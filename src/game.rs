@@ -18656,10 +18656,7 @@ impl Game {
         let ear = self.own_vehicle_ear_level(crate::sound_levels::LUGER_EAR.lpk_db,
             crate::sound_levels::LUGER_EAR.laf_db, crate::sound_levels::SpectrumClass::SmallArms,
             crate::sound_levels::LUGER_EAR.a_duration_ms);
-        self.hear_own_vehicle_impulse(&ear, 0.0);
-        if let Some(audio) = &self.audio {
-            audio.play_at_ear(crate::audio::Sfx::LugerShot, ear.laf_db);
-        }
+        self.play_and_hear_at_ear(crate::audio::Sfx::LugerShot, &ear, 0.0);
         let shot_pos = visual_muzzle;
         self.push_noise(shot_pos, 120.0, 3.0);
         self.propagate_alarm(shot_pos);
@@ -22458,12 +22455,10 @@ impl Game {
                         crate::acoustics::ShellClass::ApHe | crate::acoustics::ShellClass::He));
                 let ear = self.own_armour_strike_ear_level(&event, penetrated, internal_burst,
                     station_distance);
-                self.hear_own_vehicle_impulse(&ear, bearing);
-                if let Some(audio) = &self.audio {
-                    // The impact bus skips the pre-hit drop and keeps the first moments of the
-                    // strike at full level, so its layers land together before hearing fails.
-                    audio.play_stereo_at_ear(sound.main, ear.laf_db, crate::audio::EarBus::Impact);
-                }
+                // The impact bus keeps the first moments of the strike at full level, so its
+                // layers land together before hearing fails; the strike as heard drives the reflex.
+                self.play_stereo_and_hear_at_ear(sound.main, &ear, bearing,
+                    crate::audio::EarBus::Impact);
 
                 // The strike reached the ears above (`hear_own_vehicle_impulse`). What follows is
                 // the eye's disturbance only; hearing is the ear model's.
@@ -22773,11 +22768,10 @@ impl Game {
         };
         let ear = self.own_vehicle_ear_level(level.lpk_db, level.laf_db, level.spectrum,
             level.a_duration_ms);
-        // The ears take the shot when the recording's sound begins, not at its first sample.
-        let onset = self.audio.as_ref().map_or(0.0, |a| a.direct_onset_s(pick));
-        self.hear_own_vehicle_impulse_after(&ear, 0.0, onset);
+        // The ears take the shot where the recording's sound begins, and the recording, as
+        // heard, drives the middle-ear reflex.
+        self.play_and_hear_at_ear(pick, &ear, 0.0);
         if let Some(a) = &self.audio {
-            a.play_at_ear(pick, ear.laf_db);
             a.play_mechanical(
                 crate::acoustics::MechanicalParams {
                     cue: crate::acoustics::MechanicalCue::MainGunRecoil,

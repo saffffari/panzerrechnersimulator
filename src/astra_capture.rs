@@ -190,8 +190,8 @@ fn audio(
     let mut film = crate::audio::OfflineMix::new(SECONDS);
     film.bed(&mix, bed_ear);
     film.continuous(bed_ear);
-    film.impulse(HIT_T, &ear, params.bearing_deg);
-    film.voice(HIT_T, &event.main, ear.laf_db, crate::audio::EarBus::Impact);
+    film.voice_with_impulse(HIT_T, &event.main, &ear, params.bearing_deg,
+        crate::audio::EarBus::Impact);
     for &(relative, contact) in contacts {
         let fragment = acoustics::synth_fragment_collision_batch(&[contact]);
         film.voice(HIT_T + relative.max(0.0), &fragment,

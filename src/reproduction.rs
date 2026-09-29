@@ -250,6 +250,46 @@ pub fn laf_max_dbfs_mono(mono: &[f32]) -> f32 {
     meter.max_dbfs()
 }
 
+/// Block length of a voice's drive envelope for the middle-ear reflex, s.
+pub const DRIVE_BLOCK_S: f32 = 0.005;
+/// A voice's sound is taken to begin at its first sample within 40 dB of its sample peak.
+pub const ONSET_OF_PEAK: f32 = 0.01;
+
+/// A voice's short-term level as the middle-ear reflex's drive (`hearing::DriveEnvelope`): where
+/// its sound begins (s from its first sample; the first sample within 40 dB of its peak) and, from
+/// there, the mean A-weighted power of each `DRIVE_BLOCK_S` block in dB relative to the voice's
+/// own LAF,max. Placed at the voice's level at the ear, it is the level the listener hears.
+pub fn drive_envelope(stereo: &[f32]) -> (f32, Vec<f32>) {
+    let frames = stereo.len() / 2;
+    let peak = stereo.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    if frames == 0 || peak <= 0.0 {
+        return (0.0, Vec::new());
+    }
+    let onset = stereo.iter().position(|v| v.abs() >= ONSET_OF_PEAK * peak).map_or(0, |i| i / 2);
+    let reference = laf_max_dbfs(stereo);
+    let mut weighting = [AWeighting::new(SAMPLE_RATE), AWeighting::new(SAMPLE_RATE)];
+    let block = ((DRIVE_BLOCK_S * SAMPLE_RATE).round() as usize).max(1);
+    let (mut sum, mut count, mut envelope) = (0.0f64, 0usize, Vec::new());
+    for (frame, pair) in stereo.chunks_exact(2).enumerate() {
+        // The weighting runs from the first sample so its state is settled at the onset.
+        let l = f64::from(weighting[0].process(pair[0]));
+        let r = f64::from(weighting[1].process(pair[1]));
+        if frame < onset {
+            continue;
+        }
+        sum += 0.5 * (l * l + r * r);
+        count += 1;
+        if count == block {
+            envelope.push(power_dbfs(sum / block as f64) - reference);
+            (sum, count) = (0.0, 0);
+        }
+    }
+    if count > 0 {
+        envelope.push(power_dbfs(sum / count as f64) - reference);
+    }
+    (onset as f32 / SAMPLE_RATE, envelope)
+}
+
 /// Sample peak of a buffer, dBFS.
 pub fn peak_dbfs(samples: &[f32]) -> f32 {
     let peak = samples.iter().fold(0.0f32, |m, v| m.max(v.abs()));
@@ -489,6 +529,25 @@ mod tests {
             [v, v]
         }).collect();
         assert!(close(laf_max_dbfs(&bass), -30.2, 1.0), "{}", laf_max_dbfs(&bass));
+    }
+
+    #[test]
+    fn a_voice_envelope_begins_with_its_sound_and_reads_relative_to_its_laf_max() {
+        // 50 ms of silence, 0.5 s of a steady 1 kHz tone, then 0.5 s of the tone 20 dB down.
+        let tone = |n: usize, a: f32| {
+            a * (std::f32::consts::TAU * 1000.0 * n as f32 / SAMPLE_RATE).sin()
+        };
+        let voice: Vec<f32> = (0..2_205).map(|_| 0.0)
+            .chain((0..22_050).map(|n| tone(n, 0.5)))
+            .chain((0..22_050).map(|n| tone(n, 0.05)))
+            .flat_map(|v| [v, v]).collect();
+        let (onset, envelope) = drive_envelope(&voice);
+        assert!((onset - 0.05).abs() < 0.001, "onset {onset}");
+        assert_eq!(envelope.len(), (1.0 / DRIVE_BLOCK_S).round() as usize);
+        // The steady tone's blocks read its LAF,max; the quieter half 20 dB below.
+        assert!(close(envelope[50], 0.0, 0.2), "{}", envelope[50]);
+        assert!(close(envelope[150], -20.0, 0.3), "{}", envelope[150]);
+        assert_eq!(drive_envelope(&[0.0; 64]), (0.0, Vec::new()));
     }
 
     #[test]

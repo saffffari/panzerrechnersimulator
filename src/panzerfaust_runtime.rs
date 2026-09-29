@@ -464,10 +464,7 @@ impl Game {
         let ear = self.own_vehicle_ear_level(crate::sound_levels::PTRD41_1M.lpk_db - 6.0,
             crate::sound_levels::PTRD41_1M.laf_db - 6.0,
             crate::sound_levels::SpectrumClass::SmallArms, crate::sound_levels::PTRD41_1M.a_duration_ms);
-        self.hear_own_vehicle_impulse(&ear, 0.0);
-        if let Some(audio) = &self.audio {
-            audio.play_at_ear(crate::audio::Sfx::EnemyGun, ear.laf_db);
-        }
+        self.play_and_hear_at_ear(crate::audio::Sfx::EnemyGun, &ear, 0.0);
         self.push_noise(hold.nose(), 180.0, 3.5);
         self.propagate_alarm(hold.nose());
         if let Some(runtime) = self.campaign.as_mut() {

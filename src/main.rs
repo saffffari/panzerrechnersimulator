@@ -5137,8 +5137,7 @@ fn write_terror_soundtrack(path: &str, t34_witness: bool) -> anyhow::Result<()> 
         &acoustics::synth_gun_punch(true, 0x88F1_0345),
         acoustics::ReverbParams::STEEL_INTERIOR,
     );
-    film.impulse(TERROR_FIRE_T, &gun_ear, 0.0);
-    film.voice(TERROR_FIRE_T, &gun, gun_ear.laf_db, audio::EarBus::World);
+    film.voice_with_impulse(TERROR_FIRE_T, &gun, &gun_ear, 0.0, audio::EarBus::World);
     let recoil = |seed| acoustics::MechanicalParams {
         cue: acoustics::MechanicalCue::MainGunRecoil,
         intensity: 1.15,
@@ -5151,8 +5150,7 @@ fn write_terror_soundtrack(path: &str, t34_witness: bool) -> anyhow::Result<()> 
     // The staged late-fight Tiger fires its newly loaded final cartridge before the incoming hit.
     // This leaves a physically empty ammunition state for the isolated crew-trauma witness rather
     // than disabling live-round collision behind the camera.
-    film.impulse(TERROR_LAST_ROUND_FIRE_T, &gun_ear, 0.0);
-    film.voice(TERROR_LAST_ROUND_FIRE_T, &gun, gun_ear.laf_db, audio::EarBus::World);
+    film.voice_with_impulse(TERROR_LAST_ROUND_FIRE_T, &gun, &gun_ear, 0.0, audio::EarBus::World);
     film.voice(TERROR_LAST_ROUND_FIRE_T + 0.045, &acoustics::synth_mechanical(recoil(0xB8EE_C002)),
         audio::mechanical_level_dba(acoustics::MechanicalCue::MainGunRecoil, 1.15, 0.78),
         audio::EarBus::World);
@@ -5993,8 +5991,8 @@ fn build_damage_reel_case_audio(
     film.continuous(bed_ear);
     let ear = acoustics::impact_ear_level(result.impact_params, result.sound_context,
         acoustics::staged_filler_kg(&result.impact_params));
-    film.impulse(result.impact_t, &ear, result.impact_params.bearing_deg);
-    film.voice(result.impact_t, &event.main, ear.laf_db, audio::EarBus::Impact);
+    film.voice_with_impulse(result.impact_t, &event.main, &ear, result.impact_params.bearing_deg,
+        audio::EarBus::Impact);
 
     if result.case.expect_penetration {
         // One exceptional head-close flight. The public visual API exposes collision contacts but

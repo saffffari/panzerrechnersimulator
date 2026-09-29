@@ -3003,8 +3003,7 @@ pub fn synth_headphone_damage_compilation() -> Vec<f32> {
     for (&at, (signature, seed)) in DAMAGE_COMPILATION_CUE_TIMES.iter().zip(sequence) {
         let ear = impact_signature_ear_level(signature, seed);
         let bearing = impact_signature_params(signature, seed).0.bearing_deg;
-        mix.impulse(at, &ear, bearing);
-        mix.voice(at, &synth_impact_signature(signature, seed).main, ear.laf_db,
+        mix.voice_with_impulse(at, &synth_impact_signature(signature, seed).main, &ear, bearing,
             crate::audio::EarBus::Impact);
     }
     mix.render().0

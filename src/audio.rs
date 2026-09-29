@@ -1553,6 +1553,9 @@ pub struct Audio {
     transients: RefCell<Vec<TransientSink>>,
     /// Measured short-term A-weighted maxima of waveforms, keyed by source (`audio_calibrated`).
     level_cache: RefCell<HashMap<String, calibrated::MeasuredSource>>,
+    /// Where each direct recording's sound begins and its envelope, as the middle-ear reflex's
+    /// drive (`hearing::DriveEnvelope`), keyed by source.
+    drive_cache: RefCell<HashMap<String, (f32, crate::hearing::DriveEnvelope)>>,
     /// Other vehicles' engines and tracks (`audio_vehicles`).
     vehicle_voices: RefCell<vehicles::VehicleVoices>,
     /// The tinnitus percept (`audio_tinnitus`), created the first time it is heard.
@@ -1772,6 +1775,7 @@ impl Audio {
             shriek_state: RefCell::new(ShriekState::default()),
             transients: RefCell::new(Vec::new()),
             level_cache: RefCell::new(HashMap::new()),
+            drive_cache: RefCell::new(HashMap::new()),
             vehicle_voices: RefCell::new(vehicles::VehicleVoices::default()),
             tinnitus_control: Arc::new(tinnitus::TinnitusControl::default()),
             tinnitus_sink: RefCell::new(None),

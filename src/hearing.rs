@@ -216,6 +216,25 @@ pub fn reflex_stable_fraction(drive_dba: f32) -> f32 {
     ((drive_dba - REFLEX_THRESHOLD_DBA) / REFLEX_STABLE_ABOVE_DB).clamp(0.0, 1.0)
 }
 
+/// A voice's own short-term level at the ear from where its sound begins, as the reflex's drive:
+/// block levels (dB relative to the voice's LAF,max, which lies at the impulse's LAF at the ear)
+/// every `block_s` (`reproduction::drive_envelope`). With it the reflex follows the sound the
+/// listener actually hears, recordings included; without it an impulse's drive is its LAF,
+/// decaying at `REFLEX_IMPULSE_DECAY_DB_PER_S`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DriveEnvelope {
+    pub rel_db: std::sync::Arc<[f32]>,
+    pub block_s: f32,
+}
+
+impl DriveEnvelope {
+    /// The envelope of an interleaved stereo voice, and where its sound begins (s).
+    pub fn of_voice(stereo: &[f32]) -> (f32, Self) {
+        let (onset, rel_db) = crate::reproduction::drive_envelope(stereo);
+        (onset, Self { rel_db: rel_db.into(), block_s: crate::reproduction::DRIVE_BLOCK_S })
+    }
+}
+
 /// One impulse as it reaches one ear.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EarImpulse {
@@ -430,8 +449,11 @@ struct Reflex {
     now_s: f64,
     /// Contraction now: attenuation below 0.7 kHz, dB.
     contraction_db: f32,
-    /// Impulse drive power now and its integrated (rising) value.
+    /// Declared impulse drive power now (each impulse's LAF, decaying), the voices driving it by
+    /// their own envelopes (start, level at the ear of the envelope's 0 dB, envelope), and the
+    /// integrated (rising) value of their sum.
     impulse_power: f64,
+    envelopes: Vec<(f64, f32, DriveEnvelope)>,
     impulse_integrated: f64,
     /// Continuous drive (dB(A) at the ear), its integrated power, and the adaptation of the
     /// sustained contraction (1 = unadapted).
@@ -450,6 +472,7 @@ impl Default for Reflex {
             now_s: 0.0,
             contraction_db: 0.0,
             impulse_power: 0.0,
+            envelopes: Vec::new(),
             impulse_integrated: 0.0,
             bed_dba: 0.0,
             bed_integrated: 0.0,
@@ -463,6 +486,24 @@ impl Default for Reflex {
 impl Reflex {
     fn add_impulse(&mut self, laf_dba: f32) {
         self.impulse_power += power_of(laf_dba);
+    }
+
+    /// A voice drives the reflex by its own envelope from now, its 0 dB at `laf_dba` at the ear.
+    fn add_envelope(&mut self, laf_dba: f32, envelope: DriveEnvelope) {
+        if laf_dba.is_finite() && !envelope.rel_db.is_empty() && envelope.block_s > 0.0 {
+            self.envelopes.push((self.now_s, laf_dba, envelope));
+        }
+    }
+
+    /// The voices' envelope drive power at `at_s`, dropping finished voices.
+    fn envelope_power(&mut self, at_s: f64) -> f64 {
+        self.envelopes.retain(|(start, _, envelope)| {
+            ((at_s - start) / f64::from(envelope.block_s)) < envelope.rel_db.len() as f64
+        });
+        self.envelopes.iter().map(|(start, level, envelope)| {
+            let block = ((at_s - start) / f64::from(envelope.block_s)).max(0.0) as usize;
+            envelope.rel_db.get(block).map_or(0.0, |rel| power_of(level + rel))
+        }).sum()
     }
 
     /// Demand now (dB) and the time constant of the class that sets it.
@@ -489,7 +530,8 @@ impl Reflex {
                 *integrated = drive;
             }
         };
-        integrate(&mut self.impulse_integrated, self.impulse_power);
+        let voices = self.envelope_power(self.now_s + h);
+        integrate(&mut self.impulse_integrated, self.impulse_power + voices);
         integrate(&mut self.bed_integrated, power_of(self.bed_dba));
         let bed = level_of(self.bed_integrated);
         let stable = if bed > REFLEX_THRESHOLD_DBA { reflex_stable_fraction(bed) } else { 1.0 };
@@ -524,10 +566,11 @@ impl Reflex {
 pub struct Hearing {
     pub ears: [Ear; 2],
     reflex: Reflex,
-    /// Impulses handed over since the last update, each with its delay after that update's end.
-    handed: Vec<(f32, [EarImpulse; 2])>,
+    /// Impulses handed over since the last update, each with its delay after that update's end
+    /// and the envelope of the voice carrying it, if known.
+    handed: Vec<(f32, [EarImpulse; 2], Option<DriveEnvelope>)>,
     /// Impulses due at a time on the reflex clock, in no particular order.
-    due: Vec<(f64, [EarImpulse; 2])>,
+    due: Vec<(f64, [EarImpulse; 2], Option<DriveEnvelope>)>,
     /// The last update's step, s: the listener stage follows the reflex over one more such step.
     last_step_s: f32,
     seed: u32,
@@ -569,19 +612,31 @@ impl Hearing {
     /// As [`impulse`](Self::impulse), `delay_s` later: for a recording whose sound begins that long
     /// after its first sample.
     pub fn impulse_after(&mut self, pulses: [EarImpulse; 2], delay_s: f32) {
+        self.impulse_with_envelope(pulses, delay_s, None);
+    }
+
+    /// As [`impulse_after`](Self::impulse_after), with the envelope of the voice carrying the
+    /// impulse from where its sound begins: the reflex then follows that voice as it is heard.
+    pub fn impulse_with_envelope(&mut self, pulses: [EarImpulse; 2], delay_s: f32,
+        envelope: Option<DriveEnvelope>)
+    {
         let delay = if delay_s.is_finite() { delay_s.clamp(0.0, 10.0) } else { 0.0 };
-        self.handed.push((delay, pulses));
+        self.handed.push((delay, pulses, envelope));
     }
 
     /// The impulse arrives: each ear takes its dose through the reflex already contracted, then the
     /// impulse drives the reflex (it cannot protect against its own first moments).
-    fn arrive(&mut self, pulses: [EarImpulse; 2]) {
+    fn arrive(&mut self, pulses: [EarImpulse; 2], envelope: Option<DriveEnvelope>) {
         self.seed = self.seed.wrapping_add(0x9E37);
         let reflex = self.reflex.contraction_db;
         for (ear, pulse) in self.ears.iter_mut().zip(pulses) {
             ear.impulse(pulse, reflex, self.seed.wrapping_add(pulse.facing as u32));
         }
-        self.reflex.add_impulse(pulses[0].laf_db.max(pulses[1].laf_db));
+        let laf = pulses[0].laf_db.max(pulses[1].laf_db);
+        match envelope {
+            Some(envelope) => self.reflex.add_envelope(laf, envelope),
+            None => self.reflex.add_impulse(laf),
+        }
     }
 
     /// Advance time. The reflex runs on `dt_s`; the ears' recovery and continuous exposure run on
@@ -593,17 +648,18 @@ impl Hearing {
         let recovery_dt = if recovery_dt_s.is_finite() { recovery_dt_s.max(0.0) } else { dt };
         let end = self.reflex.now_s + f64::from(dt);
         let handed: Vec<_> = self.handed.drain(..).collect();
-        self.due.extend(handed.into_iter().map(|(delay, pulses)| (end + f64::from(delay), pulses)));
+        self.due.extend(handed.into_iter()
+            .map(|(delay, pulses, envelope)| (end + f64::from(delay), pulses, envelope)));
         let bed = if engine_laeq_dba.is_finite() { engine_laeq_dba } else { 0.0 };
         loop {
             let next = self.due.iter().enumerate()
-                .filter(|(_, (at, _))| *at <= end + 1.0e-9)
+                .filter(|(_, (at, ..))| *at <= end + 1.0e-9)
                 .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
                 .map(|(i, _)| i);
             let Some(i) = next else { break };
-            let (at, pulses) = self.due.swap_remove(i);
+            let (at, pulses, envelope) = self.due.swap_remove(i);
             self.reflex.run_to(at, bed);
-            self.arrive(pulses);
+            self.arrive(pulses, envelope);
         }
         self.reflex.run_to(end, bed);
         for ear in &mut self.ears {
@@ -645,16 +701,20 @@ impl Hearing {
     }
 }
 
+/// One impulse of an offline timeline: when it reaches the ears, at each ear, and the envelope of
+/// the voice carrying it (if known) from that moment.
+pub type TimedImpulse = (f32, [EarImpulse; 2], Option<DriveEnvelope>);
+
 /// The ear state every `step_s` for `seconds` from t = 0 (entry k is the state at k·step), with
-/// `impulses` (time, both ears) arriving at their times and `engine_laeq_dba` as the continuous
-/// level. For review films and audition reels that do not run the game loop; the runtime advances
-/// the same model once per frame.
-pub fn offline_timeline(impulses: &[(f32, [EarImpulse; 2])], seconds: f32, step_s: f32,
+/// `impulses` arriving at their times and `engine_laeq_dba` as the continuous level. For review
+/// films and audition reels that do not run the game loop; the runtime advances the same model
+/// once per frame.
+pub fn offline_timeline(impulses: &[TimedImpulse], seconds: f32, step_s: f32,
     engine_laeq_dba: f32) -> Vec<EarRender>
 {
     let step = if step_s.is_finite() { step_s.max(1.0e-4) } else { 1.0e-3 };
     let count = (seconds.max(0.0) / step).ceil() as usize + 1;
-    let mut order: Vec<&(f32, [EarImpulse; 2])> = impulses.iter().collect();
+    let mut order: Vec<&TimedImpulse> = impulses.iter().collect();
     order.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut next = 0;
     let mut hearing = Hearing { last_step_s: step, ..Hearing::default() };
@@ -662,7 +722,8 @@ pub fn offline_timeline(impulses: &[(f32, [EarImpulse; 2])], seconds: f32, step_
         let state = hearing.render();
         let until = (k + 1) as f64 * f64::from(step);
         while next < order.len() && f64::from(order[next].0) < until {
-            hearing.due.push((f64::from(order[next].0), order[next].1));
+            let (at, pulses, envelope) = order[next].clone();
+            hearing.due.push((f64::from(at), pulses, envelope));
             next += 1;
         }
         hearing.advance(step, step, engine_laeq_dba);
@@ -961,6 +1022,28 @@ mod tests {
         let course = reflex_course(&mut hearing, 400, step, 0.0);
         let first = course.iter().position(|c| *c > 0.0).unwrap() as f32 * step;
         assert!((0.074..=0.077).contains(&first), "{first} s");
+    }
+
+    #[test]
+    fn a_voice_drives_the_reflex_as_it_is_heard() {
+        // A recording that stays at its short-term maximum for 0.8 s after its sound begins.
+        let loud = DriveEnvelope { rel_db: vec![0.0f32; 160].into(), block_s: 0.005 };
+        let step = 0.001;
+        let mut heard = Hearing::default();
+        heard.impulse_with_envelope([OWN_GUN, OWN_GUN], 0.0, Some(loud));
+        let held = reflex_course(&mut heard, 1_500, step, 0.0);
+        let mut declared = Hearing::default();
+        declared.impulse([OWN_GUN, OWN_GUN]);
+        let decayed = reflex_course(&mut declared, 1_500, step, 0.0);
+        // While the voice is loud the reflex holds; the declared drive (the turret's decay) has
+        // let go.
+        assert!(held[700] > 0.9 * REFLEX_MAX_DB, "{}", held[700]);
+        assert!(decayed[700] < 1.0, "{}", decayed[700]);
+        // Both start alike: the first 25 ms after the sound begins pass, then the rise.
+        assert_eq!(held[20], 0.0);
+        assert!((held[100] - decayed[100]).abs() < 0.5, "{} {}", held[100], decayed[100]);
+        // Once the voice has ended the reflex relaxes on its recovery constant.
+        assert!(held[1_200] < 1.0, "{}", held[1_200]);
     }
 
     #[test]

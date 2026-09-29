@@ -171,27 +171,50 @@ impl Game {
 
     /// Hand an impulse from the listener's own vehicle to the ears.
     pub(super) fn hear_own_vehicle_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {
-        self.hear_impulse_after(ear, bearing_deg, 0.0);
+        self.hear_impulse_with(ear, bearing_deg, 0.0, None);
     }
 
-    /// Hand an impulse to the ears `delay_s` after the voice carrying it starts: a recording whose
-    /// sound begins after its first sample (the verified gun recordings open with ~50 ms of
-    /// near-silence) reaches the ears, and raises the middle-ear reflex, when its sound does.
-    pub(super) fn hear_own_vehicle_impulse_after(&mut self, ear: &EarLevel, bearing_deg: f32,
-        delay_s: f32)
+    /// Play a direct recording at the ear (the own gun, the listener's own weapons) and hand the
+    /// impulse it carries to the ears where its sound begins (the verified gun recordings open
+    /// with ~50 ms of near-silence); the recording, as heard, drives the middle-ear reflex.
+    pub(super) fn play_and_hear_at_ear(&mut self, sfx: crate::audio::Sfx, ear: &EarLevel,
+        bearing_deg: f32)
     {
-        self.hear_impulse_after(ear, bearing_deg, delay_s);
+        let (onset, envelope) = match self.audio.as_ref().and_then(|a| a.direct_drive(sfx)) {
+            Some((onset, envelope)) => (onset, Some(envelope)),
+            None => (0.0, None),
+        };
+        self.hear_impulse_with(ear, bearing_deg, onset, envelope);
+        if let Some(audio) = &self.audio {
+            audio.play_at_ear(sfx, ear.laf_db);
+        }
+    }
+
+    /// Play a synthesized voice at the ear on `bus` (a strike on the own hull, a bullet on its
+    /// steel) and hand its impulse to the ears where its sound begins; the voice, as heard,
+    /// drives the middle-ear reflex.
+    pub(super) fn play_stereo_and_hear_at_ear(&mut self, samples: Vec<f32>, ear: &EarLevel,
+        bearing_deg: f32, bus: crate::audio::EarBus)
+    {
+        let (onset, envelope) = crate::hearing::DriveEnvelope::of_voice(&samples);
+        self.hear_impulse_with(ear, bearing_deg, onset, Some(envelope));
+        if let Some(audio) = &self.audio {
+            audio.play_stereo_at_ear(samples, ear.laf_db, bus);
+        }
     }
 
     fn hear_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {
-        self.hear_impulse_after(ear, bearing_deg, 0.0);
+        self.hear_impulse_with(ear, bearing_deg, 0.0, None);
     }
 
-    fn hear_impulse_after(&mut self, ear: &EarLevel, bearing_deg: f32, delay_s: f32) {
+    fn hear_impulse_with(&mut self, ear: &EarLevel, bearing_deg: f32, delay_s: f32,
+        envelope: Option<crate::hearing::DriveEnvelope>)
+    {
         if !matches!(self.mode, Mode::Tank | Mode::Foot) || !ear.lpk_db.is_finite() {
             return;
         }
-        self.hearing.impulse_after(crate::hearing::ear_impulses(ear, bearing_deg), delay_s);
+        self.hearing.impulse_with_envelope(crate::hearing::ear_impulses(ear, bearing_deg), delay_s,
+            envelope);
     }
 }
 

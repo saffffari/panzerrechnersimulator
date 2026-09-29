@@ -7,7 +7,7 @@
 
 use super::ear::{offline_listen, EarBus, OFFLINE_POLL_FRAMES};
 use super::tinnitus::offline_tinnitus;
-use crate::hearing::{ear_impulses, offline_timeline, EarImpulse};
+use crate::hearing::{ear_impulses, offline_timeline, DriveEnvelope, TimedImpulse};
 use crate::reproduction::{laf_max_dbfs, master_offline, voice_gain};
 use crate::sound_propagation::EarLevel;
 
@@ -18,7 +18,7 @@ pub(crate) struct OfflineMix {
     frames: usize,
     /// (first frame, samples already placed at their level, bus)
     voices: Vec<(usize, Vec<f32>, EarBus)>,
-    impulses: Vec<(f32, [EarImpulse; 2])>,
+    impulses: Vec<TimedImpulse>,
     continuous_dba: f32,
 }
 
@@ -56,9 +56,23 @@ impl OfflineMix {
         self.voices.push((0, placed, EarBus::World));
     }
 
-    /// An impulse reaching the ears `at_s` seconds in, from `bearing_deg` (0 ahead, 90 right).
+    /// An impulse reaching the ears `at_s` seconds in, from `bearing_deg` (0 ahead, 90 right),
+    /// with no voice of its own here: its reflex drive is its LAF at the ear, decaying.
     pub fn impulse(&mut self, at_s: f32, ear: &EarLevel, bearing_deg: f32) {
-        self.impulses.push((Self::frame_at(at_s) as f32 / RATE, ear_impulses(ear, bearing_deg)));
+        let at = Self::frame_at(at_s) as f32 / RATE;
+        self.impulses.push((at, ear_impulses(ear, bearing_deg), None));
+    }
+
+    /// A voice starting `at_s` seconds in whose LAF,max at the ear is `ear.laf_db`, carrying the
+    /// impulse `ear` from `bearing_deg`: the impulse reaches the ears where the voice's sound
+    /// begins, and the voice's own envelope drives the middle-ear reflex, as in the game.
+    pub fn voice_with_impulse(&mut self, at_s: f32, stereo: &[f32], ear: &EarLevel,
+        bearing_deg: f32, bus: EarBus)
+    {
+        let (onset, envelope) = DriveEnvelope::of_voice(stereo);
+        let arrives = (Self::frame_at(at_s) as f32 + (onset * RATE).round()) / RATE;
+        self.impulses.push((arrives, ear_impulses(ear, bearing_deg), Some(envelope)));
+        self.voice(at_s, stereo, ear.laf_db, bus);
     }
 
     /// The continuous (engine) level at the ears for the ear model's slow accumulator.

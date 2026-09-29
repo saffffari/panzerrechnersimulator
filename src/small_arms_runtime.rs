@@ -117,10 +117,8 @@ impl Game {
                             lpk - crate::sound_levels::LPK_MINUS_LAE_REVERBERANT_DB
                                 + crate::sound_levels::LAF_MINUS_LAE_DB,
                             crate::sound_levels::SpectrumClass::ArmourRing, 0.5);
-                        self.hear_own_vehicle_impulse(&ear, bearing);
-                        if let Some(audio) = &self.audio {
-                            audio.play_stereo_at_ear(sound, ear.laf_db, crate::audio::EarBus::World);
-                        }
+                        self.play_stereo_and_hear_at_ear(sound, &ear, bearing,
+                            crate::audio::EarBus::World);
                     } else {
                         self.schedule_emission(crate::audio::Sfx::ImpactTank, contact.pos,
                             crate::sound_propagation::Emission::from_level(

@@ -121,8 +121,10 @@ fn own_gun_through_the_ears(level: &levels::SourceLevel, sfx: Sfx,
             audio.set_engine_at_ear(telemetry, at_ear, dt);
         }
         if t == fire_tick {
-            let onset = audio.direct_onset_s(sfx);
-            hearing.impulse_after(crate::hearing::ear_impulses(&ear, 0.0), onset);
+            // As the game: the impulse where the recording's sound begins, its envelope the drive.
+            let (onset, envelope) = audio.direct_drive(sfx)
+                .map_or((0.0, None), |(onset, envelope)| (onset, Some(envelope)));
+            hearing.impulse_with_envelope(crate::hearing::ear_impulses(&ear, 0.0), onset, envelope);
             audio.play_at_ear(sfx, ear.laf_db);
         }
         hearing.advance(dt, dt, bed_dba);
@@ -138,8 +140,7 @@ fn own_gun_through_the_offline_ears() -> Vec<f32> {
     let ear = own_gun(&levels::OWN_88_BUTTONED);
     let Some(waveform) = audio.direct_waveform(sfx) else { return Vec::new() };
     let mut mix = crate::audio::OfflineMix::new(2.0);
-    mix.voice(0.0, &waveform, ear.laf_db, EarBus::World);
-    mix.impulse(audio.direct_onset_s(sfx), &ear, 0.0);
+    mix.voice_with_impulse(0.0, &waveform, &ear, 0.0, EarBus::World);
     mix.render().0
 }
 
@@ -366,7 +367,7 @@ pub fn checks(events: &[Measured]) -> Vec<Check> {
     // 25 ms dead time from where the recording's sound begins.
     {
         let (plain, eared) = (e("own_gun_buttoned"), e("own_gun_buttoned_ears"));
-        let onset = Audio::new_capture().direct_onset_s(Sfx::PlayerGunInt1);
+        let onset = Audio::new_capture().direct_drive(Sfx::PlayerGunInt1).map_or(0.0, |d| d.0);
         let a = ((onset * HZ as f32) as usize * 2).min(plain.samples.len());
         let b = (((onset + crate::hearing::REFLEX_DEAD_TIME_S) * HZ as f32) as usize * 2)
             .min(plain.samples.len()).min(eared.samples.len());
