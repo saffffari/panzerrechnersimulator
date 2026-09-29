@@ -49,9 +49,10 @@ impl WorldIndex {
                 }
             }
         }
-        // A building module's occluder, once the module fails, stands knee-high on its building's
-        // ground (`collapsed_occluder_on`), below where it stood: index it down to that ground so
-        // the indexed box holds both states.
+        // A building module's occluder, once the module fails, stands on its building's ground up
+        // to its rubble (`solid_city::rubble_occluder`), below or above where it stood: index it
+        // from that ground to the highest a rubble occluder may reach so the indexed box holds
+        // every state.
         let occluder_index = BoxIndex::build(
             WORLD_INDEX_CELL_M,
             occluders.iter().enumerate().map(|(index, o)| {
@@ -60,7 +61,10 @@ impl WorldIndex {
                 if let Some(instance) = owner {
                     let ground_y = buildings.ground_y(instance as usize);
                     min.y = min.y.min(ground_y);
-                    max.y = max.y.max(ground_y + COLLAPSE_OCCLUDER_H);
+                    max.y = max
+                        .y
+                        .max(ground_y + COLLAPSE_OCCLUDER_H)
+                        .max(ground_y + solid_city::RUBBLE_OCCLUDER_REACH_M);
                 }
                 (index as u32, min, max, owner)
             }),

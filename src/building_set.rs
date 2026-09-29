@@ -75,11 +75,100 @@ pub struct NetApply {
     pub errors: Vec<String>,
 }
 
+/// How far a building's rubble can reach beyond its world box: a mound's berm, spread and apron
+/// (`building_rubble`), with room to spare.
+pub const RUBBLE_REACH_M: f32 = 12.0;
+
+/// One intact piece of rubble that is part of a building from the start (a grammar burned-floor
+/// layer): its module, transform and top surface generated from its mesh.
+#[derive(Clone, Debug)]
+struct DebrisLayer {
+    module: usize,
+    transform: glam::Mat4,
+    inverse: glam::Mat4,
+    surface: std::sync::Arc<crate::building_rubble::TopSurface>,
+    min: Vec2,
+    max: Vec2,
+}
+
+/// The rubble of one building: the pile its failed modules have left, the floors a mound can land
+/// on, the modules whose rubble stays buried in a sealed cellar, and its burned-floor layers.
+#[derive(Clone, Debug, Default)]
+struct RubbleState {
+    pile: crate::building_rubble::RubblePile,
+    /// (module, world box) of every floor, foundation and stair proxy.
+    floors: Vec<(usize, Vec3, Vec3)>,
+    buried: Vec<bool>,
+    debris: Vec<DebrisLayer>,
+}
+
+/// The rubble over a small area, gathered once for many point queries ([`BuildingSet::rubble_near`]).
+pub struct LocalRubble<'a> {
+    mounds: Vec<(usize, &'a crate::building_rubble::PlacedMound)>,
+    layers: Vec<(usize, &'a DebrisLayer)>,
+}
+
+impl LocalRubble<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.mounds.is_empty() && self.layers.is_empty()
+    }
+
+    /// The highest rubble over a world XZ point among the mounds and layers that start at or
+    /// below `max_base` (a mound's lowest point, a burned-floor layer's floor): the rubble a
+    /// track or a foot at that height can stand on or meet, and the rubble a round at that height
+    /// is inside when below its top. Rubble lying on an upper floor is not ground under the
+    /// street below it (before 2026-09-29 a burned-floor layer 10 m up read as a 9.9 m step).
+    pub fn top_at_from(&self, xz: Vec2, max_base: f32) -> Option<RubbleHit> {
+        let mut best: Option<RubbleHit> = None;
+        for &(instance, mound) in &self.mounds {
+            if mound.world_min.y > max_base {
+                continue;
+            }
+            if let Some(height) = mound.top_at(xz) {
+                if best.map_or(true, |b| height > b.height) {
+                    best = Some(RubbleHit { height, base: mound.world_min.y, instance, module: Some(mound.module) });
+                }
+            }
+        }
+        for &(instance, layer) in &self.layers {
+            if xz.x < layer.min.x || xz.x > layer.max.x || xz.y < layer.min.y || xz.y > layer.max.y {
+                continue;
+            }
+            let base = layer.transform.w_axis.y;
+            if base > max_base {
+                continue;
+            }
+            let local = layer.inverse.transform_point3(Vec3::new(xz.x, 0.0, xz.y));
+            if let Some(h) = layer.surface.height_at(Vec2::new(local.x, local.z)) {
+                let height = base + layer.transform.y_axis.y * h;
+                if best.map_or(true, |b| height > b.height) {
+                    best = Some(RubbleHit { height, base, instance, module: None });
+                }
+            }
+        }
+        best
+    }
+}
+
+/// The highest rubble over a point: its height, and the building and module whose mound it is
+/// (`None` module for a burned-floor layer).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RubbleHit {
+    pub height: f32,
+    /// Where the rubble starts: a mound's lowest point, a burned-floor layer's floor.
+    pub base: f32,
+    pub instance: usize,
+    pub module: Option<usize>,
+}
+
 #[derive(Default)]
 pub struct BuildingSet {
     instances: Vec<BuildingRuntime>,
     /// Grid over the instances' world boxes (key = instance index).
     instance_index: crate::spatial_grid::BoxIndex,
+    /// Grid over the instances' world boxes widened by their rubble's reach.
+    rubble_index: crate::spatial_grid::BoxIndex,
+    rubble: Vec<RubbleState>,
     /// Destructible index → (instance, module).
     owners: Vec<Option<(u32, u32)>>,
     /// Host: last revision seen by `net_sync`, publishes left hot, and (revision, differs from
@@ -113,9 +202,46 @@ impl BuildingSet {
                 (index as u32, min, max, None)
             }),
         );
+        let rubble_index = crate::spatial_grid::BoxIndex::build(
+            INSTANCE_INDEX_CELL_M,
+            instances.iter().enumerate().map(|(index, instance)| {
+                let (min, max) = instance.world_bounds();
+                let reach = Vec3::new(RUBBLE_REACH_M, 0.0, RUBBLE_REACH_M);
+                (index as u32, min - reach, max + reach, None)
+            }),
+        );
+        let rubble = instances
+            .iter()
+            .map(|instance| {
+                let placements = instance.layout().placements();
+                let floors = placements
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, placement)| {
+                        matches!(
+                            placement.kind,
+                            crate::building_blueprint::ModuleKind::Foundation
+                                | crate::building_blueprint::ModuleKind::Slab
+                                | crate::building_blueprint::ModuleKind::Stair
+                        )
+                    })
+                    .flat_map(|(module, _)| {
+                        instance.module_proxies(module).iter().map(move |&(min, max)| (module, min, max))
+                    })
+                    .collect();
+                RubbleState {
+                    pile: crate::building_rubble::RubblePile::new(placements.len()),
+                    floors,
+                    buried: vec![false; placements.len()],
+                    debris: Vec::new(),
+                }
+            })
+            .collect();
         Ok(Self {
             instances,
             instance_index,
+            rubble_index,
+            rubble,
             owners: Vec::new(),
             net_last_revision: vec![0; count],
             net_hot: vec![0; count],
@@ -223,6 +349,262 @@ impl BuildingSet {
     /// Ground height the rubble and collapse effects of an instance fall to.
     pub fn ground_y(&self, instance: usize) -> f32 {
         self.instances[instance].world_center().y
+    }
+
+    // ── Rubble (solid city, 2026-09-29; `building_rubble`) ───────────────────────────────────
+
+    /// Lay the mounds of every instance's failed modules, in placement order: at build, when the
+    /// instances already carry their condition damage.
+    pub fn init_rubble(&mut self, terrain: &dyn Fn(Vec2) -> f32) {
+        for instance in 0..self.instances.len() {
+            self.rebuild_rubble(instance, terrain);
+        }
+    }
+
+    /// Lay one instance's pile again from scratch, its failed modules in placement order (after a
+    /// snapshot import, whose failure order is unknown).
+    pub fn rebuild_rubble(&mut self, instance: usize, terrain: &dyn Fn(Vec2) -> f32) {
+        let order: Vec<usize> = (0..self.instances[instance].layout().placements().len())
+            .filter(|&module| self.rubble_candidate(instance, module))
+            .collect();
+        self.lay_rubble_in_order(instance, &order, terrain);
+    }
+
+    fn lay_rubble_in_order(&mut self, instance: usize, order: &[usize], terrain: &dyn Fn(Vec2) -> f32) {
+        self.rubble[instance].pile.clear();
+        self.rubble[instance].buried.iter_mut().for_each(|b| *b = false);
+        for &module in order {
+            self.deposit_rubble(instance, module, terrain);
+        }
+    }
+
+    /// A failed module with solids leaves rubble.
+    fn rubble_candidate(&self, instance: usize, module: usize) -> bool {
+        let runtime = &self.instances[instance];
+        !runtime.module_intact(module) && !runtime.module_proxies(module).is_empty()
+    }
+
+    /// Lay one failed module's mound on what lies under it: the terrain, the building's intact
+    /// floors, foundations and stairs below the module, and the rubble already there. A module
+    /// buried in a sealed cellar (all its solids below the terrain) leaves its rubble there, unseen.
+    fn deposit_rubble(&mut self, instance: usize, module: usize, terrain: &dyn Fn(Vec2) -> f32) -> bool {
+        let runtime = &self.instances[instance];
+        let proxies = runtime.module_proxies(module);
+        if proxies.is_empty() {
+            return false;
+        }
+        let (lo, hi) = proxies.iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(lo, hi), (min, max)| (lo.min(*min), hi.max(*max)),
+        );
+        let ground = [
+            Vec2::new(lo.x, lo.z),
+            Vec2::new(hi.x, lo.z),
+            Vec2::new(lo.x, hi.z),
+            Vec2::new(hi.x, hi.z),
+            Vec2::new(0.5 * (lo.x + hi.x), 0.5 * (lo.z + hi.z)),
+        ]
+        .into_iter()
+        .map(|xz| terrain(xz))
+        .fold(f32::INFINITY, f32::min);
+        if hi.y <= ground + 0.01 {
+            self.rubble[instance].buried[module] = true;
+            return false;
+        }
+        let placement = &runtime.layout().placements()[module];
+        let variant = crate::building_rubble::mound_variant(runtime.instance_id(), module);
+        let Some(shape) = crate::building_rubble::mound(placement.asset_id.as_str(), variant) else {
+            return false;
+        };
+        let world = runtime.module_world(module);
+        // The mound's world footprint (at base 0) picks the floors it can land on.
+        let probe = crate::building_rubble::mound_transform(world, &shape, 0.0);
+        let (e_lo, e_hi) = shape.extent();
+        let (mut f_lo, mut f_hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for corner in [e_lo, Vec2::new(e_hi.x, e_lo.y), Vec2::new(e_lo.x, e_hi.y), e_hi] {
+            let p = probe.transform_point3(Vec3::new(corner.x, 0.0, corner.y));
+            f_lo = f_lo.min(Vec2::new(p.x, p.z));
+            f_hi = f_hi.max(Vec2::new(p.x, p.z));
+        }
+        let bottom = lo.y;
+        let floors: Vec<(usize, Vec3, Vec3)> = self.rubble[instance]
+            .floors
+            .iter()
+            .filter(|(m, min, max)| {
+                *m != module
+                    && runtime.module_intact(*m)
+                    && max.y <= bottom + 0.05
+                    && max.x >= f_lo.x
+                    && min.x <= f_hi.x
+                    && max.z >= f_lo.y
+                    && min.z <= f_hi.y
+            })
+            .copied()
+            .collect();
+        let support = |xz: Vec2| {
+            let mut h = terrain(xz);
+            let mut carrier = None;
+            for &(floor, min, max) in &floors {
+                if xz.x >= min.x && xz.x <= max.x && xz.y >= min.z && xz.y <= max.z && max.y > h {
+                    h = max.y;
+                    carrier = Some(floor);
+                }
+            }
+            (h, carrier)
+        };
+        self.rubble[instance].pile.deposit(module, world, shape, &support);
+        true
+    }
+
+    /// After a structural change of `instance`: lay the mounds of its newly failed modules on the
+    /// pile. When a failed floor, foundation or stair carried earlier rubble, the whole pile is laid
+    /// again in the order its modules fell, the new ones last. Returns the modules whose mound was
+    /// laid or moved, and the failed modules that leave no visible rubble (buried).
+    pub fn settle_rubble(&mut self, instance: usize, terrain: &dyn Fn(Vec2) -> f32) -> (Vec<usize>, Vec<usize>) {
+        let modules = self.instances[instance].layout().placements().len();
+        let fresh: Vec<usize> = (0..modules)
+            .filter(|&module| {
+                self.rubble_candidate(instance, module)
+                    && self.rubble[instance].pile.mound(module).is_none()
+                    && !self.rubble[instance].buried[module]
+            })
+            .collect();
+        // Mounds whose module stands again (a restored snapshot) are rebuilt too.
+        let restored = self.rubble[instance]
+            .pile
+            .order()
+            .iter()
+            .any(|&module| self.instances[instance].module_intact(module));
+        let carried_rubble_failed = fresh.iter().any(|&module| {
+            let kind = self.instances[instance].layout().placements()[module].kind;
+            matches!(
+                kind,
+                crate::building_blueprint::ModuleKind::Foundation
+                    | crate::building_blueprint::ModuleKind::Slab
+                    | crate::building_blueprint::ModuleKind::Stair
+            ) && self.instances[instance].module_proxies(module).iter().any(|(min, max)| {
+                self.rubble[instance].pile.placed().any(|mound| {
+                    mound.world_max.y > max.y
+                        && mound.world_max.x >= min.x
+                        && mound.world_min.x <= max.x
+                        && mound.world_max.z >= min.z
+                        && mound.world_min.z <= max.z
+                })
+            })
+        });
+        if carried_rubble_failed || restored {
+            let mut order: Vec<usize> = self.rubble[instance]
+                .pile
+                .order()
+                .iter()
+                .copied()
+                .filter(|&module| self.rubble_candidate(instance, module))
+                .collect();
+            order.extend(fresh.iter().copied());
+            self.lay_rubble_in_order(instance, &order, terrain);
+            let laid: Vec<usize> = self.rubble[instance].pile.order().to_vec();
+            let buried = (0..modules).filter(|&m| self.rubble[instance].buried[m]).collect();
+            return (laid, buried);
+        }
+        let mut laid = Vec::new();
+        let mut buried = Vec::new();
+        for module in fresh {
+            if self.deposit_rubble(instance, module, terrain) {
+                laid.push(module);
+            } else {
+                buried.push(module);
+            }
+        }
+        (laid, buried)
+    }
+
+    /// World transform of a failed module's mound, when it has one.
+    pub fn rubble_transform(&self, instance: usize, module: usize) -> Option<glam::Mat4> {
+        self.rubble[instance].pile.mound(module).map(|mound| mound.transform)
+    }
+
+    /// The mound of a failed module, when it has one.
+    pub fn rubble_mound(&self, instance: usize, module: usize) -> Option<&crate::building_rubble::PlacedMound> {
+        self.rubble[instance].pile.mound(module)
+    }
+
+    /// Mounds laid over the instance's pile.
+    pub fn rubble_mound_count(&self, instance: usize) -> usize {
+        self.rubble[instance].pile.len()
+    }
+
+    /// The modules of the instance's pile in the order their mounds were laid.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn rubble_pile_order(&self, instance: usize) -> &[usize] {
+        self.rubble[instance].pile.order()
+    }
+
+    /// Give every intact burned-floor layer (Debris modules) its top surface, generated from its
+    /// kit mesh, so its rubble carries tanks, feet and shells like a mound.
+    pub fn attach_debris_surfaces(
+        &mut self,
+        surface: &mut dyn FnMut(&str) -> Option<std::sync::Arc<crate::building_rubble::TopSurface>>,
+    ) {
+        for (instance, runtime) in self.instances.iter().enumerate() {
+            let mut layers = Vec::new();
+            for (module, placement) in runtime.layout().placements().iter().enumerate() {
+                if placement.kind != crate::building_blueprint::ModuleKind::Debris {
+                    continue;
+                }
+                let Some(top) = surface(placement.asset_id.as_str()) else { continue };
+                let transform = runtime.module_world(module);
+                let (lo, hi) = top.extent();
+                let (mut min, mut max) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+                for corner in [lo, Vec2::new(hi.x, lo.y), Vec2::new(lo.x, hi.y), hi] {
+                    let p = transform.transform_point3(Vec3::new(corner.x, 0.0, corner.y));
+                    min = min.min(Vec2::new(p.x, p.z));
+                    max = max.max(Vec2::new(p.x, p.z));
+                }
+                layers.push(DebrisLayer { module, transform, inverse: transform.inverse(), surface: top, min, max });
+            }
+            self.rubble[instance].debris = layers;
+        }
+    }
+
+    /// The highest rubble over a world XZ point (failed modules' mounds and intact burned-floor
+    /// layers of every building whose rubble can reach it) that starts at or below `max_base` (see
+    /// [`LocalRubble::top_at_from`]).
+    pub fn rubble_top_from(&self, xz: Vec2, max_base: f32) -> Option<RubbleHit> {
+        self.rubble_near(xz, xz).top_at_from(xz, max_base)
+    }
+
+    /// The rubble that can lie over an XZ rectangle (mounds and intact burned-floor layers of the
+    /// buildings whose rubble reaches it), for many point queries in a small area: a tank's
+    /// tracks sample it hundreds of times a frame.
+    pub fn rubble_near(&self, min: Vec2, max: Vec2) -> LocalRubble<'_> {
+        let mut keys = Vec::new();
+        self.rubble_index.keys_in_rect(min, max, &mut keys);
+        let mut mounds = Vec::new();
+        let mut layers = Vec::new();
+        for key in keys {
+            let instance = key as usize;
+            let state = &self.rubble[instance];
+            for mound in state.pile.placed() {
+                if mound.world_max.x >= min.x
+                    && mound.world_min.x <= max.x
+                    && mound.world_max.z >= min.y
+                    && mound.world_min.z <= max.y
+                {
+                    mounds.push((instance, mound));
+                }
+            }
+            for layer in &state.debris {
+                if layer.max.x >= min.x
+                    && layer.min.x <= max.x
+                    && layer.max.y >= min.y
+                    && layer.min.y <= max.y
+                    && self.instances[instance].module_intact(layer.module)
+                {
+                    layers.push((instance, layer));
+                }
+            }
+        }
+        LocalRubble { mounds, layers }
     }
 
     // ── Queries across instances ─────────────────────────────────────────────────────────────
