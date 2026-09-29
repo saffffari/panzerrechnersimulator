@@ -106,6 +106,7 @@ mod rubble;
 mod run_route;
 mod showreel;
 mod soviet_animation;
+mod sound_levels;
 mod spatial_audio;
 mod tank;
 mod tank_dressing;
