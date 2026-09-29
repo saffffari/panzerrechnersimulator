@@ -1438,6 +1438,14 @@ impl BuildingRuntime {
             })
     }
 
+    /// True for a suspended floor, landing or stair: what a tank's hull breaks rather than climbs
+    /// or grinds (`Game::resolve_tank_crush`).
+    pub fn destructible_is_floor(&self, destructible_index: usize) -> bool {
+        self.module_for_destructible(destructible_index)
+            .and_then(|index| self.layout.placements().get(index))
+            .is_some_and(|placement| matches!(placement.kind, ModuleKind::Slab | ModuleKind::Stair))
+    }
+
     /// Damage the module behind one bound destructible record (tests; `Game` goes through
     /// `BuildingSet::apply_damage_to_destructible`, which resolves the instance first).
     #[cfg(test)]
@@ -1843,8 +1851,24 @@ impl BuildingRuntime {
     /// this building, then gate every live stair corridor: it may be entered or left only through
     /// its bottom edge by feet on the lower floor or its top edge by feet on the upper floor.
     pub fn resolve_walk_xz(&self, old: Vec3, attempted: Vec3) -> Vec3 {
+        self.resolve_walk_xz_body(old, attempted, FOOT_COLLISION_HEIGHT)
+    }
+
+    /// True when a live wall, pillar, partition or door frame of this building (a lintel over a
+    /// doorway) meets the vertical segment `from → to`: a crouching soldier there cannot stand up.
+    pub fn blocks_vertical(&self, from: Vec3, to: Vec3) -> bool {
+        let (lo, hi) = (from.y.min(to.y), from.y.max(to.y));
+        self.live_wall_proxies().any(|(min, max)| {
+            from.x >= min.x && from.x <= max.x && from.z >= min.z && from.z <= max.z
+                && max.y > lo && min.y < hi
+        })
+    }
+
+    /// [`Self::resolve_walk_xz`] for a body `body_height` tall: a crouching soldier passes under
+    /// a lintel (a wooden house's 1.75 m doorway) that stops a standing one.
+    pub fn resolve_walk_xz_body(&self, old: Vec3, attempted: Vec3, body_height: f32) -> Vec3 {
         let barriers: Vec<_> = self.live_wall_proxies().collect();
-        let resolved = resolve_walk_xz_against_bounds(old, attempted, &barriers);
+        let resolved = resolve_walk_xz_against_bounds_body(old, attempted, &barriers, body_height);
         let g = &self.geometry;
         let old_local = g.local(old);
         let resolved_local = g.local(resolved);
@@ -2177,8 +2201,19 @@ fn sweep_point_aabb(start: Vec2, delta: Vec2, min: Vec2, max: Vec2) -> Option<(f
 /// generated-city static mass use the same swept-circle rules, so a visibly open window/door cannot
 /// be sealed by a different collision path.
 pub fn resolve_walk_xz_against_bounds(old: Vec3, attempted: Vec3, bounds: &[(Vec3, Vec3)]) -> Vec3 {
+    resolve_walk_xz_against_bounds_body(old, attempted, bounds, FOOT_COLLISION_HEIGHT)
+}
+
+/// As [`resolve_walk_xz_against_bounds`] for a body `body_height` tall (a crouching soldier passes
+/// under a lintel a standing one strikes).
+pub fn resolve_walk_xz_against_bounds_body(
+    old: Vec3,
+    attempted: Vec3,
+    bounds: &[(Vec3, Vec3)],
+    body_height: f32,
+) -> Vec3 {
     let feet = old.y + 0.06;
-    let head = old.y + FOOT_COLLISION_HEIGHT;
+    let head = old.y + body_height;
     // Manifest towns add thousands of exact wall strips, but one human step can only touch the
     // handful overlapping its swept XZ rectangle. Cull before allocating/solving; projection after
     // contact can only remove a motion component, so it cannot leave this conservative rectangle.

@@ -255,6 +255,7 @@ fn walk_opened(
     openings: &crate::terrain_opening::TerrainOpenings,
     start: Vec2,
     waypoints: &[Vec2],
+    body: f32,
 ) -> (Vec3, f32, f32, Option<usize>) {
     let ground = |x: f32, z: f32| openings.at(x, z).map(|o| o.floor_y).unwrap_or(PAD_Y);
     let mut feet = runtime.world_point(Vec3::new(start.x, 0.0, start.y));
@@ -269,7 +270,7 @@ fn walk_opened(
             }
             let step = to.normalize() * to.length().min(0.05);
             let attempted = Vec3::new(feet.x + step.x, feet.y, feet.z + step.y);
-            let mut resolved = runtime.resolve_walk_xz(feet, attempted);
+            let mut resolved = runtime.resolve_walk_xz_body(feet, attempted, body);
             let gated = crate::terrain_opening::gate_edges(
                 openings,
                 ground,
@@ -314,6 +315,8 @@ fn soldiers_walk_down_the_cellar_stair_once_the_opening_is_cut() {
         (Typology::MerchantBrickHouse, 16.0, 16.0, 3, Condition::Burned),
         (Typology::ApartmentBlock, 32.0, 12.0, 4, Condition::Shelled),
         (Typology::ApartmentBlock, 24.0, 16.0, 3, Condition::Burned),
+        (Typology::WoodenHouse, 8.0, 8.0, 1, Condition::Shelled),
+        (Typology::WoodenHouse, 12.0, 8.0, 1, Condition::Intact),
     ] {
         for yaw in [0.0, 90.0, 180.0, 270.0] {
             let spec = spec(typology, width, depth, storeys, true, condition, 11);
@@ -326,6 +329,13 @@ fn soldiers_walk_down_the_cellar_stair_once_the_opening_is_cut() {
             let mut runtime = instantiate(&spec, &id, yaw);
             assert_eq!(runtime.cellar_storeys(), 1, "{id}");
             assert!(runtime.cellar_reachable_by_stairs(), "{id}: no live cellar stair");
+            // A wooden house's doorways clear 1.75 m above its floor: the soldier ducks through
+            // them (crouched, 1.18 m); the masonry houses are walked standing.
+            let body = if typology == Typology::WoodenHouse {
+                crate::foot::STANDING_HEIGHT + crate::foot::EYE_CROUCH - crate::foot::EYE
+            } else {
+                crate::foot::STANDING_HEIGHT
+            };
             let opening = runtime.cellar_opening().expect("a cellar opening");
             runtime.open_cellar().unwrap();
             assert_eq!(runtime.sealed_cellar_storeys(), 0);
@@ -334,7 +344,7 @@ fn soldiers_walk_down_the_cellar_stair_once_the_opening_is_cut() {
             // Inside the door, find the way across the entry floor to the flight's head (round a
             // stove or partition) on a 10 cm grid through the runtime's own collision.
             let entry = runtime.geometry.storeys[runtime.geometry.entry].surface;
-            let path = floor_path(&runtime, waypoints[0], waypoints[1], entry)
+            let path = floor_path(&runtime, waypoints[0], waypoints[1], entry, body)
                 .unwrap_or_else(|| {
                     let at = |p: Vec2| {
                         let w = runtime.world_point(Vec3::new(p.x, entry, p.y));
@@ -350,7 +360,8 @@ fn soldiers_walk_down_the_cellar_stair_once_the_opening_is_cut() {
                     )
                 });
             waypoints.splice(1..2, path);
-            let (feet, highest, lowest, stuck) = walk_opened(&runtime, &openings, start, &waypoints);
+            let (feet, highest, lowest, stuck) =
+                walk_opened(&runtime, &openings, start, &waypoints, body);
             let local = runtime.geometry.local(feet);
             assert!(
                 stuck.is_none(),
@@ -371,13 +382,13 @@ fn soldiers_walk_down_the_cellar_stair_once_the_opening_is_cut() {
             walked += 1;
         }
     }
-    assert_eq!(walked, 20);
+    assert_eq!(walked, 28);
 }
 
 /// A walkable way across one floor (local height `y`) from `from` to `to` (local XZ): breadth-
 /// first over a 10 cm grid, each move checked with the runtime's own collision and floor support.
 /// Returns the waypoints after `from`, ending at `to`.
-fn floor_path(runtime: &BuildingRuntime, from: Vec2, to: Vec2, y: f32) -> Option<Vec<Vec2>> {
+fn floor_path(runtime: &BuildingRuntime, from: Vec2, to: Vec2, y: f32, body: f32) -> Option<Vec<Vec2>> {
     const STEP: f32 = 0.1;
     let lo = from.min(to) - Vec2::splat(8.0);
     let hi = from.max(to) + Vec2::splat(8.0);
@@ -406,7 +417,7 @@ fn floor_path(runtime: &BuildingRuntime, from: Vec2, to: Vec2, y: f32) -> Option
                 continue;
             }
             let (a, b) = (world(point(c)), world(point(n)));
-            let resolved = runtime.resolve_walk_xz(a, b);
+            let resolved = runtime.resolve_walk_xz_body(a, b, body);
             let carried = runtime
                 .walkable_surface_y(b, a.y)
                 .is_some_and(|s| (s - a.y).abs() < 0.05);
@@ -417,4 +428,69 @@ fn floor_path(runtime: &BuildingRuntime, from: Vec2, to: Vec2, y: f32) -> Option
         }
     }
     None
+}
+
+/// The terrain's cut edge over an open cellar lies inside the masonry: every point of the opening's
+/// boundary just above grade is inside a live wall solid of the intact building, so the cut edge
+/// and the soil face below it are hidden in the foundation walls while they stand. The opening
+/// lies within the footprint, and the rubble of a module inside the excavation falls to the cellar
+/// floor.
+#[test]
+fn a_cellar_opening_is_cut_inside_its_foundation_walls() {
+    let mut checked = 0;
+    for (typology, width, depth, storeys) in [
+        (Typology::MerchantBrickHouse, 12.0, 12.0, 2),
+        (Typology::MerchantBrickHouse, 20.0, 16.0, 3),
+        (Typology::ApartmentBlock, 32.0, 12.0, 4),
+        (Typology::ApartmentBlock, 48.0, 16.0, 5),
+        (Typology::WoodenHouse, 8.0, 8.0, 1),
+        (Typology::WoodenHouse, 12.0, 8.0, 1),
+    ] {
+        for yaw in [0.0, 90.0, 180.0, 270.0] {
+            let spec = spec(typology, width, depth, storeys, true, Condition::Intact, 7);
+            let id = format!("urban_intro.edge.{}.y{}", typology.as_str(), yaw as i32);
+            let mut runtime = instantiate(&spec, &id, yaw);
+            let opening = runtime.cellar_opening().expect("a cellar opening");
+            let walls: Vec<(Vec3, Vec3)> = runtime.live_wall_proxies().collect();
+            let (lo, hi) = (opening.min, opening.max);
+            let y = PAD_Y + 0.02;
+            let mut points = Vec::new();
+            let n = 64;
+            for k in 0..=n {
+                let t = k as f32 / n as f32;
+                points.push(Vec2::new(lo.x + (hi.x - lo.x) * t, lo.y));
+                points.push(Vec2::new(lo.x + (hi.x - lo.x) * t, hi.y));
+                points.push(Vec2::new(lo.x, lo.y + (hi.y - lo.y) * t));
+                points.push(Vec2::new(hi.x, lo.y + (hi.y - lo.y) * t));
+            }
+            for p in points {
+                let inside = walls.iter().any(|(min, max)| {
+                    p.x >= min.x - 1e-3 && p.x <= max.x + 1e-3 && p.y >= min.z - 1e-3
+                        && p.y <= max.z + 1e-3 && min.y <= y && max.y >= y
+                });
+                assert!(inside, "{id}: the cut edge at ({:.2}, {:.2}) is not inside a wall", p.x, p.y);
+            }
+            // Inside the footprint's world box, and the floor below grade.
+            let (blo, bhi) = runtime.world_bounds();
+            assert!(lo.x > blo.x && lo.y > blo.z && hi.x < bhi.x && hi.y < bhi.z, "{id}");
+            assert!(opening.floor_y < PAD_Y - 1.0 && opening.base_y < opening.floor_y, "{id}");
+            // Once open, a module inside the excavation drops its rubble to the cellar floor.
+            runtime.open_cellar().unwrap();
+            let floors_inside = (0..runtime.layout().placements().len())
+                .filter(|&m| {
+                    let placement = &runtime.layout().placements()[m];
+                    placement.kind == crate::building_blueprint::ModuleKind::Slab
+                        && placement.floor_index.is_some_and(|f| runtime.layout().floors()[f].level == 0)
+                })
+                .filter(|&m| (runtime.module_ground_y(m) - opening.floor_y).abs() < 1e-4)
+                .count();
+            // (A wooden house's floor pieces round its trapdoor centre outside the small pit.)
+            assert!(
+                typology == Typology::WoodenHouse || floors_inside > 0,
+                "{id}: no ground-floor slab over the cellar grounds in it"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 24);
 }

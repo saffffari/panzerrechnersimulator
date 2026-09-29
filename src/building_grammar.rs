@@ -3437,11 +3437,13 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
             transform([px, floor_y - 0.2, pz], 0.0, [side / 4.0, 0.5, side / 4.0]),
             800,
         );
-        for (name, x, z, yaw) in [
-            ("front", px, pz + side * 0.5, 0.0),
-            ("back", px, pz - side * 0.5, 180.0),
-            ("left", px - side * 0.5, pz, -90.0),
-            ("right", px + side * 0.5, pz, 90.0),
+        // The front and back walls run through the corners (grammar revision 3), so the pit's
+        // masonry is closed at its outer corners too.
+        for (name, x, z, yaw, length) in [
+            ("front", px, pz + side * 0.5, 0.0, side + 0.25),
+            ("back", px, pz - side * 0.5, 180.0, side + 0.25),
+            ("left", px - side * 0.5, pz, -90.0, side),
+            ("right", px + side * 0.5, pz, 90.0, side),
         ] {
             let id = b.module(
                 &format!("module.sc.{name}.b00"),
@@ -3449,7 +3451,7 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
                 Some(-1),
                 &[cellar_room.clone()],
                 kit::WALL,
-                transform([x, floor_y - 0.2, z], yaw, [side / 4.0, (walk - 0.1 - floor_y + 0.2) / 3.0, 0.25 / KIT_WALL_THICKNESS]),
+                transform([x, floor_y - 0.2, z], yaw, [length / 4.0, (walk - 0.1 - floor_y + 0.2) / 3.0, 0.25 / KIT_WALL_THICKNESS]),
                 120,
             );
             b.support(&pit, &id);

@@ -202,6 +202,12 @@ impl BuildingSet {
         })
     }
 
+    pub fn destructible_is_floor(&self, destructible_index: usize) -> bool {
+        self.owner(destructible_index).is_some_and(|(instance, _)| {
+            self.instances[instance].destructible_is_floor(destructible_index)
+        })
+    }
+
     pub fn integrity_for_destructible(&self, destructible_index: usize) -> Option<(u16, u16)> {
         let (instance, _) = self.owner(destructible_index)?;
         self.instances[instance].integrity_for_destructible(destructible_index)
@@ -260,6 +266,24 @@ impl BuildingSet {
     fn near_point(&self, point: Vec3, margin: f32) -> Vec<usize> {
         let xz = Vec2::new(point.x, point.z);
         self.near(xz, xz, margin)
+    }
+
+    /// As [`Self::resolve_walk_xz`] for a body `body_height` tall (crouching under a lintel).
+    pub fn resolve_walk_xz_body(&self, old: Vec3, attempted: Vec3, body_height: f32) -> Vec3 {
+        let min = Vec2::new(old.x.min(attempted.x), old.z.min(attempted.z));
+        let max = Vec2::new(old.x.max(attempted.x), old.z.max(attempted.z));
+        let mut resolved = attempted;
+        for index in self.near(min, max, QUERY_MARGIN_M) {
+            resolved = self.instances[index].resolve_walk_xz_body(old, resolved, body_height);
+        }
+        resolved
+    }
+
+    /// True when a live wall of a nearby instance meets the vertical segment `from → to`.
+    pub fn blocks_vertical(&self, from: Vec3, to: Vec3) -> bool {
+        self.near_point(from, 0.0)
+            .into_iter()
+            .any(|index| self.instances[index].blocks_vertical(from, to))
     }
 
     /// Resolve one on-foot move against every nearby instance's live walls and stair corridors.

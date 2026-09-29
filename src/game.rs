@@ -1484,6 +1484,9 @@ const PEN_RAY_MAX_HOPS: usize = 6; // walls a single round can chain through
 
 const TIMBER_BURST_SPEED: f32 = 2.2; // m/s — above this, tier-1 pieces burst instead of grinding
 const CRUSH_NOSE_R: f32 = 1.4; // m — bow contact radius (Tiger hull is ~3.7 m wide)
+/// Height of the Tiger's hull and turret roof above its ground contact (3.0 m overall): the
+/// vertical reach of the hull against floors and stairs it drives into (`resolve_tank_crush`).
+const TIGER_HULL_TOP_M: f32 = 2.9;
 const CRUSH_NOSE_LEN: f32 = 3.2; // m — hull pivot → bow, along the direction of travel
 
 /// Bow-circle vs wall-AABB contact in the ground plane: `Some((push, overlap))` when the nose
@@ -11696,13 +11699,16 @@ impl Game {
         let spawn_xz = (act.spawn.x, act.spawn.y);
         let to_goal = act.goal - act.spawn;
         let spawn_heading = to_goal.x.atan2(to_goal.y);
-        let player = Tank::new(
+        let mut player = Tank::new(
             spawn_xz.0,
             spawn_xz.1,
             spawn_heading,
             &hf,
             tank::TIGER_PARTS,
         );
+        // The crew chooses where to drive: over an open cellar's rim the Tiger falls in (and cannot
+        // climb its faces out). AI tanks are kept out of pits instead (`Tank::drops_into_pits`).
+        player.drops_into_pits = true;
 
         // Swarm muster (see `SWARM`): the OPENING array on the player's terms. The OUTSKIRTS platoon
         // (0,1,2) is the near sniper picket ring around the city's southern approach — the first (long-
@@ -18440,6 +18446,8 @@ impl Game {
                     let delta = to - from;
                     (near_tiger && source_contacts.sweep_batch(&[[from, to]])[0].is_some())
                         || self.nearest_cover_ray(from, delta.normalize_or_zero(), delta.length()).is_some()
+                        // A building's lintel over the soldier: stay crouched under it.
+                        || self.buildings.blocks_vertical(from, to)
                 });
         let crouching = input.crouch || !headroom;
         self.foot.update(
@@ -18459,7 +18467,11 @@ impl Game {
             self.foot.pos,
             &story_near,
         );
-        self.foot.pos = self.buildings.resolve_walk_xz(previous_foot_pos, self.foot.pos);
+        self.foot.pos = self.buildings.resolve_walk_xz_body(
+            previous_foot_pos,
+            self.foot.pos,
+            self.foot.body_height(),
+        );
         self.foot.pos = self.world_doors.resolve_walk(previous_foot_pos, self.foot.pos, self.foot.body_height());
         // Ordinary manifest floor/ceiling modules support the actual standing body using
         // their source triangles. This does not turn ceilings or upper storeys into nearby floors.
@@ -26024,6 +26036,40 @@ impl Game {
                 }
             }
         }
+        // Suspended floors, landings and stairs the hull meets (a raised ground floor ploughed into
+        // from below, or the floor over a cellar the Tiger drives onto) cannot carry or stop 57 t:
+        // residential floors are built for a few kN/m², the Tiger's tracks press about 100 kPa.
+        // They fail through the ordinary damage path and their rubble falls to the ground under
+        // them, instead of standing through the hull. The hull does not climb onto them.
+        let hull = self.player.hull_footprint();
+        let (hull_low, hull_high) = (self.player.pos.y + 0.15, self.player.pos.y + TIGER_HULL_TOP_M);
+        let mut broke = 0;
+        for i in self.structures_near(self.player.pos, hull.half_extents.length() + 0.5) {
+            let d = self.destructibles[i];
+            if !d.alive || !self.buildings.destructible_is_floor(i) {
+                continue;
+            }
+            if d.max.y < hull_low || d.min.y > hull_high {
+                continue;
+            }
+            let slab = tank::HullFootprint {
+                center: Vec2::new((d.min.x + d.max.x) * 0.5, (d.min.z + d.max.z) * 0.5),
+                half_extents: Vec2::new((d.max.x - d.min.x) * 0.5, (d.max.z - d.min.z) * 0.5),
+                heading: 0.0,
+            };
+            if tank::yaw_obb_contact(hull, slab).is_none() {
+                continue;
+            }
+            self.damage_structure(i, d.max_hp.max(1.0), r);
+            broke += 1;
+        }
+        if broke > 0 {
+            self.crush_rumble = self.crush_rumble.max(1.2);
+            println!(
+                "[panzerrechnersystem] KETTEN-CRUSH — the hull broke {broke} floor/stair piece(s) at ({:.1}, {:.1}, {:.1})",
+                self.player.pos.x, self.player.pos.y, self.player.pos.z
+            );
+        }
         // Authored wreck columns and barricades are static battlefield mass, not holograms. They
         // hard-stop the bow; small story clutter was intentionally excluded from `story_cover` so
         // cans, grass, boards and luggage remain crushable visual dressing.
@@ -31720,6 +31766,7 @@ mod tests {
             hp: tank::MAX_HP,
             parts: tank::TIGER_PARTS,
             kind: EnemyKind::T34,
+            drops_into_pits: false,
         };
         let driver_before = crew_live_hit_center(&player, crate::lan::LanRole::Driver);
         let gunner_before = crew_live_hit_center(&player, crate::lan::LanRole::Gunner);
@@ -31792,6 +31839,7 @@ mod tests {
             hp: tank::MAX_HP,
             parts: tank::TIGER_PARTS,
             kind: EnemyKind::T34,
+            drops_into_pits: false,
         };
         let casualty = CouchCrewCasualty {
             peer_id: 22,
@@ -31844,6 +31892,7 @@ mod tests {
             hp: tank::MAX_HP,
             parts: tank::TIGER_PARTS,
             kind: EnemyKind::T34,
+            drops_into_pits: false,
         };
         let casualty = CouchCrewCasualty {
             peer_id: 33,

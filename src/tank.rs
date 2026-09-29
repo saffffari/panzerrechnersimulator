@@ -733,6 +733,11 @@ pub struct Tank {
     /// overwatch AI in `game.rs`. Defaults to `T34`; the enemy spawn overrides it per swarm member,
     /// and the player Tiger keeps the default (never read for the player).
     pub kind: EnemyKind,
+    /// Whether this tank may drive over the rim of an open cellar's pit and fall in: true for the
+    /// player's Tiger (the crew chooses where to drive), false for AI tanks, which have no
+    /// navigation and would otherwise drop into every pit their route crosses. Neither climbs a
+    /// face higher than `terrain::TANK_STEP_M` out of one.
+    pub drops_into_pits: bool,
     // A tank is NOT an HP sponge — armor either holds (bounce, no effect) or is holed (a real
     // consequence). For the PLAYER Tiger the discrete penetration damage-state (individual crewmen +
     // modules, the spall model, fire) lives on `Game` (player-only, richer than the enemies need);
@@ -756,6 +761,7 @@ impl Tank {
             hp: MAX_HP,
             parts,
             kind: EnemyKind::T34,
+            drops_into_pits: false,
         }
     }
 
@@ -860,7 +866,22 @@ impl Tank {
         let d = (target - self.speed).clamp(-ACCEL * dt, ACCEL * dt);
         self.speed += d;
         self.heading += steer * TURN_RATE * dt;
+        let before = self.pos;
         self.pos += self.forward() * self.speed * dt;
+        // An open cellar's excavation face is a vertical step: no tank climbs more than its rated
+        // obstacle out of the pit, and only a tank that may fall in drives over its rim.
+        let gated = hf.gate_opening_edges(
+            glam::Vec2::new(before.x, before.z),
+            glam::Vec2::new(self.pos.x, self.pos.z),
+            before.y,
+            crate::terrain::TANK_STEP_M,
+            (!self.drops_into_pits).then_some(crate::terrain::TANK_STEP_M),
+        );
+        if gated.x != self.pos.x || gated.y != self.pos.z {
+            self.speed = 0.0;
+        }
+        self.pos.x = gated.x;
+        self.pos.z = gated.y;
         self.pos.y = hf.height_at(self.pos.x, self.pos.z);
 
         self.turret_yaw += traverse * TRAVERSE * dt;

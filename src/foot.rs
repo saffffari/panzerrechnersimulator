@@ -516,7 +516,19 @@ impl FootSoldier {
         } else {
             0.0
         };
+        let before = self.pos;
         self.pos += wish * speed * dt;
+        // An open cellar's excavation face stops feet that would have to climb more than a step
+        // (a jump can carry them over it); stepping off its rim into the pit is a fall.
+        let gated = hf.gate_opening_edges(
+            glam::Vec2::new(before.x, before.z),
+            glam::Vec2::new(self.pos.x, self.pos.z),
+            before.y,
+            crate::terrain::WALKER_STEP_M,
+            None,
+        );
+        self.pos.x = gated.x;
+        self.pos.z = gated.y;
         // Vertical: a jump lofts you, gravity brings you back; the ground snap only re-engages on
         // landing (so you can hop a low wall or step off the hull deck). Can't jump mid-air or crouched.
         let ground = hf.height_at(self.pos.x, self.pos.z);
