@@ -33639,3 +33639,98 @@ mod surface_fire_render_tests {
         assert!(total.distance(Vec3::new(0.32,0.064,0.0032)) < 1e-5);
     }
 }
+
+/// End-to-end check of the multi-instance building runtime through the real `Game` update loop:
+/// foot controller, world doors and the building set together, on the generated test revision.
+#[cfg(test)]
+mod urban_runtime_gpu_tests {
+    use super::*;
+
+    const TEST_REVISION: &str =
+        "assets/worldgen/workshops/urban-runtime-test-20260928/manifest.v1.json";
+
+    fn stage_on_foot(g: &mut Game, start: Vec3, look_at: Vec3) {
+        g.mode = Mode::Foot;
+        g.climb.active = false;
+        g.climb.anim = false;
+        g.foot.pos = start;
+        g.foot.vel_y = 0.0;
+        g.foot.airborne = false;
+        g.foot.crouch_t = 0.0;
+        g.dbg_look_foot_at(look_at);
+    }
+
+    /// Walk forward for ten seconds; the highest feet height reached.
+    fn walk_forward(g: &mut Game, r: &mut Renderer) -> f32 {
+        let mut highest = g.foot.pos.y;
+        for _ in 0..600 {
+            g.update(&TankInput { drive: 1.0, ..TankInput::default() }, 1.0 / 60.0, r);
+            highest = highest.max(g.foot.pos.y);
+        }
+        highest
+    }
+
+    #[test]
+    #[ignore = "requires a GPU and the generated test revision (python3 tools/worldgen/urban_runtime_test_manifest.py)"]
+    fn soldiers_enter_turned_test_houses_and_climb_only_where_the_stair_stands() -> anyhow::Result<()> {
+        anyhow::ensure!(
+            std::path::Path::new(TEST_REVISION).is_file(),
+            "generate the test revision first"
+        );
+        std::env::set_var(crate::building_runtime::DEBUG_FEATURED_BLUEPRINT_ENV, "1");
+        let act = crate::act_manifest::select_runtime_manifest(Some(TEST_REVISION.into()))?
+            .expect("the test revision is a campaign act");
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let built = Game::build_act(&device, &queue, false, &crate::world::act(act));
+        crate::act_manifest::select_runtime_manifest(None)?;
+        let (mut r, mut g) = built?;
+        g.god = true;
+        for enemy in &mut g.enemies {
+            enemy.alive = false;
+        }
+        for soldier in &mut g.soldiers {
+            soldier.alive = false;
+        }
+        // The 90 degree house loses its stair through the ordinary destruction path first.
+        let h2 = g.buildings.index_of("urban_runtime_test.row_a.h2").expect("test house h2");
+        let stair = g
+            .buildings
+            .get(h2)
+            .layout()
+            .placement(&crate::building_blueprint::SemanticId::new("module.stair.main")?)
+            .expect("stair")
+            .instance_index;
+        let record = (0..g.destructibles.len())
+            .find(|&index| g.buildings.owner(index) == Some((h2, stair)))
+            .expect("the stair is a destructible record");
+        g.damage_structure(record, 10_000.0, &mut r);
+        assert!(!g.destructibles[record].alive);
+
+        for (id, climbs) in [("urban_runtime_test.row_a.h4", true), ("urban_runtime_test.row_a.h2", false)] {
+            let house = g.buildings.index_of(id).expect("test house");
+            let (start, look_at, pad) = {
+                let b = g.buildings.get(house);
+                // Outside the entrance on the blueprint's local -Z, facing in along +Z.
+                (
+                    b.world_point(Vec3::new(-2.0, 0.4, -6.5)),
+                    b.world_point(Vec3::new(-2.0, 0.4 + 1.7, 4.0)),
+                    b.world_center().y,
+                )
+            };
+            stage_on_foot(&mut g, start, look_at);
+            let highest = walk_forward(&mut g, &mut r);
+            let feet = g.foot.pos;
+            println!("{id}: highest feet {:.2} m above the pad, final {feet:?}", highest - pad);
+            let inside = g.buildings.get(house).contains_walk_point(feet);
+            assert!(inside, "{id}: the soldier did not get inside: {feet:?}");
+            if climbs {
+                assert!((feet.y - (pad + 3.0)).abs() < 0.1, "{id}: not on the upper floor: {feet:?}");
+            } else {
+                assert!(highest < pad + 0.5, "{id}: climbed a destroyed stair to {highest}");
+            }
+        }
+        Ok(())
+    }
+}

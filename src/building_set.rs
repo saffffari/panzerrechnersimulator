@@ -650,6 +650,9 @@ mod tests {
         };
         let top_b1 = climb(&set, b1);
         assert!((top_b1.y - (5.0 + 3.0)).abs() < 0.08, "b1 climbs to its landing: {top_b1:?}");
+        let b3 = set.index_of("urban_intro.test.b3").unwrap();
+        let top_b3 = climb(&set, b3);
+        assert!((top_b3.y - (5.0 + 3.0)).abs() < 0.08, "the 270° house climbs too: {top_b3:?}");
         let top_b2 = climb(&set, b2);
         assert!(top_b2.y < 5.0 + 0.5, "b2's failed stair carries no one: {top_b2:?}");
         // Feet left on b2's former stair are unsupported; b1's stair still holds them.
