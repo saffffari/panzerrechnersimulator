@@ -77,6 +77,427 @@ struct PendingProxy {
     max: Vec3,
 }
 
+// Named tolerances of the derived queries. They are properties of a walking soldier and of the
+// query envelope, not of any one building: every building shares them.
+/// Feet may stand this close to the outer edge of the ground footprint and still use its floors.
+const WALK_EDGE_MARGIN_M: f32 = 0.15;
+/// Weather shelter starts one soldier radius inside the outer footprint.
+const SHELTER_EDGE_MARGIN_M: f32 = FOOT_COLLISION_RADIUS;
+/// Feet belong to the storey above once they are this fraction of the way up from the one below.
+const STOREY_SWITCH_FRACTION: f32 = 0.45;
+/// Feet at most this far above the entry floor count as standing on it.
+const GROUNDED_TOLERANCE_M: f32 = 0.08;
+/// Shelter ends this far below the entry floor surface.
+const SHELTER_BELOW_FLOOR_M: f32 = 0.15;
+/// A point is on a storey once it is this far above that storey's slab bottom.
+const SHELTER_ABOVE_SLAB_M: f32 = 0.15;
+/// A point this far above the base of the roof covering it is in or above the roof itself.
+const ROOF_EAVE_TOLERANCE_M: f32 = 0.2;
+/// A stair corridor may only be entered through its bottom or top edge by feet this close to the
+/// floor that edge serves (includes a 0.4 m slab resolved later in the same frame).
+const STAIR_ENDPOINT_HEIGHT_TOLERANCE_M: f32 = 0.45;
+/// Container search: the soldier stands this far inside the container's room, within this height of
+/// its floor and this reach of the container, looks toward it and has a clear line to it.
+const SEARCH_ROOM_MARGIN_M: f32 = 0.35;
+const SEARCH_FLOOR_TOLERANCE_M: f32 = 0.65;
+const SEARCH_REACH_M: f32 = 1.75;
+const SEARCH_VIEW_COS: f32 = 0.42;
+const SEARCH_CLEAR_FRACTION: f32 = 0.97;
+
+/// One storey of a building in its local frame: the walk surface of its floor cells and the bottom
+/// of its slabs.
+#[derive(Clone, Copy, Debug)]
+struct Storey {
+    floor_index: usize,
+    level: i16,
+    surface: f32,
+    bottom: f32,
+}
+
+/// A floor module's walkable cell: half-open local XZ rectangle [min, max).
+#[derive(Clone, Copy, Debug)]
+struct Cell {
+    module: usize,
+    storey: usize,
+    min: Vec2,
+    max: Vec2,
+}
+
+/// The area a roof module covers, half-open [min, max), and the height of its base.
+#[derive(Clone, Copy, Debug)]
+struct RoofCell {
+    module: usize,
+    min: Vec2,
+    max: Vec2,
+    base: f32,
+}
+
+/// A stair's walking corridor in local XZ (inclusive) climbing along `axis` from `bottom_edge` for
+/// `run` metres between the surfaces of two storeys.
+#[derive(Clone, Copy, Debug)]
+struct StairWalk {
+    module: usize,
+    min: Vec2,
+    max: Vec2,
+    axis: Vec2,
+    bottom_edge: f32,
+    run: f32,
+    lower: usize,
+    upper: usize,
+}
+
+/// Everything the physical queries need, derived once from the compiled layout (floors, rooms,
+/// portals, stairs, slabs, containers) and the kit shapes, in the instance's frame.
+#[derive(Clone, Debug)]
+struct Geometry {
+    world: Mat4,
+    inverse: Mat4,
+    /// World transform of each compiled placement.
+    module_world: Vec<Mat4>,
+    /// World AABB of each solid of each placement (collision, damage, sight).
+    proxies: Vec<Vec<(Vec3, Vec3)>>,
+    storeys: Vec<Storey>,
+    entry: usize,
+    cells: Vec<Cell>,
+    roofs: Vec<RoofCell>,
+    stairs: Vec<StairWalk>,
+    /// Local XZ bounds of the entry storey's cells: the building footprint (rectangular by the
+    /// placement contract).
+    footprint: (Vec2, Vec2),
+    /// Local XZ bounds of each compiled room's floor cells, and its storey.
+    rooms: Vec<Option<(Vec2, Vec2, usize)>>,
+}
+
+impl Geometry {
+    fn derive(
+        blueprint: &BuildingBlueprint,
+        layout: &BlueprintLayout,
+        world: Mat4,
+    ) -> anyhow::Result<Self> {
+        let (_, rotation, _) = world.to_scale_rotation_translation();
+        let up = rotation * Vec3::Y;
+        anyhow::ensure!(
+            world.is_finite() && up.dot(Vec3::Y) > 1.0 - 1.0e-5,
+            "building {} world transform must keep +Y up",
+            blueprint.id
+        );
+        let inverse = world.inverse();
+        let placements = layout.placements();
+        let mut module_world = Vec::with_capacity(placements.len());
+        let mut proxies = Vec::with_capacity(placements.len());
+        let mut local_matrices = Vec::with_capacity(placements.len());
+        for placement in placements {
+            let shape = crate::building_kit::shape(placement.asset_id.as_str());
+            let local = local_matrix(placement.transform);
+            let has_solids = !matches!(
+                placement.kind,
+                ModuleKind::Cabinet | ModuleKind::Fixture | ModuleKind::Debris
+            ) && shape.is_some_and(|shape| !shape.solids.is_empty());
+            let needs_shape = placement.structural
+                || matches!(placement.kind, ModuleKind::DoorFrame | ModuleKind::PartitionWall);
+            anyhow::ensure!(
+                !needs_shape || shape.is_some(),
+                "building {} module {} uses asset {} without a kit runtime shape",
+                blueprint.id,
+                placement.module_id,
+                placement.asset_id
+            );
+            if has_solids || shape.is_some_and(|s| s.floor.is_some() || s.stair.is_some()) {
+                anyhow::ensure!(
+                    quarter_turn_yaw(placement.transform).is_some(),
+                    "building {} module {} must be turned about +Y by a multiple of 90°",
+                    blueprint.id,
+                    placement.module_id
+                );
+            }
+            let model = world * local;
+            proxies.push(if has_solids {
+                shape
+                    .expect("checked above")
+                    .solids
+                    .iter()
+                    .map(|solid| {
+                        transformed_aabb(model, Vec3::from(solid.min), Vec3::from(solid.max))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            });
+            module_world.push(model);
+            local_matrices.push(local);
+        }
+
+        // Storeys in level order; a floor's walk surface is the top of its floor cells.
+        let mut floor_cells: Vec<(usize, Vec2, Vec2, f32, f32)> = Vec::new();
+        for (index, placement) in placements.iter().enumerate() {
+            if !matches!(placement.kind, ModuleKind::Foundation | ModuleKind::Slab) {
+                continue;
+            }
+            let Some(shape) = crate::building_kit::shape(placement.asset_id.as_str()) else {
+                continue;
+            };
+            let Some(floor) = shape.floor else { continue };
+            let (min, max) = transformed_aabb(
+                local_matrices[index],
+                Vec3::from(shape.bounds.min),
+                Vec3::from(shape.bounds.max),
+            );
+            let top = local_matrices[index]
+                .transform_point3(Vec3::new(0.0, floor.top_y, 0.0))
+                .y;
+            floor_cells.push((index, Vec2::new(min.x, min.z), Vec2::new(max.x, max.z), top, min.y));
+        }
+        let mut storeys: Vec<Storey> = layout
+            .floors()
+            .iter()
+            .map(|floor| {
+                let cells: Vec<_> = floor_cells
+                    .iter()
+                    .filter(|cell| placements[cell.0].floor_index == Some(floor.floor_index))
+                    .collect();
+                Storey {
+                    floor_index: floor.floor_index,
+                    level: floor.level,
+                    surface: cells
+                        .iter()
+                        .map(|cell| cell.3)
+                        .reduce(f32::max)
+                        .unwrap_or(floor.elevation_m),
+                    bottom: cells
+                        .iter()
+                        .map(|cell| cell.4)
+                        .reduce(f32::min)
+                        .unwrap_or(floor.elevation_m),
+                }
+            })
+            .collect();
+        storeys.sort_by_key(|storey| storey.level);
+        anyhow::ensure!(!storeys.is_empty(), "building {} has no floors", blueprint.id);
+        let storey_of_floor = |floor_index: usize| {
+            storeys
+                .iter()
+                .position(|storey| storey.floor_index == floor_index)
+        };
+        let entry = storeys
+            .iter()
+            .position(|storey| storey.level == 0)
+            .unwrap_or(0);
+        let cells: Vec<Cell> = floor_cells
+            .iter()
+            .filter_map(|&(module, min, max, _, _)| {
+                let storey = storey_of_floor(placements[module].floor_index?)?;
+                Some(Cell { module, storey, min, max })
+            })
+            .collect();
+
+        let footprint = {
+            let entry_cells: Vec<_> = cells.iter().filter(|cell| cell.storey == entry).collect();
+            let source: Vec<(Vec2, Vec2)> = if entry_cells.is_empty() {
+                cells.iter().map(|cell| (cell.min, cell.max)).collect()
+            } else {
+                entry_cells.iter().map(|cell| (cell.min, cell.max)).collect()
+            };
+            anyhow::ensure!(
+                !source.is_empty(),
+                "building {} has no floor cells to walk on",
+                blueprint.id
+            );
+            source.iter().fold(
+                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+                |(lo, hi), (min, max)| (lo.min(*min), hi.max(*max)),
+            )
+        };
+
+        let roofs = placements
+            .iter()
+            .enumerate()
+            .filter(|(_, placement)| placement.kind == ModuleKind::Roof)
+            .filter_map(|(index, placement)| {
+                let shape = crate::building_kit::shape(placement.asset_id.as_str())?;
+                let (min, max) = transformed_aabb(
+                    local_matrices[index],
+                    Vec3::from(shape.bounds.min),
+                    Vec3::from(shape.bounds.max),
+                );
+                Some(RoofCell {
+                    module: index,
+                    min: Vec2::new(min.x, min.z),
+                    max: Vec2::new(max.x, max.z),
+                    base: min.y,
+                })
+            })
+            .collect();
+
+        let mut stairs = Vec::new();
+        for stair in &blueprint.stairs {
+            let placement = layout.placement(&stair.module_id).ok_or_else(|| {
+                anyhow::anyhow!("building {} stair {} has no module", blueprint.id, stair.id)
+            })?;
+            let shape = crate::building_kit::shape(placement.asset_id.as_str())
+                .and_then(|shape| shape.stair)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "building {} stair module {} uses asset {} without a stair corridor",
+                        blueprint.id,
+                        placement.module_id,
+                        placement.asset_id
+                    )
+                })?;
+            let local = local_matrices[placement.instance_index];
+            let a = local.transform_point3(Vec3::new(shape.corridor_min[0], 0.0, shape.corridor_min[1]));
+            let b = local.transform_point3(Vec3::new(shape.corridor_max[0], 0.0, shape.corridor_max[1]));
+            let axis3 = local
+                .transform_vector3(Vec3::new(shape.ascent[0], 0.0, shape.ascent[1]))
+                .normalize_or_zero();
+            let axis = Vec2::new(axis3.x.round(), axis3.z.round());
+            let min = Vec2::new(a.x.min(b.x), a.z.min(b.z));
+            let max = Vec2::new(a.x.max(b.x), a.z.max(b.z));
+            let along_min = min.dot(axis).min(max.dot(axis));
+            let along_max = min.dot(axis).max(max.dot(axis));
+            let connector = layout.portal(&stair.connector_id).ok_or_else(|| {
+                anyhow::anyhow!("building {} stair {} has no portal", blueprint.id, stair.id)
+            })?;
+            let room_storey = |space: crate::building_blueprint::CompiledSpaceRef| match space {
+                crate::building_blueprint::CompiledSpaceRef::Room(room) => {
+                    storey_of_floor(layout.rooms()[room].floor_index)
+                }
+                crate::building_blueprint::CompiledSpaceRef::Exterior => None,
+            };
+            let (Some(sa), Some(sb)) = (room_storey(connector.a), room_storey(connector.b)) else {
+                anyhow::bail!("building {} stair {} must join two rooms", blueprint.id, stair.id);
+            };
+            let (lower, upper) = if storeys[sa].surface <= storeys[sb].surface {
+                (sa, sb)
+            } else {
+                (sb, sa)
+            };
+            stairs.push(StairWalk {
+                module: placement.instance_index,
+                min,
+                max,
+                axis,
+                bottom_edge: along_min,
+                run: (along_max - along_min).max(1.0e-3),
+                lower,
+                upper,
+            });
+        }
+
+        let rooms = layout
+            .rooms()
+            .iter()
+            .map(|room| {
+                let storey = storey_of_floor(room.floor_index)?;
+                let mine: Vec<_> = cells
+                    .iter()
+                    .filter(|cell| placements[cell.module].room_indices.contains(&room.room_index))
+                    .collect();
+                if mine.is_empty() {
+                    return None;
+                }
+                let (min, max) = mine.iter().fold(
+                    (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+                    |(lo, hi), cell| (lo.min(cell.min), hi.max(cell.max)),
+                );
+                Some((min, max, storey))
+            })
+            .collect();
+
+        Ok(Self {
+            world,
+            inverse,
+            module_world,
+            proxies,
+            storeys,
+            entry,
+            cells,
+            roofs,
+            stairs,
+            footprint,
+            rooms,
+        })
+    }
+
+    fn local(&self, world_pos: Vec3) -> Vec3 {
+        self.inverse.transform_point3(world_pos)
+    }
+
+    /// World height of a local height (the world transform turns only about +Y).
+    fn world_y(&self, local_y: f32) -> f32 {
+        self.world.w_axis.y + local_y
+    }
+
+    fn walk_envelope(&self, local: Vec2) -> bool {
+        let (min, max) = self.footprint;
+        local.x >= min.x + WALK_EDGE_MARGIN_M
+            && local.x <= max.x - WALK_EDGE_MARGIN_M
+            && local.y >= min.y + WALK_EDGE_MARGIN_M
+            && local.y <= max.y - WALK_EDGE_MARGIN_M
+    }
+
+    fn shelter_envelope(&self, local: Vec2) -> bool {
+        let (min, max) = self.footprint;
+        local.x > min.x + SHELTER_EDGE_MARGIN_M
+            && local.x < max.x - SHELTER_EDGE_MARGIN_M
+            && local.y > min.y + SHELTER_EDGE_MARGIN_M
+            && local.y < max.y - SHELTER_EDGE_MARGIN_M
+    }
+
+    fn cell_at(&self, storey: usize, local: Vec2) -> Option<&Cell> {
+        self.cells.iter().find(|cell| {
+            cell.storey == storey
+                && local.x >= cell.min.x
+                && local.x < cell.max.x
+                && local.y >= cell.min.y
+                && local.y < cell.max.y
+        })
+    }
+
+    fn roof_at(&self, local: Vec2) -> Option<&RoofCell> {
+        self.roofs.iter().find(|roof| {
+            local.x >= roof.min.x && local.x < roof.max.x && local.y >= roof.min.y && local.y < roof.max.y
+        })
+    }
+
+    fn stairs_at(&self, local: Vec2) -> impl Iterator<Item = &StairWalk> + '_ {
+        self.stairs.iter().filter(move |stair| stair_contains(stair, local))
+    }
+
+    /// The storey whose floor carries feet at world height `feet_y`: the highest storey whose
+    /// surface lies within the lower `STOREY_SWITCH_FRACTION` of the climb from the storey below.
+    fn storey_for_feet(&self, feet_y: f32) -> usize {
+        let mut storey = 0;
+        for upper in 1..self.storeys.len() {
+            let below = self.storeys[upper - 1].surface;
+            let above = self.storeys[upper].surface;
+            if feet_y > self.world_y(below + STOREY_SWITCH_FRACTION * (above - below)) {
+                storey = upper;
+            }
+        }
+        storey
+    }
+
+    fn stair_height(&self, stair: &StairWalk, local: Vec2) -> f32 {
+        let t = ((local.dot(stair.axis) - stair.bottom_edge) / stair.run).clamp(0.0, 1.0);
+        let bottom = self.storeys[stair.lower].surface;
+        let top = self.storeys[stair.upper].surface;
+        bottom + t * (top - bottom)
+    }
+}
+
+fn stair_contains(stair: &StairWalk, local: Vec2) -> bool {
+    (stair.min.x..=stair.max.x).contains(&local.x) && (stair.min.y..=stair.max.y).contains(&local.y)
+}
+
+/// The yaw of a module transform when it is an exact quarter turn about +Y with positive scale.
+fn quarter_turn_yaw(transform: LocalTransform) -> Option<i32> {
+    let [rx, ry, rz] = transform.rotation_degrees;
+    let quarter = (ry / 90.0).round();
+    ((rx.abs() < 1.0e-4) && (rz.abs() < 1.0e-4) && ((ry - quarter * 90.0).abs() < 1.0e-3)
+        && transform.scale.iter().all(|s| *s > 0.0))
+    .then_some((quarter as i32).rem_euclid(4))
+}
+
 /// Persistent authoritative state plus the loose-scene bindings owned by the live game build.
 pub struct BuildingRuntime {
     blueprint: BuildingBlueprint,
@@ -86,6 +507,7 @@ pub struct BuildingRuntime {
     destructible_to_module: BTreeMap<usize, usize>,
     fractional_damage: Vec<f32>,
     world_center: Vec3,
+    geometry: Geometry,
 }
 
 impl BuildingRuntime {
@@ -102,6 +524,8 @@ impl BuildingRuntime {
             sid(FEATURE_INSTANCE_ID),
             0xB017_D1A6_0000_0001,
         )?;
+        let world = Mat4::from_translation(world_center + Vec3::new(0.0, -0.3, 0.0));
+        let geometry = Geometry::derive(&blueprint, &layout, world)?;
         let module_count = layout.placements().len();
         Ok(Self {
             blueprint,
@@ -111,6 +535,7 @@ impl BuildingRuntime {
             destructible_to_module: BTreeMap::new(),
             fractional_damage: vec![0.0; module_count],
             world_center,
+            geometry,
         })
     }
 
@@ -834,6 +1259,347 @@ impl BuildingRuntime {
             .unwrap_or(true)
     }
 
+    // ── Queries derived from the compiled layout ──────────────────────────────────────────────
+
+    fn placement_alive(&self, index: usize) -> bool {
+        !self
+            .state
+            .damage
+            .is_failed(&self.layout, &self.layout.placements()[index].module_id)
+            .unwrap_or(true)
+    }
+
+    /// World transform of a compiled placement.
+    pub fn module_world(&self, index: usize) -> Mat4 {
+        self.geometry.module_world[index]
+    }
+
+    /// World AABBs of a placement's solids: its collision, damage and sight proxies.
+    pub fn module_proxies(&self, index: usize) -> &[(Vec3, Vec3)] {
+        &self.geometry.proxies[index]
+    }
+
+    fn is_wall_kind(kind: ModuleKind) -> bool {
+        matches!(
+            kind,
+            ModuleKind::LoadBearingWall
+                | ModuleKind::PartitionWall
+                | ModuleKind::Pillar
+                | ModuleKind::DoorFrame
+        )
+    }
+
+    fn live_wall_proxies(&self) -> impl Iterator<Item = (Vec3, Vec3)> + '_ {
+        self.layout
+            .placements()
+            .iter()
+            .enumerate()
+            .filter(|(index, placement)| {
+                Self::is_wall_kind(placement.kind) && self.placement_alive(*index)
+            })
+            .flat_map(|(index, _)| self.geometry.proxies[index].iter().copied())
+    }
+
+    /// Weather shelter at a world point: 1 when the point is inside the building's footprint on a
+    /// storey and the first structure above it in its column is live, else 0. A stair opening
+    /// passes up to the storey it leads into; the roof covers the top storey.
+    pub fn shelter_at_derived(&self, world_pos: Vec3) -> f32 {
+        let g = &self.geometry;
+        let local = g.local(world_pos);
+        let xz = Vec2::new(local.x, local.z);
+        if !g.shelter_envelope(xz) || local.y <= g.storeys[g.entry].surface - SHELTER_BELOW_FLOOR_M {
+            return 0.0;
+        }
+        if g
+            .roof_at(xz)
+            .is_some_and(|roof| local.y >= roof.base + ROOF_EAVE_TOLERANCE_M)
+        {
+            return 0.0;
+        }
+        let storey = (g.entry..g.storeys.len())
+            .rev()
+            .find(|&index| index == g.entry || local.y >= g.storeys[index].bottom + SHELTER_ABOVE_SLAB_M)
+            .unwrap_or(g.entry);
+        for above in storey + 1..g.storeys.len() {
+            if g.stairs_at(xz).any(|stair| stair.upper == above) {
+                continue;
+            }
+            if let Some(cell) = g.cell_at(above, xz) {
+                return if self.placement_alive(cell.module) { 1.0 } else { 0.0 };
+            }
+        }
+        match g.roof_at(xz) {
+            Some(roof) if self.placement_alive(roof.module) => 1.0,
+            _ => 0.0,
+        }
+    }
+
+    /// Feet surface at a world point for feet last at `previous_feet_y`: a live stair's corridor
+    /// climbs between its floors; otherwise the storey the feet belong to carries them on its live
+    /// floor cell (the entry floor always carries them). A failed stair or upper cell gives no
+    /// surface, so gravity resolves the fall.
+    pub fn walkable_surface_y_derived(&self, world_pos: Vec3, previous_feet_y: f32) -> Option<f32> {
+        let g = &self.geometry;
+        let local = g.local(world_pos);
+        let xz = Vec2::new(local.x, local.z);
+        if !g.walk_envelope(xz) {
+            return None;
+        }
+        for stair in g.stairs_at(xz) {
+            if self.placement_alive(stair.module) {
+                return Some(g.world_y(g.stair_height(stair, xz)));
+            }
+            if previous_feet_y > g.world_y(g.storeys[stair.lower].surface) + GROUNDED_TOLERANCE_M {
+                return None;
+            }
+        }
+        let storey = g.storey_for_feet(previous_feet_y);
+        if storey <= g.entry {
+            let storey = storey.max(0);
+            return g
+                .cell_at(storey, xz)
+                .map(|_| g.world_y(g.storeys[storey].surface));
+        }
+        g.cell_at(storey, xz)
+            .filter(|cell| self.placement_alive(cell.module))
+            .map(|_| g.world_y(g.storeys[storey].surface))
+    }
+
+    /// True when feet at this world point were carried by a stair or an upper floor cell that has
+    /// since failed (or never existed there). `Game` then lets gravity resolve the fall.
+    pub fn unsupported_upper_position_derived(&self, world_pos: Vec3) -> bool {
+        let g = &self.geometry;
+        if world_pos.y <= g.world_y(g.storeys[g.entry].surface) + GROUNDED_TOLERANCE_M {
+            return false;
+        }
+        let local = g.local(world_pos);
+        let xz = Vec2::new(local.x, local.z);
+        if !g.walk_envelope(xz) {
+            return false;
+        }
+        if g.stairs_at(xz).any(|stair| !self.placement_alive(stair.module)) {
+            return true;
+        }
+        let storey = g.storey_for_feet(world_pos.y);
+        if storey <= g.entry {
+            return false;
+        }
+        !g.cell_at(storey, xz)
+            .is_some_and(|cell| self.placement_alive(cell.module))
+    }
+
+    /// Resolve one bounded on-foot XZ move against the live wall, pillar and door-frame solids of
+    /// this building, then gate every live stair corridor: it may be entered or left only through
+    /// its bottom edge by feet on the lower floor or its top edge by feet on the upper floor.
+    pub fn resolve_walk_xz_derived(&self, old: Vec3, attempted: Vec3) -> Vec3 {
+        let barriers: Vec<_> = self.live_wall_proxies().collect();
+        let resolved = resolve_walk_xz_against_bounds(old, attempted, &barriers);
+        let g = &self.geometry;
+        let old_local = g.local(old);
+        let resolved_local = g.local(resolved);
+        let old_xz = Vec2::new(old_local.x, old_local.z);
+        let resolved_xz = Vec2::new(resolved_local.x, resolved_local.z);
+        for stair in &g.stairs {
+            if !self.placement_alive(stair.module) {
+                continue;
+            }
+            let old_inside = stair_contains(stair, old_xz);
+            let resolved_inside = stair_contains(stair, resolved_xz);
+            if old_inside == resolved_inside {
+                if old_inside
+                    || sweep_point_aabb(old_xz, resolved_xz - old_xz, stair.min, stair.max).is_none()
+                {
+                    continue;
+                }
+                // A single oversized outside-to-outside step may not tunnel through the corridor.
+                return Vec3::new(old.x, resolved.y, old.z);
+            }
+            // `sweep_point_aabb` reports the outward normal of the entered edge; reverse the
+            // segment for an inside-to-outside move so both directions share one classification.
+            let crossing = if old_inside {
+                sweep_point_aabb(resolved_xz, old_xz - resolved_xz, stair.min, stair.max)
+            } else {
+                sweep_point_aabb(old_xz, resolved_xz - old_xz, stair.min, stair.max)
+            };
+            let bottom = g.world_y(g.storeys[stair.lower].surface);
+            let top = g.world_y(g.storeys[stair.upper].surface);
+            let allowed = crossing.is_some_and(|(_, normal)| {
+                (normal.dot(-stair.axis) > 0.5
+                    && (old.y - bottom).abs() <= STAIR_ENDPOINT_HEIGHT_TOLERANCE_M)
+                    || (normal.dot(stair.axis) > 0.5
+                        && (old.y - top).abs() <= STAIR_ENDPOINT_HEIGHT_TOLERANCE_M)
+            });
+            if !allowed {
+                return Vec3::new(old.x, resolved.y, old.z);
+            }
+        }
+        resolved
+    }
+
+    /// Damage-aware wall samples for the legacy infantry sight model: small overlapping circles
+    /// along each live wall solid; door apertures stay open because their jambs are separate solids.
+    pub fn append_infantry_cover_derived(&self, cover: &mut Vec<(Vec2, f32)>, from_y: f32, to_y: f32) {
+        const RADIUS: f32 = 0.38;
+        let vertical_min = from_y.min(to_y);
+        let vertical_max = from_y.max(to_y);
+        for (world_min, world_max) in self.live_wall_proxies() {
+            if world_max.y <= vertical_min || world_min.y >= vertical_max {
+                continue;
+            }
+            let min = Vec2::new(world_min.x, world_min.z);
+            let max = Vec2::new(world_max.x, world_max.z);
+            let extent = max - min;
+            let (start, end) = if extent.x >= extent.y {
+                (
+                    Vec2::new(min.x, (min.y + max.y) * 0.5),
+                    Vec2::new(max.x, (min.y + max.y) * 0.5),
+                )
+            } else {
+                (
+                    Vec2::new((min.x + max.x) * 0.5, min.y),
+                    Vec2::new((min.x + max.x) * 0.5, max.y),
+                )
+            };
+            let length = start.distance(end);
+            let segments = (length / (RADIUS * 1.5)).ceil().max(1.0) as usize;
+            for sample in 0..=segments {
+                let t = sample as f32 / segments as f32;
+                cover.push((start.lerp(end, t), RADIUS));
+            }
+        }
+    }
+
+    /// Live light fixtures: every live placement whose kit asset declares a light.
+    pub fn interior_lights_derived(&self) -> Vec<BuildingLight> {
+        self.layout
+            .placements()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.placement_alive(*index))
+            .filter_map(|(index, placement)| {
+                let light = crate::building_kit::shape(placement.asset_id.as_str())?.light?;
+                Some(BuildingLight {
+                    pos: self.geometry.module_world[index]
+                        .transform_point3(Vec3::from(light.offset)),
+                    radius: light.radius_m,
+                    color: Vec3::from(light.color),
+                    intensity: light.intensity,
+                })
+            })
+            .collect()
+    }
+
+    /// World position of a container socket while its module stands and it still holds loot.
+    pub fn container_world_position(&self, container_id: &SemanticId) -> Option<Vec3> {
+        let container = self
+            .blueprint
+            .containers
+            .iter()
+            .find(|container| &container.id == container_id)?;
+        if let Some(module_id) = &container.module_id {
+            let index = self.layout.placement(module_id)?.instance_index;
+            if !self.placement_alive(index) {
+                return None;
+            }
+        }
+        if self.state.containers.get(container_id) == Some(&ContainerRuntimeState::Emptied) {
+            return None;
+        }
+        Some(
+            self.geometry
+                .world
+                .transform_point3(Vec3::from_array(container.transform.translation_m)),
+        )
+    }
+
+    /// Context gate for a container: the soldier stands inside its room (not outside the wall),
+    /// on its floor, within reach, looks toward it and has an unobstructed line to it.
+    pub fn can_search_container(
+        &self,
+        container_id: &SemanticId,
+        feet: Vec3,
+        eye: Vec3,
+        view_dir: Vec3,
+    ) -> bool {
+        let Some(position) = self.container_world_position(container_id) else {
+            return false;
+        };
+        let Some(container) = self
+            .blueprint
+            .containers
+            .iter()
+            .find(|container| &container.id == container_id)
+        else {
+            return false;
+        };
+        let g = &self.geometry;
+        let Some(Some((min, max, storey))) = self
+            .layout
+            .room(&container.room_id)
+            .map(|room| g.rooms[room.room_index])
+        else {
+            return false;
+        };
+        let local = g.local(feet);
+        if local.x < min.x + SEARCH_ROOM_MARGIN_M
+            || local.x > max.x - SEARCH_ROOM_MARGIN_M
+            || local.z < min.y + SEARCH_ROOM_MARGIN_M
+            || local.z > max.y - SEARCH_ROOM_MARGIN_M
+            || (feet.y - g.world_y(g.storeys[storey].surface)).abs() > SEARCH_FLOOR_TOLERANCE_M
+            || feet.distance(position) > SEARCH_REACH_M
+        {
+            return false;
+        }
+        let to_container = position - eye;
+        let distance = to_container.length();
+        if distance <= 0.05
+            || view_dir.normalize_or_zero().dot(to_container / distance) < SEARCH_VIEW_COS
+        {
+            return false;
+        }
+        !self.segment_blocked_derived(eye, position, SEARCH_CLEAR_FRACTION)
+    }
+
+    /// The first container (canonical id order) the soldier can search from here.
+    pub fn searchable_container(&self, feet: Vec3, eye: Vec3, view_dir: Vec3) -> Option<SemanticId> {
+        self.state
+            .containers
+            .keys()
+            .find(|id| self.can_search_container(id, feet, eye, view_dir))
+            .cloned()
+    }
+
+    /// Open a container once and take everything it holds. Resolved loot lives in persistent
+    /// BuildingState, so a held key or a revisit cannot duplicate it.
+    pub fn search_container(
+        &mut self,
+        container_id: &SemanticId,
+    ) -> Result<Vec<(SemanticId, u16)>, crate::building_blueprint::StateError> {
+        if self.state.containers.get(container_id) == Some(&ContainerRuntimeState::Emptied) {
+            return Ok(Vec::new());
+        }
+        let resolved = self
+            .state
+            .open_container(&self.blueprint, &self.layout, container_id)?;
+        let mut taken = Vec::new();
+        for (socket_id, loot) in resolved {
+            for item in loot.items {
+                self.state
+                    .take_item(&self.blueprint, &socket_id, &item.item_id, item.count)?;
+                taken.push((item.item_id, item.count));
+            }
+        }
+        taken.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(taken)
+    }
+
+    fn segment_blocked_derived(&self, from: Vec3, to: Vec3, max_fraction: f32) -> bool {
+        let delta = to - from;
+        self.live_wall_proxies().any(|(min, max)| {
+            segment_aabb_fraction(from, delta, min, max).is_some_and(|t| t < max_fraction)
+        })
+    }
+
     fn segment_blocked_by_intact_structure(&self, from: Vec3, to: Vec3, max_fraction: f32) -> bool {
         let delta = to - from;
         self.layout
@@ -1058,12 +1824,31 @@ pub fn assemble_feature_building(
     })
 }
 
+/// Module transform in the building frame. Quarter turns about +Y are built from exact ±1/0
+/// entries so that derived cells, corridors and proxies carry no `sin(π)` residue.
 fn local_matrix(transform: LocalTransform) -> Mat4 {
+    let scale = Vec3::from_array(transform.scale);
+    let translation = Vec3::from_array(transform.translation_m);
+    if let Some(quarter) = quarter_turn_yaw(transform) {
+        let (sin, cos) = match quarter {
+            0 => (0.0, 1.0),
+            1 => (1.0, 0.0),
+            2 => (0.0, -1.0),
+            _ => (-1.0, 0.0),
+        };
+        // R_y(θ): x' = cos·x + sin·z, z' = -sin·x + cos·z.
+        return Mat4::from_cols(
+            glam::Vec4::new(cos * scale.x, 0.0, -sin * scale.x, 0.0),
+            glam::Vec4::new(0.0, scale.y, 0.0, 0.0),
+            glam::Vec4::new(sin * scale.z, 0.0, cos * scale.z, 0.0),
+            translation.extend(1.0),
+        );
+    }
     let rotation = transform.rotation_degrees.map(f32::to_radians);
     Mat4::from_scale_rotation_translation(
-        Vec3::from_array(transform.scale),
+        scale,
         Quat::from_euler(EulerRot::XYZ, rotation[0], rotation[1], rotation[2]),
-        Vec3::from_array(transform.translation_m),
+        translation,
     )
 }
 
@@ -2791,5 +3576,329 @@ mod tests {
                 "{id} resolves outside the Pizza roots: {path}"
             );
         }
+    }
+}
+
+/// The featured house's hard-coded queries against the ones derived from its compiled layout, at
+/// many sample points and in every single-module failure state plus deterministic combinations.
+#[cfg(test)]
+mod derived_regression {
+    use super::*;
+
+    const HEIGHT_TOLERANCE: f32 = 1.0e-4;
+
+    /// A runtime whose legacy bindings carry exactly the derived proxies, as `Game` binds them.
+    fn bound_runtime(center: Vec3) -> BuildingRuntime {
+        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut proxy = 0usize;
+        for index in 0..runtime.layout().placements().len() {
+            let proxies = runtime.module_proxies(index).to_vec();
+            runtime.bind_intact_slot(index, index, Vec3::ZERO, Vec3::ONE);
+            for (min, max) in proxies {
+                runtime.bind_destructible(index, proxy, 10_000 + proxy, 20_000 + proxy, min, max);
+                proxy += 1;
+            }
+        }
+        runtime
+    }
+
+    fn fail(runtime: &mut BuildingRuntime, index: usize) {
+        let module_id = runtime.layout().placements()[index].module_id.clone();
+        runtime
+            .state
+            .apply_damage(&runtime.blueprint, &runtime.layout, &module_id, u16::MAX)
+            .unwrap();
+    }
+
+    fn hash(n: u32) -> u32 {
+        n.wrapping_mul(2_654_435_761) >> 8
+    }
+
+    /// Intact, every single module failed (with its support and cluster cascade), and 24
+    /// deterministic multi-module combinations.
+    fn scenarios(center: Vec3) -> Vec<(String, BuildingRuntime)> {
+        scenarios_where(center, |_| true, 24)
+    }
+
+    fn scenarios_where(
+        center: Vec3,
+        single: impl Fn(&crate::building_blueprint::CompiledModulePlacement) -> bool,
+        combos: u32,
+    ) -> Vec<(String, BuildingRuntime)> {
+        let layout = feature_blueprint().compile().unwrap();
+        let count = layout.placements().len();
+        let mut out = vec![("intact".to_owned(), bound_runtime(center))];
+        for index in 0..count {
+            if !single(&layout.placements()[index]) {
+                continue;
+            }
+            let mut runtime = bound_runtime(center);
+            let id = runtime.layout().placements()[index].module_id.to_string();
+            fail(&mut runtime, index);
+            out.push((format!("failed {id}"), runtime));
+        }
+        for combo in 0..combos {
+            let mut runtime = bound_runtime(center);
+            let picks = 2 + hash(combo * 7 + 1) % 4;
+            let mut names = Vec::new();
+            for pick in 0..picks {
+                let index = (hash(combo * 131 + pick * 17 + 3) as usize) % count;
+                names.push(runtime.layout().placements()[index].module_id.to_string());
+                fail(&mut runtime, index);
+            }
+            out.push((format!("combo {names:?}"), runtime));
+        }
+        out
+    }
+
+    /// Sample coordinates that avoid every authored boundary by more than a millimetre.
+    fn axis_samples(from: f32, to: f32, step: f32) -> Vec<f32> {
+        let mut out = Vec::new();
+        let mut value = from + 0.0123;
+        while value <= to {
+            out.push(value);
+            value += step;
+        }
+        out
+    }
+
+    fn same_height(a: Option<f32>, b: Option<f32>) -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => (a - b).abs() <= HEIGHT_TOLERANCE,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn derived_shelter_matches_the_hard_coded_answer_everywhere() {
+        let center = Vec3::new(-30.0, -12.88, 80.0);
+        let mut checked = 0usize;
+        let mut sheltered = 0usize;
+        for (name, runtime) in scenarios(center) {
+            for x in axis_samples(-4.6, 4.6, 0.2971) {
+                for z in axis_samples(-4.6, 4.6, 0.2971) {
+                    for y in axis_samples(-0.6, 7.2, 0.1937) {
+                        let p = center + Vec3::new(x, y - 0.3, z);
+                        let old = runtime.shelter_at(p);
+                        let new = runtime.shelter_at_derived(p);
+                        assert_eq!(old, new, "{name}: shelter differs at local ({x}, {y}, {z})");
+                        checked += 1;
+                        sheltered += usize::from(new > 0.5);
+                    }
+                }
+            }
+        }
+        assert!(checked > 1_000_000, "{checked}");
+        assert!(sheltered > 100_000 && checked - sheltered > 100_000, "{sheltered} of {checked}");
+    }
+
+    #[test]
+    fn derived_walk_surface_and_support_match_the_hard_coded_answer_everywhere() {
+        let center = Vec3::new(20.0, 7.0, -10.0);
+        let ground = center.y - 0.3 + 0.4;
+        let previous = [
+            ground - 0.3,
+            ground,
+            ground + 0.05,
+            ground + 0.17,
+            ground + 0.9,
+            ground + 1.34,
+            ground + 1.36,
+            ground + 2.2,
+            ground + 3.0,
+            ground + 3.4,
+        ];
+        let mut checked = 0usize;
+        let (mut surfaces, mut ramps, mut unsupported) = (0usize, 0usize, 0usize);
+        for (name, runtime) in scenarios(center) {
+            for x in axis_samples(-4.4, 4.4, 0.1871) {
+                for z in axis_samples(-4.4, 4.4, 0.1871) {
+                    for prev in previous {
+                        let p = Vec3::new(center.x + x, prev, center.z + z);
+                        let old = runtime.walkable_surface_y(p, prev);
+                        let new = runtime.walkable_surface_y_derived(p, prev);
+                        assert!(
+                            same_height(old, new),
+                            "{name}: surface at ({x}, {z}) from {prev}: {old:?} vs {new:?}"
+                        );
+                        let support = runtime.unsupported_upper_position_derived(p);
+                        assert_eq!(
+                            runtime.unsupported_upper_position(p),
+                            support,
+                            "{name}: support at ({x}, {prev}, {z})"
+                        );
+                        checked += 2;
+                        surfaces += usize::from(new.is_some());
+                        ramps += usize::from(new.is_some_and(|y| {
+                            (y - ground).abs() > 0.01 && (y - ground - 3.0).abs() > 0.01
+                        }));
+                        unsupported += usize::from(support);
+                    }
+                }
+            }
+        }
+        assert!(checked > 500_000, "{checked}");
+        let samples = checked / 2;
+        assert!(surfaces > 50_000 && samples - surfaces > 50_000, "{surfaces} of {samples}");
+        assert!(ramps > 5_000 && unsupported > 5_000, "{ramps} ramps, {unsupported} unsupported");
+    }
+
+    #[test]
+    fn derived_walk_resolution_matches_the_hard_coded_answer_for_every_step() {
+        let center = Vec3::new(20.0, 7.0, -10.0);
+        let ground = center.y - 0.3 + 0.4;
+        let heights = [ground, ground + 0.17, ground + 1.5, ground + 3.0, ground + 3.1];
+        let directions: Vec<Vec2> = (0..8)
+            .map(|k| {
+                let angle = k as f32 * std::f32::consts::TAU / 8.0 + 0.071;
+                Vec2::new(angle.sin(), angle.cos())
+            })
+            .collect();
+        let blocked = std::cell::Cell::new(0usize);
+        let free = std::cell::Cell::new(0usize);
+        let compare = |name: &str, runtime: &BuildingRuntime, x: f32, z: f32| {
+            for y in heights {
+                for direction in &directions {
+                    for length in [0.08, 0.9] {
+                        let old = Vec3::new(center.x + x, y, center.z + z);
+                        let attempted = old + Vec3::new(direction.x, 0.03, direction.y) * length;
+                        let legacy = runtime.resolve_walk_xz(old, attempted);
+                        let derived = runtime.resolve_walk_xz_derived(old, attempted);
+                        assert!(
+                            legacy.distance(derived) <= 1.0e-5,
+                            "{name}: walk from {old:?} to {attempted:?}: {legacy:?} vs {derived:?}"
+                        );
+                        if legacy.distance(attempted) > 1.0e-4 {
+                            blocked.set(blocked.get() + 1);
+                        } else {
+                            free.set(free.get() + 1);
+                        }
+                    }
+                }
+            }
+            heights.len() * directions.len() * 2
+        };
+        // Walls and the stair decide walking: compare intact, every wall/door/stair failure and
+        // multi-module combinations over the whole footprint, and the stair region densely.
+        let mut checked = 0usize;
+        let decides_walking = |placement: &crate::building_blueprint::CompiledModulePlacement| {
+            BuildingRuntime::is_wall_kind(placement.kind) || placement.kind == ModuleKind::Stair
+        };
+        for (name, runtime) in scenarios_where(center, decides_walking, 12) {
+            for x in axis_samples(-5.2, 5.2, 0.5733) {
+                for z in axis_samples(-5.2, 5.2, 0.5733) {
+                    checked += compare(&name, &runtime, x, z);
+                }
+            }
+            if name == "intact" || name.contains("stair") {
+                for x in axis_samples(-3.6, -0.4, 0.1017) {
+                    for z in axis_samples(-4.3, 0.3, 0.1017) {
+                        checked += compare(&name, &runtime, x, z);
+                    }
+                }
+            }
+        }
+        assert!(checked > 500_000, "{checked}");
+        assert!(blocked.get() > 20_000 && free.get() > 20_000, "{} blocked, {} free", blocked.get(), free.get());
+    }
+
+    #[test]
+    fn derived_cover_lights_and_storage_match_the_hard_coded_answer() {
+        let center = Vec3::new(-30.0, -12.88, 80.0);
+        let mut searchable = 0usize;
+        for (name, mut runtime) in scenarios(center) {
+            for (from, to) in [(1.3, 1.7), (-0.5, 0.2), (2.0, 5.5), (4.0, 3.2), (6.5, 9.0)] {
+                let (mut old, mut new) = (Vec::new(), Vec::new());
+                runtime.append_infantry_cover(&mut old, center.y + from, center.y + to);
+                runtime.append_infantry_cover_derived(&mut new, center.y + from, center.y + to);
+                assert_eq!(old, new, "{name}: cover {from}..{to}");
+            }
+            let (old, new) = (runtime.interior_lights(), runtime.interior_lights_derived());
+            assert_eq!(old.len(), new.len(), "{name}: light count");
+            for (a, b) in old.iter().zip(&new) {
+                assert!(a.pos.distance(b.pos) <= 1.0e-5, "{name}: light {a:?} vs {b:?}");
+                assert_eq!((a.radius, a.color, a.intensity), (b.radius, b.color, b.intensity));
+            }
+            let shelf = sid("container.store.shelf");
+            assert_eq!(
+                runtime.storage_world_position(),
+                runtime.container_world_position(&shelf),
+                "{name}: storage position"
+            );
+            for x in axis_samples(-4.5, 4.5, 0.3313) {
+                for z in axis_samples(-4.5, 4.5, 0.3313) {
+                    for (dy, look) in [(0.1, 0.0), (0.1, 0.8), (0.45, 0.0), (1.0, 0.0), (3.1, 0.0)] {
+                        let feet = center + Vec3::new(x, dy, z);
+                        let eye = feet + Vec3::Y * 1.7;
+                        let storage = center + Vec3::new(2.5, 0.5, 2.8);
+                        for view in [storage - eye, eye - storage, Vec3::X, storage - eye + Vec3::Y * look] {
+                            let can = runtime.can_search_container(&shelf, feet, eye, view);
+                            assert_eq!(
+                                runtime.can_search_storage(feet, eye, view),
+                                can,
+                                "{name}: search from {feet:?} looking {view:?}"
+                            );
+                            searchable += usize::from(can);
+                        }
+                    }
+                }
+            }
+            // Searching through either path empties the same shelf.
+            if runtime.storage_world_position().is_some() {
+                let taken = runtime.search_container(&shelf).unwrap();
+                assert!(!taken.is_empty(), "{name}: shelf gave nothing");
+                assert!(runtime.storage_world_position().is_none());
+                assert!(runtime.search_storage().unwrap().is_empty());
+            }
+        }
+        assert!(searchable > 500, "{searchable}");
+    }
+
+    /// The kit-derived solids equal the proxies the assembly computed from the loaded meshes and
+    /// the analytic doorway/window strips, module by module.
+    #[test]
+    fn derived_proxies_match_the_assembled_damage_bounds() {
+        let installed = feature_blueprint().modules.iter().all(|module| {
+            crate::building_kit::asset_path(module.asset_id.as_str())
+                .is_some_and(crate::resource::is_file)
+        });
+        if !installed {
+            eprintln!("skipping: Pizza building assets are not installed");
+            return;
+        }
+        for (center, ground) in [(Vec2::new(-30.0, 80.0), -12.88), (Vec2::new(17.5, -3.25), 4.5)] {
+            let assembly = assemble_feature_building(center, ground).unwrap();
+            for module in &assembly.modules {
+                let derived = assembly.runtime.module_proxies(module.placement_index);
+                let id = &assembly.runtime.layout().placements()[module.placement_index].module_id;
+                assert_eq!(derived.len(), module.damage_bounds.len(), "{id}: proxy count");
+                for ((a_min, a_max), (b_min, b_max)) in derived.iter().zip(&module.damage_bounds) {
+                    assert!(
+                        a_min.distance(*b_min) <= 1.0e-3 && a_max.distance(*b_max) <= 1.0e-3,
+                        "{id}: derived {a_min:?}..{a_max:?} vs assembled {b_min:?}..{b_max:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn derived_stair_and_storeys_reproduce_the_authored_numbers() {
+        let runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let g = &runtime.geometry;
+        assert_eq!(g.storeys.len(), 2);
+        assert!((g.storeys[0].surface - 0.4).abs() < 1e-6 && (g.storeys[1].surface - 3.4).abs() < 1e-6);
+        assert!((g.storeys[1].bottom - 3.0).abs() < 1e-6);
+        assert_eq!(g.footprint, (Vec2::splat(-4.0), Vec2::splat(4.0)));
+        assert_eq!(g.stairs.len(), 1);
+        let stair = g.stairs[0];
+        assert!((stair.min - Vec2::new(-3.15, -3.8)).length() < 1e-5, "{:?}", stair.min);
+        assert!((stair.max - Vec2::new(-0.85, -0.2)).length() < 1e-5, "{:?}", stair.max);
+        assert_eq!(stair.axis, Vec2::Y);
+        assert!((stair.bottom_edge + 3.8).abs() < 1e-5 && (stair.run - 3.6).abs() < 1e-5);
+        assert_eq!((stair.lower, stair.upper), (0, 1));
+        assert_eq!(g.cells.len(), 8);
+        assert_eq!(g.roofs.len(), 2);
     }
 }
