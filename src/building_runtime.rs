@@ -2088,13 +2088,31 @@ impl KitMeshCache {
                 .map_err(|error| anyhow::anyhow!("building kit asset {asset_id}: {error}"))?;
             if let Some(shape) = crate::building_kit::shape(asset_id) {
                 let (min, max) = (Vec3::from(shape.bounds.min), Vec3::from(shape.bounds.max));
-                anyhow::ensure!(
-                    mesh.min.distance(min) <= 1.0e-3 && mesh.max.distance(max) <= 1.0e-3,
-                    "building kit asset {asset_id}: source bounds {:?}..{:?} no longer match its \
-                     runtime shape {min:?}..{max:?}",
-                    mesh.min,
-                    mesh.max
-                );
+                let derived = !shape.solids.is_empty()
+                    || shape.floor.is_some()
+                    || shape.stair.is_some()
+                    || !shape.flights.is_empty()
+                    || shape.light.is_some();
+                if derived {
+                    anyhow::ensure!(
+                        mesh.min.distance(min) <= 1.0e-3 && mesh.max.distance(max) <= 1.0e-3,
+                        "building kit asset {asset_id}: source bounds {:?}..{:?} no longer match its \
+                         runtime shape {min:?}..{max:?}",
+                        mesh.min,
+                        mesh.max
+                    );
+                } else {
+                    // Nothing is derived from a shape without solids or roles (a snow deposit's)
+                    // but the broad-phase box, which must hold the mesh.
+                    anyhow::ensure!(
+                        mesh.min.cmpge(min - Vec3::splat(1.0e-3)).all()
+                            && mesh.max.cmple(max + Vec3::splat(1.0e-3)).all(),
+                        "building kit asset {asset_id}: source bounds {:?}..{:?} leave its runtime \
+                         shape {min:?}..{max:?}",
+                        mesh.min,
+                        mesh.max
+                    );
+                }
             }
             self.meshes.insert(asset_id.to_owned(), mesh);
         }
