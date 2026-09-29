@@ -26,6 +26,7 @@ pub const DIRECT_BEAM_ALTITUDE_DEG: f64 = -1.0;
 pub const ATMOSPHERE_SHADOW_ALTITUDE_DEG: f64 = -21.5;
 /// Largest ratio of the dropped Moon's horizontal illuminance to the Sun's while the Sun is the
 /// key (Sun above -1 deg; USNO 171, same sky for both bodies).
+#[cfg_attr(not(test), allow(dead_code))]
 pub const MOON_DROPPED_BOUND: f64 = 1.5e-3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -294,6 +295,27 @@ mod tests {
         clock.advance(3600.0);
         clock.advance(f64::NAN);
         assert!((clock.now().jd - phase_instant(1, ClockPhase::Day).jd - 1.0 / 24.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_workshop_migration_instants_light_the_authored_sun_heights() {
+        // tools/apply_ephemeris_lighting_20260929.py gives each version-1 workshop the instant
+        // its authored sun height stood for; the ephemeris must put the Sun there.
+        let tool = include_str!("../tools/apply_ephemeris_lighting_20260929.py");
+        for (workshop, altitude, tolerance) in [
+            ("act1-winter-courtyard-20260925", 7.41, 0.05),
+            ("act1-urban-intro-20260928", 7.5, 0.1),
+            ("act1-winter-encounter-20260925-staged", 22.4, 0.2),
+            ("ruined-house-courtyard-20260925", 17.85, 0.1),
+        ] {
+            let line = tool.lines().find(|l| l.contains(&format!("\"{workshop}\": \"")))
+                .unwrap_or_else(|| panic!("{workshop} missing from the tool"));
+            let utc = line.split('"').nth(3).unwrap();
+            let sky = CelestialState::at(UtcInstant::parse_iso(utc).unwrap(), STALINGRAD);
+            assert!((sky.sun.altitude_deg - altitude).abs() <= tolerance,
+                "{workshop} {utc}: {:?}", sky.sun);
+            assert!(sky.sun.azimuth_deg > 180.0 - 1.0, "{workshop}: noon or afternoon Sun");
+        }
     }
 
     #[test]

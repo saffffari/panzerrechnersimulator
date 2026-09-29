@@ -11,7 +11,7 @@
 //! - pupil: Watson & Yellott 2012's unified formula [R] (Stanley-Davies with the age term, age
 //!   25), constricting with 0.3 s, dilating with 2 s plus a 15 s tail (30 %) [M/E];
 //! - pigments: rate-limited regeneration (Mahroo & Lamb 2004 [M] for cones: K_m 0.2,
-//!   0.5 /min, 2.1e6 td s; rods [R/D]: 0.03 /min, 1e7 scotopic td s); bleaching raises the
+//!   0.5 /min, 2.1e6 td s; rods [R/D]: 0.045 /min, 1e7 scotopic td s); bleaching raises the
 //!   threshold by 3 (cones) and 20 (rods) log units per unit fraction bleached (Rushton [M]);
 //! - neural: log-domain first-order adaptation, cones 0.1 s up / 1 s down, rods 0.2 s / 3 s [E];
 //! - threshold-versus-intensity: Ferwerda, Pattanaik, Shirley & Greenberg 1996 [R];
@@ -123,6 +123,8 @@ fn clamp_luminance(value: f64) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Viewing {
     Binocular,
+    // The GPU eye takes the sight from the clock's `monocular` lane.
+    #[cfg_attr(not(test), allow(dead_code))]
     MonocularSight,
 }
 
@@ -279,7 +281,9 @@ impl Eye {
         self.pupil_fast_mm * (1.0 - PUPIL_SLOW_SHARE) + self.pupil_slow_mm * PUPIL_SLOW_SHARE
     }
 
-    /// Advance by `dt_s` seconds of simulated time with this frame's meter.
+    /// Advance by `dt_s` seconds of simulated time with this frame's meter. The CPU statement of
+    /// what `exposure.wgsl` integrates on every frame (tests hold the two together).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn step(&mut self, meter: Meter, viewing: Viewing, dt_s: f64) {
         if !(dt_s > 0.0) { return; }
         let meter = meter.clamped();
@@ -290,6 +294,7 @@ impl Eye {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn substep(&mut self, meter: Meter, viewing: Viewing, dt: f64) {
         let relax = |value: f64, target: f64, tau: f64| value + (target - value) * (1.0 - (-dt / tau).exp());
         // Pupil.
@@ -380,6 +385,7 @@ impl Eye {
 
 impl Mapping {
     /// ACES input of a spectral-radiance triplet (what `crush.wgsl` computes per pixel).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn aces_input(&self, radiance: [f64; 3]) -> [f64; 3] {
         let scotopic: f64 = (0..3).map(|i| radiance[i] * SCOTOPIC_WEIGHTS[i]).sum();
         let rods = self.rod_exposure * scotopic / (1.0 + scotopic * self.rod_inverse_saturation);
@@ -388,11 +394,13 @@ impl Mapping {
 }
 
 /// The ACES fit `crush.wgsl` applies (Narkowicz), the one tone curve of the display.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn aces(x: f64) -> f64 {
     ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
 }
 
 /// Radiance triplet of a spectrally flat surface of the given luminance.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn flat_radiance(luminance_cd_m2: f64) -> [f64; 3] {
     [luminance_cd_m2 / LUMINANCE_PER_UNIT_RADIANCE; 3]
 }

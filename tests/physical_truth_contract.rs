@@ -411,7 +411,7 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
         &[
             "physical_atmosphere_transport_shader_source(include_str!(",
             "\"../shaders/combine.wgsl\",",
-            "deferred: rt_on",
+            "let deferred = rt_on",
             "rt_surface_gpu: Option<RtSurfaceGpu>",
             "combine_rt_bind: Option<wgpu::BindGroup>",
         ],

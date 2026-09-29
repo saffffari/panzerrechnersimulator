@@ -112,7 +112,7 @@ pub struct SkyVisibility {
 }
 
 impl SkyVisibility {
-    pub fn new(device: &wgpu::Device, enabled: bool) -> Self {
+    pub fn new(device: &wgpu::Device, enabled: bool, probe: &wgpu::Buffer) -> Self {
         let size = if enabled {
             wgpu::Extent3d { width: COLS * TILE, height: ROWS * TILE, depth_or_array_layers: 1 }
         } else {
@@ -177,6 +177,8 @@ impl SkyVisibility {
                     count: None,
                 },
                 uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
+                // The physical environment probe (environment_probe.rs) for raster media.
+                uniform_entry(3, wgpu::ShaderStages::FRAGMENT),
             ],
         });
         let sampling_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -186,6 +188,7 @@ impl SkyVisibility {
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&compare) },
                 wgpu::BindGroupEntry { binding: 2, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: probe.as_entire_binding() },
             ],
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

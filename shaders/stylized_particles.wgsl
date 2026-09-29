@@ -111,7 +111,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         var flake=vec3(0.80,0.83,0.84);
         if (u.sky_radiances[0].w>0.5) {
             let radiance=0.9*(0.5*(u.sky_radiances[0].rgb+u.sky_radiances[1].rgb)
-                +0.25*u.solar_irradiance.rgb);
+                +0.25/3.14159265*u.solar_irradiance.rgb);
             flake=flake_camera_response(eye_response(radiance));
         }
         return vec4(flake*optic,0.92*(1.0-near_coverage));

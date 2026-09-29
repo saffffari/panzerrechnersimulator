@@ -440,7 +440,9 @@ impl HorizontalPosition {
         DVec3::new(a.sin() * h.cos(), h.sin(), -a.cos() * h.cos())
     }
 
-    /// Engine azimuth as `LightingTuning` stores it: compass azimuth minus 90 degrees.
+    /// Engine azimuth (compass azimuth minus 90 degrees), for comparison with the retired
+    /// version-1 lighting records.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn engine_azimuth_deg(self) -> f64 {
         wrap_degrees(self.azimuth_deg - 90.0)
     }
@@ -581,23 +583,28 @@ pub const LUNAR_RELATIVE_REFLECTANCE: DVec3 = DVec3::new(1.22, 1.00, 0.80);
 /// three samples (research section 1.2, CVRL tables; sum 72,983). Applied to a spectral irradiance
 /// triplet the same weights give lux.
 pub const PHOTOPIC_WEIGHTS: DVec3 = DVec3::new(12_458.6, 52_558.9, 7_965.8);
-/// Scotopic luminance weights, CIE 1951 V'(lambda) with K'm = 1700 lm/W (research section 1.2).
-pub const SCOTOPIC_WEIGHTS: DVec3 = DVec3::new(2_322.5, 89_437.1, 73_261.6);
 
 pub fn photopic_illuminance_lux(spectral_irradiance: DVec3) -> f64 {
     spectral_irradiance.dot(PHOTOPIC_WEIGHTS)
 }
 
 // ---- USNO Circular 171 -------------------------------------------------------------------
+// The Circular's empirical illuminance model is the reference the tests hold the physical
+// atmosphere against; the renderer itself uses only the Moon's phase factor.
 
 /// Brown's sky-condition divisors quoted by USNO Circular 171.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const SKY_CLEAR: f64 = 1.0;
+#[cfg_attr(not(test), allow(dead_code))]
 pub const SKY_THIN_CLOUD: f64 = 2.0;
+#[cfg_attr(not(test), allow(dead_code))]
 pub const SKY_AVERAGE_CLOUD: f64 = 3.0;
+#[cfg_attr(not(test), allow(dead_code))]
 pub const SKY_DARK_STRATUS: f64 = 10.0;
 
 /// The Circular's attenuation function M(h) of the geometric altitude h (degrees): refraction,
 /// the air mass of a homogeneous spherical atmosphere and the diffuse term of Brown's curve.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn usno_attenuation(altitude_deg: f64) -> f64 {
     let h = altitude_deg;
     let refracted = if h < -5.0 / 6.0 {
@@ -614,11 +621,13 @@ pub fn usno_attenuation(altitude_deg: f64) -> f64 {
 }
 
 /// Horizontal illuminance from the Sun (without the night-sky term), lux.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn usno_sun_illuminance_lux(altitude_deg: f64, sky_divisor: f64) -> f64 {
     (133_775.0 * usno_attenuation(altitude_deg) / sky_divisor).max(0.0)
 }
 
 /// The Circular's night-sky term, lux (the text quotes 0.0003, the programs add 0.0005).
+#[cfg_attr(not(test), allow(dead_code))]
 pub const USNO_NIGHT_SKY_LUX: f64 = 0.0005;
 
 /// The Circular's lunar phase factor P(E): the illuminance of the Moon at the mean distance
@@ -638,6 +647,7 @@ pub fn usno_moon_phase_factor(elongation_rad: f64, altitude_deg: f64) -> f64 {
 
 /// Horizontal illuminance from the Moon, lux, as the Circular computes it: geocentric altitude
 /// corrected by the mean parallax, the phase factor and M(H).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn usno_moon_illuminance_lux(geocentric_altitude_deg: f64, elongation_rad: f64, sky_divisor: f64)
     -> f64
 {

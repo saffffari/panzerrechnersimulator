@@ -495,6 +495,14 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         }
     }
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    // KESSEL_SKY_UTC=YYYY-MM-DDTHH:MM:SSZ starts the act clock at another instant of the same place
+    // (the ephemeris lights it; nothing else changes).
+    if let Ok(text) = std::env::var("KESSEL_SKY_UTC") {
+        let instant = ephemeris::UtcInstant::parse_iso(&text)?;
+        r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
+        println!("[sky] clock {} at {:.3} N {:.3} E", instant.to_iso(),
+            r.sky_clock.site.latitude_deg, r.sky_clock.site.longitude_deg_east);
+    }
     if let Some(c) = cam {
         r.camera.pos = Vec3::new(c[0], c[1], c[2]);
         r.camera.yaw = c[3].to_radians();
@@ -567,7 +575,30 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         );
     }
     let (cw, ch) = (r.iw * 3, r.ih * 3);
-    r.render_to_png(&device, &queue, path, cw, ch)
+    r.render_to_png(&device, &queue, path, cw, ch)?;
+    // Scene-referred luminance of the frame just written, the eye that showed it and the
+    // displayed brightness: the numbers behind the backend-agreement regression.
+    let photometry = r.debug_frame_photometry(&device, &queue)?;
+    let shown = image::open(capture_target(path))?.to_rgba8();
+    let display = displayed_mean_luminance(&shown);
+    let mut report = photometry.to_json();
+    report["display_mean_linear"] = serde_json::json!(display);
+    report["backend"] = serde_json::json!(if r.shader_backend { "shader" } else { "physical" });
+    report["preset"] = serde_json::json!(r.graphics_preset.key());
+    println!("[light] photometry {report}");
+    Ok(())
+}
+
+/// Mean Rec.709 luminance of a displayed sRGB frame, in linear display units (0..1).
+fn displayed_mean_luminance(image: &image::RgbaImage) -> f64 {
+    let decode = |c: u8| {
+        let v = c as f64 / 255.0;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    let sum: f64 = image.pixels().map(|p| {
+        0.2126 * decode(p[0]) + 0.7152 * decode(p[1]) + 0.0722 * decode(p[2])
+    }).sum();
+    sum / (image.width() * image.height()).max(1) as f64
 }
 
 /// Deterministic art-direction gallery: one grounded exterior composition for each campaign act,
