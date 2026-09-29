@@ -22,6 +22,7 @@ const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", 
     "look_driver_control",
     "map_zoom",
     "look_at_gun",
+    "staged_discharge",
 ];
 
 /// Explicit render-only crew witness for checking source hands. Ordinary input still uses the
@@ -209,6 +210,11 @@ fn capture_crew_controls(input: TankInput, g: &Game, diagnostic: bool,
     }
 }
 
+/// The one-T-34 Arena bench: the enemy-report review or the sound-calibration duel.
+fn duel_setup(spec: &Value) -> Option<&Value> {
+    spec["setup"].get("enemy_discharge_review").or_else(|| spec["setup"].get("calibration_duel"))
+}
+
 fn scalar(v: &Value, key: &str, default: f64) -> f64 {
     v.get(key).and_then(Value::as_f64).unwrap_or(default)
 }
@@ -363,6 +369,31 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
             anyhow::ensure!(he.as_u64().is_some_and(|n|n<=8), "soft-target HE ammunition must be 0..8 whole rounds");
         }
     }
+    if let Some(setup) = spec["setup"].get("calibration_duel") {
+        // The enemy-report bench's geometry (one T-34, ordinary AI) for a sound-level film: the
+        // commander may close and open his hatch, ride head-out, drive, and use the disclosed
+        // staged discharge. No impact, target placement or outcome is injected.
+        anyhow::ensure!(spec["setup"].get("enemy_discharge_review").is_none(),
+            "calibration duel and enemy report bench are separate fixtures");
+        anyhow::ensure!(setup.is_object() && act == 0 && spec["night"] == false
+            && spec["station"] == "commander" && spec["setup"]["on_foot"] != true
+            && spec["setup"]["enemy_policy"] == "live" && spec["setup"]["hatch_open"] == true,
+            "calibration duel needs a daylight Arena Commander, live AI and an open hatch at setup");
+        for incompatible in ["mixed_combat", "soft_target_tank", "diagnostic_crew", "playtest",
+            "fire", "source_fire", "broken_module", "destruction_review", "aim_enemy", "showcase_crew"] {
+            anyhow::ensure!(spec["setup"].get(incompatible).is_none(),
+                "calibration duel cannot combine with {incompatible}");
+        }
+        anyhow::ensure!(setup["range_m"].as_f64().is_some_and(|n|(40.0..=300.0).contains(&n))
+            && setup.get("bearing_deg").is_none_or(|v|v.as_f64().is_some_and(|n|(-180.0..=180.0).contains(&n)))
+            && setup.get("readiness_s").is_none_or(|v|v.as_f64().is_some_and(|n|(0.5..=3.0).contains(&n))),
+            "calibration duel range/readiness/bearing invalid");
+        anyhow::ensure!(spec["timeline"].as_array().is_some_and(|steps| steps.iter().all(|step|
+            matches!(step["action"].as_str(), Some("hatch" | "head_out" | "head_in" | "staged_discharge"))
+            || step["input"].as_object().is_some_and(|input| input.keys()
+                .all(|key| matches!(key.as_str(), "drive" | "steer"))))),
+            "calibration duel accepts hatch, head-out/in, staged discharge and driving only");
+    }
     if let Some(setup) = spec["setup"].get("enemy_discharge_review") {
         anyhow::ensure!(setup.is_object() && act == 0 && spec["night"] == false
             && spec["station"] == "commander" && spec["setup"]["on_foot"] != true,
@@ -506,8 +537,8 @@ fn validate_act_one_playtest(spec: &Value) -> anyhow::Result<bool> {
     anyhow::ensure!(spec["setup"].get("enemy_policy").is_none()
         || spec["setup"]["enemy_policy"] == "live", "Act-One Playtest enemies must remain live");
     anyhow::ensure!(!spec["timeline"].as_array().into_iter().flatten()
-        .any(|step|step["action"] == "incoming_impact"),
-        "Act-One Playtest cannot inject diagnostic damage");
+        .any(|step|step["action"] == "incoming_impact" || step["action"] == "staged_discharge"),
+        "Act-One Playtest cannot inject diagnostic damage or staged discharges");
     Ok(true)
 }
 
@@ -706,6 +737,14 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
         },
         "map_pin" => {
             if map.open {ui::toggle_map_pin(&mut map.pins,g.act.id,map.cursor);true} else {false}
+        },
+        "staged_discharge" => {
+            let before=g.main_gun_shot_sequence();
+            let post=g.mechanic_status()["current_station"].clone();
+            g.debug_staged_discharge(r);
+            detail=Some(json!({"station":post,"shots_before":before,"shots_after":g.main_gun_shot_sequence(),
+                "scope":"Disclosed discharge fixture: a serviceable round is seated and the gun fires along its current lay while the viewer stays at the current post (in a crew the gunner fires while the commander rides head-out; the solo player fires only from the sight). Round, report at the listener's ear, recoil and hearing follow the ordinary path."}));
+            g.main_gun_shot_sequence()==before.wrapping_add(1)
         },
         "incoming_impact" => {
             let shell=incoming_shell(step["shell"].as_str().unwrap_or(""))?;
@@ -1042,7 +1081,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         "live"=>{if playtest {g.set_playtest_return_fire(true);}},
         other=>anyhow::bail!("unknown enemy policy {other}"),
     }
-    if spec["setup"].get("enemy_discharge_review").is_some() {
+    if duel_setup(&spec).is_some() {
         // Discarded warmup has no live duel; one real opponent is placed only after it finishes.
         g.debug_banish_enemies();
     }
@@ -1110,7 +1149,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     let mut staged_combat=false;
     let mut setup_results = serde_json::Map::new();
     if let Some(crew) = showcase_crew { setup_results.insert("showcase_crew".into(),crew.receipt()); }
-    if let Some(setup) = spec["setup"].get("enemy_discharge_review") {
+    if let Some(setup) = duel_setup(&spec) {
         setup_results.insert("enemy_discharge_review".into(),g.debug_stage_enemy_discharge_review(
             scalar(setup,"range_m",0.0) as f32,scalar(setup,"bearing_deg",0.0) as f32,
             scalar(setup,"readiness_s",1.0) as f32,r.time)?);
@@ -1197,7 +1236,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     }
     let mut map=ReviewMap::default();
     let mut primary_was_held = false;
-    if spec["setup"].get("enemy_discharge_review").is_some() {
+    if duel_setup(&spec).is_some() {
         g.debug_enemy_report_recording_origin(r.time)?;
     }
     let mut initial=telemetry(&g,&r);initial["player_displacement_m"]=json!(0.0);map.add_to(&mut initial);
@@ -1385,8 +1424,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     anyhow::ensure!(samples.iter().all(|s|s.is_finite()),"nonfinite gameplay audio");
     anyhow::ensure!(samples.iter().any(|s|s.abs()>1e-6),"gameplay capture was silent");
     let raw_peak=samples.iter().map(|s|s.abs()).fold(0.0f32,f32::max);
-    // Same gain for every case; an emergency linear peak guard only attenuates overloads.
-    for sample in &mut samples {*sample*=0.5;}
+    // Unity export: the capture is the game's own output, after its one reproduction transform
+    // and master limiter (-1 dBFS). The linear guard only acts on a sum the master let through.
     let peak_guard=acoustics::attenuate_over_peak(&mut samples,0.94);
     if record {
         acoustics::write_wav_stereo(&wav,&samples,acoustics::SAMPLE_RATE)?;
@@ -1423,7 +1462,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             else {"Game::update player camera; ordinary two-pass gunner optic when active; no chase camera"},
         "audio_source":"same ordinary gameplay Audio sinks, sampled on simulation clock; no substitute soundtrack",
         "audio_initial":initial_audio,"audio_final":g.audio_capture_metadata(),"raw_mix_peak":raw_peak,
-        "export_fixed_gain":0.5,"export_peak_guard_gain":peak_guard,"sample_frames":samples.len()/2,
+        "export_fixed_gain":1.0,"export_peak_guard_gain":peak_guard,"sample_frames":samples.len()/2,
         "initial_state":initial,"final_state":final_state,"events":events,"state_samples":states,
         "setup_results":setup_results,"construction":construction_receipt,
         "campaign_capture_state":campaign_run.as_ref().map(|run|json!({

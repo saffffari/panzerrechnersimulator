@@ -31,6 +31,14 @@ const POLL_FRAMES: u64 = 32;
 const GAIN_TAU_S: f32 = 0.010;
 /// Band level detector (a short-term loudness estimate for the expander).
 const LEVEL_TAU_S: f32 = 0.010;
+/// Onset detector: a loud onset is seen within 0.3 ms and a band opens as fast. Recruitment in the
+/// cochlea acts within a cycle; without this a transient born into a damaged ear lost its first
+/// 10-20 ms to the quiet-sound gains. The onset level is the fast peak power less 6 dB, so a
+/// steady sound's peaks do not bias the level upward.
+const ONSET_ATTACK_S: f32 = 0.0003;
+const ONSET_RELEASE_S: f32 = 0.003;
+const ONSET_PEAK_TO_MEAN: f32 = 0.25;
+const GAIN_OPEN_S: f32 = 0.0003;
 /// Reflex share per band: the stapedius acts on low frequencies (SL §9).
 const REFLEX_SHARE: [f32; EAR_BANDS] = [1.0, 0.5, 0.0, 0.0, 0.0];
 
@@ -176,8 +184,12 @@ pub(super) struct Ear<S> {
     coef: [f32; EAR_BANDS - 1],
     split: [Split; 2],
     power: [[f32; EAR_BANDS]; 2],
+    onset: [[f32; EAR_BANDS]; 2],
     gain_target: [[f32; EAR_BANDS]; 2],
     gain: [[f32; EAR_BANDS]; 2],
+    /// Band level the gain targets were computed from; an onset 10 dB above it re-polls at once.
+    polled_level: [[f32; EAR_BANDS]; 2],
+    repoll: bool,
 }
 
 impl<S: Source<Item = f32>> Ear<S> {
@@ -189,8 +201,11 @@ impl<S: Source<Item = f32>> Ear<S> {
             coef: EAR_SPLITS_HZ.map(one_pole),
             split: [Split::default(); 2],
             power: [[0.0; EAR_BANDS]; 2],
+            onset: [[0.0; EAR_BANDS]; 2],
             gain_target: [[1.0; EAR_BANDS]; 2],
             gain: [[1.0; EAR_BANDS]; 2],
+            polled_level: [[0.0; EAR_BANDS]; 2],
+            repoll: false,
         };
         ear.poll();
         // Start at the listener's current state: a voice born into impaired hearing does not ramp
@@ -233,6 +248,7 @@ impl<S: Source<Item = f32>> Ear<S> {
             // Engaging: the split starts from rest; with unity gains the bands sum to the input.
             self.split = [Split::default(); 2];
             self.power = [[0.0; EAR_BANDS]; 2];
+            self.onset = [[0.0; EAR_BANDS]; 2];
             self.gain = [[1.0; EAR_BANDS]; 2];
             self.active = true;
         }
@@ -241,7 +257,10 @@ impl<S: Source<Item = f32>> Ear<S> {
         }
         for channel in 0..2 {
             for band in 0..EAR_BANDS {
-                let dbfs = 10.0 * (self.power[channel][band].max(1.0e-20) / 0.5).log10();
+                let level = self.power[channel][band]
+                    .max(ONSET_PEAK_TO_MEAN * self.onset[channel][band]);
+                self.polled_level[channel][band] = level;
+                let dbfs = 10.0 * (level.max(1.0e-20) / 0.5).log10();
                 self.gain_target[channel][band] = self.band_gain(channel, band, dbfs);
             }
         }
@@ -261,7 +280,8 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
         let x = self.source.next()?;
         let channel = usize::from(self.right);
         if !self.right {
-            if self.frames % POLL_FRAMES == 0 {
+            if self.frames % POLL_FRAMES == 0 || self.repoll {
+                self.repoll = false;
                 self.poll();
             }
             self.frames += 1;
@@ -275,13 +295,22 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
             return Some(x);
         }
         let bands = self.split[channel].run(x, &self.coef);
-        let (level_a, gain_a) = (ramp(LEVEL_TAU_S), ramp(GAIN_TAU_S));
+        let (level_a, gain_close) = (ramp(LEVEL_TAU_S), ramp(GAIN_TAU_S));
+        let (onset_up, onset_down, gain_open) =
+            (ramp(ONSET_ATTACK_S), ramp(ONSET_RELEASE_S), ramp(GAIN_OPEN_S));
         let mut out = 0.0f32;
         for band in 0..EAR_BANDS {
+            let e = bands[band] * bands[band];
             let power = &mut self.power[channel][band];
-            *power += level_a * (bands[band] * bands[band] - *power);
+            *power += level_a * (e - *power);
+            let onset = &mut self.onset[channel][band];
+            *onset += if e > *onset { onset_up } else { onset_down } * (e - *onset);
+            if ONSET_PEAK_TO_MEAN * *onset > 10.0 * self.polled_level[channel][band].max(1.0e-12) {
+                self.repoll = true;
+            }
+            let target = self.gain_target[channel][band];
             let gain = &mut self.gain[channel][band];
-            *gain += gain_a * (self.gain_target[channel][band] - *gain);
+            *gain += if target > *gain { gain_open } else { gain_close } * (target - *gain);
             out += bands[band] * *gain;
         }
         Some(out)
@@ -387,6 +416,25 @@ mod tests {
         assert!(recruitment_loss_db(30.0, 100.0, 3) == 0.0);
         assert!((recruitment_loss_db(30.0, THRESHOLD_DB[3], 3) + 30.0).abs() < 1e-4);
         assert!(recruitment_loss_db(30.0, 50.0, 3) < -10.0);
+    }
+
+    #[test]
+    fn a_loud_transient_born_into_a_damaged_ear_keeps_its_onset() {
+        // A 30 dB shift. A gunshot-like burst far above 100 dB SPL at the ear: recruitment leaves
+        // it at full level from its first millisecond.
+        let shift = [[3.0, 6.0, 15.0, 30.0, 25.0]; 2];
+        let control = Arc::new(EarControl::default());
+        control.set_state(&render(shift, 0.0, [0.0; 2]));
+        let loud = 10f32.powf(crate::reproduction::tone_map_dbfs(140.0) / 20.0);
+        let mut burst = noise(4_410, loud);
+        for (i, v) in burst.iter_mut().enumerate() {
+            *v *= (-(i as f32 / 2.0) / 441.0).exp();
+        }
+        let out = run(&control, EarBus::World, &burst);
+        let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let first_ms = 2 * 44;
+        let ratio = peak(&out[..first_ms * 3]) / peak(&burst[..first_ms * 3]);
+        assert!(20.0 * ratio.log10() > -1.2, "onset kept: {:.2} dB", 20.0 * ratio.log10());
     }
 
     #[test]

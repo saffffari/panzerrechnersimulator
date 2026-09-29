@@ -15266,12 +15266,14 @@ fn main() -> anyhow::Result<()> {
         let prefix = capture_arg(&args, 2, "audio_terror_review");
         return audio_terror_review::run(&prefix);
     }
-    // Staged hits through the live mix: pre-hit contrast, hit layering, hearing aftermath.
+    // Sound calibration check: every key event at its physical level at the ear through the live
+    // graph, measured (LAF,max and peak, dBFS), and the calibration's dB relations asserted.
     if args.len() >= 2 && args[1] == "impact-mix-review" {
-        let prefix = capture_arg(&args, 2, "impact_mix_review");
+        let prefix = capture_arg(&args, 2, "sound_calibration_check");
         let receipt = impact_mix_review::run(&prefix)?;
-        println!("[impact-mix-review] wrote {} takes; {prefix}_receipt.json",
-            receipt["takes"].as_array().map_or(0, Vec::len));
+        println!("[impact-mix-review] PASS: {} events, {} relations; {prefix}_receipt.json",
+            receipt["events"].as_array().map_or(0, Vec::len),
+            receipt["checks"].as_array().map_or(0, Vec::len));
         return Ok(());
     }
     if args.len() >= 2 && args[1] == "sfx" {

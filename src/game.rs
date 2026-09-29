@@ -19369,6 +19369,22 @@ impl Game {
         self.on_fired();
     }
 
+    /// Disclosed review fixture: seat a serviceable round and fire along the current lay without
+    /// moving the viewer from the current post. In a crew the gunner fires while the commander
+    /// rides head-out; the solo player fires only from the sight, so a film of what the commander
+    /// hears needs this. Everything after the discharge (the round, the report at the listener's
+    /// ear, recoil, the ear model) is the ordinary path.
+    pub fn debug_staged_discharge(&mut self, r: &mut Renderer) {
+        self.cartridge_primers.consume(cartridge_primer::CHAMBER);
+        self.breech = Breech::Loaded;
+        self.lever_open = 0.0;
+        self.ram = 0.0;
+        self.player.reload = 0.0;
+        self.fire(r);
+        self.player.fired();
+        self.on_fired();
+    }
+
     /// Headless hook: fire along the CURRENT gun lay (no auto-aim) — for demos shooting at
     /// something other than a tank (a tree, a wall).
     pub fn debug_fire_laid(&mut self, r: &mut Renderer) {

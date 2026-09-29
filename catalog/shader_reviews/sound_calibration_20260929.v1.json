@@ -1,0 +1,91 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "sound_calibration_20260929",
+  "title": "Real-life loudness: the Tiger's own gun buttoned and head-out, its engine, a T-34 firing from 280 m",
+  "caption": "COMMANDER / SOUND AT REAL LEVELS - OWN 88, ENGINE, T-34 FROM 280 M",
+  "act_id": 0,
+  "night": false,
+  "station": "commander",
+  "seconds": 28,
+  "setup": {
+    "enemy_policy": "live",
+    "player_xz": [
+      60,
+      -280
+    ],
+    "hatch_open": true,
+    "calibration_duel": {
+      "range_m": 280,
+      "bearing_deg": -12,
+      "readiness_s": 2
+    }
+  },
+  "mechanics": [
+    "calibrated_sound_levels",
+    "listener_enclosure_buttoned_and_head_out",
+    "engine_bed_at_true_level",
+    "enemy_report_propagated_over_snow",
+    "strikes_on_own_armour_at_the_ear",
+    "ear_model_threshold_shift_and_tinnitus"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.3,
+      "action": "head_out"
+    },
+    {
+      "at_s": 12.5,
+      "action": "staged_discharge"
+    },
+    {
+      "at_s": 15.5,
+      "action": "head_in"
+    },
+    {
+      "at_s": 15.8,
+      "action": "hatch"
+    },
+    {
+      "from_s": 18.0,
+      "until_s": 22.5,
+      "input": {
+        "drive": 1.0
+      }
+    },
+    {
+      "at_s": 24.5,
+      "action": "staged_discharge"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 2,
+      "max_delta": 2
+    },
+    {
+      "metric": "enemy_fire_discharges",
+      "min_delta": 1
+    },
+    {
+      "metric": "enemy_report_calibrated_arrivals",
+      "min_delta": 1
+    }
+  ],
+  "input_audit": "Arena bench: one T-34 280 m away, 12 degrees left of straight ahead, with ordinary detection, lay, AI discharge, swept projectile flight and impact (no outcome selection). The commander rides head-out from 0.3 s with the Tiger idling, ducks in at 15.5 s and closes his hatch at 15.8 s, then drives buttoned 18-22.5 s. The two own-gun discharges (12.5 s head-out, 24.5 s buttoned) are the disclosed staged_discharge fixture: a round is seated and the gun fires along its current lay while the commander stays at his post, because the solo player fires only from the sight; in a crew the gunner fires while the commander rides head-out. Every level is the calibration's physical level at the ear through the live Audio graph; no voice is placed by hand.",
+  "historical_scope": "A sound-level demonstration on the training arena, not a historical engagement.",
+  "visual_acceptance": [
+    "Head-out: each T-34 discharge is seen, then heard across the snow the flight time of sound later; a round that misses cracks past first; its strike on the hull rings.",
+    "Head-out: the own 88 is the loudest event of the film; the world is duller after it (the ear model's threshold shift) and a quiet tinnitus band may follow.",
+    "Buttoned: the engine and tracks are the bed (louder than with the hatch open); the own gun still reaches near full scale, heard through ears the head-out shot damaged."
+  ],
+  "status": "pending_runtime_review"
+}

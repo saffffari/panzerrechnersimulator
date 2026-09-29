@@ -34,6 +34,7 @@ use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
 pub(crate) use ear::EarBus;
 pub(crate) use offline::OfflineMix;
+pub(crate) use tinnitus::tinnitus_dbfs;
 pub(crate) use calibrated::effort_db;
 #[cfg(test)]
 pub(crate) use calibrated::control_level_dba;
