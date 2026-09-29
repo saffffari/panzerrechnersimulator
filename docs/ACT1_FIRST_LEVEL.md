@@ -22,7 +22,8 @@ One crewman, one Tiger I, Stalingrad in January 1943.
 2. **Urban combat.** The district's defenders already stand in its streets: two T-34/76 platoons
    (3 + 2) on street beats with their riders, and two 45 mm anti-tank guns sited by the
    field-of-fire probe over the tram street and the ways out north. They find the Tiger by sight
-   and sound. No route contact materializes until the district's armour is destroyed.
+   and sound. No route contact materializes until the district's armour is destroyed or the Tiger
+   has fought its way out of the district (450 m from the spawn); crews left behind fight on.
 3. **Choose a route west** (objective `Act1ChooseBreakoutRoute`): after 220 m of travel or the first
    sheet. The paper map and compass are the only navigation; there is no marker.
 4. **Three guarded map sites.** The route generator picks three authored military sites in strict
@@ -57,8 +58,11 @@ on the same maps: house, wreck salvage, first and second shot, withdrawal; it is
   manifest's Spawn marker.
 - **Opening.** On a map that lays the street encounter, campaign Act 1 fields the district's
   defenders at the start (`Game::field_campaign_street_opening`, the winter session's own fielding)
-  and the director holds every route contact until their armour is destroyed; then it hands the
-  enemy slots back to the ordinary campaign AI.
-- **Launchers.** `tools/launch_winter_session.sh --campaign` (and `launch_current_build.sh
-  --campaign`) opens the title menu on the first level without the winter-session override, so
-  ONE PLAYER / ACT ONE CAMPAIGN plays it. The defaults (`--urban`, the courtyard) are unchanged.
+  and the director holds every route contact until their armour is destroyed or the Tiger has left
+  the district; then the survivors fight on under the ordinary campaign AI and route contacts take
+  the free enemy slots (a wave no longer clears every slot).
+- **Launchers.** `tools/launch_winter_session.sh --campaign` opens the title menu on the first
+  level without the winter-session override, so ONE PLAYER / ACT ONE CAMPAIGN (and ACT ONE /
+  SKIP INTRO) play it; `tools/launch_current_build.sh --campaign` builds and starts the campaign
+  directly (`--menu --campaign` for the title menu). The defaults (the courtyard session, `--urban`)
+  are unchanged.
