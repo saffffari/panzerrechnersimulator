@@ -7,32 +7,67 @@ above the terrain of the generated workshop, looking back at the facade. The hei
 workshop's heights.npy exactly as the engine samples them (origin-centred grid, bilinear), so the
 cameras sit on the ground whatever the pads' heights.
 
-    python3 tools/worldgen/urban_intro_views.py [--review] [--pick TYPOLOGY:CONDITION ...]
+    python3 tools/worldgen/urban_intro_views.py [--lighting authored|review|inspect] [--pick TYPOLOGY:CONDITION ...]
+    python3 tools/worldgen/urban_intro_views.py --write-inspect
+
+Lighting: `authored` is the workshop as generated (the courtyard's stormy dusk, nearly black away
+from lamps); `review` is the district tool's daylight variant (`urban_intro_district.py --review`);
+`inspect` is a copy written by `--write-inspect` with the sun at 32 degrees, less overcast and the
+camera exposure at its cap, for judging geometry. Review and inspect lighting change a real emitter
+(the sun, the sky) and the camera, nothing else; captures made with them say so in their names.
 
 Without --pick it chooses one building of every typology in every condition that the district
-holds (nearest the spawn first). Deterministic: the same workshop gives the same commands.
+holds (nearest the spawn first). Deterministic: the same workshop gives the same commands and the
+same inspection copy.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import shutil
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKSHOP = ROOT / "assets/worldgen/workshops/act1-urban-intro-20260928"
-REVIEW = ROOT / "assets/worldgen/workshops/act1-urban-intro-20260928-review-daylight"
+LIGHTING = {
+    "authored": WORKSHOP,
+    "review": ROOT / "assets/worldgen/workshops/act1-urban-intro-20260928-review-daylight",
+    "inspect": ROOT / "assets/worldgen/workshops/act1-urban-intro-20260928-inspect",
+}
+INSPECT_LIGHTING = {
+    "enabled": True,
+    "camera_exposure": 8.0,
+    "fog_density": 0.0015,
+    "overcast": 0.45,
+    "storm": 0.0,
+    "sun_azimuth_deg": 150.0,
+    "sun_elevation_deg": 32.0,
+    "twilight": 0.0,
+    "schema": "kessel.environment-authoring",
+    "version": 1,
+}
 SPAWN = (1850.0, 250.0)
+
+
+def write_inspect() -> Path:
+    """The workshop with inspection lighting: only `environment_lighting` differs."""
+    dst = LIGHTING["inspect"]
+    dst.mkdir(parents=True, exist_ok=True)
+    for name in ["manifest.v1.json", "heights.npy", "features.json", "level_design.v1.json"]:
+        shutil.copyfile(WORKSHOP / name, dst / name)
+    edits = json.loads((WORKSHOP / "manifest_edits.json").read_text())
+    edits["environment_lighting"] = INSPECT_LIGHTING
+    (dst / "manifest_edits.json").write_text(json.dumps(edits, indent=2) + "\n")
+    return dst
 
 
 def load_heights(workshop: Path):
     manifest = json.loads((workshop / "manifest.v1.json").read_text())
-    terrain = manifest["terrain"]
-    spacing = float(terrain["spacing_m"]) if "spacing_m" in terrain else float(terrain["spacing"])
-    heights = np.load(workshop / "heights.npy").astype(np.float64)
-    # np.load honours fortran_order; the engine reads the same logical [row][col] = [z][x] grid.
+    spacing = float(manifest["terrain"]["spacing"])
+    heights = np.load(workshop / manifest["terrain"]["heights"]).astype(np.float64)
     return heights, spacing
 
 
@@ -45,9 +80,8 @@ def height_at(heights, spacing, x, z):
     x1, z1 = min(x0 + 1, res - 1), min(z0 + 1, res - 1)
     tx = min(max(gx - x0, 0.0), 1.0)
     tz = min(max(gz - z0, 0.0), 1.0)
-    h = lambda i, j: heights[j, i]
-    a = h(x0, z0) * (1 - tx) + h(x1, z0) * tx
-    b = h(x0, z1) * (1 - tx) + h(x1, z1) * tx
+    a = heights[z0, x0] * (1 - tx) + heights[z0, x1] * tx
+    b = heights[z1, x0] * (1 - tx) + heights[z1, x1] * tx
     return a * (1 - tz) + b * tz
 
 
@@ -70,14 +104,18 @@ def facade_camera(inst, heights, spacing, distance=13.0, eye=1.7):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--review", action="store_true", help="render with the daylight review lighting")
+    parser.add_argument("--lighting", choices=sorted(LIGHTING), default="inspect")
     parser.add_argument("--pick", nargs="*", default=None, help="TYPOLOGY:CONDITION pairs")
     parser.add_argument("--prefix", default="urban_i_facade")
+    parser.add_argument("--write-inspect", action="store_true", help="write the inspection-lighting copy")
     args = parser.parse_args()
+    if args.write_inspect:
+        print(f"wrote {write_inspect().relative_to(ROOT)}")
+        return
     heights, spacing = load_heights(WORKSHOP)
     edits = json.loads((WORKSHOP / "manifest_edits.json").read_text())
     instances = edits["building_instances"]
-    manifest = (REVIEW if args.review else WORKSHOP) / "manifest.v1.json"
+    manifest = LIGHTING[args.lighting] / "manifest.v1.json"
     by_kind = {}
     for inst in sorted(instances, key=lambda i: (math.hypot(i["x"] - SPAWN[0], i["z"] - SPAWN[1]), i["id"])):
         by_kind.setdefault((inst["typology"], inst["condition"]), inst)
@@ -88,7 +126,7 @@ def main():
             print(f"# no {key[0]} in condition {key[1]} in the district")
             continue
         cx, cy, cz, cyaw, pitch, pad = facade_camera(inst, heights, spacing)
-        name = f"{args.prefix}_{key[0]}_{key[1]}{'_review' if args.review else ''}.png"
+        name = f"{args.prefix}_{key[0]}_{key[1]}_{args.lighting}.png"
         print(f"# {inst['id']}: {inst['typology']} {inst['width_m']:.0f}x{inst['depth_m']:.0f} m, "
               f"{inst['storeys']} storeys, cellar {inst['cellar']}, {inst['condition']}, yaw {inst['yaw_deg']:.0f}, pad {pad:.2f}")
         print(f"KESSEL_RECON_MANIFEST={manifest.relative_to(ROOT)} cargo run -- screenshot captures/{name} "

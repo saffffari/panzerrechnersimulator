@@ -1,4 +1,4 @@
-# Panzerrechnersystem — current status (2026-09-09)
+# Panzerrechnersystem — current status (2026-09-29)
 
 Panzerrechnersystem is a playable three-act prototype moving permanently to one authoritative CachyOS Linux
 checkout on the i9-12900K / 128 GB / NVMe Gen5 / RTX 4090 workstation. Linux, Vulkan and the
@@ -12,6 +12,23 @@ The integrated executable still contains the earlier Halbe finale and lacks the 
 crew-trauma/rescue campaign. The canonical destination is now the Reichstag last stand, with a
 nearly impossible, intentionally ambiguous escape easter egg. These are production decisions and
 remaining work, not claims about the current build.
+
+## 2026-09-29 urban intro district
+
+- The intro is urban combat (owner, 28 September). A city-centre district of January 1943 now
+  surrounds the Act I spawn in the workshop `assets/worldgen/workshops/act1-urban-intro-20260928/`,
+  generated deterministically by `tools/worldgen/urban_intro_district.py` and played with
+  `tools/launch_winter_session.sh --urban` (the default session is still the winter courtyard).
+  See [`URBAN_INTRO_20260928.md`](URBAN_INTRO_20260928.md).
+- 203 generated buildings (merchant houses, 1930s blocks, timber houses, workshops; intact, burned,
+  shelled or partly collapsed) are live runtime instances beside the courtyard house: 23,226
+  modules, destructible through the ordinary damage path, enterable on foot by their external steps,
+  with dog-leg stairs to their upper floors, rubble mounds from failed modules, per-instance saves
+  and LAN sync. Their dimensions come from cited research, their forms were checked against the 180
+  reference photographs (`docs/research/`).
+- Not yet: the 45 mm gun sites conflict with the district and the guns do not engage there;
+  cellars are sealed under the terrain; rubble is render-only; the authored stormy dusk leaves the
+  city nearly black; AI infantry still have no navigation.
 
 ## 2026-09-09 pause and checkpoint update
 
@@ -141,6 +158,10 @@ remaining work, not claims about the current build.
 - This is one proved vertical slice, not a finished city system. Most landmarks remain sealed or
   placeholder geometry, and the editor still needs first-class floorplan, room, stair, door, loot
   and structural authoring.
+- Since 2026-09-29 the same runtime builds every `building_instances` placement of a manifest
+  revision from the building grammar (four typologies in four conditions), with collision proxies
+  generated from the kit's source meshes, external steps, dog-leg stairs, instanced rendering and
+  spatial grids; the urban intro district holds 203 of them (see the section above).
 
 ## Runtime assets and preserved Mac package
 
@@ -240,7 +261,9 @@ only if a Mac release is deliberately revived.
    run-save before multiplying mutable props.
 4. **Scale the vertical slice.** Turn the proved building into a dense 500×500 m warzone block with
    varied multi-floor interiors, destruction, scavenging, debris, cover, forest and streets. Keep
-   compact building state bounded and authoritative as instance count grows.
+   compact building state bounded and authoritative as instance count grows. Begun 2026-09-29:
+   the urban intro district (585 × 600 m, 203 generated buildings); next are its encounter sites,
+   tableaux, open cellars and verification (`URBAN_INTRO_20260928.md`).
 5. **Worldbuilder and terrain.** Add floorplan/room/door/stair/loot tools, structural tagging and collapse
    preview, density brushes, spline roads/trenches/patrols, semantic zones, encounter sockets and
    validation overlays. Replace the coarse ground treatment with chunked/LOD terrain, layered tiled
