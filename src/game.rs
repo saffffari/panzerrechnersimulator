@@ -33868,6 +33868,50 @@ mod urban_runtime_gpu_tests {
         Ok(())
     }
 
+    /// The T-34 patrol probe on the urban-intro district answers as the scan of every record did,
+    /// at a cost that follows the boxes near it: 2,000 hull-sized probes across the district.
+    #[test]
+    #[ignore = "requires a GPU and the urban workshop (python3 tools/worldgen/urban_intro_district.py)"]
+    fn patrol_probes_on_the_urban_district_are_indexed_and_exact() -> anyhow::Result<()> {
+        const DISTRICT: &str = "assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json";
+        anyhow::ensure!(std::path::Path::new(DISTRICT).is_file(), "generate the urban workshop first");
+        let act = crate::act_manifest::select_runtime_manifest(Some(DISTRICT.into()))?
+            .expect("the urban workshop is a campaign act");
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let built = Game::build_act(&device, &queue, false, &crate::world::act(act));
+        crate::act_manifest::select_runtime_manifest(None)?;
+        let (_r, g) = built?;
+        let h = |n: u32| (n.wrapping_mul(2_654_435_761) >> 8) as f32 / (1u32 << 24) as f32;
+        let half = Vec3::new(3.2, 1.3, 3.2);
+        let probes: Vec<Vec3> = (0..2_000u32)
+            .map(|n| {
+                let (x, z) = (1555.0 + h(n * 3) * 585.0, -100.0 + h(n * 3 + 1) * 600.0);
+                Vec3::new(x, g.hf.height_at(x, z) + 1.4, z)
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let indexed: Vec<bool> = probes.iter().map(|&p| g.box_region_blocked(p - half, p + half)).collect();
+        let indexed_s = started.elapsed().as_secs_f64();
+        let started = std::time::Instant::now();
+        let linear: Vec<bool> = probes.iter().map(|&p| g.box_region_blocked_linear(p - half, p + half)).collect();
+        let linear_s = started.elapsed().as_secs_f64();
+        assert_eq!(indexed, linear);
+        let blocked = indexed.iter().filter(|b| **b).count();
+        println!(
+            "{} probes over {} records, {} occluders, {} story boxes: {blocked} blocked; {:.1} µs per probe indexed, {:.1} µs scanning",
+            probes.len(),
+            g.destructibles.len(),
+            g.occluders.len(),
+            g.story_cover.len(),
+            indexed_s * 1.0e6 / probes.len() as f64,
+            linear_s * 1.0e6 / probes.len() as f64
+        );
+        assert!(blocked > 100 && blocked < probes.len(), "probes meet buildings and open ground");
+        Ok(())
+    }
+
     /// (intact visible, rubble visible) of every module of one building, from the renderer.
     fn module_visibility(g: &Game, r: &Renderer, house: usize) -> Vec<(bool, Option<bool>)> {
         let visible = |handle: crate::renderer::SceneRef| match handle {
@@ -33922,7 +33966,7 @@ mod urban_runtime_gpu_tests {
         let projectile_index = projectile_cover::Index::build(&g.story_cover, &g.destructibles);
         let building_records = (0..g.destructibles.len()).filter(|&i| g.buildings.owner(i).is_some()).count();
         assert!(building_records > 400, "the test revision's houses are destruction records");
-        let (mut shell_hits, mut blocked_lines, mut candidates) = (0, 0, 0);
+        let (mut shell_hits, mut blocked_lines, mut candidates, mut probes_blocked) = (0, 0, 0, 0usize);
         // Half the queries around the demolished house, half in the courtyard's dense story cover.
         let courtyard = Vec3::new(1880.0, g.hf.height_at(1880.0, 170.0), 170.0);
         for n in 0..6_000u32 {
@@ -33952,6 +33996,14 @@ mod urban_runtime_gpu_tests {
             assert_eq!(cover.occupies(a, 0.25, a.y, a.y + 1.75), cover_list.occupies(a, 0.25, a.y, a.y + 1.75));
             // Doors.
             assert_eq!(g.world_doors.ray(a, dir, distance), g.world_doors.linear_ray(a, dir, distance));
+            // The T-34 patrol probe: a hull-sized box around the point.
+            let half = Vec3::new(3.2, 1.3, 3.2);
+            assert_eq!(
+                g.box_region_blocked(a - half, a + half),
+                g.box_region_blocked_linear(a - half, a + half),
+                "patrol probe at {a:?}"
+            );
+            probes_blocked += usize::from(g.box_region_blocked(a - half, a + half));
             // On-foot collision with the story cover.
             let step = a + Vec3::new((h(n * 9 + 7) - 0.5) * 0.9, 0.0, (h(n * 9 + 8) - 0.5) * 0.9);
             assert_eq!(
@@ -34014,10 +34066,11 @@ mod urban_runtime_gpu_tests {
             candidates += near.len() + blast.len();
         }
         println!(
-            "6000 queries: {shell_hits} shell hits, {blocked_lines} blocked sight lines, {candidates} crush/blast candidates, {} records, {} story boxes",
+            "6000 queries: {shell_hits} shell hits, {blocked_lines} blocked sight lines, {candidates} crush/blast candidates, {probes_blocked} blocked patrol probes, {} records, {} story boxes",
             g.destructibles.len(),
             g.story_cover.len()
         );
+        assert!(probes_blocked > 100, "the patrol probes must meet the houses");
         assert!(shell_hits > 100 && blocked_lines > 100, "the queries must meet the houses");
         Ok(())
     }

@@ -85,12 +85,36 @@ impl Game {
         let ground = self.hf.height_at(p.x,p.y);
         let min = Vec3::new(p.x-footprint,ground+0.15,p.y-footprint);
         let max = Vec3::new(p.x+footprint,ground+2.7,p.y+footprint);
-        let overlaps = |a: Vec3,b: Vec3| min.cmple(b).all() && max.cmpge(a).all();
-        !self.story_cover.iter().any(|&(a,b)| overlaps(a,b))
-            && !self.destructibles.iter().any(|d| d.alive && overlaps(d.min,d.max))
-            && !self.occluders.iter().any(|o| overlaps(o.min,o.max))
+        !self.box_region_blocked(min,max)
             && [-1.0,1.0].into_iter().all(|x| [-1.0,1.0].into_iter().all(|z|
                 (self.hf.height_at(p.x+x*footprint,p.y+z*footprint)-ground).abs() < 1.2))
+    }
+
+    /// Does any story cover, standing destruction record or sight occluder overlap the box? The
+    /// candidates come from the spatial indexes (a district holds some 136,000 records and 148,000
+    /// occluders, and every moving T-34 probes up to six boxes a frame); each keeps the scan's
+    /// exact overlap test, so the answer equals `box_region_blocked_linear`'s.
+    pub(super) fn box_region_blocked(&self, min: Vec3, max: Vec3) -> bool {
+        let overlaps = |a: Vec3,b: Vec3| min.cmple(b).all() && max.cmpge(a).all();
+        let (lo,hi) = (Vec2::new(min.x,min.z),Vec2::new(max.x,max.z));
+        let mut keys = Vec::new();
+        self.world_index.story.keys_in_rect(lo,hi,&mut keys);
+        if keys.iter().any(|&key| { let (a,b) = self.story_cover[key as usize]; overlaps(a,b) }) { return true; }
+        self.world_index.structures.keys_in_rect(lo,hi,&mut keys);
+        if keys.iter().any(|&key| { let d = &self.destructibles[key as usize]; d.alive && overlaps(d.min,d.max) }) { return true; }
+        self.world_index.occluders.keys_in_rect(lo,hi,&mut keys);
+        let base = self.world_index.occluder_count.min(self.occluders.len());
+        keys.iter().any(|&key| self.occluders.get(key as usize).is_some_and(|o| overlaps(o.min,o.max)))
+            || self.occluders[base..].iter().any(|o| overlaps(o.min,o.max))
+    }
+
+    /// The former scan of every story box, record and occluder: the oracle of `box_region_blocked`.
+    #[cfg(test)]
+    pub(super) fn box_region_blocked_linear(&self, min: Vec3, max: Vec3) -> bool {
+        let overlaps = |a: Vec3,b: Vec3| min.cmple(b).all() && max.cmpge(a).all();
+        self.story_cover.iter().any(|&(a,b)| overlaps(a,b))
+            || self.destructibles.iter().any(|d| d.alive && overlaps(d.min,d.max))
+            || self.occluders.iter().any(|o| overlaps(o.min,o.max))
     }
 
     /// Called only by successful actual weapon discharges, never by a trigger press.
