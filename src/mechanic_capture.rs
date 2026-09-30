@@ -211,6 +211,22 @@ fn capture_crew_controls(input: TankInput, g: &Game, diagnostic: bool,
     }
 }
 
+/// The terminal latch owns every gameplay callback in the recorder, not only Game::update.
+/// Audio sampling and the death fade deliberately remain outside this gate.
+fn capture_gameplay_if_alive<T>(kia_at: Option<f32>, operation: impl FnOnce() -> T) -> Option<T> {
+    if kia_at.is_some() { None } else { Some(operation()) }
+}
+
+fn terminal_input_rejection(kia_at: f32) -> Value {
+    json!({"reason":"terminal_kia", "kia_started_s":kia_at,
+        "scope":"Skipped after terminal state; no gameplay action, input or interaction callback invoked"})
+}
+
+fn required_capture_actions_passed(events: &[Value]) -> bool {
+    events.iter().all(|event| event["request"].get("action").is_none()
+        || event["accepted"] == true || event["request"]["allow_rejected"] == true)
+}
+
 /// The one-T-34 Arena bench: the enemy-report review or the sound-calibration duel.
 fn duel_setup(spec: &Value) -> Option<&Value> {
     spec["setup"].get("enemy_discharge_review").or_else(|| spec["setup"].get("calibration_duel"))
@@ -460,8 +476,8 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
             }
             if action == "look_equipment" {
                 anyhow::ensure!(
-                    matches!(step["value"].as_str(), Some("toolbox" | "panzerfaust_rack")),
-                    "look_equipment requires toolbox or panzerfaust_rack"
+                    matches!(step["value"].as_str(), Some("toolbox" | "panzerfaust_rack" | "extinguisher")),
+                    "look_equipment requires toolbox, panzerfaust_rack or extinguisher"
                 );
             }
             if action == "look_driver_control" {
@@ -918,6 +934,8 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
         "soldier_0_looted":(g.n_soldiers()>0).then(||g.soldier_looted(0)),
         "soldier_0_world_m":(g.n_soldiers()>0).then(||g.soldier_pos(0).to_array()),
         "mg_rounds":g.mg_round_count(),"tank_alive":g.player.alive});
+    state["game_over"] = json!(g.game_over().is_some());
+    state["death_cause"] = json!(g.game_over().map(|cause|format!("{cause:?}")));
     // What the Tiger's tracks meet (solid city, 2026-09-29): the hull's tilt, what carries it,
     // the limit refusing its move, and the extremes so far.
     let ground = g.tank_ground_state();
@@ -983,6 +1001,10 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
     state.as_object_mut().unwrap().extend(world_fields.as_object().unwrap().clone());
     state.as_object_mut().unwrap().extend(g.portable_fuel_telemetry().as_object().unwrap().clone());
     state.as_object_mut().unwrap().extend(g.mechanic_status().as_object().unwrap().clone());
+    state["carried_hammer"] = g.carried_hammer_receipt();
+    state["hammer_swing_remaining_s"] = state["carried_hammer"]["swing_remaining_s"].clone();
+    state["hammer_target_job"] = state["carried_hammer"]["target_job"].clone();
+    state["hammer_track_pin_hits"] = state["carried_hammer"]["track_pin_hits"].clone();
     state.as_object_mut().unwrap().extend(g.world_mechanic_status(r).as_object().unwrap().clone());
     state.as_object_mut().unwrap().extend(g.destruction_mechanic_status().as_object().unwrap().clone());
     state
@@ -1324,6 +1346,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     let timeline=spec["timeline"].as_array().unwrap();let mut performed=vec![false;timeline.len()];
     let mut samples=Vec::new();let mut events=Vec::new();let mut states=Vec::new();
     let mut kia_at = g.game_over().map(|_|0.0_f32);
+    let mut kia_audio_at_fatal = kia_at.map(|_|g.debug_scheduled_audio());
     let capture_profile_enabled = std::env::var("KESSEL_CAPTURE_PROFILE").as_deref() == Ok("1");
     let mut render_readback_ms = Vec::new();
     let mut simulation_batch_ms = Vec::new();
@@ -1394,76 +1417,100 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                 for (i,step) in timeline.iter().enumerate() {
                     if step.get("action").is_some() {
                         if !performed[i] && t+1e-8>=scalar(step,"at_s",0.0) {
-                            let (accepted,detail)=action(&mut g,&mut r,step,&mut map)?;performed[i]=true;
+                            let terminal_before = kia_at;
+                            let (accepted,detail)=capture_gameplay_if_alive(kia_at,
+                                || action(&mut g,&mut r,step,&mut map)).transpose()?
+                                .unwrap_or_else(|| (false, Some(terminal_input_rejection(
+                                    terminal_before.expect("only terminal actions are skipped")))));
+                            performed[i]=true;
                             events.push(json!({"at_s":t,"request":step,"accepted":accepted,"detail":detail}));
-                            anyhow::ensure!(accepted || step["allow_rejected"]==true,
+                            // Preserve the complete fatal fade/receipt. Required skipped actions
+                            // fail acceptance below, instead of aborting or pretending success.
+                            anyhow::ensure!(accepted || step["allow_rejected"]==true || terminal_before.is_some(),
                                 "scenario interaction rejected at {t}: {}",step["action"]);
+                            if kia_at.is_none() && g.game_over().is_some() { kia_at=Some(t as f32); }
                         }
                     } else if t+1e-8>=scalar(step,"from_s",0.0) && t<scalar(step,"until_s",0.0) {
-                        for (key,value) in step["input"].as_object().unwrap() {fields.insert(key.clone(),value.clone());}
+                        if let Some(start) = kia_at {
+                            if !performed[i] {
+                                events.push(json!({"at_s":t,"request":step,"accepted":false,
+                                    "detail":terminal_input_rejection(start),
+                                    "ignored_until_s":step["until_s"]}));
+                                performed[i]=true;
+                            }
+                        } else {
+                            for (key,value) in step["input"].as_object().unwrap() {fields.insert(key.clone(),value.clone());}
+                        }
                     }
                 }
-                let mut controls = map.controls(input(&Value::Object(fields)),g.act.id,g.held_map_zoom());
-                if map.open {g.focus_held_map(map.cursor);}
-                let primary_edge = controls.mg_coax && !primary_was_held;
-                primary_was_held = controls.mg_coax;
-                // Mirror native LMB dispatch before Game::update. Held ammunition/equipment
-                // remain update-owned; station entry and the cupola crank are click-owned.
-                if primary_edge && !map.open && !diagnostic_crew
-                    && !(controls.aim && g.exposed_commander_sidearm_post()) {
-                    let forward = r.camera.forward();
-                    let eye = r.camera.pos;
-                    let dispatch = if g.click_articulated_hatch() {
-                        Some("click_articulated_hatch")
-                    } else if g.primary_loader_owns_click() {
-                        None
-                    } else if g.interact_world_door(forward, eye) || g.interact_portable_item(forward, eye) {
-                        g.consume_primary_press();
-                        Some("world_or_portable_interaction")
-                    } else if showcase_crew.is_some() && g.hover_hatch_lever() {
-                        // Native LAN clicks send a station-owned hatch request to authority.
-                        controls.hatch_toggle = true;
-                        g.consume_primary_press();
-                        Some("lan_hatch_pulse")
-                    } else if g.interact_hatch_lever(forward, eye) {
-                        Some("interact_hatch_lever")
-                    } else if g.click_station() {
-                        Some("click_station")
-                    } else if g.hover_hatch() {
-                        if showcase_crew.is_some() { controls.hatch_toggle = true; }
-                        else { g.click_hatch_or_exit(); }
-                        Some("click_hatch_or_exit")
-                    } else if g.click_mount(forward, eye) {
-                        Some("click_mount")
-                    } else { None };
-                    if let Some(dispatch) = dispatch {
-                        events.push(json!({"at_s":t,"request":{"input":{"mg_coax":true}},
-                            "accepted":true,"detail":{"dispatch":dispatch,
-                                "scope":"Ordinary source-hover LMB edge; no forced hatch or station state"}}));
+                capture_gameplay_if_alive(kia_at, || -> anyhow::Result<()> {
+                    let mut controls = map.controls(input(&Value::Object(fields)),g.act.id,g.held_map_zoom());
+                    if map.open {g.focus_held_map(map.cursor);}
+                    let primary_edge = controls.mg_coax && !primary_was_held;
+                    primary_was_held = controls.mg_coax;
+                    // Mirror native LMB dispatch before Game::update. Held ammunition/equipment
+                    // remain update-owned; station entry and the cupola crank are click-owned.
+                    if primary_edge && !map.open && !diagnostic_crew
+                        && !(controls.aim && g.exposed_commander_sidearm_post()) {
+                        let forward = r.camera.forward();
+                        let eye = r.camera.pos;
+                        let dispatch = if g.click_articulated_hatch() {
+                            Some("click_articulated_hatch")
+                        } else if g.primary_loader_owns_click() {
+                            None
+                        } else if g.interact_world_door(forward, eye) || g.interact_portable_item(forward, eye) {
+                            g.consume_primary_press();
+                            Some("world_or_portable_interaction")
+                        } else if showcase_crew.is_some() && g.hover_hatch_lever() {
+                            // Native LAN clicks send a station-owned hatch request to authority.
+                            controls.hatch_toggle = true;
+                            g.consume_primary_press();
+                            Some("lan_hatch_pulse")
+                        } else if g.interact_hatch_lever(forward, eye) {
+                            Some("interact_hatch_lever")
+                        } else if g.click_station() {
+                            Some("click_station")
+                        } else if g.hover_hatch() {
+                            if showcase_crew.is_some() { controls.hatch_toggle = true; }
+                            else { g.click_hatch_or_exit(); }
+                            Some("click_hatch_or_exit")
+                        } else if g.click_mount(forward, eye) {
+                            Some("click_mount")
+                        } else { None };
+                        if let Some(dispatch) = dispatch {
+                            events.push(json!({"at_s":t,"request":{"input":{"mg_coax":true}},
+                                "accepted":true,"detail":{"dispatch":dispatch,
+                                    "scope":"Ordinary source-hover LMB edge; no forced hatch or station state"}}));
+                        }
                     }
-                }
-                let controls=capture_crew_controls(controls,&g,diagnostic_crew,showcase_crew);
-                let before = g.foot_pos();
-                let tracking_foot = g.dbg_is_foot() && !g.is_climbing() && g.foot_hp()>0.0;
-                let requested = if tracking_foot && (controls.drive*controls.drive+controls.steer*controls.steer)>1e-8 {
-                    requested_foot_speed(&controls)
-                } else {0.0} / SIM_HZ as f32;
-                if g.game_over().is_none() { g.update(&controls,1.0/SIM_HZ as f32,&mut r); }
+                    let controls=capture_crew_controls(controls,&g,diagnostic_crew,showcase_crew);
+                    let before = g.foot_pos();
+                    let tracking_foot = g.dbg_is_foot() && !g.is_climbing() && g.foot_hp()>0.0;
+                    let requested = if tracking_foot && (controls.drive*controls.drive+controls.steer*controls.steer)>1e-8 {
+                        requested_foot_speed(&controls)
+                    } else {0.0} / SIM_HZ as f32;
+                    g.update(&controls,1.0/SIM_HZ as f32,&mut r);
+                    ingest_capture_campaign(&mut g,&mut campaign_run)?;
+                    if let Some(crew) = showcase_crew {
+                        anyhow::ensure!(g.station == crew.post && !g.dbg_is_foot(),
+                            "showcase_crew left its fixed LAN post; use a separate solo traversal fixture");
+                    }
+                    if tracking_foot && g.dbg_is_foot() {foot_motion.record(before,g.foot_pos(),requested);}
+                    Ok(())
+                }).transpose()?;
                 if g.game_over().is_some() && kia_at.is_none() {
                     kia_at=Some((t+1.0/SIM_HZ as f64) as f32);
                 }
                 if let Some(start) = kia_at {
                     // As in live play, the whole mix fades with the picture, then holds silent.
                     let since = (t+1.0/SIM_HZ as f64) as f32 - start;
+                    if kia_audio_at_fatal.is_none() { kia_audio_at_fatal = Some(g.debug_scheduled_audio()); }
+                    // Only sound already emitted before terminal state may finish travelling.
+                    // The fatal tick has since=0, so it is never advanced twice.
+                    g.advance_terminal_audio(1.0/SIM_HZ as f32, &r, since);
                     g.set_audio_level(1.0-crate::death_fade(since));
                     if since >= crate::DEATH_FADE {g.set_audio_silenced(true);}
                 }
-                ingest_capture_campaign(&mut g,&mut campaign_run)?;
-                if let Some(crew) = showcase_crew {
-                    anyhow::ensure!(g.station == crew.post && !g.dbg_is_foot(),
-                        "showcase_crew left its fixed LAN post; use a separate solo traversal fixture");
-                }
-                if tracking_foot && g.dbg_is_foot() {foot_motion.record(before,g.foot_pos(),requested);}
                 let count=((tick+1) as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64)
                     -(tick as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64);
                 samples.extend(g.render_audio_capture_frames(count as usize)?);
@@ -1511,7 +1558,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         };
         outcome_check(check,&initial,observed)
     }).collect();
-    let checks_passed=checks.iter().all(|c|c["passed"]==true);
+    let required_actions_passed=required_capture_actions_passed(&events);
+    let checks_passed=required_actions_passed && checks.iter().all(|c|c["passed"]==true);
     let mut receipt=json!({
         "schema":if record && retained_diagnostic {"kessel.retained-model-diagnostic-record.v1"}
             else if record {"kessel.first-person-mechanic-record.v1"} else {"kessel.mechanic-simulation-check.v1"},
@@ -1534,7 +1582,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "scope":"Normal mission signals consumed; short capture stays within Act One and does not exercise completion/retry menus"})),
         "movement_evidence":"Actual foot XZ positions/path vs requested controller distance. Clipped distance reports constrained motion, not an invented collision contact or material classification.",
         "outcome_checks":checks,"outcome_checks_passed":checks_passed,
-        "kia_started_s":kia_at,"kia_policy":"As in live play: from the terminal 120 Hz tick the frozen fatal frame and the whole ordinary mix fade out together over DEATH_FADE seconds (24 fps frames, per-tick listener level), then black and silence hold for the rest of this clip; no attacker/exterior/replay, no words",
+        "kia_started_s":kia_at,"kia_policy":"As in live play: terminal state latches before any further gameplay action/input/interaction; skipped timeline requests are recorded as terminal_kia, and required skipped actions fail acceptance. Already emitted sound finishes travelling during the fade without gameplay updates. The frozen fatal frame and whole ordinary mix fade together over DEATH_FADE seconds, then black and silence hold while the 120 Hz audio clock continues; no attacker/exterior/replay, no words",
         "kia_black_seconds_in_clip":kia_at.map(|t| (scalar(&spec,"seconds",0.0)-(t+crate::DEATH_FADE) as f64).max(0.0)),
         "capture_frame_pause_ms":pause_ms,"capture_idle_factor":idle_factor,
         "validation":"interaction acceptance, declared state outcomes and audible finite mixer checked; visual review remains separate",
@@ -1542,6 +1590,9 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "Rendered state is sampled at 24 fps; audio event timing follows 120 Hz simulation ticks and ordinary rodio control latency.",
             "Held map uses the live folded paper mesh, GPU cartography texture, imported compass and pencil/pin input; network overlays and controls menus are not exercised here."]
     });
+    receipt["kia_audio_at_fatal"] = json!(kia_audio_at_fatal);
+    receipt["scheduled_audio_final"] = g.debug_scheduled_audio();
+    receipt["required_timeline_actions_passed"] = json!(required_actions_passed);
     receipt["capture_profile"] = if capture_profile_enabled {
         let adapter_info = adapter.get_info();
         json!({"enabled":true,"schema":"kessel.mechanic-capture-timing.v1",
@@ -1570,7 +1621,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     receipt["retained_source_draws"]=json!(model_view.as_ref().map(|view|view.last_draw_count));
     receipt["diagnostic_scope"]=json!(retained_diagnostic.then_some("Retained live tank meshes with source section planes; skeleton and live cartridge X-ray overlay. Separate bounded diagnostic lighting. No organ health, hit-volume circles, gameplay visibility changes or substituted audio."));
     std::fs::write(format!("{prefix}_manifest.json"),serde_json::to_vec_pretty(&receipt)?)?;
-    anyhow::ensure!(checks_passed,"mechanic did not meet its state checks; retained available evidence for diagnosis");
+    anyhow::ensure!(checks_passed,"mechanic did not meet its state or required interaction checks; retained available evidence for diagnosis");
     println!("[mechanic-review] {}",if record {output} else {format!("{prefix}_manifest.json (simulation only; no media)")});
     Ok(())
 }
@@ -1935,6 +1986,85 @@ mod tests {
     }
 
     #[test]
+    fn terminal_capture_never_invokes_gameplay_callbacks_but_keeps_audio_clock() {
+        let mut kia_at = None;
+        let mut shots = 0;
+        let mut input_ticks = 0;
+        let mut audio_frames = 0u64;
+        let mut events = Vec::new();
+        let terminal_tick = 2_202; // 18.35 s, matching the observed original duel.
+        let mut state_at_death = None;
+        for tick in 0..34 * SIM_HZ {
+            if tick == 7 * SIM_HZ || tick == 27 * SIM_HZ {
+                let accepted = capture_gameplay_if_alive(kia_at, || { shots += 1; true })
+                    .unwrap_or(false);
+                events.push(json!({"request":{"action":"staged_discharge"},
+                    "accepted":accepted,"detail":kia_at.map(terminal_input_rejection)}));
+            }
+            capture_gameplay_if_alive(kia_at, || { input_ticks += 1; });
+            if tick + 1 == terminal_tick {
+                kia_at = Some((tick + 1) as f32 / SIM_HZ as f32);
+                state_at_death = Some((shots, input_ticks));
+            }
+            // Audio continues on the same rational clock while the ordinary death fade runs.
+            audio_frames += ((tick+1) as u64 * 44_100 / SIM_HZ as u64)
+                - (tick as u64 * 44_100 / SIM_HZ as u64);
+            if let Some(start) = kia_at {
+                let since = (tick+1) as f32 / SIM_HZ as f32 - start;
+                if since >= crate::DEATH_FADE { assert_eq!(crate::death_fade(since), 1.0); }
+            }
+        }
+        assert_eq!(Some((shots, input_ticks)), state_at_death,
+            "neither staged actions nor input/interaction callbacks may mutate terminal state");
+        assert_eq!(shots, 1);
+        assert_eq!(audio_frames, 34 * 44_100);
+        assert_eq!(events[1]["accepted"], false);
+        assert_eq!(events[1]["detail"]["reason"], "terminal_kia");
+        assert!(!required_capture_actions_passed(&events));
+        let required_shots = json!({"metric":"main_gun_shots","min_delta":2,"max_delta":2});
+        assert_eq!(outcome_check(&required_shots,&json!({"main_gun_shots":0}),
+            &json!({"main_gun_shots":shots}))["passed"], false);
+        events[1]["request"]["allow_rejected"] = json!(true);
+        assert!(required_capture_actions_passed(&events));
+    }
+
+    #[test]
+    fn terminal_duel_evaluation_preserves_setup_and_has_no_postmortem_shot() {
+        let original = validate_file("catalog/shader_reviews/pilot_cupola_t34_duel_20260929.v1.json").unwrap();
+        let evaluation = validate_file("catalog/shader_reviews/pilot_cupola_t34_duel_terminal_20260929.v1.json").unwrap();
+        assert_eq!(evaluation["setup"], original["setup"]);
+        assert_eq!(evaluation["seconds"], 20);
+        assert_eq!(evaluation["timeline"], json!(original["timeline"].as_array().unwrap()[..3]));
+        let expects = evaluation["expect"].as_array().unwrap();
+        assert!(expects.iter().any(|check| check["metric"] == "main_gun_shots"
+            && check["min_delta"] == 1 && check["max_delta"] == 1));
+        assert!(expects.iter().any(|check| check["metric"] == "game_over" && check["equals"] == true));
+        assert!(expects.iter().any(|check| check["metric"] == "death_cause"
+            && check["equals"] == "AmmoDetonation"));
+    }
+
+    #[test]
+    fn healthy_hammer_fixture_uses_real_pickup_then_released_clicks_and_hold() {
+        let spec = validate_file("catalog/shader_reviews/toolkit_free_hammer_20260929.v1.json").unwrap();
+        assert_eq!(spec["act_id"], 0);
+        assert_eq!(spec["station"], "loader");
+        assert_eq!(spec["setup"], json!({"enemy_policy":"banish"}));
+        let timeline = spec["timeline"].as_array().unwrap();
+        assert!(timeline.iter().filter_map(|step|step["action"].as_str())
+            .all(|action| matches!(action,"look_equipment" | "look_tray")));
+        let presses: Vec<_> = timeline.iter().filter(|step|step["input"]["mg_coax"]==true).collect();
+        assert_eq!(presses.len(), 4, "pickup, two short clicks, then a hold");
+        assert!(presses.windows(2).all(|pair|
+            scalar(pair[0],"until_s",0.0)<scalar(pair[1],"from_s",0.0)));
+        assert!(scalar(presses[3],"until_s",0.0)-scalar(presses[3],"from_s",0.0)>1.0);
+        let checks = spec["expect"].as_array().unwrap();
+        assert!(checks.iter().any(|check|check["metric"]=="repair_progress_s"
+            && check["max_value"]==0));
+        assert!(checks.iter().any(|check|check["metric"]=="hammer_swing_remaining_s"
+            && check["at_s"]==2 && scalar(check,"min_value",0.0)>0.0));
+    }
+
+    #[test]
     fn world_service_outcomes_require_observed_values_and_keep_checkpoint_deltas() {
         let initial=json!({"tank_fuel_liters":400.0,"held_fuel_can":false});
         let held=json!({"tank_fuel_liters":400.0,"held_fuel_can":true});
@@ -1957,6 +2087,28 @@ mod tests {
         assert_eq!(motion.clipped_m,1.0);assert_eq!(motion.clipped_ticks,1);
         let mut state=json!({});motion.add_to(&mut state,Vec3::new(0.0,-2.0,2.0),Vec3::ZERO);
         assert_eq!(state["foot_displacement_m"],2.0);
+    }
+
+    #[test]
+    fn current_fire_pair_uses_identical_source_and_released_lmb_pickup() {
+        let read = |name: &str| {
+            let path = format!("catalog/shader_reviews/fire_suppression_{name}_lmb_20260929.v1.json");
+            validate_file(&path).unwrap_or_else(|error| panic!("{path}: {error}"));
+            serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()
+        };
+        let aimed = read("aimed");
+        let wrong = read("wrong_aim");
+        assert_eq!(aimed["setup"], wrong["setup"]);
+        for spec in [&aimed, &wrong] {
+            let steps = spec["timeline"].as_array().unwrap();
+            assert!(steps.iter().any(|step| step["action"] == "look_equipment"
+                && step["value"] == "extinguisher"));
+            assert!(steps.iter().all(|step| step["input"].get("extinguish").is_none()
+                && step["action"] != "equip"));
+            let presses: Vec<_> = steps.iter().filter(|step| step["input"]["mg_coax"] == true).collect();
+            assert_eq!(presses.len(), 2);
+            assert!(scalar(presses[0], "until_s", 0.0) < scalar(presses[1], "from_s", 0.0));
+        }
     }
 
     #[test]

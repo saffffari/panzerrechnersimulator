@@ -1,0 +1,179 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "act_id": 0,
+  "night": false,
+  "station": "loader",
+  "seconds": 9,
+  "setup": {
+    "enemy_policy": "banish",
+    "source_fire": {
+      "frame": "hull",
+      "ray_start_m": [
+        0.5,
+        1.43,
+        -0.2
+      ],
+      "ray_end_m": [
+        0.5,
+        1.15,
+        -0.2
+      ],
+      "strength": 0.1
+    }
+  },
+  "status": "rendered_mechanic_failed_ammunition_cookoff",
+  "historical_scope": "Isolated current-Tiger controls bench with one disclosed initial source-triangle ignition, shared by the correct-aim and wrong-aim pair. This is not a historical incident or calibrated combustion experiment.",
+  "mechanics": [
+    "source_surface_ignition",
+    "physical_extinguisher_lmb_pickup",
+    "fresh_press_spray",
+    "source_triangle_foam_contact",
+    "persistent_surface_coating"
+  ],
+  "timeline": [
+    {
+      "at_s": 0,
+      "action": "look_fire"
+    },
+    {
+      "at_s": 0.05,
+      "action": "look_equipment",
+      "value": "extinguisher"
+    },
+    {
+      "from_s": 0.15,
+      "until_s": 0.23,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 0.25,
+      "action": "look_fire"
+    },
+    {
+      "from_s": 0.27,
+      "until_s": 0.42,
+      "input": {
+        "look_dx": 2.037948267,
+        "look_dy": -1.751693033
+      }
+    },
+    {
+      "from_s": 0.43,
+      "until_s": 5,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 2,
+      "until_s": 2.5,
+      "input": {
+        "look_dx": 0.25,
+        "look_dy": 0.1
+      }
+    },
+    {
+      "from_s": 2.5,
+      "until_s": 3.5,
+      "input": {
+        "look_dx": -0.25,
+        "look_dy": -0.1
+      }
+    },
+    {
+      "from_s": 3.5,
+      "until_s": 4,
+      "input": {
+        "look_dx": 0.25,
+        "look_dy": 0.1
+      }
+    },
+    {
+      "at_s": 5.3,
+      "action": "look_fire"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "extinguisher_equipped",
+      "equals": true,
+      "at_s": 1
+    },
+    {
+      "metric": "current_station",
+      "equals": "loader"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "foam_airborne",
+      "min_value": 20,
+      "at_s": 1
+    },
+    {
+      "metric": "surface_foam_deposits",
+      "min_value": 100,
+      "at_s": 4
+    },
+    {
+      "metric": "surface_fire_coverage",
+      "min_value": 0.35,
+      "at_s": 5
+    },
+    {
+      "metric": "fire",
+      "max_value": 0.05,
+      "at_s": 7
+    },
+    {
+      "metric": "surface_foam_deposits",
+      "min_value": 100
+    },
+    {
+      "metric": "foam_airborne",
+      "equals": 0
+    },
+    {
+      "metric": "ammunition_heat",
+      "max_value": 0.05
+    },
+    {
+      "metric": "fire",
+      "max_value": 0.05
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "The identical disclosed setup ray seeds one source contact after warmup. Gaze-only helpers turn the ordinary loader head toward the visible extinguisher or fire. The first short ordinary LMB press picks up the mounted tool; release ends the pickup press; a separate fresh LMB press drives the physical nozzle. No F shortcut, forced equipped state, direct foam deposit, suppression, invulnerability or outcome is used. Enemy absence isolates the controls experiment; live ammunition remains and any cookoff is ordinary.",
+  "limitations": [
+    "The rebuilt release was evaluated and recorded. Player-view frames and actual delayed CookOff delivery were verified; subjective headphone or speaker audition remains separate. Aimed surface extinction does not prevent the already ignited cartridge from cooking off, so survival remains a failed acceptance.",
+    "Surface fire/exposure remain authored bounded models; this pair measures control and coating causality, not physical foam chemistry or measured heat transfer."
+  ],
+  "visual_acceptance": [
+    "The wall-mounted extinguisher visibly moves into the hands after the first LMB press.",
+    "The first pickup press does not discharge foam. Release then fresh LMB produces a nozzle-led jet.",
+    "After trigger release airborne grains settle or expire while matte coating remains on the actual contacted surfaces.",
+    "The fixed input sweep visibly covers the seeded surface; remaining fire and ammunition exposure must fall through ordinary coating response. Any failed receipt remains a failure."
+  ],
+  "id": "fire_suppression_aimed_lmb_20260929",
+  "title": "Cabin fire: physical extinguisher pickup and aimed sweep",
+  "caption": "STAGED SOURCE IGNITION / PICK UP, RELEASE, AIM AND SPRAY",
+  "evaluation_receipt": "captures/astra/fire_aimed_lmb_20260929_eval_v3_manifest.json",
+  "review_receipt": "captures/astra/fire_aimed_lmb_20260929_review_audiofixed_manifest.json"
+}

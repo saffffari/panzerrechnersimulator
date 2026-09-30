@@ -20,7 +20,10 @@ use crate::reproduction::{TruePeakLimiter, MASTER_LATENCY_FRAMES};
 #[derive(Default)]
 pub(super) struct MasterTelemetry {
     min_gain_db: AtomicU32,
+    current_gain_db: AtomicU32,
     limited_frames: AtomicU64,
+    frames_over_1db_reduction: AtomicU64,
+    frames_over_6db_reduction: AtomicU64,
     frames: AtomicU64,
     input_peak: AtomicU32,
     output_peak: AtomicU32,
@@ -34,6 +37,9 @@ impl MasterTelemetry {
             "latency_frames": MASTER_LATENCY_FRAMES,
             "frames": self.frames.load(Ordering::Relaxed),
             "limited_frames": self.limited_frames.load(Ordering::Relaxed),
+            "frames_over_1db_reduction": self.frames_over_1db_reduction.load(Ordering::Relaxed),
+            "frames_over_6db_reduction": self.frames_over_6db_reduction.load(Ordering::Relaxed),
+            "current_gain_reduction_db": f(&self.current_gain_db),
             "deepest_gain_reduction_db": f(&self.min_gain_db),
             "input_peak": f(&self.input_peak),
             "output_peak": f(&self.output_peak),
@@ -86,7 +92,6 @@ impl<S: Iterator<Item = f32>> Iterator for MasterStage<S> {
         let input = [self.source.next().unwrap_or(0.0), self.source.next().unwrap_or(0.0)];
         let finite = input.map(|x| if x.is_finite() { x.abs() } else { 0.0 });
         self.input_peak = self.input_peak.max(finite[0]).max(finite[1]);
-        let limited_before = self.limiter.limited_frames;
         let mut output = self.limiter.process(input);
         // The KIA cut is sample-exact at the output too: nothing already in the lookahead
         // buffer may play after it.
@@ -96,10 +101,11 @@ impl<S: Iterator<Item = f32>> Iterator for MasterStage<S> {
         self.output_peak = self.output_peak.max(output[0].abs()).max(output[1].abs());
         let t = &self.telemetry;
         t.frames.fetch_add(1, Ordering::Relaxed);
-        if self.limiter.limited_frames != limited_before {
-            t.limited_frames.fetch_add(1, Ordering::Relaxed);
-            t.min_gain_db.store(self.limiter.min_gain_db.to_bits(), Ordering::Relaxed);
-        }
+        t.limited_frames.store(self.limiter.limited_frames, Ordering::Relaxed);
+        t.frames_over_1db_reduction.store(self.limiter.frames_over_1db_reduction, Ordering::Relaxed);
+        t.frames_over_6db_reduction.store(self.limiter.frames_over_6db_reduction, Ordering::Relaxed);
+        t.current_gain_db.store(self.limiter.current_gain_db.to_bits(), Ordering::Relaxed);
+        t.min_gain_db.store(self.limiter.min_gain_db.to_bits(), Ordering::Relaxed);
         t.input_peak.store(self.input_peak.to_bits(), Ordering::Relaxed);
         t.output_peak.store(self.output_peak.to_bits(), Ordering::Relaxed);
         self.right = Some(output[1]);
@@ -129,6 +135,10 @@ mod tests {
         assert!(out[..MASTER_LATENCY_FRAMES * 2].iter().all(|v| *v == 0.0));
         assert!(telemetry.limited_frames() > 0);
         assert!(telemetry.deepest_gain_reduction_db() < -9.0);
+        let snapshot = telemetry.snapshot();
+        assert!(snapshot["current_gain_reduction_db"].as_f64().unwrap() < -9.0);
+        assert!(snapshot["frames_over_1db_reduction"].as_u64().unwrap() > 0);
+        assert!(snapshot["frames_over_6db_reduction"].as_u64().unwrap() > 0);
 
         control.set_silenced(true);
         let mut stage = MasterStage::new(std::iter::repeat(0.2f32), Arc::clone(&control),

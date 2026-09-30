@@ -369,33 +369,43 @@ impl TruePeakDetector {
 #[derive(Clone, Debug)]
 pub struct TruePeakLimiter {
     ceiling: f32,
-    release: f32,
+    release: f64,
     detector: TruePeakDetector,
     delay: VecDeque<[f32; 2]>,
     minima: VecDeque<(u64, f32)>,
-    envelope: f32,
-    average: VecDeque<f32>,
+    // A single-precision release stalls below unity once its per-sample increment falls below
+    // half an ULP. Keep the control envelope in f64 so a past overload actually releases.
+    envelope: f64,
+    average: VecDeque<f64>,
     average_sum: f64,
     frame: u64,
     /// Telemetry: the deepest gain reduction so far (dB, ≤ 0) and frames spent limiting.
     pub min_gain_db: f32,
     pub limited_frames: u64,
+    /// Applied gain this frame (dB, <= 0), including the lookahead smoothing.
+    pub current_gain_db: f32,
+    /// Frames with audible-scale reduction, separate from the tiny final release tail.
+    pub frames_over_1db_reduction: u64,
+    pub frames_over_6db_reduction: u64,
 }
 
 impl TruePeakLimiter {
     pub fn new(rate: f32) -> Self {
         Self {
             ceiling: LIMITER_CEILING,
-            release: 1.0 - (-1.0 / (LIMITER_RELEASE_S * rate)).exp(),
+            release: 1.0 - (-1.0 / (f64::from(LIMITER_RELEASE_S) * f64::from(rate))).exp(),
             detector: TruePeakDetector::new(),
             delay: VecDeque::from(vec![[0.0f32; 2]; MASTER_LATENCY_FRAMES]),
             minima: VecDeque::new(),
             envelope: 1.0,
-            average: VecDeque::from(vec![1.0f32; LIMITER_WINDOW_FRAMES]),
+            average: VecDeque::from(vec![1.0f64; LIMITER_WINDOW_FRAMES]),
             average_sum: LIMITER_WINDOW_FRAMES as f64,
             frame: 0,
             min_gain_db: 0.0,
             limited_frames: 0,
+            current_gain_db: 0.0,
+            frames_over_1db_reduction: 0,
+            frames_over_6db_reduction: 0,
         }
     }
 
@@ -413,7 +423,7 @@ impl TruePeakLimiter {
         while self.minima.front().is_some_and(|(t, _)| *t + (LIMITER_WINDOW_FRAMES as u64) < now) {
             self.minima.pop_front();
         }
-        let held = self.minima.front().map_or(1.0, |(_, g)| *g);
+        let held = f64::from(self.minima.front().map_or(1.0, |(_, g)| *g));
         self.envelope = if held < self.envelope {
             held
         } else {
@@ -421,7 +431,7 @@ impl TruePeakLimiter {
         };
         let leaving = self.average.pop_front().unwrap_or(1.0);
         self.average.push_back(self.envelope);
-        self.average_sum += f64::from(self.envelope) - f64::from(leaving);
+        self.average_sum += self.envelope - leaving;
         let gain = (self.average_sum / LIMITER_WINDOW_FRAMES as f64) as f32;
         // Floating drift cannot creep above unity.
         let gain = if gain > 0.999_999 { 1.0 } else { gain.max(0.0) };
@@ -429,9 +439,13 @@ impl TruePeakLimiter {
         let out = self.delay.pop_front().unwrap_or([0.0; 2]);
         if gain < 1.0 {
             self.limited_frames += 1;
-            self.min_gain_db = self.min_gain_db.min(20.0 * gain.max(1e-9).log10());
+            self.current_gain_db = 20.0 * gain.max(1e-9).log10();
+            self.min_gain_db = self.min_gain_db.min(self.current_gain_db);
+            self.frames_over_1db_reduction += u64::from(self.current_gain_db < -1.0);
+            self.frames_over_6db_reduction += u64::from(self.current_gain_db < -6.0);
             out.map(|x| (x * gain).clamp(-1.0, 1.0))
         } else {
+            self.current_gain_db = 0.0;
             out
         }
     }
@@ -587,5 +601,35 @@ mod tests {
         let mut limiter = TruePeakLimiter::new(SAMPLE_RATE);
         for _ in 0..MASTER_LATENCY_FRAMES { limiter.process([f32::NAN, f32::INFINITY]); }
         assert_eq!(limiter.process([0.0, 0.0]), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn limiter_releases_to_unity_and_separates_material_reduction_from_its_tail() {
+        let mut limiter = TruePeakLimiter::new(SAMPLE_RATE);
+        // Hold an overload, then leave a quiet signal running. A f32 control envelope used to
+        // stop releasing roughly 0.0023 dB below unity and report every later frame as limited.
+        for _ in 0..4_410 { limiter.process([3.0, -3.0]); }
+        assert!(limiter.current_gain_db < -10.0);
+        // Let the discontinuity's interpolated true peak and sliding hold drain first.
+        for _ in 0..256 { limiter.process([0.2, -0.2]); }
+        let release_start = limiter.envelope;
+        for _ in 0..8_820 { limiter.process([0.2, -0.2]); }
+        // The same 200 ms exponential release, apart from its existing ~2 ms lookahead.
+        let expected = 1.0 - (1.0 - release_start) * (-1.0f64).exp();
+        let gain = 10f64.powf(f64::from(limiter.current_gain_db) / 20.0);
+        assert!((gain - expected).abs() < 0.006, "release gain {gain} vs {expected}");
+        assert!(limiter.current_gain_db > -6.0 && limiter.current_gain_db < -1.0);
+        assert!(limiter.frames_over_1db_reduction > limiter.frames_over_6db_reduction);
+        assert!(limiter.frames_over_6db_reduction > 0);
+        for _ in 0..(3 * 44_100) { limiter.process([0.2, -0.2]); }
+        assert_eq!(limiter.current_gain_db, 0.0, "the release must finish");
+        let counts = (limiter.limited_frames, limiter.frames_over_1db_reduction,
+            limiter.frames_over_6db_reduction);
+        for _ in 0..44_100 {
+            assert_eq!(limiter.process([0.2, -0.2]), [0.2, -0.2]);
+        }
+        assert_eq!(counts, (limiter.limited_frames, limiter.frames_over_1db_reduction,
+            limiter.frames_over_6db_reduction), "quiet playback adds no limiting time");
+        assert!(counts.0 > counts.1 && counts.1 > counts.2);
     }
 }

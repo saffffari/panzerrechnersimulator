@@ -13475,7 +13475,7 @@ impl WindowState {
 
     /// Death is black and silence, without words. From the player's own eye the last picture and
     /// every sound fade out together over `DEATH_FADE`; the black and silence then hold until the
-    /// retry or menu. The dead Game is never updated again, so the fading picture is the fatal one.
+    /// retry or menu. Gameplay is never updated again; only emitted audio finishes travelling during the fade.
     /// Split-screen co-op keeps its per-seat black cells and goes straight to black here.
     fn render_death(&mut self, t: f32) {
         let fade = death_fade(t);
@@ -15020,6 +15020,7 @@ impl ApplicationHandler for App {
                     }
                     AppState::Death { t } => {
                         let nt = t + dt;
+                        state.game.advance_terminal_audio(dt, &state.renderer, nt);
                         if nt >= DEATH_END {
                             // However long the last frame took, the dead Game ends silent.
                             state.game.set_audio_silenced(true);

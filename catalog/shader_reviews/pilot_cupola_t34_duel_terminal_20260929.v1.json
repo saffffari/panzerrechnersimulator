@@ -1,0 +1,86 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "pilot_cupola_t34_duel_terminal_20260929",
+  "title": "Sound evaluation: live T-34 duel through actual ammunition catastrophe and terminal fade",
+  "caption": "COMMANDER CUPOLA / LIVE T-34 AT 150 M / TERMINAL OUTCOME",
+  "act_id": 0,
+  "night": false,
+  "station": "commander",
+  "seconds": 20,
+  "setup": {
+    "enemy_policy": "live",
+    "player_xz": [
+      60,
+      -280
+    ],
+    "hatch_open": true,
+    "calibration_duel": {
+      "range_m": 150,
+      "bearing_deg": 0,
+      "readiness_s": 2
+    }
+  },
+  "mechanics": [
+    "calibrated_sound_levels",
+    "listener_enclosure_buttoned_and_head_out",
+    "engine_bed_at_true_level",
+    "enemy_report_propagated_over_snow",
+    "strikes_on_own_armour_at_the_ear",
+    "ear_model_threshold_shift_and_tinnitus"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.2,
+      "action": "hatch"
+    },
+    {
+      "at_s": 7.0,
+      "action": "staged_discharge"
+    },
+    {
+      "from_s": 12.0,
+      "until_s": 19.0,
+      "input": {
+        "drive": 0.6
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 1,
+      "max_delta": 1
+    },
+    {
+      "metric": "enemy_fire_discharges",
+      "min_delta": 1
+    },
+    {
+      "metric": "tank_alive",
+      "equals": false
+    },
+    {
+      "metric": "game_over",
+      "equals": true
+    },
+    {
+      "metric": "death_cause",
+      "equals": "AmmoDetonation"
+    }
+  ],
+  "input_audit": "Derived from pilot_cupola_t34_duel_20260929.v1.json with identical setup, hatch at 0.2 s, one disclosed staged own-gun discharge at 7 s, and drive input from 12 to 19 s. The original live enemy detection, firing, flight and damage are unchanged. This 20 s evaluation expects the observed actual ammunition catastrophe, then the ordinary terminal fade; it does not inject death or select an impact outcome. Remaining drive input after death is recorded as ignored. No postmortem own-gun action is scheduled.",
+  "historical_scope": "A sound-level demonstration on the training arena, not a historical engagement.",
+  "visual_acceptance": [
+    "Buttoned cupola, live enemy reports and armour strikes, own 88 at 7 s, actual ammunition catastrophe, frozen fatal frame fading to black with the same audio fade. No fabricated replay, continued driving or postmortem shot."
+  ],
+  "status": "evaluation_pending_recording",
+  "evaluation_scope": "Compare the common pre-death encounter and terminal fade. The original 34 s baseline remains preserved as historical evidence with an old recorder defect: its 27 s staged discharge mutated a dead player and falsely satisfied its two-shot check. Its postmortem acceptance is invalid. This shorter fixture must pass one-shot, actual death and ammunition-detonation checks with the repaired terminal latch."
+}

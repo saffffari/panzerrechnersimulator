@@ -80,9 +80,9 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | System | Live truth | Remaining debt / release gate |
 |---|---|---|
 | Exterior cannon flight | Authoritative projectile pool with fixed substeps, `ShellSpec` velocity loss/gravity and swept contacts is being integrated; focused moving-target/range/frame-schedule tests pass. | Unified game tests and a playable delayed-impact capture must pass after renderer integration. No trigger-time outcome or forced landing may remain. |
-| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. | P0: the live internal solver still clamps/overwrites entry geometry and samples damage separately from visible fragments. One penetration solution must own fragment trajectories, crew/module contacts, visible heat, and collision audio. |
+| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. | P0: damage forecasts those bodies immediately against frozen targets, while their later visible paths meet moving state. Interior collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance but do not deform or perforate retained triangles. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. No new fracture solver is claimed. |
 | Vehicle loss | Module/fire states and crew bodies exist. | P0: enemy penetration currently collapses too readily to an instant kill; random turret-pop/cook-off decisions are not derived from ammo/fuel/module energy. Replace with the shared vehicle damage state. |
-| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent equal-size blood grains and persistent stains exist. | P0: blood and fragments still collide with authored cabin shapes rather than the visible triangle interior. Generate collision from source geometry with measured error bounds. |
+| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. | P0: hot steel fragments still meet cabin proxies rather than the visible triangle interior; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations. Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
 | World collision/destruction | Tank/tank separation, trees, destructible structures, rubble and drive-over classes work; since 2026-09-29 the Tiger's contacts go through the push model (tank push row) and the manifest's walls, piers, doorways and sheds are destruction records. | P0: AABBs/yawed footprints, hard-coded infantry cover cylinders and several authored structure shapes are proxies. Replace them with source-derived triangle/convex data; no invisible blocker may contradict the rendered object. |
 | Campaign outcomes | Route, resources, AI navigation/combat and authoritative telemetry run headlessly. | P0: Act-III allied hits/kills and civilian/town loss counters include scripted scalars. Outcomes must come only from simulated entities/events. |
 | First level: campaign Act 1 on the urban district (2026-09-29, `docs/ACT1_FIRST_LEVEL.md`) | Campaign Act 1 plays the urban-intro workshop: the route starts at the district spawn (the level design's entry gate) and leaves by its west exit gate; the district's defenders (the winter session's street encounter: two T-34 platoons on street beats, two 45 mm guns sited by the field-of-fire probe) are fielded at the start and the director raises no route contact until their armour is destroyed or the Tiger has left the district (450 m from the spawn); survivors keep their slots and fight on under the ordinary campaign AI, and route contacts take the free slots. It is a gate on when contacts spawn; no outcome is scripted. | Named limits: (1) the breakout radius is a distance from the spawn, not the district's outline. (2) `campaign-ai-run`, which proves the level headlessly, plays with an omniscient scripted crewman (it knows where unseen crews are; it lays by setting the gunner's desired lay, the turret following at its real traverse rate), and its field track repair takes the kit and is set down at the break instead of walking there; the ritual itself is the player's. (3) `KESSEL_CAMPAIGN_AI_INVINCIBLE=1` is a named debug gate for traversal proofs: it suppresses every mutation of the Tiger by hits. None of these run in play. |
@@ -126,6 +126,53 @@ exists; those figures are the report's scalings and derivations ([E]/[D]).
 | **Removed pending simulation** | The outgoing-shell "shriek" heard head-out (a firer behind a Mach 2+ round hears its blast, never its shock) and the random horizon booms every 6–20 s (no simulated source) are off in both presets, reachable only through `KESSEL_DEBUG_SHELL_SHRIEK` / `KESSEL_DEBUG_AMBIENT_BOOMS` in a debug build. The booms return only with simulated off-map indirect fire (artillery, mortars) whose shells, bursts and reports are propagated like any other source. | Gate: `game::tests::shell_shriek_and_ambient_booms_are_behind_their_debug_gates` and `debug_gates::tests`. |
 | Debug gates (`debug_gates`) | `KESSEL_DEBUG_HEARING_TIME_SCALE` (time compression of hearing recovery, named as such), `KESSEL_DEBUG_SHELL_SHRIEK`, `KESSEL_DEBUG_AMBIENT_BOOMS`. A release build never reads them; a debug build opens one only on an explicit opt-in; the process prints "NOT A SHIPPING CONFIGURATION" when any is open. | Gate: `debug_gates::tests::every_gate_is_off_in_both_shipping_presets` (Laptop and High, release and debug without opt-in). |
 | Structure collapse and authored emitters (2026-09-29, merge of the calibrated sound with the urban intro) | A structure's collapse beat (one per structural event: a legacy wall, or a compiler delta that fails building modules, as when a tank grinds a wall down or a shell drops one) is heard as masonry falling: `sound_levels::PROP_IMPACT_1M` + 16 dB (`STRUCTURE_COLLAPSE_OVER_PROP_DB`), spherical spreading, through the ordinary propagation, headset and ears. Head-out with the headset: 121 dB peak / 93 dB(A) at 2 m, 112 / 84 at 5 m, 92 / 61 at 20 m, below the ear model's 140 dB dose threshold. Before the merge it borrowed the vehicle-kill blast of its voice (0.71 kg TNT: 198 / 167 at 2 m, 182 / 150 at 5 m, the own 88 head-out's level), so every wall the Tiger ground down in the district reached the ears as a detonation (measured on the district during a head-out crush: repeated limiter-level −1 dBFS peaks, LAF,max −21.6 dBFS(A)). | The +16 dB is an estimate [E]: a kit wall bay (~8.6 t of brick) dropping its centre of mass ~1.3 m releases ~110 kJ, about ten times a felled trunk heard at +6 dB, with radiated sound taken to scale with energy. One level per beat however much falls with it (a storey is heard as one bay); the voice is still the kill-explosion recording. Authored scene emitters (`SceneEnvironment`: the courtyard workshop's two generated cues and the urban tableau's slot wind) play at their authored gain through the World bus's listener stage, not through the per-voice calibration and tone map (the master limiter still bounds them). Gate: `game::tests::a_collapsing_structure_is_heard_as_falling_masonry_not_as_a_detonation`. |
+
+## Repair interaction limits — 29 September 2026
+
+The carried hammer now responds to the ordinary post-pickup LMB trigger independently of repair
+eligibility. Its animation is not a swept hammer-head collision solver. A repair still uses a
+reachable target point (1.65 m reach, 22 cm look-ray radius) and retained-scene line of sight
+with a 28 cm endpoint tolerance. The traverse wheel itself is not part of that contact mesh.
+Repair credit is an uninterrupted held-input timer; named procedures such as recoil-fluid refill,
+boresighting and fuse replacement do not yet simulate their individual tools and operations.
+Only eligible targets receive repair work and the repair-contact cue. The existing wordless
+interaction dot identifies an eligible interior repair target instead of appearing everywhere
+merely because tools are held. The track-pin ritual retains its own timer and hit accounting.
+See `REPAIR_INTERACTION_20260929.md` for field-fault distinctions, supplies and remaining gaps.
+
+## Sound source corrections — 29 September 2026
+
+See `SOUND_MASS_20260929.md` and `research/IMPACT_STRUCTURAL_DECAY_20260929.md` for
+implementation, source provenance and bounded evidence. These are source-waveform and
+reproduction corrections, not measured Tiger acoustics.
+
+- The procedural own-engine now runs continuously at output rate: only its combustion
+  clock follows RPM, while the inherited structural/filter frequencies stay fixed. The
+  complete source is normalized once against its measured LAF across seven rates.
+  The engine level law, headset, reflex and listener model remain; optional recorded
+  loops retain their former path. The coefficients, pseudo-gearbox and scalar enclosure
+  transfer are still estimates. Separate travel-driven track contacts are not implemented.
+- Structural impact modes use an explicitly inferred effective loss factor of 0.01,
+  retaining existing support/breach factors. The formula is a damped-mode approximation,
+  not geometry-solved hull vibration. A confirmed internal detonation selects broadband
+  burst/rupture energy with subordinate ringing; dry penetrations and casualties alone do
+  not manufacture an explosion. Actual filler/ammunition state gates both the waveform
+  and the existing ear-level law. No duplicate calibrated blast or cosmetic fragment
+  shower is added; normal fragment contact sound still uses its limited live event budget.
+- The master limiter's release control uses f64 to avoid a tiny stuck residual gain.
+  Its ceiling and 200 ms law remain. Receipts now expose current gain reduction and frames
+  over 1 dB and 6 dB; old `limited_frames` totals counted any residual reduction and must
+  not be read as the duration of audible pumping. This is a measurement/correctness fix,
+  not a claim that the residual itself sounded hollow.
+- Already emitted world sounds continue their existing travel and propagation during the
+  terminal fade in native play and recorded encounters. Fire cookoff previously queued its
+  voice after the final ordinary queue drain, so death prevented it from playing at all.
+  Only acoustic arrivals and the listener state advance after death; no new gameplay event
+  is generated. The existing generic cookoff/rack source calibrations and enclosure transfer
+  are retained estimates, not a solved internal pressure history. Fixed fire films preserve
+  every rendered frame and pre-fatal audio sample while delivering the queued cookoff once.
+- Player-view and subjective acceptance are recorded separately in the sound review
+  document. A matching digital LAF or passing unit suite is not headphone/speaker approval.
 
 ## Mandatory gates
 

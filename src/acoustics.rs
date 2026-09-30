@@ -430,6 +430,18 @@ fn add_damped_chirp(
 #[derive(Clone, Copy)]
 struct SteelMode { hz: f32, t60_s: f32, gain: f32 }
 
+/// Estimated effective structural loss, not the airborne compartment RT60. A modal amplitude
+/// decays as exp(-PI * frequency * loss_factor * time), hence T60 = ln(1000)/(PI*f*eta).
+/// Steel-sheet measurements bracket eta around 0.005--0.01; 0.01 is an explicit inference for
+/// this assembled-hull timbre, not a measured Tiger value. Panel support and breach retain their
+/// existing relative damping below. See docs/research/IMPACT_STRUCTURAL_DECAY_20260929.md.
+const ESTIMATED_STEEL_STRUCTURE_LOSS_FACTOR: f32 = 0.01;
+
+fn structural_mode_t60_s(hz: f32, support_scale: f32) -> f32 {
+    6.907_755 * support_scale
+        / (core::f32::consts::PI * hz * ESTIMATED_STEEL_STRUCTURE_LOSS_FACTOR)
+}
+
 fn steel_modes(p: ImpactParams) -> [SteelMode; 16] {
     const RATIOS: [f32; 16] = [
         0.74, 1.0, 1.29, 1.57, 1.93, 2.34, 2.79, 3.37,
@@ -442,7 +454,7 @@ fn steel_modes(p: ImpactParams) -> [SteelMode; 16] {
     let plate = (p.plate_thickness_mm / 80.0).clamp(0.25, 2.0);
     let caliber = (p.caliber_mm / 88.0).clamp(0.5, 2.0);
     let base_hz = p.panel.base_freq() * 0.78 * plate.powf(0.12) / caliber.powf(0.24);
-    let ring = 5.8 * (0.60 + 0.40 * p.panel.ring_scale()) * plate.powf(0.10);
+    let support_scale = (0.60 + 0.40 * p.panel.ring_scale()) * plate.powf(0.10);
     let residual = (p.residual_v / p.velocity.max(1.0)).clamp(0.0, 1.0);
     // More damping after a breach, but a hole does not silence the surrounding structure.
     let breach = if p.penetrated { 0.76 - 0.10 * residual } else { 1.0 };
@@ -455,7 +467,7 @@ fn steel_modes(p: ImpactParams) -> [SteelMode; 16] {
         let excitation = 0.84 + 0.16 * hash_noise(p.seed.wrapping_add(8_100 + i as u32 * 71));
         SteelMode {
             hz,
-            t60_s: ring * breach / RATIOS[i].powf(0.43),
+            t60_s: structural_mode_t60_s(hz, support_scale * breach),
             gain: GAINS[i] * excitation / (1.0 + (hz / cutoff).powi(2)),
         }
     })
@@ -580,6 +592,10 @@ fn add_strike_weight(mono: &mut [f32], p: ImpactParams, coupling: f32) {
 /// (a compact panel/pressure thump, never sub-bass) and the steel modal ring that carries the
 /// tail. Event geometry controls their balance, weight and direction.
 pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
+    synth_impact_with_ring(p, 1.0)
+}
+
+fn synth_impact_with_ring(p: ImpactParams, ring_gain: f32) -> Vec<f32> {
     if p.shell == ShellClass::Mg { return synth_mg_armor_hit(p); }
     let sr = SAMPLE_RATE as f32;
     let normal = p.impact_angle_deg.to_radians().cos().clamp(0.12, 1.0);
@@ -598,7 +614,7 @@ pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
     let attack_s = (0.0015 * 700.0 / p.velocity.max(200.0)).clamp(0.0008, 0.003);
     // Ring: the long structural response; its contact-time attack starts every mode with the strike.
     for mode in steel_modes(p) {
-        add_steel_mode(&mut mono, mode, 0.20 * coupling, attack_s);
+        add_steel_mode(&mut mono, mode, 0.20 * coupling * ring_gain, attack_s);
     }
     // Weight: the panel thump, and on a breach the punched plug, peak with the contact.
     add_strike_weight(&mut mono, p, coupling);
@@ -1010,12 +1026,9 @@ fn mix_moving_binaural_at(
 /// post-armor energy and resolved consequences, so a large dry hole is not mixed like an ammunition
 /// burst and a glancing 76 mm bounce never inherits the IS-2 terror profile.
 pub fn damage_sound_profile(p: ImpactParams, context: DamageSoundContext) -> DamageSoundProfile {
-    let kind = if context.catastrophic {
-        DamageSoundKind::Catastrophic
-    } else if p.penetrated
-        && (context.internal_detonation || matches!(p.shell, ShellClass::ApHe | ShellClass::He))
-    {
-        DamageSoundKind::InternalExplosion
+    let kind = if p.penetrated && context.internal_detonation {
+        if context.catastrophic { DamageSoundKind::Catastrophic }
+        else { DamageSoundKind::InternalExplosion }
     } else if p.penetrated {
         DamageSoundKind::Penetration
     } else {
@@ -1033,7 +1046,7 @@ pub fn damage_sound_profile(p: ImpactParams, context: DamageSoundContext) -> Dam
     if matches!(kind, DamageSoundKind::InternalExplosion) {
         score += 0.08;
     }
-    let severity = if context.catastrophic || score >= 1.10 {
+    let severity = if kind == DamageSoundKind::Catastrophic || score >= 1.10 {
         DamageSeverity::Catastrophic
     } else if score >= 0.67 {
         DamageSeverity::Heavy
@@ -1231,6 +1244,9 @@ pub fn synth_fragment_ricochets(
 }
 
 fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: u32) -> Vec<f32> {
+    if matches!(profile.kind, DamageSoundKind::InternalExplosion | DamageSoundKind::Catastrophic) {
+        return synth_confined_detonation(profile, bearing_deg, seed);
+    }
     let sr = SAMPLE_RATE as f32;
     // Pressure should punch and then get out of the way. Recovery belongs to the hearing-state bus,
     // not to a sustained explosion texture. This layer is therefore built only from finite physical
@@ -1319,6 +1335,50 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
     out
 }
 
+/// One resolved internal explosive event: shock, a dense finite gas/rupture response, then the
+/// hot-gas release. This is an authored pressure-history timbre, not a fluid/structural solver.
+/// No individual chip impacts are invented: live fragment trajectories own those voices.
+/// Only DamageSoundContext's confirmed detonation can reach this branch; calibre, casualties
+/// and a severe dry penetration cannot manufacture an explosion.
+fn synth_confined_detonation(profile: DamageSoundProfile, bearing_deg: f32, seed: u32) -> Vec<f32> {
+    let catastrophic = profile.kind == DamageSoundKind::Catastrophic;
+    let sr = SAMPLE_RATE as f32;
+    let duration = if catastrophic { 0.96 } else { 0.72 };
+    let mut mono = vec![0.0f32; (duration * sr) as usize];
+    let g = profile.pressure_gain;
+    add_blast_pulse(&mut mono, 0.001, if catastrophic { 0.012 } else { 0.008 }, 0.72 * g);
+    let a = |hz: f32| 1.0 - (-TAU * hz / sr).exp();
+    let (low_a, body_a, edge_a) = (a(55.0), a(680.0), a(4_600.0));
+    let (mut low, mut body, mut edge) = (0.0f32, 0.0f32, 0.0f32);
+    let body_decay = if catastrophic { 0.105 } else { 0.068 };
+    for (i, sample) in mono.iter_mut().enumerate() {
+        let t = i as f32 / sr;
+        let noise = hash_noise(seed.wrapping_add(i as u32).wrapping_add(0x4255_5253));
+        low += low_a * (noise - low);
+        body += body_a * (noise - body);
+        edge += edge_a * (noise - edge);
+        let onset = smoothstep(0.0, 0.0012, t);
+        let finite = 1.0 - smoothstep(duration - 0.14, duration, t);
+        // Broadband onset and irregular body carry the explosion; no long sinusoidal bell.
+        let rupture = (edge - body) * (-t / 0.024).exp() * 1.20;
+        let gas = (body - low) * (-t / body_decay).exp() * 4.0;
+        // A finite low gas release is part of this burst, not a fabricated persistent fuel fire.
+        let vent = (body - low) * smoothstep(0.045, 0.09, t)
+            * (-t / (body_decay * 1.7)).exp() * 0.55;
+        *sample += g * onset * finite * (rupture + gas + vent);
+    }
+    // Catastrophic ammunition ignition also drives the already-modeled hull rupture. Its short
+    // irregular stresses are subordinate to the gas burst; chip/casing contacts remain separate.
+    if catastrophic { add_armor_rupture(&mut mono, g * 0.20, seed ^ 0x4152_4D52); }
+    let lateral = bearing_deg.to_radians().sin() * 0.38;
+    let pan = (lateral + 1.0) * core::f32::consts::FRAC_PI_4;
+    let (left, right) = (pan.cos(), pan.sin());
+    let mut out: Vec<f32> = mono.into_iter().flat_map(|x| [x * left, x * right]).collect();
+    apply_head_shadow(&mut out, bearing_deg);
+    attenuate_over_peak(&mut out, 0.90);
+    out
+}
+
 /// Complete gameplay/offline hit render. The returned main bus is the plate, pressure, internal
 /// explosion, optional separately-authored fragment flight/contact, casualty falls and finite cabin
 /// response. Tinnitus is separate so the audio runtime can leave it audible while ducking the
@@ -1362,7 +1422,14 @@ fn synth_damage_event_components(
     pressure_delay_frames: usize,
 ) -> DamageSoundEvent {
     let profile = damage_sound_profile(p, context);
-    let impact = synth_impact(p);
+    let explosive = matches!(profile.kind,
+        DamageSoundKind::InternalExplosion | DamageSoundKind::Catastrophic);
+    let ring_gain = match profile.kind {
+        DamageSoundKind::InternalExplosion => 0.28,
+        DamageSoundKind::Catastrophic => 0.10,
+        _ => 1.0,
+    };
+    let impact = synth_impact_with_ring(p, ring_gain);
     let pressure = synth_internal_pressure(profile, p.bearing_deg, p.seed ^ 0x5052_4553);
     let fragments = if include_authored_fragments {
         synth_fragment_ricochets(profile, p.bearing_deg, p.seed ^ 0x4652_4147)
@@ -1385,11 +1452,13 @@ fn synth_damage_event_components(
     let mut main = vec![0.0f32; frames.max(1) * 2];
     mix_stereo_at(&mut main, &impact, 0, 0.92);
     if !matches!(profile.kind, DamageSoundKind::ArmorRicochet) {
-        // A pressure pulse distinguishes a breach/filler burst, but does not mask the steel.
+        // A confirmed explosive burst is pressure/rupture-dominant; a dry hole remains steel
+        // and fragment-dominant. The combined group is calibrated once by the playback caller.
         // Use the same coarse source distance available to the plate; aperture transfer is still
         // unmodeled. This is mix weighting, not a pressure-to-Pa calibration.
         let proximity = (1.6 / (1.6 + p.station_dist_m.max(0.0))).clamp(0.12, 1.0);
-        mix_stereo_at(&mut main, &pressure, pressure_delay_frames, 0.22 * proximity);
+        mix_stereo_at(&mut main, &pressure, pressure_delay_frames,
+            (if explosive { 1.10 } else { 0.22 }) * proximity);
     }
     if include_authored_fragments {
         // Fragment telemetry remains a readable detail, never the event's body. The pressure/plate
@@ -1411,8 +1480,8 @@ fn synth_damage_event_components(
     main = sparse_cabin_early_reflections(&main);
     for s in &mut main { *s *= 0.82; }
     attenuate_over_peak(&mut main, 0.92);
-    // September gameplay review: preserve the approved 45 mm voice exactly; larger rounds
-    // retain their steel signature with specifically requested changes to body/top-end balance.
+    // Retain the earlier gameplay-review EQ only for larger rounds. The shared structural
+    // damping and confirmed-detonation response above apply at every calibre.
     if p.caliber_mm >= 84.0 {
         let (cutoff, bass, gain) = if p.caliber_mm >= 150.0 {
             (1800.0, 1.85, 1.05)
@@ -1465,8 +1534,7 @@ pub fn impact_signature_ear_level(signature: ImpactSignature, seed: u32)
 pub fn impact_ear_level(p: ImpactParams, context: DamageSoundContext, filler_kg: f32)
     -> crate::sound_propagation::EarLevel
 {
-    let internal = p.penetrated
-        && (context.internal_detonation || matches!(p.shell, ShellClass::ApHe | ShellClass::He));
+    let internal = p.penetrated && context.internal_detonation;
     let strike = crate::sound_levels::own_armour_strike(p.mass_kg, p.velocity, p.impact_angle_deg,
         p.station_dist_m, p.penetrated, internal, filler_kg, p.shell == ShellClass::He);
     crate::sound_propagation::at_ear(strike.lpk_db, strike.laf_db, strike.spectrum,
@@ -2500,89 +2568,142 @@ fn fold_loop_tail(buf: &mut Vec<f32>, crossfade_s: f32) {
     buf.truncate(tail * 2);
 }
 
-fn synth_engine_loop(seed: u32) -> Vec<f32> {
-    let sr = SAMPLE_RATE as f32;
-    // A longer source makes the deterministic irregularities slow enough that repeat playback does
-    // not advertise a short sample. The folded tail below keeps the in-memory loop seamless.
-    let duration = 7.0;
-    let total = (duration * sr) as usize;
-    let mut out = Vec::with_capacity(total * 2);
-    // Six combustion events/revolution place this source around a 720 rpm idle. Runtime playback
-    // speed supplies the wider RPM range, but the source itself must not be a perfect impulse train:
-    // that was perceived as a bass synth even after the original sine/organ stack was removed.
-    const FIRING_HZ: f32 = 72.0;
-    const CYLINDER_GAIN: [f32; 12] = [
-        0.78, 1.08, 0.91, 1.18, 0.73, 1.03, 0.86, 1.13, 0.76, 0.99, 0.89, 1.10,
-    ];
-    // The crank still turns at one stable average rate. These apparent acoustic spacings describe
-    // unequal paths through the two exhaust banks and engine mounts, preventing every pressure
-    // arrival at the microphone from becoming one mathematically identical tick.
-    const ARRIVAL_SPACING: [f32; 12] = [
-        0.76, 1.24, 0.88, 1.12, 0.82, 1.18, 0.93, 1.07, 0.79, 1.21, 0.90, 1.10,
-    ];
-    let slow_a = 1.0 - (-TAU * 1.35 / sr).exp();
-    let exhaust_a = 1.0 - (-TAU * 430.0 / sr).exp();
-    let exhaust_floor_a = 1.0 - (-TAU * 82.0 / sr).exp();
-    let block_a = 1.0 - (-TAU * 520.0 / sr).exp();
-    let hull_a = 1.0 - (-TAU * 74.0 / sr).exp();
-    let gear_a = 1.0 - (-TAU * 1_050.0 / sr).exp();
-    let gear_floor_a = 1.0 - (-TAU * 245.0 / sr).exp();
-    let rumble_a = 1.0 - (-TAU * 210.0 / sr).exp();
-    let rumble_floor_a = 1.0 - (-TAU * 29.0 / sr).exp();
-    let stereo_a = 1.0 - (-TAU * 610.0 / sr).exp();
-    let stereo_floor_a = 1.0 - (-TAU * 155.0 / sr).exp();
-    let dc_a = 1.0 - (-TAU * 18.0 / sr).exp();
-    let ceiling_a = 1.0 - (-TAU * 1_420.0 / sr).exp();
-    let snap_decay = (-1.0 / (sr * 0.0038)).exp();
-    let pressure_decay = (-1.0 / (sr * 0.016)).exp();
-    let block_tail_decay = (-1.0 / (sr * 0.038)).exp();
-    let exhaust_decay = (-1.0 / (sr * 0.021)).exp();
-    let lash_fast_decay = (-1.0 / (sr * 0.006)).exp();
-    let lash_slow_decay = (-1.0 / (sr * 0.030)).exp();
-
-    let mut firing_phase = 0.0f32;
-    let mut next_interval = 1.0f32;
-    let mut event = 0u32;
-    let mut slow_wander = 0.0f32;
-    let mut snap = 0.0f32;
-    let mut pressure = 0.0f32;
-    let mut block_tail = 0.0f32;
-    let mut exhaust_env = 0.0f32;
-    let mut exhaust = 0.0f32;
-    let mut exhaust_floor = 0.0f32;
-    let mut block = 0.0f32;
-    let mut hull = 0.0f32;
-    let mut gear = 0.0f32;
-    let mut gear_floor = 0.0f32;
-    let mut rumble = 0.0f32;
-    let mut rumble_floor = 0.0f32;
-    let mut lash_fast = 0.0f32;
-    let mut lash_slow = 0.0f32;
-    let mut samples_until_lash = (0.071 * sr) as usize;
-    let mut lash_event = 0u32;
-    let mut stereo_l = 0.0f32;
-    let mut stereo_l_floor = 0.0f32;
-    let mut stereo_r = 0.0f32;
-    let mut stereo_r_floor = 0.0f32;
-    let mut dc = 0.0f32;
-    let mut ceiling_l1 = 0.0f32;
-    let mut ceiling_l2 = 0.0f32;
-    let mut ceiling_r1 = 0.0f32;
-    let mut ceiling_r2 = 0.0f32;
-
-    for n in 0..total {
-        let noise = hash_noise(seed.wrapping_add(n as u32));
-        slow_wander += slow_a * (noise - slow_wander);
+/// Continuous version of the existing authored Maybach source. Its combustion clock changes
+/// with RPM; its structure/air filters stay at the output sample rate. Their existing frequencies
+/// are authored spectral estimates, not measured Tiger modes or a structural mechanics solver.
+pub(crate) struct EngineSynthesis {
+    seed: u32,
+    n: u32,
+    slow_a: f32,
+    exhaust_a: f32,
+    exhaust_floor_a: f32,
+    block_a: f32,
+    hull_a: f32,
+    gear_a: f32,
+    gear_floor_a: f32,
+    rumble_a: f32,
+    rumble_floor_a: f32,
+    stereo_a: f32,
+    stereo_floor_a: f32,
+    dc_a: f32,
+    ceiling_a: f32,
+    snap_decay: f32,
+    pressure_decay: f32,
+    block_tail_decay: f32,
+    exhaust_decay: f32,
+    lash_fast_decay: f32,
+    lash_slow_decay: f32,
+    firing_phase: f32,
+    next_interval: f32,
+    event: u32,
+    slow_wander: f32,
+    snap: f32,
+    pressure: f32,
+    block_tail: f32,
+    exhaust_env: f32,
+    exhaust: f32,
+    exhaust_floor: f32,
+    block: f32,
+    hull: f32,
+    gear: f32,
+    gear_floor: f32,
+    rumble: f32,
+    rumble_floor: f32,
+    lash_fast: f32,
+    lash_slow: f32,
+    samples_until_lash: usize,
+    lash_event: u32,
+    stereo_l: f32,
+    stereo_l_floor: f32,
+    stereo_r: f32,
+    stereo_r_floor: f32,
+    dc: f32,
+    ceiling_l1: f32,
+    ceiling_l2: f32,
+    ceiling_r1: f32,
+    ceiling_r2: f32,
+}
+impl EngineSynthesis {
+    pub(crate) fn new(seed: u32) -> Self {
+        let sr = SAMPLE_RATE as f32;
+        Self {
+            seed,
+            n: 0,
+            slow_a: 1.0 - (-TAU * 1.35 / sr).exp(),
+            exhaust_a: 1.0 - (-TAU * 430.0 / sr).exp(),
+            exhaust_floor_a: 1.0 - (-TAU * 82.0 / sr).exp(),
+            block_a: 1.0 - (-TAU * 520.0 / sr).exp(),
+            hull_a: 1.0 - (-TAU * 74.0 / sr).exp(),
+            gear_a: 1.0 - (-TAU * 1_050.0 / sr).exp(),
+            gear_floor_a: 1.0 - (-TAU * 245.0 / sr).exp(),
+            rumble_a: 1.0 - (-TAU * 210.0 / sr).exp(),
+            rumble_floor_a: 1.0 - (-TAU * 29.0 / sr).exp(),
+            stereo_a: 1.0 - (-TAU * 610.0 / sr).exp(),
+            stereo_floor_a: 1.0 - (-TAU * 155.0 / sr).exp(),
+            dc_a: 1.0 - (-TAU * 18.0 / sr).exp(),
+            ceiling_a: 1.0 - (-TAU * 1_420.0 / sr).exp(),
+            snap_decay: (-1.0 / (sr * 0.0038)).exp(),
+            pressure_decay: (-1.0 / (sr * 0.016)).exp(),
+            block_tail_decay: (-1.0 / (sr * 0.038)).exp(),
+            exhaust_decay: (-1.0 / (sr * 0.021)).exp(),
+            lash_fast_decay: (-1.0 / (sr * 0.006)).exp(),
+            lash_slow_decay: (-1.0 / (sr * 0.030)).exp(),
+            firing_phase: 0.0f32,
+            next_interval: 1.0f32,
+            event: 0u32,
+            slow_wander: 0.0f32,
+            snap: 0.0f32,
+            pressure: 0.0f32,
+            block_tail: 0.0f32,
+            exhaust_env: 0.0f32,
+            exhaust: 0.0f32,
+            exhaust_floor: 0.0f32,
+            block: 0.0f32,
+            hull: 0.0f32,
+            gear: 0.0f32,
+            gear_floor: 0.0f32,
+            rumble: 0.0f32,
+            rumble_floor: 0.0f32,
+            lash_fast: 0.0f32,
+            lash_slow: 0.0f32,
+            samples_until_lash: (0.071 * sr) as usize,
+            lash_event: 0u32,
+            stereo_l: 0.0f32,
+            stereo_l_floor: 0.0f32,
+            stereo_r: 0.0f32,
+            stereo_r_floor: 0.0f32,
+            dc: 0.0f32,
+            ceiling_l1: 0.0f32,
+            ceiling_l2: 0.0f32,
+            ceiling_r1: 0.0f32,
+            ceiling_r2: 0.0f32,
+        }
+    }
+    pub(crate) fn frame(&mut self, speed: f32) -> [f32; 2] {
+        let sr = SAMPLE_RATE as f32;
+        let speed = if speed.is_finite() { speed.clamp(0.5, 3.0) } else { 1.0 };
+        const FIRING_HZ: f32 = 72.0;
+        const CYLINDER_GAIN: [f32; 12] = [
+            0.78, 1.08, 0.91, 1.18, 0.73, 1.03, 0.86, 1.13, 0.76, 0.99, 0.89, 1.10,
+        ];
+        // The crank still turns at one stable average rate. These apparent acoustic spacings describe
+        // unequal paths through the two exhaust banks and engine mounts, preventing every pressure
+        // arrival at the microphone from becoming one mathematically identical tick.
+        const ARRIVAL_SPACING: [f32; 12] = [
+            0.76, 1.24, 0.88, 1.12, 0.82, 1.18, 0.93, 1.07, 0.79, 1.21, 0.90, 1.10,
+        ];
+        let noise = hash_noise(self.seed.wrapping_add(self.n as u32));
+        self.slow_wander += self.slow_a * (noise - self.slow_wander);
         // About +/-3.5% slow crank wander. Per-event acoustic spacing and scatter are applied below;
         // the stable average cadence remains recognisably a V12 without a narrow spectral comb.
-        firing_phase += FIRING_HZ * (1.0 + 0.035 * slow_wander) / sr;
-        if firing_phase >= next_interval {
-            firing_phase -= next_interval;
-            let cylinder = event as usize % CYLINDER_GAIN.len();
-            let scatter = hash_noise(seed.wrapping_add(0x434f_4d42).wrapping_add(event * 977));
+        self.firing_phase += FIRING_HZ * speed * (1.0 + 0.035 * self.slow_wander) / sr;
+        if self.firing_phase >= self.next_interval {
+            self.firing_phase -= self.next_interval;
+            let cylinder = self.event as usize % CYLINDER_GAIN.len();
+            let scatter = hash_noise(self.seed.wrapping_add(0x434f_4d42).wrapping_add(self.event.wrapping_mul(977)));
             let stumble = if hash_noise(
-                seed.wrapping_add(0x5354_554d)
-                    .wrapping_add(event.wrapping_mul(2_053)),
+                self.seed.wrapping_add(0x5354_554d)
+                    .wrapping_add(self.event.wrapping_mul(2_053)),
             ) > 0.82
             {
                 0.68
@@ -2591,92 +2712,97 @@ fn synth_engine_loop(seed: u32) -> Vec<f32> {
             };
             let force = CYLINDER_GAIN[cylinder] * (1.0 + 0.10 * scatter) * stumble;
             // Three decays form a rounded compression/rebound rather than a click or oscillator.
-            snap += 0.58 * force;
-            pressure += 0.92 * force;
-            block_tail += 0.56 * force;
-            exhaust_env = (exhaust_env + 0.72 * force).min(2.2);
-            event = event.wrapping_add(1);
-            next_interval = ARRIVAL_SPACING[event as usize % ARRIVAL_SPACING.len()]
+            self.snap += 0.58 * force;
+            self.pressure += 0.92 * force;
+            self.block_tail += 0.56 * force;
+            self.exhaust_env = (self.exhaust_env + 0.72 * force).min(2.2);
+            self.event = self.event.wrapping_add(1);
+            self.next_interval = ARRIVAL_SPACING[self.event as usize % ARRIVAL_SPACING.len()]
                 * (1.0
                     + 0.080
                         * hash_noise(
-                            seed.wrapping_add(0x494e_5456)
-                                .wrapping_add(event.wrapping_mul(1_291)),
+                            self.seed.wrapping_add(0x494e_5456)
+                                .wrapping_add(self.event.wrapping_mul(1_291)),
                         ));
         }
 
-        snap *= snap_decay;
-        pressure *= pressure_decay;
-        block_tail *= block_tail_decay;
-        exhaust_env *= exhaust_decay;
+        self.snap *= self.snap_decay;
+        self.pressure *= self.pressure_decay;
+        self.block_tail *= self.block_tail_decay;
+        self.exhaust_env *= self.exhaust_decay;
         // Difference-of-decays removes the pressure offset and supplies a blunt block displacement.
-        let combustion = 0.42 * snap + 0.82 * pressure - 0.72 * block_tail;
-        block += block_a * (combustion - block);
-        hull += hull_a * (block - hull);
+        let combustion = 0.42 * self.snap + 0.82 * self.pressure - 0.72 * self.block_tail;
+        self.block += self.block_a * (combustion - self.block);
+        self.hull += self.hull_a * (self.block - self.hull);
 
         // Exhaust is a dark, noisy chuff opened by each cylinder event. It contributes rhythm and
         // mass without another periodic waveform or pitched resonator.
-        exhaust += exhaust_a * (noise - exhaust);
-        exhaust_floor += exhaust_floor_a * (noise - exhaust_floor);
-        let chuff = exhaust_env * (exhaust - exhaust_floor);
+        self.exhaust += self.exhaust_a * (noise - self.exhaust);
+        self.exhaust_floor += self.exhaust_floor_a * (noise - self.exhaust_floor);
+        let chuff = self.exhaust_env * (self.exhaust - self.exhaust_floor);
 
         // Continuous fan/gear texture: broad filtered friction, not a tooth-frequency sine. Sparse
         // torque-lash knocks are scheduled independently from combustion so the tank sounds like a
         // large coupled machine instead of one clean motor voice.
-        let gear_noise = hash_noise(seed.wrapping_add(0x4745_4152).wrapping_add(n as u32));
-        gear += gear_a * (gear_noise - gear);
-        gear_floor += gear_floor_a * (gear_noise - gear_floor);
-        let rumble_noise = hash_noise(seed.wrapping_add(0x5255_4d42).wrapping_add(n as u32));
-        rumble += rumble_a * (rumble_noise - rumble);
-        rumble_floor += rumble_floor_a * (rumble_noise - rumble_floor);
-        if samples_until_lash == 0 {
+        let gear_noise = hash_noise(self.seed.wrapping_add(0x4745_4152).wrapping_add(self.n as u32));
+        self.gear += self.gear_a * (gear_noise - self.gear);
+        self.gear_floor += self.gear_floor_a * (gear_noise - self.gear_floor);
+        let rumble_noise = hash_noise(self.seed.wrapping_add(0x5255_4d42).wrapping_add(self.n as u32));
+        self.rumble += self.rumble_a * (rumble_noise - self.rumble);
+        self.rumble_floor += self.rumble_floor_a * (rumble_noise - self.rumble_floor);
+        if self.samples_until_lash == 0 {
             let lash_noise = hash_noise(
-                seed.wrapping_add(0x4c41_5348)
-                    .wrapping_add(lash_event.wrapping_mul(3_119)),
+                self.seed.wrapping_add(0x4c41_5348)
+                    .wrapping_add(self.lash_event.wrapping_mul(3_119)),
             );
-            lash_fast += 0.25 * lash_noise;
-            lash_slow += 0.18 * lash_noise;
+            self.lash_fast += 0.25 * lash_noise;
+            self.lash_slow += 0.18 * lash_noise;
             let gap = 0.046
                 + 0.074
                     * (0.5
                         + 0.5
                             * hash_noise(
-                                seed.wrapping_add(0x4741_5053)
-                                    .wrapping_add(lash_event.wrapping_mul(1_733)),
+                                self.seed.wrapping_add(0x4741_5053)
+                                    .wrapping_add(self.lash_event.wrapping_mul(1_733)),
                             ));
-            samples_until_lash = (gap * sr) as usize;
-            lash_event = lash_event.wrapping_add(1);
+            self.samples_until_lash = (gap * sr) as usize;
+            self.lash_event = self.lash_event.wrapping_add(1);
         } else {
-            samples_until_lash -= 1;
+            self.samples_until_lash -= 1;
         }
-        lash_fast *= lash_fast_decay;
-        lash_slow *= lash_slow_decay;
-        let lash = lash_fast - lash_slow;
+        self.lash_fast *= self.lash_fast_decay;
+        self.lash_slow *= self.lash_slow_decay;
+        let lash = self.lash_fast - self.lash_slow;
 
-        let noise_l = hash_noise(seed.wrapping_add(0x4c45_4654).wrapping_add(n as u32));
-        let noise_r = hash_noise(seed.wrapping_add(0x5249_4748).wrapping_add(n as u32));
-        stereo_l += stereo_a * (noise_l - stereo_l);
-        stereo_l_floor += stereo_floor_a * (noise_l - stereo_l_floor);
-        stereo_r += stereo_a * (noise_r - stereo_r);
-        stereo_r_floor += stereo_floor_a * (noise_r - stereo_r_floor);
+        let noise_l = hash_noise(self.seed.wrapping_add(0x4c45_4654).wrapping_add(self.n as u32));
+        let noise_r = hash_noise(self.seed.wrapping_add(0x5249_4748).wrapping_add(self.n as u32));
+        self.stereo_l += self.stereo_a * (noise_l - self.stereo_l);
+        self.stereo_l_floor += self.stereo_floor_a * (noise_l - self.stereo_l_floor);
+        self.stereo_r += self.stereo_a * (noise_r - self.stereo_r);
+        self.stereo_r_floor += self.stereo_floor_a * (noise_r - self.stereo_r_floor);
 
-        let core = 0.19 * block
-            + 0.31 * hull
+        let core = 0.19 * self.block
+            + 0.31 * self.hull
             + 0.25 * chuff
-            + 0.23 * (gear - gear_floor)
-            + 0.66 * (rumble - rumble_floor)
+            + 0.23 * (self.gear - self.gear_floor)
+            + 0.66 * (self.rumble - self.rumble_floor)
             + 0.52 * lash;
-        dc += dc_a * (core - dc);
-        let centered_core = core - dc;
-        let left_raw = centered_core + 0.026 * (stereo_l - stereo_l_floor);
-        let right_raw = centered_core + 0.026 * (stereo_r - stereo_r_floor);
-        ceiling_l1 += ceiling_a * (left_raw - ceiling_l1);
-        ceiling_l2 += ceiling_a * (ceiling_l1 - ceiling_l2);
-        ceiling_r1 += ceiling_a * (right_raw - ceiling_r1);
-        ceiling_r2 += ceiling_a * (ceiling_r1 - ceiling_r2);
-        out.push(ceiling_l2 * 0.96);
-        out.push(ceiling_r2 * 0.98);
+        self.dc += self.dc_a * (core - self.dc);
+        let centered_core = core - self.dc;
+        let left_raw = centered_core + 0.026 * (self.stereo_l - self.stereo_l_floor);
+        let right_raw = centered_core + 0.026 * (self.stereo_r - self.stereo_r_floor);
+        self.ceiling_l1 += self.ceiling_a * (left_raw - self.ceiling_l1);
+        self.ceiling_l2 += self.ceiling_a * (self.ceiling_l1 - self.ceiling_l2);
+        self.ceiling_r1 += self.ceiling_a * (right_raw - self.ceiling_r1);
+        self.ceiling_r2 += self.ceiling_a * (self.ceiling_r1 - self.ceiling_r2);
+        self.n = self.n.wrapping_add(1);
+        [self.ceiling_l2 * 0.96, self.ceiling_r2 * 0.98]
     }
+}
+
+fn synth_engine_loop(seed: u32) -> Vec<f32> {
+    let mut voice = EngineSynthesis::new(seed);
+    let mut out: Vec<f32> = (0..SAMPLE_RATE * 7).flat_map(|_| voice.frame(1.0)).collect();
     fold_loop_tail(&mut out, 0.75);
     soft_limit_in_place(&mut out, 0.72);
     out
@@ -3618,6 +3744,46 @@ mod tests {
     }
 
     #[test]
+    fn only_resolved_internal_detonation_selects_an_explosion() {
+        let (mut p, _) = impact_signature_params(ImpactSignature::HeavyObliquePenetration, 0xB005_2026);
+        for shell in [ShellClass::Ap, ShellClass::ApHe, ShellClass::He] {
+            p.shell = shell;
+            for catastrophic in [false, true] {
+                let dry = DamageSoundContext { casualty_count: 4, module_hits: 8,
+                    catastrophic, internal_detonation: false };
+                assert_eq!(damage_sound_profile(p, dry).kind, DamageSoundKind::Penetration,
+                    "a shell label or fatal dry hit invented explosive energy");
+            }
+            let burst = DamageSoundContext { internal_detonation: true, ..Default::default() };
+            assert_eq!(damage_sound_profile(p, burst).kind, DamageSoundKind::InternalExplosion);
+            assert_eq!(damage_sound_profile(p, DamageSoundContext { catastrophic: true, ..burst }).kind,
+                DamageSoundKind::Catastrophic);
+            assert_eq!(damage_sound_profile(ImpactParams { penetrated: false, ..p }, burst).kind,
+                DamageSoundKind::ArmorRicochet, "outside filler cannot become an internal explosion");
+        }
+    }
+
+    #[test]
+    fn confirmed_detonation_has_broadband_body_and_catastrophic_state_changes_its_tail() {
+        let (p, mut context) = impact_signature_params(ImpactSignature::HeavyObliquePenetration, 0xB005_2026);
+        let filler = synth_damage_impact_body(p, context);
+        context.catastrophic = true;
+        let catastrophic = synth_damage_impact_body(p, context);
+        let blast = synth_internal_pressure(catastrophic.profile, p.bearing_deg, p.seed);
+        let dry = synth_internal_pressure(DamageSoundProfile::for_key(
+            DamageSoundKind::Penetration, catastrophic.profile.severity), p.bearing_deg, p.seed);
+        finite_stereo(&filler.main); finite_stereo(&catastrophic.main);
+        assert_ne!(filler.main, catastrophic.main);
+        let broad = |s: &[f32]| band_bins(segment(s, 0.025, 0.20), 700, 3_000).iter().sum::<f32>();
+        assert!(broad(&blast) > broad(&dry) * 8.0,
+            "internal explosive state must carry a broadband burst rather than only a panel tone");
+        assert!(rms(segment(&blast, 0.70, 0.90)) < rms(segment(&blast, 0.02, 0.20)) * 0.03,
+            "confined burst must decay, not become a persistent unmodeled fire bed");
+        // Same event -> same waveform; the live and offline body path is one implementation.
+        assert_eq!(catastrophic.main, synth_damage_impact_with_pressure_delay(p, context, 0.0).main);
+    }
+
+    #[test]
     fn canonical_impact_signatures_are_unique_and_deterministic() {
         let signatures = [
             ImpactSignature::DistantFrontalRicochet,
@@ -3770,6 +3936,52 @@ mod tests {
     }
 
     #[test]
+    fn structural_loss_preserves_strike_onset_and_damps_upper_modes() {
+        // Compare only the changed structural layer with its former decay law. Contact, body,
+        // pressure and the source-level calibration are deliberately outside this correction.
+        for signature in [ImpactSignature::DistantFrontalRicochet,
+            ImpactSignature::CloseT34SidePenetration, ImpactSignature::HeavyObliquePenetration] {
+            let (p, _) = impact_signature_params(signature, 0xDA6F_2026);
+            let frames = (3.4 * SAMPLE_RATE as f32) as usize;
+            let mut before = vec![0.0; frames];
+            let mut after = vec![0.0; frames];
+            let mut upper_before = vec![0.0; frames];
+            let mut upper_after = vec![0.0; frames];
+            let plate = (p.plate_thickness_mm / 80.0).clamp(0.25, 2.0);
+            let residual = (p.residual_v / p.velocity.max(1.0)).clamp(0.0, 1.0);
+            let breach = if p.penetrated { 0.76 - 0.10 * residual } else { 1.0 };
+            let old_ring = 5.8 * (0.60 + 0.40 * p.panel.ring_scale()) * plate.powf(0.10) * breach;
+            let ratios: [f32; 16] = [0.74, 1.0, 1.29, 1.57, 1.93, 2.34, 2.79, 3.37,
+                4.12, 4.83, 5.71, 6.68, 7.83, 9.24, 10.81, 12.63];
+            let attack_s = (0.0015 * 700.0 / p.velocity.max(200.0)).clamp(0.0008, 0.003);
+            for (mode, ratio) in steel_modes(p).into_iter().zip(ratios) {
+                let legacy = SteelMode { t60_s: old_ring / ratio.powf(0.43), ..mode };
+                add_steel_mode(&mut before, legacy, 0.20, attack_s);
+                add_steel_mode(&mut after, mode, 0.20, attack_s);
+                if mode.hz >= 300.0 {
+                    add_steel_mode(&mut upper_before, legacy, 0.20, attack_s);
+                    add_steel_mode(&mut upper_after, mode, 0.20, attack_s);
+                }
+            }
+            let energy = |voice: &[f32], from_s: f32, to_s: f32| {
+                let start = (from_s * SAMPLE_RATE as f32) as usize;
+                let end = (to_s * SAMPLE_RATE as f32) as usize;
+                voice[start..end].iter().map(|x| x*x).sum::<f32>()
+            };
+            let onset_ratio = energy(&after, 0.0, 0.008) / energy(&before, 0.0, 0.008);
+            let upper_tail_ratio = energy(&upper_after, 0.30, 1.20)
+                / energy(&upper_before, 0.30, 1.20);
+            eprintln!("{signature:?}: structural first8ms={onset_ratio:.4}, upper300ms_1s2={upper_tail_ratio:.5}");
+            assert!(onset_ratio > 0.90 && onset_ratio < 1.04,
+                "{signature:?}: modal contact onset changed ({onset_ratio})");
+            assert!(upper_tail_ratio < 0.12,
+                "{signature:?}: high structural modes keep an unsupported long tail ({upper_tail_ratio})");
+            assert!(energy(&after, 0.08, 0.25) > energy(&after, 0.0, 0.008),
+                "{signature:?}: removed the low structural body instead of damping its tail");
+        }
+    }
+
+    #[test]
     fn structural_ring_and_separate_ear_fatigue_stay_dark() {
         let (params, _) = impact_signature_params(ImpactSignature::HeavyObliquePenetration, 0xA017);
         let impact = synth_impact(params);
@@ -3782,7 +3994,7 @@ mod tests {
             "impact leaked harsh HF energy: low={low_energy:.4} high={high_energy:.4}"
         );
         let attack = segment(&impact, 0.04, 0.25);
-        let ring = segment(&impact, 0.8, 1.2);
+        let ring = segment(&impact, 0.35, 0.65);
         let tail = segment(&impact, 2.7, 3.2);
         assert!(rms(ring) > rms(attack) * 0.08, "penetration erased the steel ring");
         assert!(rms(tail) < rms(ring) * 0.20, "modal losses do not decay the ring");
@@ -3819,7 +4031,7 @@ mod tests {
             );
 
             let attack = segment(&voice, 0.04, 0.25);
-            let ring = segment(&voice, 0.8, 1.2);
+            let ring = segment(&voice, 0.35, 0.65);
             let late = segment(&voice, 2.7, 3.2);
             assert!(rms(ring) > rms(attack) * 0.08,
                 "{signature:?} lost sustained structural resonance");
@@ -3892,10 +4104,24 @@ mod tests {
             let delayed = synth_damage_impact_with_pressure_delay(params, context, 0.12);
             finite_stereo(&delayed.main);
             assert_ne!(original.main, delayed.main, "pressure arrival was ignored");
-            let original_attack = segment(&original.main, 0.0, 0.015);
-            let delayed_attack = segment(&delayed.main, 0.0, 0.015);
-            assert!(rms(delayed_attack) > rms(original_attack) * 0.65,
-                "the entire impact was delayed instead of just its air component");
+            // Moving only the air arrival leaves exactly the same immediate structural signal
+            // before either front. Account for the group's attenuation-only peak guard, which can
+            // choose a different scalar when its two layers overlap at different times.
+            let later = synth_damage_impact_with_pressure_delay(params, context, 0.20);
+            let delayed_attack = segment(&delayed.main, 0.0, 0.010);
+            let first = delayed_attack.iter().position(|v| v.abs() > 1e-6).unwrap();
+            assert!(first / 2 < (0.0005 * SAMPLE_RATE as f32) as usize,
+                "the structural contact itself was delayed");
+            let scale = rms(delayed_attack) / rms(segment(&later.main, 0.0, 0.010));
+            let residual = |from, to| -> f32 {
+                let a = segment(&delayed.main, from, to);
+                let b = segment(&later.main, from, to);
+                rms(&a.iter().zip(b).map(|(a, b)| a - b * scale).collect::<Vec<_>>())
+            };
+            assert!(residual(0.0, 0.12) < rms(segment(&delayed.main, 0.0, 0.12)) * 0.0001,
+                "air pressure leaked ahead of its scheduled front");
+            assert!(residual(0.122, 0.14) > rms(delayed_attack) * 0.05,
+                "the pressure front did not arrive at its scheduled time");
         }
         let (ricochet, context) =
             impact_signature_params(ImpactSignature::DistantFrontalRicochet, 0x4455_8899);
@@ -4071,16 +4297,20 @@ mod tests {
             ImpactSignature::HeavyObliquePenetration,
         ] {
             let (p, ctx) = impact_signature_params(signature, 0x1A4D_0000 ^ signature as u32);
-            let main = synth_damage_impact_with_pressure_delay(p, ctx, p.station_dist_m / crate::sound_propagation::speed_of_sound()).main;
-            // Every layer is under way at contact: each band reaches half of its first-150 ms
-            // maximum within 3 ms, instead of a thump or pressure wall arriving as a later flam.
+            let air_delay = p.station_dist_m / crate::sound_propagation::speed_of_sound();
+            let main = synth_damage_impact_with_pressure_delay(p, ctx, air_delay).main;
+            // A dry strike's bands are under way at contact. An actual explosion may dominate
+            // their peak after its air front arrives; assess that onset relative to the front,
+            // not by forcing delayed airborne energy into the immediate structure-borne strike.
+            let onset_limit = 0.003 + if ctx.internal_detonation { air_delay } else { 0.0 };
             for (low, high) in [(35.0, 110.0), (170.0, 600.0), (1_000.0, 4_000.0)] {
                 let band = band_mono(&main, low, high);
                 let first = &band[..(0.15 * SAMPLE_RATE as f32) as usize];
                 let max = first.iter().fold(0.0f32, |m, v| m.max(v.abs()));
                 let half = first.iter().position(|v| v.abs() >= 0.5 * max).unwrap();
-                assert!(half as f32 / SAMPLE_RATE as f32 <= 0.003,
-                    "{signature:?} {low}-{high} Hz starts {:.1} ms late", half as f32 / 44.1);
+                assert!(half as f32 / SAMPLE_RATE as f32 <= onset_limit,
+                    "{signature:?} {low}-{high} Hz half peak at {:.1} ms exceeds {:.1} ms arrival bound",
+                    half as f32 / 44.1, onset_limit * 1_000.0);
             }
             if p.penetrated {
                 // A breach lands as one strike: the first 10 ms is the loudest 10 ms of the hit.
@@ -4089,8 +4319,39 @@ mod tests {
                 let loudest = w.iter().enumerate().fold(0, |b, (i, v)| if *v > w[b] { i } else { b });
                 assert_eq!(loudest, 0, "{signature:?} blooms after contact: {w:?}");
             }
-            // ...and the steel ring still carries the tail.
-            assert!(rms(segment(&main, 0.8, 1.2)) > rms(segment(&main, 0.0, 0.02)) * 0.02);
+            // Dry contact retains a compact lower-mode tail. A confirmed explosion intentionally
+            // subordinates ringing to its gas/rupture body; its finite decay is tested separately.
+            if !ctx.internal_detonation {
+                assert!(rms(segment(&main, 0.35, 0.65)) > rms(segment(&main, 0.0, 0.02)) * 0.02);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod engine_clock_tests {
+    use super::*;
+
+    #[test]
+    fn combustion_tracks_rpm_while_the_same_structural_excitation_keeps_its_time_scale() {
+        let mut idle = EngineSynthesis::new(3_801);
+        let mut revved = EngineSynthesis::new(3_801);
+        for _ in 0..SAMPLE_RATE * 2 {
+            idle.frame(0.8);
+            revved.frame(2.4);
+            // These histories are driven by the same authored excitation in absolute seconds.
+            // Resampling the whole old engine loop would alter every history and its frequency.
+            assert_eq!(idle.rumble, revved.rumble);
+            assert_eq!(idle.rumble_floor, revved.rumble_floor);
+            assert_eq!(idle.gear, revved.gear);
+            assert_eq!(idle.lash_fast, revved.lash_fast);
+            assert_eq!(idle.lash_slow, revved.lash_slow);
+        }
+        let idle_hz = idle.event as f32 / 2.0;
+        let revved_hz = revved.event as f32 / 2.0;
+        eprintln!("engine arrival cadence: {idle_hz:.1} Hz idle, {revved_hz:.1} Hz revved");
+        assert!((idle_hz / (72.0 * 0.8) - 1.0).abs() < 0.04);
+        assert!((revved_hz / (72.0 * 2.4) - 1.0).abs() < 0.04);
+        assert!(revved.event > idle.event * 2);
     }
 }

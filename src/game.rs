@@ -1126,8 +1126,17 @@ const EXTINGUISHER_OUTLET: Vec3 = Vec3::new(0.0, 1.244_999_8, -0.025_891_4);
 
 /// Preserve the original extinguisher's hose, lever, label and texture. The previously substituted
 /// gas cylinder had no extinguisher mechanism; recoloring it red could not restore that silhouette.
+fn extinguisher_source_mesh() -> anyhow::Result<&'static crate::gltf_load::CpuMesh> {
+    static SOURCE: OnceLock<crate::gltf_load::CpuMesh> = OnceLock::new();
+    if SOURCE.get().is_none() {
+        let mesh = normalize_bottom_centered_y(crate::gltf_load::load_glb(EXTINGUISHER_ASSET)?, 1.348_838);
+        let _ = SOURCE.set(mesh);
+    }
+    Ok(SOURCE.get().expect("source was loaded or another caller supplied it"))
+}
+
 fn load_extinguisher_mesh() -> anyhow::Result<crate::gltf_load::CpuMesh> {
-    Ok(normalize_bottom_centered_y(crate::gltf_load::load_glb(EXTINGUISHER_ASSET)?, 1.348_838))
+    Ok(extinguisher_source_mesh()?.clone())
 }
 
 fn brass_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
@@ -7114,7 +7123,6 @@ const TRAY_MOUTH: Vec3 = crate::interior_rig::ROUND_READY; // authored tray entr
                                                            // The extinguisher bracket: Turret_0232's spot in the blend (rear-left wall, calibrated against
                                                            // ROUND_SEAT to 7 mm). The cylinder is excluded from the bake; the interactive bottle lives here.
 const EXT_MOUNT_BASE: Vec3 = Vec3::new(-0.350, 0.848, -1.043);
-const EXT_MOUNT_MID: Vec3 = Vec3::new(-0.350, 1.13, -1.043);
 // ── The BREECH LEVER (user design 2026-07-06): pull UP to open the breech — only then can the
 // hot case come out and a fresh round go in; pull DOWN after ramming to CLOSE, which is what
 // completes the load. The gun fires only closed. Pivots calibrated from the blend (gun-local).
@@ -7976,6 +7984,33 @@ struct ScheduledSound {
     enemy_report: Option<enemy_discharge_review::ReportStamp>,
 }
 
+#[derive(Default)]
+struct ScheduledAudioAudit {
+    arrivals: u32,
+    terminal_arrivals: u32,
+    last_arrival: Option<(crate::audio::Sfx, f32)>,
+}
+
+/// Preserve the same travel-time queue semantics in ordinary play and the terminal audio clock.
+fn take_arrived_sounds(queue: &mut Vec<ScheduledSound>, dt: f32) -> Vec<ScheduledSound> {
+    let mut arrived = Vec::new();
+    if !dt.is_finite() || dt <= 0.0 { return arrived; }
+    let mut i = 0;
+    while i < queue.len() {
+        queue[i].delay -= dt;
+        if queue[i].delay <= 0.0 { arrived.push(queue.swap_remove(i)); }
+        else { i += 1; }
+    }
+    arrived
+}
+
+/// A terminal tick may advance only the portion still inside the existing audible fade.
+fn terminal_audio_step(dt: f32, elapsed_s: f32) -> f32 {
+    if !dt.is_finite() || !elapsed_s.is_finite() || dt <= 0.0 || elapsed_s <= 0.0 { return 0.0; }
+    let before = (elapsed_s - dt).max(0.0);
+    dt.min(elapsed_s).min((crate::DEATH_FADE - before).max(0.0))
+}
+
 /// THE CLIMB RITUAL (embodied-interior Stage 1): mounting/dismounting the Tiger is a timed,
 /// camera-scripted sequence up a ladder of perches — each Space is a committed ~0.5 s move (the
 /// vulnerability window while enemies hunt you). Symmetric: 3 moves in, 3 moves out.
@@ -8505,7 +8540,8 @@ pub struct Game {
     track_repair_phase: TrackRepairPhase,
     track_pull: f32, // 0..1 — loose run dragged back over the wheels with downward mouse pulls
     track_hits: u8,  // hammer blows landed on the break so far
-    hammer_t: f32,   // >0: swing animation running (counts down)
+    hammer_t: f32,   // >0: track-pin swing animation running (counts down)
+    repair_hammer_t: f32, // independent carried-tool swing/repeat clock; never awards track hits
     /// INSIDE-view hotspot under the crosshair this frame (mouse-look + point-and-interact).
     hover: Option<Hotspot>,
     /// German hover prompt for the HUD (drawn by the front-end over the crushed frame).
@@ -8513,6 +8549,7 @@ pub struct Game {
     /// Backspace bail-out counter (stub until the on-foot mode lands).
     bail_presses: u32,
     scheduled: Vec<ScheduledSound>, // speed-of-sound delayed combat audio (see schedule_sound_from)
+    scheduled_audio_audit: ScheduledAudioAudit,
     ambient_t: f32,                 // countdown to the next distant battlefield explosion
     ambient_tick: u32,              // counter-based pseudo-random (interval + bearing + clip pick)
     audio: Option<crate::audio::Audio>,
@@ -12350,7 +12387,9 @@ impl Game {
             track_pull: 0.0,
             track_hits: 0,
             hammer_t: 0.0,
+            repair_hammer_t: 0.0,
             scheduled: Vec::new(),
+            scheduled_audio_audit: ScheduledAudioAudit::default(),
             ambient_t: AMBIENT_EXP_MIN,
             ambient_tick: 0,
             audio: crate::audio::Audio::new(),
@@ -15601,22 +15640,8 @@ impl Game {
                 let hm = self.player.hull_model();
                 let eye = r.camera.pos;
                 let look = r.camera.forward();
-                let spots2 = [(Hotspot::Extinguisher, EXT_MOUNT_MID,
-                    "PICK UP EXTINGUISHER [LMB]")];
-                let mut best = 0.94f32;
-                for (spot, local, label) in spots2 {
-                    let wp = tm.transform_point3(local);
-                    let to = wp - eye;
-                    if to.length() > 2.6 {
-                        continue;
-                    }
-                    let d = to.normalize_or_zero().dot(look);
-                    if d > best {
-                        best = d;
-                        self.hover = Some(spot);
-                        self.hover_label = Some(label);
-                    }
-                }
+                // Source-mesh equipment selection runs after the final camera/hover update.
+                // A broad extinguisher cone must not steal a click on the nearby toolbox.
                 // The BREECH LEVER: the gate of the whole cycle. Contextual prompt by state.
                 {
                     let wp = self
@@ -16111,92 +16136,7 @@ impl Game {
             a.update_shell_shriek(dt);
         }
 
-        // Speed of sound: release delayed combat sounds whose wavefront has now reached the player.
-        // The source survives in the queue so the final direct ray, head-relative bearing, snow/wall
-        // reflections and hull transmission are evaluated where the listener is when the bang lands.
-        let mut arrived = Vec::new();
-        let mut i = 0;
-        while i < self.scheduled.len() {
-            self.scheduled[i].delay -= dt;
-            if self.scheduled[i].delay <= 0.0 {
-                arrived.push(self.scheduled.swap_remove(i));
-            } else {
-                i += 1;
-            }
-        }
-        if !arrived.is_empty() {
-            let listener = r.camera.pos;
-            let facing = r.camera.forward();
-            let enclosure = self.listener_enclosure();
-            let headset = self.listener_headset();
-            let atmosphere = crate::sound_propagation::active_atmosphere();
-            let hard_surfaces = self
-                .occluders
-                .iter()
-                .filter(|o| ((o.min + o.max) * 0.5).distance(listener) < 85.0)
-                .count();
-            let reverb = if matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned) {
-                crate::acoustics::ReverbParams::STEEL_INTERIOR
-            } else if hard_surfaces >= 3 {
-                crate::acoustics::ReverbParams::VILLAGE
-            } else {
-                crate::acoustics::ReverbParams::OPEN_SNOW
-            };
-            for s in arrived {
-                self.enemy_report_audit.arrive(&s, r.time, self.audio.is_some());
-                let bearing = bearing_deg_from(facing, s.source - listener);
-                // A wreck blast begins inside its own newly registered hull AABB. Step beyond any
-                // cover box containing the origin so the source cannot occlude itself; buildings
-                // and terrain farther along the path still participate normally.
-                let mut acoustic_origin = s.source + Vec3::new(0.0, 1.2, 0.0);
-                let toward_listener = (listener - acoustic_origin).normalize_or_zero();
-                for cover in &self.occluders {
-                    let inside = acoustic_origin.x >= cover.min.x
-                        && acoustic_origin.x <= cover.max.x
-                        && acoustic_origin.y >= cover.min.y
-                        && acoustic_origin.y <= cover.max.y
-                        && acoustic_origin.z >= cover.min.z
-                        && acoustic_origin.z <= cover.max.z;
-                    if inside {
-                        acoustic_origin +=
-                            toward_listener * ((cover.max - cover.min).length() * 0.5 + 0.25);
-                    }
-                }
-                // Propagate the source's calibration to the ear where the listener is now: the
-                // distance law, muzzle directivity, air, snow, a blocked ray, hull and headset.
-                let occluded = !self.los_clear(acoustic_origin, listener);
-                let mut emission = s.emission;
-                if let Some((axis, braked)) = s.muzzle {
-                    let to_listener = (listener - s.source).normalize_or_zero();
-                    let angle = axis.normalize_or_zero().dot(to_listener).clamp(-1.0, 1.0)
-                        .acos().to_degrees();
-                    emission = emission
-                        .with_directivity(crate::sound_levels::muzzle_directivity_db(angle, braked));
-                }
-                let path = crate::sound_propagation::Path {
-                    distance_m: s.source.distance(listener),
-                    atmosphere,
-                    occluded,
-                    enclosure,
-                    headset,
-                };
-                let ear = crate::sound_propagation::propagate(&emission, &path);
-                self.hear_world_impulse(&ear, bearing);
-                if let Some(a) = &self.audio {
-                    if let Some(buf) = s.buf {
-                        // Parametric reports may arrive pre-panned, but the listener can rotate
-                        // during flight. Collapse once and spatialise again against the live head.
-                        let mono: Vec<f32> = buf
-                            .chunks_exact(2)
-                            .map(|frame| (frame[0] + frame[1]) * std::f32::consts::FRAC_1_SQRT_2)
-                            .collect();
-                        a.play_world_mono_at_ear(&mono, &ear, bearing, reverb);
-                    } else {
-                        a.play_world_at_ear(s.sfx, &ear, bearing, reverb);
-                    }
-                }
-            }
-        }
+        self.drain_scheduled_audio(dt, r, r.time);
 
         // Random booms on the horizon with no simulated source. Removed pending simulated off-map
         // indirect fire; kept only behind a debug-only gate, off in both presets.
@@ -19233,7 +19173,9 @@ impl Game {
         if input.fire2 && !self.foot.prev_fire && self.hover == Some(Hotspot::RepairKit)
             && !self.carrying_track_kit { self.take_toolbox(); }
         let fire_edge = input.fire2 && !self.foot.prev_fire && !self.primary_pickup_press;
-        if !at_armor_patch {
+        if at_armor_patch {
+            self.update_carried_patch_hammer(input.fire2, dt);
+        } else {
             self.update_carried_repair(input.fire2, dt, r.camera.pos, r.camera.forward());
         }
         self.foot.prev_fire = input.fire2;
@@ -20892,6 +20834,7 @@ impl Game {
         self.track_pull = 0.0;
         self.track_hits = 0;
         self.hammer_t = 0.0;
+        self.repair_hammer_t = 0.0;
         self.driver_hatch = false;
         self.engine_on = true;
         self.engine_crank_t = 0.0;
@@ -20929,6 +20872,7 @@ impl Game {
         }
         self.fx = Fx::default();
         self.scheduled.clear();
+        self.scheduled_audio_audit = ScheduledAudioAudit::default();
         self.pressure_arrivals.clear();
         self.pressure_reset_pending = true;
         self.pressure_arrivals_delivered = 0;
@@ -22454,6 +22398,121 @@ impl Game {
         self.module_ok(kind)
     }
 
+    /// Release only already emitted acoustic wavefronts. Shared by ordinary play and the
+    /// terminal fade: neither camera nor simulation state is advanced here.
+    fn drain_scheduled_audio(&mut self, dt: f32, r: &Renderer, audio_time_s: f32) -> usize {
+        let arrived = take_arrived_sounds(&mut self.scheduled, dt);
+        let count = arrived.len();
+        self.scheduled_audio_audit.arrivals += count as u32;
+        if !arrived.is_empty() {
+            let listener = r.camera.pos;
+            let facing = r.camera.forward();
+            let enclosure = self.listener_enclosure();
+            let headset = self.listener_headset();
+            let atmosphere = crate::sound_propagation::active_atmosphere();
+            let hard_surfaces = self
+                .occluders
+                .iter()
+                .filter(|o| ((o.min + o.max) * 0.5).distance(listener) < 85.0)
+                .count();
+            let reverb = if matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned) {
+                crate::acoustics::ReverbParams::STEEL_INTERIOR
+            } else if hard_surfaces >= 3 {
+                crate::acoustics::ReverbParams::VILLAGE
+            } else {
+                crate::acoustics::ReverbParams::OPEN_SNOW
+            };
+            for s in arrived {
+                self.scheduled_audio_audit.last_arrival = Some((s.sfx, audio_time_s));
+                self.enemy_report_audit.arrive(&s, audio_time_s, self.audio.is_some());
+                let bearing = bearing_deg_from(facing, s.source - listener);
+                // A wreck blast begins inside its own newly registered hull AABB. Step beyond any
+                // cover box containing the origin so the source cannot occlude itself; buildings
+                // and terrain farther along the path still participate normally.
+                let mut acoustic_origin = s.source + Vec3::new(0.0, 1.2, 0.0);
+                let toward_listener = (listener - acoustic_origin).normalize_or_zero();
+                for cover in &self.occluders {
+                    let inside = acoustic_origin.x >= cover.min.x
+                        && acoustic_origin.x <= cover.max.x
+                        && acoustic_origin.y >= cover.min.y
+                        && acoustic_origin.y <= cover.max.y
+                        && acoustic_origin.z >= cover.min.z
+                        && acoustic_origin.z <= cover.max.z;
+                    if inside {
+                        acoustic_origin +=
+                            toward_listener * ((cover.max - cover.min).length() * 0.5 + 0.25);
+                    }
+                }
+                // Propagate the source's calibration to the ear where the listener is now: the
+                // distance law, muzzle directivity, air, snow, a blocked ray, hull and headset.
+                let occluded = !self.los_clear(acoustic_origin, listener);
+                let mut emission = s.emission;
+                if let Some((axis, braked)) = s.muzzle {
+                    let to_listener = (listener - s.source).normalize_or_zero();
+                    let angle = axis.normalize_or_zero().dot(to_listener).clamp(-1.0, 1.0)
+                        .acos().to_degrees();
+                    emission = emission
+                        .with_directivity(crate::sound_levels::muzzle_directivity_db(angle, braked));
+                }
+                let path = crate::sound_propagation::Path {
+                    distance_m: s.source.distance(listener),
+                    atmosphere,
+                    occluded,
+                    enclosure,
+                    headset,
+                };
+                let ear = crate::sound_propagation::propagate(&emission, &path);
+                self.hear_world_impulse(&ear, bearing);
+                if let Some(a) = &self.audio {
+                    if let Some(buf) = s.buf {
+                        // Parametric reports may arrive pre-panned, but the listener can rotate
+                        // during flight. Collapse once and spatialise again against the live head.
+                        let mono: Vec<f32> = buf
+                            .chunks_exact(2)
+                            .map(|frame| (frame[0] + frame[1]) * std::f32::consts::FRAC_1_SQRT_2)
+                            .collect();
+                        a.play_world_mono_at_ear(&mono, &ear, bearing, reverb);
+                    } else {
+                        a.play_world_at_ear(s.sfx, &ear, bearing, reverb);
+                    }
+                }
+            }
+        }
+
+        count
+    }
+
+    /// After a fatal update, let emitted sound finish travelling during the existing fade.
+    /// No input, world, camera, fire, damage, source generation or scene update occurs here.
+    /// Callers invoke this only from Death; a living/new Game also rejects this path.
+    pub fn advance_terminal_audio(&mut self, dt: f32, r: &Renderer, elapsed_s: f32) {
+        if self.game_over().is_none() { return; }
+        let step = terminal_audio_step(dt, elapsed_s);
+        if step > 0.0 {
+            let arrived = self.drain_scheduled_audio(step, r, r.time + elapsed_s);
+            self.scheduled_audio_audit.terminal_arrivals += arrived as u32;
+            let recovery_scale = crate::debug_gates::DebugGates::active().hearing_time_scale;
+            self.hearing.advance(step, step * recovery_scale, 0.0);
+            if let Some(audio) = &self.audio { audio.set_ear_state(&self.hearing.render()); }
+        }
+        // A wavefront that arrives after the listener has faded out must never be replayed
+        // by a later menu or retry. A new Game already starts with an empty queue.
+        if elapsed_s >= crate::DEATH_FADE { self.scheduled.clear(); }
+    }
+
+    pub fn debug_scheduled_audio(&self) -> serde_json::Value {
+        serde_json::json!({
+            "pending": self.scheduled.iter().map(|sound| serde_json::json!({
+                "sfx": format!("{:?}",sound.sfx), "remaining_s":sound.delay,
+                "source_world_m":sound.source.to_array(),
+            })).collect::<Vec<_>>(),
+            "arrivals":self.scheduled_audio_audit.arrivals,
+            "terminal_arrivals":self.scheduled_audio_audit.terminal_arrivals,
+            "last_arrival":self.scheduled_audio_audit.last_arrival.map(|(sfx,at_s)|
+                serde_json::json!({"sfx":format!("{sfx:?}"),"at_s":at_s})),
+        })
+    }
+
     /// Queue a combat sound whose SOURCE is at `src` in the world, to be HEARD after its travel time
     /// to the player (range / speed of sound). Distant gunfire and explosions are thus SEEN first
     /// (muzzle flash / fireball) and heard a beat later. Its level is the source's physical
@@ -23400,9 +23459,7 @@ impl Game {
                 }
                 let sound = crate::acoustics::synth_damage_impact_with_pressure_delay(params, context, air_delay_s);
                 // The strike's physical level at the ear (SL §5), placed by the reproduction curve.
-                let internal_burst = penetrated
-                    && (context.internal_detonation || matches!(params.shell,
-                        crate::acoustics::ShellClass::ApHe | crate::acoustics::ShellClass::He));
+                let internal_burst = penetrated && context.internal_detonation;
                 let ear = self.own_armour_strike_ear_level(&event, penetrated, internal_burst,
                     station_distance);
                 // The impact bus keeps the first moments of the strike at full level, so its
@@ -25243,10 +25300,7 @@ impl Game {
         let sound_context = crate::acoustics::DamageSoundContext {
             casualty_count: casualty_hits.min(u8::MAX as usize) as u8,
             module_hits: res.hit_modules.len().min(u8::MAX as usize) as u8,
-            internal_detonation: (matches!(ev.shell.kind,
-                crate::ballistics::ShellKind::Ap | crate::ballistics::ShellKind::Apcbc)
-                && ev.shell.filler_g > 10.0)
-                || res.ammo,
+            internal_detonation: explosive_energy_j > 0.0 || res.ammo,
             catastrophic: res.ammo,
         };
 
@@ -25273,7 +25327,11 @@ impl Game {
                 eprintln!(
                     "[panzerrechnersystem] rejected ammunition detonation: no physical live cartridge remains"
                 );
-                return sound_context;
+                return crate::acoustics::DamageSoundContext {
+                    internal_detonation: explosive_energy_j > 0.0,
+                    catastrophic: false,
+                    ..sound_context
+                };
             };
             self.player_catastrophic(
                 shooter,
@@ -28309,12 +28367,11 @@ impl Game {
     fn drive_ext_fx(&mut self, dt: f32, r: &mut Renderer) {
         let show_interior = self.interior_light > 0.02;
         let grabbing = matches!(self.activity, Some(Activity::Extinguish)) || self.ext_equipped;
-        let turret = self.player.turret_model();
 
         // The original extinguisher, including its hose and trigger: mounted on the turret wall at the
         // Extinguisher hotspot; while the activity runs it rides in the hands instead —
         // lerped off the wall over the grab beat, so you SEE yourself take it down.
-        let wall_p = turret.transform_point3(EXT_MOUNT_BASE);
+        let (wall_scale, wall_rot, wall_p) = self.mounted_extinguisher_model().to_scale_rotation_translation();
         // Held pose: low-left corner of the view, FPS-equipment style — out of the sightline.
         let hand_p =
             self.station_eye(self.station) + r.camera.forward() * 0.52 + r.camera.right() * -0.30
@@ -28334,10 +28391,9 @@ impl Game {
         // On the WALL the bottle is bolted to the TURRET (it must turn with the tank — a
         // world-fixed identity rotation read as "spinning" whenever the hull turned); in the
         // HANDS it faces the camera, held steady.
-        let wall_rot = glam::Quat::from_rotation_y(self.player.heading + self.player.turret_yaw);
         let hand_rot = glam::Quat::from_rotation_y(r.camera.yaw);
         let extinguisher_model = Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.45 - 0.17 * k), // full-size on its bracket, compact in the hands
+                wall_scale.lerp(Vec3::splat(0.28), k), // same mounted pose as source-mesh pickup
                 if k > 0.5 { hand_rot } else { wall_rot },
                 bp,
             );
@@ -28995,9 +29051,11 @@ impl Game {
 
     /// Click takes the extinguisher; E/Q stows it. LMB after release uses the equipped tool.
     pub fn interact_equip(&mut self) -> bool {
+        // Releasing a load already in the hands is valid at every post. The Commander guard
+        // below still restricts new equipment pickup; it must not trap carried tools in hand.
+        if self.carrying_track_kit { self.put_down_toolbox(); return true; }
         if self.mode == Mode::Tank && self.station == Station::Commander { return false; }
         if self.compass_equipped { return false; }
-        if self.carrying_track_kit { self.put_down_toolbox(); return true; }
         if self.panzerfaust_claimed && self.mode == Mode::Tank {
             if let Some(index) = self.panzerfaust_source {
                 let point = (self.player.turret_model() * panzerfaust_rack_local_pose(index))
@@ -30538,6 +30596,84 @@ mod tests {
         assert!((laptop.distance_m - high.distance_m).abs() < 1.0e-4);
         assert!(laptop.pos.distance(high.pos) < 1.0e-4);
         assert!(laptop.velocity.distance(high.velocity) < 1.0e-4);
+    }
+
+    #[test]
+    fn terminal_audio_arrival_waits_then_plays_once_inside_the_existing_fade() {
+        use crate::audio::{Audio, Sfx};
+        use crate::sound_propagation::{propagate, Atmosphere, Enclosure, Path};
+        let dt = 1.0 / 120.0;
+        // This wavefront was emitted after the fatal update's normal audio drain. Its
+        // remaining flight also exceeds one tick, so an immediate death sound cannot pass.
+        let mut pending = vec![ScheduledSound {
+            delay: 3.5 * dt, sfx:Sfx::CookOff, emission:sound_emission_for(Sfx::CookOff),
+            muzzle:None, source:Vec3::X, buf:None, enemy_report:None,
+        }];
+        let audio = Audio::new_capture();
+        let mut hearing = crate::hearing::Hearing::default();
+        let unchanged_delay = pending[0].delay;
+        // A paused simulation owns no acoustic elapsed time, even if the output device runs.
+        audio.set_paused(true);
+        assert!(take_arrived_sounds(&mut pending, 0.0).is_empty());
+        assert_eq!(pending[0].delay, unchanged_delay);
+        assert!(audio.render_capture_frames(441).unwrap().iter().all(|v| *v == 0.0));
+        audio.set_paused(false);
+        let mut arrivals = 0;
+        let mut audible_during_fade = false;
+        for tick in 0..240 {
+            let elapsed = (tick + 1) as f32 * dt;
+            let step = terminal_audio_step(dt, elapsed);
+            for sound in take_arrived_sounds(&mut pending, step) {
+                arrivals += 1;
+                assert_eq!(tick, 3, "wavefront must wait for its scheduled travel time");
+                let ear = propagate(&sound.emission, &Path {distance_m:1.0,
+                    atmosphere:Atmosphere::WINTER, occluded:false,
+                    enclosure:Enclosure::Buttoned, headset:true});
+                hearing.impulse_with_envelope(crate::hearing::ear_impulses(&ear, 0.0), 0.0, None);
+                let voices_before = audio.capture_metadata().unwrap()["sinks_created"].as_u64().unwrap();
+                audio.play_world_at_ear(sound.sfx, &ear, 0.0,
+                    crate::acoustics::ReverbParams::STEEL_INTERIOR);
+                assert_eq!(audio.capture_metadata().unwrap()["sinks_created"].as_u64().unwrap(),
+                    voices_before + 1, "exactly one world voice for the arriving wavefront");
+            }
+            hearing.advance(step, step, 0.0);
+            audio.set_ear_state(&hearing.render());
+            audio.set_listener_level(1.0 - crate::death_fade(elapsed));
+            if elapsed >= crate::DEATH_FADE { audio.set_silenced(true); }
+            let frames = ((tick + 1) * crate::acoustics::SAMPLE_RATE / 120
+                - tick * crate::acoustics::SAMPLE_RATE / 120) as usize;
+            let pcm = audio.render_capture_frames(frames).unwrap();
+            assert!(pcm.iter().all(|sample| sample.is_finite()));
+            if tick < 3 || elapsed >= crate::DEATH_FADE {
+                assert!(pcm.iter().all(|sample| *sample == 0.0));
+            } else { audible_during_fade |= pcm.iter().any(|sample| sample.abs() > 1e-4); }
+        }
+        assert!(audible_during_fade, "the already emitted cookoff must reach the mixer");
+        assert_eq!(arrivals, 1);
+        assert!(pending.is_empty());
+        // Listener tinnitus may own its own sink; it is not a duplicate combat arrival.
+        // Retry constructs a fresh queue and mixer, never inheriting the old listener's tail.
+        let mut retry_queue = Vec::new();
+        assert!(take_arrived_sounds(&mut retry_queue, dt).is_empty());
+        let retry_audio = Audio::new_capture();
+        assert!(retry_audio.render_capture_frames(512).unwrap().iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn terminal_audio_clock_stops_at_fade_without_double_advancing_the_fatal_tick() {
+        assert_eq!(terminal_audio_step(1.0 / 120.0, 0.0), 0.0);
+        for invalid in [f32::NAN, f32::INFINITY, -1.0, 0.0] {
+            assert_eq!(terminal_audio_step(invalid, 0.2), 0.0);
+            assert_eq!(terminal_audio_step(0.01, invalid), 0.0);
+        }
+        assert!((terminal_audio_step(0.02, crate::DEATH_FADE + 0.01) - 0.01).abs() < 1e-5);
+        assert_eq!(terminal_audio_step(0.01, crate::DEATH_FADE + 1.0), 0.0);
+        for hz in [24, 60, 120] {
+            let dt = 1.0 / hz as f32;
+            let elapsed: f32 = (1..=hz * 3).map(|tick|
+                terminal_audio_step(dt, tick as f32 * dt)).sum();
+            assert!((elapsed - crate::DEATH_FADE).abs() < 1e-5);
+        }
     }
 
     #[test]

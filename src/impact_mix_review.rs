@@ -277,6 +277,21 @@ pub fn measure_events() -> Vec<Measured> {
         let render = one_shot(|audio| audio.play_stereo_at_ear(voice.clone(), ear.laf_db, EarBus::Impact));
         out.push(measured(name, description, (ear.lpk_db, ear.laf_db), (0.0, 1.8), render));
     }
+    // Explicit sound-design fixture: compare the confirmed ammunition-detonation timbre at the
+    // SAME ear level as the 122 mm filler burst above. This is not a gameplay damage resolution,
+    // nor an estimate of a full ammunition rack's pressure; it isolates outcome-specific timbre.
+    {
+        let signature = a::ImpactSignature::HeavyObliquePenetration;
+        let seed = 0x1220_1004;
+        let (params, mut context) = a::impact_signature_params(signature, seed);
+        context.catastrophic = true;
+        let ear = a::impact_signature_ear_level(signature, seed);
+        let voice = a::synth_damage_impact_body(params, context).main;
+        let render = one_shot(|audio| audio.play_stereo_at_ear(voice.clone(), ear.laf_db, EarBus::Impact));
+        out.push(measured("hit_ammo_outcome_same_ear_level",
+            "staged ammunition outcome timbre, same calibrated ear level as 122 mm filler; not a resolved rack blast",
+            (ear.lpk_db, ear.laf_db), (0.0, 1.8), render));
+    }
     // The own MG34 burst inside (SL §1 row 10) and a 76 mm round cracking past 10 m from a head-out
     // commander (SL §3).
     {

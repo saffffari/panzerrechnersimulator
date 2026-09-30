@@ -10,6 +10,18 @@ use super::*;
 use crate::sound_levels::SpectrumClass;
 use crate::sound_propagation::{propagate, EarLevel, Emission, Path};
 
+// Pure source-level bridge shared by the live listener and its regression checks. The resolved
+// outcome decides whether explosive energy is inside; carrying filler alone does not establish it.
+fn resolved_armour_strike_level(event: &crate::ballistics::ImpactEvent, penetrated: bool,
+    internal_burst: bool, station_distance_m: f32) -> crate::sound_levels::StrikeLevel
+{
+    let fill_kg = event.shell.filler_g / 1000.0;
+    let he = matches!(event.shell.kind, crate::ballistics::ShellKind::He | crate::ballistics::ShellKind::Heat);
+    crate::sound_levels::own_armour_strike(event.shell.mass_kg, event.striking_v,
+        event.impact_angle_deg, station_distance_m, penetrated,
+        penetrated && internal_burst, fill_kg, he)
+}
+
 impl Game {
     /// Level at the ear of an own-vehicle source given its calibration at the ear position.
     pub(super) fn own_vehicle_ear_level(&self, lpk_db: f32, laf_db: f32, class: SpectrumClass,
@@ -23,11 +35,7 @@ impl Game {
     pub(super) fn own_armour_strike_ear_level(&self, event: &crate::ballistics::ImpactEvent,
         penetrated: bool, internal_burst: bool, station_distance_m: f32) -> EarLevel
     {
-        let fill_kg = event.shell.filler_g / 1000.0;
-        let he = matches!(event.shell.kind, crate::ballistics::ShellKind::He | crate::ballistics::ShellKind::Heat);
-        let strike = crate::sound_levels::own_armour_strike(event.shell.mass_kg, event.striking_v,
-            event.impact_angle_deg, station_distance_m, penetrated,
-            internal_burst || (penetrated && fill_kg > 0.01), fill_kg, he);
+        let strike = resolved_armour_strike_level(event, penetrated, internal_burst, station_distance_m);
         self.own_vehicle_ear_level(strike.lpk_db, strike.laf_db, strike.spectrum, strike.a_duration_ms)
     }
 
@@ -280,6 +288,40 @@ mod tests {
     use super::*;
 
     const C: f32 = 319.0;
+
+    #[test]
+    fn armour_source_requires_a_resolved_internal_burst_including_heat_and_ammunition() {
+        use crate::ballistics as b;
+        use crate::acoustics as a;
+        let facing = b::Facing::HullSide;
+        let plate = b::ArmorScheme::TigerI.plate(facing);
+        for shell in [&b::PANZERFAUST_60, &b::BR_471, &b::PZGR_40] {
+            let event = b::resolve(shell, 25.0, plate, 0.0, 0xA660_2026);
+            assert_eq!(event.terminal, b::Terminal::Penetration);
+            let params = a::params_from_event(&event, facing, 0.0, 0.9, 0xA660_2026);
+            let dry = resolved_armour_strike_level(&event, true, false, 0.9);
+            let internal = resolved_armour_strike_level(&event, true, true, 0.9);
+            assert_eq!(dry.spectrum, SpectrumClass::ArmourRing,
+                "{} filler alone selected the confined internal source", shell.name);
+            assert_eq!(internal.spectrum, SpectrumClass::LowFrequencyBlast,
+                "a resolved ammunition/filler burst was lost for {}", shell.name);
+            assert_ne!(internal, dry);
+            // The PzGr 40 has no filler: its internal=true case represents the damage solver's
+            // separate live-ammunition outcome, not an invented explosive projectile.
+            if shell.kind == b::ShellKind::Apcr { assert_eq!(shell.filler_g, 0.0); }
+            for (confirmed, source) in [(false, dry), (true, internal)] {
+                let ear = crate::sound_propagation::at_ear(source.lpk_db, source.laf_db,
+                    source.spectrum, source.a_duration_ms, true);
+                let offline = a::impact_ear_level(params,
+                    a::DamageSoundContext { internal_detonation: confirmed, ..Default::default() },
+                    shell.filler_g / 1000.0);
+                assert_eq!((ear.lpk_db, ear.laf_db), (offline.lpk_db, offline.laf_db),
+                    "live listener and offline strike disagree about resolved source state");
+            }
+            assert_eq!(resolved_armour_strike_level(&event, false, true, 0.9).spectrum,
+                SpectrumClass::ArmourRing, "no penetration means no internal source");
+        }
+    }
 
     #[test]
     fn a_round_passing_abeam_cracks_after_its_closest_approach() {

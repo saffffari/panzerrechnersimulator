@@ -1,0 +1,57 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "toolkit_free_hammer_20260929",
+  "title": "Healthy Tiger: actual toolbox pickup, quick hammer swings and held swings",
+  "caption": "TOOLBOX + HAMMER / ORDINARY LMB / NO DAMAGED TARGET",
+  "act_id": 0,
+  "night": false,
+  "station": "loader",
+  "seconds": 5.5,
+  "setup": {
+    "enemy_policy": "banish"
+  },
+  "mechanics": [
+    "physical_toolbox_pickup",
+    "pickup_press_consumed",
+    "immediate_free_hammer_swing",
+    "held_hammer_cadence",
+    "no_repair_credit_without_valid_target"
+  ],
+  "timeline": [
+    {"at_s": 0.1, "action": "look_equipment", "value": "toolbox"},
+    {"from_s": 0.3, "until_s": 0.38, "input": {"mg_coax": true}},
+    {"at_s": 0.65, "action": "look_tray"},
+    {"from_s": 1.9, "until_s": 1.97, "input": {"mg_coax": true}},
+    {"from_s": 2.5, "until_s": 2.57, "input": {"mg_coax": true}},
+    {"from_s": 3.9, "until_s": 5.1, "input": {"mg_coax": true}}
+  ],
+  "expect": [
+    {"metric": "current_station", "equals": "loader"},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "game_over", "equals": false},
+    {"metric": "traverse_functional", "equals": true},
+    {"metric": "main_gun_shots", "max_delta": 0},
+    {"metric": "enemy_fire_discharges", "max_delta": 0},
+    {"metric": "toolkit_equipped", "at_s": 1, "equals": true},
+    {"metric": "toolkit_equipped", "equals": true},
+    {"metric": "hammer_swing_remaining_s", "at_s": 1, "max_value": 0},
+    {"metric": "hammer_swing_remaining_s", "at_s": 2, "min_value": 0.1},
+    {"metric": "hammer_swing_remaining_s", "at_s": 3, "max_value": 0},
+    {"metric": "hammer_swing_remaining_s", "at_s": 4, "min_value": 0.1},
+    {"metric": "hammer_swing_remaining_s", "max_value": 0},
+    {"metric": "hammer_target_job", "equals": null},
+    {"metric": "repair_progress_s", "at_s": 2, "max_value": 0},
+    {"metric": "repair_progress_s", "at_s": 4, "max_value": 0},
+    {"metric": "repair_progress_s", "max_value": 0},
+    {"metric": "hammer_track_pin_hits", "max_delta": 0}
+  ],
+  "input_audit": "Derived from toolkit_pickup_putdown.v1.json's ordinary loader source-target pickup. This uses the lighter act-0 training world and the same source Tiger toolbox/hammer geometry; winter stowage has no Panzerfaust rack and no rack-count expectation is copied. Only enemy removal and starting station are staged. Named look actions rotate the existing head, without moving the body or equipping tools. The 0.3 s LMB picks up the actual box and is released; separate 70 ms LMB clicks at 1.9 and 2.5 s then a 1.2 s hold must swing the carried hammer. The Tiger is healthy: no module damage, repair target or repair success is injected.",
+  "historical_scope": "Disclosed input/animation regression in the training arena, not a historical encounter or proof of repairing a broken traverse mechanism.",
+  "visual_acceptance": [
+    "The source toolbox is picked up with ordinary LMB; the pickup press does not swing. The full-size hammer remains visible in the right hand after looking toward the tray.",
+    "Each released quick click visibly starts a swing; holding LMB repeats swings. Both animations occur without a valid damaged target, with no fabricated repair impact sound or repair credit.",
+    "Inspect actual first-person hand/tool clearance and whole swing path at normal speed. Positive phase telemetry alone is not visual approval."
+  ],
+  "status": "source_fixture_ready_runtime_review_pending"
+}

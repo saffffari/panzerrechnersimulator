@@ -9,6 +9,70 @@ pub(super) enum RepairJob {
     VisionBlock(usize),
 }
 
+/// Recorder gaze may choose a visible point on an item, but cannot move the body, expand reach
+/// or bypass intervening steel. A mesh's AABB centre can be hidden behind the basket structure.
+fn visible_equipment_point(mesh: &CpuMesh, model: Mat4, eye: Vec3, reach: f32,
+    mut clear_path: impl FnMut(Vec3) -> bool) -> Option<Vec3>
+{
+    let centre = model.transform_point3(mesh.center());
+    let centre_direction = (centre - eye).normalize_or_zero();
+    let mut best: Option<(f32, Vec3)> = None;
+    let mut consider = |candidate: Vec3| {
+        let direction = (candidate - eye).normalize_or_zero();
+        if let Some(distance) = ray_loader_ammunition_mesh(eye, direction, model, reach, mesh) {
+            let point = eye + direction * distance;
+            let score = direction.dot(centre_direction);
+            if best.as_ref().is_none_or(|(old, _)| score > *old) && clear_path(point) {
+                best = Some((score, point));
+            }
+        }
+    };
+    consider(centre);
+    for triangle in mesh.indices.chunks_exact(3) {
+        let a = model.transform_point3(Vec3::from_array(mesh.vertices[triangle[0] as usize].pos));
+        let b = model.transform_point3(Vec3::from_array(mesh.vertices[triangle[1] as usize].pos));
+        let c = model.transform_point3(Vec3::from_array(mesh.vertices[triangle[2] as usize].pos));
+        // Interior barycentric samples avoid using barely grazed silhouette vertices as targets.
+        for weights in [[1.0/3.0; 3], [0.6,0.2,0.2], [0.2,0.6,0.2], [0.2,0.2,0.6]] {
+            consider(a * weights[0] + b * weights[1] + c * weights[2]);
+        }
+    }
+    best.map(|(_, point)| point)
+}
+
+const REPAIR_HAMMER_CYCLE_S: f32 = 0.48;
+const REPAIR_HAMMER_REST_S: f32 = 0.10;
+const REPAIR_HAMMER_CONTACT_S: f32 = 0.24;
+
+/// Hand motion belongs to the trigger, while work and contact sound require an eligible target.
+/// The outside track ritual owns its own independent clock and discrete pin-hit accounting.
+#[derive(Debug)]
+struct CarriedHammerStep {
+    remaining_s: f32,
+    contact: bool,
+    work_s: f32,
+}
+
+fn carried_hammer_step(remaining_s: f32, trigger: bool, pickup_press: bool,
+    equipped: bool, track_owns_primary: bool, eligible_target: bool, dt: f32) -> CarriedHammerStep
+{
+    if !equipped || track_owns_primary {
+        return CarriedHammerStep { remaining_s: 0.0, contact: false, work_s: 0.0 };
+    }
+    let active_trigger = trigger && !pickup_press;
+    let before = if active_trigger && remaining_s <= 0.0 {
+        REPAIR_HAMMER_CYCLE_S
+    } else { remaining_s.max(0.0) };
+    let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+    let remaining_s = (before - dt).max(0.0);
+    CarriedHammerStep {
+        remaining_s,
+        contact: !pickup_press && eligible_target
+            && before > REPAIR_HAMMER_CONTACT_S && remaining_s <= REPAIR_HAMMER_CONTACT_S,
+        work_s: if active_trigger && eligible_target { dt } else { 0.0 },
+    }
+}
+
 /// A put-down kit follows the basket when inside; an outside kit remains at its world position.
 #[derive(Clone, Copy)]
 pub(super) struct ToolRest {
@@ -99,9 +163,19 @@ impl Game {
             return false;
         }
         let point = match target {
-            "toolbox" if !self.carrying_track_kit => self
-                .toolbox_model()
-                .transform_point3(toolbox_mesh().center()),
+            "extinguisher" if !self.ext_equipped => {
+                let Ok(mesh) = extinguisher_source_mesh() else { return false; };
+                let eye = self.station_eye(Station::Loader);
+                let Some(point) = visible_equipment_point(mesh, self.mounted_extinguisher_model(), eye,
+                    1.85, |point| self.equipment_path_clear(eye, point, 0.04)) else { return false; };
+                point
+            },
+            "toolbox" if !self.carrying_track_kit => {
+                let eye = self.station_eye(Station::Loader);
+                let Some(point) = visible_equipment_point(toolbox_mesh(), self.toolbox_model(), eye,
+                    1.85, |point| self.equipment_path_clear(eye, point, 0.04)) else { return false; };
+                point
+            },
             "panzerfaust_rack" => {
                 let mut points = (0..PANZERFAUST_RACK)
                     .filter(|&i| !self.panzerfaust_rack_taken[i])
@@ -121,6 +195,13 @@ impl Game {
         };
         self.loader_face_world(point);
         true
+    }
+
+    /// One mounted source pose drives both the rendered bottle and exact pickup/gaze rays.
+    pub(super) fn mounted_extinguisher_model(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(Vec3::splat(0.45),
+            Quat::from_rotation_y(self.player.heading + self.player.turret_yaw),
+            self.player.turret_model().transform_point3(EXT_MOUNT_BASE))
     }
 
     fn toolbox_model(&self) -> Mat4 {
@@ -147,7 +228,7 @@ impl Game {
     pub(super) fn update_equipment_hover(&mut self, r: &Renderer) {
         self.equipment_eye = r.camera.pos;
         self.equipment_look = r.camera.forward();
-        if matches!(self.hover, Some(Hotspot::RepairKit | Hotspot::PanzerfaustRack(_))) {
+        if matches!(self.hover, Some(Hotspot::RepairKit | Hotspot::PanzerfaustRack(_) | Hotspot::Extinguisher)) {
             self.hover = None;
         }
         if self.climb.active || self.switch_t > 0.0 { return; }
@@ -156,10 +237,9 @@ impl Game {
         if self.carrying_track_kit {
             self.hover = None;
             if self.mode == Mode::Tank {
-                self.hover_label = Some(match self.physical_repair_target(eye, look) {
-                    Some(job) => self.job_prompt(job),
-                    None => "TOOLBOX + HAMMER - CARRY TO DAMAGED PART; Q/E: PUT DOWN",
-                });
+                // Play renders only the existing wordless dot for a hover label. Do not imply
+                // a repair target in empty air merely because the toolbox is being carried.
+                self.hover_label = self.physical_repair_target(eye, look).map(|job| self.job_prompt(job));
             }
             return;
         }
@@ -170,9 +250,21 @@ impl Game {
         }
         if !self.equipment_hands_free() { return; }
         let mut nearest = f32::INFINITY;
+        if self.mode == Mode::Tank && self.station == Station::Loader {
+            if let Ok(mesh) = extinguisher_source_mesh() {
+                if let Some(distance) = ray_loader_ammunition_mesh(eye, look,
+                    self.mounted_extinguisher_model(), 1.85, mesh) {
+                    if self.equipment_path_clear(eye, eye + look * distance, 0.04) {
+                        nearest = distance;
+                        self.hover = Some(Hotspot::Extinguisher);
+                        self.hover_label = Some("PICK UP EXTINGUISHER [LMB]");
+                    }
+                }
+            }
+        }
         let model = self.toolbox_model();
         if let Some(t) = ray_loader_ammunition_mesh(eye, look, model, 1.85, toolbox_mesh()) {
-            if self.equipment_path_clear(eye, eye + look * t, 0.04) {
+            if t < nearest && self.equipment_path_clear(eye, eye + look * t, 0.04) {
                 nearest = t;
                 self.hover = Some(Hotspot::RepairKit);
                 self.hover_label = Some("TAKE TOOLBOX + HAMMER [LMB]");
@@ -215,6 +307,7 @@ impl Game {
         if !self.equipment_hands_free() { return false; }
         self.carrying_track_kit = true;
         self.toolbox_rest = None;
+        self.repair_hammer_t = 0.0;
         self.primary_pickup_press = true;
         true
     }
@@ -250,6 +343,7 @@ impl Game {
             } else { world } })
         };
         self.carrying_track_kit = false;
+        self.repair_hammer_t = 0.0;
         self.activity = None;
         self.repair_t = 0.0;
         self.primary_pickup_press = true;
@@ -339,31 +433,57 @@ impl Game {
         })
     }
 
+    /// Match the existing outside track interaction before starting an ordinary hammer swing.
+    /// Keeping its input and timer separate prevents a free swing from fitting/driving a track pin.
+    fn track_owns_carried_primary(&self, eye: Vec3, look: Vec3) -> bool {
+        if self.mode != Mode::Foot || self.foot.reload_t > 0.0 || self.foot.panzerfaust_swap_t > 0.0 {
+            return false;
+        }
+        let broken_side = if !self.module_ok(ModuleKind::LeftTrack) { Some(1.55_f32) }
+            else if !self.module_ok(ModuleKind::RightTrack) { Some(-1.55_f32) } else { None };
+        broken_side.is_some_and(|side| {
+            let anchor = self.player.hull_model().transform_point3(
+                Vec3::new(side + side.signum() * 0.38, 0.9, -0.4));
+            repair_in_reach(eye, look, anchor, 0.36) && self.equipment_path_clear(eye, anchor, 0.32)
+        })
+    }
+
+    /// Armor-hole patching owns its existing six-second work/consumable/completion-sound path.
+    /// It still uses the carried hammer's trigger motion, without generic module repair credit.
+    pub(super) fn update_carried_patch_hammer(&mut self, trigger: bool, dt: f32) {
+        self.repair_hammer_t = carried_hammer_step(self.repair_hammer_t, trigger,
+            self.primary_pickup_press, self.carrying_track_kit, false, false, dt).remaining_s;
+    }
+
     pub(super) fn update_carried_repair(&mut self, trigger: bool, dt: f32, eye: Vec3, look: Vec3) {
-        if trigger && !self.primary_pickup_press {
-            if let Some(job) = self.physical_repair_target(eye, look) {
-                if self.activity != Some(Activity::Repair(job)) {
-                    self.activity = Some(Activity::Repair(job));
-                    self.repair_t = 0.0;
-                }
-                let previous = self.repair_t;
-                self.repair_t += dt;
-                if (previous / 0.48) as u32 != (self.repair_t / 0.48) as u32 {
-                    self.hammer_t = 0.38;
-                    if let Some(audio) = &self.audio {
-                        audio.play_at_ear(crate::audio::Sfx::HammerStrike,
-                            crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.42));
-                    }
-                }
-                self.hover_label = Some(self.job_prompt(job));
-                if self.repair_t >= self.job_seconds(job) {
-                    self.finish_repair(job);
-                    self.activity = None;
-                    self.repair_t = 0.0;
-                    self.recompute_hp();
-                }
-                return;
+        let track_owns_primary = self.carrying_track_kit && self.track_owns_carried_primary(eye, look);
+        let job = if track_owns_primary { None } else { self.physical_repair_target(eye, look) };
+        let step = carried_hammer_step(self.repair_hammer_t, trigger, self.primary_pickup_press,
+            self.carrying_track_kit, track_owns_primary, job.is_some(), dt);
+        self.repair_hammer_t = step.remaining_s;
+        // Contact is evaluated at the existing repair target when the head reaches its strike
+        // phase. Releasing the button does not cancel a hand already in motion, but air, blocked
+        // geometry and non-repairable parts cannot produce a repair-contact clang or work credit.
+        if step.contact {
+            if let Some(audio) = &self.audio {
+                audio.play_at_ear(crate::audio::Sfx::HammerStrike,
+                    crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.42));
             }
+        }
+        if let Some(job) = job.filter(|_| step.work_s > 0.0) {
+            if self.activity != Some(Activity::Repair(job)) {
+                self.activity = Some(Activity::Repair(job));
+                self.repair_t = 0.0;
+            }
+            self.repair_t += step.work_s;
+            self.hover_label = Some(self.job_prompt(job));
+            if self.repair_t >= self.job_seconds(job) {
+                self.finish_repair(job);
+                self.activity = None;
+                self.repair_t = 0.0;
+                self.recompute_hp();
+            }
+            return;
         }
         if matches!(self.activity, Some(Activity::Repair(_))) {
             self.activity = None;
@@ -393,6 +513,21 @@ impl Game {
         }
     }
 
+    /// Read-only recorder evidence for input/animation/work separation; never starts a repair.
+    pub fn carried_hammer_receipt(&self) -> serde_json::Value {
+        let job = match self.activity { Some(Activity::Repair(job)) => Some(format!("{job:?}")), _ => None };
+        serde_json::json!({
+            "equipped": self.carrying_track_kit,
+            "swing_remaining_s": self.repair_hammer_t,
+            "repair_progress_s": self.repair_t,
+            "repair_job": job,
+            "target_job": self.physical_repair_target(self.equipment_eye, self.equipment_look)
+                .map(|job| format!("{job:?}")),
+            "track_swing_remaining_s": self.hammer_t,
+            "track_pin_hits": self.track_hits,
+        })
+    }
+
     /// Shared final draw: walking inside, climbing and walking outside use the same source props.
     pub(super) fn drive_carried_tools(&mut self, dt: f32, r: &mut Renderer) {
         let eye = r.camera.pos;
@@ -408,8 +543,12 @@ impl Game {
             let left_hand = eye + f * 0.48 - right * 0.31 - up * 0.30;
             r.set_model(self.slots.toolbox, Mat4::from_rotation_translation(rotation,
                 left_hand - rotation * grip));
-            let swing = if self.hammer_t > 0.0 {
-                let t = self.hammer_t / 0.38;
+            let swing_t = if self.mode == Mode::Foot && self.track_repair_phase == TrackRepairPhase::HammerPin
+                && (self.hammer_t > 0.0 || self.track_owns_carried_primary(eye, f)) {
+                self.hammer_t
+            } else { (self.repair_hammer_t - REPAIR_HAMMER_REST_S).max(0.0) };
+            let swing = if swing_t > 0.0 {
+                let t = swing_t / 0.38;
                 if t > 0.37 { (1.0 - t) * 1.9 } else { 1.2 - (0.37 - t) * 5.5 }
             } else { 0.24 };
             // Source head is at -Z, grip near +Z. Stand the head up above the right hand;
@@ -422,7 +561,7 @@ impl Game {
             self.hide_p08(r);
             r.set_visible(self.slots.panzerfaust, false);
             r.set_visible(self.slots.panzerfaust_sight, false);
-            // Track strikes advance in the existing four-hit ritual; other repairs use this clock.
+            // Preserve the separate track clock; carried-tool motion advances only in its input step.
             if self.mode != Mode::Foot || self.track_repair_phase != TrackRepairPhase::HammerPin {
                 self.hammer_t = (self.hammer_t - dt).max(0.0);
             }
@@ -777,6 +916,60 @@ mod tests {
     }
 
     #[test]
+    fn carried_hammer_swings_on_fresh_use_but_pickup_and_track_input_cannot_start_it() {
+        let dt = 1.0 / 120.0;
+        let pickup = carried_hammer_step(0.0, true, true, true, false, true, dt);
+        assert_eq!(pickup.remaining_s, 0.0);
+        assert!(!pickup.contact && pickup.work_s == 0.0);
+        let released = carried_hammer_step(pickup.remaining_s, false, false, true, false, false, dt);
+        let clicked = carried_hammer_step(released.remaining_s, true, false, true, false, false, dt);
+        assert!(clicked.remaining_s > REPAIR_HAMMER_REST_S,
+            "a fresh empty-air click must start the visible swing immediately");
+        assert!(!clicked.contact && clicked.work_s == 0.0);
+        for (equipped, track_owns) in [(false, false), (true, true)] {
+            let blocked = carried_hammer_step(0.0, true, false, equipped, track_owns, true, dt);
+            assert_eq!(blocked.remaining_s, 0.0);
+            assert!(!blocked.contact && blocked.work_s == 0.0,
+                "unheld tools and the separate track ritual cannot earn generic repair credit");
+        }
+    }
+
+    #[test]
+    fn carried_hammer_air_and_occluded_parts_get_motion_without_contact_or_work() {
+        let mut timer = 0.0;
+        let mut starts = 0;
+        for _ in 0..360 {
+            let step = carried_hammer_step(timer, true, false, true, false, false, 1.0 / 120.0);
+            starts += usize::from(step.remaining_s > timer);
+            assert!(!step.contact && step.work_s == 0.0);
+            timer = step.remaining_s;
+        }
+        assert!((6..=7).contains(&starts), "held trigger repeats at the existing ~0.48 s cadence");
+    }
+
+    #[test]
+    fn carried_hammer_contact_checks_current_target_and_never_banks_air_work() {
+        // The look/LOS eligibility can change during a swing. Missing the part at contact is
+        // silent; finding it after contact must not retroactively play a hit or earn earlier work.
+        let missed = carried_hammer_step(0.25, true, false, true, false, false, 0.02);
+        assert!(!missed.contact && missed.work_s == 0.0);
+        let acquired_late = carried_hammer_step(missed.remaining_s, true, false, true, false, true, 0.02);
+        assert!(!acquired_late.contact);
+        assert_eq!(acquired_late.work_s, 0.02);
+        let actual_contact = carried_hammer_step(0.25, true, false, true, false, true, 0.02);
+        assert!(actual_contact.contact);
+        assert_eq!(actual_contact.work_s, 0.02);
+        // A tap still completes its hand motion, but only holding on the eligible part advances
+        // the existing repair clock. Releasing cannot leave automatic repair running.
+        let released = carried_hammer_step(0.25, false, false, true, false, true, 0.02);
+        assert!(released.contact && released.remaining_s < 0.25);
+        assert_eq!(released.work_s, 0.0);
+        let track_takeover = carried_hammer_step(0.25, true, false, true, true, true, 0.02);
+        assert_eq!(track_takeover.remaining_s, 0.0);
+        assert!(!track_takeover.contact && track_takeover.work_s == 0.0);
+    }
+
+    #[test]
     fn repair_requires_the_component_in_front_and_within_hand_reach() {
         let eye = Vec3::new(0.0, 1.5, 0.0);
         assert!(repair_in_reach(eye, Vec3::Z, eye + Vec3::Z * 1.0, 0.22));
@@ -811,6 +1004,54 @@ mod tests {
         assert_eq!(panzerfaust_restowed_slots(1), [false, true, true]);
         assert_eq!(panzerfaust_restowed_slots(0), [true, true, true]);
         assert_eq!(panzerfaust_restowed_slots(u8::MAX), [false, false, false]);
+    }
+
+    #[test]
+    fn toolbox_gaze_selects_an_exposed_source_surface_without_bypassing_steel() {
+        let (turret, loader, optics, _, escape, _) = tiger_periscopes::load_turret().unwrap();
+        let disc = crate::turret_disc::turret_disc_mesh()
+            .transformed(crate::turret_disc::turret_disc_model(Mat4::IDENTITY));
+        let mut surfaces = vec![(1, &turret), (1, &loader), (1, &escape), (1, &disc)];
+        surfaces.extend(optics.iter().map(|part| (1, &part.mesh)));
+        let source = surface_fire::CabinFire::new(&surfaces);
+        let models = [Mat4::IDENTITY; surface_fire::FRAMES];
+        let eye = Vec3::new(-0.85, crate::interior_rig::FLOOR_STAND_Y + 1.29, 0.15);
+        let model = Mat4::from_translation(TOOLBOX_MESH);
+        let mesh = toolbox_mesh();
+        let clear = |point: Vec3| source.sweep(eye, point, &models)
+            .is_none_or(|hit| hit.point.distance(point) <= 0.04);
+        let centre = model.transform_point3(mesh.center());
+        let centre_ray = (centre - eye).normalize();
+        let centre_t = ray_loader_ammunition_mesh(eye, centre_ray, model, 1.85, mesh).unwrap();
+        eprintln!("toolbox centre={centre:?} surface_dist={centre_t:.4} clear={} blocker={:?}",
+            clear(eye + centre_ray * centre_t), source.sweep(eye, centre, &models));
+        let point = visible_equipment_point(mesh, model, eye, 1.85, clear)
+            .expect("a real exposed toolbox surface is reachable from the default loader eye");
+        eprintln!("visible toolbox source surface={point:?} distance={:.4}", eye.distance(point));
+        let hit = ray_loader_ammunition_mesh(eye, (point - eye).normalize(), model, 1.85, mesh)
+            .expect("gaze must hit the actual toolbox mesh");
+        assert!((hit - eye.distance(point)).abs() < 0.002);
+        assert!(clear(point));
+        let extinguisher = extinguisher_source_mesh().unwrap();
+        let bottle_model = Mat4::from_scale_rotation_translation(Vec3::splat(0.45),
+            Quat::IDENTITY, EXT_MOUNT_BASE);
+        let box_direction = (point - eye).normalize();
+        let bottle_on_box_ray = ray_loader_ammunition_mesh(eye, box_direction, bottle_model, 1.85, extinguisher);
+        assert!(bottle_on_box_ray.is_none_or(|distance| distance > hit),
+            "the real nearest surface on the toolbox gaze must own pickup");
+        let bottle_point = visible_equipment_point(extinguisher, bottle_model, eye, 1.85, clear)
+            .expect("a real visible extinguisher surface remains physically pickable");
+        let bottle_direction = (bottle_point - eye).normalize();
+        let bottle_hit = ray_loader_ammunition_mesh(eye, bottle_direction, bottle_model, 1.85, extinguisher).unwrap();
+        assert!(clear(bottle_point));
+        assert!(ray_loader_ammunition_mesh(eye, bottle_direction, model, 1.85, mesh)
+            .is_none_or(|distance| distance > bottle_hit),
+            "a farther toolbox cannot override the closer bottle surface");
+        eprintln!("visible extinguisher source surface={bottle_point:?} distance={bottle_hit:.4}");
+        assert!(visible_equipment_point(mesh, model, eye, 0.1, |_| true).is_none(),
+            "gaze cannot make an out-of-reach item reachable");
+        assert!(visible_equipment_point(mesh, model, eye, 1.85, |_| false).is_none(),
+            "gaze cannot look through an occluder to guarantee a requested pickup");
     }
 
     #[test]

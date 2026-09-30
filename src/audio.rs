@@ -52,6 +52,8 @@ mod master;
 mod calibrated;
 #[path = "audio_vehicles.rs"]
 mod vehicles;
+#[path = "audio_engine.rs"]
+mod engine;
 #[path = "audio_tinnitus.rs"]
 mod tinnitus;
 #[path = "audio_offline.rs"]
@@ -1376,6 +1378,7 @@ struct WeatherState {
 #[derive(Default)]
 struct EngineState {
     sink: Option<Sink>,
+    procedural: Arc<engine::Control>,
     /// Smoothed physical level at the ear, dB(A).
     level_dba: Option<f32>,
     rpm: f32,
@@ -1539,6 +1542,7 @@ pub struct Audio {
     world_mono: Vec<Arc<[f32]>>,
     ambience: Vec<Option<Clip>>,
     engine_clip: Option<Clip>,
+    engine_recorded: bool,
     mg_clips: [Option<Clip>; 2], // [interior, exterior]
     traverse_clip: Option<Clip>,
     master_volume: f32,
@@ -1708,6 +1712,9 @@ impl Audio {
             )
         };
         loaded_sources.legacy_engine = recorded_engine;
+        // Build the procedural group-level table during bank loading, before a live sink can
+        // start. Runtime updates only interpolate this shared measurement.
+        if !recorded_engine { let _ = engine::measured_laf(1.0); }
         // Short fold on the MG loops: the fire is dense, a long crossfade would smear the hammer.
         let mut mg_clips = [
             (if allow_recordings {
@@ -1763,6 +1770,7 @@ impl Audio {
             world_mono,
             ambience,
             engine_clip,
+            engine_recorded: recorded_engine,
             mg_clips,
             traverse_clip,
             master_volume: 1.0,
@@ -1837,6 +1845,11 @@ impl Audio {
                     "conductive_db": self.ear.targets().conductive_db},
             },
             "master": self.master.snapshot(),
+            "engine_voice": if self.engine_recorded {
+                "optional recorded loop; whole-waveform RPM resampling"
+            } else {
+                "continuous procedural Maybach; RPM combustion clock, fixed-Hz structure, calibrated group level"
+            },
             "weather_voice": if self.weather_state.borrow().sink.is_some() {
                 "continuous procedural stereo wind, noise-driven seal/hull resonances, sample-rate parameter ramps"
             } else { "not started" },
@@ -2230,7 +2243,12 @@ impl Audio {
         let mut st = self.engine_state.borrow_mut();
         if st.sink.is_none() {
             if let Ok(sink) = self.create_sink() {
-                sink.append(clip.source().repeat_infinite());
+                sink.set_volume(0.0);
+                if self.engine_recorded {
+                    sink.append(clip.source().repeat_infinite());
+                } else {
+                    sink.append(engine::EngineSource::new(Arc::clone(&st.procedural)));
+                }
                 st.sink = Some(sink);
             }
         }
@@ -2270,16 +2288,24 @@ impl Audio {
         let (_, target_speed) = engine_mix_targets(smoothed);
         let fade_a = ((if telemetry.running { 6.0 } else { 2.2 }) * dt).clamp(0.0, 1.0);
         st.off_fade += ((if telemetry.running { 1.0 } else { 0.0 }) - st.off_fade) * fade_a;
+        if !telemetry.running && st.off_fade < 1e-5 { st.off_fade = 0.0; }
         // The level follows load at the same rate as the old gain did, in dB.
         let target_level = if ear_laf_dba.is_finite() { ear_laf_dba } else { 0.0 };
         let level = st.level_dba.map_or(target_level,
             |level| level + (target_level - level) * load_a);
         st.level_dba = Some(level);
-        let gain = self.engine_gain(clip, level, target_speed);
+        let gain = if self.engine_recorded {
+            self.engine_gain(clip, level, target_speed)
+        } else {
+            crate::reproduction::voice_gain(level, engine::measured_laf(target_speed))
+        };
+        st.procedural.set_speed(target_speed);
         if let Some(sink) = st.sink.as_ref() {
             let vol = gain * self.master_volume * st.off_fade;
             sink.set_volume(vol);
-            sink.set_speed(target_speed);
+            // Resample only an optional recorded engine. Procedural machinery keeps fixed-Hz
+            // structure filters; its combustion clock alone follows the authored RPM mapping.
+            sink.set_speed(if self.engine_recorded { target_speed } else { 1.0 });
         }
     }
 
