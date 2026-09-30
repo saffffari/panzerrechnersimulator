@@ -11,7 +11,9 @@
 //! Values not given by the sources are tuning and are marked so.
 use super::*;
 
-pub(super) const AT_GUNS: usize = 2;
+/// Gun slots: the courtyard and street encounters field two (the battalion's platoon), the CANYON
+/// course one per choke (src/canyon.rs). Crews fill the soldiers after the tank escorts.
+pub(super) const AT_GUNS: usize = 3;
 /// Men at the gun (the full detachment was six, plus drivers and horses kept away from it).
 pub(super) const CREW: usize = 4;
 /// Garrison soldiers after the tank escort pairs serve the guns.
@@ -284,9 +286,10 @@ pub(super) fn upper_mesh() -> CpuMesh {
 }
 
 impl Game {
-    /// Site the battalion's two guns and put their crews at them.
-    pub(super) fn field_at_guns(&mut self, sites: [(Vec2, f32); AT_GUNS]) {
-        for (g, (site, heading)) in sites.into_iter().enumerate() {
+    /// Site the guns (at most `AT_GUNS`) and put their crews at them.
+    pub(super) fn field_at_guns(&mut self, sites: &[(Vec2, f32)]) {
+        debug_assert!(sites.len() <= AT_GUNS);
+        for (g, &(site, heading)) in sites.iter().enumerate().take(AT_GUNS) {
             let pos = Vec3::new(site.x, self.hf.height_at(site.x, site.y), site.y);
             self.at_guns[g] = Some(AtGun::new(pos, heading));
             let carriage = self.at_guns[g].unwrap().carriage();
@@ -302,7 +305,7 @@ impl Game {
                 soldier.activate_escort([p; 4], &self.hf);
             }
         }
-        println!("[at-guns] {} x 45 mm 53-K sited, crews of {CREW}", AT_GUNS);
+        println!("[at-guns] {} x 45 mm 53-K sited, crews of {CREW}", sites.len().min(AT_GUNS));
     }
 
     fn at_gun_artillerymen(&self, g: usize) -> usize {
@@ -321,7 +324,8 @@ impl Game {
     }
 
     fn is_gun_crew(&self, index: usize) -> bool {
-        (FIRST_CREW_SOLDIER..FIRST_CREW_SOLDIER + AT_GUNS * CREW).contains(&index)
+        (0..AT_GUNS).any(|g| self.at_guns[g].is_some()
+            && (FIRST_CREW_SOLDIER + g * CREW..FIRST_CREW_SOLDIER + (g + 1) * CREW).contains(&index))
             || self.at_guns.iter().flatten().any(|gun| gun.riflemen.contains(&Some(index)))
     }
 

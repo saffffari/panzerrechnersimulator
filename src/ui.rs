@@ -89,6 +89,8 @@ pub enum PlayMode {
     TestAct2,
     /// Direct load of the act-3 map (Halbe) — a map-test entry, no act flow.
     TestAct3,
+    /// The CANYON playtest course (src/canyon.rs): one crewman punches through a defended ravine.
+    Canyon,
 }
 
 // Menu item indices (order they appear on screen). Keep the campaign alias for existing callers.
@@ -98,11 +100,12 @@ pub const IDX_COOP: usize = 1;
 pub const IDX_PLAYTEST: usize = 2;
 pub const IDX_EDITOR: usize = 3;
 pub const IDX_LOAD_CHECKPOINT: usize = 4;
-pub const MENU_LABELS: [&str; 5] = [
-    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint",
+pub const IDX_CANYON: usize = 5;
+pub const MENU_LABELS: [&str; 6] = [
+    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon",
 ];
 pub const MENU_COUNT: usize = MENU_LABELS.len();
-const MENU_ROW_TOP: f32 = 0.575;
+const MENU_ROW_TOP: f32 = 0.515;
 const MENU_ROW_STEP: f32 = 0.064;
 const MENU_ROW_LEFT: f32 = 0.20;
 const MENU_ROW_RIGHT: f32 = 0.80;
@@ -114,11 +117,12 @@ pub enum MenuAction {
     Playtest,
     Editor,
     LoadCheckpoint,
+    Canyon,
 }
 
 const MENU_ACTIONS: [MenuAction; MENU_COUNT] = [
     MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-    MenuAction::Editor, MenuAction::LoadCheckpoint,
+    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon,
 ];
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
@@ -364,6 +368,8 @@ pub struct MenuModel {
     /// instead of discarding campaign state or rebuilding the world.
     pub resume_available: bool,
     pub checkpoint_available: bool,
+    /// The Canyon entry's line: the last and the best run's time (seconds), none before any run.
+    pub canyon_times: Option<(f32, f32)>,
 }
 
 impl Default for MenuModel {
@@ -376,6 +382,7 @@ impl Default for MenuModel {
             graphics: GraphicsPreset::High,
             resume_available: false,
             checkpoint_available: false,
+            canyon_times: None,
         }
     }
 }
@@ -405,7 +412,7 @@ mod title_menu_tests {
         assert_eq!(menu.action(), Some(MenuAction::Singleplayer));
         let expected = [
             MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-            MenuAction::Editor, MenuAction::LoadCheckpoint,
+            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon,
         ];
         for (index, action) in expected.into_iter().enumerate() {
             let y = MENU_ROW_TOP + (index as f32 + 0.5) * MENU_ROW_STEP;
@@ -1476,6 +1483,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         r.draw_text_bold(&text, 0.50, top + 0.012, 0.036,
             if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM }, Align::Center);
     }
+    let canyon_line: String;
     let detail = match m.action() {
         Some(MenuAction::Singleplayer) => "ONE PLAYER / ACT ONE CAMPAIGN",
         Some(MenuAction::Coop) => "TWO PLAYERS / TOP & BOTTOM / LOCAL CREW CO-OP",
@@ -1483,6 +1491,14 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         Some(MenuAction::Editor) => "BUILD WORLDS & TANK INTERIORS",
         Some(MenuAction::LoadCheckpoint) if m.checkpoint_available => "CONTINUE YOUR SAVED CAMPAIGN",
         Some(MenuAction::LoadCheckpoint) => "NO CAMPAIGN CHECKPOINT SAVED",
+        Some(MenuAction::Canyon) => match m.canyon_times {
+            Some((last, best)) => {
+                canyon_line = format!("LAST RUN {}    BEST {}", crate::canyon::format_time(last),
+                    crate::canyon::format_time(best));
+                canyon_line.as_str()
+            }
+            None => "ONE CREWMAN / PUNCH THROUGH THE RAVINE TO ITS HEAD",
+        },
         None => "",
     };
     r.draw_text(detail, 0.50, 0.905, 0.020, COL_HINT, Align::Center);

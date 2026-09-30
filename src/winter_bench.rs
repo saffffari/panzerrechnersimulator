@@ -12,7 +12,9 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     let path=act_manifest::playtest_manifest_path();
     let act=act_manifest::select_runtime_manifest(Some(path.clone()))?.unwrap();
     let (mut r,mut g)=Game::build_playtest_act(&device,&queue,false,&world::act(act))?;
-    g.enable_live_playtest_encounter(); g.mute_audio(); g.set_defer_rtt_to_render(true);
+    // A canyon course workshop fields its own defence (src/canyon.rs); any other map the winter one.
+    if g.enable_canyon_course().is_err() { g.enable_live_playtest_encounter(); }
+    g.mute_audio(); g.set_defer_rtt_to_render(true);
     // Initial conditions are disclosed in the receipt. God mode prevents a short benchmark from
     // replacing the measured workload with a death card; no play-session policy is changed.
     g.god=true;

@@ -41,6 +41,20 @@ pub const TIGER_STEP_M: f32 = 0.762;
 pub const TIGER_TRENCH_M: f32 = 2.50;
 /// Steepest gradient the Tiger climbs: Spielberger pp. 190-191 (via de.wikipedia): 35°.
 pub const TIGER_GRADIENT_DEG: f32 = 35.0;
+/// Outer edge of the tracks from the hull's centre line, measured from the baked hull (the tracks'
+/// lateral band is |x| 1.15-1.93 m).
+pub const TIGER_TRACK_OUTER_X_M: f32 = 1.93;
+/// Height of the centre of gravity above the track bottoms: an engineering estimate [I] from the
+/// mass split (hull and running gear about 45 t low, the turret's 11 t above the hull roof at
+/// 1.9 m). No source for the Tiger's figure was found.
+pub const TIGER_CG_HEIGHT_M: f32 = 1.30;
+/// Static tipping angle: the hull rolls over its downhill track's outer edge once the weight's line
+/// passes outside it, atan(1.93 / 1.30) = 56.0°. A pose rolled further is refused where the real
+/// tank would roll over (a named simplification: docs/PHYSICAL_TRUTH_AUDIT.md, tank ground
+/// contact); the dynamic margin (speed, turning, soft ground) is not modelled.
+pub fn tiger_tipping_angle() -> f32 {
+    (TIGER_TRACK_OUTER_X_M / TIGER_CG_HEIGHT_M).atan()
+}
 /// Ground clearance: Spielberger pp. 190-191, 47 cm; the baked belly measures 0.469 m (the belly
 /// rule reads the measured profile; `tests::profiles_match_the_baked_hull` holds it to this).
 #[cfg_attr(not(test), allow(dead_code))]
@@ -490,6 +504,8 @@ pub enum Refusal {
     /// The rest pose would pitch the hull beyond the 35° gradient limit, uphill in the direction
     /// of travel.
     Gradient(f32),
+    /// The rest pose would roll the hull past its static tipping angle (`tiger_tipping_angle`).
+    Tipping(f32),
 }
 
 /// The pose a hull takes on its supports, or why it cannot.
@@ -711,6 +727,13 @@ pub fn refusal(before: Option<&Settled>, after: &Settled, forward: bool) -> Opti
             return Some(Refusal::Gradient(uphill.atan()));
         }
     }
+    let roll = after.plane.slope_x.abs();
+    if roll > tiger_tipping_angle().tan() {
+        let old = before.map_or(f32::NEG_INFINITY, |b| b.plane.slope_x.abs());
+        if roll > old + WORSE {
+            return Some(Refusal::Tipping(roll.atan()));
+        }
+    }
     // A crest under the belly is no refusal: the belly rests on it (`Settled::belly_share`), and
     // the game takes the grip the tracks lose and the belly's drag from the push
     // (`tank_push::belly_drag`) and presses on a building solid there as on any other.
@@ -801,6 +824,31 @@ mod tests {
             // Downhill (reversing up it is refused the same way; driving down is allowed).
             let down = settle(&samples(|s, _| -s * t), true, 1.0, 0.0).unwrap();
             assert!(refusal(None, &down, true).is_none(), "driving down {deg}°");
+        }
+    }
+
+    /// A side slope beyond the static tipping angle is refused whatever the heading, and a face
+    /// steeper than the gradient and tipping limits combined cannot be climbed in any direction:
+    /// every heading either pitches past 35° or rolls past the tipping angle.
+    #[test]
+    fn a_face_steeper_than_the_combined_limits_cannot_be_climbed_at_any_heading() {
+        assert!((tiger_tipping_angle().to_degrees() - 56.0).abs() < 0.1);
+        for (deg, rolls_over) in [(40.0f32, false), (55.0, false), (58.0, true), (70.0, true)] {
+            let t = deg.to_radians().tan();
+            let settled = settle_on(|_, x| x * t);
+            assert!((settled.plane.roll().abs() - deg.to_radians()).abs() < 0.02, "{deg}° roll {}", settled.plane.roll());
+            assert_eq!(matches!(refusal(None, &settled, true), Some(Refusal::Tipping(_))), rolls_over, "{deg}°");
+        }
+        let combined = (TIGER_GRADIENT_DEG.to_radians().tan().powi(2) + tiger_tipping_angle().tan().powi(2)).sqrt();
+        for face_deg in [60.0f32, 64.0, 76.0] {
+            let g = face_deg.to_radians().tan();
+            assert!(g > combined, "{face_deg}° is steeper than the combined limit");
+            for heading_deg in (0..=90).step_by(5) {
+                let a = (heading_deg as f32).to_radians();
+                let (along, across) = (g * a.cos(), g * a.sin());
+                let settled = settle_on(|s, x| s * along + x * across);
+                assert!(refusal(None, &settled, true).is_some(), "{face_deg}° face at {heading_deg}° is climbable");
+            }
         }
     }
 

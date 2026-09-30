@@ -2,7 +2,8 @@
 # Desktop-shortcut entry for this checkout: build it if the code changed, then start the winter
 # map (singleplayer by default; pass --menu for the title menu). Every argument is forwarded to
 # launch_winter_session.sh, so `--singleplayer --urban` plays the urban intro district (its
-# workshop is generated first if it is missing); without a mode argument, --singleplayer is used.
+# workshop is generated first if it is missing) and `--singleplayer --canyon` the CANYON playtest
+# course (likewise); without a mode argument, --singleplayer is used.
 # `--menu --campaign` opens the title menu on the first level (the Act 1 campaign in the district).
 # A shortcut has no terminal, so a slow build and any failure are reported as desktop
 # notifications with the log path.
@@ -11,10 +12,12 @@ SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 MODE_GIVEN=0
 URBAN=0
+CANYON=0
 for arg in "$@"; do
     case "$arg" in
         --menu|--singleplayer|--coop|--playtest|--editor|--garage) MODE_GIVEN=1 ;;
         --urban|--campaign) URBAN=1 ;;
+        --canyon) CANYON=1 ;;
     esac
 done
 (( MODE_GIVEN )) || set -- --singleplayer "$@"
@@ -39,6 +42,9 @@ if ! wait "$BUILD_PID"; then
 fi
 if (( URBAN )) && [[ ! -f "$ROOT/assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json" ]]; then
     notify "Generating the urban intro district…" "first launch only — the game opens when it finishes"
+fi
+if (( CANYON )) && [[ ! -f "$ROOT/assets/worldgen/workshops/canyon-course/manifest.v1.json" ]]; then
+    notify "Generating the canyon course…" "first launch only — the game opens when it finishes"
 fi
 LAUNCH_LOG="$ROOT/artifacts/runtime/current-launch-$STAMP.log"
 "$SCRIPT_DIR/launch_winter_session.sh" "$@" >"$LAUNCH_LOG" 2>&1

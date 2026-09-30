@@ -96,7 +96,7 @@ pub(super) struct StreetSiting {
     pub receipt: serde_json::Value,
 }
 
-fn sample_kill_zone(lines: &[KillZoneLine], ground: impl Fn(Vec2) -> f32) -> Vec<KillPoint> {
+pub(super) fn sample_kill_zone(lines: &[KillZoneLine], ground: impl Fn(Vec2) -> f32) -> Vec<KillPoint> {
     let mut out = Vec::new();
     for line in lines {
         for segment in line.points.windows(2) {
@@ -179,6 +179,79 @@ impl Game {
             && ray_terrain_near(from, delta / distance, &self.hf, distance - 1.0, 0.5).is_none()
     }
 
+    /// The field-of-fire probe for one candidate site (see the module doc): its ground, its crew's
+    /// approach, what it must not see (`watched`), and its field of fire over `kill_zone` laid on
+    /// the centre of what it sees. `legs` are the platoons' beats as fielded. The per-point scores
+    /// (indexed like `kill_zone`) serve the pairing.
+    pub(super) fn probe_gun_site(&self, site: &crate::street_plan::GunSite, kill_zone: &[KillPoint],
+        legs: &[(Vec2, Vec2)], watched: &[Vec3]) -> Result<(SitedGun, Vec<f32>), &'static str> {
+        let p = site.at;
+        let g = self.hf.height_at(p.x, p.y);
+        let why = if legs.iter().any(|&(a, b)| segment_distance(p, a, b) < GUN_OFF_BEAT_M) {
+            Some("in a platoon's beat")
+        } else if self.box_region_blocked(Vec3::new(p.x - GUN_GROUND_HALF_M, g + 0.2, p.y - GUN_GROUND_HALF_M),
+            Vec3::new(p.x + GUN_GROUND_HALF_M, g + 1.4, p.y + GUN_GROUND_HALF_M)) {
+            Some("no ground for the gun and crew")
+        } else if [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)].iter().any(|&(sx, sz)|
+            (self.hf.height_at(p.x + sx * GUN_GROUND_HALF_M, p.y + sz * GUN_GROUND_HALF_M) - g).abs() > GUN_GROUND_RELIEF_M) {
+            Some("ground too steep to lay the gun")
+        } else {
+            None
+        };
+        if let Some(why) = why { return Err(why); }
+        let eye = Vec3::new(p.x, g + GUN_EYE_M, p.y);
+        if watched.iter().any(|&q| eye.distance(q) <= at_guns::OPEN_FIRE_M && self.los_clear(eye, q)) {
+            return Err("sees the spawn or the house");
+        }
+        let mut field = Vec::new();
+        for (k, point) in kill_zone.iter().enumerate() {
+            let centre = Vec3::new(point.at.x, point.ground + tank::TIGER_PARTS.center_h, point.at.y);
+            let range_m = eye.distance(centre);
+            if !(at_guns::GROUND_M..=at_guns::OPEN_FIRE_M).contains(&range_m) || !self.los_clear(eye, centre) {
+                continue;
+            }
+            let aim = Vec3::new(point.at.x, point.ground + LOWER_SIDE_M, point.at.y);
+            let (muzzle, _) = at_guns::AtGun::new(Vec3::new(p.x, g, p.y), at_guns::bearing(eye, aim)).muzzle();
+            if !self.street_line_of_fire_clear(muzzle, aim) { continue; }
+            let flank = (point.at - p).normalize_or_zero().perp_dot(point.travel).abs();
+            let score = point.weight * (0.25 + 0.75 * flank) * range_weight(range_m);
+            field.push(FieldPoint { point: k, range_m, flank, score });
+        }
+        // Laid on the centre of what it sees; beyond point blank it engages only inside its sector
+        // (at_guns: ±60°), so what lies outside is not its field.
+        let seen: f32 = field.iter().map(|f| f.score).sum();
+        let heading = (seen > 0.0).then(|| {
+            let centre = field.iter().map(|f| kill_zone[f.point].at * f.score).sum::<Vec2>() / seen;
+            (centre.x - p.x).atan2(centre.y - p.y)
+        }).unwrap_or(0.0);
+        field.retain(|f| {
+            let at = kill_zone[f.point].at;
+            f.range_m <= at_guns::POINT_BLANK_M
+                || at_guns::wrap((at.x - p.x).atan2(at.y - p.y) - heading).abs() <= at_guns::SECTOR_HALF
+        });
+        if field.len() < 3 {
+            return Err("no field of fire over the kill zone");
+        }
+        let total: f32 = field.iter().map(|f| f.score).sum();
+        let mut scores = vec![0.0f32; kill_zone.len()];
+        for f in &field { scores[f.point] = f.score; }
+        // The crew comes up from behind, over ground a man can walk.
+        let back = -Vec2::new(heading.sin(), heading.cos());
+        let mut previous = g;
+        let rear_clear = (1..=5).all(|s| {
+            let q = p + back * (REAR_APPROACH_M * s as f32 / 5.0);
+            let h = self.hf.height_at(q.x, q.y);
+            let walkable = (h - previous).abs() < 1.0
+                && !self.box_region_blocked(Vec3::new(q.x - 0.35, h + 0.3, q.y - 0.35), Vec3::new(q.x + 0.35, h + 1.7, q.y + 0.35));
+            previous = h;
+            walkable
+        });
+        if !rear_clear {
+            return Err("no approach from behind");
+        }
+        Ok((SitedGun { at: p, heading, kind: site.kind, on: site.on.clone(), score: total, field }, scores))
+    }
+
     /// The field-of-fire probe: choose the platoon's two gun sites among the plan's candidates on
     /// the built district (see the module doc). `beats` are the platoons' beats as fielded.
     pub(super) fn site_street_at_guns(&self, plan: &StreetPlan, beats: &[Vec<Vec2>; 2]) -> anyhow::Result<StreetSiting> {
@@ -191,74 +264,10 @@ impl Game {
         let mut rejected = std::collections::BTreeMap::<&str, usize>::new();
         let mut valid: Vec<(usize, SitedGun, Vec<f32>)> = Vec::new();
         for (index, site) in plan.gun_sites.iter().enumerate() {
-            let p = site.at;
-            let g = self.hf.height_at(p.x, p.y);
-            let why = if legs.iter().any(|&(a, b)| segment_distance(p, a, b) < GUN_OFF_BEAT_M) {
-                Some("in a platoon's beat")
-            } else if self.box_region_blocked(Vec3::new(p.x - GUN_GROUND_HALF_M, g + 0.2, p.y - GUN_GROUND_HALF_M),
-                Vec3::new(p.x + GUN_GROUND_HALF_M, g + 1.4, p.y + GUN_GROUND_HALF_M)) {
-                Some("no ground for the gun and crew")
-            } else if [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)].iter().any(|&(sx, sz)|
-                (self.hf.height_at(p.x + sx * GUN_GROUND_HALF_M, p.y + sz * GUN_GROUND_HALF_M) - g).abs() > GUN_GROUND_RELIEF_M) {
-                Some("ground too steep to lay the gun")
-            } else {
-                None
-            };
-            if let Some(why) = why { *rejected.entry(why).or_default() += 1; continue; }
-            let eye = Vec3::new(p.x, g + GUN_EYE_M, p.y);
-            if watched.iter().any(|&q| eye.distance(q) <= at_guns::OPEN_FIRE_M && self.los_clear(eye, q)) {
-                *rejected.entry("sees the spawn or the house").or_default() += 1;
-                continue;
+            match self.probe_gun_site(site, &kill_zone, &legs, &watched) {
+                Ok((gun, scores)) => valid.push((index, gun, scores)),
+                Err(why) => *rejected.entry(why).or_default() += 1,
             }
-            let mut field = Vec::new();
-            for (k, point) in kill_zone.iter().enumerate() {
-                let centre = Vec3::new(point.at.x, point.ground + tank::TIGER_PARTS.center_h, point.at.y);
-                let range_m = eye.distance(centre);
-                if !(at_guns::GROUND_M..=at_guns::OPEN_FIRE_M).contains(&range_m) || !self.los_clear(eye, centre) {
-                    continue;
-                }
-                let aim = Vec3::new(point.at.x, point.ground + LOWER_SIDE_M, point.at.y);
-                let (muzzle, _) = at_guns::AtGun::new(Vec3::new(p.x, g, p.y), at_guns::bearing(eye, aim)).muzzle();
-                if !self.street_line_of_fire_clear(muzzle, aim) { continue; }
-                let flank = (point.at - p).normalize_or_zero().perp_dot(point.travel).abs();
-                let score = point.weight * (0.25 + 0.75 * flank) * range_weight(range_m);
-                field.push(FieldPoint { point: k, range_m, flank, score });
-            }
-            // Laid on the centre of what it sees; beyond point blank it engages only inside its sector
-            // (at_guns: ±60°), so what lies outside is not its field.
-            let seen: f32 = field.iter().map(|f| f.score).sum();
-            let heading = (seen > 0.0).then(|| {
-                let centre = field.iter().map(|f| kill_zone[f.point].at * f.score).sum::<Vec2>() / seen;
-                (centre.x - p.x).atan2(centre.y - p.y)
-            }).unwrap_or(0.0);
-            field.retain(|f| {
-                let at = kill_zone[f.point].at;
-                f.range_m <= at_guns::POINT_BLANK_M
-                    || at_guns::wrap((at.x - p.x).atan2(at.y - p.y) - heading).abs() <= at_guns::SECTOR_HALF
-            });
-            if field.len() < 3 {
-                *rejected.entry("no field of fire over the kill zone").or_default() += 1;
-                continue;
-            }
-            let total: f32 = field.iter().map(|f| f.score).sum();
-            let mut scores = vec![0.0f32; kill_zone.len()];
-            for f in &field { scores[f.point] = f.score; }
-            // The crew comes up from behind, over ground a man can walk.
-            let back = -Vec2::new(heading.sin(), heading.cos());
-            let mut previous = g;
-            let rear_clear = (1..=5).all(|s| {
-                let q = p + back * (REAR_APPROACH_M * s as f32 / 5.0);
-                let h = self.hf.height_at(q.x, q.y);
-                let walkable = (h - previous).abs() < 1.0
-                    && !self.box_region_blocked(Vec3::new(q.x - 0.35, h + 0.3, q.y - 0.35), Vec3::new(q.x + 0.35, h + 1.7, q.y + 0.35));
-                previous = h;
-                walkable
-            });
-            if !rear_clear {
-                *rejected.entry("no approach from behind").or_default() += 1;
-                continue;
-            }
-            valid.push((index, SitedGun { at: p, heading, kind: site.kind, on: site.on.clone(), score: total, field }, scores));
         }
         anyhow::ensure!(valid.len() >= 2, "street encounter: only {} of {} candidate gun sites can fight here ({rejected:?})",
             valid.len(), plan.gun_sites.len());
