@@ -1,0 +1,301 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "cupola_seven_fields_20260929",
+  "title": "Seven healthy cupola ports: ordinary eye, held focus and release",
+  "caption": "HEALTHY CUPOLA / SEVEN PORTS / ORDINARY EYE - HOLD RMB - RELEASE",
+  "act_id": 0,
+  "night": false,
+  "station": "commander",
+  "seconds": 21.0,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "banish"
+  },
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_cupola",
+      "value": "block0"
+    },
+    {
+      "from_s": 0.5,
+      "until_s": 1.5,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "at_s": 3.1,
+      "action": "look_cupola",
+      "value": "block2"
+    },
+    {
+      "from_s": 3.5,
+      "until_s": 4.5,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "at_s": 6.1,
+      "action": "look_cupola",
+      "value": "block4"
+    },
+    {
+      "from_s": 6.5,
+      "until_s": 7.5,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "at_s": 9.1,
+      "action": "look_cupola",
+      "value": "block6"
+    },
+    {
+      "from_s": 9.5,
+      "until_s": 10.5,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "at_s": 12.1,
+      "action": "look_cupola",
+      "value": "block5"
+    },
+    {
+      "from_s": 12.5,
+      "until_s": 13.5,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "at_s": 15.1,
+      "action": "look_cupola",
+      "value": "block3"
+    },
+    {
+      "from_s": 15.5,
+      "until_s": 16.5,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "at_s": 18.1,
+      "action": "look_cupola",
+      "value": "block1"
+    },
+    {
+      "from_s": 18.5,
+      "until_s": 19.5,
+      "input": {
+        "aim": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "hatch_open",
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    },
+    {
+      "metric": "mg_rounds",
+      "max_delta": 0
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 1,
+      "equals": 0
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 1,
+      "min_value": 0.999
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 2,
+      "equals": null
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 2,
+      "max_value": 0
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 4,
+      "equals": 2
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 4,
+      "min_value": 0.999
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 5,
+      "equals": null
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 5,
+      "max_value": 0
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 7,
+      "equals": 4
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 7,
+      "min_value": 0.999
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 8,
+      "equals": null
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 8,
+      "max_value": 0
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 10,
+      "equals": 6
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 10,
+      "min_value": 0.999
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 11,
+      "equals": null
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 11,
+      "max_value": 0
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 13,
+      "equals": 5
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 13,
+      "min_value": 0.999
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 14,
+      "equals": null
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 14,
+      "max_value": 0
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 16,
+      "equals": 3
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 16,
+      "min_value": 0.999
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 17,
+      "equals": null
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 17,
+      "max_value": 0
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 19,
+      "equals": 1
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 19,
+      "min_value": 0.999
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 20,
+      "equals": null
+    },
+    {
+      "metric": "cupola_focus_phase",
+      "at_s": 20,
+      "max_value": 0
+    },
+    {
+      "metric": "cupola_blocks",
+      "equals": [
+        "Clear",
+        "Clear",
+        "Clear",
+        "Clear",
+        "Clear",
+        "Clear",
+        "Clear"
+      ]
+    },
+    {
+      "metric": "cupola_focus_index",
+      "equals": null
+    },
+    {
+      "metric": "enemy_fire_discharges",
+      "max_delta": 0
+    }
+  ],
+  "historical_scope": "Diagnostic comparison of retained source geometry, not a historical validation of the roof fitting or reconstructed optics.",
+  "visual_acceptance": [
+    "Inspect each ordinary, held and released field and the unchanged source casing.",
+    "Left-front cap remains in the lower field; verify the focused centre now agrees with the source direction.",
+    "No head-out transition or damage injection. Healthy state checks do not by themselves prove optical correctness."
+  ],
+  "review_port_order": [
+    0,
+    2,
+    4,
+    6,
+    5,
+    3,
+    1
+  ]
+}

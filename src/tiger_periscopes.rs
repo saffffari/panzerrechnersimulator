@@ -71,6 +71,11 @@ pub fn close_view(index: usize) -> (Vec3, Vec3, f32) {
 }
 
 impl super::Game {
+    /// Read-only evidence of ordinary RMB acquisition/release; does not move or grant focus.
+    pub fn cupola_focus_receipt(&self) -> serde_json::Value {
+        serde_json::json!({"index":self.cupola_focus.index,"phase":self.cupola_focus.phase})
+    }
+
     pub(super) fn update_cupola_focus(&mut self, aim: bool, dt: f32, renderer: &mut crate::renderer::Renderer) {
         let commander = matches!(self.station, super::Station::Commander) && !self.commander_outside;
         let loader = matches!(self.station, super::Station::Loader) && !self.grab && self.carry_mesh.is_none();
@@ -433,6 +438,7 @@ pub fn raster_optic_specs(parts: &[OpticalPart], first_slot: usize) -> anyhow::R
                 entry_indices: 0..6,
                 entry_corners:corners,entry_outward,
             objective:objective.center(),objective_outward,
+            preserve_ray_direction: index < LOADER_INDEX,
         })
     }).collect()
 }

@@ -74,6 +74,25 @@ def build():
                   f'<p>{hammer_status} · <a href="{hammer_prefix}_manifest.json">Receipt</a></p></article>')
     # Keep telemetry names from the runtime rather than assuming a threshold field spelling.
     master_text = json.dumps(master, indent=2)
+    cupola = ''
+    optic_before = 'cupola_lower_field_20260929_baseline'
+    optic_after = 'cupola_lower_field_20260929_corrected'
+    if all((OUT / f'{prefix}.mp4').is_file() for prefix in (optic_before, optic_after)):
+        optic_cards = []
+        for title, prefix in [('Before: centred virtual pupil', optic_before),
+                              ('After: observer direction preserved', optic_after)]:
+            receipt = load(prefix + '_manifest.json')
+            status = 'State checks passed' if receipt.get('outcome_checks_passed') else 'State checks failed'
+            optic_cards.append(f'<article><h3>{title}</h3><video controls preload="metadata" '
+                               f'src="{prefix}.mp4" poster="{prefix}_leftfront.png"></video>'
+                               f'<p>{status} · <a href="{prefix}_manifest.json">Receipt</a></p></article>')
+        cupola = ('<h2 id="cupola">Vision block: lower-field obstruction</h2>'
+                  '<p>The healthy front-left commander’s block looks past a retained roof cap. '
+                  'The old raster view lost the focused eye’s upward direction and put that cap '
+                  'across the centre. The correction preserves the source relay’s ray direction; '
+                  'the actual lower-field obstruction remains. Each film compares this block with '
+                  'the front block. This does not identify an unconfirmed block in a live session.</p>'
+                  '<div class="grid">' + ''.join(optic_cards) + '</div>')
     passed = candidate.get("outcome_checks_passed", False)
     page = '''<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -111,6 +130,7 @@ scheduled shot after death; compare its first 20 s. The candidate ends at 20 s a
 <a href="AFTER_manifest.json">Candidate receipt</a></p>
 FIRE
 HAMMER
+CUPOLA
 <h2>What changed</h2>
 <p>Combustion speeds up with RPM while the engine's structural frequencies stay fixed. Confirmed
 internal explosions have broadband pressure and rupture, with steel ringing underneath. The source-level
@@ -147,7 +167,8 @@ player.addEventListener('timeupdate',()=>{if(player.currentTime>=20){player.paus
             'deposited foam. Fire and spray do not yet have dedicated continuous sound sources.</p><div class="grid">'
             + ''.join(fire_cards) + '</div>') if fire_cards else ''
     for key, value in (("AFTER_CALIBRATION", after_cal_name), ("BEFORE", before), ("AFTER", after), ("CHECKS", "checks passed" if passed else "checks failed"),
-                       ("ROWS", ''.join(rows)), ("MASTER", esc(master_text)), ("FIRE", fire), ("HAMMER", hammer)):
+                       ("ROWS", ''.join(rows)), ("MASTER", esc(master_text)), ("FIRE", fire), ("HAMMER", hammer),
+                       ("CUPOLA", cupola)):
         page = page.replace(key, value)
     path = OUT / "immersion_review_20260929.html"
     path.write_text(page)

@@ -1,0 +1,30 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "cupola_lower_field_20260929",
+  "title": "Healthy cupola: left-front lower-field obstruction and clear front comparison",
+  "caption": "HEALTHY CUPOLA / LEFT-FRONT THEN FRONT / HOLD RMB",
+  "act_id": 0,
+  "night": false,
+  "station": "commander",
+  "seconds": 5.0,
+  "setup": {"playtest": true, "enemy_policy": "banish"},
+  "timeline": [
+    {"at_s": 0.1, "action": "look_cupola", "value": "block1"},
+    {"from_s": 0.4, "until_s": 2.1, "input": {"aim": true}},
+    {"at_s": 2.5, "action": "look_cupola", "value": "block0"},
+    {"from_s": 2.8, "until_s": 4.5, "input": {"aim": true}}
+  ],
+  "expect": [
+    {"metric": "current_station", "equals": "commander"},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "hatch_open", "equals": false},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "main_gun_shots", "max_delta": 0},
+    {"metric": "mg_rounds", "max_delta": 0}
+  ],
+  "historical_scope": "Diagnostic comparison of retained source geometry, not a historical validation of the roof fitting or reconstructed optics.",
+  "visual_acceptance": [
+    "Identify whether the healthy left-front block has a lower-field obstruction and whether its center remains clear.",
+    "Compare the adjacent front block after normal focus release; state checks alone do not identify the visible blocker."
+  ]
+}

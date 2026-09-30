@@ -138,7 +138,8 @@ fn spec(entry: &CpuMesh, mesh: usize, objective: Vec3, objective_outward: Vec3) 
         .map(|(x,y)| center + right*x + up*y);
     Ok(RasterOpticSpec {mesh,
         entry_indices: 0..6,
-        entry_corners:corners,entry_outward,objective,objective_outward})
+        entry_corners:corners,entry_outward,objective,objective_outward,
+        preserve_ray_direction:false})
 }
 
 pub(super) fn raster_specs(driver: &CpuMesh, radio: &CpuMesh, fixed: &CpuMesh,

@@ -82,6 +82,7 @@ pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::Raster
         entry_outward: Vec3::Z,
         objective: crate::tank::TIGER_SIGHT_OBJECTIVE,
         objective_outward: Vec3::Z,
+        preserve_ray_direction: false,
     }
 }
 

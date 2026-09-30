@@ -19,9 +19,9 @@ struct Out {
     let relative = (panel.model * vec4(position, 1.0)).xyz - panel.eye.xyz;
     var out: Out;
     out.position = panel.main_view_proj * vec4(relative, 1.0);
-    // Centered virtual pupil gives an upright optical-axis image plane even from the ordinary
-    // off-axis seat. The projection includes the entry-to-objective relay rotation: a tilted
-    // eyepiece must not tilt a horizontal exterior objective's view toward the roof.
+    // Source-verified cupola unit relays use the actual observer pupil and preserve direction.
+    // Other ports retain their registered virtual pupil and entry-to-objective rotation.
+    // CPU capture fitting and this pane projection use the same declared mapping.
     let source_ray = (panel.model * vec4(position, 1.0)).xyz - panel.source_eye.xyz;
     out.source = panel.source_direction_view_proj * vec4(source_ray, 0.0);
     return out;

@@ -1005,6 +1005,10 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
     state["hammer_swing_remaining_s"] = state["carried_hammer"]["swing_remaining_s"].clone();
     state["hammer_target_job"] = state["carried_hammer"]["target_job"].clone();
     state["hammer_track_pin_hits"] = state["carried_hammer"]["track_pin_hits"].clone();
+    state["cupola_focus"] = g.cupola_focus_receipt();
+    state["cupola_focus_index"] = state["cupola_focus"]["index"].clone();
+    state["cupola_focus_phase"] = state["cupola_focus"]["phase"].clone();
+    state["cupola_blocks"] = g.exterior_damage_receipt()["cupola_blocks"].clone();
     state.as_object_mut().unwrap().extend(g.world_mechanic_status(r).as_object().unwrap().clone());
     state.as_object_mut().unwrap().extend(g.destruction_mechanic_status().as_object().unwrap().clone());
     state

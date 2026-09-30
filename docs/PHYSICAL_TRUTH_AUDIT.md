@@ -174,6 +174,26 @@ reproduction corrections, not measured Tiger acoustics.
 - Player-view and subjective acceptance are recorded separately in the sound review
   document. A matching digital LAF or passing unit suite is not headphone/speaker approval.
 
+## Cupola raster direction correction — 29 September 2026
+
+The seven commander cupola relays now use the actual observer pupil and preserve incident
+ray directions, matching the existing reconstructed four-lens/two-mirror source path. The old
+centered virtual pupil plus entrance-normal-to-horizon rotation lost the held eye's upward
+direction. On left-front port `Turret_0139`, retained roof cap `Turret_0116` then covered the
+centre as well as the lower field. Source tracing clears the centre and retains the lower cap.
+Neither the cap nor any glass/casing geometry is removed, translated or made transparent.
+Ordinary off-axis cupola views also use their actual incident direction, so their image changes
+with eye position instead of being forced to the horizon. The explicit registration flag is
+false for loader, driver, radio and gunner optics; their prior mapping is unchanged.
+
+The raster implementation still samples every direction from one objective-centred exterior
+pupil offset 8 mm beyond the glass, rather than each physical ray's exit point. Near-field
+silhouettes can differ from the source trace. Finite internal aperture rejection and glass/lens
+aberrations remain absent, and no general numerical error bound is claimed. The verified scope
+is the angular mapping, retained source obstruction and tested held fields; it is not exact
+periscope light transport or a historically measured prescription. See the focused and seven-port
+fixtures `cupola_lower_field_20260929.v1.json` and `cupola_seven_fields_20260929.v1.json`.
+
 ## Mandatory gates
 
 1. `cargo fmt --all -- --check`, release compilation, full tests and `git diff --check`.

@@ -1,8 +1,9 @@
 //! Explicit shader-backend alternative to the ray-traced optical path. Source entrance faces
 //! retain their depth/occlusion and each objective gets a distinct exterior raster view. A pupil
-//! centered on the authored optical axis presents an upright image plane from ordinary seats.
-//! Off-axis observer angular mapping, finite glass/prism aberration and sub-aperture lateral
-//! pupil parallax are declared raster approximations; preserved hoods still occlude the objective.
+//! uses the actual observer for source-verified direction-preserving cupola relays. Other ports
+//! retain their centered virtual-pupil approximation. Finite internal aperture rejection,
+//! glass/prism aberration and sub-aperture lateral exit parallax remain raster limitations;
+//! preserved hoods and roof fixtures still occlude the exterior objective.
 use super::{CameraUniform, RenderWorkStats, Renderer, DEPTH, HDR};
 use glam::{Mat4, Vec3};
 use std::cell::RefCell;
@@ -19,6 +20,9 @@ pub struct RasterOpticSpec {
     pub entry_outward: Vec3,
     pub objective: Vec3,
     pub objective_outward: Vec3,
+    /// The source relay has been verified to preserve incident direction. Use the actual
+    /// observer pupil, without re-aiming a tilted entrance normal toward the horizon.
+    pub preserve_ray_direction: bool,
 }
 
 #[derive(Clone)]
@@ -172,6 +176,7 @@ fn objective_view_axis(spec: &RasterOpticSpec, model: Mat4) -> Vec3 {
 
 /// Apply one shared entrance-to-exterior bearing transform to capture fitting and panel sampling.
 fn relay_rotation(spec: &RasterOpticSpec, model: Mat4) -> Mat4 {
+    if spec.preserve_ray_direction { return Mat4::IDENTITY; }
     let entry=model.transform_vector3(spec.entry_outward).normalize();
     let exit=objective_view_axis(spec, model);
     Mat4::from_quat(glam::Quat::from_rotation_arc(entry,exit))
@@ -198,10 +203,13 @@ fn capture_camera(
         polygon = clip(polygon, plane);
     }
     if polygon.len() < 3 { return None; }
-    // Raster image-plane approximation: the virtual pupil is centered on the authored port
-    // axis at the observer's normal eye relief. Looking upward at a raised eyepiece must not
-    // redirect its exterior camera into the hood. Actual pane clipping still follows the viewer.
-    let source_eye = center - axis * to.dot(axis);
+    // A source-verified unit relay keeps every incident direction, including the held cupola
+    // eye's upward gaze and the ordinary seat's downward view. Centering that pupil on a
+    // slanted pane normal silently aimed the exterior at the horizon and put the roof cap
+    // across the held eye's center. Other registrations retain their declared image-plane
+    // approximation until their optical prescriptions have been independently audited.
+    let source_eye = if spec.preserve_ray_direction { viewer.pos }
+        else { center - axis * to.dot(axis) };
     let relay=relay_rotation(spec,model);
     let source_rays: Vec<_> = polygon.iter().map(|&p| relay.transform_vector3(p + viewer.pos - source_eye)).collect();
     let chief = (source_rays.iter().copied().sum::<Vec3>() / source_rays.len() as f32).normalize();
@@ -612,7 +620,8 @@ mod tests {
             entry_corners:[
             Vec3::new(-0.055,-0.0175,0.0),Vec3::new(0.055,-0.0175,0.0),
             Vec3::new(0.055,0.0175,0.0),Vec3::new(-0.055,0.0175,0.0)],
-            entry_outward:Vec3::Z,objective:Vec3::new(0.0,0.14,0.045),objective_outward:Vec3::Z}
+            entry_outward:Vec3::Z,objective:Vec3::new(0.0,0.14,0.045),objective_outward:Vec3::Z,
+            preserve_ray_direction:false}
     }
     fn viewer(distance:f32, fov:f32) -> crate::camera::Camera {
         let mut camera=crate::camera::Camera::new(16.0/9.0);
@@ -691,7 +700,7 @@ mod tests {
         }
     }
     #[test]
-    fn raster_optic_authored_ports_keep_horizon_at_the_pane_center_from_ordinary_seats() {
+    fn raster_optic_ordinary_cupola_preserves_incident_bearing_and_loader_keeps_its_mapping() {
         let (_, _, parts, _, _, _) = crate::game::tiger_periscopes::load_turret().unwrap();
         let specs = crate::game::tiger_periscopes::raster_optic_specs(&parts, 0).unwrap();
         for (index, spec) in specs.iter().enumerate() {
@@ -708,14 +717,105 @@ mod tests {
                     .unwrap_or_else(|| panic!("source port {index} disappeared from its own seat"));
                 let objective = objective_view_axis(spec, model);
                 let center_ray = relay_rotation(spec, model).transform_vector3(world_center - pupil).normalize();
-                assert!(capture.forward().dot(objective) > 0.999, "source port {index} capture misses battlefield");
-                assert!(center_ray.dot(objective) > 0.99999, "source port {index} center leaves objective axis");
+                let expected = if index < 7 {
+                    assert!(spec.preserve_ray_direction);
+                    assert!(pupil.distance(observer.pos) < 1e-6);
+                    (world_center-observer.pos).normalize()
+                } else {
+                    assert!(!spec.preserve_ray_direction);
+                    assert!(capture.forward().dot(objective) > 0.999,
+                        "loader capture changed its existing bearing");
+                    objective
+                };
+                assert!(center_ray.dot(expected) > 0.99999, "source port {index} changed its incident bearing");
+                if index < 7 {
+                    for corner in spec.entry_corners {
+                        let point=model.transform_point3(corner);
+                        let incident=(point-observer.pos).normalize();
+                        let outgoing=relay_rotation(spec,model).transform_vector3(point-pupil).normalize();
+                        assert!(outgoing.distance(incident)<0.0001,
+                            "ordinary cupola {index} changed an entrance-corner bearing");
+                    }
+                }
                 assert!(objective.y.abs() < 0.002, "source port {index} objective aims away from horizon: {objective:?}");
                 let panel_projection = capture.relative_view_proj() * relay_rotation(spec, model);
                 let panel_center = panel_projection * (world_center - pupil).extend(0.0);
-                let world_horizon = capture.relative_view_proj() * objective.extend(0.0);
-                assert!((panel_center.y / panel_center.w - world_horizon.y / world_horizon.w).abs() < 0.0001,
-                    "source port {index} pane center does not sample horizon");
+                let exterior = capture.relative_view_proj() * expected.extend(0.0);
+                assert!((panel_center.y / panel_center.w - exterior.y / exterior.w).abs() < 0.0001,
+                    "source port {index} pane samples a different exterior direction");
+            }
+        }
+    }
+
+    #[test]
+    fn raster_optic_cupola_held_field_matches_source_rays_and_retains_roof_cap() {
+        let (_, _, parts, _, _, _) = crate::game::tiger_periscopes::load_turret().unwrap();
+        let specs = crate::game::tiger_periscopes::raster_optic_specs(&parts, 0).unwrap();
+        let mut cap = crate::gltf_load::load_glb_partitioned_roots(
+            "assets/tanks/tiger/baked/tiger_turret.glb", &["Turret_0116"]).unwrap();
+        let cap = cap.pop().unwrap();
+        // Exact retained source triangles, two-sided, rather than a fitted blocker box.
+        let cap_hit = |origin: Vec3, direction: Vec3| {
+            cap.indices.chunks_exact(3).any(|tri| {
+                let [a,b,c] = [0,1,2].map(|i| Vec3::from(cap.vertices[tri[i] as usize].pos).as_dvec3());
+                let direction=direction.as_dvec3(); let e1=b-a; let e2=c-a;
+                let h=direction.cross(e2); let determinant=e1.dot(h);
+                if determinant.abs()<1e-10 { return false; }
+                let s=origin.as_dvec3()-a; let u=s.dot(h)/determinant;
+                let q=s.cross(e1); let v=direction.dot(q)/determinant;
+                let distance=e2.dot(q)/determinant;
+                u>=0.0 && v>=0.0 && u+v<=1.0 && distance>0.00005 && distance<1.0
+            })
+        };
+        // Independently traced through the loaded four lenses, two mirrors and closed windows
+        // (artifacts/immersion-20260929/cupola-block1-source-rays.json). The center clears the
+        // cap while the lower edge hits it. The old centered pupil mapped the center to level.
+        let reference = [
+            (-1.0, Vec3::new(-0.7805538,-0.06975705,0.6211841), true),
+            (0.0, Vec3::new(-0.7813883,0.05233310,0.6218469), false),
+            (1.0, Vec3::new(-0.7705734,0.17364574,0.6132404), false),
+        ];
+        for (index,spec) in specs.iter().take(7).enumerate() {
+            let (eye,forward,fov)=crate::game::tiger_periscopes::close_view(index);
+            let center=spec.entry_corners.iter().copied().sum::<Vec3>()*0.25;
+            for model in [Mat4::IDENTITY,Mat4::from_translation(Vec3::new(32.0,4.0,-19.0))
+                *Mat4::from_rotation_y(0.9),Mat4::from_rotation_y(-0.6)*Mat4::from_rotation_x(0.18)] {
+                let mut observer=viewer(0.025,14.0);
+                observer.pos=model.transform_point3(eye);
+                observer.set_forward(model.transform_vector3(forward));observer.fov_y=fov;
+                let (capture,_,pupil)=capture_camera(spec,model,&observer,16.0/9.0).unwrap();
+                let world_center=model.transform_point3(center);
+                let normal=model.transform_vector3(spec.entry_outward);
+                let rotation=relay_rotation(spec,model);
+                let up=observer.right().cross(observer.forward());
+                for y in [-1.0,-0.5,0.0,0.5,1.0] {
+                    for x in [-1.0,-0.5,0.0,0.5,1.0] {
+                        let incident=(observer.forward()+(observer.right()*x*(16.0/9.0)+up*y)
+                            *(fov*0.5).tan()).normalize();
+                        let pane=observer.pos+incident*(world_center-observer.pos).dot(normal)
+                            /incident.dot(normal);
+                        let outgoing=rotation.transform_vector3(pane-pupil).normalize();
+                        assert!(outgoing.distance(incident)<0.0002,
+                            "cupola {index} field ({x},{y}) changed the source relay direction");
+                        let projected=capture.relative_view_proj()*outgoing.extend(0.0);
+                        assert!((projected.x/projected.w).abs()<1.001
+                            && (projected.y/projected.w).abs()<1.001,
+                            "cupola {index} field clipped by exterior capture");
+                        // The receipt's upper/lower samples use the level turret's up vector.
+                        // A pitched camera keeps world-up, so only its center is that same ray;
+                        // its full field still has the incident-direction check above.
+                        if index==1 && x==0.0 && (y==0.0
+                            || model.transform_vector3(Vec3::Y).distance(Vec3::Y)<0.0001) {
+                            if let Some((_,expected,blocked))=reference.iter().find(|r|r.0==y) {
+                                let local=model.inverse().transform_vector3(outgoing).normalize();
+                                assert!(local.distance(*expected)<0.0002,
+                                    "raster direction {local:?} differs from source {expected:?} at y={y}");
+                                assert_eq!(cap_hit(model.inverse().transform_point3(capture.pos),local),
+                                    *blocked,"source roof-cap intersection changed at vertical field {y}");
+                            }
+                        }
+                    }
+                }
             }
         }
     }
