@@ -3738,7 +3738,7 @@ impl Renderer {
             ..Default::default()
         });
         let cabin_shadows = cabin_shadows::CabinShadows::new(device,raster_lighting,&camera_bgl,
-            &terrain_detail_view,&terrain_detail_sampler);
+            &terrain_detail_view,&terrain_detail_sampler,&shadow_sampler);
         let environment_probe = environment_probe::EnvironmentProbe::new(device, &physical_environment_buf);
         let sky_visibility = sky_visibility::SkyVisibility::new(device, raster_lighting,
             &environment_probe.uniform);
@@ -5012,7 +5012,8 @@ impl Renderer {
         // surfaces, so gun haze inside closed armour sees only what the openings admit.
         let smoke_visibility_bgl = if raster_media { &sky_visibility.sampling_bgl }
             else { rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl) };
-        let smoke_layouts = vec![&smoke_bgl, smoke_visibility_bgl, &physical_environment_bgl];
+        let mut smoke_layouts = vec![&smoke_bgl, smoke_visibility_bgl, &physical_environment_bgl];
+        if raster_media { smoke_layouts.push(&cabin_shadows.sampling_bgl); }
         let smoke_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("smoke-pl"),
             bind_group_layouts: &smoke_layouts,
@@ -5286,7 +5287,7 @@ impl Renderer {
             shader_backend,
             raster_optics: shader_backend.then(|| {
                 raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler,
-                    &sky_visibility.sampling_bgl)
+                    &sky_visibility.sampling_bgl, &cabin_shadows.sampling_bgl)
             }),
             raster_ssao,
             hover_outline: shader_backend.then(|| hover_outline::HoverOutline::new(device, iw, ih, &mesh_pl, &mesh_shader)),
@@ -7730,6 +7731,7 @@ impl Renderer {
                 pass.set_bind_group(0, &self.smoke_bind, &[]);
                 if self.raster_lighting && !self.rt_on {
                     pass.set_bind_group(1, &self.sky_visibility.sampling_bind, &[]);
+                    pass.set_bind_group(3, &self.cabin_shadows.sampling_bind, &[]);
                 } else if self.rt_on {
                     pass.set_bind_group(
                         1,
@@ -10095,6 +10097,7 @@ fn terrain_material_shader_source(src: &str) -> String {
         include_str!("../shaders/terrain_material.wgsl"),
     ).replace("// @camera-relative-projection", include_str!("../shaders/camera_relative.wgsl"))
     .replace("// @sky-visibility-sampling", include_str!("../shaders/sky_visibility_sampling.wgsl"))
+    .replace("// @cabin-visibility-sampling", include_str!("../shaders/cabin_visibility.wgsl"))
 }
 
 fn shader(device: &wgpu::Device, label: &str, src: &str) -> wgpu::ShaderModule {

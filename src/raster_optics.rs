@@ -94,7 +94,8 @@ fn optic_particle_shader_source() -> String {
         .replace("// @shared-stylized-particle-functions", &shared))
 }
 
-fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayout)
+fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayout,
+    cabin_shadows: &wgpu::BindGroupLayout)
     -> (WeatherPipelines, WeatherLayouts) {
     let depth = |binding| wgpu::BindGroupLayoutEntry {binding,visibility:wgpu::ShaderStages::FRAGMENT,
         ty:wgpu::BindingType::Texture {sample_type:wgpu::TextureSampleType::Depth,
@@ -107,7 +108,7 @@ fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayo
     let environment=device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label:Some("optic-weather-environment"),entries:&[super::uniform_entry(0,wgpu::ShaderStages::FRAGMENT)]});
     let smoke_layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label:Some("optic-smoke-pipeline-layout"),bind_group_layouts:&[&smoke,sky_visibility,&environment],push_constant_ranges:&[]});
+        label:Some("optic-smoke-pipeline-layout"),bind_group_layouts:&[&smoke,sky_visibility,&environment,cabin_shadows],push_constant_ranges:&[]});
     let smoke_module=super::shader(device,"optic-same-raster-smoke",include_str!("../shaders/stylized_smoke.wgsl"));
     let smoke_pipe=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label:Some("optic-deterministic-smoke-over"),layout:Some(&smoke_layout),
@@ -255,7 +256,7 @@ impl RasterOptics {
 
     pub(super) fn new(device: &wgpu::Device, iw: u32, ih: u32,
         terrain: &wgpu::TextureView, terrain_sampler: &wgpu::Sampler,
-        sky_visibility: &wgpu::BindGroupLayout) -> Self {
+        sky_visibility: &wgpu::BindGroupLayout, cabin_shadows: &wgpu::BindGroupLayout) -> Self {
         let width = iw.clamp(256, 640);
         let height = ih.clamp(128, 360);
         let make_texture = |label, format| {
@@ -303,7 +304,7 @@ impl RasterOptics {
             multisample:Default::default(),multiview:None,cache:None,
         });
         let camera_layout = super::camera_bind_group_layout(device);
-        let (weather, weather_layouts) = weather_pipelines(device, sky_visibility);
+        let (weather, weather_layouts) = weather_pipelines(device, sky_visibility, cabin_shadows);
         let layers = (0..MAX_PORTS).map(|i| {
             let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {label:Some("raster-optic-camera"),
                 size:std::mem::size_of::<CameraUniform>() as u64,usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false});
@@ -505,6 +506,7 @@ impl Renderer {
             pass.set_pipeline(&pipelines.smoke);pass.set_bind_group(0,&layer.weather.smoke_bind,&[]);
             pass.set_bind_group(1,&self.sky_visibility.sampling_bind,&[]);
             pass.set_bind_group(2,&self.physical_environment_bind,&[]);
+            pass.set_bind_group(3,&self.cabin_shadows.sampling_bind,&[]);
             pass.draw(0..3,0..1);work.smoke_passes+=1;work.fullscreen_raster_passes+=1;
         }
         if particles>0 && self.precipitation>0.0 {

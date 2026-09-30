@@ -64,6 +64,10 @@ struct EnvironmentProbe { lanes: array<vec4<f32>, 68> };
 @group(1) @binding(3) var<uniform> probe: EnvironmentProbe;
 @group(2) @binding(0) var<uniform> environment: PhysicalEnvironment;
 // @sky-visibility-sampling
+@group(3) @binding(0) var cabin_shadow_maps: texture_depth_cube_array;
+@group(3) @binding(1) var shadow_samp: sampler_comparison;
+// @cabin-visibility-sampling
+@group(3) @binding(2) var<uniform> cabin_shadows: CabinShadows;
 const LOCAL_STEPS: i32 = 8;
 // combine.wgsl's world-medium optics (tests keep the three copies identical).
 const FOG_AEROSOL_PHASE_G = 0.42;
@@ -175,7 +179,8 @@ fn smoke_light(point: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
         let delta=source.xyz-point;
         let d2=max(dot(delta,delta),max(source.w*source.w,0.0025));
         incident += emission.rgb*max(emission.w,0.0)/d2
-            *henyey_greenstein(dot(ray,delta*inverseSqrt(d2)),0.42);
+            *henyey_greenstein(dot(ray,delta*inverseSqrt(d2)),0.42)
+            *cabin_volume_light_shadow(source.xyz,point);
     }
     return 0.70*incident;
 }

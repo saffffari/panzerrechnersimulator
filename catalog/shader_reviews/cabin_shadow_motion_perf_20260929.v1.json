@@ -1,0 +1,33 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "cabin_shadow_motion_perf_20260929",
+  "title": "Cabin shadow cost: stationary lower commander view, then ordinary vehicle movement",
+  "act_id": 0,
+  "night": false,
+  "station": "commander",
+  "seconds": 6.0,
+  "setup": {"enemy_policy": "banish"},
+  "mechanics": ["fixed_lower_commander_gaze", "stationary_shadow_cache", "vehicle_motion_invalidates_shadow_cache"],
+  "timeline": [
+    {"at_s": 0.1, "action": "look_cupola", "value": "block0"},
+    {"from_s": 0.2, "until_s": 1.2, "input": {"look_dy": 2.0}},
+    {"from_s": 3.0, "until_s": 6.0, "input": {"drive": 0.55, "steer": 0.15}}
+  ],
+  "expect": [
+    {"metric": "current_station", "equals": "commander"},
+    {"metric": "hatch_open", "equals": false},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "game_over", "equals": false},
+    {"metric": "player_displacement_m", "min_value": 0.2},
+    {"metric": "main_gun_shots", "max_delta": 0},
+    {"metric": "enemy_fire_discharges", "max_delta": 0},
+    {"metric": "fire", "max_value": 0}
+  ],
+  "input_audit": "Healthy act0 training world with enemies removed. The existing gaze action and normal mouse input establish a lower commander view, held unchanged after1.2s. Ordinary drive/steer input moves the vehicle from3–6s, changing real hull/turret/source transforms. No camera teleport, shadow invalidation hook, exposure, emitter, material, weather, damage or fire override. Run with KESSEL_CAPTURE_PROFILE=1. Compare stationary frames1.5<=t<3.0 (36frames) and moving frames3.5<=t<6.0 (60frames), keeping the first render, gaze transition and initial acceleration separately visible in full telemetry.",
+  "historical_scope": "Bounded renderer workload comparison, not an encounter, hardware-independent result or interactive FPS measurement.",
+  "visual_acceptance": [
+    "The same source cabin remains visible while the vehicle moves; no death or station transition removes render work.",
+    "Report render-and-readback and five-tick simulation batch timings separately. Work counters must confirm moving frames actually submit the shadow work being compared."
+  ]
+}

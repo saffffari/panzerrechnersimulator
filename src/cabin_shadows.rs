@@ -1,11 +1,14 @@
-//! Two explicitly selected practical lamps, with source-geometry cubemap visibility. Static lamp
+//! Eight explicitly selected practical lamps, with source-geometry cubemap visibility. Static lamp
 //! and caster poses reuse depth; light selection never guesses from brightness or camera distance.
 use super::*;
 use std::cell::RefCell;
 
-pub const MAX_LIGHTS: usize = 2;
+pub const MAX_LIGHTS: usize = 8;
 const SIDE: u32 = 512;
-const NEAR: f32 = 0.035;
+// The dome sits 27 mm below the source fan. A 35 mm near plane erased that blocker.
+// 5 mm retains it; only the fixture's explicitly registered emitting mesh is excluded.
+// Depth32Float error is bounded below 0.4 mm through 4 m (1.6 mm at the 8 m limit).
+const NEAR: f32 = 0.005;
 const FAR: f32 = 8.0;
 
 #[repr(C)]
@@ -49,10 +52,13 @@ pub struct CabinShadows {
     static_depth: wgpu::Texture,
     static_faces: Vec<wgpu::TextureView>,
     pub uniform: wgpu::Buffer,
+    pub sampling_bgl: wgpu::BindGroupLayout,
+    pub sampling_bind: wgpu::BindGroup,
     faces: Vec<wgpu::TextureView>,
     cameras: Vec<wgpu::Buffer>,
     binds: Vec<wgpu::BindGroup>,
     lights: RefCell<Vec<PointLight>>,
+    emitting_meshes: RefCell<Vec<Option<usize>>>,
     caches: RefCell<[LampCache; MAX_LIGHTS]>,
     dynamic_meshes: Vec<usize>,
     dynamic_flags: Vec<bool>,
@@ -81,6 +87,14 @@ fn near_box(position: glam::Vec3, lo: glam::Vec3, hi: glam::Vec3) -> bool {
         && position.distance_squared(position.clamp(lo, hi)) <= FAR * FAR
 }
 
+fn active_fixture(lamp: &PointLight) -> bool {
+    lamp.pos.is_finite() && lamp.radiant_intensity.is_finite() && lamp.radiant_intensity > 0.0
+}
+
+fn casts_for_fixture(mesh: usize, emitting_mesh: Option<usize>) -> bool {
+    Some(mesh) != emitting_mesh
+}
+
 impl CabinShadows {
     pub fn new(
         device: &wgpu::Device,
@@ -88,13 +102,14 @@ impl CabinShadows {
         camera_bgl: &wgpu::BindGroupLayout,
         terrain: &wgpu::TextureView,
         sampler: &wgpu::Sampler,
+        shadow_sampler: &wgpu::Sampler,
     ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cabin-lamp-shadow-cubes"),
             size: wgpu::Extent3d {
                 width: if enabled { SIDE } else { 1 },
                 height: if enabled { SIDE } else { 1 },
-                depth_or_array_layers: 12,
+                depth_or_array_layers: (MAX_LIGHTS * 6) as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -122,7 +137,8 @@ impl CabinShadows {
         let mut static_faces = Vec::new();
         let mut cameras = Vec::new();
         let mut binds = Vec::new();
-        for face in 0..12 {
+        // Two 512² Depth32Float banks × 48 faces = 96 MiB when enabled.
+        for face in 0..(MAX_LIGHTS * 6) as u32 {
             static_faces.push(static_depth.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2),
                 base_array_layer: face, array_layer_count: Some(1), ..Default::default()
@@ -165,8 +181,29 @@ impl CabinShadows {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let sampling_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("cabin-shadow-sampling-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::CubeArray, multisampled: false }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
+                uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
+            ],
+        });
+        let sampling_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cabin-shadow-sampling-bind"), layout: &sampling_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(shadow_sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: uniform.as_entire_binding() },
+            ],
+        });
         Self {
             view,
+            sampling_bgl,
+            sampling_bind,
             composed_depth: texture,
             static_depth,
             static_faces,
@@ -175,22 +212,22 @@ impl CabinShadows {
             cameras,
             binds,
             lights: RefCell::new(Vec::new()),
+            emitting_meshes: RefCell::new(Vec::new()),
             caches: RefCell::new([LampCache::default(); MAX_LIGHTS]),
             dynamic_meshes: Vec::new(),
             dynamic_flags: Vec::new(),
         }
     }
 
-    pub fn set_lights(&self, lights: &[PointLight]) {
+    pub fn set_lights(&self, lights: &[PointLight], emitting_meshes: &[Option<usize>]) {
+        // Preserve off fixtures in their named slots; switching a status lamp cannot reassign
+        // another lamp's cached faces. Invalid/off slots stay disabled in the GPU uniform.
         let mut selected = self.lights.borrow_mut();
         selected.clear();
-        selected.extend(
-            lights
-                .iter()
-                .copied()
-                .filter(|l| l.pos.is_finite() && l.radiant_intensity > 0.0)
-                .take(MAX_LIGHTS),
-        );
+        selected.extend(lights.iter().copied().take(MAX_LIGHTS));
+        let mut emitters = self.emitting_meshes.borrow_mut();
+        emitters.clear();
+        emitters.extend((0..selected.len()).map(|i| emitting_meshes.get(i).copied().flatten()));
     }
 
     fn set_dynamic_meshes(&mut self, meshes: &[usize]) {
@@ -206,15 +243,16 @@ impl CabinShadows {
         self.dynamic_flags.get(index).copied().unwrap_or(false)
     }
 
-    fn signature(&self, renderer: &Renderer, lamp: PointLight, dynamic: bool) -> u64 {
+    fn signature(&self, renderer: &Renderer, lamp: PointLight, emitting_mesh: Option<usize>, dynamic: bool) -> u64 {
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         for f in lamp.pos.to_array() {
             f.to_bits().hash(&mut hash);
         }
+        emitting_mesh.hash(&mut hash);
         // Only participating casters define this map. Appending distant world geometry must
         // not invalidate all six faces of an otherwise unchanged cabin fixture.
         for (i, m) in renderer.meshes.iter().enumerate() {
-            if self.is_dynamic(i) != dynamic || !m.visible || m.glass || m.raster_only
+            if !casts_for_fixture(i, emitting_mesh) || self.is_dynamic(i) != dynamic || !m.visible || m.glass || m.raster_only
                 || !near_box(lamp.pos, m.world_min, m.world_max) {
                 continue;
             }
@@ -256,15 +294,16 @@ impl CabinShadows {
 
     pub fn prepare(&self, renderer: &Renderer, queue: &wgpu::Queue, camera: &CameraUniform) {
         let lights = self.lights.borrow();
+        let emitting_meshes = self.emitting_meshes.borrow();
         let mut uniform = Uniform {
             lamps: [[0.0; 4]; MAX_LIGHTS],
             range: [NEAR, FAR, 2.0 / SIDE as f32, 0.0],
         };
         let mut caches = self.caches.borrow_mut();
         for (i, &lamp) in lights.iter().enumerate() {
-            // set_lights may trim/reorder packed sources. Match identity by the explicit fixture
-            // position so an unrelated muzzle/annunciator never inherits its visibility map.
-            if !renderer
+            // The packed source list can be reordered independently of these stable fixture IDs.
+            // A source omitted from that list does not spend shadow rendering work.
+            if !active_fixture(&lamp) || !renderer
                 .lights
                 .iter()
                 .any(|l| l.pos.abs_diff_eq(lamp.pos, 0.0001))
@@ -273,8 +312,8 @@ impl CabinShadows {
             }
             uniform.lamps[i] = [lamp.pos.x, lamp.pos.y, lamp.pos.z, 1.0];
             uniform.range[3] += 1.0;
-            let changed = caches[i].observe(self.signature(renderer, lamp, false),
-                self.signature(renderer, lamp, true));
+            let changed = caches[i].observe(self.signature(renderer, lamp, emitting_meshes[i], false),
+                self.signature(renderer, lamp, emitting_meshes[i], true));
             if !changed.compose { continue; }
             for face in 0..6 {
                 let cam = CameraUniform {
@@ -294,9 +333,12 @@ impl CabinShadows {
         work: &mut RenderWorkStats,
     ) {
         let lights = self.lights.borrow();
+        let emitting_meshes = self.emitting_meshes.borrow();
         for (light, &lamp) in lights.iter().enumerate() {
+            if !active_fixture(&lamp) { continue; }
             let changed = self.caches.borrow_mut()[light].take_work();
             if !changed.compose { continue; }
+            let emitting_mesh = emitting_meshes[light];
             for face in 0..6 {
                 let layer = light * 6 + face;
                 let matrix = face_view_proj(lamp.pos, face);
@@ -317,7 +359,7 @@ impl CabinShadows {
                     pass.set_pipeline(&renderer.shadow_pipe);
                     pass.set_bind_group(0, &self.binds[layer], &[]);
                     for (index, m) in renderer.meshes.iter().enumerate() {
-                        if self.is_dynamic(index) || !m.visible || m.glass || m.raster_only
+                        if !casts_for_fixture(index, emitting_mesh) || self.is_dynamic(index) || !m.visible || m.glass || m.raster_only
                             || !near_box(lamp.pos, m.world_min, m.world_max)
                             || !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
                         let push = PushData { model: m.model.to_cols_array_2d(), params: [0.0; 4] };
@@ -347,7 +389,7 @@ impl CabinShadows {
                 copy_cached_depth_face(encoder, &self.static_depth, &self.composed_depth, layer as u32);
                 let visible_dynamic: Vec<_> = self.dynamic_meshes.iter().filter_map(|&index| {
                     let m = renderer.meshes.get(index)?;
-                    (m.visible && !m.glass && !m.raster_only
+                    (casts_for_fixture(index, emitting_mesh) && m.visible && !m.glass && !m.raster_only
                         && near_box(lamp.pos, m.world_min, m.world_max)
                         && aabb_in_frustum(&planes, m.world_min, m.world_max)).then_some(m)
                 }).collect();
@@ -395,8 +437,8 @@ impl Renderer {
     pub fn set_cabin_shadow_dynamic_meshes(&mut self, meshes: &[usize]) {
         self.cabin_shadows.set_dynamic_meshes(meshes);
     }
-    pub fn set_shadowed_cabin_lights(&mut self, lights: &[PointLight]) {
-        self.cabin_shadows.set_lights(lights);
+    pub fn set_shadowed_cabin_lights(&mut self, lights: &[PointLight], emitting_meshes: &[Option<usize>]) {
+        self.cabin_shadows.set_lights(lights, emitting_meshes);
     }
 }
 
@@ -543,7 +585,31 @@ mod tests {
             );
         }
         assert_eq!(std::mem::size_of::<NearShadowUniform>(), 80);
-        assert_eq!(std::mem::size_of::<Uniform>(), 48);
+        assert_eq!(std::mem::size_of::<Uniform>(), 144);
+    }
+
+    #[test]
+    fn close_dome_fan_remains_a_blocker_but_only_own_emitter_is_excluded() {
+        let position = crate::interior_rig::TURRET_DOME_LAMP_POS;
+        let underside = crate::interior_rig::TURRET_FAN_UNDERSIDE_Y;
+        let separation = underside - position.y;
+        assert!((separation - 0.027).abs() < 1e-6);
+        assert!(NEAR < separation && separation < 0.035);
+        let projection = face_view_proj(position, 2);
+        let blocker = projection.project_point3(glam::Vec3::new(position.x, underside, position.z));
+        assert!((0.0..1.0).contains(&blocker.z), "actual fan underside must survive near clipping");
+        let behind = projection.project_point3(position + glam::Vec3::Y * 0.05);
+        assert!(blocker.z < behind.z, "fan must occlude receivers above the dome");
+        // Exclusion is an exact per-fixture mesh identity, never an emissive-material class.
+        assert!(!casts_for_fixture(17, Some(17)));
+        assert!(casts_for_fixture(18, Some(17))); // fan / another lamp remain casters
+        assert!(casts_for_fixture(17, Some(18)));
+        assert!(casts_for_fixture(17, None));
+        // Largest floating-point depth step at FAR stays below the existing receiver bias.
+        let depth_step_m = f32::EPSILON * FAR * (FAR - NEAR) / NEAR;
+        // At the full 8 m range the worst bound is 1.53 mm; at cabin distances <=4 m, <0.4 mm.
+        assert!(depth_step_m < 0.0016);
+        assert!(depth_step_m * 0.25 < 0.0007);
     }
 
     #[test]
@@ -560,12 +626,18 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            for distance in [0.05, 0.2, 1.0, 6.0] {
-                let p = face_view_proj(position, face).project_point3(position + axis * distance);
-                let reference = FAR / (FAR - NEAR) - FAR * NEAR / ((FAR - NEAR) * distance);
+            for distance in [0.006, 0.027, 0.05, 0.2, 1.0, 6.0] {
+                let point = position + axis * distance;
+                // WGSL also subtracts the represented world point from the represented lamp.
+                // At x=17 m, a requested 6 mm becomes 6.000519 mm in f32; comparing against
+                // the unrepresentable request adds 7.2e-5 depth error before projection rounding.
+                let represented_major = (point - position).dot(axis);
+                let p = face_view_proj(position, face).project_point3(point);
+                let reference = FAR / (FAR - NEAR)
+                    - FAR * NEAR / ((FAR - NEAR) * represented_major);
                 assert!(
                     (p.z - reference).abs() < 0.0001,
-                    "face {face}: {p:?} expected {reference}"
+                    "face {face}: {p:?} expected {reference}, major {represented_major}"
                 );
                 assert!(p.x.abs() < 0.0001 && p.y.abs() < 0.0001);
             }

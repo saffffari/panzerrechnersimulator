@@ -21,6 +21,7 @@ fn compose(source: &str) -> String {
     with_observer(source).replace("// @camera-relative-projection",include_str!("../shaders/camera_relative.wgsl"))
         .replace("// @campaign-terrain-material",include_str!("../shaders/terrain_material.wgsl"))
         .replace("// @sky-visibility-sampling",include_str!("../shaders/sky_visibility_sampling.wgsl"))
+        .replace("// @cabin-visibility-sampling",include_str!("../shaders/cabin_visibility.wgsl"))
 }
 /// The physical atmosphere library prepended as renderer.rs prepends it
 /// (`physical_atmosphere_transport_shader_source`): everything before the snow section.
@@ -121,10 +122,14 @@ fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
     // The probe the mesh reads is the probe the compute pass writes.
     assert_eq!(layout(&mesh,"EnvironmentProbe").0,68*16);
     assert_eq!(layout(&mesh,"NearShadow"),(80,vec![("view_proj".into(),0),("scale".into(),64)]));
-    assert_eq!(layout(&mesh,"CabinShadows"),(48,vec![("lamps".into(),0),("range".into(),32)]));
+    assert_eq!(layout(&mesh,"CabinShadows"),(144,vec![("lamps".into(),0),("range".into(),128)]));
     let old_smoke=include_str!("../shaders/smoke.wgsl");
     let old=parse(&(structure(old_smoke,"Puff")+&structure(old_smoke,"Smoke")));
     let smoke=parse(&compose(SMOKE));
+    assert_eq!(layout(&smoke,"CabinShadows"),layout(&mesh,"CabinShadows"));
+    let smoke_bindings:std::collections::BTreeSet<_>=smoke.global_variables.iter()
+        .filter_map(|(_,v)|v.binding.as_ref().map(|b|(b.group,b.binding))).collect();
+    assert_eq!(smoke_bindings,[(0,0),(0,1),(1,0),(1,1),(1,2),(1,3),(2,0),(3,0),(3,1),(3,2)].into_iter().collect());
     assert_eq!(layout(&smoke,"Smoke"),layout(&old,"Smoke"));
     assert_eq!(layout(&smoke,"Smoke").0,1616);
     assert_eq!(layout(&smoke,"PhysicalEnvironment"),layout(&sky,"PhysicalEnvironment"));

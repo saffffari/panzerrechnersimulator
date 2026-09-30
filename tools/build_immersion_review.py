@@ -93,6 +93,23 @@ def build():
                   'the actual lower-field obstruction remains. Each film compares this block with '
                   'the front block. This does not identify an unconfirmed block in a live session.</p>'
                   '<div class="grid">' + ''.join(optic_cards) + '</div>')
+    cabin = ''
+    cabin_prefixes = ['cabin_doom_20260929_baseline', 'cabin_doom_20260929_candidate']
+    if all((OUT / f'{prefix}.mp4').is_file() for prefix in cabin_prefixes):
+        cabin_cards = []
+        for title, prefix in zip(['Before: broad cabin wash', 'After: finite lamp power and fixture shadows'], cabin_prefixes):
+            receipt = load(prefix + '_manifest.json')
+            status = 'State checks passed' if receipt.get('outcome_checks_passed') else 'State checks failed'
+            cabin_cards.append(f'<article><h3>{title}</h3><video controls preload="metadata" '
+                               f'src="{prefix}.mp4" poster="{prefix}_breech.png"></video>'
+                               f'<p>{status} · <a href="{prefix}_manifest.json">Receipt</a></p></article>')
+        cabin = ('<h2 id="cabin">Inside the Tiger</h2>'
+                 '<p>The same healthy cabin, camera sequence and eye response. The lamps now derive '
+                 'their illuminating power and colour from their visible surfaces. All eight registered '
+                 'cabin fixtures can cast geometry shadows on surfaces and local smoke. The sequence '
+                 'visits the breech, rack, tray, gunner and lower commander view, with an ordinary LMB '
+                 'shot at 6.3 seconds. These are authored fixture radiances, not measured historical lamps.</p>'
+                 '<div class="grid">' + ''.join(cabin_cards) + '</div>')
     passed = candidate.get("outcome_checks_passed", False)
     page = '''<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -131,6 +148,7 @@ scheduled shot after death; compare its first 20 s. The candidate ends at 20 s a
 FIRE
 HAMMER
 CUPOLA
+CABIN
 <h2>What changed</h2>
 <p>Combustion speeds up with RPM while the engine's structural frequencies stay fixed. Confirmed
 internal explosions have broadband pressure and rupture, with steel ringing underneath. The source-level
@@ -147,8 +165,8 @@ The direct impact retains the incoming shell's calibration. Queued rack/cookoff 
 The old limiter duration counter included tiny residual attenuation; use the new threshold counters.</p>
 <pre>MASTER</pre></details>
 <p><small>Private local evaluation. No third-party source library is packaged in this page.
-Armor deformation, online fragment contacts, finite extinguisher charge and further atmospheric lighting
-remain development work; these films do not claim those features.</small></p>
+Armor deformation, online fragment contacts and finite extinguisher charge remain development work;
+these films do not claim those features.</small></p>
 <script>
 const player=document.getElementById('duel');let revision=0;
 function choose(name){const n=++revision,t=Math.min(player.currentTime||0,19.9),playing=!player.paused;
@@ -168,7 +186,7 @@ player.addEventListener('timeupdate',()=>{if(player.currentTime>=20){player.paus
             + ''.join(fire_cards) + '</div>') if fire_cards else ''
     for key, value in (("AFTER_CALIBRATION", after_cal_name), ("BEFORE", before), ("AFTER", after), ("CHECKS", "checks passed" if passed else "checks failed"),
                        ("ROWS", ''.join(rows)), ("MASTER", esc(master_text)), ("FIRE", fire), ("HAMMER", hammer),
-                       ("CUPOLA", cupola)):
+                       ("CUPOLA", cupola), ("CABIN", cabin)):
         page = page.replace(key, value)
     path = OUT / "immersion_review_20260929.html"
     path.write_text(page)

@@ -1,0 +1,53 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "cabin_doom_sweep_20260929",
+  "title": "Closed healthy Tiger: breech, ammunition, gunner surround and lower cupola",
+  "act_id": 0,
+  "night": false,
+  "station": "loader",
+  "seconds": 11.5,
+  "setup": {"enemy_policy": "banish"},
+  "mechanics": [
+    "ordinary_loader_head_views",
+    "ordinary_station_transitions",
+    "physical_gunner_eyepiece_surround",
+    "one_real_lmb_main_gun_shot",
+    "ordinary_commander_lower_head_view"
+  ],
+  "timeline": [
+    {"at_s": 0.1, "action": "look_breech"},
+    {"at_s": 1.8, "action": "look_rack"},
+    {"at_s": 3.0, "action": "look_tray"},
+    {"at_s": 4.5, "action": "station", "value": "gunner"},
+    {"from_s": 6.3, "until_s": 6.37, "input": {"mg_coax": true}},
+    {"at_s": 7.5, "action": "station", "value": "commander"},
+    {"at_s": 8.2, "action": "look_cupola", "value": "block0"},
+    {"from_s": 8.4, "until_s": 9.4, "input": {"look_dy": 2.0}}
+  ],
+  "expect": [
+    {"metric": "current_station", "at_s": 4, "equals": "loader"},
+    {"metric": "current_station", "at_s": 6, "equals": "gunner"},
+    {"metric": "main_gun_shots", "at_s": 6, "max_delta": 0},
+    {"metric": "main_gun_shots", "at_s": 7, "min_delta": 1, "max_delta": 1},
+    {"metric": "main_gun_shots", "min_delta": 1, "max_delta": 1},
+    {"metric": "current_station", "equals": "commander"},
+    {"metric": "hatch_open", "equals": false},
+    {"metric": "breech_loaded", "equals": false},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "game_over", "equals": false},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "fire", "max_value": 0},
+    {"metric": "enemy_fire_discharges", "max_delta": 0},
+    {"metric": "mg_rounds", "max_delta": 0},
+    {"metric": "rack_rounds", "max_delta": 0}
+  ],
+  "input_audit": "The act-0 training world's healthy Tiger and initial loader station are setup; enemies are removed to isolate cabin appearance. Named loader/cupola gaze actions rotate the current head only. Station actions use the ordinary request_station transition and its control lock. mg_coax is the recorder's ordinary LMB binding: at 6.3 seconds it fires the initially loaded serviceable round from the gunner's sight; no round, firing event, target, damage or outcome is injected. The gunner segment is the shipped physical eyepiece with its cabin surround, not a free interior camera. From 8.4 to 9.4 seconds ordinary mouse input lowers the commander's gaze within its normal head limits. No exposure, material, emitter, medium, weather, hatch state, crew witness or render-only camera is overridden. There are no on-screen review captions.",
+  "historical_scope": "Current training-arena cabin appearance and controls comparison, not a historical encounter or Act-I atmosphere acceptance.",
+  "visual_acceptance": [
+    "At 1 second inspect the breech and adjacent steel; at 2.5 seconds inspect the rack; at 4 seconds inspect the tray and lower cabin.",
+    "At 5.8 seconds inspect the actual gunner eyepiece surround. Compare the ordinary shot at 6.3 seconds and its recoil/report against the same static gunner view.",
+    "At 10.5 seconds inspect the lower commander view. Darker cabin candidates must retain physical control silhouettes and coherent illumination from the existing fixtures and openings.",
+    "Compare the same fixture, native sensor resolution, renderer preset and audio selection. Numerical checks establish inputs/state only; inspect matching video frames and ordinary soundtrack separately."
+  ],
+  "status": "baseline_capture_pending"
+}

@@ -15,8 +15,6 @@ pub enum Frame {
     Turret,
 }
 
-/// The real interior lamps (the authenticity whitelist): the dome lamp, the TPZ dial illuminator,
-/// and the red ignition indicator. `(frame, pos, color, radiant intensity, source radius metres)`.
 /// The dome lens is fixed to the underside of the turret-roof extractor fan.
 pub const TURRET_FAN_UNDERSIDE_Y: f32 = 2.2301013; // source Turret_0118, turret-local
 pub const TURRET_DOME_LAMP_HALF_SIZE: f32 = 0.027;
@@ -27,7 +25,66 @@ pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(
 /// Daylight apertures must establish the daytime cabin's bright end. Apply the same reduction to
 /// the visible dome lens and its transported light; exposure remains the ordinary measured eye.
 pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.02;
-pub const TURRET_DOME_LENS_EMISSION: f32 = 1.15 * CABIN_PRACTICAL_POWER_SCALE;
+
+/// The visible finite cube is the source of the lamp's spectrum and total emitted power.
+/// Dimensions, colours and radiances remain authored, not measured historical fixtures.
+#[derive(Clone, Copy, Debug)]
+pub struct FiniteCubeLamp {
+    pub half_size_m: f32,
+    pub srgb: [u8; 3],
+    pub emission: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LampEmission {
+    /// The own-colour mesh shader receives this exact value.
+    pub visible_emissive: f32,
+    pub linear_color: Vec3,
+    pub radiant_intensity: f32,
+    /// Circumscribed radius of the actual cube; not an illumination cutoff.
+    pub source_radius_m: f32,
+}
+
+impl FiniteCubeLamp {
+    pub fn sample(self, state: f32) -> LampEmission {
+        let state = if state.is_finite() { state.max(0.0) } else { 0.0 };
+        let visible_emissive = self.emission * CABIN_PRACTICAL_POWER_SCALE * state;
+        // Match the sRGB texture decode used by both mesh shaders, including its linear toe.
+        let linear_color = Vec3::from_array(self.srgb.map(|byte| {
+            let c = f32::from(byte) / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        }));
+        // Own-colour emission in gbuf/stylized_mesh. Current fixture states stay below the knee.
+        let radiance = visible_emissive + (visible_emissive - 3.0).max(0.0) * 0.15;
+        let area = 24.0 * self.half_size_m * self.half_size_m;
+        // A diffuse surface emits pi*L*A. The existing isotropic point-source approximation
+        // emits 4*pi*I, so I=L*A/4 conserves total power. It does not reproduce the cube's
+        // direction-dependent projected area or exact near field; scene geometry owns shadows.
+        LampEmission {
+            visible_emissive,
+            linear_color,
+            radiant_intensity: radiance * area * 0.25,
+            source_radius_m: self.half_size_m * 3.0_f32.sqrt(),
+        }
+    }
+}
+
+pub const DOME_FIXTURE: FiniteCubeLamp = FiniteCubeLamp {
+    half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 171, 66], emission: 1.15,
+};
+pub const ANNUNCIATOR_FIXTURES: [FiniteCubeLamp; 4] = [
+    FiniteCubeLamp { half_size_m: 0.028, srgb: [255, 46, 30], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.028, srgb: [255, 172, 44], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.028, srgb: [70, 128, 255], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.028, srgb: [70, 255, 96], emission: 1.0 },
+];
+pub const BREECH_FIXTURES: [FiniteCubeLamp; 3] = [
+    FiniteCubeLamp { half_size_m: 0.022, srgb: [60, 235, 90], emission: 2.4 },
+    FiniteCubeLamp { half_size_m: 0.022, srgb: [255, 245, 20], emission: 2.4 },
+    FiniteCubeLamp { half_size_m: 0.022, srgb: [235, 45, 30], emission: 2.4 },
+];
+
+pub fn dome_lamp_state(time_s: f32) -> f32 { 0.96 + 0.04 * (time_s * 5.0).sin() }
 
 /// Since the light foundation (2026-09-29) both backends hold the same spectral radiance, lit by
 /// the same physical environment and mapped by the same crewman's eye, so the shader backend's
@@ -39,17 +96,10 @@ pub const fn cabin_practical_gain(shader_backend: bool) -> f32 {
     if shader_backend { SHADER_CABIN_PRACTICAL_GAIN } else { 1.0 }
 }
 
+/// Existing source registrations whose emitting lens area/radiance has not yet been extracted.
+/// Keep their authored output explicit; never invent a finite mesh to claim source agreement.
+/// `(frame, pos, linear color, radiant intensity, source radius metres)`.
 pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
-    // Innenbeleuchtung dome lamp — a dim amber practical beneath the turret roof fan. Its real
-    // inverse-square source shapes only the nearby basket instead of flattening the compartment and
-    // overpowering the TPZ/ignition lamps. The lens spectrum below matches the visible bulb mesh.
-    (
-        Frame::Turret,
-        TURRET_DOME_LAMP_POS,
-        Vec3::new(1.0, 0.41, 0.055),
-        0.42 * CABIN_PRACTICAL_POWER_SCALE,
-        0.090,
-    ),
     // TPZ dial illuminator — small warm-orange pool on the dial face (rides the turret)
     (
         Frame::Turret,
@@ -80,8 +130,62 @@ mod lighting_tests {
             assert_eq!(intensity * physical, intensity);
             assert_eq!(intensity * raster, intensity, "the shader backend adds no gain");
         }
-        assert_eq!(TURRET_DOME_LENS_EMISSION * raster, TURRET_DOME_LENS_EMISSION);
+        for fixture in std::iter::once(DOME_FIXTURE)
+            .chain(ANNUNCIATOR_FIXTURES).chain(BREECH_FIXTURES) {
+            for state in [0.0, 0.4, 0.5, 0.6, 1.0, 2.4, 3.5, 4.0, 6.0] {
+                let a = fixture.sample(state * physical);
+                let b = fixture.sample(state * raster);
+                assert_eq!(a.visible_emissive, b.visible_emissive);
+                assert_eq!(a.radiant_intensity, b.radiant_intensity);
+                assert_eq!(a.linear_color, b.linear_color);
+            }
+        }
         assert_eq!(0.0 * raster, 0.0, "an unlit fixture stays unlit");
+    }
+
+    #[test]
+    fn finite_cabin_fixtures_conserve_the_visible_mesh_emission() {
+        for fixture in std::iter::once(DOME_FIXTURE)
+            .chain(ANNUNCIATOR_FIXTURES).chain(BREECH_FIXTURES) {
+            let mesh = crate::prims::box_mesh(Vec3::splat(-fixture.half_size_m),
+                Vec3::splat(fixture.half_size_m), fixture.srgb);
+            let area: f32 = mesh.indices.chunks_exact(3).map(|tri| {
+                let [a,b,c] = [0,1,2].map(|i| Vec3::from(mesh.vertices[tri[i] as usize].pos));
+                (b-a).cross(c-a).length()*0.5
+            }).sum();
+            for state in [0.0, 0.4, 1.0, 2.4, 3.5, 4.0, 6.0] {
+                let source = fixture.sample(state);
+                let visible_radiance = source.linear_color * source.visible_emissive;
+                let mesh_flux = visible_radiance * (std::f32::consts::PI * area);
+                let point_flux = source.linear_color * source.radiant_intensity
+                    * (4.0 * std::f32::consts::PI);
+                assert!(mesh_flux.abs_diff_eq(point_flux, 1e-8), "{fixture:?}, state {state}");
+                for vertex in &mesh.vertices {
+                    assert!(Vec3::from(vertex.pos).length() <= source.source_radius_m + 1e-7);
+                }
+                if state == 0.0 {
+                    assert_eq!(source.visible_emissive, 0.0);
+                    assert_eq!(source.radiant_intensity, 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn finite_cabin_fixture_spectra_match_srgb_and_flicker_changes_both_outputs() {
+        let ready = BREECH_FIXTURES[0].sample(1.0);
+        assert!(ready.linear_color.abs_diff_eq(Vec3::new(0.0451862,0.8307699,0.1022417),1e-6));
+        let station = ANNUNCIATOR_FIXTURES[3].sample(2.4);
+        assert!(station.linear_color.abs_diff_eq(Vec3::new(0.0612461,1.0,0.1169707),1e-6));
+        let dark = FiniteCubeLamp {srgb:[0,10,255], ..DOME_FIXTURE}.sample(1.0);
+        assert_eq!(dark.linear_color.x,0.0);
+        assert!((dark.linear_color.y-10.0/255.0/12.92).abs()<1e-8);
+        assert_eq!(dark.linear_color.z,1.0);
+        let high = DOME_FIXTURE.sample(dome_lamp_state(std::f32::consts::FRAC_PI_2/5.0));
+        let low = DOME_FIXTURE.sample(dome_lamp_state(3.0*std::f32::consts::FRAC_PI_2/5.0));
+        assert!((low.visible_emissive/high.visible_emissive-0.92).abs()<1e-6);
+        assert!((low.radiant_intensity/high.radiant_intensity-0.92).abs()<1e-6);
+        assert!((high.radiant_intensity-0.000100602).abs()<1e-9);
     }
 }
 

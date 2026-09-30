@@ -39,7 +39,7 @@ struct Camera {
 struct NearShadow { view_proj: mat4x4<f32>, scale: vec4<f32> };
 @group(2) @binding(3) var<uniform> near_shadow: NearShadow;
 @group(2) @binding(4) var cabin_shadow_maps: texture_depth_cube_array;
-struct CabinShadows { lamps: array<vec4<f32>,2>, range: vec4<f32> };
+// @cabin-visibility-sampling
 @group(2) @binding(5) var<uniform> cabin_shadows: CabinShadows;
 // Near-field environment visibility (src/sky_visibility.rs): 24 sky and 8 ground directions, each an
 // orthographic depth tile of the real scene geometry around the camera. Terrain never occludes.
@@ -218,7 +218,6 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
     let first = vec2<i32>(floor(pixel));
     let fraction = fract(pixel);
     let near = cabin_shadows.range.x;
-    let far = cabin_shadows.range.y;
     let plane_distance = dot(n, offset);
     var visibility = 0.0;
     for (var y = 0; y < 2; y += 1) {
@@ -235,9 +234,8 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
                 // is one, so this is the face's view-Z, not radial distance to the lamp.
                 let major = plane_distance / denominator;
                 if (major > near) {
-                    let reference = far/(far-near) - far*near/((far-near)*max(major-bias_m,near));
                     tap = textureSampleCompareLevel(cabin_shadow_maps, shadow_samp, ray, lamp,
-                                                    min(reference, 0.999999));
+                                                    cabin_shadow_reference(major, bias_m));
                 }
             }
             let weight = select(1.0 - fraction.x, fraction.x, x == 1)
@@ -249,19 +247,15 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
 }
 
 fn cabin_light_shadow(source: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
-    for (var lamp = 0; lamp < 2; lamp += 1) {
-        let fixture = cabin_shadows.lamps[lamp];
-        if (fixture.w < 0.5 || distance(source,fixture.xyz) > 0.0001) { continue; }
-        let distance_m = distance(world,source);
-        let bias_m = max(0.0007,min(distance_m,8.0)*cabin_shadows.range.z*0.22)
-            * (1.0 + 0.5*(1.0-ndl));
-        let offset = world + n * bias_m - source;
-        let major = max(max(abs(offset.x),abs(offset.y)),abs(offset.z));
-        let near = cabin_shadows.range.x;
-        if (major <= near) { return 1.0; }
-        return cabin_receiver_plane_pcf(offset, n, bias_m, lamp);
-    }
-    return 1.0;
+    let lamp = cabin_fixture_index(source);
+    if (lamp < 0) { return 1.0; }
+    let distance_m = distance(world,source);
+    let bias_m = max(0.0007,min(distance_m,8.0)*cabin_shadows.range.z*0.22)
+        * (1.0 + 0.5*(1.0-ndl));
+    let offset = world + n * bias_m - source;
+    let major = max(max(abs(offset.x),abs(offset.y)),abs(offset.z));
+    if (major <= cabin_shadows.range.x) { return 1.0; }
+    return cabin_receiver_plane_pcf(offset, n, bias_m, lamp);
 }
 
 struct Push {

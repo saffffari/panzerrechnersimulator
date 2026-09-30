@@ -10412,10 +10412,11 @@ impl Game {
         // path: the bulb glows warm amber, the snow puffs glow white-grey (marked below via
         // `mark_own_emissive`).
         let bulb = scene.len();
+        let dome_fixture = crate::interior_rig::DOME_FIXTURE;
         scene.push(box_mesh(
-            Vec3::splat(-crate::interior_rig::TURRET_DOME_LAMP_HALF_SIZE),
-            Vec3::splat(crate::interior_rig::TURRET_DOME_LAMP_HALF_SIZE),
-            [255, 171, 66],
+            Vec3::splat(-dome_fixture.half_size_m),
+            Vec3::splat(dome_fixture.half_size_m),
+            dome_fixture.srgb,
         )); // amber cube mounted directly to the measured fan underside
 
         // Procedural turret-basket floor. Its asymmetric cleat and inspection cover make the
@@ -10584,21 +10585,18 @@ impl Game {
         let foam_batch = [usize::MAX; N_FOAM_BATCHES];
         // Annunciator lamps — distinct authored colours (red / amber / blue / green) modulated by
         // emissive intensity per state. Own-colour path so they glow their own hue, not FX orange.
-        let annun_cols: [[u8; 3]; N_LAMP] =
-            [[255, 46, 30], [255, 172, 44], [70, 128, 255], [70, 255, 96]];
         let mut annun = [0usize; N_LAMP];
-        for (i, col) in annun_cols.iter().enumerate() {
+        for (i, fixture) in crate::interior_rig::ANNUNCIATOR_FIXTURES.iter().enumerate() {
             annun[i] = scene.len();
-            scene.push(box_mesh(Vec3::splat(-0.028), Vec3::splat(0.028), *col));
+            scene.push(box_mesh(Vec3::splat(-fixture.half_size_m),
+                Vec3::splat(fixture.half_size_m), fixture.srgb));
         }
         // Chamber contents: green loaded, bright yellow empty, red spent.
         let mut breech_lamp = [0usize; 3];
-        for (k, col) in [[60u8, 235, 90], [255, 245, 20], [235, 45, 30]]
-            .iter()
-            .enumerate()
-        {
+        for (k, fixture) in crate::interior_rig::BREECH_FIXTURES.iter().enumerate() {
             breech_lamp[k] = scene.len();
-            scene.push(box_mesh(Vec3::splat(-0.022), Vec3::splat(0.022), *col));
+            scene.push(box_mesh(Vec3::splat(-fixture.half_size_m),
+                Vec3::splat(fixture.half_size_m), fixture.srgb));
         }
 
         // Full textured crew bodies live before the legacy FX tail. Each of the five original
@@ -11847,8 +11845,8 @@ impl Game {
             renderer.set_visible(*slot, false);
         }
         // Warm interior bulb + snow puffs take the own-colour (ungated) emissive path so they glow
-        // with their authored amber / white-grey instead of the FX orange. Bulb is driven per frame in
-        // `update` (lit only when buttoned up); the snow puffs sit idle until a near-miss arms one.
+        // with their authored amber / white-grey instead of the FX orange. The bulb's mesh and
+        // transported power are driven together; snow puffs sit idle until a near-miss arms one.
         renderer.mark_own_emissive(slots.bulb);
         renderer.set_visible(slots.bulb, false);
         // The Enigma is an ordinary textured PBR object attached to the hull; it emits no light and
@@ -15969,29 +15967,6 @@ impl Game {
             }
         } // end Mode::Tank arm
 
-        // The physical warm lens: a visible amber button/dome attached beneath the turret-roof
-        // fan. It rides the traverse and is a real rendered source, matching the other glowing
-        // controls instead of relying on an invisible point light.
-        {
-            // The electrical fixture exists and emits independently of the current camera.
-            // Visibility through armor is decided by geometry, never by view state.
-            let lamp_on = true;
-            let flick = 0.96 + 0.04 * (self.stealth.t * 5.0).sin();
-            r.set_visible(self.slots.bulb, lamp_on);
-            r.set_emissive(
-                self.slots.bulb,
-                if lamp_on {
-                    crate::interior_rig::TURRET_DOME_LENS_EMISSION * flick
-                        * crate::interior_rig::cabin_practical_gain(r.shader_backend)
-                } else {
-                    0.0
-                },
-            );
-            let model = self.player.turret_model()
-                * Mat4::from_translation(crate::interior_rig::TURRET_DOME_LAMP_POS);
-            r.set_model(self.slots.bulb, model);
-        }
-
         // A held Space is consumed in both modes, including across the end of a climb.
         self.prev_jump = input.jump;
         self.update_driver_visor_hover(r);
@@ -17354,6 +17329,21 @@ impl Game {
         self.drive_lights_with_transients(r, true);
     }
 
+    /// One sample owns the visible lamp and its total-power-equivalent point source. Even an
+    /// unlit lens remains real geometry; camera/station changes cannot switch electrical power.
+    fn drive_finite_lamp(r: &mut Renderer, slot: usize, model: Mat4,
+        emission: crate::interior_rig::LampEmission) -> PointLight {
+        r.set_visible(slot, true);
+        r.set_emissive(slot, emission.visible_emissive);
+        r.set_model(slot, model);
+        PointLight {
+            pos: model.transform_point3(Vec3::ZERO),
+            source_radius: emission.source_radius_m,
+            color: emission.linear_color,
+            radiant_intensity: emission.radiant_intensity,
+        }
+    }
+
     /// The frozen post-blackout cause view retains fixtures/fire, but the impact's millisecond
     /// emitters have expired. Hiding their meshes alone leaves a permanent white blast light.
     fn drive_lights_with_transients(&mut self, r: &mut Renderer, transients: bool) {
@@ -17497,8 +17487,17 @@ impl Game {
             let practical_gain = rig::cabin_practical_gain(r.shader_backend);
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
-            let mut shadowed_cabin_lights = Vec::with_capacity(2);
-            for (index, &(frame, pos, color, radiant_intensity, source_radius)) in rig::LAMPS.iter().enumerate() {
+            // Stable identities: dome, TPZ, ignition, fire/breech/repair/station, ready lamp.
+            // Preserve zero-output status slots in this list; source power never selects geometry.
+            let mut shadowed_cabin_lights = Vec::with_capacity(8);
+            let mut emitting_meshes = Vec::with_capacity(8);
+            let dome = Self::drive_finite_lamp(r, self.slots.bulb,
+                tm * Mat4::from_translation(rig::TURRET_DOME_LAMP_POS),
+                rig::DOME_FIXTURE.sample(rig::dome_lamp_state(self.stealth.t) * practical_gain));
+            lights.push(dome);
+            shadowed_cabin_lights.push(dome);
+            emitting_meshes.push(Some(self.slots.bulb));
+            for &(frame, pos, color, radiant_intensity, source_radius) in rig::LAMPS {
                 let m = if frame == Frame::Hull { &hm } else { &tm };
                 let pos = m.transform_point3(pos);
                 let light = PointLight {
@@ -17508,49 +17507,38 @@ impl Game {
                     radiant_intensity: radiant_intensity * practical_gain,
                 };
                 lights.push(light);
-                // Stable source identities: dome fixture, then gunner's TPZ dial lamp.
-                if index < 2 { shadowed_cabin_lights.push(light); }
+                shadowed_cabin_lights.push(light);
+                emitting_meshes.push(None); // TPZ/ignition emitting surfaces are not yet registered.
             }
-            r.set_shadowed_cabin_lights(&shadowed_cabin_lights);
 
-            // The four status buttons light only the air immediately around their own physical
-            // meshes. A dead lamp contributes nothing, while urgent pulses flare in the same color
-            // and on the same frame as the visible button.
-            const ANNUN_COLORS: [Vec3; N_LAMP] = [
-                Vec3::new(1.0, 0.18, 0.12),
-                Vec3::new(1.0, 0.67, 0.17),
-                Vec3::new(0.27, 0.50, 1.0),
-                Vec3::new(0.27, 1.0, 0.38),
-            ];
+            // Status colour, pulse and emitting area come from the same finite visible cube.
+            // Inverse-square transport has no authored distance cutoff; visibility owns its reach.
             for (i, emissive) in self.annunciator_emissives().into_iter().enumerate() {
-                if emissive <= 0.0 {
-                    continue;
-                }
-                lights.push(PointLight {
-                    pos: tm.transform_point3(Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72)),
-                    source_radius: 0.028,
-                    color: ANNUN_COLORS[i],
-                    radiant_intensity: emissive * 0.018 * rig::CABIN_PRACTICAL_POWER_SCALE
-                        * practical_gain,
-                });
+                let local = Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72);
+                let lamp = Self::drive_finite_lamp(r, self.slots.annun[i],
+                    tm * Mat4::from_translation(local),
+                    rig::ANNUNCIATOR_FIXTURES[i].sample(emissive * practical_gain));
+                shadowed_cabin_lights.push(lamp);
+                emitting_meshes.push(Some(self.slots.annun[i]));
+                if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
             }
 
-            // The on-breech ready/work/spent lamp gets the same treatment. This is deliberately a
-            // hand-sized halo, not another ambient fill source.
-            let breech_colors = [
-                Vec3::new(0.24, 0.92, 0.35),
-                Vec3::new(1.0, 0.96, 0.08),
-                Vec3::new(0.92, 0.18, 0.12),
-            ];
-            lights.push(PointLight {
-                pos: self
-                    .player
-                    .visual_gun_model()
-                    .transform_point3(BREECH_LAMP_POS),
-                source_radius: 0.022,
-                color: breech_colors[self.breech_lamp_state()],
-                radiant_intensity: 0.035 * rig::CABIN_PRACTICAL_POWER_SCALE * practical_gain,
-            });
+            // Three colour alternatives occupy one physical lens; only the live state exists.
+            let state = self.breech_lamp_state();
+            let model = self.player.visual_gun_model() * Mat4::from_translation(BREECH_LAMP_POS);
+            for (k, &slot) in self.slots.breech_lamp.iter().enumerate() {
+                if k == state {
+                    let lamp = Self::drive_finite_lamp(r, slot, model,
+                        rig::BREECH_FIXTURES[k].sample(practical_gain));
+                    lights.push(lamp);
+                    shadowed_cabin_lights.push(lamp);
+                    emitting_meshes.push(Some(slot));
+                } else {
+                    r.set_visible(slot, false);
+                    r.set_emissive(slot, 0.0);
+                }
+            }
+            r.set_shadowed_cabin_lights(&shadowed_cabin_lights, &emitting_meshes);
         }
         lights.extend(self.tank_editor_lights(r));
         r.set_lights(&lights);
@@ -27652,7 +27640,6 @@ impl Game {
         self.drive_track_repair_fx(r);
         self.drive_at_guns(r);
         self.drive_carried_tools(dt, r);
-        self.drive_annunciators(r);
 
         // Legacy backend smoke remains available; raster weapons use only bounded grain pages.
         self.drive_smoke(r);
@@ -28206,17 +28193,6 @@ impl Game {
         let turret = self.player.turret_model();
         let at = |local: Vec3| turret * Mat4::from_translation(local);
 
-        // The ON-BREECH reload lamp: green = ready, orange = lever open (working), red = shut
-        // on a spent case / empty chamber. One of the three colour meshes lit at a time.
-        let gm_lamp = self.player.visual_gun_model() * Mat4::from_translation(BREECH_LAMP_POS);
-        let lamp_state = self.breech_lamp_state();
-        for (k, &slot) in self.slots.breech_lamp.iter().enumerate() {
-            r.set_visible(slot, show && k == lamp_state);
-            r.set_emissive(slot, 2.4 * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE
-                * crate::interior_rig::cabin_practical_gain(r.shader_backend));
-            r.set_model(slot, gm_lamp);
-        }
-
         // The breech LEVER swings about its local X as it opens; the block COVER slides down
         // with it (the falling-block breech). Both live in the GUN frame (they elevate with it).
         // The crank remains attached to the source lid's long stem during both lift and swing.
@@ -28451,24 +28427,6 @@ impl Game {
 
     fn breech_lamp_state(&self) -> usize {
         breech_indicator_state(self.breech, self.lever_open, self.player_can_fire())
-    }
-
-    /// Drive the interior ANNUNCIATOR strip — four coloured lamps that surface the ONE top task without
-    /// any text HUD (the frame is a pure crushed 3D buffer): RED = fire (pulse rate ramps as the
-    /// cook-off timer shrinks — the countdown you FEEL), AMBER = breech not loaded, BLUE = a repairable
-    /// module down, GREEN = the active station (pulses when it needs service). Own-colour emissive,
-    /// turret-local, visible only buttoned-up. Deterministic (no rand).
-    fn drive_annunciators(&mut self, r: &mut Renderer) {
-        let show = self.interior_light > 0.02 || self.climb.active;
-        let turret = self.player.turret_model();
-        let emis = self.annunciator_emissives();
-        for (i, &slot) in self.slots.annun.iter().enumerate() {
-            let local = Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72); // low panel in the crew's forward view
-            r.set_visible(slot, show);
-            r.set_emissive(slot, emis[i] * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE
-                * crate::interior_rig::cabin_practical_gain(r.shader_backend));
-            r.set_model(slot, turret * Mat4::from_translation(local));
-        }
     }
 
     /// Animate the coaxial / hull MG34 FX: the stroboscopic muzzle-flash flicker at the live port,
