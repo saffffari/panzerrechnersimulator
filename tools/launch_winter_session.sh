@@ -5,10 +5,10 @@
 # deterministic district tool (tools/worldgen/urban_intro_district.py) writes it before the launch
 # (about 15 s, byte-identical on every run; with --check it is only reported). A workshop written by an
 # older version of the tool is regenerated the same way, unless it was edited by hand.
-# --canyon plays the CANYON playtest course (docs/CANYON_COURSE_20260929.md): its workshop is
-# generated the same way by tools/worldgen/canyon_course.py (about 6 s) when it is missing or was
-# written by an older tool, and the game starts the course directly (with --menu, the title menu's
-# Canyon entry starts it).
+# --canyon plays the CANYON playtest course (docs/CANYON_COURSE_20260929.md) directly (with --menu,
+# the title menu, whose Canyon entry starts it). Every session writes the course's workshop with
+# tools/worldgen/canyon_course.py (about 6 s) when it is missing or was written by an older tool, so
+# the title menu's Canyon entry loads from any session.
 # Every other option passes through to launch_shader_playtest.sh.
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -45,13 +45,18 @@ elif [[ "$MANIFEST" == "$URBAN_MANIFEST" ]] && (( ! CHECK )); then
             || echo "urban workshop kept as it is (hand-edited?); regenerate with --force to take the new tool" >&2
     fi
 fi
-if (( CANYON )) && (( ! CHECK )); then
+if (( ! CHECK )); then
+    # Every session keeps the title menu's Canyon entry playable: the course is written when missing
+    # or from an older tool (about 6 s, once). Only a --canyon session fails without it.
     CANYON_RECEIPT="$(dirname "$CANYON_MANIFEST")/canyon-course.receipt.json"
     CANYON_WANT=$(sed -n 's/^TOOL_VERSION = \([0-9]*\).*/\1/p' "$PROJECT_ROOT/tools/worldgen/canyon_course.py")
     CANYON_HAVE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tool_version", 0))' "$CANYON_RECEIPT" 2>/dev/null || echo 0)
     if [[ ! -f "$CANYON_MANIFEST" || "$CANYON_HAVE" != "$CANYON_WANT" ]]; then
         echo "canyon workshop missing or from tool version $CANYON_HAVE; generating it with tools/worldgen/canyon_course.py" >&2
-        python3 "$PROJECT_ROOT/tools/worldgen/canyon_course.py" >&2
+        if ! python3 "$PROJECT_ROOT/tools/worldgen/canyon_course.py" >&2; then
+            if (( CANYON )); then exit 1; fi
+            echo "canyon workshop not written; the title menu's Canyon entry will not load" >&2
+        fi
     fi
 fi
 if (( CANYON )); then

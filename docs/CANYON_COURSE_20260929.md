@@ -12,7 +12,9 @@ steep faces").
 - Title menu: **Canyon** (the last entry). Its line shows the last and the best run once a run is
   complete; before that, what the course is.
 - `tools/launch_winter_session.sh --canyon` starts the course directly (with `--menu`, the title
-  menu); it writes a missing workshop first (about 6 s) or one an older tool wrote.
+  menu). Every session of that launcher (with or without `--canyon`, `--urban`) writes the course's
+  workshop first when it is missing or an older tool wrote it (about 6 s, once), so the title menu's
+  Canyon entry loads from any session.
 - `tools/launch_current_build.sh --singleplayer --canyon` builds if needed, then starts it; the
   desktop entry `/home/alex/panzer/panzerrechnersystem-canyon-dev.desktop` runs exactly that on the
   sound-overhaul worktree (its "Title menu" action passes `--menu --canyon`).
