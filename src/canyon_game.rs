@@ -15,6 +15,10 @@ impl Game {
     /// the guns and the riflemen, and start the run's clock. Needs the manifest's `canyon_course`
     /// and `street_encounter` blocks.
     pub fn enable_canyon_course(&mut self) -> anyhow::Result<()> {
+        self.enable_canyon_course_seeded(crate::canyon::fresh_seed())
+    }
+
+    pub fn enable_canyon_course_seeded(&mut self, seed: u64) -> anyhow::Result<()> {
         let spec = self.canyon_spec.clone()
             .ok_or_else(|| anyhow::anyhow!("this map declares no canyon course (canyon_course block)"))?;
         let plan = self.street_plan.clone()
@@ -31,9 +35,31 @@ impl Game {
         let (w, h) = nav.size();
         println!("[canyon] floor: {} of {} cells clear for a T-34 ({:.0} ms)", nav.clear_cells(), w * h,
             started.elapsed().as_secs_f64() * 1e3);
-        let mut encounter = winter_encounter_ai::WinterEncounter::in_streets(plan.beats.clone(), nav);
-        let placed = self.muster_winter_platoons(&mut encounter);
-        // One gun per choke, the best the probe finds among that choke's candidates.
+        // Course loops are authored on a terrain route; masonry, trees and craters can
+        // invalidate individual knots after the scene is built. Project onto measured
+        // clear cells and retain supported knots. The navigation grid still routes the
+        // tank between them, rather than ordering straight chords through the terrain.
+        let beat = |game: &Game, i: usize, phase: u64| {
+            let mut points: Vec<Vec2> = crate::canyon::varied_beat(&plan.beats[i], phase)
+                .into_iter().filter_map(|p| nav.nearest_clear(p,20.0)
+                    .filter(|&q|game.winter_patrol_point_clear(q))).collect();
+            points.dedup_by(|a,b|a.distance_squared(*b)<1.0);
+            points
+        };
+        let beats = std::array::from_fn(|i| beat(self,i,seed ^ i as u64));
+        anyhow::ensure!(beats.iter().all(|b|b.len()>=2),"canyon has no supported patrol loop");
+        let mut encounter = winter_encounter_ai::WinterEncounter::in_streets(beats, nav.clone());
+        let mut placed = self.muster_winter_platoons(&mut encounter);
+        for attempt in 1..16u64 {
+            if placed.iter().filter(|&&v|v).count() == 5 { break; }
+            for i in 0..2 {
+                encounter.set_route(i, beat(self,i,seed ^ i as u64 ^ (attempt << 32)));
+            }
+            placed = self.muster_winter_platoons(&mut encounter);
+        }
+        anyhow::ensure!(placed.iter().filter(|&&v|v).count() == 5,
+            "canyon seed {seed} cannot place both complete platoons on legal ground");
+        // One gun per choke, seeded among that choke's geometrically viable candidates.
         let routes = [encounter.route(0), encounter.route(1)];
         let legs: Vec<(Vec2, Vec2)> = routes.iter()
             .flat_map(|beat| beat.iter().zip(beat.iter().cycle().skip(1)).map(|(&a, &b)| (a, b))).collect();
@@ -44,7 +70,7 @@ impl Game {
         let watched = [start_eye];
         let mut guns: Vec<(String, SitedGun)> = Vec::new();
         let mut zones = Vec::new();
-        for zone in spec.gun_zones.iter().take(at_guns::AT_GUNS) {
+        for (zone_index, zone) in spec.gun_zones.iter().take(at_guns::AT_GUNS).enumerate() {
             let lines: Vec<_> = plan.kill_zone.iter().filter(|line| line.id == zone.kill_zone).cloned().collect();
             if lines.is_empty() {
                 eprintln!("[canyon] gun zone {} names no kill-zone line {:?}", zone.id, zone.kill_zone);
@@ -52,7 +78,7 @@ impl Game {
             }
             let kill_zone = sample_kill_zone(&lines, |p| self.hf.height_at(p.x, p.y));
             let mut rejected = std::collections::BTreeMap::<&str, usize>::new();
-            let mut best: Option<SitedGun> = None;
+            let mut viable: Vec<(usize, SitedGun)> = Vec::new();
             let mut fighting = 0usize;
             for &index in &zone.candidates {
                 let Some(site) = plan.gun_sites.get(index) else { continue; };
@@ -61,12 +87,20 @@ impl Game {
                         fighting += 1;
                         // Not in another gun's line of fire: at least 60 m from the guns already sited.
                         if guns.iter().any(|(_, other)| other.at.distance(gun.at) < 60.0) { continue; }
-                        if best.as_ref().is_none_or(|b| gun.score > b.score) { best = Some(gun); }
+                        viable.push((index, gun));
                     }
                     Err(why) => *rejected.entry(why).or_default() += 1,
                 }
             }
+            // Every choice must pass the same geometry/field-of-fire probe. Choose among
+            // viable positions within 60% of the best score, not one eternal optimal ambush.
+            let peak = viable.iter().map(|(_,g)| g.score).fold(0.0_f32, f32::max);
+            viable.retain(|(_,g)| g.score >= peak * 0.60);
+            let choices = viable.len();
+            let best = viable.into_iter().max_by_key(|(index, _)|
+                crate::canyon::mix(seed ^ (zone_index as u64 * 0x9e3779b9) ^ *index as u64)).map(|(_,g)|g);
             zones.push(serde_json::json!({
+                "viable_choices": choices,
                 "zone": zone.id, "candidates": zone.candidates.len(), "fighting": fighting, "rejected": rejected,
                 "gun": best.as_ref().map(|gun| serde_json::json!({
                     "at": [gun.at.x, gun.at.y], "kind": gun.kind.name(), "on": gun.on,
@@ -88,14 +122,21 @@ impl Game {
         let crews = at_guns::FIRST_CREW_SOLDIER..at_guns::FIRST_CREW_SOLDIER + sites.len() * at_guns::CREW;
         let riders = |i: usize| i < N_ENEMIES * 2 && winter_encounter_ai::platoon_of(i / 2) == 0
             && self.enemy_active.get(i / 2).copied().unwrap_or(false);
-        // Only the Soviet riflemen: the German soldiers of the mixed-combat runtime follow them.
+        // Only the Soviet riflemen; Canyon's scene omits the unrelated allied practice squad.
         let free: Vec<usize> = (0..N_SOLDIERS.min(self.soldiers.len())).filter(|&i| {
             !riders(i) && !crews.contains(&i)
         }).collect();
         let mut posted = 0usize;
+        let mut used_posts = Vec::new();
         if !spec.garrison.is_empty() {
             for (k, &i) in free.iter().enumerate() {
-                let post = spec.garrison[k % spec.garrison.len()];
+                let sector = k % 3;
+                let selected = spec.garrison.iter().enumerate()
+                    .filter(|(j, _)| j % 3 == sector && !used_posts.contains(j))
+                    .max_by_key(|(j, _)| crate::canyon::mix(seed ^ 0x61726973 ^ *j as u64 ^ ((k as u64) << 32)))
+                    .map(|(j,_)|j).unwrap_or(k % spec.garrison.len());
+                used_posts.push(selected);
+                let post = spec.garrison[selected];
                 // A second man at a post stands a pace aside of the first.
                 let round = (k / spec.garrison.len()) as f32;
                 let aside = Vec2::new(post.heading.cos(), -post.heading.sin()) * (1.6 * round);
@@ -111,8 +152,12 @@ impl Game {
         self.winter_encounter = Some(encounter);
         let fielded = placed.iter().filter(|&&active| active).count();
         let receipt = serde_json::json!({
+            "seed": seed, "deployment": "seeded viable sites and patrol phases",
             "start": [spec.start.x, spec.start.y], "goal": [spec.goal.x, spec.goal.y], "goal_radius_m": spec.goal_radius_m,
             "length_m": spec.length_m, "t34s": fielded, "platoon_tanks": winter_encounter_ai::PLATOON_TANKS,
+            "patrols": self.winter_encounter.as_ref().map(|e|
+                [e.route(0),e.route(1)].map(|route| route.iter().map(|p|p.to_array()).collect::<Vec<_>>())),
+            "infantry_positions": free.iter().map(|&i|self.soldiers[i].pos.to_array()).collect::<Vec<_>>(),
             "guns": zones, "riflemen_posted": posted, "rule": "src/canyon.rs, game/canyon_game.rs",
         });
         println!("[canyon] course fielded: {receipt}");
@@ -155,7 +200,12 @@ impl Game {
         let (point, travel) = points.iter().filter(|k| {
             let centre = Vec3::new(k.at.x, k.ground + tank::TIGER_PARTS.center_h, k.at.y);
             let p = Vec3::new(k.at.x, k.ground, k.at.y);
-            self.los_clear(eye, centre) && !self.box_region_blocked(Vec3::new(p.x - reach, p.y + 0.3, p.z - reach),
+            let range=eye.distance(centre);
+            let bearing=(k.at.x-gun.pos.x).atan2(k.at.y-gun.pos.z);
+            let sector=(bearing-gun.sited+std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)-std::f32::consts::PI;
+            range > at_guns::GROUND_M+5.0 && range <= at_guns::OPEN_FIRE_M
+                && (range <= at_guns::POINT_BLANK_M || sector.abs() <= at_guns::SECTOR_HALF)
+                && self.los_clear(eye, centre) && !self.box_region_blocked(Vec3::new(p.x - reach, p.y + 0.3, p.z - reach),
                 Vec3::new(p.x + reach, p.y + 2.8, p.z + reach))
         }).min_by(|a, b| (eye.distance(Vec3::new(a.at.x, a.ground, a.at.y)) - range_m).abs()
             .total_cmp(&(eye.distance(Vec3::new(b.at.x, b.ground, b.at.y)) - range_m).abs()))
@@ -215,8 +265,130 @@ mod tests {
     use super::*;
 
     fn canyon_manifest() -> Option<std::path::PathBuf> {
-        let path = std::path::PathBuf::from(crate::canyon::DEFAULT_MANIFEST);
+        let path = std::path::PathBuf::from("assets/worldgen/workshops/canyon-course/manifest.v1.json");
         path.is_file().then_some(path)
+    }
+
+    #[test]
+    #[ignore = "requires GPU and generated Gaea canyon"]
+    fn gaea_canyon_route_drives_end_to_end_on_normal_vehicle_physics() -> anyhow::Result<()> {
+        let path = std::fs::canonicalize(crate::canyon::DEFAULT_MANIFEST)?;
+        let edits: serde_json::Value = serde_json::from_slice(&std::fs::read(path.with_file_name("manifest_edits.json"))?)?;
+        let route: Vec<Vec2> = edits["canyon_course"]["route"].as_array().unwrap().iter()
+            .map(|p|Vec2::new(p[0].as_f64().unwrap() as f32,p[1].as_f64().unwrap() as f32)).collect();
+        crate::act_manifest::select_runtime_manifest(Some(path))?;
+        let instance=crate::create_instance();
+        let adapter=crate::request_adapter(&instance,None);
+        let (device,queue)=crate::request_device(&adapter);
+        let (mut renderer,mut game)=Game::build_playtest_act(&device,&queue,false,&crate::world::act(1))?;
+        game.mute_audio();
+        game.enable_canyon_course_seeded(29)?;
+        game.enable_singleplayer_crew();
+        game.jump_station(Station::Commander);
+        // Route acceptance only: ordinary drive/steer, solid geometry and mortal vehicle;
+        // defenders hold fire. This is not a claim of beating the armed course as a human.
+        game.set_playtest_return_fire(false);
+        assert!(!game.god);
+        let pos=Vec2::new(game.player.pos.x,game.player.pos.z);
+        let mut cursor=(0..route.len()).min_by(|&a,&b|route[a].distance_squared(pos).total_cmp(&route[b].distance_squared(pos))).unwrap();
+        let mut last_progress=0usize;
+        let mut samples=Vec::new();
+        for step in 0..32_000usize {
+            let pos=Vec2::new(game.player.pos.x,game.player.pos.z);
+            let closest=(cursor..(cursor+12).min(route.len())).min_by(|&a,&b|
+                route[a].distance_squared(pos).total_cmp(&route[b].distance_squared(pos))).unwrap();
+            if closest>cursor { cursor=closest;last_progress=step; }
+            let target=route[(cursor+1).min(route.len()-1)];
+            let d=target-pos;
+            let error=(d.x.atan2(d.y)-game.player.heading+std::f32::consts::PI)
+                .rem_euclid(std::f32::consts::TAU)-std::f32::consts::PI;
+            let drive=if error.abs()>0.6 {0.16} else {0.60};
+            game.update(&TankInput {drive,steer:(error*2.2).clamp(-1.0,1.0),..TankInput::default()},0.05,&mut renderer);
+            if step%400==0 {
+                println!("[canyon-drive] {:.0}% at {:?}, speed {:.2}",100.0*cursor as f32/route.len() as f32,game.player.pos,game.player.speed);
+                samples.push(serde_json::json!({"time_s":step as f32*0.05,"route_point":cursor,"pos":game.player.pos.to_array(),"speed":game.player.speed}));
+            }
+            assert!(game.player.alive,"terrain killed the Tiger at {:?}",game.player.pos);
+            assert!(step-last_progress<1200,"route stalled at point {cursor} / {}, pos {:?}, ground {:?}",route.len(),game.player.pos,game.tank_ground);
+            if game.canyon_finished().is_some() {break;}
+        }
+        assert!(game.canyon_finished().is_some(),"route did not finish: {:?}",game.player.pos);
+        let finish=game.canyon_snapshot();
+        // Separately put a mortal Tiger in the first gun's observed kill zone and let the
+        // ordinary Soviet gun and penetration simulation engage it; no damage is injected.
+        game.enable_canyon_course_seeded(29)?;
+        game.enable_singleplayer_crew();
+        let stage=game.debug_stage_canyon_fight(0,220.0,false)?;
+        for _ in 0..800 {game.update(&TankInput::default(),0.05,&mut renderer);if !game.player.alive {break;}}
+        assert!(game.at_guns[0].is_some_and(|g|g.shots>0),"first gun never engaged: stage {stage}; {}",game.at_gun_snapshot());
+        std::fs::write("captures/canyon_run_drive_verification_20260930.json",serde_json::to_vec_pretty(&serde_json::json!({
+            "route_test":"ordinary drive/steer; return fire disabled; no god mode or warps",
+            "samples":samples,"finish":finish,"armed_probe_staging":stage,"armed_probe":game.canyon_snapshot()
+        }))?)?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires GPU and generated Gaea canyon"]
+    fn gaea_canyon_seeds_field_complete_varied_forces_and_finish_only_alive() -> anyhow::Result<()> {
+        let path = std::fs::canonicalize(crate::canyon::DEFAULT_MANIFEST)?;
+        crate::act_manifest::select_runtime_manifest(Some(path))?;
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (mut renderer, mut game) = Game::build_playtest_act(&device,&queue,false,&crate::world::act(1))?;
+        game.mute_audio();
+        let mut deployments = Vec::new();
+        for seed in [11,29,73,101,503,2026,930,1984] {
+            game.enable_canyon_course_seeded(seed)?;
+            game.enable_singleplayer_crew();
+            let receipt = game.canyon_siting.clone().unwrap();
+            assert_eq!(receipt["t34s"],5);
+            assert_eq!(game.at_guns.iter().flatten().count(),3,"seed {seed}: {receipt}");
+            assert_eq!(receipt["riflemen_posted"],6);
+            assert_eq!(game.soldiers.len(), N_SOLDIERS, "Canyon has no allied practice squad");
+            assert_eq!(game.mixed_combat.actors.len(), N_SOLDIERS);
+            let posted: Vec<_> = game.soldiers.iter().enumerate()
+                .filter(|(i,s)| s.escort_enemy.is_none() && *i < at_guns::FIRST_CREW_SOLDIER)
+                .map(|(i,s)|(i,s.pos)).collect();
+            let start = game.player.pos;
+            assert!(!game.god);
+            for _ in 0..120 { game.update(&TankInput::default(),1.0/60.0,&mut renderer); }
+            assert!(game.player.alive && game.at_guns.iter().flatten().all(|g|g.shots==0),"safe start seed {seed}");
+            assert!(game.player.pos.distance(start)<1.0);
+            for (i, post) in posted {
+                assert!(game.soldiers[i].pos.distance(post) < 1.0, "seed {seed}: rifle post {i} drifted");
+                assert!(game.mixed_combat.actors[i].pos.distance(game.soldiers[i].pos)<0.001,
+                    "rendered soldier and combat actor disagree");
+            }
+            for (g, gun) in game.at_guns.iter().enumerate() {
+                let gun=gun.as_ref().unwrap();
+                for k in 0..at_guns::CREW {
+                    assert!(game.soldiers[at_guns::FIRST_CREW_SOLDIER+g*at_guns::CREW+k].pos
+                        .distance(gun.pos)<4.0, "seed {seed}: crew left gun {g}");
+                }
+            }
+            deployments.push(receipt);
+        }
+        for pair in deployments.windows(2) {
+            assert_ne!(pair[0]["guns"],pair[1]["guns"]);
+            assert_ne!(pair[0]["patrols"],pair[1]["patrols"]);
+            assert_ne!(pair[0]["infantry_positions"],pair[1]["infantry_positions"]);
+        }
+        game.enable_canyon_course_seeded(11)?;
+        assert_eq!(game.canyon_siting.as_ref().unwrap(),&deployments[0],"seed reproduces exactly");
+        let goal=game.canyon_spec.as_ref().unwrap().goal;
+        game.debug_place_tiger(goal,0.0);
+        game.player.alive=false;
+        game.update_canyon_run(1.0/60.0);
+        assert!(game.canyon_finished().is_none());
+        game.player.alive=true;
+        game.update_canyon_run(1.0/60.0);
+        assert!(game.canyon_finished().is_some());
+        game.enable_canyon_course_seeded(73)?;
+        assert!(game.canyon_finished().is_none() && game.player.alive);
+        std::fs::write("captures/canyon_run_seed_verification_20260930.json",serde_json::to_vec_pretty(&deployments)?)?;
+        Ok(())
     }
 
     /// The course on the real GPU and the generated workshop: its defence is fielded (T-34s on

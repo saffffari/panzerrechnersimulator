@@ -5,15 +5,15 @@ use crate::gltf_load::CpuMesh;
 use glam::{Mat4, Vec3};
 use std::collections::HashMap;
 
-pub const GRAIN_M: f32 = 0.008;
-pub const EMISSION_RATE: f32 = 2400.0;
-pub const MAX_AIRBORNE: usize = 4096;
+pub const GRAIN_M: f32 = 0.012;
+pub const EMISSION_RATE: f32 = 4800.0;
+pub const MAX_AIRBORNE: usize = 8192;
 pub const MAX_DEPOSITS: usize = 65536;
 pub const FRAMES: usize = 16; //8: telescope;9/10: shields;11: visor wheel;12/13: breech block/lever
 /// Maximum retained contact patches, shared with the renderer's global cell budget.
 pub const MAX_PATCHES: usize = 32;
-const SPREAD_INTERVAL: f32 = 0.065;
-const SPREAD_ATTEMPTS: usize = 12;
+const SPREAD_INTERVAL: f32 = 0.040;
+const SPREAD_ATTEMPTS: usize = 16;
 const SPREAD_DISTANCE: f32 = 0.34;
 /// Keep room for rising burning gases to contact walls and overhead structure even after the
 /// lower flame front fills its bounded pool. These contacts are wash, never combustible armor.
@@ -1250,7 +1250,7 @@ impl CabinFire {
                         - coating * 3.8)).clamp(0.0, 1.4);
                     if p.wash_feed < 0.025 && p.intensity < 0.025 { p.intensity = 0.0; }
                 } else {
-                    let growth = if venting { 0.56 } else { 0.76 };
+                    let growth = if venting { 0.80 } else { 1.10 };
                     p.intensity = (p.intensity + dt * (growth * (1.0 - coating)
                         - coating * 1.9)).clamp(0.0, 1.4);
                 }
@@ -1493,7 +1493,7 @@ mod tests {
             for x in -15..=15 {
                 f.deposit(Contact {
                     frame: 0,
-                    point: centre + Vec3::new(x as f32 * GRAIN_M, 0.0, z as f32 * GRAIN_M),
+                    point: centre + Vec3::new((x as f32 + 0.5) * GRAIN_M, 0.0, (z as f32 + 0.5) * GRAIN_M),
                     normal: Vec3::Y,
                     fraction: 0.5,
                 });
@@ -1551,7 +1551,7 @@ mod tests {
         }
         assert_eq!(f.counts(), (1, 0));
         models[0] = Mat4::from_translation(Vec3::new(3.0, 2.0, 1.0));
-        assert!(f.render_points(&models)[1][0].distance(Vec3::new(3.0, 2.004, 1.0)) < 1e-4);
+        assert!(f.render_points(&models)[1][0].distance(Vec3::new(3.0, 2.0 + GRAIN_M * 0.5, 1.0)) < 1e-4);
     }
     #[test]
     fn layers_stack_without_inflating_covered_area() {
@@ -1571,7 +1571,7 @@ mod tests {
         assert_eq!(f.deposits.len(), MAX_LAYERS as usize);
         assert_eq!(f.coverage_at(h), coverage);
         let points = f.render_points(&[Mat4::IDENTITY; FRAMES]);
-        assert!((points[1][3].y - 0.028).abs() < 1e-6);
+        assert!((points[1][3].y - GRAIN_M * 3.5).abs() < 1e-6);
     }
     #[test]
     fn playtest_residue_thins_then_clears_its_render_and_suppression_by_two_minutes() {

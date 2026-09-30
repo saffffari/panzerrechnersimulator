@@ -258,6 +258,43 @@ impl Game {
         (0.0,direction)
     }
 
+    /// Apply the existing source-derived static-cover and terrain clearance to the *resolved*
+    /// Soviet motion, including contact pushes. Orders alone could previously be safe while
+    /// speed inertia or another tank pushed the hull through a wall. Conservative hull boxes
+    /// retain the documented street collision approximation, not a new invisible arena barrier.
+    pub(super) fn constrain_winter_enemy_motion(&mut self, i: usize, previous: Vec3) {
+        if self.winter_encounter.is_none() { return; }
+        let requested = self.enemies[i].pos;
+        let from = Vec2::new(previous.x, previous.z);
+        let to = Vec2::new(requested.x, requested.z);
+        if from.distance_squared(to) < 1e-10 { return; }
+        let forward = Vec2::new(self.enemies[i].heading.sin(), self.enemies[i].heading.cos());
+        let length = (self.enemies[i].parts.hull_half_extents.y
+            - self.enemies[i].parts.hull_half_extents.x).max(0.0);
+        let clear = |p: Vec2| [-length, 0.0, length].into_iter()
+            .all(|offset| self.street_way_clear(from, p + forward * offset));
+        let resolved = clip_winter_motion(from, to, clear);
+        if resolved.distance_squared(to) > 1e-10 {
+            self.enemies[i].pos = Vec3::new(resolved.x, self.hf.vehicle_height_at(resolved.x,resolved.y),resolved.y);
+            self.enemies[i].speed = 0.0;
+        }
+    }
+
+    pub(super) fn constrain_winter_soldier_motion(&mut self, i: usize, previous: Vec3) {
+        if self.winter_encounter.is_none() || !self.soldiers[i].alive { return; }
+        let target = self.soldiers[i].pos;
+        let near = self.story_cover_near_move(previous,target,0.5);
+        let p = crate::building_runtime::resolve_walk_xz_against_bounds(previous,target,&near);
+        let p = self.buildings.resolve_walk_xz_body(previous,p,crate::foot::STANDING_HEIGHT);
+        let p = self.world_doors.resolve_walk(previous,p,crate::foot::STANDING_HEIGHT);
+        // A walking rifleman cannot step straight up a canyon face. Tank escort routes
+        // are grounded too; this runtime currently has them walking beside their tank.
+        let a = self.hf.height_at(previous.x,previous.z);
+        let b = self.hf.height_at(p.x,p.z);
+        self.soldiers[i].pos = if (b-a).abs() > 0.45 { previous }
+            else { Vec3::new(p.x,b,p.z) };
+    }
+
     /// Debug/capture telemetry only; it is deliberately not a player-facing enemy marker API.
     pub fn winter_encounter_snapshot(&self) -> Option<serde_json::Value> {
         self.winter_encounter.as_ref().map(|ai| serde_json::json!({
@@ -277,9 +314,30 @@ impl Game {
     }
 }
 
+/// Finite sweep prevents a thin obstruction from being skipped by a large frame or shove.
+fn clip_winter_motion(from: Vec2, to: Vec2, mut clear: impl FnMut(Vec2) -> bool) -> Vec2 {
+    let n = (from.distance(to) / 0.25).ceil().max(1.0) as usize;
+    let mut safe = from;
+    for k in 1..=n.min(256) {
+        let next = from.lerp(to, k as f32 / n as f32);
+        if !clear(next) { return safe; }
+        safe = next;
+    }
+    safe
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enemy_inertia_and_shoves_cannot_skip_a_thin_world_obstacle() {
+        let clear = |p: Vec2| p.x < 2.0 || p.x > 2.5;
+        let clipped = clip_winter_motion(Vec2::ZERO, Vec2::new(5.0,0.0), clear);
+        assert!(clipped.x < 2.0 && clipped.x >= 1.75);
+        assert_eq!(clip_winter_motion(Vec2::ZERO, Vec2::Y*5.0,clear), Vec2::Y*5.0);
+    }
 
     #[test]
     fn winter_dismounted_host_does_not_hide_a_seated_remote_gunner_vehicle() {

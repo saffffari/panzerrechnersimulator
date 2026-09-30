@@ -426,14 +426,15 @@ impl Game {
             if i < N_SOLDIERS && actor.last_seen.is_none() && actor.pos.distance(objective) < 1.5 {
                 self.soldiers[i].leg = (self.soldiers[i].leg + 1) % 4;
             }
-            self.soldiers[i].apply_combat_pose(
-                actor.pos,
-                actor.yaw,
-                actor.velocity,
-                actor.aiming,
-                actor.crouch_stage(),
-                shot.is_some(),
-            );
+            self.soldiers[i].pos = actor.pos;
+            // Keep the rendered body, hit actor and next observation on the same resolved
+            // winter ground/cover position, including a policy's detour around an obstacle.
+            self.constrain_winter_soldier_motion(i, before);
+            let actor = &mut self.mixed_combat.actors[i];
+            actor.pos = self.soldiers[i].pos;
+            if dt > 1e-6 { actor.velocity = (actor.pos - before) / dt; }
+            self.soldiers[i].apply_combat_pose(actor.pos, actor.yaw, actor.velocity,
+                actor.aiming, actor.crouch_stage(), shot.is_some());
             if let Some(shot) = shot {
                 shots.push(shot);
             }

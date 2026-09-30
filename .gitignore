@@ -1,4 +1,6 @@
 /target
+/artifacts/runtime/
+/artifacts/launcher-backups-*/
 /dist/
 __pycache__/
 *.py[cod]

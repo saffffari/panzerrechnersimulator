@@ -13649,7 +13649,7 @@ impl WindowState {
         });
         if let Err(error) = selected {
             eprintln!("[canyon] course unavailable ({}): {error:#}; generate it with \
-                python3 tools/worldgen/canyon_course.py", path.display());
+                python3 tools/worldgen/gaea_canyon_run.py", path.display());
             let _ = act_manifest::select_runtime_manifest(None);
             self.enter_menu(false);
             self.pause_menu.message = "CANYON COULD NOT LOAD".into();
@@ -14042,6 +14042,8 @@ impl ApplicationHandler for App {
                             } else if matches!(g.station, game::Station::Gunner) {
                                 // Q off the sights: back on your feet in the turret.
                                 g.sights_mag = 0;
+                                g.jump_station(game::Station::Loader);
+                            } else if matches!(g.station, game::Station::Driver | game::Station::Radioman) {
                                 g.jump_station(game::Station::Loader);
                             } else if g.commander_outside {
                                 g.commander_outside = false;

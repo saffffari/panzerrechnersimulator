@@ -1,0 +1,204 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "canyon_run_cupola_roundtrip_20260930",
+  "title": "Act 1 cupola: ordinary open and held-Space exit/entry roundtrip",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/canyon-run-20260930/assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 10,
+  "setup": {
+    "playtest": true,
+    "canyon_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "hold_fire"
+  },
+  "mechanics": [
+    "source_hatch_open",
+    "space_exit",
+    "source_roof_support",
+    "space_entry",
+    "space_held_across_mode_change"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.25,
+      "action": "look_cupola",
+      "value": "grip"
+    },
+    {
+      "from_s": 0.5,
+      "until_s": 0.6,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 1.0,
+      "action": "head_out"
+    },
+    {
+      "at_s": 1.2,
+      "action": "look_hatch",
+      "value": "cupola_aperture"
+    },
+    {
+      "from_s": 1.75,
+      "until_s": 4.5,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "at_s": 3.2,
+      "action": "look_hatch",
+      "value": "cupola_aperture"
+    },
+    {
+      "at_s": 4.85,
+      "action": "look_hatch",
+      "value": "cupola_aperture"
+    },
+    {
+      "from_s": 5.4,
+      "until_s": 8.5,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "at_s": 7.0,
+      "action": "look_hatch",
+      "value": "cupola_aperture"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "climbing",
+      "at_s": 2,
+      "equals": true
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 3,
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "at_s": 3,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "at_s": 4,
+      "equals": false
+    },
+    {
+      "metric": "climbing",
+      "at_s": 6,
+      "equals": true
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "at_s": 8,
+      "equals": "commander"
+    },
+    {
+      "metric": "climbing",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "station_ready",
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "hatch_open",
+      "at_s": 1,
+      "equals": true
+    },
+    {
+      "metric": "hatch_open",
+      "equals": true
+    },
+    {
+      "metric": "last_access_hatch",
+      "equals": 4,
+      "at_s": 3
+    },
+    {
+      "metric": "last_access_hatch",
+      "equals": 4,
+      "at_s": 8
+    },
+    {
+      "metric": "last_access_hatch",
+      "equals": 4
+    },
+    {
+      "metric": "driver_roof_open",
+      "equals": false
+    },
+    {
+      "metric": "loader_roof_open",
+      "equals": false
+    },
+    {
+      "metric": "radio_roof_open",
+      "equals": false
+    },
+    {
+      "metric": "side_escape_open",
+      "equals": false
+    }
+  ],
+  "input_audit": "Canyon setup owns the spawn and Soviet layout; enemy fire is held for this controls check. Named gaze helpers rotate the current head. The source-handle LMB press opens the real cupola; head_out requests the exposed commander pose through the open hatch, equivalent to X. Both exit and re-entry use ordinary held TankInput.jump with a release between them. No body teleport, forced climb, hatch phase, inventory or traversal result is assigned. Each long Space hold must finish one traversal only.",
+  "visual_acceptance": [
+    "The authored Act 1 winter city and original tank spawn remain in use, with practice enemy fire disabled.",
+    "The complete cupola lid opens on its original hinge; the player exits through that opening onto solid exterior tank geometry.",
+    "At 3.2 seconds the exterior gaze returns to the open aperture while Space is held, and the player stays outside until a new Space press.",
+    "The second Space press traverses the same aperture and finishes in the commander station. Looking at the opening while Space remains held must not eject the player again.",
+    "The camera never drops through sealed armor, teleports to a diagnostic origin, or leaves the player unsupported inside the tank mesh."
+  ],
+  "status": "runtime_checks_passed_and_player_frames_reviewed_20260930",
+  "limitations": [
+    "Scripted gameplay-input capture, separate from native keyboard/mouse verification. Enemy fire is held for the traversal check."
+  ],
+  "validation_receipt": "captures/canyon_run_cupola_verified_20260930_manifest.json"
+}

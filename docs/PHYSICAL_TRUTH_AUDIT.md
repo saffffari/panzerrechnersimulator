@@ -62,6 +62,51 @@ Full, not this deliberately simplified opt-in gameplay profile.
 | Winter snow on steep faces (2026-09-29, `shaders/terrain_material.wgsl`, both backends) | The terrain material's winter snow cover now thins on steep faces: from 45.6° (surface normal y 0.70) to 66.4° (0.40) the albedo moves to an exposed loess/clay reflectance (0.31, 0.27, 0.22 linear, 85 % at full slope), because dry snow sloughs off faces much steeper than its repose. It is one material rule in the shared shader, so both presets and both backends draw the same surface; the lighting of the face is unchanged. | Named simplifications: (1) snow cover is a function of the drawn triangle's slope, not a snow accumulation, wind or avalanche model; the 45-66° ramp and the earth reflectance are estimates [I] (snow repose, loess reflectance about 0.2-0.3), not measurements; (2) on the 3 m grid a cliff crossing the grid obliquely still alternates steeper and gentler triangles along its rim, drawn as a faint saw pattern (the canyon tool eases its walls over about a cell to reduce it); (3) `environment_probe`'s hemispheric terrain albedo still assumes full snow, which overstates the bounce inside the canyon by the walls' share of the view. Gate: the canyon captures (`captures/canyon_*_20260929.png`) and the unit suite's shader-inclusion checks. |
 | **Post (reproduction transform, not physics)** | The crewman's eye (row in "Light, sky and the eye" below) sets the exposure; the ACES fit (Narkowicz) is the display's one tone curve; optional PS1 quantization/dither and the nearest upscale follow. They alter the recorded image after transport and add no light. The prior contrast S-curve and 2.2% black-point clip are removed, so dim transported radiance is preserved while zero stays black. | P0: optic masks remain debt until physical eye-box geometry replaces them. Camera response must not add light, clamp a readability floor or erase valid low radiance; all live WGSL camera code must parse/validate in tests. |
 
+## Canyon Run, fire and tools (2026-09-30)
+
+The existing Gaea canyon is a winter placeholder, not the unbuilt winter campaign map. The new
+generator preserves the 16-bit source and its 5,000 m / 2,500 m scales; the runtime uses a
+4.883 m grid with declared building pads/craters. Route finding checks both drawn triangles,
+buffered for the tracks, and verifies the 8 m-wide travel corridor every 2 m. Stable terrain and
+landmarks support seeded selection among physically probed gun sites, supported patrol knots
+and building-side rifle posts. The generator receipt records the measured grades and source hash.
+
+Winter T-34 movement now sweeps the **resolved** translation, including inertia/contact pushes,
+through the existing source-derived static-cover queries at no more than 0.25 m intervals. Its
+front/middle/rear footprint checks reuse the existing conservative hull/source boxes and terrain
+clearance. This closes translation tunnelling; it is not the Tiger's full track-support, tipping
+or deformable-rubble solver. Rotation-only contact and the proxy error bounds already recorded
+below remain debt. Riflemen now use the existing static-cover, building and door queries after
+both legacy and shared-combat walking steps, rejecting terrain height jumps above 0.45 m.
+The rendered body and combat actor share the resolved position. Canyon omits the unrelated
+allied practice squad at scene construction; Soviet shared-combat policies remain active. Tank escorts currently
+walk beside their tank; no mounted-rider animation or suspension is claimed.
+
+Fire presentation replaces cubic flames with deterministic, continuously advected, tapered
+20-face parcels. Their triangular mesh area, current scale and heat page supply the existing
+finite aggregate emitter's power and support. This is an improvement to an existing procedural
+particle representation, **not** a new fluid, fuel-consumption or thermochemical simulation.
+The existing authored heat colours, finite clustering and raster-only dynamic-particle omissions
+remain explicit debt. No cabin fill, glow floor or preset-specific source multiplier was added.
+
+Foam now uses 12 mm grains at 4,800/s (formerly 8 mm at 2,400/s), and 8,192 airborne slots.
+Surface contacts, adhesion and coverage still determine suppression; grains remain non-emissive.
+Fire growth/spread constants were increased at the owner's request. Grain size, foam delivery
+and spread coefficients are gameplay discretization parameters, not calibrated discharge mass
+flow or measured fuel chemistry. The aimed suppression fixture and unattended-fire fixture use
+the same ignition source, preserving the distinction between coating a surface and cooling
+already burning ammunition.
+
+The hammer's hand/wrist arc now interpolates continuously through windup, contact, recoil and
+rest, aligned with the existing 0.24 s contact event. Repair credit and sounds still require the
+real eligible target. The animation does not model arm dynamics or tool impulse. The loader's
+spawn moved 0.25 m inward to start inside the existing floor bound, avoiding the old first-step
+snap. Interior walking still uses the existing floor/breech approximation; full body IK and
+collision-constrained station transitions remain unimplemented.
+
+Gates: `gaea_canyon_*` ignored GPU tests, the ordinary unit suite, the generator's travel-surface
+validation, and player-view captures listed in `docs/CANYON_RUN_20260930.md`.
+
 ## Light, sky and the eye (2026-09-29)
 
 Research: `docs/research/LIGHT_NIGHT_ADAPTATION_20260929.md` (the exposure-foundation brief; sections cited as

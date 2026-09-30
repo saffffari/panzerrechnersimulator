@@ -1,0 +1,200 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/canyon-run-20260930/assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json",
+  "night": false,
+  "status": "runtime_checks_passed_and_player_frames_reviewed_20260930",
+  "setup": {
+    "playtest": true,
+    "canyon_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "hold_fire"
+  },
+  "historical_scope": "Present-build controls review, not a historical event reconstruction. Initial tank position and station are staged; the original game inventory is retained. Enemy fire is held for an isolated review.",
+  "limitations": [
+    "Scripted Game inputs, not native OS mouse/keyboard capture. Original gameplay audio is retained. State checks and visual review are both required."
+  ],
+  "id": "canyon_run_reload_flick_20260930",
+  "title": "Physical case extraction, continuous grip, deliberate ram flick and breech closure",
+  "station": "gunner",
+  "seconds": 14,
+  "caption": "SCRIPTED INPUT / PHYSICAL CASE, GRIP, FLICK, CLOSE",
+  "timeline": [
+    {
+      "from_s": 0.5,
+      "until_s": 0.55,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 1,
+      "action": "station",
+      "value": "loader"
+    },
+    {
+      "at_s": 2,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 2.1,
+      "until_s": 2.15,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 2.8,
+      "action": "look_breech"
+    },
+    {
+      "from_s": 3,
+      "until_s": 4.2,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 4.6,
+      "action": "look_rack"
+    },
+    {
+      "from_s": 4.8,
+      "until_s": 9.1,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 5.5,
+      "action": "look_tray"
+    },
+    {
+      "from_s": 6.7,
+      "until_s": 6.775,
+      "input": {
+        "look_dy": -4.0
+      }
+    },
+    {
+      "at_s": 9.4,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 9.7,
+      "until_s": 9.75,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 10,
+      "action": "look_breech"
+    },
+    {
+      "at_s": 11,
+      "action": "station",
+      "value": "gunner"
+    },
+    {
+      "from_s": 12.3,
+      "until_s": 12.35,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "main_gun_shots",
+      "at_s": 1,
+      "min_delta": 1,
+      "max_delta": 1
+    },
+    {
+      "metric": "carrying_case",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "carrying_case",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "carrying_round",
+      "at_s": 5,
+      "equals": true
+    },
+    {
+      "metric": "breech_loaded",
+      "at_s": 6,
+      "equals": false
+    },
+    {
+      "metric": "carrying_round",
+      "at_s": 6,
+      "equals": true
+    },
+    {
+      "metric": "breech_loaded",
+      "at_s": 8,
+      "equals": true
+    },
+    {
+      "metric": "carrying_round",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "lever",
+      "at_s": 8,
+      "min_value": 0.95
+    },
+    {
+      "metric": "breech_loaded",
+      "at_s": 10,
+      "equals": true
+    },
+    {
+      "metric": "lever",
+      "at_s": 10,
+      "max_value": 0.05
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 2,
+      "max_delta": 2
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": -1,
+      "max_delta": -1
+    },
+    {
+      "metric": "loose_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "carrying_round",
+      "equals": false
+    },
+    {
+      "metric": "carrying_case",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "mg_coax is primary mouse hold, routed through the current native-style dispatch. One continuous hold begins on the rack and remains through tray alignment and the explicit 480pixel/s flick. Named look actions rotate the current head only. No cartridge, case, chamber, lever or ram result is assigned. Deliberate hold without flick must remain unloaded at6s; open loaded block stays amber before9.7s closure, then green.",
+  "visual_acceptance": [
+    "Visible case extraction and release.",
+    "Round remains in the physical grip during tray alignment; holding still does not seat it.",
+    "Explicit flick seats the round, leaving amber until the lever closes.",
+    "Green closed-breech state is visible before returning to gunner and firing the second shot."
+  ],
+  "validation_receipt": "captures/canyon_run_reload_final_20260930_manifest.json"
+}

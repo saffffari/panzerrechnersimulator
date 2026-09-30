@@ -1,0 +1,72 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "act_id": 0,
+  "night": false,
+  "station": "loader",
+  "seconds": 4,
+  "setup": {
+    "enemy_policy": "banish",
+    "source_fire": {
+      "frame": "hull",
+      "ray_start_m": [
+        0.5,
+        1.43,
+        -0.2
+      ],
+      "ray_end_m": [
+        0.5,
+        1.15,
+        -0.2
+      ],
+      "strength": 0.1
+    },
+    "singleplayer_crew": true
+  },
+  "status": "runtime_checks_passed_and_player_frames_reviewed_20260930",
+  "historical_scope": "Isolated current-Tiger controls bench with one disclosed initial source-triangle ignition, shared by the correct-aim and wrong-aim pair. This is not a historical incident or calibrated combustion experiment.",
+  "mechanics": [
+    "source_surface_ignition",
+    "unattended_surface_spread",
+    "continuous_flame_parcels",
+    "live_ammunition_heat_exposure"
+  ],
+  "timeline": [
+    {
+      "at_s": 0,
+      "action": "look_fire"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "surface_fire_patches",
+      "at_s": 1,
+      "min_value": 3
+    },
+    {
+      "metric": "surface_fire_wall_patches",
+      "at_s": 2,
+      "min_value": 1
+    },
+    {
+      "metric": "surface_foam_deposits",
+      "equals": 0
+    },
+    {
+      "metric": "fire_active",
+      "equals": true
+    }
+  ],
+  "input_audit": "A disclosed ray seeds one real source-triangle fire after warmup. The only timeline action turns the loader head toward that source. No extinguisher is used, no damage or cookoff is forced, and no invulnerability is enabled. Heat, spreading patches and ammunition exposure evolve through the ordinary simulation.",
+  "limitations": [
+    "The initial fire is a fixture, not a naturally occurring combat hit. Procedural flame parcels and spread constants are uncalibrated gameplay models. This is a four-second visual and spread check, not a survival or fire-fluid validation."
+  ],
+  "visual_acceptance": [
+    "Flames rise, curl and taper without stationary cube stacks.",
+    "Fire spreads from the seeded source onto nearby contact surfaces.",
+    "Dark cabin illumination remains from the real modeled emitters and the existing aggregate fire source."
+  ],
+  "id": "canyon_run_organic_fire_20260930",
+  "title": "Unattended cabin fire: organic flame parcels and faster spread",
+  "caption": "STAGED FIRE / UNATTENDED SPREAD",
+  "validation_receipt": "captures/canyon_run_fire_final_20260930_manifest.json"
+}

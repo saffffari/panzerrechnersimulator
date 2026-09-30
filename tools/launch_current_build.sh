@@ -43,7 +43,7 @@ fi
 if (( URBAN )) && [[ ! -f "$ROOT/assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json" ]]; then
     notify "Generating the urban intro district…" "first launch only — the game opens when it finishes"
 fi
-if (( CANYON )) && [[ ! -f "$ROOT/assets/worldgen/workshops/canyon-course/manifest.v1.json" ]]; then
+if (( CANYON )) && [[ ! -f "$ROOT/assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json" ]]; then
     notify "Generating the canyon course…" "first launch only — the game opens when it finishes"
 fi
 LAUNCH_LOG="$ROOT/artifacts/runtime/current-launch-$STAMP.log"

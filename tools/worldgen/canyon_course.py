@@ -819,10 +819,10 @@ def route_line(rv, fa, fb, step_m=40.0):
     return [[r3(v) for v in rv.world(fa + (fb - fa) * i / n, 0.0)] for i in range(n + 1)]
 
 
-def defence(site, Dr):
+def defence(site, Dr, beat_specs=BEATS):
     rv = site.rv
     beats = []
-    for platoon, pts in BEATS:
+    for platoon, pts in beat_specs:
         beats.append(dict(platoon=platoon, points=[[r3(v) for v in rv.world(f, d)] for f, d in pts]))
     legs = [(tuple(a), tuple(b)) for bt in beats for a, b in zip(bt["points"], bt["points"][1:] + bt["points"][:1])]
     kill = []

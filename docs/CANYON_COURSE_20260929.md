@@ -1,5 +1,9 @@
 # CANYON: a playtest course from the title menu (29 September 2026)
 
+The current build now uses the existing Gaea canyon as its winter placeholder, with a newly
+validated route and seeded defence. See [Canyon Run, 30 September](CANYON_RUN_20260930.md).
+This page preserves the prior procedural course and its evidence.
+
 The owner asked for "a canyon mode from main menu that is a kind of playtest challenge course where
 you have to punch straight through a canyon of soviets to get to the other side ... buildings and
 cover ... a reasonably sized canyon so as to be dynamic, but still directional." This is what was

@@ -5484,7 +5484,7 @@ const MAX_INTERIOR_SMOKE_CUBES: usize = 12288;
 const FLAME_CUBES_PER_WORLD_SOURCE: usize = 64;
 const SMOKE_CUBES_PER_WORLD_SOURCE: usize = 40;
 /// One-shot propellant gas released at the rear face of the breech when the block first opens.
-/// This is a soft ray-marched volume, not part of the cubic fire/soot pool: bore gas is a thin
+/// This is a soft ray-marched volume, not part of the flame/soot pool: bore gas is a thin
 /// translucent aerosol and must never read as 160 black pieces of debris.
 const BREECH_GAS_DUR: f32 = 2.20;
 const N_FIRE_FLAME_CUBES: usize = MAX_INTERIOR_FLAME_CUBES
@@ -5529,7 +5529,7 @@ fn interior_fire_aggregate_light(
     let mut weighted_pos = Vec3::ZERO;
     let mut weight_sum = 0.0;
     for cell in cells {
-        let intensity = radiance[cell.stage] * (6.0 * cell.size.max(0.0).powi(2) / 4.0);
+        let intensity = radiance[cell.stage] * (flame_parcel_area() * cell.size.max(0.0).powi(2) / 4.0);
         let weight = intensity.max_element();
         rgb_intensity += intensity;
         weighted_pos += parent.transform_point3(origin + cell.offset) * weight;
@@ -5643,90 +5643,55 @@ fn main_gun_camera_sample(age: f32, optic: bool, exposed: bool) -> CameraImpulse
     }
 }
 
-/// One deterministic flame cube relative to its emitter. A cube occupies one axis-aligned cell for
-/// its complete short generation, then disappears and respawns in another cell; it never rotates,
-/// stretches or grows continuously. Fine interior cells retain the existing emitter envelope
-/// with many more occupied positions; exterior cells remain coarser for distance readability. Exterior cells remain far below the retired
-/// metre-wide columns but are large enough to survive a distant battle view.
-fn flame_voxel_sample(
-    emitter_seed: u32,
-    grain: usize,
-    time: f32,
-    strength: f32,
-    exterior: bool,
-) -> FireVoxelSample {
+/// Continuously advected flame parcels rooted at the burning source. Curled rise and a
+/// tapered, rounded mesh replace the stationary grid. This is deterministic presentation
+/// of SurfaceFire's heat, not a combustion/fluid solver; suppression still owns the source.
+fn flame_parcel_sample(emitter_seed: u32, grain: usize, time: f32, strength: f32,
+    exterior: bool) -> FireVoxelSample {
     let id = (grain as u32).wrapping_mul(0x9e37_79b9) ^ emitter_seed;
-    let h0 = hash01(id ^ 0x41c6_4e6d);
-    let h1 = hash01(id ^ 0x7f4a_7c15);
-    let lifetime = if exterior {
-        0.36 + h1 * 0.42
-    } else {
-        0.18 + h1 * 0.26
-    };
-    let clock = time.max(0.0) / lifetime + h0;
-    let generation = clock.floor().max(0.0) as u32;
-    let spawn = id ^ generation.wrapping_mul(0x85eb_ca6b);
-    let hx = hash01(spawn ^ 0x94d0_49bb);
-    let hz = hash01(spawn ^ 0x369d_ea0f);
-    let hl = hash01(spawn ^ 0xa511_e9b3);
-    let hs = hash01(spawn ^ 0x27d4_eb2f);
-    let _strength = strength.clamp(0.05, 1.4); // density is selected by the caller's bounded count
-    let layer_count = if exterior { 12usize } else { 44usize };
-    // Bias cells toward the base; the upper flame remains broken rather than becoming a solid cone.
-    let layer = (hl.powf(1.55) * layer_count as f32)
-        .floor()
-        .min((layer_count - 1) as f32) as usize;
-    let height_t = layer as f32 / (layer_count - 1) as f32;
-    let cell = if exterior { 0.12 } else { 0.010 };
-    let vertical_cell = if exterior { 0.16 } else { 0.010 };
-    let base_radius = if exterior { 4.0 } else { 14.0 };
-    let radius_cells = (base_radius * (1.0 - 0.58 * height_t)).ceil().max(1.0) as i32;
-    let span = (radius_cells * 2 + 1) as f32;
-    let ix = (hx * span).floor() as i32 - radius_cells;
-    let iz = (hz * span).floor() as i32 - radius_cells;
+    let h = |salt| hash01(id ^ salt);
+    let lifetime = if exterior { 0.8 + h(13) * 0.7 } else { 0.42 + h(13) * 0.38 };
+    let clock = time.max(0.0) / lifetime + h(71);
+    let generation = clock.floor() as u32;
+    let age = clock.fract();
+    let phase = h(41) * std::f32::consts::TAU;
+    let height = if exterior { 1.85 } else { 0.43 };
+    let radius = if exterior { 0.46 } else { 0.14 };
+    let radial = h(117).sqrt();
+    let taper = 1.0 - age * 0.76;
+    let curl = phase + age * (2.4 + h(81) * 2.1);
+    let sway = (time * 3.2 + emitter_seed as f32 * 0.001).sin() * age * radius * 0.23;
+    let offset = Vec3::new(phase.cos() * radial * radius * taper + curl.sin() * radius * age * 0.20 + sway,
+        age * height,
+        phase.sin() * radial * radius * taper + curl.cos() * radius * age * 0.20);
+    // Birth and death are at zero area, avoiding a visible pop when a parcel recycles.
+    let envelope = smoothstep(0.0, 0.10, age) * (1.0 - smoothstep(0.66, 1.0, age));
+    let size = (if exterior { 0.15 + h(31) * 0.08 } else { 0.010 + h(31) * 0.005 })
+        * envelope * strength.clamp(0.15, 1.4).sqrt();
+    let heat = (1.0 - age) * (1.0 - 0.50 * radial);
+    let stage = if exterior {
+        if heat > 0.73 { 2 } else if heat > 0.42 { 1 } else if heat > 0.20 { 3 } else { 0 }
+    } else if heat > 0.70 { 2 } else if heat > 0.30 { 1 } else if age < 0.15 { 0 } else { 3 };
+    FireVoxelSample { offset, size, stage, generation,
+        rotation: Quat::from_euler(glam::EulerRot::YXZ, curl, 0.28 * curl.sin(), 0.26 * curl.cos()) }
+}
 
-    // Each new cube receives one fixed discrete size; no individual instance changes scale
-    // during its generation. Only exterior stacks use larger lower layers.
-    let tier = (hs * 3.0).floor().min(2.0) as usize;
-    let base_sizes = if exterior {
-        [0.160, 0.195, 0.230]
-    } else {
-        [0.008, 0.009, 0.010]
-    };
-    let size = base_sizes[tier]
-        * if exterior && height_t >= 0.42 { 0.78 } else { 1.0 };
-    // Resolve a coherent hot core and cooler shell in source space. Height-only stages
-    // produced four horizontal stripes once the fine cells became dense enough to join.
-    // This field stays fixed for the life of a cell, with no independent color flicker.
-    let radius_sq = (radius_cells * radius_cells).max(1) as f32;
-    let radial = ((ix * ix + iz * iz) as f32 / (2.0 * radius_sq)).clamp(0.0, 1.0);
-    let core_heat = (1.0 - (height_t - 0.38).abs() / 0.60).max(0.0)
-        * (1.0 - 0.80 * radial);
-    let stage = if !exterior {
-        if height_t < 0.08 + 0.12 * radial { 0 }
-        else if core_heat > 0.72 { 2 }
-        else if core_heat > 0.32 { 1 }
-        else { 3 }
-    } else if height_t < 0.20 {
-        0
-    } else if height_t < 0.46 {
-        1
-    } else if height_t < 0.74 {
-        2
-    } else {
-        3
-    };
-    FireVoxelSample {
-        offset: Vec3::new(
-            ix as f32 * cell,
-            layer as f32 * vertical_cell,
-            iz as f32 * cell,
-        ),
-        rotation: Quat::IDENTITY,
-        size,
-        stage,
-        generation,
-    }
+/// Fixed rounded flame tongue; source energy uses this exact mesh area.
+fn flame_parcel_mesh(color: [u8; 3]) -> CpuMesh {
+    crate::prims::faceted_sphere_mesh(color).transformed(Mat4::from_scale(Vec3::new(0.48, 0.86, 0.38)))
+}
+
+fn flame_parcel_area() -> f32 {
+    static AREA: OnceLock<f32> = OnceLock::new();
+    *AREA.get_or_init(|| {
+        let mesh = flame_parcel_mesh([255; 3]);
+        mesh.indices.chunks_exact(3).map(|t| {
+            let a = Vec3::from_array(mesh.vertices[t[0] as usize].pos);
+            let b = Vec3::from_array(mesh.vertices[t[1] as usize].pos);
+            let c = Vec3::from_array(mesh.vertices[t[2] as usize].pos);
+            (b-a).cross(c-a).length() * 0.5
+        }).sum()
+    })
 }
 
 /// One grain of a tableau stovepipe's smoke (`urban_tableaux::SmokeSource`): a thin column
@@ -7405,7 +7370,7 @@ fn casing_pull_step(progress: f32, dt: f32, held: bool, eligible: bool, aimed: b
         else { (progress - dt * 3.0).max(0.0) };
     (next, gripping)
 }
-// Two bounded instance pages: a dense 8 mm jet and persistent surface-owned deposited grains.
+// Two bounded instance pages: a dense 12 mm jet and persistent surface-owned deposited grains.
 const N_FOAM: usize = surface_fire::MAX_DEPOSITS;
 const N_FOAM_BATCHES: usize = 2;
 const FOAM_FLYING_BATCH: usize = 0;
@@ -7824,7 +7789,7 @@ struct Slots {
     armor_patch: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
-    fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // dense hot/yellow/orange/red flame cubes
+    fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // advected hot/yellow/orange/red flame parcels
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
     bulb: usize,       // warm button/dome lens, lit only when the player is buttoned up
     turret_disc: usize, // articulated turret-basket floor; follows live traverse
@@ -10950,8 +10915,13 @@ impl Game {
             )); // rifle
         }
         // The separate CC0 German body is never put into the Soviet animation pools.
+        // Canyon is a lone Tiger against the authored Soviet defence. Omit both the
+        // unrelated practice squad's source meshes and its later combat actors.
+        let canyon_map = manifest.as_ref().and_then(|m| m.edits())
+            .is_some_and(|edits| edits.get("canyon_course").is_some());
+        let allied_infantry = if canyon_map { 0 } else { mixed_combat_runtime::GERMAN_COUNT };
         let german_body = mixed_combat_runtime::german_infantry_mesh();
-        for _ in 0..mixed_combat_runtime::GERMAN_COUNT {
+        for _ in 0..allied_infantry {
             scene.push(german_body.clone());
             scene.push(box_mesh(
                 Vec3::new(-0.03, -0.03, -0.30),
@@ -11764,7 +11734,7 @@ impl Game {
             batch
         });
 
-        // High-resolution cubic fire: separate four-stage cabin/exterior heat pages plus two soot
+        // Continuous flame parcels: separate four-stage cabin/exterior heat pages plus two soot
         // pages cover every player/wreck emitter with ten bounded draws per viewport. Capacities are
         // deliberately per page because phase migration may temporarily put every grain in one shade.
         let flame_colors = FIRE_FLAME_COLORS;
@@ -11774,14 +11744,14 @@ impl Game {
                 .add_dynamic_instanced_pool(
                     device,
                     queue,
-                    &box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), flame_colors[i]),
+                    &flame_parcel_mesh(flame_colors[i]),
                     if i < FIRE_FLAME_STAGES {
                         MAX_INTERIOR_FLAME_CUBES
                     } else {
                         MAX_WORLD_FIRE_SOURCES * FLAME_CUBES_PER_WORLD_SOURCE
                     },
                 )
-                .expect("voxel-flame instance pool allocation");
+                .expect("flame-parcel instance pool allocation");
             renderer.set_batch_flags(batch, 2.0);
             assert!(renderer.set_dynamic_instanced_emissive(batch, flame_emissive[i]));
             batch
@@ -12148,7 +12118,7 @@ impl Game {
             }
             soldiers.push(soldier);
         }
-        for n in 0..mixed_combat_runtime::GERMAN_COUNT {
+        for n in 0..allied_infantry {
             let i = soldiers.len();
             let p = player.pos + player.right() * ((n as f32 - 1.5) * 2.4)
                 - player.forward() * 7.0;
@@ -12322,7 +12292,7 @@ impl Game {
             rounds_spent: 0,
             loader_crouch_t: 0.0,
             walk_sounds: footsteps::Cadence::default(),
-            walk_pos: Vec3::new(-0.85, 0.0, 0.15), // the loader's post, right of the breech (−X)
+            walk_pos: Vec3::new(-0.60, 0.0, 0.15), // the loader's post, right of the breech (−X)
             loose: [LooseShell::default(); N_LOOSE],
             drop_physics_frame: 0,
             slot_taken: vec![false; crate::interior_rig::SHELL_SLOTS.len()],
@@ -16303,7 +16273,7 @@ impl Game {
             r.set_emissive(slot[0], 0.0);
             r.set_model(slot[0], e.hull_model());
             // The metre-wide legacy flame column is permanently retired. `drive_interior_fire`
-            // aggregates this wreck into the shared high-resolution cubic flame/soot pages.
+            // aggregates this wreck into the shared flame/soot pages.
             r.set_visible(self.slots.flame[ei], false);
             match w.kind {
                 WreckKind::TurretPop => {
@@ -19685,6 +19655,7 @@ impl Game {
                 door_occluded,
             );
             self.soldiers[i].pos = self.world_doors.resolve_walk(previous_soldier_pos, self.soldiers[i].pos, crate::foot::STANDING_HEIGHT);
+            self.constrain_winter_soldier_motion(i, previous_soldier_pos);
             let shot = policy_step.shot;
             if sampled_soldier == Some(i) && self.soldiers[i].alive {
                 self.campaign_foot_decisions.push(CampaignFootDecision {
@@ -19742,8 +19713,10 @@ impl Game {
             return;
         }
         self.reanchor_infantry_escorts(dt);
-        for soldier in self.soldiers.iter_mut().take(N_SOLDIERS) {
-            soldier.update_passive(&self.hf, dt);
+        for i in 0..self.soldiers.len().min(N_SOLDIERS) {
+            let previous = self.soldiers[i].pos;
+            self.soldiers[i].update_passive(&self.hf, dt);
+            self.constrain_winter_soldier_motion(i,previous);
         }
         self.drive_infantry_visuals(dt, r);
     }
@@ -24387,6 +24360,7 @@ impl Game {
             );
             let previous = self.enemies[i].pos;
             self.enemies[i].update(drive, steer, 0.0, 0.0, dt, &self.hf);
+            self.constrain_winter_enemy_motion(i, previous);
             if self.campaign_channel {
                 let requested = Vec2::new(self.enemies[i].pos.x, self.enemies[i].pos.z);
                 let resolved =
@@ -26455,6 +26429,12 @@ impl Game {
                 reground(enemy, enemy_before[i]);
             }
         }
+        for i in 0..self.enemies.len() {
+            if self.enemy_active.get(i).copied().unwrap_or(false) {
+                let p = enemy_before[i];
+                self.constrain_winter_enemy_motion(i, Vec3::new(p.x, self.hf.vehicle_height_at(p.x,p.y),p.y));
+            }
+        }
         if pushed {
             let before = solid_city::TankPose {
                 pos: Vec3::new(player_before.x, player_supported_y, player_before.y),
@@ -28339,7 +28319,7 @@ impl Game {
 
     /// Emit the extinguisher foam as a pressure-dense stream of independent physical cube grains.
     /// The grains themselves are the visible jet; `drive_foam` batches their flying and deposited
-    /// states while `drive_interior_fire` independently scales the cubic flames off `self.fire`.
+    /// states while `drive_interior_fire` independently scales the flame parcels off `self.fire`.
     fn drive_ext_fx(&mut self, dt: f32, r: &mut Renderer) {
         let show_interior = self.interior_light > 0.02;
         let grabbing = matches!(self.activity, Some(Activity::Extinguish)) || self.ext_equipped;
@@ -28379,7 +28359,7 @@ impl Game {
         // fire; with no fire it's a test squirt forward (the foam must answer the LMB, always).
         let spraying =
             self.ext_want_spray && (self.ext_equipped || (grabbing && self.ext_t >= EXT_GRAB));
-        // A dense 8 mm jet follows the actual gaze and nozzle. There is no fire auto-aim.
+        // A dense 12 mm jet follows the actual gaze and nozzle. There is no fire auto-aim.
         if spraying {
             self.foam_emit_t-=dt;
             let aim_w=r.camera.pos+r.camera.forward()*2.5;
@@ -28533,7 +28513,7 @@ impl Game {
             let n_flame = ((strength.powf(0.62) * per_patch as f32).ceil() as usize).min(per_patch);
             let mut source_cells = Vec::with_capacity(n_flame);
             for grain in 0..n_flame {
-                let mut sample = flame_voxel_sample(seed, grain, fx_time, strength, false);
+                let mut sample = flame_parcel_sample(seed, grain, fx_time, strength, false);
                 sample.offset = fire_surface_offset(sample.offset, patch.normal, patch.tangent, patch.bitangent);
                 source_cells.push(sample);
                 flame_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
@@ -28636,7 +28616,7 @@ impl Game {
                 as usize)
                 .min(FLAME_CUBES_PER_WORLD_SOURCE);
             for grain in 0..n_flame {
-                let sample = flame_voxel_sample(seed, grain, fx_time, strength, true);
+                let sample = flame_parcel_sample(seed, grain, fx_time, strength, true);
                 flame_mats[FIRE_FLAME_STAGES + sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size),
                     sample.rotation,
@@ -29790,6 +29770,15 @@ fn swept_terrain_contact(start: Vec3, end: Vec3, hf: &Heightfield) -> Option<Pro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loader_first_step_has_no_spawn_snap_and_walks_around_the_breech() {
+        let start = Vec3::new(-0.60,0.0,0.15);
+        let next = clamp_interior_walk(start,start+Vec3::Z*(1.15/60.0));
+        assert!(next.distance(start) <= 1.15/60.0+1e-5);
+        let blocked = clamp_interior_walk(start,Vec3::new(0.0,0.0,0.15));
+        assert!(blocked.x < crate::interior_rig::BREECH_MIN.x-0.15);
+    }
 
     #[test]
     fn impact_source_label_does_not_index_a_diagnostic_sentinel_or_claim_a_real_shooter() {
@@ -34055,7 +34044,7 @@ mod tests {
         let linear_color = Vec3::from_array(FIRE_FLAME_COLORS[0].map(|value|
             crate::rt_surface::srgb_to_linear(value as f32 / 255.0)));
         let peak_color = linear_color.max_element();
-        let expected = peak_color * FIRE_FLAME_EMISSIVE[0] * 6.0 * cell.size.powi(2) / 4.0;
+        let expected = peak_color * FIRE_FLAME_EMISSIVE[0] * flame_parcel_area() * cell.size.powi(2) / 4.0;
         assert!((one.radiant_intensity - expected).abs() < 1.0e-10);
         assert!(one.pos.distance(parent.transform_point3(origin + cell.offset)) < 1.0e-6);
         assert!((one.source_radius - cell.size * 0.5 * 3.0f32.sqrt()).abs() < 1.0e-6);
@@ -34074,7 +34063,7 @@ mod tests {
     #[test]
     fn cabin_fire_keeps_amber_source_energy_separate_from_exterior_palette() {
         let cells: Vec<_> = (0..6144).map(|grain|
-            flame_voxel_sample(0x51ed_19a1, grain, 0.25, 0.5, false)).collect();
+            flame_parcel_sample(0x51ed_19a1, grain, 0.25, 0.5, false)).collect();
         let source = interior_fire_aggregate_light(&cells, Vec3::ZERO, Mat4::IDENTITY).unwrap();
         // Check the actual aggregate, not just the brightest swatch: both visible flame pages
         // and their transported light must have a warm orange component after linearization.
@@ -34088,67 +34077,25 @@ mod tests {
     }
 
     #[test]
-    fn voxel_fire_is_axis_aligned_discrete_stacked_and_deterministic() {
-        assert!(N_FIRE_FLAME_CUBES >= 768);
-        assert!(N_FIRE_SMOKE_CUBES >= 480);
-        assert_eq!(FIRE_FLAME_BATCHES + FIRE_SMOKE_BATCHES, 10);
-        assert_eq!(INTERIOR_FIRE_SPOTS[0], Vec3::new(0.50, 1.70, -0.20));
-        assert!(INTERIOR_FIRE_LIGHT_RADIUS <= 5.0);
-        assert!(INTERIOR_FIRE_GLOW_RADIUS <= 1.4);
-
-        let mut unique = std::collections::HashSet::new();
-        let mut held_generation_pairs = 0usize;
-        for grain in 0..FLAME_CUBES_PER_INTERIOR_SPOT {
-            let a = flame_voxel_sample(0x51ed, grain, 2.75, 1.0, false);
-            let b = flame_voxel_sample(0x51ed, grain, 2.75, 1.0, false);
-            let held = flame_voxel_sample(0x51ed, grain, 2.751, 1.0, false);
-            assert_eq!(a.offset, b.offset, "sampling must be replay deterministic");
-            assert_eq!(a.rotation, Quat::IDENTITY);
-            assert_eq!(b.rotation, Quat::IDENTITY);
-            assert_eq!(a.size.to_bits(), b.size.to_bits());
-            assert_eq!(a.stage, b.stage);
-            assert_eq!(a.generation, b.generation);
-            assert!((0.008..=0.010).contains(&a.size));
-            assert!(a.size <= 0.010, "interior flame cells keep their own fixed 8–10 mm size");
-            assert!(a.stage < FIRE_FLAME_BATCHES);
-            // A cell does not drift, rotate or grow within one spawn lifetime. Only crossing the
-            // discrete generation boundary is allowed to replace it.
-            if a.generation == held.generation {
-                held_generation_pairs += 1;
-                assert_eq!(a.offset, held.offset);
-                assert_eq!(a.rotation, held.rotation);
-                assert_eq!(a.size.to_bits(), held.size.to_bits());
-                assert_eq!(a.stage, held.stage);
+    fn organic_fire_rises_continuously_and_is_replay_deterministic() {
+        for exterior in [false, true] {
+            for grain in 0..512 {
+                let a = flame_parcel_sample(0x51ed, grain, 2.75, 1.0, exterior);
+                let b = flame_parcel_sample(0x51ed, grain, 2.75, 1.0, exterior);
+                let next = flame_parcel_sample(0x51ed, grain, 2.751, 1.0, exterior);
+                assert_eq!(a.offset, b.offset);
+                assert_eq!(a.size, b.size);
+                assert!(a.offset.is_finite() && a.rotation.is_finite());
+                assert!(a.size >= 0.0 && a.size <= if exterior { 0.23 } else { 0.015 });
+                assert!(a.stage < FIRE_FLAME_STAGES);
+                if a.generation == next.generation {
+                    assert!(next.offset.y > a.offset.y, "a flame parcel must rise, not hold a voxel");
+                    assert!(a.offset.distance(next.offset) < 0.01);
+                    assert!((a.size - next.size).abs() < 0.01);
+                }
             }
-            unique.insert((
-                a.offset.x.to_bits(),
-                a.offset.y.to_bits(),
-                a.offset.z.to_bits(),
-            ));
         }
-        assert!(
-            unique.len() >= FLAME_CUBES_PER_INTERIOR_SPOT * 3 / 4,
-            "the discrete stack needs broad cell occupancy even though intentional overlaps are allowed"
-        );
-        assert!(held_generation_pairs >= FLAME_CUBES_PER_INTERIOR_SPOT * 99 / 100);
-
-        for grain in 0..SMOKE_CUBES_PER_INTERIOR_SPOT {
-            let s = smoke_voxel_sample(0xc001, grain, 3.25, 1.0, false, Vec2::ZERO);
-            assert!((0.0025..=0.0035).contains(&s.size));
-            assert!(s.offset.y >= 0.46, "soot starts above the flame base");
-            assert_eq!(s.rotation, Quat::IDENTITY);
-            assert!(s.stage < FIRE_SMOKE_BATCHES);
-        }
-        let distant = flame_voxel_sample(7, 11, 1.0, 1.0, true);
-        assert!(
-            distant.size <= 0.230,
-            "even distance-readable wreck grains stay far below the retired metre-wide boxes"
-        );
-        let distant_soot = smoke_voxel_sample(7, 11, 1.0, 1.0, true, Vec2::new(4.0, -2.0));
-        assert!(distant_soot.size < distant.size);
-        assert!(distant_soot.offset.y >= 1.82);
-        assert_eq!(distant.rotation, Quat::IDENTITY);
-        assert_eq!(distant_soot.rotation, Quat::IDENTITY);
+        assert!(flame_parcel_area() > 1.0 && flame_parcel_area() < 6.0);
     }
 
     #[test]
@@ -34586,7 +34533,7 @@ mod surface_fire_render_tests {
             let tangent = if normal.y.abs() > 0.9 { Vec3::X } else { normal.cross(Vec3::Y).normalize() };
             let bitangent = normal.cross(tangent);
             for i in 0..200 {
-                let sample = flame_voxel_sample(9, i, 0.4, 1.0, false);
+                let sample = flame_parcel_sample(9, i, 0.4, 1.0, false);
                 let p = fire_surface_offset(sample.offset, normal, tangent, bitangent);
                 assert!(p.dot(normal) >= 0.0079, "fire cannot root behind the contact plane");
             }

@@ -1,0 +1,44 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "canyon_run_start_20260930",
+  "title": "Canyon Run: live single-player start and cupola survey",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/canyon-run-20260930/assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 5,
+  "setup": {
+    "playtest": true,
+    "canyon_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "live"
+  },
+  "timeline": [
+    {
+      "at_s": 0.3,
+      "action": "hatch"
+    },
+    {
+      "at_s": 1.2,
+      "action": "head_out",
+      "allow_rejected": true
+    },
+    {
+      "from_s": 1.5,
+      "until_s": 3.5,
+      "input": {
+        "look_dx": 0.25
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "enemy_fire_discharges",
+      "max_delta": 0
+    }
+  ]
+}

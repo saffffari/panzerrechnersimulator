@@ -102,7 +102,7 @@ pub const IDX_EDITOR: usize = 3;
 pub const IDX_LOAD_CHECKPOINT: usize = 4;
 pub const IDX_CANYON: usize = 5;
 pub const MENU_LABELS: [&str; 6] = [
-    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon",
+    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run",
 ];
 pub const MENU_COUNT: usize = MENU_LABELS.len();
 const MENU_ROW_TOP: f32 = 0.515;
@@ -1497,7 +1497,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
                     crate::canyon::format_time(best));
                 canyon_line.as_str()
             }
-            None => "ONE CREWMAN / PUNCH THROUGH THE RAVINE TO ITS HEAD",
+            None => "ONE TIGER / BREAK THROUGH / NEW DEFENCE EACH RUN",
         },
         None => "",
     };

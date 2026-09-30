@@ -10,14 +10,14 @@
 # CAMPAIGN starts the campaign in the district and runs through Act 1 to its west exit.
 # --canyon plays the CANYON playtest course (docs/CANYON_COURSE_20260929.md) directly (with --menu,
 # the title menu, whose Canyon entry starts it). Every session writes the course's workshop with
-# tools/worldgen/canyon_course.py (about 6 s) when it is missing or was written by an older tool, so
+# tools/worldgen/gaea_canyon_run.py (about 6 s) when it is missing or was written by an older tool, so
 # the title menu's Canyon entry loads from any session.
 # Every other option passes through to launch_shader_playtest.sh.
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 URBAN_MANIFEST="$PROJECT_ROOT/assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json"
-CANYON_MANIFEST="$PROJECT_ROOT/assets/worldgen/workshops/canyon-course/manifest.v1.json"
+CANYON_MANIFEST="$PROJECT_ROOT/assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json"
 MANIFEST="$PROJECT_ROOT/assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json"
 CHECK=0
 CAMPAIGN=0
@@ -54,11 +54,11 @@ if (( ! CHECK )); then
     # Every session keeps the title menu's Canyon entry playable: the course is written when missing
     # or from an older tool (about 6 s, once). Only a --canyon session fails without it.
     CANYON_RECEIPT="$(dirname "$CANYON_MANIFEST")/canyon-course.receipt.json"
-    CANYON_WANT=$(sed -n 's/^TOOL_VERSION = \([0-9]*\).*/\1/p' "$PROJECT_ROOT/tools/worldgen/canyon_course.py")
+    CANYON_WANT=$(sed -n 's/^TOOL_VERSION = \([0-9]*\).*/\1/p' "$PROJECT_ROOT/tools/worldgen/gaea_canyon_run.py")
     CANYON_HAVE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tool_version", 0))' "$CANYON_RECEIPT" 2>/dev/null || echo 0)
     if [[ ! -f "$CANYON_MANIFEST" || "$CANYON_HAVE" != "$CANYON_WANT" ]]; then
-        echo "canyon workshop missing or from tool version $CANYON_HAVE; generating it with tools/worldgen/canyon_course.py" >&2
-        if ! python3 "$PROJECT_ROOT/tools/worldgen/canyon_course.py" >&2; then
+        echo "canyon workshop missing or from tool version $CANYON_HAVE; generating it with tools/worldgen/gaea_canyon_run.py" >&2
+        if ! python3 "$PROJECT_ROOT/tools/worldgen/gaea_canyon_run.py" >&2; then
             if (( CANYON )); then exit 1; fi
             echo "canyon workshop not written; the title menu's Canyon entry will not load" >&2
         fi
@@ -67,7 +67,7 @@ fi
 if (( CANYON )); then
     if [[ ! -f "$CANYON_MANIFEST" ]]; then
         echo "missing $CANYON_MANIFEST" >&2
-        echo 'generate the canyon workshop with: python3 tools/worldgen/canyon_course.py' >&2
+        echo 'generate the canyon workshop with: python3 tools/worldgen/gaea_canyon_run.py' >&2
         exit 2
     fi
     # The course is its own map (its display and weather are its own); the session's other entries
@@ -88,6 +88,6 @@ if [[ ! -f "$MANIFEST" ]]; then
     exit 2
 fi
 export KESSEL_PLAYTEST_MANIFEST="$MANIFEST"
-export KESSEL_INTERNAL_RES=1280x720
+export KESSEL_INTERNAL_RES="${KESSEL_INTERNAL_RES:-1280x720}"
 if (( CAMPAIGN )); then unset KESSEL_WINTER_COMBAT; else export KESSEL_WINTER_COMBAT=1; fi
 exec "$SCRIPT_DIR/launch_shader_playtest.sh" --menu ${PASS[@]+"${PASS[@]}"}

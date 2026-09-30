@@ -44,6 +44,26 @@ const REPAIR_HAMMER_CYCLE_S: f32 = 0.48;
 const REPAIR_HAMMER_REST_S: f32 = 0.10;
 const REPAIR_HAMMER_CONTACT_S: f32 = 0.24;
 
+/// A complete wrist arc: ready -> wind-up -> contact -> recoil -> ready. The
+/// 0.24 s strike is shared with the real repair/track contact clock, never the pickup click.
+fn hammer_pose(remaining: f32) -> (f32, Vec3) {
+    if remaining <= 0.0 || remaining >= 0.38 { return (0.24, Vec3::ZERO); }
+    let t = (1.0 - remaining / 0.38).clamp(0.0, 1.0);
+    let keys = [(0.0, 0.24, Vec3::ZERO),
+        (0.30, -0.70, Vec3::new(-0.08, -0.025, 0.08)),
+        (0.632, 1.18, Vec3::new(-0.08, -0.035, 0.12)),
+        (0.76, 0.82, Vec3::new(-0.05, -0.015, 0.07)),
+        (1.0, 0.24, Vec3::ZERO)];
+    for pair in keys.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if t <= b.0 {
+            let u = smoothstep(a.0, b.0, t);
+            return (a.1 + (b.1-a.1)*u, a.2.lerp(b.2,u));
+        }
+    }
+    (0.24, Vec3::ZERO)
+}
+
 /// Hand motion belongs to the trigger, while work and contact sound require an eligible target.
 /// The outside track ritual owns its own independent clock and discrete pin-hit accounting.
 #[derive(Debug)]
@@ -547,17 +567,15 @@ impl Game {
                 && (self.hammer_t > 0.0 || self.track_owns_carried_primary(eye, f)) {
                 self.hammer_t
             } else { (self.repair_hammer_t - REPAIR_HAMMER_REST_S).max(0.0) };
-            let swing = if swing_t > 0.0 {
-                let t = swing_t / 0.38;
-                if t > 0.37 { (1.0 - t) * 1.9 } else { 1.2 - (0.37 - t) * 5.5 }
-            } else { 0.24 };
+            let (swing, hand) = hammer_pose(swing_t);
             // Source head is at -Z, grip near +Z. Stand the head up above the right hand;
             // an uncorrected weapon basis pointed the head back into the holder's arm.
             let hammer_rot = Quat::from_axis_angle(right, -swing) * rotation
                 * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
             r.set_visible(self.slots.hammer, true);
             r.set_model(self.slots.hammer, Mat4::from_rotation_translation(hammer_rot,
-                eye + f * 0.46 + right * 0.26 - up * 0.28 - hammer_rot * Vec3::Z * 0.065));
+                eye + f * (0.46 + hand.z) + right * (0.26 + hand.x) + up * (-0.28 + hand.y)
+                    - hammer_rot * Vec3::Z * 0.065));
             self.hide_p08(r);
             r.set_visible(self.slots.panzerfaust, false);
             r.set_visible(self.slots.panzerfaust_sight, false);
@@ -609,6 +627,19 @@ mod tests {
             if game.physical_repair_target(eye, look) != Some(job) { return true; }
         }
         false
+    }
+
+    #[test]
+    fn hammer_arc_returns_to_ready_and_contact_is_the_forward_extreme() {
+        assert_eq!(hammer_pose(0.38), hammer_pose(0.0));
+        let contact = hammer_pose(0.14);
+        assert!(contact.0 > 1.17 && contact.1.z > 0.119);
+        for i in 1..380 {
+            let a = hammer_pose(i as f32 * 0.001);
+            let b = hammer_pose((i+1) as f32 * 0.001);
+            assert!((a.0-b.0).abs() < 0.03, "no discontinuous wrist flip");
+            assert!(a.1.distance(b.1) < 0.004);
+        }
     }
 
     #[test]

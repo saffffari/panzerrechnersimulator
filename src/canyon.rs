@@ -27,13 +27,47 @@ pub const AUTHORING_MODE: &str = "course";
 /// The launcher's absolute path to the course manifest; without it the default relative to the
 /// working directory (the launchers run from the worktree root).
 pub const MANIFEST_ENV: &str = "KESSEL_CANYON_MANIFEST";
-pub const DEFAULT_MANIFEST: &str = "assets/worldgen/workshops/canyon-course/manifest.v1.json";
+pub const DEFAULT_MANIFEST: &str = "assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json";
 const TIMES_FILE: &str = "canyon-times.v1.json";
 const TIMES_SCHEMA: &str = "panzerrechnersystem.canyon-times";
 /// The finish: the picture and every sound fade out together over this, the world still running.
 pub const FINISH_FADE_S: f32 = 4.0;
 /// Then black and silence hold this long before the title menu.
 pub const FINISH_END_S: f32 = 5.5;
+
+/// Every new run/retry rolls a deployment. Pin only for reproducible QA.
+pub fn fresh_seed() -> u64 {
+    if let Ok(seed) = std::env::var("KESSEL_CANYON_SEED") {
+        if let Ok(seed) = seed.parse() { return seed; }
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_nanos() as u64;
+    mix(t ^ NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+pub fn mix(mut n: u64) -> u64 {
+    n = (n ^ (n >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    n = (n ^ (n >> 27)).wrapping_mul(0x94d049bb133111eb);
+    n ^ (n >> 31)
+}
+
+/// Rotate a loop's start onto any leg and reverse its patrol, retaining its authored cover/route.
+pub fn varied_beat(points: &[Vec2], seed: u64) -> Vec<Vec2> {
+    let mut out = points.to_vec();
+    if out.is_empty() { return out; }
+    if mix(seed) & 1 != 0 { out.reverse(); }
+    let phase = (mix(seed ^ 97) % (out.len() * 4) as u64) as usize;
+    out.rotate_left(phase / 4);
+    if phase % 4 != 0 && out.len() > 1 {
+        // Only interpolate the start. Turning every interpolation sample into a waypoint
+        // made the existing patrol doctrine stop and observe every few metres.
+        let start = out[0].lerp(out[1], (phase % 4) as f32 / 4.0);
+        out.rotate_left(1);
+        out.insert(0, start);
+    }
+    out
+}
 
 pub fn is_course_manifest(mode: Option<&str>) -> bool {
     mode == Some(AUTHORING_MODE)
