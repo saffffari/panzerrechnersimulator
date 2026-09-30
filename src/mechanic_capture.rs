@@ -23,6 +23,7 @@ const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", 
     "map_zoom",
     "look_at_gun",
     "staged_discharge",
+    "lay_on_at_gun",
 ];
 
 /// Explicit render-only crew witness for checking source hands. Ordinary input still uses the
@@ -677,6 +678,10 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
         "look_driver_control" => {
             detail = Some(json!({"scope":"Head rotation only toward source hull control; no position, station or mechanical state mutation"}));
             g.debug_face_driver_control(step["value"].as_str().unwrap_or(""))
+        },
+        "lay_on_at_gun" => {
+            detail = Some(json!({"scope":"Disclosed lay fixture: the turret and gun are laid on the named anti-tank gun's shield (ballistic aim for the Pzgr 39) as a gunner would lay them; nothing is fired"}));
+            g.debug_lay_on_at_gun(step["value"].as_str().and_then(|v| v.parse().ok()).unwrap_or(0))
         },
         "look_at_gun" => {
             detail = Some(json!({"scope":"Head rotation only toward the named anti-tank gun"}));

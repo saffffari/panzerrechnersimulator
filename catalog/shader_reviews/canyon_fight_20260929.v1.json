@@ -1,45 +1,47 @@
 {
   "schema": "kessel.first-person-mechanic.v1",
   "id": "canyon_fight_20260929",
-  "title": "The CANYON course: at the second choke the Tiger's gunner answers a 45 mm gun firing from the factory edge, then the commander rides head-out up the ravine toward the factory arena's T-34 patrol",
+  "title": "The CANYON course: the commander rides head-out up the ravine into the second choke; the 45 mm gun at the factory edge opens fire; the crewman drops to the gunner's sight and answers",
   "act_id": 1,
   "world_manifest": "assets/worldgen/workshops/canyon-course/manifest.v1.json",
   "night": false,
-  "station": "gunner",
+  "station": "commander",
   "seconds": 32.0,
   "setup": {
     "playtest": true,
     "canyon_session": true,
     "singleplayer_crew": true,
     "enemy_policy": "live",
-    "canyon_stage": {"gun": 1, "range_m": 300, "lay_on_gun": true}
+    "canyon_stage": {"gun": 1, "range_m": 430, "lay_on_gun": true}
   },
   "mechanics": [
     "canyon_course_as_the_title_menu_fields_it",
     "choke_gun_sited_by_the_field_of_fire_probe",
-    "at_gun_holds_until_the_fight_starts",
+    "at_gun_holds_until_the_tiger_is_in_range",
     "authoritative_45mm_projectile",
     "tiger_round_answers_the_gun",
-    "t34_platoon_hears_the_fight",
     "calibrated_sound_levels",
     "no_words_on_screen"
   ],
   "timeline": [
-    {"at_s": 0.2, "action": "sight_zoom"},
-    {"at_s": 5.0, "action": "staged_discharge"},
-    {"at_s": 11.0, "action": "staged_discharge"},
-    {"at_s": 14.0, "action": "station", "value": "commander"},
-    {"at_s": 14.4, "action": "hatch"},
-    {"at_s": 15.4, "action": "head_out", "allow_rejected": true},
-    {"from_s": 16.0, "until_s": 30.0, "input": {"drive": 1.0}},
-    {"from_s": 18.0, "until_s": 20.0, "input": {"look_dx": 0.7}},
-    {"from_s": 22.0, "until_s": 25.0, "input": {"look_dx": -0.9}}
+    {"at_s": 0.3, "action": "hatch"},
+    {"at_s": 1.2, "action": "head_out", "allow_rejected": true},
+    {"from_s": 1.5, "until_s": 13.0, "input": {"drive": 1.0}},
+    {"from_s": 5.0, "until_s": 6.5, "input": {"look_dx": 0.6}},
+    {"from_s": 8.0, "until_s": 9.5, "input": {"look_dx": -0.6}},
+    {"at_s": 13.5, "action": "head_in"},
+    {"at_s": 14.0, "action": "station", "value": "gunner"},
+    {"at_s": 14.3, "action": "lay_on_at_gun", "value": "1"},
+    {"at_s": 14.6, "action": "sight_zoom"},
+    {"at_s": 18.0, "action": "staged_discharge"},
+    {"at_s": 21.0, "action": "lay_on_at_gun", "value": "1"},
+    {"at_s": 25.0, "action": "staged_discharge"}
   ],
   "expect": [
     {"metric": "tank_alive", "equals": true},
     {"metric": "on_foot", "equals": false},
     {"metric": "main_gun_shots", "min_delta": 2}
   ],
-  "input_audit": "The course as the title menu's Canyon entry fields it (the two T-34 platoons on their beats, one 45 mm gun per choke sited by the field-of-fire probe, riflemen in the ruins, one crewman). Disclosed staging: the Tiger stands on the second choke's route where its gun sees it, 300 m out, facing up the ravine, its turret laid on the gun's shield, and the gun's crew has heard the fight; the platoons, the other guns and the riflemen keep their own states. The gunner fires twice with the disclosed staged_discharge fixture (a serviceable round seated, fired along the current lay); from 14 s the crewman climbs to the commander's post, opens the hatch, rides head-out and drives up the ravine. Every mark in the frame comes from the game; every level is the calibration's physical level at the ear through the live Audio graph.",
+  "input_audit": "The course as the title menu's Canyon entry fields it (the two T-34 platoons on their beats, one 45 mm gun per choke sited by the field-of-fire probe, riflemen in the ruins, one crewman). Disclosed staging: the Tiger stands on the second choke's route at the point its gun sees nearest 430 m (beyond the gun's 400 m opening range), facing up the ravine, its turret laid on the gun's shield, and the gun's crew has heard the fight; the platoons, the other guns and the riflemen keep their own states. The crewman opens the hatch, rides head-out and drives up the ravine from 1.5 s (the gun opens fire once the Tiger is in its range); at 13.5 s he ducks in and moves to the gunner's sight; the disclosed lay_on_at_gun fixture lays the turret on the gun's shield (14.3 s, 21 s) and the disclosed staged_discharge fixture fires twice along that lay (a serviceable round seated). Every mark in the frame comes from the game; every level is the calibration's physical level at the ear through the live Audio graph.",
   "historical_scope": "The CANYON playtest course (docs/CANYON_COURSE_20260929.md): a composite of Stalingrad's balkas with a workers' settlement and a factory edge, held by a rifle battalion's 45 mm guns and two T-34 platoons; a playtest course, not a recorded engagement."
 }

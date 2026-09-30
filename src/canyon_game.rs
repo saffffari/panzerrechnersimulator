@@ -162,13 +162,7 @@ impl Game {
             .map(|k| (k.at, k.travel)).ok_or_else(|| anyhow::anyhow!("gun {g} sees no point of its choke's route"))?;
         self.debug_place_tiger(point, travel.x.atan2(travel.y));
         if let Some(gun) = self.at_guns[g].as_mut() { gun.heard = true; }
-        if lay_on_gun {
-            let shield = gun.pos + Vec3::Y * 0.7;
-            let aim = ballistic_aim_target(self.player.muzzle().0, shield, &crate::ballistics::PZGR_39);
-            self.player.ai_aim(aim, 1000.0);
-            self.lay_yaw = self.player.turret_yaw;
-            self.lay_pitch = self.player.gun_pitch;
-        }
+        if lay_on_gun { self.debug_lay_on_at_gun(g); }
         Ok(serde_json::json!({"gun": g, "zone": zone.id, "tiger_at": [point.x, point.y],
             "tiger_range_m": Vec3::new(point.x, self.hf.height_at(point.x, point.y), point.y).distance(gun.pos),
             "heading_deg": travel.x.atan2(travel.y).to_degrees(), "fight_started": true,
@@ -187,6 +181,19 @@ impl Game {
             "siting": self.canyon_siting,
             "winter": self.winter_encounter_snapshot(),
         }))
+    }
+
+    /// Film fixture (disclosed where used): lay the turret and gun on AT gun `g`'s shield, its upper
+    /// part (the shield spans 0.30-1.18 m; what shows over a crest the gun sees across), with the
+    /// Pzgr 39's ballistic aim. False when there is no such gun.
+    pub fn debug_lay_on_at_gun(&mut self, g: usize) -> bool {
+        let Some(gun) = self.at_guns.get(g).copied().flatten() else { return false; };
+        let shield = gun.pos + Vec3::Y * 0.95;
+        let aim = ballistic_aim_target(self.player.muzzle().0, shield, &crate::ballistics::PZGR_39);
+        self.player.ai_aim(aim, 1000.0);
+        self.lay_yaw = self.player.turret_yaw;
+        self.lay_pitch = self.player.gun_pitch;
+        true
     }
 
     /// Test and film fixture (disclosed where used): put the Tiger at `at` on the ground, facing

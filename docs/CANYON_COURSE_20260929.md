@@ -73,15 +73,23 @@ up, shining along the ravine).
   `canyon_gunner_choke2_20260929.png`, the title menu `canyon_title_menu_20260929.png` (and
   `canyon_title_menu_times_sample_20260929.png`, rendered with a hand-written sample times file).
 - Film: `captures/canyon_fight_20260929.mp4` (scenario `catalog/shader_reviews/canyon_fight_20260929.v1.json`,
-  32 s, synced soundtrack, contact sheet `canyon_fight_20260929_sheet.png`): at the second choke the
-  gun fires four BR-240 rounds that bounce off the hull front at 292 m, the gunner fires twice (the
-  disclosed staged-discharge fixture), then the crewman rides head-out up the ravine; all checks pass.
+  32 s at 24 fps, recorded at 640 × 360 and encoded 1920 × 1080 with its synced soundtrack; contact
+  sheet `canyon_fight_20260929_sheet.png`): the commander rides head-out up the ravine into the
+  second choke from 352 m; the gun opens fire once the Tiger is in its range (BR-240 at 304 and
+  243 m, both bouncing off the hull front, and the hits break both tracks); the crewman ducks in,
+  takes the gunner's sight, and with the disclosed lay and discharge fixtures fires twice: the
+  first Pzgr 39 wrecks the gun. All three declared checks pass.
 - Frame time, shader backend, `winter-bench dense 60` at the start, 1280 × 720, RTX 4090 shared with
-  other jobs (84 % busy): mean 20.5 ms, p95 21.2 ms (simulation 0.53 ms, submission 1.1 ms); the
-  courtyard workshop under the same load 14.2 ms (documented 7.2 ms on an idle GPU).
+  other jobs (84 % busy): mean 20.5 ms, p95 21.2 ms (simulation 0.53 ms, submission 1.1 ms, the rest
+  waiting on the GPU); under the same load the courtyard workshop 14.2 ms and the urban district
+  24.4 ms (documented 7.2 and 11.5 ms on an idle GPU).
 
 ## Limits
 
+- Balance, untested in play: a 45 mm gun's ordinary rounds bounce off the Tiger but its hits break
+  the tracks (the existing damage model: in the film two hits at 243-304 m immobilised it), so each
+  choke's gun can stop the run until the crewman repairs the tracks under fire. A single crewman
+  who drives into a choke before finding its gun will be stuck often.
 - The walls are a heightfield: no overhangs or dugouts in them. On the 3 m grid a face crossing the
   grid obliquely still shows a faint saw pattern along its rim.
 - AI tanks and riflemen do not meet the solid city or the Tiger's limits; they keep to the floor by
