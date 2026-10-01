@@ -9,6 +9,16 @@ const BURSTS: usize = 48;
 const GRAINS: usize = 3072;
 const FRAME_GRAINS: usize = 24_576;
 const CANNON_DRAWS: usize = 128;
+// Fine exterior incandescent grains: density comes from the number of sparks, not a wide
+// luminous cuboid per particle. These authored raster streaks do not change impact physics.
+const CANNON_RICOCHET_SPARKS: usize = 384;
+const SMALL_ARM_RICOCHET_SPARKS: usize = 72;
+const BLAST_SPARKS: usize = 384;
+const IMPACT_SPARKS: usize = 192;
+const SPARK_EXPOSURE_S: f32 = 0.008;
+const SPARK_MAX_LENGTH_M: f32 = 0.32;
+const ARMOR_FLASH_OFFSET_M: f32 = 0.03;
+const ARMOR_RICOCHET_OFFSET_M: f32 = 0.008;
 pub(super) const PAGE_CAPACITY: usize = FRAME_GRAINS + FLIGHTS * 2 + CANNON_DRAWS * 2;
 const COLORS: [[u8; 3]; PAGES] = [
     [255, 226, 96], [255, 181, 48], [255, 146, 28], [255, 249, 215],
@@ -62,10 +72,26 @@ impl Weapon {
 #[derive(Clone, Copy)]
 struct Flight { from: Vec3, to: Vec3, age: f32, life: f32, weapon: Weapon, armor_normal: Option<Vec3> }
 #[derive(Clone, Copy)]
-enum BurstKind { Muzzle, Blast, Impact, Dust, Ricochet(Vec3) }
+enum BurstKind { Muzzle, Blast, InteriorBlast, Impact, ArmorImpact(Vec3), Dust, Ricochet(Vec3) }
+impl BurstKind {
+    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet(_)) }
+}
 #[derive(Clone, Copy)]
 struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
     seed: u32, kind: BurstKind, weapon: Weapon }
+
+/// Cosmetic armor grains cannot cross the source plate. Test the complete oriented cuboid,
+/// including its speed streak, rather than only its center. Returning grains disappear on
+/// contact; this source-plane approximation does not simulate secondary hull collisions.
+fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) -> bool {
+    let (normal, offset) = match burst.kind {
+        BurstKind::ArmorImpact(normal) => (normal, ARMOR_FLASH_OFFSET_M),
+        BurstKind::Ricochet(normal) => (normal, ARMOR_RICOCHET_OFFSET_M),
+        _ => return true,
+    };
+    let half_support = (rotation.conjugate() * normal).abs().dot(size) * 0.5;
+    (pos - burst.pos).dot(normal) + offset >= half_support
+}
 
 pub(super) struct Effects {
     flights: [Option<Flight>; FLIGHTS], bursts: [Option<Burst>; BURSTS],
@@ -114,6 +140,11 @@ impl Effects {
     pub(super) fn blast(&mut self, pos: Vec3, radius: f32) {
         self.burst(pos, Vec3::Y, radius, 6.0, BurstKind::Blast, Weapon::Cannon(88));
     }
+    /// Cabin fragmentation already comes from the authoritative solver. Keep the same ignition
+    /// flash and smoke without adding uncollided exterior ejecta through the compartment.
+    pub(super) fn interior_blast(&mut self, pos: Vec3, radius: f32) {
+        self.burst(pos, Vec3::Y, radius, 6.0, BurstKind::InteriorBlast, Weapon::Cannon(88));
+    }
     pub(super) fn impact(&mut self, pos: Vec3, dir: Vec3, radius: f32, hot: bool, weapon: Weapon) {
         self.burst(pos, -dir, radius, 1.3,
             if hot { BurstKind::Impact } else { BurstKind::Dust }, weapon);
@@ -123,9 +154,9 @@ impl Effects {
         let normal=normal.normalize_or_zero();
         let reflected=incoming-normal*(2.0*incoming.dot(normal));
         if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {
-            self.burst(point+normal*0.03,normal,0.75,1.2,BurstKind::Impact,weapon);
+            self.burst(point+normal*ARMOR_FLASH_OFFSET_M,normal,0.75,1.2,BurstKind::ArmorImpact(normal),weapon);
         }
-        self.burst(point+normal*0.008,reflected,0.24,if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {1.4}else{0.65},BurstKind::Ricochet(normal),weapon);
+        self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {1.4}else{0.65},BurstKind::Ricochet(normal),weapon);
     }
     pub(super) fn small_arm(&mut self, from: Vec3, to: Vec3, weapon: Weapon) {
         self.small_arm_contact(from,to,weapon,None);
@@ -205,7 +236,7 @@ impl Effects {
     fn draw_burst(&mut self, b: Burst, eye: Vec3, remaining: usize) -> usize {
         if let BurstKind::Ricochet(normal) = b.kind {
             let cannon=matches!(b.weapon,Weapon::Cannon(_) | Weapon::Rocket);
-            let count = remaining.min(if cannon {192}else{40});
+            let count = remaining.min(if cannon {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS});
             for j in 0..count {
                 let seed=b.seed.wrapping_mul(3948571).wrapping_add(j as u32*977);
                 let rnd=random(seed);
@@ -213,35 +244,46 @@ impl Effects {
                 let mut direction=(b.dir*0.75+direction(seed.wrapping_add(19))*0.30+normal*0.25).normalize_or_zero();
                 if direction.dot(normal)<0.05 { direction=(direction+normal*(0.06-direction.dot(normal))).normalize_or_zero(); }
                 let speed=if cannon {14.0+rnd*30.0}else{5.0+rnd*15.0};
-                let mut offset=direction*speed*b.age-Vec3::Y*(4.905*b.age*b.age);
-                if offset.dot(normal)<0.003 { offset+=normal*(0.003-offset.dot(normal)); }
-                let width=(if cannon {0.025+rnd*0.035}else{0.008+rnd*0.012})*(1.0-b.age/b.life).max(0.15);
+                let offset=direction*speed*b.age-Vec3::Y*(4.905*b.age*b.age);
+                let width=(if cannon {0.008+rnd*0.010}else{0.003+rnd*0.005})*(1.0-b.age/b.life).max(0.15);
                 let page=if b.age<0.055 {3} else if b.age<0.16 {4} else {2};
-                self.push(page,Vec3::new(width,width,(speed*0.020).clamp(0.04,0.80)),b.pos+offset,
-                    Quat::from_rotation_arc(Vec3::Z,direction));
+                let size=Vec3::new(width,width,(speed*SPARK_EXPOSURE_S).clamp(0.025,SPARK_MAX_LENGTH_M));
+                let rotation=Quat::from_rotation_arc(Vec3::Z,direction);
+                if armor_grain_is_air_side(b,b.pos+offset,size,rotation) {
+                    self.push(page,size,b.pos+offset,rotation);
+                }
             }
             return count;
         }
         // Long-range incandescent ejecta: separate from the expanding flash and the slow soot.
         // Cosmetic trajectories only. Authoritative shell/armor damage is untouched.
         let mut spark_count=0;
-        if matches!(b.kind,BurstKind::Blast | BurstKind::Impact) {
-            let n=remaining.min(if matches!(b.kind,BurstKind::Blast){192}else{96});
+        if matches!(b.kind,BurstKind::Blast | BurstKind::Impact | BurstKind::ArmorImpact(_)) {
+            let n=remaining.min(if matches!(b.kind,BurstKind::Blast){BLAST_SPARKS}else{IMPACT_SPARKS});
             spark_count=n;
             for j in 0..n {
                 let seed=b.seed.wrapping_mul(9348571).wrapping_add(j as u32*977);
                 let rnd=random(seed); let life=0.45+rnd*1.4;
                 if b.age>=life {continue;}
                 let mut dir=direction(seed.wrapping_add(17));dir.y=dir.y.abs()*0.75+0.15;
+                if let BurstKind::ArmorImpact(normal)=b.kind {
+                    // The same outward hemisphere follows the actual struck plate, including
+                    // vertical/sloped armor, instead of ejecting through it in world-up space.
+                    dir=Quat::from_rotation_arc(Vec3::Y,normal)*dir;
+                }
                 let velocity=dir.normalize()*(10.0+rnd*28.0);
                 let age=b.age;let pos=b.pos+velocity*age-Vec3::Y*(4.905*age*age);
-                let v=velocity-Vec3::Y*(9.81*age);let width=(0.02+rnd*0.04)*(1.0-age/life).sqrt();
+                let v=velocity-Vec3::Y*(9.81*age);let width=(0.006+rnd*0.012)*(1.0-age/life).sqrt();
                 let page=if age<0.12 {3}else if age<0.55 {4}else{2};
-                self.push(page,Vec3::new(width,width,v.length()*0.022),pos,Quat::from_rotation_arc(Vec3::Z,v.normalize()));
+                let size=Vec3::new(width,width,(v.length()*SPARK_EXPOSURE_S).min(SPARK_MAX_LENGTH_M));
+                let rotation=Quat::from_rotation_arc(Vec3::Z,v.normalize());
+                if armor_grain_is_air_side(b,pos,size,rotation) {
+                    self.push(page,size,pos,rotation);
+                }
             }
         }
         let muzzle = matches!(b.kind, BurstKind::Muzzle);
-        let blast = matches!(b.kind, BurstKind::Blast);
+        let blast = matches!(b.kind, BurstKind::Blast | BurstKind::InteriorBlast);
         let hot = !matches!(b.kind, BurstKind::Dust);
         let distance = eye.distance(b.pos).max(0.1);
         let detail = if distance < b.radius * 18.0 { GRAINS }
@@ -267,7 +309,12 @@ impl Effects {
                 let rot = Quat::from_rotation_arc(Vec3::Z,
                     if b.dir.length_squared() > 0.5 { b.dir } else { Vec3::Z });
                 rot * Vec3::new(ray.x * 0.34, ray.y * 0.34, 0.22 + ray.z.abs())
-            } else { Vec3::new(ray.x, ray.y.abs() * 0.95, ray.z) };
+            } else {
+                let radial=Vec3::new(ray.x, ray.y.abs() * 0.95, ray.z);
+                if let BurstKind::ArmorImpact(normal)=b.kind {
+                    Quat::from_rotation_arc(Vec3::Y,normal)*radial
+                } else { radial }
+            };
             let expansion = if blast { 1.0 - (-t * 4.5).exp() } else { 1.0 - (-t * 5.0).exp() };
             let flame = hot && t < flash_life && j % 3 != 0;
             let wind = self.act_id.map(|act| wind_at(act,b.pos)).unwrap_or(Vec2::ZERO);
@@ -290,8 +337,11 @@ impl Effects {
             let size = b.radius * grain_scale * if flame { 0.019 + rnd * 0.025 }
                 else { (0.016 + rnd * 0.025) * (0.65 + expansion * 0.8)
                     * if muzzle { 1.7 } else { 1.0 } } * fade;
-            self.push(page, Vec3::splat(size.max(0.008)), pos,
-                Quat::from_rotation_y(rnd * 1.57 + t * 0.18));
+            let size=Vec3::splat(size.max(0.008));
+            let rotation=Quat::from_rotation_y(rnd * 1.57 + t * 0.18);
+            if armor_grain_is_air_side(b,pos,size,rotation) {
+                self.push(page,size,pos,rotation);
+            }
         }
         count+spark_count
     }
@@ -324,7 +374,7 @@ impl Game {
         let mut smoke: Vec<_>=self.weapon_vfx.bursts.iter().flatten().copied().collect();
         smoke.sort_by(|a,b|a.pos.distance_squared(r.camera.pos).total_cmp(&b.pos.distance_squared(r.camera.pos)));
         for b in smoke {
-            if matches!(b.kind,BurstKind::Ricochet(_)){continue;}
+            if !b.kind.emits_smoke(){continue;}
             let age=b.age;let f=(age/b.life).clamp(0.0,1.0);
             let wind=self.weapon_vfx.wind;
             let muzzle=matches!(b.kind,BurstKind::Muzzle);
@@ -408,6 +458,35 @@ mod tests {
     }
 
     #[test]
+    fn armor_sparks_and_flash_keep_full_support_outside_rotated_source_planes() {
+        // Translated near the live fatal Tiger hit, including vertical, inverted and sloped armor.
+        let point=Vec3::new(62.06,5.44,-280.65);
+        for normal in [Vec3::X,Vec3::NEG_X,Vec3::Y,Vec3::NEG_Y,Vec3::Z,Vec3::NEG_Z,
+            Vec3::new(0.65,0.72,-0.25).normalize(),Vec3::new(-0.5,-0.7,0.5).normalize()] {
+            let mut fx=Effects::default();
+            fx.armor_sparks(point,-normal*760.0,normal,Weapon::Cannon(76));
+            for step in 0..26 {
+                fx.prepare(0.05,point);
+                let count=fx.mats.iter().map(Vec::len).sum::<usize>();
+                if step==0 { assert!(count>500,"outward confinement must retain a dense contact spray"); }
+                assert!(count<=CANNON_RICOCHET_SPARKS+IMPACT_SPARKS+384);
+                for matrix in fx.mats.iter().flatten() {
+                    let (size,rotation,center)=matrix.to_scale_rotation_translation();
+                    let support=(rotation.conjugate()*normal).abs().dot(size)*0.5;
+                    assert!((center-point).dot(normal)-support>=-0.00005,
+                        "entire flash/streak must stay outside source plate: normal={normal:?}, age={}, center={center:?}, size={size:?}",
+                        (step+1) as f32*0.05);
+                }
+            }
+        }
+        // Ordinary non-armor impact presentation keeps its existing world-up radial distribution.
+        let mut generic=Effects::default();
+        generic.impact(point,Vec3::X,0.75,true,Weapon::Cannon(76));
+        generic.prepare(0.08,point);
+        assert!(generic.mats.iter().flatten().any(|m|m.w_axis.x<point.x-0.1));
+    }
+
+    #[test]
     fn explosion_smoke_follows_world_wind_and_outlives_flash() {
         let mut still=Effects::default();let mut windy=Effects::default();windy.act_id=Some(1);
         let origin=Vec3::new(1880.0,6.0,165.0);
@@ -416,6 +495,47 @@ mod tests {
         assert!(windy.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)));
         assert!(windy.mats[6..].iter().all(Vec::is_empty), "smoke must not submit opaque matter meshes");
         assert!(windy.mats[..6].iter().all(Vec::is_empty));
+    }
+    #[test]
+    fn interior_catastrophe_keeps_flash_and_smoke_without_exterior_ejecta() {
+        // The distinction is semantic, never inferred from blast radius or camera location.
+        for radius in [0.65 * 0.65, 3.0] {
+            let mut interior = Effects::default();
+            let mut exterior = Effects::default();
+            interior.interior_blast(Vec3::ZERO, radius);
+            exterior.blast(Vec3::ZERO, radius);
+            interior.prepare(0.10, Vec3::ZERO);
+            exterior.prepare(0.10, Vec3::ZERO);
+            let flash: Vec<_> = interior.mats[..6].iter().flatten().copied().collect();
+            assert!(flash.len() > 100, "the cabin ignition flash must remain visible");
+            assert!(flash.iter().all(|m| {
+                let size = m.to_scale_rotation_translation().0;
+                size.max_element() - size.min_element() < 1e-5
+            }), "interior flash grains must not include elongated exterior spark streaks");
+            let outside: Vec<_> = exterior.mats[..6].iter().flatten().copied().collect();
+            assert_eq!(outside.len(), flash.len() + BLAST_SPARKS);
+            for page in 0..6 {
+                let exterior_flash: Vec<_> = exterior.mats[page].iter().filter(|m| {
+                    let size = m.to_scale_rotation_translation().0;
+                    size.max_element() - size.min_element() < 1e-5
+                }).copied().collect();
+                assert_eq!(interior.mats[page], exterior_flash,
+                    "changing the presentation context must preserve the original flash");
+            }
+            for _ in 0..4 {
+                interior.prepare(0.10, Vec3::ZERO);
+                exterior.prepare(0.10, Vec3::ZERO);
+            }
+            assert!(interior.mats.iter().all(Vec::is_empty),
+                "after the flash only authoritative cabin fragments may remain luminous");
+            assert!(exterior.mats[..6].iter().any(|page| !page.is_empty()),
+                "exterior blast ejecta must retain their existing lifetime");
+            let smoke = interior.bursts.iter().flatten().next().unwrap();
+            assert!(matches!(smoke.kind, BurstKind::InteriorBlast));
+            assert!(smoke.kind.emits_smoke(), "the shared smoke-volume pass must retain cabin soot");
+            assert_eq!(smoke.life, 6.0);
+            assert!(smoke.age < smoke.life);
+        }
     }
     #[test]
     #[ignore = "GPU source-Tiger effect review; run alone with KESSEL_RENDERER=shader"]

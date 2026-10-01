@@ -558,3 +558,47 @@ Recorded fragment positions now survive the replay's zero-time rebuild. Motion h
 presentation and contributes no duplicate source power. Replay time is deliberately nonlinear
 to show entry/spall motion; it does not reapply a hit. No synthetic residual beam or casualty
 event is added. Details and captured evidence: `docs/CANYON_EXTENDED_20260930.md`.
+
+### 2026-10-01: projectile whistle, severity, sparks, turret and surface fire
+
+The shell whistle is an explicitly requested authored timbre. Real swept cannon segments supply
+its lifespan, position, speed, caliber, mass and filler fraction; no visual tracer can extend it
+past terminal contact. A continuous voice retains oscillator/filter state across 240 Hz steps.
+Changing acoustic filters use warmed parallel cascades and a ten-millisecond output crossfade;
+the final filter taper fits within the real terminal segment.
+Pitch variation and a restrained radial-motion bend are sound design, not measured wartime
+whistle data or a supersonic Doppler solver. Level is an authored 115.5 dBA at ten metres for the
+reference round. Shared air, snow, barrier, hull and headset transfer apply. Its playback stream
+holds the initial range/c delay so later samples remain contiguous; moving-source retarded-time
+transport is not solved. The existing conical ballistic crack remains a separate physical gate.
+
+The external recorder now distinguishes ordinary wreck destruction from the authoritative
+catastrophic classification, using the same ammunition-detonation and tearing-metal sources as
+live play. Heat-triggered detonation of the player ammunition reservoir uses that same
+catastrophic pair; ordinary secondary wreck cook-offs remain smaller. First-person review
+records the actual live crew audio graph, including enclosure,
+headset, hearing and terminal fade, while independent automated co-op inputs operate the gun.
+It is an independently simulated encounter per viewpoint, not a synchronized replay or human
+playthrough. Enemy catastrophic selection remains the inherited stochastic simplification;
+player ammunition detonation still follows the existing internal damage result.
+
+Spark presentation uses more, smaller grains and shorter individual streaks while retaining
+original impact positions and motion. Their number and visual scale are authored, not a resolved
+fragmentation distribution. The player cabin detonation retains flash and smoke but omits the
+duplicate unconstrained exterior spark spray; the authoritative interior fragment solver and
+its rendered fragments remain active. A separate crew-view check also exposed armor-impact
+ejecta ignoring the struck plate normal. The corrected armor presentation confines those
+cosmetic sparks and flash grains to the exterior of the authoritative contact plane. This
+local plane is not a full hull or world collision solver for decorative grains. Detached enemy
+turrets now use source-triangle-derived thin-shell
+mass/inertia and sampled surface contact, instead of random high launch speeds, fast uniform
+spin and a fixed landing height. Plate thickness, blast-energy coupling, contact restitution,
+and friction are approximations; the source support sampling bounds are recorded at runtime.
+See `docs/SPARK_REFINEMENT_20261001.md` and `docs/TURRET_DETACHMENT_20261001.md`.
+
+Exterior fire follows damage-attached source hull/turret patches, including moving detached
+parts. Its heat graph, spreading speed, gas wash and reservoir are authored approximations;
+steel is not fuel and no CFD is claimed. The source-sampling and connection limits, bounded
+geometry/light budgets, and legacy archived-hulk behavior are recorded in
+`docs/SURFACE_WRECK_FIRE_20261001.md`. Actual visibility, contact and audio are checked separately
+from CPU regression results in the capture receipts.

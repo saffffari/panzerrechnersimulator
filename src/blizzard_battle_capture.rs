@@ -1,7 +1,7 @@
 //! External witness of an ordinary tank fight in coupled blizzard weather.
 //! Only opening positions and automated crew controls are authored; no impacts or kills are injected.
 use super::*;
-use crate::combat_capture_audio::{Cue, EngineFrame, Kind};
+use crate::combat_capture_audio::{Cue, EngineFrame, FlightFrame, Kind};
 use anyhow::{ensure, Context};
 use serde_json::json;
 use std::io::Write;
@@ -21,6 +21,11 @@ impl Drop for EncoderChild {
 }
 
 pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
+    run_with_view(prefix, seconds, preview, crate::crew_blizzard_capture::View::External)
+}
+
+pub fn run_with_view(prefix: &str, seconds: f32, preview: bool,
+    view: crate::crew_blizzard_capture::View) -> anyhow::Result<()> {
     ensure!(
         seconds.is_finite() && (6.0..=60.0).contains(&seconds),
         "duration must be 6..60 seconds"
@@ -70,6 +75,7 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
     r.set_weather_seed(world::act(1).seed);
     r.set_weather_override(Some(2.5));
     r.camera.aspect = 16.0 / 9.0;
+    view.stage(&mut g);
 
     let fps = if preview { 5 } else { 30 };
     let raw = format!("{prefix}_picture.mp4");
@@ -113,8 +119,10 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
     let mut events = Vec::new();
     let mut samples = Vec::new();
     let mut audio = Vec::new();
+    let mut crew_soundtrack = Vec::new();
     let mut microphone_cues = Vec::new();
     let mut engine_frames = Vec::new();
+    let mut flight_frames = Vec::new();
     let weather_time = r.time;
     let mut tiger_cursor = game::ShotSequenceCursor::at(g.main_gun_shot_sequence());
     let mut enemy_cursors: Vec<_> = active
@@ -126,14 +134,19 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
     let mut crew_cd = 4.0_f32;
     let mut last_shots = g.main_gun_shot_sequence();
     let mut dead_since = None;
+    let mut listener_dead_since = None;
     let steps = (seconds * 60.0).round() as u32;
     let mut frames = 0;
+    let mut maximum_turret_rise = 0.0_f64;
+    let mut maximum_turret_correction = 0.0_f64;
     let initial = json!({"tiger":g.player.pos.to_array(),"t34s":active.iter().map(|&i|
         g.enemies[i].pos.to_array()).collect::<Vec<_>>()});
     for tick in 0..steps {
         let now = (tick + 1) as f32 / 60.0;
         crew_cd = (crew_cd - 1.0 / 60.0).max(0.0);
-        let controls = if !g.player.alive {
+        let controls = if view.is_crew() {
+            view.controls(&mut g, tick, crew_cd <= 0.0)
+        } else if !g.player.alive {
             TankInput::default()
         } else if g.is_fire_active() {
             TankInput {
@@ -162,6 +175,12 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
         // Keep uploads bounded even between preview frames; no renderer work alters simulation.
         if tick % 8 == 0 {
             simulation_uploads::drain(&device, &queue)?;
+        }
+        for &i in &active {
+            if let Some(body)=g.debug_enemy_turret_dynamics(i) {
+                maximum_turret_rise=maximum_turret_rise.max(body["peak_com_rise_m"].as_f64().unwrap_or(f64::INFINITY));
+                maximum_turret_correction=maximum_turret_correction.max(body["max_contact_correction_m"].as_f64().unwrap_or(f64::INFINITY));
+            }
         }
         let combat = g.capture_combat_receipt();
         let hits = (g.stat_hits_on_player, combat["hits"].as_u64().unwrap_or(0));
@@ -193,14 +212,27 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
         for (k, &i) in active.iter().enumerate() {
             if previous_alive[k] && !g.enemies[i].alive {
                 events.push(json!({"at":now,"kind":"t34_destroyed","index":i}));
-                new_sounds.push((g.enemies[i].center(), Kind::Destruction));
+                new_sounds.push((g.enemies[i].center(), Kind::Destruction { catastrophic: g.capture_catastrophic(Some(i)) }));
                 previous_alive[k] = false;
             }
         }
         if !g.player.alive && dead_since.is_none() {
             events.push(json!({"at":now,"kind":"tiger_destroyed"}));
             dead_since = Some(now);
-            new_sounds.push((g.player.center(), Kind::Destruction));
+            new_sounds.push((g.player.center(), Kind::Destruction { catastrophic: g.capture_catastrophic(None) }));
+        }
+        if view.is_crew() {
+            // Same terminal audio fade as the windowed game; the review holds this camera
+            // instead of entering the separate silent death replay.
+            if !view.listener_alive(&g) && listener_dead_since.is_none() {
+                listener_dead_since = Some(now);
+                events.push(json!({"at":now,"kind":"listener_kia","viewpoint":view.label()}));
+            }
+            if let Some(dead_at) = listener_dead_since {
+                g.set_audio_level(1.0 - death_fade(now - dead_at));
+                if now - dead_at >= DEATH_FADE { g.set_audio_silenced(true); }
+            }
+            crew_soundtrack.extend(g.render_audio_capture_frames(acoustics::SAMPLE_RATE as usize / 60)?);
         }
         // Two observer angles in one continuous fight: opening T-34 contact, then the Tiger.
         // Switch before the flanker's next shot so the incoming impact is visible in context.
@@ -211,9 +243,16 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
             g.enemies[active[0]].center()
         };
         let eye = focus + Vec3::new(-13.0, 8.0, 15.0);
-        r.camera.pos = eye;
-        r.camera.set_forward(focus + Vec3::Y - eye);
-        r.camera.fov_y = 60_f32.to_radians();
+        if !view.is_crew() {
+            r.camera.pos = eye;
+            r.camera.set_forward(focus + Vec3::Y - eye);
+            r.camera.fov_y = 60_f32.to_radians();
+        }
+        for &segment in g.shell_flight_segments() {
+            let mut segment=segment;
+            segment.at_s-=weather_time;
+            flight_frames.push(FlightFrame{segment,listener:r.camera.pos,forward:r.camera.forward()});
+        }
         for (source, kind) in new_sounds {
             microphone_cues.push(Cue {
                 at_s: now,
@@ -283,16 +322,18 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
                 r.interior_haze,
                 r.weather_shelter,
             );
-            r.reticle = false;
-            r.optic_mask = 0.0;
-            r.optic_blast = 0.0;
-            r.crew_ko = 0.0;
-            r.interior_light = 0.0;
-            r.interior_haze = 0.0;
-            r.weather_shelter = 0.0;
-            r.set_interior_atmosphere_enabled(false);
-            r.set_active_view(1);
-            g.drive_singleplayer_crew_rigs_for_view(None, &mut r);
+            if !view.is_crew() {
+                r.reticle = false;
+                r.optic_mask = 0.0;
+                r.optic_blast = 0.0;
+                r.crew_ko = 0.0;
+                r.interior_light = 0.0;
+                r.interior_haze = 0.0;
+                r.weather_shelter = 0.0;
+                r.set_interior_atmosphere_enabled(false);
+                r.set_active_view(1);
+                g.drive_singleplayer_crew_rigs_for_view(None, &mut r);
+            }
             // Settle the sensor at the opening observer view without advancing the fight.
             if frames == 0 {
                 for _ in 0..12 {
@@ -319,6 +360,8 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
                 json!({"at":now,"tiger_alive":g.player.alive,"hp":g.player.hp,
                 "incoming_hits":hits.0,"outgoing_hits":hits.1,"combat":combat,
                 "enemy_alive":active.iter().map(|&i|g.enemies[i].alive).collect::<Vec<_>>(),
+                "turrets":active.iter().filter_map(|&i|g.debug_enemy_turret_dynamics(i)).collect::<Vec<_>>(),
+                "wreck_fire":active.iter().filter(|&&i|!g.enemies[i].alive).map(|&i|g.debug_wreck_fire_report(i)).collect::<Vec<_>>(),
                 "snow":r.precipitation,"fog":r.fog_density,"wind":r.weather_wind_world.to_array()}),
             );
             println!(
@@ -332,27 +375,47 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
     ensure!(encoder.0.wait()?.success(), "video encoder failed");
     let duration = frames as f32 / fps as f32;
     let wav = format!("{prefix}_soundtrack.wav");
-    let (soundtrack, audio_receipt) = crate::combat_capture_audio::render(
-        duration,
-        &microphone_cues,
-        &engine_frames,
-        weather_time,
-    )?;
+    let (soundtrack, audio_receipt) = if view.is_crew() {
+        // Strip only the common master's known lookahead latency. No gain, synthesis, or
+        // second mastering is applied to the recording of the ordinary gameplay sinks.
+        let latency = crate::reproduction::MASTER_LATENCY_FRAMES;
+        crew_soundtrack.extend(g.render_audio_capture_frames(latency)?);
+        crew_soundtrack.drain(..latency * 2);
+        let metadata = g.audio_capture_metadata();
+        (crew_soundtrack, json!({"kind":"live_crew_audio_capture", "viewpoint":view.label(),
+            "sample_frames_per_simulation_step":acoustics::SAMPLE_RATE / 60,
+            "master_latency_removed_frames":latency,"live_graph":metadata,
+            "limits":"Automated co-op crew, fixed opening positions, physical main-gun/reload gates. Selected crew station remains the acoustic listener with its ordinary headset, enclosure and hearing. Live terminal sound fade; review camera holds instead of entering the silent death replay."}))
+    } else {
+        crate::combat_capture_audio::render(duration, &microphone_cues, &engine_frames,
+            weather_time, &flight_frames)?
+    };
     acoustics::write_wav_stereo(&wav, &soundtrack, acoustics::SAMPLE_RATE)?;
     mux_duel_soundtrack(&raw, &wav, &format!("{prefix}.mp4"))?;
     let tiger_shots = audio.iter().filter(|e| e.tiger).count();
     let enemy_shots = audio.len() - tiger_shots;
-    let passed = tiger_shots > 0 && enemy_shots > 0 && previous_hits.0 + previous_hits.1 as u32 > 0;
-    let receipt = json!({"schema":"panzer.blizzard-battle.v1","passed":passed,
+    let turret_motion_ok=maximum_turret_rise<2.0 && maximum_turret_correction<0.5;
+    let first_own_shot=events.iter().find(|event|event["kind"]=="gun_discharge" && event["tiger"]==true)
+        .and_then(|event|event["at"].as_f64());
+    let listener_heard_own_shot=!view.is_crew() || first_own_shot.is_some_and(|shot|
+        listener_dead_since.is_none_or(|kia|f64::from(kia)>shot+0.1));
+    let passed = tiger_shots > 0 && enemy_shots > 0 && previous_hits.0 + previous_hits.1 as u32 > 0
+        && turret_motion_ok && listener_heard_own_shot;
+    let receipt = json!({"schema":"panzer.blizzard-battle.v1","passed":passed,"viewpoint":view.label(),
         "video":format!("{prefix}.mp4"),"duration_s":duration,"fps":fps,"native_resolution":[r.iw,r.ih],
         "output_resolution":[1280,720],"adapter":adapter.get_info().name,"storm_intensity":2.5,
         "validated_opening_lanes":lanes,"initial_positions":initial,"policy":policy_path,"events":events,"samples":samples,
         "tiger_shots":tiger_shots,"enemy_shots":enemy_shots,"final_combat":g.capture_combat_receipt(),
         "incoming_hits":g.stat_hits_on_player,"incoming_penetrations":g.stat_pens_on_player,
-        "tiger_alive":g.player.alive,"enemy_alive":active.iter().map(|&i|g.enemies[i].alive).collect::<Vec<_>>(),
-        "scope":"Fixed opening positions; alerted live baseline T-34 AI; automated Tiger direct gun lay and physical breech service with 6.5s minimum cycle. Ordinary swept shells, armor, damage, wrecks, collisions and weather. External observer; not human gameplay or real-time performance.",
-        "audio":"External observer microphone mixed offline from shared gameplay source voices, weather voice, propagation and reproduction; actual gun, armor-contact and destruction events. No player headset/ear effects.",
+        "tiger_alive":g.player.alive,"listener_alive":view.listener_alive(&g),"listener_kia_at":listener_dead_since,
+        "enemy_alive":active.iter().map(|&i|g.enemies[i].alive).collect::<Vec<_>>(),
+        "scope":if view.is_crew() { "Fixed opening positions; alerted live baseline T-34 AI; automated co-op crew with direct gun lay and physical breech service, 6.5s minimum shot cycle. Actual occupied first-person Commander/Loader station and ordinary swept shells, armor, damage, wrecks, collisions and weather. Independent simulation per view; not human gameplay or real-time performance." } else { "Fixed opening positions; alerted live baseline T-34 AI; automated Tiger direct gun lay and physical breech service with 6.5s minimum cycle. Ordinary swept shells, armor, damage, wrecks, collisions and weather. External observer; not human gameplay or real-time performance." },
+        "audio":if view.is_crew() { "Recorded ordinary gameplay sinks on the simulation clock, with the selected crew station's headset, enclosure, reflex and hearing damage. No replacement soundtrack or extra master pass." } else { "External observer microphone mixed offline from shared gameplay source voices, weather voice, propagation and reproduction; actual gun, armor-contact and destruction events. No player headset/ear effects." },
         "audio_receipt":audio_receipt,
+        "turret_motion_validation":{"passed":turret_motion_ok,"maximum_com_rise_m":maximum_turret_rise,
+            "maximum_contact_correction_m":maximum_turret_correction,"rise_limit_m":2.0,"correction_limit_m":0.5,
+            "scope":"Actual staged T-34 source and coupled blast energy, sampled every simulation step; diagnostics do not clamp motion."},
+        "listener_heard_own_shot":listener_heard_own_shot,
         "forced_impacts":false,"forced_kills":false,"invulnerability":g.god});
     std::fs::write(
         format!("{prefix}.json"),
@@ -360,7 +423,7 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
     )?;
     ensure!(
         passed,
-        "capture did not contain two-sided fire and a resolved hit; see receipt"
+        "capture failed combat, listener survival, or turret-motion validation; see receipt"
     );
     Ok(())
 }

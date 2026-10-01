@@ -105,7 +105,9 @@ mod interior_rig;
 mod lan;
 mod mechanic_capture;
 mod blizzard_battle_capture;
+mod crew_blizzard_capture;
 mod combat_capture_audio;
+mod shell_flight_audio;
 mod panzerfaust;
 mod pixel_particles;
 mod pressure_front;
@@ -15988,8 +15990,13 @@ fn main() -> anyhow::Result<()> {
     if args.get(1).is_some_and(|s| s == "blizzard-battle") {
         let prefix = args.get(2).ok_or_else(||anyhow::anyhow!("blizzard-battle requires output prefix"))?;
         let seconds = args.get(3).map(|s|s.parse()).transpose()?.unwrap_or(24.0);
-        let preview = args.get(4).is_some_and(|s|s == "preview");
-        return blizzard_battle_capture::run(prefix, seconds, preview);
+        let preview = args.iter().skip(4).any(|s|s == "preview");
+        let view = if args.iter().skip(4).any(|s|s == "cupola") {
+            crew_blizzard_capture::View::Cupola
+        } else if args.iter().skip(4).any(|s|s == "inside") {
+            crew_blizzard_capture::View::Inside
+        } else { crew_blizzard_capture::View::External };
+        return blizzard_battle_capture::run_with_view(prefix, seconds, preview, view);
     }
     if args.len() >= 2 && args[1] == "duel" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);

@@ -472,6 +472,63 @@ pub fn master_offline(stereo: &[f32]) -> (Vec<f32>, f32) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn catastrophe_retains_its_scale_through_propagation_and_master() {
+        use crate::{acoustics as a, sound_levels as levels, sound_propagation as p};
+        // This is the actual weather voice, then the same source/propagation/master chain used
+        // by the observer capture. Compare short-term loudness, not peak: a small impact and a
+        // close detonation can both touch the limiter ceiling without sounding equally loud.
+        let weather = crate::audio::Audio::new_capture();
+        weather.set_weather_ambience(2.5, 0.0, 18.0);
+        let bed = weather.render_capture_frames(8 * SAMPLE_RATE as usize).unwrap();
+        for range_m in [10.0, 22.0, 50.0, 100.0] {
+            let path = p::Path { distance_m: range_m, atmosphere: p::Atmosphere::WINTER,
+                occluded: false, enclosure: p::Enclosure::OnFoot, headset: false };
+            let voice = |sound, emission| {
+                let ear = p::propagate(&emission, &path);
+                let mut mono: Vec<_> = a::synth_procedural_dry(sound).chunks_exact(2)
+                    .map(|pair| (pair[0] + pair[1]) * 0.5).collect();
+                p::SpectralTransfer::fit(&ear.transfer_db, SAMPLE_RATE).apply_mono(&mut mono);
+                let mut voice = a::spatialize_mono(&mono, 0.0, 0.0);
+                let gain = voice_gain(ear.laf_db, laf_max_dbfs(&voice));
+                for sample in &mut voice { *sample *= gain; }
+                voice
+            };
+            let armour = p::Emission::from_level(&levels::EXTERIOR_ARMOUR_STRIKE_10M);
+            let impact = voice(a::ProceduralSound::ImpactTank, armour);
+            let kill = voice(a::ProceduralSound::KillExplosion,
+                p::Emission::blast(levels::VEHICLE_KILL_TNT_KG));
+            let mut catastrophic = voice(a::ProceduralSound::TurretPop,
+                p::Emission::blast(levels::AMMUNITION_DETONATION_TNT_KG));
+            let rip = voice(a::ProceduralSound::TurretRip, armour);
+            for (sample, layer) in catastrophic.iter_mut().zip(&rip) { *sample += layer; }
+            let mut mix = bed.clone();
+            let starts = [0.75, 3.0, 5.25];
+            for (source, start_s) in [&impact, &kill, &catastrophic].into_iter().zip(starts) {
+                let start = (start_s * SAMPLE_RATE) as usize * 2;
+                for (sample, layer) in mix[start..].iter_mut().zip(source) { *sample += layer; }
+            }
+            let (mix, reduction) = master_offline(&mix);
+            let levels = starts.map(|start_s| {
+                let start = (start_s * SAMPLE_RATE) as usize * 2;
+                laf_max_dbfs(&mix[start..start + (1.5 * SAMPLE_RATE) as usize * 2])
+            });
+            let attacks = starts.map(|start_s| {
+                let start = (start_s * SAMPLE_RATE) as usize * 2;
+                20.0 * a::rms(&mix[start..start + (0.25 * SAMPLE_RATE) as usize * 2]).log10()
+            });
+            eprintln!("severity range={range_m}m: LAF impact/kill/catastrophe={levels:?}; 250ms RMS={attacks:?}; master reduction={reduction:.2}dB");
+            assert!(levels[2] > levels[0] + 8.0,
+                "catastrophe lost its loudness over ordinary impact at {range_m}m: {levels:?}");
+            assert!(attacks[2] > attacks[0] + 3.0,
+                "catastrophe lost its broadband pressure body at {range_m}m: {attacks:?}");
+            assert!(levels[2] > levels[1],
+                "catastrophic ammunition blast must exceed the smaller vehicle kill: {levels:?}");
+            assert!(mix.iter().all(|sample| sample.is_finite()
+                && sample.abs() <= LIMITER_CEILING + 1.0e-6));
+        }
+    }
+
     fn close(a: f32, b: f32, tol: f32) -> bool {
         (a - b).abs() <= tol
     }

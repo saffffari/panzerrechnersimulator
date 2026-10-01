@@ -1,0 +1,174 @@
+{
+  "schema": "panzer.combat-crew-review.v1",
+  "passed": true,
+  "videos": [
+    {
+      "viewpoint": "external",
+      "video": "captures/blizzard_external_v6_20261001.mp4",
+      "receipt": "captures/blizzard_external_v6_20261001.json",
+      "sha256": "611fe9f15884b3725b2dc8f78403ec01f04801efcc1f081f524f414acd057104",
+      "receipt_sha256": "4d769c920ec27b8b69cb19c5439ecae5d334d4973f99c5366177f3b48688ee81",
+      "soundtrack_sha256": "b31fcfb8e432f362f80f5fda17f551d8e0698b8b3de05511b16fa4f50ca68ff1",
+      "bytes": 10888086,
+      "duration_s": 14,
+      "frames": 420,
+      "full_decode_passed": true,
+      "audio_peak_dbfs": -1.0004493301428767,
+      "audio_finite": true,
+      "audio_identical_to_validated_v4": true,
+      "capture_passed": true,
+      "tiger_shots": 1,
+      "enemy_shots": 3,
+      "incoming_hits": 3,
+      "listener_kia_at": null,
+      "turret_motion_validation": {
+        "correction_limit_m": 0.5,
+        "maximum_com_rise_m": 0.295107364654541,
+        "maximum_contact_correction_m": 0.007183806970715523,
+        "passed": true,
+        "rise_limit_m": 2.0,
+        "scope": "Actual staged T-34 source and coupled blast energy, sampled every simulation step; diagnostics do not clamp motion."
+      }
+    },
+    {
+      "viewpoint": "cupola",
+      "video": "captures/blizzard_cupola_v6_20261001.mp4",
+      "receipt": "captures/blizzard_cupola_v6_20261001.json",
+      "sha256": "1c27392a2148fd4b131a6cd8604b7f0dc1efbe351e6935b98b95e7400616dcb5",
+      "receipt_sha256": "d15ded62cdc68d31f3f028d62b825190f749247ba0aacc7847f8e6deb5cf3f4e",
+      "soundtrack_sha256": "0eb49b84d03927498e1f732fd97e97c249cdc3b82e6d97332cd9c57c44aa11b5",
+      "bytes": 10943790,
+      "duration_s": 12,
+      "frames": 360,
+      "full_decode_passed": true,
+      "audio_peak_dbfs": -1.0004493301428767,
+      "audio_finite": true,
+      "audio_identical_to_validated_v4": true,
+      "capture_passed": true,
+      "tiger_shots": 1,
+      "enemy_shots": 3,
+      "incoming_hits": 3,
+      "listener_kia_at": 9.933333396911621,
+      "turret_motion_validation": {
+        "correction_limit_m": 0.5,
+        "maximum_com_rise_m": 0.295107364654541,
+        "maximum_contact_correction_m": 0.007183806970715523,
+        "passed": true,
+        "rise_limit_m": 2.0,
+        "scope": "Actual staged T-34 source and coupled blast energy, sampled every simulation step; diagnostics do not clamp motion."
+      }
+    },
+    {
+      "viewpoint": "inside",
+      "video": "captures/blizzard_inside_v6_20261001.mp4",
+      "receipt": "captures/blizzard_inside_v6_20261001.json",
+      "sha256": "5b50f24bd0f22ab551d73f07eeb4e6ed6d707773a6eed16ca554deb90e4c507f",
+      "receipt_sha256": "f2721c5a026f82d30178d67785cbd4438fd4452d493a40e7ac458af787e0e31b",
+      "soundtrack_sha256": "e753dc1cf8b2225754a2021233918d124ec80fd6b511a360933d8a4f591d39b0",
+      "bytes": 13169427,
+      "duration_s": 12,
+      "frames": 360,
+      "full_decode_passed": true,
+      "audio_peak_dbfs": -1.001044213345497,
+      "audio_finite": true,
+      "audio_identical_to_validated_v4": true,
+      "capture_passed": true,
+      "tiger_shots": 1,
+      "enemy_shots": 3,
+      "incoming_hits": 3,
+      "listener_kia_at": 9.933333396911621,
+      "turret_motion_validation": {
+        "correction_limit_m": 0.5,
+        "maximum_com_rise_m": 0.295107364654541,
+        "maximum_contact_correction_m": 0.007183806970715523,
+        "passed": true,
+        "rise_limit_m": 2.0,
+        "scope": "Actual staged T-34 source and coupled blast energy, sampled every simulation step; diagnostics do not clamp motion."
+      }
+    }
+  ],
+  "cpu_tests": [
+    {
+      "filter": "shell_flight_audio::tests",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1520 filtered out; finished in 0.01s"
+      ],
+      "log": "artifacts/runtime/v4_shell_flight_audio_tests_20261001.log"
+    },
+    {
+      "filter": "game::projectile_flight_audio::tests",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1526 filtered out; finished in 0.98s"
+      ],
+      "log": "artifacts/runtime/v4_game_projectile_flight_audio_tests_20261001.log"
+    },
+    {
+      "filter": "reproduction::tests::catastrophe_retains_its_scale_through_propagation_and_master",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1528 filtered out; finished in 1.56s"
+      ],
+      "log": "artifacts/runtime/v4_reproduction_tests_catastrophe_retains_its_scale_through_propagation_and_master_20261001.log"
+    },
+    {
+      "filter": "combat_capture_audio::tests",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1528 filtered out; finished in 1.17s"
+      ],
+      "log": "artifacts/runtime/v4_combat_capture_audio_tests_20261001.log"
+    },
+    {
+      "filter": "game::wreck_turret::tests",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1525 filtered out; finished in 1.08s"
+      ],
+      "log": "artifacts/runtime/v4_game_wreck_turret_tests_20261001.log"
+    },
+    {
+      "filter": "surface_fire",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 1497 filtered out; finished in 0.05s"
+      ],
+      "log": "artifacts/runtime/v4_surface_fire_20261001.log"
+    },
+    {
+      "filter": "weapon_vfx::tests",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 10 passed; 0 failed; 1 ignored; 0 measured; 1520 filtered out; finished in 0.03s"
+      ],
+      "log": "artifacts/runtime/armor_spark_plane_final_tests_20261001.log"
+    },
+    {
+      "filter": "ammunition_fire::tests",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1524 filtered out; finished in 0.00s"
+      ],
+      "log": "artifacts/runtime/v4_ammunition_fire_tests_20261001.log"
+    }
+  ],
+  "whistle_qa": "captures/blizzard_external_v6_whistle_qa_20261001.json",
+  "scope": "Independent deterministic automated crew runs with real projectiles, damage and weather. Native 640x360 shader render exported at 1280x720/30fps. Crew audio uses the live game graph; external audio uses the shared microphone mix. Not a human playthrough or real-time benchmark.",
+  "rejected_capture": {
+    "prefix": "captures/blizzard_external_v3_20261001",
+    "reason": "Turret contact coordinate error and moving-whistle filter transient; superseded by v4 with native motion and spectral verification."
+  },
+  "binary_sha256": "15951092b26bf0b019a3ce32c064b7192b853388972d49b49dfaf3553d5f841d",
+  "build_log": "artifacts/runtime/combat_crew_v6_build_final_20261001.log",
+  "visual_review": "docs/BLIZZARD_CREW_REVIEW_20261001.md",
+  "superseded_crew_captures": {
+    "versions": [
+      "v4",
+      "v5"
+    ],
+    "reason": "Crew-view review exposed duplicate cabin exterior ejecta and an armor-impact spray ignoring the struck plate normal. Final v6 separates interior ignition and confines armor spark/flash geometry to the source plane."
+  },
+  "validation_log": "artifacts/runtime/combat_crew_v6_validation_20261001.log",
+  "verification_script": "artifacts/runtime/verify_combat_crew_v6_20261001.py"
+}

@@ -716,6 +716,24 @@ impl SpectralTransfer {
             }
         }
     }
+
+    /// The same fitted transfer on consecutive stereo source blocks. Keep the state per voice;
+    /// restarting every 240 Hz projectile segment would add a false train of filter transients.
+    pub fn apply_stereo_stream(&self, samples: &mut [f32], state: &mut Vec<[f64; 8]>) {
+        state.resize(self.sections.len(), [0.0; 8]);
+        for (section, history) in self.sections.iter().zip(state.iter_mut()) {
+            for frame in samples.chunks_exact_mut(2) {
+                for (channel, sample) in frame.iter_mut().enumerate() {
+                    let h = &mut history[channel * 4..channel * 4 + 4];
+                    let x = f64::from(*sample);
+                    let y = section.b[0] * x + section.b[1] * h[0] + section.b[2] * h[1]
+                        - section.a[0] * h[2] - section.a[1] * h[3];
+                    h[1] = h[0]; h[0] = x; h[3] = h[2]; h[2] = y;
+                    *sample = y as f32;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -27,8 +27,12 @@ pub use canyon_pilot::CanyonPilot;
 mod street_nav;
 #[path = "winter_mission.rs"]
 mod winter_mission;
+#[path = "wreck_surface_fire.rs"]
+mod wreck_surface_fire;
 #[path = "wreck_salvage.rs"]
 mod wreck_salvage;
+#[path = "wreck_turret.rs"]
+mod wreck_turret;
 #[cfg(test)]
 #[path = "couch_station_scene_tests.rs"]
 mod couch_station_scene_tests;
@@ -98,6 +102,8 @@ mod mixed_combat_runtime;
 mod p08;
 #[path = "cupola_pistol.rs"]
 mod cupola_pistol;
+#[path = "crew_capture_view.rs"]
+mod crew_capture_view;
 #[path = "panzerfaust_runtime.rs"]
 mod panzerfaust_runtime;
 #[path = "scene_environment.rs"]
@@ -145,6 +151,9 @@ mod small_arms_runtime;
 mod listener_hearing;
 #[path = "projectile_cover.rs"]
 mod projectile_cover;
+#[path = "projectile_flight_audio.rs"]
+mod projectile_flight_audio;
+pub use projectile_flight_audio::FlightSegment;
 #[path = "world_index.rs"]
 mod world_index;
 #[path = "solid_city.rs"]
@@ -696,10 +705,8 @@ const CATASTROPHIC_CHANCE: f32 = 0.35; // fraction of kills that pop the turret 
 const COOKOFF_CHANCE: f32 = 0.55; // of the *burning* (non-pop) wrecks, fraction that later cook off
 const COOKOFF_MIN: f32 = 3.0; // s — earliest a burning wreck cooks off
 const COOKOFF_MAX: f32 = 8.0; // s — latest
-const TURRET_POP_V0_MIN: f32 = 14.0; // m/s — turret launch (vertical) velocity, ammo-rack blast
-const TURRET_POP_V0_MAX: f32 = 20.0;
 const N_BLAST: usize = 4; // pooled big emissive fireball FX (kills / pops / cook-offs overlap)
-const N_DEBRIS: usize = 48; // pooled fragments: a penetration fills the compartment with sparks
+const N_DEBRIS: usize = 144; // bounded exterior chips; hot debris uses many fine grains
 
 /// How a destroyed enemy reads as a wreck.
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -720,16 +727,16 @@ struct Wreck {
     fire_t: f32, // seconds since the wreck was created (fire flicker + smoke clock)
     ignition_load: f32, // authored 0..1 response to the actual penetrating round's energy
     fuel_remaining: f32, // normalized combustible reservoir, consumed while burning
+    fire_entry_world: Option<Vec3>,
+    fire_hit_turret: bool,
+    surface_burn: Option<[wreck_surface_fire::Burn; 2]>,
     // ── turret-pop ballistics (the turret mesh flies off) ──
     t_pos: Vec3, // world position of the tumbling turret ring
-    t_vel: Vec3, // integrated under gravity
-    t_spin_axis: Vec3,
-    t_spin_rate: f32,  // rad/s
-    t_ang: f32,        // accumulated tumble angle
-    t_base_rot: Quat,  // the turret's world orientation at the instant it popped
+    t_initial: Mat4, // exact articulated source transform at detachment
+    t_body: Option<wreck_turret::Body>,
+    t_launch_pending: bool,
+    t_impact: Option<(Vec3, Vec3)>, // actual terminal point and outward plate normal
     t_gun_local: Mat4, // gun transform relative to the turret (so the barrel flies with it)
-    t_rest_y: f32,     // world Y the turret comes to rest at
-    landed: bool,
     // ── delayed cook-off ──
     cookoff_t: Option<f32>, // countdown to the secondary; None = never cooks off (or already did)
     cooked: bool,
@@ -752,10 +759,14 @@ impl Wreck {
         let load = (1.0 - (-(residual_j + filler_j) / 1_500_000.0).exp()).clamp(0.0, 1.0);
         self.ignition_load = self.ignition_load.max(load);
     }
+    fn set_turret_impact(&mut self, point: Vec3, outward_normal: Vec3) {
+        if point.is_finite() && outward_normal.is_finite() {
+            self.t_impact = Some((point, outward_normal));
+        }
+    }
     /// World transform for the tumbling turret mesh.
     fn turret_pop_xf(&self) -> Mat4 {
-        let spin = Quat::from_axis_angle(self.t_spin_axis, self.t_ang);
-        Mat4::from_rotation_translation(spin * self.t_base_rot, self.t_pos)
+        self.t_body.as_ref().map_or(self.t_initial, wreck_turret::Body::model)
     }
     /// World transform for the gun mesh, rigidly attached to the tumbling turret.
     fn gun_pop_xf(&self) -> Mat4 {
@@ -5885,6 +5896,54 @@ fn world_fire_cells(seed: u32, time: f32, strength: f32) -> Vec<FireVoxelSample>
     }).collect()
 }
 
+/// Distribute the existing bounded luminous-cell budget over actual damaged surfaces. Flame
+/// roots follow the articulated mesh; gravity and shared weather bend their escaping gases.
+fn surface_wreck_fire_cells(seed:u32,time:f32,strength:f32,origin:Vec3,
+    patches:&[wreck_surface_fire::Patch],wind:Vec2)->Vec<FireVoxelSample>
+{
+    if patches.is_empty() || strength<=0.0 {return Vec::new();}
+    let total=patches.iter().map(|p|p.strength).sum::<f32>().max(1e-6);
+    let budget=(strength.clamp(0.0,1.0).sqrt()*FLAME_CUBES_PER_WORLD_SOURCE as f32) as usize;
+    let mut cells=Vec::with_capacity(budget);
+    let mut occupied=std::collections::HashSet::with_capacity(budget);
+    let mut used=0;
+    let mut cumulative=0.0;
+    // Match the fine surface tongue's lattice compression with its actual grain edge. Keeping
+    // the old 80–115 mm cubes on a 28 mm lattice made overlapping luminous blocks and counted
+    // obscured cells repeatedly in the light-energy sum.
+    const CELL_SCALE:f32=0.45;
+    const MAX_CELL_EDGE:f32=0.115*CELL_SCALE;
+    for patch in patches {
+        cumulative+=patch.strength;
+        let end=((cumulative/total*budget as f32).round() as usize).min(budget);
+        let normal=patch.normal.normalize_or_zero();
+        if normal.length_squared()<0.5 {used=end;continue;}
+        let tangent=normal.cross(if normal.y.abs()>0.9 {Vec3::X}else{Vec3::Y}).normalize_or_zero();
+        let bitangent=normal.cross(tangent).normalize_or_zero();
+        let mut rise=Vec3::Y*0.85+normal*0.35;
+        // A detached turret can expose downward-facing surfaces. Clip the buoyant direction
+        // to the air-side hemisphere before normalizing, rather than sending its cells inward.
+        rise-=normal*(rise.dot(normal)-0.20).min(0.0);
+        let rise=rise.normalize_or_zero();
+        // Grains stay world-axis-aligned, so their support extent is the normal's L1 norm.
+        // One shared maximum clearance also lets repeated lattice positions deduplicate even
+        // when their randomly chosen grain-size tiers differ.
+        let clearance=MAX_CELL_EDGE*0.5*normal.abs().element_sum()+0.004;
+        for grain in used..end {
+            let mut cell=flame_parcel_sample(seed^(patch.id as u32).wrapping_mul(7919),grain,time,patch.strength,true);
+            cell.size*=CELL_SCALE;
+            let height=cell.offset.y*CELL_SCALE*(1.0+0.15*patch.strength.clamp(0.0,1.0));
+            let drift=Vec3::new(wind.x,0.0,wind.y)*height.powi(2)*0.035;
+            let drift=drift-normal*drift.dot(normal).min(0.0);
+            cell.offset=patch.position-origin+normal*clearance+tangent*cell.offset.x*CELL_SCALE
+                +bitangent*cell.offset.z*CELL_SCALE+rise*height+drift;
+            if occupied.insert(cell.offset.to_array().map(f32::to_bits)) {cells.push(cell);}
+        }
+        used=end;
+    }
+    cells
+}
+
 /// One grain of a tableau stovepipe's smoke (`urban_tableaux::SmokeSource`): a thin column
 /// leaving the pipe mouth at about 0.55 m/s, widening as it rises and carried downwind, each grain
 /// respawning at the mouth after its 4-6.5 s life by the same discrete generation rule as
@@ -8612,6 +8671,7 @@ pub struct Game {
     projectiles: Vec<AuthoritativeProjectile>,
     projectile_scratch: Vec<AuthoritativeProjectile>,
     projectile_cover: projectile_cover::Index,
+    projectile_flight_audio: projectile_flight_audio::Runtime,
     crew_battle_audit: Option<crew_battle_scene::BattleAudit>,
     next_projectile_id: u64,
     projectile_accumulator_s: f32,
@@ -8890,6 +8950,11 @@ pub struct Game {
     interior_fire_lights: [Option<PointLight>; N_INT_FIRE_LIGHTS],
     world_fire_lights: [Option<PointLight>; MAX_WORLD_FIRE_SOURCES],
     wreck_deck_anchors: [Option<Vec3>; 6],
+    wreck_fire_surfaces: [[wreck_surface_fire::Surface; 2]; 6],
+    player_fire_surfaces: [wreck_surface_fire::Surface; 2],
+    player_surface_burn: Option<[wreck_surface_fire::Burn; 2]>,
+    player_surface_fire_started: f32,
+    wreck_turret_sources: [std::sync::Arc<wreck_turret::Source>; 6],
     fire_t: f32,                             // fire clock (drives flicker)
     ammo_fire: ammunition_fire::AmmunitionFire, // latched to the ignited live round
     fire_ammo_ids: Vec<u32>, // exposure history belongs to this exact inventory ordering
@@ -10360,6 +10425,13 @@ impl Game {
             tank::build_is3(),
         ] };
         let wreck_deck_anchors = std::array::from_fn(|i| wreck_deck_anchor(&prototypes[i][0]));
+        let wreck_fire_surfaces = std::array::from_fn(|i| std::array::from_fn(|part|
+            wreck_surface_fire::Surface::from_mesh(&prototypes[i][part])));
+        let wreck_turret_sources = std::array::from_fn(|i| {
+            let kind = [EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
+                EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3][i];
+            std::sync::Arc::new(wreck_turret::Source::new(&prototypes[i], enemy_armor(kind)))
+        });
         for _ in 0..N_ENEMIES {
             for (prototype, slots) in prototypes.iter().zip([
                 &mut t34,
@@ -11365,6 +11437,8 @@ impl Game {
         // by the live articulated frame. The source scene and its authored hinges remain unchanged.
         let cupola_spindle_source = scene[slots.hatchlever].clone().transformed(
             Mat4::from_translation(HATCHLEVER_POS - CUPOLA_HINGE));
+        let player_fire_surfaces = std::array::from_fn(|part|
+            wreck_surface_fire::Surface::from_mesh(&scene[slots.tiger[part]]));
         let mut fire_surfaces = vec![
             (0, &scene[slots.tiger[0]]), (1, &scene[slots.tiger[1]]),
             (2, &scene[slots.tiger[2]]), (3, &scene[slots.roof_hatches[0]]),
@@ -12516,6 +12590,7 @@ impl Game {
             projectiles: Vec::with_capacity(256),
             projectile_scratch: Vec::with_capacity(256),
             projectile_cover: projectile_cover::Index::default(),
+            projectile_flight_audio: projectile_flight_audio::Runtime::default(),
             crew_battle_audit: None,
             next_projectile_id: 1,
             projectile_accumulator_s: 0.0,
@@ -12696,6 +12771,8 @@ impl Game {
             interior_fire_lights: [None; N_INT_FIRE_LIGHTS],
             world_fire_lights: [None; MAX_WORLD_FIRE_SOURCES],
             wreck_deck_anchors,
+            wreck_fire_surfaces, player_fire_surfaces, player_surface_burn: None, player_surface_fire_started: 0.0,
+            wreck_turret_sources,
             fire_t: 0.0,
             ammo_fire: ammunition_fire::AmmunitionFire::default(),
             fire_ammo_ids: Vec::new(),
@@ -14049,6 +14126,7 @@ impl Game {
         self.muster_tank_escorts();
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.projectiles.clear();
+        self.projectile_flight_audio = projectile_flight_audio::Runtime::default();
         self.projectile_accumulator_s = 0.0;
         for shot in &mut self.e_shots {
             *shot = EnemyShot::default();
@@ -15221,6 +15299,7 @@ impl Game {
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
         if !input.mg_coax && !input.fire2 { self.primary_pickup_press = false; }
         if self.pressure_reset_pending {
@@ -16645,6 +16724,7 @@ impl Game {
         // Resolve cannon flight after every moving vehicle has advanced. This is host simulation,
         // not presentation: all split views sample the same stable-ID projectile pool below.
         self.advance_projectiles(dt, r);
+        self.dispatch_shell_flight_audio(r);
         self.sync_authoritative_tracer_presentation();
         self.update_panzerfaust_shot(dt, r);
         self.drive_panzerfaust_rack(r);
@@ -18385,6 +18465,7 @@ impl Game {
                 self.breech = Breech::Loaded;
                 self.death_cause = None;
                 self.last_fatal = None;
+        self.player_surface_burn = None;
                 self.abandoned[k].2 = true;
                 self.recompute_hp();
                 stow_recovered_88mm(
@@ -21006,6 +21087,7 @@ impl Game {
             }
         }
         self.projectiles.clear();
+        self.projectile_flight_audio = projectile_flight_audio::Runtime::default();
         self.projectile_accumulator_s = 0.0;
         for shot in &mut self.e_shots {
             *shot = EnemyShot::default();
@@ -21126,7 +21208,10 @@ impl Game {
         }
         // Combat state: stealth machine, in-flight shells, FX, delayed audio, telemetry.
         self.stealth = stealth::Stealth::new(n);
+        self.player_surface_burn = None;
+        self.player_surface_fire_started = 0.0;
         self.projectiles.clear();
+        self.projectile_flight_audio = projectile_flight_audio::Runtime::default();
         self.projectile_accumulator_s = 0.0;
         for shot in &mut self.e_shots {
             *shot = EnemyShot::default();
@@ -21234,6 +21319,7 @@ impl Game {
 
     /// Silence the mix (training runs hundreds of matches; every shot would open a real sink).
     pub fn mute_audio(&mut self) {
+        self.projectile_flight_audio = projectile_flight_audio::Runtime::default();
         self.scene_environment.clear_voices();
         self.audio = None;
     }
@@ -21252,12 +21338,14 @@ impl Game {
     /// Solo pause preserves sound source positions instead of discarding and restarting the mix.
     pub fn set_audio_paused(&self, paused: bool) {
         if let Some(audio) = &self.audio { audio.set_paused(paused); }
+        self.projectile_flight_audio.set_paused(paused);
         self.scene_environment.set_paused(paused);
     }
 
     /// Start a device-free recording of the ordinary gameplay Audio sinks before stepping a
     /// deterministic review scenario. Existing sound tails are deliberately cleared at this cut.
     pub fn begin_audio_capture(&mut self) {
+        self.projectile_flight_audio = projectile_flight_audio::Runtime::default();
         self.scene_environment.clear_voices();
         self.audio = Some(crate::audio::Audio::new_capture());
     }
@@ -23083,6 +23171,8 @@ impl Game {
         self.projectile_accumulator_s += dt;
         while self.projectile_accumulator_s + 1.0e-8 >= PROJECTILE_FIXED_DT {
             self.projectile_accumulator_s -= PROJECTILE_FIXED_DT;
+            let flight_start = self.projectile_flight_audio.segments.len();
+            let flight_at = r.time - self.projectile_accumulator_s - PROJECTILE_FIXED_DT;
             let mut active = std::mem::take(&mut self.projectile_scratch);
             active.clear();
             let mut flying = std::mem::take(&mut self.projectiles);
@@ -23097,6 +23187,7 @@ impl Game {
                 let terminal_t = contact.map_or(step.start.distance(step.end), |hit| hit.t_m);
                 let terminal_end =
                     step.start + (step.end - step.start).normalize_or_zero() * terminal_t.max(0.0);
+                self.record_shell_flight_segment(&projectile, step, terminal_end, step_dt, flight_at);
 
                 // Lightweight props are physical but not armor. Query only the portion actually
                 // travelled this tick and impart their shell strike at the same authoritative time.
@@ -23256,6 +23347,7 @@ impl Game {
                 }
             }
             active.append(&mut self.projectiles);
+            self.finish_shell_flight_step(flight_start, &active);
             self.projectiles = active;
             self.projectile_scratch = flying;
         }
@@ -23605,6 +23697,9 @@ impl Game {
                     );
                     self.destroy_enemy(index);
                     self.wrecks[index].absorb_impact(&event);
+                    self.wrecks[index].set_turret_impact(impact_pos, armor.world_normal);
+                    self.wrecks[index].fire_entry_world = Some(impact_pos);
+                    self.wrecks[index].fire_hit_turret = armor.part == ArmorPart::Turret;
                     if was_player {
                         self.stat_kills_by_player = self.stat_kills_by_player.saturating_add(1);
                     }
@@ -25960,7 +26055,7 @@ impl Game {
         // The cabin ignition is compact; the former nine-metre exterior fireball light
         // flooded the entire compartment for 850 ms and hid every incandescent fragment.
         // Persistent furnace illumination comes from the actual burning cabin cells.
-        self.spawn_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
+        self.spawn_interior_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
         self.spawn_debris(centre, 12, 16.0, self.armor_tick.wrapping_mul(2246822519));
         self.schedule_sound_from(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
         self.schedule_sound_from(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
@@ -26022,14 +26117,17 @@ impl Game {
         self.recompute_hp();
         self.cue_engine_death(0.7); // the wreck's motor dies under the cook-off
         self.death_cause = Some(DeathCause::FuelFire);
-        self.spawn_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
+        self.spawn_interior_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
         self.spawn_debris(
             centre,
             12,
             16.0,
             self.kill_tick.wrapping_add(777).wrapping_mul(2246822519),
         );
-        self.schedule_sound_from(crate::audio::Sfx::CookOff, ammo_blast.origin_world);
+        // The same ammunition reservoir detonated as in a direct rack hit. A heat-triggered
+        // catastrophic loss must retain that blast scale, not use a single secondary pop.
+        self.schedule_sound_from(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
+        self.schedule_sound_from(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
         self.death_replay = None;
         self.last_fatal = Some(FatalHit {
             shooter_pos: self.station_eye(self.station),
@@ -26055,19 +26153,18 @@ impl Game {
     /// Deterministic via `hash01` (no rand), matching the rest of the file.
     fn destroy_enemy(&mut self, idx: usize) {
         // Snapshot the (Copy) death pose before taking any &mut borrow of self.
-        let (epos, eheading, eyaw, epitch, eparts, ekind, alive) = {
+        let (epos, eparts, ekind, alive, turret_world, gun_world) = {
             let e = match self.enemies.get(idx) {
                 Some(e) => e,
                 None => return,
             };
             (
                 e.pos,
-                e.heading,
-                e.turret_yaw,
-                e.gun_pitch,
                 e.parts,
                 e.kind,
                 e.alive,
+                e.turret_model(),
+                e.gun_model(),
             )
         };
         if !alive {
@@ -26095,8 +26192,7 @@ impl Game {
                 .push(stealth::Occluder::from_aabb(epos - half, epos + half + top));
         }
         let center = epos + Vec3::new(0.0, eparts.center_h, 0.0);
-        let ground = epos.y;
-        let ring = epos + Quat::from_rotation_y(eheading) * eparts.turret_pivot; // world turret ring
+        let ring = turret_world.transform_point3(Vec3::ZERO);
 
         self.kill_tick = self.kill_tick.wrapping_add(1);
         let seed = self
@@ -26118,26 +26214,12 @@ impl Game {
             };
             if catastrophic {
                 w.kind = WreckKind::TurretPop;
-                let vy = TURRET_POP_V0_MIN
-                    + (TURRET_POP_V0_MAX - TURRET_POP_V0_MIN) * hash01(seed.wrapping_add(11));
-                let lat = 2.0 + 4.0 * hash01(seed.wrapping_add(23)); // small random lateral drift
-                let la = hash01(seed.wrapping_add(31)) * std::f32::consts::TAU;
                 w.t_pos = ring;
-                w.t_vel = Vec3::new(la.cos() * lat, vy, la.sin() * lat);
-                let axis = Vec3::new(
-                    hash01(seed.wrapping_add(41)) - 0.5,
-                    hash01(seed.wrapping_add(43)) - 0.5,
-                    hash01(seed.wrapping_add(47)) - 0.5,
-                );
-                w.t_spin_axis = axis.normalize_or_zero();
-                if w.t_spin_axis.length_squared() < 0.01 {
-                    w.t_spin_axis = Vec3::X;
-                }
-                w.t_spin_rate = 6.0 + 8.0 * hash01(seed.wrapping_add(53)); // rad/s tumble
-                w.t_base_rot = Quat::from_rotation_y(eheading + eyaw);
-                w.t_gun_local =
-                    Mat4::from_translation(eparts.gun_trunnion) * Mat4::from_rotation_x(-epitch);
-                w.t_rest_y = ground + 0.4;
+                w.t_initial = turret_world;
+                w.t_gun_local = turret_world.inverse() * gun_world;
+                // Defer to the next host step so the terminal event can attach its actual
+                // penetration severity, contact point and normal before calculating the impulse.
+                w.t_launch_pending = true;
                 // A turret-popped tank has already vented its ammunition — no secondary cook-off.
                 w.cookoff_t = None;
             } else {
@@ -26194,14 +26276,21 @@ impl Game {
                 if w.cook_flash > 0.0 {
                     w.cook_flash = (w.cook_flash - dt * 1.2).max(0.0);
                 }
-                if w.kind == WreckKind::TurretPop && !w.landed {
-                    w.t_vel.y -= 9.8 * dt;
-                    w.t_pos += w.t_vel * dt;
-                    w.t_ang += w.t_spin_rate * dt;
-                    if w.t_pos.y <= w.t_rest_y {
-                        w.t_pos.y = w.t_rest_y;
-                        w.t_vel = Vec3::ZERO;
-                        w.landed = true;
+                if w.kind == WreckKind::TurretPop {
+                    if w.t_launch_pending {
+                        w.t_launch_pending = false;
+                        let source = self.wreck_turret_sources[wreck_kind_index(self.enemies[i].kind)].clone();
+                        let (point, normal) = w.t_impact.unwrap_or((w.t_pos, Vec3::Y));
+                        w.t_body = wreck_turret::Body::launch(source, w.t_gun_local,
+                            w.t_initial, w.ignition_load, point, normal);
+                        if let Some(body) = &w.t_body {
+                            println!("[wreck turret] #{i} estimated source mass {:.1} kg, impulse energy {:.1} J, speed {:.2} m/s, spin {:.3} rad/s",
+                                body.mass_kg, body.launched_energy_j, body.velocity.length(), body.angular_speed());
+                        }
+                    }
+                    if let Some(body) = &mut w.t_body {
+                        body.advance(dt, &self.hf, self.enemies[i].hull_model());
+                        w.t_pos = body.model().transform_point3(Vec3::ZERO);
                     }
                 }
             }
@@ -26244,6 +26333,16 @@ impl Game {
     /// Claim the next pooled fireball slot (round-robin) and arm it.
     fn spawn_blast(&mut self, pos: Vec3, scale: f32, hot: f32, dur: f32) {
         self.weapon_vfx.blast(pos, scale * 0.65);
+        self.spawn_blast_light(pos, scale, hot, dur);
+    }
+
+    /// Interior damage fragments are already simulated; add only the ignition flash and soot.
+    fn spawn_interior_blast(&mut self, pos: Vec3, scale: f32, hot: f32, dur: f32) {
+        self.weapon_vfx.interior_blast(pos, scale * 0.65);
+        self.spawn_blast_light(pos, scale, hot, dur);
+    }
+
+    fn spawn_blast_light(&mut self, pos: Vec3, scale: f32, hot: f32, dur: f32) {
         let k = self.next_blast;
         self.next_blast = (self.next_blast + 1) % N_BLAST;
         self.blasts[k] = Blast {
@@ -26292,6 +26391,9 @@ impl Game {
     }
 
     fn spawn_debris_kind(&mut self, pos: Vec3, count: usize, speed: f32, seed: u32, hot: bool) {
+        // Incandescent ejecta read as a dense spray, not 22–62 cm glowing chunks. Masonry keeps
+        // its original visible fragment size; this presentation-only pool cannot damage a body.
+        let count = if hot { count.saturating_mul(3) } else { count }.min(N_DEBRIS);
         for j in 0..count {
             let k = self.next_spark;
             self.next_spark = (self.next_spark + 1) % N_DEBRIS;
@@ -26306,7 +26408,8 @@ impl Game {
                 dur: life,
                 pos,
                 vel,
-                size: 0.22 + 0.4 * hash01(s.wrapping_add(23)),
+                size: if hot { 0.010 + 0.014 * hash01(s.wrapping_add(23)) }
+                    else { 0.22 + 0.4 * hash01(s.wrapping_add(23)) },
                 hot,
                 streak: false,
             };
@@ -28798,6 +28901,32 @@ impl Game {
         }
     }
 
+    fn wreck_surface_patches(&mut self, index: usize) -> Vec<wreck_surface_fire::Patch> {
+        let tank = &self.enemies[index];
+        let wreck = &mut self.wrecks[index];
+        let kind = wreck_kind_index(tank.kind);
+        let surfaces = &self.wreck_fire_surfaces[kind];
+        let models = [tank.hull_model(), if wreck.kind == WreckKind::TurretPop {
+            wreck.turret_pop_xf()
+        } else {tank.turret_model()}];
+        if wreck.surface_burn.is_none() {
+            let source = wreck.fire_entry_world.or_else(||self.wreck_deck_anchors[kind]
+                .map(|p|models[0].transform_point3(p))).unwrap_or(tank.center());
+            wreck.surface_burn = Some(std::array::from_fn(|i|surfaces[i].ignite(
+                models[i].inverse().transform_point3(source))));
+        }
+        let burn = wreck.surface_burn.as_ref().unwrap();
+        let strength = wreck.fire_strength();
+        let mut patches = surfaces[0].patches(&burn[0],models[0],wreck.fire_t,
+            wreck.ignition_load,strength);
+        // Turret hits ignite at the breach. Later upward gas wash can reach its source surface;
+        // a detached turret retains only a small residue reservoir rather than the hull's fuel.
+        let turret_age = wreck.fire_t-if wreck.fire_hit_turret {0.0}else{3.0};
+        patches.extend(surfaces[1].patches(&burn[1],models[1],turret_age,
+            wreck.ignition_load,strength*if wreck.kind==WreckKind::TurretPop {0.30}else{0.50}));
+        patches
+    }
+
     /// Build the complete sustained-fire visual from independent cubes: centimetre-scale interior
     /// flames/soot plus the nearest burning wrecks and archived hulks. Ten shared dynamic pages keep
     /// the count bounded and make all four couch views see the exact same grains.
@@ -28876,11 +29005,16 @@ impl Game {
         // grow the global upload or its world-space bounds without limit.
         let listener = self.player.center();
         let mut world_sources: Vec<(f32, Vec3, f32, u32)> = Vec::new();
+        let mut surface_patches = std::collections::HashMap::new();
         for i in 0..self.wrecks.len() {
             if self.enemy_active[i] && !self.enemies[i].alive && self.wrecks[i].burning {
+                surface_patches.insert(0x7100_0000 ^ i as u32, self.wreck_surface_patches(i));
                 let enemy = &self.enemies[i];
-                let Some(anchor) = self.wreck_deck_anchors[wreck_kind_index(enemy.kind)] else { continue; };
-                let pos = enemy.hull_model().transform_point3(anchor);
+                let pos = surface_patches.get(&(0x7100_0000 ^ i as u32)).and_then(|p|p.first()).map(|p|p.position)
+                    .or_else(|| self.wreck_deck_anchors[wreck_kind_index(enemy.kind)]
+                        .map(|p|enemy.hull_model().transform_point3(p)))
+                    .or(self.wrecks[i].fire_entry_world);
+                let Some(pos)=pos else {continue;};
                 world_sources.push((
                     pos.distance_squared(listener),
                     pos,
@@ -28888,6 +29022,22 @@ impl Game {
                     0x7100_0000 ^ i as u32,
                 ));
             }
+        }
+        if !self.player.alive && self.fire_active {
+            let models = [self.player.hull_model(),self.player.turret_model()];
+            if self.player_surface_burn.is_none() {
+                self.player_surface_fire_started=self.stealth.t;
+                let source = self.last_fatal.as_ref().map_or(self.player.center(),|fatal|fatal.entry_point);
+                self.player_surface_burn=Some(std::array::from_fn(|i|self.player_fire_surfaces[i]
+                    .ignite(models[i].inverse().transform_point3(source))));
+            }
+            let age=(self.stealth.t-self.player_surface_fire_started).max(0.0);
+            let burn=self.player_surface_burn.as_ref().unwrap();
+            let patches:Vec<_>=(0..2).flat_map(|i|self.player_fire_surfaces[i].patches(
+                &burn[i],models[i],age,1.0,self.fire.clamp(0.0,1.0))).collect();
+            let pos=self.last_fatal.as_ref().map_or(self.player.center(),|f|f.entry_point);
+            surface_patches.insert(0x7400_0000,patches);
+            world_sources.push((pos.distance_squared(listener),pos,self.fire.clamp(0.0,1.0),0x7400_0000));
         }
         for (i, ally) in self.allies.iter().enumerate() {
             if !ally.tank.alive {
@@ -28937,13 +29087,17 @@ impl Game {
                     let roll=fx_time*0.55+seed as f32*0.0001;
                     let sway=Vec3::new((roll+age).sin(),0.0,(roll*0.73+age).cos())*0.18*age;
                     let radius=if stove {0.22+age*0.20}else{0.65+age*0.68};
-                    let center=pos+Vec3::new(wind.x*age*0.28,age*if stove {0.75}else{1.2},wind.y*age*0.28)+sway;
+                    let root=surface_patches.get(&seed).and_then(|p|p.get(lobe*3%p.len().max(1)))
+                        .map_or(pos,|p|p.position);
+                    let center=root+Vec3::new(wind.x*age*0.28,age*if stove {0.75}else{1.2},wind.y*age*0.28)+sway;
                     r.add_smoke_volume(center,radius,strength*if stove {0.09}else{0.32}/(1.0+age*0.22),roll+age,if stove {0.35}else{0.08});
                 }
             }
             if stove {continue;}
             if heat_review { r.heat_sources.add(pos,0.72,3.2,strength,seed as f32*0.0001); }
-            let source_cells = world_fire_cells(seed, fx_time, strength);
+            let source_cells = if let Some(patches)=surface_patches.get(&seed) {
+                surface_wreck_fire_cells(seed,fx_time,strength,pos,patches,wind)
+            } else {world_fire_cells(seed, fx_time, strength)};
             for sample in &source_cells {
                 flame_mats[FIRE_FLAME_STAGES + sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size),
@@ -29322,6 +29476,11 @@ impl Game {
         Some(idx)
     }
 
+    pub fn capture_catastrophic(&self, enemy: Option<usize>) -> bool {
+        enemy.map_or(matches!(self.death_cause, Some(DeathCause::AmmoDetonation | DeathCause::FuelFire)),
+            |i| self.wrecks.get(i).is_some_and(|w|w.kind == WreckKind::TurretPop))
+    }
+
     pub fn debug_wreck_fire_report(&self, idx: usize) -> serde_json::Value {
         let w = &self.wrecks[idx];
         let flick = 0.78 + 0.22 * (w.fire_t * 9.7 + idx as f32).sin();
@@ -29349,6 +29508,10 @@ impl Game {
     pub fn debug_enemy_turret_pop_position(&self, idx: usize) -> Option<Vec3> {
         let wreck = self.wrecks.get(idx)?;
         (wreck.kind == WreckKind::TurretPop).then_some(wreck.t_pos)
+    }
+
+    pub fn debug_enemy_turret_dynamics(&self, idx: usize) -> Option<serde_json::Value> {
+        self.wrecks.get(idx)?.t_body.as_ref().map(wreck_turret::Body::report)
     }
 
     /// Headless-only: the first living T-34 in the swarm (the overpen demo wants the thin-skinned
@@ -34823,6 +34986,33 @@ mod tests {
 #[cfg(test)]
 mod surface_fire_render_tests {
     use super::*;
+    #[test]
+    fn exterior_surface_cells_stay_unique_and_outside_rotated_source_planes() {
+        let origin=Vec3::new(117.0,4.0,-209.0);
+        for normal in [Vec3::Y,Vec3::NEG_Y,Vec3::X,
+            Vec3::new(0.75,-0.6,0.25).normalize()] {
+            for wind in [Vec2::ZERO,Vec2::new(-12.0,7.0)] {
+                let patch=wreck_surface_fire::Patch {position:origin,normal,strength:0.8,id:31};
+                let cells=surface_wreck_fire_cells(47,3.7,0.8,origin,&[patch],wind);
+                assert!(!cells.is_empty());
+                assert!(cells.len()<=FLAME_CUBES_PER_WORLD_SOURCE);
+                let mut occupied=std::collections::HashSet::new();
+                for cell in cells {
+                    assert!(occupied.insert(cell.offset.to_array().map(f32::to_bits)),
+                        "one rendered cell per occupied location");
+                    assert!(cell.size<=0.115*0.45+1e-6);
+                    let radius=cell.size*0.5*normal.abs().element_sum();
+                    assert!(cell.offset.dot(normal)-radius>=0.0039,
+                        "entire flame grain must remain outside the source plane");
+                }
+            }
+        }
+        let patches:Vec<_>=(0..24).map(|id|wreck_surface_fire::Patch {
+            position:origin+Vec3::X*(id as f32*0.62),normal:Vec3::Y,strength:0.8,id}).collect();
+        assert!(surface_wreck_fire_cells(47,3.7,1.0,origin,&patches,Vec2::ZERO).len()
+            <=FLAME_CUBES_PER_WORLD_SOURCE);
+        assert!(surface_wreck_fire_cells(47,3.7,0.0,origin,&patches,Vec2::ZERO).is_empty());
+    }
     #[test]
     fn wall_flames_remain_on_the_air_side_and_climb_while_floor_flames_rise() {
         for normal in [Vec3::Y, Vec3::X, -Vec3::Z, -Vec3::Y] {
