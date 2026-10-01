@@ -1,6 +1,7 @@
 //! External witness of an ordinary tank fight in coupled blizzard weather.
 //! Only opening positions and automated crew controls are authored; no impacts or kills are injected.
 use super::*;
+use crate::combat_capture_audio::{Cue, EngineFrame, Kind};
 use anyhow::{ensure, Context};
 use serde_json::json;
 use std::io::Write;
@@ -112,7 +113,9 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
     let mut events = Vec::new();
     let mut samples = Vec::new();
     let mut audio = Vec::new();
-    let mut destruction_audio = Vec::new();
+    let mut microphone_cues = Vec::new();
+    let mut engine_frames = Vec::new();
+    let weather_time = r.time;
     let mut tiger_cursor = game::ShotSequenceCursor::at(g.main_gun_shot_sequence());
     let mut enemy_cursors: Vec<_> = active
         .iter()
@@ -162,21 +165,42 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
         }
         let combat = g.capture_combat_receipt();
         let hits = (g.stat_hits_on_player, combat["hits"].as_u64().unwrap_or(0));
+        let mut new_sounds = Vec::new();
         if hits != previous_hits {
             events.push(json!({"at":now,"kind":"resolved_hit","incoming":hits.0,"outgoing":hits.1,"combat":combat}));
+            for _ in previous_hits.0..hits.0 {
+                let penetrated = g
+                    .debug_last_player_damage_sound()
+                    .is_some_and(|(p, _)| p.penetrated);
+                new_sounds.push((g.player.center(), Kind::Armour { penetrated }));
+            }
+            for _ in previous_hits.1..hits.1 {
+                let position = &combat["impact"];
+                let source = Vec3::new(
+                    position[0].as_f64().unwrap() as f32,
+                    position[1].as_f64().unwrap() as f32,
+                    position[2].as_f64().unwrap() as f32,
+                );
+                new_sounds.push((
+                    source,
+                    Kind::Armour {
+                        penetrated: combat["impact_kind"] == "Penetrate",
+                    },
+                ));
+            }
             previous_hits = hits;
         }
         for (k, &i) in active.iter().enumerate() {
             if previous_alive[k] && !g.enemies[i].alive {
                 events.push(json!({"at":now,"kind":"t34_destroyed","index":i}));
-                destruction_audio.push((now, g.enemies[i].center()));
+                new_sounds.push((g.enemies[i].center(), Kind::Destruction));
                 previous_alive[k] = false;
             }
         }
         if !g.player.alive && dead_since.is_none() {
             events.push(json!({"at":now,"kind":"tiger_destroyed"}));
             dead_since = Some(now);
-            destruction_audio.push((now, g.player.center()));
+            new_sounds.push((g.player.center(), Kind::Destruction));
         }
         // Two observer angles in one continuous fight: opening T-34 contact, then the Tiger.
         // Switch before the flanker's next shot so the incoming impact is visible in context.
@@ -190,8 +214,36 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
         r.camera.pos = eye;
         r.camera.set_forward(focus + Vec3::Y - eye);
         r.camera.fov_y = 60_f32.to_radians();
+        for (source, kind) in new_sounds {
+            microphone_cues.push(Cue {
+                at_s: now,
+                range_m: source.distance(r.camera.pos),
+                bearing_deg: duel_camera_bearing_deg(&r, source),
+                kind,
+            });
+        }
+        if tick % 6 == 0 {
+            for (tank, t34) in std::iter::once((&g.player, false))
+                .chain(active.iter().map(|&i| (&g.enemies[i], true)))
+                .filter(|(tank, _)| tank.alive)
+            {
+                engine_frames.push(EngineFrame {
+                    at_s: tick as f32 / 60.0,
+                    range_m: tank.center().distance(r.camera.pos),
+                    bearing_deg: duel_camera_bearing_deg(&r, tank.center()),
+                    t34,
+                    speed_mps: tank.speed,
+                });
+            }
+        }
         let mut record_report = |source: Vec3, caliber_mm: f32, seed: u32, tiger: bool| {
             let range_m = source.distance(r.camera.pos);
+            microphone_cues.push(Cue {
+                at_s: now,
+                range_m,
+                bearing_deg: duel_camera_bearing_deg(&r, source),
+                kind: Kind::Gun { caliber_mm, seed },
+            });
             audio.push(DuelGunAudioEvent {
                 at: now + range_m / crate::sound_propagation::speed_of_sound(),
                 caliber_mm,
@@ -280,18 +332,12 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
     ensure!(encoder.0.wait()?.success(), "video encoder failed");
     let duration = frames as f32 / fps as f32;
     let wav = format!("{prefix}_soundtrack.wav");
-    let mut soundtrack = build_duel_soundtrack(duration, &audio);
-    let destruction = acoustics::synth_procedural_dry(acoustics::ProceduralSound::KillExplosion);
-    for (at, _) in &destruction_audio {
-        // The observer is ~21m from the featured wreck; this is an explicitly post-produced mix.
-        terror_mix(
-            &mut soundtrack,
-            &destruction,
-            *at + 21.4 / crate::sound_propagation::speed_of_sound(),
-            0.9,
-        );
-    }
-    acoustics::soft_limit_in_place(&mut soundtrack, 0.96);
+    let (soundtrack, audio_receipt) = crate::combat_capture_audio::render(
+        duration,
+        &microphone_cues,
+        &engine_frames,
+        weather_time,
+    )?;
     acoustics::write_wav_stereo(&wav, &soundtrack, acoustics::SAMPLE_RATE)?;
     mux_duel_soundtrack(&raw, &wav, &format!("{prefix}.mp4"))?;
     let tiger_shots = audio.iter().filter(|e| e.tiger).count();
@@ -305,7 +351,8 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
         "incoming_hits":g.stat_hits_on_player,"incoming_penetrations":g.stat_pens_on_player,
         "tiger_alive":g.player.alive,"enemy_alive":active.iter().map(|&i|g.enemies[i].alive).collect::<Vec<_>>(),
         "scope":"Fixed opening positions; alerted live baseline T-34 AI; automated Tiger direct gun lay and physical breech service with 6.5s minimum cycle. Ordinary swept shells, armor, damage, wrecks, collisions and weather. External observer; not human gameplay or real-time performance.",
-        "audio":"Deterministic exterior bed and synthesized reports synchronized to accepted gameplay gun sequences and acoustic propagation, with destruction sounds on actual alive-to-dead transitions (~21m observer delay). Post-produced, not the live player audio mix.",
+        "audio":"External observer microphone mixed offline from shared gameplay source voices, weather voice, propagation and reproduction; actual gun, armor-contact and destruction events. No player headset/ear effects.",
+        "audio_receipt":audio_receipt,
         "forced_impacts":false,"forced_kills":false,"invulnerability":g.god});
     std::fs::write(
         format!("{prefix}.json"),

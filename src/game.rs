@@ -11400,6 +11400,12 @@ impl Game {
         let mut renderer =
             Renderer::new_with_raster_only(device, queue, &scene, &crew_raster_only_slots);
         renderer.display_tuning = authored_display;
+        renderer.register_track_footprint(tank::TIGER_PARTS, &scene[slots.tiger[0]]);
+        for (prototype, kind) in prototypes.iter().zip([
+            EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
+            EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3,
+        ]) { renderer.register_track_footprint(tank::parts_for(kind), &prototype[0]); }
+
         // Physical ammunition casts moving cabin shadows without rebuilding all static armor
         // depth whenever the loader's hand spring moves a shell by a fraction of a millimetre.
         let dynamic_ammunition: Vec<usize> = (slots.shell0..slots.shell0 + crate::interior_rig::SHELL_SLOTS.len())
@@ -11788,7 +11794,7 @@ impl Game {
         world_doors.initialize(&mut renderer, device, queue)?;
         let door_links = buildings.door_links(|key| world_doors.feature_doors(key));
 
-        // ── Tank-track rut map covers the whole act window (see mesh.wgsl params.w == 3). ──
+        // ── Enable fixed-resolution, source-width tread compaction on this act terrain. ──
         renderer.track_half = act.half_extent_m.max(500.0);
         renderer.mark_track_receiver(0); // scene mesh 0 = the terrain heightfield
                                          // Schutzglas parts: baked separate + GLASS-mode capable, but see-through is OFF for now —
@@ -15418,23 +15424,23 @@ impl Game {
 
         // ── Tank tracks: every moving tank compresses the snow/dirt under its treads (rut map). ──
         if self.player.alive && self.player.speed.abs() > 0.25 {
-            r.stamp_tank_tracks(self.player.pos, self.player.heading, 0.28);
+            r.stamp_tank_tracks(self.player.hull_model(), self.player.parts, 0.28);
         }
         for e in self
             .enemies
             .iter()
             .filter(|e| e.alive && e.speed.abs() > 0.25)
         {
-            r.stamp_tank_tracks(e.pos, e.heading, 0.28);
+            r.stamp_tank_tracks(e.hull_model(), e.parts, 0.28);
         }
         for ally in self
             .allies
             .iter()
             .filter(|ally| ally.tank.alive && ally.tank.speed.abs() > 0.25)
         {
-            r.stamp_tank_tracks(ally.tank.pos, ally.tank.heading, 0.28);
+            r.stamp_tank_tracks(ally.tank.hull_model(), ally.tank.parts, 0.28);
         }
-        // Solid grass keeps persistent, narrow tread contacts separately from the coarse rut map.
+        // Solid grass keeps its own persistent tread contacts separately from snow/soil material history.
         if let Some(g) = self.grass.as_mut() {
             if self.player.alive && self.player.speed.abs() > 0.25 {
                 g.trample(self.player.pos, self.player.heading);

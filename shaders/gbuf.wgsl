@@ -39,6 +39,23 @@ struct Camera {
 
 @group(3) @binding(0) var track_tex: texture_2d<f32>;
 @group(3) @binding(1) var track_samp: sampler;
+@group(3) @binding(2) var track_pages: texture_2d<u32>;
+
+// Fixed 12.5 cm cells in persistent 64 m pages. Loading the containing cell avoids linear
+// filtering beyond the tread edge or across unrelated atlas pages. Maximum edge error is
+// half a cell along each world axis (8.84 cm at a diagonal), independent of act size.
+fn sample_track(world: vec2<f32>) -> f32 {
+    let tile = vec2<i32>(floor(world / 64.0));
+    let lookup = tile + vec2<i32>(128);
+    if (any(lookup < vec2<i32>(0)) || any(lookup >= vec2<i32>(256))) { return 0.0; }
+    let entry = textureLoad(track_pages, lookup, 0).r;
+    if (entry == 0u) { return 0.0; }
+    let page = entry - 1u;
+    let local = vec2<i32>(floor((world - vec2<f32>(tile) * 64.0) / 0.125));
+    let atlas = vec2<i32>(i32(page % 16u), i32(page / 16u)) * 512 + local;
+    return textureLoad(track_tex, atlas, 0).r;
+}
+
 
 struct Push {
     model: mat4x4<f32>,
@@ -202,13 +219,11 @@ fn fs(in: VsOut) -> GbufOut {
     var track = 0.0;
     var track_grad = vec2(0.0);
     if (pc.params.w > 2.5 && pc.params.w < 3.5 && cam.track_half > 1.0) {
-        let tuv = in.world.xz / (2.0 * cam.track_half) + vec2(0.5);
-        let texel = 1.0 / 4096.0;
-        track = textureSampleLevel(track_tex, track_samp, tuv, 0.0).r;
-        let tx = textureSampleLevel(track_tex, track_samp, tuv + vec2(texel, 0.0), 0.0).r
-               - textureSampleLevel(track_tex, track_samp, tuv - vec2(texel, 0.0), 0.0).r;
-        let tz = textureSampleLevel(track_tex, track_samp, tuv + vec2(0.0, texel), 0.0).r
-               - textureSampleLevel(track_tex, track_samp, tuv - vec2(0.0, texel), 0.0).r;
+        track = sample_track(in.world.xz);
+        let tx = sample_track(in.world.xz + vec2(0.125, 0.0))
+               - sample_track(in.world.xz - vec2(0.125, 0.0));
+        let tz = sample_track(in.world.xz + vec2(0.0, 0.125))
+               - sample_track(in.world.xz - vec2(0.0, 0.125));
         track_grad = vec2(tx, tz);
     }
     if (track > 0.004) {

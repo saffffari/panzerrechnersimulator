@@ -41,3 +41,23 @@ five-frame-per-second camera check. The JSON beside the video records setup,
 accepted shots, hit counters, destruction events, weather and final combat state.
 Capture acceptance requires both sides to fire and an authoritative resolved hit.
 The final delivery receipt additionally records media decoding and actual kills.
+
+## Track and audio revision
+
+The second recording is `captures/blizzard_tracks_audio_v2_20261001.mp4`.
+Track bands are measured from the loaded source hull: Tiger 0.7706/0.7674 m wide,
+T-34 0.7065 m, instead of the old 2.10 m circles. A persistent sparse atlas keeps
+12.5 cm material samples at campaign scale. The atlas has 256 non-evicting pages;
+once full, new pages receive no ruts. Compaction changes material/shading, not
+terrain collision geometry. CPU source-width/page tests and production GPU
+readback verify the footprint without widening it.
+
+The shared cannon source replaces sustained hiss and a long sine body with
+compact pressure and bass impulses, upper-bass support and a short crack. The
+new observer mix includes four real armor contacts previously absent from the
+film, four discharges and two destructions. Its wind is the actual dynamic
+weather voice; engine level follows the observed speed and range. Propagation,
+the reproduction curve and a single master limiter replace arbitrary per-film
+gains and stacked saturation. This remains an offline external microphone mix;
+the receipt lists its approximations. Source and mix tests assess spectrum,
+onset, level and event inclusion; they do not claim subjective listening approval.

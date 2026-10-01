@@ -17,6 +17,9 @@ use crate::camera::Camera;
 use crate::gltf_load::{CpuImage, CpuMesh, Vertex};
 use crate::ui::{Align, Ui};
 
+#[path = "track_ruts.rs"]
+mod track_ruts;
+
 #[path = "held_map_render.rs"]
 mod held_map_render;
 
@@ -534,7 +537,7 @@ struct CameraUniform {
     snap_res: [f32; 2],
     interior_light: f32, // 0 = open/exposed, 1 = buttoned-up; view/shelter state, never light energy
     time: f32,           // seconds, accumulated by the sim — drives grass wind sway
-    track_half: f32,     // world half-extent (m) the tank-track map covers; 0 disables sampling
+    track_half: f32,     // act half-extent / enable flag; sparse track cells remain 0.125 m
     n_lights: f32,       // active positioned point lights (0..N_LIGHTS)
     _pad2: f32,
     _pad3: f32,
@@ -2428,12 +2431,15 @@ pub struct Renderer {
     next_inst_buffer_id: usize,
     /// Sim time (s), accumulated by whoever drives the frame — grass wind phase.
     pub time: f32,
-    /// World half-extent (m) covered by the tank-track map; set from the act on build. 0 = off.
+    /// Act half-extent enables the track material; 0 = off. Sparse cells keep fixed world spacing.
     pub track_half: f32,
     track_view: wgpu::TextureView,
     track_bind: wgpu::BindGroup,
     track_pipe: wgpu::RenderPipeline,
-    pending_stamps: Vec<[f32; 4]>,
+    pending_stamps: Vec<[f32; 5]>,
+    track_lookup: wgpu::Texture,
+    track_atlas: track_ruts::Atlas,
+    track_footprints: HashMap<[u32; 2], track_ruts::Footprint>,
     /// Kept from `new` so the front-end can upload extra meshes after construction (the main-menu
     /// turntable Tiger, `menu_meshes`) reusing the same material bind-group layout.
     material_bgl: wgpu::BindGroupLayout,
@@ -3562,8 +3568,8 @@ impl Renderer {
             sky_compile_start.elapsed().as_secs_f32() * 1000.0,
         );
 
-        // ---------- tank-track map: a world-space R8 rut field the terrain shader samples ----------
-        const TRACK_RES: u32 = 4096;
+        // ---------- tank-track map: fixed-resolution sparse R8 material history ----------
+        const TRACK_RES: u32 = track_ruts::ATLAS_RES;
         let track_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("track-map"),
             size: wgpu::Extent3d {
@@ -3575,10 +3581,21 @@ impl Renderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let track_view = track_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let track_lookup = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("track-page-table"),
+            size: wgpu::Extent3d { width: track_ruts::LOOKUP_RES, height: track_ruts::LOOKUP_RES,
+                depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let track_lookup_view = track_lookup.create_view(&Default::default());
         let track_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("track-bgl"),
             entries: &[
@@ -3597,6 +3614,13 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2, multisampled: false,
+                    }, count: None,
                 },
             ],
         });
@@ -3620,6 +3644,8 @@ impl Renderer {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&track_samp),
                 },
+                wgpu::BindGroupEntry { binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&track_lookup_view) },
             ],
         });
         let track_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -5398,6 +5424,9 @@ impl Renderer {
             track_bind,
             track_pipe,
             pending_stamps: Vec::new(),
+            track_lookup,
+            track_atlas: track_ruts::Atlas::default(),
+            track_footprints: HashMap::new(),
             shadow_view,
             shadow_pipe,
             shadow_bind,
@@ -5569,7 +5598,7 @@ impl Renderer {
             optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
-            track_half, track_view, track_bind, pending_stamps, smoke_puffs, breech_gas,
+            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
             pressure_fronts, heat_sources, ui, held_map_surface);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
@@ -5916,21 +5945,22 @@ impl Renderer {
         }
     }
 
-    /// Queue a pair of tread stamps for a tank at `pos` facing `yaw` — flushed into the world
-    /// track map on the next rendered frame. `strength` accumulates (repeated passes darken).
-    pub fn stamp_tank_tracks(&mut self, pos: glam::Vec3, yaw: f32, strength: f32) {
-        if self.track_half <= 1.0 {
-            return;
+    /// Register the exact rendered hull used by this rig. Its lowest 5 cm define the two
+    /// tread-band envelopes; this is a measured rectangle approximation, not a wheel/soil solver.
+    pub fn register_track_footprint(&mut self, parts: crate::tank::Parts, hull: &CpuMesh) {
+        let key = parts.hull_half_extents.to_array().map(f32::to_bits);
+        if let Some(footprint) = track_ruts::Footprint::from_hull(hull) {
+            self.track_footprints.insert(key, footprint);
         }
-        let (sy, cy) = yaw.sin_cos();
-        let right = glam::Vec2::new(cy, -sy); // engine plan: heading (sin,cos), right = rotate -90°
-        let c = glam::Vec2::new(pos.x, pos.z);
-        for side in [-1.45f32, 1.45] {
-            let t = c + right * side;
-            let uv = t / (2.0 * self.track_half) + glam::Vec2::splat(0.5);
-            // tread contact patch — drawn a touch wide so the rut survives the 1 m/px track map
-            let r = 1.05 / (2.0 * self.track_half);
-            self.pending_stamps.push([uv.x, uv.y, r, strength]);
+    }
+
+    /// Stamp the source rig's oriented tread contact bands at fixed world sample spacing.
+    pub fn stamp_tank_tracks(&mut self, hull_model: glam::Mat4, parts: crate::tank::Parts, strength: f32) {
+        if self.track_half <= 1.0 { return; }
+        let key = parts.hull_half_extents.to_array().map(f32::to_bits);
+        let Some(footprint) = self.track_footprints.get(&key).copied() else { return; };
+        for quad in footprint.quads_for_model(hull_model) {
+            self.track_atlas.stamp(quad, strength, &mut self.pending_stamps);
         }
     }
 
@@ -5939,22 +5969,15 @@ impl Renderer {
         if self.pending_stamps.is_empty() {
             return;
         }
-        // 6 verts per stamp: pos in track-UV, corner in -1..1, strength
-        let mut verts: Vec<[f32; 5]> = Vec::with_capacity(self.pending_stamps.len() * 6);
-        for s in self.pending_stamps.drain(..) {
-            let [u, v, r, k] = s;
-            let quad = [
-                (-1.0f32, -1.0f32),
-                (1.0, -1.0),
-                (1.0, 1.0),
-                (-1.0, -1.0),
-                (1.0, 1.0),
-                (-1.0, 1.0),
-            ];
-            for (cx, cyv) in quad {
-                verts.push([u + cx * r, v + cyv * r, cx, cyv, k]);
-            }
+        for ((x, y), value) in self.track_atlas.new_pages.drain(..) {
+            self.instance_queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &self.track_lookup, mip_level: 0,
+                    origin: wgpu::Origin3d { x, y, z: 0 }, aspect: wgpu::TextureAspect::All },
+                &value.to_le_bytes(),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 });
         }
+        let verts = std::mem::take(&mut self.pending_stamps);
         let vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("track-stamps"),
             contents: bytemuck::cast_slice(&verts),

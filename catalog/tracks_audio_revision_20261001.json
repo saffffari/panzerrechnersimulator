@@ -1,0 +1,166 @@
+{
+  "schema": "panzer.tracks-audio-revision.v1",
+  "date": "2026-10-01",
+  "base_commit": "017bbfaade686f2ee8fb8ae73e57a3ca26b811b7",
+  "video": "captures/blizzard_tracks_audio_v2_20261001.mp4",
+  "track_width_m": {
+    "old_stamp_diameter": 2.1,
+    "tiger_left": 0.77061224,
+    "tiger_right": 0.76738167,
+    "t34": 0.7064934
+  },
+  "track_validation": {
+    "cpu_tests_passed": 4,
+    "gpu_cells_checked": 262144,
+    "source_covered_cells": 841,
+    "widened_edges": 0,
+    "rendered_before_after_compared": true,
+    "cell_m": 0.125,
+    "maximum_edge_error_diagonal_m": 0.0884,
+    "atlas_mib": 64,
+    "page_cap": 256,
+    "at_capacity": "preserve existing pages, omit new pages"
+  },
+  "audio_validation": {
+    "acoustics_tests_passed": 41,
+    "audio_tests_passed": 79,
+    "audio_tests_ignored": 3,
+    "microphone_mix_test_passed": true,
+    "actual_gun_cues": 4,
+    "actual_armor_cues": 4,
+    "actual_destruction_cues": 2,
+    "signal_measurements": {
+      "before": {
+        "file": "captures/blizzard_firefight_20261001_soundtrack.wav",
+        "all": {
+          "rms_dbfs": -27.37545232785223,
+          "peak_dbfs": -3.7446695491800135,
+          "bass_20_160_fraction": 0.5979405262370794,
+          "upper_bass_160_400_fraction": 0.034023235651057915,
+          "high_3000_16000_fraction": 0.24318072641360283
+        },
+        "first_report": {
+          "rms_dbfs": -20.716842976881047,
+          "peak_dbfs": -6.010003486885416,
+          "bass_20_160_fraction": 0.46936597444300243,
+          "upper_bass_160_400_fraction": 0.019896551503629546,
+          "high_3000_16000_fraction": 0.3475130026575147
+        },
+        "first_destruction": {
+          "rms_dbfs": -17.935769593740996,
+          "peak_dbfs": -3.7446695491800135,
+          "bass_20_160_fraction": 0.6521350502393328,
+          "upper_bass_160_400_fraction": 0.03044270496879051,
+          "high_3000_16000_fraction": 0.21126268505647866
+        },
+        "quiet_start": {
+          "rms_dbfs": -42.315998975982666,
+          "peak_dbfs": -31.38978462764299,
+          "bass_20_160_fraction": 0.7102462253464512,
+          "upper_bass_160_400_fraction": 0.16174935405968124,
+          "high_3000_16000_fraction": 0.0045164213822815845
+        }
+      },
+      "after": {
+        "file": "captures/blizzard_tracks_audio_v2_20261001_soundtrack.wav",
+        "all": {
+          "rms_dbfs": -21.468812983060012,
+          "peak_dbfs": -1.0004493301428767,
+          "bass_20_160_fraction": 0.9789412885131965,
+          "upper_bass_160_400_fraction": 0.016205617770137484,
+          "high_3000_16000_fraction": 0.0006124829453740743
+        },
+        "first_report": {
+          "rms_dbfs": -17.317814255414632,
+          "peak_dbfs": -1.0004493301428767,
+          "bass_20_160_fraction": 0.984441059065076,
+          "upper_bass_160_400_fraction": 0.012796105772253421,
+          "high_3000_16000_fraction": 0.0006006414088533193
+        },
+        "first_destruction": {
+          "rms_dbfs": -12.119635414176681,
+          "peak_dbfs": -1.0004493301428767,
+          "bass_20_160_fraction": 0.9787900468411617,
+          "upper_bass_160_400_fraction": 0.017072390032056364,
+          "high_3000_16000_fraction": 0.0005348936558579007
+        },
+        "quiet_start": {
+          "rms_dbfs": -39.53100174213674,
+          "peak_dbfs": -27.306155462223188,
+          "bass_20_160_fraction": 0.9686178974447172,
+          "upper_bass_160_400_fraction": 0.01877246441664789,
+          "high_3000_16000_fraction": 0.0019442225116590329
+        }
+      }
+    },
+    "subjective_listening_approval": false
+  },
+  "media_validation": {
+    "full_decode_passed": true,
+    "dimensions": [
+      1280,
+      720
+    ],
+    "native_sensor": [
+      640,
+      360
+    ],
+    "fps": 30,
+    "frames": 420,
+    "seconds": 14,
+    "aac_audio": true
+  },
+  "audio_limits": "Offline external microphone: clear exterior paths and side-on gun source calibration; incoming armor acoustic origin uses tank center, within the vehicle envelope. Engine timbre is looped, level follows observed speed/range at 10 Hz. No headset, crew hearing reflex or tinnitus.",
+  "files": [
+    {
+      "path": "captures/blizzard_tracks_audio_v2_20261001.mp4",
+      "bytes": 13473330,
+      "sha256": "9a63706b29097a9c1a1b498964c7ba2bf954ba915a7812b85a57f4da82456bf7"
+    },
+    {
+      "path": "captures/blizzard_tracks_audio_v2_20261001.json",
+      "bytes": 25213,
+      "sha256": "8547e0a4d68a906acef7eed1c380feccacb21c4614805fca7938afb444e4ee0d"
+    },
+    {
+      "path": "captures/blizzard_tracks_audio_v2_metrics_20261001.json",
+      "bytes": 4781,
+      "sha256": "dc695c754d66e40bead37c3bf5937e7ee69af73219c663d1cfc7a59704664840"
+    },
+    {
+      "path": "captures/blizzard_tracks_v1_20261001.png",
+      "bytes": 687359,
+      "sha256": "002d9dbbaabad0ab0e0953cd8f3efe0ad1a7f78fb146f00121f1610af77b4127"
+    },
+    {
+      "path": "captures/blizzard_tracks_v2_20261001.png",
+      "bytes": 678682,
+      "sha256": "d5431928b6d6e691a335596cd4245fdc3a8c08366d8649ae9ecdd444fc3973b4"
+    },
+    {
+      "path": "captures/blizzard_tracks_audio_v2_contact_20261001.jpg",
+      "bytes": 34916,
+      "sha256": "2b015bbcafb55f9eeed3df791063c948f678428f2ade665e7fbccf168329823e"
+    },
+    {
+      "path": "captures/apollo_cannon_audio_metrics_20261001.json",
+      "bytes": 7455,
+      "sha256": "5bef063f3c9c8ce01ececabfc3d59fa8474817ac6d5cb6027ccf8454f813e1d7"
+    },
+    {
+      "path": "src/track_ruts.rs",
+      "bytes": 12850,
+      "sha256": "61161d3b026c9c550ecd9b814cd02cd0ca1aa391343859b7a58f7009e48d6554"
+    },
+    {
+      "path": "src/combat_capture_audio.rs",
+      "bytes": 9020,
+      "sha256": "86b048acee6f4c5ece4db62adbe495ab33e8ab7f0d5140af3541b1ce3e4c3211"
+    },
+    {
+      "path": "src/acoustics.rs",
+      "bytes": 203484,
+      "sha256": "7fb495fe9b2264cd80107275ef70ae5fc4c3a8dc7f273ec3dfe647f5a87848f5"
+    }
+  ]
+}

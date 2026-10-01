@@ -4,6 +4,22 @@ Updated: 2026-10-01 (graphics, weather and impact integration). This ledger is a
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
+## Cannon source and observer microphone revision, 2026-10-01
+
+The shared procedural cannon voice now uses compact pressure-front and low/upper-bass
+impulses plus a short crack and dark gas tail. These are authored timbres, not measured muzzle
+pressure or a fluid/acoustic simulation. Live enemy reports and generated own-gun fallback
+voices share the source; verified own-gun recordings still take priority where installed.
+
+The blizzard recorder now includes actual armor-hit events, and uses the shared source voices,
+clear-exterior atmospheric propagation, reproduction curve and one master limiter. Its wind
+bed is the gameplay weather voice. It represents an external microphone, without player-ear
+trauma, headset or tinnitus. Named capture limits: side-on gun source calibration rather than
+measured muzzle directivity toward the camera; clear acoustic paths; incoming strike acoustic
+origin at the tank center (within the vehicle envelope); looped engine timbre with observed
+speed/range levels at 10 Hz. It is an offline mix, not a capture of the live player's audio sink.
+Spectral/onset checks prove signal properties, not listener approval or real-world calibration.
+
 ## Graphics and atmosphere integration, 2026-10-01
 
 - Graphics preferences are separate from world truth: internal/window size, shadows, transport
@@ -106,6 +122,19 @@ use those fresh traces to distinguish already integrated work from still-open ga
   non-wreck transient raster lights still retain their older unshadowed paths. This change does
   not establish global illumination or parity with the hardware ray-query backend.
 - Evidence and review commands: [WRECK_FIRE_20261001.md](WRECK_FIRE_20261001.md).
+
+- Runtime tread compaction (2026-10-01) no longer uses 2.10 m diameter circular stamps.
+  Each rig's two oriented contact rectangles are measured from its rendered hull vertices within
+  0.05 m of the lowest surface, preserving source width, spacing, and forward/rear extent. This is
+  the envelope of the low tread surfaces, not per-shoe contact or simulated snow compaction.
+  An R8 sparse atlas retains 12.5 cm cells on every act: 256 persistent 64 m-square pages in
+  64 MiB, with a 256 KiB page table covering +/-8192 m. Pages never evict older trails; once full,
+  previously untouched pages receive no further material history. Raster cell-center coverage has
+  at most 6.25 cm edge error along a world axis (8.84 cm diagonally); nearest-cell lookup adds no
+  out-of-band filter halo. This changes terrain material reflectance, not collision or terrain
+  geometry. The shader renderer samples this same atlas as the legacy forward/deferred paths;
+  those legacy paths retain their preexisting shading-normal perturbation. Source hull width and
+  rotated/page-boundary area regressions are `renderer::track_ruts::tests`.
 
 - The separate Gaea v2 uses source `SatMap_Out.png` for rock albedo and `snow.png` for coverage.
   The RGBA packing reserves alpha 32–223 for coverage, decoded separately from RGB sRGB. Snow

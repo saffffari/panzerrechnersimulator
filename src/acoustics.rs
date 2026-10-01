@@ -954,41 +954,58 @@ pub fn interior_muffle(buf: &mut [f32], amount: f32) {
     }
 }
 
-/// The 88's report body: a broadband muzzle crack over a non-pitched low pressure shove and rumble.
-/// The interior variant is double-low-passed at 3.8 kHz and trades crack for compartment weight.
-pub fn synth_gun_punch(interior: bool, seed: u32) -> Vec<f32> {
+/// One authored cannon source shared by near and distant reports. Its pressure front and
+/// low body are compact zero-mean impulses, not a sustained 55 Hz oscillator or a noise wash.
+/// Caliber changes their duration; actual charge, distance and propagation level stay with the
+/// caller. This is a designed source timbre, not a measured muzzle-pressure reconstruction.
+fn cannon_source_mono(caliber_mm: f32, interior: bool, seed: u32) -> Vec<f32> {
     let sr = SAMPLE_RATE as f32;
-    let dur = if interior { 0.7 } else { 0.5 };
-    let total = (dur * sr) as usize;
-    let mut out = Vec::with_capacity(total * 2);
-    let crack_len = (0.007 * sr) as usize;
-    let crack_amp = if interior { 0.45 } else { 1.0 };
-    let body_amp = if interior { 1.25 } else { 0.95 };
-    let body_a = 1.0 - (-TAU * 105.0 / sr).exp();
-    let rumble_a = 1.0 - (-TAU * 48.0 / sr).exp();
-    let crack_cutoff = if interior { 3_800.0 } else { 8_500.0 };
-    let crack_a = 1.0 - (-TAU * crack_cutoff / sr).exp();
-    let mut body = 0.0f32;
-    let mut rumble = 0.0f32;
+    let size = (caliber_mm / 88.0).clamp(0.5, 2.0).sqrt();
+    let duration = 0.52 * size;
+    let mut mono = vec![0.0; (duration * sr) as usize];
+    let body = if interior { 1.10 } else { 1.0 };
+    add_blast_pulse(&mut mono, 0.0, 0.0065 * size, 0.86 * body);
+    add_ricker_wavelet(&mut mono, 0.025 * size, 49.0 / size, 0.88 * body);
+    // This compact upper-bass displacement carries the gun on smaller loudspeakers as well as
+    // headphones. It is a single compression/rebound, with no oscillator or pitch sweep.
+    add_ricker_wavelet(&mut mono, 0.014 * size, 118.0 / size, 0.44 * body);
+    add_ricker_wavelet(&mut mono, 0.008 * size, 245.0 / size, 0.24 * body);
+    // The pressure edge is compact enough to read as a crack while the slower displacement
+    // carries the mass; no bright layer survives into the decaying body.
+    add_ricker_wavelet(&mut mono, 0.0035, 720.0, if interior { 0.12 } else { 0.32 });
+
+    let crack_a = 1.0 - (-TAU * if interior { 2_700.0 } else { 5_400.0 } / sr).exp();
+    let body_a = 1.0 - (-TAU * 360.0 / sr).exp();
+    let sub_a = 1.0 - (-TAU * 27.0 / sr).exp();
     let mut crack_1 = 0.0f32;
     let mut crack_2 = 0.0f32;
-    for n in 0..total {
+    let mut body_1 = 0.0f32;
+    let mut body_2 = 0.0f32;
+    let mut sub = 0.0f32;
+    for (n, sample) in mono.iter_mut().enumerate() {
         let t = n as f32 / sr;
         let noise = hash_noise(seed.wrapping_add(n as u32));
-        body += body_a * (noise - body);
-        rumble += rumble_a * (noise - rumble);
         crack_1 += crack_a * (noise - crack_1);
         crack_2 += crack_a * (crack_1 - crack_2);
-        let benv = (-t / 0.20).exp();
-        let mut s = body_amp * (1.38 * body * benv + 0.85 * rumble * (-t / 0.34).exp());
-        if n < crack_len {
-            let e = 1.0 - n as f32 / crack_len as f32;
-            s += crack_amp * e * crack_2;
-        }
-        out.push(s);
-        out.push(s);
+        body_1 += body_a * (noise - body_1);
+        body_2 += body_a * (body_1 - body_2);
+        sub += sub_a * (body_2 - sub);
+        let attack = smoothstep(0.0, 0.0005, t);
+        let crack = (1.0 - t / 0.012).clamp(0.0, 1.0).powi(2);
+        let gas_tail = (-t / (0.065 * size)).exp()
+            * (1.0 - smoothstep(0.20 * size, 0.36 * size, t));
+        *sample += attack * (crack_2 * crack * if interior { 0.22 } else { 0.78 }
+            + (body_2 - sub) * gas_tail * 0.60);
     }
-    soft_limit_in_place(&mut out, 0.92);
+    mono
+}
+
+/// The 88's own-gun source. The same pressure impulse underlies exterior and compartment voices;
+/// a sealed compartment reduces the crack without replacing the body with more noise.
+pub fn synth_gun_punch(interior: bool, seed: u32) -> Vec<f32> {
+    let mut out = mono_center(&cannon_source_mono(88.0, interior, seed));
+    // A transparent peak guard avoids manufacturing harmonics in the bass impulse with tanh.
+    attenuate_over_peak(&mut out, 0.92);
     out
 }
 
@@ -1914,35 +1931,30 @@ pub fn impact_follow(age_s: f32) -> f32 {
     smoothstep(IMPACT_FULL_S, IMPACT_FULL_S + IMPACT_FOLLOW_S, age_s)
 }
 
-/// The DISTANT gun report: what a muzzle blast sounds like after `range_m` of air — the body
-/// survives, the crack dies (air absorption kills highs with distance). A low boom + rumble tail,
-/// panned by bearing. Played through the speed-of-sound delay queue by the game.
+/// A cannon report with optional source-to-observer air absorption and bearing. Live gameplay
+/// passes range zero and applies propagation once at arrival. Range never normalizes away its
+/// filtering: the pressure body survives while the brief crack recedes.
 pub fn synth_gun_report(caliber_mm: f32, range_m: f32, bearing_deg: f32, seed: u32) -> Vec<f32> {
-    let sr = SAMPLE_RATE as f32;
-    let big = (caliber_mm / 88.0).clamp(0.5, 2.0);
-    let dur = 0.35 + 0.45 * big;
-    let total = (dur * sr) as usize;
-    // Air absorption: HF cutoff falls with range (≈6 kHz close → a few hundred Hz kms out).
-    let cutoff = (6000.0 * (-range_m / 900.0).exp()).clamp(140.0, 6000.0);
-    let a = 1.0 - (-TAU * cutoff / sr).exp();
-    let mut mono = vec![0.0f32; total];
-    let mut lp = 0.0f32;
-    for (n, s) in mono.iter_mut().enumerate() {
-        let t = n as f32 / sr;
-        let env = (-t / (dur * 0.30)).exp();
-        lp += a * (hash_noise(seed.wrapping_add(n as u32)) - lp);
-        // boom body ~55/big Hz + the filtered blast noise
-        *s = env * (0.9 * lp + 0.5 * (TAU * (55.0 / big) * t).sin() * (-t / (dur * 0.5)).exp());
+    if !caliber_mm.is_finite() || caliber_mm <= 0.0
+        || !range_m.is_finite() || !bearing_deg.is_finite() {
+        return Vec::new();
     }
+    let mono = cannon_source_mono(caliber_mm, false, seed);
+    let cutoff = (6000.0 * (-range_m.max(0.0) / 900.0).exp()).clamp(140.0, 6000.0);
+    let a = 1.0 - (-TAU * cutoff / SAMPLE_RATE as f32).exp();
     let br = bearing_deg.to_radians();
-    let pan = ((br.sin() + 1.0) * 0.25 * TAU / 2.0).clamp(0.0, TAU / 4.0);
+    let pan = ((br.sin() + 1.0) * TAU / 8.0).clamp(0.0, TAU / 4.0);
     let (lg, rg) = (pan.cos(), pan.sin());
-    let mut out = Vec::with_capacity(total * 2);
-    for &s in &mono {
-        out.push(s * lg);
-        out.push(s * rg);
+    let mut out = Vec::with_capacity(mono.len() * 2);
+    let mut low_1 = 0.0;
+    let mut low_2 = 0.0;
+    for s in mono {
+        low_1 += a * (s - low_1);
+        low_2 += a * (low_1 - low_2);
+        out.push(low_2 * lg);
+        out.push(low_2 * rg);
     }
-    normalize_peak(&mut out, 0.85);
+    attenuate_over_peak(&mut out, 0.92);
     out
 }
 
@@ -3725,6 +3737,92 @@ mod tests {
             dry_a, a,
             "destruction compatibility playback must not bake a default reverb tail"
         );
+    }
+
+    /// Export the exact shared source buffers for comparative listening, without a device or
+    /// renderer. Source gains are unchanged; spacing prevents overlapping tails from hiding them.
+    #[test]
+    fn cannon_source_audio_review() {
+        let Ok(prefix) = std::env::var("KESSEL_CANNON_AUDIO_REVIEW_PREFIX") else { return; };
+        let sources = [
+            ("88mm_report", synth_gun_report(88.0, 0.0, 0.0, 0xA901)),
+            ("76mm_report", synth_gun_report(76.2, 0.0, 0.0, 0xA902)),
+            ("88mm_exterior", synth_gun_punch(false, 0xA903)),
+            ("88mm_interior", synth_gun_punch(true, 0xA904)),
+            ("tank_destruction", synth_procedural_dry(ProceduralSound::KillExplosion)),
+            ("armor_contact", synth_procedural_dry(ProceduralSound::ImpactTank)),
+        ];
+        let mut reel = vec![0.0f32; SAMPLE_RATE as usize * 2 * 21];
+        for (index, (name, samples)) in sources.iter().enumerate() {
+            let path = format!("{prefix}_{name}.wav");
+            assert!(!std::path::Path::new(&path).exists(), "preserve previous review: {path}");
+            write_wav_stereo(path, samples, SAMPLE_RATE).unwrap();
+            mix_stereo_at(&mut reel, samples, SAMPLE_RATE as usize * (index * 3 + 1), 1.0);
+        }
+        let path = format!("{prefix}_sources.wav");
+        assert!(!std::path::Path::new(&path).exists(), "preserve previous review: {path}");
+        write_wav_stereo(path, &reel, SAMPLE_RATE).unwrap();
+    }
+
+    /// The same 4 Hz DFT grid for each band, over the unwindowed first quarter second. This
+    /// measures the transient itself; a Hann window would hide the first 25 ms pressure pulse.
+    fn cannon_band_energy(stereo: &[f32], low_hz: u32, high_hz: u32) -> f64 {
+        let frames = (SAMPLE_RATE as usize / 4).min(stereo.len() / 2);
+        (low_hz..high_hz).step_by(4).map(|hz| {
+            let coeff = 2.0 * (std::f64::consts::TAU * hz as f64 / SAMPLE_RATE as f64).cos();
+            let (mut q1, mut q2) = (0.0f64, 0.0f64);
+            for frame in stereo[..frames * 2].chunks_exact(2) {
+                let q0 = (frame[0] as f64 + frame[1] as f64) * 0.5 + coeff * q1 - q2;
+                q2 = q1;
+                q1 = q0;
+            }
+            (q1*q1 + q2*q2 - coeff*q1*q2).max(0.0)
+        }).sum()
+    }
+
+    #[test]
+    fn cannon_sources_keep_pressure_body_ahead_of_noise_and_finish_promptly() {
+        for seed in [1, 0xA901, 0xBAD5_EED] {
+            for (name, cue) in [
+                ("76 mm report", synth_gun_report(76.2, 0.0, 0.0, seed)),
+                ("88 mm report", synth_gun_report(88.0, 0.0, 0.0, seed)),
+                ("own exterior", synth_gun_punch(false, seed)),
+                ("own interior", synth_gun_punch(true, seed)),
+            ] {
+                finite_stereo(&cue);
+                let bass = cannon_band_energy(&cue, 20, 160);
+                let definition = cannon_band_energy(&cue, 160, 3_000);
+                let hiss = cannon_band_energy(&cue, 3_000, 12_000);
+                let speaker_body = cannon_band_energy(&cue, 100, 350);
+                assert!(bass > definition * 3.0, "{name}: lost low pressure body");
+                assert!(speaker_body > bass * 0.10,
+                    "{name}: weight only exists below small-speaker response");
+                assert!(hiss < bass * 0.035, "{name}: bright noise masks the body");
+                assert!(definition > bass * 0.01, "{name}: gun lost its short attack");
+                let onset = rms(segment(&cue, 0.0, 0.080));
+                let tail = rms(segment(&cue, 0.25, 0.45));
+                assert!(onset > 0.12, "{name}: only a weak filtered-noise body remains");
+                assert!(tail < onset * 0.003, "{name}: prolonged hiss/oscillator tail");
+                assert!(crest_factor(segment(&cue, 0.0, 0.20)) > 3.0,
+                    "{name}: compressed into a sustained wash");
+            }
+        }
+    }
+
+    #[test]
+    fn cannon_report_range_filters_without_boosting_and_keeps_bearing() {
+        let near = synth_gun_report(88.0, 0.0, 0.0, 17);
+        assert_eq!(near, synth_gun_report(88.0, 0.0, 0.0, 17));
+        let far = synth_gun_report(88.0, 2_000.0, 0.0, 17);
+        assert!(rms(&far) <= rms(&near));
+        assert!(cannon_band_energy(&far, 2_000, 10_000)
+            < cannon_band_energy(&near, 2_000, 10_000) * 0.025);
+        assert!(cannon_band_energy(&far, 20, 160)
+            > cannon_band_energy(&near, 20, 160) * 0.8);
+        let (left, right) = channel_energy(&synth_gun_report(88.0, 0.0, -80.0, 17));
+        assert!(left > right * 10.0);
+        assert!(synth_gun_report(f32::NAN, 0.0, 0.0, 17).is_empty());
+        assert!(synth_gun_report(88.0, f32::INFINITY, 0.0, 17).is_empty());
     }
 
     #[test]

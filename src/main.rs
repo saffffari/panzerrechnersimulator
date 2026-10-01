@@ -105,6 +105,7 @@ mod interior_rig;
 mod lan;
 mod mechanic_capture;
 mod blizzard_battle_capture;
+mod combat_capture_audio;
 mod panzerfaust;
 mod pixel_particles;
 mod pressure_front;
