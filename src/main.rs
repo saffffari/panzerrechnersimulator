@@ -68,6 +68,7 @@ mod camera;
 mod campaign;
 mod campaign_save;
 mod canyon;
+mod canyon_attempt;
 mod canyon_director;
 mod playtest_mode;
 mod winter_weather;
@@ -15217,6 +15218,14 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "campaign-verify" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return run_campaign_verify(outdir);
+    }
+    if args.len() >= 2 && args[1] == "canyon-ai-run" {
+        return canyon_attempt::run(
+            &capture_arg(&args, 2, "canyon_ai_attempt"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(7200.0),
+            args.get(5).map(String::as_str),
+        );
     }
     if args.len() >= 2 && matches!(args[1].as_str(), "campaign-ai-run" | "campaign-ai") {
         let output = args

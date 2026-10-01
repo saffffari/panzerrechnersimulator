@@ -18,6 +18,11 @@ mod street_encounter;
 mod canyon_game;
 #[path = "canyon_map.rs"]
 mod canyon_map;
+#[path = "player_capture.rs"]
+mod player_capture;
+#[path = "canyon_pilot.rs"]
+mod canyon_pilot;
+pub use canyon_pilot::CanyonPilot;
 #[path = "street_nav.rs"]
 mod street_nav;
 #[path = "winter_mission.rs"]

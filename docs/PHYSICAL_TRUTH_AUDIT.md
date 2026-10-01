@@ -303,3 +303,15 @@ The Canyon drawing is source-derived cartography printed as albedo on existing p
 scene lighting. Aerial captures explicitly lower the physical fog density for terrain
 inspection; ground/cupola frames retain the authored winter atmosphere. Neither
 capture staging nor the aerial camera is presented as a completed human gameplay run.
+
+## Explicit Canyon AI video driver (2026-09-30)
+
+`canyon-ai-run` alone installs `CanyonPilot`; shipping menu play never creates it. This test
+driver has privileged route knowledge, geometry-based target sight within 420 m, target-velocity
+lead and a ballistic aim solution. It does not model pixel recognition, field of view or fog
+recognition. These are AI test approximations, not claims of human-equivalent perception.
+It emits ordinary drive, mouse and trigger inputs and native station actions, including the
+interior manual reload. It cannot override damage, ammunition, enemy motion or the Canyon
+director. It has no automatic repair. A failed/stalled policy is a failed attempt, not evidence
+that the level is impossible for a human. Details and reproduction are in
+`docs/CANYON_AI_HIGHLIGHTS_20260930.md`.
