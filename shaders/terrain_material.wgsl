@@ -58,8 +58,16 @@ fn terrain_material(source: vec4<f32>, world: vec3<f32>, normal_y: f32,
         let authored_snow = clamp((source.a * 255.0 - 32.0) / 191.0, 0.0, 1.0);
         let retained_snow = authored_snow * smoothstep(0.40, 0.72, normal_y) * (1.0 - spring);
         let grain = clamp(dot(soil_detail,vec3(0.2126,0.7152,0.0722)),0.75,1.25);
-        let rock = raw * mix(1.0,grain,0.16);
-        return mix(rock,winter*snow_detail,retained_snow);
+        // Resolved source texture breaks the metre-scale authored mixture into snow and
+        // disturbed substrate. Pure snow / pure rock remain their authored materials. The
+        // area-filtered mip converges to unity; distant coverage never becomes stipple.
+        let resolved = 1.0 - smoothstep(5.0, 8.0, lod);
+        let broken_coverage = clamp(retained_snow + (snow_value-grain)
+            * min(retained_snow,1.0-retained_snow)*2.8*resolved,0.0,1.0);
+        let rock = raw * mix(1.0,grain,0.75*resolved);
+        let granular_snow = clamp(winter * (1.0+(snow_value-1.0)*0.72*resolved),
+                                  vec3(0.0),vec3(0.99));
+        return mix(rock,granular_snow,broken_coverage);
     }
     let detail = mix(snow_detail, mix(mix(soil_detail, litter_detail, litter), grass_detail, green), spring);
     // A 1x1 average is neutral; explicitly converge to exact unity once detail is subpixel.

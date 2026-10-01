@@ -2593,6 +2593,8 @@ pub struct Renderer {
 
     pub pressure_fronts: crate::pressure_front::Fronts,
     pressure_gpu: crate::pressure_front::Gpu,
+    pub heat_sources: crate::heat_haze::Sources,
+    heat_gpu: Option<crate::heat_haze::Gpu>,
 
     crush_buf: wgpu::Buffer,
     /// Compatibility dial retained for callers; it no longer controls a proxy modulation pass.
@@ -5110,6 +5112,8 @@ impl Renderer {
                 cache: None,
             });
 
+        let heat_gpu = crate::debug_gates::DebugGates::active().heat_haze
+            .then(|| crate::heat_haze::Gpu::new(device, iw, ih, &depth_view));
         let pressure_gpu = crate::pressure_front::Gpu::new(device, iw, ih, &depth_view, rt_as_bgl.as_ref());
 
         // ---------- crush ----------
@@ -5418,6 +5422,8 @@ impl Renderer {
             pixel_particle_field: RefCell::new(crate::pixel_particles::PixelParticleField::default()),
             pixel_particle_count: Cell::new(0),
             pixel_particle_vertices, pixel_particle_uniform, pixel_particle_bind, pixel_particle_pipe,
+            heat_sources: crate::heat_haze::Sources::default(),
+            heat_gpu,
             pressure_fronts: crate::pressure_front::Fronts::default(),
             pressure_gpu,
             crush_buf,
@@ -5523,7 +5529,7 @@ impl Renderer {
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
-            pressure_fronts, ui, held_map_surface);
+            pressure_fronts, heat_sources, ui, held_map_surface);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
             new.copy_registrations_from(old);
         }
@@ -7924,6 +7930,13 @@ impl Renderer {
         // Interaction outlines are an interface cue, never an outdoor/fixture light source.
         if finish_ldr && self.shader_backend { self.encode_hover_outline(encoder, &mut work); }
 
+        // Debug-only heat study: refraction outside temporal histories, never a light source.
+        if let Some(heat) = &self.heat_gpu {
+            if heat.encode(&self.instance_queue, encoder, &self.hdr_tex, &self.hdr_view,
+                &self.heat_sources, self.heat_sources.time, self.camera.pos, self.camera.relative_view_proj()) {
+                work.fullscreen_raster_passes += 1;
+            }
+        }
         // A transient optical pressure cap never feeds surface/volume histories or bloom.
         // Its source visibility comes from the same live TLAS; it only refracts existing HDR.
         if self.pressure_gpu.encode(&self.instance_queue, encoder, &self.hdr_tex,

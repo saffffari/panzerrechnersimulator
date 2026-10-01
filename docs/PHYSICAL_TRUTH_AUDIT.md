@@ -33,14 +33,20 @@ use those fresh traces to distinguish already integrated work from still-open ga
 - The separate Gaea v2 uses source `SatMap_Out.png` for rock albedo and `snow.png` for coverage.
   The RGBA packing reserves alpha 32–223 for coverage, decoded separately from RGB sRGB. Snow
   also depends on surface slope; this is a material blend, not simulated snow deposition.
-- Generator version 4 retains version 3's prior-traffic and disturbed-yard albedo / snow coverage in a derived
+- Generator version 5 reworks prior-traffic and disturbed-yard albedo / snow coverage in a derived
   texture, while retaining both native Gaea inputs. At 4096 texels over 5000 m this has 1.22 m
   spacing; narrow track bands use fractional texel coverage. It adds no geometric ruts or runtime
   traffic simulation. The modern Bradley/T-90 reference guides appearance only, not WWII damage
-  or historical-event claims; see `research/CANYON_FOOTAGE_DIRECTION_20260930.md`.
-- Old aftermath stains use irregular nested albedo contours clipped to terrain triangles,
-  6 mm above the surface to avoid depth fighting. They are authored material evidence, not a
-  blood-fluid solver. Fallen log orientation derives from the source mesh's principal axis and
+  or historical-event claims; see `research/CANYON_FOOTAGE_DIRECTION_20260930.md`. Version 5
+  adds broken material borders and slope-constrained exposed-bank patches. The shared terrain
+  shader resolves the mixed cover using area-filtered source snow/soil textures; this is material
+  variation, not a height map, fabricated normal, rut or snow-transport solver. Pure snow and rock
+  retain their authored material identity. Native terrain geometry and collision are unchanged.
+- The metre-wide nested red/pink aftermath contours are removed. Version 5 uses 6–32 mm-wide
+  closed cuboids, 3–10 mm tall, slightly embedded in the shared terrain. 49,983 drops are grouped
+  irregularly beside 753 existing anonymous figures. These static deposits follow the visual
+  vocabulary of live cubic blood grains; they are not output from the wound or blood-fluid solver.
+  No injury event, victim identity or measured blood volume is asserted. Fallen log orientation derives from the source mesh's principal axis and
   rests at its measured minimum; the original purchased mesh and materials are preserved.
 - Requested ambient occlusion is the existing **screen-space, ambient-only** depth pass, now
   64 samples with 0.60 m interior / 2.20 m exterior radii. It is not GI and cannot see off-screen
@@ -53,10 +59,18 @@ use those fresh traces to distinguish already integrated work from still-open ga
   Visual acceptance remains incomplete: ordinary training-night views and the controlled sun
   probe clip practical/reflected highlights. Optical relay preparation did not resolve the probe.
   The Canyon reload frames are darker; they do not validate all eye-adaptation conditions.
-- Winter ground cover uses world-fixed coherent 36 m patches and distributed, closed stems.
+- Canyon v2 winter ground cover now follows 91 authored surviving pockets, with road/yard
+  exclusion. Only 0.1735% of the entire 25 km² source map permits grass above a 25% mask value;
+  this is an authoring statistic, not a measured historical vegetation fraction. The authored mask
+  is the clearing authority; fallback noise varies density within it without deleting entire
+  stands. Worlds without such a mask retain the existing world-fixed 36 m fallback patches.
+  Close stems are approximately 6 mm wide before their small instance variation; coarse LODs
+  widen representative stems to 13 / 24 mm. Dry-straw albedo replaces the dark olive palette.
   Distant stems are a geometry LOD, not a measured botanical population. Grass remains primary
   raster geometry without secondary visibility / self shadow; worst-case budget is under 2 M
   triangles and is the same geometry rule across graphics presets.
+  Explicit screenshot survey cameras now refresh this ordinary camera-local population after
+  moving away from the Tiger; earlier free-camera stills did not reliably show local vegetation.
 - Canyon rocks, breastworks and wrecked equipment use the existing source-triangle occupancy
   collision approximation (0.5 m local cells, capped adaptive grid). Cell dilation is bounded by
   the cell diagonal. V2 runs are limited to two cells; at unit-scale yaw placements every world proxy
@@ -82,15 +96,32 @@ use those fresh traces to distinguish already integrated work from still-open ga
   at 1 m per unit fire intensity. Cabin patches are aggregated at their intensity-weighted centroid.
   This is an authored combustion voice, not measured thermodynamic acoustics; ignition wavefront
   delay is not modeled for this continuous bed. Pause, KIA, extinguishing and mixer capture are tested.
-- Environmental fixture radiance and source power are both scaled by 0.25. Sustained flame
-  radiance and its transported source power are scaled by 0.55. Existing exterior wreck point
-  sources remain an approximation; exposure and muzzle/impact power are not adjusted by this pass.
-- Terminal replay uses the actual fatal record, crew anatomy, fragment/blast and blood snapshot.
-  It advances only presentation aftermath; it never applies another hit or resets the run. Replay
-  is silent slow motion after the live fatal audio tail. Cases without a recorded fatal shot retain
-  a fade/black fallback; they do not invent an explosion. Both the window and Canyon film append it.
-  Sampled replay frames still have clipped interior highlights; fire-review soot remains visibly
-  cubic. These recordings are retained as diagnostic evidence, not final look acceptance.
+- Environmental fixture radiance and source power retain their 0.25 scaling. The requested
+  pre-Canyon generation-held cubic flames are restored with 6–8 mm cabin grains and 80–115 mm
+  exterior grains; exterior count rises from 64 to 256 per selected source. The old flame radiance
+  table is restored. Interior aggregate power still comes from the actual visible cube face area
+  and radiance. Existing exterior wreck point sources retain their independent 0.55 calibration
+  and remain a source-clustering debt; they are not newly calibrated radiometry.
+- Heat shimmer is an explicit **debug-only screen-space prototype**, gated by
+  `KESSEL_DEBUG_HEAT_HAZE=1` in a build with debug assertions. Both shipping presets keep it off,
+  including when the environment variable is set. It samples up to 16 active fire-patch/wreck
+  plumes, advects a prescribed curl field, bounds refraction to two native pixels, rejects visible
+  foreground depth, and adds no radiance. Cabin plume height stops at sampled source-mesh
+  contacts. This is not solved temperature, gas density or refractive light transport; it cannot
+  reconstruct off-screen imagery. The fire A/B has identical authoritative final states.
+- Terminal replay now uses the earlier rear-turret witness eye for **every visible phase**, including
+  the initial fade. It never chooses an exterior, optic or driver camera from the player's last
+  station. The turret-local eye is (-0.45, 2.34, -0.84), looking toward (0, 1.45, 0.18), at 80 degrees.
+  The actual fatal crew, fragment/blast and blood snapshot supplies 3.2 seconds of presentation
+  aftermath across eight screen seconds; no second hit or gameplay update is applied. The live
+  audio tail fades, slow motion is silent, then black holds. Missing records show black rather
+  than inventing a fatal hit. Window, mechanic recorder and Canyon recorder share this policy.
+  The fixture's short explosion still clips highlights; later dark aftermath reveals the cabin.
+- Isolated Gaea storm workshops compare fog 0.0046, cloud cover 0.98 and storm 0.58 against the
+  default 0.0022 / 0.82 / 0.07. Morning and low-sun combat recordings use ordinary eye adaptation
+  and existing emitters; no fixed exposure, global darkening grade or extra ambient fill is added.
+  The 14:15 UTC test loses terrain visibility between shots and is rejected as a gameplay target.
+  These weather comparisons are not the default v2 weather. See `CANYON_STORM_20260930.md`.
 - Additional anonymous casualties and ruined field sites are an inferred fictional course under
   documented recurring winter battlefield conditions, not a named event or identified victims.
   The generator records provenance and source hashes. The original v1 workshop is preserved.

@@ -400,7 +400,10 @@ impl Grass {
                                 let footprint = if winter { filament::WINTER_FOOTPRINT[kind]*1.1 } else { FOOTPRINT[kind] };
                                 let cover = m.footprint(x, z, footprint);
                                 if winter {
-                                    winter_density(kind,patch)*cover
+                                    // An authored winter map already places the surviving stands
+                                    // and snow clearings. A second independent zero-valued mask
+                                    // erased whole stands; use noise only for density variation.
+                                    winter_density(kind,0.80+0.20*patch)*cover
                                 } else if kind == 0 {
                                     cover * (0.82 + 0.16 * patch)
                                 } else if cover > 0.0 {
@@ -576,6 +579,32 @@ mod population_tests {
             h: 1,
             rgba: vec![rgb[0], rgb[1], rgb[2], 255],
             half_extent: 384.0,
+        }
+    }
+    #[test]
+    fn authored_winter_stands_survive_fallback_noise_clearings() {
+        for seed in [0, 42] {
+            let center = (-15..15).flat_map(|z|(-15..15).map(move |x|
+                Vec2::new(x as f32*4.0,z as f32*4.0)))
+                .find(|p|winter_patch(p.x,p.y,seed)==0.0).unwrap();
+            let mut mask=Mask {w:201,h:201,rgba:vec![0;201*201*4],half_extent:100.0};
+            for z in 0..201 {
+                for x in 0..201 {
+                    let p=Vec2::new(x as f32-100.0,z as f32-100.0);
+                    mask.rgba[(z*201+x)*4]=if p.distance(center)<14.0 {255} else {0};
+                    mask.rgba[(z*201+x)*4+3]=255;
+                }
+            }
+            let mut grass=population(Some(mask),seed);
+            grass.winter=true;
+            grass.layers=std::array::from_fn(|kind|Layer::new(usize::MAX,kind,true));
+            grass.rebuild(center,&|_,_|0.0);
+            let close=grass.layers[0].roots.iter().filter(|r|
+                Vec2::new(r.position.x,r.position.z).distance(center)<2.5).count();
+            assert!(close>20,"an authored surviving stand was erased: {close} roots");
+            assert!(grass.layers.iter().flat_map(|l|&l.roots).all(|r|
+                Vec2::new(r.position.x,r.position.z).distance(center)<14.0),
+                "the authored snow outside the stand must remain empty");
         }
     }
     #[test]

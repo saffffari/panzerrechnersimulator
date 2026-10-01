@@ -105,6 +105,7 @@ mod mechanic_capture;
 mod panzerfaust;
 mod pixel_particles;
 mod pressure_front;
+mod heat_haze;
 mod world_doors;
 mod prims;
 mod procedural_ordnance;
@@ -554,6 +555,10 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
             c[0],
             c[2]
         );
+        // Camera-local vegetation was still populated around the Tiger after moving this
+        // survey camera. Use the same world-fixed roots and wind as a real exterior view.
+        g.prepare_world_survey(&mut r, 1.0 / 60.0);
+        println!("[grass] survey {}", g.world_survey_grass_stats());
     }
     if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
         // The build hook exercised the real damage/state/render path. The requested aftermath frame
@@ -4917,10 +4922,8 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Headless: force a fatal flank penetration on the player Tiger, then render the death instant-
-/// replay (kill-cam) at three phases — the shell mid-flight, the impact + spall, and the final hold
-/// on the holed Tiger — then the same hold with a spare-track field repair. Writes
-/// `prefix_{shell,impact,hold,patched}.png` for verification without the AppState front-end.
+/// Disclosed catastrophic penetration fixture: six interior witness phases and, optionally,
+/// the same terminal sequence used in live play. Crew outcome is checked before/after replay.
 fn run_replay_aftermath(prefix: &str, video: bool) -> anyhow::Result<()> {
     if video {std::env::set_var("KESSEL_AUDIO_CAPTURE","1");}
     let instance = create_instance();
@@ -4938,8 +4941,8 @@ fn run_replay_aftermath(prefix: &str, video: bool) -> anyhow::Result<()> {
         "fatal event must retain all five anatomical records");
     if video {canyon_attempt::record_terminal_review(prefix,&mut g,&mut r,&device,&queue)?;}
     let mut evidence = Vec::new();
-    for (phase, name) in [(0.20, "incoming"), (0.49, "entry"), (0.50, "interior0"),
-        (0.56, "interior1"), (0.70, "interior2"), (0.95, "interior3")] {
+    for (phase, name) in [(0.0, "interior0"), (0.08, "interior1"), (0.20, "interior2"),
+        (0.40, "interior3"), (0.70, "interior4"), (0.95, "interior5")] {
         r.ui_reset();
         g.render_replay(phase, &mut r);
         evidence.push(g.replay_aftermath_receipt());
@@ -4947,7 +4950,7 @@ fn run_replay_aftermath(prefix: &str, video: bool) -> anyhow::Result<()> {
     }
     anyhow::ensure!(g.singleplayer_crew_state_receipt() == Some(crew_before), "replay changed crew outcome");
     std::fs::write(format!("{prefix}_motion.json"), serde_json::to_vec_pretty(&evidence)?)?;
-    println!("[replay-aftermath] PASS: recorded full-crew ammo hit; incoming shot and four interior phases");
+    println!("[replay-aftermath] PASS: recorded full-crew ammo hit; six interior-only witness phases");
     Ok(())
 }
 
@@ -11035,8 +11038,7 @@ mod close_request_tests {
     }
 }
 
-// Death instant-replay duration (seconds): the ~0.3 s of real ballistics is stretched across this so
-// the shell reads in slow-motion, plus a final beat holding on the holed Tiger.
+// Interior aftermath replay: the recorded casualty runs in slow motion from the turret witness.
 const REPLAY_DUR: f32 = 8.0;
 const KIA_BLACK_SECONDS: f32 = 2.0;
 
@@ -11068,10 +11070,26 @@ fn death_replay_phase(t: f32) -> Option<f32> {
         .then(|| (t - DEATH_FADE) / REPLAY_DUR)
 }
 
+/// Even a head-out or on-foot death opens on the turret witness, never the outdoor fatal view.
+fn terminal_visual_phase(t: f32) -> Option<f32> {
+    if (0.0..DEATH_FADE).contains(&t) { Some(0.0) } else { death_replay_phase(t) }
+}
+
 #[cfg(test)]
 mod local_presentation_tests {
     use super::*;
 
+    #[test]
+    fn terminal_camera_has_an_interior_phase_from_the_first_fatal_frame() {
+        for tick in 0..(DEATH_END * 120.0) as u32 {
+            let t = tick as f32 / 120.0;
+            if t < DEATH_FADE + REPLAY_DUR {
+                let phase = terminal_visual_phase(t).unwrap();
+                assert!((0.0..=1.0).contains(&phase));
+                if t < DEATH_FADE { assert_eq!(phase, 0.0); }
+            } else { assert_eq!(terminal_visual_phase(t), None); }
+        }
+    }
     #[test]
     fn death_fades_picture_and_sound_then_holds_black_before_the_retry() {
         assert_eq!(death_fade(0.0), 0.0);
@@ -13517,15 +13535,17 @@ impl WindowState {
         if t >= DEATH_FADE {
             self.game.set_audio_silenced(true);
         }
-        if t < DEATH_FADE && !self.couch_active {
-            self.death_fade = Some(fade);
-            self.render_game();
-            self.death_fade = None;
-        } else if let Some(phase) = death_replay_phase(t).filter(|_| self.game.last_fatal.is_some()) {
+        if let Some(phase) = terminal_visual_phase(t).filter(|_| self.game.last_fatal.is_some()) {
             let Some((frame, view)) = self.acquire() else { return; };
             self.game.render_replay(phase, &mut self.renderer);
             self.renderer.render_replay_to_surface(&self.device, &self.queue, &view,
-                self.config.format, t - DEATH_FADE);
+                self.config.format, t);
+            if t < DEATH_FADE {
+                self.renderer.ui_reset();
+                self.renderer.fill_rect(0.0, 0.0, 1.0, 1.0, [0.0, 0.0, 0.0, fade]);
+                self.renderer.render_hud_over_surface(&self.device, &self.queue, &view,
+                    self.config.format, self.config.width, self.config.height);
+            }
             frame.present();
         } else {
             self.render_black();

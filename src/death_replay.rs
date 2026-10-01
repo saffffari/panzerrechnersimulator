@@ -1,9 +1,8 @@
-//! Terminal replay presentation. The incoming shot is followed by a compartment witness camera.
+//! Interior-only terminal replay from a turret-local witness camera.
 //! Recorded anatomy, droplets and fragment bodies supply motion; replay never applies new damage.
 use super::*;
 
-pub(super) const INTERIOR_CUT: f32 = 0.5;
-const AFTERMATH_SECONDS: f32 = 1.2; // played across four seconds of screen time
+const AFTERMATH_SECONDS: f32 = 3.2; // played across eight seconds of screen time
 const STEP: f32 = 1.0 / 120.0;
 
 pub(super) struct Aftermath {
@@ -19,6 +18,12 @@ fn desired_time(phase: f32) -> f32 {
     phase.clamp(0.0, 1.0) * AFTERMATH_SECONDS
 }
 
+/// Matches the established rear-turret witness capture.
+pub(super) fn witness_camera(turret: Mat4) -> (Vec3, Vec3) {
+    (turret.transform_point3(Vec3::new(-0.45, 2.34, -0.84)),
+     turret.transform_point3(Vec3::new(0.00, 1.45, 0.18)))
+}
+
 impl Game {
     pub fn replay_aftermath_receipt(&self) -> serde_json::Value {
         serde_json::json!({"elapsed": self.death_replay.as_ref().map(|r| r.elapsed),
@@ -31,13 +36,8 @@ impl Game {
             "blood": self.surface_blood.diagnostics().emitted})
     }
 
-    pub fn replay_has_interior_cut(&self, phase: f32) -> bool {
-        self.last_fatal.as_ref().is_some_and(|fatal|
-            fatal.cause == DeathCause::FuelFire || phase >= INTERIOR_CUT)
-    }
-
     pub(super) fn render_replay_interior(&mut self, phase: f32, r: &mut Renderer) {
-        let Some(fatal) = self.last_fatal.clone() else { return };
+        if self.last_fatal.is_none() { return; }
         let target = desired_time(phase);
         let mut replay = self.death_replay.take().unwrap_or_else(|| Aftermath {
             ragdolls: self.couch_ragdolls.clone(), blood: self.surface_blood.clone(),
@@ -77,6 +77,10 @@ impl Game {
         }
         self.death_replay = Some(replay);
 
+        r.set_model(self.slots.tiger[0], self.player.hull_model());
+        r.set_model(self.slots.tiger[1], self.player.turret_model());
+        r.set_model(self.slots.tiger[2], self.player.visual_gun_model());
+        self.drive_roof_hatches(r);
         self.clear_weapon_vfx_render(r);
         for slot in [self.slots.r_muzzle, self.slots.r_shell, self.slots.r_flash,
             self.slots.muzzle, self.slots.tracer, self.slots.impact, self.slots.binocular_prop] {
@@ -94,21 +98,13 @@ impl Game {
         else if self.couch_crew_active { self.drive_couch_crew_rigs_for_view(u32::MAX, r); }
         else { self.drive_physical_crew_casualties(r); }
 
-        // A real free space above/behind the crew, never an X-ray view through armour. Pick the
-        // struck compartment so hull casualties are not hidden below the turret basket.
-        let compartment = if phase >= 0.55 && self.couch_ragdolls.iter().any(|b| b.frame == BloodFrame::Turret) {
-            BloodFrame::Turret
-        } else { fatal.fragment_frame };
-        let (parent, eye_local, look_local) = match compartment {
-            BloodFrame::Hull => (self.player.hull_model(),
-                tiger_driver_visor::DRIVER_EYE.lerp(tiger_driver_visor::DRIVER_LEAN_EYE, 0.8),
-                Vec3::new(0.0, 1.10, 1.40)),
-            BloodFrame::Turret => (self.player.turret_model(), Vec3::new(0.55, 2.13, -0.70),
-                Vec3::new(-0.25, 1.17, 0.30)),
-        };
-        r.camera.pos = parent.transform_point3(eye_local);
-        r.camera.set_forward(parent.transform_point3(look_local) - r.camera.pos);
-        r.camera.fov_y = 78_f32.to_radians();
+        // The established rear turret witness eye stays inside the roof. Its parent is the
+        // actual turret, so hull pitch, turret traverse and a displaced wreck remain coherent.
+        // Never select a driver/optic/exterior eye based on the victim's last location.
+        let (eye, look) = witness_camera(self.player.turret_model());
+        r.camera.pos = eye;
+        r.camera.set_forward(look - eye);
+        r.camera.fov_y = 80_f32.to_radians();
         r.reticle = false;
         r.crew_ko = 0.0;
         r.concussion = 0.0;
@@ -130,9 +126,6 @@ impl Game {
         self.drive_lights_with_transients(r, false);
         r.extend_lights(&transient_lights);
         self.stealth.t = live_time;
-        r.draw_text(if fatal.cause == DeathCause::FuelFire { "AMMUNITION COOK-OFF" }
-            else { "INTERIOR / FATAL HIT REPLAY" },
-            0.5, 0.92, 0.025, [0.95, 0.66, 0.36, 1.0], crate::ui::Align::Center);
     }
 }
 
@@ -140,9 +133,22 @@ impl Game {
 mod tests {
     use super::*;
     #[test]
+    fn witness_eye_is_turret_local_and_independent_of_player_station() {
+        let local = witness_camera(Mat4::IDENTITY);
+        assert!(local.0.y <= 2.34 && local.0.y > 2.0);
+        for yaw in [-3.0, -1.0, 0.0, 1.0, 3.0] {
+            let turret = Mat4::from_rotation_translation(
+                Quat::from_rotation_y(yaw) * Quat::from_rotation_x(0.17),
+                Vec3::new(713.0, -9.0, -438.0));
+            let (eye, target) = witness_camera(turret);
+            assert!(turret.inverse().transform_point3(eye).distance(local.0) < 0.0001);
+            assert!(turret.inverse().transform_point3(target).distance(local.1) < 0.0001);
+        }
+    }
+    #[test]
     fn aftermath_clock_is_bounded_and_slow_motion() {
         assert_eq!(desired_time(-1.0), 0.0);
-        assert_eq!(desired_time(0.5), 0.6);
-        assert_eq!(desired_time(2.0), 1.2);
+        assert_eq!(desired_time(0.5), 1.6);
+        assert_eq!(desired_time(2.0), 3.2);
     }
 }

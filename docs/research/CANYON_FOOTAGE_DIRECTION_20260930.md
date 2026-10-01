@@ -58,3 +58,28 @@ Acceptance uses identical game camera positions before / after, a nearby yard vi
 layout inspection. A successful generator or compilation alone is not visual acceptance. The
 remaining impact, cooling and audio work is tracked by the armor/audio handoff, not implied done
 by this environment pass.
+
+## Ground revision after owner review
+
+Generator version 5 removes the broad nested blood stains above. It uses small discontinuous
+cube deposits with irregular short trails, retaining open snow between drops. This is authored
+aftermath geometry rather than a claim that a fluid solver deposited it.
+
+The following primary wartime photographs were opened and visually inspected in the local
+reference set `/home/alex/panzer/reference/wartime_photos_20260928/`. Their archive metadata and
+source hashes remain in that directory's `manifest.json`:
+
+- [NAC 2-942, destroyed Soviet tank in Stalingrad, January 1943](https://commons.wikimedia.org/wiki/File:Zniszczony_czo%C5%82g_radziecki_w_Stalingradzie_(2-942).jpg):
+  snow-covered wreck and masonry, irregular snow ledges, compressed foreground marks; no broad
+  grass cover is visible in this frame.
+- [Strunnikov, abandoned vehicles, 1943](https://commons.wikimedia.org/wiki/File:Сталинград._Брошенные_машины.jpg):
+  dirty traffic and footmarked snow, exposed debris and local bare patches.
+- [Zelma / RIA 2251, 23 December 1942](https://commons.wikimedia.org/wiki/File:RIAN_archive_2251_Destroyed_Stalingrad_does_not_give_up.jpg):
+  broken ruins and snow, with a few visible bare stems / shrubs along rubble edges.
+- [Strunnikov, abandoned six-barrel launchers in a gully, 1943](https://commons.wikimedia.org/wiki/File:Сталинград._Немецкие_шестиствольные_минометы.jpg):
+  patchy snow and exposed bank/stubble pockets beside smoother travelled snow.
+
+These frames support sparse, locally dense winter stubble; they do not establish that all grass
+was absent, a universal winter snow depth, or an exact vegetation percentage. The 91 v2 patches
+and their placements are authored inference. The monochrome period photographs cannot calibrate
+the scene's colour. The user-supplied modern video continues to guide winter colour relationships.

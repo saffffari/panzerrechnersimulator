@@ -14,11 +14,12 @@ from PIL import Image
 import canyon_course as cc
 import canyon_v2_assets as props
 import canyon_winter_surface
+import canyon_ground_splatter
 import gaea_canyon_run as gaea
 
 ROOT=Path(__file__).resolve().parents[2]
 DEST=ROOT/'assets/worldgen/workshops/gaea-canyon-run-v2'
-VERSION=4
+VERSION=5
 BASE_DRESS=cc.dress
 BASE_BUILDINGS=cc.place_buildings
 GROUPS=[
@@ -41,7 +42,7 @@ EXTRA_ASSETS={
 }
 
 
-def terrain_materials(edits):
+def terrain_materials(edits,H):
     """Preserve both Gaea inputs; pack rock sRGB + linear snow coverage for one GPU sample.
 
     Alpha 32..223 identifies this documented terrain format; ordinary opaque legacy drapes use
@@ -54,7 +55,7 @@ def terrain_materials(edits):
     if snow.max()>1:snow/=65535. if snow.max()>255 else 255.
     if snow.ndim==3:snow=snow[:,:,0]
     assert rock.shape[:2]==snow.shape and np.isfinite(snow).all()
-    rock,snow,vegetation,wear=canyon_winter_surface.author(rock,snow,edits['canyon_course']['route'],edits['building_instances'])
+    rock,snow,vegetation,wear=canyon_winter_surface.author(rock,snow,edits['canyon_course']['route'],edits['building_instances'],heights=H)
     rgba=np.dstack([rock,np.uint8(np.rint(32+191*np.clip(snow,0,1)))])
     Image.fromarray(rgba,'RGBA').save(folder/'rock_snow_material.png')
     Image.fromarray(np.dstack([vegetation,np.zeros_like(vegetation),np.zeros_like(vegetation)]),'RGB').save(folder/'ground_class.png')
@@ -165,7 +166,12 @@ def dress(site,H):
             if max(heights)-min(heights)>.28:continue
             dr.add('combat_dead',f'casualty_{(j+k)%6}',x,z,cc.rnd(c['id'],k+500)*360,1.,-.045)
             casualties.append((x,z));c['bodies']+=1
-            stain(stains[min(int(c['fraction']*12),11)],dr,x+.25,z,.85+.7*cc.rnd(c['id'],k+713),j*77+k)
+            # Coordinate seed survives the independent surface-study workflow and relocation
+            # of unrelated props. Tiny deposited cubes replace the metre-wide nested stamps.
+            bx,bz=cc.r3(x),cc.r3(z)
+            rec=canyon_ground_splatter.splatter(stains[min(int(c['fraction']*12),11)],
+                dr.ground,bx+.25,bz,canyon_ground_splatter.seed_at(bx,bz))
+            dr.counts['blood_drops']=dr.counts.get('blood_drops',0)+rec['drops']
     # Debris and abandoned belongings tie the new architecture to the ground.
     for b in site.buildings:
         for k in range(22):
@@ -227,57 +233,10 @@ def dress(site,H):
         if not m.points:continue
         name=f'blood_snow_{i:02}';rec=m.write(ROOT/props.PREFIX/(name+'.glb'))
         ASSET_RECEIPT[name]=rec;cc.ASSETS[name]=rec['path']
-        # Vertices are already projected onto exactly the heightfield's individual triangles.
+        # Each small cuboid rests on the shared heightfield and slightly enters the snow.
         dr.items.append((name,0.,0.,0.,0.,1.))
-    dr.counts['blood_stains']=len(casualties)
+    dr.counts['blood_splatter_sites']=len(casualties)
     return dr
-
-
-def clip(poly,axis,value,greater):
-    out=[]
-    for a,b in zip(poly,poly[1:]+poly[:1]):
-        da=a[axis]-value;db=b[axis]-value
-        ina=da>=-1e-8 if greater else da<=1e-8
-        inb=db>=-1e-8 if greater else db<=1e-8
-        if ina:out.append(a)
-        if ina!=inb:out.append(a+(b-a)*da/(da-db))
-    return out
-
-
-def stain(mesh,dr,x,z,r,seed):
-    # Irregular nested pigment contours, clipped to the actual terrain triangles. These are
-    # authored old stains, not runtime blood-fluid simulation; no luminous/decal screen layer.
-    sides=48
-    rings=[]
-    phase=cc.rnd(seed,810)*math.tau
-    for radius in (0.,.30,.56,.80,1.):
-        ring=[]
-        for i in range(sides):
-            a=i*math.tau/sides+phase
-            edge=1+.12*math.sin(3*a+seed)+.08*math.sin(7*a+seed*.37)+.04*math.sin(13*a)
-            ring.append(np.array([x+math.cos(a)*r*radius*edge,
-                                  z+math.sin(a)*r*radius*edge*.82]))
-        rings.append(ring)
-    for band in range(4):
-        for i in range(sides):
-            j=(i+1)%sides
-            square=[rings[band][i],rings[band+1][i],rings[band+1][j],rings[band][j]]
-            gx=[int(math.floor(dr.site.grid.col(p[0]))) for p in square];gz=[int(math.floor(dr.site.grid.col(p[1]))) for p in square]
-            sp=dr.site.grid.sp;half=(dr.site.grid.res-1)*sp*.5
-            for ix in range(min(gx),max(gx)+1):
-                for iz in range(min(gz),max(gz)+1):
-                    xx=ix*sp-half;zz=iz*sp-half;p=square
-                    for axis,v,g in [(0,xx,True),(0,xx+sp,False),(1,zz,True),(1,zz+sp,False)]:p=clip(p,axis,v,g) if p else []
-                    for side in (-1,1):
-                        out=[]
-                        for a,b in zip(p,p[1:]+p[:1]):
-                            da=(a.sum()-xx-zz-sp)*side;db=(b.sum()-xx-zz-sp)*side
-                            if da>=-1e-8:out.append(a)
-                            if (da>=0)!=(db>=0):out.append(a+(b-a)*da/(da-db))
-                        color=[(82,27,29),(105,43,47),(151,96,101),(206,183,188)][band]
-                        for j in range(1,len(out)-1):
-                            pp=[(q[0],dr.ground(*q)+.006,q[1]) for q in [out[0],out[j+1],out[j]]]
-                            mesh.tri(*pp,color)
 
 
 def build(dest):
@@ -300,7 +259,12 @@ def build(dest):
     cc.GROUPS=GROUPS;cc.CRATERS=50;cc.RAZED_PLOTS=9
     cc.dress=dress;cc.place_buildings=place_buildings
     manifest,edits,H,receipt=gaea.build()
-    manifest['terrain'].update(terrain_materials(edits))
+    manifest['terrain'].update(terrain_materials(edits,H))
+    vegetation=np.asarray(Image.open(ROOT/manifest['terrain']['ground_class']))[:,:,0]
+    stalks=canyon_winter_surface.restrict_stalks(manifest,vegetation)
+    manifest['terrain']['authored_wear'].update(stalks)
+    edits['base_placements']=len(manifest['placements'])
+    receipt['dressing']['dry_stalk_bed']=stalks['stalks_after']
     manifest['authoring'].update(tool='tools/worldgen/gaea_canyon_v2.py',tool_version=VERSION,variant='canyon-v2')
     edits['canyon_course'].update(variant='canyon-v2',tool='tools/worldgen/gaea_canyon_v2.py')
     # Broad winter overcast, actual ephemeris and cloud occupancy; no blue post-process veil.

@@ -134,7 +134,7 @@ impl Film {
     }
     fn terminal(&mut self, g: &mut Game, r: &mut Renderer, device: &wgpu::Device,
         queue: &wgpu::Queue) -> anyhow::Result<()> {
-        self.segments.push(serde_json::json!({"label":"KIA / recorded fatal shot and interior aftermath",
+        self.segments.push(serde_json::json!({"label":"KIA / interior-only turret witness aftermath",
             "film_start_s":self.frames as f64/30.0,"replay":g.last_fatal.is_some(),
             "audio":"live fatal tail, then silent slow motion","damage_reapplied":false}));
         for tick in 0..(crate::DEATH_END*60.0).round() as usize {
@@ -144,21 +144,18 @@ impl Film {
             if since>=crate::DEATH_FADE {g.set_audio_silenced(true);}
             self.samples.extend(g.render_audio_capture_frames((acoustics::SAMPLE_RATE/60) as usize)?);
             if tick%2!=0 {continue;}
-            let rgba=if since<crate::DEATH_FADE {
-                let mut pixels=mechanic_capture::gameplay_frame(g,r,device,queue)?;
-                for pixel in pixels.chunks_exact_mut(4) {for c in &mut pixel[..3] {
-                    *c=(*c as f32*(1.0-crate::death_fade(since))).round() as u8;
-                }}
-                pixels
-            } else if let Some(phase)=crate::death_replay_phase(since).filter(|_|g.last_fatal.is_some()) {
+            let rgba = if let Some(phase) = crate::terminal_visual_phase(since).filter(|_|g.last_fatal.is_some()) {
                 g.render_replay(phase,r);
-                let pixels=r.render_replay_rgba(device,queue,since-crate::DEATH_FADE,
+                let mut pixels=r.render_replay_rgba(device,queue,since,
                     crate::renderer::ReplayCapturePolicy::Current)?;
+                if since < crate::DEATH_FADE {
+                    for pixel in pixels.chunks_exact_mut(4) { for c in &mut pixel[..3] {
+                        *c = (*c as f32 * (1.0-crate::death_fade(since))).round() as u8;
+                    }}
+                }
                 let native=image::RgbaImage::from_raw(r.iw,r.ih,pixels).unwrap();
                 image::imageops::resize(&native,1920,1080,image::imageops::FilterType::Nearest).into_raw()
-            } else {
-                [0,0,0,255].repeat(1920*1080)
-            };
+            } else { [0,0,0,255].repeat(1920*1080) };
             self.encoder.stdin.as_mut().unwrap().write_all(&rgba)?;
             self.frames+=1;
         }

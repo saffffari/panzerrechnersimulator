@@ -207,8 +207,8 @@ pub fn stalk_mesh(winter: bool) -> CpuMesh {
     )
 }
 
-/// Dry straw rises from a compact crown and splays into irregular tall stems and short,
-/// collapsed blades. Coarse levels keep that broken fan silhouette instead of a flat pad.
+/// Dry straw has distributed roots, irregular tall stems and short collapsed blades.
+/// Coarse levels retain that broken silhouette instead of a flat pad.
 /// A bent blade is a closed ten-triangle tapered stalk with a real knee; far straw is a
 /// four-triangle wedge. No flat ground pads, double-sided cards, alpha test, or strand physics.
 fn winter_tuft_mesh(layer: usize) -> CpuMesh {
@@ -251,7 +251,10 @@ fn winter_tuft_mesh(layer: usize) -> CpuMesh {
         // ground with fewer wider stems; all are closed geometry and remain snow-colored gaps.
         let root = direction * ([0.03, 0.12, 0.35][layer]
             + [0.24, 0.94, 2.95][layer] * irregular.sqrt());
-        let width = [0.014, 0.030, 0.060][layer] * (0.76 + 0.35 * irregular);
+        // Millimetre-scale close stems. The former 28 / 60 / 120 mm full widths read
+        // as dark triangular leaves and wedges rather than dead winter stubble.
+        // Coarser layers widen the representative stems, a declared geometry LOD.
+        let width = [0.003, 0.0065, 0.012][layer] * (0.76 + 0.35 * irregular);
         let depth = width * 0.24;
         let ring = |center: Vec3, taper: f32| [
             center + tangent * width * taper,
@@ -262,8 +265,8 @@ fn winter_tuft_mesh(layer: usize) -> CpuMesh {
         // Tall stems lean gently; the shorter dead leaves spread across the snowy crown.
         // A knee stays nearer the root before the blade bends outward, giving the clump
         // an irregular curved silhouette even when wind is calm.
-        let spread = [0.12, 0.22, 0.36][layer]
-            + [0.17, 0.17, 0.25][layer] * (1.0 - heights[i]);
+        let spread = [0.06, 0.12, 0.18][layer]
+            + [0.12, 0.14, 0.20][layer] * (1.0 - heights[i]);
         let tip = root + direction * spread
             + tangent * (azimuth_jitter[i] * [0.16, 0.24, 0.30][layer])
             + Vec3::Y * (HEIGHT * heights[i]);
@@ -286,10 +289,10 @@ fn winter_tuft_mesh(layer: usize) -> CpuMesh {
         }
     }
     let rgba = [
-        [121, 111, 75, 255],
-        [110, 103, 66, 255],
-        [85, 79, 51, 255],
-        [65, 60, 42, 255],
+        [151, 139, 117, 255],
+        [138, 124, 99, 255],
+        [118, 105, 83, 255],
+        [101, 88, 69, 255],
     ].into_iter().flatten().collect();
     let mut mesh = CpuMesh::basic(
         vertices,
@@ -450,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn winter_detail_levels_keep_mixed_heights_and_splayed_straw_instead_of_flat_pads() {
+    fn winter_detail_levels_keep_mixed_heights_and_bent_straw_instead_of_flat_pads() {
         for layer in 0..3 {
             let mesh = tuft_mesh(layer, true);
             let mut shortest = HEIGHT;
@@ -467,8 +470,8 @@ mod tests {
                 assert!(base.iter().all(|v| v.y == 0.0), "one compact root, no raised canopy rim");
                 assert!(tip.y > HEIGHT * 0.25);
                 let center = (base[0] + base[1] + base[2]) / 3.0;
-                assert!(Vec2::new(tip.x - center.x, tip.z - center.z).length() > 0.10,
-                    "the blades must visibly fan outward instead of remaining parallel spikes");
+                assert!(Vec2::new(tip.x - center.x, tip.z - center.z).length() > 0.04,
+                    "thin winter stems must retain lean instead of parallel spikes");
                 let volume = (base[1] - base[0]).cross(base[2] - base[0]).dot(tip - base[0]).abs() / 6.0;
                 assert!(volume > 1e-7, "opaque straw must have a real closed volume");
                 if bent {
@@ -476,7 +479,7 @@ mod tests {
                     let knee = (Vec3::from(blade[4].pos) + Vec3::from(blade[5].pos)
                         + Vec3::from(blade[14].pos)) / 3.0;
                     let straight = center.lerp(tip, knee.y / tip.y);
-                    assert!(knee.distance(straight) > 0.03,
+                    assert!(knee.distance(straight) > 0.015,
                         "near straw needs a visible knee, not extra collinear triangles");
                     assert!(knee.y > tip.y * 0.55 && knee.y < tip.y * 0.85);
                 }

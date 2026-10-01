@@ -5473,8 +5473,8 @@ const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
 // Authored particle radiance calibration, not a temperature or physical fire-power model.
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
-    0.1925, 0.495, 0.33, 0.099, // same 0.55 reduction in cells and aggregate lights
-    0.44, 0.275, 0.1375, 0.055, // exterior source reduction; no camera-dependent scaling
+    0.35, 0.90, 0.60, 0.18, // restored pre-Canyon radiance; aggregate uses actual grain area
+    0.80, 0.50, 0.25, 0.10, // source calibration, never camera-dependent fill
 ];
 // Cabin flame chromaticity needs an amber core after sRGB decoding, not almost pure red.
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
@@ -5487,7 +5487,7 @@ const FIRE_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_BATCHES] = [
 // while breaking up the coarse black confetti. The shared cap still bounds a spreading fire.
 const SMOKE_CUBES_PER_INTERIOR_SPOT: usize = 1536;
 const MAX_INTERIOR_SMOKE_CUBES: usize = 12288;
-const FLAME_CUBES_PER_WORLD_SOURCE: usize = 64;
+const FLAME_CUBES_PER_WORLD_SOURCE: usize = 256; // half-width grains, four times the old count
 const SMOKE_CUBES_PER_WORLD_SOURCE: usize = 40;
 /// One-shot propellant gas released at the rear face of the breech when the block first opens.
 /// This is a soft ray-marched volume, not part of the flame/soot pool: bore gas is a thin
@@ -5649,42 +5649,92 @@ fn main_gun_camera_sample(age: f32, optic: bool, exposed: bool) -> CameraImpulse
     }
 }
 
-/// Continuously advected flame parcels rooted at the burning source. Curled rise and a
-/// tapered, rounded mesh replace the stationary grid. This is deterministic presentation
-/// of SurfaceFire's heat, not a combustion/fluid solver; suppression still owns the source.
-fn flame_parcel_sample(emitter_seed: u32, grain: usize, time: f32, strength: f32,
-    exterior: bool) -> FireVoxelSample {
+/// Restored generation-held cubic flames, with finer 6–8 mm cabin / 80–115 mm exterior grains.
+/// Source-surface intensity and suppression still own the bounded particle population.
+fn flame_parcel_sample(
+    emitter_seed: u32,
+    grain: usize,
+    time: f32,
+    strength: f32,
+    exterior: bool,
+) -> FireVoxelSample {
     let id = (grain as u32).wrapping_mul(0x9e37_79b9) ^ emitter_seed;
-    let h = |salt| hash01(id ^ salt);
-    let lifetime = if exterior { 0.8 + h(13) * 0.7 } else { 0.42 + h(13) * 0.38 };
-    let clock = time.max(0.0) / lifetime + h(71);
-    let generation = clock.floor() as u32;
-    let age = clock.fract();
-    let phase = h(41) * std::f32::consts::TAU;
-    let height = if exterior { 1.85 } else { 0.43 };
-    let radius = if exterior { 0.46 } else { 0.14 };
-    let radial = h(117).sqrt();
-    let taper = 1.0 - age * 0.76;
-    let curl = phase + age * (2.4 + h(81) * 2.1);
-    let sway = (time * 3.2 + emitter_seed as f32 * 0.001).sin() * age * radius * 0.23;
-    let offset = Vec3::new(phase.cos() * radial * radius * taper + curl.sin() * radius * age * 0.20 + sway,
-        age * height,
-        phase.sin() * radial * radius * taper + curl.cos() * radius * age * 0.20);
-    // Birth and death are at zero area, avoiding a visible pop when a parcel recycles.
-    let envelope = smoothstep(0.0, 0.10, age) * (1.0 - smoothstep(0.66, 1.0, age));
-    let size = (if exterior { 0.15 + h(31) * 0.08 } else { 0.010 + h(31) * 0.005 })
-        * envelope * strength.clamp(0.15, 1.4).sqrt();
-    let heat = (1.0 - age) * (1.0 - 0.50 * radial);
-    let stage = if exterior {
-        if heat > 0.73 { 2 } else if heat > 0.42 { 1 } else if heat > 0.20 { 3 } else { 0 }
-    } else if heat > 0.70 { 2 } else if heat > 0.30 { 1 } else if age < 0.15 { 0 } else { 3 };
-    FireVoxelSample { offset, size, stage, generation,
-        rotation: Quat::from_euler(glam::EulerRot::YXZ, curl, 0.28 * curl.sin(), 0.26 * curl.cos()) }
+    let h0 = hash01(id ^ 0x41c6_4e6d);
+    let h1 = hash01(id ^ 0x7f4a_7c15);
+    let lifetime = if exterior {
+        0.36 + h1 * 0.42
+    } else {
+        0.18 + h1 * 0.26
+    };
+    let clock = time.max(0.0) / lifetime + h0;
+    let generation = clock.floor().max(0.0) as u32;
+    let spawn = id ^ generation.wrapping_mul(0x85eb_ca6b);
+    let hx = hash01(spawn ^ 0x94d0_49bb);
+    let hz = hash01(spawn ^ 0x369d_ea0f);
+    let hl = hash01(spawn ^ 0xa511_e9b3);
+    let hs = hash01(spawn ^ 0x27d4_eb2f);
+    let _strength = strength.clamp(0.05, 1.4); // density is selected by the caller's bounded count
+    let layer_count = if exterior { 12usize } else { 44usize };
+    // Bias cells toward the base; the upper flame remains broken rather than becoming a solid cone.
+    let layer = (hl.powf(1.55) * layer_count as f32)
+        .floor()
+        .min((layer_count - 1) as f32) as usize;
+    let height_t = layer as f32 / (layer_count - 1) as f32;
+    let cell = if exterior { 0.12 } else { 0.010 };
+    let vertical_cell = if exterior { 0.16 } else { 0.010 };
+    let base_radius = if exterior { 4.0 } else { 14.0 };
+    let radius_cells = (base_radius * (1.0 - 0.58 * height_t)).ceil().max(1.0) as i32;
+    let span = (radius_cells * 2 + 1) as f32;
+    let ix = (hx * span).floor() as i32 - radius_cells;
+    let iz = (hz * span).floor() as i32 - radius_cells;
+
+    // Each new cube receives one fixed discrete size; no individual instance changes scale
+    // during its generation. Only exterior stacks use larger lower layers.
+    let tier = (hs * 3.0).floor().min(2.0) as usize;
+    let base_sizes = if exterior {
+        [0.080, 0.098, 0.115]
+    } else {
+        [0.006, 0.007, 0.008]
+    };
+    let size = base_sizes[tier]
+        * if exterior && height_t >= 0.42 { 0.78 } else { 1.0 };
+    // Resolve a coherent hot core and cooler shell in source space. Height-only stages
+    // produced four horizontal stripes once the fine cells became dense enough to join.
+    // This field stays fixed for the life of a cell, with no independent color flicker.
+    let radius_sq = (radius_cells * radius_cells).max(1) as f32;
+    let radial = ((ix * ix + iz * iz) as f32 / (2.0 * radius_sq)).clamp(0.0, 1.0);
+    let core_heat = (1.0 - (height_t - 0.38).abs() / 0.60).max(0.0)
+        * (1.0 - 0.80 * radial);
+    let stage = if !exterior {
+        if height_t < 0.08 + 0.12 * radial { 0 }
+        else if core_heat > 0.72 { 2 }
+        else if core_heat > 0.32 { 1 }
+        else { 3 }
+    } else if height_t < 0.20 {
+        0
+    } else if height_t < 0.46 {
+        1
+    } else if height_t < 0.74 {
+        2
+    } else {
+        3
+    };
+    FireVoxelSample {
+        offset: Vec3::new(
+            ix as f32 * cell,
+            layer as f32 * vertical_cell,
+            iz as f32 * cell,
+        ),
+        rotation: Quat::IDENTITY,
+        size,
+        stage,
+        generation,
+    }
 }
 
 /// Fixed rounded flame tongue; source energy uses this exact mesh area.
 fn flame_parcel_mesh(color: [u8; 3]) -> CpuMesh {
-    crate::prims::faceted_sphere_mesh(color).transformed(Mat4::from_scale(Vec3::new(0.48, 0.86, 0.38)))
+    box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color)
 }
 
 fn flame_parcel_area() -> f32 {
@@ -28527,7 +28577,10 @@ impl Game {
     /// the count bounded and make all four couch views see the exact same grains.
     fn drive_interior_fire(&mut self, r: &mut Renderer) {
         self.interior_fire_lights.fill(None);
+        r.heat_sources.clear();
+        let heat_review = crate::debug_gates::DebugGates::active().heat_haze;
         let fx_time = self.stealth.t;
+        r.heat_sources.time = fx_time;
         let mut flame_mats: [Vec<Mat4>; FIRE_FLAME_BATCHES] =
             std::array::from_fn(|i| {
             Vec::with_capacity(if i < FIRE_FLAME_STAGES {
@@ -28550,6 +28603,14 @@ impl Game {
         for (k, patch) in patches {
             let fire_origin = patch.position;
             let strength = patch.intensity.clamp(0.0, 1.0);
+            if heat_review {
+                let source = fire_origin + patch.normal * 0.02;
+                // Stop the prescribed plume at the first source-mesh contact above its origin.
+                let ends: Vec<_> = (1..=12).map(|i|source+Vec3::Y*(i as f32*0.065)).collect();
+                let clear = self.cabin_fire.clear_source_paths(source, &ends, &models);
+                let height = clear.into_iter().take_while(|v|*v).count() as f32 * 0.065;
+                r.heat_sources.add(source,0.20,height,strength,k as f32*1.37);
+            }
             let seed = (k as u32).wrapping_mul(0x9e37_79b9) ^ 0x51ed_19a1;
             let n_flame = ((strength.powf(0.62) * per_patch as f32).ceil() as usize).min(per_patch);
             let mut source_cells = Vec::with_capacity(n_flame);
@@ -28653,6 +28714,7 @@ impl Game {
                 }
                 continue;
             }
+            if heat_review { r.heat_sources.add(pos,0.72,3.2,strength,seed as f32*0.0001); }
             let n_flame = ((strength.min(1.0).sqrt() * FLAME_CUBES_PER_WORLD_SOURCE as f32).ceil()
                 as usize)
                 .min(FLAME_CUBES_PER_WORLD_SOURCE);
@@ -28705,217 +28767,11 @@ impl Game {
         }
     }
 
-    // ── Death instant-replay (kill-cam) ──────────────────────────────────────────────────────────
-    /// Render one frame of the fatal-shot replay at normalised phase `t` in [0,1], driven ENTIRELY
-    /// off `last_fatal`: the enemy firing (muzzle flash), the shell streaking in over slow-motion
-    /// ballistics, the penetration, and the spall/shrapnel cone spraying through the interior to the
-    /// crew/modules it killed — the "you see exactly what killed you" beat. No-op (leaves the last
-    /// frame) if there is no fatal record. The world is frozen at the death pose; this only overrides
-    /// the camera and drives the dedicated replay FX slots (it never touches the live FX pools).
-    pub fn render_replay(&mut self, t: f32, r: &mut Renderer) {
-        let Some(f) = self.last_fatal.clone() else {
-            return;
-        };
-        let t = t.clamp(0.0, 1.0);
-        self.clear_weapon_vfx_render(r);
-
-        if self.replay_has_interior_cut(t) {
-            let phase = if f.cause == DeathCause::FuelFire { t }
-                else { (t - death_replay::INTERIOR_CUT) / (1.0 - death_replay::INTERIOR_CUT) };
-            self.render_replay_interior(phase, r);
-            return;
-        }
-        // The first half of the eight-second replay covers muzzle-to-penetration. Cut inside
-        // immediately after entry rather than leaving the internal result behind opaque armour.
-        let t = t / death_replay::INTERIOR_CUT * 0.62;
-        r.interior_light = 0.0;
-        r.weather_shelter = 0.0;
-
-        // Cinematic look: reticle off, no crew-KO/optic overlay, and thin the shipped combat fog so
-        // the distant shooter reads across the ~300 m shell corridor.
-        r.reticle = false;
-        r.crew_ko = 0.0;
-        r.concussion = 0.0;
-        r.optic_blast = 0.0;
-        r.fog_density = 0.0018;
-
-        // Freeze-frame world: re-push the Tiger's death-pose transforms (enemies keep theirs from the
-        // last live update / the headless build) and hide the volatile live FX so no leftover
-        // in-flight tracer / impact / death-blast from the killing frame lingers under the replay FX.
-        r.set_model(self.slots.tiger[0], self.player.hull_model());
-        r.set_model(self.slots.tiger[1], self.player.turret_model());
-        r.set_model(self.slots.tiger[2], self.player.visual_gun_model());
-        self.drive_roof_hatches(r);
-        let glass_models = [
-            self.player.hull_model(),
-            self.player.turret_model(),
-            self.player.visual_gun_model(),
-        ];
-        for (k, s) in self.slots.tiger_glass.iter().enumerate() {
-            if let Some(s) = s {
-                r.set_model(*s, glass_models[k]);
-            }
-        }
-        for (k, s) in self.slots.tiger_rtt.iter().enumerate() {
-            if let Some(s) = s {
-                r.set_model(*s, glass_models[k]);
-            }
-        }
-        for &slot in &self.slots.tiger_periscopes {
-            r.set_model(slot, self.player.turret_model());
-        }
-        for slot in self.slots.gunner_sight {
-            r.set_model(slot,self.player.gun_model());
-        }
-        self.drive_tiger_dressing(r);
-        self.drive_armor_scars(r);
-        for s in [self.slots.muzzle, self.slots.tracer, self.slots.impact] {
-            r.set_visible(s, false);
-        }
-        for k in 0..E_FX_POOL {
-            r.set_visible(self.slots.e_tracer[k], false);
-            r.set_visible(self.slots.e_impact[k], false);
-        }
-        for k in 0..N_BLAST {
-            r.set_visible(self.slots.blast[k], false);
-        }
-        for k in 0..N_DEBRIS {
-            r.set_visible(self.slots.debris[k], false);
-        }
-        // Interior bulb + any live near-miss snow puffs are irrelevant to the external kill-cam.
-        r.set_visible(self.slots.bulb, false);
-        r.set_visible(self.slots.binocular_prop, false);
-        for k in 0..N_SNOW {
-            r.set_visible(self.slots.snow[k], false);
-        }
-        // Any in-flight MG chatter from the killing frame is hidden too.
-        r.set_visible(self.slots.mg_flash, false);
-        for k in 0..N_MG_TRACER {
-            r.set_visible(self.slots.mg_tracer[k], false);
-        }
-        for k in 0..N_MG_IMPACT {
-            r.set_visible(self.slots.mg_impact[k], false);
-        }
-
-        // The death replay never ghosts armor or reveals hidden module proxies. Damage feedback is
-        // the real wound, interior bodies/fragments/fire, and directional sound recorded by the
-        // authoritative event; the external camera sees only geometry it could physically see.
-        for &slot in &self.slots.tiger {
-            r.set_xray(slot, false);
-        }
-        for &slot in &self.slots.r_crew {
-            r.set_visible(slot, false);
-            r.set_emissive(slot, 0.0);
-        }
-        for &slot in &self.slots.r_mod {
-            r.set_visible(slot, false);
-            r.set_emissive(slot, 0.0);
-        }
-
-        // Kill-cam camera: opens beside the shooter down the shell path, dollies onto the entry.
-        let (eye, look) = replay_camera(f.shooter_pos, f.entry_point, f.spall_dir, t);
-        r.camera.pos = eye;
-        r.camera.set_forward(look - eye);
-        r.camera.fov_y = 50f32.to_radians();
-
-        // Optional slow-mo audio cue (diegetic, one-shot): the distant report as the round leaves,
-        // the penetration slam as it holes the plate. Gated so it fires once per replay pass. Fire-
-        // and-forget on the existing Sfx sinks; silent if there's no audio device.
-        if t <= 0.02 {
-            self.replay_cue = 0;
-        }
-        if self.replay_cue == 0 {
-            if let Some(a) = &self.audio {
-                let camera = r.camera.pos;
-                let ear = crate::sound_propagation::propagate(
-                    &crate::sound_propagation::Emission::gun(1.08, false, 0.0),
-                    &crate::sound_propagation::Path { distance_m: f.shooter_pos.distance(camera),
-                        atmosphere: crate::sound_propagation::active_atmosphere(), occluded: false,
-                        enclosure: crate::sound_propagation::Enclosure::OnFoot, headset: false });
-                a.play_world_at_ear(crate::audio::Sfx::EnemyGun, &ear, 0.0,
-                    crate::acoustics::ReverbParams::OPEN_SNOW);
-            }
-            self.replay_cue = 1;
-        }
-        if t >= REPLAY_IMPACT_T0 && self.replay_cue < 2 {
-            if let Some(a) = &self.audio {
-                let ear = crate::sound_propagation::propagate(
-                    &crate::sound_propagation::Emission::from_level(
-                        &crate::sound_levels::EXTERIOR_ARMOUR_STRIKE_10M),
-                    &crate::sound_propagation::Path { distance_m: f.entry_point.distance(r.camera.pos),
-                        atmosphere: crate::sound_propagation::active_atmosphere(), occluded: false,
-                        enclosure: crate::sound_propagation::Enclosure::OnFoot, headset: false });
-                a.play_world_at_ear(crate::audio::Sfx::PenetrationHit, &ear, 0.0,
-                    crate::acoustics::ReverbParams::OPEN_SNOW);
-            }
-            self.replay_cue = 2;
-        }
-
-        // Shooter muzzle flash at t≈0.
-        if t < REPLAY_MUZZLE_END {
-            let f0 = 1.0 - t / REPLAY_MUZZLE_END; // 1 → 0
-            let s = 1.4 + 6.0 * f0;
-            r.set_visible(self.slots.r_muzzle, true);
-            r.set_emissive(self.slots.r_muzzle, 15.0);
-            r.set_model(
-                self.slots.r_muzzle,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::splat(s),
-                    Quat::IDENTITY,
-                    f.shooter_pos,
-                ),
-            );
-        } else {
-            r.set_visible(self.slots.r_muzzle, false);
-        }
-
-        // The shell: a thin white-hot streak travelling shooter → entry over the slow-mo window.
-        let sfrac = replay_shell_frac(t);
-        if sfrac > 0.0 && sfrac < 1.0 {
-            let pos = replay_shell_pos(f.shooter_pos, f.entry_point, t);
-            let dir = (f.entry_point - f.shooter_pos).normalize_or_zero();
-            let rot = Quat::from_rotation_arc(Vec3::Z, dir);
-            r.set_visible(self.slots.r_shell, true);
-            r.set_emissive(self.slots.r_shell, 18.0); // blows to a white-hot core through bloom
-            r.set_model(
-                self.slots.r_shell,
-                Mat4::from_scale_rotation_translation(Vec3::new(0.35, 0.35, 9.0), rot, pos),
-            );
-        } else {
-            r.set_visible(self.slots.r_shell, false);
-        }
-
-        // Penetration flash at the entry, then a lingering ember through the final hold.
-        if t >= REPLAY_IMPACT_T0 && t < REPLAY_IMPACT_END {
-            let a = (t - REPLAY_IMPACT_T0) / (REPLAY_IMPACT_END - REPLAY_IMPACT_T0); // 0 → 1
-            let s = (1.5 * (1.2 - a)).max(0.3);
-            r.set_visible(self.slots.r_flash, true);
-            r.set_emissive(self.slots.r_flash, 20.0 * (1.0 - 0.55 * a));
-            r.set_model(
-                self.slots.r_flash,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::splat(s),
-                    Quat::IDENTITY,
-                    f.entry_point,
-                ),
-            );
-        } else if t >= REPLAY_IMPACT_END && t < 0.90 {
-            r.set_visible(self.slots.r_flash, true);
-            r.set_emissive(self.slots.r_flash, 6.0);
-            r.set_model(
-                self.slots.r_flash,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::splat(0.55),
-                    Quat::IDENTITY,
-                    f.entry_point,
-                ),
-            );
-        } else {
-            r.set_visible(self.slots.r_flash, false);
-        }
-
-        // Spall / shrapnel cone into the interior.
-        self.drive_replay_spall(&f, t, r);
+    /// Interior-only recorded aftermath. Independent of the shooter's or player's last eye.
+    pub fn render_replay(&mut self, phase: f32, r: &mut Renderer) {
+        if self.last_fatal.is_none() { return; }
+        r.ui_reset();
+        self.render_replay_interior(phase.clamp(0.0, 1.0), r);
     }
 
     /// Spray the spall/shrapnel cone for the replay: `N_SHARD` glowing cubes travel from the
@@ -34148,11 +34004,11 @@ mod tests {
         assert!(source.radiant_intensity > 0.0 && source.radiant_intensity.is_finite());
         assert_eq!(&FIRE_FLAME_COLORS[FIRE_FLAME_STAGES..],
             &[[183, 24, 4], [255, 73, 6], [255, 107, 12], [203, 38, 6]]);
-        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.44, 0.275, 0.1375, 0.055]);
+        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.8, 0.5, 0.25, 0.1]);
     }
 
     #[test]
-    fn organic_fire_rises_continuously_and_is_replay_deterministic() {
+    fn fine_cube_fire_holds_each_generation_and_is_replay_deterministic() {
         for exterior in [false, true] {
             for grain in 0..512 {
                 let a = flame_parcel_sample(0x51ed, grain, 2.75, 1.0, exterior);
@@ -34161,16 +34017,16 @@ mod tests {
                 assert_eq!(a.offset, b.offset);
                 assert_eq!(a.size, b.size);
                 assert!(a.offset.is_finite() && a.rotation.is_finite());
-                assert!(a.size >= 0.0 && a.size <= if exterior { 0.23 } else { 0.015 });
+                assert!(a.size >= 0.0 && a.size <= if exterior { 0.115 } else { 0.008 });
                 assert!(a.stage < FIRE_FLAME_STAGES);
                 if a.generation == next.generation {
-                    assert!(next.offset.y > a.offset.y, "a flame parcel must rise, not hold a voxel");
-                    assert!(a.offset.distance(next.offset) < 0.01);
-                    assert!((a.size - next.size).abs() < 0.01);
+                    assert_eq!(next.offset, a.offset);
+                    assert_eq!(a.size, next.size);
+                    assert_eq!(a.rotation, Quat::IDENTITY);
                 }
             }
         }
-        assert!(flame_parcel_area() > 1.0 && flame_parcel_area() < 6.0);
+        assert!((flame_parcel_area() - 6.0).abs() < 1e-6);
     }
 
     #[test]

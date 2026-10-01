@@ -3,6 +3,8 @@
 //! environment is never read, and in a debug build a gate opens only on an explicit opt-in.
 //! `tests::every_gate_is_off_in_both_shipping_presets` is the required regression.
 //!
+//! - `KESSEL_DEBUG_HEAT_HAZE=1`: prescribed screen-space fire refraction for look review.
+//!   No solved gas temperature or offscreen transmission; disabled in shipping.
 //! - `KESSEL_DEBUG_SHELL_SHRIEK=1`: the scripted outgoing-shell "shriek" heard head-out. A firer
 //!   behind a Mach 2+ round hears the muzzle blast, not a receding shriek (the round's shock never
 //!   reaches him); removed pending a simulated projectile acoustic.
@@ -25,6 +27,8 @@ use crate::graphics::GraphicsPreset;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DebugGates {
+    /// Screen-space fire refraction study; not a thermal-fluid solver.
+    pub heat_haze: bool,
     pub shell_shriek: bool,
     pub ambient_booms: bool,
     /// Multiplier on the ear model's recovery clock (1 = real time).
@@ -39,6 +43,7 @@ pub struct DebugGates {
 impl DebugGates {
     /// Every gate closed: what both shipping presets run.
     pub const SHIPPING: Self = Self {
+        heat_haze: false,
         shell_shriek: false,
         ambient_booms: false,
         hearing_time_scale: 1.0,
@@ -74,6 +79,7 @@ impl DebugGates {
             .and_then(|v| v.trim().parse::<f32>().ok())
             .filter(|v| v.is_finite() && (0.01..=1.0e7).contains(v));
         Self {
+            heat_haze: opted("KESSEL_DEBUG_HEAT_HAZE"),
             shell_shriek: opted("KESSEL_DEBUG_SHELL_SHRIEK"),
             ambient_booms: opted("KESSEL_DEBUG_AMBIENT_BOOMS"),
             hearing_time_scale: scale,
@@ -114,7 +120,7 @@ mod tests {
             assert!(DebugGates::resolve(true, preset, nothing).is_shipping(), "{preset:?}");
             // Only an explicit opt-in in a debug build opens them.
             let open = DebugGates::resolve(true, preset, everything_on);
-            assert!(open.shell_shriek && open.ambient_booms && open.hearing_time_scale == 3600.0);
+            assert!(open.heat_haze && open.shell_shriek && open.ambient_booms && open.hearing_time_scale == 3600.0);
             assert_eq!(open.terrain_render_res, Some(256));
             assert_eq!(open.fixed_camera_exposure, Some(320.0));
         }
