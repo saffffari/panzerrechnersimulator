@@ -1,0 +1,316 @@
+{
+  "schema": "panzer.blizzard-firefight-delivery.v1",
+  "date": "2026-10-01",
+  "base_commit": "756455c26491d7321eaa95469abf40c235917836",
+  "video": "captures/blizzard_firefight_20261001.mp4",
+  "checks": {
+    "release_build": true,
+    "dust_medium_regression": true,
+    "same_scene_dust_gpu_regression": true,
+    "full_video_decode": true,
+    "visual_contact_sheet_and_impacts_inspected": true,
+    "output": [
+      1280,
+      720
+    ],
+    "native_resolution": [
+      640,
+      360
+    ],
+    "fps": 30,
+    "frames": 420,
+    "duration_seconds": 14,
+    "aac_audio": true,
+    "both_actual_lanes_los_checked": true,
+    "god_mode": false
+  },
+  "combat": {
+    "tiger_shots": 1,
+    "enemy_shots": 3,
+    "incoming_hits": 3,
+    "incoming_penetrations": 1,
+    "tiger_alive": false,
+    "enemy_alive": [
+      false,
+      true
+    ],
+    "final_combat": {
+      "bore": [
+        0.9548482894897461,
+        -0.02901560068130493,
+        -0.29567351937294006
+      ],
+      "gun_pitch": -0.0290196742862463,
+      "hits": 1,
+      "impact": [
+        69.41315460205078,
+        4.968369483947754,
+        -241.20611572265625
+      ],
+      "impact_kind": "Penetrate",
+      "kills": 1,
+      "lay_pitch": -0.0290196742862463,
+      "lay_yaw": 1.8710871934890747,
+      "muzzle": [
+        65.56600189208984,
+        5.978760719299316,
+        -281.708740234375
+      ],
+      "target": [
+        59.393226623535156,
+        6.433357238769531,
+        -306.8204650878906
+      ]
+    },
+    "events": [
+      {
+        "at": 2.0166666507720947,
+        "kind": "gun_discharge",
+        "source": [
+          57.931732177734375,
+          5.827156066894531,
+          -227.2003631591797
+        ],
+        "tiger": false
+      },
+      {
+        "at": 2.0833332538604736,
+        "combat": {
+          "bore": [
+            -0.03825686499476433,
+            -0.021553432568907738,
+            0.9990354776382446
+          ],
+          "gun_pitch": -0.02155510149896145,
+          "hits": 0,
+          "impact": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "impact_kind": "Ground",
+          "kills": 0,
+          "lay_pitch": -0.02155510149896145,
+          "lay_yaw": -0.038275096565485,
+          "muzzle": [
+            59.780948638916016,
+            6.014504432678223,
+            -274.1562194824219
+          ],
+          "target": [
+            58.94603729248047,
+            5.931465148925781,
+            -225.61769104003906
+          ]
+        },
+        "incoming": 1,
+        "kind": "resolved_hit",
+        "outgoing": 0
+      },
+      {
+        "at": 4.016666889190674,
+        "kind": "gun_discharge",
+        "source": [
+          61.37814712524414,
+          5.977316856384277,
+          -274.3183288574219
+        ],
+        "tiger": true
+      },
+      {
+        "at": 4.050000190734863,
+        "combat": {
+          "bore": [
+            0.23570390045642853,
+            -0.02931704744696617,
+            0.9713826179504395
+          ],
+          "gun_pitch": -0.029321249574422836,
+          "hits": 1,
+          "impact": [
+            69.41315460205078,
+            4.968369483947754,
+            -241.20611572265625
+          ],
+          "impact_kind": "Penetrate",
+          "kills": 1,
+          "lay_pitch": -0.029321249574422836,
+          "lay_yaw": 0.23804710805416107,
+          "muzzle": [
+            61.37814712524414,
+            5.977316856384277,
+            -274.3183288574219
+          ],
+          "target": [
+            78.59708404541016,
+            6.181007385253906,
+            -233.46343994140625
+          ]
+        },
+        "incoming": 1,
+        "kind": "resolved_hit",
+        "outgoing": 1
+      },
+      {
+        "at": 4.050000190734863,
+        "index": 0,
+        "kind": "t34_destroyed"
+      },
+      {
+        "at": 4.5,
+        "kind": "gun_discharge",
+        "source": [
+          77.39973449707031,
+          6.053943634033203,
+          -239.29576110839844
+        ],
+        "tiger": false
+      },
+      {
+        "at": 4.550000190734863,
+        "combat": {
+          "bore": [
+            0.23570390045642853,
+            -0.02931704744696617,
+            0.9713826179504395
+          ],
+          "gun_pitch": -0.029321249574422836,
+          "hits": 1,
+          "impact": [
+            69.41315460205078,
+            4.968369483947754,
+            -241.20611572265625
+          ],
+          "impact_kind": "Penetrate",
+          "kills": 1,
+          "lay_pitch": -0.029321249574422836,
+          "lay_yaw": 0.23804710805416107,
+          "muzzle": [
+            61.37814712524414,
+            5.977316856384277,
+            -274.3183288574219
+          ],
+          "target": [
+            79.17280578613281,
+            6.181007385253906,
+            -237.420654296875
+          ]
+        },
+        "incoming": 2,
+        "kind": "resolved_hit",
+        "outgoing": 1
+      },
+      {
+        "at": 9.916666984558105,
+        "kind": "gun_discharge",
+        "source": [
+          80.6308822631836,
+          6.222951889038086,
+          -286.7877197265625
+        ],
+        "tiger": false
+      },
+      {
+        "at": 9.933333396911621,
+        "combat": {
+          "bore": [
+            0.9548482894897461,
+            -0.02901560068130493,
+            -0.29567351937294006
+          ],
+          "gun_pitch": -0.0290196742862463,
+          "hits": 1,
+          "impact": [
+            69.41315460205078,
+            4.968369483947754,
+            -241.20611572265625
+          ],
+          "impact_kind": "Penetrate",
+          "kills": 1,
+          "lay_pitch": -0.0290196742862463,
+          "lay_yaw": 1.8710871934890747,
+          "muzzle": [
+            65.56600189208984,
+            5.978760719299316,
+            -281.708740234375
+          ],
+          "target": [
+            83.80736541748047,
+            6.433357238769531,
+            -289.0869140625
+          ]
+        },
+        "incoming": 3,
+        "kind": "resolved_hit",
+        "outgoing": 1
+      },
+      {
+        "at": 9.933333396911621,
+        "kind": "tiger_destroyed"
+      }
+    ]
+  },
+  "limits": {
+    "capture": "External camera with automated Tiger crew and baseline T-34 AI; staged positions, no staged impacts or damage",
+    "audio": "Deterministic exterior bed and synthesized reports synchronized to accepted gameplay gun sequences and acoustic propagation, with destruction sounds on actual alive-to-dead transitions (~21m observer delay). Post-produced, not the live player audio mix.",
+    "dust": "Twelve shared volume supports, expansion and dilution envelopes; no fluid solver",
+    "performance": "Offline rendering; not a real-time benchmark"
+  },
+  "files": [
+    {
+      "path": "captures/blizzard_firefight_20261001.mp4",
+      "sha256": "dbe2294b2bbf3c9e6dd4c0ac637ecf7ac1ac549e6b50bee4f502adfb15a9cecb",
+      "bytes": 13465924
+    },
+    {
+      "path": "captures/blizzard_firefight_20261001.json",
+      "sha256": "af8d9ddc7f62fc67aefde2ae58077b328edd8624933780febcdb3d04593becc2",
+      "bytes": 22927
+    },
+    {
+      "path": "captures/blizzard_firefight_contact_20261001.jpg",
+      "sha256": "4cdd7c348ce1c718c7f7fcbe8a76d62d977ad63abd482ec5b3b38575b1ea16ef",
+      "bytes": 44294
+    },
+    {
+      "path": "captures/blizzard_firefight_impact_20261001.png",
+      "sha256": "38ac3c5c90638a62a70ea4b3ad0034133197ad53f290fdf2046fc65714c6a267",
+      "bytes": 680073
+    },
+    {
+      "path": "captures/blizzard_firefight_tiger_hit_20261001.png",
+      "sha256": "41bfb7705a8d563e9826357168b78816442dee17e670467bb492771466f0e7b3",
+      "bytes": 495709
+    },
+    {
+      "path": "captures/impact_motion_dust_fix_20261001.mp4",
+      "sha256": "d8bcfcd413214dab0719fd539891e501358e34ed22fa0170b585d563e928fb1d",
+      "bytes": 4148741
+    },
+    {
+      "path": "captures/impact_cube_before_20261001.png",
+      "sha256": "f8aab14711dcd358dfc02ae38e5921f06082a27590aa57ca626a352162e4e373",
+      "bytes": 770779
+    },
+    {
+      "path": "captures/impact_cube_after_20261001.png",
+      "sha256": "0547ded1633b3f84665e3853a72a6e59f110b3bde6f2052e8972706d07ad8b66",
+      "bytes": 788591
+    },
+    {
+      "path": "src/blizzard_battle_capture.rs",
+      "sha256": "1c09e430b6f8297dd551925fd0d454ae857d5099b5d90607da5e9600ea4937f6",
+      "bytes": 13549
+    },
+    {
+      "path": "src/game.rs",
+      "sha256": "337cbbb67f001498f27eb9702a59b8e66359ece4633fd3f56a133e6f79b2c59c",
+      "bytes": 1675851
+    },
+    {
+      "path": "src/weapon_vfx.rs",
+      "sha256": "bd987ed1443d49a670d207c33ff768b96954034fc6a392c5551f0ea9e2dc926b",
+      "bytes": 36237
+    }
+  ]
+}

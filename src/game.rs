@@ -781,7 +781,25 @@ struct SnowPuff {
     t: f32,   // life remaining
     dur: f32, // total life
     pos: Vec3,
-    scale: f32, // peak radius (closer near-miss = bigger)
+    scale: f32, // legacy edge scale (closer near-miss = bigger)
+    albedo: f32, // suspended snow scatters more than masonry dust
+}
+
+impl SnowPuff {
+    /// Finite particulate support, advected by the shared weather wind. Expansion and dilution
+    /// are a prescribed presentation envelope, not a granular/fluid solver or damage state.
+    fn medium(&self, wind: Vec2) -> Option<(Vec3, f32, f32, f32)> {
+        if self.t <= 0.0 || self.dur <= 0.0 {
+            return None;
+        }
+        let age = (self.dur - self.t).max(0.0);
+        let grow = (age / self.dur).clamp(0.0, 1.0);
+        // `scale` was the old box's edge length. Preserve its reach using a soft radial support.
+        let radius = self.scale * (0.175 + 0.575 * grow);
+        let center = self.pos + Vec3::new(wind.x * age * 0.6, grow * 0.7, wind.y * age * 0.6);
+        let density = 0.8 * (1.0 - grow).powf(1.4);
+        Some((center, radius, density, age))
+    }
 }
 
 /// One pooled MG tracer streak: the thin/fast MG round, animated with the same muzzle→impact lerp
@@ -26246,6 +26264,7 @@ impl Game {
             dur,
             pos: pos + Vec3::new(0.0, 0.3, 0.0), // lift off the snow so it reads as a kicked-up cloud
             scale: 1.1 + 1.9 * close,
+            albedo: 0.9,
         };
         println!(
             "[panzerrechnersystem] NEAR-MISS — snow puff at {:.1} m (close {:.2})",
@@ -26575,8 +26594,7 @@ impl Game {
     }
 
     /// Claim the next pooled snow/dust puff slot (round-robin) and arm it as a grey MASONRY-DUST
-    /// cloud — reuses the near-miss snow-puff pool as ordinary lit grey material. `scale` sizes the
-    /// burst.
+    /// cloud — shares the near-miss pool and participating-medium renderer. `scale` sizes the burst.
     fn spawn_dust(&mut self, pos: Vec3, scale: f32) {
         let k = self.next_snow;
         self.next_snow = (self.next_snow + 1) % N_SNOW;
@@ -26586,6 +26604,7 @@ impl Game {
             dur,
             pos: pos + Vec3::new(0.0, 0.3, 0.0),
             scale: 1.4 + 2.4 * scale,
+            albedo: 0.65,
         };
     }
 
@@ -27870,29 +27889,14 @@ impl Game {
             }
         }
 
-        // Near-miss snow/dust puffs are ordinary particulate material and drift upward from the
-        // impact. They receive scene light; they never manufacture their own visibility.
+        // Advance the near-miss/collapse/blast dust clock. Retain the old scene indices for
+        // capture compatibility, but never draw their opaque boxes: density is submitted below
+        // after the shared smoke pool has been cleared and the primary smoke sources admitted.
         for k in 0..N_SNOW {
-            let slot = self.slots.snow[k];
             let sp = &mut self.snow_puffs[k];
-            if sp.t > 0.0 {
-                sp.t -= dt;
-                let frac = (sp.t / sp.dur).clamp(0.0, 1.0); // 1 → 0 over its life
-                let grow = 1.0 - frac; // 0 → 1
-                let s = sp.scale * (0.35 + 1.15 * grow); // expanding cloud
-                r.set_visible(slot, true);
-                r.set_emissive(slot, 0.0);
-                r.set_model(
-                    slot,
-                    Mat4::from_scale_rotation_translation(
-                        Vec3::new(s, s * 0.8, s),
-                        Quat::IDENTITY,
-                        sp.pos + Vec3::new(0.0, grow * 0.7, 0.0),
-                    ),
-                );
-            } else {
-                r.set_visible(slot, false);
-            }
+            sp.t = (sp.t - dt.max(0.0)).max(0.0);
+            r.set_visible(self.slots.snow[k], false);
+            r.set_emissive(self.slots.snow[k], 0.0);
         }
 
         // Coax / hull MG34 FX: muzzle flicker, thin/fast tracer streaks, and impact spurts.
@@ -27918,6 +27922,19 @@ impl Game {
 
         // Transient weapon volumes join the sustained smoke supports above.
         self.drive_weapon_vfx(dt, r);
+        self.drive_dust_volumes(r);
+    }
+
+    fn drive_dust_volumes(&self, r: &mut Renderer) {
+        // Use remaining supports nearest-first; fire and weapon smoke retain their existing
+        // priority in the bounded shared pool. Actual solid debris remains in its own mesh pool.
+        let mut puffs: Vec<_> = self.snow_puffs.iter().enumerate()
+            .filter_map(|(i, puff)| puff.medium(r.weather_wind_world).map(|sample| (i, puff, sample)))
+            .collect();
+        puffs.sort_by(|a, b| a.2.0.distance_squared(r.camera.pos).total_cmp(&b.2.0.distance_squared(r.camera.pos)));
+        for (i, puff, (center, radius, density, age)) in puffs {
+            r.add_smoke_volume(center, radius, density, age * 0.8 + i as f32 * 2.1, puff.albedo);
+        }
     }
 
     /// Integrate and draw dropped rounds against the actual floor, walls and machinery. Their
@@ -29884,6 +29901,24 @@ fn swept_terrain_contact(start: Vec3, end: Vec3, hf: &Heightfield) -> Option<Pro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dust_medium_expands_dilutes_and_uses_weather_wind() {
+        let mut puff = SnowPuff {
+            t: 0.9, dur: 0.9, pos: Vec3::new(2.0, 0.8, 4.0), scale: 3.2, albedo: 0.65,
+        };
+        let (initial_center, initial_radius, initial_density, _) = puff.medium(Vec2::ZERO).unwrap();
+        assert_eq!(initial_center, puff.pos);
+        puff.t = 0.45;
+        let calm = puff.medium(Vec2::ZERO).unwrap();
+        let windy = puff.medium(Vec2::new(4.0, -2.0)).unwrap();
+        assert!(calm.1 > initial_radius && calm.2 < initial_density);
+        assert!((windy.0 - calm.0 - Vec3::new(1.08, 0.0, -0.54)).length() < 1e-5);
+        assert_eq!(calm.1, windy.1);
+        assert_eq!(calm.2, windy.2);
+        puff.t = 0.0;
+        assert!(puff.medium(Vec2::ZERO).is_none());
+    }
 
     #[test]
     fn loader_first_step_has_no_spawn_snap_and_walks_around_the_breech() {

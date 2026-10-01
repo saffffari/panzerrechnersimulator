@@ -499,7 +499,7 @@ mod tests {
                 for _ in 0..2 {g.update(&TankInput::default(),1.0/60.0,&mut r);}
                 if frame==24 {g.weapon_vfx.armor_sparks(Vec3::new(0.0,1.5,7.0),Vec3::Z,Vec3::NEG_Z,Weapon::Cannon(88));}
                 if frame==48 {g.spawn_blast(Vec3::new(0.0,0.8,7.0),7.0,20.0,0.8);}
-                set_camera(&mut r);r.clear_smoke();g.drive_weapon_vfx(0.0,&mut r);r.ui_reset();
+                set_camera(&mut r);r.clear_smoke();g.drive_weapon_vfx(0.0,&mut r);g.drive_dust_volumes(&mut r);r.ui_reset();
                 r.draw_text("STAGED EFFECT REVIEW / SOURCE TIGER / NO DAMAGE OUTCOME",0.5,0.025,0.016,[1.0,0.95,0.8,1.0],crate::ui::Align::Center);
                 encoder.stdin.as_mut().unwrap().write_all(&r.render_to_rgba(&device,&queue,1280,720)?)?;
             }
