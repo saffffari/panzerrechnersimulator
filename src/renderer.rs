@@ -47,8 +47,8 @@ const CAMERA_EXPOSURE_ENV: &str = "KESSEL_CAMERA_EXPOSURE";
 /// Diagnostic A/B only: restore the former ordering (fullscreen sky before opaque draws).
 /// Shipping defaults to depth-gated sky; the transport and its samples are otherwise identical.
 const UNGATED_SKY_ENV: &str = "KESSEL_UNGATED_SKY";
-const INTERNAL_RES_PRESETS: [(u32, u32); 9] =
-    [(320, 180), (320, 240), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1280, 720)];
+pub const INTERNAL_RES_PRESETS: [(u32, u32); 12] =
+    [(320, 180), (320, 240), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
 const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
@@ -343,7 +343,10 @@ fn parse_shadow_resolution(raw: &str) -> Result<u32, &'static str> {
         .ok_or("allowed shadow sides are 512, 768, 1024, 1536, and 2048")
 }
 
+thread_local! { static MENU_SHADOW_RES: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) }; }
+
 fn configured_shadow_resolution(preset: crate::graphics::GraphicsPreset) -> u32 {
+    if let Some(size) = MENU_SHADOW_RES.get() { return size; }
     let fallback = preset.shadow_resolution();
     match std::env::var(SHADOW_RES_ENV) {
         Ok(raw) => match parse_shadow_resolution(&raw) {
@@ -825,6 +828,8 @@ struct CrushUniform {
     retro: f32,
     /// Short-lived visual disorientation from a severe nearby armor hit.
     concussion: f32,
+    _grade_pad: [f32; 2],
+    display_grade: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -900,6 +905,7 @@ struct PuffGpu {
     age: f32,
     dir: [f32; 3],
     strength: f32,
+    shape: [f32; 4], // radius (0 legacy), density, noise phase, reserved
 }
 
 /// Uniform for the volumetric smoke pass. Kept SEPARATE from the shared `CameraUniform` on purpose:
@@ -937,6 +943,7 @@ struct SmokeUniform {
     fog_layer: [f32; 4], // bottom_y, top_y, unused, unused
     // Runtime numerical quadrature: world, cabin, plume, secondary local-medium steps.
     transport_steps: [f32; 4],
+    weather_motion: [f32;4],
 }
 
 const SMOKE_SHADER_SOURCE: &str = include_str!("../shaders/smoke.wgsl");
@@ -2306,6 +2313,13 @@ pub struct Renderer {
     pub camera: Camera,
     pub master_retro: f32,
     pub display_tuning: Option<display_tuning::DisplayTuning>,
+    /// User reproduction controls: exposure multiplier, saturation, warmth, gamma.
+    pub display_grade: [f32; 4],
+    pub sky_time_scale: f32,
+    weather_offset: glam::Vec3,
+    pub weather_override: Option<f32>,
+    weather_original: Option<(f32,f32,f32,f32,glam::Vec2)>,
+    user_sky_phase: Option<(u8,crate::celestial_sky::SkyClock)>,
     /// Optional fixed capture exposure. Normal play uses DEFAULT_CAMERA_EXPOSURE without any
     /// adaptation. Deterministic photo harnesses can explicitly select another fixed HDR key.
     pub exposure_override: Option<f32>,
@@ -5313,6 +5327,12 @@ impl Renderer {
             camera,
             master_retro: configured_master_retro(),
             display_tuning: None,
+            display_grade: [1.0, 1.0, 0.0, 1.0],
+            sky_time_scale: 1.0,
+            weather_offset: glam::Vec3::ZERO,
+            weather_override: None,
+            weather_original: None,
+            user_sky_phase: None,
             exposure_override: configured_camera_exposure_override(),
             fog_density: 0.02,
             reticle: false,
@@ -5405,12 +5425,14 @@ impl Renderer {
                 age: 0.0,
                 dir: [0.0, 0.0, 1.0],
                 strength: 0.0,
+                shape: [0.0;4],
             }; MAX_PUFFS],
             breech_gas: PuffGpu {
                 pos: [0.0; 3],
                 age: 0.0,
                 dir: [0.0, 0.0, -1.0],
                 strength: 0.0,
+                shape: [0.0;4],
             },
             atmo_enabled: false,
             atmo_haze: 0.0,
@@ -5515,19 +5537,34 @@ impl Renderer {
     pub fn resize_shader_resolution(
         &mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: (u32, u32),
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(self.shader_backend && !self.rt_on, "Display previews require the shader renderer");
+        self.resize_shader_targets(device, queue, size, self.shadow_res)
+    }
+
+    pub fn full_transport_quality(&self) -> bool { self.transport_quality == TransportQuality::Full }
+    pub fn set_full_transport_quality(&mut self, full: bool) {
+        let quality = if full { TransportQuality::Full } else { TransportQuality::Gameplay };
+        if quality != self.transport_quality { self.transport_quality = quality; self.reset_history(); }
+    }
+
+    pub fn resize_shader_targets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue,
+        size: (u32,u32), shadows: u32) -> anyhow::Result<()> {
+        anyhow::ensure!(self.shader_backend && !self.rt_on, "Resolution changes require the shader renderer");
+        anyhow::ensure!([512,768,1024,1536,2048].contains(&shadows), "Unsupported shadow resolution");
         anyhow::ensure!(INTERNAL_RES_PRESETS.contains(&size), "Unsupported display resolution");
-        if (self.iw, self.ih) == size { return Ok(()); }
+        if (self.iw, self.ih) == size && self.shadow_res == shadows { return Ok(()); }
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        MENU_SHADOW_RES.set(Some(shadows));
         let mut next = Self::new_at_resolution(device, queue, &[], &[], size);
+        MENU_SHADOW_RES.set(None);
         // Scene and simulation-owned presentation state survive. Target-bound uniforms, shadow
         // caches, temporal histories and post-process bindings are rebuilt together by new().
         macro_rules! retain { ($($field:ident),* $(,)?) => { $(
             std::mem::swap(&mut next.$field, &mut self.$field);
         )* }; }
-        retain!(camera, master_retro, display_tuning, exposure_override, fog_density, reticle, optic_blast,
+        retain!(camera, master_retro, display_tuning, display_grade, transport_quality, exposure_override, fog_density, reticle, optic_blast,
             crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
-            sky_clock, celestial, authored_clock_start,
+            sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, weather_override, weather_original,
             weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
             optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
@@ -5538,6 +5575,7 @@ impl Renderer {
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
             new.copy_registrations_from(old);
         }
+        next.cabin_shadows.copy_registrations_from(&self.cabin_shadows);
         next.camera.aspect = size.0 as f32 / size.1 as f32;
         println!("[display] render targets {}x{}; retained {} meshes, {} instance batches",
             size.0, size.1, next.meshes.len(), next.inst_batches.len());
@@ -5594,8 +5632,26 @@ impl Renderer {
     }
 
     /// Advance the act clock with simulated time; the Sun and the Moon move with it.
+    pub fn user_sky_phase(&self) -> u8 { self.user_sky_phase.map_or(0,|p|p.0) }
+
+    pub fn set_user_sky_phase(&mut self, phase:u8) {
+        if phase == self.user_sky_phase() { return; }
+        if phase == 0 {
+            if let Some((_,clock)) = self.user_sky_phase.take() { self.set_sky_clock(clock); }
+        } else if phase <= 4 {
+            let original = self.user_sky_phase.map_or(self.sky_clock,|p|p.1);
+            let named = [DayPhase::Dawn,DayPhase::Day,DayPhase::Dusk,DayPhase::Night][phase as usize-1];
+            self.set_sky_clock(crate::celestial_sky::SkyClock::for_act(self.weather_act_id,named.clock_phase()));
+            self.user_sky_phase = Some((phase,original));
+        }
+        self.reset_history();
+    }
+
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
-        self.sky_clock.advance(dt_s as f64);
+        self.sky_clock.advance(dt_s as f64 * self.sky_time_scale as f64);
+        self.apply_weather_override();
+        self.weather_offset += glam::Vec3::new(self.weather_wind_world.x,0.0,self.weather_wind_world.y)
+            *weather_gust(self.time,self.weather_seed)*dt_s.max(0.0);
         self.refresh_celestial();
     }
 
@@ -5646,6 +5702,7 @@ impl Renderer {
         } else {
             glam::Vec2::ZERO
         };
+        self.apply_weather_override();
     }
 
     pub fn set_model(&mut self, idx: usize, m: glam::Mat4) {
@@ -6851,7 +6908,15 @@ impl Renderer {
                 age,
                 dir: dir.normalize_or_zero().to_array(),
                 strength,
+                shape: [0.0;4],
             };
+        }
+    }
+
+    /// Add a soft participating-medium support; bounded shared pool, no opaque particles.
+    pub fn add_smoke_volume(&mut self, center: glam::Vec3, radius: f32, density: f32, phase: f32, albedo: f32) {
+        if let Some(p) = self.smoke_puffs.iter_mut().find(|p|p.strength<=0.0) {
+            *p=PuffGpu {pos:center.to_array(),age:0.0,dir:[0.0;3],strength:1.0,shape:[radius.max(0.02),density.max(0.0),phase,albedo.clamp(0.0,1.0)]};
         }
     }
 
@@ -6864,6 +6929,7 @@ impl Renderer {
             age,
             dir: dir.normalize_or_zero().to_array(),
             strength: strength.clamp(0.0, 1.0),
+            shape: [0.0;4],
         };
     }
 
@@ -7009,7 +7075,29 @@ impl Renderer {
         queue.write_buffer(&self.pixel_particle_uniform,0,bytemuck::bytes_of(&uniform));
     }
 
+    pub fn set_weather_override(&mut self, value:Option<f32>) {
+        if value==self.weather_override {return;}
+        if self.weather_override.is_none() && value.is_some() {
+            self.weather_original=Some((self.precipitation,self.fog_density,self.overcast,self.storm,self.weather_wind_world));
+        }
+        if value.is_none() {
+            if let Some((snow,fog,cloud,storm,wind))=self.weather_original.take() {
+                self.precipitation=snow;self.fog_density=fog;self.overcast=cloud;self.storm=storm;self.weather_wind_world=wind;
+            }
+        }
+        self.weather_override=value;
+    }
+    fn apply_weather_override(&mut self) {
+        if let Some(intensity)=self.weather_override {
+            let weather=crate::storm_weather::sample(intensity,self.time);
+            self.precipitation=weather.snow;self.fog_density=weather.extinction;
+            self.overcast=weather.cloud;self.storm=weather.storm;
+            let direction=self.weather_wind_world.try_normalize().unwrap_or(glam::Vec2::new(0.8,0.6));
+            self.weather_wind_world=direction*weather.wind;
+        }
+    }
     fn upload_uniforms(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.apply_weather_override();
         // Actor topology can change between frames. Refresh source/instance tables before writing
         // per-frame material state, not later in rt_update after that write already used old sizes.
         self.rt_refresh_actor_lookup(queue);
@@ -7128,6 +7216,12 @@ impl Renderer {
         // colour mix. Laptop changes only the numerical column quadrature below, never this scene
         // state or transport law.
         physical_environment.cloud.coverage = self.overcast.clamp(0.0, 1.0) as f64;
+        physical_environment.cloud_offset_m = self.weather_offset.as_dvec3();
+        physical_environment.cloud_evolution_s = self.time as f64;
+        let latitude = self.sky_clock.site.latitude_deg.to_radians();
+        let sidereal = (crate::ephemeris::apparent_sidereal_time_deg(self.sky_clock.now())
+            + self.sky_clock.site.longitude_deg_east).to_radians();
+        physical_environment.star_frame = [latitude.sin(),latitude.cos(),sidereal,1.0];
         // The ephemeris supplies both bodies: the key carries the direct beam along `sun_dir`
         // (diagnostic fixtures may stage that direction), the secondary lights only air and
         // cloud. Night is whatever these give: no floor, no fraction of the Sun.
@@ -7185,6 +7279,7 @@ impl Renderer {
             // while allowing real downwelling daylight to reach the battlefield.
             fog_layer: world_medium.layer,
             transport_steps: self.transport_quality.smoke_steps(),
+            weather_motion:[self.weather_offset.x,self.weather_offset.y,self.weather_offset.z,self.time],
         };
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
 
@@ -7216,6 +7311,8 @@ impl Renderer {
             exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
+            _grade_pad: [0.0; 2],
+            display_grade: self.display_grade,
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
@@ -10200,6 +10297,7 @@ fn terrain_material_shader_source(src: &str) -> String {
     ).replace("// @camera-relative-projection", include_str!("../shaders/camera_relative.wgsl"))
     .replace("// @sky-visibility-sampling", include_str!("../shaders/sky_visibility_sampling.wgsl"))
     .replace("// @cabin-visibility-sampling", include_str!("../shaders/cabin_visibility.wgsl"))
+    .replace("// @weather-density",include_str!("../shaders/weather_volume.wgsl"))
 }
 
 fn shader(device: &wgpu::Device, label: &str, src: &str) -> wgpu::ShaderModule {
@@ -10601,7 +10699,7 @@ mod atmosphere_tests {
             "0x0",
             "640x480",
             "1024x576",
-            "1920x1080",
+            "3840x2160",
             "potato",
         ] {
             assert!(
@@ -10658,26 +10756,27 @@ mod atmosphere_tests {
         assert!(!ordered_branch.contains("grain_gate"));
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 56);
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 80);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
         assert_eq!(std::mem::offset_of!(CrushUniform, concussion), 52);
+        assert_eq!(std::mem::offset_of!(CrushUniform, display_grade), 64);
     }
 
     #[test]
     fn volumetric_uniform_v2_contains_only_modeled_medium_and_shared_sources() {
-        assert_eq!(std::mem::offset_of!(SmokeUniform, breech_gas), 480);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, breech_gas), 672);
         assert_eq!(std::mem::offset_of!(SmokeUniform, fog_density), 76);
-        assert_eq!(std::mem::offset_of!(SmokeUniform, n_lights), 512);
-        assert_eq!(std::mem::offset_of!(SmokeUniform, lights), 528);
-        assert_eq!(std::mem::offset_of!(SmokeUniform, interior), 1_552);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, n_lights), 720);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, lights), 736);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, interior), 1_760);
         assert_eq!(
             std::mem::offset_of!(SmokeUniform, world_snow_fraction),
-            1_560
+            1_768
         );
-        assert_eq!(std::mem::offset_of!(SmokeUniform, atmo_origin), 1_568);
-        assert_eq!(std::mem::offset_of!(SmokeUniform, fog_layer), 1_584);
-        assert_eq!(std::mem::offset_of!(SmokeUniform, transport_steps), 1_600);
-        assert_eq!(std::mem::size_of::<SmokeUniform>(), 1_616);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, atmo_origin), 1_776);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, fog_layer), 1_792);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, transport_steps), 1_808);
+        assert_eq!(std::mem::size_of::<SmokeUniform>(), 1_840);
 
         // Read the actual composed WGSL layout rather than trusting matching Rust constants.
         let module = wgpu::naga::front::wgsl::parse_str(&smoke_ray_query_source()).unwrap();

@@ -1,3 +1,4 @@
+// @weather-density
 // Participating media for bounded world aerosol/snow, muzzle smoke, breech gas and cabin haze.
 // Compact local media currently resolve one scattering order; High/Vulkan's homogeneous world
 // suspension additionally traces bounded sourceward paths for orders two through five.
@@ -29,6 +30,7 @@ struct Puff {
     age: f32,         // seconds since this plume was born
     dir: vec3<f32>,   // gun forward — the plume drifts a little along this and lofts up
     strength: f32,    // 0 = inactive slot
+    shape: vec4<f32>, // explicit radius / density / rolling phase (radius zero uses legacy puff)
 };
 
 struct Smoke {
@@ -53,6 +55,7 @@ struct Smoke {
     atmo_time: f32,         // simulation time — identical for every split view in this frame
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol
     transport_steps: vec4<f32>, // world, cabin, plume, secondary local-medium quadrature
+    weather_motion: vec4<f32>, // shared wind displacement and weather time
 };
 
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
@@ -184,7 +187,21 @@ fn fbm(p0: vec3<f32>) -> f32 {
 // Plume centre + radius for a puff at its current age. Lofts UP fast (so it climbs out of a level
 // sightline within a few tenths of a second) and drifts only a little forward, keeping the smoke off
 // the line to a distant target.
+
+// Advected finite 3D matter. Smooth radial support and coherent erosion remove hard cell faces.
+fn smoke_billow_density(point:vec3<f32>,puff:Puff)->f32 {
+    let q=(point-puff.pos)/max(puff.shape.x,0.02);
+    let radius=length(q); if(radius>=1.0 || puff.strength<=0.0){return 0.0;}
+    let phase=puff.shape.z;
+    let warp=vec3(sin(q.y*4.1+phase),sin(q.z*3.7-phase*0.8),sin(q.x*4.7+phase*0.6))*0.23;
+    let noise=weather_noise(q*3.2+warp+vec3(0.0,-phase*0.35,0.0));
+    let fine=weather_noise(q*7.1+warp+vec3(7.3,phase*0.2,4.1));
+    let envelope=1.0-smoothstep(0.12,1.0,radius);
+    return puff.shape.y*envelope*smoothstep(0.15,0.75,noise*0.75+fine*0.25);
+}
+
 fn puff_shape(pf: Puff) -> vec4<f32> {
+    if (pf.shape.x>0.0) {return vec4(pf.pos,pf.shape.x);}
     let a = pf.age;
     let center = pf.pos + pf.dir * (0.55 * a) + vec3(0.0, 3.4 * a, 0.0);
     let radius = 0.5 + 1.8 * a;
@@ -198,6 +215,7 @@ fn puff_env(a: f32) -> f32 {
 }
 
 fn puff_density(p: vec3<f32>, pf: Puff) -> f32 {
+    if (pf.shape.x>0.0) {return smoke_billow_density(p,pf);}
     if (pf.strength <= 0.0 || pf.age >= LIFE) { return 0.0; }
     let sh = puff_shape(pf);
     let q = (p - sh.xyz) / sh.w;           // normalized, centred on the plume
@@ -270,7 +288,7 @@ fn world_medium_density(p: vec3<f32>) -> f32 {
     // `fog_density` is authored as sigma_t in inverse metres. The rest of this integrator stores
     // density separately from EXTINCT, hence this conversion keeps Beer-Lambert exactly
     // `exp(-fog_density * distance)` for the homogeneous world aerosol.
-    return sm.fog_density / EXTINCT;
+    return sm.fog_density / EXTINCT * weather_relative_density(p,sm.weather_motion.xyz,sm.world_snow_fraction);
 }
 
 fn local_medium_density(p: vec3<f32>) -> f32 {
@@ -914,7 +932,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                     // soot. It does not add color or energy of its own; the real incident sources
                     // above still determine every visible photon.
                     let gas_share = clamp(gas_dens / max(dens, 1e-4), 0.0, 1.0);
-                    let single_scatter_albedo = mix(0.68, 0.92, gas_share);
+                    var scattering=gas_dens*0.92;
+                    for(var source=0;source<12;source+=1) {
+                        let puff=sm.puffs[source];
+                        scattering+=puff_density(p,puff)*select(0.68,puff.shape.w,puff.shape.x>0.0);
+                    }
+                    let single_scatter_albedo=clamp(scattering/max(dens,1e-4),0.0,1.0);
                     let a = 1.0 - exp(-dens * EXTINCT * step);
                     smoke_rgb = smoke_rgb + trans * a * single_scatter_albedo * incident;
                     smoke_a = smoke_a + trans * a;

@@ -5519,10 +5519,10 @@ const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
 // pages independent: restoring cabin warmth must not retune distant wrecks or muzzle reports.
 const FIRE_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_BATCHES] = [
-    [183, 38, 5], [255, 128, 20], [255, 182, 52], [203, 36, 5],
+    [183, 76, 12], [255, 160, 32], [255, 211, 94], [203, 81, 13],
     // Exterior pages sit hotter than the cabin: more green and a trace of blue pull the snow
     // wash from saturated orange toward amber with a whiter core, per the 2026-10-01 review.
-    [187, 46, 12], [255, 138, 36], [255, 196, 88], [192, 48, 13],
+    [187, 87, 18], [255, 176, 44], [255, 225, 122], [192, 88, 18],
 ];
 // Halving the grain edge and quadrupling the count preserves approximate projected coverage
 // while breaking up the coarse black confetti. The shared cap still bounds a spreading fire.
@@ -7836,6 +7836,37 @@ fn apply_vehicle_avoidance(
     // the short horizon instead of pretending a T-34 instantly reaches TOP_SPEED.
     let desired_velocity = own.velocity * 0.35 + forward * (drive * tank::TOP_SPEED * 0.65);
 
+    // A policy must never keep applying a residual throttle into a hull. Check current
+    // oriented clearance as well as predicted motion, including parked and wrecked vehicles.
+    // Neutral steering is real track control; reversing is permitted only with rear clearance.
+    let front = neighbors.iter().filter(|n| n.id != own.id).filter_map(|n| {
+        let delta = n.footprint.center - own.footprint.center;
+        let along = delta.dot(forward);
+        let width = footprint_support_radius(own.footprint, local_x)
+            + footprint_support_radius(n.footprint, local_x) + 0.6;
+        if along < 0.0 || delta.dot(local_x).abs() > width { return None; }
+        let gap = along - footprint_support_radius(own.footprint,forward)
+            - footprint_support_radius(n.footprint,forward);
+        Some((gap,n.id,delta.dot(local_x),delta.length_squared()))
+    }).min_by(|a,b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    if let Some((gap, id, lateral, distance_sq)) = front {
+        let speed = own.velocity.dot(forward);
+        let stopping = speed.max(0.0).powi(2) / 4.0 + 1.25;
+        if drive > 0.0 && gap < stopping {
+            let rear_clear = !neighbors.iter().filter(|n|n.id != own.id).any(|n| {
+                let delta=n.footprint.center-own.footprint.center;
+                let along=delta.dot(forward);
+                let radius=footprint_support_radius(own.footprint,forward)+footprint_support_radius(n.footprint,forward);
+                along < 0.0 && -along < radius + 3.0 && delta.dot(local_x).abs()
+                    < footprint_support_radius(own.footprint,local_x)+footprint_support_radius(n.footprint,local_x)+0.5
+            });
+            let turn = if lateral.abs()>0.1 { -lateral.signum() } else if distance_sq > 1e-6 || own.id<id {-1.0}else{1.0};
+            // Brake before rotating: a sweeping corner can otherwise hook the neighbor.
+            let backing = rear_clear && gap < 1.25 && speed < 0.5;
+            return (if backing {-0.4} else {0.0}, if speed.abs()>1.0 {0.0} else {turn});
+        }
+    }
+
     let mut best: Option<(f32, usize, f32, f32)> = None; // urgency, id, avoid steer, ahead
     for neighbor in neighbors {
         if neighbor.id == own.id {
@@ -7934,6 +7965,7 @@ fn apply_vehicle_avoidance(
 }
 
 struct Slots {
+    hand_torch: [usize;2], // compact body and finite luminous lens
     tiger: [usize; 3],               // hull, turret, gun
     roof_hatches: [usize; 4],        // authored driver + loader roof lids, removed from static parts
     driver_controls: [usize; 2],   // authored steering yoke and ignition button
@@ -8441,6 +8473,7 @@ fn story_sites(act: u8) -> &'static [(crate::campaign::StorySiteId, f32, f32)] {
 }
 
 pub struct Game {
+    pub hand_torch_on: bool,
     pub hf: Heightfield,
     /// The act this world was built from — the paper map (M) and act-flow logic read it.
     pub act: crate::world::ActMap,
@@ -11175,7 +11208,12 @@ impl Game {
             ));
         }
 
+        let hand_torch = [scene.len(),scene.len()+1];
+        // A compact period-style hand lamp, in metres, lens pointing down local +Z.
+        scene.push(box_mesh(Vec3::new(-0.033,-0.07,-0.12),Vec3::new(0.033,0.025,0.025),[39,45,36]));
+        scene.push(box_mesh(Vec3::new(-0.026,-0.023,0.026),Vec3::new(0.026,0.023,0.031),[255,229,185]));
         let mut slots = Slots {
+            hand_torch,
             tiger: [tiger0, tiger0 + 1, tiger0 + 2],
             roof_hatches,
             driver_controls,
@@ -11349,7 +11387,7 @@ impl Game {
         let dynamic_ammunition: Vec<usize> = (slots.shell0..slots.shell0 + crate::interior_rig::SHELL_SLOTS.len())
             .chain(slots.loose_shell.iter().copied()).chain(slots.loose_shell_he.iter().copied())
             .chain(slots.casing.iter().copied())
-            .chain([slots.chamber_round, slots.chamber_round_he]).chain(slots.driver_controls).collect();
+            .chain([slots.chamber_round, slots.chamber_round_he]).chain(slots.driver_controls).chain(slots.hand_torch).collect();
         renderer.set_cabin_shadow_dynamic_meshes(&dynamic_ammunition);
         // Chunk grids are preallocated into `scene` before the renderer exists. Their CPU state is
         // dormant until a wall is penetrated/collapsed, so mirror that state into the renderer now;
@@ -11955,7 +11993,7 @@ impl Game {
                 .add_dynamic_instanced_pool(
                     device,
                     queue,
-                    &box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), smoke_colors[i]),
+                    &crate::prims::faceted_sphere_mesh(smoke_colors[i]).transformed(Mat4::from_scale(Vec3::splat(0.5))),
                     N_FIRE_SMOKE_CUBES,
                 )
                 .expect("voxel-soot instance pool allocation");
@@ -12522,6 +12560,7 @@ impl Game {
             rtt_screens,
             rtt_dev: Some((device.clone(), queue.clone())),
             rtt_refresh_cursor: 0,
+            hand_torch_on: false,
             rtt_updates_per_frame,
             rtt_priority_enabled,
             rtt_refresh_tick: 0,
@@ -13846,7 +13885,9 @@ impl Game {
                 return tiger_foot_action_input(action);
             }
         }
-        campaign_ai_command_input(self.mode, self.foot.yaw, command)
+        let mut input = campaign_ai_command_input(self.mode, self.foot.yaw, command);
+        if self.mode == Mode::Tank { (input.drive,input.steer)=self.safe_ai_tiger_drive(input.drive,input.steer); }
+        input
     }
 
     pub fn campaign_kills(&self) -> u16 {
@@ -14806,6 +14847,12 @@ impl Game {
 
     /// Live windows use this to move the RTT submission from simulation into the render graph,
     /// where it can share one shadow map with the view that is about to be presented.
+    pub fn set_optic_update_budget(&mut self, count: usize) {
+        self.rtt_updates_per_frame = count.clamp(1, 4).min(self.rtt_screens.len().max(1));
+        self.rtt_priority_enabled = self.rtt_updates_per_frame == 1;
+    }
+    pub fn optic_update_budget(&self) -> usize { self.rtt_updates_per_frame }
+
     pub fn set_defer_rtt_to_render(&mut self, defer: bool) {
         self.defer_rtt_to_render = defer;
     }
@@ -17704,7 +17751,33 @@ impl Game {
         }
         r.set_shadowed_world_fire_lights(&self.world_fire_lights.iter().flatten().copied().collect::<Vec<_>>());
         lights.extend(self.tank_editor_lights(r));
+        let torch = self.drive_hand_torch(r);
+        if let Some(light) = torch { lights.push(light); }
         r.set_lights(&lights);
+    }
+
+    pub fn toggle_hand_torch(&mut self) { self.hand_torch_on = !self.hand_torch_on; }
+
+    fn drive_hand_torch(&mut self, r:&mut Renderer) -> Option<PointLight> {
+        // A free hand holds it below the eye. Stow for binoculars/sights, carrying ordnance,
+        // climbing and death; the requested toggle survives so the lamp returns with a free hand.
+        let visible = self.hand_torch_on && r.shader_backend
+            && (if self.mode == Mode::Foot {self.foot.hp>0.0} else {self.player.alive}) && self.carry_mesh.is_none()
+            && self.held_item.is_none() && !self.climb.active && r.optic_mask == 0.0;
+        for slot in self.slots.hand_torch { r.set_visible(slot,visible); }
+        if !visible { r.set_hand_torch(None,Vec3::Z,self.slots.hand_torch[1]); return None; }
+        let forward = r.camera.forward().normalize_or_zero();
+        let right = forward.cross(Vec3::Y).normalize_or_zero();
+        let up = right.cross(forward).normalize_or_zero();
+        let grip = r.camera.pos + forward*0.32 - right*0.19 - up*0.23;
+        let rotation = Quat::from_rotation_arc(Vec3::Z,forward);
+        let model = Mat4::from_rotation_translation(rotation,grip);
+        for slot in self.slots.hand_torch { r.set_model(slot,model); }
+        r.set_emissive(self.slots.hand_torch[1],0.8);
+        let lamp = PointLight {pos:model.transform_point3(Vec3::new(0.0,0.0,0.035)),
+            source_radius:0.015,color:Vec3::new(1.0,0.82,0.58),radiant_intensity:0.0035};
+        r.set_hand_torch(Some(lamp),forward,self.slots.hand_torch[1]);
+        Some(lamp)
     }
 
     /// Interior-haze tuning (user's accumulator + fan model). A shot puffs a little; the BREECH
@@ -20732,6 +20805,14 @@ impl Game {
     /// `executor_obs`: a Tiger policy controls the player vehicle while the ordinary enemy policy
     /// still controls every T-34. The net chooses only drive, steer and trigger intent; crew
     /// movement, breech service, gun lay, travel lock, armor and ballistics remain authoritative.
+    /// Shared AI-only driver gate. Human tank controls never enter this helper.
+    pub(crate) fn safe_ai_tiger_drive(&self, drive:f32, steer:f32) -> (f32,f32) {
+        let neighbors:Vec<_> = self.enemies.iter().enumerate()
+            .filter(|(i,_)|self.enemy_active.get(*i).copied().unwrap_or(false))
+            .map(|(i,tank)|vehicle_motion(i,tank)).collect();
+        apply_vehicle_avoidance(vehicle_motion(usize::MAX,&self.player),&neighbors,drive,steer)
+    }
+
     pub fn tiger_executor_obs(&self) -> [f32; crate::ai::OBS] {
         let pc = self.player.center();
         let nearest = self.enemies.iter().filter(|e| e.alive).min_by(|a, b| {
@@ -27818,6 +27899,7 @@ impl Game {
         self.drive_mg_fx(dt, r);
 
         // The player's OWN interior fire, seen from inside — builds + spreads as the fire grows.
+        self.drive_smoke(r); // Clear/reseed volume pool before sustained and transient emitters.
         self.drive_interior_fire(r);
 
         // Crew-of-one interior workload FX: tumbling casings, the breech + reload rounds, the
@@ -27834,8 +27916,7 @@ impl Game {
         self.drive_at_guns(r);
         self.drive_carried_tools(dt, r);
 
-        // Legacy backend smoke remains available; raster weapons use only bounded grain pages.
-        self.drive_smoke(r);
+        // Transient weapon volumes join the sustained smoke supports above.
         self.drive_weapon_vfx(dt, r);
     }
 
@@ -28825,21 +28906,19 @@ impl Game {
         world_sources.truncate(MAX_WORLD_FIRE_SOURCES);
 
         for (source_index, (_, pos, strength, seed)) in world_sources.into_iter().enumerate() {
-            if stoves.contains(&seed) {
-                let n_smoke = ((strength.min(1.0).sqrt() * SMOKE_CUBES_PER_WORLD_SOURCE as f32)
-                    .ceil() as usize)
-                    .min(SMOKE_CUBES_PER_WORLD_SOURCE);
-                let wind = wind_at(self.act.id, pos) * self.weather_wind_scale;
-                for grain in 0..n_smoke {
-                    let sample = stove_smoke_sample(seed, grain, fx_time, wind);
-                    smoke_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
-                        Vec3::splat(sample.size),
-                        sample.rotation,
-                        pos + sample.offset,
-                    ));
+            let stove=stoves.contains(&seed);
+            let wind=r.weather_wind_world;
+            if source_index<3 {
+                for lobe in 0..3 {
+                    let age=lobe as f32*1.35+0.45;
+                    let roll=fx_time*0.55+seed as f32*0.0001;
+                    let sway=Vec3::new((roll+age).sin(),0.0,(roll*0.73+age).cos())*0.18*age;
+                    let radius=if stove {0.22+age*0.20}else{0.65+age*0.68};
+                    let center=pos+Vec3::new(wind.x*age*0.28,age*if stove {0.75}else{1.2},wind.y*age*0.28)+sway;
+                    r.add_smoke_volume(center,radius,strength*if stove {0.09}else{0.32}/(1.0+age*0.22),roll+age,if stove {0.35}else{0.08});
                 }
-                continue;
             }
+            if stove {continue;}
             if heat_review { r.heat_sources.add(pos,0.72,3.2,strength,seed as f32*0.0001); }
             let source_cells = world_fire_cells(seed, fx_time, strength);
             for sample in &source_cells {
@@ -28851,19 +28930,7 @@ impl Game {
             }
             self.world_fire_lights[source_index] = fire_aggregate_light(
                 &source_cells, pos, Mat4::IDENTITY, true);
-            let n_smoke = ((strength.min(1.0).sqrt() * SMOKE_CUBES_PER_WORLD_SOURCE as f32).ceil()
-                as usize)
-                .min(SMOKE_CUBES_PER_WORLD_SOURCE);
-            let wind = wind_at(self.act.id, pos) * self.weather_wind_scale;
-            for grain in 0..n_smoke {
-                let sample =
-                    smoke_voxel_sample(seed ^ 0xc001_d00d, grain, fx_time, strength, true, wind);
-                smoke_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
-                    Vec3::splat(sample.size),
-                    sample.rotation,
-                    pos + sample.offset,
-                ));
-            }
+
         }
 
         debug_assert!(flame_mats.iter().map(Vec::len).sum::<usize>() <= N_FIRE_FLAME_CUBES);
@@ -30854,6 +30921,34 @@ mod tests {
     }
 
     #[test]
+    fn ai_tank_stops_pushing_and_checks_space_before_backing() {
+        let own=test_vehicle_motion(0,Vec2::ZERO,0.0,Vec2::ZERO);
+        let ahead=test_vehicle_motion(1,Vec2::new(0.0,6.2),0.0,Vec2::ZERO);
+        let behind=test_vehicle_motion(2,Vec2::new(0.0,-6.2),0.0,Vec2::ZERO);
+        assert!(apply_vehicle_avoidance(own,&[own,ahead],1.0,0.0).0<0.0,"back out of a blocked nose");
+        assert_eq!(apply_vehicle_avoidance(own,&[own,ahead,behind],1.0,0.0).0,0.0,"do not reverse into a second hull");
+        let moving=VehicleMotion{velocity:Vec2::new(0.0,5.0),..own};
+        assert_eq!(apply_vehicle_avoidance(moving,&[moving,ahead],1.0,0.0),(0.0,0.0),"brake before pivoting");
+    }
+
+    #[test]
+    fn ai_track_commands_clear_a_parked_t34_with_real_tank_dynamics() {
+        let hf=Heightfield {res:2,spacing:1000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default()};
+        let mut tiger=Tank::new(0.0,0.0,0.0,&hf,tank::TIGER_PARTS);
+        let blocker=Tank::new(0.0,8.0,0.0,&hf,tank::T34_PARTS);
+        let obstacle=vehicle_motion(1,&blocker);
+        for _ in 0..600 {
+            let own=vehicle_motion(0,&tiger);
+            let (drive,steer)=apply_vehicle_avoidance(own,&[own,obstacle],1.0,0.0);
+            tiger.update(drive,steer,0.0,0.0,1.0/60.0,&hf);
+            assert!(tiger.pos.is_finite());
+            let delta=Vec2::new(tiger.pos.x-blocker.pos.x,tiger.pos.z-blocker.pos.z);
+            assert!(delta.length()>4.0,"avoidance must not drive into the parked hull");
+        }
+        assert!(tiger.pos.distance(Vec3::ZERO)>10.0,"AI must resume movement rather than remain nose-locked");
+    }
+
+    #[test]
     fn vehicle_avoidance_brakes_and_breaks_head_on_tie_to_opposite_sides() {
         let a = test_vehicle_motion(0, Vec2::ZERO, 0.0, Vec2::new(0.0, 8.0));
         let b = test_vehicle_motion(
@@ -30866,6 +30961,11 @@ mod tests {
         let (a_drive, a_steer) = apply_vehicle_avoidance(a, &bodies, 1.0, 0.0);
         let (b_drive, b_steer) = apply_vehicle_avoidance(b, &bodies, 1.0, 0.0);
         assert!(a_drive < 1.0 && b_drive < 1.0);
+        assert_eq!((a_steer,b_steer),(0.0,0.0),"brake before swinging the corners at road speed");
+        let a=VehicleMotion{velocity:Vec2::ZERO,..a};
+        let b=VehicleMotion{velocity:Vec2::ZERO,..b};
+        let (_,a_steer)=apply_vehicle_avoidance(a,&[a,b],1.0,0.0);
+        let (_,b_steer)=apply_vehicle_avoidance(b,&[a,b],1.0,0.0);
         let a_world_dodge = Vec2::new(1.0, 0.0) * a_steer;
         let b_world_dodge = Vec2::new(-1.0, 0.0) * b_steer;
         assert!(
@@ -34185,11 +34285,11 @@ mod tests {
         // Check the actual aggregate, not just the brightest swatch: both visible flame pages
         // and their transported light must have a warm orange component after linearization.
         assert!(source.color.y / source.color.x > 0.20);
-        assert!(source.color.y / source.color.x < 0.50);
-        assert!(source.color.z / source.color.x < 0.05);
+        assert!(source.color.y / source.color.x < 0.75);
+        assert!(source.color.z / source.color.x < 0.15);
         assert!(source.radiant_intensity > 0.0 && source.radiant_intensity.is_finite());
         assert_eq!(&FIRE_FLAME_COLORS[FIRE_FLAME_STAGES..],
-            &[[187, 46, 12], [255, 138, 36], [255, 196, 88], [192, 48, 13]]);
+            &[[187, 87, 18], [255, 176, 44], [255, 225, 122], [192, 88, 18]]);
         assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.20, 0.125, 0.0625, 0.025]);
     }
 

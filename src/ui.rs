@@ -101,12 +101,12 @@ pub const IDX_PLAYTEST: usize = 2;
 pub const IDX_EDITOR: usize = 3;
 pub const IDX_LOAD_CHECKPOINT: usize = 4;
 pub const IDX_CANYON: usize = 5;
-pub const MENU_LABELS: [&str; 7] = [
-    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2",
+pub const MENU_LABELS: [&str; 8] = [
+    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Graphics",
 ];
 pub const MENU_COUNT: usize = MENU_LABELS.len();
 const MENU_ROW_TOP: f32 = 0.485;
-const MENU_ROW_STEP: f32 = 0.057;
+const MENU_ROW_STEP: f32 = 0.049;
 const MENU_ROW_LEFT: f32 = 0.20;
 const MENU_ROW_RIGHT: f32 = 0.80;
 
@@ -119,11 +119,12 @@ pub enum MenuAction {
     LoadCheckpoint,
     Canyon,
     CanyonV2,
+    Graphics,
 }
 
 const MENU_ACTIONS: [MenuAction; MENU_COUNT] = [
     MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2,
+    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Graphics,
 ];
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
@@ -413,7 +414,7 @@ mod title_menu_tests {
         assert_eq!(menu.action(), Some(MenuAction::Singleplayer));
         let expected = [
             MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2,
+            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Graphics,
         ];
         for (index, action) in expected.into_iter().enumerate() {
             let y = MENU_ROW_TOP + (index as f32 + 0.5) * MENU_ROW_STEP;
@@ -451,6 +452,7 @@ pub enum PausePage {
     Main,
     Settings,
     Display,
+    Graphics,
     ConfirmExit,
 }
 
@@ -484,7 +486,7 @@ impl PauseMenuModel {
     pub fn row_count(&self) -> usize {
         match self.page {
             PausePage::Main => PauseAction::ALL.len(),
-            PausePage::Settings | PausePage::Display => 6,
+            PausePage::Settings | PausePage::Display | PausePage::Graphics => 6,
             PausePage::ConfirmExit => 2,
         }
     }
@@ -1481,11 +1483,12 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
                 MENU_ROW_RIGHT - MENU_ROW_LEFT - 0.004, MENU_ROW_STEP - 0.011,
                 [0.006, 0.007, 0.009, 1.0]);
         }
-        r.draw_text_bold(&text, 0.50, top + 0.012, 0.036,
+        r.draw_text_bold(&text, 0.50, top + 0.010, 0.031,
             if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM }, Align::Center);
     }
     let canyon_line: String;
     let detail = match m.action() {
+        Some(MenuAction::Graphics) => "RESOLUTION / QUALITY / COLOR / RETRO",
         Some(MenuAction::Singleplayer) => "ONE PLAYER / ACT ONE CAMPAIGN",
         Some(MenuAction::Coop) => "TWO PLAYERS / TOP & BOTTOM / LOCAL CREW CO-OP",
         Some(MenuAction::Playtest) => "ACT ONE / ONE CREWMAN / SKIP INTRO & TUTORIAL",
@@ -1518,7 +1521,7 @@ pub fn draw_pause_menu(
     can_save: bool,
     can_load: bool,
     fullscreen: bool,
-    retro: f32,
+    _retro: f32,
     show_stats: bool,
     haptics_enabled: bool,
     playtest_return_fire: Option<bool>,
@@ -1528,6 +1531,7 @@ pub fn draw_pause_menu(
     let title = match m.page {
         PausePage::Main => "Paused",
         PausePage::Settings => "Settings",
+        PausePage::Graphics => "Graphics",
         PausePage::Display => "Display",
         PausePage::ConfirmExit => "Exit game?",
     };
@@ -1542,9 +1546,10 @@ pub fn draw_pause_menu(
             };
             (action.label().to_owned(), enabled)
         }).collect(),
+        PausePage::Graphics => Vec::new(),
         PausePage::Settings => vec![
             ("Display / Adafruit previews".to_owned(), true),
-            (format!("Retro filter: {:.0}%", retro * 100.0), true),
+            ("Graphics / quality and color".to_owned(), true),
             (format!("Show FPS counter: {}", if show_stats { "On" } else { "Off" }), true),
             (format!("Haptics: {}", if haptics_enabled { "On" } else { "Off" }), true),
             (format!("Enemy return fire: {}", match playtest_return_fire {
@@ -2379,6 +2384,7 @@ pub fn draw_controls(r: &mut Renderer) {
     row(r, lk, 0.635, "MMB hold", "coax MG (gunner sight)");
     row(r, lk, 0.680, "Z", "engine off / start");
     row(r, lk, 0.720, "Shift hold", "sprint on foot");
+    row(r, lk, 0.775, "L", "handheld torch on / off");
 
     // ── Right column: inside work + system ──
     let (rk, rh) = (0.78, 0.575);

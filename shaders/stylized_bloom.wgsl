@@ -1,5 +1,5 @@
 // Four bounded raster bloom passes, before the fixed camera tone map. RGB retains the compact
-// emissive/lens halo; the spare alpha channel carries a broader outdoor-aperture halo. Openings
+// emissive/lens halo, including the colored outdoor-aperture halo. Openings
 // are identified from visible scene depth and depth-tested optic masks, never inferred from a
 // bright cabin wall or a hatch-open flag. No ray tracing, exposure adaptation or temporal history.
 
@@ -76,7 +76,7 @@ fn fs_bright(in: VsOut) -> @location(0) vec4<f32> {
     let size=vec2<i32>(textureDimensions(glow_mask));
     let first=vec2<i32>(floor(in.uv*vec2<f32>(size)-vec2(0.5)));
     var optical_glow=vec3(0.0);
-    var aperture_glow=0.0;
+    var aperture_glow=vec3(0.0);
     // Downsample each source radiance together with its own mask. Point-sampling a mask
     // beside bilinear HDR drops one-pixel lenses on alternating half-resolution blocks.
     for(var y=0;y<2;y+=1) {for(var x=0;x<2;x+=1) {
@@ -89,11 +89,14 @@ fn fs_bright(in: VsOut) -> @location(0) vec4<f32> {
             let visible=aperture_source(textureLoad(scene_depth,pixel,0),mask);
             // Sampled radiance, not a constant white source: dim night/storm windows remain dim.
             // A cap prevents a muzzle flash in the sight from becoming a broad screen-white flare.
-            aperture_glow+=min(luminance,1.4)*smoothstep(0.025,0.20,luminance*exposure)*visible;
+            let limited_radiance = radiance * min(1.0,1.4/max(luminance,1e-6));
+            aperture_glow+=limited_radiance*smoothstep(0.025,0.20,luminance*exposure)*visible;
         }
     }}
     optical_glow*=0.25*0.65;
-    return vec4(max(c*contrib,optical_glow), aperture_glow*0.25);
+    // Carry all three channels through both separable passes. A scalar luminance in alpha
+    // cannot reconstruct the color of a fire seen through a viewport.
+    return vec4(max(c*contrib,optical_glow) + aperture_glow*0.25*(PORTAL_INTENSITY/INTENSITY),1.0);
 }
 
 @fragment
@@ -114,28 +117,28 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     col += textureSample(src, samp, in.uv - o * 3.0).rgb * w3;
     col += textureSample(src, samp, in.uv + o * 4.0).rgb * w4;
     col += textureSample(src, samp, in.uv - o * 4.0).rgb * w4;
-    // Dense Gaussian support: the former nine taps were 3.8 texels apart, stamping separated
-    // copies of a narrow vision slit into a square halo. Sample every half-resolution texel.
-    var aperture = 0.0;
+    // Inside the cabin, scatter the sampled RGB with the same normalized broad kernel.
+    // Outside, compact emissive sources retain the original nine-tap kernel.
     if (portal.depth_and_view.z > 0.5) {
         let p = pc.texel * pc.dir;
+        var broad = vec3(0.0);
         var weight_sum = 0.0;
         for (var tap = -16; tap <= 16; tap += 1) {
             let distance = f32(tap);
             let weight = exp(-0.5 * distance * distance / (6.1 * 6.1));
-            aperture += textureSampleLevel(src,samp,in.uv+p*distance,0.0).a*weight;
+            broad += textureSampleLevel(src,samp,in.uv+p*distance,0.0).rgb*weight;
             weight_sum += weight;
         }
-        aperture /= weight_sum;
+        col = broad / weight_sum;
     }
-    return vec4(col, aperture);
+    return vec4(col,1.0);
 }
 
 @fragment
 fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // Additive-blended into the HDR target on the pass side; emit the halo pre-scaled.
     let c = textureSample(src, samp, in.uv);
-    var surround = 0.0;
+    var surround = 1.0;
     if (portal.depth_and_view.z > 0.5) {
         let size = vec2<i32>(textureDimensions(scene_depth));
         let pixel = clamp(vec2<i32>(in.pos.xy),vec2(0),size-vec2(1));
@@ -147,7 +150,6 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         surround = 1.0-aperture;
     }
     // This is lens scatter over the visible image, not an unshadowed surface light or a volume.
-    // A near-neutral cool halo suits daylight without tinting the existing warm cabin lamps.
-    let daylight = vec3(0.91,0.96,1.0)*c.a*PORTAL_INTENSITY*surround;
-    return vec4(c.rgb * INTENSITY + daylight, 1.0);
+    // No fixed tint: orange fire produces an orange surround, cool sky a cool surround.
+    return vec4(c.rgb * INTENSITY * surround, 1.0);
 }

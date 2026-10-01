@@ -8,13 +8,13 @@ use glam::{DVec3, Mat4, Quat, Vec3};
 
 pub const KIND_SNOW: u32 = 0;
 pub const KIND_DUST: u32 = 1;
-pub const MAX_SNOW_PARTICLES: usize = 8192;
+pub const MAX_SNOW_PARTICLES: usize = 65536;
 pub const MAX_DUST_PARTICLES: usize = 100;
 pub const MAX_PIXEL_PARTICLES: usize = MAX_SNOW_PARTICLES + MAX_DUST_PARTICLES;
 pub const SNOW_RADIUS_M: f32 = 24.0;
 pub const CABIN_DUST_RADIUS_M: f32 = 3.35;
 const CELL_M: f64 = 2.0;
-const SEEDS_PER_CELL: u32 = 2;
+const SEEDS_PER_CELL: u32 = 16;
 const DEFAULT_SEED: u64 = 0x91d0_03bf_661e_a205;
 
 #[repr(C)]
@@ -133,7 +133,7 @@ impl PixelParticleField {
         self.last_velocity = velocity;
     }
 
-    /// Returns at most 8192 snow + 100 dust world positions. `dust_model` maps the hull-local
+    /// Returns at most 65536 snow + 100 dust world positions. `dust_model` maps the hull-local
     /// sphere into world space; its translation should equal `atmo_origin`. The initial renderer
     /// integration may pass Mat4::from_translation(atmo_origin). A rigid hull transform also works.
     /// All dust is additionally clipped to cabin_density's actual 3.35 m world sphere.
@@ -155,7 +155,7 @@ impl PixelParticleField {
             return &self.particles;
         }
         let precipitation = if precipitation.is_finite() {
-            precipitation.clamp(0.0, 1.0)
+            precipitation.clamp(0.0, 8.0)
         } else {
             0.0
         };
@@ -174,10 +174,14 @@ impl PixelParticleField {
                     for x in center[0].saturating_sub(REACH)..=center[0].saturating_add(REACH) {
                         let cell = [x, y, z];
                         for sample in 0..SEEDS_PER_CELL {
+                            // Each pair is a density octave. The first pair preserves the existing
+                            // normal snowfall identities; severe storms add up to seven more pairs.
+                            let layer=(precipitation-(sample/2) as f32).clamp(0.0,1.0);
+                            if layer<=0.0 {continue;}
                             let id = snow_identity(self.seed, cell, sample);
                             // Two candidates at half occupancy give ~7.2k at full precipitation
                             // inside a 24 m sphere. Lower precipitation thins by stable identity.
-                            if unit(id ^ 0xef) >= precipitation as f64 * 0.5 {
+                            if unit(id ^ 0xef) >= layer as f64 * 0.5 {
                                 continue;
                             }
                             let world = snow_position(self.seed, cell, sample, self.displacement);
@@ -315,6 +319,16 @@ mod tests {
             many.displacement.distance(previous) < 0.04,
             "gust must integrate over dt, not total age"
         );
+    }
+
+    #[test]
+    fn eightfold_snow_adds_layers_without_moving_existing_flakes() {
+        let mut field=PixelParticleField::new();
+        let normal=field.update(Vec3::ZERO,Vec3::ZERO,3.0,1.0,Vec3::ZERO,0.0,Mat4::IDENTITY).to_vec();
+        let severe=field.update(Vec3::ZERO,Vec3::ZERO,3.0,8.0,Vec3::ZERO,0.0,Mat4::IDENTITY);
+        assert!(severe.len()>normal.len()*7 && severe.len()<=MAX_SNOW_PARTICLES);
+        let ids:std::collections::HashSet<_>=severe.iter().map(|p|p.world.map(f32::to_bits)).collect();
+        assert!(normal.iter().all(|p|ids.contains(&p.world.map(f32::to_bits))));
     }
 
     #[test]

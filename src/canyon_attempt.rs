@@ -252,6 +252,7 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
         let t = step as f32 * dt;
         let input = pilot.step(&mut g, &r, t, dt);
         g.update(&input, dt, &mut r);
+        if step % 8 == 0 { crate::simulation_uploads::drain(&device, &queue)?; }
         if let Some(f) = film.as_mut() {
             f.step(&mut g, &mut r, &device, &queue, step)?;
         }
@@ -294,6 +295,7 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
             }
         }
     }
+    crate::simulation_uploads::drain(&device, &queue)?;
     trace.flush()?;
     let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression","manifest":manifest,"simulation_hz":60,"film":cuts.is_some()});
     fs::write(

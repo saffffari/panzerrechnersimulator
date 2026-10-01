@@ -1,5 +1,8 @@
 # Kessel — Neuroevolution Tank AI (plan)
 
+Current runner and October 1 recovery evidence: [AI_RECOVERY_20261001.md](AI_RECOVERY_20261001.md).
+The July throughput figures and implementation notes below are historical, not current acceptance results.
+
 Status (2026-07-02): **pipeline smoke test PASSED** — `cargo run --release -- train [gens] [pop]
 [secs]` runs the full loop (obs → shared-executor MLP → match → fitness → deterministic ES →
 `assets/ai/weights_test.bin` → reload → bit-identical re-eval). `src/ai.rs` + the `enemy_policy`

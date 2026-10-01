@@ -92,7 +92,7 @@ cargo run -- lasttiger                              # headless: the Last Tiger l
 cargo run -- climb                                  # headless: the mount/dismount climb ritual (3 timed moves each way) + jump
 cargo run --release -- train [gens] [pop] [secs] [acts]  # neuroevolution: ES over enemy policy, acts="0,1" = mean fitness across maps
 cargo run --release -- duel outdir [weights] [act]  # film a T-34 duel (aerial cam → mp4); act 0 = the training arena
-cargo run --release -- train-foot-ai [epochs]       # deterministic CPU KSL2 Tiger/Soviet foot checkpoints
+cargo run --release -- train-foot-ai [epochs] [dir] # deterministic CPU KSL2 foot candidates; default assets/ai/foot_candidates/epochs_<epochs>; refuses overwrite
 cargo run --release -- campaign-ai-run out.jsonl 1 seed max_s t34.bin tiger.bin [foot.jsonl]
                                                     # physical Act-I rollout; optional role-separated DAgger JSONL
 cargo test --bin panzerrechnersystem                             # unit tests (currently audio.rs asset-path guards)

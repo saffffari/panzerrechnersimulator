@@ -14,6 +14,14 @@ pub struct CanyonPilot {
     last_check: f32,
     check_pos: Vec2,
     reverse_until: f32,
+    /// Route watchdog: the farthest waypoint reached and when, plus the escalating
+    /// alternating-side detour state used to leave a bump-and-retreat loop.
+    best_cursor: usize,
+    best_cursor_at: f32,
+    stuck_count: u32,
+    avoid_until: f32,
+    avoid_side: f32,
+    was_advancing: bool,
     pub reloads: u32,
     pub phase: &'static str,
 }
@@ -26,7 +34,11 @@ impl CanyonPilot {
             .expect("Canyon AI needs the real course")
             .route
             .clone();
-        let pos = Vec2::new(g.player.pos.x, g.player.pos.z);
+        Self::from_route(route, Vec2::new(g.player.pos.x, g.player.pos.z))
+    }
+
+    fn from_route(route: Vec<Vec2>, pos: Vec2) -> Self {
+        assert!(!route.is_empty(), "Canyon pilot needs a route");
         let cursor = (0..route.len())
             .min_by(|&a, &b| {
                 route[a]
@@ -44,9 +56,27 @@ impl CanyonPilot {
             last_check: 0.0,
             check_pos: pos,
             reverse_until: 0.0,
+            best_cursor: cursor,
+            best_cursor_at: 0.0,
+            stuck_count: 0,
+            avoid_until: 0.0,
+            avoid_side: -1.0,
+            was_advancing: false,
             reloads: 0,
             phase: "approach",
         }
+    }
+
+    /// Escalate out of a blocked spot: back off in an arc, then approach past the obstruction
+    /// through a perpendicular offset carrot. Sides alternate and both the reverse and the
+    /// detour grow with each consecutive failure; any real route progress resets the ladder.
+    fn trigger_avoid(&mut self, t: f32) {
+        self.stuck_count = (self.stuck_count + 1).min(6);
+        self.avoid_side = -self.avoid_side;
+        let grade = self.stuck_count.min(4) as f32;
+        self.reverse_until = t + 2.5 + 0.7 * grade;
+        self.avoid_until = self.reverse_until + 8.0 + 2.5 * grade;
+        self.best_cursor_at = t;
     }
 
     fn look(&mut self, g: &Game, r: &Renderer, target: Vec3, dt: f32, input: &mut TankInput) {
@@ -199,19 +229,36 @@ impl CanyonPilot {
                 })
                 .unwrap();
             self.cursor = self.cursor.max(close);
-            let carrot = self.route[(self.cursor + 1).min(self.route.len() - 1)];
-            let to = carrot - here;
-            let error = (to.x.atan2(to.y) - g.player.heading + std::f32::consts::PI)
-                .rem_euclid(std::f32::consts::TAU)
-                - std::f32::consts::PI;
-            let mut input = TankInput {
-                drive: if error.abs() > 0.6 { 0.16 } else { 0.60 },
-                steer: (error * 2.2).clamp(-1.0, 1.0),
-                ..Default::default()
-            };
-            if t - self.last_check > 12.0 {
-                if here.distance(self.check_pos) < 2.0 {
-                    self.reverse_until = t + 3.0;
+            // Route watchdog. Combat and reloads pause the advance; only advancing time counts.
+            if !self.was_advancing {
+                self.best_cursor_at = t;
+                self.last_check = t;
+                self.check_pos = here;
+            }
+            if self.cursor > self.best_cursor {
+                self.best_cursor = self.cursor;
+                self.best_cursor_at = t;
+                if t >= self.avoid_until {
+                    self.stuck_count = 0;
+                }
+            } else if t - self.best_cursor_at > 30.0 && t >= self.avoid_until {
+                self.trigger_avoid(t);
+            }
+            let mut carrot = self.route[(self.cursor + 1).min(self.route.len() - 1)];
+            if t >= self.reverse_until && t < self.avoid_until {
+                // Approach past the obstruction: offset the carrot perpendicular to the local
+                // route direction, farther out on each consecutive failure.
+                let a = self.route[self.cursor.min(self.route.len() - 1)];
+                let b = self.route[(self.cursor + 2).min(self.route.len() - 1)];
+                let along = (b - a).normalize_or_zero();
+                let perp = Vec2::new(-along.y, along.x);
+                carrot += perp * self.avoid_side * (16.0 + 8.0 * self.stuck_count.min(4) as f32);
+                self.phase = "detouring";
+            }
+            let mut input = navigation_input(carrot - here, g.player.heading);
+            if t - self.last_check > 4.0 {
+                if input.drive > 0.1 && here.distance(self.check_pos) < 2.0 && t >= self.avoid_until {
+                    self.trigger_avoid(t);
                 }
                 self.check_pos = here;
                 self.last_check = t;
@@ -219,7 +266,9 @@ impl CanyonPilot {
             if t < self.reverse_until {
                 self.phase = "backing_off";
                 input.drive = -0.55;
-                input.steer = 0.0;
+                // Arc the reverse so the hull rotates away from the blocked line instead of
+                // backing straight down it and driving straight back in.
+                input.steer = -self.avoid_side * 0.45;
             }
             let look_at = self.route[(self.cursor + 12).min(self.route.len() - 1)];
             self.look(
@@ -235,6 +284,8 @@ impl CanyonPilot {
             );
             input
         };
+        if g.mode == Mode::Tank { (input.drive,input.steer)=g.safe_ai_tiger_drive(input.drive,input.steer); }
+        self.was_advancing = matches!(self.phase, "advance" | "backing_off" | "detouring");
         // Mirror native primary-click dispatch. Held ammunition is owned by Game::update.
         if input.mg_coax && !self.primary_held {
             let eye = r.camera.pos;
@@ -250,10 +301,62 @@ impl CanyonPilot {
             }
         }
         self.primary_held = input.mg_coax;
-        if !g.engine_on && self.phase == "advance" {
+        if !g.engine_on && self.was_advancing {
             input.ignition = true;
         }
         input
+    }
+}
+
+/// Pivot before accelerating into a new heading. Forward creep during a large turn cuts across
+/// the obstruction the recovery is trying to clear. Tank::update supplies normal braking inertia.
+fn navigation_input(to: Vec2, heading: f32) -> TankInput {
+    let error = (to.x.atan2(to.y) - heading + std::f32::consts::PI)
+        .rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    TankInput {
+        drive: if error.abs() > 0.6 { 0.0 } else { 0.60 },
+        steer: (error * 2.2).clamp(-1.0, 1.0),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+
+    #[test]
+    fn turn_to_detour_brakes_before_accelerating() {
+        let turning = navigation_input(Vec2::X * 24.0, 0.0);
+        assert_eq!(turning.drive, 0.0);
+        assert_eq!(turning.steer, 1.0);
+        let aligned = navigation_input(Vec2::X * 24.0, std::f32::consts::FRAC_PI_2);
+        assert_eq!(aligned.drive, 0.6);
+        assert!(aligned.steer.abs() < 1e-5);
+    }
+
+    #[test]
+    fn steering_takes_short_arc_across_heading_wrap() {
+        let angle = -std::f32::consts::PI + 0.1;
+        let input = navigation_input(Vec2::new(angle.sin(), angle.cos()), std::f32::consts::PI - 0.1);
+        assert!(input.steer > 0.0 && input.steer < 0.5);
+        assert!(input.drive > 0.0);
+    }
+
+    #[test]
+    fn repeated_stalls_alternate_and_bound_recovery() {
+        let mut pilot = CanyonPilot::from_route(vec![Vec2::ZERO, Vec2::Y * 100.0], Vec2::ZERO);
+        let mut last_side = pilot.avoid_side;
+        let mut last_duration = 0.0;
+        for i in 0..20 {
+            let t = i as f32 * 100.0;
+            pilot.trigger_avoid(t);
+            assert_eq!(pilot.avoid_side, -last_side);
+            let duration = pilot.avoid_until - t;
+            assert!(duration >= last_duration - 0.001 && duration <= 23.301);
+            assert!(pilot.reverse_until > t && pilot.reverse_until < pilot.avoid_until);
+            last_side = pilot.avoid_side;
+            last_duration = duration;
+        }
     }
 }
 
@@ -299,6 +402,8 @@ impl Game {
             "walk":self.walk_pos.to_array(),"broken_modules":self.modules.iter().filter(|m|!m.functional).map(|m|m.kind.name()).collect::<Vec<_>>(),
             "live_t34s":self.campaign_ai_enemies_alive(),"total_t34s":run.director.as_ref().unwrap().total_spawned,
             "combat":self.capture_combat_receipt(),"live_at_guns":self.at_guns.iter().flatten().filter(|g|g.working()).count(),
+            "navigation":{"cursor":pilot.cursor,"recoveries":pilot.stuck_count,"side":pilot.avoid_side,"reverse_until":pilot.reverse_until,"avoid_until":pilot.avoid_until},
+            "ground":format!("{:?}",self.tank_ground_state()),
             "god":self.god,"return_fire":self.playtest_return_fire(),"target_in_sight":self.canyon_pilot_visible_target().map(|(p,g)|serde_json::json!({"position":p.to_array(),"gun":g}))})
     }
 }

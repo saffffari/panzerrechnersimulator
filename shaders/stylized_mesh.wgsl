@@ -248,14 +248,15 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
 
 fn cabin_light_shadow(source: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
     let lamp = cabin_fixture_index(source);
-    if (lamp < 0) { return 1.0; }
+    let gain = hand_torch_gain(source,world);
+    if (lamp < 0) { return gain; }
     let distance_m = distance(world,source);
     let bias_m = max(0.0007,min(distance_m,8.0)*cabin_shadows.range.z*0.22)
         * (1.0 + 0.5*(1.0-ndl));
     let offset = world + n * bias_m - source;
     let major = max(max(abs(offset.x),abs(offset.y)),abs(offset.z));
-    if (major <= cabin_shadows.range.x) { return 1.0; }
-    return cabin_receiver_plane_pcf(offset, n, bias_m, lamp);
+    if (major <= cabin_shadows.range.x) { return gain; }
+    return gain * cabin_receiver_plane_pcf(offset, n, bias_m, lamp);
 }
 
 struct Push {

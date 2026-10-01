@@ -1,0 +1,132 @@
+{
+  "schema": "panzer.graphics-weather-effects-review.v1",
+  "date": "2026-10-01",
+  "base_commit": "b7c76fa",
+  "host": "HAL RTX 4090",
+  "renderer": "shader",
+  "checks": {
+    "unit": {
+      "passed": 1444,
+      "failed": 0,
+      "ignored": 55
+    },
+    "integration": {
+      "passed": 21,
+      "failed": 0,
+      "suites": [
+        "stylized_raster",
+        "bloom_camera_response",
+        "display_quantization",
+        "training_cli_guards"
+      ]
+    },
+    "gpu_effect_review": "passed, native source Tiger capture visually inspected",
+    "gpu_resize": "passed after preserving blocked optics state",
+    "native_window": "title rendered with Graphics entry; X11 synthetic key navigation did not produce a validated change, so native interaction is not claimed",
+    "video": "180 frames, 30 fps, 6 seconds, 1280x720; fully decoded with ffmpeg; contact sheet inspected",
+    "cloud_motion": "fixed-camera captures 120 simulation seconds apart; 91.3% pixels changed, mean absolute channel delta 1.177 (includes small celestial movement)"
+  },
+  "known_preexisting_integration_failures": [
+    "live_fx_contract: two source-string assertions expect the old literal N_BLOOD_CUBES = 8192 and removed flame_voxel_sample definition",
+    "physical_truth_contract: source-string assertion rejects glass_pipe, which already exists at the base commit"
+  ],
+  "scope": "Staged effects beside source Tiger, not battle outcome. Reference video remains external. No private asset package redistributed.",
+  "limits": [
+    "Column approximation remains for cloud multiple scattering; no CFD.",
+    "Twelve smoke supports; exterior smoke is volumetric, cabin soot retains mesh-clipped rounded sparse particles.",
+    "Flashlight is supported in shipping Canyon shader backend only.",
+    "AI candidate was rejected; long-course results predate near-field safety guard and did not finish the course."
+  ],
+  "artifacts": [
+    {
+      "path": "captures/impact_motion_20261001.mp4",
+      "sha256": "dcc338868557a5f5d547c7fbd37b4d787eadce2602bcce6c1c4092a22d34041c",
+      "bytes": 4037115
+    },
+    {
+      "path": "captures/impact_motion_20261001.json",
+      "sha256": "9add6ed8128f93ad2c7e440c57759fd043c6743890f53abf2865f5456c6648e9",
+      "bytes": 309
+    },
+    {
+      "path": "captures/impact_reference_v2_20261001_explosion.png",
+      "sha256": "d1c778a407a5b3af3322135ccb6646f0dacdefe89b9d2ae0657123496c651209",
+      "bytes": 683811
+    },
+    {
+      "path": "captures/impact_reference_v2_20261001_explosion_soot.png",
+      "sha256": "e0e4cb3ae1426f6ed9d0100afff0202eb8bc183d437e39b361e8fc6575b48df0",
+      "bytes": 681424
+    },
+    {
+      "path": "captures/graphics_color_gpu_review_20261001.png",
+      "sha256": "3a2e72ea78fca1fe5fc2eec624e7970867e5c8c99a2c166a16766db8979cfd9e",
+      "bytes": 367252
+    },
+    {
+      "path": "captures/graphics_live_visible_20261001.png",
+      "sha256": "8d3e347c301d450a77c3a8869dabfdfc5bec118f3451cc3a7b282d09b6d2e6bf",
+      "bytes": 129184
+    },
+    {
+      "path": "captures/stars_final_20261001.png",
+      "sha256": "e450324f9524c18bf51c6e54f3d71b97d6663f91698aee142ce5c66f3de8f14e",
+      "bytes": 315733
+    },
+    {
+      "path": "captures/torch_final_20261001.png",
+      "sha256": "47ef5f1e3666d65266dc86847d25305e87a16831f18b0df93fb652f5b3217549",
+      "bytes": 150346
+    },
+    {
+      "path": "captures/sunrise_20261001.png",
+      "sha256": "e33e3a271b7a16c20d1c6d427ef5aeabf9eeed5448b32eb4c9d8ccfa459c9db1",
+      "bytes": 612392
+    },
+    {
+      "path": "captures/sunset_final_20261001.png",
+      "sha256": "34eb882f0daf89ba13475eb16cad50de8c07ba30845c92a20773626b8690768c",
+      "bytes": 610151
+    },
+    {
+      "path": "captures/cloud_volume_a_20261001.png",
+      "sha256": "257ef9b962ca1d4b238dc6d760d43acbe07d8106f4f7263094db292882c2de2b",
+      "bytes": 449314
+    },
+    {
+      "path": "captures/cloud_volume_b_20261001.png",
+      "sha256": "bfa59a9f08000525d7b7fd0a66613f73c3d80cd30f6e13f86df395763ea53ee3",
+      "bytes": 450579
+    },
+    {
+      "path": "captures/blizzard_extreme_20261001.png",
+      "sha256": "cd80b415a3c3b21ed645a801a173a68544ab02cbfaa61852204dcf469ae18b13",
+      "bytes": 562419
+    },
+    {
+      "path": "artifacts/runtime/tests_release_candidate1001.log",
+      "sha256": "bc32a29d974359ba36464fd5aa54d7c41af83b2db4ff96ab67a155b6861b817d",
+      "bytes": 176086
+    },
+    {
+      "path": "artifacts/runtime/tests_final_contracts1001.log",
+      "sha256": "ee2b232d4ec50f50a5eaa56fe4809d62a0102398e4787f616177990deec63d8d",
+      "bytes": 74954
+    },
+    {
+      "path": "artifacts/runtime/graphics_gpu_resize1001_final.log",
+      "sha256": "7d3926021945864b5976d69bc6922440209fc7b111cdeb077d1382070972881e",
+      "bytes": 38706
+    },
+    {
+      "path": "artifacts/runtime/impact_motion1001.log",
+      "sha256": "37d7822cfd2e2f6b03202fb00dd38add1e49e93bb3048bc382a926067e16e719",
+      "bytes": 36095
+    },
+    {
+      "path": "artifacts/runtime/build_deliverable1001.log",
+      "sha256": "ef73467da1a04cb4d9c91a4b987821452bd9f4c879da906e61ea0fed65b7848e",
+      "bytes": 64168
+    }
+  ]
+}

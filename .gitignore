@@ -8,6 +8,14 @@ __pycache__/
 # Runtime binaries and authoring sources stay local; only the versioned campaign contracts are
 # tracked so code cannot point at manifests that exist solely in one ignored checkout.
 /assets/*
+# Small engine-generated policies reviewed in docs/AI_RECOVERY_20261001.md.
+# Keep exploratory training runs and all other AI artifacts local.
+!/assets/ai/
+/assets/ai/*
+!/assets/ai/weights_foot_tiger.bin
+!/assets/ai/weights_foot_soviet.bin
+!/assets/ai/weights_foot_tiger_aug30_baseline.bin
+!/assets/ai/weights_foot_soviet_aug30_baseline.bin
 # Exact reviewed CC0 pocket-compass derivative and attribution; the source ZIP stays private.
 !/assets/props/
 /assets/props/*

@@ -22,6 +22,7 @@ fn compose(source: &str) -> String {
         .replace("// @campaign-terrain-material",include_str!("../shaders/terrain_material.wgsl"))
         .replace("// @sky-visibility-sampling",include_str!("../shaders/sky_visibility_sampling.wgsl"))
         .replace("// @cabin-visibility-sampling",include_str!("../shaders/cabin_visibility.wgsl"))
+        .replace("// @weather-density",include_str!("../shaders/weather_volume.wgsl"))
 }
 /// The physical atmosphere library prepended as renderer.rs prepends it
 /// (`physical_atmosphere_transport_shader_source`): everything before the snow section.
@@ -123,7 +124,7 @@ fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
     assert_eq!(layout(&mesh,"EnvironmentProbe").0,68*16);
     assert_eq!(layout(&mesh,"NearShadow"),(80,vec![("view_proj".into(),0),("scale".into(),64)]));
     // Eight fixed cabin fixtures plus eight source-coupled world fires, as in the Rust bank.
-    assert_eq!(layout(&mesh,"CabinShadows"),(272,vec![("lamps".into(),0),("range".into(),256)]));
+    assert_eq!(layout(&mesh,"CabinShadows"),(320,vec![("lamps".into(),0),("torch_position".into(),272),("torch_direction".into(),288),("range".into(),304)]));
     let old_smoke=include_str!("../shaders/smoke.wgsl");
     let old=parse(&(structure(old_smoke,"Puff")+&structure(old_smoke,"Smoke")));
     let smoke=parse(&compose(SMOKE));
@@ -132,9 +133,9 @@ fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
         .filter_map(|(_,v)|v.binding.as_ref().map(|b|(b.group,b.binding))).collect();
     assert_eq!(smoke_bindings,[(0,0),(0,1),(1,0),(1,1),(1,2),(1,3),(2,0),(3,0),(3,1),(3,2)].into_iter().collect());
     assert_eq!(layout(&smoke,"Smoke"),layout(&old,"Smoke"));
-    assert_eq!(layout(&smoke,"Smoke").0,1616);
+    assert_eq!(layout(&smoke,"Smoke").0,1840);
     assert_eq!(layout(&smoke,"PhysicalEnvironment"),layout(&sky,"PhysicalEnvironment"));
-    assert_eq!(layout(&smoke,"PhysicalEnvironment").0,208);
+    assert_eq!(layout(&smoke,"PhysicalEnvironment").0,240);
     assert_eq!(layout(&smoke,"EnvironmentProbe").0,68*16);
 }
 

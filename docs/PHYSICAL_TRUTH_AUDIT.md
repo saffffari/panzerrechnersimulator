@@ -1,8 +1,52 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-01 (T-34 wreck fire correction). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Graphics and atmosphere integration, 2026-10-01
+
+- Graphics preferences are separate from world truth: internal/window size, shadows, transport
+  samples, optic cadence and camera/display reproduction have a versioned local preference file.
+  Time/Weather pages explicitly change world conditions; hardware presets do not do so. GPU
+  target rebuilds retain scene slots, optics including damaged/blocked flags, lamp registrations,
+  particle identities and clocks. The resize regression renders after two target changes.
+- Handheld light uses a modeled lens, a warm directional emitter, a 16–28 degree cone and the
+  shared geometry-shadow bank (512-pixel cubemap, 8 m range). Shipping Canyon shader backend
+  only; unsupported RT views stow it. It is a compact emitter/shadow approximation, not a
+  traced reflector or a global night-brightness lift. The night tone map remains desaturated.
+- Removed fixed white viewport halo RGB. Bloom spreads the aperture's source RGB, bounded in
+  exposed energy, then uses the same camera response. It remains a lens post effect, not GI.
+- Cloud density now advects and rolls in world space. The existing delta-Eddington column diffuse
+  closure now supplies a source function integrated through the actual 3D cloud density, rather
+  than adding light at the cloud-base sphere (which looked planar). CPU/GPU integrate each
+  piecewise-constant segment analytically. The column closure is still an approximation of
+  multiple scattering, not full 3D multiple scattering; density evolution is prescribed, not CFD.
+- Stars are a deterministic illustrative celestial field, transformed by latitude/sidereal time
+  and attenuated by the shared atmosphere/cloud optical depth. They are not an astronomical
+  catalogue. Dawn and dusk use the existing ephemeris and atmospheric scattering.
+- Coupled storm override spans 0–8; gradual temporal fronts/gusts control suspension extinction,
+  precipitation and wind. The same wind advects world-space snow banks and cloud density.
+  World-medium view/source extinction samples a shared 3D density function. The raster fog's
+  environment source is still a representative phase-weighted probe, not full volumetric GI.
+  Discrete snow capacity rises to 65,536, preserving old flakes when adding density layers.
+- Exterior soot and transient smoke move from opaque/faceted grains to twelve finite, overlapping
+  density supports with soft edges, coherent erosion, wind drift and explicit scattering albedo
+  (soot 0.08, propellant 0.55). Source light is shared with geometry and shadowed by it. Raster
+  smoke integrates extinction at eight points/support and evaluates incident light at the density
+  centroid; full per-sample source integration and soot self-shadowing remain limitations.
+  Nearest three sustained emitters use nine supports, leaving three for transient smoke. Cabin
+  soot retains its mesh-clipped sparse particles, with rounded silhouettes; cavity-constrained
+  continuous density is not implemented by this change.
+- Requested effect palette uses yellow/cream cores and orange/amber edges, with flame-source
+  RGB updated from the same cells. Tracers read real projectile states. Wider spark trajectories
+  are bounded cosmetic ejecta; they do not define penetration, spall damage or collision. The
+  staged six-second review is an effects comparison beside the source Tiger, not combat evidence.
+- Existing seasonal grove choices include both pine variants alongside bare/broken trees, retaining
+  counts and placement exclusions. This changes authored scenery, identically for both presets.
+
+Details and controls: [GRAPHICS_WEATHER_20261001.md](GRAPHICS_WEATHER_20261001.md).
+AI recovery and evaluation boundary: [AI_RECOVERY_20261001.md](AI_RECOVERY_20261001.md).
 
 ## September 2026 audit corrections
 

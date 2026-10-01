@@ -1517,7 +1517,7 @@ fn seasonal_boundary_groves(g: &mut Gen<'_>, act: &crate::world::ActMap, exclude
     let dir = delta.normalize_or_zero();
     let side = glam::Vec2::new(-dir.y, dir.x);
     let groups = if act.id == 1 { 18u32 } else { 14u32 };
-    let trees = [Kit::BareTree5, Kit::BareTree7, Kit::DeadTree8, Kit::DeadTree9];
+    let trees = [Kit::BareTree5, Kit::BareTree7, Kit::DeadTree8, Kit::DeadTree9, Kit::Pine, Kit::Pine2];
     for group in 0..groups {
         let key = 0xBA2E_0000u32 + act.id as u32 * 100 + group;
         let t = 0.008 + group as f32 / (groups - 1) as f32 * 0.94;
@@ -3112,7 +3112,8 @@ mod tests {
         let (_, trees, _, _) = grouped_asset_pages(&mut g, false);
         let count: usize = trees.iter().flat_map(|asset| &asset.pages).map(Vec::len).sum();
         assert!((40..=126).contains(&count), "sparse bare winter trees: {count}");
-        assert!(trees.iter().all(|asset| !matches!(asset.kit, Kit::Pine | Kit::Pine2)));
+        assert!(trees.iter().any(|asset| matches!(asset.kit, Kit::Pine | Kit::Pine2)));
+        assert!(trees.iter().any(|asset| matches!(asset.kit, Kit::BareTree5 | Kit::BareTree7)));
         for matrix in trees.iter().flat_map(|asset| &asset.pages).flatten() {
             let p = matrix.w_axis.truncate();
             assert!(p.x * p.x + p.z * p.z >= 320.0f32.powi(2));

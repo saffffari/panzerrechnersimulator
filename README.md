@@ -69,8 +69,12 @@ remain useful only for render-free automation, fault isolation and historical co
 must not set visual scope or shipping defaults. Split-screen currently fixes each local viewport at
 320×180 while retaining the selected quality tier.
 
-`train-foot-ai` writes two role-tagged checkpoints:
-`assets/ai/weights_foot_tiger.bin` and `assets/ai/weights_foot_soviet.bin`. Runtime loading rejects a
+`train-foot-ai [epochs] [output-directory]` writes two role-tagged candidates under
+`assets/ai/foot_candidates/epochs_<epochs>` by default and refuses existing outputs.
+The active runtime files remain `assets/ai/weights_foot_tiger.bin` and
+`assets/ai/weights_foot_soviet.bin`; promotion is a separate evaluated decision. See
+[`docs/AI_RECOVERY_20261001.md`](docs/AI_RECOVERY_20261001.md) for the comparison commands,
+memory fix, and reviewed policies. Runtime loading rejects a
 checkpoint with the wrong role or schema and keeps the scripted mission/doctrine expert active when
 either artifact is absent or invalid. To collect the opt-in `kessel.foot_transition.v1` DAgger
 stream during a physical campaign rollout, append a separate output path after the Tiger vehicle
@@ -208,3 +212,5 @@ stops rendering until the game is active again; choose **Resume** when you retur
 
 macOS owner/test packages remain historical artifacts; new scaffold builds use the current product
 name. See [`docs/PRODUCT_NAME.md`](docs/PRODUCT_NAME.md) for naming and compatibility boundaries.
+
+Graphics and weather controls (including **L** for handheld light): [October 1 guide](docs/GRAPHICS_WEATHER_20261001.md).

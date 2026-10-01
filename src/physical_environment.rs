@@ -55,6 +55,12 @@ pub struct AtmosphereParameters {
     pub airglow_layer_altitude_m: f64,
 
     pub cloud: CloudLayerParameters,
+    /// Advected world-space density, shared by every view and illumination query.
+    pub cloud_offset_m: DVec3,
+    pub cloud_evolution_s: f64,
+    /// sin(latitude), cos(latitude), local apparent sidereal radians, enabled.
+    /// Stars are a deterministic illustrative field, not a surveyed star catalogue.
+    pub star_frame: [f64;4],
 }
 
 /// Moonless zenith night sky at sunspot minimum, as measured at La Palma (Benn & Ellison 1998:
@@ -116,6 +122,7 @@ impl Default for AtmosphereParameters {
             secondary_angular_radius_rad: 0.259_f64.to_radians(),
             airglow_zenith_radiance: NIGHT_SKY_ZENITH_RADIANCE,
             airglow_layer_altitude_m: AIRGLOW_LAYER_ALTITUDE_M,
+            cloud_offset_m: DVec3::ZERO, cloud_evolution_s: 0.0, star_frame:[0.0;4],
             cloud: CloudLayerParameters {
                 bottom_altitude_m: 900.0,
                 top_altitude_m: 2_200.0,
@@ -351,8 +358,9 @@ pub fn cloud_relative_density(atmosphere: &AtmosphereParameters, position_m: DVe
 
     let large_scale = cloud.structure_scale_large_m.max(1.0);
     let small_scale = cloud.structure_scale_small_m.max(1.0);
-    let large = value_noise(position_m / large_scale, 0x51f1_5e5d);
-    let small = value_noise(position_m / small_scale, 0xa17c_9e37);
+    let advected = position_m - atmosphere.cloud_offset_m;
+    let large = value_noise(advected / large_scale, 0x51f1_5e5d);
+    let small = value_noise((advected + DVec3::Y*atmosphere.cloud_evolution_s*0.7) / small_scale, 0xa17c_9e37);
     let structure = large * 0.72 + small * 0.28;
     let threshold = 1.0 - coverage;
     let occupied = smoothstep(threshold - 0.08, threshold + 0.08, structure);
@@ -998,16 +1006,8 @@ fn cloud_diffuse_boundary(
     }
     // The hemispheric closure is constant in the downward hemisphere, whose cosine integral is pi.
     let lower_boundary_radiance = lower_flux / PI;
-    let view_transmittance = exp_neg(optical_depth_segment(
-        atmosphere,
-        origin_m,
-        direction,
-        0.0,
-        base_distance,
-        quality.source_steps,
-    ));
     CloudDiffuseBoundary {
-        transported_radiance: lower_boundary_radiance * view_transmittance,
+        transported_radiance: lower_boundary_radiance,
         handled_cloud_scattering: true,
     }
 }
@@ -1143,7 +1143,7 @@ pub fn integrate_environment(
     let secondary = atmosphere.secondary_irradiance.max_element() > 0.0;
     let secondary_direction = atmosphere.secondary_direction.normalize_or_zero();
     let mut optical_depth = DVec3::ZERO;
-    let mut inscattered = cloud_boundary.transported_radiance;
+    let mut inscattered = DVec3::ZERO;
     for (t, ds) in integration_samples(
         atmosphere,
         origin_m,
@@ -1154,7 +1154,7 @@ pub fn integrate_environment(
     ) {
         let position = origin_m + direction * t;
         let medium = medium_coefficients_at(atmosphere, position);
-        let view_transmittance = exp_neg(optical_depth + medium.extinction_m_inv * (0.5 * ds));
+        let view_transmittance = exp_neg(optical_depth);
         let cloud_scattering = if cloud_boundary.handled_cloud_scattering {
             0.0
         } else {
@@ -1196,7 +1196,13 @@ pub fn integrate_environment(
             let cos_theta = direction.dot(secondary_direction).clamp(-1.0, 1.0);
             source += atmosphere.secondary_irradiance * source_transmittance * scattering(cos_theta);
         }
-        inscattered += view_transmittance * source * ds;
+        // Column diffuse closure supplies a source function inside the actual 3D water density.
+        // It is no longer painted onto the cloud-base sphere across empty sight lines.
+        if cloud_boundary.handled_cloud_scattering {
+            source += cloud_boundary.transported_radiance * medium.cloud_scattering_m_inv;
+        }
+        let segment_weight=(DVec3::ONE-exp_neg(medium.extinction_m_inv*ds))/medium.extinction_m_inv.max(DVec3::splat(1e-12));
+        inscattered += view_transmittance * source * segment_weight;
         optical_depth += medium.extinction_m_inv * ds;
     }
 
@@ -1220,8 +1226,30 @@ pub fn integrate_environment(
 }
 
 /// Unattenuated radiance of whichever finite disc (key or secondary) contains `direction`.
+pub fn stellar_radiance(atmosphere:&AtmosphereParameters,direction:DVec3)->DVec3 {
+    if atmosphere.star_frame[3]<=0.0 {return DVec3::ZERO;}
+    let [sin_lat,cos_lat,sidereal,gain]=atmosphere.star_frame;
+    let d=direction.normalize_or_zero();
+    let dec=d.dot(DVec3::new(0.0,sin_lat,-cos_lat)).clamp(-1.0,1.0);
+    let hour=(-d.x).atan2(d.dot(DVec3::new(0.0,cos_lat,sin_lat)));
+    let ra=sidereal-hour;let radial=(1.0-dec*dec).max(0.0).sqrt();
+    let q=DVec3::new(radial*ra.cos(),dec,radial*ra.sin());let a=q.abs();
+    let (uv,face)=if a.x>=a.y && a.x>=a.z {(glam::DVec2::new(q.z,q.y)/a.x,if q.x>0.0{0}else{1})}
+        else if a.y>=a.z {(glam::DVec2::new(q.x,q.z)/a.y,if q.y>0.0{2}else{3})}
+        else {(glam::DVec2::new(q.x,q.y)/a.z,if q.z>0.0{4}else{5})};
+    let grid=(uv*0.5+glam::DVec2::splat(0.5))*96.0;let cell=grid.floor();
+    let h=hash_lattice(cell.x as i32,cell.y as i32,face,0x5354_4152);
+    if h<0.986 {return DVec3::ZERO;}
+    let cx=0.25+0.5*hash_lattice(cell.x as i32,cell.y as i32,face,0x4152_0001);
+    let cy=0.25+0.5*hash_lattice(cell.x as i32,cell.y as i32,face,0x4152_0002);
+    let radius=(grid-cell-glam::DVec2::new(cx,cy)).length()/0.14;
+    let brightness=(-radius*radius*2.0).exp()*(0.000003+0.000012*((h-0.986)/0.014).powi(4));
+    let color=DVec3::new(0.65,0.80,1.0).lerp(DVec3::new(1.0,0.77,0.55),hash_lattice(cell.x as i32,cell.y as i32,face,0x4152_0003));
+    color*brightness*gain
+}
+
 fn disc_radiance(atmosphere: &AtmosphereParameters, direction: DVec3) -> DVec3 {
-    let mut radiance = DVec3::ZERO;
+    let mut radiance = stellar_radiance(atmosphere,direction);
     if direction.dot(atmosphere.sun_direction.normalize()) >= atmosphere.sun_angular_radius_rad.cos() {
         radiance += atmosphere.solar_irradiance
             / sun_disk_solid_angle(atmosphere.sun_angular_radius_rad).max(1.0e-12);
@@ -1256,6 +1284,8 @@ pub struct GpuPhysicalEnvironment {
     pub secondary_direction: [f32; 4],
     /// Night-sky layer: zenith spectral radiance before extinction (xyz), layer altitude m (w).
     pub airglow_zenith_altitude: [f32; 4],
+    pub cloud_motion: [f32;4],
+    pub star_frame: [f32;4],
 }
 
 impl GpuPhysicalEnvironment {
@@ -1332,6 +1362,8 @@ impl GpuPhysicalEnvironment {
                 let d = atmosphere.secondary_direction.normalize_or_zero();
                 [d.x as f32, d.y as f32, d.z as f32, 0.0]
             },
+            cloud_motion:[atmosphere.cloud_offset_m.x as f32,atmosphere.cloud_offset_m.y as f32,atmosphere.cloud_offset_m.z as f32,atmosphere.cloud_evolution_s as f32],
+            star_frame:atmosphere.star_frame.map(|v|v as f32),
             airglow_zenith_altitude: [
                 atmosphere.airglow_zenith_radiance.x as f32,
                 atmosphere.airglow_zenith_radiance.y as f32,
@@ -1636,6 +1668,16 @@ mod tests {
     }
 
     #[test]
+    fn cloud_density_advects_in_world_space_without_changing_vertical_support() {
+        let mut a=AtmosphereParameters::default();a.cloud.coverage=0.65;
+        let point=DVec3::new(327.0,(a.cloud.bottom_altitude_m+a.cloud.top_altitude_m)*0.5,193.0);
+        let initial=cloud_relative_density(&a,point);
+        a.cloud_offset_m=DVec3::new(145.0,0.0,-97.0);
+        assert!((cloud_relative_density(&a,point+a.cloud_offset_m)-initial).abs()<1e-10);
+        assert_eq!(cloud_relative_density(&a,DVec3::new(0.0,a.cloud.bottom_altitude_m-1.0,0.0)),0.0);
+    }
+
+    #[test]
     fn atmosphere_radiance_and_transmittance_are_finite_and_nonnegative() {
         let mut atmosphere = AtmosphereParameters::default();
         atmosphere.cloud.coverage = 0.93;
@@ -1880,7 +1922,7 @@ mod tests {
 
     #[test]
     fn gpu_abis_are_whole_sixteen_byte_lanes() {
-        assert_eq!(std::mem::size_of::<GpuPhysicalEnvironment>(), 208);
+        assert_eq!(std::mem::size_of::<GpuPhysicalEnvironment>(), 240);
         assert_eq!(std::mem::align_of::<GpuPhysicalEnvironment>(), 16);
         assert_eq!(std::mem::size_of::<GpuPhysicalSnowField>(), 80);
         assert_eq!(std::mem::align_of::<GpuPhysicalSnowField>(), 16);

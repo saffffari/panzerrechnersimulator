@@ -243,6 +243,7 @@ fn capture_camera(
 impl RasterOptics {
     pub(super) fn copy_registrations_from(&mut self, other: &Self) {
         self.specs.clone_from(&other.specs);
+        self.blocked.clone_from(&other.blocked);
     }
 
     /// Copy the active view's eye mapping (cone lane 0 to byte 44, rod lanes 2-3 to byte 16) into
@@ -395,6 +396,7 @@ impl Renderer {
                 atmo_origin:self.atmo_origin.to_array(),atmo_time:self.time,
                 fog_layer:[cam.world_medium[2],cam.world_medium[3],0.0,0.0],
                 transport_steps:self.transport_quality.smoke_steps(),
+                weather_motion:[self.weather_offset.x,self.weather_offset.y,self.weather_offset.z,self.time],
             };
             queue.write_buffer(&layer.weather.smoke_buf,0,bytemuck::bytes_of(&smoke));
             let gust=super::weather_gust(self.time,self.weather_seed);

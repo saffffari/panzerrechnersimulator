@@ -119,9 +119,10 @@ impl<'a> TigerPilot<'a> {
             && self.crew_cd <= 0.0
             && action[2] > 0.0
             && game.auto_can_fire();
+        let (drive,steer) = game.safe_ai_tiger_drive(action[0],action[1]);
         TankInput {
-            drive: action[0],
-            steer: action[1],
+            drive,
+            steer,
             // Main-gun input is LMB (`mg_coax`) in embodied play. `fire` is Space/climb now.
             mg_coax: trigger,
             ..Default::default()
@@ -153,8 +154,7 @@ impl<'a> TigerPilot<'a> {
             } else {
                 let action = self.brain.forward(&game.tiger_executor_obs());
                 if role_alive(LanRole::Driver) {
-                    drive = action[0];
-                    steer = action[1];
+                    (drive,steer) = game.safe_ai_tiger_drive(action[0],action[1]);
                 }
                 if game.breech_loaded() && role_alive(LanRole::Gunner) {
                     game.aim_at_enemy();

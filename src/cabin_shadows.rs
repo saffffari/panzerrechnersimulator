@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 pub const CABIN_LIGHTS: usize = 8;
 pub const WORLD_FIRE_LIGHTS: usize = 8;
-pub const MAX_LIGHTS: usize = CABIN_LIGHTS + WORLD_FIRE_LIGHTS;
+pub const MAX_LIGHTS: usize = CABIN_LIGHTS + WORLD_FIRE_LIGHTS + 1;
 const SIDE: u32 = 512;
 // The smaller dome sits 14 mm below the source fan. A 35 mm near plane erased that blocker.
 // 5 mm retains it; only the fixture's explicitly registered emitting mesh is excluded.
@@ -17,6 +17,8 @@ const FAR: f32 = 8.0;
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniform {
     pub lamps: [[f32; 4]; MAX_LIGHTS], // world position; enabled, matched to packed source position
+    pub torch_position: [f32; 4], // xyz, enabled
+    pub torch_direction: [f32; 4], // xyz, outer cone cosine
     pub range: [f32; 4],               // near, far, texel angular scale, active lights
 }
 
@@ -64,6 +66,7 @@ pub struct CabinShadows {
     caches: RefCell<[LampCache; MAX_LIGHTS]>,
     dynamic_meshes: Vec<usize>,
     dynamic_flags: Vec<bool>,
+    torch_direction: glam::Vec3,
 }
 
 fn face_view_proj(position: glam::Vec3, face: usize) -> glam::Mat4 {
@@ -218,6 +221,7 @@ impl CabinShadows {
             caches: RefCell::new([LampCache::default(); MAX_LIGHTS]),
             dynamic_meshes: Vec::new(),
             dynamic_flags: Vec::new(),
+            torch_direction: glam::Vec3::Z,
         }
     }
 
@@ -240,6 +244,25 @@ impl CabinShadows {
         emitters.resize(CABIN_LIGHTS, None);
         selected.extend(lights.iter().copied().take(WORLD_FIRE_LIGHTS));
         emitters.resize(selected.len(), None);
+    }
+
+    pub fn copy_registrations_from(&mut self, old: &Self) {
+        *self.lights.borrow_mut() = old.lights.borrow().clone();
+        *self.emitting_meshes.borrow_mut() = old.emitting_meshes.borrow().clone();
+        self.dynamic_meshes = old.dynamic_meshes.clone();
+        self.dynamic_flags = old.dynamic_flags.clone();
+        self.torch_direction = old.torch_direction;
+    }
+
+    fn set_torch(&mut self, light: Option<PointLight>, direction: glam::Vec3, lens: usize) {
+        let mut lights = self.lights.borrow_mut();
+        let mut emitters = self.emitting_meshes.borrow_mut();
+        let off = PointLight {pos:glam::Vec3::ZERO, source_radius:0.015,color:glam::Vec3::ZERO,radiant_intensity:0.0};
+        lights.resize(MAX_LIGHTS,off);
+        emitters.resize(MAX_LIGHTS,None);
+        lights[MAX_LIGHTS-1] = light.unwrap_or(off);
+        emitters[MAX_LIGHTS-1] = Some(lens);
+        self.torch_direction = direction.normalize_or_zero();
     }
 
     fn set_dynamic_meshes(&mut self, meshes: &[usize]) {
@@ -309,6 +332,8 @@ impl CabinShadows {
         let emitting_meshes = self.emitting_meshes.borrow();
         let mut uniform = Uniform {
             lamps: [[0.0; 4]; MAX_LIGHTS],
+            torch_position: lights.get(MAX_LIGHTS-1).filter(|l|active_fixture(l)).map_or([0.0;4],|l|[l.pos.x,l.pos.y,l.pos.z,1.0]),
+            torch_direction: [self.torch_direction.x,self.torch_direction.y,self.torch_direction.z,28f32.to_radians().cos()],
             range: [NEAR, FAR, 2.0 / SIDE as f32, 0.0],
         };
         let mut caches = self.caches.borrow_mut();
@@ -443,6 +468,10 @@ fn copy_cached_depth_face(encoder: &mut wgpu::CommandEncoder, source: &wgpu::Tex
 }
 
 impl Renderer {
+    pub fn set_hand_torch(&mut self, light: Option<PointLight>, direction: glam::Vec3, lens: usize) {
+        self.cabin_shadows.set_torch(light,direction,lens);
+    }
+
     /// Stable named fixture selection supplied by Game, independent of light sorting or exposure.
     /// Ammunition remains a real shadow caster, but cannot invalidate static machinery depth.
     /// Register the actual finite pool once; visibility/model changes drive composed depth later.
@@ -467,8 +496,8 @@ mod tests {
     fn cabin_and_wreck_shadow_slots_share_the_expanded_shader_abi() {
         assert_eq!(CABIN_LIGHTS, 8);
         assert_eq!(WORLD_FIRE_LIGHTS, 8);
-        assert_eq!(std::mem::size_of::<Uniform>(), 272);
-        assert_eq!(std::mem::offset_of!(Uniform, range), 256);
+        assert_eq!(std::mem::size_of::<Uniform>(), 320);
+        assert_eq!(std::mem::offset_of!(Uniform, range), 304);
     }
 
 
@@ -611,7 +640,7 @@ mod tests {
             );
         }
         assert_eq!(std::mem::size_of::<NearShadowUniform>(), 80);
-        assert_eq!(std::mem::size_of::<Uniform>(), 272);
+        assert_eq!(std::mem::size_of::<Uniform>(), 320);
     }
 
     #[test]

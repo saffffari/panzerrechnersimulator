@@ -1,3 +1,4 @@
+// @weather-density
 // Bounded deterministic raster volumes. Existing Smoke ABI, depth terminates every local march.
 // World fog is analytic; eight midpoint samples per intersecting volume cover compact muzzle/breech/cabin media.
 // Output is premultiplied HDR for source-over blending. No acceleration structure or history.
@@ -6,6 +7,7 @@ struct Puff {
     age: f32,         // seconds since this plume was born
     dir: vec3<f32>,   // gun forward — the plume drifts a little along this and lofts up
     strength: f32,    // 0 = inactive slot
+    shape: vec4<f32>, // explicit radius / density / rolling phase (radius zero uses legacy puff)
 };
 
 struct Smoke {
@@ -30,6 +32,7 @@ struct Smoke {
     atmo_time: f32,         // simulation time — identical for every split view in this frame
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol
     transport_steps: vec4<f32>, // world, cabin, plume, secondary local-medium quadrature
+    weather_motion: vec4<f32>, // shared wind displacement and weather time
 };
 
 struct PhysicalEnvironment {
@@ -46,6 +49,8 @@ struct PhysicalEnvironment {
     secondary_irradiance_angle: vec4<f32>,
     secondary_direction: vec4<f32>,
     airglow_zenith_altitude: vec4<f32>,
+    cloud_motion: vec4<f32>,
+    star_frame: vec4<f32>,
 };
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> sm: Smoke;
@@ -92,11 +97,26 @@ fn slab_length(origin: vec3<f32>, ray: vec3<f32>, limit: f32) -> f32 {
     let a=(sm.fog_layer.x-origin.y)/ray.y; let b=(sm.fog_layer.y-origin.y)/ray.y;
     return max(min(max(a,b),limit)-max(min(a,b),0.0),0.0);
 }
+
+// Advected finite 3D matter. Smooth radial support and coherent erosion remove hard cell faces.
+fn smoke_billow_density(point:vec3<f32>,puff:Puff)->f32 {
+    let q=(point-puff.pos)/max(puff.shape.x,0.02);
+    let radius=length(q); if(radius>=1.0 || puff.strength<=0.0){return 0.0;}
+    let phase=puff.shape.z;
+    let warp=vec3(sin(q.y*4.1+phase),sin(q.z*3.7-phase*0.8),sin(q.x*4.7+phase*0.6))*0.23;
+    let noise=weather_noise(q*3.2+warp+vec3(0.0,-phase*0.35,0.0));
+    let fine=weather_noise(q*7.1+warp+vec3(7.3,phase*0.2,4.1));
+    let envelope=1.0-smoothstep(0.12,1.0,radius);
+    return puff.shape.y*envelope*smoothstep(0.15,0.75,noise*0.75+fine*0.25);
+}
+
 fn puff_shape(puff: Puff) -> vec4<f32> {
+    if (puff.shape.x>0.0) {return vec4(puff.pos,puff.shape.x);}
     let age=max(puff.age,0.0);
     return vec4(puff.pos+puff.dir*(0.55*age)+vec3(0.0,3.4*age,0.0),0.5+1.8*age);
 }
 fn plume_density(point: vec3<f32>, puff: Puff) -> f32 {
+    if (puff.shape.x>0.0) {return smoke_billow_density(point,puff);}
     if (puff.strength<=0.0 || puff.age<0.0 || puff.age>=PUFF_LIFE) { return 0.0; }
     let shape=puff_shape(puff); let q=(point-shape.xyz)/shape.w;
     let radius=length(q); if (radius>=1.0) { return 0.0; }
@@ -222,7 +242,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         scene_distance=max(length(surface.xyz/surface.w),0.0);
     }
     let fog_distance=min(scene_distance,max(sm.world_max_distance,0.0));
-    let fog_transmittance=exp(-max(sm.fog_density,0.0)*slab_length(origin,ray,fog_distance));
+    let fog_transmittance=exp(-weather_optical_depth(origin,ray,fog_distance,sm.fog_layer.xy,max(sm.fog_density,0.0),sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x)));
     // The world medium's single-scattering source: its albedo times the physical environment
     // (the probe's directions, phase-weighted) and the key body's beam through its phase,
     // with the aerosol/blowing-snow optics of smoke.wgsl. An optically thick layer converges to
@@ -234,24 +254,29 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         + probe.lanes[32].xyz*henyey_greenstein(dot(ray,unit_or_up(sm.sun_dir)),fog_g));
 
     var depth_moment=vec2(0.0);
+    var scattering_depth=0.0;
     for (var index=0;index<12;index+=1) {
         let puff=sm.puffs[index];
         if (puff.strength<=0.0 || puff.age<0.0 || puff.age>=PUFF_LIFE) { continue; }
         let shape=puff_shape(puff);
-        depth_moment+=volume_depth(origin,ray,sphere_interval(origin,ray,shape.xyz,shape.w),scene_distance,index);
+        let moment=volume_depth(origin,ray,sphere_interval(origin,ray,shape.xyz,shape.w),scene_distance,index);
+        depth_moment+=moment;
+        scattering_depth+=moment.x*select(0.70,puff.shape.w,puff.shape.x>0.0);
     }
     if (sm.breech_gas.strength>0.0 && sm.breech_gas.age<2.2) {
         let shape=gas_shape(sm.breech_gas);
-        depth_moment+=volume_depth(origin,ray,sphere_interval(origin,ray,shape.xyz,shape.w),scene_distance,12);
+        let moment=volume_depth(origin,ray,sphere_interval(origin,ray,shape.xyz,shape.w),scene_distance,12);
+        depth_moment+=moment;scattering_depth+=moment.x*0.70;
     }
     if (sm.interior>0.001) {
-        depth_moment+=volume_depth(origin,ray,sphere_interval(origin,ray,sm.atmo_origin,3.35),scene_distance,13);
+        let moment=volume_depth(origin,ray,sphere_interval(origin,ray,sm.atmo_origin,3.35),scene_distance,13);
+        depth_moment+=moment;scattering_depth+=moment.x*0.70;
     }
     let transmittance=exp(-depth_moment.x);
     var radiance=vec3(0.0);
     if (depth_moment.x>0.00001) {
         let center=origin+ray*(depth_moment.y/depth_moment.x);
-        radiance=smoke_light(center,ray)*(1.0-transmittance);
+        radiance=smoke_light(center,ray)*(1.0-transmittance)*scattering_depth/(0.70*depth_moment.x);
     }
     radiance+=transmittance*fog_color*(1.0-fog_transmittance);
     return vec4(max(radiance,vec3(0.0)),clamp(1.0-transmittance*fog_transmittance,0.0,1.0));

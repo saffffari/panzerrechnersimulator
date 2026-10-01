@@ -11,8 +11,8 @@ const FRAME_GRAINS: usize = 24_576;
 const CANNON_DRAWS: usize = 128;
 pub(super) const PAGE_CAPACITY: usize = FRAME_GRAINS + FLIGHTS * 2 + CANNON_DRAWS * 2;
 const COLORS: [[u8; 3]; PAGES] = [
-    [255, 211, 46], [255, 132, 24], [255, 64, 12], [255, 241, 185],
-    [255, 171, 36], [255, 28, 8], [142, 143, 136], [76, 79, 82],
+    [255, 226, 96], [255, 181, 48], [255, 146, 28], [255, 249, 215],
+    [255, 202, 62], [255, 191, 52], [142, 143, 136], [76, 79, 82],
     [228, 231, 234], // pale propellant aerosol, separate from blast soot and ground dust
 ];
 const EMISSION: [f32; PAGES] = [4.0, 4.5, 5.0, 9.0, 4.2, 5.2, 0.0, 0.0, 0.0];
@@ -33,7 +33,7 @@ fn propellant_offset(axis: Vec3, ray: Vec3, age: f32, radius: f32, spread: f32, 
 }
 
 /// Artistic energy classes, shared by both factions. Rifle, MG and tank-gun tiers become
-/// progressively redder; this is a readability cue, not historical tracer composition.
+/// differ in size and amber warmth; this is presentation, not historical tracer composition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Weapon { Pistol, Rifle, MachineGun, Cannon(u16), Rocket }
 impl Weapon {
@@ -72,12 +72,13 @@ pub(super) struct Effects {
     next_flight: usize, next_burst: usize, sequence: u32,
     pixel_world_scale: f32,
     act_id: Option<u8>,
+    wind: Vec2,
     mats: [Vec<Mat4>; PAGES],
 }
 impl Default for Effects {
     fn default() -> Self { Self {
         flights: [None; FLIGHTS], bursts: [None; BURSTS], next_flight: 0, next_burst: 0,
-        sequence: 0, pixel_world_scale: 0.0036, act_id: None,
+        sequence: 0, pixel_world_scale: 0.0036, act_id: None, wind: Vec2::ZERO,
         mats: std::array::from_fn(|_| Vec::with_capacity(PAGE_CAPACITY)),
     } }
 }
@@ -121,7 +122,10 @@ impl Effects {
         let incoming=incoming.normalize_or_zero();
         let normal=normal.normalize_or_zero();
         let reflected=incoming-normal*(2.0*incoming.dot(normal));
-        self.burst(point+normal*0.008,reflected,0.24,0.65,BurstKind::Ricochet(normal),weapon);
+        if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {
+            self.burst(point+normal*0.03,normal,0.75,1.2,BurstKind::Impact,weapon);
+        }
+        self.burst(point+normal*0.008,reflected,0.24,if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {1.4}else{0.65},BurstKind::Ricochet(normal),weapon);
     }
     pub(super) fn small_arm(&mut self, from: Vec3, to: Vec3, weapon: Weapon) {
         self.small_arm_contact(from,to,weapon,None);
@@ -200,22 +204,41 @@ impl Effects {
     }
     fn draw_burst(&mut self, b: Burst, eye: Vec3, remaining: usize) -> usize {
         if let BurstKind::Ricochet(normal) = b.kind {
-            let count = remaining.min(40);
+            let cannon=matches!(b.weapon,Weapon::Cannon(_) | Weapon::Rocket);
+            let count = remaining.min(if cannon {192}else{40});
             for j in 0..count {
                 let seed=b.seed.wrapping_mul(3948571).wrapping_add(j as u32*977);
                 let rnd=random(seed);
-                if b.age > 0.24 + rnd*0.40 { continue; }
+                if b.age > if cannon {0.55+rnd*0.85}else{0.24 + rnd*0.40} { continue; }
                 let mut direction=(b.dir*0.75+direction(seed.wrapping_add(19))*0.30+normal*0.25).normalize_or_zero();
                 if direction.dot(normal)<0.05 { direction=(direction+normal*(0.06-direction.dot(normal))).normalize_or_zero(); }
-                let speed=5.0+rnd*15.0;
+                let speed=if cannon {14.0+rnd*30.0}else{5.0+rnd*15.0};
                 let mut offset=direction*speed*b.age-Vec3::Y*(4.905*b.age*b.age);
                 if offset.dot(normal)<0.003 { offset+=normal*(0.003-offset.dot(normal)); }
-                let width=(0.008+rnd*0.012)*(1.0-b.age/b.life).max(0.15);
+                let width=(if cannon {0.025+rnd*0.035}else{0.008+rnd*0.012})*(1.0-b.age/b.life).max(0.15);
                 let page=if b.age<0.055 {3} else if b.age<0.16 {4} else {2};
-                self.push(page,Vec3::new(width,width,(speed*0.015).clamp(0.04,0.22)),b.pos+offset,
+                self.push(page,Vec3::new(width,width,(speed*0.020).clamp(0.04,0.80)),b.pos+offset,
                     Quat::from_rotation_arc(Vec3::Z,direction));
             }
             return count;
+        }
+        // Long-range incandescent ejecta: separate from the expanding flash and the slow soot.
+        // Cosmetic trajectories only. Authoritative shell/armor damage is untouched.
+        let mut spark_count=0;
+        if matches!(b.kind,BurstKind::Blast | BurstKind::Impact) {
+            let n=remaining.min(if matches!(b.kind,BurstKind::Blast){192}else{96});
+            spark_count=n;
+            for j in 0..n {
+                let seed=b.seed.wrapping_mul(9348571).wrapping_add(j as u32*977);
+                let rnd=random(seed); let life=0.45+rnd*1.4;
+                if b.age>=life {continue;}
+                let mut dir=direction(seed.wrapping_add(17));dir.y=dir.y.abs()*0.75+0.15;
+                let velocity=dir.normalize()*(10.0+rnd*28.0);
+                let age=b.age;let pos=b.pos+velocity*age-Vec3::Y*(4.905*age*age);
+                let v=velocity-Vec3::Y*(9.81*age);let width=(0.02+rnd*0.04)*(1.0-age/life).sqrt();
+                let page=if age<0.12 {3}else if age<0.55 {4}else{2};
+                self.push(page,Vec3::new(width,width,v.length()*0.022),pos,Quat::from_rotation_arc(Vec3::Z,v.normalize()));
+            }
         }
         let muzzle = matches!(b.kind, BurstKind::Muzzle);
         let blast = matches!(b.kind, BurstKind::Blast);
@@ -225,7 +248,7 @@ impl Effects {
             else if distance < b.radius * 65.0 { 1024 } else { 256 };
         let desired = if blast { detail } else if muzzle && b.radius > 0.6 { detail.min(2048) }
             else if b.radius > 0.4 { detail.min(384) } else { 48 };
-        let count = desired.min(remaining);
+        let count = desired.min(remaining.saturating_sub(spark_count));
         // Coarsen distant silhouettes only as grain count decreases; close fire is composed of
         // thousands of fine voxels, while its bounded, less detailed far LOD remains recognizable.
         let grain_scale = (GRAINS as f32 / desired as f32).sqrt().clamp(1.0, 3.5);
@@ -263,14 +286,14 @@ impl Effects {
             } else if muzzle { 8 } else if blast && j % 5 != 0 { 7 } else { 6 };
             // Separate small grains, not one scaled cube. The three delayed lobes expand and cool
             // into matte rising soot; a per-grain stagger dissolves the cloud without alpha sheets.
-            if !flame && f > 0.58 + rnd * 0.38 { continue; }
+            if !flame { continue; } // Matter is integrated by the shared smoke volume pass.
             let size = b.radius * grain_scale * if flame { 0.019 + rnd * 0.025 }
                 else { (0.016 + rnd * 0.025) * (0.65 + expansion * 0.8)
                     * if muzzle { 1.7 } else { 1.0 } } * fade;
             self.push(page, Vec3::splat(size.max(0.008)), pos,
                 Quat::from_rotation_y(rnd * 1.57 + t * 0.18));
         }
-        count
+        count+spark_count
     }
 }
 
@@ -294,9 +317,27 @@ pub(super) fn allocate(device: &wgpu::Device, queue: &wgpu::Queue,
 }
 impl Game {
     pub(super) fn drive_weapon_vfx(&mut self, dt: f32, r: &mut Renderer) {
+        self.weapon_vfx.wind=r.weather_wind_world;
         self.weapon_vfx.act_id = Some(self.act.id);
         self.weapon_vfx.pixel_world_scale = 2.0 * (r.camera.fov_y * 0.5).tan() / r.ih.max(1) as f32;
         self.weapon_vfx.prepare(dt, r.camera.pos);
+        let mut smoke: Vec<_>=self.weapon_vfx.bursts.iter().flatten().copied().collect();
+        smoke.sort_by(|a,b|a.pos.distance_squared(r.camera.pos).total_cmp(&b.pos.distance_squared(r.camera.pos)));
+        for b in smoke {
+            if matches!(b.kind,BurstKind::Ricochet(_)){continue;}
+            let age=b.age;let f=(age/b.life).clamp(0.0,1.0);
+            let wind=self.weapon_vfx.wind;
+            let muzzle=matches!(b.kind,BurstKind::Muzzle);
+            let radius=if muzzle {b.radius*(0.22+age.sqrt()*0.70)}else{b.radius*(0.25+0.60*age.sqrt())};
+            let center=if muzzle {b.pos+propellant_offset(b.dir,Vec3::ZERO,age,b.radius,0.5,wind)}
+                else {b.pos+Vec3::new(wind.x*age*0.55,age*b.radius*0.32,wind.y*age*0.55)};
+            let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*smoothstep(0.0,0.08,age);
+            for lobe in 0..3 {
+                let phase=b.seed as f32*0.17+lobe as f32*2.1;
+                let offset=Vec3::new(phase.sin(),0.3*phase.cos(),phase.cos())*radius*0.30;
+                r.add_smoke_volume(center+offset,radius*0.76,density,age*0.8+phase,if muzzle {0.55}else{0.08});
+            }
+        }
         let (mut cannon_draws,mut bullet_draws)=(0,0);
         for shot in &self.projectiles {
             let weapon=if let Some(bullet)=shot.small_arm {
@@ -349,7 +390,7 @@ mod tests {
         let mut fx = Effects::default();
         fx.muzzle(Vec3::ZERO, Vec3::Z, Weapon::Cannon(88));
         for _ in 0..24 { fx.prepare(0.1, Vec3::ZERO); }
-        assert!(!fx.mats[8].is_empty(), "pale propellant persists after the flash");
+        assert!(fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Muzzle)), "propellant volume persists after the flash");
         assert!(fx.mats[..8].iter().all(Vec::is_empty));
         assert_eq!(EMISSION[8], 0.0);
     }
@@ -372,10 +413,8 @@ mod tests {
         let origin=Vec3::new(1880.0,6.0,165.0);
         still.blast(origin,3.0);windy.blast(origin,3.0);
         for _ in 0..40 {still.prepare(0.1,origin);windy.prepare(0.1,origin);}
-        assert!(!windy.mats[7].is_empty());
-        let offset=windy.mats[7][0].w_axis.truncate()-still.mats[7][0].w_axis.truncate();
-        let wind=wind_at(1,origin);
-        assert!(offset.dot(Vec3::new(wind.x,0.0,wind.y))>0.1);
+        assert!(windy.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)));
+        assert!(windy.mats[6..].iter().all(Vec::is_empty), "smoke must not submit opaque matter meshes");
         assert!(windy.mats[..6].iter().all(Vec::is_empty));
     }
     #[test]
@@ -407,7 +446,7 @@ mod tests {
         let mut frames = Vec::new();
         let capture = |label: &str, g: &mut Game, r: &mut Renderer,
             frames: &mut Vec<serde_json::Value>| -> anyhow::Result<()> {
-            set_camera(r); g.drive_weapon_vfx(0.0,r);
+            set_camera(r); r.clear_smoke(); g.drive_weapon_vfx(0.0,r);
             let path=format!("{prefix}_{label}.png");
             r.ui_reset();r.draw_text("STAGED WEAPON VFX / SOURCE TIGER / RASTER ONLY",0.5,0.025,0.018,
                 [1.0,0.95,0.8,1.0],crate::ui::Align::Center);
@@ -425,8 +464,8 @@ mod tests {
             g.weapon_vfx=Effects::default();
             g.weapon_vfx.pixel_world_scale=2.0*(r.camera.fov_y*0.5).tan()/r.ih as f32;
             let tiers=[("PISTOL / YELLOW",Weapon::Pistol),("RIFLE / AMBER",Weapon::Rifle),
-                ("MG / ORANGE",Weapon::MachineGun),("CANNON <80 MM / RED-ORANGE",Weapon::Cannon(76)),
-                ("CANNON 88+ / ROCKET / HOT RED",Weapon::Cannon(88))];
+                ("MG / ORANGE",Weapon::MachineGun),("CANNON <80 MM / AMBER",Weapon::Cannon(76)),
+                ("CANNON 88+ / ROCKET / GOLD",Weapon::Cannon(88))];
             r.ui_reset();
             r.draw_text("WEAPON ENERGY PALETTE / STAGED RASTER COMPARISON",0.5,0.025,0.018,
                 [1.0,0.95,0.8,1.0],crate::ui::Align::Center);
@@ -451,6 +490,23 @@ mod tests {
             }))?)?;
             return Ok(());
         }
+        if std::env::var_os("KESSEL_WEAPON_VFX_FILM").is_some() {
+            use std::{io::Write,process::{Command,Stdio}};
+            let path=format!("{prefix}.mp4");
+            let mut encoder=Command::new("ffmpeg").args(["-v","error","-nostdin","-y","-f","rawvideo","-pixel_format","rgba","-video_size","1280x720","-framerate","30","-i","pipe:0","-an","-c:v","libx264","-preset","veryfast","-crf","18","-pix_fmt","yuv420p","-movflags","+faststart",&path]).stdin(Stdio::piped()).spawn()?;
+            g.fire(&mut r);
+            for frame in 0..180 {
+                for _ in 0..2 {g.update(&TankInput::default(),1.0/60.0,&mut r);}
+                if frame==24 {g.weapon_vfx.armor_sparks(Vec3::new(0.0,1.5,7.0),Vec3::Z,Vec3::NEG_Z,Weapon::Cannon(88));}
+                if frame==48 {g.spawn_blast(Vec3::new(0.0,0.8,7.0),7.0,20.0,0.8);}
+                set_camera(&mut r);r.clear_smoke();g.drive_weapon_vfx(0.0,&mut r);r.ui_reset();
+                r.draw_text("STAGED EFFECT REVIEW / SOURCE TIGER / NO DAMAGE OUTCOME",0.5,0.025,0.016,[1.0,0.95,0.8,1.0],crate::ui::Align::Center);
+                encoder.stdin.as_mut().unwrap().write_all(&r.render_to_rgba(&device,&queue,1280,720)?)?;
+            }
+            drop(encoder.stdin.take());anyhow::ensure!(encoder.wait()?.success(),"effect review encoder failed");
+            std::fs::write(format!("{prefix}.json"),serde_json::to_vec_pretty(&serde_json::json!({"scope":"Native production effects: real discharge, staged armor sparks and staged blast beside source Tiger for scale. Cosmetic timing; no battle outcome. No audio.","video":path,"seconds":6,"frames":180,"fps":30,"adapter":adapter.get_info().name}))?)?;
+            return Ok(());
+        }
         // The real main-gun discharge path, with the ordinary stable-ID ballistic flight.
         g.fire(&mut r);
         g.update(&TankInput::default(),1.0/60.0,&mut r);
@@ -463,6 +519,8 @@ mod tests {
         g.spawn_blast(Vec3::new(0.0,0.8,7.0),7.0,20.0,0.8);
         for _ in 0..12 {g.weapon_vfx.prepare(1.0/60.0,eye);}
         capture("explosion",&mut g,&mut r,&mut frames)?;
+        for _ in 0..27 {g.weapon_vfx.prepare(1.0/60.0,eye);}
+        capture("explosion_ejecta",&mut g,&mut r,&mut frames)?;
         for _ in 0..72 {g.weapon_vfx.prepare(1.0/60.0,eye);}
         capture("explosion_soot",&mut g,&mut r,&mut frames)?;
         g.weapon_vfx=Effects::default();
@@ -477,7 +535,7 @@ mod tests {
         g.weapon_vfx.prepare(0.035,eye);
         capture("small_arms",&mut g,&mut r,&mut frames)?;
         g.weapon_vfx=Effects::default();g.projectiles.clear();
-        g.weapon_vfx.armor_sparks(Vec3::new(2.0,1.5,0.0),Vec3::new(-1.0,-0.1,0.5),Vec3::X,Weapon::MachineGun);
+        g.weapon_vfx.armor_sparks(Vec3::new(2.0,1.5,0.0),Vec3::new(-1.0,-0.1,0.5),Vec3::X,Weapon::Cannon(88));
         g.weapon_vfx.prepare(0.06,eye);
         capture("armor_sparks",&mut g,&mut r,&mut frames)?;
         std::fs::write(format!("{prefix}.json"),serde_json::to_vec_pretty(&serde_json::json!({
@@ -529,9 +587,10 @@ mod tests {
         fx.prepare(0.10, Vec3::ZERO);
         assert!(fx.mats[..6].iter().map(Vec::len).sum::<usize>() > 20);
         assert!(fx.mats.iter().flatten().all(|m| m.to_scale_rotation_translation().0.max_element() < 1.3));
-        for _ in 0..10 { fx.prepare(0.10, Vec3::ZERO); }
+        for _ in 0..20 { fx.prepare(0.10, Vec3::ZERO); }
         assert_eq!(fx.mats[..6].iter().map(Vec::len).sum::<usize>(), 0);
-        assert!(fx.mats[7].len() > 20);
+        assert!(fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)));
+        assert!(fx.mats[6..].iter().all(Vec::is_empty));
         assert_eq!(EMISSION[7], 0.0);
     }
     #[test]
@@ -548,7 +607,7 @@ mod tests {
             let [r,g,b]=COLORS[weapon.page()];
             r as f32/(g as f32+b as f32)
         });
-        assert!(red_bias.windows(2).all(|pair|pair[1]>pair[0]));
+        assert!(red_bias.iter().all(|bias|*bias<1.6), "hot effects stay amber rather than saturated red");
         let mut fx = Effects::default();
         fx.small_arm(Vec3::NAN, Vec3::ZERO, Weapon::Pistol);
         fx.blast(Vec3::ZERO, f32::NAN);

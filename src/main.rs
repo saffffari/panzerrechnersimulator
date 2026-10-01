@@ -33,7 +33,7 @@
 //!                                                     simulation, each scene submission and GPU-tail
 //!                                                     wait, with ranked console + JSON output
 //!   cargo run --release -- train-foot-ai [epochs]       deterministic CPU KSL2 Tiger/Soviet
-//!                                                     micro-curricula → default role checkpoints
+//!                                                     micro-curricula → separate candidate directory
 //!   cargo run --release -- campaign-ai-run [jsonl] [runs] [seed] [max_s] [t34.bin] [tiger.bin] [foot.jsonl]
 //!                                                     physical fixed-step Act-I AI rollout + telemetry
 //!                                                     (render-free Laptop/no-RT by default;
@@ -41,6 +41,7 @@
 //!   cargo run --release -- soviet-shot [out.png]      real Act-I dismounted firefight frame:
 //!                                                     five riflemen, live alarm/aim/fire pipeline
 
+mod simulation_uploads;
 mod display_preview;
 mod acoustics;
 mod act_manifest;
@@ -138,6 +139,8 @@ mod texelsplat;
 mod trees;
 mod turret_disc;
 mod ui;
+mod graphics_menu;
+mod storm_weather;
 mod urban_tableau_meshes;
 mod urban_tableaux;
 mod world;
@@ -2155,7 +2158,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
         info.name, info.device_type, info.backend
     );
     let (device, queue) = request_device(&adapter);
-    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display" | "kia-black"
+    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display" | "graphics" | "torch-on" | "torch-off" | "sunrise" | "sunset" | "stars" | "storm" | "clouds" | "kia-black"
         | "death" | "actcard" | "ending" | "finaldefeat") {
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
@@ -2193,6 +2196,40 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
         }
         "kia-black" | "death" | "actcard" | "ending" | "finaldefeat" => ui::draw_black(&mut r),
         "controls" => ui::draw_controls(&mut r),
+        "stars" | "storm" | "clouds" => {
+            r.set_user_sky_phase(if kind=="stars" {4}else{2});
+            r.set_weather_override(Some(if kind=="storm" {args.get(4).and_then(|s|s.parse().ok()).unwrap_or(8.0)}else{0.0}));
+            let elapsed=args.get(5).and_then(|s|s.parse().ok()).unwrap_or(0.0);
+            r.time=elapsed; r.advance_sky_clock(elapsed);
+            if kind=="clouds" {r.set_weather_override(None);r.overcast=0.6; r.fog_density=0.0006;r.precipitation=0.0;}
+            r.camera.pos=_g.player.pos+glam::Vec3::Y*6.0;
+            r.camera.set_forward(glam::Vec3::new(0.2,if kind=="storm" {0.05}else{0.65},1.0));
+            r.interior_light=0.0;r.weather_shelter=0.0;r.optic_mask=0.0;r.reticle=false;
+            return r.render_to_png(&device,&queue,&path,cw,ch);
+        }
+        "sunrise" | "sunset" => {
+            r.set_user_sky_phase(if kind == "sunrise" {1}else{3});
+            r.camera.pos = _g.player.pos + glam::Vec3::Y*6.0;
+            r.camera.set_forward(glam::Vec3::new(r.sun_dir.x,0.025,r.sun_dir.z));
+            r.interior_light=0.0;r.weather_shelter=0.0;r.optic_mask=0.0;r.reticle=false;
+            return r.render_to_png(&device,&queue,&path,cw,ch);
+        }
+        "torch-on" | "torch-off" => {
+            let center = _g.player.pos;
+            _g.mode = game::Mode::Foot;
+            _g.dbg_place_foot(center.x + 3.5,center.z + 1.2);
+            _g.dbg_look_foot_at(center + glam::Vec3::new(0.0,1.2,0.0));
+            r.apply_campaign_atmosphere(1,true,DayPhase::Night);
+            _g.hand_torch_on = kind == "torch-on";
+            _g.update(&TankInput::default(),1.0/60.0,&mut r);
+            return r.render_to_png(&device,&queue,&path,cw,ch);
+        }
+        "graphics" => {
+            let model = graphics_menu::Menu { tab:args.get(4).and_then(|s|s.parse().ok()).unwrap_or(0) % graphics_menu::TABS.len(), ..Default::default() };
+            let settings = graphics_menu::Settings::from_renderer(&r);
+            model.draw(&mut r,&settings);
+            return r.render_to_png_hud(&device,&queue,&path,cw,ch);
+        }
         "pause" | "settings" | "display" => {
             let mut model = ui::PauseMenuModel::default();
             if kind == "settings" { model.show(ui::PausePage::Settings); }
@@ -2339,33 +2376,28 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_train_foot_ai(epochs: u32) -> anyhow::Result<()> {
+fn run_train_foot_ai(epochs: u32, output_dir: Option<&str>) -> anyhow::Result<()> {
     anyhow::ensure!(epochs > 0, "train-foot-ai needs at least one epoch");
-    let config = foot_ai::MicroTrainerConfig {
-        epochs,
-        ..foot_ai::MicroTrainerConfig::default()
-    };
-    println!(
-        "[foot-ai] deterministic CPU micro-curriculum: epochs={} train_episodes={} held_out_episodes={}",
-        config.epochs, config.train_episodes, config.held_out_episodes,
-    );
-    for report in foot_ai::train_both_micro_curricula(config)? {
-        let path = report.role.checkpoint_path();
+    let default_dir = format!("assets/ai/foot_candidates/epochs_{epochs}");
+    let dir = std::path::Path::new(output_dir.unwrap_or(&default_dir));
+    let paths: Vec<_> = [foot_ai::PolicyRole::TigerCrew, foot_ai::PolicyRole::SovietRifle]
+        .iter().map(|role| dir.join(std::path::Path::new(role.checkpoint_path()).file_name().unwrap()))
+        .collect();
+    for path in &paths {
+        anyhow::ensure!(!path.exists(), "candidate already exists: {}; choose a new output directory", path.display());
+    }
+    std::fs::create_dir_all(dir)?;
+    let config = foot_ai::MicroTrainerConfig { epochs, ..foot_ai::MicroTrainerConfig::default() };
+    println!("[foot-ai] deterministic CPU micro-curriculum: epochs={} train_episodes={} held_out_episodes={}",
+        config.epochs, config.train_episodes, config.held_out_episodes);
+    for (report, path) in foot_ai::train_both_micro_curricula(config)?.into_iter().zip(paths) {
+        let path = path.to_str().ok_or_else(|| anyhow::anyhow!("non-UTF8 output path"))?;
         report.save_checkpoint(path)?;
-        // A save is not success until the exact role/schema gate can reload the artifact.
         let (_, metadata) = foot_ai::FootPolicy::load(path, report.role)?;
-        println!(
-            "[foot-ai] {} → {} · loss={:.6} held_out_mse={:.6} agreement={:.4} success={:.4} illegal={:.6} score={:.3} generation={}",
-            report.role.label(),
-            path,
-            report.training_loss,
-            report.held_out.action_mse,
-            report.held_out.action_agreement,
-            report.held_out.success_rate,
-            report.held_out.illegal_action_rate,
-            metadata.fitness,
-            metadata.generation,
-        );
+        println!("[foot-ai] {} → {} · loss={:.6} held_out_mse={:.6} agreement={:.4} success={:.4} illegal={:.6} score={:.3} generation={}",
+            report.role.label(), path, report.training_loss, report.held_out.action_mse,
+            report.held_out.action_agreement, report.held_out.success_rate,
+            report.held_out.illegal_action_rate, metadata.fitness, metadata.generation);
     }
     Ok(())
 }
@@ -9137,7 +9169,25 @@ fn run_train(
     minutes: f32,
     tag: &str,
     sigma_spec: &str,
+    evaluate_paths: &[String],
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(pop >= 3, "training population must be at least 3");
+    anyhow::ensure!(secs.is_finite() && secs > 0.0, "positive finite episode duration required");
+    anyhow::ensure!(minutes.is_finite() && minutes >= 0.0, "nonnegative finite wall cap required");
+    anyhow::ensure!(!acts.is_empty(), "at least one map required");
+    anyhow::ensure!(gens > 0 || !evaluate_paths.is_empty(), "at least one generation required");
+    anyhow::ensure!(!tag.is_empty() && tag.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-'), "tag must contain only letters, digits, underscores or hyphens");
+    let self_adapt = sigma_spec == "sa";
+    let sigma_fixed: f32 = if self_adapt { 0.15 } else { sigma_spec.parse()? };
+    anyhow::ensure!(sigma_fixed.is_finite() && sigma_fixed > 0.0, "positive finite sigma required");
+    // No presented view is evaluated. Keep unused RT pipelines out of the simulation runner;
+    // an explicit caller override still permits renderer-construction stress tests.
+    if std::env::var_os("KESSEL_NO_RT").is_none() {
+        std::env::set_var("KESSEL_NO_RT", "1");
+    }
+    let artifact = format!("assets/ai/weights_{tag}.bin");
+    anyhow::ensure!(!evaluate_paths.is_empty() || !std::path::Path::new(&artifact).exists(),
+        "candidate already exists: {artifact}; use a new tag");
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     println!(
@@ -9145,24 +9195,13 @@ fn run_train(
         adapter.get_info().name
     );
     let (device, queue) = request_device(&adapter);
-    let mut worlds: Vec<(renderer::Renderer, game::Game)> = Vec::new();
     for &a in acts {
-        let (r, mut g) = Game::build_act(&device, &queue, false, &world::act(a))?;
-        g.mute_audio();
-        // Policy evaluation has no presented view. Suppress the automatic periscope RTT scene
-        // that live play normally submits from Game::update; otherwise every simulated tick
-        // performs hidden GPU rendering that cannot affect fitness.
-        g.set_defer_rtt_to_render(true);
         println!("[train] map: act {a} ({})", world::act(a).name);
-        worlds.push((r, g));
     }
     let dt = 1.0 / 60.0;
     let steps = (secs / dt) as usize;
     const BASE_SEED: u32 = 0x1917;
-    let self_adapt = sigma_spec == "sa";
-    let sigma_fixed: f32 = sigma_spec.parse().unwrap_or(0.15);
     let ck_dir = format!("assets/ai/ckpt_{tag}");
-    let artifact = format!("assets/ai/weights_{tag}.bin");
     println!(
         "[train] tag '{tag}': mutation {} — artifact {artifact}",
         if self_adapt {
@@ -9224,7 +9263,7 @@ fn run_train(
                     net: &ai::Mlp,
                     seed: u32,
                     opp: (bool, f32, f32, f32)|
-     -> f32 {
+     -> anyhow::Result<f32> {
         let (opp_fires, opp_cycle, opp_acq, _) = opp;
         g.reset_match(seed, RING_M);
         // Squad: keep the first SQUAD T-34s, bench everything else far off-field.
@@ -9274,6 +9313,7 @@ fn run_train(
                 }
             };
             g.update(&input, dt, r);
+            if step % 8 == 0 { simulation_uploads::drain(&device, &queue)?; }
             for &i in &squad {
                 if g.enemies[i].alive {
                     min_range = min_range.min(g.enemies[i].center().distance(g.player.center()));
@@ -9287,37 +9327,59 @@ fn run_train(
                 break; // squad wiped — nothing left to grade
             }
         }
+        simulation_uploads::drain(&device, &queue)?;
         g.enemy_policy = None;
         let close = ((RING_M - min_range.min(RING_M)) / RING_M).max(0.0);
         let speed_bonus = tiger_died_at
             .map(|st| 1.0 - st as f32 / steps as f32)
             .unwrap_or(0.0);
         let survivors = squad.iter().filter(|&&i| g.enemies[i].alive).count() as f32;
-        g.stat_pens_on_player as f32 * 30.0
+        Ok(g.stat_pens_on_player as f32 * 30.0
             + g.stat_hits_on_player as f32 * 3.0
             + close * 20.0
             + if tiger_died_at.is_some() { 100.0 } else { 0.0 }
             + speed_bonus * 50.0
-            + survivors * 10.0 // anti-suicide lite: winning while alive beats trading three hulls
+            + survivors * 10.0) // anti-suicide lite: winning while alive beats trading three hulls
     };
-    // Genome fitness: mean over (maps × K seeds) for a given seed set + opponent stage.
-    let eval = |worlds: &mut Vec<(renderer::Renderer, game::Game)>,
-                net: &ai::Mlp,
-                seeds: &[u32; K_SEEDS],
-                opp: (bool, f32, f32, f32)|
-     -> f32 {
+    // Rebuild each match from the authored scene. reset_match resets the crew and tanks, but
+    // not destroyed buildings, crushed trees, terrain/rubble support, weather and other world
+    // state. Reusing that scene makes fitness depend on the preceding policy and seed.
+    let eval = |net: &ai::Mlp, seeds: &[u32; K_SEEDS], opp: (bool, f32, f32, f32)|
+        -> anyhow::Result<(f32, Vec<f32>)> {
         let mut sum = 0.0f32;
-        let mut n = 0.0f32;
-        for (r, g) in worlds.iter_mut() {
+        let mut scores = Vec::new();
+        for &act in acts {
             for &seed in seeds {
-                sum += eval_one(g, r, net, seed, opp);
-                n += 1.0;
+                let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(act))?;
+                g.mute_audio();
+                g.set_defer_rtt_to_render(true);
+                simulation_uploads::drain(&device, &queue)?;
+                let score = eval_one(&mut g, &mut r, net, seed, opp)?;
+                println!("[train-match] act={act} seed={seed:08x} score={score:.6}");
+                sum += score;
+                scores.push(score);
+                drop(g);
+                drop(r);
+                simulation_uploads::drain(&device, &queue)?;
             }
         }
-        sum / n
+        Ok((sum / scores.len() as f32, scores))
     };
 
-    std::fs::create_dir_all(&ck_dir).ok();
+    if !evaluate_paths.is_empty() {
+        // These seeds never select a champion during evolution; use them for promotion only.
+        const PROMOTION_SEEDS: [u32; K_SEEDS] = [0xE7B1_0001, 0xE7B1_0002, 0xE7B1_0003, 0xE7B1_0005, 0xE7B1_0008];
+        for path in evaluate_paths {
+            let net = ai::Mlp::load(path)?;
+            let (score, scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
+            let (replay, replay_scores) = eval(&net, &PROMOTION_SEEDS, STAGES[2])?;
+            let deterministic = scores.iter().zip(&replay_scores).all(|(a,b)| a.to_bits() == b.to_bits());
+            println!("[tank-eval] {}", serde_json::json!({"path":path,"score":score,"replay_score":replay,"deterministic":deterministic,"scores":scores,"replay_scores":replay_scores,"maps":acts,"seconds":secs,"seeds":PROMOTION_SEEDS}));
+            anyhow::ensure!(deterministic, "tank evaluation is not repeatable: {path}");
+        }
+        return Ok(());
+    }
+    std::fs::create_dir_all(&ck_dir)?;
     let mut parents: Vec<(Vec<f32>, f32)> = Vec::new();
     let mut best_ever: (Vec<f32>, f32, u32) = (Vec::new(), f32::NEG_INFINITY, 0); // by train fitness
     let mut best_exam: (Vec<f32>, f32, u32) = (Vec::new(), f32::NEG_INFINITY, 0); // by held-out exam
@@ -9331,7 +9393,7 @@ fn run_train(
         "[train] stage 1/3: MARKSMANSHIP (passive hull) — graduate at classroom {:.0}",
         STAGES[0].3
     );
-    for gen in 0..gens {
+    'generations: for gen in 0..gens {
         if minutes > 0.0 && t0.elapsed() >= deadline {
             println!("[train] wall-clock cap ({minutes:.0} min) reached at gen {gen}");
             break;
@@ -9351,6 +9413,10 @@ fn run_train(
         }
         let mut scored: Vec<(Vec<f32>, f32)> = Vec::new();
         for child in 0..pop {
+            if minutes > 0.0 && t0.elapsed() >= deadline {
+                println!("[train] wall-clock cap reached during gen {gen}; retaining the last fully evaluated champion");
+                break 'generations;
+            }
             let fresh = |sd: u32| {
                 if self_adapt {
                     ai::sa_seeded(sd, 0.5, 0.15)
@@ -9379,7 +9445,9 @@ fn run_train(
             } else {
                 genome.clone()
             });
-            let f = eval(&mut worlds, &net, &gen_seeds(gen), STAGES[stage]);
+            let (f, _) = eval(&net, &gen_seeds(gen), STAGES[stage])?;
+            println!("[train] gen {gen} candidate {}/{pop}: fitness {f:.3} (elapsed {:.1} min)",
+                child + 1, t0.elapsed().as_secs_f32() / 60.0);
             scored.push((genome, f));
         }
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -9422,14 +9490,14 @@ fn run_train(
         } else {
             scored[0].0.clone()
         });
-        let exam = eval(&mut worlds, &champ, &EXAM_SEEDS, STAGES[STAGES.len() - 1]);
+        let (exam, _) = eval(&champ, &EXAM_SEEDS, STAGES[STAGES.len() - 1])?;
         if exam > best_exam.1 {
             best_exam = (scored[0].0.clone(), exam, gen);
             let ck = format!("{ck_dir}/gen_{gen:04}_f{:.0}_x{:.0}.bin", scored[0].1, exam);
             champ.save(&ck, gen, exam)?;
             champ.save(&artifact, gen, exam)?; // duel films the best GENERAL brain
             println!(
-                "[train] ── EXAM RECORD (gen {gen}): {exam:.1} (classroom {:.1}) — SHIPPING → {ck}",
+                "[train] ── EXAM RECORD (gen {gen}): {exam:.1} (classroom {:.1}) — CANDIDATE → {ck}",
                 scored[0].1
             );
         }
@@ -9439,14 +9507,14 @@ fn run_train(
     }
 
     // Final artifact + load-path determinism proof (on the exam seeds — the shipped metric).
+    anyhow::ensure!(gen_done > 0, "no generation completed before the wall cap");
     let path = artifact.as_str();
     let reloaded = ai::Mlp::load(path)?;
-    let f_replay = eval(
-        &mut worlds,
+    let (f_replay, _) = eval(
         &reloaded,
         &EXAM_SEEDS,
         STAGES[STAGES.len() - 1],
-    );
+    )?;
     println!("[train] ── RESULT ─────────────────────────────");
     println!(
         "[train] generations: {gen_done}, final stage {}/{}",
@@ -9458,11 +9526,11 @@ fn run_train(
         best_ever.1, best_ever.2
     );
     println!(
-        "[train] best EXAM score (shipped): {:.1} (gen {})",
+        "[train] best EXAM score (candidate): {:.1} (gen {})",
         best_exam.1, best_exam.2
     );
     println!(
-        "[train] champion artifact: {path} ({} weights) + checkpoints/",
+        "[train] candidate artifact: {path} ({} weights) + checkpoints/",
         ai::GENOME
     );
     println!(
@@ -9475,6 +9543,7 @@ fn run_train(
             "MISMATCH ✗"
         }
     );
+    anyhow::ensure!((f_replay - best_exam.1).abs() < 1e-3, "saved champion failed replay determinism");
     Ok(())
 }
 
@@ -11166,6 +11235,8 @@ struct WindowState {
     state: AppState,
     menu: MenuModel,
     pause_menu: ui::PauseMenuModel,
+    graphics_menu: graphics_menu::Menu,
+    graphics_settings: Option<graphics_menu::Settings>,
     display_preview: display_preview::DisplayPreview,
     haptics_enabled: bool,
     menu_pointer: Option<glam::Vec2>,
@@ -11323,6 +11394,8 @@ impl WindowState {
             play_mode: None,
             menu,
             pause_menu: ui::PauseMenuModel::default(),
+            graphics_menu: graphics_menu::Menu::default(),
+            graphics_settings: None,
             display_preview: display_preview::DisplayPreview::default(),
             haptics_enabled: true,
             menu_pointer: None,
@@ -11361,6 +11434,14 @@ impl WindowState {
             canyon_finish: None,
             canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
         };
+        match graphics_menu::config_path().and_then(|p| graphics_menu::Settings::load(&p)) {
+            Ok(Some(settings)) => {
+                out.graphics_settings = Some(settings);
+                out.apply_graphics_preferences(true);
+            }
+            Ok(None) => {},
+            Err(error) => eprintln!("[graphics] saved preferences ignored: {error:#}"),
+        }
         out.refresh_canyon_menu_detail();
         if let Some(config) = lan_config {
             let is_host = matches!(config.mode, lan::LanModeConfig::Host { .. });
@@ -11534,6 +11615,7 @@ impl WindowState {
                     renderer.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
                     self.renderer = renderer;
                     self.game = game;
+                    self.apply_graphics_preferences(false);
                     true
                 }
                 Err(error) => { eprintln!("[pause] workshop restart failed: {error:#}"); false }
@@ -11599,7 +11681,92 @@ impl WindowState {
         println!("[display] {}", if fullscreen { "fullscreen" } else { "windowed" });
     }
 
+    fn apply_graphics_preferences(&mut self, window_options: bool) {
+        let Some(settings) = self.graphics_settings.as_ref() else { return; };
+        if let Err(error) = settings.apply(&mut self.renderer, &self.device, &self.queue) {
+            self.graphics_menu.message = "TARGET CHANGE UNAVAILABLE FOR THIS RENDERER".into();
+            eprintln!("[graphics] apply failed: {error:#}");
+            return;
+        }
+        self.game.set_optic_update_budget(settings.optics);
+        self.show_stats = settings.fps;
+        if window_options {
+            let mode = if settings.vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
+            if self.config.present_mode != mode {
+                self.config.present_mode = mode;
+                self.surface.configure(&self.device, &self.config);
+            }
+            if self.window.fullscreen().is_some() != settings.fullscreen {
+                self.window.set_fullscreen(settings.fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
+            }
+            if !settings.fullscreen {
+                let size = winit::dpi::PhysicalSize::new(settings.window.0, settings.window.1);
+                if self.window.inner_size() != size { let _ = self.window.request_inner_size(size); }
+            }
+        }
+    }
+
+    fn open_graphics(&mut self, from_title: bool) {
+        if self.display_preview.active.is_some() { self.apply_display_preview(None); }
+        if self.graphics_settings.is_none() {
+            let mut settings = graphics_menu::Settings::from_renderer(&self.renderer);
+            settings.fullscreen = self.window.fullscreen().is_some();
+            let size = (self.config.width, self.config.height);
+            if graphics_menu::WINDOWS.contains(&size) { settings.window = size; }
+            settings.vsync = self.config.present_mode != wgpu::PresentMode::AutoNoVsync;
+            settings.fps = self.show_stats;
+            settings.optics = self.game.optic_update_budget().clamp(1,4);
+            self.graphics_settings = Some(settings);
+        }
+        self.graphics_menu.from_title = from_title;
+        self.graphics_menu.selected = 0;
+        self.graphics_menu.message.clear();
+        self.pause_menu.show(ui::PausePage::Graphics);
+        self.state = AppState::Paused;
+        self.set_play_cursor(false);
+    }
+
+    fn graphics_key(&mut self, code: winit::keyboard::KeyCode) {
+        use winit::keyboard::KeyCode;
+        let controls = self.graphics_menu.controls();
+        let back = code == KeyCode::Escape || (code == KeyCode::Enter && self.graphics_menu.selected == controls + 3);
+        if back {
+            if self.graphics_menu.from_title { self.state = AppState::Menu; }
+            else { self.pause_menu.show(ui::PausePage::Settings); }
+            return;
+        }
+        let count = self.graphics_menu.count();
+        match code {
+            KeyCode::ArrowUp => self.graphics_menu.selected = (self.graphics_menu.selected + count - 1) % count,
+            KeyCode::ArrowDown => self.graphics_menu.selected = (self.graphics_menu.selected + 1) % count,
+            KeyCode::Tab => self.graphics_menu.change_tab(true),
+            KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::Enter => {
+                let row = self.graphics_menu.selected;
+                if row == 0 { self.graphics_menu.change_tab(code != KeyCode::ArrowLeft); }
+                else if row <= controls {
+                    let previous = self.graphics_settings.clone().unwrap();
+                    self.graphics_menu.message.clear();
+                    self.graphics_settings.as_mut().unwrap().adjust(self.graphics_menu.tab,row,code != KeyCode::ArrowLeft);
+                    self.apply_graphics_preferences(self.graphics_menu.tab == 0 && row != 1);
+                    if !self.graphics_menu.message.is_empty() { self.graphics_settings = Some(previous); }
+                } else if row == controls + 1 && code == KeyCode::Enter {
+                    match graphics_menu::config_path().and_then(|p|self.graphics_settings.as_ref().unwrap().save(&p)) {
+                        Ok(()) => self.graphics_menu.message = "SAVED FOR NEXT LAUNCH".into(),
+                        Err(error) => { self.graphics_menu.message = "COULD NOT SAVE PREFERENCES".into(); eprintln!("[graphics] {error:#}"); }
+                    }
+                } else if row == controls + 2 && code == KeyCode::Enter {
+                    let previous = self.graphics_settings.clone();
+                    self.graphics_menu.message.clear();
+                    self.graphics_settings = Some(graphics_menu::Settings::defaults());
+                    self.apply_graphics_preferences(true);
+                    if !self.graphics_menu.message.is_empty() { self.graphics_settings = previous; }
+                }
+            }, _ => {}
+        }
+    }
+
     fn pause_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
+        if self.pause_menu.page == ui::PausePage::Graphics { self.graphics_key(code); return; }
         use winit::keyboard::KeyCode;
         match code {
             KeyCode::ArrowUp => self.pause_menu.move_selection(false),
@@ -11634,10 +11801,7 @@ impl WindowState {
                     (ui::PausePage::Display, row @ 1..=3) if activate => self.apply_display_preview(Some(row - 1)),
                     (ui::PausePage::Display, 4) => self.display_preview.calibrate(code != KeyCode::ArrowLeft, &self.window),
                     (ui::PausePage::Display, 5) if activate => self.pause_menu.show(ui::PausePage::Settings),
-                    (ui::PausePage::Settings, 1) => {
-                        let step = if code == KeyCode::ArrowLeft { -0.1 } else { 0.1 };
-                        self.renderer.master_retro = (self.renderer.master_retro + step).clamp(0.0, 1.0);
-                    },
+                    (ui::PausePage::Settings, 1) if activate => self.open_graphics(false),
                     (ui::PausePage::Settings, 2) => self.show_stats = !self.show_stats,
                     (ui::PausePage::Settings, 3) => self.haptics_enabled = !self.haptics_enabled,
                     (ui::PausePage::Settings, 4) => {
@@ -12088,6 +12252,7 @@ impl WindowState {
         renderer.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
         self.renderer = renderer;
         self.game = game;
+        self.apply_graphics_preferences(false);
         self.play_mode = Some(match mission {
             lan::LanMission::Garage => PlayMode::Garage,
             lan::LanMission::Arena => PlayMode::Gefecht,
@@ -12545,6 +12710,7 @@ impl WindowState {
                 r.master_retro = self.renderer.master_retro;
                 self.renderer = r;
                 self.game = g;
+                self.apply_graphics_preferences(false);
                 // The menu's Invincible toggle rides the existing god flag — set on EVERY world
                 // build (this is the one funnel all modes and act transitions pass through).
                 self.game.god = self.menu.invincible && self.play_mode != Some(PlayMode::Canyon);
@@ -12575,6 +12741,7 @@ impl WindowState {
                 r.master_retro = self.renderer.master_retro;
                 self.renderer = r;
                 self.game = g;
+                self.apply_graphics_preferences(false);
                 self.renderer.fog_density = 0.0016;
                 println!("[garage] dev garage ready");
                 true
@@ -12796,6 +12963,7 @@ impl WindowState {
             KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + ui::MENU_COUNT - 1) % ui::MENU_COUNT,
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % ui::MENU_COUNT,
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.action() {
+                Some(ui::MenuAction::Graphics) => self.open_graphics(true),
                 Some(ui::MenuAction::Singleplayer) => self.start_play(PlayMode::Kampagne),
                 Some(ui::MenuAction::Coop) => self.start_play(PlayMode::Koop),
                 Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),
@@ -13476,6 +13644,14 @@ impl WindowState {
 
     fn render_pause(&mut self) {
         let Some((frame, view)) = self.acquire() else { return; };
+        if self.pause_menu.page == ui::PausePage::Graphics {
+            self.renderer.render_to_surface(&self.device, &self.queue, &view, self.config.format);
+            self.renderer.ui_reset();
+            if let Some(settings) = &self.graphics_settings { self.graphics_menu.draw(&mut self.renderer,settings); }
+            self.renderer.render_hud_over_surface(&self.device,&self.queue,&view,self.config.format,self.config.width,self.config.height);
+            frame.present();
+            return;
+        }
         let can_save = self.play_mode.is_some_and(playtest_mode::uses_campaign)
             && self.campaign.as_ref().is_some_and(|run| run.attempt_active());
         let checkpoint_mode = if self.play_mode == Some(PlayMode::Playtest) {
@@ -14065,6 +14241,7 @@ impl ApplicationHandler for App {
                         {
                             self.keys.lan_hatch_pulse = true;
                         }
+                        KeyCode::KeyL => state.game.toggle_hand_torch(),
                         // T — swap the loaded shell nature (PzGr AP ↔ SprGr HE).
                         KeyCode::KeyT if state.game.mode == game::Mode::Tank => {
                             state.game.request_nature_swap();
@@ -14235,7 +14412,9 @@ impl ApplicationHandler for App {
                 );
                 state.menu_pointer = Some(pointer);
                 if matches!(state.state, AppState::Paused) {
-                    if let Some(row) = state.pause_menu.row_at(pointer.x, pointer.y) {
+                    if state.pause_menu.page == ui::PausePage::Graphics {
+                        if let Some(row) = state.graphics_menu.row_at(pointer.x,pointer.y) { state.graphics_menu.selected = row; }
+                    } else if let Some(row) = state.pause_menu.row_at(pointer.x, pointer.y) {
                         state.pause_menu.selected = row;
                     }
                 } else if matches!(state.state, AppState::Menu) {
@@ -14259,7 +14438,17 @@ impl ApplicationHandler for App {
                 }
                 if matches!(state.state, AppState::Paused) {
                     if btn.is_pressed() && button == winit::event::MouseButton::Left {
-                        if let Some(row) = state.menu_pointer.and_then(|p| state.pause_menu.row_at(p.x, p.y)) {
+                        if state.pause_menu.page == ui::PausePage::Graphics {
+                            if let Some(p) = state.menu_pointer {
+                                if let Some(row) = state.graphics_menu.row_at(p.x,p.y) {
+                                    state.graphics_menu.selected = row;
+                                    let key = if row <= state.graphics_menu.controls() {
+                                        if p.x < 0.48 { winit::keyboard::KeyCode::ArrowLeft } else { winit::keyboard::KeyCode::ArrowRight }
+                                    } else { winit::keyboard::KeyCode::Enter };
+                                    state.graphics_key(key);
+                                }
+                            }
+                        } else if let Some(row) = state.menu_pointer.and_then(|p| state.pause_menu.row_at(p.x, p.y)) {
                             state.pause_menu.selected = row;
                             state.pause_key(event_loop, winit::keyboard::KeyCode::Enter);
                         }
@@ -15258,7 +15447,7 @@ fn main() -> anyhow::Result<()> {
             .get(2)
             .and_then(|value| value.parse().ok())
             .unwrap_or(128);
-        return run_train_foot_ai(epochs);
+        return run_train_foot_ai(epochs, args.get(3).map(String::as_str));
     }
     if args.len() >= 2 && args[1] == "lan-verify" {
         return lan::run_loopback_verify();
@@ -15801,6 +15990,32 @@ fn main() -> anyhow::Result<()> {
         let max_secs = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0f32);
         return run_duel(outdir, weights, act, max_secs);
     }
+    if args.get(1).is_some_and(|s| s == "eval-tank-ai") {
+        anyhow::ensure!(args.len() >= 5, "eval-tank-ai seconds maps weights [weights ...]");
+        let secs = args[2].parse()?;
+        let acts = args[3].split(',').map(str::parse).collect::<Result<Vec<u8>,_>>()?;
+        return run_train(0, 3, secs, &acts, 0.0, "evaluation", "sa", &args[4..]);
+    }
+    if args.get(1).is_some_and(|s| s == "eval-foot-ai") {
+        anyhow::ensure!(args.len() == 7, "eval-foot-ai output.json tiger-baseline tiger-candidate soviet-baseline soviet-candidate");
+        let mut reports = Vec::new();
+        for (role, paths) in [(foot_ai::PolicyRole::TigerCrew, [args[3].as_str(), args[4].as_str()]),
+            (foot_ai::PolicyRole::SovietRifle, [args[5].as_str(), args[6].as_str()])] {
+            for (label, path) in ["baseline", "candidate"].into_iter().zip(paths) {
+                let (policy, metadata) = foot_ai::FootPolicy::load(path, role)?;
+                // New held-out seeds, beyond the six episodes used by the overnight trainer.
+                let m = foot_ai::evaluate_micro_curriculum(role, &policy, 0xF007_E7A2_2026_1001, 128)?;
+                reports.push(serde_json::json!({"role":role.label(),"label":label,"path":path,
+                    "generation":metadata.generation,"episodes":m.episodes,"success_rate":m.success_rate,
+                    "agreement":m.action_agreement,"mse":m.action_mse,"illegal_rate":m.illegal_action_rate,
+                    "score":m.evaluation_score}));
+            }
+        }
+        let receipt = serde_json::json!({"scope":"deterministic micro-curriculum imitation; not campaign success", "seed":0xF007_E7A2_2026_1001u64,"reports":reports});
+        std::fs::write(&args[2], serde_json::to_vec_pretty(&receipt)?)?;
+        println!("{receipt}");
+        return Ok(());
+    }
     if args.len() >= 2 && args[1] == "train" {
         let gens = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(4u32);
         let pop = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8usize);
@@ -15826,7 +16041,7 @@ fn main() -> anyhow::Result<()> {
             .map(|s| s.as_str())
             .unwrap_or("0.15")
             .to_string();
-        return run_train(gens, pop, secs, &acts, minutes, &tag, &sigma_spec);
+        return run_train(gens, pop, secs, &acts, minutes, &tag, &sigma_spec, &[]);
     }
     // The live WORLDBUILDER: fly + drag/rotate/scale the act's placements in-engine.
     if args.len() >= 2 && args[1] == "edit" {

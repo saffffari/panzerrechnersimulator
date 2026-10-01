@@ -65,6 +65,8 @@ struct PhysicalEnvironment {
     secondary_irradiance_angle: vec4<f32>,
     secondary_direction: vec4<f32>,
     airglow_zenith_altitude: vec4<f32>,
+    cloud_motion: vec4<f32>,
+    star_frame: vec4<f32>,
 };
 
 struct PhysicalMediumCoefficients {
@@ -248,8 +250,9 @@ fn physical_cloud_relative_density(
         * (1.0 - smoothstep(top - edge, top, altitude));
     let large_scale = max(environment.cloud_optics_scales.z, 1.0);
     let small_scale = max(environment.cloud_optics_scales.w, 1.0);
-    let large = physical_value_noise(position_m / large_scale, 0x51f15e5du);
-    let small = physical_value_noise(position_m / small_scale, 0xa17c9e37u);
+    let advected = position_m - environment.cloud_motion.xyz;
+    let large = physical_value_noise(advected / large_scale, 0x51f15e5du);
+    let small = physical_value_noise((advected + vec3(0.0,environment.cloud_motion.w*0.7,0.0)) / small_scale, 0xa17c9e37u);
     let structure = large * 0.72 + small * 0.28;
     let threshold = 1.0 - coverage;
     let occupied = smoothstep(threshold - 0.08, threshold + 0.08, structure);
@@ -947,16 +950,8 @@ fn physical_cloud_diffuse_boundary(
         return PhysicalCloudDiffuseBoundary(vec3(0.0), 1u);
     }
     let lower_boundary_radiance = lower_flux / PHYSICAL_ENV_PI;
-    let view_depth = physical_optical_depth_segment(
-        environment,
-        origin_m,
-        direction,
-        0.0,
-        base_distance,
-        environment.integration.y,
-    );
     return PhysicalCloudDiffuseBoundary(
-        lower_boundary_radiance * exp(-view_depth),
+        lower_boundary_radiance,
         1u,
     );
 }
@@ -1028,8 +1023,32 @@ fn physical_airglow_hemispheric_flux(environment: PhysicalEnvironment, altitude_
 }
 
 // Unattenuated radiance of whichever finite disc (key or secondary) contains `direction`.
+// Unresolved, deterministic illustrative stars in a rotating celestial frame. Radiance enters
+// above the atmosphere: the ordinary volumetric cloud/aerosol transmittance occludes it.
+fn physical_stellar_radiance(environment:PhysicalEnvironment,direction:vec3<f32>)->vec3<f32> {
+    let frame=environment.star_frame;
+    if (frame.w<=0.0) {return vec3(0.0);}
+    let d=normalize(direction);
+    let dec=clamp(dot(d,vec3(0.0,frame.x,-frame.y)),-1.0,1.0);
+    let hour=atan2(-d.x,dot(d,vec3(0.0,frame.y,frame.x)));
+    let ra=frame.z-hour;let radial=sqrt(max(1.0-dec*dec,0.0));
+    let q=vec3(radial*cos(ra),dec,radial*sin(ra));let a=abs(q);
+    var uv=vec2(0.0);var face=0;
+    if (a.x>=a.y && a.x>=a.z) {uv=q.zy/a.x;face=select(1,0,q.x>0.0);}
+    else if (a.y>=a.z) {uv=q.xz/a.y;face=select(3,2,q.y>0.0);}
+    else {uv=q.xy/a.z;face=select(5,4,q.z>0.0);}
+    let grid=(uv*0.5+vec2(0.5))*96.0;let cell=vec3<i32>(vec2<i32>(floor(grid)),face);
+    let h=physical_hash_lattice(cell,0x53544152u);
+    if (h<0.986) {return vec3(0.0);}
+    let center=vec2(0.25)+0.5*vec2(physical_hash_lattice(cell,0x41520001u),physical_hash_lattice(cell,0x41520002u));
+    let radius=length(fract(grid)-center)/0.14;
+    let brightness=exp(-radius*radius*2.0)*(0.000003+0.000012*pow((h-0.986)/0.014,4.0));
+    let color=mix(vec3(0.65,0.80,1.0),vec3(1.0,0.77,0.55),physical_hash_lattice(cell,0x41520003u));
+    return color*brightness*frame.w;
+}
+
 fn physical_disc_radiance(environment: PhysicalEnvironment, direction: vec3<f32>) -> vec3<f32> {
-    var radiance = vec3(0.0);
+    var radiance = physical_stellar_radiance(environment,direction);
     if (dot(direction, normalize(environment.sun_direction_water_density.xyz))
         >= cos(environment.solar_irradiance_angle.w)) {
         radiance += environment.solar_irradiance_angle.xyz
@@ -1146,14 +1165,14 @@ fn physical_environment_transport(
         maximum_distance_m,
     );
     var optical_depth = vec3(0.0);
-    var inscattered = cloud_boundary.transported_radiance;
+    var inscattered = vec3(0.0);
     for (var step = 0u; step < quadrature.count; step = step + 1u) {
         let distance_m = quadrature.distances_m[step];
         let weight_m = quadrature.weights_m[step];
         let position_m = origin_m + direction * distance_m;
         let medium = physical_medium_coefficients(environment, position_m);
         let view_transmittance = exp(
-            -(optical_depth + medium.extinction_m_inv * (0.5 * weight_m)),
+            -optical_depth,
         );
         var source = vec3(0.0);
         for (var sample_index = 0u;
@@ -1223,7 +1242,11 @@ fn physical_environment_transport(
                 );
             source += secondary_irradiance * source_transmittance * scattering;
         }
-        inscattered += view_transmittance * source * weight_m;
+        if (cloud_boundary.handled_cloud_scattering != 0u) {
+            source += cloud_boundary.transported_radiance * medium.cloud_scattering_m_inv;
+        }
+        let segment_weight=(vec3(1.0)-exp(-medium.extinction_m_inv*weight_m))/max(medium.extinction_m_inv,vec3(1e-12));
+        inscattered += view_transmittance * source * segment_weight;
         optical_depth += medium.extinction_m_inv * weight_m;
     }
     let transmittance = exp(-max(optical_depth, vec3(0.0)));

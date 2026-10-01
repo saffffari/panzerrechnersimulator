@@ -21,6 +21,9 @@ struct Crush {
     exposure: f32,  // the eye's chromatic cone channel per unit radiance
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
+    _grade_pad0: f32,
+    _grade_pad1: f32,
+    display_grade: vec4<f32>, // exposure multiplier, saturation, warmth, display gamma
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
@@ -120,7 +123,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         + textureSample(hdr, samp, in.uv + vec2(0.0, radius.y)).rgb * 0.15
         + textureSample(hdr, samp, in.uv - vec2(0.0, radius.y)).rgb * 0.15;
     var c = eye_response(mix(centre, blur, concussion));
+    // Explicit user camera/display reproduction. Identity by default; black stays black.
+    c *= cr.display_grade.x * vec3(1.0 + 0.2 * cr.display_grade.z, 1.0, 1.0 - 0.2 * cr.display_grade.z);
     var m = aces(c); // filmic tonemap (the only one — blit is a pass-through)
+    let display_luma = dot(m, vec3(0.2126, 0.7152, 0.0722));
+    m = clamp(mix(vec3(display_luma), m, cr.display_grade.y), vec3(0.0), vec3(1.0));
+    m = pow(m, vec3(1.0 / cr.display_grade.w));
     // Do not add colour or energy to shadows here. Readability must come from transported light;
     // this pass is limited to the response of the virtual camera/recording medium.
     // ACES already maps zero transported radiance to exact black.  Do not apply an authored

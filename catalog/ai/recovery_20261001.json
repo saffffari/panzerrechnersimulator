@@ -1,0 +1,361 @@
+{
+  "schema": "panzer.ai-recovery.v1",
+  "date": "2026-10-01",
+  "base_commit": "b7c76fa",
+  "foot": {
+    "reports": [
+      {
+        "agreement": 0.9466145634651184,
+        "episodes": 128,
+        "generation": 128,
+        "illegal_rate": 0.0,
+        "label": "baseline",
+        "mse": 0.00810857955366373,
+        "path": "assets/ai/weights_foot_tiger_aug30_baseline.bin",
+        "role": "tiger_crew",
+        "score": 99.18914794921875,
+        "success_rate": 1.0
+      },
+      {
+        "agreement": 0.9713541865348816,
+        "episodes": 128,
+        "generation": 512,
+        "illegal_rate": 0.0,
+        "label": "candidate",
+        "mse": 0.002548944903537631,
+        "path": "assets/ai/weights_foot_tiger.bin",
+        "role": "tiger_crew",
+        "score": 99.74510955810547,
+        "success_rate": 1.0
+      },
+      {
+        "agreement": 0.908203125,
+        "episodes": 128,
+        "generation": 128,
+        "illegal_rate": 0.0,
+        "label": "baseline",
+        "mse": 0.0078817093744874,
+        "path": "assets/ai/weights_foot_soviet_aug30_baseline.bin",
+        "role": "soviet_rifle",
+        "score": 99.21183013916016,
+        "success_rate": 1.0
+      },
+      {
+        "agreement": 0.974609375,
+        "episodes": 128,
+        "generation": 512,
+        "illegal_rate": 0.0,
+        "label": "candidate",
+        "mse": 0.0024199800100177526,
+        "path": "assets/ai/weights_foot_soviet.bin",
+        "role": "soviet_rifle",
+        "score": 99.75799560546875,
+        "success_rate": 1.0
+      }
+    ],
+    "scope": "deterministic micro-curriculum imitation; not campaign success",
+    "seed": 17296047577449762817,
+    "decision": "Keep the reproduced 512-epoch active foot policies: better agreement and lower MSE for both roles, equal success and illegal-action rates on fresh curriculum seeds."
+  },
+  "memory_comparison": {
+    "workload": {
+      "generations": 1,
+      "population": 3,
+      "episode_seconds": 6,
+      "maps": [
+        0
+      ],
+      "sigma": "sa",
+      "KESSEL_NO_RT": "1"
+    },
+    "baseline_peak_rss_kib": 20912832,
+    "fixed_peak_rss_kib": 3468360,
+    "champions_byte_identical": true,
+    "baseline_fitness": 138.217,
+    "fixed_fitness": 138.217,
+    "artifacts": [
+      {
+        "path": "artifacts/runtime/train_audit1001_baseline_nort.log",
+        "sha256": "4af8ea2a29a352e30126f0c5628498bcaee70c99faab03db7ca87d20a7e03609",
+        "bytes": 16908
+      },
+      {
+        "path": "artifacts/runtime/train_audit1001_fixed.log",
+        "sha256": "b552d773cc149cb9d47c95d1e9b06e4f0f81bcf20835061d2a321ef6b8a3883d",
+        "bytes": 16856
+      }
+    ]
+  },
+  "pilot": {
+    "scope": "offscreen crew-input driver; normal collision, reload and damage rules; no course victory claimed; these long-course receipts precede the added near-field safety guard",
+    "cases": [
+      {
+        "seed": 137,
+        "outcome": "pilot_stalled",
+        "final_progress": 0.6434838175773621,
+        "simulation_seconds": 1035.0167236328125,
+        "shots": 5,
+        "kills": 3,
+        "broken_modules": [],
+        "film": false,
+        "receipt": {
+          "path": "captures/canyon_ai_attempt137_bluewinter_20261001_result.json",
+          "sha256": "110d22a4e77c9207f6228a5fccd2d52b201bc0fc8a9b7d22099c5a821c956712",
+          "bytes": 1917
+        },
+        "trace": {
+          "path": "captures/canyon_ai_attempt137_bluewinter_20261001_trace.jsonl",
+          "sha256": "e853ad7ecb49310ea314cc304f4f159249a0f91f0636da81ba32a6bd991d7371",
+          "bytes": 1045358
+        }
+      },
+      {
+        "seed": 137,
+        "outcome": "pilot_stalled",
+        "final_progress": 0.8375264406204224,
+        "simulation_seconds": 1469.016845703125,
+        "shots": 13,
+        "kills": 10,
+        "broken_modules": [
+          "turret traverse",
+          "right track",
+          "radio"
+        ],
+        "film": true,
+        "receipt": {
+          "path": "captures/canyon_recovery137_review_20261001_result.json",
+          "sha256": "b86158ee6ad8757d34dd28b2b405907da20fd5e762a151aff4807695036bf13b",
+          "bytes": 2645
+        },
+        "trace": {
+          "path": "captures/canyon_recovery137_review_20261001_trace.jsonl",
+          "sha256": "934ce4983fee6a4886a53798b28554bc33e067ceeef3ba25eaf6c6574a48265c",
+          "bytes": 2227301
+        }
+      },
+      {
+        "seed": 29,
+        "outcome": "knocked_out",
+        "final_progress": 0.8388622999191284,
+        "simulation_seconds": 1303.416748046875,
+        "shots": 16,
+        "kills": 11,
+        "broken_modules": [
+          "turret traverse",
+          "gunner sight (TZF)",
+          "coaxial MG",
+          "engine",
+          "right track",
+          "fuel",
+          "ammunition rack",
+          "hull MG",
+          "radio"
+        ],
+        "film": false,
+        "receipt": {
+          "path": "captures/canyon_recovery29_20261001_result.json",
+          "sha256": "922839e25e8c5540e28c7e3a9a84bc9872d50028c9057dd18424dbb3edc89038",
+          "bytes": 2768
+        },
+        "trace": {
+          "path": "captures/canyon_recovery29_20261001_trace.jsonl",
+          "sha256": "06e4a72a36098f747138bb30662050aaba510dcdea4945a6fd112e77e86886fc",
+          "bytes": 1969264
+        }
+      }
+    ]
+  },
+  "validation": {
+    "full_host_unit_suite": {
+      "passed": 1444,
+      "failed": 0,
+      "ignored": 55,
+      "scope": "final unit suite; graphics/effects GPU and integration checks recorded separately"
+    },
+    "training_cli_guards": {
+      "passed": 2,
+      "failed": 0
+    },
+    "release_build": "passed",
+    "video_decode": "passed"
+  },
+  "artifacts": [
+    {
+      "path": "assets/ai/weights_foot_tiger.bin",
+      "sha256": "f4ec96ec7adfc4306d4464e0800fa2a2f0e82a07b0cfb67c1cde0e1105276f85",
+      "bytes": 8024
+    },
+    {
+      "path": "assets/ai/weights_foot_soviet.bin",
+      "sha256": "8bed92ecaf71426d4da35ff80e9b848719ceecea8fac0d5e2927bff544f116f7",
+      "bytes": 8024
+    },
+    {
+      "path": "assets/ai/weights_foot_tiger_aug30_baseline.bin",
+      "sha256": "8083aaabe86ff148483d1f7f2e0d1f2d698ca72c0b4d2f3cd69b0b88c445440d",
+      "bytes": 8024
+    },
+    {
+      "path": "assets/ai/weights_foot_soviet_aug30_baseline.bin",
+      "sha256": "ae8e2c87b1b31adfbf9d0b51f45943b9670249b3368a3dad37cf755fae96882f",
+      "bytes": 8024
+    },
+    {
+      "path": "assets/ai/weights_academy.bin",
+      "sha256": "906463dd69bf7691a2e3ed68c4d807a9c51c305375402f27b7f2d42f0fab7679",
+      "bytes": 1188
+    },
+    {
+      "path": "assets/ai/weights_tiger.bin",
+      "sha256": "fed7ce8429545d28f180698ada8222c155f4994a78d6edf719254a72ddfeb662",
+      "bytes": 1188
+    },
+    {
+      "path": "captures/canyon_recovery137_review_20261001.mp4",
+      "sha256": "4311f5cd83bfd40a5b00af57fe64af21a9b2764540a4eb64afceb302ad585cb2",
+      "bytes": 40439331
+    },
+    {
+      "path": "captures/canyon_recovery137_review_20261001_segments.json",
+      "sha256": "a1957974fb60874b4df13a5122d7bc59c14947a4a357bb70445768dba5f27e7b",
+      "bytes": 446
+    },
+    {
+      "path": "artifacts/runtime/tests_recovery1001_host.log",
+      "sha256": "cf491da7091f85c2ee591a4dd945dda34a605f79a1cadf1e91ff15c43c637cf4",
+      "bytes": 175022
+    },
+    {
+      "path": "artifacts/runtime/tests_training_guards1001.log",
+      "sha256": "52a68f6c4c9b84ebe24562db643ab61bb3ce35ad697eb002c312a2b85274e807",
+      "bytes": 72563
+    },
+    {
+      "path": "artifacts/runtime/build_recovery1001_final.log",
+      "sha256": "b354cbe964e3f1c9e726680934efa8b079564df106c1c8001cccc377a32659c3",
+      "bytes": 63945
+    },
+    {
+      "path": "artifacts/runtime/foot_ab_20261001.json",
+      "sha256": "043d386a95111dd2a2c2a6ed903c14a6ec177264cdfaee9bf72dc64b9f9c7973",
+      "bytes": 1460
+    }
+  ],
+  "tank_training": {
+    "status": "completed bounded recovery; candidate rejected",
+    "generations": 2,
+    "population": 4,
+    "episode_seconds": 30,
+    "maps": [
+      0,
+      1
+    ],
+    "peak_rss_kib": 9327904,
+    "best_exam_fitness": 116.5,
+    "reloaded_exam_fitness": 116.5,
+    "evaluation": [
+      {
+        "deterministic": true,
+        "maps": [
+          0,
+          1
+        ],
+        "path": "assets/ai/weights_academy.bin",
+        "replay_score": 114.25054931640625,
+        "replay_scores": [
+          223.77903747558594,
+          215.71267700195312,
+          13.818635940551758,
+          212.7923583984375,
+          202.70269775390625,
+          5.271932601928711,
+          15.636472702026367,
+          17.4483699798584,
+          21.197399139404297,
+          214.1459503173828
+        ],
+        "score": 114.25054931640625,
+        "scores": [
+          223.77903747558594,
+          215.71267700195312,
+          13.818635940551758,
+          212.7923583984375,
+          202.70269775390625,
+          5.271932601928711,
+          15.636472702026367,
+          17.4483699798584,
+          21.197399139404297,
+          214.1459503173828
+        ],
+        "seconds": 90.0,
+        "seeds": [
+          3887136769,
+          3887136770,
+          3887136771,
+          3887136773,
+          3887136776
+        ],
+        "label": "baseline",
+        "artifact": {
+          "path": "artifacts/runtime/tank_baseline_isolated1001.log",
+          "sha256": "b5638d456726406316a904a077a76b39f4bae0881498ac511c4c1166811362ad",
+          "bytes": 104787
+        }
+      },
+      {
+        "deterministic": true,
+        "maps": [
+          0,
+          1
+        ],
+        "path": "assets/ai/weights_recovery1001_isolated.bin",
+        "replay_score": 111.07551574707031,
+        "replay_scores": [
+          12.448047637939453,
+          215.57093811035156,
+          8.251856803894043,
+          212.625,
+          230.86293029785156,
+          200.0408935546875,
+          2.984011173248291,
+          3.082059383392334,
+          206.93531799316406,
+          17.954097747802734
+        ],
+        "score": 111.07551574707031,
+        "scores": [
+          12.448047637939453,
+          215.57093811035156,
+          8.251856803894043,
+          212.625,
+          230.86293029785156,
+          200.0408935546875,
+          2.984011173248291,
+          3.082059383392334,
+          206.93531799316406,
+          17.954097747802734
+        ],
+        "seconds": 90.0,
+        "seeds": [
+          3887136769,
+          3887136770,
+          3887136771,
+          3887136773,
+          3887136776
+        ],
+        "label": "candidate",
+        "artifact": {
+          "path": "artifacts/runtime/tank_candidate_isolated1001.log",
+          "sha256": "48c6dfa2aa2a8b06929960ba596a6c846131d364a69289d65949199a266d66a2",
+          "bytes": 111056
+        }
+      }
+    ],
+    "decision": "Retain weights_academy.bin. Candidate mean 111.0755 is lower than baseline 114.2505 on ten independent 90-second episodes; both replayed bit-exactly. This bounded recovery is not the interrupted 2000-generation run or evidence of convergence.",
+    "artifact": {
+      "path": "artifacts/runtime/train_recovery1001_isolated.log",
+      "sha256": "03f78121e82ac7efebb92264e187c3e3caa87a453233c2f60f14e7cf304df480",
+      "bytes": 543935
+    }
+  }
+}

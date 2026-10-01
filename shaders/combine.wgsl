@@ -1,3 +1,4 @@
+// @weather-density
 // S4 (M-D): the deferred COMBINE pass is now the RAY INTEGRATOR. Per lit pixel:
 //   • sun: one disc-jittered hardware shadow ray (the penumbra emerges under S3 accumulation)
 //   • environment: one cosine-weighted visibility ray, shaded by the same physical environment
@@ -491,14 +492,8 @@ fn sample_ggx_vndf(
 fn world_medium_source_transmittance(
     origin: vec3<f32>, direction: vec3<f32>, max_distance: f32,
 ) -> f32 {
-    return physical_bounded_medium_transmittance(
-        cam.world_medium.x,
-        origin,
-        direction,
-        max_distance,
-        cam.world_medium.z,
-        cam.world_medium.w,
-    );
+    return exp(-weather_optical_depth(origin,direction,max_distance,cam.world_medium.zw,
+        cam.world_medium.x,cam.world_medium.y,environment.cloud_motion.xyz,24u));
 }
 
 struct WorldMediumSolarSource {
