@@ -1,9 +1,11 @@
-//! Eight explicitly selected practical lamps, with source-geometry cubemap visibility. Static lamp
+//! Eight practical lamps plus eight admitted wreck fires, with source-geometry cubemap visibility. Static lamp
 //! and caster poses reuse depth; light selection never guesses from brightness or camera distance.
 use super::*;
 use std::cell::RefCell;
 
-pub const MAX_LIGHTS: usize = 8;
+pub const CABIN_LIGHTS: usize = 8;
+pub const WORLD_FIRE_LIGHTS: usize = 8;
+pub const MAX_LIGHTS: usize = CABIN_LIGHTS + WORLD_FIRE_LIGHTS;
 const SIDE: u32 = 512;
 // The smaller dome sits 14 mm below the source fan. A 35 mm near plane erased that blocker.
 // 5 mm retains it; only the fixture's explicitly registered emitting mesh is excluded.
@@ -137,7 +139,7 @@ impl CabinShadows {
         let mut static_faces = Vec::new();
         let mut cameras = Vec::new();
         let mut binds = Vec::new();
-        // Two 512² Depth32Float banks × 48 faces = 96 MiB when enabled.
+        // Two 512² Depth32Float banks × 96 faces = 192 MiB when enabled.
         for face in 0..(MAX_LIGHTS * 6) as u32 {
             static_faces.push(static_depth.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2),
@@ -224,10 +226,20 @@ impl CabinShadows {
         // another lamp's cached faces. Invalid/off slots stay disabled in the GPU uniform.
         let mut selected = self.lights.borrow_mut();
         selected.clear();
-        selected.extend(lights.iter().copied().take(MAX_LIGHTS));
+        selected.extend(lights.iter().copied().take(CABIN_LIGHTS));
         let mut emitters = self.emitting_meshes.borrow_mut();
         emitters.clear();
         emitters.extend((0..selected.len()).map(|i| emitting_meshes.get(i).copied().flatten()));
+    }
+
+    fn set_world_fire_lights(&self, lights: &[PointLight]) {
+        let mut selected = self.lights.borrow_mut();
+        let mut emitters = self.emitting_meshes.borrow_mut();
+        selected.resize(CABIN_LIGHTS, PointLight { pos:glam::Vec3::ZERO,
+            source_radius:0.0,color:glam::Vec3::ZERO,radiant_intensity:0.0 });
+        emitters.resize(CABIN_LIGHTS, None);
+        selected.extend(lights.iter().copied().take(WORLD_FIRE_LIGHTS));
+        emitters.resize(selected.len(), None);
     }
 
     fn set_dynamic_meshes(&mut self, meshes: &[usize]) {
@@ -440,11 +452,25 @@ impl Renderer {
     pub fn set_shadowed_cabin_lights(&mut self, lights: &[PointLight], emitting_meshes: &[Option<usize>]) {
         self.cabin_shadows.set_lights(lights, emitting_meshes);
     }
+    /// The same eight exterior sources admitted to the flame pool. Their own rendered hull,
+    /// nearby terrain and walls cast into the shared 8 m, 512-square visibility bank.
+    pub fn set_shadowed_world_fire_lights(&mut self, lights: &[PointLight]) {
+        self.cabin_shadows.set_world_fire_lights(lights);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cabin_and_wreck_shadow_slots_share_the_expanded_shader_abi() {
+        assert_eq!(CABIN_LIGHTS, 8);
+        assert_eq!(WORLD_FIRE_LIGHTS, 8);
+        assert_eq!(std::mem::size_of::<Uniform>(), 272);
+        assert_eq!(std::mem::offset_of!(Uniform, range), 256);
+    }
+
 
     #[test]
     fn moving_ammunition_preserves_static_depth_and_settled_frames_do_no_work() {
@@ -585,7 +611,7 @@ mod tests {
             );
         }
         assert_eq!(std::mem::size_of::<NearShadowUniform>(), 80);
-        assert_eq!(std::mem::size_of::<Uniform>(), 144);
+        assert_eq!(std::mem::size_of::<Uniform>(), 272);
     }
 
     #[test]

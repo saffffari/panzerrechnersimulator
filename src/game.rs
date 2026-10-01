@@ -5513,7 +5513,7 @@ const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
     0.35, 0.90, 0.60, 0.18, // restored pre-Canyon radiance; aggregate uses actual grain area
-    0.80, 0.50, 0.25, 0.10, // source calibration, never camera-dependent fill
+    0.20, 0.125, 0.0625, 0.025, // exterior cell radiance; aggregate light uses this same table
 ];
 // Cabin flame chromaticity needs an amber core after sRGB decoding, not almost pure red.
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
@@ -5526,7 +5526,7 @@ const FIRE_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_BATCHES] = [
 // while breaking up the coarse black confetti. The shared cap still bounds a spreading fire.
 const SMOKE_CUBES_PER_INTERIOR_SPOT: usize = 3072;
 const MAX_INTERIOR_SMOKE_CUBES: usize = 24576;
-const FLAME_CUBES_PER_WORLD_SOURCE: usize = 256; // half-width grains, four times the old count
+const FLAME_CUBES_PER_WORLD_SOURCE: usize = 768; // larger plume, same fine 80–115 mm grains
 const SMOKE_CUBES_PER_WORLD_SOURCE: usize = 240;
 /// One-shot propellant gas released at the rear face of the breech when the block first opens.
 /// This is a soft ray-marched volume, not part of the flame/soot pool: bore gas is a thin
@@ -5558,17 +5558,18 @@ struct FireVoxelSample {
     generation: u32,
 }
 
-/// Cluster only the visible cells of one cabin fire spot. Lambertian faces of radiance L and
+/// Cluster only the rendered cells of one fire source. Lambertian faces of radiance L and
 /// total area A emit flux pi*L*A; the isotropic average intensity is therefore L*A/4. This uses
 /// the same authored radiance and sRGB-decoded texture as the raster cells, without an independent
 /// fire-strength/flicker multiplier. Source clustering is an approximation until dynamic flame
 /// faces can be sampled directly; it must not manufacture another high-power cabin light.
-fn interior_fire_aggregate_light(
-    cells: &[FireVoxelSample], origin: Vec3, parent: Mat4,
+fn fire_aggregate_light(
+    cells: &[FireVoxelSample], origin: Vec3, parent: Mat4, exterior: bool,
 ) -> Option<PointLight> {
     let radiance: [Vec3; FIRE_FLAME_STAGES] = std::array::from_fn(|stage| {
-        let rgb = FIRE_FLAME_COLORS[stage].map(|value| crate::rt_surface::srgb_to_linear(value as f32 / 255.0));
-        Vec3::from_array(rgb) * FIRE_FLAME_EMISSIVE[stage]
+        let page = stage + if exterior { FIRE_FLAME_STAGES } else { 0 };
+        let rgb = FIRE_FLAME_COLORS[page].map(|value| crate::rt_surface::srgb_to_linear(value as f32 / 255.0));
+        Vec3::from_array(rgb) * FIRE_FLAME_EMISSIVE[page]
     });
     let mut rgb_intensity = Vec3::ZERO;
     let mut weighted_pos = Vec3::ZERO;
@@ -5593,6 +5594,35 @@ fn interior_fire_aggregate_light(
         color: rgb_intensity / peak,
         radiant_intensity: peak,
     })
+}
+
+/// Rear-deck attachment measured from the loaded hull triangles, not the ground origin or
+/// the top of a bounding box. The authored longitudinal position selects the engine bay;
+/// its height comes from the actual surface. No contact means no fabricated attachment.
+fn wreck_deck_anchor(mesh: &CpuMesh) -> Option<Vec3> {
+    let x = (mesh.min.x + mesh.max.x) * 0.5;
+    let z = mesh.min.z + (mesh.max.z - mesh.min.z) * 0.20;
+    let mut highest: Option<f32> = None;
+    for tri in mesh.indices.chunks_exact(3) {
+        let [a, b, c] = std::array::from_fn(|i| Vec3::from_array(mesh.vertices[tri[i] as usize].pos));
+        let u = Vec2::new(b.x - a.x, b.z - a.z);
+        let v = Vec2::new(c.x - a.x, c.z - a.z);
+        let q = Vec2::new(x - a.x, z - a.z);
+        let determinant = u.perp_dot(v);
+        if determinant.abs() < 1e-8 { continue; }
+        let s = q.perp_dot(v) / determinant;
+        let t = u.perp_dot(q) / determinant;
+        if s >= -1e-5 && t >= -1e-5 && s + t <= 1.0 + 1e-5 {
+            let y = a.y + s * (b.y - a.y) + t * (c.y - a.y);
+            highest = Some(highest.map_or(y, |old| old.max(y)));
+        }
+    }
+    highest.map(|y| Vec3::new(x, y + 0.015, z))
+}
+
+fn wreck_kind_index(kind: EnemyKind) -> usize {
+    match kind { EnemyKind::T34 => 0, EnemyKind::Su100 => 1, EnemyKind::Kv2 => 2,
+        EnemyKind::Isu152 => 3, EnemyKind::Is2 => 4, EnemyKind::Is3 => 5 }
 }
 
 /// Root the emitter footprint on the contacted plane. Wall flames climb the wall while
@@ -5690,6 +5720,39 @@ fn main_gun_camera_sample(age: f32, optic: bool, exposed: bool) -> CameraImpulse
 
 /// Restored generation-held cubic flames, with finer 6–8 mm cabin / 80–115 mm exterior grains.
 /// Source-surface intensity and suppression still own the bounded particle population.
+/// Exterior parcels rise through a prescribed three-tongue envelope. This is authored particle
+/// motion, not solved combustion; cell sizes stay fixed and no independent light pulse is added.
+fn exterior_flame_parcel_sample(seed: u32, grain: usize, time: f32) -> FireVoxelSample {
+    let id = (grain as u32).wrapping_mul(0x9e37_79b9) ^ seed;
+    let lifetime = 0.65 + 0.65 * hash01(id ^ 0x7f4a_7c15);
+    let clock = time.max(0.0) / lifetime + hash01(id ^ 0x41c6_4e6d);
+    let generation = clock.floor() as u32;
+    let age = clock.fract();
+    let spawn = id ^ generation.wrapping_mul(0x85eb_ca6b);
+    let tongue = grain % 3;
+    let height_t = age.powf(1.45);
+    let phase = time * 3.7 + tongue as f32 * 2.1 + hash01(seed) * 6.0;
+    let heights = [2.95, 1.90, 2.45];
+    let height = height_t * heights[tongue] * (0.88 + 0.12 * phase.sin());
+    let spread = 0.46 * (1.0 - height_t).powf(0.90) + 0.015;
+    let radial = hash01(spawn ^ 0x94d0_49bb).sqrt();
+    let angle = hash01(spawn ^ 0x369d_ea0f) * std::f32::consts::TAU;
+    let roots = [Vec2::new(-0.34,-0.14),Vec2::new(0.38,-0.12),Vec2::new(0.06,0.30)];
+    let bend = Vec2::new((phase - height_t * 2.6).sin(),
+        (phase * 0.79 - height_t * 1.8).cos()) * (0.32 * height_t.powi(2));
+    let horizontal = roots[tongue] * (1.0 - 0.45 * height_t)
+        + Vec2::new(angle.cos(),angle.sin()) * (spread * radial) + bend;
+    let stage = if radial > 0.84 || height_t > 0.80 { 3 }
+        else if height_t < 0.08 && radial > 0.55 { 0 }
+        else if radial < 0.55 && height_t > 0.08 && height_t < 0.62 { 2 }
+        else { 1 };
+    let tier = (hash01(spawn ^ 0x27d4_eb2f) * 3.0).floor().min(2.0) as usize;
+    FireVoxelSample {
+        offset: (Vec3::new(horizontal.x,height,horizontal.y) / 0.12).round() * 0.12,
+        rotation: Quat::IDENTITY, size: [0.080,0.098,0.115][tier], stage, generation,
+    }
+}
+
 fn flame_parcel_sample(
     emitter_seed: u32,
     grain: usize,
@@ -5697,6 +5760,7 @@ fn flame_parcel_sample(
     strength: f32,
     exterior: bool,
 ) -> FireVoxelSample {
+    if exterior { return exterior_flame_parcel_sample(emitter_seed, grain, time); }
     let id = (grain as u32).wrapping_mul(0x9e37_79b9) ^ emitter_seed;
     let h0 = hash01(id ^ 0x41c6_4e6d);
     let h1 = hash01(id ^ 0x7f4a_7c15);
@@ -5713,7 +5777,7 @@ fn flame_parcel_sample(
     let hl = hash01(spawn ^ 0xa511_e9b3);
     let hs = hash01(spawn ^ 0x27d4_eb2f);
     let _strength = strength.clamp(0.05, 1.4); // density is selected by the caller's bounded count
-    let layer_count = if exterior { 12usize } else { 44usize };
+    let layer_count = if exterior { 18usize } else { 44usize };
     // Bias cells toward the base; the upper flame remains broken rather than becoming a solid cone.
     let layer = (hl.powf(1.55) * layer_count as f32)
         .floor()
@@ -5721,7 +5785,7 @@ fn flame_parcel_sample(
     let height_t = layer as f32 / (layer_count - 1) as f32;
     let cell = if exterior { 0.12 } else { 0.010 };
     let vertical_cell = if exterior { 0.16 } else { 0.010 };
-    let base_radius = if exterior { 4.0 } else { 14.0 };
+    let base_radius = if exterior { 5.0 } else { 14.0 };
     let radius_cells = (base_radius * (1.0 - 0.58 * height_t)).ceil().max(1.0) as i32;
     let span = (radius_cells * 2 + 1) as f32;
     let ix = (hx * span).floor() as i32 - radius_cells;
@@ -5771,7 +5835,7 @@ fn flame_parcel_sample(
     }
 }
 
-/// Fixed rounded flame tongue; source energy uses this exact mesh area.
+/// Fixed cubic flame grain; source energy uses this exact mesh area.
 fn flame_parcel_mesh(color: [u8; 3]) -> CpuMesh {
     box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color)
 }
@@ -5787,6 +5851,18 @@ fn flame_parcel_area() -> f32 {
             (b-a).cross(c-a).length() * 0.5
         }).sum()
     })
+}
+
+/// One exterior cell per occupied lattice position. Coincident particles neither hide inside
+/// each other nor multiply the aggregate's energy while showing only one cube to the player.
+fn world_fire_cells(seed: u32, time: f32, strength: f32) -> Vec<FireVoxelSample> {
+    let count = ((strength.clamp(0.0, 1.0).sqrt() * FLAME_CUBES_PER_WORLD_SOURCE as f32)
+        .ceil() as usize).min(FLAME_CUBES_PER_WORLD_SOURCE);
+    let mut occupied = std::collections::HashSet::with_capacity(count);
+    (0..count).filter_map(|grain| {
+        let cell = flame_parcel_sample(seed, grain, time, strength, true);
+        occupied.insert(cell.offset.to_array().map(f32::to_bits)).then_some(cell)
+    }).collect()
 }
 
 /// One grain of a tableau stovepipe's smoke (`urban_tableaux::SmokeSource`): a thin column
@@ -5981,8 +6057,8 @@ fn smoke_voxel_sample(
     let cell = if exterior { 0.12 } else { 0.012 };
     let vertical_cell = if exterior { 0.17 } else { 0.014 };
     // The first soot cell starts just above the tallest flame-stack cell rather than occupying the
-    // luminous base (11 * 0.16 = 1.76 m exterior; 21 * 0.02 = 0.42 m interior).
-    let base_y = if exterior { 1.82 } else { 0.46 };
+    // luminous base (17 * 0.16 = 2.72 m exterior; 43 * 0.01 = 0.43 m interior).
+    let base_y = if exterior { 2.78 } else { 0.46 };
     let radius_cells = if exterior {
         2 + (height_t * 4.0).round() as i32
     } else {
@@ -8759,6 +8835,8 @@ pub struct Game {
     fire: f32, // interior fire intensity (0 = none); grows once alight
     fire_active: bool,
     interior_fire_lights: [Option<PointLight>; N_INT_FIRE_LIGHTS],
+    world_fire_lights: [Option<PointLight>; MAX_WORLD_FIRE_SOURCES],
+    wreck_deck_anchors: [Option<Vec3>; 6],
     fire_t: f32,                             // fire clock (drives flicker)
     ammo_fire: ammunition_fire::AmmunitionFire, // latched to the ignited live round
     fire_ammo_ids: Vec<u32>, // exposure history belongs to this exact inventory ordering
@@ -10228,6 +10306,7 @@ impl Game {
             tank::build_is2(),
             tank::build_is3(),
         ] };
+        let wreck_deck_anchors = std::array::from_fn(|i| wreck_deck_anchor(&prototypes[i][0]));
         for _ in 0..N_ENEMIES {
             for (prototype, slots) in prototypes.iter().zip([
                 &mut t34,
@@ -12550,6 +12629,8 @@ impl Game {
             fire: 0.0,
             fire_active: false,
             interior_fire_lights: [None; N_INT_FIRE_LIGHTS],
+            world_fire_lights: [None; MAX_WORLD_FIRE_SOURCES],
+            wreck_deck_anchors,
             fire_t: 0.0,
             ammo_fire: ammunition_fire::AmmunitionFire::default(),
             fire_ammo_ids: Vec::new(),
@@ -17528,17 +17609,9 @@ impl Game {
                 radiant_intensity: envelope * legacy_reach * legacy_reach * 0.0625,
             });
         }
-        // Burning wrecks illuminate their own soot columns and turn every completed engagement into
-        // persistent orange geography rather than a collection of unlit glowing boxes.
-        for (i, w) in self.wrecks.iter().enumerate().filter(|(_, w)| w.burning) {
-            let flick = 0.78 + 0.22 * (w.fire_t * 9.7 + i as f32).sin();
-            lights.push(PointLight {
-                pos: self.enemies[i].center() + Vec3::Y * 0.7,
-                source_radius: 0.80,
-                color: Vec3::new(1.0, 0.30, 0.08),
-                radiant_intensity: 48.0 * 0.55 * flick * w.fire_strength(),
-            });
-        }
+        // Same admitted cells, same frame, same emission. No separate wreck floodlight or
+        // off-pool light survives when its flame source is absent or extinguished.
+        lights.extend(self.world_fire_lights.iter().flatten().copied());
         // Enemy muzzle flashes light the field too — the swarm's fire flickers across the snow.
         for k in 0..E_FX_POOL {
             if transients && self.e_shots[k].tracer_active && self.e_shots[k].tracer_t < 0.06 {
@@ -17627,6 +17700,7 @@ impl Game {
             }
             r.set_shadowed_cabin_lights(&shadowed_cabin_lights, &emitting_meshes);
         }
+        r.set_shadowed_world_fire_lights(&self.world_fire_lights.iter().flatten().copied().collect::<Vec<_>>());
         lights.extend(self.tank_editor_lights(r));
         r.set_lights(&lights);
     }
@@ -28623,6 +28697,7 @@ impl Game {
     /// the count bounded and make all four couch views see the exact same grains.
     fn drive_interior_fire(&mut self, r: &mut Renderer) {
         self.interior_fire_lights.fill(None);
+        self.world_fire_lights.fill(None);
         r.heat_sources.clear();
         let heat_review = crate::debug_gates::DebugGates::active().heat_haze;
         let fx_time = self.stealth.t;
@@ -28667,7 +28742,7 @@ impl Game {
                 flame_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size), sample.rotation, fire_origin + sample.offset));
             }
-            if let Some(light) = interior_fire_aggregate_light(&source_cells, fire_origin, Mat4::IDENTITY) {
+            if let Some(light) = fire_aggregate_light(&source_cells, fire_origin, Mat4::IDENTITY, false) {
                 merge_fire_light(&mut self.interior_fire_lights, light);
             }
             let smoke_strength = ((strength - 0.08) / 0.92).clamp(0.0, 1.0);
@@ -28697,7 +28772,9 @@ impl Game {
         let mut world_sources: Vec<(f32, Vec3, f32, u32)> = Vec::new();
         for i in 0..self.wrecks.len() {
             if self.enemy_active[i] && !self.enemies[i].alive && self.wrecks[i].burning {
-                let pos = self.enemies[i].pos + Vec3::Y * 0.38;
+                let enemy = &self.enemies[i];
+                let Some(anchor) = self.wreck_deck_anchors[wreck_kind_index(enemy.kind)] else { continue; };
+                let pos = enemy.hull_model().transform_point3(anchor);
                 world_sources.push((
                     pos.distance_squared(listener),
                     pos,
@@ -28719,7 +28796,8 @@ impl Game {
         }
         for (i, hulk) in self.campaign_hulks.iter().enumerate() {
             if hulk.burning {
-                let pos = hulk.models[0].w_axis.truncate() + Vec3::Y * 0.38;
+                let Some(anchor) = self.wreck_deck_anchors[wreck_kind_index(hulk.kind)] else { continue; };
+                let pos = hulk.models[0].transform_point3(anchor);
                 world_sources.push((
                     pos.distance_squared(listener),
                     pos,
@@ -28744,7 +28822,7 @@ impl Game {
         world_sources.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.3.cmp(&b.3)));
         world_sources.truncate(MAX_WORLD_FIRE_SOURCES);
 
-        for (_, pos, strength, seed) in world_sources {
+        for (source_index, (_, pos, strength, seed)) in world_sources.into_iter().enumerate() {
             if stoves.contains(&seed) {
                 let n_smoke = ((strength.min(1.0).sqrt() * SMOKE_CUBES_PER_WORLD_SOURCE as f32)
                     .ceil() as usize)
@@ -28761,17 +28839,16 @@ impl Game {
                 continue;
             }
             if heat_review { r.heat_sources.add(pos,0.72,3.2,strength,seed as f32*0.0001); }
-            let n_flame = ((strength.min(1.0).sqrt() * FLAME_CUBES_PER_WORLD_SOURCE as f32).ceil()
-                as usize)
-                .min(FLAME_CUBES_PER_WORLD_SOURCE);
-            for grain in 0..n_flame {
-                let sample = flame_parcel_sample(seed, grain, fx_time, strength, true);
+            let source_cells = world_fire_cells(seed, fx_time, strength);
+            for sample in &source_cells {
                 flame_mats[FIRE_FLAME_STAGES + sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size),
                     sample.rotation,
                     pos + sample.offset,
                 ));
             }
+            self.world_fire_lights[source_index] = fire_aggregate_light(
+                &source_cells, pos, Mat4::IDENTITY, true);
             let n_smoke = ((strength.min(1.0).sqrt() * SMOKE_CUBES_PER_WORLD_SOURCE as f32).ceil()
                 as usize)
                 .min(SMOKE_CUBES_PER_WORLD_SOURCE);
@@ -29138,6 +29215,31 @@ impl Game {
     /// Headless-only: is enemy `idx` still alive? (overpen demo assertion)
     pub fn debug_enemy_alive(&self, idx: usize) -> bool {
         self.enemies.get(idx).map_or(false, |e| e.alive)
+    }
+
+    /// Explicit capture fixture, never called by gameplay: an intact-turret burning T-34.
+    /// Isolates sustained fire from the brief kill blast and random secondary cook-off.
+    pub fn debug_stage_burning_t34(&mut self, x: f32, z: f32) -> Option<usize> {
+        let idx = self.debug_first_t34()?;
+        self.debug_place_enemy(idx, x, z, 0.0);
+        self.enemy_active[idx] = true;
+        self.destroy_enemy(idx);
+        self.wrecks[idx].kind = WreckKind::Burn;
+        self.wrecks[idx].ignition_load = 0.75;
+        self.wrecks[idx].cookoff_t = None;
+        Some(idx)
+    }
+
+    pub fn debug_wreck_fire_report(&self, idx: usize) -> serde_json::Value {
+        let w = &self.wrecks[idx];
+        let flick = 0.78 + 0.22 * (w.fire_t * 9.7 + idx as f32).sin();
+        serde_json::json!({"fire_s":w.fire_t,"strength":w.fire_strength(),
+            "fuel":w.fuel_remaining,"ignition_load":w.ignition_load,
+            "legacy_radiant_intensity":48.0*0.55*flick*w.fire_strength(),
+            "deck_anchor":self.wreck_deck_anchors[wreck_kind_index(self.enemies[idx].kind)].map(|p| p.to_array()),
+            "rendered_sources":self.world_fire_lights.iter().flatten().map(|l|serde_json::json!({
+                "position":l.pos.to_array(),"radiant_intensity":l.radiant_intensity,
+                "color":l.color.to_array(),"support_radius":l.source_radius})).collect::<Vec<_>>()})
     }
 
     /// Headless-only: complete unfired tubes left in the Tiger, on the carrier, and claim state.
@@ -34050,8 +34152,8 @@ mod tests {
         let origin = INTERIOR_FIRE_SPOTS[0];
         let parent = Mat4::from_translation(Vec3::new(3.0, 1.0, -2.0))
             * Mat4::from_rotation_y(0.7);
-        assert!(interior_fire_aggregate_light(&[], origin, parent).is_none());
-        let one = interior_fire_aggregate_light(&[cell], origin, parent).unwrap();
+        assert!(fire_aggregate_light(&[], origin, parent, false).is_none());
+        let one = fire_aggregate_light(&[cell], origin, parent, false).unwrap();
         // PointLight separates peak radiant intensity from normalized linear RGB. The red
         // base is below sRGB 255, so its texture's peak must participate in emitted power.
         let linear_color = Vec3::from_array(FIRE_FLAME_COLORS[0].map(|value|
@@ -34064,12 +34166,12 @@ mod tests {
         assert!(one.color.distance(linear_color / peak_color) < 1.0e-6);
 
         let second = FireVoxelSample { offset: cell.offset + Vec3::X * 0.2, ..cell };
-        let pair = interior_fire_aggregate_light(&[cell, second], origin, parent).unwrap();
+        let pair = fire_aggregate_light(&[cell, second], origin, parent, false).unwrap();
         assert!((pair.radiant_intensity - one.radiant_intensity * 2.0).abs() < 1.0e-10);
         assert!(pair.pos.distance(parent.transform_point3(origin + cell.offset + Vec3::X * 0.1)) < 1.0e-6);
         assert!(pair.source_radius >= 0.1 + cell.size * 0.5 * 3.0f32.sqrt() - 1.0e-6);
         let larger = FireVoxelSample { size: cell.size * 2.0, ..cell };
-        let scaled = interior_fire_aggregate_light(&[larger], origin, parent).unwrap();
+        let scaled = fire_aggregate_light(&[larger], origin, parent, false).unwrap();
         assert!((scaled.radiant_intensity - one.radiant_intensity * 4.0).abs() < 1.0e-10);
     }
 
@@ -34077,7 +34179,7 @@ mod tests {
     fn cabin_fire_keeps_amber_source_energy_separate_from_exterior_palette() {
         let cells: Vec<_> = (0..6144).map(|grain|
             flame_parcel_sample(0x51ed_19a1, grain, 0.25, 0.5, false)).collect();
-        let source = interior_fire_aggregate_light(&cells, Vec3::ZERO, Mat4::IDENTITY).unwrap();
+        let source = fire_aggregate_light(&cells, Vec3::ZERO, Mat4::IDENTITY, false).unwrap();
         // Check the actual aggregate, not just the brightest swatch: both visible flame pages
         // and their transported light must have a warm orange component after linearization.
         assert!(source.color.y / source.color.x > 0.20);
@@ -34086,7 +34188,45 @@ mod tests {
         assert!(source.radiant_intensity > 0.0 && source.radiant_intensity.is_finite());
         assert_eq!(&FIRE_FLAME_COLORS[FIRE_FLAME_STAGES..],
             &[[183, 24, 4], [255, 98, 12], [255, 155, 30], [188, 25, 4]]);
-        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.8, 0.5, 0.25, 0.1]);
+        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.20, 0.125, 0.0625, 0.025]);
+    }
+
+    #[test]
+    fn wreck_flame_energy_uses_exterior_pages_and_disappears_with_the_cells() {
+        let cells = world_fire_cells(0x7100_0000, 8.0, 0.742);
+        let source = fire_aggregate_light(&cells, Vec3::ZERO, Mat4::IDENTITY, true).unwrap();
+        let mut expected = Vec3::ZERO;
+        for cell in &cells {
+            let page = FIRE_FLAME_STAGES + cell.stage;
+            let color = Vec3::from_array(FIRE_FLAME_COLORS[page].map(|v|
+                crate::rt_surface::srgb_to_linear(v as f32 / 255.0)));
+            expected += color * FIRE_FLAME_EMISSIVE[page] * 1.5 * cell.size.powi(2);
+        }
+        assert!((source.color * source.radiant_intensity).distance(expected) < 1e-5);
+        // The recorded old floodlight was 18.75 at this damage state. Larger visible flames
+        // must not recreate that independent source through a second power multiplier.
+        assert!(source.radiant_intensity > 0.0 && source.radiant_intensity < 0.75);
+        assert!(cells.iter().any(|c| c.offset.y > 2.3));
+        let unique: std::collections::HashSet<_> = cells.iter()
+            .map(|c|c.offset.to_array().map(f32::to_bits)).collect();
+        assert_eq!(unique.len(), cells.len());
+        let extinct = world_fire_cells(0x7100_0000, 8.0, 0.0);
+        assert!(extinct.is_empty());
+        assert!(fire_aggregate_light(&extinct, Vec3::ZERO, Mat4::IDENTITY, true).is_none());
+    }
+
+    #[test]
+    fn wreck_fire_attaches_to_rear_source_surface_not_bounding_box_top() {
+        let mut mesh = box_mesh(Vec3::new(-1.0,0.0,-3.0),Vec3::new(1.0,1.7,3.0),[0;3]);
+        mesh.max.y = 3.5; // a raised forward fitting must not float the rear attachment
+        let anchor = wreck_deck_anchor(&mesh).unwrap();
+        assert!((anchor.y - 1.715).abs() < 1e-6);
+        assert!((anchor.z + 1.8).abs() < 1e-6);
+        mesh.indices.clear();
+        assert!(wreck_deck_anchor(&mesh).is_none());
+        let hull = &tank::build_t34()[0];
+        let anchor = wreck_deck_anchor(hull).unwrap();
+        assert!(anchor.y > 1.0 && anchor.y < 2.1 && anchor.z < -1.0);
     }
 
     #[test]
@@ -34102,7 +34242,7 @@ mod tests {
                 assert!(a.size >= 0.0 && a.size <= if exterior { 0.115 } else { 0.008 });
                 assert!(a.stage < FIRE_FLAME_STAGES);
                 if a.generation == next.generation {
-                    assert_eq!(next.offset, a.offset);
+                    if !exterior { assert_eq!(next.offset, a.offset); }
                     assert_eq!(a.size, next.size);
                     assert_eq!(a.rotation, Quat::IDENTITY);
                 }

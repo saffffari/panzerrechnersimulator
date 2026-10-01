@@ -122,7 +122,8 @@ fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
     // The probe the mesh reads is the probe the compute pass writes.
     assert_eq!(layout(&mesh,"EnvironmentProbe").0,68*16);
     assert_eq!(layout(&mesh,"NearShadow"),(80,vec![("view_proj".into(),0),("scale".into(),64)]));
-    assert_eq!(layout(&mesh,"CabinShadows"),(144,vec![("lamps".into(),0),("range".into(),128)]));
+    // Eight fixed cabin fixtures plus eight source-coupled world fires, as in the Rust bank.
+    assert_eq!(layout(&mesh,"CabinShadows"),(272,vec![("lamps".into(),0),("range".into(),256)]));
     let old_smoke=include_str!("../shaders/smoke.wgsl");
     let old=parse(&(structure(old_smoke,"Puff")+&structure(old_smoke,"Smoke")));
     let smoke=parse(&compose(SMOKE));

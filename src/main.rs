@@ -69,6 +69,7 @@ mod campaign;
 mod campaign_save;
 mod canyon;
 mod canyon_attempt;
+mod wreck_fire_review;
 mod canyon_director;
 mod playtest_mode;
 mod winter_weather;
@@ -15227,6 +15228,9 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "wreck-fire-review") {
+        return wreck_fire_review::run(&capture_arg(&args, 2, "wreck_fire_review"));
+    }
     let gates = debug_gates::DebugGates::active();
     if !gates.is_shipping() {
         // Named wherever it runs: an open gate is a presentation shortcut or time compression.

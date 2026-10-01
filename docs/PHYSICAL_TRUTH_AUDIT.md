@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-09-30 (Canyon v2). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-01 (T-34 wreck fire correction). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -29,6 +29,34 @@ use those fresh traces to distinguish already integrated work from still-open ga
   remains in any live or offline listener path.
 
 ## Canyon v2 review, 2026-09-30
+
+### Wreck fire correction, 2026-10-01
+
+- The latest Canyon films and launcher explicitly use `KESSEL_RENDERER=shader`. This is a raster
+  renderer with physically based material response and a physical environment probe, **not full
+  path tracing or solved combustion**. Selecting the High/4090 preset does not select a backend.
+- Removed the independently calibrated, unshadowed wreck source (`48 * 0.55 * flicker * strength`).
+  Exterior flame cells now supply their own sRGB-decoded radiance, mesh face area, aggregate RGB
+  intensity, centroid and support radius. Only the same eight admitted world-fire sources can
+  provide light; the pool clears each frame. Smoke-only stovepipes do not acquire flame light.
+- The engine-deck attachment is intersected against the loaded hull triangles, at an authored
+  rearward longitudinal position, instead of starting 0.38 m above ground under the hull.
+  Exterior flames use up to 768 candidates of the same 80–115 mm cubes, three rising/bending
+  tongues and deterministic lattice occupancy. Duplicate coincident cells are removed before
+  both rendering and energy aggregation. Cabin flame generation and practical lamps are unchanged.
+- The existing raster shadow bank now reserves eight additional slots for these world fires,
+  separate from the eight cabin fixture slots. The actual hull, terrain and nearby walls cast
+  into 512-square cubemap faces within 8 m; surface and local-smoke shaders share that visibility.
+  This prevents the old direct light through the wreck and nearby walls. Two cache banks use
+  192 MiB rather than 96 MiB in the raster backend. Inactive/unadmitted lights do not render maps.
+- Remaining approximation: authored flame radiance and motion, normalized fuel/damage law,
+  sum of cube-face energy reduced to one isotropic source per fire, and centroid shadow sampling
+  rather than flame-volume or finite-area transport. Cube-face self-occlusion and solved smoke
+  extinction inside a flame are absent. Raster blockers beyond the 8 m source map remain outside
+  its visibility estimate; there is no new artificial attenuation cutoff. Other non-fixture,
+  non-wreck transient raster lights still retain their older unshadowed paths. This change does
+  not establish global illumination or parity with the hardware ray-query backend.
+- Evidence and review commands: [WRECK_FIRE_20261001.md](WRECK_FIRE_20261001.md).
 
 - The separate Gaea v2 uses source `SatMap_Out.png` for rock albedo and `snow.png` for coverage.
   The RGBA packing reserves alpha 32–223 for coverage, decoded separately from RGB sRGB. Snow
@@ -100,8 +128,8 @@ use those fresh traces to distinguish already integrated work from still-open ga
   pre-Canyon generation-held cubic flames are restored with 6–8 mm cabin grains and 80–115 mm
   exterior grains; exterior count rises from 64 to 256 per selected source. The old flame radiance
   table is restored. Interior aggregate power still comes from the actual visible cube face area
-  and radiance. Existing exterior wreck point sources retain their independent 0.55 calibration
-  and remain a source-clustering debt; they are not newly calibrated radiometry.
+  and radiance. The independent exterior 0.55 calibration described by that earlier review was
+  removed by the 2026-10-01 correction above; source clustering remains an approximation.
 - Heat shimmer is an explicit **debug-only screen-space prototype**, gated by
   `KESSEL_DEBUG_HEAT_HAZE=1` in a build with debug assertions. Both shipping presets keep it off,
   including when the environment variable is set. It samples up to 16 active fire-patch/wreck

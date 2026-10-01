@@ -1,7 +1,8 @@
-// Eight stable named fixtures, exactly src/cabin_shadows.rs::Uniform. Source geometry is captured
-// within 8 m into 512² cube faces. Other positioned sources retain their existing unshadowed path.
-const CABIN_SHADOW_LIGHTS: i32 = 8;
-struct CabinShadows { lamps: array<vec4<f32>,8>, range: vec4<f32> };
+// Eight stable fixtures plus eight admitted wreck fires, exactly src/cabin_shadows.rs::Uniform.
+// Source geometry is captured within 8 m into 512² cube faces. Other positioned sources retain
+// their existing unshadowed path; this is bounded raster visibility, not global ray transport.
+const CABIN_SHADOW_LIGHTS: i32 = 16;
+struct CabinShadows { lamps: array<vec4<f32>,16>, range: vec4<f32> };
 fn cabin_fixture_index(source: vec3<f32>) -> i32 {
     for (var lamp = 0; lamp < CABIN_SHADOW_LIGHTS; lamp += 1) {
         let fixture = cabin_shadows.lamps[lamp];

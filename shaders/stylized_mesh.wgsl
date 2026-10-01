@@ -519,8 +519,8 @@ fn shade(in: VsOut) -> SurfaceOutput {
     color += surface_response(albedo, metallic, roughness, normal, view, key) * beam
         * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, key), 0.0));
 
-    // Finite spherical emitters, inverse-square in their radiant intensity. The two named cabin
-    // fixtures use cached source-geometry cubemap visibility; the other sources are unshadowed
+    // Finite spherical emitters, inverse-square in their radiant intensity. The named cabin
+    // fixtures and admitted wreck fires use source-geometry cubemap visibility; other sources are unshadowed
     // (the raster paths' named approximation).
     let light_count = min(max(i32(cam.n_lights), 0), 32);
     for (var index = 0; index < light_count; index += 1) {
