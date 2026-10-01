@@ -199,7 +199,7 @@ impl Game {
     /// Called only by successful actual weapon discharges, never by a trigger press.
     pub(super) fn winter_report_discharge(&mut self, origin: Vec3, range: f32) {
         if self.winter_encounter.is_none() { return; }
-        for i in 0..winter_encounter_ai::SLOTS {
+        for i in 0..self.enemies.len() {
             if !self.enemies[i].alive || !self.enemy_active[i] { continue; }
             let listener = self.enemies[i].center();
             if listener.distance(origin) > range { continue; }
@@ -209,13 +209,13 @@ impl Game {
         self.at_guns_hear(origin, range);
     }
 
-    pub(super) fn winter_enemy_orders(&mut self, dt: f32) -> [Option<winter_encounter_ai::Order>; winter_encounter_ai::SLOTS] {
-        if self.winter_encounter.is_none() { return [None; winter_encounter_ai::SLOTS]; }
+    pub(super) fn winter_enemy_orders(&mut self, dt: f32) -> Vec<Option<winter_encounter_ai::Order>> {
+        if self.winter_encounter.is_none() { return vec![None; self.enemies.len()]; }
         self.winter_encounter.as_mut().unwrap().tick(dt);
         let live = |i: usize| i < self.enemies.len() && self.enemies[i].alive && self.enemy_active[i];
-        let hulls = std::array::from_fn(|i| live(i).then(|| winter_encounter_ai::Hull {
-            pos: self.enemies[i].center(), heading: self.enemies[i].heading }));
-        let observations = std::array::from_fn(|i| {
+        let hulls: Vec<_> = (0..self.enemies.len()).map(|i| live(i).then(|| winter_encounter_ai::Hull {
+            pos: self.enemies[i].center(), heading: self.enemies[i].heading })).collect();
+        let observations: Vec<_> = (0..self.enemies.len()).map(|i| {
             let visible = live(i) && self.player.alive
                 && self.winter_encounter.as_ref().unwrap().visible(i)
                 && self.stealth.spotted[i] && self.stealth.meters[i] >= 0.9;
@@ -225,7 +225,7 @@ impl Game {
             winter_encounter_ai::Observation {
                 visible: visible.then(|| self.threat_center()), radio_fix, on_foot:self.winter_foot_target(),
             }
-        });
+        }).collect();
         // In the streets a leader closing on a report halts where the reported area comes into view:
         // the same sight test the crews see by, to a hull standing there.
         let mut encounter = self.winter_encounter.take().unwrap();
@@ -300,7 +300,7 @@ impl Game {
         self.winter_encounter.as_ref().map(|ai| serde_json::json!({
             "elapsed_s":ai.elapsed,"sounds_heard":ai.sounds_heard,
             "confirmed_sightings":ai.confirmed_sightings,
-            "crews":(0..winter_encounter_ai::SLOTS).filter(|&i| winter_encounter_ai::fielded(i)).map(|i| serde_json::json!({
+            "crews":(0..ai.slots()).filter(|&i| self.enemy_active.get(i).copied().unwrap_or(false)).map(|i| serde_json::json!({
                 "slot":i,"platoon":winter_encounter_ai::platoon_of(i),"role":ai.role(i).name(),
                 "alive":self.enemies[i].alive,"phase":ai.phase(i).name(),
                 "position":self.enemies[i].pos.to_array(),"visible_now":ai.visible(i),

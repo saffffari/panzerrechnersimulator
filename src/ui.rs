@@ -1493,11 +1493,11 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         Some(MenuAction::LoadCheckpoint) => "NO CAMPAIGN CHECKPOINT SAVED",
         Some(MenuAction::Canyon) => match m.canyon_times {
             Some((last, best)) => {
-                canyon_line = format!("LAST RUN {}    BEST {}", crate::canyon::format_time(last),
+                canyon_line = format!("PERMADEATH    LAST {}    BEST {}", crate::canyon::format_time(last),
                     crate::canyon::format_time(best));
                 canyon_line.as_str()
             }
-            None => "ONE TIGER / BREAK THROUGH / NEW DEFENCE EACH RUN",
+            None => "ONE TIGER / ADAPTIVE DEFENCE / PERMADEATH",
         },
         None => "",
     };

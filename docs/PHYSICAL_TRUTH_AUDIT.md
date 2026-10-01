@@ -284,3 +284,22 @@ tests, full composed raster shader validation, and identical-input player-view f
 7. A luminous mesh either carries a documented radiometric/thermal emission state that the path
    integrator can hit, or it is non-emissive. A separate unshadowed glow object or point source may
    not impersonate emission from a non-luminous surface.
+
+## Canyon adaptive arrivals and paper survey (2026-09-30)
+
+`canyon_director.rs` changes encounter admission only. Finite resources, reload, penetration,
+visibility and tank movement retain their existing laws. New actors use the original triangle
+geometry/material/BLAS with fresh identities; wrecks are retained and history storage grows. A
+sorted sparse instance lookup is updated without reuploading unchanged triangles or textures;
+the geometry and material source IDs remain exact. Compact record capacity does not create hidden
+actors, and exhaustion uses the full pack path instead of dropping any physical surface. The
+650 m admission buffer, five silhouette probes and measured navigation cells are conservative
+siting approximations, **not exact full-mesh visibility or continuous collision proof**. Existing
+terrain/structure navigation and wreck occluder debt still applies. Exposed/blocked entries defer
+instead of spawning on the player's view. No fog-only hiding, target fixes or difficulty-dependent
+physical changes are introduced. The 60–120 minute duration remains a design target.
+
+The Canyon drawing is source-derived cartography printed as albedo on existing paper, with normal
+scene lighting. Aerial captures explicitly lower the physical fog density for terrain
+inspection; ground/cupola frames retain the authored winter atmosphere. Neither
+capture staging nor the aerial camera is presented as a completed human gameplay run.

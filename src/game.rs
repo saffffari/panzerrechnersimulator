@@ -16,6 +16,8 @@ mod winter_encounter_ai;
 mod street_encounter;
 #[path = "canyon_game.rs"]
 mod canyon_game;
+#[path = "canyon_map.rs"]
+mod canyon_map;
 #[path = "street_nav.rs"]
 mod street_nav;
 #[path = "winter_mission.rs"]
@@ -8637,6 +8639,7 @@ pub struct Game {
     /// The CANYON course a course workshop declares (`canyon_course`), its run once fielded and the
     /// guns' siting receipt (src/canyon.rs, game/canyon_game.rs).
     canyon_spec: Option<crate::canyon::CourseSpec>,
+    canyon_paper: Option<u32>,
     canyon_run: Option<crate::canyon::CanyonRun>,
     canyon_siting: Option<serde_json::Value>,
     /// Where the street encounter's field-of-fire probe sited the guns, once it has run.
@@ -12168,6 +12171,8 @@ impl Game {
 
         let stealth = stealth::Stealth::new(enemies.len());
         let base_occluders = occluders.len();
+        let map_spec = manifest.as_ref().map(|m|crate::canyon::from_edits(m.edits())).transpose()?.flatten();
+        let canyon_paper = canyon_map::load(&mut renderer,device,queue,map_spec.as_ref())?;
         let mut game = Game {
             hf,
             player,
@@ -12425,6 +12430,7 @@ impl Game {
             street_plan: manifest.as_ref().and_then(|m| m.street_plan().cloned()),
             canyon_spec: manifest.as_ref().and_then(|m| crate::canyon::from_edits(m.edits())
                 .inspect_err(|error| eprintln!("[canyon] course block refused: {error:#}")).ok().flatten()),
+            canyon_paper,
             canyon_run: None,
             canyon_siting: None,
             street_siting: None,
@@ -16395,7 +16401,7 @@ impl Game {
         self.drive_hand_compass(dt, r);
         self.update_cupola_pistol(input,dt,r);
         self.update_winter_mission(dt);
-        self.update_canyon_run(dt);
+        self.update_canyon_run(dt, r);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
         {
             let mut bx: Vec<(Vec3, Vec3, f32)> = Vec::new();
@@ -19918,13 +19924,14 @@ impl Game {
     /// retains the Last Tiger replacement-hull escape; the authored campaign is explicitly the same
     /// scarred vehicle across all three acts, so losing that Tiger while bailed out resolves the
     /// checkpoint instead of leaving a living crewman permanently stranded with no legal mount.
+    /// Canyon likewise ends on losing its Tiger, including while the player is outside it.
     pub fn game_over(&self) -> Option<DeathCause> {
         match self.mode {
             Mode::Tank if !self.player.alive => {
                 Some(self.death_cause.unwrap_or(DeathCause::CrewLost))
             }
             Mode::Foot if self.foot.hp <= 0.0 => Some(DeathCause::OnFoot),
-            Mode::Foot if self.campaign.is_some() && !self.player.alive => {
+            Mode::Foot if (self.campaign.is_some() || self.canyon_run.is_some()) && !self.player.alive => {
                 Some(self.death_cause.unwrap_or(DeathCause::FuelFire))
             }
             _ => None,
@@ -24541,7 +24548,7 @@ impl Game {
         }
 
         if let Some(encounter) = &mut self.winter_encounter {
-            for i in 0..winter_encounter_ai::SLOTS.min(rate.len()) { encounter.set_visible(i,rate[i] > 0.0); }
+            for i in 0..rate.len() { encounter.set_visible(i,rate[i] > 0.0); }
         }
         let enemies = &self.enemies;
         self.stealth.tick(dt, &rate, &alive, player_pos, |i| enemies[i].kind.name());

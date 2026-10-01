@@ -828,7 +828,7 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
         r.ui_reset();
         // As in the window: the winter session carries its own sketch, otherwise the survey print.
-        if !g.draw_winter_map(r,&map.marks,&map.pins,map.cursor) {
+        if !g.draw_canyon_map(r,&map.marks,&map.pins,map.cursor) && !g.draw_winter_map(r,&map.marks,&map.pins,map.cursor) {
             ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position());
         }
         r.render_held_map_texture(device,queue,g.held_map_slot());

@@ -1,19 +1,9 @@
-//! CANYON: a playtest challenge course from the title menu (29 Sep 2026).
-//!
-//! A lone Tiger with its one crewman must punch north through a steep-walled ravine held by Soviet
-//! troops in depth and reach its head. The course is a generated workshop
-//! (`tools/worldgen/canyon_course.py`, `assets/worldgen/workshops/canyon-course/`) whose manifest
-//! declares `authoring.mode = "course"`: the game lays no legacy Act-I city, story overlay or spare
-//! tanks over it (`game.rs`), and its `canyon_course` block (read here) names the start, the goal and
-//! the gun zones. The defence is the winter encounter's own machinery: the street encounter block
-//! beside it carries the kill zones, candidate gun sites, beats and ways; the game sites one 45 mm
-//! gun per choke by its field-of-fire probe on the built course and fields the two T-34 platoons
-//! (`game/canyon_game.rs`).
-//!
-//! Play carries no words. Reaching the goal disc in the Tiger ends the run: the fight is over, the
-//! engine and the battle fade with the picture, and the title menu shows the elapsed time and the
-//! best time, kept in the game's state directory beside the campaign checkpoint. Death is black and
-//! silence, and the retry builds the course afresh.
+//! Canyon Run: a seeded Gaea mechanics course, the placeholder for the unbuilt winter map.
+//! Two opening patrols and three sited guns form the initial defence. An adaptive director adds
+//! fresh platoons through hidden, physically checked approach routes; there is no total tank quota.
+//! Normal winter doctrine/perception owns their movement and combat. Death ends this run. The
+//! title starts a fresh seed; only successful elapsed times are stored, never a Canyon checkpoint.
+//! The 60–120 minute level duration is a design target, not an enforced delay or validated balance.
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, ensure, Context};
@@ -103,6 +93,7 @@ pub struct CourseSpec {
     pub goal_radius_m: f32,
     pub length_m: f32,
     pub tool_version: u64,
+    pub route: Vec<Vec2>,
     pub gun_zones: Vec<GunZone>,
     pub garrison: Vec<Post>,
 }
@@ -151,6 +142,9 @@ pub fn parse(block: &serde_json::Value) -> anyhow::Result<CourseSpec> {
         start, heading, goal, goal_radius_m,
         length_m: num(&block["length_m"], "length_m")?,
         tool_version: block["tool_version"].as_u64().unwrap_or(0),
+        route: block["route"].as_array().map(|v| v.iter().map(|p| Ok(Vec2::new(
+            num(&p[0], "route.x")?, num(&p[1], "route.z")?))).collect::<anyhow::Result<Vec<_>>>())
+            .transpose()?.unwrap_or_else(|| vec![start,goal]),
         gun_zones, garrison,
     })
 }
@@ -162,18 +156,20 @@ pub struct CanyonRun {
     pub elapsed_s: f32,
     /// The elapsed time at which the Tiger reached the goal.
     pub finished_s: Option<f32>,
+    pub failed: bool,
+    pub director: Option<crate::canyon_director::Director>,
 }
 
 impl CanyonRun {
     pub fn new(spec: CourseSpec) -> Self {
-        Self { spec, elapsed_s: 0.0, finished_s: None }
+        Self { spec, elapsed_s: 0.0, finished_s: None, failed: false, director: None }
     }
 
     /// One step. `tiger` is the player's Tiger's ground position when it is alive and crewed (the
     /// crewman aboard, not on foot); a Tiger inside the goal disc ends the run. Returns true on
     /// the step the run is completed.
     pub fn step(&mut self, dt: f32, tiger: Option<Vec2>) -> bool {
-        if self.finished_s.is_some() { return false; }
+        if self.finished_s.is_some() || self.failed { return false; }
         self.elapsed_s += dt.max(0.0);
         if tiger.is_some_and(|p| p.distance(self.spec.goal) <= self.spec.goal_radius_m) {
             self.finished_s = Some(self.elapsed_s);

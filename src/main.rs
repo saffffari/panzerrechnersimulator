@@ -68,6 +68,7 @@ mod camera;
 mod campaign;
 mod campaign_save;
 mod canyon;
+mod canyon_director;
 mod playtest_mode;
 mod winter_weather;
 mod campaign_ai;
@@ -558,6 +559,12 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         // is deliberately after its short-lived masonry impact beat, with persistent grounded rubble
         // still visible; do not freeze t≈0 debris in the review image.
         g.debug_settle_structure_fx(&mut r);
+    }
+    if std::env::var("KESSEL_SHOT_MAP").as_deref() == Ok("1") {
+        g.prepare_held_map(&mut r,true);
+        r.ui_reset();
+        anyhow::ensure!(g.draw_canyon_map(&mut r,&[],&[],glam::Vec2::splat(0.5)),"no matching canyon survey");
+        r.render_held_map_texture(&device,&queue,g.held_map_slot());
     }
     // KESSEL_WARMUP=N selects the minimum transport-only pre-roll. Auto-exposure remains paused
     // during those frames, is re-armed against the converged HDR estimate, then runs until its
@@ -11611,6 +11618,10 @@ impl WindowState {
     }
 
     fn save_campaign_checkpoint(&mut self) {
+        if self.play_mode == Some(PlayMode::Canyon) {
+            self.pause_menu.message = "CANYON RUN HAS NO CHECKPOINTS".into();
+            return;
+        }
         let Some(run) = self.campaign.as_ref().filter(|run|
             self.play_mode.is_some_and(playtest_mode::uses_campaign) && run.attempt_active()) else {
             self.pause_menu.message = "CHECKPOINTS ARE AVAILABLE IN CAMPAIGN AND ACT ONE PLAYTEST".to_owned();
@@ -11632,6 +11643,10 @@ impl WindowState {
     }
 
     fn load_campaign_checkpoint(&mut self) {
+        if self.play_mode == Some(PlayMode::Canyon) {
+            self.pause_menu.message = "CANYON RUN HAS NO CHECKPOINTS".into();
+            return;
+        }
         if self.lan.is_some() {
             return;
         }
@@ -12494,7 +12509,7 @@ impl WindowState {
                 self.game = g;
                 // The menu's Invincible toggle rides the existing god flag — set on EVERY world
                 // build (this is the one funnel all modes and act transitions pass through).
-                self.game.god = self.menu.invincible;
+                self.game.god = self.menu.invincible && self.play_mode != Some(PlayMode::Canyon);
                 if self.game.god {
                     println!("[panzerrechnersystem] INVINCIBLE — damage to you is disabled (menu toggle)");
                 }
@@ -12783,7 +12798,8 @@ impl WindowState {
         let (route, sheets) = self.game.campaign_map_state()
             .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
         self.renderer.ui_reset();
-        if self.game.draw_winter_map(&mut self.renderer,&self.pencil_marks,&self.map_pins,self.map_cursor) {
+        if self.game.draw_canyon_map(&mut self.renderer,&self.pencil_marks,&self.map_pins,self.map_cursor)
+            || self.game.draw_winter_map(&mut self.renderer,&self.pencil_marks,&self.map_pins,self.map_cursor) {
             self.renderer.render_held_map_texture(&self.device,&self.queue,self.game.held_map_slot());
             return;
         }
@@ -13660,6 +13676,8 @@ impl WindowState {
             self.show_controls = false;
             self.state = AppState::Playing;
             self.set_play_cursor(true);
+            self.pencil_marks.retain(|(sheet,_)| *sheet != 1);
+            self.map_pins.retain(|(sheet,_)| *sheet != 1);
             println!("[canyon] run started: {}", path.display());
         } else {
             let _ = act_manifest::select_runtime_manifest(None);
@@ -13668,12 +13686,14 @@ impl WindowState {
         }
     }
 
-    /// After a death in the canyon the retry builds the course afresh. False outside the canyon.
+    /// A Canyon death is terminal. Leave the spent run for the title, with no resume/checkpoint.
     fn retry_canyon_after_death(&mut self) -> bool {
         if self.play_mode != Some(PlayMode::Canyon) {
             return false;
         }
-        self.start_play(PlayMode::Canyon);
+        self.canyon_finish = None;
+        self.play_mode = None;
+        self.enter_menu(false);
         true
     }
 
@@ -13945,7 +13965,7 @@ impl ApplicationHandler for App {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
                             } else if state.retry_canyon_after_death() {
-                                // The canyon course is built afresh; the next frame plays it.
+                                // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
                             } else {
@@ -14629,7 +14649,7 @@ impl ApplicationHandler for App {
                         if let Some(reason) = state.pending_final_defeat.take() {
                             state.state = AppState::FinalDefeat { t: 0.0, reason };
                         } else if state.retry_canyon_after_death() {
-                                // The canyon course is built afresh; the next frame plays it.
+                                // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
                             } else {
@@ -15032,7 +15052,7 @@ impl ApplicationHandler for App {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
                                 state.render_black();
                             } else if state.retry_canyon_after_death() {
-                                // The canyon course is built afresh; the next frame plays it.
+                                // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
                             } else {

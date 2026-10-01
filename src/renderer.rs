@@ -1155,6 +1155,8 @@ struct RtSurfaceGpu {
     atlas_buf: wgpu::Buffer,
     instances_buf: wgpu::Buffer,
     instance_count: usize,
+    instance_capacity: usize,
+    lookup_offset_words: u32,
     daylight_proposals_buf: wgpu::Buffer,
 }
 
@@ -1260,6 +1262,7 @@ pub struct DiagnosticMeshLease {
     pub visible: bool,
 }
 
+#[derive(Clone)]
 struct MeshGpu {
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
@@ -2538,6 +2541,7 @@ pub struct Renderer {
     /// when source topology or custom-data allocation changes; transforms stay authoritative in TLAS.
     rt_surface_gpu: Option<RtSurfaceGpu>,
     rt_surface_dirty: bool,
+    rt_instance_topology_dirty: bool,
     rt_scene_surface_ids: Vec<u32>,
     rt_prototype_surface_ids: Vec<u32>,
     /// The depth attachment's texture, kept for the bvhview depth-correlation readback.
@@ -5477,6 +5481,7 @@ impl Renderer {
             rt_batch_slot_offsets: Vec::new(),
             rt_surface_gpu: None,
             rt_surface_dirty: rt_on,
+            rt_instance_topology_dirty: false,
             rt_scene_surface_ids: Vec::new(),
             rt_prototype_surface_ids: Vec::new(),
             depth_tex,
@@ -5669,6 +5674,26 @@ impl Renderer {
                 self.rt_surface_dirty = self.rt_on;
             }
         }
+    }
+    /// New persistent actor identity sharing the original triangles, material and built BLAS.
+    /// No dead actor is reused; its physics, wreck animation and render identity remain intact.
+    pub fn clone_actor_mesh(&mut self, source: usize) -> usize {
+        let mut mesh = self.meshes[source].clone();
+        mesh.visible = false;
+        mesh.temporal_dynamic = true;
+        let slot = self.meshes.len();
+        self.meshes.push(mesh);
+        self.rt_batches_dirty = true;
+        if self.rt_on && !self.rt_surface_dirty && self.rt_surface_gpu.is_some()
+            && self.rt_scene_surface_ids.len() == slot {
+            // Identical source triangles keep their existing surface ID. Only the sparse
+            // instance lookup changes; do not repack a gigabyte of unchanged world geometry.
+            self.rt_scene_surface_ids.push(self.rt_scene_surface_ids[source]);
+            self.rt_instance_topology_dirty = true;
+        } else {
+            self.rt_surface_dirty = self.rt_on;
+        }
+        slot
     }
     pub fn set_visible(&mut self, idx: usize, v: bool) {
         if let Some(g) = self.meshes.get_mut(idx) {
@@ -6972,7 +6997,11 @@ impl Renderer {
         queue.write_buffer(&self.pixel_particle_uniform,0,bytemuck::bytes_of(&uniform));
     }
 
-    fn upload_uniforms(&self, queue: &wgpu::Queue) {
+    fn upload_uniforms(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // Actor topology can change between frames. Refresh source/instance tables before writing
+        // per-frame material state, not later in rt_update after that write already used old sizes.
+        self.rt_refresh_actor_lookup(queue);
+        self.rt_rebuild_surface_pack(device);
         if let Some(buffer) = &self.bloom_portal_buf {
             // The actual interior-view gate stays true while a hatch is open, and is cleared
             // for outside cameras, driver's wide objective, and the gunner's sight snapshot.
@@ -8135,6 +8164,34 @@ impl Renderer {
         records
     }
 
+    /// A cloned actor changes identities, not triangles or materials. Keep the static buffers and
+    /// bindings; rewrite the sorted sparse lookup so existing instanced props still address their
+    /// correct material-state row after the new loose meshes are inserted before them.
+    fn rt_refresh_actor_lookup(&mut self, queue: &wgpu::Queue) {
+        if !self.rt_instance_topology_dirty || self.rt_surface_dirty { return; }
+        let started = std::time::Instant::now();
+        let instances = self.rt_instance_shading_records();
+        let surface = self.rt_surface_gpu.as_mut().expect("cloned actor has a surface pack");
+        if instances.len() > surface.instance_capacity {
+            // Rare capacity growth uses the full, source-exact pack path; never omit actors.
+            self.rt_surface_dirty = true;
+            return;
+        }
+        let mut lookup: Vec<_> = instances.iter().enumerate().map(|(i, record)|
+            crate::rt_surface::GpuInstanceLookup { key_value: [record.ids[0], i as u32, 0, 0] }).collect();
+        lookup.sort_unstable_by_key(|record| record.key_value[0]);
+        assert!(lookup.windows(2).all(|p| p[0].key_value[0] < p[1].key_value[0]),
+            "cloned actor duplicated a ray-scene identity");
+        queue.write_buffer(&surface.records_buf, u64::from(surface.lookup_offset_words) * 4,
+            bytemuck::cast_slice(&lookup));
+        queue.write_buffer(&surface.records_buf, 17 * 4,
+            bytemuck::cast_slice(&[lookup.len() as u32, instances.len() as u32]));
+        surface.instance_count = instances.len();
+        self.rt_instance_topology_dirty = false;
+        println!("[rt] actor lookup: {} instances; unchanged geometry/atlas ({:.2} ms)",
+            instances.len(), started.elapsed().as_secs_f64() * 1000.0);
+    }
+
     /// Repack exact source triangles/material maps only when topology or the sparse custom-data
     /// allocation changes. BLAS primitive ordering and SurfacePack triangle ordering are identical.
     fn rt_rebuild_surface_pack(&mut self, device: &wgpu::Device) {
@@ -8211,12 +8268,18 @@ impl Renderer {
         assert_eq!(instances.len(), pack.instances().len());
         pack.validate_instance_material_states(&instances)
             .unwrap_or_else(|error| panic!("RT dynamic material-state validation failed: {error}"));
-        let upload = pack_rt_surface_static(&pack);
-        let instance_upload = if instances.is_empty() {
+        let mut upload = pack_rt_surface_static(&pack);
+        let mut instance_upload = if instances.is_empty() {
             vec![crate::rt_surface::GpuInstanceMaterialState::default()]
         } else {
             instances
         };
+        // Reserve only compact identity/state records. Geometry and texture payloads are exact,
+        // unchanged source data; no actor or physical geometry is pre-spawned by this capacity.
+        let instance_capacity = instance_upload.len().next_power_of_two();
+        let lookup_offset_words = upload.records[16];
+        upload.records.resize(lookup_offset_words as usize + instance_capacity * 4, 0);
+        instance_upload.resize(instance_capacity, crate::rt_surface::GpuInstanceMaterialState::default());
         let limits = device.limits();
         let binding_limit =
             u64::from(limits.max_storage_buffer_binding_size).min(limits.max_buffer_size);
@@ -8258,7 +8321,7 @@ impl Renderer {
         let records_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("rt-surface-records"),
             contents: bytemuck::cast_slice(&upload.records),
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let atlas_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("rt-surface-atlas"),
@@ -8296,9 +8359,12 @@ impl Renderer {
             atlas_buf,
             instances_buf,
             instance_count: pack.instances().len(),
+            instance_capacity,
+            lookup_offset_words,
             daylight_proposals_buf,
         });
         self.rt_surface_dirty = false;
+        self.rt_instance_topology_dirty = false;
         self.combine_rt_bind = None;
     }
 
@@ -8316,7 +8382,7 @@ impl Renderer {
             label: Some("daylight-connection-probe"),
         });
         self.rt_update(device, &mut encoder);
-        self.upload_uniforms(queue);
+        self.upload_uniforms(device, queue);
         let stages = wgpu::ShaderStages::COMPUTE;
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("daylight-probe-scene"),
@@ -8860,7 +8926,7 @@ impl Renderer {
     /// S3 per-frame temporal bookkeeping: camera-cut detection, per-slot prev-transform deltas
     /// (true rigid motion vectors), uniform upload, ping-pong flip. Must run before
     /// render_internal encodes the accum pass.
-    fn accum_prepare(&mut self, queue: &wgpu::Queue) {
+    fn accum_prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if !self.deferred {
             return;
         }
@@ -8880,6 +8946,21 @@ impl Renderer {
         let reset = !self.views[self.active_view].history_valid || cut;
         let volume_active = self.smoke_active();
         let volume_reset = !self.views[self.active_view].volume_history_valid || cut;
+        // Actor identities may grow when the canyon receives reinforcements. Resize the history
+        // buffer and its shared binding before upload; existing source identities do not change.
+        let required = (self.meshes.len().max(1) * 64) as u64;
+        if required > self.delta_buf.size() {
+            self.delta_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("growing-actor-history"), size: required.next_power_of_two(),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.accum_delta_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("growing-actor-history-bind"),
+                layout: &self.accum_pipe.get_bind_group_layout(1),
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: self.delta_buf.as_entire_binding() }],
+            });
+        }
         let previous_models = &mut self.views[self.active_view].prev_models;
         if previous_models.len() != self.meshes.len() {
             *previous_models = self.meshes.iter().map(|m| m.model).collect();
@@ -8978,13 +9059,13 @@ impl Renderer {
     pub fn render_offscreen(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.frame = self.frame.wrapping_add(1);
         self.menu_mode = false;
-        self.upload_uniforms(queue);
+        self.upload_uniforms(device, queue);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("bench-frame"),
         });
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
-        self.accum_prepare(queue);
+        self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
         queue.submit([encoder.finish()]);
     }
@@ -9373,13 +9454,13 @@ impl Renderer {
         );
         self.frame = self.frame.wrapping_add(1);
         self.menu_mode = false;
-        self.upload_uniforms(queue);
+        self.upload_uniforms(device, queue);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
-        self.accum_prepare(queue);
+        self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
         self.blit(device, &mut encoder, view, format);
         queue.submit([encoder.finish()]);
@@ -9392,13 +9473,13 @@ impl Renderer {
     pub fn render_optic_snapshot(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.frame = self.frame.wrapping_add(1);
         self.menu_mode = false;
-        self.upload_uniforms(queue);
+        self.upload_uniforms(device, queue);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("optic-pass"),
         });
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
-        self.accum_prepare(queue);
+        self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
         encoder.copy_texture_to_texture(
             self.ldr_tex.as_image_copy(),
@@ -9428,13 +9509,13 @@ impl Renderer {
         queue.write_buffer(&self.blit_ubuf, 0, bytemuck::bytes_of(&rect.src_uv));
         self.frame = self.frame.wrapping_add(1);
         self.menu_mode = false;
-        self.upload_uniforms(queue);
+        self.upload_uniforms(device, queue);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("coop-view"),
         });
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
-        self.accum_prepare(queue);
+        self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
         self.blit_rect(device, &mut encoder, view, format, Some(rect));
         queue.submit([encoder.finish()]);
@@ -9626,7 +9707,7 @@ impl Renderer {
         self.frame = self.frame.wrapping_add(1);
         self.menu_mode = false;
         self.reset_blit_crop(queue);
-        self.upload_uniforms(queue);
+        self.upload_uniforms(device, queue);
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let cap = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("capture"),
@@ -9657,7 +9738,7 @@ impl Renderer {
         });
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
-        self.accum_prepare(queue);
+        self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
         self.blit(device, &mut encoder, &cap_view, format);
         if hud && !self.encode_preview_ui(device, &mut encoder, &cap_view, format, true) {
@@ -9933,9 +10014,9 @@ impl Renderer {
         if self.title_backdrop_frames < 64 {
             self.frame = self.frame.wrapping_add(1);
             self.menu_mode = false;
-            self.upload_uniforms(queue);
+            self.upload_uniforms(device, queue);
             self.rt_update(device, &mut encoder);
-            self.accum_prepare(queue);
+            self.accum_prepare(device, queue);
             self.render_internal(&mut encoder, true);
             encoder.copy_texture_to_texture(self.ldr_tex.as_image_copy(),
                 self.title_backdrop.as_ref().unwrap().as_image_copy(), size);
@@ -9965,7 +10046,7 @@ impl Renderer {
         self.frame = self.frame.wrapping_add(1);
         self.menu_mode = true; // crush.wgsl → keep the black backdrop pure #000 (no grain speckle)
         self.reset_blit_crop(queue);
-        self.upload_uniforms(queue);
+        self.upload_uniforms(device, queue);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("menu-frame"),
         });

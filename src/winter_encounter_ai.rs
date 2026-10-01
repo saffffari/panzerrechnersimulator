@@ -130,10 +130,10 @@ struct Relay {
 
 pub(super) struct WinterEncounter {
     /// Each platoon's beat: a closed loop of corners.
-    routes: [Vec<Vec2>; 2],
-    crews: [Crew; SLOTS],
+    routes: Vec<Vec<Vec2>>,
+    crews: Vec<Crew>,
     /// Each platoon leader's recent track, newest first; wingmen drive along it.
-    trails: [Vec<Vec2>; 2],
+    trails: Vec<Vec<Vec2>>,
     relay: Option<Relay>,
     pub elapsed: f32,
     pub storm: f32,
@@ -160,14 +160,14 @@ const EYE_ABOVE_CENTRE_M: f32 = 1.0;
 /// and each leader's progress on the report it is closing on.
 pub(super) struct Streets {
     nav: StreetNav,
-    legs: [Option<Leg>; SLOTS],
+    legs: Vec<Option<Leg>>,
     /// The fix a leader is closing on and whether it has reached its flank position yet.
-    closing: [Option<(Vec2, bool)>; SLOTS],
+    closing: Vec<Option<(Vec2, bool)>>,
 }
 
 impl Streets {
     pub fn new(nav: StreetNav) -> Self {
-        Self { nav, legs: std::array::from_fn(|_| None), closing: [None; SLOTS] }
+        Self { nav, legs: vec![None; SLOTS], closing: vec![None; SLOTS] }
     }
 
     pub fn nav(&self) -> &StreetNav { &self.nav }
@@ -203,15 +203,15 @@ pub(super) fn visibility_radius(existing: f32, foot: bool, storm: f32) -> f32 {
 impl WinterEncounter {
     pub fn new() -> Self {
         Self {
-            routes: ROUTES.map(|route| route.to_vec()),
-            crews: std::array::from_fn(|i| Crew {
+            routes: ROUTES.map(|route| route.to_vec()).to_vec(),
+            crews: (0..SLOTS).map(|i| Crew {
                 role: if !fielded(i) { Role::Absent }
                     else if i % PLATOON_SIZE == 0 { Role::Leader }
                     else { Role::Wingman { leader: slot(platoon_of(i), 0), place: i % PLATOON_SIZE } },
                 waypoint: 1, dwell: 8.0 + platoon_of(i) as f32 * 8.0, heard: None, heard_t: 0.0,
                 phase: Phase::Patrol, visible_now: false, observed_fix: None, observed_t: 0.0,
-            }),
-            trails: [Vec::new(), Vec::new()],
+            }).collect(),
+            trails: vec![Vec::new(), Vec::new()],
             relay: None,
             elapsed: 0.0, storm: 0.66, sounds_heard: 0, confirmed_sightings: 0,
             streets: None,
@@ -221,8 +221,30 @@ impl WinterEncounter {
     /// every leg, search and return along the measured streets of `nav`.
     pub fn in_streets(routes: [Vec<Vec2>; 2], nav: StreetNav) -> Self {
         assert!(routes.iter().all(|route| route.len() >= 2), "a beat needs corners");
-        Self { routes, streets: Some(Streets::new(nav)), ..Self::new() }
+        Self { routes: routes.to_vec(), streets: Some(Streets::new(nav)), ..Self::new() }
     }
+    /// Append a fresh platoon without recycling casualties or sharing another crew's memory.
+    /// Three identity slots are retained even for an under-strength reinforcement.
+    pub fn append_platoon(&mut self, route: Vec<Vec2>, count: usize) -> usize {
+        assert!(route.len() >= 2 && (1..=PLATOON_SIZE).contains(&count));
+        let first = self.crews.len();
+        self.routes.push(route);
+        self.trails.push(Vec::new());
+        for place in 0..PLATOON_SIZE {
+            self.crews.push(Crew {
+                role: if place >= count { Role::Absent } else if place == 0 { Role::Leader }
+                    else { Role::Wingman { leader: first, place } },
+                waypoint: 1, dwell: 0.0, heard: None, heard_t: 0.0,
+                phase: Phase::Patrol, visible_now: false, observed_fix: None, observed_t: 0.0,
+            });
+        }
+        if let Some(streets) = &mut self.streets {
+            streets.legs.extend([None, None, None]);
+            streets.closing.extend([None, None, None]);
+        }
+        first
+    }
+    pub fn slots(&self) -> usize { self.crews.len() }
     pub fn streets(&self) -> Option<&Streets> { self.streets.as_ref() }
     pub fn route(&self, platoon: usize) -> Vec<Vec2> { self.routes[platoon].clone() }
     pub fn set_route(&mut self, platoon: usize, route: Vec<Vec2>) { self.routes[platoon] = route; }
@@ -245,11 +267,11 @@ impl WinterEncounter {
     /// hearing; sound supplies an area to investigate, never a line to fire along. A wingman
     /// signals what it heard to its leader, who decides.
     pub fn hear(&mut self, i: usize, listener: Vec3, origin: Vec3, range: f32, obstructed: bool) {
-        if i >= SLOTS { return; }
+        if i >= self.crews.len() { return; }
         let range = range * if obstructed { 0.62 } else { 1.0 };
         if !origin.is_finite() || listener.distance(origin) > range { return; }
         let uncertainty = [Vec2::new(11.0, -13.0), Vec2::new(-15.0, 7.0), Vec2::new(5.0, 17.0),
-            Vec2::new(-9.0, -16.0), Vec2::new(14.0, 9.0), Vec2::new(-4.0, -12.0)][i];
+            Vec2::new(-9.0, -16.0), Vec2::new(14.0, 9.0), Vec2::new(-4.0, -12.0)][i % SLOTS];
         let heard = Vec3::new((origin.x / 32.0).round() * 32.0 + uncertainty.x,
             (origin.y / 4.0).round() * 4.0, (origin.z / 32.0).round() * 32.0 + uncertainty.y);
         let keeper = match self.crews[i].role { Role::Wingman { leader, .. } => leader, _ => i };
@@ -260,15 +282,15 @@ impl WinterEncounter {
     }
 
     /// Orders for every slot. `hulls[i]` is Some for a fielded tank that is still alive.
-    pub fn orders(&mut self, hulls: &[Option<Hull>; SLOTS], observations: &[Observation; SLOTS],
-        dt: f32, sees: SightTest) -> [Option<Order>; SLOTS] {
+    pub fn orders(&mut self, hulls: &[Option<Hull>], observations: &[Observation],
+        dt: f32, sees: SightTest) -> Vec<Option<Order>> {
         let dt = dt.max(0.0);
         self.update_roles(hulls, dt);
         self.update_trails(hulls);
         let relayed = self.update_relay(hulls, observations, dt);
-        let mut out = [None; SLOTS];
+        let mut out = vec![None; self.crews.len()];
         // Leaders and independent tanks decide first; wingmen then read their leader's order.
-        for i in 0..SLOTS {
+        for i in 0..self.crews.len() {
             let Some(hull) = hulls[i] else { continue; };
             let mut observation = observations[i];
             out[i] = match self.crews[i].role {
@@ -287,7 +309,7 @@ impl WinterEncounter {
                 Role::Wingman { .. } | Role::Absent => None,
             };
         }
-        for i in 0..SLOTS {
+        for i in 0..self.crews.len() {
             let (Some(hull), Role::Wingman { leader, place }) = (hulls[i], self.crews[i].role)
             else { continue; };
             let (Some(leader_hull), Some(leader_order)) = (hulls[leader], out[leader]) else { continue; };
@@ -298,8 +320,8 @@ impl WinterEncounter {
 
     /// A leader's death leaves its wingmen leaderless; after the regroup wait they join another
     /// living leader in formation, or wander if none is left.
-    fn update_roles(&mut self, hulls: &[Option<Hull>; SLOTS], dt: f32) {
-        for i in 0..SLOTS {
+    fn update_roles(&mut self, hulls: &[Option<Hull>], dt: f32) {
+        for i in 0..self.crews.len() {
             if hulls[i].is_none() { continue; }
             match self.crews[i].role {
                 Role::Wingman { leader, .. } if hulls[leader].is_none() => {
@@ -309,10 +331,10 @@ impl WinterEncounter {
                     let waited = waited + dt;
                     self.crews[i].role = if waited < REGROUP_S {
                         Role::Leaderless { waited }
-                    } else if let Some(leader) = (0..2).map(|p| slot(p, 0))
+                    } else if let Some(leader) = (0..self.routes.len()).map(|p| slot(p, 0))
                         .find(|&l| hulls[l].is_some() && self.crews[l].role == Role::Leader)
                     {
-                        let place = 1 + (0..SLOTS).filter(|&j| hulls[j].is_some() && matches!(
+                        let place = 1 + (0..self.crews.len()).filter(|&j| hulls[j].is_some() && matches!(
                             self.crews[j].role, Role::Wingman { leader: l, .. } if l == leader)).count();
                         Role::Wingman { leader, place }
                     } else {
@@ -324,8 +346,8 @@ impl WinterEncounter {
         }
     }
 
-    fn update_trails(&mut self, hulls: &[Option<Hull>; SLOTS]) {
-        for platoon in 0..2 {
+    fn update_trails(&mut self, hulls: &[Option<Hull>]) {
+        for platoon in 0..self.routes.len() {
             let Some(leader) = hulls[slot(platoon, 0)] else { continue; };
             let here = xz(leader.pos);
             let trail = &mut self.trails[platoon];
@@ -343,9 +365,9 @@ impl WinterEncounter {
 
     /// The company net: a living leader in contact reports its fix; the other living leader
     /// receives it after the hand-off time. Only leaders transmit or receive.
-    fn update_relay(&mut self, hulls: &[Option<Hull>; SLOTS], observations: &[Observation; SLOTS],
+    fn update_relay(&mut self, hulls: &[Option<Hull>], observations: &[Observation],
         dt: f32) -> Option<Relay> {
-        let reporting = (0..2).find_map(|platoon| {
+        let reporting = (0..self.routes.len()).find_map(|platoon| {
             let leader = slot(platoon, 0);
             (hulls[leader].is_some() && self.crews[leader].role == Role::Leader).then_some(())?;
             let observation = observations[leader];
@@ -389,8 +411,8 @@ impl WinterEncounter {
             // Sweep from outside the reported area. Never drive through the fix or orbit
             // using a hidden player's heading. Each platoon takes a separate flank of the area.
             let radial = xz(pos - fix).normalize_or_zero();
-            let tangent = Vec2::new(-radial.y, radial.x) * [-28.0, 28.0][platoon];
-            let goal = xz(fix) + radial * (112.0 + platoon as f32 * 12.0) + tangent;
+            let tangent = Vec2::new(-radial.y, radial.x) * [-28.0, 28.0][platoon % 2];
+            let goal = xz(fix) + radial * (112.0 + (platoon % 2) as f32 * 12.0) + tangent;
             let (drive, steer) = if let Some(streets) = self.streets.as_mut() {
                 // In the streets: along them to the flank position outside the reported area, then
                 // on toward the area itself, halting wherever it comes into view (never through it).
@@ -419,7 +441,7 @@ impl WinterEncounter {
             let route = &self.routes[platoon];
             if xz(pos).distance(route[c.waypoint]) < 6.0 {
                 c.waypoint = (c.waypoint + 1) % route.len();
-                c.dwell = 10.0 + platoon as f32 * 4.0;
+                c.dwell = 10.0 + (platoon % 2) as f32 * 4.0;
             }
             c.dwell = (c.dwell - dt).max(0.0);
             let corner = route[c.waypoint];
@@ -431,7 +453,7 @@ impl WinterEncounter {
                         None => {
                             // No street leads to this corner from here: walk on to the next.
                             c.waypoint = (c.waypoint + 1) % self.routes[platoon].len();
-                            c.dwell = 10.0 + platoon as f32 * 4.0;
+                            c.dwell = 10.0 + (platoon % 2) as f32 * 4.0;
                             (0.0, 0.0)
                         }
                     }
@@ -565,6 +587,30 @@ mod tests {
     use crate::tank::Tank;
     use super::super::street_nav::StreetNav;
 
+    #[test]
+    fn appended_platoons_keep_independent_roles_and_can_patrol_investigate_and_search() {
+        let mut ai=WinterEncounter::new();
+        let old_role=ai.role(1);
+        for p in 2..14 {
+            let a=Vec2::new(p as f32*180.0,0.0);
+            let first=ai.append_platoon(vec![a,a+Vec2::Y*240.0],3);
+            assert_eq!(first,p*PLATOON_SIZE);
+            assert_eq!(ai.role(first),Role::Leader);
+            assert_eq!(ai.role(first+2),Role::Wingman{leader:first,place:2});
+        }
+        assert_eq!(ai.role(1),old_role);
+        let hulls: Vec<_>=(0..ai.slots()).map(|i| {
+            let(p,heading)=ai.start(i);Some(Hull{pos:Vec3::new(p.x,1.0,p.y),heading})
+        }).collect();
+        let mut obs=vec![unknown();ai.slots()];
+        assert_eq!(ai.orders(&hulls,&obs,0.1,&|_,_|true).len(),ai.slots());
+        for i in 6..ai.slots() {ai.hear(i,hulls[i].unwrap().pos,hulls[i].unwrap().pos+Vec3::Z*200.0,900.0,false);}
+        ai.orders(&hulls,&obs,0.1,&|_,_|true);
+        for o in &mut obs {o.radio_fix=Some(Vec3::new(1200.0,1.0,300.0));}
+        let orders=ai.orders(&hulls,&obs,0.1,&|_,_|false);
+        assert!(orders.iter().enumerate().filter(|(i,_)|i%3==0).all(|(_,o)|o.is_some_and(|o|o.phase==Phase::Search)));
+    }
+
     fn flat() -> crate::terrain::Heightfield {
         crate::terrain::Heightfield { res: 2, spacing: 8000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default() }
     }
@@ -580,7 +626,7 @@ mod tests {
         std::array::from_fn(|i| tanks[i].as_ref().map(|t| Hull { pos: t.center(), heading: t.heading }))
     }
     fn step(ai: &mut WinterEncounter, tanks: &mut [Option<Tank>], observations: &[Observation; SLOTS],
-        dt: f32) -> [Option<Order>; SLOTS] {
+        dt: f32) -> Vec<Option<Order>> {
         ai.tick(dt);
         let orders = ai.orders(&hulls(tanks), observations, dt, &|_, _| true);
         for i in 0..SLOTS {
@@ -675,7 +721,7 @@ mod tests {
         let mut seen = blind();
         seen[0].visible = Some(target);
         seen[0].on_foot = false;
-        let mut orders = [None; SLOTS];
+        let mut orders = vec![None; SLOTS];
         for _ in 0..60 * 10 { orders = step(&mut ai, &mut tanks, &seen, 0.1); }
         let leader = tanks[0].as_ref().unwrap();
         let across = Vec3::new(ahead.y, 0.0, -ahead.x);
@@ -825,7 +871,7 @@ mod tests {
         ], district())
     }
     fn step_seeing(ai: &mut WinterEncounter, tanks: &mut [Option<Tank>], observations: &[Observation; SLOTS],
-        dt: f32, sees: SightTest) -> [Option<Order>; SLOTS] {
+        dt: f32, sees: SightTest) -> Vec<Option<Order>> {
         ai.tick(dt);
         let orders = ai.orders(&hulls(tanks), observations, dt, sees);
         for i in 0..SLOTS {
@@ -904,7 +950,7 @@ mod tests {
         let mut seen = blind();
         seen[0].visible = Some(target);
         seen[0].on_foot = false;
-        let mut orders = [None; SLOTS];
+        let mut orders = vec![None; SLOTS];
         for _ in 0..60 * 20 {
             orders = step_seeing(&mut ai, &mut tanks, &seen, 0.05, &|_, _| false);
             for i in 1..3 { assert!(!in_block(xz(tanks[i].as_ref().unwrap().pos)), "wingman {i} left the street"); }

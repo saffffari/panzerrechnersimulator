@@ -31,6 +31,7 @@ pub const MASK_PROTO: u8 = 0x10; // instanced prototypes (trees, worldgen module
 
 /// One mesh's BLAS geometry description, kept so the build entry can be re-issued (BLASes are
 /// built once at load — rigid world — but destruction-spawned geometry arrives later).
+#[derive(Clone)]
 pub struct BlasSet {
     pub blas: wgpu::Blas,
     pub size: wgpu::BlasTriangleGeometrySizeDescriptor,

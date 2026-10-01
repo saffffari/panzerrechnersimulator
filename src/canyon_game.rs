@@ -6,7 +6,8 @@
 //! ordinary stealth model; one 45 mm gun per choke, chosen among that choke's candidate sites by the
 //! same field-of-fire probe the street encounter uses (`probe_gun_site`) over that choke's kill-zone
 //! line, with its crew of four; riflemen with the tanks, and the rest posted in the ruins. Nothing is
-//! told where the Tiger is.
+//! told where the Tiger is. These are opening forces; the adaptive director admits fresh armour
+//! through concealed, navigable approaches throughout the run, retaining every previous casualty.
 use super::*;
 use super::street_encounter::{sample_kill_zone, SitedGun};
 
@@ -26,6 +27,7 @@ impl Game {
         anyhow::ensure!(self.act.id == 1 && self.act.season == crate::world::Season::Winter,
             "the canyon course is an Act One winter map");
         self.playtest_setup();
+        self.god = false;
         self.set_playtest_return_fire(true);
         self.player = Tank::new(spec.start.x, spec.start.y, spec.heading, &self.hf, tank::TIGER_PARTS);
         self.spawn_xz = (spec.start.x, spec.start.y);
@@ -49,6 +51,9 @@ impl Game {
         let beats = std::array::from_fn(|i| beat(self,i,seed ^ i as u64));
         anyhow::ensure!(beats.iter().all(|b|b.len()>=2),"canyon has no supported patrol loop");
         let mut encounter = winter_encounter_ai::WinterEncounter::in_streets(beats, nav.clone());
+        while encounter.slots() < self.enemies.len() {
+            encounter.append_platoon(encounter.route(0),1);
+        }
         let mut placed = self.muster_winter_platoons(&mut encounter);
         for attempt in 1..16u64 {
             if placed.iter().filter(|&&v|v).count() == 5 { break; }
@@ -162,20 +167,117 @@ impl Game {
         });
         println!("[canyon] course fielded: {receipt}");
         self.canyon_siting = Some(receipt);
-        self.canyon_run = Some(crate::canyon::CanyonRun::new(spec));
+        let mut run = crate::canyon::CanyonRun::new(spec);
+        run.director = Some(crate::canyon_director::Director::new(seed, fielded));
+        self.canyon_run = Some(run);
         Ok(())
     }
 
-    /// The run's clock and finish, once per simulation step.
-    pub(super) fn update_canyon_run(&mut self, dt: f32) {
-        let tiger = (self.player.alive && self.mode == Mode::Tank)
-            .then(|| Vec2::new(self.player.pos.x, self.player.pos.z));
+    /// Advance the run and request reinforcements without altering any combatant's laws.
+    pub(super) fn update_canyon_run(&mut self, dt: f32, r: &mut Renderer) {
+        if self.canyon_run.is_none() { return; }
+        let alive = self.player.alive && self.game_over().is_none();
+        let at = Vec2::new(self.player.pos.x, self.player.pos.z);
+        let damage = self.modules.iter().filter(|m| !m.functional).count() as u32
+            + self.crew.iter().filter(|c| !c.ok).count() as u32;
+        let critical = !self.module_ok(ModuleKind::Engine) || !self.module_ok(ModuleKind::LeftTrack)
+            || !self.module_ok(ModuleKind::RightTrack) || self.fire > 0.05;
+        let live = self.enemies.iter().enumerate().filter(|(i,e)| e.alive && self.enemy_active[*i]).count();
+        let engaged = self.enemies.iter().enumerate().filter(|(i,e)| e.alive && self.enemy_active[*i]
+            && (self.stealth.spotted[*i] || e.pos.distance(self.player.pos) < 430.0)).count();
+        let kills = self.enemies.iter().enumerate().filter(|(i,e)| !e.alive && self.enemy_active[*i]).count() as u32;
         let Some(run) = self.canyon_run.as_mut() else { return; };
-        if run.step(dt, tiger) {
+        if !alive { run.failed = true; }
+        if run.step(dt, (alive && self.mode == Mode::Tank).then_some(at)) {
             println!("[canyon] the Tiger reached the ravine's head in {:.1} s", run.elapsed_s);
-            // The fight is over: no Soviet crew fires again while the run fades out.
             self.set_playtest_return_fire(false);
+            return;
         }
+        let s = crate::canyon_director::Situation {
+            progress: crate::canyon_director::route_progress(&run.spec.route,at), live, engaged,
+            kills, shots: self.gun_shots, damage, critical, alive: alive && !run.failed,
+            finished: run.finished_s.is_some(),
+        };
+        let request = run.director.as_mut().and_then(|d| d.step(dt,s));
+        if let Some(count) = request {
+            if let Some((route, positions)) = self.canyon_reinforcement_entry(count,r.camera.pos) {
+                self.append_canyon_platoon(route,positions,count,r);
+                self.canyon_run.as_mut().unwrap().director.as_mut().unwrap().admitted(count);
+            } else {
+                self.canyon_run.as_mut().unwrap().director.as_mut().unwrap().deferred();
+            }
+        }
+    }
+
+    /// Entry candidates are fixed knots of the authored corridor. Choose only uncleared approaches
+    /// ahead, with terrain/structure cover from BOTH the real eye and the Tiger. Fog and view angle
+    /// never count as cover. A blocked or exposed map simply defers the request.
+    fn canyon_reinforcement_entry(&self, count: usize, eye: Vec3) -> Option<(Vec<Vec2>,Vec<Vec2>)> {
+        let run = self.canyon_run.as_ref()?;
+        let director = run.director.as_ref()?;
+        let nav = self.winter_encounter.as_ref()?.streets()?.nav();
+        let source = &run.spec.route;
+        let tiger = Vec2::new(self.player.pos.x,self.player.pos.z);
+        let observer = Vec2::new(eye.x,eye.z);
+        let mut entries: Vec<_> = (60..source.len().saturating_sub(12)).step_by(16)
+            .filter(|&j| j as f32 / source.len() as f32 > director.progress + 0.035)
+            .collect();
+        entries.sort_by_key(|&j| crate::canyon::mix(director.seed ^ ((director.arrivals as u64)<<32) ^ j as u64));
+        for j in entries {
+            let distance = source[j].distance(tiger);
+            if !(crate::canyon_director::ENTRY_MIN_M..=1550.0).contains(&distance) { continue; }
+            let route: Option<Vec<_>> = (0..=5).map(|k| source[j-k*10])
+                .map(|p| nav.nearest_clear(p,12.0).filter(|&q|self.winter_patrol_point_clear(q))).collect();
+            let Some(route) = route else { continue; };
+            if route.windows(2).any(|edge|nav.path(edge[0],edge[1]).is_none()) {continue;}
+            let direction = (route[1]-route[0]).normalize_or_zero();
+            let positions: Option<Vec<_>> = (0..count).map(|k| {
+                nav.nearest_clear(route[0]-direction*(k as f32*36.0),18.0)
+                    .filter(|&q|self.winter_patrol_point_clear(q))
+            }).collect();
+            let Some(positions) = positions else {continue;};
+            if positions.iter().enumerate().any(|(i,p)| {
+                p.distance(tiger)<crate::canyon_director::ENTRY_MIN_M
+                || p.distance(observer)<crate::canyon_director::ENTRY_MIN_M
+                || positions[..i].iter().any(|q|p.distance(*q)<18.0)
+                || self.enemies.iter().enumerate().any(|(k,e)|self.enemy_active[k]
+                    && p.distance(Vec2::new(e.pos.x,e.pos.z))<18.0)
+                || nav.path(*p,route[1]).is_none()
+                || [Vec2::ZERO,Vec2::X*3.5,-Vec2::X*3.5,Vec2::Y*3.5,-Vec2::Y*3.5].iter().any(|off| {
+                    let q=*p+*off;
+                    let roof=Vec3::new(q.x,self.hf.height_at(q.x,q.y)+3.3,q.y);
+                    self.los_clear(eye,roof) || self.los_clear(self.player.center()+Vec3::Y*2.0,roof)
+                })
+            }) {continue;}
+            return Some((route,positions));
+        }
+        None
+    }
+
+    fn append_canyon_platoon(&mut self, route: Vec<Vec2>, positions: Vec<Vec2>, count: usize, r: &mut Renderer) {
+        let heading=(route[1]-route[0]).x.atan2((route[1]-route[0]).y);
+        let first=self.winter_encounter.as_mut().unwrap().append_platoon(route.clone(),count);
+        assert_eq!(first,self.enemies.len());
+        for k in 0..stealth::PLATOON_SIZE {
+            let p=positions.get(k).copied().unwrap_or(route[0]);
+            let mut tank=Tank::new(p.x,p.y,heading,&self.hf,tank::T34_PARTS);
+            tank.alive=k<count; tank.reload=8.0+k as f32*3.0;
+            self.enemies.push(tank);
+            self.enemy_active.push(k<count); self.enemy_skill.push(38); self.enemy_concealed.push(false);
+            self.enemy_gun_shots.push(0); self.enemy_mg_cd.push(0.0); self.wrecks.push(Wreck::default());
+            for rigs in [&mut self.slots.t34,&mut self.slots.su100,&mut self.slots.kv2,
+                &mut self.slots.isu152,&mut self.slots.is2,&mut self.slots.is3] {
+                let source=rigs[0];
+                rigs.push(source.map(|slot|r.clone_actor_mesh(slot)));
+            }
+            self.slots.flame.push(r.clone_actor_mesh(self.slots.flame[0]));
+            self.stealth.meters.push(0.0); self.stealth.spotted.push(false);
+        }
+        let mut fresh=stealth::Stealth::new(stealth::PLATOON_SIZE);
+        let mut platoon=fresh.platoons.remove(0);platoon.members=(first..first+stealth::PLATOON_SIZE).collect();
+        self.stealth.platoons.push(platoon);
+        println!("[canyon-director] {} T-34s enter at {:?}; identities {}..{}; ordinary patrol, no target fix",
+            count,positions,first,first+count);
     }
 
     /// The elapsed time of a completed run, once the Tiger has reached the goal.
@@ -224,7 +326,13 @@ impl Game {
     pub fn canyon_snapshot(&self) -> Option<serde_json::Value> {
         let run = self.canyon_run.as_ref()?;
         Some(serde_json::json!({
-            "elapsed_s": run.elapsed_s, "finished_s": run.finished_s,
+            "elapsed_s": run.elapsed_s, "finished_s": run.finished_s, "failed":run.failed,
+            "director":run.director.as_ref().map(|d|serde_json::json!({
+                "seed":d.seed,"state":d.state,"progress":d.progress,"total_spawned":d.total_spawned,
+                "arrivals":d.arrivals,"target_live":d.target_live,"credit":d.credit,
+                "rest_until":d.rest_until,"next_check":d.next_check,"rejected_entries":d.rejected_entries,
+                "pacing_reference_s":crate::canyon_director::TARGET_SECONDS,"live_cap":crate::canyon_director::MAX_LIVE,
+            })),
             "tiger": [self.player.pos.x, self.player.pos.y, self.player.pos.z],
             "tiger_alive": self.player.alive,
             "goal_distance_m": Vec2::new(self.player.pos.x, self.player.pos.z).distance(run.spec.goal),
@@ -263,6 +371,64 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires GPU and generated Gaea canyon"]
+    fn canyon_adaptive_entries_preserve_wrecks_and_render_new_actor_identities() -> anyhow::Result<()> {
+        crate::act_manifest::select_runtime_manifest(Some(std::fs::canonicalize(crate::canyon::DEFAULT_MANIFEST)?))?;
+        let instance=crate::create_instance();let adapter=crate::request_adapter(&instance,None);
+        let(device,queue)=crate::request_device(&adapter);
+        let(mut renderer,mut game)=Game::build_playtest_act(&device,&queue,false,&crate::world::act(1))?;
+        game.mute_audio();game.enable_canyon_course_seeded(29)?;game.enable_singleplayer_crew();
+        // Isolate armour movement from the fixed guns while preserving ordinary enemy AI.
+        game.at_guns.fill(None);
+        game.set_playtest_return_fire(true);
+        assert!(game.canyon_paper.is_some());
+        let route=game.canyon_spec.as_ref().unwrap().route.clone();
+        let mut checks=Vec::new();let mut first_wreck=None;
+        for index in [120usize,230,330,420] {
+            game.debug_place_tiger(route[index],0.0);
+            for i in 0..game.enemies.len() { if game.enemy_active[i] && game.enemies[i].alive {game.destroy_enemy(i);} }
+            if first_wreck.is_none() {first_wreck=Some(game.enemies[0].pos);}
+            // These are explicitly staged casualties and clock/credit advances, testing the live
+            // admission + rendering path. They are not claimed player victories or timing evidence.
+            let d=game.canyon_run.as_mut().unwrap().director.as_mut().unwrap();
+            d.elapsed=1800.0;d.credit=4.0;d.rest_until=0.0;d.next_check=0.0;
+            let before=game.enemies.len();
+            game.update_canyon_run(0.1,&mut renderer);
+            game.update_canyon_run(130.0,&mut renderer);
+            game.update(&TankInput::default(),1.0/60.0,&mut renderer);
+            renderer.render_offscreen(&device,&queue);
+            assert_eq!(game.enemies[0].pos,first_wreck.unwrap(),"casualty was relocated");
+            assert!(!game.enemies[0].alive && game.enemy_active[0],"wreck disappeared");
+            let fresh:Vec<_>=(before..game.enemies.len()).filter(|&i|game.enemy_active[i]).collect();
+            for &i in &fresh {
+                assert!(game.winter_patrol_point_clear(Vec2::new(game.enemies[i].pos.x,game.enemies[i].pos.z)));
+                assert!(game.enemies[i].pos.distance(game.player.pos)>=crate::canyon_director::ENTRY_MIN_M);
+                assert!(!game.stealth.spotted[i]);
+            }
+            let initial: Vec<_>=fresh.iter().map(|&i|game.enemies[i].pos).collect();
+            for _ in 0..600 {game.update(&TankInput::default(),0.1,&mut renderer);}
+            let travelled:Vec<_>=fresh.iter().zip(&initial).map(|(&i,p)|game.enemies[i].pos.distance(*p)).collect();
+            if !fresh.is_empty() {
+                assert!(travelled[0]>3.0,"reinforcement leader did not enter under its ordinary AI: {travelled:?}");
+            }
+            checks.push(serde_json::json!({"route_index":index,"new_slots":fresh,"travelled_60s_m":travelled,"snapshot":game.canyon_snapshot()}));
+        }
+        let d=game.canyon_run.as_ref().unwrap().director.as_ref().unwrap();
+        assert!(d.total_spawned>8,"real terrain never admitted sufficient reinforcements: {checks:?}");
+        assert_eq!(game.enemies.len(),game.winter_encounter.as_ref().unwrap().slots());
+        game.prepare_held_map(&mut renderer,true);renderer.ui_reset();
+        assert!(game.draw_canyon_map(&mut renderer,&[(1,Vec2::splat(0.4))],&[],Vec2::splat(0.5)));
+        renderer.render_held_map_texture(&device,&queue,game.held_map_slot());
+        renderer.render_offscreen(&device,&queue);
+        let backend=if crate::graphics::shader_backend_enabled(){"shader"}else{"physical"};
+        std::fs::write(format!("captures/canyon_adaptive_{backend}_real_map_20260930.json"),serde_json::to_vec_pretty(&serde_json::json!({
+            "backend":backend,
+            "staging":"forced casualties, fixed guns disabled, relocated Tiger, advanced pacing clock; real terrain admission, ordinary tank AI/motion, actors, wrecks and GPU render",
+            "checks":checks,"final":game.canyon_snapshot()}))?)?;
+        Ok(())
+    }
 
     fn canyon_manifest() -> Option<std::path::PathBuf> {
         let path = std::path::PathBuf::from("assets/worldgen/workshops/canyon-course/manifest.v1.json");
@@ -380,13 +546,37 @@ mod tests {
         let goal=game.canyon_spec.as_ref().unwrap().goal;
         game.debug_place_tiger(goal,0.0);
         game.player.alive=false;
-        game.update_canyon_run(1.0/60.0);
+        game.update_canyon_run(1.0/60.0, &mut renderer);
         assert!(game.canyon_finished().is_none());
         game.player.alive=true;
-        game.update_canyon_run(1.0/60.0);
+        game.update_canyon_run(1.0/60.0, &mut renderer);
+        assert!(game.canyon_finished().is_none(),"death is terminal even if a debug fixture revives the hull");
+        game.enable_canyon_course_seeded(11)?;
+        game.debug_place_tiger(goal,0.0);
+        game.update_canyon_run(1.0/60.0, &mut renderer);
         assert!(game.canyon_finished().is_some());
         game.enable_canyon_course_seeded(73)?;
         assert!(game.canyon_finished().is_none() && game.player.alive);
+        // Walking outside a sound Tiger is legal; dying there is just as terminal as hull loss.
+        game.mode=Mode::Foot;game.foot.hp=100.0;
+        game.update_canyon_run(1.0,&mut renderer);
+        assert!(!game.canyon_run.as_ref().unwrap().failed && game.game_over().is_none());
+        let elapsed=game.canyon_run.as_ref().unwrap().elapsed_s;
+        let director_elapsed=game.canyon_run.as_ref().unwrap().director.as_ref().unwrap().elapsed;
+        game.foot.hp=0.0;
+        game.update_canyon_run(1.0,&mut renderer);
+        assert!(matches!(game.game_over(),Some(DeathCause::OnFoot)));
+        assert!(game.canyon_run.as_ref().unwrap().failed);
+        assert_eq!(game.canyon_run.as_ref().unwrap().elapsed_s,elapsed);
+        assert_eq!(game.canyon_run.as_ref().unwrap().director.as_ref().unwrap().elapsed,director_elapsed);
+        game.foot.hp=100.0;game.mode=Mode::Tank;game.debug_place_tiger(goal,0.0);
+        game.update_canyon_run(1.0,&mut renderer);
+        assert!(game.canyon_finished().is_none(),"a debug revival cannot resume a spent attempt");
+        game.enable_canyon_course_seeded(73)?;
+        game.mode=Mode::Foot;game.foot.hp=100.0;game.player.alive=false;
+        assert!(game.game_over().is_some(),"losing the Canyon Tiger while outside must end the run");
+        game.update_canyon_run(1.0,&mut renderer);
+        assert!(game.canyon_run.as_ref().unwrap().failed);
         std::fs::write("captures/canyon_run_seed_verification_20260930.json",serde_json::to_vec_pretty(&deployments)?)?;
         Ok(())
     }
