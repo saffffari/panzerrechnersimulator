@@ -3,7 +3,7 @@
 //! endpoint-flight helper remains available only to isolated presentation diagnostics.
 use super::*;
 
-pub(super) const PAGES: usize = 8;
+pub(super) const PAGES: usize = 9;
 const FLIGHTS: usize = 160;
 const BURSTS: usize = 48;
 const GRAINS: usize = 3072;
@@ -13,8 +13,24 @@ pub(super) const PAGE_CAPACITY: usize = FRAME_GRAINS + FLIGHTS * 2 + CANNON_DRAW
 const COLORS: [[u8; 3]; PAGES] = [
     [255, 211, 46], [255, 132, 24], [255, 64, 12], [255, 241, 185],
     [255, 171, 36], [255, 28, 8], [142, 143, 136], [76, 79, 82],
+    [228, 231, 234], // pale propellant aerosol, separate from blast soot and ground dust
 ];
-const EMISSION: [f32; PAGES] = [4.0, 4.5, 5.0, 9.0, 4.2, 5.2, 0.0, 0.0];
+const EMISSION: [f32; PAGES] = [4.0, 4.5, 5.0, 9.0, 4.2, 5.2, 0.0, 0.0, 0.0];
+
+/// Authored discharge kinematics: forward momentum dominates early, then the plume
+/// entrains a little wind. The barrel direction is captured at discharge, not at render time.
+fn propellant_offset(axis: Vec3, ray: Vec3, age: f32, radius: f32, spread: f32, wind: Vec2) -> Vec3 {
+    let axis = if axis.length_squared() > 1e-8 { axis.normalize() } else { Vec3::Z };
+    let rotation = Quat::from_rotation_arc(Vec3::Z, axis);
+    let expansion = 1.0 - (-age / 0.32).exp();
+    let jet = 4.8 * (1.0 - (-age / 0.62).exp());
+    let width = (0.22 + 0.78 * age.sqrt()) * expansion;
+    let local = Vec3::new(ray.x * width, ray.y * width,
+        jet * (0.55 + 0.45 * spread) + ray.z.abs() * expansion * 0.8);
+    let wind_time = (age - 1.2 * (1.0 - (-age / 1.2).exp())).max(0.0);
+    rotation * local * radius + Vec3::new(wind.x,0.0,wind.y) * wind_time * 0.12
+        + Vec3::Y * age * age * 0.10
+}
 
 /// Artistic energy classes, shared by both factions. Rifle, MG and tank-gun tiers become
 /// progressively redder; this is a readability cue, not historical tracer composition.
@@ -91,7 +107,7 @@ impl Effects {
         self.next_burst = (k + 1) % BURSTS;
     }
     pub(super) fn muzzle(&mut self, pos: Vec3, dir: Vec3, weapon: Weapon) {
-        let life = match weapon { Weapon::Pistol => 0.65, Weapon::Rifle | Weapon::MachineGun => 0.95, _ => 2.1 };
+        let life = match weapon { Weapon::Pistol => 0.65, Weapon::Rifle | Weapon::MachineGun => 0.95, _ => 3.4 };
         self.burst(pos, dir, weapon.muzzle_size(), life, BurstKind::Muzzle, weapon);
     }
     pub(super) fn blast(&mut self, pos: Vec3, radius: f32) {
@@ -207,7 +223,7 @@ impl Effects {
         let distance = eye.distance(b.pos).max(0.1);
         let detail = if distance < b.radius * 18.0 { GRAINS }
             else if distance < b.radius * 65.0 { 1024 } else { 256 };
-        let desired = if blast { detail } else if muzzle && b.radius > 0.6 { detail.min(768) }
+        let desired = if blast { detail } else if muzzle && b.radius > 0.6 { detail.min(2048) }
             else if b.radius > 0.4 { detail.min(384) } else { 48 };
         let count = desired.min(remaining);
         // Coarsen distant silhouettes only as grain count decreases; close fire is composed of
@@ -230,22 +246,27 @@ impl Effects {
                 rot * Vec3::new(ray.x * 0.34, ray.y * 0.34, 0.22 + ray.z.abs())
             } else { Vec3::new(ray.x, ray.y.abs() * 0.95, ray.z) };
             let expansion = if blast { 1.0 - (-t * 4.5).exp() } else { 1.0 - (-t * 5.0).exp() };
-            let mut pos = b.pos + radial * b.radius * expansion * (0.25 + rnd * 0.9);
-            let wind = self.act_id.map(|act| wind_at(act,b.pos)).unwrap_or(Vec2::ZERO);
-            pos += Vec3::new(wind.x,0.0,wind.y) * t * if blast {0.55} else {0.35};
-            pos.y += (0.15 + rnd * 0.42) * t * b.radius;
             let flame = hot && t < flash_life && j % 3 != 0;
+            let wind = self.act_id.map(|act| wind_at(act,b.pos)).unwrap_or(Vec2::ZERO);
+            let mut pos = b.pos + radial * b.radius * expansion * (0.25 + rnd * 0.9);
+            if muzzle && !flame {
+                pos = b.pos + propellant_offset(b.dir, ray, t, b.radius, rnd, wind);
+            } else {
+                pos += Vec3::new(wind.x,0.0,wind.y) * t * if blast {0.55} else {0.35};
+                pos.y += (0.15 + rnd * 0.42) * t * b.radius;
+            }
             let page = if flame {
                 let phase = t / flash_life;
                 if phase < 0.20 && j % 5 == 0 { 3 }
                 else if muzzle { b.weapon.page() }
                 else if phase < 0.48 { 4 } else { 2 }
-            } else if blast && j % 5 != 0 { 7 } else { 6 };
+            } else if muzzle { 8 } else if blast && j % 5 != 0 { 7 } else { 6 };
             // Separate small grains, not one scaled cube. The three delayed lobes expand and cool
             // into matte rising soot; a per-grain stagger dissolves the cloud without alpha sheets.
             if !flame && f > 0.58 + rnd * 0.38 { continue; }
             let size = b.radius * grain_scale * if flame { 0.019 + rnd * 0.025 }
-                else { (0.016 + rnd * 0.025) * (0.65 + expansion * 0.8) } * fade;
+                else { (0.016 + rnd * 0.025) * (0.65 + expansion * 0.8)
+                    * if muzzle { 1.7 } else { 1.0 } } * fade;
             self.push(page, Vec3::splat(size.max(0.008)), pos,
                 Quat::from_rotation_y(rnd * 1.57 + t * 0.18));
         }
@@ -314,6 +335,24 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn propellant_keeps_barrel_momentum_before_wind_entrainment() {
+        for axis in [Vec3::Z, Vec3::X, -Vec3::Z] {
+            let calm = propellant_offset(axis, Vec3::Y, 0.3, 1.0, 0.5, Vec2::ZERO);
+            let gust = propellant_offset(axis, Vec3::Y, 0.3, 1.0, 0.5, Vec2::splat(8.0));
+            assert!(calm.dot(axis) > 1.3);
+            assert!((gust-calm).length() < 0.06);
+            let late = propellant_offset(axis, Vec3::Y, 2.0, 1.0, 0.5, Vec2::splat(8.0));
+            assert!(late.dot(axis) > 1.5);
+        }
+        assert!(propellant_offset(Vec3::ZERO,Vec3::Y,0.3,1.0,0.5,Vec2::ZERO).is_finite());
+        let mut fx = Effects::default();
+        fx.muzzle(Vec3::ZERO, Vec3::Z, Weapon::Cannon(88));
+        for _ in 0..24 { fx.prepare(0.1, Vec3::ZERO); }
+        assert!(!fx.mats[8].is_empty(), "pale propellant persists after the flash");
+        assert!(fx.mats[..8].iter().all(Vec::is_empty));
+        assert_eq!(EMISSION[8], 0.0);
+    }
     #[test]
     fn armor_contact_emits_reflected_sparks_only_after_tracer_arrival() {
         let mut fx=Effects::default();

@@ -413,3 +413,42 @@ interior manual reload. It cannot override damage, ammunition, enemy motion or t
 director. It has no automatic repair. A failed/stalled policy is a failed attempt, not evidence
 that the level is impossible for a human. Details and reproduction are in
 `docs/CANYON_AI_HIGHLIGHTS_20260930.md`.
+
+## Canyon camera and combat-media pass (2026-09-30, generator v6)
+
+The user requested neutral winter white balance, stronger dither, warmer muzzle illumination,
+more/directional pale gun smoke, denser blood, red flame edges, yellow fragment trails and
+damage-dependent wreck fires. The document's optional white balance is diagonal three-channel
+camera reproduction using diffuse environmental irradiance, not changed illumination, spectral
+chromatic adaptation or a measured eye model. The shared filmic shoulder scales RGB together;
+neutral response is unchanged. The older CPU diagnostic ACES helper remains channel-wise and
+is not a promise of pixel equality with this presentation path. Both shipping presets share
+the same scene and display equations. Native Canyon media uses the shader backend.
+
+Muzzle power is now calibrated against the legacy cube's radiance and area, including its
+mode-zero hot core, instead of an unrelated 420-unit pale light; the enemy 76 mm tier scales
+that reference. The raster weapon grain field replaces the visible legacy cube, so the positioned
+source is **not** an exact aggregate of that grain field. Angular distribution, shadow coverage
+and near-field transport remain existing emitter debt. Internal catastrophic blast calibration
+is shortened/reduced; persistent fire and moving-chip light remain their existing source-cluster
+approximations. This is authored VFX calibration, not a validated explosion model.
+
+The pale muzzle plume is a bounded raster presentation: a captured barrel axis, prescribed
+forward expansion, delayed 12% wind entrainment, buoyancy and grain lifetimes. It does not simulate
+compressible gas, turbulent entrainment or collisions of the smoke with scenery. The legacy
+physical-backend volumetric muzzle puff is unchanged; plume geometry parity across backends is
+not claimed. Additional fire soot and static/dynamic blood budgets are presentation changes,
+not measured soot mass or conserved blood volume. Static connected cells share buried faces
+and follow the real source heightfield. Wound/contact positions and injury outcomes are preserved.
+
+Enemy wreck fire strength uses actual penetrating-round residual/filler energy, the existing
+vented-turret/cook-off state and an authored normalized fuel-decay law. Constants are not historical
+measurements; the existing stochastic catastrophic classification remains. Archived campaign
+hulks and dead allies retain their older fixed strengths. LAN clients initialize an estimated
+severity because the snapshot does not yet replicate the new reservoir. This pass is validated
+for single-player Canyon, not new multiplayer fire-state parity.
+
+Recorded fragment positions now survive the replay's zero-time rebuild. Motion history is only
+presentation and contributes no duplicate source power. Replay time is deliberately nonlinear
+to show entry/spall motion; it does not reapply a hit. No synthetic residual beam or casualty
+event is added. Details and captured evidence: `docs/CANYON_EXTENDED_20260930.md`.

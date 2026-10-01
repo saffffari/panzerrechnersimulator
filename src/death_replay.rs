@@ -15,7 +15,11 @@ pub(super) struct Aftermath {
 }
 
 fn desired_time(phase: f32) -> f32 {
-    phase.clamp(0.0, 1.0) * AFTERMATH_SECONDS
+    let phase = phase.clamp(0.0, 1.0);
+    // Hold the first 120 ms of measured penetration motion across 3.2 screen seconds.
+    // Then release into the cooling/fire aftermath. Fixed simulation steps still own motion.
+    if phase <= 0.4 { phase * 0.30 }
+    else { 0.12 + (phase - 0.4) / 0.6 * (AFTERMATH_SECONDS - 0.12) }
 }
 
 /// Matches the established rear-turret witness capture.
@@ -33,7 +37,10 @@ impl Game {
             })).collect::<Vec<_>>(),
             "destroyed_parts": self.destroyed_couch_body_parts(),
             "detached_parts": self.detached_couch_body_parts(),
-            "blood": self.surface_blood.diagnostics().emitted})
+            "blood": self.debug_surface_blood(),
+            "hot_fragments": self.active_hot_fragments(),
+            "moving_fragment_trails": self.hot_fragments.iter()
+                .filter(|f| hot_fragment_tail_pose(f).is_some()).count()})
     }
 
     pub(super) fn render_replay_interior(&mut self, phase: f32, r: &mut Renderer) {
@@ -148,7 +155,8 @@ mod tests {
     #[test]
     fn aftermath_clock_is_bounded_and_slow_motion() {
         assert_eq!(desired_time(-1.0), 0.0);
-        assert_eq!(desired_time(0.5), 1.6);
+        assert!((desired_time(0.4) - 0.12).abs() < 1e-6);
+        assert!(desired_time(0.5) < 0.65);
         assert_eq!(desired_time(2.0), 3.2);
     }
 }

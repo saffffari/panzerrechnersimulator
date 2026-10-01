@@ -1,0 +1,69 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "canyon_look_day_20260930",
+  "title": "Gaea Canyon day: neutral exterior, orange muzzle and stronger dither",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/gaea-canyon-look-day/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 18.0,
+  "setup": {
+    "playtest": true,
+    "canyon_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "live",
+    "canyon_stage": {
+      "gun": 0,
+      "range_m": 180,
+      "lay_on_gun": true
+    }
+  },
+  "mechanics": [
+    "canyon_course_as_the_title_menu_fields_it",
+    "choke_gun_sited_by_the_field_of_fire_probe",
+    "at_gun_holds_until_the_tiger_is_in_range",
+    "authoritative_45mm_projectile",
+    "tiger_round_answers_the_gun",
+    "calibrated_sound_levels",
+    "no_words_on_screen"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.3,
+      "action": "hatch"
+    },
+    {
+      "at_s": 1.2,
+      "action": "head_out",
+      "allow_rejected": true
+    },
+    {
+      "from_s": 1.5,
+      "until_s": 10,
+      "input": {
+        "drive": 0.1
+      }
+    },
+    {
+      "at_s": 5.5,
+      "action": "staged_discharge"
+    },
+    {
+      "at_s": 13,
+      "action": "lay_on_at_gun",
+      "value": "0"
+    },
+    {
+      "at_s": 14,
+      "action": "staged_discharge"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 1
+    }
+  ],
+  "input_audit": "Disclosed combat-lighting fixture: place the Tiger on a viable route point near 180 m from the seeded first 45 mm gun, mark the engagement begun, and lay its gun on that gun. Two disclosed loaded discharges. Live Soviet movement, aiming, projectiles and damage; no invulnerability. Head-out ride and ordinary low driving input. This is not an autonomous full Canyon attempt.",
+  "historical_scope": "The CANYON playtest course (docs/CANYON_COURSE_20260929.md): a composite of Stalingrad's balkas with a workers' settlement and a factory edge, held by a rifle battalion's 45 mm guns and two T-34 platoons; a playtest course, not a recorded engagement."
+}

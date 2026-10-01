@@ -7,12 +7,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 pub const GRAIN_M: f32 = 0.004;
 pub const CELL_M: f32 = 0.005;
-pub const MAX_GRAINS: usize = 8192;
-pub const MAX_CELLS: usize = 65_536;
+pub const MAX_GRAINS: usize = 32_768;
+pub const MAX_CELLS: usize = 262_144;
 const MAX_FRONTIER: usize = MAX_CELLS * 4;
-const FILM_CELLS_PER_CONTACT: u32 = 9;
-const MAX_CELLS_PER_STEP: usize = 384;
-const FILM_CELLS_PER_SECOND: f32 = 12_000.0;
+const FILM_CELLS_PER_CONTACT: u32 = 49;
+const MAX_CELLS_PER_STEP: usize = 1536;
+const FILM_CELLS_PER_SECOND: f32 = 48_000.0;
 const SURFACE_OFFSET: f32 = 0.00035;
 
 /// The live implementation must use the existing source triangle bins. Sweeps are world-space;
@@ -663,7 +663,7 @@ mod tests {
         assert_eq!(blood.diagnostics().emitted, 1);
         assert_eq!(blood.diagnostics().measured_contacts, 1);
         assert_eq!(blood.diagnostics().airborne, 0);
-        assert_eq!(blood.diagnostics().retained_cells, 9);
+        assert_eq!(blood.diagnostics().retained_cells, FILM_CELLS_PER_CONTACT as usize);
         assert!(blood
             .deposits()
             .all(|d| d.frame == 7 && d.point.y.abs() < 1e-6 && d.owner_mask == (1 << 2)));
@@ -701,7 +701,7 @@ mod tests {
             blood.record_contact(contact, 1, 202, seed);
         }
         grow(&mut blood, &source, 4);
-        assert_eq!(blood.diagnostics().retained_cells, 20 * 9);
+        assert_eq!(blood.diagnostics().retained_cells, 20 * FILM_CELLS_PER_CONTACT as usize);
         assert_eq!(blood.contact_sources(0).unwrap().len(), 20);
         assert!(blood.contact_sources(0).unwrap().contains(&(101, 1)));
         assert!(blood.contact_sources(0).unwrap().contains(&(202, 20)));
@@ -742,7 +742,7 @@ mod tests {
             assert!(blood.record_contact(contact, 0, 42, seed));
         }
         grow(&mut blood, &source, 4);
-        assert_eq!(blood.diagnostics().retained_cells, 32 * 9);
+        assert_eq!(blood.diagnostics().retained_cells, 32 * FILM_CELLS_PER_CONTACT as usize);
         assert_eq!(blood.contact_sources(0).unwrap().len(), 32);
     }
     #[test]
@@ -827,8 +827,8 @@ mod tests {
             1,
         );
         grow(&mut blood, &source, 3);
-        assert_eq!(blood.diagnostics().retained_cells, 18);
-        assert_eq!(blood.diagnostics().wall_cells, 18);
+        assert_eq!(blood.diagnostics().retained_cells, 2 * FILM_CELLS_PER_CONTACT as usize);
+        assert_eq!(blood.diagnostics().wall_cells, 2 * FILM_CELLS_PER_CONTACT as usize);
         for d in blood.deposits() {
             assert_eq!(d.owner_mask, if d.normal.x < 0.0 { 1 } else { 2 });
         }
@@ -846,7 +846,7 @@ mod tests {
             blood.record_contact(actual, 0, 99, seed);
         }
         grow(&mut blood, &source, 4);
-        assert_eq!(blood.diagnostics().retained_cells, 12 * 9);
+        assert_eq!(blood.diagnostics().retained_cells, 12 * FILM_CELLS_PER_CONTACT as usize);
         assert!(blood
             .deposits()
             .all(|d| d.point.dot(n).abs() < 1e-4 && d.frame == 2));

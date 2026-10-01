@@ -13,7 +13,7 @@ struct Crush {
     frame: f32,
     rod_exposure: f32,            // the eye's achromatic rod channel per scotopic cd/m^2
     rod_inverse_saturation: f32,  // rod saturation per scotopic cd/m^2
-    _reserved: f32,
+    ambient_white_balance: f32,
     menu_mode: f32, // 1 = main-menu turntable pass: keep pure black truly black (kill grain on near-black)
     ldr_dither: f32, // fixed native-LDR quantization coverage; shader backend only
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
@@ -25,6 +25,21 @@ struct Crush {
 @group(0) @binding(2) var<uniform> cr: Crush;
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
 @group(0) @binding(5) var optic_tex: texture_2d<f32>;   // snapshot of the crushed optic frame (mask mode 4)
+struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
+@group(0) @binding(6) var<uniform> environment_white: EnvironmentWhite;
+
+// A camera white point, not a change to scene lighting. Use the diffuse sky irradiance that
+// already lights the scene; a red flash, painted wall or warm cabin lamp cannot drive this meter.
+// Diagonal three-channel balance is limited by the renderer's three-band colour model. It
+// neutralises a neutral receiver under that illuminant, retains material/relative source colour,
+// and preserves the reference white's luminance. No mode, depth mask or lifted black floor.
+fn camera_white_gain() -> vec3<f32> {
+    if (cr.ambient_white_balance < 0.5) { return vec3(1.0); }
+    let white = environment_white.lanes[33].xyz;
+    if (min(white.r, min(white.g, white.b)) <= 1e-12) { return vec3(1.0); }
+    let luminance = dot(white, vec3(0.2126, 0.7152, 0.0722));
+    return vec3(luminance) / white;
+}
 
 // The crewman's eye maps transported radiance to the display (a reproduction transform, see
 // src/observer.rs): the cones keep the pixel's colour, the rods add an achromatic signal that
@@ -33,14 +48,20 @@ struct Crush {
 fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
     let rods = cr.rod_exposure * scotopic / (1.0 + scotopic * cr.rod_inverse_saturation);
-    return radiance * cr.exposure + vec3(rods);
+    return radiance * camera_white_gain() * cr.exposure + vec3(rods);
 }
 
 // ACES-ish filmic tonemap: real toe/shoulder for dynamic range. Deep shadows, snow highlights that
-// roll off cleanly, and emissive sources that punch straight through to white and bloom.
+// roll off cleanly, and emissive sources retain their relative RGB colour through the shoulder.
 fn aces(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3(0.0), vec3(1.0));
+    // Apply one shoulder to the largest channel, retaining the source's RGB ratios.
+    // Independent channel clipping turned orange reflected muzzle light and yellow steel
+    // grains white. Neutral radiance keeps the identical filmic response; black stays black.
+    let positive = max(x, vec3(0.0));
+    let peak = max(positive.r, max(positive.g, positive.b));
+    let mapped = clamp((peak * (a * peak + b)) / (peak * (c * peak + d) + e), 0.0, 1.0);
+    return positive * (mapped / max(peak, 1e-12));
 }
 
 // Quantization is a property of display codes, not scene-linear light. The LDR intermediate is

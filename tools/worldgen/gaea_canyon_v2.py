@@ -15,11 +15,12 @@ import canyon_course as cc
 import canyon_v2_assets as props
 import canyon_winter_surface
 import canyon_ground_splatter
+from canyon_look_review import apply_look
 import gaea_canyon_run as gaea
 
 ROOT=Path(__file__).resolve().parents[2]
 DEST=ROOT/'assets/worldgen/workshops/gaea-canyon-run-v2'
-VERSION=5
+VERSION=6
 BASE_DRESS=cc.dress
 BASE_BUILDINGS=cc.place_buildings
 GROUPS=[
@@ -231,7 +232,7 @@ def dress(site,H):
                 reserved.append((xx,zz,.7))
     for i,m in enumerate(stains):
         if not m.points:continue
-        name=f'blood_snow_{i:02}';rec=m.write(ROOT/props.PREFIX/(name+'.glb'))
+        name=f'blood_drops_v{VERSION}_{i:02}';rec=m.write(ROOT/props.PREFIX/(name+'.glb'))
         ASSET_RECEIPT[name]=rec;cc.ASSETS[name]=rec['path']
         # Each small cuboid rests on the shared heightfield and slightly enters the snow.
         dr.items.append((name,0.,0.,0.,0.,1.))
@@ -268,7 +269,7 @@ def build(dest):
     manifest['authoring'].update(tool='tools/worldgen/gaea_canyon_v2.py',tool_version=VERSION,variant='canyon-v2')
     edits['canyon_course'].update(variant='canyon-v2',tool='tools/worldgen/gaea_canyon_v2.py')
     # Broad winter overcast, actual ephemeris and cloud occupancy; no blue post-process veil.
-    edits['environment_lighting'].update(utc='1943-01-20T06:35:00Z',overcast=.82,storm=.07)
+    apply_look(edits)
     edits['canyon_v2_population']=dict(seed=cc.SEED,clusters=CLUSTERS,provenance={
         'class':'attested_condition',
         'scope':'Fictional Gaea mechanics course. Counts, local placements, casualty poses and rock formations are authored inference.',

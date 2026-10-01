@@ -812,7 +812,7 @@ struct CrushUniform {
     rod_exposure: f32,
     /// Rod saturation, per scotopic cd/m^2 (pupil area / 1,700 scotopic td).
     rod_inverse_saturation: f32,
-    _reserved: f32,
+    ambient_white_balance: f32,
     menu_mode: f32, // 1 = main-menu turntable pass (keep pure black truly black); 0 = normal game frame
     ldr_dither: f32, // shader-only fixed coverage for the linear 8-bit intermediate; ABI lane 32
     mask: f32, // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
@@ -5136,6 +5136,7 @@ impl Renderer {
                     count: None,
                 },
                 tex_entry(5), // optic snapshot — the eyepiece-composite inset (mask mode 4)
+                uniform_entry(6, wgpu::ShaderStages::FRAGMENT),
             ],
         });
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -5161,6 +5162,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&optic_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: environment_probe.uniform.as_entire_binding(),
                 },
             ],
         });
@@ -7201,7 +7206,8 @@ impl Renderer {
             frame: (self.frame & 0xFFFF) as f32,
             rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
             rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
-            _reserved: 0.0,
+            ambient_white_balance: f32::from(self.display_tuning
+                .is_some_and(|p| p.ambient_white_balance)),
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
@@ -11372,7 +11378,7 @@ mod atmosphere_tests {
         // The crush applies the eye's two channels and nothing else before ACES.
         let crush = include_str!("../shaders/crush.wgsl");
         assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
-        assert!(crush.contains("return radiance * cr.exposure + vec3(rods);"));
+        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + vec3(rods);"));
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

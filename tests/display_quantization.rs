@@ -72,7 +72,7 @@ fn quantized_channel_error_is_bounded_in_display_codes_and_keeps_channel_order()
     let shader = include_str!("../shaders/crush.wgsl");
     let branch = shader.split("if (retro > 0.001) {").nth(1).unwrap();
     assert!(branch.contains("let continuous_grade = display_encode(m);"));
-    assert!(branch.contains("m = display_decode(display_grade);"));
+    assert!(branch.contains("m = mix(m, display_decode(display_grade), retro);"));
     assert!(shader.contains("var m = aces(c);"));
     assert!(!shader.contains("m = floor(m * cr.levels"));
 }
