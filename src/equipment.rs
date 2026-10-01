@@ -570,8 +570,10 @@ impl Game {
             let (swing, hand) = hammer_pose(swing_t);
             // Source head is at -Z, grip near +Z. Stand the head up above the right hand;
             // an uncorrected weapon basis pointed the head back into the holder's arm.
+            // Roll 90 degrees around the source handle (+Z) so the striking face leads the arc.
             let hammer_rot = Quat::from_axis_angle(right, -swing) * rotation
-                * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+                * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)
+                * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
             r.set_visible(self.slots.hammer, true);
             r.set_model(self.slots.hammer, Mat4::from_rotation_translation(hammer_rot,
                 eye + f * (0.46 + hand.z) + right * (0.26 + hand.x) + up * (-0.28 + hand.y)

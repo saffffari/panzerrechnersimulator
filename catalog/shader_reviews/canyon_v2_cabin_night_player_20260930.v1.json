@@ -1,0 +1,68 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "canyon_v2_cabin_night_player_20260930",
+  "title": "Ordinary interior walk and head views",
+  "act_id": 0,
+  "night": true,
+  "station": "loader",
+  "seconds": 9,
+  "setup": {
+    "enemy_policy": "banish"
+  },
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_breech"
+    },
+    {
+      "at_s": 1.8,
+      "action": "look_rack"
+    },
+    {
+      "at_s": 3.3,
+      "action": "look_tray"
+    },
+    {
+      "from_s": 4.3,
+      "until_s": 4.8,
+      "input": {
+        "drive": 0.4
+      }
+    },
+    {
+      "at_s": 5.5,
+      "action": "station",
+      "value": "commander"
+    },
+    {
+      "at_s": 6.6,
+      "action": "look_cupola",
+      "value": "block0"
+    },
+    {
+      "from_s": 7.2,
+      "until_s": 8.2,
+      "input": {
+        "look_dy": 1.2
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    }
+  ],
+  "input_audit": "Staged initial station in the native training arena. Ordinary player render with optical relay preparation, ordinary station requests and head controls. No exposure or brightness override.",
+  "status": "state_verified_visual_issue_open",
+  "validation_receipt": "captures/canyon_v2_cabin_night_player_20260930_manifest.json",
+  "review_notes": "State checks passed; sampled frames clip practical/reflected highlights to white. Visual acceptance incomplete."
+}

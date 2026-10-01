@@ -487,7 +487,10 @@ impl Game {
         let dt = if dt.is_finite() { dt.clamp(0.0, 0.1) } else { 0.0 };
         // The move the drive made (horizontal: on a pitched hull it covers `cos pitch` of it).
         let mut after = self.player_pose();
-        let travel = Vec2::new(after.pos.x - before.pos.x, after.pos.z - before.pos.z) * before.pitch.cos();
+        // A zero-time call settles a contact projection that is already in world XZ.
+        // Applying the drive's slope correction again would undo separation every frame.
+        let travel = Vec2::new(after.pos.x - before.pos.x, after.pos.z - before.pos.z)
+            * if dt > 0.0 { before.pitch.cos() } else { 1.0 };
         after.pos = Vec3::new(before.pos.x + travel.x, before.pos.y, before.pos.z + travel.y);
         after.pitch = before.pitch;
         after.roll = before.roll;

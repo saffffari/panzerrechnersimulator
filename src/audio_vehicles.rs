@@ -9,6 +9,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::cell::RefCell;
 use std::time::Duration;
 
 use rodio::Source;
@@ -125,14 +126,34 @@ impl Audio {
     /// vehicles no longer listed fade out and stop. Call once per simulation update.
     pub fn set_vehicle_voices(&self, vehicles: &[VehicleVoice], dt: f32) {
         let samples = self.vehicle_samples();
-        let laf_at_speed_1 = self.cached_laf_dbfs("loop:t34_exterior", || samples.to_vec());
+        self.set_positioned_loops(&self.vehicle_voices, vehicles, dt, samples,
+            "loop:t34_exterior", MAX_VEHICLE_VOICES, 0.4);
+    }
+
+    /// Actual burning surfaces only. Shares the live/capture listener stage and positioned-loop
+    /// implementation with vehicles; independent pool means a wreck cannot steal an engine voice.
+    pub fn set_fire_voices(&self, fires: &[VehicleVoice], dt: f32) {
+        if fires.is_empty() && self.fire_voices.borrow().slots.is_empty() { return; }
+        let samples = self.fire_voices.borrow_mut().samples.get_or_insert_with(|| {
+            let mut pcm: Vec<i16> = crate::acoustics::synth_burning_fire(8.0, 0xF1AE_2026)
+                .iter().map(|v| (v.clamp(-1.0,1.0) * 32767.0) as i16).collect();
+            super::seamless_loop_blend(&mut pcm, 2, crate::acoustics::SAMPLE_RATE, 0.25);
+            pcm.into_iter().map(|v| v as f32 / 32767.0).collect::<Vec<_>>().into()
+        }).clone();
+        self.set_positioned_loops(&self.fire_voices, fires, dt, samples,
+            "loop:burning_fire", 8, 0.06);
+    }
+
+    fn set_positioned_loops(&self, pool: &RefCell<VehicleVoices>, vehicles: &[VehicleVoice],
+        dt: f32, samples: Arc<[f32]>, key: &str, capacity: usize, fade_s: f32) {
+        let laf_at_speed_1 = self.cached_laf_dbfs(key, || samples.to_vec());
         let mut wanted: Vec<VehicleVoice> = vehicles.iter().copied()
             .filter(|v| v.ear_laf_dba.is_finite()).collect();
         wanted.sort_by(|a, b| b.ear_laf_dba.total_cmp(&a.ear_laf_dba));
-        wanted.truncate(MAX_VEHICLE_VOICES);
-        let fade_step = (dt.max(0.0) / 0.4).min(1.0);
+        wanted.truncate(capacity);
+        let fade_step = (dt.max(0.0) / fade_s).min(1.0);
         let master = self.master_volume;
-        let mut voices = self.vehicle_voices.borrow_mut();
+        let mut voices = pool.borrow_mut();
         // Retire voices whose vehicle left the set.
         voices.slots.retain_mut(|slot| {
             if wanted.iter().any(|v| v.id == slot.id) {
@@ -221,5 +242,32 @@ mod tests {
         assert!((lowpass_for_transfer(&transfer) - 150.0).abs() < 1.0);
         transfer[5] = 3.0;
         assert!((lowpass_for_transfer(&transfer) - 1000.0).abs() < 20.0);
+    }
+
+    #[test]
+    fn fire_loop_is_continuous_bounded_and_silent_when_extinguished() {
+        let mut audio=Audio::new_capture();
+        let fire=VehicleVoice {id:41,ear_laf_dba:76.0,bearing_deg:-65.0,
+            lowpass_hz:3500.0,playback_speed:1.0};
+        for _ in 0..120 {
+            audio.set_fire_voices(&[fire],1.0/60.0);
+            audio.render_capture_frames(735);
+        }
+        assert_eq!(audio.capture_metadata().unwrap()["sinks_created"],1);
+        let pcm=audio.render_capture_frames(4410).unwrap();
+        let (left,right)=crate::acoustics::channel_energy(&pcm);
+        assert!(left>right && right>0.0);
+        audio.set_paused(true);
+        assert!(audio.fire_voices.borrow().slots[0].sink.is_paused());
+        audio.set_paused(false);
+        audio.set_silenced(true);
+        assert!(audio.render_capture_frames(735).unwrap().iter().all(|v| *v==0.0));
+        audio.set_silenced(false);
+        for _ in 0..12 {
+            audio.set_fire_voices(&[],1.0/60.0);
+            audio.render_capture_frames(735);
+        }
+        assert!(audio.fire_voices.borrow().slots.is_empty());
+        assert!(audio.render_capture_frames(4410).unwrap().iter().all(|v| v.abs()<1e-6));
     }
 }

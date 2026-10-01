@@ -143,6 +143,53 @@ impl Game {
         }).collect()
     }
 
+    /// Continuous combustion follows the same patches/wreck states as the flames.
+    /// Levels and timbre are authored estimates, not historical measurements.
+    pub(super) fn burning_fire_voices(&self, listener: Vec3, facing: Vec3)
+        -> Vec<crate::audio::VehicleVoice>
+    {
+        use crate::sound_propagation::{Enclosure, class_spectrum};
+        let mut sources=Vec::new();
+        let models=self.fire_surface_models();
+        let mut sum=0.0;
+        let mut weighted=Vec3::ZERO;
+        for k in 0..surface_fire::MAX_PATCHES {
+            if let Some((pos,intensity))=self.cabin_fire.patch_world(k,&models) {
+                if intensity>0.02 {sum+=intensity;weighted+=pos*intensity;}
+            }
+        }
+        if sum>0.02 {sources.push((0,weighted/sum,sum,true));}
+        for (i,wreck) in self.wrecks.iter().enumerate() {
+            if self.enemy_active[i] && !self.enemies[i].alive && wreck.burning {
+                sources.push((100+i,self.enemies[i].center(),1.0,false));
+            }
+        }
+        for (i,ally) in self.allies.iter().enumerate() {
+            if !ally.tank.alive {sources.push((1000+i,ally.tank.center(),0.88,false));}
+        }
+        for (i,hulk) in self.campaign_hulks.iter().enumerate() {
+            if hulk.burning {sources.push((2000+i,hulk.models[0].w_axis.truncate(),0.82,false));}
+        }
+        sources.into_iter().filter(|(_,p,_,_)|p.distance_squared(listener)<500.0*500.0)
+            .map(|(id,source,strength,inside)| {
+                let level=74.0+10.0*strength.max(0.01_f32).log10();
+                let emission=Emission {lpk_db:level+12.0,laf_db:level,ref_m:1.0,
+                    law:crate::sound_levels::DistanceLaw::Spherical,class:SpectrumClass::Wind,
+                    spectrum:class_spectrum(SpectrumClass::Wind),a_duration_ms:1000.0,
+                    tnt_kg:0.0,directivity_db:0.0};
+                let same_compartment=inside && self.mode==Mode::Tank;
+                let path=Path {distance_m:source.distance(listener).max(0.4),
+                    atmosphere:crate::sound_propagation::active_atmosphere(),
+                    occluded:!same_compartment && !self.los_clear(source,listener),
+                    enclosure:if same_compartment {Enclosure::OnFoot} else {self.listener_enclosure()},
+                    headset:self.listener_headset()};
+                let ear=propagate(&emission,&path);
+                crate::audio::VehicleVoice {id,ear_laf_dba:ear.laf_db,
+                    bearing_deg:bearing_deg_from(facing,source-listener),
+                    lowpass_hz:crate::audio::lowpass_for_transfer(&ear.transfer_db),playback_speed:1.0}
+            }).collect()
+    }
+
     /// A passing supersonic round's conical shock at the listener (SL §3), tested for every round
     /// (shells and bullets alike) once per flight step against the segment it actually travelled
     /// (`passing_crack`), then carried by the ordinary delay queue (hull, headset, air, the ears).
@@ -159,11 +206,20 @@ impl Game {
         if crack.lpk_db < 90.0 {
             return;
         }
-        let wave = crate::acoustics::synth_n_wave(crack.period_s);
+        let shock = crate::acoustics::synth_n_wave(crack.period_s);
+        let wave = crate::acoustics::synth_shell_pass(crack.period_s,
+            projectile.shell.caliber_mm,speed_m_s,crack.miss_m);
+        let mut emission=Emission::crack(crack.lpk_db,crack.period_s);
+        // Preserve the shock's peak; account for the wake's additional energy before the common
+        // level-calibrated playback stage. Armor/headset/LOS filtering still happen at arrival.
+        let energy=|samples:&[f32]| samples.iter().map(|v|v*v).sum::<f32>();
+        let ratio=energy(&wave)/energy(&shock).max(1e-9);
+        emission.laf_db+=10.0*ratio.log10();
+        emission.a_duration_ms*=ratio;
         self.scheduled.push(ScheduledSound {
             delay: crack.delay_s,
             sfx: crate::audio::Sfx::NearMiss,
-            emission: Emission::crack(crack.lpk_db, crack.period_s),
+            emission,
             muzzle: None,
             source: crack.emission_point,
             buf: Some(crate::acoustics::spatialize_mono(&wave, 0.0, 0.0)),

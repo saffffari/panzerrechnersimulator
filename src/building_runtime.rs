@@ -559,7 +559,7 @@ impl Geometry {
                         pos: module_world[index].transform_point3(Vec3::from(light.offset)),
                         radius: light.radius_m,
                         color: Vec3::from(light.color),
-                        intensity: light.intensity,
+                        intensity: light.intensity * crate::building_render::LIGHT_FIXTURE_POWER_SCALE,
                     },
                 ))
             })
@@ -3340,7 +3340,7 @@ mod tests {
         assert_eq!(lights.len(), 4);
         assert!(lights.iter().all(|light| {
             light.radius == 4.5
-                && light.intensity == 6.0
+                && light.intensity == 1.5
                 && light.pos.is_finite()
                 && light.pos.x >= center.x - 0.01
                 && light.pos.x <= center.x + 0.01
@@ -5144,7 +5144,9 @@ mod derived_regression {
             assert_eq!(old.len(), new.len(), "{name}: light count");
             for (a, b) in old.iter().zip(&new) {
                 assert!(a.pos.distance(b.pos) <= 1.0e-5, "{name}: light {a:?} vs {b:?}");
-                assert_eq!((a.radius, a.color, a.intensity), (b.radius, b.color, b.intensity));
+                // The source geometry is unchanged; fixtures now emit one quarter of the
+                // legacy authored power, matching the visible housing radiance reduction.
+                assert_eq!((a.radius, a.color, a.intensity * 0.25), (b.radius, b.color, b.intensity));
             }
             let shelf = sid("container.store.shelf");
             assert_eq!(

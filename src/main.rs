@@ -4921,20 +4921,22 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
 /// replay (kill-cam) at three phases — the shell mid-flight, the impact + spall, and the final hold
 /// on the holed Tiger — then the same hold with a spare-track field repair. Writes
 /// `prefix_{shell,impact,hold,patched}.png` for verification without the AppState front-end.
-fn run_replay_aftermath(prefix: &str) -> anyhow::Result<()> {
+fn run_replay_aftermath(prefix: &str, video: bool) -> anyhow::Result<()> {
+    if video {std::env::set_var("KESSEL_AUDIO_CAPTURE","1");}
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let (device, queue) = request_device(&adapter);
     let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::garage())?;
     g.garage_setup();
     g.enable_singleplayer_crew();
-    g.mute_audio();
+    if !video {g.mute_audio();}
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
     anyhow::ensure!(g.debug_full_crew_catastrophic_penetration(), "actual ammo hit did not produce a fatal record");
     let crew_before = g.singleplayer_crew_state_receipt().unwrap();
     anyhow::ensure!(crew_before.as_array().unwrap().iter().all(|person|
         person["incapacitated"] == true && person["has_anatomical_record"] == true),
         "fatal event must retain all five anatomical records");
+    if video {canyon_attempt::record_terminal_review(prefix,&mut g,&mut r,&device,&queue)?;}
     let mut evidence = Vec::new();
     for (phase, name) in [(0.20, "incoming"), (0.49, "entry"), (0.50, "interior0"),
         (0.56, "interior1"), (0.70, "interior2"), (0.95, "interior3")] {
@@ -5902,6 +5904,12 @@ fn run_cabin_light_demo(prefix: &str, night: bool, sunlight_probe: bool) -> anyh
     };
     let mut port_exposure = None;
     for &tag in views {
+        // Prepare optical relay views as the window does before rendering this diagnostic.
+        // This keeps harness setup consistent; it does not establish exposure/look acceptance.
+        r.begin_coop_shadow_frame(g.player.center());
+        let shadow_ready = g.refresh_rtt_periscopes(&mut r);
+        r.set_coop_shadow_reuse(shadow_ready);
+        r.set_active_view(4);
         if let Some(id) = g.couch_role_occupant(lan::LanRole::Driver) {
             g.drive_couch_crew_rigs_for_view(id, &mut r);
         }
@@ -10944,8 +10952,7 @@ enum AppState {
     Paused,
     LanMenu,
     Playing,
-    // `t` seconds since the fatal update. The last picture and all sound fade to black and silence,
-    // the black holds, then the retry or title menu follows (`DEATH_FADE` .. `DEATH_END`).
+    // `t` seconds since the fatal update: fade, recorded fatal shot/interior aftermath, black.
     Death {
         t: f32,
     },
@@ -11040,11 +11047,11 @@ const MENU_SPIN_RATE: f32 = 0.007;
 // Act title-card hold (seconds): the between-acts/restart card that doubles as the loading screen.
 const ACT_CARD_DUR: f32 = 4.0;
 
-// Death timeline (seconds), decided 2026-09-28: black and silence, without words. The last picture
-// and every sound fade out together, the black holds, then the ordinary retry or menu flow runs.
+// The fatal view fades, then the recorded shot and embodied crew aftermath play once.
+// Replay is presentation only: it cannot restart the permadeath run or apply damage again.
 const DEATH_FADE: f32 = 1.5; // picture and sound fade to nothing over this
-const DEATH_SKIP_AFTER: f32 = DEATH_FADE + 1.0; // at least a beat of black silence before a skip
-const DEATH_END: f32 = 5.0; // black and silent until here, then retry or the title menu
+const DEATH_SKIP_AFTER: f32 = DEATH_FADE + REPLAY_DUR * 0.65;
+const DEATH_END: f32 = DEATH_FADE + REPLAY_DUR + KIA_BLACK_SECONDS;
 const ENDING_HOLD: f32 = 12.0;
 
 /// How far death has gone toward black and silence `t` seconds after the fatal update: 0 is the
@@ -11055,6 +11062,11 @@ fn death_fade(t: f32) -> f32 {
 }
 
 fn death_may_skip(t: f32) -> bool { t >= DEATH_SKIP_AFTER }
+
+fn death_replay_phase(t: f32) -> Option<f32> {
+    (t >= DEATH_FADE && t < DEATH_FADE + REPLAY_DUR)
+        .then(|| (t - DEATH_FADE) / REPLAY_DUR)
+}
 
 #[cfg(test)]
 mod local_presentation_tests {
@@ -11074,6 +11086,10 @@ mod local_presentation_tests {
         assert!(!death_may_skip(DEATH_FADE), "no skip while the picture and sound are fading");
         assert!(death_may_skip(DEATH_SKIP_AFTER));
         assert!(DEATH_END > DEATH_SKIP_AFTER, "the black holds before the retry or menu");
+        assert!(death_replay_phase(DEATH_FADE - 0.001).is_none());
+        assert_eq!(death_replay_phase(DEATH_FADE), Some(0.0));
+        assert_eq!(death_replay_phase(DEATH_FADE + REPLAY_DUR * 0.75), Some(0.75));
+        assert!(death_replay_phase(DEATH_END).is_none());
     }
 
     #[test]
@@ -11201,6 +11217,7 @@ struct WindowState {
     death_fade: Option<f32>,
     /// Seconds since the CANYON run reached its goal (the finish fade), while it plays out.
     canyon_finish: Option<f32>,
+    canyon_v2: bool,
 }
 
 impl WindowState {
@@ -11323,6 +11340,7 @@ impl WindowState {
             couch_kia_started: Vec::new(),
             death_fade: None,
             canyon_finish: None,
+            canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
         };
         out.refresh_canyon_menu_detail();
         if let Some(config) = lan_config {
@@ -12764,7 +12782,8 @@ impl WindowState {
                 Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),
                 Some(ui::MenuAction::Editor) => { self.menu.editor_page = true; self.menu.selected = 0; },
                 Some(ui::MenuAction::LoadCheckpoint) => self.load_campaign_checkpoint(),
-                Some(ui::MenuAction::Canyon) => self.start_play(PlayMode::Canyon),
+                Some(ui::MenuAction::Canyon) => { self.canyon_v2 = false; self.start_play(PlayMode::Canyon); },
+                Some(ui::MenuAction::CanyonV2) => { self.canyon_v2 = true; self.start_play(PlayMode::Canyon); },
                 None => {},
             },
             KeyCode::Escape if self.menu.resume_available => {
@@ -13490,10 +13509,8 @@ impl WindowState {
         frame.present();
     }
 
-    /// Death is black and silence, without words. From the player's own eye the last picture and
-    /// every sound fade out together over `DEATH_FADE`; the black and silence then hold until the
-    /// retry or menu. Gameplay is never updated again; only emitted audio finishes travelling during the fade.
-    /// Split-screen co-op keeps its per-seat black cells and goes straight to black here.
+    /// Frozen fatal view, actual recorded shot, then the dead crew and internal explosion.
+    /// The slow-motion replay is silent; already-emitted live audio finishes during the fade.
     fn render_death(&mut self, t: f32) {
         let fade = death_fade(t);
         self.game.set_audio_level(1.0 - fade);
@@ -13504,6 +13521,12 @@ impl WindowState {
             self.death_fade = Some(fade);
             self.render_game();
             self.death_fade = None;
+        } else if let Some(phase) = death_replay_phase(t).filter(|_| self.game.last_fatal.is_some()) {
+            let Some((frame, view)) = self.acquire() else { return; };
+            self.game.render_replay(phase, &mut self.renderer);
+            self.renderer.render_replay_to_surface(&self.device, &self.queue, &view,
+                self.config.format, t - DEATH_FADE);
+            frame.present();
         } else {
             self.render_black();
         }
@@ -13659,7 +13682,8 @@ impl WindowState {
     /// Build the course from its workshop and drop in with the one crewman. Called by `start_play`.
     fn start_canyon(&mut self) {
         self.canyon_finish = None;
-        let path = canyon::manifest_path();
+        let path = if self.canyon_v2 { std::path::PathBuf::from(canyon::V2_MANIFEST) }
+            else { canyon::manifest_path() };
         let selected = act_manifest::select_runtime_manifest(Some(path.clone())).and_then(|act| {
             anyhow::ensure!(act == Some(1), "the canyon course is an Act One map");
             Ok(())
@@ -13708,7 +13732,10 @@ impl WindowState {
         let Some(elapsed) = self.game.canyon_finished() else { return false; };
         let t = match self.canyon_finish {
             None => {
-                let times = canyon::times_path().and_then(|path| canyon::record_time(&path, elapsed));
+                let times = canyon::times_path().and_then(|path| {
+                    let path = if self.canyon_v2 { path.with_file_name("canyon-v2-times.v1.json") } else { path };
+                    canyon::record_time(&path, elapsed)
+                });
                 match &times {
                     Ok(times) => println!("[canyon] run complete in {} (best {})", canyon::format_time(elapsed),
                         times.best_s.map_or_else(|| "-".into(), canyon::format_time)),
@@ -13730,7 +13757,7 @@ impl WindowState {
             self.canyon_finish = None;
             let _ = act_manifest::select_runtime_manifest(None);
             self.enter_menu(false);
-            self.menu.selected = ui::IDX_CANYON;
+            self.menu.selected = ui::IDX_CANYON + usize::from(self.canyon_v2);
             self.render_menu();
         } else if t < canyon::FINISH_FADE_S && !self.couch_active {
             self.death_fade = Some(fade);
@@ -15213,7 +15240,8 @@ fn main() -> anyhow::Result<()> {
         return lan::run_loopback_verify();
     }
     if args.len() >= 2 && args[1] == "replay-aftermath" {
-        return run_replay_aftermath(&capture_arg(&args, 2, "captures/astra/replay_aftermath"));
+        return run_replay_aftermath(&capture_arg(&args, 2, "captures/astra/replay_aftermath"),
+            args.get(3).is_some_and(|s|s=="video"));
     }
     if args.len() >= 2 && args[1] == "campaign-verify" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
@@ -15592,6 +15620,9 @@ fn main() -> anyhow::Result<()> {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("sfx");
         acoustics::render_demo(prefix)?;
         return Ok(());
+    }
+    if args.len() >= 2 && args[1] == "shell-pass-review" {
+        return acoustics::render_shell_pass_review(&capture_arg(&args,2,"shell_pass_review"));
     }
     if args.len() >= 2 && args[1] == "train-tiger" {
         let generations = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(80u32);

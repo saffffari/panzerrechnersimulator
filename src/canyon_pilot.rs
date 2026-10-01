@@ -181,11 +181,15 @@ impl CanyonPilot {
             input
         } else {
             self.phase = "advance";
-            g.request_station(Station::Commander);
+            if g.station_ready(Station::Gunner) {
+                g.request_station(Station::Loader);
+            } else if g.station_ready(Station::Loader) {
+                g.request_station(Station::Commander);
+            }
             if !g.hatch_is_open() {
                 g.toggle_hatch();
             }
-            g.commander_outside = g.hatch_t > 0.95;
+            g.commander_outside = g.station_ready(Station::Commander) && g.hatch_t > 0.95;
             let here = Vec2::new(g.player.pos.x, g.player.pos.z);
             let close = (self.cursor.saturating_sub(3)..(self.cursor + 12).min(self.route.len()))
                 .min_by(|&a, &b| {

@@ -66,14 +66,14 @@ impl RasterSsao {
                         alpha:wgpu::BlendComponent::REPLACE})})]}),multiview:None,cache:None,
         });
         let enabled=std::env::var("PANZER_SSAO").ok().as_deref()!=Some("0");
-        println!("[renderer] ambient-only SSAO: {} (24 deterministic depth samples)",if enabled{"on"}else{"off"});
+        println!("[renderer] ambient-only SSAO: {} (64 deterministic depth samples)",if enabled{"on"}else{"off"});
         Self{ambient,mesh,mesh_inst,pipe,bind,height,enabled}
     }
-    pub fn encode(&self,encoder:&mut wgpu::CommandEncoder,color:&wgpu::TextureView,camera:&Camera,work:&mut RenderWorkStats) {
+    pub fn encode(&self,encoder:&mut wgpu::CommandEncoder,color:&wgpu::TextureView,camera:&Camera,interior:bool,work:&mut RenderWorkStats) {
         if !self.enabled {return;}
         let mut parameters=[0.0_f32;20];
         parameters[..16].copy_from_slice(&camera.relative_view_proj().inverse().to_cols_array());
-        parameters[16..].copy_from_slice(&[0.48,0.90,self.height as f32/(2.0*(camera.fov_y*0.5).tan()),0.0]);
+        parameters[16..].copy_from_slice(&[if interior {0.60} else {2.20},0.90,self.height as f32/(2.0*(camera.fov_y*0.5).tan()),0.0]);
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor{label:Some("raster-ssao-ambient-only"),
             color_attachments:&[Some(super::attachment(color,wgpu::LoadOp::Load))],
             depth_stencil_attachment:None,timestamp_writes:None,occlusion_query_set:None});

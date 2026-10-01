@@ -76,7 +76,9 @@ impl Game {
                 self.weapon_vfx.armor_sparks(contact.pos, projectile.velocity, armor.world_normal, weapon);
                 let on_own_armor = armor.vehicle == ProjectileVehicle::Player;
                 let structure_borne = on_own_armor && self.mode == Mode::Tank;
-                if on_own_armor || projectile.id % MG_SOUND_EVERY as u64 == 0 {
+                // Every resolved metal contact emits once. Misses and range retirement do not.
+                // The shared master limiter, enclosure and propagation own the audible result.
+                {
                     use crate::acoustics::{HullPanel, ImpactParams, ShellClass};
                     use crate::ballistics::Facing;
                     let (bearing, distance) = impact_listener_geometry(camera, contact.pos);

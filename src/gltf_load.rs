@@ -616,6 +616,22 @@ fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
                 rgba.extend_from_slice(&[v, v, v, 255]);
             }
         }
+        Format::R16 | Format::R16G16 | Format::R16G16B16 | Format::R16G16B16A16 => {
+            // The winter pine bark is a 16-bit PNG. gltf/image decode u16 samples into
+            // native-endian bytes; preserve its color and alpha instead of the magenta fallback.
+            let channels=match img.format {
+                Format::R16=>1,Format::R16G16=>2,Format::R16G16B16=>3,_=>4,
+            };
+            for pixel in px.chunks_exact(channels*2) {
+                let mut c=[255_u8;4];
+                for i in 0..channels {
+                    c[i]=((u16::from_ne_bytes([pixel[i*2],pixel[i*2+1]]) as u32+128)/257) as u8;
+                }
+                rgba.extend_from_slice(&match channels {
+                    1=>[c[0],c[0],c[0],255],2=>[c[0],c[0],c[0],c[1]],_=>c,
+                });
+            }
+        }
         _ => {
             // Fallback: flat magenta so a missing/odd format is obvious, not a crash.
             rgba.resize((w * h * 4) as usize, 0);
@@ -630,6 +646,16 @@ fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
 #[cfg(test)]
 mod partition_tests {
     use super::*;
+
+    #[test]
+    fn sixteen_bit_source_color_and_alpha_do_not_turn_magenta() {
+        let pixels=[0_u16,32768,65535,16384].into_iter().flat_map(u16::to_ne_bytes).collect();
+        let image=to_rgba8(&gltf::image::Data {pixels,width:1,height:1,format:gltf::image::Format::R16G16B16A16});
+        assert_eq!(image.rgba.as_slice(),&[0,128,255,64]);
+        let pixels=[32768_u16,65535].into_iter().flat_map(u16::to_ne_bytes).collect();
+        let gray=to_rgba8(&gltf::image::Data {pixels,width:1,height:1,format:gltf::image::Format::R16G16});
+        assert_eq!(gray.rgba.as_slice(),&[128,128,128,255]);
+    }
 
     #[test]
     fn actual_tiger_constant_materials_match_every_source_primitive() {

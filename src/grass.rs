@@ -9,9 +9,8 @@ use filament::{Bend, TrackMemory};
 
 const LAYERS: usize = 3;
 const CAPACITIES: [usize; LAYERS] = [32_768, 24_576, 36_864];
-// Winter uses fuller individual tufts, not the continuous summer canopy. Reserve a smaller
-// instance budget so increasing each tuft's blade count cannot multiply worst-case GPU work.
-const WINTER_CAPACITIES: [usize; LAYERS] = [1536, 8192, 12288];
+// Winter distributes stems across overlapping patches, with a bounded instance budget.
+const WINTER_CAPACITIES: [usize; LAYERS] = [2048, 16384, 20000];
 pub const CAPACITY: usize = CAPACITIES[0] + CAPACITIES[1] + CAPACITIES[2];
 const CELLS: [f32; LAYERS] = [2.0, 2.0, 8.0];
 const CANDIDATES: [u32; LAYERS] = [1024, 4, 4];
@@ -92,15 +91,15 @@ fn winter_patch(x: f32, z: f32, seed: u32) -> f32 {
     // Shared by all detail layers: low, coherent stands separated by broad *empty* snow.
     // World-fixed interpolation and a true zero region keep the gaps in place as the eye moves.
     smooth(
-        0.56,
-        0.78,
-        noise(18.0, 0x8fe1_2943) * 0.78 + noise(4.0, 0x451e_9537) * 0.22,
+        0.38,
+        0.64,
+        noise(36.0, 0x8fe1_2943) * 0.82 + noise(8.0, 0x451e_9537) * 0.18,
     )
 }
 fn winter_density(layer: usize, patch: f32) -> f32 {
-    // No background population: a snow gap stays empty at every detail level. Fuller tufts
-    // need far fewer roots than summer blades, including immediately beside the tank.
-    [0.004, 0.18, 0.14][layer] * patch
+    // A broad stand fills with independent stems; the same mask leaves real snow clearings
+    // in every detail layer. No isolated random tufts sprinkled through those clearings.
+    [0.035, 0.88, 0.96][layer] * patch
 }
 /// Near blades use many independent roots. Coarse cover uses a jittered lattice: random
 /// rejection and fully random positions leave meadow-sized holes even at high triangle counts.
@@ -210,6 +209,7 @@ pub struct Grass {
     layers: [Layer; LAYERS],
     mask: Option<Mask>,
     mask_requested: bool,
+    winter: bool,
     focus: Vec2,
     seed: u32,
     wind: HashMap<(i32, i32), Bend>,
@@ -222,6 +222,7 @@ impl Grass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         mask_path: Option<&str>,
+        winter_authored: bool,
         half_extent: f32,
         seed: u32,
     ) -> Self {
@@ -245,13 +246,16 @@ impl Grass {
                 }
             }
         });
+        // A winter class map still describes dry stems. The former mask-presence switch
+        // made authored road exclusions select summer geometry and density.
+        let winter = winter_authored || mask.is_none();
         let layers = std::array::from_fn(|kind| {
             let batch = r
                 .add_dynamic_instanced_pool(
                     device,
                     queue,
-                    &filament::tuft_mesh(kind, mask.is_none()),
-                    if mask.is_none() {
+                    &filament::tuft_mesh(kind, winter),
+                    if winter {
                         WINTER_CAPACITIES[kind]
                     } else {
                         CAPACITIES[kind]
@@ -259,12 +263,13 @@ impl Grass {
                 )
                 .expect("bounded grass layer pool");
             r.set_batch_flags(batch, 4.0);
-            Layer::new(batch, kind, mask.is_none())
+            Layer::new(batch, kind, winter)
         });
         Self {
             layers,
             mask,
             mask_requested: mask_path.is_some(),
+            winter,
             focus: Vec2::ZERO,
             seed,
             wind: HashMap::new(),
@@ -273,7 +278,7 @@ impl Grass {
         }
     }
     pub fn stats(&self) -> serde_json::Value {
-        let winter = self.mask.is_none();
+        let winter = self.winter;
         let blades = if winter {
             filament::WINTER_BLADES
         } else {
@@ -320,7 +325,7 @@ impl Grass {
             "maximum_triangles":(0..LAYERS).map(|i|capacities[i]*triangles[i]).sum::<usize>(),
             "visible_triangles":(0..LAYERS).map(|i|visible[i]*triangles[i]).sum::<usize>(),
             "ground_class_loaded":self.mask.is_some(),"ground_class_requested":self.mask_requested,
-            "winter_fallback":self.mask.is_none(),"primary_raster_only":true,"secondary_visibility_and_self_shadow":false})
+            "winter_stems":self.winter,"winter_fallback":self.mask.is_none(),"primary_raster_only":true,"secondary_visibility_and_self_shadow":false})
     }
     pub fn trample(&mut self, position: Vec3, heading: f32) {
         self.tracks.stamp(position, heading);
@@ -382,7 +387,7 @@ impl Grass {
                             .as_ref()
                             .map(|m| m.sample(x, z))
                             .unwrap_or((0.0, 0.0, 0.0));
-                        let winter = self.mask.is_none();
+                        let winter = self.winter;
                         let patch = if winter {
                             winter_patch(x, z, self.seed)
                         } else {
@@ -392,8 +397,11 @@ impl Grass {
                             .mask
                             .as_ref()
                             .map(|m| {
-                                let cover = m.footprint(x, z, FOOTPRINT[kind]);
-                                if kind == 0 {
+                                let footprint = if winter { filament::WINTER_FOOTPRINT[kind]*1.1 } else { FOOTPRINT[kind] };
+                                let cover = m.footprint(x, z, footprint);
+                                if winter {
+                                    winter_density(kind,patch)*cover
+                                } else if kind == 0 {
                                     cover * (0.82 + 0.16 * patch)
                                 } else if cover > 0.0 {
                                     // Every eligible coarse cell needs a canopy; density varies in
@@ -410,13 +418,13 @@ impl Grass {
                         if layer.roots.len() >= layer.capacity {
                             continue;
                         }
-                        let height = if self.mask.is_some() {
+                        let height = if !winter {
                             0.28 + hash01(key.wrapping_add(4)) * 0.34
                         } else {
                             0.12 + hash01(key.wrapping_add(4)) * 0.28 + patch * 0.06
                         };
                         let width = if winter {
-                            0.60 + hash01(key.wrapping_add(5)) * 0.30
+                            0.90 + hash01(key.wrapping_add(5)) * 0.20
                         } else {
                             (if kind == 0 { 0.85 } else { 0.96 })
                                 + hash01(key.wrapping_add(5)) * if kind == 0 { 0.25 } else { 0.08 }
@@ -553,6 +561,7 @@ mod population_tests {
         Grass {
             layers: std::array::from_fn(|kind| Layer::new(usize::MAX, kind, mask.is_none())),
             mask_requested: mask.is_some(),
+            winter: mask.is_none(),
             mask,
             focus: Vec2::ZERO,
             seed,
@@ -568,6 +577,34 @@ mod population_tests {
             rgba: vec![rgb[0], rgb[1], rgb[2], 255],
             half_extent: 384.0,
         }
+    }
+    #[test]
+    fn winter_stems_respect_a_road_mask_across_every_detail_layer() {
+        let mut mask = Mask { w: 769, h: 769, rgba: vec![0;769*769*4], half_extent:384.0 };
+        for z in 0..769 {
+            for x in 0..769 {
+                let i=(z*769+x)*4;
+                mask.rgba[i]=if (x as i32-384).abs()<=5 {0} else {255};
+                mask.rgba[i+3]=255;
+            }
+        }
+        let mut grass=population(Some(mask),42);
+        grass.winter=true;
+        grass.layers=std::array::from_fn(|kind| Layer::new(usize::MAX,kind,true));
+        grass.rebuild(Vec2::ZERO,&|_,_|0.0);
+        for (kind,layer) in grass.layers.iter().enumerate() {
+            assert!(!layer.roots.is_empty(),"winter verge is still populated at layer {kind}");
+            let mesh=filament::tuft_mesh(kind,true);
+            for root in &layer.roots {
+                // Check the actual stem mesh footprint, not only its anchor.
+                for vertex in &mesh.vertices {
+                    let p=root.model.transform_point3(Vec3::from(vertex.pos));
+                    assert!(p.x.abs()>4.,"winter stem entered the road at {p:?}, layer {kind}");
+                }
+            }
+        }
+        assert_eq!(grass.stats()["winter_stems"],true);
+        assert_eq!(grass.stats()["ground_class_loaded"],true);
     }
     #[test]
     fn full_pasture_keeps_close_blades_and_reserved_400_metre_canopy() {
@@ -809,15 +846,15 @@ mod population_tests {
         );
     }
     #[test]
-    fn winter_stands_have_sparse_low_tufts_with_a_smaller_geometry_budget() {
+    fn winter_stands_form_broad_bounded_patches_with_real_snow_clearings() {
         for seed in [0, 42, 20260905] {
             for focus in [Vec2::ZERO, Vec2::new(1850.0, 250.0), Vec2::new(1912.0, 244.0)] {
                 let mut winter = population(None, seed);
                 winter.rebuild(focus, &|_, _| 0.0);
                 let counts: Vec<_> = winter.layers.iter().map(|l| l.roots.len()).collect();
                 assert!(
-                    counts[0] < 256 && counts[1] > 100 && counts[2] > 100,
-                    "winter keeps distant patches without filling every nearby snow gap: {counts:?}"
+                    counts[0] < WINTER_CAPACITIES[0] && counts[1] > 100 && counts[2] > 100,
+                    "winter fills broad stands while preserving snow gaps: {counts:?}"
                 );
                 for layer in &winter.layers {
                     assert!(
@@ -842,9 +879,9 @@ mod population_tests {
                 }
                 let stats = winter.stats();
                 assert_eq!(stats["continuous_canopy"], false);
-                assert!(stats["maximum_triangles"].as_u64().unwrap() < 1_000_000);
+                assert!(stats["maximum_triangles"].as_u64().unwrap() < 2_000_000);
                 assert!((0..LAYERS).map(|i| WINTER_CAPACITIES[i] * filament::WINTER_TRIANGLES[i]).sum::<usize>()
-                    < (0..LAYERS).map(|i| CAPACITIES[i] * TRIANGLES[i]).sum::<usize>());
+                    < 2_000_000);
                 assert!(stats["max_roots"].as_u64().unwrap() < CAPACITY as u64);
                 eprintln!("winter grass seed {seed} at {focus}: {stats}");
             }
@@ -853,7 +890,7 @@ mod population_tests {
         let values: Vec<_> = (-25..25)
             .flat_map(|z| (-25..25).map(move |x| winter_patch(x as f32 * 2.0, z as f32 * 2.0, 42)))
             .collect();
-        assert!(values.iter().filter(|&&v| v == 0.0).count() > values.len() / 2);
+        assert!(values.iter().filter(|&&v| v == 0.0).count() > values.len() / 12);
         assert!(values.iter().filter(|&&v| v > 0.9).count() > 10);
         for layer in 0..LAYERS {
             assert_eq!(winter_density(layer, 0.0), 0.0,

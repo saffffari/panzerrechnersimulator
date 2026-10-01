@@ -37,14 +37,13 @@ fn position(pixel: vec2<i32>, size: vec2<i32>) -> vec3<f32> {
     let radius=p.tuning.x;
     let projected_radius=radius*p.tuning.z/max(length(c),0.05);
     let pixel_radius=clamp(projected_radius,1.0,64.0);
-    let directions=array<vec2<f32>,8>(vec2(1.0,0.0),vec2(0.7071,0.7071),
-        vec2(0.0,1.0),vec2(-0.7071,0.7071),vec2(-1.0,0.0),vec2(-0.7071,-0.7071),
-        vec2(0.0,-1.0),vec2(0.7071,-0.7071));
     var obscured=0.0;
-    for(var d=0;d<8;d+=1) {
+    for(var d=0;d<16;d+=1) {
+        let angle=f32(d)*0.3926990817;
+        let direction=vec2(cos(angle),sin(angle));
         var horizon=0.0;
-        for(var step=1;step<=3;step+=1) {
-            let q=pixel+vec2<i32>(round(directions[d]*pixel_radius*f32(step)/3.0));
+        for(var step=1;step<=4;step+=1) {
+            let q=pixel+vec2<i32>(round(direction*pixel_radius*f32(step)/4.0));
             if(any(q<vec2(0))||any(q>=size)||textureLoad(depth_tex,q,0)>=0.999999) {continue;}
             let v=position(q,size)-c;
             let distance=length(v);
@@ -55,7 +54,7 @@ fn position(pixel: vec2<i32>, size: vec2<i32>) -> vec3<f32> {
         }
         obscured+=horizon;
     }
-    let occlusion=clamp(obscured*(p.tuning.y/8.0)*2.3,0.0,0.80)*smoothstep(0.4,1.5,projected_radius);
+    let occlusion=clamp(obscured*(p.tuning.y/16.0)*2.3,0.0,0.80)*smoothstep(0.4,1.5,projected_radius);
     // ReverseSubtract blending: destination HDR minus occluded ambient. Lamps, direct sunlight,
     // highlights, portals and sky retain their original radiance and sharp pixels.
     return vec4(ambient*occlusion,0.0);

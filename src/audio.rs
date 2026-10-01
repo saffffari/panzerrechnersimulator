@@ -130,16 +130,14 @@ fn breech_control_gain(cue: crate::acoustics::MechanicalCue, intensity: f32, vol
     } else { 0.0 })
 }
 
-/// The same verified pack gestures used by the hand tools provide short, concrete metal
-/// contacts for ammunition. A handled case is not a blast: never layer the broadband
-/// mechanism synthesizer underneath these recordings (including when the private bank is absent).
+/// Short lift/drop contacts retain their verified recordings. The long extraction scrape and
+/// heavy seating stroke have their own synthesized voices; pistol controls cannot stand in for
+/// an 88 mm cartridge moving through the chamber. Never layer both routes on one event.
 pub(super) fn ammunition_control_key(cue: crate::acoustics::MechanicalCue) -> Option<&'static str> {
     use crate::acoustics::MechanicalCue as C;
     match cue {
-        C::CasingExtract => Some("p08_mag_out"),
         C::CasingDrop | C::ShellDrop => Some("hatch_stop"),
         C::ShellLift => Some("p08_mag_in"),
-        C::ShellRam => Some("p08_toggle_close"),
         _ => None,
     }
 }
@@ -1562,6 +1560,7 @@ pub struct Audio {
     drive_cache: RefCell<HashMap<String, (f32, crate::hearing::DriveEnvelope)>>,
     /// Other vehicles' engines and tracks (`audio_vehicles`).
     vehicle_voices: RefCell<vehicles::VehicleVoices>,
+    fire_voices: RefCell<vehicles::VehicleVoices>,
     /// The tinnitus percept (`audio_tinnitus`), created the first time it is heard.
     tinnitus_control: Arc<tinnitus::TinnitusControl>,
     tinnitus_sink: RefCell<Option<Sink>>,
@@ -1785,6 +1784,7 @@ impl Audio {
             level_cache: RefCell::new(HashMap::new()),
             drive_cache: RefCell::new(HashMap::new()),
             vehicle_voices: RefCell::new(vehicles::VehicleVoices::default()),
+            fire_voices: RefCell::new(vehicles::VehicleVoices::default()),
             tinnitus_control: Arc::new(tinnitus::TinnitusControl::default()),
             tinnitus_sink: RefCell::new(None),
         }
@@ -2078,6 +2078,7 @@ impl Audio {
         for voice in self.transients.borrow().iter() { apply(&voice.sink); }
         self.mechanisms.borrow().set_paused(paused);
         self.vehicle_voices.borrow().set_paused(paused);
+        self.fire_voices.borrow().set_paused(paused);
         if let Some(sink) = &*self.tinnitus_sink.borrow() { apply(sink); }
     }
 
@@ -2626,8 +2627,8 @@ mod tests {
         use crate::acoustics::{MechanicalCue as C, MechanicalParams};
         // Comparing the decoded mixer output catches an accidentally retained synth layer,
         // a double-play, or the wrong recording; merely checking the routing table would not.
-        for (cue, key) in [(C::CasingExtract, "p08_mag_out"), (C::CasingDrop, "hatch_stop"),
-            (C::ShellLift, "p08_mag_in"), (C::ShellRam, "p08_toggle_close"),
+        for (cue, key) in [(C::CasingDrop, "hatch_stop"),
+            (C::ShellLift, "p08_mag_in"),
             (C::ShellDrop, "hatch_stop")]
         {
             let actual = Audio::new_capture();
@@ -2646,6 +2647,23 @@ mod tests {
     }
 
     #[test]
+    fn heavy_ammunition_has_its_own_finite_spatial_mixer_voice() {
+        use crate::acoustics::{MechanicalCue as C, MechanicalParams};
+        for cue in [C::CasingExtract, C::ShellRam] {
+            let audio = Audio::new_capture();
+            assert_eq!(ammunition_control_key(cue), None);
+            audio.play_mechanical(MechanicalParams {
+                cue, intensity: 0.8, bearing_deg: 65.0, seed: 93,
+            }, 0.65);
+            let pcm = audio.render_capture_frames(44_100).unwrap();
+            assert!(pcm.iter().all(|v| v.is_finite() && v.abs() < 1.0));
+            let (left, right) = crate::acoustics::channel_energy(&pcm);
+            assert!(right > left && left > 0.0);
+            assert!(pcm[70000..].iter().all(|v| v.abs() < 1e-6));
+        }
+    }
+
+    #[test]
     fn ammunition_recorded_review_sample_and_metadata() {
         use crate::acoustics::{MechanicalCue as C, MechanicalParams, SAMPLE_RATE};
         let Some(directory) = std::env::var_os("KESSEL_AMMO_AUDIO_REVIEW_DIR") else { return; };
@@ -2654,8 +2672,9 @@ mod tests {
         let audio = Audio::new_capture();
         let metadata = audio.capture_metadata().unwrap();
         for route in metadata["audio_bank"]["ammunition_mechanisms"].as_array().unwrap() {
-            assert_eq!(route["source"], "verified_feedback_recording",
-                "review requires the actual verified pack bank, not a substitute");
+            let heavy = matches!(route["cue"].as_str(), Some("CasingExtract" | "ShellRam"));
+            assert_eq!(route["source"], if heavy { "heavy_mechanism_synthesis" }
+                else { "verified_feedback_recording" });
             assert_eq!(route["broadband_mechanical_layer"], false);
         }
         let mut pcm = audio.render_capture_frames((SAMPLE_RATE / 4) as usize).unwrap();

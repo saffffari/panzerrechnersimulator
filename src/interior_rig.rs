@@ -17,14 +17,14 @@ pub enum Frame {
 
 /// The dome lens is fixed to the underside of the turret-roof extractor fan.
 pub const TURRET_FAN_UNDERSIDE_Y: f32 = 2.2301013; // source Turret_0118, turret-local
-pub const TURRET_DOME_LAMP_HALF_SIZE: f32 = 0.027;
+pub const TURRET_DOME_LAMP_HALF_SIZE: f32 = 0.014;
 pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(
     -0.01264894, TURRET_FAN_UNDERSIDE_Y - TURRET_DOME_LAMP_HALF_SIZE, -0.00222471);
 
 /// Art-calibrated fixture output in the renderer's linear scale, not measured historical watts.
 /// Daylight apertures must establish the daytime cabin's bright end. Apply the same reduction to
 /// the visible dome lens and its transported light; exposure remains the ordinary measured eye.
-pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.02;
+pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.003;
 
 /// The visible finite cube is the source of the lamp's spectrum and total emitted power.
 /// Dimensions, colours and radiances remain authored, not measured historical fixtures.
@@ -73,15 +73,15 @@ pub const DOME_FIXTURE: FiniteCubeLamp = FiniteCubeLamp {
     half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 171, 66], emission: 1.15,
 };
 pub const ANNUNCIATOR_FIXTURES: [FiniteCubeLamp; 4] = [
-    FiniteCubeLamp { half_size_m: 0.028, srgb: [255, 46, 30], emission: 1.0 },
-    FiniteCubeLamp { half_size_m: 0.028, srgb: [255, 172, 44], emission: 1.0 },
-    FiniteCubeLamp { half_size_m: 0.028, srgb: [70, 128, 255], emission: 1.0 },
-    FiniteCubeLamp { half_size_m: 0.028, srgb: [70, 255, 96], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 46, 30], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 172, 44], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.012, srgb: [70, 128, 255], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.012, srgb: [70, 255, 96], emission: 1.0 },
 ];
 pub const BREECH_FIXTURES: [FiniteCubeLamp; 3] = [
-    FiniteCubeLamp { half_size_m: 0.022, srgb: [60, 235, 90], emission: 2.4 },
-    FiniteCubeLamp { half_size_m: 0.022, srgb: [255, 245, 20], emission: 2.4 },
-    FiniteCubeLamp { half_size_m: 0.022, srgb: [235, 45, 30], emission: 2.4 },
+    FiniteCubeLamp { half_size_m: 0.010, srgb: [60, 235, 90], emission: 1.2 },
+    FiniteCubeLamp { half_size_m: 0.010, srgb: [255, 245, 20], emission: 1.2 },
+    FiniteCubeLamp { half_size_m: 0.010, srgb: [235, 45, 30], emission: 1.2 },
 ];
 
 pub fn dome_lamp_state(time_s: f32) -> f32 { 0.96 + 0.04 * (time_s * 5.0).sin() }
@@ -185,7 +185,7 @@ mod lighting_tests {
         let low = DOME_FIXTURE.sample(dome_lamp_state(3.0*std::f32::consts::FRAC_PI_2/5.0));
         assert!((low.visible_emissive/high.visible_emissive-0.92).abs()<1e-6);
         assert!((low.radiant_intensity/high.radiant_intensity-0.92).abs()<1e-6);
-        assert!((high.radiant_intensity-0.000100602).abs()<1e-9);
+        assert!((high.radiant_intensity-0.0000040572).abs()<1e-10);
     }
 }
 

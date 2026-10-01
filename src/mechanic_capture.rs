@@ -1365,9 +1365,16 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             if let Some(encoder)=encoder.as_mut() {
                 let now = f as f32 / FPS as f32;
                 let render_start = capture_profile_enabled.then(|| (Instant::now(), r.render_work_stats()));
-                let rgba = if kia_at.is_some_and(|start| now - start >= crate::DEATH_FADE) {
-                    // Recording mirrors live death: no exterior, attacker, replay or words. After
-                    // the fade the clip stays black; the mix is silent from the same moment.
+                let rgba = if let Some(phase)=kia_at.and_then(|start|crate::death_replay_phase(now-start))
+                    .filter(|_|g.last_fatal.is_some()) {
+                    profile_kind="kia_recorded_replay";
+                    g.render_replay(phase,&mut r);
+                    let pixels=r.render_replay_rgba(&device,&queue,now-kia_at.unwrap()-crate::DEATH_FADE,
+                        renderer::ReplayCapturePolicy::Current)?;
+                    let native=image::RgbaImage::from_raw(r.iw,r.ih,pixels).unwrap();
+                    image::imageops::resize(&native,1920,1080,image::imageops::FilterType::Nearest).into_raw()
+                } else if kia_at.is_some_and(|start| now - start >= crate::DEATH_FADE) {
+                    // No recorded shot, or completed replay: hold black. Never invent a hit.
                     profile_kind = "kia_black_no_gpu_render";
                     let mut black = vec![0u8; 1920 * 1080 * 4];
                     for pixel in black.chunks_exact_mut(4) { pixel[3] = 255; }
@@ -1586,8 +1593,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "scope":"Normal mission signals consumed; short capture stays within Act One and does not exercise completion/retry menus"})),
         "movement_evidence":"Actual foot XZ positions/path vs requested controller distance. Clipped distance reports constrained motion, not an invented collision contact or material classification.",
         "outcome_checks":checks,"outcome_checks_passed":checks_passed,
-        "kia_started_s":kia_at,"kia_policy":"As in live play: terminal state latches before any further gameplay action/input/interaction; skipped timeline requests are recorded as terminal_kia, and required skipped actions fail acceptance. Already emitted sound finishes travelling during the fade without gameplay updates. The frozen fatal frame and whole ordinary mix fade together over DEATH_FADE seconds, then black and silence hold while the 120 Hz audio clock continues; no attacker/exterior/replay, no words",
-        "kia_black_seconds_in_clip":kia_at.map(|t| (scalar(&spec,"seconds",0.0)-(t+crate::DEATH_FADE) as f64).max(0.0)),
+        "kia_started_s":kia_at,"kia_policy":"As in live play: terminal state latches before any further gameplay action/input/interaction; skipped timeline requests are recorded as terminal_kia, and required skipped actions fail acceptance. Already emitted sound finishes travelling during the fade without gameplay updates. The frozen fatal frame and whole ordinary mix fade together over DEATH_FADE seconds, then the recorded fatal shot and interior aftermath replay silently, followed by black; the 120 Hz audio clock continues. No new damage or gameplay inputs during replay",
+        "kia_black_seconds_in_clip":kia_at.map(|t| (scalar(&spec,"seconds",0.0)-(t+crate::DEATH_FADE+if g.last_fatal.is_some() {crate::REPLAY_DUR} else {0.0}) as f64).max(0.0)),
         "capture_frame_pause_ms":pause_ms,"capture_idle_factor":idle_factor,
         "validation":"interaction acceptance, declared state outcomes and audible finite mixer checked; visual review remains separate",
         "limitations":["Setup is a disclosed deterministic bench, not a historical event reconstruction.",

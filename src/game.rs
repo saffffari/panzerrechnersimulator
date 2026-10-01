@@ -486,7 +486,6 @@ const DISTRICT_BREAKOUT_M: f32 = 450.0;
 const HAND_TRAVERSE_FRACTION: f32 = 0.25;
 const VEHICLE_CONTACT_ITERATIONS: usize = 3;
 const VEHICLE_CONTACT_SLOP_M: f32 = 0.004;
-const VEHICLE_CONTACT_SPEED_RETENTION: f32 = 0.34;
 const VEHICLE_AVOID_HORIZON_S: f32 = 1.25;
 const VEHICLE_AVOID_NEIGHBORHOOD_M: f32 = 26.0;
 const VEHICLE_AVOID_CLEARANCE_M: f32 = 1.6;
@@ -5474,8 +5473,8 @@ const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
 // Authored particle radiance calibration, not a temperature or physical fire-power model.
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
-    0.35, 0.90, 0.60, 0.18, // visible hot core and red base in the dark compartment
-    0.8, 0.5, 0.25, 0.1, // exterior remains visible in daytime; no camera-dependent scaling
+    0.1925, 0.495, 0.33, 0.099, // same 0.55 reduction in cells and aggregate lights
+    0.44, 0.275, 0.1375, 0.055, // exterior source reduction; no camera-dependent scaling
 ];
 // Cabin flame chromaticity needs an amber core after sRGB decoding, not almost pure red.
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
@@ -7575,6 +7574,8 @@ struct VehiclePairResolution {
     a_delta: Vec2,
     b_delta: Vec2,
     closing: bool,
+    a_speed_delta: f32,
+    b_speed_delta: f32,
 }
 
 fn tank_velocity_xz(vehicle: &Tank) -> Vec2 {
@@ -7625,10 +7626,21 @@ fn vehicle_pair_resolution(
     let translation = contact.normal * (contact.depth + VEHICLE_CONTACT_SLOP_M);
     let a_share = a_inverse_mass.max(0.0) / inverse_mass_sum;
     let b_share = b_inverse_mass.max(0.0) / inverse_mass_sum;
+    // Perfectly inelastic longitudinal impulse. Resolve the closing velocity once, rather
+    // than multiplying both speeds by 0.34 every frame and repeatedly accelerating into contact.
+    // The existing drive model has one speed DOF per tank, so project the contact Jacobian onto
+    // each track heading. Lateral/yaw impulses remain outside this bounded hull solver.
+    let along_a = Vec2::new(a.footprint.heading.sin(), a.footprint.heading.cos()).dot(contact.normal);
+    let along_b = Vec2::new(b.footprint.heading.sin(), b.footprint.heading.cos()).dot(contact.normal);
+    let closing_speed = (b.velocity - a.velocity).dot(contact.normal);
+    let effective_mass = a_inverse_mass * along_a * along_a + b_inverse_mass * along_b * along_b;
+    let impulse = if effective_mass > 1e-7 { (-closing_speed).max(0.0) / effective_mass } else { 0.0 };
     Some(VehiclePairResolution {
         a_delta: -translation * a_share,
         b_delta: translation * b_share,
         closing: (b.velocity - a.velocity).dot(contact.normal) < -0.05,
+        a_speed_delta: -impulse * a_inverse_mass * along_a,
+        b_speed_delta: impulse * b_inverse_mass * along_b,
     })
 }
 
@@ -11602,6 +11614,7 @@ impl Game {
             device,
             queue,
             grass_mask,
+            manifest.as_ref().is_some_and(|m| m.value()["terrain"]["grass_season"].as_str()==Some("winter")),
             grass_half_extent,
             act.seed,
         ));
@@ -12177,7 +12190,9 @@ impl Game {
         let stealth = stealth::Stealth::new(enemies.len());
         let base_occluders = occluders.len();
         let map_spec = manifest.as_ref().map(|m|crate::canyon::from_edits(m.edits())).transpose()?.flatten();
-        let canyon_paper = canyon_map::load(&mut renderer,device,queue,map_spec.as_ref())?;
+        let canyon_v2=manifest.as_ref().and_then(|m|m.edits())
+            .is_some_and(|e|e["canyon_course"]["variant"]=="canyon-v2");
+        let canyon_paper = canyon_map::load(&mut renderer,device,queue,map_spec.as_ref(),canyon_v2)?;
         let mut game = Game {
             hf,
             player,
@@ -16069,6 +16084,7 @@ impl Game {
             // Other tanks' engines and tracks, propagated like every other source.
             let vehicles = self.enemy_vehicle_voices(r.camera.pos, r.camera.forward());
             a.set_vehicle_voices(&vehicles, dt);
+            a.set_fire_voices(&self.burning_fire_voices(r.camera.pos, r.camera.forward()), dt);
             a.set_starter(self.engine_crank_t > 0.0 && self.player.alive);
             a.set_traverse_jam(self.traverse_jam_active && self.player.alive);
             // MG sustained-fire loop: runs while rounds are leaving the barrel (set by update_mg),
@@ -16516,6 +16532,7 @@ impl Game {
     /// Request a move to station `s`. Ignored if already there or mid-switch; otherwise flips the
     /// target immediately and arms the switch cost (during which no seat control is honoured).
     pub fn request_station(&mut self, s: Station) {
+        if s == Station::Commander && self.station != Station::Loader { return; }
         if s == self.station || self.switch_t > 0.0 {
             return;
         }
@@ -16525,6 +16542,7 @@ impl Game {
             let target=self.player.turret_model().transform_point3(tiger_periscopes::close_view(index).0);
             origin=origin.lerp(target,blend);
         }
+        if s == Station::Loader { self.place_interior_exit(); }
         self.switch_origin_hull=Some(self.player.hull_model().inverse().transform_point3(origin));
         self.switch_from = self.station;
         self.station = s;
@@ -17078,6 +17096,11 @@ impl Game {
                         self.slot_taken[next_slot] = true; // the auto-crew takes from the rack too
                         self.he_loaded = self.slot_nature_he[next_slot];
                         if let Some(a) = &self.audio {
+                            a.play_mechanical(crate::acoustics::MechanicalParams {
+                                cue: crate::acoustics::MechanicalCue::ShellRam,
+                                intensity: 0.88, bearing_deg: 18.0,
+                                seed: self.rounds_spent ^ 0x5EA7_0001,
+                            }, 0.72);
                             a.play_mechanical(
                                 crate::acoustics::MechanicalParams {
                                     cue: crate::acoustics::MechanicalCue::BreechLock,
@@ -17430,7 +17453,7 @@ impl Game {
                 pos: self.enemies[i].center() + Vec3::Y * 0.7,
                 source_radius: 0.80,
                 color: Vec3::new(1.0, 0.30, 0.08),
-                radiant_intensity: 48.0 * flick,
+                radiant_intensity: 48.0 * 0.55 * flick,
             });
         }
         // Enemy muzzle flashes light the field too — the swarm's fire flickers across the snow.
@@ -19295,7 +19318,8 @@ impl Game {
             let rgt = r.camera.right();
             let hp = r.camera.pos + f * 0.45 + rgt * 0.22 - Vec3::new(0.0, 0.16, 0.0);
             let pose = glam::Quat::from_axis_angle(rgt, -swing)
-                * glam::Quat::from_rotation_arc(Vec3::Z, f);
+                * glam::Quat::from_rotation_arc(Vec3::Z, f)
+                * glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
             r.set_model(self.slots.hammer, Mat4::from_rotation_translation(pose, hp));
         } else {
             r.set_visible(self.slots.hammer, false);
@@ -23193,6 +23217,8 @@ impl Game {
         if projectile.shell.kind == crate::ballistics::ShellKind::He {
             self.weapon_vfx.blast(contact.pos - travel_direction * 0.08,
                 (projectile.shell.caliber_mm * 0.038).clamp(1.2, 5.5));
+        } else if let Some((armor, _)) = vehicle_event {
+            self.weapon_vfx.armor_sparks(contact.pos, projectile.velocity, armor.world_normal, weapon);
         } else {
             self.weapon_vfx.impact(contact.pos - travel_direction * 0.08, travel_direction,
                 if vehicle_event.is_some() { 0.65 } else { 1.25 }, vehicle_event.is_some(), weapon);
@@ -23798,6 +23824,8 @@ impl Game {
     /// Instant close-use views retain the ordinary solo station controls. In crew modes the
     /// existing human occupancy check still protects an occupied post.
     pub fn jump_station(&mut self, s: Station) {
+        // The cupola is reached from the walkable compartment, never from an optical view.
+        if s == Station::Commander && self.station != Station::Loader { return; }
         let post = match s {
             Station::Commander => crate::lan::LanRole::Commander,
             Station::Driver => crate::lan::LanRole::Driver,
@@ -23813,9 +23841,28 @@ impl Game {
             return;
         }
         if s != self.station {
+            if s == Station::Loader && self.station == Station::Gunner {
+                self.request_station(s);
+                self.sights_mag = 0;
+                return;
+            }
+            if s == Station::Loader { self.place_interior_exit(); }
             self.station = s;
             self.switch_t = 0.0;
         }
+    }
+
+    /// Turret-local +X is the gunner's left side. Leaving the eyepiece steps back along that
+    /// same side of the breech; the old loader walk position was across it at -0.60 m.
+    fn place_interior_exit(&mut self) {
+        let at = match self.station {
+            Station::Gunner => Vec3::new(0.60, 0.0, 0.20),
+            Station::Commander => Vec3::new(0.56, 0.0, -0.42),
+            _ => return,
+        };
+        self.walk_pos = clamp_interior_walk(at, at);
+        self.commander_outside = false;
+        self.cupola_focus = Default::default();
     }
 
     /// Backspace bail-out (stub until the on-foot mode lands): ten presses from the cupola or
@@ -26325,8 +26372,6 @@ impl Game {
             .iter()
             .map(|enemy| Vec2::new(enemy.pos.x, enemy.pos.z))
             .collect();
-        let mut player_closing_contact = false;
-        let mut enemy_closing_contact = vec![false; self.enemies.len()];
         let mut first_player_contact: Option<(usize, Vec3)> = None;
 
         for _ in 0..VEHICLE_CONTACT_ITERATIONS {
@@ -26348,10 +26393,8 @@ impl Game {
                 self.player.pos.z += resolution.a_delta.y;
                 self.enemies[i].pos.x += resolution.b_delta.x;
                 self.enemies[i].pos.z += resolution.b_delta.y;
-                if resolution.closing {
-                    player_closing_contact = true;
-                    enemy_closing_contact[i] = true;
-                }
+                self.player.speed += resolution.a_speed_delta;
+                self.enemies[i].speed += resolution.b_speed_delta;
                 first_player_contact.get_or_insert_with(|| {
                     let point = (self.player.center() + self.enemies[i].center()) * 0.5;
                     (i, point)
@@ -26387,24 +26430,9 @@ impl Game {
                     left[i].pos.z += resolution.a_delta.y;
                     right[0].pos.x += resolution.b_delta.x;
                     right[0].pos.z += resolution.b_delta.y;
-                    if resolution.closing {
-                        enemy_closing_contact[i] = true;
-                        enemy_closing_contact[j] = true;
-                    }
+                    left[i].speed += resolution.a_speed_delta;
+                    right[0].speed += resolution.b_speed_delta;
                 }
-            }
-        }
-
-        if player_closing_contact {
-            self.player.speed *= VEHICLE_CONTACT_SPEED_RETENTION;
-        }
-        for (enemy, closing) in self
-            .enemies
-            .iter_mut()
-            .zip(enemy_closing_contact.into_iter())
-        {
-            if closing {
-                enemy.speed *= VEHICLE_CONTACT_SPEED_RETENTION;
             }
         }
 
@@ -26452,12 +26480,13 @@ impl Game {
                 pos: Vec3::new(player_before.x, player_supported_y, player_before.y),
                 ..player_pose
             };
-            self.settle_player_tank(before, dt, None);
+            // Contact projection is not a second simulation step: do not integrate falling twice.
+            self.settle_player_tank(before, 0.0, None);
         }
 
         if let Some((enemy_index, point)) = first_player_contact {
-            self.crush_rumble = self.crush_rumble.max(0.70);
             if !self.vehicle_contact_was {
+                self.crush_rumble = self.crush_rumble.max(0.22);
                 // Steel on steel at walking pace, not a cannon strike [E: 20 dB below one].
                 self.schedule_emission(crate::audio::Sfx::ImpactTank, point,
                     crate::sound_propagation::Emission::from_level(
@@ -26505,6 +26534,7 @@ impl Game {
             if d.min.y > self.player.pos.y + 2.2 || buried_below_ground(&self.hf, d.min, d.max) {
                 continue;
             }
+            let nose = self.player.pos + dir * CRUSH_NOSE_LEN;
             let Some((push, overlap)) = nose_contact(nose, dir, d.min, d.max) else {
                 continue;
             };
@@ -26526,14 +26556,13 @@ impl Game {
             contact = true;
             // Holding: the bow stays at the face (the piece stands where it is drawn).
             self.player.pos += push * overlap;
-            self.player.pos.y = self.hf.vehicle_height_at(self.player.pos.x, self.player.pos.z);
             if speed > 0.4 {
                 let c = Vec3::new(
                     nose.x.clamp(d.min.x, d.max.x),
                     d.min.y + 0.8,
                     nose.z.clamp(d.min.z, d.max.z),
                 );
-                self.crush_rumble = self.crush_rumble.max(0.55);
+                self.crush_rumble = self.crush_rumble.max((speed * 0.045).min(0.25));
                 // Throttled plough FX: masonry chips + dust churning at the contact point.
                 if self.crush_fx_t <= 0.0 {
                     self.crush_fx_t = 0.22;
@@ -26563,19 +26592,19 @@ impl Game {
             if min.y > self.player.pos.y + 2.2 {
                 continue;
             }
+            let nose = self.player.pos + dir * CRUSH_NOSE_LEN;
             let Some((push, overlap)) = nose_contact(nose, dir, min, max) else {
                 continue;
             };
             contact = true;
             self.player.pos += push * overlap;
-            self.player.pos.y = self.hf.vehicle_height_at(self.player.pos.x, self.player.pos.z);
             self.player.speed = crate::tank_push::press(
                 self.player.speed, self.player.pitch * sgn, crate::tank_push::Resistance::UNYIELDING, 0.0, dt).speed;
-            self.crush_rumble = self.crush_rumble.max(0.45);
         }
         // Trees under the bow: each trunk resists by its bending strength against the push
         // (`trees::Trees::crush`, `tank_push::tree`) and falls when the work is done.
         let mut tree_events = Vec::new();
+        let nose = self.player.pos + dir * CRUSH_NOSE_LEN;
         let tc = self.trees.crush(
             nose,
             dir,
@@ -30785,6 +30814,40 @@ mod tests {
     }
 
     #[test]
+    fn head_on_contact_conserves_momentum_and_removes_closing_velocity() {
+        let a=test_vehicle_motion(0,Vec2::ZERO,0.0,Vec2::new(0.0,4.0));
+        let b=test_vehicle_motion(1,Vec2::new(0.0,5.0),std::f32::consts::PI,Vec2::new(0.0,-3.0));
+        let hit=vehicle_pair_resolution(a,1.0/57.0,b,1.0/26.5).unwrap();
+        let va=4.0+hit.a_speed_delta;
+        let vb=-(3.0+hit.b_speed_delta);
+        assert!((va-vb).abs()<1e-5,"no repeated closing impulse");
+        assert!((57.0*va+26.5*vb-(57.0*4.0-26.5*3.0)).abs()<1e-3);
+        assert!(57.0*va*va+26.5*vb*vb<=57.0*16.0+26.5*9.0);
+    }
+
+    #[test]
+    fn sustained_drive_into_wreck_has_no_rebound_or_position_jump() {
+        for hz in [30,60,120] {
+            let dt=1.0/hz as f32;
+            let wreck=test_vehicle_motion(1,Vec2::new(0.0,6.0),0.0,Vec2::ZERO);
+            let mut position=Vec2::new(0.0,-0.01);
+            let mut speed=0.0_f32;
+            let mut furthest=position.y;let mut nearest=position.y;
+            for _ in 0..hz*4 {
+                speed+=2.0*dt;position.y+=speed*dt;
+                let moving=test_vehicle_motion(0,position,0.0,Vec2::new(0.0,speed));
+                if let Some(hit)=vehicle_pair_resolution(moving,1.0/57.0,wreck,0.0) {
+                    position+=hit.a_delta;speed+=hit.a_speed_delta;
+                }
+                assert!(speed>=-1e-6,"contact must not bounce the tank backward");
+                furthest=furthest.max(position.y);nearest=nearest.min(position.y);
+                assert!(tank::yaw_obb_contact(test_vehicle_motion(0,position,0.0,Vec2::ZERO).footprint,wreck.footprint).is_none());
+            }
+            assert!(furthest-nearest<0.02,"stationary push jitter at {hz} Hz: {}",furthest-nearest);
+        }
+    }
+
+    #[test]
     fn vehicle_avoidance_brakes_and_breaks_head_on_tie_to_opposite_sides() {
         let a = test_vehicle_motion(0, Vec2::ZERO, 0.0, Vec2::new(0.0, 8.0));
         let b = test_vehicle_motion(
@@ -34085,7 +34148,7 @@ mod tests {
         assert!(source.radiant_intensity > 0.0 && source.radiant_intensity.is_finite());
         assert_eq!(&FIRE_FLAME_COLORS[FIRE_FLAME_STAGES..],
             &[[183, 24, 4], [255, 73, 6], [255, 107, 12], [203, 38, 6]]);
-        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.8, 0.5, 0.25, 0.1]);
+        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.44, 0.275, 0.1375, 0.055]);
     }
 
     #[test]

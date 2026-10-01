@@ -411,10 +411,11 @@ const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Shadow-map side is selected once with the renderer: Laptop uses 512², High/4090 uses 2048².
 /// The internal render targets likewise remain fixed until a world/renderer rebuild.
-const SOLO_SHADOW_HALF_M: f32 = 60.0;
+const SOLO_SHADOW_HALF_M: f32 = 240.0;
+const FAR_SHADOW_DEPTH_HALF_M: f32 = 700.0;
 const SOLO_SHADOW_LOOK_AHEAD_M: f32 = 30.0;
 /// Four crew cameras can face opposing directions from the same tank. The union of their previous
-/// 120 m, 30 m-forward cascades is conservatively bounded by a tank-centred 180 m square.
+/// far cascades is conservatively bounded by their union around the tank.
 const COOP_SHADOW_HALF_M: f32 = SOLO_SHADOW_HALF_M + SOLO_SHADOW_LOOK_AHEAD_M;
 
 /// Direction TO the winter sun (matches the value mesh.wgsl shaded with before it was lifted to the
@@ -425,9 +426,9 @@ const SUN_DIR: glam::Vec3 = glam::Vec3::new(-0.5, 0.55, 0.25);
 
 fn shadow_view_proj_for_focus(sun_dir: glam::Vec3, focus: glam::Vec3, half: f32) -> glam::Mat4 {
     let sun = sun_dir.normalize();
-    let eye = focus + sun * 90.0;
+    let eye = focus + sun * FAR_SHADOW_DEPTH_HALF_M;
     let view = glam::Mat4::look_to_rh(eye, -sun, glam::Vec3::Y);
-    let proj = glam::Mat4::orthographic_rh(-half, half, -half, half, 0.1, 180.0);
+    let proj = glam::Mat4::orthographic_rh(-half, half, -half, half, 0.1, FAR_SHADOW_DEPTH_HALF_M*2.0);
     proj * view
 }
 
@@ -6918,13 +6919,13 @@ impl Renderer {
                 .any(|p| p.strength > 0.0 && p.age < 1.0)
     }
 
-    /// Sun's ortho shadow cascade: a ~120 m box centred just ahead of the camera (so what the view
+    /// Sun's far shadow cascade: a 480 m box centred just ahead of the camera (so what the view
     /// sees is what the map covers), looking down the sun ray. glam's `orthographic_rh` gives NDC
     /// z ∈ [0,1] to match wgpu, exactly like the perspective camera.
     fn light_view_proj(&self) -> glam::Mat4 {
         let focus = self.camera.pos + self.camera.forward() * SOLO_SHADOW_LOOK_AHEAD_M;
         let fallback = if self.raster_lighting {
-            stable_shadow_view_proj(self.sun_dir,focus,SOLO_SHADOW_HALF_M,90.0,self.shadow_res)
+            stable_shadow_view_proj(self.sun_dir,focus,SOLO_SHADOW_HALF_M,FAR_SHADOW_DEPTH_HALF_M,self.shadow_res)
         } else { shadow_view_proj_for_focus(
             self.sun_dir,
             focus,
@@ -6940,7 +6941,7 @@ impl Renderer {
                 self.near_shadow_res).to_cols_array_2d(),
             scale: [half*2.0/self.near_shadow_res as f32,119.9,
                 if self.coop_shadow.view_proj.is_some() { COOP_SHADOW_HALF_M*2.0 } else { SOLO_SHADOW_HALF_M*2.0 }
-                    /self.shadow_res as f32,179.9],
+                    /self.shadow_res as f32,FAR_SHADOW_DEPTH_HALF_M*2.0-0.1],
         }
     }
 

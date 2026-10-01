@@ -128,7 +128,8 @@ pub fn rubble_mesh(asset_id: &str, variant: u32, source: &CpuMesh) -> anyhow::Re
 }
 
 /// Own-colour glow of a visible light-fixture housing (the value the loose lamp meshes had).
-pub const LIGHT_FIXTURE_GLOW: f32 = 2.2;
+pub const LIGHT_FIXTURE_POWER_SCALE: f32 = 0.25;
+pub const LIGHT_FIXTURE_GLOW: f32 = 2.2 * LIGHT_FIXTURE_POWER_SCALE;
 
 /// World AABB of a local box under `model`.
 pub fn transformed_bounds(model: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {

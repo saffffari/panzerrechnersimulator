@@ -10,12 +10,14 @@ pub(super) fn load(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     spec: Option<&crate::canyon::CourseSpec>,
+    v2: bool,
 ) -> anyhow::Result<Option<u32>> {
     let Some(spec) = spec else { return Ok(None) };
-    if !std::path::Path::new(META).exists() {
+    let metadata=if v2 {"catalog/maps/canyon_v2_survey_20260930.json"} else {META};
+    if !std::path::Path::new(metadata).exists() {
         return Ok(None);
     }
-    let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(META)?)?;
+    let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(metadata)?)?;
     let route: Vec<[f32; 2]> = serde_json::from_value(meta["route"].clone())?;
     if route.len() != spec.route.len()
         || route

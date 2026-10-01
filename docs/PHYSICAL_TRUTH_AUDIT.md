@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-09-29 (solid city). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-09-30 (Canyon v2). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -27,6 +27,73 @@ use those fresh traces to distinguish already integrated work from still-open ga
   no physical cause — a supersonic round gives no acoustic warning — and the owner dropped it on
   28 Sep 2026; the calibrated ear model's loss after the hit replaces it. No pre-hit ducking
   remains in any live or offline listener path.
+
+## Canyon v2 review, 2026-09-30
+
+- The separate Gaea v2 uses source `SatMap_Out.png` for rock albedo and `snow.png` for coverage.
+  The RGBA packing reserves alpha 32–223 for coverage, decoded separately from RGB sRGB. Snow
+  also depends on surface slope; this is a material blend, not simulated snow deposition.
+- Generator version 4 retains version 3's prior-traffic and disturbed-yard albedo / snow coverage in a derived
+  texture, while retaining both native Gaea inputs. At 4096 texels over 5000 m this has 1.22 m
+  spacing; narrow track bands use fractional texel coverage. It adds no geometric ruts or runtime
+  traffic simulation. The modern Bradley/T-90 reference guides appearance only, not WWII damage
+  or historical-event claims; see `research/CANYON_FOOTAGE_DIRECTION_20260930.md`.
+- Old aftermath stains use irregular nested albedo contours clipped to terrain triangles,
+  6 mm above the surface to avoid depth fighting. They are authored material evidence, not a
+  blood-fluid solver. Fallen log orientation derives from the source mesh's principal axis and
+  rests at its measured minimum; the original purchased mesh and materials are preserved.
+- Requested ambient occlusion is the existing **screen-space, ambient-only** depth pass, now
+  64 samples with 0.60 m interior / 2.20 m exterior radii. It is not GI and cannot see off-screen
+  occluders. Sun visibility retains two geometry shadow maps: a fine nearby map and a 480 m
+  far map (540 m crew union), with 1,400 m light-space depth for canyon occluders. Beyond the
+  cascades there is no new terrain-shadow solution. The existing local sky-visibility atlas remains.
+- Portal bloom is lens-space scatter from the aperture/radiance mask, now a contiguous normalized
+  33-tap Gaussian per axis. It adds no world illumination. Practical cube emitters are smaller;
+  visible radiance and emitted flux still derive from the same finite surface and spectrum.
+  Visual acceptance remains incomplete: ordinary training-night views and the controlled sun
+  probe clip practical/reflected highlights. Optical relay preparation did not resolve the probe.
+  The Canyon reload frames are darker; they do not validate all eye-adaptation conditions.
+- Winter ground cover uses world-fixed coherent 36 m patches and distributed, closed stems.
+  Distant stems are a geometry LOD, not a measured botanical population. Grass remains primary
+  raster geometry without secondary visibility / self shadow; worst-case budget is under 2 M
+  triangles and is the same geometry rule across graphics presets.
+- Canyon rocks, breastworks and wrecked equipment use the existing source-triangle occupancy
+  collision approximation (0.5 m local cells, capped adaptive grid). Cell dilation is bounded by
+  the cell diagonal. V2 runs are limited to two cells; at unit-scale yaw placements every world proxy
+  diagonal is below 1.62 m (regression over all six hard prop meshes and four rotations).
+  This is a conservative error bound, not exact triangle contact. Vehicles still have longitudinal speed and XZ OBB contact,
+  not a lateral/angular rigid-body solver. Contact now removes closing velocity with an inelastic
+  mass-weighted impulse; it does not bounce, repeatedly damp both speeds or integrate gravity twice.
+- Incoming shell pass timbre retains the computed N-wave and adds a synthesized receding wake.
+  Arrival/miss distance/speed are the authoritative projectile's actual clipped segment; outgoing
+  shots cannot sound ahead of causal arrival. The wake is an audible approximation, not a measured
+  aeroacoustic spectrum. Its energy enters existing calibration and armor/headset/LOS filtering.
+  Spatial bearing is sampled at arrival, not continuously moving along the tail.
+- Every small-arms armor contact now uses the existing delayed exterior sound path or immediate
+  own-hull structural path; the previous one-in-N exterior throttle is removed. Cannon spark
+  presentation uses the struck armor normal. This does **not** yet continue the cannon after a
+  ricochet: stopped/deflected terminal separation and dissipated outgoing flight remain pending.
+- Casing extraction and cartridge ramming use distinct heavy-mechanism synthesis through the
+  ordinary calibrated mixer; short lift/drop contacts retain their existing recordings. The
+  assisted ram now emits its seating sound as well as the breech closure.
+- Continuous burning audio is driven by actual cabin patches, burning wrecks, dead allied hulls
+  and archived burning hulks. It reuses the positioned-loop engine (eight loudest fires, 60 ms
+  fade, stereo pan and one-pole propagation filtering); source strength is an unsourced 74 dBA
+  at 1 m per unit fire intensity. Cabin patches are aggregated at their intensity-weighted centroid.
+  This is an authored combustion voice, not measured thermodynamic acoustics; ignition wavefront
+  delay is not modeled for this continuous bed. Pause, KIA, extinguishing and mixer capture are tested.
+- Environmental fixture radiance and source power are both scaled by 0.25. Sustained flame
+  radiance and its transported source power are scaled by 0.55. Existing exterior wreck point
+  sources remain an approximation; exposure and muzzle/impact power are not adjusted by this pass.
+- Terminal replay uses the actual fatal record, crew anatomy, fragment/blast and blood snapshot.
+  It advances only presentation aftermath; it never applies another hit or resets the run. Replay
+  is silent slow motion after the live fatal audio tail. Cases without a recorded fatal shot retain
+  a fade/black fallback; they do not invent an explosion. Both the window and Canyon film append it.
+  Sampled replay frames still have clipped interior highlights; fire-review soot remains visibly
+  cubic. These recordings are retained as diagnostic evidence, not final look acceptance.
+- Additional anonymous casualties and ruined field sites are an inferred fictional course under
+  documented recurring winter battlefield conditions, not a named event or identified victims.
+  The generator records provenance and source hashes. The original v1 workshop is preserved.
 
 ## Renderer
 

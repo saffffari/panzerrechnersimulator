@@ -59,10 +59,11 @@ pub(super) fn bank_metadata(
         crate::acoustics::MechanicalCue::ShellRam,
         crate::acoustics::MechanicalCue::ShellDrop,
     ].into_iter().map(|cue| {
-        let key = super::ammunition_control_key(cue).expect("ammunition route");
+        let key = super::ammunition_control_key(cue);
         serde_json::json!({
             "cue": format!("{cue:?}"), "feedback_key": key,
-            "source": if feedback_bank.contains(key) { "verified_feedback_recording" }
+            "source": if key.is_none() { "heavy_mechanism_synthesis" }
+                else if key.is_some_and(|key| feedback_bank.contains(key)) { "verified_feedback_recording" }
                 else { "tonal_control_fallback" },
             "broadband_mechanical_layer": false,
         })
@@ -95,7 +96,7 @@ pub(super) fn bank_metadata(
         },
         "procedural_families": [
             "unreplaced Sfx and missing-recording fallbacks",
-            "MainGunRecoil and BodyImpact; breech and ammunition controls use recorded gestures or tonal control fallbacks",
+            "MainGunRecoil, BodyImpact, CasingExtract and ShellRam; breech and short lift/drop contacts use recordings or tonal fallbacks",
             "parametric armor impact, pressure, physical fragment contacts/flight, concussion and enemy caliber report",
         ],
         "review": "load status and routing only; subjective first-person video review is separate",
@@ -106,7 +107,7 @@ pub(super) fn startup_summary(bank: &serde_json::Value) -> String {
     let direct = bank["sfx_routes"].as_array().expect("sound routes");
     let count = |kind: &str| direct.iter().filter(|route| route["direct_source"] == kind).count();
     format!(
-        "[audio] initialized: {} verified feedback recordings ({}); direct Sfx routes: {} recorded replacements, {} legacy references, {} generated; {} verified v1 layers; ammunition uses recorded/control contacts; recoil, body and impact voices remain generated",
+        "[audio] initialized: {} verified feedback recordings ({}); direct Sfx routes: {} recorded replacements, {} legacy references, {} generated; {} verified v1 layers; heavy extraction and ramming use distinct synthesis; short lift/drop contacts retain recordings",
         bank["feedback"]["loaded_count"],
         bank["feedback"]["status"].as_str().expect("feedback status"),
         count("verified_feedback_recording"), count("legacy_reference_recording"), count("procedural"),

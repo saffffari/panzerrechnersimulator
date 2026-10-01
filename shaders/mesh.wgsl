@@ -298,7 +298,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var albedo = raw;
     if (pc.params.w > 2.5 && pc.params.w < 3.5) {
         albedo = terrain_material(textureSampleLevel(albedo_tex, terrain_detail_sampler,
-                                   in.uv, terrain_macro_lod).rgb, in.world, normalize(in.normal).y,
+                                   in.uv, terrain_macro_lod), in.world, normalize(in.normal).y,
                                    cam.atmosphere.z, terrain_footprint);
     }
 

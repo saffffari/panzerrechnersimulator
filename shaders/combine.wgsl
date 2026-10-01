@@ -408,7 +408,7 @@ fn trace_exact_surface_mask(origin: vec3<f32>, direction: vec3<f32>, tmin: f32,
     if ((out.flags & RT_INSTANCE_FLAG_TERRAIN) != 0u) {
         // The exact source drape and seasonal material are shared with both raster paths.
         // Macro colour and centimetre source detail both use the projected grazing footprint.
-        out.base_color = vec4(terrain_material(material.base_color.rgb, out.position,
+        out.base_color = vec4(terrain_material(material.base_color, out.position,
             world_normal.y, cam.atmosphere.z, terrain_hit_footprint), material.base_color.a);
         out.roughness = terrain_roughness(cam.atmosphere.z);
     }

@@ -11,7 +11,11 @@ type Key = (String, usize, usize, [u32; 6]);
 static CACHE: OnceLock<Mutex<HashMap<Key, Vec<Bounds>>>> = OnceLock::new();
 
 pub(super) fn accepts(path: &str) -> bool {
-    super::RETIRED_HALF_TIGER_GLBS.contains(&path)
+    (path.starts_with("assets/authoring/canyon-v2/")
+        && path.rsplit('/').next().is_some_and(|name| matches!(name,
+            "rock_0.glb" | "rock_1.glb" | "rock_2.glb" | "outpost.glb"
+            | "wreck_cart.glb" | "wreck_gun45.glb")))
+        || super::RETIRED_HALF_TIGER_GLBS.contains(&path)
         || super::CURRENT_TIGER_PART_GLBS.contains(&path)
         || super::RETIRED_WRECK_GLBS.iter().any(|(p, _)| *p == path)
         || (path.starts_with("assets/authoring/battlefield/")
@@ -41,6 +45,10 @@ fn overlaps(triangle: [Vec3; 3], min: Vec3, max: Vec3) -> bool {
 }
 
 fn local_proxies(mesh: &CpuMesh) -> Vec<Bounds> {
+    local_proxies_with_run_limit(mesh,usize::MAX)
+}
+
+fn local_proxies_with_run_limit(mesh: &CpuMesh, run_limit: usize) -> Vec<Bounds> {
     // Source tanks are <12m; adapt only for an unusually large authored variant to retain a
     // bounded grid. Scanning source triangles is startup work cached once per asset geometry.
     let cell = 0.5_f32.max((mesh.max - mesh.min).max_element() / 48.0);
@@ -63,7 +71,9 @@ fn local_proxies(mesh: &CpuMesh) -> Vec<Bounds> {
     let mut cells = occupied.into_iter().peekable();
     while let Some((y, z, first)) = cells.next() {
         let mut last = first;
-        while cells.peek() == Some(&(y, z, last + 1)) { cells.next(); last += 1; }
+        while ((last-first+1) as usize)<run_limit && cells.peek() == Some(&(y, z, last + 1)) {
+            cells.next(); last += 1;
+        }
         let min = (IVec3::new(first, y, z).as_vec3() * cell).max(mesh.min);
         let max = (IVec3::new(last + 1, y + 1, z + 1).as_vec3() * cell).min(mesh.max);
         // Thin authored plates must still be hittable by a swept foot or shell.
@@ -79,7 +89,11 @@ pub(super) fn proxies(path: &str, mesh: &CpuMesh, model: Mat4) -> Vec<Bounds> {
     let key = (path.to_owned(), mesh.vertices.len(), mesh.indices.len(), bounds.map(f32::to_bits));
     let local = {
         let mut cache = CACHE.get_or_init(Mutex::default).lock().expect("wreck collision cache");
-        cache.entry(key).or_insert_with(|| local_proxies(mesh)).clone()
+        cache.entry(key).or_insert_with(|| if path.starts_with("assets/authoring/canyon-v2/") {
+            // At most a 1 x .5 x .5 m run. A rotated world AABB cannot expand a whole log/rock
+            // row into an invisible wall. For unit-scale yaw placement its diagonal <=1.582 m.
+            local_proxies_with_run_limit(mesh,2)
+        } else {local_proxies(mesh)}).clone()
     };
     super::proxy_boxes(model, local)
 }
@@ -118,6 +132,24 @@ impl StaticTankCollider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn canyon_props_bound_rotated_contact_expansion_and_exclude_casualties() {
+        assert!(!accepts("assets/authoring/canyon-v2/casualty_0.glb"));
+        assert!(!accepts("assets/authoring/canyon-v2/blood_snow_00.glb"));
+        for name in ["rock_0","rock_1","rock_2","outpost","wreck_cart","wreck_gun45"] {
+            let path=format!("assets/authoring/canyon-v2/{name}.glb");
+            assert!(accepts(&path));
+            let source=crate::gltf_load::load_glb(&path).unwrap();
+            let mut max_diagonal=0.0_f32;
+            for angle in [0.0,0.35,std::f32::consts::FRAC_PI_4,1.25] {
+                let boxes=proxies(&path,&source,Mat4::from_rotation_y(angle));
+                assert!(!boxes.is_empty());
+                for (a,b) in boxes {max_diagonal=max_diagonal.max(a.distance(b));}
+            }
+            assert!(max_diagonal<1.62,"{name}: conservative world-cell bound {max_diagonal} m");
+            eprintln!("Canyon source-derived collision {name}: max world proxy diagonal {max_diagonal:.4} m");
+        }
+    }
     fn contains(boxes: &[Bounds], p: Vec3) -> bool {
         boxes.iter().any(|(a,b)| p.cmpge(*a).all() && p.cmple(*b).all())
     }

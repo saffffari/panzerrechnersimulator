@@ -706,6 +706,67 @@ pub fn synth_n_wave(period_s: f32) -> Vec<f32> {
     out
 }
 
+/// Causal shell pass: retain the ballistic N-wave and give it a short receding aerodynamic
+/// wake. This is a synthesized timbre, not a recording or a measured shell aeroacoustic model.
+/// The caller supplies the real Mach-cone arrival, miss distance, speed and caliber.
+pub fn synth_shell_pass(period_s: f32, caliber_mm: f32, speed_m_s: f32, miss_m: f32) -> Vec<f32> {
+    let shock=synth_n_wave(period_s);
+    if !caliber_mm.is_finite() || caliber_mm<20.0 || !speed_m_s.is_finite() || speed_m_s<=0.0
+        || !miss_m.is_finite() || miss_m<0.0 {return shock;}
+    let sr=SAMPLE_RATE as f32;
+    let duration=(0.16+miss_m/speed_m_s).clamp(0.16,0.32);
+    let mut wave=vec![0.0;(duration*sr).ceil() as usize];
+    wave[..shock.len()].copy_from_slice(&shock);
+    let mut seed=caliber_mm.to_bits()^speed_m_s.to_bits()^miss_m.to_bits()^0x36e1_904b;
+    let mut phase=0.0_f32;
+    let mut low=0.0;
+    for i in shock.len()..wave.len() {
+        let t=(i-shock.len()) as f32/sr;
+        seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;
+        let noise=(seed as f32/u32::MAX as f32)*2.0-1.0;
+        low+=0.22*(noise-low);
+        let distance=(miss_m*miss_m+(speed_m_s*t).powi(2)).sqrt().max(0.5);
+        let receding=speed_m_s*speed_m_s*t/distance;
+        let hz=2400.0*(76.2/caliber_mm).sqrt()*319.0/(319.0+receding);
+        phase+=TAU*hz/sr;
+        let envelope=(1.0-(-t/0.002).exp())*(-t/(duration*0.24)).exp()
+            *(1.0-t/duration).max(0.0);
+        wave[i]=0.12*envelope*(0.65*phase.sin()+0.35*low);
+    }
+    wave
+}
+
+/// Isolated source audition through the same calibrated ear/mixer as live passing shells.
+pub fn render_shell_pass_review(prefix:&str) -> anyhow::Result<()> {
+    use crate::sound_propagation::{self as prop,Emission,Enclosure,Path};
+    let (lpk,period)=crate::sound_levels::whitham_n_wave(650.0,319.0,0.0762,
+        crate::sound_levels::projectile_length_m(76.2),5.0).unwrap();
+    let shock=synth_n_wave(period);let wave=synth_shell_pass(period,76.2,650.0,5.0);
+    let energy=|s:&[f32]|s.iter().map(|v|v*v).sum::<f32>();
+    let ratio=energy(&wave)/energy(&shock);
+    let mut emission=Emission::crack(lpk,period);
+    emission.laf_db+=10.0*ratio.log10();emission.a_duration_ms*=ratio;
+    let mut receipt=Vec::new();let mut comparison=Vec::new();
+    for (name,enclosure) in [("head_out",Enclosure::HeadOut),("buttoned",Enclosure::Buttoned)] {
+        let path=Path {distance_m:5.0,atmosphere:prop::active_atmosphere(),occluded:false,enclosure,headset:true};
+        let ear=prop::propagate(&emission,&path);
+        let audio=crate::audio::Audio::new_capture();
+        let mut samples=audio.render_capture_frames(SAMPLE_RATE as usize/2).unwrap();
+        audio.play_world_mono_at_ear(&wave,&ear,-35.0,ReverbParams::OPEN_SNOW);
+        samples.extend(audio.render_capture_frames(SAMPLE_RATE as usize*3/2).unwrap());
+        anyhow::ensure!(samples.iter().all(|v|v.is_finite()) && samples.iter().any(|v|v.abs()>1e-5));
+        write_wav_stereo(&format!("{prefix}_{name}.wav"),&samples,SAMPLE_RATE)?;
+        receipt.push(serde_json::json!({"enclosure":name,"ear_laf_dba":ear.laf_db,"ear_peak_db":ear.lpk_db}));
+        comparison.extend(samples);
+    }
+    anyhow::ensure!(receipt[0]["ear_laf_dba"].as_f64()>receipt[1]["ear_laf_dba"].as_f64());
+    write_wav_stereo(&format!("{prefix}_comparison.wav"),&comparison,SAMPLE_RATE)?;
+    std::fs::write(format!("{prefix}_receipt.json"),serde_json::to_vec_pretty(&serde_json::json!({
+        "scope":"isolated synthesized 76.2 mm pass audition; first head-out, then buttoned; shared shipping mixer",
+        "speed_m_s":650,"miss_m":5,"wake_energy_ratio":ratio,"cases":receipt}))?)?;
+    Ok(())
+}
+
 pub fn synth_small_arm_ground_hit(velocity_mps: f32, caliber_mm: f32, seed: u32) -> Vec<f32> {
     if !velocity_mps.is_finite() || !caliber_mm.is_finite()
         || velocity_mps <= 0.0 || caliber_mm <= 0.0 { return Vec::new(); }
@@ -1672,6 +1733,28 @@ pub fn synth_impact_signature(signature: ImpactSignature, seed: u32) -> DamageSo
     synth_damage_impact_body(params, context)
 }
 
+/// Authored continuous combustion: turbulent low roar and irregular dry crackle.
+/// Synthesis, not a recorded vehicle fire or a thermodynamic pressure calculation.
+pub fn synth_burning_fire(seconds: f32, seed: u32) -> Vec<f32> {
+    let frames=(seconds.clamp(0.1,30.0)*SAMPLE_RATE as f32) as usize;
+    let mut out=Vec::with_capacity(frames*2);
+    let (mut low,mut band,mut crack)=(0.0_f32,0.0_f32,0.0_f32);
+    for n in 0..frames {
+        let t=n as f32/SAMPLE_RATE as f32;
+        let noise=hash_noise(seed.wrapping_add(n as u32));
+        low+=0.012*(noise-low);
+        band+=0.12*(noise-band);
+        if hash_noise(seed.wrapping_add(n as u32).wrapping_mul(97))>0.99985 {
+            crack=0.35+noise.abs()*0.65;
+        }
+        crack*=0.993;
+        let surge=0.70+0.16*(t*1.7).sin()+0.14*(t*3.31+0.8).sin();
+        let value=surge*(low*1.9+(band-low)*0.32)+crack*(noise-band)*0.24;
+        out.extend([value,value]);
+    }
+    out
+}
+
 /// Deterministic cabin mechanism/body foley with moving stereo contacts. `BodyImpact` is a delayed,
 /// cloth-damped mass hit; casing and shell cues retain their distinct brass/steel/ordnance weights.
 pub fn synth_mechanical(p: MechanicalParams) -> Vec<f32> {
@@ -1680,7 +1763,7 @@ pub fn synth_mechanical(p: MechanicalParams) -> Vec<f32> {
         C::MainGunRecoil => (0.72, 72.0, 0.72, 0.16, -8.0, [0.0, 0.055, 0.36, 0.61], 4),
         C::BreechOpen => (0.42, 158.0, 0.68, 0.58, 5.0, [0.03, 0.22, 0.0, 0.0], 2),
         C::BreechLock => (0.38, 205.0, 0.82, 0.12, -4.0, [0.0, 0.064, 0.0, 0.0], 2),
-        C::CasingExtract => (0.48, 355.0, 1.0, 0.64, 14.0, [0.19, 0.31, 0.0, 0.0], 2),
+        C::CasingExtract => (0.62, 165.0, 0.85, 0.76, 14.0, [0.28, 0.44, 0.0, 0.0], 2),
         C::CasingDrop => (0.92, 485.0, 1.0, 0.10, -32.0, [0.0, 0.18, 0.49, 0.0], 3),
         C::ShellLift => (0.46, 112.0, 0.26, 0.34, 8.0, [0.02, 0.24, 0.0, 0.0], 2),
         C::ShellRam => (0.52, 94.0, 0.42, 0.62, -3.0, [0.30, 0.37, 0.0, 0.0], 2),
@@ -4331,6 +4414,20 @@ mod tests {
 #[cfg(test)]
 mod engine_clock_tests {
     use super::*;
+
+    #[test]
+    fn shell_pass_keeps_causal_shock_and_bounded_audible_wake() {
+        let shock=synth_n_wave(0.002);
+        let pass=synth_shell_pass(0.002,76.2,650.0,5.0);
+        assert_eq!(&pass[..shock.len()],&shock);
+        assert!(pass.len()>(SAMPLE_RATE as f32*0.15) as usize);
+        assert!(pass.iter().all(|v|v.is_finite() && v.abs()<=1.0));
+        assert!(pass[shock.len()..].iter().any(|v|v.abs()>0.03));
+        assert_eq!(pass,synth_shell_pass(0.002,76.2,650.0,5.0));
+        assert_ne!(pass,synth_shell_pass(0.002,76.2,850.0,5.0));
+        assert_eq!(shock,synth_shell_pass(0.002,7.92,650.0,5.0),"rifle cracks retain their own duration");
+        assert_eq!(shock,synth_shell_pass(0.002,76.2,f32::NAN,5.0));
+    }
 
     #[test]
     fn combustion_tracks_rpm_while_the_same_structural_excitation_keeps_its_time_scale() {

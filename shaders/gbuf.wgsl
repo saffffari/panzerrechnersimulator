@@ -195,7 +195,7 @@ fn fs(in: VsOut) -> GbufOut {
     var albedo = raw;
     if (pc.params.w > 2.5 && pc.params.w < 3.5) {
         albedo = terrain_material(textureSampleLevel(albedo_tex, terrain_detail_sampler,
-                                   in.uv, terrain_macro_lod).rgb, in.world, geo_n.y,
+                                   in.uv, terrain_macro_lod), in.world, geo_n.y,
                                    cam.atmosphere.z, terrain_footprint);
     }
 

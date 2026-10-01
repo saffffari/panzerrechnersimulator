@@ -1,0 +1,71 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "canyon_v2_sight_exit_20260930",
+  "title": "Gunsight left-side exit and cabin-only cupola access",
+  "act_id": 0,
+  "night": false,
+  "station": "gunner",
+  "seconds": 8,
+  "setup": {
+    "enemy_policy": "banish"
+  },
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "station",
+      "value": "commander"
+    },
+    {
+      "at_s": 1.0,
+      "action": "station",
+      "value": "loader"
+    },
+    {
+      "from_s": 2.0,
+      "until_s": 3.0,
+      "input": {
+        "look_dx": 0.5
+      }
+    },
+    {
+      "at_s": 4.0,
+      "action": "station",
+      "value": "commander"
+    },
+    {
+      "at_s": 6.0,
+      "action": "station",
+      "value": "loader"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "current_station",
+      "at_s": 1,
+      "equals": "gunner"
+    },
+    {
+      "metric": "current_station",
+      "at_s": 3,
+      "equals": "loader"
+    },
+    {
+      "metric": "current_station",
+      "at_s": 5,
+      "equals": "commander"
+    },
+    {
+      "metric": "current_station",
+      "equals": "loader"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "Initial gunner pose and absence of enemies are staged. Station requests then use the ordinary station transition API; no position is assigned by the fixture."
+}

@@ -475,7 +475,7 @@ impl Renderer {
         pass.set_bind_group(0,camera_bind,&[]);pass.set_bind_group(1,&self.physical_environment_bind,&[]);
         pass.draw(0..3,0..1);work.fullscreen_raster_passes+=1;
         drop(pass);
-        if let Some(ao)=ao { ao.encode(encoder,color,&self.camera,work); }
+        if let Some(ao)=ao { ao.encode(encoder,color,&self.camera,self.interior_light>0.02,work); }
         self.encode_raster_glass(encoder,camera_bind,view_proj,color,depth,optical_capture,work);
     }
 

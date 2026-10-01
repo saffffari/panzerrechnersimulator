@@ -132,6 +132,38 @@ impl Film {
         }
         Ok(())
     }
+    fn terminal(&mut self, g: &mut Game, r: &mut Renderer, device: &wgpu::Device,
+        queue: &wgpu::Queue) -> anyhow::Result<()> {
+        self.segments.push(serde_json::json!({"label":"KIA / recorded fatal shot and interior aftermath",
+            "film_start_s":self.frames as f64/30.0,"replay":g.last_fatal.is_some(),
+            "audio":"live fatal tail, then silent slow motion","damage_reapplied":false}));
+        for tick in 0..(crate::DEATH_END*60.0).round() as usize {
+            let since=tick as f32/60.0;
+            g.advance_terminal_audio(1.0/60.0,r,since);
+            g.set_audio_level(1.0-crate::death_fade(since));
+            if since>=crate::DEATH_FADE {g.set_audio_silenced(true);}
+            self.samples.extend(g.render_audio_capture_frames((acoustics::SAMPLE_RATE/60) as usize)?);
+            if tick%2!=0 {continue;}
+            let rgba=if since<crate::DEATH_FADE {
+                let mut pixels=mechanic_capture::gameplay_frame(g,r,device,queue)?;
+                for pixel in pixels.chunks_exact_mut(4) {for c in &mut pixel[..3] {
+                    *c=(*c as f32*(1.0-crate::death_fade(since))).round() as u8;
+                }}
+                pixels
+            } else if let Some(phase)=crate::death_replay_phase(since).filter(|_|g.last_fatal.is_some()) {
+                g.render_replay(phase,r);
+                let pixels=r.render_replay_rgba(device,queue,since-crate::DEATH_FADE,
+                    crate::renderer::ReplayCapturePolicy::Current)?;
+                let native=image::RgbaImage::from_raw(r.iw,r.ih,pixels).unwrap();
+                image::imageops::resize(&native,1920,1080,image::imageops::FilterType::Nearest).into_raw()
+            } else {
+                [0,0,0,255].repeat(1920*1080)
+            };
+            self.encoder.stdin.as_mut().unwrap().write_all(&rgba)?;
+            self.frames+=1;
+        }
+        Ok(())
+    }
     fn finish(mut self) -> anyhow::Result<()> {
         drop(self.encoder.stdin.take());
         anyhow::ensure!(self.encoder.wait()?.success(), "video encoder failed");
@@ -175,14 +207,26 @@ impl Film {
     }
 }
 
+/// Explicitly staged damage fixture, using the same terminal recorder as a real Canyon defeat.
+pub fn record_terminal_review(prefix:&str,g:&mut Game,r:&mut Renderer,device:&wgpu::Device,
+    queue:&wgpu::Queue) -> anyhow::Result<()> {
+    let setup=format!("{prefix}_setup.json");
+    fs::write(&setup,serde_json::to_vec_pretty(&serde_json::json!([
+        {"start_s":0.0,"end_s":crate::DEATH_END,"label":"staged catastrophic penetration / terminal presentation fixture"}
+    ]))?)?;
+    let mut film=Film::new(prefix,&setup)?;
+    film.terminal(g,r,device,queue)?;
+    film.finish()
+}
+
 pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::Result<()> {
     anyhow::ensure!(
         max_s.is_finite() && max_s > 0.0,
         "positive finite duration required"
     );
     std::env::set_var("KESSEL_AUDIO_CAPTURE", "1");
-    let manifest = "assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json";
-    act_manifest::select_runtime_manifest(Some(manifest.into()))?;
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
     graphics::set_active_preset(graphics::GraphicsPreset::High);
     let instance = crate::create_instance();
     let adapter = crate::request_adapter(&instance, None);
@@ -262,18 +306,8 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     println!("[canyon-result] {receipt}");
     if let Some(mut f) = film {
         if g.game_over().is_some() {
-            // Native death presentation freezes the world and lets already-emitted audio
-            // arrive. Keep the fatal frame and its report instead of cutting a tick early.
-            let start = (state["time_s"].as_f64().unwrap() * 60.0).round() as usize;
-            for tick in 0..180 {
-                let since = (tick + 1) as f32 * dt;
-                g.advance_terminal_audio(dt, &r, since);
-                g.set_audio_level(1.0 - crate::death_fade(since));
-                if since >= crate::DEATH_FADE {
-                    g.set_audio_silenced(true);
-                }
-                f.step(&mut g, &mut r, &device, &queue, start + tick)?;
-            }
+            // Append every terminal event independently of the user's ordinary highlight cuts.
+            f.terminal(&mut g,&mut r,&device,&queue)?;
         }
         f.finish()?;
     }

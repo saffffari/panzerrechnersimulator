@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 pub const MAX_LIGHTS: usize = 8;
 const SIDE: u32 = 512;
-// The dome sits 27 mm below the source fan. A 35 mm near plane erased that blocker.
+// The smaller dome sits 14 mm below the source fan. A 35 mm near plane erased that blocker.
 // 5 mm retains it; only the fixture's explicitly registered emitting mesh is excluded.
 // Depth32Float error is bounded below 0.4 mm through 4 m (1.6 mm at the 8 m limit).
 const NEAR: f32 = 0.005;
@@ -593,7 +593,7 @@ mod tests {
         let position = crate::interior_rig::TURRET_DOME_LAMP_POS;
         let underside = crate::interior_rig::TURRET_FAN_UNDERSIDE_Y;
         let separation = underside - position.y;
-        assert!((separation - 0.027).abs() < 1e-6);
+        assert!((separation - crate::interior_rig::TURRET_DOME_LAMP_HALF_SIZE).abs() < 1e-6);
         assert!(NEAR < separation && separation < 0.035);
         let projection = face_view_proj(position, 2);
         let blocker = projection.project_point3(glam::Vec3::new(position.x, underside, position.z));

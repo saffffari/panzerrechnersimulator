@@ -488,7 +488,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
     }
     if (terrain) {
         albedo = terrain_material(textureSampleLevel(albedo_tex, terrain_detail_sampler,
-            in.uv, macro_lod).rgb, in.world, geometric_normal.y, cam.atmosphere.z, footprint);
+            in.uv, macro_lod), in.world, geometric_normal.y, cam.atmosphere.z, footprint);
         roughness = terrain_roughness(cam.atmosphere.z);
         if (cam.track_half > 1.0) {
             let track_uv = in.world.xz / (2.0 * cam.track_half) + vec2(0.5);

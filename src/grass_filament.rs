@@ -7,12 +7,12 @@ use glam::{Vec2, Vec3};
 
 pub const HEIGHT: f32 = 0.48;
 /// Winter clumps use separate closed straw blades at every detail level, never summer pads.
-pub const WINTER_BLADES: [usize; 3] = [18, 8, 5];
+pub const WINTER_BLADES: [usize; 3] = [8, 10, 12];
 // Near straw has one physical bend; coarse straw keeps only the strongest broken stems.
-const WINTER_BENT_BLADES: [usize; 3] = [18, 3, 0];
-pub const WINTER_TRIANGLES: [usize; 3] = [180, 50, 20];
+const WINTER_BENT_BLADES: [usize; 3] = [8, 2, 0];
+pub const WINTER_TRIANGLES: [usize; 3] = [80, 52, 48];
 /// Unscaled radial footprints, including a 10% margin at any yaw; population scales by width.
-pub const WINTER_FOOTPRINT: [f32; 3] = [0.42, 0.72, 1.10];
+pub const WINTER_FOOTPRINT: [f32; 3] = [0.68, 1.80, 4.40];
 pub const TRACK_CELL: f32 = 0.25;
 const TRACK_PAGE: i32 = 32; // 8 m × 8 m pages; one byte per 25 cm contact cell.
 const TRACK_PAGE_CAPACITY: usize = 65_536; // At most 64 MiB payload; never evict old tracks.
@@ -247,9 +247,11 @@ fn winter_tuft_mesh(layer: usize) -> CpuMesh {
         let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
         let tangent = Vec3::new(-direction.z, 0.0, direction.x);
         let irregular = ((i * 7 + 3) % 11) as f32 / 10.0;
-        let root = direction * ([0.03, 0.08, 0.16][layer]
-            + [0.06, 0.11, 0.10][layer] * irregular);
-        let width = [0.026, 0.055, 0.105][layer] * (0.76 + 0.35 * irregular);
+        // A distributed stand, not blades sharing one crown. Coarse layers cover the same
+        // ground with fewer wider stems; all are closed geometry and remain snow-colored gaps.
+        let root = direction * ([0.03, 0.12, 0.35][layer]
+            + [0.24, 0.94, 2.95][layer] * irregular.sqrt());
+        let width = [0.014, 0.030, 0.060][layer] * (0.76 + 0.35 * irregular);
         let depth = width * 0.24;
         let ring = |center: Vec3, taper: f32| [
             center + tangent * width * taper,

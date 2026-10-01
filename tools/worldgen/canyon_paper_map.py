@@ -14,6 +14,7 @@ ROOT=Path(__file__).resolve().parents[2]
 DEFAULT=ROOT/'assets/worldgen/workshops/gaea-canyon-run'
 
 def draw(source, output):
+    source=Path(source).resolve();output=Path(output).resolve()
     edits=json.loads((source/'manifest_edits.json').read_text())
     manifest=json.loads((source/'manifest.v1.json').read_text())
     height=np.load(source/'heights.npy').astype(float)

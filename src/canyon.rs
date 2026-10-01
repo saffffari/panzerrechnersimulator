@@ -18,6 +18,7 @@ pub const AUTHORING_MODE: &str = "course";
 /// working directory (the launchers run from the worktree root).
 pub const MANIFEST_ENV: &str = "KESSEL_CANYON_MANIFEST";
 pub const DEFAULT_MANIFEST: &str = "assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json";
+pub const V2_MANIFEST: &str = "assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json";
 const TIMES_FILE: &str = "canyon-times.v1.json";
 const TIMES_SCHEMA: &str = "panzerrechnersystem.canyon-times";
 /// The finish: the picture and every sound fade out together over this, the world still running.

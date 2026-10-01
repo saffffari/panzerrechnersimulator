@@ -32,7 +32,6 @@ const THRESHOLD: f32 = 1.30;
 const KNEE: f32 = 0.7;
 const INTENSITY: f32 = 0.18;
 const SPREAD: f32 = 1.0; // a restrained halo preserves the boundary of small emissive cells
-const PORTAL_SPREAD: f32 = 3.8; // about 26 internal pixels of support, independent of output size
 const PORTAL_INTENSITY: f32 = 0.40;
 
 fn aperture_source(depth: f32, mask: f32) -> f32 {
@@ -115,16 +114,19 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     col += textureSample(src, samp, in.uv - o * 3.0).rgb * w3;
     col += textureSample(src, samp, in.uv + o * 4.0).rgb * w4;
     col += textureSample(src, samp, in.uv - o * 4.0).rgb * w4;
-    // Fixed 9-tap broad alpha blur reuses the same targets and draw calls. Lamp RGB keeps its
-    // former kernel, while exterior light wraps gently around nearby aperture edges.
+    // Dense Gaussian support: the former nine taps were 3.8 texels apart, stamping separated
+    // copies of a narrow vision slit into a square halo. Sample every half-resolution texel.
     var aperture = 0.0;
     if (portal.depth_and_view.z > 0.5) {
-        let p = pc.texel * pc.dir * PORTAL_SPREAD;
-        aperture = textureSample(src,samp,in.uv).a*w0;
-        aperture += (textureSample(src,samp,in.uv+p).a+textureSample(src,samp,in.uv-p).a)*w1;
-        aperture += (textureSample(src,samp,in.uv+p*2.0).a+textureSample(src,samp,in.uv-p*2.0).a)*w2;
-        aperture += (textureSample(src,samp,in.uv+p*3.0).a+textureSample(src,samp,in.uv-p*3.0).a)*w3;
-        aperture += (textureSample(src,samp,in.uv+p*4.0).a+textureSample(src,samp,in.uv-p*4.0).a)*w4;
+        let p = pc.texel * pc.dir;
+        var weight_sum = 0.0;
+        for (var tap = -16; tap <= 16; tap += 1) {
+            let distance = f32(tap);
+            let weight = exp(-0.5 * distance * distance / (6.1 * 6.1));
+            aperture += textureSampleLevel(src,samp,in.uv+p*distance,0.0).a*weight;
+            weight_sum += weight;
+        }
+        aperture /= weight_sum;
     }
     return vec4(col, aperture);
 }
