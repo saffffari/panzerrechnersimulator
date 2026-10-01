@@ -14,12 +14,16 @@ pub struct DisplayTuning {
     pub ldr_dither: f32,
     /// Camera reproduction only: balance to the diffuse environmental illuminant.
     pub ambient_white_balance: bool,
+    /// Degree of that balance, 0..1. 1 fully neutralises the ambient cast; lower values model
+    /// incomplete chromatic adaptation, letting part of the illuminant colour reach the display.
+    pub ambient_white_balance_strength: f32,
 }
 
 impl DisplayTuning {
     pub fn at_resolution(width: u32, height: u32) -> Self {
         Self { width, height, palette_levels: 31.0, ordered_dither: 1.0,
-            retro_strength: 1.0, ldr_dither: 1.0, ambient_white_balance: false }
+            retro_strength: 1.0, ldr_dither: 1.0, ambient_white_balance: false,
+            ambient_white_balance_strength: 1.0 }
     }
 
     pub fn from_edits(edits: Option<&Value>) -> anyhow::Result<Option<Self>> {
@@ -43,13 +47,18 @@ impl DisplayTuning {
             ldr_dither:read("ldr_dither",0.0,1.0)?,
             ambient_white_balance: value.get("ambient_white_balance")
                 .map(|v| v.as_bool().context("display ambient_white_balance must be boolean"))
-                .transpose()?.unwrap_or(false) })
+                .transpose()?.unwrap_or(false),
+            ambient_white_balance_strength: match value.get("ambient_white_balance_strength") {
+                None | Some(Value::Null) => 1.0,
+                Some(_) => read("ambient_white_balance_strength", 0.0, 1.0)?,
+            } })
     }
 
     pub fn to_json(self) -> Value {
         json!({"width":self.width,"height":self.height,"palette_levels":self.palette_levels,
             "ordered_dither":self.ordered_dither,"retro_strength":self.retro_strength,
-            "ldr_dither":self.ldr_dither,"ambient_white_balance":self.ambient_white_balance})
+            "ldr_dither":self.ldr_dither,"ambient_white_balance":self.ambient_white_balance,
+            "ambient_white_balance_strength":self.ambient_white_balance_strength})
     }
 }
 
@@ -101,6 +110,7 @@ mod tests {
         let mut tuning = DisplayTuning::at_resolution(960,540);
         tuning.ordered_dither = 0.35;
         tuning.ambient_white_balance = true;
+        tuning.ambient_white_balance_strength = 0.65;
         assert_eq!(DisplayTuning::from_edits(Some(&json!({KEY:tuning.to_json()}))).unwrap(),Some(tuning));
         for (key, bad) in [("width",json!(777)),("ordered_dither",json!(1.5)),
             ("palette_levels",json!(2.5)),("retro_strength",json!(-0.1))] {

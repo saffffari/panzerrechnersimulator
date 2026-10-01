@@ -5520,7 +5520,9 @@ const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
 // pages independent: restoring cabin warmth must not retune distant wrecks or muzzle reports.
 const FIRE_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_BATCHES] = [
     [183, 38, 5], [255, 128, 20], [255, 182, 52], [203, 36, 5],
-    [183, 24, 4], [255, 98, 12], [255, 155, 30], [188, 25, 4],
+    // Exterior pages sit hotter than the cabin: more green and a trace of blue pull the snow
+    // wash from saturated orange toward amber with a whiter core, per the 2026-10-01 review.
+    [187, 46, 12], [255, 138, 36], [255, 196, 88], [192, 48, 13],
 ];
 // Halving the grain edge and quadrupling the count preserves approximate projected coverage
 // while breaking up the coarse black confetti. The shared cap still bounds a spreading fire.
@@ -34187,7 +34189,7 @@ mod tests {
         assert!(source.color.z / source.color.x < 0.05);
         assert!(source.radiant_intensity > 0.0 && source.radiant_intensity.is_finite());
         assert_eq!(&FIRE_FLAME_COLORS[FIRE_FLAME_STAGES..],
-            &[[183, 24, 4], [255, 98, 12], [255, 155, 30], [188, 25, 4]]);
+            &[[187, 46, 12], [255, 138, 36], [255, 196, 88], [192, 48, 13]]);
         assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.20, 0.125, 0.0625, 0.025]);
     }
 

@@ -7206,8 +7206,9 @@ impl Renderer {
             frame: (self.frame & 0xFFFF) as f32,
             rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
             rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
-            ambient_white_balance: f32::from(self.display_tuning
-                .is_some_and(|p| p.ambient_white_balance)),
+            ambient_white_balance: self.display_tuning
+                .filter(|p| p.ambient_white_balance)
+                .map_or(0.0, |p| p.ambient_white_balance_strength.clamp(0.0, 1.0)),
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,

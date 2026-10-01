@@ -33,12 +33,16 @@ struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
 // Diagonal three-channel balance is limited by the renderer's three-band colour model. It
 // neutralises a neutral receiver under that illuminant, retains material/relative source colour,
 // and preserves the reference white's luminance. No mode, depth mask or lifted black floor.
+// cr.ambient_white_balance carries the balance strength 0..1: 1 fully neutralises the ambient
+// cast, intermediate values model incomplete chromatic adaptation (part of the illuminant colour
+// survives, as it does for a real observer or daylight-balanced film under a cold overcast).
 fn camera_white_gain() -> vec3<f32> {
-    if (cr.ambient_white_balance < 0.5) { return vec3(1.0); }
+    if (cr.ambient_white_balance <= 0.0) { return vec3(1.0); }
     let white = environment_white.lanes[33].xyz;
     if (min(white.r, min(white.g, white.b)) <= 1e-12) { return vec3(1.0); }
     let luminance = dot(white, vec3(0.2126, 0.7152, 0.0722));
-    return vec3(luminance) / white;
+    let full = vec3(luminance) / white;
+    return mix(vec3(1.0), full, clamp(cr.ambient_white_balance, 0.0, 1.0));
 }
 
 // The crewman's eye maps transported radiance to the display (a reproduction transform, see
