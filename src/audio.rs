@@ -38,7 +38,7 @@ pub(crate) use tinnitus::tinnitus_dbfs;
 pub(crate) use calibrated::effort_db;
 #[cfg(test)]
 pub(crate) use calibrated::control_level_dba;
-pub use vehicles::{lowpass_for_transfer, VehicleVoice};
+pub use vehicles::{lowpass_for_transfer, VehicleVoice, GunElevationMotion};
 
 #[path = "audio_capture.rs"]
 mod capture;
@@ -50,10 +50,21 @@ mod feedback;
 mod master;
 #[path = "audio_calibrated.rs"]
 mod calibrated;
+#[path = "audio_small_arms.rs"]
+pub(crate) mod small_arms;
 #[path = "audio_vehicles.rs"]
 mod vehicles;
 #[path = "audio_engine.rs"]
 mod engine;
+#[path = "audio_loop.rs"]
+mod continuous;
+#[path = "audio_running_gear.rs"]
+mod running_gear;
+#[path = "audio_loose_track.rs"]
+mod loose_track;
+pub use loose_track::source_level as loose_track_source_level;
+pub use loose_track::REFERENCE_BELT_MPS as LOOSE_TRACK_REFERENCE_BELT_MPS;
+pub use running_gear::MotionSampler as RunningGearMotion;
 #[path = "audio_tinnitus.rs"]
 mod tinnitus;
 #[path = "audio_offline.rs"]
@@ -371,8 +382,8 @@ pub enum Sfx {
     AlarmShout,
     /// ABSITZEN infantry: an enemy rifle shot.
     RifleShot,
-    /// Enemy tank coax fire. Preserves the pre-feedback tank MG voice, which historically used
-    /// the RifleShot procedural bank entry; infantry rifle recordings must not replace it.
+    /// A real tank coax round, with its own short dry report family. World playback may use
+    /// the early verified rifle onset, without the recording's long tail or v1 character layer.
     TankMgShot,
 }
 
@@ -493,7 +504,8 @@ impl Sfx {
             Sfx::Pickup => P::Pickup,
             Sfx::LugerShot => P::LugerShot,
             Sfx::AlarmShout => P::AlarmShout,
-            Sfx::RifleShot | Sfx::TankMgShot => P::RifleShot,
+            Sfx::RifleShot => P::RifleShot,
+            Sfx::TankMgShot => P::TankMgShot,
         }
     }
 
@@ -685,6 +697,14 @@ impl Clip {
 
     fn procedural(sound: crate::acoustics::ProceduralSound) -> Clip {
         Self::from_stereo_f32(crate::acoustics::synth_procedural(sound))
+    }
+
+    fn procedural_seamless(sound: crate::acoustics::ProceduralSound, crossfade_secs: f32) -> Clip {
+        let mut clip = Self::procedural(sound);
+        let mut samples = clip.samples.to_vec();
+        seamless_loop_blend(&mut samples, clip.channels, clip.sample_rate, crossfade_secs);
+        clip.samples = samples.into();
+        clip
     }
 
     /// Collapse a licensed clip to source-domain mono at the acoustics sample rate. World playback
@@ -1376,6 +1396,8 @@ struct WeatherState {
 #[derive(Default)]
 struct EngineState {
     sink: Option<Sink>,
+    loop_control: Arc<continuous::Control>,
+    base_gain: f32,
     procedural: Arc<engine::Control>,
     /// Smoothed physical level at the ear, dB(A).
     level_dba: Option<f32>,
@@ -1401,6 +1423,7 @@ struct MgState {
 #[derive(Default)]
 struct TraverseState {
     sink: Option<Sink>,
+    loop_control: Arc<continuous::Control>,
     vol: f32,
     speed: f32,
     load: f32,
@@ -1538,6 +1561,7 @@ pub struct Audio {
     pizza_variant_counters: RefCell<Vec<u64>>,
     /// Dry source-domain procedural identities, cached once for live world propagation.
     world_mono: Vec<Arc<[f32]>>,
+    small_arm_reports: small_arms::SourceBank,
     ambience: Vec<Option<Clip>>,
     engine_clip: Option<Clip>,
     engine_recorded: bool,
@@ -1549,6 +1573,7 @@ pub struct Audio {
     amb_state: RefCell<AmbState>,
     weather_state: RefCell<WeatherState>,
     engine_state: RefCell<EngineState>,
+    running_gear_state: RefCell<running_gear::State>,
     mg_state: RefCell<MgState>,
     traverse_state: RefCell<TraverseState>,
     shriek_state: RefCell<ShriekState>,
@@ -1561,6 +1586,8 @@ pub struct Audio {
     /// Other vehicles' engines and tracks (`audio_vehicles`).
     vehicle_voices: RefCell<vehicles::VehicleVoices>,
     fire_voices: RefCell<vehicles::VehicleVoices>,
+    elevation_voices: RefCell<vehicles::VehicleVoices>,
+    loose_track_voices: RefCell<vehicles::VehicleVoices>,
     /// The tinnitus percept (`audio_tinnitus`), created the first time it is heard.
     tinnitus_control: Arc<tinnitus::TinnitusControl>,
     tinnitus_sink: RefCell<Option<Sink>>,
@@ -1592,6 +1619,7 @@ impl Audio {
     }
 
     fn load(stream: Option<OutputStream>, handle: Option<OutputStreamHandle>) -> Audio {
+        eprintln!("[audio] playback range: {} (physical source levels unchanged)", crate::reproduction::playback_range_name());
         let ear = Arc::new(ear::EarControl::default());
         let master = Arc::new(master::MasterTelemetry::default());
         let capture = handle.is_none().then(|| RefCell::new(
@@ -1746,12 +1774,17 @@ impl Audio {
             feedback::tone(&mut mono, 1800.0, 1.08, 1.0);
             mg_clips[0] = Some(Clip::from_stereo_f32(mono.into_iter().flat_map(|x| [x, x]).collect()));
         }
-        let traverse_clip = Some(Clip::procedural(
-            crate::acoustics::ProceduralSound::TurretTraverseLoop,
+        // The pump/noise synthesis is not periodic at its four-second boundary. Fold that
+        // boundary before repeating; clip_gain measures this resulting loop for calibration.
+        let traverse_clip = Some(Clip::procedural_seamless(
+            crate::acoustics::ProceduralSound::TurretTraverseLoop, 0.10,
         ));
 
         let feedback_bank = feedback::FeedbackBank::load();
-        let bank_metadata = metadata::bank_metadata(&feedback_bank, &loaded_sources, &pizza_layers);
+        let rifle_recording = feedback_bank.get("rifle_shot");
+        let small_arm_reports = small_arms::SourceBank::new(rifle_recording.as_deref());
+        let mut bank_metadata = metadata::bank_metadata(&feedback_bank, &loaded_sources, &pizza_layers);
+        bank_metadata["small_arms_reports"] = small_arm_reports.metadata();
         eprintln!("{}", metadata::startup_summary(&bank_metadata));
 
         Audio {
@@ -1767,6 +1800,7 @@ impl Audio {
             pizza_variant_counters: RefCell::new(vec![0; pizza_layers.len()]),
             pizza_layers,
             world_mono,
+            small_arm_reports,
             ambience,
             engine_clip,
             engine_recorded: recorded_engine,
@@ -1777,6 +1811,7 @@ impl Audio {
             amb_state: RefCell::new(AmbState::default()),
             weather_state: RefCell::new(WeatherState::default()),
             engine_state: RefCell::new(EngineState::default()),
+            running_gear_state: RefCell::new(running_gear::State::default()),
             mg_state: RefCell::new(MgState::default()),
             traverse_state: RefCell::new(TraverseState::default()),
             shriek_state: RefCell::new(ShriekState::default()),
@@ -1785,6 +1820,8 @@ impl Audio {
             drive_cache: RefCell::new(HashMap::new()),
             vehicle_voices: RefCell::new(vehicles::VehicleVoices::default()),
             fire_voices: RefCell::new(vehicles::VehicleVoices::default()),
+            elevation_voices: RefCell::new(vehicles::VehicleVoices::default()),
+            loose_track_voices: RefCell::new(vehicles::VehicleVoices::default()),
             tinnitus_control: Arc::new(tinnitus::TinnitusControl::default()),
             tinnitus_sink: RefCell::new(None),
         }
@@ -1830,12 +1867,14 @@ impl Audio {
         let capture = self.capture.as_ref()?.borrow();
         Some(serde_json::json!({
             "backend": "ordinary_audio_sinks_offline",
+            "playback_range": crate::reproduction::playback_range_name(),
             "sample_rate": crate::acoustics::SAMPLE_RATE, "channels": 2,
             "rendered_sample_frames": capture.rendered_frames,
             "sinks_created": capture.sinks_created, "raw_mix_peak": capture.peak,
             "nonfinite_samples": capture.nonfinite_samples,
             "clock": "samples consumed only when the simulation capture advances",
             "sink_controls": "ordinary rodio 5 ms source-sample control polling; no wall-clock ramps",
+            "continuous_machinery_controls": "engine, running gear, traverse and positioned loops: 5 ms sample-clock gain ramps; 20 ms phase-continuous rate smoothing; retire only after rendered zero; source calibration unchanged",
             "silenced": self.is_silenced(),
             "silence_gate": "every sink source is sample-gated, including scene, impact and trauma voices",
             "listener_ear": {
@@ -1997,21 +2036,11 @@ impl Audio {
         // Concussion no longer bakes a muffle into new reports here: the listener stage applies the
         // current threshold shift to every world voice, including loops already playing, and lets
         // it recover while a long report is still sounding.
-        if let Some(mono) = feedback::replacement_key(sfx).and_then(|key| self.feedback_source(key)) {
-            self.play_stereo(
-                render_world_mono_muffled(&mono, bearing_deg, occlusion, reverb, interior_amount),
-                volume,
-            );
-            return;
-        }
-        let Some(mono) = self.world_mono.get(sfx.index()) else {
-            return;
-        };
+        let Some(mono) = self.world_source(sfx) else { return; };
         self.play_stereo(
-            render_world_mono_muffled(mono, bearing_deg, occlusion, reverb, interior_amount),
+            render_world_mono_muffled(&mono, bearing_deg, occlusion, reverb, interior_amount),
             volume,
         );
-        self.play_pizza_world_layer(sfx, volume, bearing_deg, occlusion, reverb, interior_amount);
     }
 
     /// Set the master volume for loops and every live one-shot tail. `1.0` = unity. This is a
@@ -2022,6 +2051,15 @@ impl Audio {
     pub fn set_master_volume(&mut self, v: f32) {
         self.master_volume = v.clamp(0.0, 4.0);
         self.weather_state.get_mut().control.set_gain(self.master_volume);
+        self.running_gear_state.get_mut().set_master_volume(self.master_volume);
+        let engine = self.engine_state.get_mut();
+        engine.loop_control.set_gain(engine.base_gain * self.master_volume);
+        let traverse = self.traverse_state.get_mut();
+        traverse.loop_control.set_gain(traverse.vol * self.master_volume);
+        self.vehicle_voices.get_mut().set_master_volume(self.master_volume);
+        self.fire_voices.get_mut().set_master_volume(self.master_volume);
+        self.elevation_voices.get_mut().set_master_volume(self.master_volume);
+        self.loose_track_voices.get_mut().set_master_volume(self.master_volume);
         self.mechanisms.get_mut().set_master_volume(self.master_volume);
         let live = self.transients.get_mut();
         live.retain(|voice| !voice.sink.empty());
@@ -2072,6 +2110,7 @@ impl Audio {
         for (sink, _) in ambience.active.iter().chain(ambience.outgoing.iter()) { apply(sink); }
         if let Some(sink) = &self.weather_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.engine_state.borrow().sink { apply(sink); }
+        self.running_gear_state.borrow().set_paused(paused);
         if let Some(sink) = &self.mg_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.traverse_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.shriek_state.borrow().sink { apply(sink); }
@@ -2079,6 +2118,8 @@ impl Audio {
         self.mechanisms.borrow().set_paused(paused);
         self.vehicle_voices.borrow().set_paused(paused);
         self.fire_voices.borrow().set_paused(paused);
+        self.elevation_voices.borrow().set_paused(paused);
+        self.loose_track_voices.borrow().set_paused(paused);
         if let Some(sink) = &*self.tinnitus_sink.borrow() { apply(sink); }
     }
 
@@ -2244,11 +2285,13 @@ impl Audio {
         let mut st = self.engine_state.borrow_mut();
         if st.sink.is_none() {
             if let Ok(sink) = self.create_sink() {
-                sink.set_volume(0.0);
+                // The source starts at zero and applies targets on its stereo sample clock.
                 if self.engine_recorded {
-                    sink.append(clip.source().repeat_infinite());
+                    sink.append(continuous::Continuous::new(clip.source().convert_samples::<f32>().repeat_infinite(),
+                        Arc::clone(&st.loop_control)));
                 } else {
-                    sink.append(engine::EngineSource::new(Arc::clone(&st.procedural)));
+                    sink.append(continuous::Continuous::new(engine::EngineSource::new(Arc::clone(&st.procedural)),
+                        Arc::clone(&st.loop_control)));
                 }
                 st.sink = Some(sink);
             }
@@ -2301,13 +2344,11 @@ impl Audio {
             crate::reproduction::voice_gain(level, engine::measured_laf(target_speed))
         };
         st.procedural.set_speed(target_speed);
-        if let Some(sink) = st.sink.as_ref() {
-            let vol = gain * self.master_volume * st.off_fade;
-            sink.set_volume(vol);
-            // Resample only an optional recorded engine. Procedural machinery keeps fixed-Hz
-            // structure filters; its combustion clock alone follows the authored RPM mapping.
-            sink.set_speed(if self.engine_recorded { target_speed } else { 1.0 });
-        }
+        st.base_gain = gain * st.off_fade;
+        st.loop_control.set_gain(st.base_gain * self.master_volume);
+        // Only optional recorded engines are resampled. Procedural structure filters retain
+        // fixed Hz and their combustion clock already follows sample-smoothed RPM.
+        st.loop_control.set_rate(if self.engine_recorded { target_speed } else { 1.0 });
     }
 
     /// Gain placing the engine loop, played at `speed`, at `ear_laf_dba`. Playback speed shifts the
@@ -2447,8 +2488,8 @@ impl Audio {
         let mut st = self.traverse_state.borrow_mut();
         if moving && st.sink.is_none() {
             if let (Some(clip), Ok(sink)) = (&self.traverse_clip, self.create_sink()) {
-                sink.set_volume(0.0);
-                sink.append(clip.source().repeat_infinite());
+                sink.append(continuous::Continuous::new(clip.source().convert_samples::<f32>().repeat_infinite(),
+                    Arc::clone(&st.loop_control)));
                 st.sink = Some(sink);
                 st.vol = 0.0;
             }
@@ -2475,13 +2516,12 @@ impl Audio {
                 (dt / TRAVERSE_FADE_OUT_SECS).clamp(0.0, 1.0)
             };
             st.vol += ((if moving { target } else { 0.0 }) - st.vol) * ramp;
-            if st.vol <= 0.0 && !moving {
-                if let Some(sink) = st.sink.take() {
-                    sink.stop();
-                }
-            } else if let Some(sink) = st.sink.as_ref() {
-                sink.set_volume(st.vol * self.master_volume);
-                sink.set_speed(playback);
+            if !moving && st.vol < 1e-5 { st.vol = 0.0; }
+            st.loop_control.set_gain(st.vol * self.master_volume);
+            st.loop_control.set_rate(playback);
+            // The audio thread must finish its final gain ramp before a sink can be retired.
+            if st.vol == 0.0 && !moving && st.loop_control.is_silent() {
+                if let Some(sink) = st.sink.take() { sink.stop(); }
             }
         }
     }
@@ -3066,29 +3106,18 @@ mod tests {
     }
 
     #[test]
-    fn tank_mg_keeps_exact_pre_feedback_waveform_and_infantry_recording_is_separate() {
-        use crate::acoustics::{synth_procedural, synth_procedural_dry, ProceduralSound};
-
-        // This is the explicit historical voice, not the newly replaced infantry playback path.
-        let old_stereo = synth_procedural(ProceduralSound::RifleShot);
-        let tank_stereo = synth_procedural(Sfx::TankMgShot.procedural());
-        assert_eq!(tank_stereo, old_stereo);
-        let old_dry = stereo_source_to_mono(&synth_procedural_dry(ProceduralSound::RifleShot));
-        let tank_dry = procedural_world_mono(Sfx::TankMgShot);
-        assert_eq!(tank_dry, old_dry);
+    fn tank_mg_and_rifle_have_distinct_dry_reports_with_one_live_environment() {
+        let rifle = procedural_world_mono(Sfx::RifleShot);
+        let mg = procedural_world_mono(Sfx::TankMgShot);
+        assert_ne!(mg, rifle);
+        assert!(mg.len() < rifle.len());
         assert_eq!(feedback::replacement_key(Sfx::TankMgShot), None);
         assert_eq!(feedback::replacement_key(Sfx::RifleShot), Some("rifle_shot"));
-
-        // The public propagation path must preserve the old voice in either listening state.
-        for interior in [0.0, 1.0] {
-            assert_eq!(
-                render_world_mono_muffled(
-                    &tank_dry, 38.0, 0.3, crate::acoustics::ReverbParams::VILLAGE, interior,
-                ),
-                render_world_mono_muffled(
-                    &old_dry, 38.0, 0.3, crate::acoustics::ReverbParams::VILLAGE, interior,
-                ),
-            );
+        let reverb=crate::acoustics::ReverbParams::OPEN_SNOW;
+        for mono in [&rifle,&mg] {
+            let rendered=render_world_mono(mono,38.0,0.3,reverb);
+            let tail=(reverb.rt60_s.clamp(0.08,3.0)*1.25*crate::acoustics::SAMPLE_RATE as f32) as usize;
+            assert_eq!(rendered.len()/2,mono.len()+tail);
         }
     }
 
@@ -3268,6 +3297,26 @@ mod tests {
     }
 
     #[test]
+    fn hydraulic_loop_seam_matches_source_continuity_without_a_boundary_step() {
+        let raw = Clip::procedural(crate::acoustics::ProceduralSound::TurretTraverseLoop);
+        let folded = Clip::procedural_seamless(crate::acoustics::ProceduralSound::TurretTraverseLoop, 0.10);
+        let seam = |clip: &Clip| (0..2).map(|c|
+            (clip.samples[c] as f32-clip.samples[clip.samples.len()-2+c] as f32).abs())
+            .fold(0.0f32,f32::max);
+        let original=seam(&raw);let joined=seam(&folded);
+        eprintln!("traverse source seam: {original} i16 units; folded seam: {joined} i16 units");
+        for c in 0..2 {
+            let adjacent = raw.samples[folded.samples.len()+c] as i32
+                - raw.samples[folded.samples.len()-2+c] as i32;
+            let actual = folded.samples[c] as i32-folded.samples[folded.samples.len()-2+c] as i32;
+            assert!((actual-adjacent).abs()<=2,"joined seam must follow the original adjacent samples");
+        }
+        // Only the first crossfade window and redundant tail change; the long body is preserved.
+        let n=crate::acoustics::SAMPLE_RATE as usize/10*2;
+        assert_eq!(&raw.samples[n..folded.samples.len()],&folded.samples[n..]);
+    }
+
+    #[test]
     fn hydraulic_traverse_inherits_engine_revs_and_stays_below_engine() {
         let (idle_volume, idle_pitch) = traverse_mix_targets(1.0, 0.35, 0.10, 0.2, true);
         let (rev_volume, rev_pitch) = traverse_mix_targets(1.0, 0.35, 0.90, 0.2, true);
@@ -3364,7 +3413,11 @@ mod tests {
                 "{} WAV is empty",
                 entry.name
             );
-            assert!(entry.duration_secs > 0.1 && entry.peak > 0.001 && entry.rms > 0.0005);
+            // A single 90ms MG report must fit between rounds; it is not a burst loop.
+            if entry.name == "tank_mg_shot" {
+                assert!((entry.duration_secs-0.090).abs()<1.0/crate::acoustics::SAMPLE_RATE as f32);
+            } else { assert!(entry.duration_secs>0.1,"{} duration",entry.name); }
+            assert!(entry.peak>0.001 && entry.rms>0.0005,"{} must contain audible energy",entry.name);
         }
         std::fs::remove_dir_all(dir).expect("remove temporary soundbank");
     }

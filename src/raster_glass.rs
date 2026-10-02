@@ -64,7 +64,7 @@ impl Renderer {
     /// projected depth; it never borrows the main eye for a differently oriented objective.
     pub(super) fn encode_raster_glass(&self, encoder: &mut wgpu::CommandEncoder,
         camera_bind: &wgpu::BindGroup, view_proj: Mat4, color: &wgpu::TextureView,
-        depth: &wgpu::TextureView, optical_capture: bool, work: &mut RenderWorkStats) {
+        depth: &wgpu::TextureView, optical_capture: bool, viewport: Option<[u32;2]>, work: &mut RenderWorkStats) {
         let Some(pipeline) = (if optical_capture {&self.raster_glass_pipe}else{&self.raster_glow_glass_pipe}) else { return; };
         let planes = super::frustum_planes(view_proj);
         let mut panes: Vec<_> = self.meshes.iter().enumerate().filter_map(|(index, mesh)| {
@@ -95,6 +95,10 @@ impl Renderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+        if let Some([width,height])=viewport {
+            pass.set_viewport(0.0,0.0,width as f32,height as f32,0.0,1.0);
+            pass.set_scissor_rect(0,0,width,height);
+        }
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, camera_bind, &[]);
         pass.set_bind_group(2, &self.shadow_bind, &[]);

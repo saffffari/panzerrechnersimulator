@@ -13,7 +13,7 @@ use super::*;
 
 /// Gun slots: the courtyard and street encounters field two (the battalion's platoon), the CANYON
 /// course one per choke (src/canyon.rs). Crews fill the soldiers after the tank escorts.
-pub(super) const AT_GUNS: usize = 3;
+pub(super) const AT_GUNS: usize = 6;
 /// Men at the gun (the full detachment was six, plus drivers and horses kept away from it).
 pub(super) const CREW: usize = 4;
 /// Garrison soldiers after the tank escort pairs serve the guns.
@@ -24,6 +24,9 @@ pub(super) const TRAVERSE_LIMIT: f32 = 0.5236;
 pub(super) const AIMED_INTERVAL_S: f32 = 8.5;
 /// First round after the gun is laid on a new target (tuning).
 const LAY_S: f32 = 3.0;
+/// Keep an already laid weapon through a short interruption in the gun commander's sight.
+/// Authored crew-response tuning, not extra perception: no aiming or firing without current LOS.
+const REACQUIRE_HOLD_S: f32 = 1.5;
 /// Hauling the trails round to bring the gun onto a target beyond its traverse (tuning).
 pub(super) const SHIFT_TRAILS_S: f32 = 10.0;
 /// Doctrine: hold fire until the tank is this close.
@@ -72,6 +75,7 @@ pub(super) struct AtGun {
     pub traverse: f32,
     pub state: GunState,
     pub timer: f32,
+    sight_lost_s: f32,
     pub apcr: u8,
     pub shots: u32,
     /// The crew heard the fight start: a Tiger's gun, or its own platoon's other gun.
@@ -89,7 +93,7 @@ const RIFLEMAN_DISPERSION: f32 = 1.8;
 
 impl AtGun {
     pub fn new(pos: Vec3, heading: f32) -> Self {
-        Self { pos, heading, sited: heading, traverse: 0.0, state: GunState::Hidden, timer: 0.0,
+        Self { pos, heading, sited: heading, traverse: 0.0, state: GunState::Hidden, timer: 0.0, sight_lost_s: 0.0,
             apcr: APCR_ROUNDS, shots: 0, heard: false, riflemen: [None; RIFLEMEN] }
     }
 
@@ -106,6 +110,13 @@ impl AtGun {
         (upper.transform_point3(Vec3::new(0.0, BORE_Y, BARREL_END)),
             upper.transform_vector3(Vec3::Z).normalize())
     }
+    /// Exact current visual pose, also used for projectile contact after a gun is wrecked.
+    pub(super) fn visible_upper(&self)->Mat4 {
+        if self.state==GunState::Wrecked {
+            self.upper()*Mat4::from_translation(Vec3::new(0.25,-0.18,-0.2))
+                *Mat4::from_rotation_z(0.35)*Mat4::from_rotation_x(0.42)
+        } else {self.upper()}
+    }
     pub fn working(&self) -> bool {
         !matches!(self.state, GunState::Silenced | GunState::Wrecked)
     }
@@ -119,14 +130,22 @@ impl AtGun {
             return false;
         }
         if self.state == GunState::Silenced { self.state = GunState::Hidden; }
-        self.timer = (self.timer - dt.max(0.0)).max(0.0);
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        self.timer = (self.timer - dt).max(0.0);
         // Fewer hands: slower service (tuning).
         let hands = if crew >= 3 { 1.0 } else { 1.6 };
         let Some(c) = contact.filter(|c| c.visible) else {
-            if self.state != GunState::Down { self.state = GunState::Hidden; }
-            else if self.timer == 0.0 { self.state = GunState::Hidden; }
+            self.sight_lost_s += dt;
+            if self.state == GunState::Down {
+                if self.timer == 0.0 { self.state = GunState::Hidden; }
+            } else if self.sight_lost_s > REACQUIRE_HOLD_S {
+                self.state = GunState::Hidden;
+            }
+            // Reload/service can finish while concealed, but the last observed pose is frozen.
+            // In particular, never use the bearing/range carried by an invisible Contact.
             return false;
         };
+        self.sight_lost_s = 0.0;
         if self.state == GunState::Down {
             if self.timer == 0.0 && c.range_m > REMAN_M { self.state = GunState::Hidden; }
             return false;
@@ -160,7 +179,8 @@ impl AtGun {
         self.traverse = want;
         if self.state != GunState::Engaging {
             self.state = GunState::Engaging;
-            self.timer = LAY_S * hands;
+            // Reacquisition must not shorten a reload that started before LOS was lost.
+            self.timer = self.timer.max(LAY_S * hands);
             return false;
         }
         if self.timer > 0.0 { return false; }
@@ -257,7 +277,7 @@ fn merge(parts: Vec<CpuMesh>) -> CpuMesh {
 }
 
 /// Wheels, axle and the split trails: the part that stays put while the gun traverses.
-pub(super) fn lower_mesh() -> CpuMesh {
+pub(super) fn lower_parts() -> Vec<CpuMesh> {
     const WASH: [u8; 3] = [178, 182, 176];
     const TYRE: [u8; 3] = [30, 30, 30];
     let mut parts = Vec::new();
@@ -271,19 +291,21 @@ pub(super) fn lower_mesh() -> CpuMesh {
                 * Mat4::from_rotation_y(-side * 0.21) * Mat4::from_rotation_x(-0.17));
         parts.push(trail);
     }
-    merge(parts)
+    parts
 }
+pub(super) fn lower_mesh()->CpuMesh {merge(lower_parts())}
 
 /// Shield, cradle and barrel: the part that traverses.
-pub(super) fn upper_mesh() -> CpuMesh {
+pub(super) fn upper_parts() -> Vec<CpuMesh> {
     const WASH: [u8; 3] = [186, 190, 184];
     const STEEL: [u8; 3] = [66, 72, 62];
-    merge(vec![
+    vec![
         box_mesh(Vec3::new(-0.60, 0.30, 0.15), Vec3::new(0.60, 1.18, 0.19), WASH),
         box_mesh(Vec3::new(-0.10, BORE_Y - 0.10, -0.85), Vec3::new(0.10, BORE_Y + 0.08, 0.20), STEEL),
         box_mesh(Vec3::new(-0.035, BORE_Y - 0.035, 0.20), Vec3::new(0.035, BORE_Y + 0.035, BARREL_END), STEEL),
-    ])
+    ]
 }
+pub(super) fn upper_mesh()->CpuMesh {merge(upper_parts())}
 
 impl Game {
     /// Site the guns (at most `AT_GUNS`) and put their crews at them.
@@ -442,20 +464,12 @@ impl Game {
         println!("[at-guns] gun {g} fires {} at {:.0} m ({:?})", shell.name, range_m, round);
     }
 
-    /// Nearest contact of a swept step with a standing gun's shield and carriage.
-    pub(super) fn at_gun_contact(&self, start: Vec3, end: Vec3) -> Option<ProjectileContact> {
-        let mut best: Option<ProjectileContact> = None;
-        for (g, gun) in self.at_guns.iter().enumerate() {
-            let Some(gun) = gun.filter(|gun| gun.state != GunState::Wrecked) else { continue; };
-            let inverse = gun.upper().inverse();
-            let (a, b) = (inverse.transform_point3(start), inverse.transform_point3(end));
-            let Some((fraction, _)) = segment_local_aabb_contact(a, b, HIT_MIN, HIT_MAX) else { continue; };
-            let t_m = start.distance(end) * fraction;
-            if best.is_none_or(|old| t_m < old.t_m) {
-                best = Some(ProjectileContact { t_m, pos: start.lerp(end, fraction), kind: ProjectileContactKind::AtGun(g) });
-            }
-        }
-        best
+    /// Source triangles in the same intact/wrecked models passed to the renderer. No live-gun
+    /// filter: wrecks remain solid, and the ordinary nearest-contact query still compares crew.
+    pub(super) fn at_gun_contact(&self,start:Vec3,end:Vec3,passed:Option<(usize,u8)>)->Option<ProjectileContact> {
+        self.at_guns.iter().enumerate().filter_map(|(index,gun)|
+            gun.and_then(|gun|at_gun_ballistics::source_contact(index,&gun,start,end,passed)))
+            .min_by(|a,b|a.t_m.total_cmp(&b.t_m))
     }
 
     /// A cannon round or a close high-explosive burst wrecks the gun.
@@ -491,10 +505,7 @@ impl Game {
             r.set_visible(upper, true);
             r.set_model(lower, gun.carriage());
             // A wrecked gun's upper carriage is knocked off its pivot and down onto the trails.
-            let upper_model = if gun.state == GunState::Wrecked {
-                gun.upper() * Mat4::from_translation(Vec3::new(0.25, -0.18, -0.2))
-                    * Mat4::from_rotation_z(0.35) * Mat4::from_rotation_x(0.42)
-            } else { gun.upper() };
+            let upper_model = gun.visible_upper();
             r.set_model(upper, upper_model);
         }
     }
@@ -587,6 +598,44 @@ mod tests {
         let mut gun = AtGun::new(Vec3::ZERO, 0.0);
         assert_eq!(run(&mut gun, seen(450.0, 0.0, true), CREW, 30.0), 0, "beyond 400 m it waits");
         assert_eq!(run(&mut gun, seen(300.0, 2.2, true), CREW, 30.0), 0, "outside its sector it waits");
+    }
+
+    #[test]
+    fn brief_occlusion_keeps_laying_without_tracking_or_firing_through_cover() {
+        let mut gun = AtGun::new(Vec3::ZERO, 0.0);
+        assert!(!gun.step(seen(300.0, 0.1, true), CREW, 0.05));
+        let original_heading = gun.heading;
+        let original_traverse = gun.traverse;
+        // An adversarial invisible contact changes hidden bearing/range every gap.
+        let hidden = Some(Contact {range_m: 2.0, bearing: 2.8, visible: false, alerted: true});
+        for _ in 0..30 {
+            assert!(!gun.step(hidden, CREW, 0.05));
+            assert_eq!(gun.heading, original_heading);
+            assert_eq!(gun.traverse, original_traverse);
+            let fired = gun.step(seen(300.0, 0.1, true), CREW, 0.05);
+            if fired { assert_eq!(gun.shots, 1); return; }
+        }
+        // Float countdown tolerance: one more real visible update can cross the laying boundary.
+        assert!(gun.step(seen(300.0, 0.1, true), CREW, 0.05));
+        assert_eq!(gun.shots, 1);
+    }
+
+    #[test]
+    fn long_occlusion_requires_relaying_and_cannot_accelerate_reload() {
+        let mut gun = AtGun::new(Vec3::ZERO, 0.0);
+        assert_eq!(run(&mut gun, seen(300.0, 0.1, true), CREW, 3.2), 1);
+        assert_eq!(run(&mut gun, None, CREW, 2.0), 0);
+        assert_eq!(gun.state, GunState::Hidden);
+        let reload_remaining = gun.timer;
+        assert!(reload_remaining > LAY_S);
+        assert!(!gun.step(seen(300.0, 0.1, true), CREW, 0.05));
+        assert!((gun.timer - (reload_remaining - 0.05)).abs() < 1e-5);
+        assert_eq!(run(&mut gun, seen(300.0, 0.1, true), CREW, 3.1), 0);
+        assert_eq!(run(&mut gun, None, CREW, 20.0), 0);
+        assert!(!gun.step(seen(300.0, 0.1, true), CREW, 0.05));
+        assert!((gun.timer - LAY_S).abs() < 1e-5);
+        assert_eq!(run(&mut gun, seen(300.0, 0.1, true), CREW, 2.5), 0);
+        assert_eq!(run(&mut gun, seen(300.0, 0.1, true), CREW, 0.7), 1);
     }
 
     #[test]

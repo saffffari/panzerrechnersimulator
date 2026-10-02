@@ -317,7 +317,7 @@ impl Game {
                 if !soldier.alive {
                     continue;
                 }
-                let height = if i < N_SOLDIERS {
+                let height = if i < self.soviet_soldier_count {
                     1.75
                 } else {
                     crate::infantry_combat::GERMAN_BODY_HEIGHTS[soldier.crouch_stage.min(4)]

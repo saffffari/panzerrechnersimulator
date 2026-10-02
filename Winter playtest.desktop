@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Winter playtest
+GenericName=Tank simulation
+Comment=Fresh Canyon v2 run using the MAIN release and winter game assets
+Exec=/home/alex/panzer/canyon-v2-20260930/tools/launch_winter_playtest.sh
+TryExec=/home/alex/panzer/canyon-v2-20260930/tools/launch_winter_playtest.sh
+Path=/home/alex/panzer/canyon-v2-20260930
+Icon=panzerrechnersystem
+Terminal=false
+Categories=Game;Simulation;
+StartupNotify=true
+StartupWMClass=Panzerrechnersystem
+PrefersNonDefaultGPU=true
+Actions=Menu;
+
+[Desktop Action Menu]
+Name=Main menu and settings
+Exec=/home/alex/panzer/canyon-v2-20260930/tools/launch_winter_playtest.sh --menu

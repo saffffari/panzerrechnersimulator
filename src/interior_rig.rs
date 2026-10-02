@@ -216,15 +216,25 @@ pub const COMMANDER_TRAVERSE_WHEEL_AXIS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 /// turret revolution. Keeping the real ratio also makes powered traverse read as driven machinery.
 pub const COMMANDER_TRAVERSE_TURNS_PER_TURRET_REV: f32 = 595.0;
 
-/// The 65 rack-shell slots (from the `Shells` collection): the engine instances the textured
-/// round mesh at each. `(Frame, pos, quat_engine [x,y,z,w])` — quat = blender XYZ-euler swizzled
-/// to engine axes ((x,z,-y) component swap). Slots deplete as ammunition is spent.
-/// One whole loader-side forward rack is HE. All other racks are AP. Source slot IDs are
-/// deliberately enumerated: source export order interleaves the separate trays.
-pub const HE_RACK_SLOTS: [usize; 12] = [41, 42, 43, 47, 48, 49, 59, 60, 61, 62, 63, 64];
-pub fn shell_slot_is_he(index: usize) -> bool { HE_RACK_SLOTS.contains(&index) }
+/// The64 real source cartridges rest in fixed hull trays Hull_0559..0566 and Hull_0735..0742.
+/// Source hierarchy mislabeled48 of them as turret-attached. Source slot32 (Turret_0125) is
+/// a1.9866m non-cartridge fitting admitted by the old long/thin filter, not a65th round.
+/// Runtime indices are compact; source IDs remain0..31,33..64 for damage/primer provenance.
+pub const RACK_FITTING_GLB:&str="assets/tanks/tiger/baked/tiger_rack_fitting.glb";
+pub const REJECTED_NON_CARTRIDGE_SOURCE_SLOT: usize = 32;
+pub const HE_RACK_SOURCE_IDS: [usize;12] = [41,42,43,47,48,49,59,60,61,62,63,64];
+pub const fn shell_source_id(index:usize)->u32 {
+    (if index<REJECTED_NON_CARTRIDGE_SOURCE_SLOT {index}else{index+1}) as u32
+}
+pub const fn shell_slot_from_source_id(id:u32)->Option<usize> {
+    if id>=65 || id==REJECTED_NON_CARTRIDGE_SOURCE_SLOT as u32 {None}
+    else {Some(if id<REJECTED_NON_CARTRIDGE_SOURCE_SLOT as u32 {id as usize}else{id as usize-1})}
+}
+pub fn shell_slot_is_he(index: usize) -> bool {
+    HE_RACK_SOURCE_IDS.contains(&(shell_source_id(index) as usize))
+}
 
-pub const SHELL_SLOTS: &[(Frame, Vec3, [f32; 4])] = &[
+pub(crate) const AUTHORED_SHELL_SLOTS: &[(Frame, Vec3, [f32; 4])] = &[
     (
         Frame::Hull,
         Vec3::new(1.561, 1.75, -0.5445),
@@ -551,6 +561,81 @@ pub const SHELL_SLOTS: &[(Frame, Vec3, [f32; 4])] = &[
         [0.0, 0.0, -0.0, 1.0],
     ),
 ];
+
+const fn hull_stowage_slots() -> [(Frame,Vec3,[f32;4]);AUTHORED_SHELL_SLOTS.len()-1] {
+    let mut slots=[(Frame::Hull,Vec3::ZERO,[0.0,0.0,0.0,1.0]);AUTHORED_SHELL_SLOTS.len()-1];
+    let pivot=crate::tank::TIGER_PARTS.turret_pivot;
+    let mut i=0;
+    while i<slots.len() {
+        let (frame,p,q)=AUTHORED_SHELL_SLOTS[shell_source_id(i) as usize];
+        let p=match frame {Frame::Hull=>p,Frame::Turret=>Vec3::new(p.x+pivot.x,p.y+pivot.y,p.z+pivot.z)};
+        slots[i]=(Frame::Hull,p,q);i+=1;
+    }
+    slots
+}
+pub const SHELL_SLOTS: &[(Frame,Vec3,[f32;4])] = &hull_stowage_slots();
+
+#[cfg(test)]
+mod ammunition_stowage_tests {
+    use super::*;
+    use glam::{Mat4,Quat};
+    #[test]
+    fn source_tray_attachment_preserves_every_round_at_zero_traverse() {
+        assert_eq!(SHELL_SLOTS.len(),64);
+        assert_eq!(AUTHORED_SHELL_SLOTS.iter().filter(|s|s.0==Frame::Turret).count(),49);
+        let pivot=Mat4::from_translation(crate::tank::TIGER_PARTS.turret_pivot);
+        for (index,new) in SHELL_SLOTS.iter().enumerate() {
+            let old=&AUTHORED_SHELL_SLOTS[shell_source_id(index) as usize];
+            let old_model=if old.0==Frame::Hull {Mat4::IDENTITY}else{pivot}*Mat4::from_rotation_translation(Quat::from_array(old.2),old.1);
+            let new_model=Mat4::from_rotation_translation(Quat::from_array(new.2),new.1);
+            assert_eq!(old_model,new_model);assert!(new.0==Frame::Hull);
+        }
+    }
+    #[test]
+    fn source_ids_preserve_ammunition_nature_and_reject_the_non_cartridge() {
+        for i in 0..SHELL_SLOTS.len() {
+            assert_eq!(shell_slot_from_source_id(shell_source_id(i)),Some(i));
+        }
+        assert_eq!(shell_source_id(31),31); assert_eq!(shell_source_id(32),33);
+        assert_eq!(shell_source_id(63),64);
+        assert_eq!(shell_slot_from_source_id(32),None);
+        assert_eq!(shell_slot_from_source_id(65),None);
+        assert_eq!((0..64).filter(|&i|shell_slot_is_he(i)).count(),12);
+        assert_eq!((0..64).filter(|&i|shell_slot_is_he(i)).map(shell_source_id).collect::<Vec<_>>(),
+            HE_RACK_SOURCE_IDS.map(|i|i as u32));
+    }
+    #[test]
+    fn ammunition_stowage_retains_actual_source_cartridges_and_restores_the_fitting_once() {
+        let receipt:serde_json::Value=serde_json::from_slice(&crate::resource::read(
+            "assets/tanks/tiger/baked/tiger_rack_source.json").unwrap()).unwrap();
+        let rows=receipt["source_slots"].as_array().unwrap();
+        assert_eq!(rows.len(),65);
+        for (i,row) in rows.iter().enumerate() {
+            assert_eq!(row["source_id"].as_u64(),Some(i as u64));
+            let length=row["dimensions_m"].as_array().unwrap().iter().map(|x|x.as_f64().unwrap()).fold(0.0,f64::max);
+            if i==32 {assert_eq!(row["object"],"Turret_0125");assert!(length>1.98 && length<1.99);}
+            else {assert!(length>0.98 && length<0.99);assert!(shell_slot_from_source_id(i as u32).is_some());}
+        }
+        let raw=crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hull.glb").unwrap();
+        let restored=crate::gltf_load::load_glb_partitioned_roots_with_source_addition(
+            "assets/tanks/tiger/baked/tiger_hull.glb",&[],None,Some((RACK_FITTING_GLB,"Turret_0125"))).unwrap().remove(0);
+        let fitting=crate::gltf_load::load_glb(RACK_FITTING_GLB).unwrap();
+        assert_eq!(fitting.indices.len()/3,2176);
+        assert_eq!(restored.vertices.len(),raw.vertices.len()+fitting.vertices.len());
+        assert_eq!(&restored.indices[..raw.indices.len()],&raw.indices);
+        for (before,after) in raw.vertices.iter().zip(&restored.vertices) {
+            assert_eq!(before.pos,after.pos);assert_eq!(before.normal,after.normal);assert_eq!(before.tangent,after.tangent);
+        }
+        for (source,added) in fitting.vertices.iter().zip(&restored.vertices[raw.vertices.len()..]) {
+            assert_eq!(source.pos,added.pos);assert_eq!(source.normal,added.normal);
+        }
+        // On a future corrected bake the root already exists: addition is idempotent.
+        let already=crate::gltf_load::load_glb_partitioned_roots_with_source_addition(
+            RACK_FITTING_GLB,&[],None,Some((RACK_FITTING_GLB,"Turret_0125"))).unwrap().remove(0);
+        assert_eq!(already.vertices.len(),fitting.vertices.len());assert_eq!(already.indices,fitting.indices);
+    }
+
+}
 
 #[cfg(test)]
 mod lamp_mount_tests {

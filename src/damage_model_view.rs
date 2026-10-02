@@ -150,8 +150,8 @@ fn round_mesh_slot(g: &Game, stable_id: u32) -> Option<usize> {
         } else {
             g.slots.loose_shell[i]
         })
-    } else if (stable_id as usize) < crate::interior_rig::SHELL_SLOTS.len() {
-        Some(g.slots.shell0 + stable_id as usize)
+    } else if let Some(index) = crate::interior_rig::shell_slot_from_source_id(stable_id) {
+        Some(g.slots.shell0 + index)
     } else {
         None
     }

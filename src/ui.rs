@@ -208,6 +208,27 @@ impl Default for LanMenuModel {
 }
 
 impl LanMenuModel {
+    pub fn visible_session_start(&self, count: usize) -> usize {
+        if count <= 4 { 0 }
+        else if matches!(self.selection(count), LanMenuSelection::Back) { count-4 }
+        else {
+            let selected = match self.selection(count) { LanMenuSelection::Session(i) => i, _ => 0 };
+            selected.saturating_sub(1).min(count-4)
+        }
+    }
+    pub fn row_at(&self, x:f32, y:f32, session_count:usize) -> Option<usize> {
+        if !(0.065..=0.94).contains(&x) { return None; }
+        for (row,top) in [(LAN_IDX_HOST,0.325),(LAN_IDX_MANUAL,0.390),
+            (LAN_IDX_SPLITSCREEN,0.443),(LAN_IDX_COUCH_DEVICES,0.495),
+            (Self::back_index(session_count),0.840)] {
+            if (top..top+0.045).contains(&y) { return Some(row); }
+        }
+        let start=self.visible_session_start(session_count);
+        (start..(start+4).min(session_count)).enumerate().find_map(|(row,index)| {
+            let top=0.595+row as f32*0.055;
+            (top..top+0.045).contains(&y).then_some(LAN_SESSION_START+index)
+        })
+    }
     pub fn row_count(session_count: usize) -> usize {
         LAN_SESSION_START + session_count + 1
     }
@@ -1721,20 +1742,7 @@ pub fn draw_lan_menu(
         Align::Left,
     );
     const VISIBLE: usize = 4;
-    let selected_session = match m.selection(sessions.len()) {
-        LanMenuSelection::Session(index) => Some(index),
-        _ => None,
-    };
-    let start = if sessions.len() <= VISIBLE {
-        0
-    } else if matches!(m.selection(sessions.len()), LanMenuSelection::Back) {
-        sessions.len() - VISIBLE
-    } else {
-        selected_session
-            .unwrap_or(0)
-            .saturating_sub(1)
-            .min(sessions.len() - VISIBLE)
-    };
+    let start = m.visible_session_start(sessions.len());
     let end = (start + VISIBLE).min(sessions.len());
     if sessions.is_empty() {
         r.draw_text(
@@ -2449,12 +2457,7 @@ pub fn draw_controls(r: &mut Renderer) {
         COL_ITEM,
         Align::Center,
     );
-    r.draw_text(
-        "Home / Menu to close",
-        0.5,
-        0.925,
-        0.032,
-        COL_HINT,
-        Align::Center,
-    );
+    r.draw_text("Driver: PgUp / PgDn manual gear · End automatic",0.5,0.890,0.024,COL_ITEM,Align::Center);
+    r.fill_rect(0.34,0.930,0.32,0.054,[0.12,0.13,0.14,1.0]);
+    r.draw_text("Back  ·  Home / Esc",0.5,0.940,0.029,COL_ITEM,Align::Center);
 }

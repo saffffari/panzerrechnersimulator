@@ -195,7 +195,8 @@ mod tests {
     fn report(stamp: Option<ReportStamp>, calibrated: bool) -> ScheduledSound {
         ScheduledSound { delay: 0.0, sfx: crate::audio::Sfx::EnemyGun,
             emission: crate::sound_propagation::Emission::gun(1.08, false, 90.0), muzzle: None,
-            source: Vec3::ZERO, buf: calibrated.then(|| vec![0.0; 4]), enemy_report: stamp }
+            source: Vec3::ZERO, source_in_player: false,
+            buf: calibrated.then(|| vec![0.0; 4]), wave: None, enemy_report: stamp }
     }
     #[test]
     fn near_and_far_reports_keep_one_voice_and_physical_arrival_time() {

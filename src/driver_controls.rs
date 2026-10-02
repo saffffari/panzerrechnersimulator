@@ -11,7 +11,7 @@ const DURATION: f32 = 0.85;
 
 pub(super) struct Source { pub wheel: CpuMesh, pub button: CpuMesh }
 #[derive(Default)]
-pub(super) struct Controls { pub steering: f32, press_age: Option<f32> }
+pub(super) struct Controls { pub steering: f32, press_age: Option<f32>, contact_pending: bool }
 impl Controls {
     pub fn reach(&self) -> f32 {
         let Some(age) = self.press_age else { return 0.0; };
@@ -20,7 +20,16 @@ impl Controls {
             else { (DURATION-age)/(DURATION-CONTACT-0.10) }.clamp(0.0,1.0);
         t*t*(3.0-2.0*t)
     }
-    pub fn request(&mut self) { if self.press_age.is_none() { self.press_age=Some(0.0); } }
+    /// A physical click dispatches its action only when the hand reaches the button.
+    pub fn request(&mut self) {
+        if self.press_age.is_none() { self.press_age=Some(0.0); self.contact_pending=true; }
+    }
+    /// A key/crew command was already handled. Show its reach without feeding a second
+    /// ignition action back into the game when this cosmetic animation reaches contact.
+    pub fn animate(&mut self) {
+        if self.press_age.is_none() {self.press_age=Some(0.0);}
+        self.contact_pending=false;
+    }
     pub fn advance_steering(&mut self, dt:f32, steer:f32) {
         let dt=dt.clamp(0.0,0.05);
         self.steering += (steer.clamp(-1.0,1.0)*0.55-self.steering)*(1.0-(-dt*10.0).exp());
@@ -30,7 +39,9 @@ impl Controls {
         let Some(age)=self.press_age else {return false;};
         let next=age+dt;
         self.press_age=if next>=DURATION {None} else {Some(next)};
-        age<CONTACT && next>=CONTACT
+        let fired=self.contact_pending && age<CONTACT && next>=CONTACT;
+        if fired || self.press_age.is_none() {self.contact_pending=false;}
+        fired
     }
     pub fn wheel_model(&self,hull:Mat4)->Mat4 {
         hull*Mat4::from_translation(WHEEL_CENTER)*Mat4::from_rotation_z(self.steering)
@@ -90,9 +101,20 @@ impl Game {
         }
         assert_eq!(fires,1);assert_eq!(c.reach(),0.0);assert!(c.steering>0.54);
     }
+    #[test] fn handled_ignition_animation_cannot_toggle_the_engine_again() {
+        let mut keyboard=Controls::default();keyboard.animate();
+        assert_eq!((0..120).filter(|_|keyboard.advance(1.0/120.0)).count(),0);
+        assert_eq!(keyboard.reach(),0.0);
+        let mut button=Controls::default();button.request();let mut actions=0;
+        for _ in 0..120 {if button.advance(1.0/120.0) {actions+=1;button.animate();}}
+        assert_eq!(actions,1,"post-action visual feedback must not request another action");
+        // An explicit command arriving during a pending physical reach consumes that action.
+        let mut pending=Controls::default();pending.request();pending.advance(0.05);pending.animate();
+        assert_eq!((0..120).filter(|_|pending.advance(1.0/120.0)).count(),0);
+    }
     #[test] fn steering_keeps_both_hands_attached_to_yoke() {
         for angle in [-0.55,0.0,0.55] {
-            let c=Controls{steering:angle,press_age:None};
+            let c=Controls{steering:angle,..Default::default()};
             let hands=c.hand_targets(Mat4::IDENTITY);
             assert!((hands[0].unwrap().distance(hands[1].unwrap())-0.38).abs()<1e-5);
         }

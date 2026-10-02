@@ -182,6 +182,7 @@ impl Game {
             0.0
         };
         let step = crate::tank_push::press(self.player.speed, pitch_along, resist, absorbed, dt);
+        self.crush_rumble=self.crush_rumble.max(crate::tank_push::collision_rumble(self.player.speed,step.speed));
         self.player.speed = step.speed;
         if step.gave_way {
             self.damage_structure(record, d.max_hp.max(d.hp).max(1.0) * 2.0, r);
@@ -320,6 +321,14 @@ impl Game {
         } else {
             self.hf.height_at(xz.x, xz.y)
         };
+        // Estimated 35 mm compression of the winter snowpack under the loaded track.
+        // This changes the physical support pose, so hull, collision, ports and visuals agree.
+        // Cellar floors and the authored bridge remain hard supports.
+        if self.act.season == crate::world::Season::Winter
+            && self.hf.openings.at(xz.x,xz.y).is_none()
+            && !(self.campaign_channel && act2_bridge_deck_height(&self.hf,xz).is_some()) {
+            height -= 0.035;
+        }
         let mut source = SOURCE_TERRAIN;
         if let Some(hit) = rubble.top_at_from(xz, ref_y + tank_support::TIGER_STEP_M) {
             if hit.height > height {
@@ -581,12 +590,8 @@ impl Game {
         });
         self.tank_ground.embedded = embedded;
 
-        // Climbing is power-limited: the engine holds first-gear speed on the steepest gradient.
-        let uphill = if forward { settled.plane.slope_s } else { -settled.plane.slope_s };
-        if uphill > 0.0 {
-            let limit = tank_support::grade_speed_limit(uphill.atan());
-            self.player.speed = self.player.speed.clamp(-limit, limit);
-        }
+        // Grade resistance and the selected gear are integrated by the authoritative player
+        // powertrain. A steady-state speed cap here would discard climbing momentum instantly.
 
         // Telemetry.
         let terrain = self.hf.height_at(self.player.pos.x, self.player.pos.z);
@@ -804,7 +809,6 @@ impl Game {
         // steps shift; a slab met edge-on slides off its bearing.
         let dir = if self.player.speed >= 0.0 { 1.0 } else { -1.0 };
         if self.press_on_structure(record, self.player.pitch * dir, dt, r) {
-            self.crush_rumble = 1.5; // the give
             return true;
         }
         if speed > 0.4 {
@@ -815,7 +819,6 @@ impl Game {
                 d.max.y.min(pose.pos.y + 0.8),
                 nose.z.clamp(d.min.z, d.max.z),
             );
-            self.crush_rumble = self.crush_rumble.max(0.55);
             if self.crush_fx_t <= 0.0 {
                 self.crush_fx_t = 0.22;
                 let seed = d.seed ^ (self.destructibles[record].hp as u32).wrapping_mul(2_654_435_761);

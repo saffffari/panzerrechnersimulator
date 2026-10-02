@@ -1,5 +1,5 @@
 //! Canyon Run: a seeded Gaea mechanics course, the placeholder for the unbuilt winter map.
-//! Two opening patrols and three sited guns form the initial defence. An adaptive director adds
+//! Two opening patrols, infantry groups and sited gun pairs form the initial defence. An adaptive director adds
 //! fresh platoons through hidden, physically checked approach routes; there is no total tank quota.
 //! Normal winter doctrine/perception owns their movement and combat. Death ends this run. The
 //! title starts a fresh seed; only successful elapsed times are stored, never a Canyon checkpoint.
@@ -108,7 +108,27 @@ fn num(value: &serde_json::Value, what: &str) -> anyhow::Result<f32> {
 /// Parse the course block of a revision's edits; `Ok(None)` when it carries none.
 pub fn from_edits(edits: Option<&serde_json::Value>) -> anyhow::Result<Option<CourseSpec>> {
     let Some(block) = edits.and_then(|e| e.get(KEY)) else { return Ok(None) };
-    parse(block).with_context(|| format!("manifest_edits.json {KEY:?}")).map(Some)
+    let mut spec = parse(block).with_context(|| format!("manifest_edits.json {KEY:?}"))?;
+    // The original garrison list covered the three main arenas but omitted every opening
+    // hamlet and saddle building. Add exterior posts at those real authored footprints.
+    for building in edits.into_iter().flat_map(|e| e["building_instances"].as_array()).flatten() {
+        let id = building["id"].as_str().unwrap_or("");
+        if !(id.starts_with("canyon.hamlet.") || id.starts_with("canyon.saddle.")) { continue; }
+        let x = num(&building["x"], "garrison building.x")?;
+        let z = num(&building["z"], "garrison building.z")?;
+        let yaw = num(&building["yaw_deg"], "garrison building.yaw_deg")?.to_radians();
+        let half_width = num(&building["width_m"], "garrison building.width_m")? * 0.5;
+        let front = num(&building["depth_m"], "garrison building.depth_m")? * 0.5 + 2.5;
+        for side in [-1.0,1.0] {
+            let local_x = side * half_width * 0.65;
+            let at = Vec2::new(x + yaw.cos()*local_x + yaw.sin()*front,
+                z - yaw.sin()*local_x + yaw.cos()*front);
+            if at.distance(spec.start) >= 160.0 && !spec.garrison.iter().any(|p|p.at.distance(at)<1.0) {
+                spec.garrison.push(Post {at, heading:yaw});
+            }
+        }
+    }
+    Ok(Some(spec))
 }
 
 pub fn parse(block: &serde_json::Value) -> anyhow::Result<CourseSpec> {
@@ -262,6 +282,21 @@ mod tests {
         bad["gun_zones"][0]["candidates"] = serde_json::json!([]);
         assert!(parse(&bad).is_err());
         assert!(is_course_manifest(Some("course")) && !is_course_manifest(Some("scene")) && !is_course_manifest(None));
+    }
+
+    #[test]
+    fn opening_building_posts_are_local_exterior_points_outside_spawn_safety_radius() {
+        let edits=serde_json::json!({KEY:block(),"building_instances":[
+            {"id":"canyon.hamlet.test","x":20.,"z":950.,"yaw_deg":90.,"width_m":10.,"depth_m":8.},
+            {"id":"canyon.hamlet.spawn","x":0.,"z":1200.,"yaw_deg":0.,"width_m":10.,"depth_m":8.}
+        ]});
+        let spec=from_edits(Some(&edits)).unwrap().unwrap();
+        assert_eq!(spec.garrison.len(),3);
+        for p in &spec.garrison[1..] {
+            assert!((p.at.x-26.5).abs()<0.001);
+            assert!((p.at.y-950.).abs()<=3.251);
+            assert!(p.at.distance(spec.start)>=160.);
+        }
     }
 
     #[test]

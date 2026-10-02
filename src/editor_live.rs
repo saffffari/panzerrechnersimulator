@@ -33,6 +33,20 @@ fn vector(value: &Value, field: &str) -> anyhow::Result<Vec3> {
     Ok(Vec3::from_array(v))
 }
 
+fn checked_tilt_edit(current: [f32; 2], expected: &Value, change: Option<&Value>) -> anyhow::Result<[f32; 2]> {
+    if let Some(expected) = expected.get("tilt_deg") {
+        let inspected = crate::assetlib::parse_tilt_deg(Some(expected), "expected.tilt_deg")?;
+        ensure!((current[0]-inspected[0]).abs() < 0.0001 && (current[1]-inspected[1]).abs() < 0.0001,
+            "placement tilt changed since inspection; preserving the user's edit");
+    } else {
+        ensure!(change.is_none(), "changing tilt requires expected.tilt_deg from a fresh snapshot");
+    }
+    match change {
+        Some(value) => crate::assetlib::parse_tilt_deg(Some(value), "tilt_deg"),
+        None => Ok(current),
+    }
+}
+
 fn slug(value: &Value) -> anyhow::Result<&str> {
     let name = value.as_str().context("name required")?;
     ensure!(!name.is_empty() && name.len() < 100 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'), "name must be a short filename slug");
@@ -122,7 +136,7 @@ impl EditorState {
         if changed {
         let placements: Vec<Value> = self.world.placements.iter().enumerate().map(|(index,p)| json!({
             "index":index,"asset":self.world.assets[p.asset],"position":p.pos.to_array(),
-            "scale":p.scale.to_array(),"yaw":p.rot_deg,"deleted":p.deleted
+            "scale":p.scale.to_array(),"yaw":p.rot_deg,"tilt_deg":p.tilt_deg,"deleted":p.deleted
         })).collect();
         let snapshot = json!({"schema":"panzer.editor-live.v1","manifest":self.world.manifest_path,
             "busy":busy,"dirty":self.has_unsaved_changes(),"status":self.status,
@@ -180,6 +194,7 @@ impl EditorState {
                     ensure!(seen.insert(index), "duplicate edited index");
                     let mut placement = self.world.placements.get(index).context("unknown index")?.clone();
                     let expected = &edit["expected"];
+                    placement.tilt_deg = checked_tilt_edit(placement.tilt_deg, expected, edit.get("tilt_deg"))?;
                     ensure!(!placement.deleted && expected["asset"].as_str() == Some(self.world.assets[placement.asset].as_str())
                         && placement.pos.distance(vector(&expected["position"], "expected.position")?) < 0.0001
                         && placement.scale.distance(vector(&expected["scale"], "expected.scale")?) < 0.0001
@@ -241,6 +256,7 @@ impl EditorState {
                 let yaw = command["yaw"].as_f64().context("yaw required")? as f32;
                 ensure!(yaw.is_finite(), "invalid yaw");
                 let current = self.world.placements.get_mut(index).context("unknown index")?;
+                let tilt = checked_tilt_edit(current.tilt_deg, expected, command.get("tilt_deg"))?;
                 ensure!(!current.deleted && current.pos.distance(vector(&expected["position"], "expected.position")?) < 0.0001
                     && current.scale.distance(vector(&expected["scale"], "expected.scale")?) < 0.0001
                     && (current.rot_deg - expected["yaw"].as_f64().context("expected.yaw required")? as f32).abs() < 0.0001,
@@ -248,6 +264,7 @@ impl EditorState {
                 current.pos = position;
                 current.scale = scale;
                 current.rot_deg = yaw;
+                current.tilt_deg = tilt;
                 let asset = current.asset;
                 self.refresh_asset(asset);
                 self.dirty = true;
@@ -267,7 +284,8 @@ impl EditorState {
                     let yaw = item["yaw"].as_f64().context("yaw required")? as f32;
                     ensure!(yaw.is_finite(), "invalid yaw");
                     let asset = self.ensure_world_asset(path).context(format!("load asset {path}"))?;
-                    pending.push(Placement { asset, pos, scale, rot_deg:yaw, deleted:false });
+                    let tilt_deg = crate::assetlib::parse_tilt_deg(item.get("tilt_deg"), "tilt_deg")?;
+                    pending.push(Placement { asset, pos, scale, rot_deg:yaw, tilt_deg, deleted:false });
                 }
                 let first = self.world.placements.len();
                 let touched = pending.iter().map(|p| p.asset).collect::<Vec<_>>();
@@ -330,7 +348,7 @@ impl EditorState {
                     let p = self.world.placements.get(index).context("unknown placement index")?;
                     if p.deleted { continue; }
                     items.push(json!({"asset":self.world.assets[p.asset],"dx":p.pos.x-anchor.x,
-                        "dz":p.pos.z-anchor.z,"hoff":p.pos.y-anchor.y,"deg":p.rot_deg,"s":p.scale.to_array()}));
+                        "dz":p.pos.z-anchor.z,"hoff":p.pos.y-anchor.y,"deg":p.rot_deg,"tilt_deg":p.tilt_deg,"s":p.scale.to_array()}));
                 }
                 ensure!(!items.is_empty(), "all prefab pieces were deleted");
                 let path = PathBuf::from(crate::assetlib::PREFAB_DIR).join(format!("{name}.json"));
@@ -353,6 +371,15 @@ impl EditorState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placement_tilt_live_edits_preserve_legacy_fields_and_check_concurrent_changes() {
+        let current=[12.0,-7.0];
+        assert_eq!(checked_tilt_edit(current,&json!({}),None).unwrap(),current);
+        assert!(checked_tilt_edit(current,&json!({}),Some(&json!([1,2]))).is_err());
+        assert!(checked_tilt_edit(current,&json!({"tilt_deg":[0,0]}),Some(&json!([1,2]))).is_err());
+        assert_eq!(checked_tilt_edit(current,&json!({"tilt_deg":current}),Some(&json!([1,2]))).unwrap(),[1.0,2.0]);
+    }
     #[test]
     fn mailbox_rejects_escaping_paths_and_bad_vectors() {
         assert!(asset_path(&json!("assets/../secret.glb")).is_err());

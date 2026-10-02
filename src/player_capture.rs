@@ -2,6 +2,15 @@
 //! They do not move actors, reload ammunition, aim the gun or alter combat.
 use super::*;
 impl Game {
+    pub fn capture_gun_mechanism(&self) -> serde_json::Value {
+        serde_json::json!({"gun_pitch_rad":self.player.gun_pitch,
+            "turret_yaw_rad":self.player.turret_yaw,
+            "elevation_normalized_rate":self.gun_elevation_motion.normalized_rate,
+            "elevation_max_rate_rad_s":crate::tank::ELEV_RATE,
+            "elevation_source_world_m":self.player.turret_model()
+                .transform_point3(crate::interior_rig::WHEEL1_POS).to_array(),
+            "scope":"Actual pose and source-motion control; not an audibility measurement"})
+    }
     pub fn capture_walk_position(&self) -> Vec3 {
         self.walk_pos
     }
@@ -125,6 +134,96 @@ impl Game {
             && self.breech_loaded()
             && dy.abs() < 0.0007
             && (pitch - self.player.gun_pitch).abs() < 0.0005
+    }
+    /// Fixed seed and geometry-only placement for real course defenders. No awareness, reload,
+    /// aim, damage or target identity is changed. The first feasible authored site wins.
+    pub fn capture_stage_course(&mut self, infantry:bool)->anyhow::Result<serde_json::Value> {
+        self.enable_canyon_course_seeded(29)?;
+        let spec=self.canyon_run.as_ref().unwrap().spec.clone();
+        let reach=tank::TIGER_PARTS.hull_half_extents.length()+0.3;
+        let clear=|at:Vec2| {
+            let p=Vec3::new(at.x,self.hf.height_at(at.x,at.y),at.y);
+            self.winter_patrol_point_clear(at) && !self.box_region_blocked(
+                p+Vec3::new(-reach,0.3,-reach),p+Vec3::new(reach,2.8,reach))
+        };
+        let (point,target,identity)=if infantry {
+            let mut selected=None;
+            for (index,squad) in self.mixed_combat.squads.iter().enumerate() {
+                let members:Vec<_>=squad.members.iter().filter_map(|&i|self.soldiers.get(i).map(|s|(i,s.pos))).collect();
+                let center=members.iter().map(|(_,p)|*p).sum::<Vec3>()/members.len().max(1) as f32;
+                let mut route=spec.route.clone();
+                route.sort_by(|a,b| (a.distance(Vec2::new(center.x,center.z))-34.0).abs()
+                    .total_cmp(&(b.distance(Vec2::new(center.x,center.z))-34.0).abs()));
+                if let Some(at)=route.into_iter().find(|&at| {
+                    let eye=Vec3::new(at.x,self.hf.height_at(at.x,at.y)+2.9,at.y);
+                    let range=eye.distance(center);
+                    (25.0..42.0).contains(&range) && clear(at)
+                        && members.iter().filter(|(i,p)| {
+                            let yaw=self.soldiers[*i].yaw;let delta=eye-*p;
+                            Vec3::new(yaw.sin(),0.0,-yaw.cos()).dot(Vec3::new(delta.x,0.0,delta.z).normalize_or_zero())>0.342
+                                && self.los_clear(eye,*p+Vec3::Y*1.2)
+                        }).count()>=2
+                }) {
+                    let target=members.iter().find(|(_,p)|self.los_clear(
+                        Vec3::new(at.x,self.hf.height_at(at.x,at.y)+2.9,at.y),*p+Vec3::Y*1.2)).unwrap();
+                    selected=Some((at,target.1+Vec3::Y*1.2,serde_json::json!({"kind":"infantry_group",
+                        "group":index,"members":members.iter().map(|(i,_)|*i).collect::<Vec<_>>(),"focus_member":target.0})));
+                    break;
+                }
+            }
+            selected.ok_or_else(||anyhow::anyhow!("no authored route point provides clear25–42m group review"))?
+        } else {
+            let gun=self.at_guns[0].ok_or_else(||anyhow::anyhow!("seeded course has no first gun"))?;
+            let zone=&spec.gun_zones[0];let plan=self.street_plan.as_ref().unwrap();
+            let lines:Vec<_>=plan.kill_zone.iter().filter(|l|l.id==zone.kill_zone).cloned().collect();
+            let mut points=street_encounter::sample_kill_zone(&lines,|p|self.hf.height_at(p.x,p.y));
+            points.sort_by(|a,b|(Vec3::new(a.at.x,a.ground,a.at.y).distance(gun.pos)-155.0).abs()
+                .total_cmp(&(Vec3::new(b.at.x,b.ground,b.at.y).distance(gun.pos)-155.0).abs()));
+            let point=points.into_iter().find(|p| {
+                let center=Vec3::new(p.at.x,p.ground+1.5,p.at.y);
+                let range=center.distance(gun.pos);
+                (115.0..195.0).contains(&range) && clear(p.at)
+                    && self.los_clear(gun.pos+Vec3::Y*1.1,center)
+            }).ok_or_else(||anyhow::anyhow!("first seeded gun has no clear115–195m review point"))?;
+            (point.at,gun.pos+Vec3::Y*0.95,serde_json::json!({"kind":"at_gun","gun":0,"zone":zone.id}))
+        };
+        let delta=target-Vec3::new(point.x,0.0,point.y);
+        self.debug_place_tiger(point,delta.x.atan2(delta.z));
+        Ok(serde_json::json!({"seed":29,"identity":identity,"focus_world_m":target.to_array(),
+            "player_world_m":self.player.pos.to_array(),"source_heading_rad":self.player.heading,
+            "active_t34_indices":self.enemies.iter().enumerate().filter(|(i,e)|e.alive && self.enemy_active[*i]).map(|(i,_)|i).collect::<Vec<_>>(),
+            "initial_course":self.canyon_snapshot(),"initial_defenders":self.capture_course_receipt(),
+            "scope":"Only initial Tiger position/heading staged on measured-clear authored route. Full seeded course defenders retained; no forced awareness, reload, hit, kill or outcome search."}))
+    }
+    pub fn capture_course_receipt(&self)->serde_json::Value {
+        serde_json::json!({"course":self.canyon_snapshot(),"at_guns":self.at_gun_snapshot(),
+            "mixed":self.mixed_combat_telemetry(),"exterior":self.exterior_damage_receipt(),
+            "groups":self.mixed_combat.squads.iter().map(|s|serde_json::json!({"members":s.members,
+                "positions":s.members.iter().filter_map(|&i|self.soldiers.get(i).map(|s|s.pos.to_array())).collect::<Vec<_>>()
+            })).collect::<Vec<_>>()})
+    }
+    /// Accumulated live track travel and ground excitation, without changing their sampler.
+    pub fn capture_running_gear(&self) -> serde_json::Value {
+        serde_json::json!({"distance_m":self.running_gear_motion.distance_m,
+            "ground_excitation_m":self.running_gear_motion.ground_excitation_m,
+            "engine_ear_laf_dba":self.engine_ear_laf_dba,"engine_on":self.engine_on,
+            "turret_yaw_rad":self.player.turret_yaw,"previous_turret_audio_yaw_rad":self.turret_audio_prev_yaw,
+            "scope":"Fourteen source track-path ground samples; travel/excitation, not solved wheel forces or suspension compression"})
+    }
+    /// Read-only placement evidence for native combat reviews in any authored act. This checks
+    /// the real terrain/cover LOS and gun-depression slope; it never removes an obstruction or
+    /// changes detection, damage, aim, readiness, or any actor's position.
+    pub fn capture_opening_lane(&self, position: Vec2) -> serde_json::Value {
+        let delta=position-Vec2::new(self.player.pos.x,self.player.pos.z);
+        let range=delta.length();
+        let candidate=Tank::new(position.x,position.y,(-delta.x).atan2(-delta.y),&self.hf,tank::T34_PARTS);
+        let slope=(candidate.pos.y-self.player.pos.y).atan2(range).to_degrees();
+        let inside_map=position.x.abs()<self.act.half_extent_m-8.0 && position.y.abs()<self.act.half_extent_m-8.0;
+        let clear=self.los_clear(candidate.center(),self.player.center());
+        let near_cover=self.occluders.iter().filter(|o|((o.min+o.max)*0.5).distance(self.player.center())<150.0).count();
+        serde_json::json!({"position":position.to_array(),"range_m":range,"slope_deg":slope,
+            "inside_map":inside_map,"los_clear":clear,"nearby_cover_boxes":near_cover,
+            "accepted":inside_map && range>=40.0 && range<=320.0 && slope.abs()<6.0 && clear})
     }
     pub fn capture_combat_receipt(&self) -> serde_json::Value {
         let step = serde_json::json!({"gaze":"enemy"});

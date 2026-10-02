@@ -21,16 +21,41 @@ const TRAVERSE: f32 = 0.10472; // 6 deg/s
                                // bearing that's changing as the tank drives past). ~23 deg/s — brisk, but not an instant snap.
 const AI_TRAVERSE: f32 = 0.80;
 const AI_ELEV_RATE: f32 = crate::anti_infantry_ai::GUN_ELEVATION_RATE;
-const ELEV_RATE: f32 = 0.06981; // 4 deg/s
+pub(crate) const ELEV_RATE: f32 = 0.06981; // 4 deg/s
 const GUN_MIN: f32 = crate::anti_infantry_ai::GUN_MIN_PITCH;
 const GUN_MAX: f32 = crate::anti_infantry_ai::GUN_MAX_PITCH;
 pub const TOP_SPEED: f32 = 12.0; // m/s
 const ACCEL: f32 = 6.0;
 const TURN_RATE: f32 = 0.7; // rad/s (neutral steer)
-                            // The player's main gun is now MANUALLY reloaded (breech eject + ram, driven from the Loader
-                            // station in game.rs), so `fired()` no longer starts a long auto-reload — it only locks the gun for
-                            // the recoil run-out (return to battery). The travel-lock in `can_fire` still forbids firing on the
-                            // move. Enemies set their own cadence directly (`ENEMY_RELOAD`), so this only affects the player.
+/// Measured contact-line centers in the baked Tiger support profile (+X is left).
+pub(crate) const TIGER_TRACK_HALF_SPACING: f32 = crate::tank_support::TIGER_TRACK_X;
+
+/// Physical belt availability, independent of whether the engine is running. Commands are gated
+/// upstream by engine/transmission/operator state; losing a belt never shuts the engine down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TrackTraction {
+    pub left: bool,
+    pub right: bool,
+}
+
+impl TrackTraction {
+    pub const INTACT: Self = Self { left: true, right: true };
+
+    pub fn any(self) -> bool { self.left || self.right }
+
+    pub fn gate_commands(self, drivetrain_available: bool, operator_available: bool,
+        drive: f32, steer: f32) -> (f32, f32) {
+        if drivetrain_available && operator_available && self.any() {
+            (drive, steer)
+        } else {
+            (0.0, 0.0)
+        }
+    }
+}
+
+// The player's main gun is now manually reloaded (breech eject + ram, driven from the Loader
+// station in game.rs), so fired() only locks the gun for its recoil/return cycle. Enemies set
+// their own cadence directly; the travel-lock in can_fire still forbids firing on the move.
 const RETURN_TO_BATTERY: f32 = 1.0;
 
 // Visual-only KwK recoil. Ballistics always use `gun_model()` at the laid, in-battery pose; the
@@ -297,6 +322,14 @@ fn load_parts(hull: &str, turret: &str, gun: &str) -> Option<[CpuMesh; 3]> {
 #[path = "tiger_exterior_finishes.rs"]
 mod exterior_finishes;
 
+/// Exact authored running-belt steel nodes, shared with the reviewed finishes. The ten
+/// Turret_* spare shoes are stored armor, not moving belts, and are excluded by source identity.
+pub(crate) fn tiger_track_source_nodes() -> &'static [&'static str] {
+    static NODES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    NODES.get_or_init(|| exterior_finishes::TRACK_STEEL.iter().copied()
+        .filter(|name|name.starts_with("Hull_")).collect()).as_slice()
+}
+
 /// Reviewed exterior armor/deck/barrel nodes from the current source Tiger. Material.001 is also
 /// shared by tracks, engine internals and breech steel, so it must never be repainted globally.
 /// Cabin surfaces have separate material identities and their own user-selected gunmetal finish.
@@ -347,7 +380,10 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
 }
 
 pub(crate) fn load_painted_tiger(path: &str) -> anyhow::Result<CpuMesh> {
-    crate::gltf_load::load_glb_with_material_override(path, tiger_paint_finish)
+    if path=="assets/tanks/tiger/baked/tiger_hull.glb" {
+        Ok(crate::gltf_load::load_glb_partitioned_roots_with_source_addition(path,&[],
+            Some(tiger_paint_finish),Some((crate::interior_rig::RACK_FITTING_GLB,"Turret_0125")))?.remove(0))
+    } else {crate::gltf_load::load_glb_with_material_override(path,tiger_paint_finish)}
 }
 
 /// Compatibility hook for the existing source-steel/optic callers. The former whole-atlas tint
@@ -720,8 +756,8 @@ pub struct Tank {
     pub pos: Vec3, // ground contact
     pub heading: f32,
     /// Nose-up pitch and left-up roll of the hull (radians) on its supports (`tank_support`: the
-    /// player Tiger rests on terrain, building floors and rubble). Zero for a tank grounded on
-    /// the terrain alone, which keeps its hull level as before.
+    /// player Tiger rests on terrain, building floors and rubble). AI/spawn poses use a bounded
+    /// six-contact terrain fit; all attached geometry and gun lay inherit the resulting hull pose.
     pub pitch: f32,
     pub roll: f32,
     pub speed: f32,
@@ -754,7 +790,7 @@ pub const MAX_HP: f32 = 100.0;
 
 impl Tank {
     pub fn new(x: f32, z: f32, heading: f32, hf: &Heightfield, parts: Parts) -> Self {
-        Self {
+        let mut tank = Self {
             pos: Vec3::new(x, hf.height_at(x, z), z),
             heading,
             pitch: 0.0,
@@ -769,7 +805,9 @@ impl Tank {
             parts,
             kind: EnemyKind::T34,
             drops_into_pits: false,
-        }
+        };
+        crate::vehicle_ground::settle(&mut tank, |x,z|hf.vehicle_height_at(x,z));
+        tank
     }
 
     /// AI lay: slew the turret/gun toward a world target at the tank's own traverse/elevation
@@ -869,12 +907,84 @@ impl Tank {
         dt: f32,
         hf: &Heightfield,
     ) {
-        let target = drive * TOP_SPEED;
-        let d = (target - self.speed).clamp(-ACCEL * dt, ACCEL * dt);
-        self.speed += d;
-        self.heading += steer * TURN_RATE * dt;
+        self.update_with_track_traction(drive, steer, traverse, elevate, dt, hf, TrackTraction::INTACT);
+    }
+
+    /// The damaged-player drive retains the ordinary terrain/contact path. With one broken belt,
+    /// the intact belt can creep in either direction around the stationary opposite contact line.
+    /// This is a bounded differential-drive approximation, not a track slip/tension simulation.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn update_with_track_traction(
+        &mut self,
+        drive: f32,
+        steer: f32,
+        traverse: f32,
+        elevate: f32,
+        dt: f32,
+        hf: &Heightfield,
+        traction: TrackTraction,
+    ) {
         let before = self.pos;
-        self.pos += self.forward() * self.speed * dt;
+        match (traction.left, traction.right) {
+            (true, true) => {
+                // Preserve the established healthy drivetrain and every enemy's handling.
+                let target = drive * TOP_SPEED;
+                let d = (target - self.speed).clamp(-ACCEL * dt, ACCEL * dt);
+                self.speed += d;
+                self.heading += steer * TURN_RATE * dt;
+                self.pos += self.forward() * self.speed * dt;
+            }
+            (false, false) => self.speed = 0.0,
+            (left, _) => {
+                // Faster right belt turns toward +heading; faster left toward -heading. A
+                // half-rate yaw cap expresses the drag of the thrown track without giving the
+                // surviving belt normal road speed around the measured track contact radius.
+                let yaw_sign = if left { -1.0 } else { 1.0 };
+                let command = (drive + yaw_sign * steer).clamp(-1.0, 1.0);
+                let limit = TURN_RATE * 0.5 * TIGER_TRACK_HALF_SPACING;
+                self.speed = self.speed.clamp(-limit, limit);
+                let target = command * limit;
+                let accel = ACCEL * 0.5;
+                let duration = dt.max(0.0);
+                let ramp = ((target - self.speed).abs() / accel).min(duration);
+                let after_ramp = self.speed + (target - self.speed).signum() * accel * ramp;
+                // Integrate the acceleration ramp, including a target reached within this frame.
+                // Splitting a frame must not change the position of the stationary track.
+                let distance = (self.speed + after_ramp) * 0.5 * ramp
+                    + after_ramp * (duration - ramp);
+                self.speed = after_ramp;
+                let broken_side = Vec3::new(yaw_sign * TIGER_TRACK_HALF_SPACING, 0.0, 0.0);
+                let anchor = self.pos + Mat4::from_rotation_y(self.heading).transform_vector3(broken_side);
+                self.heading += yaw_sign * distance / TIGER_TRACK_HALF_SPACING;
+                self.pos = anchor - Mat4::from_rotation_y(self.heading).transform_vector3(broken_side);
+            }
+        }
+        self.finish_update(before, traverse, elevate, dt, hf);
+    }
+
+    /// Player-only stateful gearbox/engine path. Every hull-attached visual and ballistic source
+    /// uses this same physical chassis pose; ordinary AI updates keep their existing controller.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn update_player_powertrain(&mut self, state: &mut crate::powertrain::Powertrain,
+        controls: crate::powertrain::Controls, traverse:f32, elevate:f32, dt:f32, hf:&Heightfield) {
+        let before=self.pos;
+        let motion=state.advance(dt,self.speed,self.pitch,controls);
+        self.speed=motion.speed;
+        if controls.left_track != controls.right_track {
+            let side=if controls.left_track {-1.0}else{1.0};
+            let broken=Vec3::X*side*TIGER_TRACK_HALF_SPACING;
+            let anchor=self.pos+Mat4::from_rotation_y(self.heading).transform_vector3(broken);
+            self.heading+=motion.yaw;
+            self.pos=anchor-Mat4::from_rotation_y(self.heading).transform_vector3(broken);
+        } else {
+            let midpoint=self.heading+motion.yaw*0.5;
+            self.pos+=Vec3::new(midpoint.sin(),0.0,midpoint.cos())*motion.distance;
+            self.heading+=motion.yaw;
+        }
+        self.finish_update(before,traverse,elevate,dt,hf);
+    }
+
+    fn finish_update(&mut self, before:Vec3, traverse:f32, elevate:f32, dt:f32, hf:&Heightfield) {
         // An open cellar's excavation face is a vertical step: no tank climbs more than its rated
         // obstacle out of the pit, and only a tank that may fall in drives over its rim.
         // Its tracks bridge a trench narrower than its crossing span.
@@ -893,7 +1003,7 @@ impl Tank {
         }
         self.pos.x = gated.x;
         self.pos.z = gated.y;
-        self.pos.y = hf.vehicle_height_at(self.pos.x, self.pos.z);
+        crate::vehicle_ground::settle(self, |x,z|hf.vehicle_height_at(x,z));
 
         self.turret_yaw += traverse * TRAVERSE * dt;
         self.gun_pitch = (self.gun_pitch + elevate * ELEV_RATE * dt).clamp(GUN_MIN, GUN_MAX);
@@ -1085,7 +1195,8 @@ mod tests {
         for part in ["hull", "turret", "gun", "hatch"] {
             let path = format!("assets/tanks/tiger/baked/tiger_{part}.glb");
             let raw = load_glb(&path).expect("source Tiger mesh");
-            let painted = load_painted_tiger(&path).expect("painted Tiger mesh");
+            let painted = crate::gltf_load::load_glb_with_material_override(&path,tiger_paint_finish)
+                .expect("paint-only source Tiger mesh");
             assert_eq!(raw.indices, painted.indices);
             assert_eq!(raw.vertices.len(), painted.vertices.len());
             assert!(raw.vertices.iter().zip(&painted.vertices).all(|(a,b)|
@@ -1186,6 +1297,91 @@ mod tests {
             tank.ai_aim(tank.pos + Vec3::new(0.0, -10.0, 60.0), 0.05);
             assert!((tank.gun_pitch - old).abs() <= AI_ELEV_RATE * 0.05 + 1e-6);
         }
+    }
+
+    #[test]
+    fn track_traction_single_side_retains_power_but_engine_and_operator_gates_still_apply() {
+        for tracks in [TrackTraction::INTACT, TrackTraction { left: true, right: false },
+            TrackTraction { left: false, right: true }] {
+            assert_eq!(tracks.gate_commands(true, true, 0.8, -0.5), (0.8, -0.5));
+            assert_eq!(tracks.gate_commands(false, true, 0.8, -0.5), (0.0, 0.0));
+            assert_eq!(tracks.gate_commands(true, false, 0.8, -0.5), (0.0, 0.0));
+        }
+        assert_eq!(TrackTraction { left: false, right: false }
+            .gate_commands(true, true, 1.0, 1.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn track_traction_healthy_motion_keeps_existing_rates() {
+        let hf = flat();
+        let mut tank = Tank::new(0.0, 0.0, 0.4, &hf, TIGER_PARTS);
+        tank.speed = 2.0;
+        tank.update_with_track_traction(0.8, -0.3, 0.5, -0.25, 0.2, &hf, TrackTraction::INTACT);
+        approx(tank.speed, 3.2, 1e-6);
+        approx(tank.heading, 0.4 - 0.3 * TURN_RATE * 0.2, 1e-6);
+        assert!((tank.pos - tank.forward() * 3.2 * 0.2).length() < 1e-6);
+        approx(tank.turret_yaw, 0.5 * TRAVERSE * 0.2, 1e-6);
+        approx(tank.gun_pitch, -0.25 * ELEV_RATE * 0.2, 1e-6);
+    }
+
+    #[test]
+    fn track_traction_broken_side_stays_stationary_and_opposite_sides_mirror() {
+        let hf = flat();
+        let mut states = Vec::new();
+        for left in [false, true] {
+            let traction = TrackTraction { left, right: !left };
+            let sign = if left { -1.0 } else { 1.0 };
+            let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+            let contact = Vec3::X * sign * TIGER_TRACK_HALF_SPACING;
+            for _ in 0..240 {
+                tank.update_with_track_traction(1.0, 0.0, 0.0, 0.0, 1.0 / 120.0, &hf, traction);
+                let anchor = tank.pos + Mat4::from_rotation_y(tank.heading).transform_vector3(contact);
+                assert!((anchor - contact).length() < 2e-5);
+                assert!(tank.speed <= TURN_RATE * 0.5 * TIGER_TRACK_HALF_SPACING + 1e-6);
+            }
+            assert!(tank.pos.z > 0.5 && tank.heading.abs() > 0.3);
+            states.push(tank);
+        }
+        approx(states[0].pos.x, -states[1].pos.x, 2e-5);
+        approx(states[0].pos.z, states[1].pos.z, 2e-5);
+        approx(states[0].heading, -states[1].heading, 2e-5);
+    }
+
+    #[test]
+    fn track_traction_pivot_has_consistent_time_integration_and_can_reverse() {
+        let hf = flat();
+        let traction = TrackTraction { left: false, right: true };
+        let simulate = |dt: f32, steps: usize| {
+            let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+            for command in [1.0, -1.0, 0.0] {
+                for _ in 0..steps {
+                    tank.update_with_track_traction(command, 0.0, 0.0, 0.0, dt, &hf, traction);
+                }
+                if command == -1.0 { assert!(tank.speed < -0.5); }
+            }
+            assert!(tank.speed.abs() < 1e-6);
+            tank
+        };
+        let coarse = simulate(0.25, 4);
+        let fine = simulate(1.0 / 120.0, 120);
+        assert!((coarse.pos - fine.pos).length() < 3e-5);
+        approx(coarse.heading, fine.heading, 3e-5);
+    }
+
+    #[test]
+    fn track_traction_both_broken_blocks_chassis_but_keeps_manual_gun_controls() {
+        let hf = flat();
+        let mut tank = Tank::new(0.0, 0.0, 0.4, &hf, TIGER_PARTS);
+        tank.speed = 5.0;
+        tank.update_with_track_traction(1.0, 1.0, 1.0, 1.0, 0.2, &hf,
+            TrackTraction { left: false, right: false });
+        assert_eq!(tank.speed, 0.0);
+        assert_eq!(tank.pos, Vec3::ZERO);
+        approx(tank.heading, 0.4, 1e-6);
+        assert!(tank.turret_yaw > 0.0 && tank.gun_pitch > 0.0);
+        // Repair restores the actual drive path, without changing gun or engine state here.
+        tank.update_with_track_traction(1.0, 0.0, 0.0, 0.0, 0.2, &hf, TrackTraction::INTACT);
+        assert!(tank.speed > 1.0 && tank.pos.length() > 0.2);
     }
 
     /// A dead-flat heightfield at y=0, so a tank grounds at its spawn (no assets needed).

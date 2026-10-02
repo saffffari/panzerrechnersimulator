@@ -1,3 +1,5 @@
+// @weather-density
+// @cabin-medium
 // Explicit presentation contract: each accepted world-space particle covers exactly ONE native
 // pixel. This pass follows crush and precedes upscale/UI. No bloom, Bayer or motion-streak kernel.
 struct ParticleUniform {
@@ -12,7 +14,16 @@ struct ParticleUniform {
     lights: array<vec4<f32>, 64>,
     world_medium: vec4<f32>, // sigma_t,bottom,top,cabin sigma_t
     cabin_origin: vec4<f32>,
+    cabin_medium: CabinMedium,
+    medium_transport:vec4<f32>,
 };
+
+@group(0) @binding(3) var cabin_air_columns:texture_2d_array<f32>;
+fn cabin_transform(i:u32)->mat4x4<f32> {return u.cabin_medium.world_to_local[i];}
+fn cabin_grid(i:u32)->vec4<f32> {return u.cabin_medium.grid_min_step[i];}
+fn cabin_size(i:u32)->vec4<u32> {return u.cabin_medium.grid_size[i];}
+fn cabin_min(i:u32)->vec3<f32> {return u.cabin_medium.bounds_min[i].xyz;}
+fn cabin_max(i:u32)->vec3<f32> {return u.cabin_medium.bounds_max[i].xyz;}
 struct Exposure {
     levels: f32, dither: f32, reticle: f32, frame: f32,
     rod_exposure: f32, rod_inverse_saturation: f32, removed2: f32, menu: f32,
@@ -68,25 +79,13 @@ fn blocked(origin: vec3<f32>, direction: vec3<f32>, distance_m: f32) -> bool {
     while (rayQueryProceed(&query)) { }
     return rayQueryGetCommittedIntersection(&query).kind != RAY_QUERY_INTERSECTION_NONE;
 }
-fn medium_transmittance(p: vec3<f32>, d: vec3<f32>, distance_m: f32) -> f32 {
-    var length_m = 0.0;
-    if (abs(d.y) < 1e-6) {
-        if (p.y >= u.world_medium.y && p.y <= u.world_medium.z) { length_m = distance_m; }
-    } else {
-        let a = (u.world_medium.y - p.y) / d.y;
-        let b = (u.world_medium.z - p.y) / d.y;
-        length_m = max(min(max(a,b),distance_m) - max(min(a,b),0.0),0.0);
-    }
-    let rel = p - u.cabin_origin.xyz;
-    let along = dot(rel,d);
-    let discriminant = along * along - dot(rel,rel) + 3.35 * 3.35;
-    var cabin_length = 0.0;
-    if (discriminant > 0.0) {
-        let root = sqrt(discriminant);
-        cabin_length = max(min(-along+root,distance_m)-max(-along-root,0.0),0.0);
-    }
-    return exp(-u.world_medium.x * length_m - u.world_medium.w * cabin_length);
+fn medium_transmittance(p:vec3<f32>,d:vec3<f32>,distance_m:f32)->f32 {
+    let world_tau=weather_optical_depth(p,d,distance_m,u.world_medium.yz,u.world_medium.x,
+        u.medium_transport.x,u.medium_transport.yzw,24u);
+    let cabin_tau=u.world_medium.w*cabin_path_length(p,d,distance_m);
+    return exp(-world_tau-cabin_tau);
 }
+
 fn phase(cosine: f32) -> f32 {
     let g = 0.42;
     return (1.0-g*g)/(12.5663706144*pow(1.0+g*g-2.0*g*clamp(cosine,-1.0,1.0),1.5));
@@ -158,6 +157,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
     if (in.position.z >= textureLoad(depth_tex,pixel,0)) { discard; }
     if (in.kind == 0u) {
+        if(cabin_contains(in.world)){discard;}
         let upstream = -normalize(u.snow_velocity.xyz);
         let ceiling = max(u.world_medium.z,u.camera.y+64.0);
         let distance_m = min(max((ceiling-in.world.y)/max(upstream.y,0.001),1.0),4000.0);
@@ -166,7 +166,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         if (blocked(in.world,upstream,distance_m)) { discard; }
         return vec4(vec3(optic),1.0);
     }
-    if (distance(in.world,u.cabin_origin.xyz)>3.35 || u.world_medium.w<=0.0) { discard; }
+    if (!cabin_contains(in.world) || u.world_medium.w<=0.0) { discard; }
     let hdr = eye_response(dust_radiance(in.world));
     let color = clamp((hdr*(2.51*hdr+0.03))/(hdr*(2.43*hdr+0.59)+0.14),vec3(0.0),vec3(1.0));
     let brightness = max(color.x,max(color.y,color.z));

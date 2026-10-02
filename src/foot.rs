@@ -81,6 +81,31 @@ pub fn hatch_entry_crossing(previous: Vec3, current: Vec3, center: Vec3, normal:
     (offset - normal * offset.dot(normal)).length_squared() < radius * radius
 }
 
+/// Reconcile feet already inside an open roof aperture, including a walk into the cupola
+/// from a roof lower than its raised rim. Source collision is resolved before this query. An
+/// unobstructed segment back through the real opening proves that a nearby sealed compartment
+/// or the ground beneath the hull cannot qualify. This does not create a support plane.
+pub fn open_roof_entry(
+    feet: Vec3, center: Vec3, normal: Vec3, radius: f32, fully_open: bool,
+    mut blocked: impl FnMut(Vec3, Vec3) -> bool,
+) -> bool {
+    if !fully_open || !feet.is_finite() || !center.is_finite() || !normal.is_finite()
+        || normal.length_squared() < 0.5 || !radius.is_finite() || radius <= 0.0 {
+        return false;
+    }
+    let normal = normal.normalize();
+    let offset = feet - center;
+    let depth = offset.dot(normal);
+    if depth >= 0.0 || (offset - normal * depth).length_squared() >= radius * radius {
+        return false;
+    }
+    // One millimetre avoids re-hitting the support on which accepted feet are resting.
+    // It is a numerical contact skin, not an allowance to pass through an armor plate.
+    let from = feet + normal * 0.001;
+    let outside = feet - normal * depth + normal * 0.001;
+    !blocked(from, outside)
+}
+
 /// Releasing crouch may raise the body only through clear space. Five vertical probes cover
 /// the head/shoulders so a centreline under a beam edge cannot let the skull pass through it.
 pub fn standing_headroom(feet: Vec3, current_height: f32, standing_height: f32, radius: f32,
@@ -580,12 +605,19 @@ impl FootSoldier {
         if distance > 1e-6 {
             let direction = delta / distance;
             let lateral = direction.cross(Vec3::Y) * (BODY_RADIUS * 0.85);
-            let base = Vec3::new(previous.x, previous.y.max(self.pos.y), previous.z);
+            // Grounded motion may step 30 cm; an airborne body must clear the ledge with
+            // its feet. A shin-only sweep at 32 cm could put a failed jump inside the armor.
+            // The terrain-only update temporarily marks a grounded roof walker airborne
+            // before this resolver restores support; only prior flight or a new jump counts.
+            let airborne = was_airborne || self.vel_y > 0.0;
+            let base = Vec3::new(previous.x,
+                if airborne { previous.y } else { previous.y.max(self.pos.y) }, previous.z);
+            let rise = if airborne { self.pos.y - previous.y } else { 0.0 };
             let mut allowed = distance;
-            for height in [0.32, standing * 0.5, standing - 0.05] {
+            for height in [if airborne { 0.01 } else { 0.32 }, standing * 0.5, standing - 0.05] {
                 for side in [-1.0, 0.0, 1.0] {
                     let from = base + Vec3::Y * height + lateral * side;
-                    if let Some((point, normal)) = contact(from, from + direction * (distance + BODY_RADIUS)) {
+                    if let Some((point, normal)) = contact(from, from + direction * (distance + BODY_RADIUS) + Vec3::Y * rise) {
                         if normal.y.abs() < 0.7 {
                             allowed = allowed.min(((point - from).dot(direction) - BODY_RADIUS - 0.005).max(0.0));
                         }
@@ -801,6 +833,19 @@ mod tests {
         assert!(foot.airborne && foot.pos.y > 2.4);
         for _ in 0..120 { solid_step(&mut foot, 1.0, false); }
         assert!(!foot.airborne && foot.pos.y.abs() < 1e-5);
+    }
+
+    #[test]
+    fn airborne_feet_cannot_clip_a_ledge_that_the_shins_clear() {
+        for (before_y, after_y) in [(2.30, 2.40), (2.20, 2.50), (2.55, 2.40)] {
+            let previous = Vec3::new(2.0, before_y, 0.0);
+            let mut foot = FootSoldier { pos: Vec3::new(1.4, after_y, 0.0),
+                airborne: true, vel_y: if after_y > before_y { 2.0 } else { -2.0 },
+                ..FootSoldier::default() };
+            foot.resolve_solid_motion(previous, true, solid_box);
+            assert!(foot.pos.x >= 1.5 + BODY_RADIUS || foot.pos.y >= 2.46,
+                "failed jump must not bury feet in armor: {before_y}->{after_y}, {:?}", foot.pos);
+        }
     }
 
     #[test]

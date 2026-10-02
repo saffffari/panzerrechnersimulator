@@ -217,3 +217,38 @@ fn finite_round_uses_actual_open_and_closed_moving_breech_block() {
         }
     }
 }
+
+    #[test]
+    fn ammunition_stowage_source_vertices_remain_behind_hull_armor_after_traverse() {
+        use crate::interior_rig::{Frame,SHELL_SLOTS,AUTHORED_SHELL_SLOTS};
+        let hull=crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hull.glb").unwrap();
+        let source=surface_fire::CabinFire::new(&[(0,&hull)]);
+        let models=[Mat4::IDENTITY;surface_fire::FRAMES];let contacts=source.source_contacts(&models);
+        let round=crate::procedural_ordnance::ap_round_mesh();
+        let unique:std::collections::BTreeSet<_>=round.vertices.iter().map(|v|v.pos.map(f32::to_bits)).collect();
+        let exposed=|slots:&[(Frame,Vec3,[f32;4])],yaw:f32| {
+            let turret=Mat4::from_translation(crate::tank::TIGER_PARTS.turret_pivot)*Mat4::from_rotation_y(yaw);
+            let mut rays=Vec::new();let mut owners=Vec::new();
+            for (slot,(frame,p,q)) in slots.iter().enumerate() {
+                let parent=if *frame==Frame::Hull {Mat4::IDENTITY}else{turret};
+                let model=parent*Mat4::from_rotation_translation(Quat::from_array(*q),*p);
+                for v in &unique {
+                    let point=model.transform_point3(Vec3::from_array(v.map(f32::from_bits)));
+                    rays.push([point+Vec3::X*point.x.signum()*8.0,point]);owners.push((slot,point));
+                }
+            }
+            contacts.sweep_batch(&rays).into_iter().zip(owners).filter_map(|(hit,p)|hit.is_none().then_some(p)).collect::<Vec<_>>()
+        };
+        let baseline=exposed(AUTHORED_SHELL_SLOTS,0.0);
+        let corrected=exposed(SHELL_SLOTS,0.0);
+        assert!(!baseline.is_empty() && baseline.iter().all(|(slot,_)|*slot==32),
+            "fixture must identify the false non-cartridge slot at zero traverse");
+        assert!(corrected.is_empty(),"real rack rounds must remain behind actual source armor");
+        eprintln!("[rack-source] zero-traverse exterior-visible vertices={}: {:?}",corrected.len(),corrected);
+        for yaw in [0.5,std::f32::consts::FRAC_PI_4,std::f32::consts::FRAC_PI_2,std::f32::consts::PI] {
+            let old=exposed(AUTHORED_SHELL_SLOTS,yaw);let fixed=exposed(SHELL_SLOTS,yaw);
+            eprintln!("[rack-source] yaw={yaw:.3} old_exposed={} fixed_exposed={}",old.len(),fixed.len());
+            assert_eq!(fixed,corrected,"traverse moved stored ammunition through source hull armor");
+            if yaw==std::f32::consts::FRAC_PI_4 {assert!(old.len()>fixed.len(),"fixture must reproduce visible stowage leak");}
+        }
+    }

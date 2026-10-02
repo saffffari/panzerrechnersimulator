@@ -198,6 +198,7 @@ impl Game {
 
     /// Called only by successful actual weapon discharges, never by a trigger press.
     pub(super) fn winter_report_discharge(&mut self, origin: Vec3, range: f32) {
+        self.record_infantry_report(origin,range);
         if self.winter_encounter.is_none() { return; }
         for i in 0..self.enemies.len() {
             if !self.enemies[i].alive || !self.enemy_active[i] { continue; }

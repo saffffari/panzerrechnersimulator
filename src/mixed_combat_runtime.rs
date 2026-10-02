@@ -5,6 +5,8 @@ use crate::{anti_infantry_ai as soft_ai, infantry_combat as combat};
 use combat::{Combatant, Cover, Team, Weapon};
 pub(super) const GERMAN_COUNT: usize = 4;
 const PLAYER_ACTOR_ID: u32 = u32::MAX;
+#[path = "infantry_aim.rs"]
+mod infantry_aim;
 
 /// Keep allies available to the shared observation, but query terrain, cover and physical doors
 /// only for enemies the same sensor could admit. Rejected enemies cannot affect observe's target,
@@ -28,6 +30,17 @@ fn permitted_infantry_action(mut action: FootAction, return_fire: bool) -> FootA
         action.fire = false;
     }
     action
+}
+
+fn coordinated_infantry_action(mut base:FootAction,obs:&crate::foot_ai::FootObservation,
+    moving:bool,covering:bool)->FootAction {
+    if moving {base.fire=false;base.aim=false;return base;}
+    if covering {
+        let mut support=crate::foot_ai::micro_expert(obs);
+        support.forward=0.0;support.strafe=0.0;
+        return support;
+    }
+    base
 }
 
 fn enemy_native_he(kind: EnemyKind) -> Option<&'static crate::ballistics::NativeHeProfile> {
@@ -61,6 +74,9 @@ const POST_ARRIVE_M: f32 = 0.5;
 pub(super) struct MixedCombatRuntime {
     pub enabled: bool,
     pub actors: Vec<Combatant>,
+    pub squads: Vec<super::infantry_squad::Squad>,
+    hearing: infantry_squad::Hearing,
+    tactics: infantry_squad::Tactics,
     german_policy: Option<FootPolicy>,
     soviet_policy: Option<FootPolicy>,
     tank_policy: Option<soft_ai::Policy>,
@@ -97,6 +113,9 @@ impl MixedCombatRuntime {
         auxiliary
     }
     pub fn new(soldiers: &[Soldier]) -> Self {
+        Self::new_with_soviet_count(soldiers, N_SOLDIERS)
+    }
+    pub fn new_with_soviet_count(soldiers: &[Soldier], soviet_count: usize) -> Self {
         // Explicit evaluation never goes through the legacy OnceLock checkpoint cache.
         let dir = std::env::var("KESSEL_COMBAT_WEIGHTS_DIR")
             .ok()
@@ -144,7 +163,7 @@ impl MixedCombatRuntime {
                 .map(|(i, s)| {
                     Combatant::new(
                         i as u32,
-                        if i < N_SOLDIERS {
+                        if i < soviet_count {
                             Team::Soviet
                         } else {
                             Team::German
@@ -154,6 +173,9 @@ impl MixedCombatRuntime {
                     )
                 })
                 .collect(),
+            squads: Vec::new(),
+            hearing: infantry_squad::Hearing::default(),
+            tactics: infantry_squad::Tactics::default(),
             german_policy: load(PolicyRole::GermanRifle, "german_rifle.ksl2"),
             soviet_policy: load(PolicyRole::SovietRifle, "soviet_rifle.ksl2"),
             tank_policy,
@@ -234,6 +256,9 @@ impl Game {
     }
 
     fn mixed_vehicle_cover(&self, ignored_enemy: Option<usize>) -> Vec<Cover> {
+        self.mixed_vehicle_cover_with_player(ignored_enemy,true)
+    }
+    fn mixed_vehicle_cover_with_player(&self, ignored_enemy: Option<usize>,include_player:bool) -> Vec<Cover> {
         let mut cover = Vec::new();
         // Conservative world AABBs derived from measured articulated armor bounds. They are
         // visibility/collision proxies, not replacement render geometry or penetrable material.
@@ -260,7 +285,7 @@ impl Game {
                 }
             }
         };
-        push_tank(&self.player, crate::ballistics::ArmorScheme::TigerI);
+        if include_player {push_tank(&self.player, crate::ballistics::ArmorScheme::TigerI);}
         for (i, tank) in self.enemies.iter().enumerate() {
             if Some(i) != ignored_enemy && self.enemy_active.get(i).copied().unwrap_or(false) {
                 push_tank(tank, enemy_armor(tank.kind));
@@ -316,6 +341,10 @@ impl Game {
             }
         }
     }
+    /// Successful hostile discharge only: timestamped at emission, never a trigger intent.
+    pub(super) fn record_infantry_report(&mut self, origin:Vec3, range:f32) {
+        self.mixed_combat.hearing.report(origin,range,self.enemy_report_audit.clock_s,speed_of_sound());
+    }
     pub(super) fn update_mixed_infantry(&mut self, dt: f32, r: &mut Renderer) {
         if !dt.is_finite() || dt <= 0.0 {
             return;
@@ -332,10 +361,44 @@ impl Game {
 
         self.mixed_sync_actors();
         let cover = self.mixed_cover(None);
+        let sight_world=self.world_cover(self.mixed_vehicle_cover_with_player(None,false));
+        let player_models=self.fire_surface_models();
         let mut snapshot = self.mixed_combat.actors.clone();
         if let Some(player) = self.mixed_player_actor() {
             snapshot.push(player);
         }
+        let squad_members: Vec<_> = self.mixed_combat.actors.iter().map(|a| infantry_squad::Member {
+            pos:a.pos, alive:a.alive(), yaw:a.yaw, contact:if a.memory_s>=4.7 {a.last_seen} else {None},
+        }).collect();
+        let squad_orders=infantry_squad::orders(&self.mixed_combat.squads,&squad_members,
+            |a,b|self.los_clear(a,b));
+        let now=self.enemy_report_audit.clock_s;
+        let mut hearing=std::mem::take(&mut self.mixed_combat.hearing);
+        hearing.expire(now);
+        let mut heard=vec![None;squad_members.len()];
+        for squad in &self.mixed_combat.squads {
+            for &i in &squad.members {
+                if self.mixed_combat.actors.get(i).is_some_and(|a|a.alive()&&a.team==Team::Soviet) {
+                    heard[i]=hearing.listen(i,self.mixed_combat.actors[i].eye(),now,|a,b| {
+                        let distance=a.distance(b);
+                        (distance<0.005 || self.nearest_cover_ray(a,(b-a)/distance,distance-0.005).is_none())
+                            && !self.world_doors.blocks_segment(a,b)
+                            && self.cabin_fire.sweep(a,b,&player_models).is_none()
+                    });
+                }
+            }
+        }
+        self.mixed_combat.hearing=hearing;
+        let fighters:Vec<_>=self.mixed_combat.actors.iter().zip(&squad_members).map(|(a,m)|
+            infantry_squad::Fighter {member:*m,ready:a.magazine>0&&a.reload<=0.0&&a.suppression<0.45}).collect();
+        let mut tactics=std::mem::take(&mut self.mixed_combat.tactics);
+        let tactical=tactics.orders(&self.mixed_combat.squads,&fighters,now,|from,to| {
+            let y=self.hf.height_at(to.x,to.z);
+            let goal=Vec3::new(to.x,y,to.z);
+            (y-from.y).abs()<1.0 && !combat::CoverSet::occupies(&cover,goal,0.35,y,y+1.75)
+                && self.los_clear(from+Vec3::Y*0.8,goal+Vec3::Y*0.8)
+        });
+        self.mixed_combat.tactics=tactics;
         let mut shots = Vec::new();
         let return_fire = self.enemy_return_fire_allowed();
         for i in 0..self.mixed_combat.actors.len() {
@@ -343,21 +406,40 @@ impl Game {
                 continue;
             }
             // Terrain/trees participate in sight, not just in the later bullet collision test.
-            let seen = sensed_actors(&self.mixed_combat.actors[i], &snapshot,
+            // Mounted targets are source points, not fabricated human bodies. Each observer
+            // samples the actual visible hull face; head-out anatomy takes priority when clear.
+            let mut candidates=snapshot.clone();
+            if self.mode==Mode::Tank {
+                if let Some(point)=self.small_arm_player_aim_point(self.mixed_combat.actors[i].eye()) {
+                    let mut target=Combatant::new(PLAYER_ACTOR_ID,Team::German,point,0.0);
+                    target.perception_point=Some(point);
+                    candidates.push(target);
+                }
+            }
+            let seen = sensed_actors(&self.mixed_combat.actors[i], &candidates,
                 |from, to| self.los_clear(from, to));
-            let objective = if i >= N_SOLDIERS {
+            let squad_order=squad_orders[i];
+            let maneuver=tactical[i].goal;
+            let investigate=heard[i].filter(|point| {
+                let d=point.distance(self.mixed_combat.actors[i].pos);
+                d>12.0&&d<=60.0&&self.mixed_combat.actors[i].last_seen.is_none()
+            });
+            let navigation=squad_order.regroup.or(maneuver).or(investigate);
+            let objective = navigation.unwrap_or_else(|| if i >= self.soviet_soldier_count {
                 self.player.pos + self.player.forward() * 18.0
             } else {
                 self.soldiers[i].route[self.soldiers[i].leg.min(3)]
-            };
+            });
             // Head for the objective round any open cellar or trench on the straight line.
-            let heading_for = if i < N_SOLDIERS {
+            let heading_for = if i < self.soviet_soldier_count {
                 self.hf.walk_toward(self.mixed_combat.actors[i].pos, objective)
             } else {
                 objective
             };
             let actor = &mut self.mixed_combat.actors[i];
-            let obs = combat::observe(actor, &seen, &cover, heading_for, dt);
+            let obs = combat::observe(actor, &seen, &small_arms_runtime::PlayerSightCover {
+                world:&sight_world,movement:&cover,source:&self.cabin_fire,models:&player_models,
+            }, heading_for, dt);
             let policy = if actor.team == Team::German {
                 self.mixed_combat.german_policy.as_ref()
             } else {
@@ -369,22 +451,43 @@ impl Game {
             // short (a rifleman sent to take over a gun never reached it).
             let contact = actor.last_seen.is_some()
                 || seen.iter().any(|other| other.team != actor.team && other.alive());
-            let to_post = i < N_SOLDIERS
-                && !contact
+            let to_post = i < self.soviet_soldier_count
+                && (navigation.is_some() || (!contact && squad_order.look.is_none() && heard[i].is_none()))
                 && Vec2::new(objective.x - actor.pos.x, objective.z - actor.pos.z).length()
                     > POST_ARRIVE_M;
+            // Preserve the real contact and its firing gates. A separate navigation observation
+            // lets an isolated man rejoin his squad instead of chasing alone indefinitely.
+            let regroup_obs = navigation.map(|_| {
+                let mut navigator=actor.clone();
+                navigator.memory_s=0.0;
+                combat::observe(&mut navigator,&[],&cover,heading_for,0.0)
+            });
             if decide || to_post {
                 self.mixed_combat.actions[i] = if to_post {
-                    crate::foot_ai::walk_to_goal(&obs, combat::INFANTRY_SENSOR_RANGE, POST_ARRIVE_M)
+                    crate::foot_ai::walk_to_goal(regroup_obs.as_ref().unwrap_or(&obs), combat::INFANTRY_SENSOR_RANGE, POST_ARRIVE_M)
                 } else {
                     policy
                         .and_then(|p| p.decide(&obs).ok())
                         .unwrap_or_else(|| crate::foot_ai::micro_expert(&obs))
                 };
             }
+            if !contact && navigation.is_none() {
+                if let Some(point)=squad_order.look.or(heard[i]) {
+                    let delta=point-actor.pos;
+                    let error=delta.x.atan2(-delta.z)-actor.yaw;
+                    let action=&mut self.mixed_combat.actions[i];
+                    action.turn=error.sin().atan2(error.cos()).clamp(-1.0,1.0);
+                    action.forward=0.0; action.strafe=0.0; action.fire=false; action.aim=false;
+                }
+            }
+            // Movement and hearing never authorize a shot. Covering men keep their own
+            // current sight, aiming error, magazine, reload and ordinary rifle cadence.
+            self.mixed_combat.actions[i]=coordinated_infantry_action(self.mixed_combat.actions[i],&obs,
+                maneuver.is_some()||investigate.is_some(),tactical[i].cover&&squad_order.regroup.is_none());
             // Practice retains physical target bodies, but NPCs neither pursue nor discharge.
             // Gate before apply_action consumes ammunition or creates shot/pose/audio events.
-            let action = permitted_infantry_action(self.mixed_combat.actions[i], return_fire);
+            let action = infantry_aim::visible_target_motor(actor, &obs, self.mixed_combat.actions[i], dt);
+            let action = permitted_infantry_action(action, return_fire);
             let before = actor.pos;
             let shot =
                 combat::apply_action(actor, &obs, action, &cover, dt, self.mixed_combat.tick);
@@ -423,7 +526,8 @@ impl Game {
             actor.pos = self.hf.ground_walker(before, actor.pos);
             if dt > 1e-6 { actor.velocity = (actor.pos - before) / dt; }
             actor.pos.y = self.hf.height_at(actor.pos.x, actor.pos.z);
-            if i < N_SOLDIERS && actor.last_seen.is_none() && actor.pos.distance(objective) < 1.5 {
+            if i < self.soviet_soldier_count && navigation.is_none() && squad_order.look.is_none() && heard[i].is_none()
+                && actor.last_seen.is_none() && actor.pos.distance(objective) < 1.5 {
                 self.soldiers[i].leg = (self.soldiers[i].leg + 1) % 4;
             }
             self.soldiers[i].pos = actor.pos;
@@ -717,9 +821,7 @@ impl Game {
             // Exclude the firing hull from its own muzzle shadow; other armor still blocks it.
             self.mixed_launch_small_arm(shot);
             self.mixed_combat.mg_shots += 1;
-            if n % MG_SOUND_EVERY == 0 {
-                self.schedule_sound_from(crate::audio::Sfx::TankMgShot, muzzle);
-            }
+            self.schedule_sound_from(crate::audio::Sfx::TankMgShot, muzzle);
             let k = self.next_inf_fx;
             self.next_inf_fx = (k + 1) % INF_FX;
             self.inf_flash_t[k] = 0.05;
@@ -742,7 +844,11 @@ impl Game {
             self.mixed_combat.auxiliary_he_ids.insert(id);
             self.present_external_projectile(id, muzzle, direction);
             self.enemies[i].reload = soft_ai::HE_RELOAD_SECONDS;
-            self.schedule_sound_from(crate::audio::Sfx::EnemyGun, muzzle);
+            let charge=crate::sound_levels::propellant_charge_kg(shell.caliber_mm,shell.mass_kg,shell.muzzle_velocity);
+            let braked=crate::sound_levels::gun_is_braked(shell.caliber_mm,shell.muzzle_velocity);
+            self.schedule_emission(crate::audio::Sfx::EnemyGun,muzzle,
+                crate::sound_propagation::Emission::gun(charge,braked,90.0),Some((direction,braked)),
+                Some(crate::acoustics::synth_gun_report(shell.caliber_mm,0.0,0.0,self.ai_tick.wrapping_mul(977))));
         }
         true
     }
@@ -788,6 +894,9 @@ impl Game {
             })
             .collect();
         serde_json::json!({"enabled":self.mixed_combat.enabled,
+            "squad_hearing_admissions":self.mixed_combat.hearing.admitted,
+            "squad_hearing_omitted_reports":self.mixed_combat.hearing.omitted,
+            "squad_maneuver_plans":self.mixed_combat.tactics.plans,
             "german_alive":self.mixed_combat.actors.iter().filter(|a|a.team==Team::German&&a.alive()).count(),
             "soviet_alive":self.mixed_combat.actors.iter().filter(|a|a.team==Team::Soviet&&a.alive()).count(),
             "rifle_shots":self.mixed_combat.rifle_shots,"damage":self.mixed_combat.damage,
@@ -845,13 +954,13 @@ impl Game {
         self.mixed_combat.enabled = true;
         for (i, soldier) in self.soldiers.iter_mut().enumerate() {
             soldier.activate_escort([soldier.pos; 4], &self.hf);
-            let german = i >= N_SOLDIERS;
+            let german = i >= self.soviet_soldier_count;
             let active = german || i < 4;
             if !active {
                 soldier.kill();
                 continue;
             }
-            let index = if german { i - N_SOLDIERS } else { i };
+            let index = if german { i - self.soviet_soldier_count } else { i };
             let p = center
                 + Vec3::new(
                     (index as f32 - 1.5) * 3.5,
@@ -878,6 +987,25 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn squad_support_requires_own_sight_and_maneuver_never_consumes_a_round() {
+        let mut actor=Combatant::new(1,Team::Soviet,Vec3::ZERO,0.0);actor.cooldown=0.0;
+        let target=Combatant::new(2,Team::German,Vec3::new(0.0,0.0,-25.0),0.0);
+        let obs=combat::observe(&mut actor,&[target],&[],Vec3::ZERO,0.01);
+        let base=FootAction {forward:0.8,aim:true,fire:true,..Default::default()};
+        let support=coordinated_infantry_action(base,&obs,false,true);
+        assert!(support.aim&&support.fire);assert_eq!(support.forward,0.0);
+        let mut mover=actor.clone();let rounds=mover.magazine;
+        let moving=coordinated_infantry_action(base,&obs,true,false);
+        assert!(combat::apply_action(&mut mover,&obs,moving,&[],0.1,1).is_none());
+        assert_eq!(mover.magazine,rounds);
+        assert!(combat::apply_action(&mut actor,&obs,support,&[],0.1,1).is_some());
+        assert_eq!(actor.magazine,rounds-1);
+        let hidden=combat::observe(&mut actor,&[],&[],Vec3::ZERO,0.1);
+        assert!(actor.last_seen.is_some(),"test retains memory but no current sight");
+        assert!(!coordinated_infantry_action(base,&hidden,false,true).fire);
+    }
 
     #[test]
     fn practice_infantry_stays_stationary_and_live_combat_restores_motion_and_fire() {
@@ -993,6 +1121,18 @@ mod tests {
         assert!(mesh.texture.is_some());
         assert!(mesh.max.x - mesh.min.x > 0.2 && mesh.max.x - mesh.min.x < 1.5);
     }
+    #[test]
+    fn expanded_canyon_roster_keeps_every_extra_rifleman_on_the_soviet_team() {
+        let soldiers: Vec<_> = (0..CANYON_SOLDIERS).map(|i| {
+            let p=Vec3::new(i as f32*3.0,0.0,0.0);
+            Soldier::new(p,0.0,[p;4],i as u32,i*2,i*2+1)
+        }).collect();
+        let state=MixedCombatRuntime::new_with_soviet_count(&soldiers,CANYON_SOLDIERS);
+        assert_eq!(state.actors.len(),CANYON_SOLDIERS);
+        assert!(state.actors.iter().all(|a|a.team==Team::Soviet && a.alive()));
+        assert_eq!(state.actions.len(),CANYON_SOLDIERS);
+    }
+
     #[test]
     fn appended_german_roster_has_distinct_role_and_finite_ammunition() {
         let soldiers: Vec<_> = (0..N_SOLDIERS + GERMAN_COUNT)

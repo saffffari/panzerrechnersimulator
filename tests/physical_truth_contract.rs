@@ -13,6 +13,8 @@ mod observer;
 #[allow(dead_code)]
 fn with_observer(source: &str) -> String {
     source.replacen("// @observer-constants", &observer::wgsl_constants(), 1)
+        .replace("// @weather-density",include_str!("../shaders/weather_volume.wgsl"))
+        .replace("// @cabin-medium",include_str!("../shaders/cabin_medium.wgsl"))
 }
 
 #[path = "../src/protective_glass.rs"]
@@ -46,29 +48,40 @@ fn camera_response_shader_parses_and_validates() {
 
 #[test]
 fn clean_camera_endpoint_cannot_execute_screen_grain_or_dither() {
-    let branch = CRUSH_WGSL
-        .find("if (retro > 0.001)")
-        .expect("explicit retro-only branch");
-    let bayer_use = CRUSH_WGSL.find("BAYER[bi]").expect("Bayer lookup");
-    let depth_use = CRUSH_WGSL
-        .find("textureLoad(depth_tex")
-        .expect("far-field depth mask");
-
-    assert!(
-        bayer_use > branch,
-        "clean/off evaluated the Bayer screen pattern"
-    );
-    assert!(
-        depth_use > branch,
-        "clean/off evaluated the dither-only depth mask"
-    );
+    let source=compact(&shader_code(CRUSH_WGSL));
+    let retro=braced_block(&source,"if(retro>0.001)");
+    let ldr=braced_block(&source,"if(cr.ldr_dither>0.0)");
+    let threshold=braced_block(&source,"fndisplay_threshold(");
+    let enabled=braced_block(&source,"if(cr.retro>0.001||cr.ldr_dither>0.0)");
+    // One shared native-pixel decision, evaluated only when at least one consumer is enabled.
+    // Clean/off must neither sample blue noise nor evaluate a Bayer pattern.
+    assert_eq!(enabled.matches("display_threshold(vec2<i32>(in.pos.xy))").count(),1);
+    assert!(enabled.contains("native_threshold=display_threshold("));
+    assert_eq!(source.matches("display_threshold(").count(),2,"one definition and one gated call");
+    assert!(source.contains("varnative_threshold=0.0;"));
+    assert!(retro.contains("letordered=native_threshold;"));
+    assert!(ldr.contains("letthreshold=native_threshold;"));
+    assert_eq!(retro.matches("textureLoad(depth_tex").count(),1);
+    assert_eq!(source.matches("textureLoad(depth_tex").count(),1,"depth mask must stay retro-only");
     assert!(!CRUSH_WGSL.contains("temporal_grain("));
     assert!(!CRUSH_WGSL.contains("fn noise2"));
     assert!(!CRUSH_WGSL.contains("var grain_amt"));
     // A stationary resolved image has no clock-dependent pattern in its quantization branch.
-    let treatment = &CRUSH_WGSL[branch..CRUSH_WGSL.find("// TZF 9b/9c").unwrap()];
-    assert!(!treatment.contains("cr.frame"));
-    assert!(treatment.contains("(px.y & 3) * 4 + (px.x & 3)"));
+    for code in [retro,ldr,threshold,enabled] {assert!(!code.contains("cr.frame"));}
+    assert!(threshold.contains("(px.y&3)*4+(px.x&3)"));
+    assert!(threshold.contains("textureLoad(blue_noise,vec2(px.x&63,px.y&63),0)"));
+}
+
+/// Read a complete balanced block, so a call after an if's closing brace cannot satisfy the gate.
+fn braced_block<'a>(source:&'a str,marker:&str)->&'a str {
+    let start=source.find(marker).unwrap_or_else(||panic!("missing block {marker}"));
+    let open=start+source[start..].find('{').expect("block opening brace");
+    let mut depth=0;
+    for (offset,byte) in source.as_bytes()[open..].iter().enumerate() {
+        if *byte==b'{' {depth+=1;}
+        if *byte==b'}' {depth-=1;if depth==0 {return &source[open+1..open+offset];}}
+    }
+    panic!("unclosed block {marker}");
 }
 
 fn mask_bytes_except_newlines(bytes: &mut [u8], start: usize, end: usize) {
@@ -330,6 +343,18 @@ fn assert_absent(label: &str, source: &str, forbidden: &[&str]) {
     );
 }
 
+fn contains_identifier(source:&str,identifier:&str)->bool {
+    source.split(|c:char|!(c.is_alphanumeric()||c=='_')).any(|token|token==identifier)
+}
+
+#[test]
+fn legacy_resource_identifier_checks_do_not_reject_distinct_live_resources() {
+    assert!(!contains_identifier("self.raster_glass_pipe: RenderPipeline", "glass_pipe"));
+    assert!(contains_identifier("self.glass_pipe: RenderPipeline", "glass_pipe"));
+    assert!(contains_identifier("let glass_pipe = make_pipe();", "glass_pipe"));
+    assert_eq!(braced_block("if(x){inside{nested}}outside()","if(x)"),"inside{nested}");
+}
+
 fn assert_present(label: &str, source: &str, required: &[&str]) {
     let missing: Vec<_> = required
         .iter()
@@ -588,11 +613,12 @@ fn aperture_and_screen_overlay_proxies_cannot_reappear() {
             "shaft_sun_dir(",
             "outline_pipe",
             "xray_pipe",
-            "glass_pipe",
             "label: Some(\"outline-",
             "label: Some(\"xray-",
         ],
     );
+    assert!(!contains_identifier(&renderer,"glass_pipe"),
+        "retired screen-overlay glass_pipe resource returned; raster_glass_pipe is a distinct surface pipeline");
     assert_absent(
         "game",
         &game,
@@ -718,12 +744,20 @@ fn high_direct_view_glass_uses_geometric_dielectric_transport() {
         ],
     );
 
+    // Match physical_atmosphere_transport_shader_source and its shared source injection. The
+    // weather/cabin libraries are actual production dependencies, not stubs for validation.
+    let atmosphere=include_str!("../shaders/physical_environment.wgsl").split_once(
+        "// --- Persistent physical snow ---------------------------------------------------------------")
+        .expect("production atmosphere/snow split").0;
     let full_shader = format!(
         "{}\n{}",
-        include_str!("../shaders/physical_environment.wgsl"),
+        atmosphere,
         protective_glass::inject(COMBINE_WGSL, false).replace(
             "// @campaign-terrain-material", include_str!("../shaders/terrain_material.wgsl"))
+            .replace("// @weather-density",include_str!("../shaders/weather_volume.wgsl"))
+            .replace("// @cabin-medium",include_str!("../shaders/cabin_medium.wgsl"))
     );
+    let full_shader=with_observer(&full_shader);
     let module = wgpu::naga::front::wgsl::parse_str(&full_shader)
         .unwrap_or_else(|error| panic!("High dielectric WGSL parse failed: {error}"));
     let mut validator = wgpu::naga::valid::Validator::new(

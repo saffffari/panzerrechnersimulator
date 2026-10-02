@@ -1,4 +1,4 @@
-//! Component damage of the player's Tiger from strikes on its outside: what a shell breaks where
+//! Component damage of the player's Tiger from source-confirmed strikes on its outside: what a shell breaks where
 //! it lands (penetrating or not), what each failure still lets the machine do, and whether its one
 //! crewman can put it right in the field. Pure and deterministic: the projectile's seed decides.
 //!
@@ -7,7 +7,9 @@
 //! 14 of 4.5/5.7 cm and 11 of 7.62 cm, none through, yet a cupola block went opaque, both MGs were
 //! shot to pieces, a 7.62 cm mantlet hit sheared the gun mount, a hit on the bow plate tore off
 //! the spare links, the turret ring jammed for a while, the radio failed from shock, road wheels
-//! were holed and two torsion bars broke — and the tank still drove 60 km. Firing trials (NIIBT
+//! were holed and two torsion bars broke — and the tank still drove 60 km. This establishes possible
+//! failure modes, not per-hit frequencies. Remote shock failures need a structural transfer model
+//! and are not sampled from a whole-vehicle lottery. Firing trials (NIIBT
 //! Kubinka 1943, the 1944 Soviet field trial) add the turret-ring jam and the knocked-out driver's
 //! block. Probabilities below are tuning anchored to those cases, not measured rates.
 use glam::Vec3;
@@ -141,6 +143,8 @@ pub enum Zone {
     BallMount,
     DriverVisor,
     Mantlet,
+    /// A direct source-triangle hit on the separately retained gunner telescope assembly.
+    GunnerSight,
     /// The band where turret meets hull roof.
     TurretRing,
     Cupola { block: usize },
@@ -151,33 +155,29 @@ pub enum Zone {
 /// Hull-local height of the hull roof (the driver's and radio operator's hatch apertures).
 pub const HULL_ROOF_Y: f32 = 2.0;
 /// Height of the ring band above the roof in which a fragment can wedge into the gap.
-const RING_BAND_M: f32 = 0.22;
+const RING_BAND_M: f32 = 0.04;
 /// Cupola block centres, turret-local (`tiger_periscopes::CUPOLA_CENTERS`).
 pub const BLOCKS: usize = super::tiger_periscopes::CUPOLA_NAMES.len();
 
-/// Classify a strike. `hull_local` is the contact in the hull frame; `turret_local` the same point
-/// in the turret frame. The runtime armour is two coarse boxes and the hull box reaches above the
-/// roof, so a strike on it above the roofline is really on the turret: height and bearing from
-/// the turret decide, not the box face it was registered on.
+/// Classify a source-confirmed strike. The narrow zones remain declared geometric envelopes,
+/// not measured material failure models. A coarse armor OBB contact must never be passed directly:
+/// its empty upper corners previously manufactured ring, mantlet and optical failures.
 pub fn zone(hull_local: Vec3, turret_local: Vec3, on_turret_box: bool) -> Zone {
     let p = hull_local;
     let turret = on_turret_box || p.y > HULL_ROOF_Y;
     if turret {
-        if p.y < HULL_ROOF_Y + RING_BAND_M {
+        let q = turret_local;
+        let ring_radius=Vec3::new(q.x,0.0,q.z).length();
+        if (p.y-HULL_ROOF_Y).abs() < RING_BAND_M && (ring_radius-1.45).abs()<0.10 {
             return Zone::TurretRing;
         }
-        let q = turret_local;
-        let cupola = Vec3::new(0.564, 0.0, -0.42);
-        let flat = Vec3::new(q.x, 0.0, q.z);
-        if q.y > 2.2 && flat.distance(cupola) < 0.6 {
-            let block = super::tiger_periscopes::CUPOLA_CENTERS.iter().enumerate()
-                .min_by(|(_, a), (_, b)| a.distance_squared(q).total_cmp(&b.distance_squared(q)))
-                .map_or(0, |(i, _)| i);
-            return Zone::Cupola { block };
+        if let Some((block,_))=super::tiger_periscopes::CUPOLA_CENTERS.iter().enumerate()
+            .filter(|(_,center)|center.distance(q)<0.11)
+            .min_by(|(_,a),(_,b)|a.distance_squared(q).total_cmp(&b.distance_squared(q))) {
+            return Zone::Cupola {block};
         }
-        let bearing = q.x.atan2(q.z).abs();
-        // The mantlet: the gun's shield, dead ahead of the turret around the trunnion height.
-        if bearing < 0.45 && (1.55..2.3).contains(&q.y) {
+        // Only the support immediately around the gun trunnion, not the entire front turret wall.
+        if q.x.abs()<0.30 && (q.y-1.845).abs()<0.25 && (1.25..1.75).contains(&q.z) {
             return Zone::Mantlet;
         }
         return Zone::TurretWall;
@@ -200,10 +200,42 @@ pub fn zone(hull_local: Vec3, turret_local: Vec3, on_turret_box: bool) -> Zone {
     Zone::HullWall
 }
 
+/// Articulated source frames disambiguate the optic/shutter and gun from nearby armor. Other
+/// zones still require both the exact surface contact and their narrow geometric envelope.
+pub fn source_zone(hull_local:Vec3,turret_local:Vec3,source_frame:usize)->Zone {
+    match source_frame {
+        8=>Zone::GunnerSight,
+        5|9|10|11=>Zone::DriverVisor,
+        2|12|13=>Zone::Mantlet,
+        _=>zone(hull_local,turret_local,!matches!(source_frame,0|3|5|9|10|11|14)),
+    }
+}
+
+/// Kinetic energy deposited normal to the actual contacted source surface. Residual penetrator
+/// energy is removed before projecting; grazing kinetic strikes cannot act like normal hits.
+/// Filler pressure/structural shock is not guessed here; the separate penetration solver owns it.
+pub fn deposited_normal_energy_kj(mass_kg:f32,speed:f32,residual_speed:f32,cosine:f32)->f32 {
+    if !mass_kg.is_finite() || !speed.is_finite() || !residual_speed.is_finite() || !cosine.is_finite()
+        || mass_kg<=0.0 || speed<=0.0 {return 0.0;}
+    0.0005*mass_kg*(speed*speed-residual_speed.max(0.0).powi(2)).max(0.0)*cosine.clamp(0.0,1.0).powi(2)
+}
+
+/// Confirm only the bounded neighborhood behind the coarse armor envelope along the actual
+/// incoming path. A missing source surface cannot create a component fault. The outer envelope
+/// and penetration decision are deliberately left to the existing armor solver.
+pub fn confirm_source_contact(source:&super::surface_fire::CabinFire,
+    models:&[glam::Mat4;super::surface_fire::FRAMES],point:Vec3,incoming:Vec3)
+    ->Option<super::surface_fire::Contact> {
+    if !point.is_finite() || !incoming.is_finite() || incoming.length_squared()<0.5 {return None;}
+    let direction=incoming.normalize();
+    source.sweep(point-direction*0.10,point+direction*1.25,models)
+}
+
 /// What struck.
 #[derive(Copy, Clone, Debug)]
 pub struct Strike {
     pub calibre_mm: f32,
+    /// Deposited normal kinetic energy at the confirmed source contact (not incident total KE).
     pub energy_kj: f32,
     pub penetrated: bool,
     pub high_explosive: bool,
@@ -263,10 +295,25 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
     let class = strike.class();
     let chance = |salt: u32, p: f32| roll(seed, salt) < p;
     let mut out = Vec::new();
+    // Conservative eligibility thresholds [engineering estimates], not new historical rates.
+    // The old conditional outcome table is retained only after local contact and meaningful
+    // work are established. Zero/invalid or merely tangential contacts cause no component failure.
+    let minimum_kj=match zone {
+        Zone::Cupola {..}|Zone::GunnerSight=>0.05,
+        Zone::DriverVisor|Zone::BallMount=>0.5,
+        Zone::RunningGear {..}|Zone::Sprocket(_)|Zone::Idler(_)=>2.0,
+        Zone::BowPlate=>20.0,
+        Zone::Mantlet=>80.0,
+        Zone::TurretRing=>10.0,
+        Zone::HullWall|Zone::TurretWall=>return out,
+    };
+    if !strike.energy_kj.is_finite() || strike.energy_kj<minimum_kj {return out;}
+    let work=(strike.energy_kj/minimum_kj-1.0).clamp(0.0,1.0);
+    let chance=|salt:u32,p:f32|chance(salt,p*work);
     match zone {
         Zone::RunningGear { side, track } => {
             let wheels = match class { Rifle => 0.01, Light => 0.08, Medium => 0.14, Heavy => 0.25 };
-            out.push(Effect::RunningGear(side, wheels));
+            out.push(Effect::RunningGear(side, wheels*work));
             // Anti-tank rifles needed 4–5 hits on one pin, so they never break a track here;
             // a 45 mm hit at 30–200 m did. High explosive under the pannier wrecks the links.
             let breaks = match (class, track) {
@@ -287,10 +334,8 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
             if chance(3, 0.5) { out.push(Effect::BreakTrack(side)); }
         }
         Zone::Sprocket(side) | Zone::Idler(side) => out.push(Effect::RunningGear(side, 0.01)),
-        Zone::BowPlate if class >= Light => {
-            let links = if class >= Medium { 0.9 } else { 0.6 };
-            if chance(4, links) { out.push(Effect::SpareLinksLost(if class >= Medium { u8::MAX } else { 3 })); }
-        }
+        // Bow plate is not a spare-link hit. The current source set has no separately
+        // identified hung-link assembly; do not remove inventory from an arbitrary plate strike.
         Zone::DriverVisor => {
             if chance(5, if class == Rifle { 0.5 } else { 0.85 }) { out.push(Effect::DriverVisorJam); }
         }
@@ -300,29 +345,25 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
             else if chance(7, 0.35) { out.push(Effect::Fault(ModuleKind::HullMg, Fault::MgBarrel)); }
         }
         Zone::Mantlet => {
-            let (sheared, leak, sight, smashed, coax) = match class {
-                Rifle => (0.0, 0.0, 0.0, 0.0, 0.25),
-                Light => (0.0, 0.15, 0.3, 0.0, 0.5),
-                Medium => (0.25, 0.4, 0.5, 0.0, 0.55),
-                Heavy => (0.6, 0.3, 0.3, 0.4, 0.7),
+            let (sheared,leak)=match class {
+                Rifle=>(0.0,0.0),Light=>(0.0,0.15),Medium=>(0.25,0.4),Heavy=>(0.6,0.3),
             };
-            let r = roll(seed, 8);
-            if r < sheared { out.push(Effect::Fault(ModuleKind::MainGun, Fault::MountSheared)); }
-            else if r < sheared + leak { out.push(Effect::Fault(ModuleKind::MainGun, Fault::RecoilLeak)); }
-            if chance(9, smashed) { out.push(Effect::Fault(ModuleKind::GunnerSight, Fault::SightSmashed)); }
-            else if chance(10, sight) { out.push(Effect::Fault(ModuleKind::GunnerSight, Fault::SightOutOfTrue)); }
-            if chance(11, coax) {
-                let fault = if class >= Light && chance(12, 0.6) { Fault::MgWrecked } else { Fault::MgBarrel };
-                out.push(Effect::Fault(ModuleKind::CoaxMg, fault));
-            }
+            let r=roll(seed,8);
+            if r<sheared*work {out.push(Effect::Fault(ModuleKind::MainGun,Fault::MountSheared));}
+            else if r<(sheared+leak)*work {out.push(Effect::Fault(ModuleKind::MainGun,Fault::RecoilLeak));}
+            // Coax and telescope are separate parts. A shield/support strike is not proof that
+            // either was hit; penetrating fragments still test their actual internal volumes.
+        }
+        Zone::GunnerSight=>{
+            if chance(9,1.0) {out.push(Effect::Fault(ModuleKind::GunnerSight,Fault::SightSmashed));}
         }
         Zone::TurretRing => {
             let (wrecked, jammed) = match class {
                 Rifle => (0.0, 0.15), Light => (0.0, 0.5), Medium => (0.1, 0.6), Heavy => (0.4, 0.5),
             };
             let r = roll(seed, 13);
-            if r < wrecked { out.push(Effect::Fault(ModuleKind::TurretTraverse, Fault::RingWrecked)); }
-            else if r < wrecked + jammed { out.push(Effect::Fault(ModuleKind::TurretTraverse, Fault::RingJammed)); }
+            if r < wrecked*work { out.push(Effect::Fault(ModuleKind::TurretTraverse, Fault::RingWrecked)); }
+            else if r < (wrecked + jammed)*work { out.push(Effect::Fault(ModuleKind::TurretTraverse, Fault::RingJammed)); }
         }
         Zone::Cupola { block } => {
             let (opaque, holder) = match class {
@@ -331,26 +372,13 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
             if chance(14, opaque) {
                 out.push(Effect::VisionBlock { block, holder: chance(15, holder) });
             }
-            // A heavy strike on the drum cracks the neighbouring block too.
-            if class >= Medium && chance(16, 0.5) {
-                let neighbour = if roll(seed, 17) < 0.5 { (block + 1) % BLOCKS } else { (block + BLOCKS - 1) % BLOCKS };
-                out.push(Effect::VisionBlock { block: neighbour, holder: false });
-            }
+            // Neighbouring blocks are independent contacts; no free adjacent failure is
+            // invented without a propagated fracture/debris solution.
         }
         _ => {}
     }
-    // Shock through the hull: radio valves and plugs, the sight's alignment (Zabel; TF p.79).
-    let turret_zone = matches!(zone, Zone::Mantlet | Zone::TurretRing | Zone::Cupola { .. } | Zone::TurretWall);
-    let (radio, sight) = match class {
-        Rifle => (0.0, 0.0),
-        Light => (0.05, if turret_zone { 0.1 } else { 0.0 }),
-        Medium => (0.12, if turret_zone { 0.25 } else { 0.08 }),
-        Heavy => (0.25, if turret_zone { 0.4 } else { 0.15 }),
-    };
-    if chance(20, radio) { out.push(Effect::Fault(ModuleKind::Radio, Fault::RadioShock)); }
-    if chance(21, sight) && !out.iter().any(|e| matches!(e, Effect::Fault(ModuleKind::GunnerSight, _))) {
-        out.push(Effect::Fault(ModuleKind::GunnerSight, Fault::SightOutOfTrue));
-    }
+    // No remote radio/sight lottery: neither impulse transfer nor fastener/glass strain is
+    // currently solved. Internal component damage remains the real penetrating fragment path.
     out
 }
 
@@ -421,7 +449,7 @@ mod tests {
     use super::*;
 
     fn strike(calibre_mm: f32) -> Strike {
-        Strike { calibre_mm, energy_kj: 0.0, penetrated: false, high_explosive: false }
+        Strike { calibre_mm, energy_kj: if calibre_mm<20.0 {30.0}else{1800.0}, penetrated: false, high_explosive: false }
     }
     fn hull(x: f32, y: f32, z: f32) -> Zone { zone(Vec3::new(x, y, z), Vec3::ZERO, false) }
     fn share(zone: Zone, calibre: f32, want: impl Fn(&Effect) -> bool) -> f32 {
@@ -439,8 +467,9 @@ mod tests {
         assert_eq!(hull(-0.547, 1.78, 3.56), Zone::BallMount);
         assert_eq!(hull(0.0, 1.5, 3.56), Zone::BowPlate);
         assert_eq!(hull(2.06, 1.6, 0.0), Zone::HullWall);
-        // Above the roofline the coarse hull box is really the turret.
-        assert_eq!(zone(Vec3::new(2.06, 2.1, 0.0), Vec3::new(2.06, 1.58, 0.0), false), Zone::TurretRing);
+        // Empty coarse hull corners must not manufacture a turret-ring contact.
+        assert_eq!(zone(Vec3::new(2.06, 2.1, 0.0), Vec3::new(2.06, 1.58, 0.0), false), Zone::TurretWall);
+        assert_eq!(zone(Vec3::new(1.45,2.01,0.0),Vec3::new(1.45,1.49,0.0),true),Zone::TurretRing);
         assert_eq!(zone(Vec3::new(0.0, 2.4, 3.5), Vec3::new(0.0, 1.88, 1.6), false), Zone::Mantlet);
         assert_eq!(zone(Vec3::new(1.5, 2.4, 0.0), Vec3::new(1.5, 1.88, 0.0), false), Zone::TurretWall);
         let block = 3;
@@ -472,6 +501,49 @@ mod tests {
             assert!(gun <= 1);
         }
         assert_eq!(share(Zone::Mantlet, 14.5, |e| matches!(e, Effect::Fault(ModuleKind::MainGun, _))), 0.0);
+    }
+
+    #[test]
+    fn energy_and_incidence_gate_failures_without_remote_component_lotteries() {
+        assert_eq!(deposited_normal_energy_kj(6.3,680.0,0.0,0.0),0.0);
+        let normal=deposited_normal_energy_kj(6.3,680.0,0.0,1.0);
+        assert!((deposited_normal_energy_kj(6.3,680.0,0.0,0.5)-normal*0.25).abs()<0.001);
+        assert_eq!(deposited_normal_energy_kj(6.3,680.0,680.0,1.0),0.0);
+        for seed in 0..4096 {
+            for z in [Zone::HullWall,Zone::TurretWall,Zone::BowPlate,Zone::Mantlet] {
+                let e=effects(z,strike(76.2),seed);
+                assert!(!e.iter().any(|e|matches!(e,Effect::Fault(ModuleKind::Engine|ModuleKind::Radio
+                    |ModuleKind::GunnerSight|ModuleKind::CoaxMg,_))),"{z:?}: {e:?}");
+            }
+            for energy in [0.0,-1.0,f32::NAN] {
+                let mut s=strike(76.2);s.energy_kj=energy;
+                assert!(effects(Zone::Mantlet,s,seed).is_empty());
+                assert!(effects(Zone::RunningGear {side:Side::Right,track:true},s,seed).is_empty());
+            }
+        }
+    }
+    #[test]
+    fn exact_optic_and_shutter_frames_are_local_and_cupola_roof_is_not_glass() {
+        assert_eq!(source_zone(Vec3::ZERO,Vec3::ZERO,8),Zone::GunnerSight);
+        assert_eq!(source_zone(Vec3::ZERO,Vec3::ZERO,10),Zone::DriverVisor);
+        assert_eq!(zone(Vec3::new(0.56,3.2,-0.42),Vec3::new(0.56,2.68,-0.42),true),Zone::TurretWall);
+        let direct=effects(Zone::GunnerSight,strike(14.5),7);
+        assert_eq!(direct,vec![Effect::Fault(ModuleKind::GunnerSight,Fault::SightSmashed)]);
+    }
+
+    #[test]
+    fn source_confirmation_rejects_empty_envelope_and_keeps_articulated_contact() {
+        use glam::Mat4;
+        let mesh=crate::prims::box_mesh(Vec3::new(-0.2,-0.2,-0.03),Vec3::new(0.2,0.2,0.03),[80,80,80]);
+        let source=super::super::surface_fire::CabinFire::new(&[(8,&mesh)]);
+        let frame=Mat4::from_rotation_translation(glam::Quat::from_rotation_y(0.7),Vec3::new(4.,2.,-7.));
+        let mut models=[Mat4::IDENTITY;super::super::surface_fire::FRAMES];models[8]=frame;
+        let direction=frame.transform_vector3(-Vec3::Z);
+        let point=frame.transform_point3(Vec3::new(0.,0.,0.5));
+        let hit=confirm_source_contact(&source,&models,point,direction).unwrap();
+        assert_eq!(hit.frame,8);assert!((hit.point.z-0.03).abs()<1e-5);
+        assert!(confirm_source_contact(&source,&models,point+frame.transform_vector3(Vec3::X),direction).is_none());
+        assert!(confirm_source_contact(&source,&models,point,Vec3::ZERO).is_none());
     }
 
     #[test]

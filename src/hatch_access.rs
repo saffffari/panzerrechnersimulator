@@ -1,6 +1,6 @@
 //! Space traverses the open aperture. LMB selection of the articulated lid stays independent.
 use super::*;
-use hatch_traversal::{Aperture, ClimbContact, ClimbLevel, choose_target, exit_offsets, target_score};
+use hatch_traversal::{Aperture, choose_target, exit_offsets, target_score};
 
 impl Game {
     /// Local identity is not a seat lock. Only another living crewman occupying the destination
@@ -17,9 +17,8 @@ impl Game {
         self.lan_post_mask & (1 << role as u8) == 0
     }
 
-    /// Shared keyboard/replay Space action. Each exterior climb ends on a real supported deck;
-    /// another press is required for the next level or an already-open hatch. Returning true
-    /// consumes the action, including a blocked contextual request, so it cannot also jump/fire.
+    /// Outside, Space is an ordinary jump unless the player aims at a reachable open hatch.
+    /// Tank proximity alone never starts an assisted climb or consumes the jump.
     pub(super) fn try_space_traversal(&mut self, r: &Renderer) -> bool {
         if self.climb.active || !self.player.alive || self.activity.is_some()
             || self.switch_t > 0.0 || self.carried_casing.is_some()
@@ -42,62 +41,11 @@ impl Game {
             self.start_hatch_passage(index, r);
             return true;
         }
-        if self.mode == Mode::Foot {
-            for index in 0..5 {
-                if target_score(r.camera.pos, r.camera.forward(), Some(self.foot.pos),
-                    self.access_aperture(index), true).is_none() { continue; }
-                if !self.hatch_entry_post_available(index) {
-                    self.hover_label = Some("HATCH POST OCCUPIED - CREWMAN BLOCKS THE WAY");
-                    return true;
-                }
-                if !self.access_hatch_open(index) {
-                    self.hover_label = Some("OPEN HATCH [LMB] - THEN ENTER [SPACE]");
-                    return true;
-                }
-            }
-        }
-        if self.mode != Mode::Foot || self.foot.airborne || self.player.speed.abs() >= 0.6 {
-            return false;
-        }
-        let models = self.fire_surface_models();
-        let contacts = self.cabin_fire.source_contacts(&models);
-        let step = hatch_traversal::climb_step(self.foot.pos, r.camera.forward(),
-            models[0], models[1], |from, to| {
-                let source = contacts.sweep_batch(&[[from, to]])[0].map(|hit| ClimbContact {
-                    point: models[hit.frame].transform_point3(hit.point),
-                    normal: models[hit.frame].transform_vector3(hit.normal).normalize_or_zero(),
-                    frame: hit.frame,
-                });
-                let delta = to - from;
-                let length = delta.length();
-                let world = (length > 1e-5).then(||
-                    self.nearest_cover_ray(from, delta / length, length)).flatten()
-                    .map(|(distance, _)| ClimbContact {
-                        point: from + delta / length * distance,
-                        normal: Vec3::Y,
-                        frame: usize::MAX, // world cover blocks motion; it is never a tank deck
-                    });
-                [source, world].into_iter().flatten().min_by(|a, b|
-                    a.point.distance_squared(from).total_cmp(&b.point.distance_squared(from)))
-            });
-        let Some(step) = step else { return false; };
-        self.foot.yaw = r.camera.yaw;
-        self.foot.pitch = r.camera.pitch;
-        self.foot.airborne = false;
-        self.foot.vel_y = 0.0;
-        self.foot.crouch_t = 0.0;
-        self.climb = Climb {
-            active: true, mounting: true, step: 0, t: 0.0, anim: true, automatic: true,
-            exit_feet: Some(step.feet),
-            cams: step.waypoints.into_iter().map(|feet| feet + Vec3::Y * crate::foot::EYE).collect(),
-            end: ClimbEnd::Afoot,
-        };
-        self.hover_label = None;
-        self.consume_primary_press();
-        println!("[hatch] Space climb onto {}", match step.level {
-            ClimbLevel::Chassis => "chassis", ClimbLevel::Turret => "turret roof",
-        });
-        true
+        false
+    }
+
+    pub(super) fn natural_hatch_station(&self, index: usize) -> Option<Station> {
+        natural_hatch_station(index, self.lan_post_mask)
     }
 
     fn access_aperture(&self, index: usize) -> Aperture {
@@ -136,6 +84,7 @@ impl Game {
             let aperture = self.access_aperture(index);
             let Some(score) = target_score(r.camera.pos, r.camera.forward(),
                 entering.then_some(self.foot.pos), aperture, entering) else { continue; };
+            if entering && !score.aimed { continue; }
             // A near face of the opening must be visible. Do not hit-test the open lid's new
             // location, or require a standing body to fit a crawl-sized opening.
             let near = aperture.center + aperture.normal * if entering { 0.07 } else { -0.07 };
@@ -267,15 +216,6 @@ impl Game {
         }
         let Some(index) = self.space_hatch_target(r) else {
             self.blocked_hatch_exit = None;
-            if self.mode == Mode::Foot && !self.climb.active && !self.foot.airborne
-                && self.player.speed.abs() < 0.6 {
-                let local = self.player.hull_model().inverse().transform_point3(self.foot.pos);
-                if local.x.abs() < 3.4 && local.z.abs() < 4.7 {
-                    self.hover_label = if local.y < 0.85 { Some("CLIMB CHASSIS [SPACE]") }
-                        else if local.y < 2.05 { Some("CLIMB TURRET ROOF [SPACE]") }
-                        else { self.hover_label };
-                }
-            }
             return;
         };
         if self.blocked_hatch_exit == Some(index) {
@@ -328,9 +268,41 @@ impl Game {
     }
 }
 
+
+/// Reconcile a completed physical crossing without taking another crewman's post. A dismounted
+/// local player leaves at least one of the five posts available in the five-person crew model.
+fn natural_hatch_station(index: usize, occupied: u8) -> Option<Station> {
+    let preferred = Game::access_hatch_station(index);
+    [preferred, Station::Loader, Station::Commander, Station::Gunner,
+        Station::Driver, Station::Radioman].into_iter().find(|station| {
+        let role = match station {
+            Station::Commander => crate::lan::LanRole::Commander,
+            Station::Driver => crate::lan::LanRole::Driver,
+            Station::Gunner => crate::lan::LanRole::Gunner,
+            Station::Loader => crate::lan::LanRole::Loader,
+            Station::Radioman => crate::lan::LanRole::Radio,
+        };
+        occupied & (1 << role as u8) == 0
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn natural_open_hatch_entry_uses_a_free_post_even_when_the_hatch_post_is_occupied() {
+        use crate::lan::LanRole;
+        assert_eq!(natural_hatch_station(4, 0), Some(Station::Commander));
+        assert_eq!(natural_hatch_station(4, 1 << LanRole::Commander as u8), Some(Station::Loader));
+        for free in LanRole::ALL {
+            let occupied = LanRole::ALL.into_iter().filter(|role| *role != free)
+                .fold(0u8, |mask, role| mask | (1 << role as u8));
+            assert!(natural_hatch_station(4, occupied).is_some(),
+                "a dismounted player must retain a real vacant post: {free:?}");
+        }
+        assert_eq!(natural_hatch_station(4, 0xff), None);
+    }
 
     fn press(game: &mut Game, renderer: &mut Renderer, jump: bool) {
         let mut crew = crate::lan::CrewFrame::default();
@@ -362,7 +334,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GPU and source Tiger assets"]
-    fn source_tiger_couch_space_climbs_two_decks_and_crosses_only_open_unoccupied_hatch()
+    fn source_tiger_couch_space_jumps_outside_and_crosses_only_aimed_open_hatch()
         -> anyhow::Result<()> {
         use crate::tank_editor_scene::{TankAssetId, TankEditorScene};
         let instance = crate::create_instance();
@@ -385,19 +357,9 @@ mod tests {
         game.foot.pitch = renderer.camera.pitch;
         let ground_feet = game.foot.pos;
         press(&mut game, &mut renderer, true);
-        assert!(game.climb.active, "ground Space failed to find source-supported chassis");
-        finish(&mut game, &mut renderer);
-        assert!(game.mode == Mode::Foot);
-        let chassis_feet = game.foot.pos;
-        assert!(chassis_feet.y > ground_feet.y + 0.3);
-        renderer.camera.set_forward(game.player.center() - game.foot.pos);
-        game.foot.yaw = renderer.camera.yaw;
-        game.foot.pitch = renderer.camera.pitch;
-        press(&mut game, &mut renderer, true);
-        assert!(game.climb.active, "second Space failed to find source-supported turret roof");
-        finish(&mut game, &mut renderer);
-        assert!(game.mode == Mode::Foot);
-        assert!(game.foot.pos.y > chassis_feet.y + 0.3);
+        assert!(!game.climb.active, "outside Space must not start an assisted climb");
+        assert!(game.foot.airborne && game.foot.vel_y > 0.0, "outside Space must jump");
+        assert!(game.foot.pos.y < ground_feet.y + 0.2, "one tick must not teleport onto the deck");
         assert!(!game.hatch_open, "climbing cannot operate the lid");
         assert_eq!(game.space_hatch_target(&renderer), None);
         assert!(!game.start_hatch_passage(4, &renderer), "closed cupola cannot be entered");
@@ -439,7 +401,7 @@ mod tests {
         assert!(game.climb.active, "head-out Space must pull through the open cupola");
         finish(&mut game, &mut renderer);
         assert!(game.mode == Mode::Foot);
-        assert!(game.foot.pos.y > chassis_feet.y + 0.3);
+        assert!(game.foot.pos.y > ground_feet.y + 1.0);
         assert!(!game.commander_outside);
 
         // A previously opened lid permits the same route with a salvaged physical round in hand.
@@ -459,18 +421,9 @@ mod tests {
         game.set_carry_pose(round_pos, Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO);
         press(&mut game, &mut renderer, false);
         press(&mut game, &mut renderer, true);
-        assert!(game.climb.active, "carried round must not lock ground→chassis Space");
-        finish(&mut game, &mut renderer);
+        assert!(!game.climb.active && game.foot.airborne,
+            "carrying a round must retain the ordinary outside jump");
         assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))));
-        renderer.camera.set_forward(game.player.center() - game.foot.pos);
-        game.foot.yaw = renderer.camera.yaw;
-        game.foot.pitch = renderer.camera.pitch;
-        press(&mut game, &mut renderer, true);
-        assert!(game.climb.active, "carried round must not lock chassis→roof Space");
-        finish(&mut game, &mut renderer);
-        assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))));
-        assert!(game.carry_pos.distance(renderer.camera.pos) < 1.5,
-            "carried round must follow the climbing body");
         game.foot.pos = game.hatch_exit_landing(4).unwrap();
         renderer.camera.pos = game.foot.eye();
         renderer.camera.set_forward(game.access_hatch_center(4) - renderer.camera.pos);
@@ -483,7 +436,7 @@ mod tests {
         assert_eq!(game.station, Station::Loader);
         assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))),
             "the same physical salvage round must arrive in the main turret cabin");
-        println!("[hatch-space] source Tiger chassis/roof/open cupola/cabin/exposed exit PASS");
+        println!("[hatch-space] ordinary jump/open cupola/cabin/exposed exit PASS");
         Ok(())
     }
 

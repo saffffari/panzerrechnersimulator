@@ -74,11 +74,17 @@ impl ShellSpec {
     /// This is a point-mass approximation; no new historical calibration values are introduced.
     pub fn crosswind_step(&self, distance_m: f32, dt: f32, transverse_velocity: Vec3,
         wind: Vec3, direction: Vec3) -> (Vec3, Vec3) {
+        self.crosswind_step_at_speed(self.velocity_at(distance_m),dt,transverse_velocity,wind,direction)
+    }
+
+    /// Same law after a resolved kinetic impact, using the retained physical forward speed.
+    pub fn crosswind_step_at_speed(&self,speed:f32,dt:f32,transverse_velocity:Vec3,
+        wind:Vec3,direction:Vec3)->(Vec3,Vec3) {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let wind = if wind.is_finite() { wind } else { Vec3::ZERO };
         let direction = direction.normalize_or_zero();
         let crosswind = wind - direction * wind.dot(direction);
-        let rate = self.drag_k * self.velocity_at(distance_m);
+        let rate = self.drag_k * speed.max(0.0);
         if rate < 1.0e-8 { return (transverse_velocity * dt, transverse_velocity); }
         let retained = (1.0 + rate * dt).recip();
         let offset = crosswind * dt + (transverse_velocity-crosswind) * ((rate*dt).ln_1p()/rate);
@@ -124,7 +130,7 @@ impl ShellSpec {
 
     /// Base flat-plate (0° obliquity) penetration at striking velocity `v`, mm RHA. Calibrated off
     /// the 30°-convention anchor: converted to 0° via the same slope law the solver applies.
-    fn pen_flat_at_v(&self, v: f32) -> f32 {
+    pub(crate) fn pen_flat_at_v(&self, v: f32) -> f32 {
         if self.kind == ShellKind::Heat {
             return self.pen_ref_mm / 30_f32.to_radians().cos();
         }

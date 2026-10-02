@@ -120,7 +120,7 @@ shell_col = bpy.data.collections.get("Shells")
 shell_excl = set()
 if shell_col:
     for o in shell_col.all_objects:
-        if o.type == 'MESH' and max(sorted(o.dimensions)) > 0.7 and sorted(o.dimensions)[1] < 0.25:
+        if o.type == 'MESH' and 0.7 < max(o.dimensions) < 1.2 and sorted(o.dimensions)[1] < 0.25:
             shell_excl.add(o)  # shell-shaped only; trays stay
 
 all_mesh = set(o for o in bpy.data.objects if o.type == 'MESH')
@@ -171,6 +171,9 @@ turret_set -= gun_set
 turret_set -= excl
 turret_set -= set(anim_objs.values())
 turret_set -= shell_excl
+# Turret_0125 is the long fitting above the fixed sponson racks, not a cartridge.
+# Its inherited source parent is incorrect for these fixed trays.
+if O("Turret_0125"): turret_set.discard(O("Turret_0125"))
 gun_set -= set(anim_objs.values())
 
 # ---- hull: everything else ----

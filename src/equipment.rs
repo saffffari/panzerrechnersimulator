@@ -9,6 +9,37 @@ pub(super) enum RepairJob {
     VisionBlock(usize),
 }
 
+/// The track ritual owns the input first. A cue's readiness and progress must belong to the
+/// exact point it marks, rather than another service point inside the broad nearby cone.
+fn repair_cue_target(track:Option<Vec3>,job:Option<(RepairJob,Vec3)>,nearby:Option<Vec3>)
+    ->Option<(Vec3,Option<RepairJob>,bool)> {
+    track.map(|p|(p,None,true)).or_else(||job.map(|(j,p)|(p,Some(j),true)))
+        .or_else(||nearby.map(|p|(p,None,false)))
+}
+
+/// Authored visual for the existing turret-ring fault point. It is a small bent steel shard,
+/// not an emissive marker and not a newly simulated fragment or additional damage event.
+/// The origin is the point used by the real repair check.
+pub(super) fn ring_fragment_mesh() -> CpuMesh {
+    let p = [Vec3::new(-0.065,-0.012,-0.040), Vec3::new(0.060,-0.012,-0.035),
+        Vec3::new(0.035,-0.010,0.050), Vec3::new(-0.035,-0.010,0.045),
+        Vec3::new(-0.025,0.065,-0.015), Vec3::new(0.045,0.035,0.010)];
+    let faces=[[0,2,1],[0,3,2],[0,1,5],[0,5,4],[1,2,5],[2,3,4],[2,4,5],[3,0,4]];
+    let mut vertices=Vec::new();let mut indices=Vec::new();
+    for [a,b,c] in faces {
+        let normal=(p[b]-p[a]).cross(p[c]-p[a]).normalize();
+        let tangent=normal.cross(if normal.x.abs()<0.9 {Vec3::X} else {Vec3::Y}).normalize();
+        for i in [a,b,c] {
+            indices.push(vertices.len() as u32);
+            vertices.push(crate::gltf_load::Vertex{pos:p[i].to_array(),normal:normal.to_array(),
+                uv:[0.0,0.0],tangent:[tangent.x,tangent.y,tangent.z,1.0]});
+        }
+    }
+    let mut mesh=CpuMesh::basic(vertices,indices,Some(crate::prims::solid_color([91,90,85])),
+        Vec3::new(-0.065,-0.012,-0.040),Vec3::new(0.060,0.065,0.050));
+    mesh.metallic_factor=0.70;mesh.roughness_factor=0.68;mesh
+}
+
 /// Recorder gaze may choose a visible point on an item, but cannot move the body, expand reach
 /// or bypass intervening steel. A mesh's AABB centre can be hidden behind the basket structure.
 fn visible_equipment_point(mesh: &CpuMesh, model: Mat4, eye: Vec3, reach: f32,
@@ -256,10 +287,12 @@ impl Game {
         let look = r.camera.forward();
         if self.carrying_track_kit {
             self.hover = None;
-            if self.mode == Mode::Tank {
-                // Play renders only the existing wordless dot for a hover label. Do not imply
-                // a repair target in empty air merely because the toolbox is being carried.
-                self.hover_label = self.physical_repair_target(eye, look).map(|job| self.job_prompt(job));
+            // The same actionable point drives the dot, outline and hammer. Outside generic
+            // jobs (especially the turret-ring fragment) need the same feedback as inside jobs.
+            if let Some(job) = self.physical_repair_target(eye, look) {
+                self.hover_label = Some(self.job_prompt(job));
+            } else if self.mode == Mode::Tank {
+                self.hover_label = None;
             }
             return;
         }
@@ -428,6 +461,70 @@ impl Game {
         }).min_by(|a,b| a.1.total_cmp(&b.1)).map(|(job, _)| job)
     }
 
+    /// Nearby service-point cue, deliberately wordless: it identifies a place the carried tool
+    /// can work, not a remote fault list. Use the same armor visibility and work target as input.
+    pub fn draw_repair_cue(&self, r: &mut Renderer) {
+        if !self.carrying_track_kit || !self.player.alive || self.climb.active
+            || self.switch_t > 0.0 || self.player.speed.abs() >= 0.6 { return; }
+        let eye = r.camera.pos;
+        let look = r.camera.forward();
+        let mut points: Vec<Vec3> = self.open_repair_jobs().into_iter()
+            .filter_map(|job| self.repair_point(job)).collect();
+        if self.mode == Mode::Foot {
+            if let Some((kind,_)) = self.broken_repair_track() { points.push(self.track_repair_point(kind)); }
+        }
+        let nearby = points.into_iter().filter(|&point| {
+            let delta = point-eye;
+            delta.length() <= 2.6 && delta.normalize_or_zero().dot(look) > 0.90
+                && self.equipment_path_clear(eye,point,0.28)
+        }).min_by(|a,b|eye.distance_squared(*a).total_cmp(&eye.distance_squared(*b)));
+        let job=self.physical_repair_target(eye,look).and_then(|job|self.repair_point(job).map(|p|(job,p)));
+        let track=self.track_repair_target(eye,look).map(|kind|self.track_repair_point(kind));
+        let Some((point,cue_job,ready))=repair_cue_target(track,job,nearby) else { return; };
+        let clip = r.camera.view_proj() * point.extend(1.0);
+        if clip.w <= 0.0 { return; }
+        let x = ((clip.x/clip.w*0.5+0.5)*r.iw as f32).round()/r.iw as f32;
+        let y = ((0.5-clip.y/clip.w*0.5)*r.ih as f32).round()/r.ih as f32;
+        if !(0.02..0.98).contains(&x) || !(0.02..0.98).contains(&y) { return; }
+        let color = if ready {[0.95,0.89,0.66,0.95]} else {[0.82,0.82,0.77,0.50]};
+        let px=1.0/r.iw as f32;let py=1.0/r.ih as f32;
+        // Four corners, exactly one native pixel thick; no bloom/emission or fault name.
+        for sx in [-1.0,1.0] { for sy in [-1.0,1.0] {
+            let left=x+if sx<0.0 {-5.0*px} else {3.0*px};
+            let top=y+if sy<0.0 {-5.0*py} else {4.0*py};
+            r.fill_rect(left,top,2.0*px,py,color);
+            r.fill_rect(x+if sx<0.0 {-5.0*px} else {4.0*px},
+                y+if sy<0.0 {-5.0*py} else {3.0*py},px,2.0*py,color);
+        }}
+        if ready {
+            // Compact hammer silhouette makes a work surface distinct from a pickup dot.
+            r.fill_rect(x-2.0*px,y-2.0*py,4.0*px,2.0*py,color);
+            r.fill_rect(x,y,px,3.0*py,color);
+            if let Some(Activity::Repair(job)) = self.activity.filter(|activity|
+                matches!(activity,Activity::Repair(job) if cue_job==Some(*job))) {
+                let progress=(self.repair_t/self.job_seconds(job)).clamp(0.0,1.0);
+                let filled=(progress*10.0).round();
+                r.fill_rect(x-5.0*px,y+7.0*py,10.0*px,py,[0.12,0.12,0.10,0.8]);
+                r.fill_rect(x-5.0*px,y+7.0*py,filled*px,py,color);
+            }
+        }
+    }
+
+    pub(super) fn outline_physical_repair(&self, eye: Vec3, look: Vec3, slots: &mut Vec<usize>) -> bool {
+        let Some(job) = self.physical_repair_target(eye,look) else { return false; };
+        match job {
+            RepairJob::Module(ModuleKind::TurretTraverse)
+                if self.module_fault(ModuleKind::TurretTraverse) == tiger_damage::Fault::RingJammed => slots.push(self.slots.ring_fragment),
+            RepairJob::Module(ModuleKind::TurretTraverse)
+                if self.module_fault(ModuleKind::TurretTraverse) != tiger_damage::Fault::RingJammed => slots.push(self.slots.wheel2),
+            RepairJob::Module(ModuleKind::MainGun) => slots.push(self.slots.breechcover),
+            RepairJob::Module(ModuleKind::GunnerSight) => slots.extend(self.slots.gunner_sight),
+            RepairJob::VisionBlock(block) => slots.push(self.slots.tiger_periscopes[block*tiger_periscopes::CUPOLA_PART_COUNT]),
+            _ => {}, // The local point cue marks a ring seam; never outline the entire tank.
+        }
+        true
+    }
+
     pub(super) fn repair_point(&self, job: RepairJob) -> Option<Vec3> {
         use ModuleKind::*;
         let turret = self.player.turret_model();
@@ -459,13 +556,7 @@ impl Game {
         if self.mode != Mode::Foot || self.foot.reload_t > 0.0 || self.foot.panzerfaust_swap_t > 0.0 {
             return false;
         }
-        let broken_side = if !self.module_ok(ModuleKind::LeftTrack) { Some(1.55_f32) }
-            else if !self.module_ok(ModuleKind::RightTrack) { Some(-1.55_f32) } else { None };
-        broken_side.is_some_and(|side| {
-            let anchor = self.player.hull_model().transform_point3(
-                Vec3::new(side + side.signum() * 0.38, 0.9, -0.4));
-            repair_in_reach(eye, look, anchor, 0.36) && self.equipment_path_clear(eye, anchor, 0.32)
-        })
+        self.track_repair_target(eye, look).is_some()
     }
 
     /// Armor-hole patching owns its existing six-second work/consumable/completion-sound path.
@@ -550,6 +641,15 @@ impl Game {
 
     /// Shared final draw: walking inside, climbing and walking outside use the same source props.
     pub(super) fn drive_carried_tools(&mut self, dt: f32, r: &mut Renderer) {
+        let jam = self.exterior.ring_jam.filter(|_| self.module_fault(ModuleKind::TurretTraverse)
+            == tiger_damage::Fault::RingJammed);
+        r.set_visible(self.slots.ring_fragment, jam.is_some());
+        r.set_emissive(self.slots.ring_fragment, 0.0);
+        if let Some(local) = jam {
+            let angle = local.x.atan2(local.z);
+            r.set_model(self.slots.ring_fragment, self.player.turret_model()
+                * Mat4::from_translation(local) * Mat4::from_rotation_y(angle));
+        }
         let eye = r.camera.pos;
         let f = r.camera.forward();
         let right = r.camera.right();
@@ -610,7 +710,7 @@ mod tests {
 
     /// The first seed whose strike in `zone` by a `calibre` round has `want` among its effects.
     fn seed_for(zone: tiger_damage::Zone, calibre_mm: f32, want: impl Fn(&tiger_damage::Effect) -> bool) -> u32 {
-        let strike = tiger_damage::Strike { calibre_mm, energy_kj: 0.0, penetrated: false, high_explosive: false };
+        let strike = tiger_damage::Strike { calibre_mm, energy_kj: 1800.0, penetrated: false, high_explosive: false };
         (0..100_000).find(|&seed| tiger_damage::effects(zone, strike, seed).iter().any(&want))
             .expect("some shell has that effect")
     }
@@ -667,10 +767,9 @@ mod tests {
         assert!(work(&mut g, RepairJob::Module(ModuleKind::MainGun), loader_eye), "recoil brake topped up");
         assert!(g.module_ok(ModuleKind::MainGun) && g.module_fault(ModuleKind::MainGun) == Fault::None);
 
-        // Shock knocks the sight out of true: its line wanders 2–5 mils off the bore; boresighting
-        // brings it back.
-        let seed = seed_for(Zone::Mantlet, 76.2, |e| *e == Effect::Fault(ModuleKind::GunnerSight, Fault::SightOutOfTrue));
-        g.debug_exterior_strike(ArmorPart::Turret, Vec3::new(0.0, 1.88, 1.589), t76, 300.0, seed);
+        // Repair-only diagnostic: the remote shock lottery was removed. Explicitly stage the
+        // known boresight fault rather than claiming a generic mantlet contact caused it.
+        g.apply_damage_effect(Effect::Fault(ModuleKind::GunnerSight,Fault::SightOutOfTrue),99);
         let (_, bore) = g.player.muzzle();
         let error_mils = g.sight_line().angle_between(bore) * 1000.0;
         assert!((1.9..5.1).contains(&error_mils), "sight wandered {error_mils} mils");
@@ -688,10 +787,10 @@ mod tests {
         assert_eq!(g.exterior.blocks[2], Block::Clear);
         assert_eq!(g.exterior.spare_blocks, tiger_damage::SPARE_BLOCKS - 1);
 
-        // A round at the turret base wedges a fragment in the ring: no traverse. It can only be
-        // knocked free from outside; from inside the armour is in the way.
-        let seed = seed_for(Zone::TurretRing, 76.2, |e| *e == Effect::Fault(ModuleKind::TurretTraverse, Fault::RingJammed));
-        g.debug_exterior_strike(ArmorPart::Hull, Vec3::new(2.06, 2.1, 0.0), t76, 300.0, seed);
+        // Repair-only diagnostic: explicitly stage a local wedged fragment. The coarse hull
+        // corner formerly used here is not a physical turret-ring contact.
+        g.exterior.ring_jam=Some(Vec3::new(1.45,tiger_damage::HULL_ROOF_Y-tank::TIGER_PARTS.turret_pivot.y,0.0));
+        g.apply_damage_effect(Effect::Fault(ModuleKind::TurretTraverse,Fault::RingJammed),17);
         assert_eq!(g.module_fault(ModuleKind::TurretTraverse), Fault::RingJammed, "{}", g.exterior_damage_receipt());
         assert!(!g.module_ok(ModuleKind::TurretTraverse));
         let jam = g.repair_point(RepairJob::Module(ModuleKind::TurretTraverse)).unwrap();
@@ -712,10 +811,10 @@ mod tests {
         assert!(!g.module_ok(ModuleKind::LeftTrack));
         assert!(g.exterior.running_gear[0] < 1.0 && g.exterior.speed_factor() >= 0.5);
 
-        // A hit on the bow plate tears off the spare links hung there.
-        let seed = seed_for(Zone::BowPlate, 76.2, |e| matches!(e, Effect::SpareLinksLost(_)));
-        g.debug_exterior_strike(ArmorPart::Hull, Vec3::new(0.0, 1.5, 3.56), t76, 300.0, seed);
-        assert_eq!(g.exterior.spare_links, 0, "{}", g.exterior_damage_receipt());
+        // A generic bow strike cannot erase uncontacted spare inventory.
+        let before=g.exterior.spare_links;
+        g.debug_exterior_strike(ArmorPart::Hull,Vec3::new(0.0,1.5,3.56),t76,300.0,7);
+        assert_eq!(g.exterior.spare_links,before,"{}",g.exterior_damage_receipt());
         Ok(())
     }
 
@@ -1102,6 +1201,16 @@ mod tests {
                     "source turret blocks pickup of item {i}");
             }
         }
+    }
+
+    #[test]
+    fn repair_cue_readiness_is_bound_to_the_same_point_and_input_owner() {
+        let job=RepairJob::Module(ModuleKind::TurretTraverse);
+        let near=Vec3::X;let work=Vec3::Z;let track=Vec3::Y;
+        assert_eq!(repair_cue_target(None,Some((job,work)),Some(near)),Some((work,Some(job),true)));
+        assert_eq!(repair_cue_target(Some(track),Some((job,work)),Some(near)),Some((track,None,true)));
+        assert_eq!(repair_cue_target(None,None,Some(near)),Some((near,None,false)));
+        assert_eq!(repair_cue_target(None,None,None),None);
     }
 
 }

@@ -129,7 +129,7 @@ impl FeedbackBank {
         Self(bank, true)
     }
 
-    fn get(&self, key: &str) -> Option<Arc<[f32]>> { self.0.get(key).cloned() }
+    pub(super) fn get(&self, key: &str) -> Option<Arc<[f32]>> { self.0.get(key).cloned() }
 
     pub(super) fn contains(&self, key: &str) -> bool { self.0.contains_key(key) }
 
@@ -625,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn bank_metadata_reports_recorded_rifle_bypass_and_preserved_tank_mg_layer() {
+    fn bank_metadata_reports_small_arm_world_crops_without_extra_character_layers() {
         use super::super::{metadata, PizzaLayer};
         let mono: Arc<[f32]> = Arc::from(vec![0.25, -0.5]);
         let bank = FeedbackBank(HashMap::from([("rifle_shot".to_owned(), mono.clone())]), true);
@@ -640,10 +640,11 @@ mod tests {
         let rifle = routes.iter().find(|r| r["sfx"] == "rifle_shot").unwrap();
         let tank_mg = routes.iter().find(|r| r["sfx"] == "tank_mg_shot").unwrap();
         assert_eq!(rifle["direct_source"], "verified_feedback_recording");
-        assert_eq!(rifle["world_source"], "verified_feedback_recording");
+        assert_eq!(rifle["world_source"], "verified_rifle_early_crop_and_pressure_synthesis");
         assert_eq!(rifle["v1_layer_variants_available"], 1);
         assert_eq!(rifle["v1_layer_variants_active"], 0);
-        assert_eq!(tank_mg["world_source"], "procedural");
+        assert_eq!(tank_mg["world_source"], "verified_rifle_early_crop_and_pressure_synthesis");
+        assert_eq!(tank_mg["world_v1_layer_variants_active"], 0);
         assert_eq!(tank_mg["v1_layer_variants_active"], 1);
         assert_eq!(report["v1_layers"]["verified_loaded_count"], 1);
         assert!(metadata::startup_summary(&report).contains("1 verified feedback recordings (partial)"));

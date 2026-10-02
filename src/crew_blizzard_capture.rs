@@ -43,6 +43,16 @@ impl View {
     /// The listener stays in the photographed post. Separate occupied station channels operate
     /// the gun and breech through their ordinary authority and casualty gates.
     pub fn controls(self, game: &mut Game, tick: u32, fire_ready: bool) -> TankInput {
+        self.controls_for_lay(game, tick, fire_ready, true)
+    }
+
+    /// Winter motion review uses a desired lay, leaving actual pitch/traverse to the ordinary
+    /// rate-limited gun drives and their damage/crew gates. Older direct-lay films retain theirs.
+    pub fn controls_with_slew(self, game: &mut Game, tick: u32, fire_ready: bool) -> TankInput {
+        self.controls_for_lay(game, tick, fire_ready, false)
+    }
+
+    fn controls_for_lay(self, game: &mut Game, tick: u32, fire_ready: bool, direct: bool) -> TankInput {
         let mut crew = lan::CrewFrame::default();
         for (i, role) in [
             lan::LanRole::Commander,
@@ -57,8 +67,14 @@ impl View {
             crew.inputs[role as usize].post = role;
         }
         if game.player.alive {
-            game.aim_at_enemy();
-            crew.inputs[lan::LanRole::Gunner as usize].flags = if fire_ready && game.auto_can_fire()
+            let laid = if direct {
+                game.aim_at_enemy();
+                true
+            } else {
+                game.capture_gaze_target(&serde_json::json!({"gaze":"enemy"}))
+                    .is_some_and(|target| game.campaign_ai_order_lay(target, 0.002))
+            };
+            crew.inputs[lan::LanRole::Gunner as usize].flags = if fire_ready && laid && game.auto_can_fire()
             {
                 lan::F_FIRE_MAIN
             } else {

@@ -868,6 +868,27 @@ pub const BULLET_ON_STEEL_1M: SourceLevel = SourceLevel {
     in_research: false,
 };
 
+/// A clothed soft-body projectile contact. Authored acoustic estimate only; no measurement is
+/// claimed. Its short muffled contact is quieter than steel and has no ringing tail.
+pub const BULLET_ON_SOFT_BODY_1M: SourceLevel = SourceLevel {
+    key: "bullet_on_soft_body_1m",
+    description: "Rifle-calibre bullet contacting a clothed soft body, 1 m",
+    reference: Reference::Distance { metres: 1.0, azimuth_deg: 90.0 },
+    lpk_db: 109.0,
+    lpk_range_db: (95.0, 118.0),
+    laf_db: 83.0,
+    lae_db: None,
+    spectrum: SpectrumClass::Mechanical,
+    law: DistanceLaw::Spherical,
+    a_duration_ms: 1.0,
+    duration: "short damped contact, no metallic ring",
+    provenance: Provenance::Estimate,
+    confidence: "low; authored and unsourced",
+    citation: "not in SL; authored restrained soft-contact reference, requires listening review",
+    braked: false,
+    in_research: false,
+};
+
 /// A bullet or fragment striking snow or soil (1 m) [E, unsourced].
 pub const BULLET_INTO_GROUND_1M: SourceLevel = SourceLevel {
     key: "bullet_into_ground_1m",
@@ -998,6 +1019,7 @@ pub const TABLE: &[&SourceLevel] = &[
     &WIND_EXPOSED_10MS,
     &EXTERIOR_ARMOUR_STRIKE_10M,
     &BULLET_ON_STEEL_1M,
+    &BULLET_ON_SOFT_BODY_1M,
     &BULLET_INTO_GROUND_1M,
     &PROP_IMPACT_1M,
     &FRAGMENT_CONTACT_1M,

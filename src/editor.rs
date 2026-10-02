@@ -82,6 +82,7 @@ struct Placement {
     asset: usize,
     pos: Vec3,
     rot_deg: f32,
+    tilt_deg: [f32; 2],
     scale: Vec3,
     deleted: bool,
 }
@@ -91,10 +92,15 @@ struct Placement {
 pub use crate::act_manifest::MarkerData;
 
 impl Placement {
+    fn transform_edit(&self) -> serde_json::Value {
+        serde_json::json!({"x":self.pos.x,"y":self.pos.y,"z":self.pos.z,
+            "deg":self.rot_deg,"tilt_deg":self.tilt_deg,"s":self.scale.to_array()})
+    }
+
     fn model(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(
             self.scale,
-            Quat::from_rotation_y(self.rot_deg.to_radians()),
+            crate::assetlib::placement_rotation(self.rot_deg, self.tilt_deg),
             self.pos,
         )
     }
@@ -641,6 +647,7 @@ fn placements_from_manifest_value(manifest: &serde_json::Value) -> Vec<Placement
                 json_f32(&values[3]),
             ),
             rot_deg: json_f32(&values[4]),
+            tilt_deg: crate::assetlib::parse_tilt_deg(values.get(6), "placement.tilt_deg").unwrap_or_default(),
             scale,
             deleted: false,
         });
@@ -668,6 +675,11 @@ fn apply_placement_edits(
                     placement.pos =
                         Vec3::new(json_f32(&op["x"]), json_f32(&op["y"]), json_f32(&op["z"]));
                     placement.rot_deg = json_f32(&op["deg"]);
+                    if op.get("tilt_deg").is_some() {
+                        if let Ok(tilt) = crate::assetlib::parse_tilt_deg(op.get("tilt_deg"), "edit.tilt_deg") {
+                            placement.tilt_deg = tilt;
+                        }
+                    }
                     let scale = &op["s"];
                     placement.scale = if scale.is_array() {
                         Vec3::new(
@@ -702,6 +714,7 @@ fn apply_placement_edits(
                     asset,
                     pos: Vec3::new(json_f32(&op["x"]), json_f32(&op["y"]), json_f32(&op["z"])),
                     rot_deg: json_f32(&op["deg"]),
+                    tilt_deg: crate::assetlib::parse_tilt_deg(op.get("tilt_deg"), "add.tilt_deg").unwrap_or_default(),
                     scale: if scale.is_array() {
                         Vec3::new(
                             json_f32(&scale[0]),
@@ -838,6 +851,7 @@ impl EditorWorld {
                 asset: item.source_index,
                 pos: item.position,
                 rot_deg: item.yaw_deg,
+                tilt_deg: [0.0; 2],
                 scale: Vec3::ONE,
                 deleted: false,
             })
@@ -1006,22 +1020,21 @@ impl EditorWorld {
                 };
                 let bpos = Vec3::new(json_f32(&a[1]), json_f32(&a[2]), json_f32(&a[3]));
                 let brot = json_f32(&a[4]);
+                let btilt = crate::assetlib::parse_tilt_deg(a.get(6), "base.tilt_deg")?;
                 if bpos.distance(p.pos) > 0.01
                     || (brot - p.rot_deg).abs() > 0.05
+                    || (btilt[0] - p.tilt_deg[0]).abs() > 0.05
+                    || (btilt[1] - p.tilt_deg[1]).abs() > 0.05
                     || bscale.distance(p.scale) > 0.005
                 {
-                    ops.push(serde_json::json!({
-                        "op": "set", "i": i,
-                        "x": p.pos.x, "y": p.pos.y, "z": p.pos.z,
-                        "deg": p.rot_deg, "s": [p.scale.x, p.scale.y, p.scale.z],
-                    }));
+                    let mut op = p.transform_edit();
+                    op["op"] = "set".into(); op["i"] = i.into();
+                    ops.push(op);
                 }
             } else if !p.deleted {
-                ops.push(serde_json::json!({
-                    "op": "add", "asset": self.assets[p.asset],
-                    "x": p.pos.x, "y": p.pos.y, "z": p.pos.z,
-                    "deg": p.rot_deg, "s": [p.scale.x, p.scale.y, p.scale.z],
-                }));
+                let mut op = p.transform_edit();
+                op["op"] = "add".into(); op["asset"] = self.assets[p.asset].clone().into();
+                ops.push(op);
             }
         }
         // Markers: the same diff-against-base contract as placements.
@@ -3885,7 +3898,7 @@ impl EditorState {
                     MARKER_SLOT,
                     Mat4::from_scale_rotation_translation(
                         size,
-                        Quat::from_rotation_y(p.rot_deg.to_radians()),
+                        crate::assetlib::placement_rotation(p.rot_deg, p.tilt_deg),
                         centre,
                     ),
                 );
@@ -4197,6 +4210,7 @@ impl EditorState {
                     "dz": p.pos.z - centroid.z,
                     "hoff": p.pos.y - self.world.ground(p.pos.x, p.pos.z),
                     "deg": p.rot_deg,
+                    "tilt_deg": p.tilt_deg,
                     "s": [p.scale.x, p.scale.y, p.scale.z],
                 })
             })
@@ -4495,6 +4509,7 @@ impl EditorState {
                 "dy": placement.pos.y - anchor_y,
                 "dz": placement.pos.z - anchor_z,
                 "deg": placement.rot_deg,
+                "tilt_deg": placement.tilt_deg,
                 "s": [placement.scale.x, placement.scale.y, placement.scale.z],
             }));
         }
@@ -4696,6 +4711,7 @@ impl EditorState {
                 asset,
                 pos,
                 rot_deg: it.deg,
+                tilt_deg: it.tilt_deg,
                 scale: Vec3::from(it.s),
                 deleted: false,
             });
@@ -5055,6 +5071,7 @@ impl EditorState {
                 asset,
                 pos: position,
                 rot_deg: rotation,
+                tilt_deg: [0.0; 2],
                 scale,
                 deleted: false,
             });
@@ -5494,6 +5511,7 @@ impl EditorState {
             asset,
             pos: hit,
             rot_deg: 0.0,
+            tilt_deg: [0.0; 2],
             scale: Vec3::ONE,
             deleted: false,
         });
@@ -5935,6 +5953,7 @@ impl EditorState {
                     asset: pick,
                     pos: point.position,
                     rot_deg: point.yaw_deg,
+                    tilt_deg: [0.0; 2],
                     scale: Vec3::splat(point.scale),
                     deleted: false,
                 });
@@ -6052,6 +6071,7 @@ impl EditorState {
                 asset,
                 pos: point.position,
                 rot_deg: point.yaw_deg,
+                tilt_deg: [0.0; 2],
                 scale: Vec3::splat(point.scale),
                 deleted: false,
             });
@@ -8060,6 +8080,7 @@ impl ApplicationHandler for EditorApp {
                                     asset,
                                     pos: hit,
                                     rot_deg: 0.0,
+                                    tilt_deg: [0.0; 2],
                                     scale: Vec3::ONE,
                                     deleted: false,
                                 });
@@ -8404,6 +8425,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn placement_tilt_manifest_edits_roundtrip_and_model_agree() {
+        let manifest = serde_json::json!({"placements":[[0,10,3,-4,37,[1.2,0.8,2.0],[12.5,-7.0]],
+            [0,0,0,0,37,1.0]]});
+        let mut placements = placements_from_manifest_value(&manifest);
+        let expected = Mat4::from_translation(Vec3::new(10.0,3.0,-4.0))
+            * Mat4::from_rotation_y(37.0_f32.to_radians())
+            * Mat4::from_rotation_x(-12.5_f32.to_radians())
+            * Mat4::from_rotation_z(-7.0_f32.to_radians())
+            * Mat4::from_scale(Vec3::new(1.2,0.8,2.0));
+        for (a,b) in placements[0].model().to_cols_array().into_iter().zip(expected.to_cols_array()) { assert!((a-b).abs()<1e-6); }
+        assert_eq!(placements[1].tilt_deg,[0.0;2]);
+        assert_eq!(placements[1].model(),Mat4::from_rotation_y(37.0_f32.to_radians()));
+        let mut assets = vec!["assets/test/prop.glb".into()];
+        let mut legacy_set = placements[0].transform_edit();
+        legacy_set.as_object_mut().unwrap().remove("tilt_deg");
+        legacy_set["op"]="set".into();legacy_set["i"]=0.into();legacy_set["x"]=11.into();
+        apply_placement_edits(&mut assets,&mut placements,Some(&serde_json::json!({"ops":[legacy_set]})));
+        assert_eq!(placements[0].tilt_deg,[12.5,-7.0],"legacy edits must retain authored tilt");
+        let mut add = placements[0].transform_edit();
+        add["op"]="add".into();add["asset"]=assets[0].clone().into();
+        let edits = serde_json::json!({"ops":[add]});
+        let decoded = serde_json::from_slice(&serde_json::to_vec(&edits).unwrap()).unwrap();
+        apply_placement_edits(&mut assets,&mut placements,Some(&decoded));
+        assert_eq!(placements[0].model(),placements[2].model());
+        assert_eq!(placements[0].tilt_deg,placements[2].tilt_deg);
+    }
+
+    #[test]
     fn all_retired_manifest_models_route_around_direct_glb_import() {
         let mut retired = std::collections::BTreeSet::new();
         for act_id in 1..=crate::world::ACT_COUNT {
@@ -8508,6 +8557,7 @@ mod tests {
             asset,
             pos: Vec3::new(x, 3.0, z),
             rot_deg,
+            tilt_deg: [0.0; 2],
             scale: Vec3::ONE,
             deleted: false,
         }

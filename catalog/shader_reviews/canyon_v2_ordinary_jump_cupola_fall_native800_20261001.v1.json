@@ -1,0 +1,137 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "canyon_v2_ordinary_jump_cupola_fall_native800_20261001",
+  "title": "Ordinary jumps to the tracks, hull and turret, then a natural fall through the open cupola",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/canyon-v2-20260930/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 8,
+  "native_output": true,
+  "setup": {
+    "playtest": true,
+    "canyon_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [
+      -791.016,
+      745.783
+    ],
+    "player_heading_deg": 0,
+    "on_foot": true,
+    "foot_xz": [
+      -788.016,
+      745.783
+    ],
+    "look_at_xz": [
+      -791.016,
+      745.783
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 0.2,
+      "until_s": 0.225,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "from_s": 0.2,
+      "until_s": 0.7,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "from_s": 1.6,
+      "until_s": 1.625,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "from_s": 1.6,
+      "until_s": 1.833333333,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "from_s": 3.0,
+      "until_s": 3.025,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "from_s": 3.0,
+      "until_s": 3.5,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "at_s": 4.8,
+      "action": "look_hatch",
+      "value": "cupola_aperture"
+    },
+    {
+      "from_s": 5.3,
+      "until_s": 5.575,
+      "input": {
+        "drive": 1
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "at_s": 4,
+      "equals": false
+    },
+    {
+      "metric": "foot_y_m",
+      "at_s": 4,
+      "min_delta": 2.5,
+      "max_delta": 3.5
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 7,
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "at_s": 7,
+      "equals": "commander"
+    },
+    {
+      "metric": "climbing",
+      "equals": false
+    },
+    {
+      "metric": "hatch_open",
+      "equals": true
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "Initial tank heading and on-foot start beside the actual canyon-spawn Tiger are disclosed staging. The existing on-foot setup opens the source cupola and exits before placing the body on nearby terrain. There are three ordinary Space/W jumps and one W walk toward the opening. No scripted climb, mount, assigned foot height, station transition or outcome is invoked during recording. Look action rotates the head only. The actual game update, gravity, source collision and hatch reconciliation own every vertical movement and final mode.",
+  "limitations": [
+    "Scripted game inputs, not a human playtest. The cupola starts open; this clip does not demonstrate its opening operation. Enemy fire is held for traversal review."
+  ],
+  "status": "pending_runtime_and_visual_acceptance"
+}

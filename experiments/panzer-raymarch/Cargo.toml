@@ -1,0 +1,31 @@
+[package]
+name = "panzer-raymarch"
+version = "0.1.0"
+edition = "2021"
+description = "Isolated Panzer analytic geometry raymarch and display review."
+
+[dependencies]
+wgpu = "27.0.1"
+winit = "0.30.13"
+glam = { version = "0.30", features = ["bytemuck"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+anyhow = "1"
+
+# Shader hot-reload: the whole point of the harness. Edit shaders/*.wgsl, save,
+# see it. A raymarcher you cannot iterate on in under a second is a raymarcher
+# you will not learn from.
+notify = "8"
+
+# Headless stills: `cargo run -- --shot out.png`. Renders the exact same two
+# passes with no window and no compositor, which is how we verify the look in
+# CI, diff a shader change against a reference, and produce reference art.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Keep our code fast to compile in dev, but optimize the heavy deps (wgpu/naga)
+# so the marcher actually runs at speed during iteration.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -225,10 +225,25 @@ pub fn belly_drag(share: f32, pitch: f32) -> Resistance {
     Resistance { force_n: (TRACTION_MU + BELLY_FRICTION) * weight, work_j: f32::INFINITY }
 }
 
+/// Camera response to momentum actually lost by the tank, rather than a fixed jolt whenever
+/// an object changes state. Gain is presentation tuning; collision mechanics remain authoritative.
+pub fn collision_rumble(speed_before:f32,speed_after:f32)->f32 {
+    if !speed_before.is_finite() || !speed_after.is_finite() { return 0.0; }
+    ((speed_before.abs()-speed_after.abs()).max(0.0)*0.45).min(1.5)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn light_object_feedback_tracks_impulse_instead_of_a_fixed_heave() {
+        assert_eq!(collision_rumble(2.0,2.0),0.0);
+        assert!(collision_rumble(5.0,4.995)<0.003);
+        assert!(collision_rumble(5.0,3.0)>0.8);
+        assert_eq!(collision_rumble(-5.0,-3.0),collision_rumble(5.0,3.0));
+        assert_eq!(collision_rumble(1.0,2.0),0.0);
+    }
     #[test]
     fn the_push_is_grip_limited_at_a_crawl_and_power_limited_at_speed() {
         let crawl = tractive_force(0.5, 0.0);

@@ -1,3 +1,4 @@
+// @cabin-medium
 // @weather-density
 // S4 (M-D): the deferred COMBINE pass is now the RAY INTEGRATOR. Per lit pixel:
 //   • sun: one disc-jittered hardware shadow ray (the penumbra emerges under S3 accumulation)
@@ -30,7 +31,16 @@ struct Camera {
     // Host-written trip counts, always (2, 2): glass-interface paths, one-bounce estimators.
     // Keeping them runtime-visible prevents Vulkan from unrolling nested physical transport.
     transport_passes: vec4<f32>,
+    cabin_medium: CabinMedium,
+    medium_transport:vec4<f32>,
 };
+
+@group(3) @binding(1) var cabin_air_columns:texture_2d_array<f32>;
+fn cabin_transform(i:u32)->mat4x4<f32> {return cam.cabin_medium.world_to_local[i];}
+fn cabin_grid(i:u32)->vec4<f32> {return cam.cabin_medium.grid_min_step[i];}
+fn cabin_size(i:u32)->vec4<u32> {return cam.cabin_medium.grid_size[i];}
+fn cabin_min(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_min[i].xyz;}
+fn cabin_max(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_max[i].xyz;}
 @group(0) @binding(0) var<uniform> cam: Camera;
 
 @group(1) @binding(0) var g0_tex: texture_2d<f32>;      // albedo | mode

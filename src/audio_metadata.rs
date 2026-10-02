@@ -29,8 +29,12 @@ pub(super) fn bank_metadata(
                 else { "procedural" },
             // World Sfx propagation deliberately uses dry procedural sources when no feedback
             // replacement exists, even if a legacy recording loaded for direct playback.
-            "world_source": if replacement.is_some() { "verified_feedback_recording" }
-                else { "procedural" },
+            "world_source": if super::small_arms::is_report(sfx) {
+                if feedback_bank.contains("rifle_shot") { "verified_rifle_early_crop_and_pressure_synthesis" }
+                else { "pressure_and_modal_synthesis" }
+            } else if super::small_arms::is_combat_variant(sfx) {"seeded_dry_procedural"}
+            else if replacement.is_some() { "verified_feedback_recording" } else { "procedural" },
+            "world_v1_layer_variants_active": if replacement.is_some() || super::small_arms::is_variant(sfx) {0} else {variants},
             "v1_layer_variants_available": variants,
             "v1_layer_variants_active": if replacement.is_some() { 0 } else { variants },
         })
@@ -132,7 +136,7 @@ mod tests {
         let route = bank["sfx_routes"].as_array().unwrap().iter()
             .find(|route| route["sfx"] == "tank_mg_shot").unwrap();
         assert_eq!(route["direct_source"], "legacy_reference_recording");
-        assert_eq!(route["world_source"], "procedural");
+        assert_eq!(route["world_source"], "pressure_and_modal_synthesis");
         assert_eq!(bank["feedback"]["status"], "disabled");
         assert_eq!(bank["loops"][0]["source"], "legacy_reference_recording");
         assert_eq!(bank["loops"][3]["source"], "procedural");

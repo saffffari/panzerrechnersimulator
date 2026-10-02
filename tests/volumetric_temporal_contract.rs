@@ -5,6 +5,8 @@ mod observer;
 #[allow(dead_code)]
 fn with_observer(source: &str) -> String {
     source.replacen("// @observer-constants", &observer::wgsl_constants(), 1)
+        .replace("// @weather-density",include_str!("../shaders/weather_volume.wgsl"))
+        .replace("// @cabin-medium",include_str!("../shaders/cabin_medium.wgsl"))
 }
 
 const RENDERER: &str = include_str!("../src/renderer.rs");
@@ -152,9 +154,21 @@ fn stable_volume_ema_rejects_density_disocclusion_and_coherent_light_changes() {
 
 #[test]
 fn retro_zero_remains_a_structural_grain_and_dither_bypass() {
-    let branch = CRUSH
-        .find("if (retro > 0.001)")
-        .expect("explicit retro-only branch");
-    assert!(CRUSH.find("BAYER[bi]").expect("Bayer lookup") > branch);
+    let compact:String=CRUSH.chars().filter(|c|!c.is_whitespace()).collect();
+    let marker="if(cr.retro>0.001||cr.ldr_dither>0.0)";
+    let gate=compact.find(marker).expect("explicit threshold-consumer union gate");
+    let open=gate+compact[gate..].find('{').unwrap();
+    let mut depth=0;
+    let close=compact.as_bytes()[open..].iter().position(|&c| {
+        if c==b'{' {depth+=1;} else if c==b'}' {depth-=1;}
+        depth==0
+    }).map(|i|open+i).expect("balanced threshold gate");
+    let block=&compact[open+1..close];
+    assert_eq!(block.matches("display_threshold(vec2<i32>(in.pos.xy))").count(),1);
+    assert_eq!(compact.matches("display_threshold(").count(),2,"definition plus the sole opt-in call");
+    assert!(compact[..gate].contains("varnative_threshold=0.0;"));
+    let threshold=CRUSH.split("fn display_threshold(").nth(1).expect("threshold helper")
+        .split("\n}").next().unwrap();
+    assert!(!threshold.contains("cr.frame"),"fixed threshold must not become fresh frame noise");
     assert!(!CRUSH.contains("temporal_grain("));
 }

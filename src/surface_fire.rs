@@ -12,6 +12,7 @@ pub const MAX_DEPOSITS: usize = 65536;
 pub const FRAMES: usize = 16; //8: telescope;9/10: shields;11: visor wheel;12/13: breech block/lever
 /// Maximum retained contact patches, shared with the renderer's global cell budget.
 pub const MAX_PATCHES: usize = 32;
+const SOURCE_STEP_S:f64=1.0/120.0;
 const SPREAD_INTERVAL: f32 = 0.040;
 const SPREAD_ATTEMPTS: usize = 16;
 const SPREAD_DISTANCE: f32 = 0.34;
@@ -567,6 +568,7 @@ fn residue_expiry(key: ColumnKey, now: f64) -> f64 {
 }
 #[derive(Clone, Copy, Debug, Default)]
 struct Patch {
+    identity:u32,
     anchor: Option<Contact>,
     intensity: f32,
     heat: f32,
@@ -585,6 +587,7 @@ pub struct FireUpdate {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct FireSurface {
+    pub identity:u32,
     pub position: Vec3,
     pub normal: Vec3,
     pub tangent: Vec3,
@@ -601,8 +604,11 @@ pub struct CabinFire {
     coating_bins: HashMap<(usize, Cell), Vec<usize>>,
     residue_cleanup: bool,
     foam_clock: f64,
+    foam_accumulator_s:f64,
+    fire_accumulator_s:f64,
     next_residue_expiry: f64,
     patches: [Patch; MAX_PATCHES],
+    next_patch_identity:u32,
     heat_at_ammunition: f32,
     spread_clock: f32,
     spread_cursor: usize,
@@ -613,6 +619,10 @@ pub struct CabinFire {
     last_ammunition_count: usize,
 }
 impl CabinFire {
+    fn allocate_patch_identity(&mut self)->u32 {
+        self.next_patch_identity=self.next_patch_identity.wrapping_add(1);
+        self.next_patch_identity
+    }
     pub fn new(meshes: &[(usize, &CpuMesh)]) -> Self {
         let mut grids = std::array::from_fn(|_| Grid::default());
         for &(frame, mesh) in meshes {
@@ -627,8 +637,11 @@ impl CabinFire {
             coating_bins: HashMap::new(),
             residue_cleanup: false,
             foam_clock: 0.0,
+            foam_accumulator_s:0.0,
+            fire_accumulator_s:0.0,
             next_residue_expiry: f64::INFINITY,
             patches: [Patch::default(); MAX_PATCHES],
+            next_patch_identity:0,
             heat_at_ammunition: 0.0,
             spread_clock: SPREAD_INTERVAL,
             spread_cursor: 0,
@@ -650,6 +663,7 @@ impl CabinFire {
         self.columns.clear();
         self.coating_bins.clear();
         self.foam_clock = 0.0;
+        self.foam_accumulator_s=0.0;self.fire_accumulator_s=0.0;
         self.next_residue_expiry = f64::INFINITY;
         self.patches.fill(Patch::default());
         self.heat_at_ammunition = 0.0;
@@ -781,13 +795,17 @@ impl CabinFire {
         }
     }
     pub fn advance_foam(&mut self, dt: f32, models: &[Mat4; FRAMES]) {
-        let dt = dt.clamp(0.0, 0.05);
-        if !dt.is_finite() || dt <= 0.0 {
-            return;
+        if !dt.is_finite() || dt<=0.0 {return;}
+        self.foam_accumulator_s+=f64::from(dt);
+        let inverse=models.map(|m|m.inverse());
+        while self.foam_accumulator_s+1e-8>=SOURCE_STEP_S {
+            self.foam_accumulator_s=(self.foam_accumulator_s-SOURCE_STEP_S).max(0.0);
+            self.advance_foam_step(SOURCE_STEP_S as f32,&inverse);
         }
+    }
+    fn advance_foam_step(&mut self,dt:f32,inverse:&[Mat4;FRAMES]) {
         self.foam_clock += f64::from(dt);
         self.expire_residue();
-        let inverse = models.map(|m| m.inverse());
         let mut flying = std::mem::take(&mut self.airborne);
         let mut i = 0;
         while i < flying.len() {
@@ -796,7 +814,7 @@ impl CabinFire {
             f.velocity *= (-1.6 * dt).exp();
             f.velocity.y -= 5.5 * dt;
             let next = f.position + f.velocity * dt;
-            if let Some(hit) = self.sweep_inverse(f.position, next, &inverse) {
+            if let Some(hit) = self.sweep_inverse(f.position, next, inverse) {
                 self.deposit(hit);
                 flying.swap_remove(i);
             } else if f.age > 2.0 {
@@ -859,6 +877,7 @@ impl CabinFire {
             return false;
         };
         self.patches[index] = Patch {
+            identity:self.allocate_patch_identity(),
             anchor: Some(hit),
             intensity: strength.clamp(0.16, 1.4),
             ..Patch::default()
@@ -881,6 +900,7 @@ impl CabinFire {
             })
             .normalize();
             FireSurface {
+                identity:patch.identity,
                 position: models[a.frame].transform_point3(a.point) + normal * 0.003,
                 normal,
                 tangent,
@@ -1049,6 +1069,7 @@ impl CabinFire {
                 continue;
             }
             self.patches[slot] = Patch {
+                identity:self.allocate_patch_identity(),
                 anchor: Some(contact),
                 intensity: (patch.intensity * 0.84).max(0.24),
                 // Continue the parent's outward direction first; restarting every new patch at
@@ -1119,7 +1140,7 @@ impl CabinFire {
             let Some(slot) = (SURFACE_PATCHES..MAX_PATCHES)
                 .find(|&k| self.patches[k].anchor.is_none() || self.patches[k].intensity <= 0.0)
                 else { continue; };
-            self.patches[slot] = Patch { anchor: Some(contact),
+            self.patches[slot] = Patch { identity:self.allocate_patch_identity(), anchor: Some(contact),
                 intensity: (patch.intensity * 0.80).min(1.2), gas_wash: true,
                 wash_source: source_index, wash_feed: patch.intensity,
                 spread_direction: (cursor % 8) as u8, ..Patch::default() };
@@ -1192,7 +1213,24 @@ impl CabinFire {
         (cells_covered as f32 * GRAIN_M * GRAIN_M / (std::f32::consts::PI * radius * radius))
             .clamp(0.0, 1.0)
     }
-    pub fn update_fire(
+    /// Full elapsed time, with at most one120Hz tick retained as residual. Source pose is
+    /// sampled from this authoritative update; no time is discarded on a long render frame.
+    pub fn update_fire(&mut self,dt:f32,active:bool,seed_strength:f32,
+        models:&[Mat4;FRAMES],ammunition:&[Vec3],venting:bool)->FireUpdate {
+        let mut result=self.update_fire_step(0.0,active,seed_strength,models,ammunition,venting);
+        if !active {self.fire_accumulator_s=0.0;return result;}
+        if !dt.is_finite() || dt<=0.0 {return result;}
+        self.fire_accumulator_s+=f64::from(dt);
+        while self.fire_accumulator_s+1e-8>=SOURCE_STEP_S {
+            self.fire_accumulator_s=(self.fire_accumulator_s-SOURCE_STEP_S).max(0.0);
+            // Feed the previous substep's state forward, just as successive host updates do.
+            // Reapplying the host's ignition strength each tick would replenish suppressed fuel
+            // and resurrect a patch that was extinguished earlier in this same update.
+            result=self.update_fire_step(SOURCE_STEP_S as f32,result.active,result.strength,models,ammunition,venting);
+        }
+        result
+    }
+    fn update_fire_step(
         &mut self,
         dt: f32,
         active: bool,
@@ -1201,7 +1239,6 @@ impl CabinFire {
         ammunition: &[Vec3],
         venting: bool,
     ) -> FireUpdate {
-        let dt = if dt.is_finite() { dt.clamp(0.0, 0.05) } else { 0.0 };
         if !active {
             for (index, p) in self.patches.iter_mut().enumerate() {
                 if index == 0 {
@@ -1264,7 +1301,7 @@ impl CabinFire {
         let inverse = models.map(|m| m.inverse());
         self.spread_clock -= dt;
         if self.spread_clock <= 0.0 {
-            self.spread_clock = SPREAD_INTERVAL;
+            self.spread_clock += SPREAD_INTERVAL;
             self.spread(models, &inverse);
         }
         let strength = self
@@ -1282,7 +1319,8 @@ impl CabinFire {
             self.ammo_scan_clock -= dt;
             if self.ammo_scan_clock <= 0.0 || self.last_ammunition_count != ammunition.len() {
                 self.scan_ammunition(models, &inverse, ammunition);
-                self.ammo_scan_clock = AMMO_SCAN_INTERVAL;
+                self.ammo_scan_clock = if self.ammo_scan_clock<=0.0 {self.ammo_scan_clock+AMMO_SCAN_INTERVAL}
+                    else {AMMO_SCAN_INTERVAL};
             }
             // Smoothed dimensionless exposure, not a physical ammunition temperature.
             self.heat_at_ammunition +=
@@ -1313,6 +1351,19 @@ mod tests {
             [128, 128, 128],
         )
     }
+    #[test]
+    fn patch_identity_follows_articulation_but_changes_on_slot_reuse() {
+        let mesh=plane();let mut fire=CabinFire::new(&[(0,&mesh)]);
+        let mut models=[Mat4::IDENTITY;FRAMES];
+        assert!(fire.seed_from_segment(Vec3::Y,Vec3::NEG_Y,&models,0.8));
+        let first=fire.patch_surface(0,&models).unwrap().identity;
+        models[0]=Mat4::from_translation(Vec3::new(3.0,2.0,1.0));
+        assert_eq!(fire.patch_surface(0,&models).unwrap().identity,first);
+        fire.reset();models[0]=Mat4::IDENTITY;
+        assert!(fire.seed_from_segment(Vec3::new(1.0,1.0,0.0),Vec3::new(1.0,-1.0,0.0),&models,0.8));
+        assert_ne!(fire.patch_surface(0,&models).unwrap().identity,first);
+    }
+
     fn sweep_parity(grid: &Grid, rays: &[[Vec3; 2]]) -> (usize, f64, f64) {
         let begin = std::time::Instant::now();
         let expected: Vec<_> = rays.iter().map(|p| grid.sweep_binned_reference(p[0],p[1])).collect();
@@ -1486,6 +1537,38 @@ mod tests {
         f.ensure_anchors(models, [Vec3::new(0.0, 0.1, 0.0); 4]);
         for i in 1..MAX_PATCHES {
             f.patches[i].anchor = None;
+        }
+    }
+    #[test]
+    fn source_fire_and_foam_consume_all_time_at_30_60_144_hz_and_hitches() {
+        let mesh=plane();let models=[Mat4::IDENTITY;FRAMES];
+        let run=|hz:f32| {
+            let mut fire=CabinFire::new(&[(0,&mesh)]);patch(&mut fire,&models);
+            fire.emit(Vec3::new(0.0,8.0,0.0),Vec3::new(0.3,0.1,0.2));
+            // Exactly the same nominal half-second. Summing f32 elapsed then clipping the
+            // last dt would make the test itself feed different total times at each rate.
+            let dt=1.0/hz;
+            for _ in 0..(hz*0.5) as usize {
+                fire.update_fire(dt,true,0.2,&models,&[Vec3::new(0.0,0.15,0.0)],false);
+                fire.advance_foam(dt,&models);
+            }
+            fire
+        };
+        let reference=run(60.0);
+        assert!((reference.foam_clock-0.5).abs()<1e-6);
+        for hz in [30.0,144.0,2.0] {
+            let other=run(hz);
+            assert!((other.foam_clock-0.5).abs()<1e-6,"no lost time at{hz}Hz: {}",other.foam_clock);
+            assert_eq!(other.airborne.len(),reference.airborne.len());
+            for (a,b) in other.airborne.iter().zip(&reference.airborne) {
+                assert!((a.position-b.position).length()<1e-5);assert!((a.age-b.age).abs()<1e-6);
+            }
+            for (a,b) in other.patches.iter().zip(&reference.patches) {
+                assert_eq!(a.anchor.is_some(),b.anchor.is_some());
+                assert!((a.intensity-b.intensity).abs()<1e-5);
+            }
+            assert!((other.heat_at_ammunition-reference.heat_at_ammunition).abs()<1e-5);
+            assert!((other.spread_clock-reference.spread_clock).abs()<1e-5);
         }
     }
     fn coat(f: &mut CabinFire, centre: Vec3) {
@@ -1890,13 +1973,15 @@ mod tests {
         }
         for _ in 0..100 {
             normal.update_fire(0.05, true, 1.4, &models, &[], false);
-            hitch.update_fire(30.0, true, 1.4, &models, &[], false);
-            assert_eq!(normal.spread_cursor, hitch.spread_cursor, "hitch performed unbounded catch-up propagation");
-            assert_eq!(normal.plume_cursor, hitch.plume_cursor);
         }
+        // Same elapsed five seconds. Catch-up is bounded per fixed tick, not by dropping time.
+        hitch.update_fire(5.0, true, 1.4, &models, &[], false);
+        assert_eq!(normal.spread_cursor, hitch.spread_cursor);
+        assert_eq!(normal.plume_cursor, hitch.plume_cursor);
         assert_eq!(normal.enclosure_diagnostics(&models), hitch.enclosure_diagnostics(&models));
-        assert!(hitch.plume_cursor <= 100 * PLUME_ATTEMPTS);
-        assert!(hitch.spread_cursor <= 100 * SPREAD_ATTEMPTS);
+        let spread_ticks = (5.0 / SPREAD_INTERVAL).ceil() as usize + 1;
+        assert!(hitch.plume_cursor <= spread_ticks * PLUME_ATTEMPTS);
+        assert!(hitch.spread_cursor <= spread_ticks * SPREAD_ATTEMPTS);
         assert!(hitch.patches.iter().all(|patch| patch.intensity.is_finite() && patch.intensity <= 1.4));
         let frozen = (hitch.spread_cursor, hitch.plume_cursor);
         for _ in 0..120 { hitch.update_fire(0.0, true, 1.4, &models, &[], false); }

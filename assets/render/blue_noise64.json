@@ -1,0 +1,24 @@
+{
+  "schema": "panzer.dither-rank-tile.v1",
+  "path": "assets/render/blue_noise64.bin",
+  "sha256": "3e7a7ce4ea2818e78252eaffdadc7f84cf02f1b023fd99279f64211664b4cecb",
+  "format": "row-major64x64 unsigned16-bit little-endian",
+  "rank_range": [
+    0,
+    4095
+  ],
+  "threshold": "(rank+0.5)/4096",
+  "generator": "experiments/panzer-raymarch/src/bin/dither_review.rs --export-blue-noise NEW.bin",
+  "algorithm": "three-phase void-and-cluster",
+  "initial_minority_pixels": 409,
+  "seed": "0x7f4a7c1520261001",
+  "gaussian_sigma_pixels": 1.5,
+  "toroidal_kernel": true,
+  "relaxation_swaps": 146,
+  "converged": true,
+  "rank_permutation_verified": true,
+  "frame_randomization": false,
+  "source_reference": "https://cv.ulichney.com/papers/1993-void-cluster.pdf",
+  "tests": "artifacts/runtime/dither_review_tests_20261001.log:3 passed,0 failed",
+  "scope": "A display reproduction threshold field; not a physical light/material/medium change. Repeats every64native pixels and is fixed across frames."
+}

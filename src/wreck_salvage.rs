@@ -195,7 +195,7 @@ impl Game {
         if let Some(mission) = &mut self.winter_mission {
             mission.stowed(carried.ammunition_location_id(),self.rounds_spent);
         }
-        self.transfer_cartridge_state(carried.ammunition_location_id(), index as u32);
+        self.transfer_cartridge_state(carried.ammunition_location_id(), crate::interior_rig::shell_source_id(index));
         self.slot_taken[index] = false;
         if let CarriedMesh::LooseShell(i) = carried { self.loose[i].active = false; }
         self.carry_mesh = None;

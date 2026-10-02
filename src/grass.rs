@@ -99,7 +99,7 @@ fn winter_patch(x: f32, z: f32, seed: u32) -> f32 {
 fn winter_density(layer: usize, patch: f32) -> f32 {
     // A broad stand fills with independent stems; the same mask leaves real snow clearings
     // in every detail layer. No isolated random tufts sprinkled through those clearings.
-    [0.035, 0.88, 0.96][layer] * patch
+    [0.022, 0.42, 0.28][layer] * patch
 }
 /// Near blades use many independent roots. Coarse cover uses a jittered lattice: random
 /// rejection and fully random positions leave meadow-sized holes even at high triangle counts.
@@ -424,7 +424,7 @@ impl Grass {
                         let height = if !winter {
                             0.28 + hash01(key.wrapping_add(4)) * 0.34
                         } else {
-                            0.12 + hash01(key.wrapping_add(4)) * 0.28 + patch * 0.06
+                            0.06 + hash01(key.wrapping_add(4)) * 0.10 + patch * 0.025
                         };
                         let width = if winter {
                             0.90 + hash01(key.wrapping_add(5)) * 0.20
@@ -432,7 +432,7 @@ impl Grass {
                             (if kind == 0 { 0.85 } else { 0.96 })
                                 + hash01(key.wrapping_add(5)) * if kind == 0 { 0.25 } else { 0.08 }
                         };
-                        let position = Vec3::new(x, ground(x, z) - 0.006, z);
+                        let position = Vec3::new(x, ground(x, z) - if winter { 0.025 } else { 0.006 }, z);
                         let slope = {
                             let d = if winter {
                                 filament::WINTER_FOOTPRINT[kind] * width

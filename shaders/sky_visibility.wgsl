@@ -4,9 +4,11 @@
 // which parts of the sky and ground hemispheres actually reach them.
 
 struct SkyVisibility {
-    view_proj: array<mat4x4<f32>, 32>,
-    directions: array<vec4<f32>, 32>,
-    grid: vec4<f32>, // columns, rows, active directions, world texel (m)
+    view_proj:array<mat4x4<f32>,66>,
+    directions:array<vec4<f32>,32>,
+    grid:vec4<f32>,
+    global_grid:vec4<f32>, // coarse world texel, near depth span, global depth span, reserved
+    sun_direction:vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> sky: SkyVisibility;
 

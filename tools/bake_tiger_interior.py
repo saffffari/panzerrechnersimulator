@@ -99,22 +99,22 @@ if rc:
 
 # ---- shell rack: the Shells collection is shells + trays; keep only shell-shaped members ----
 shells = []
+source_id = 0
 col = bpy.data.collections.get("Shells")
 if col:
     for o in col.all_objects:
         if o.type != 'MESH': continue
         dims = sorted(o.dimensions)
-        is_shell = dims[2] > 0.7 and dims[1] < 0.25       # long + thin = a round, not a flat tray
-        if not is_shell: continue
+        old_candidate = dims[2] > 0.7 and dims[1] < 0.25
+        if not old_candidate: continue
+        original_id = source_id; source_id += 1
+        if dims[2] >= 1.2: continue  # Turret_0125 is the1.9866m fitting, not a round
         w = o.matrix_world
         e = mathutils.Euler(w.to_euler())
-        # hull- vs turret-stowed by which subtree it hangs under
-        p = o.parent
+        # All64 source cartridges rest in fixed hull trays, despite48 inherited turret parents.
         frame = "hull"
-        while p:
-            if p.name == "Turret_Pivot": frame = "turret"; break
-            p = p.parent
         shells.append({
+            "source_id": original_id, "object": o.name,
             "pos": (turret_local(w.translation) if frame == "turret" else hull_local(w.translation)),
             "rot_deg": [round(math.degrees(a), 1) for a in (e.x, e.y, e.z)],
             "frame": frame,

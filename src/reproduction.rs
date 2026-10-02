@@ -9,6 +9,9 @@
 //!    would make the head-out shot quieter than the buttoned-up one although its LAF is 13 dB
 //!    higher. The curve is applied per voice from that voice's computed ear level; every voice
 //!    uses the same curve, and no source has a gain of its own.
+//!    The default balanced playback range adds up to 12 dB below 110 dB(A), tapering the lift to
+//!    zero at that knee. Set `KESSEL_AUDIO_RANGE=reference` before launch to retain the reference
+//!    curve; the selection is fixed for that process. This does not alter physical source levels.
 //! 2. Exposure: one global offset added to the curve. It is set so the owner-verified own-gun
 //!    recording, buttoned up, peaks near full scale (the owner's rule: the own gun extremely loud).
 //!    It shifts every source equally; the relations between sources are the curve's.
@@ -66,23 +69,55 @@ pub fn tone_curve_db(l_dba: f32) -> f32 {
     }
 }
 
+/// Playback dynamic range is a reproduction choice, never a change to source pressure,
+/// propagation, or the hearing model. Balanced exposes quiet machinery on ordinary playback;
+/// reference retains the report's full range. Both preserve source ordering and the gun anchor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaybackRange { Reference, Balanced }
+
+pub fn playback_range() -> PlaybackRange {
+    static MODE: std::sync::OnceLock<PlaybackRange> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("KESSEL_AUDIO_RANGE").as_deref() {
+        Ok("reference") => PlaybackRange::Reference,
+        _ => PlaybackRange::Balanced,
+    })
+}
+
+pub fn playback_range_name() -> &'static str {
+    match playback_range() { PlaybackRange::Reference => "reference", PlaybackRange::Balanced => "balanced" }
+}
+
+pub fn playback_curve_db(level: f32, mode: PlaybackRange) -> f32 {
+    let base = tone_curve_db(level);
+    if mode == PlaybackRange::Reference || !level.is_finite() { return base; }
+    // A bounded, monotonic upward compression below the bed knee: at most12dB.
+    // There is no time detector, pre-hit duck, source-specific gain, or change to loud events.
+    let lift = if level <= 70.0 {12.0}
+        else if level <= 80.0 {12.0 - 0.45 * (level - 70.0)}
+        else {((KNEE_LOW_DBA - level) * 0.25).clamp(0.0,7.5)};
+    base + lift
+}
+
+fn inverse_playback_curve_db(y: f32, mode: PlaybackRange) -> f32 {
+    let low = KNEE_LOW_DBA + REPORT_OFFSET_DB;
+    let high = low + (KNEE_HIGH_DBA - KNEE_LOW_DBA) / 2.0;
+    if mode == PlaybackRange::Balanced && y <= low {
+        if y <= low - 28.0 { y - REPORT_OFFSET_DB - 12.0 }
+        else if y <= low - 22.5 {70.0 + (y - (low - 28.0)) / 0.55}
+        else { KNEE_LOW_DBA + (y - low) / 0.75 }
+    } else if y <= low { y - REPORT_OFFSET_DB }
+    else if y <= high { KNEE_LOW_DBA + 2.0 * (y - low) }
+    else { KNEE_HIGH_DBA + 4.0 * (y - high) }
+}
+
 /// Digital short-term A-weighted level (dBFS(A)) for a physical LAF at the ear (dB(A)).
 pub fn tone_map_dbfs(l_dba: f32) -> f32 {
-    tone_curve_db(l_dba) + exposure_db()
+    playback_curve_db(l_dba, playback_range()) + exposure_db()
 }
 
 /// Inverse of `tone_map_dbfs` (the curve is strictly increasing).
 pub fn inverse_tone_map_dba(y_dbfs: f32) -> f32 {
-    let y = y_dbfs - exposure_db();
-    let low = KNEE_LOW_DBA + REPORT_OFFSET_DB;
-    let high = low + (KNEE_HIGH_DBA - KNEE_LOW_DBA) / 2.0;
-    if y <= low {
-        y - REPORT_OFFSET_DB
-    } else if y <= high {
-        KNEE_LOW_DBA + 2.0 * (y - low)
-    } else {
-        KNEE_HIGH_DBA + 4.0 * (y - high)
-    }
+    inverse_playback_curve_db(y_dbfs - exposure_db(), playback_range())
 }
 
 /// Linear gain that places a voice measuring `measured_laf_dbfs` (its own LAF,max in dBFS(A)) at
@@ -559,6 +594,26 @@ mod tests {
         assert!(exposure_db() > 10.0 && exposure_db() < 20.0, "{}", exposure_db());
         assert!(close(voice_gain(139.0, tone_map_dbfs(139.0)), 1.0, 1e-5));
         assert_eq!(voice_gain(f32::NAN, 0.0), 0.0);
+    }
+
+    #[test]
+    fn balanced_range_is_bounded_invertible_and_preserves_loud_events() {
+        for mode in [PlaybackRange::Reference, PlaybackRange::Balanced] {
+            let mut prior = f32::NEG_INFINITY;
+            for n in 0..2400 {
+                let level = n as f32 * 0.1;
+                let y = playback_curve_db(level, mode);
+                assert!(y > prior);
+                assert!((inverse_playback_curve_db(y, mode) - level).abs() < 0.0001);
+                let lift = y - tone_curve_db(level);
+                assert!((-0.0001..=12.0001).contains(&lift));
+                if level >= 110.0 { assert_eq!(lift, 0.0); }
+                prior = y;
+            }
+        }
+        assert_eq!(playback_curve_db(70.0, PlaybackRange::Balanced) - tone_curve_db(70.0), 12.0);
+        assert_eq!(playback_curve_db(80.0, PlaybackRange::Balanced) - tone_curve_db(80.0), 7.5);
+        assert!(!playback_curve_db(f32::NAN, PlaybackRange::Balanced).is_finite());
     }
 
     #[test]

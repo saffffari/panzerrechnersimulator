@@ -32,7 +32,7 @@ const THRESHOLD: f32 = 1.30;
 const KNEE: f32 = 0.7;
 const INTENSITY: f32 = 0.18;
 const SPREAD: f32 = 1.0; // a restrained halo preserves the boundary of small emissive cells
-const PORTAL_INTENSITY: f32 = 0.40;
+const PORTAL_INTENSITY: f32 = 0.14; // modest lens response; never adds surface illumination
 
 fn aperture_source(depth: f32, mask: f32) -> f32 {
     // Depth is the nearest actual triangle (including the hatch lid and its handle). The clear
@@ -117,20 +117,8 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     col += textureSample(src, samp, in.uv - o * 3.0).rgb * w3;
     col += textureSample(src, samp, in.uv + o * 4.0).rgb * w4;
     col += textureSample(src, samp, in.uv - o * 4.0).rgb * w4;
-    // Inside the cabin, scatter the sampled RGB with the same normalized broad kernel.
-    // Outside, compact emissive sources retain the original nine-tap kernel.
-    if (portal.depth_and_view.z > 0.5) {
-        let p = pc.texel * pc.dir;
-        var broad = vec3(0.0);
-        var weight_sum = 0.0;
-        for (var tap = -16; tap <= 16; tap += 1) {
-            let distance = f32(tap);
-            let weight = exp(-0.5 * distance * distance / (6.1 * 6.1));
-            broad += textureSampleLevel(src,samp,in.uv+p*distance,0.0).rgb*weight;
-            weight_sum += weight;
-        }
-        col = broad / weight_sum;
-    }
+    // The same compact camera kernel applies inside and outside. Cabin visibility must come
+    // from light transport, not an enlarged lens halo laid over its walls.
     return vec4(col,1.0);
 }
 
@@ -144,7 +132,7 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         let pixel = clamp(vec2<i32>(in.pos.xy),vec2(0),size-vec2(1));
         let aperture = aperture_source(textureLoad(scene_depth,pixel,0),
             textureLoad(glow_mask,pixel,0).a);
-        // Keep the scene through the opening/eyepiece at its original contrast. The broad
+        // Keep the scene through the opening/eyepiece at its original contrast. The compact
         // component blooms onto its frame and nearby cabin, never back over the sight picture.
         // Use the full-resolution mask so even a one-pixel optic edge remains well defined.
         surround = 1.0-aperture;

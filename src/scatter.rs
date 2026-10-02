@@ -53,6 +53,7 @@ struct Body {
     center: Vec3,
     base_pivot: Vec3,
     half_extents: Vec3,
+    mass_kg: f32,
     contact_radius: f32,
     floor_clearance: f32,
     seed: u32,
@@ -77,7 +78,7 @@ pub struct ScatterEvent {
 }
 
 /// Scatter contact never contains a hard stop. The caller may apply the small one-frame speed
-/// retention value for feel; even a run of light fencing retains most Tiger momentum.
+/// retention from estimated prop masses; even a run of light fencing retains most Tiger momentum.
 #[derive(Clone, Copy, Debug)]
 pub struct ScatterContact {
     pub hits: usize,
@@ -138,6 +139,19 @@ fn transformed_bounds(mesh: &CpuMesh, model: Mat4) -> (Vec3, Vec3) {
     (min, max)
 }
 
+// These light props have no authored masses. Use explicit bulk-density estimates for
+// mostly hollow/open objects, not solid steel density or a fixed percentage of tank speed.
+fn estimated_prop_mass(mesh:&CpuMesh,model:Mat4,material:ScatterMaterial)->f32 {
+    let size=(mesh.max-mesh.min).max(Vec3::ZERO);
+    let volume=size.x*size.y*size.z*model.determinant().abs();
+    let density=match material {ScatterMaterial::Wood=>80.0,ScatterMaterial::Metal=>120.0,ScatterMaterial::Mixed=>100.0};
+    (volume*density).clamp(0.2,1000.0)
+}
+
+fn light_contact_retention(vehicle_kg:f32,total_prop_kg:f32)->f32 {
+    vehicle_kg/(vehicle_kg+total_prop_kg.max(0.0))
+}
+
 fn body_from_model(
     batch: usize,
     instance: usize,
@@ -168,6 +182,7 @@ fn body_from_model(
         center,
         base_pivot: Vec3::new(center.x, min.y, center.z),
         half_extents: half,
+        mass_kg: estimated_prop_mass(mesh,model,profile.material),
         contact_radius,
         // The smallest half-extent approximates the side the object naturally sleeps on. It keeps
         // a toppled cart or barrel above terrain without pretending to solve its convex hull.
@@ -456,13 +471,16 @@ impl Scatter {
         if speed < 0.25 {
             return out;
         }
-        let mass = (vehicle_tons / 57.0).clamp(0.25, 1.35);
+        let vehicle_kg=(vehicle_tons.max(1.0)*1000.0).max(1.0);
+        let mut contacted_mass=0.0;
         let mut candidates: Vec<(f32, usize)> = self
             .nearby(nose, nose_radius + 3.0)
             .into_iter()
             .filter_map(|index| {
                 let body = &self.bodies[index];
-                if body.state != State::Resting {
+                if body.state != State::Resting
+                    || body.center.y-body.half_extents.y>nose.y+2.2
+                    || body.center.y+body.half_extents.y<nose.y-0.1 {
                     return None;
                 }
                 let delta = Vec2::new(body.center.x - nose.x, body.center.z - nose.z);
@@ -496,15 +514,15 @@ impl Scatter {
                 ScatterMotion::Loose => start_loose(
                     &mut self.bodies[index],
                     dir,
-                    (2.2 + speed * 0.70) * mass,
-                    (0.55 + speed * 0.10) * mass,
+                    speed * 0.85,
+                    speed * 0.035,
                     ScatterEventKind::TankShove,
                 ),
                 ScatterMotion::Roll => start_loose(
                     &mut self.bodies[index],
                     dir,
-                    (2.8 + speed * 0.82) * mass,
-                    (0.25 + speed * 0.05) * mass,
+                    speed * 0.95,
+                    speed * 0.020,
                     ScatterEventKind::TankShove,
                 ),
             };
@@ -512,17 +530,9 @@ impl Scatter {
             events.push(event);
             self.activate(index);
             out.hits += 1;
-            let retention: f32 = match motion {
-                ScatterMotion::Hinge => 0.93,
-                ScatterMotion::Loose => 0.97,
-                ScatterMotion::Roll => 0.985,
-            };
-            out.speed_retention = out.speed_retention.min(retention);
-            out.rumble = out.rumble.max(match motion {
-                ScatterMotion::Hinge => 0.28,
-                ScatterMotion::Loose => 0.16,
-                ScatterMotion::Roll => 0.10,
-            });
+            contacted_mass += self.bodies[index].mass_kg;
+            out.speed_retention=light_contact_retention(vehicle_kg,contacted_mass);
+            out.rumble=crate::tank_push::collision_rumble(speed,speed*out.speed_retention);
         }
         out
     }
@@ -770,6 +780,19 @@ impl Scatter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prop_mass_is_rotation_invariant_and_cannot_take_a_fixed_share_of_tank_momentum() {
+        let m=mesh(Vec3::ZERO,Vec3::new(1.0,0.8,0.6));
+        let a=estimated_prop_mass(&m,Mat4::IDENTITY,ScatterMaterial::Wood);
+        let b=estimated_prop_mass(&m,Mat4::from_rotation_y(0.75),ScatterMaterial::Wood);
+        assert!((a-b).abs()<1e-4);
+        assert!((a-38.4).abs()<0.001);
+        let retention=light_contact_retention(57250.,a);
+        assert!(retention>0.999);
+        assert!(crate::tank_push::collision_rumble(5.,5.*retention)<0.002);
+        assert!(light_contact_retention(57250.,10.*a)<retention);
+    }
 
     fn mesh(min: Vec3, max: Vec3) -> CpuMesh {
         crate::prims::box_mesh(min, max, [96, 78, 55])

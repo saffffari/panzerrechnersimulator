@@ -1,3 +1,4 @@
+// @cabin-medium
 // @weather-density
 // Participating media for bounded world aerosol/snow, muzzle smoke, breech gas and cabin haze.
 // Compact local media currently resolve one scattering order; High/Vulkan's homogeneous world
@@ -56,7 +57,15 @@ struct Smoke {
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol
     transport_steps: vec4<f32>, // world, cabin, plume, secondary local-medium quadrature
     weather_motion: vec4<f32>, // shared wind displacement and weather time
+    cabin_medium: CabinMedium,
 };
+
+@group(2) @binding(1) var cabin_air_columns:texture_2d_array<f32>;
+fn cabin_transform(i:u32)->mat4x4<f32> {return sm.cabin_medium.world_to_local[i];}
+fn cabin_grid(i:u32)->vec4<f32> {return sm.cabin_medium.grid_min_step[i];}
+fn cabin_size(i:u32)->vec4<u32> {return sm.cabin_medium.grid_size[i];}
+fn cabin_min(i:u32)->vec3<f32> {return sm.cabin_medium.bounds_min[i].xyz;}
+fn cabin_max(i:u32)->vec3<f32> {return sm.cabin_medium.bounds_max[i].xyz;}
 
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> sm: Smoke;
@@ -190,7 +199,13 @@ fn fbm(p0: vec3<f32>) -> f32 {
 
 // Advected finite 3D matter. Smooth radial support and coherent erosion remove hard cell faces.
 fn smoke_billow_density(point:vec3<f32>,puff:Puff)->f32 {
-    let q=(point-puff.pos)/max(puff.shape.x,0.02);
+    // dir is the half-axis of a sustained source sweep (zero for an ordinary sphere).
+    // Pull back through the affine stretch; CPU density carries the inverse Jacobian.
+    let delta=point-puff.pos;
+    let axis_length=length(puff.dir);
+    let axis=puff.dir/max(axis_length,0.000001);
+    let stretch=1.0+axis_length/max(puff.shape.x,0.02);
+    let q=(delta-axis*dot(delta,axis)*(1.0-1.0/stretch))/max(puff.shape.x,0.02);
     let radius=length(q); if(radius>=1.0 || puff.strength<=0.0){return 0.0;}
     let phase=puff.shape.z;
     let warp=vec3(sin(q.y*4.1+phase),sin(q.z*3.7-phase*0.8),sin(q.x*4.7+phase*0.6))*0.23;
@@ -201,7 +216,7 @@ fn smoke_billow_density(point:vec3<f32>,puff:Puff)->f32 {
 }
 
 fn puff_shape(pf: Puff) -> vec4<f32> {
-    if (pf.shape.x>0.0) {return vec4(pf.pos,pf.shape.x);}
+    if (pf.shape.x>0.0) {return vec4(pf.pos,pf.shape.x+length(pf.dir));}
     let a = pf.age;
     let center = pf.pos + pf.dir * (0.55 * a) + vec3(0.0, 3.4 * a, 0.0);
     let radius = 0.5 + 1.8 * a;
@@ -274,15 +289,14 @@ fn sample_density(p: vec3<f32>) -> f32 {
 
 // Cabin aerosol is a procedural medium volume, not a light. Its support follows the vehicle-local
 // haze emitter and its radiance is always computed from the same sun/point-source table as opaque
-// surfaces. The sphere is the declared density support of this temporary procedural emitter; it
-// does not stand in for occlusion (the TLAS owns that).
+// surfaces. Authored armor-derived air domains own its support; the TLAS still owns occlusion.
 fn cabin_density(p: vec3<f32>) -> f32 {
-    if (sm.interior <= 0.001 || distance(p, sm.atmo_origin) > 3.35) { return 0.0; }
-    return sm.interior * 0.018;
+    if (sm.interior <= 0.001 || !cabin_contains(p)) { return 0.0; }
+    return sm.interior * 0.010;
 }
 
 fn world_medium_density(p: vec3<f32>) -> f32 {
-    if (sm.fog_density <= 0.0 || p.y < sm.fog_layer.x || p.y > sm.fog_layer.y) {
+    if (sm.fog_density <= 0.0 || p.y < sm.fog_layer.x || p.y > sm.fog_layer.y || cabin_contains(p)) {
         return 0.0;
     }
     // `fog_density` is authored as sigma_t in inverse metres. The rest of this integrator stores
@@ -302,9 +316,9 @@ fn total_medium_density(p: vec3<f32>) -> f32 {
 // Exact segment length inside the explicit horizontal world-medium slab.
 fn world_medium_segment_length(origin: vec3<f32>, direction: vec3<f32>, max_distance: f32) -> f32 {
     if (sm.fog_density <= 0.0) { return 0.0; }
-    return physical_bounded_medium_segment_length(
-        origin, direction, max_distance, sm.fog_layer.x, sm.fog_layer.y,
-    );
+    let interval=physical_bounded_medium_interval(origin,direction,max_distance,sm.fog_layer.x,sm.fog_layer.y);
+    let distance_m=max(interval.y-interval.x,0.0);
+    return max(distance_m-cabin_path_length(origin+direction*interval.x,direction,distance_m),0.0);
 }
 
 fn world_medium_interval(origin: vec3<f32>, direction: vec3<f32>, max_distance: f32) -> vec2<f32> {
@@ -323,8 +337,8 @@ fn medium_transmittance(origin: vec3<f32>, direction: vec3<f32>, max_distance: f
     if (full_travel <= 0.001) { return 1.0; }
     // Homogeneous world extinction is analytic over the complete source segment. Compact local
     // media retain a bounded quadrature because their density varies procedurally.
-    var optical_depth = sm.fog_density
-        * world_medium_segment_length(origin, direction, full_travel);
+    var optical_depth = weather_optical_depth(origin,direction,full_travel,sm.fog_layer.xy,
+        sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x));
     let travel = min(full_travel, 12.0);
     let light_steps = max(i32(sm.transport_steps.w), 1);
     for (var i = 0; i < light_steps; i = i + 1) {
@@ -832,7 +846,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         }
         // The uncollided camera term is analytic and independent of stochastic source estimates.
         // Never temporal-filter or truncate this Beer-Lambert opacity with the radiance path.
-        world_a = 1.0 - exp(-sm.fog_density * (world_iv.y - world_iv.x));
+        world_a = 1.0 - exp(-weather_optical_depth(ro,rd,world_limit,sm.fog_layer.xy,sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x)));
         world_rgb = world_rgb + bounded_world_higher_order_scatter(
             ro,
             rd,

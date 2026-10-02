@@ -98,6 +98,49 @@ mod tests {
     use crate::sound_levels as levels;
     use crate::sound_propagation::{propagate, Atmosphere, Emission, Enclosure, Path};
 
+    /// Isolated source/path audit. It deliberately leaves hearing healthy to distinguish source
+    /// timbre and hull transfer from the actual crew's accumulated damage in gameplay captures.
+    #[test]
+    fn destruction_pressure_path_review() {
+        let Ok(prefix) = std::env::var("KESSEL_DESTRUCTION_PATH_REVIEW_PREFIX") else { return; };
+        let mut rows = Vec::new();
+        for distance_m in [2.0, 22.0] {
+            for (path_name, enclosure, headset) in [
+                ("same_compartment", Enclosure::OnFoot, true),
+                ("through_hull", Enclosure::Buttoned, true),
+                ("observer", Enclosure::OnFoot, false),
+            ] {
+                for (name, sfx, emission) in [
+                    ("armour", Sfx::ImpactTank, Emission::from_level(&levels::EXTERIOR_ARMOUR_STRIKE_10M)),
+                    ("kill", Sfx::KillExplosion, Emission::blast(levels::VEHICLE_KILL_TNT_KG)),
+                    ("catastrophic", Sfx::TurretPop, Emission::blast(levels::AMMUNITION_DETONATION_TNT_KG)),
+                ] {
+                    let audio = Audio::new_capture();
+                    let path = Path { distance_m, atmosphere: Atmosphere::WINTER, occluded: false,
+                        enclosure, headset };
+                    let ear = propagate(&emission, &path);
+                    let reverb = if path_name == "observer" { ReverbParams::OPEN_SNOW }
+                        else { ReverbParams::STEEL_INTERIOR };
+                    audio.play_world_at_ear(sfx, &ear, 0.0, reverb);
+                    let mut out = audio.render_capture_frames(3 * 44_100).unwrap();
+                    out.drain(..reproduction::MASTER_LATENCY_FRAMES * 2);
+                    assert!(out.iter().all(|v| v.is_finite()));
+                    let file = format!("{prefix}_{name}_{path_name}_{distance_m:.0}m.wav");
+                    assert!(!std::path::Path::new(&file).exists(), "preserve review: {file}");
+                    acoustics::write_wav_stereo(&file, &out, acoustics::SAMPLE_RATE).unwrap();
+                    let master = audio.master_telemetry();
+                    rows.push(serde_json::json!({"source":name,"path":path_name,"distance_m":distance_m,
+                        "ear_laf_dba":ear.laf_db,"ear_lpk_db":ear.lpk_db,"transfer_db":ear.transfer_db,
+                        "output_laf_dbfs":laf_max_dbfs(&out),"output_peak_dbfs":reproduction::peak_dbfs(&out),
+                        "master":master,"wav":file}));
+                }
+            }
+        }
+        let file = format!("{prefix}.json");
+        assert!(!std::path::Path::new(&file).exists(), "preserve review: {file}");
+        std::fs::write(file, serde_json::to_string_pretty(&rows).unwrap()).unwrap();
+    }
+
     #[test]
     #[ignore = "timing diagnostic"]
     fn print_world_render_cost() {
@@ -208,7 +251,7 @@ mod tests {
     #[test]
     fn world_voices_are_placed_by_their_ear_level_not_their_waveform() {
         // Two different waveforms at the same ear level play at the same short-term level; the
-        // same waveform 20 dB quieter at the ear plays 20 dB quieter (linear part of the curve).
+        // same waveform 20 dB quieter at the ear follows the selected global reproduction curve.
         let ear_at = |laf: f32| {
             let mut ear = propagate(&Emission::from_level(&levels::GUN_76_F34_SIDE_10M),
                 &Path::at_ear(false));
@@ -226,7 +269,33 @@ mod tests {
         assert!((gun - ground).abs() < 0.5, "same ear level, same digital level: {gun} {ground}");
         assert!((gun - reproduction::tone_map_dbfs(100.0)).abs() < 0.5, "{gun}");
         let quieter = level(Sfx::EnemyGun, 80.0);
-        assert!((gun - quieter - 20.0).abs() < 0.5, "{gun} {quieter}");
+        let expected = reproduction::tone_map_dbfs(100.0) - reproduction::tone_map_dbfs(80.0);
+        assert!((gun - quieter - expected).abs() < 0.5, "{gun} {quieter}, expected {expected}");
+    }
+
+    #[test]
+    fn small_arm_variants_keep_calibration_and_buttoned_hull_filters_the_crack() {
+        let audio = Audio::new_capture();
+        let emission = Emission::from_level(&levels::RIFLE_1M_SIDE);
+        let path = Path { distance_m:30.0, atmosphere:Atmosphere::WINTER, occluded:false,
+            enclosure:Enclosure::OnFoot, headset:false };
+        let open = propagate(&emission,&path);
+        let closed = propagate(&emission,&Path { enclosure:Enclosure::Buttoned, headset:true, ..path });
+        assert!(open.laf_db-closed.laf_db > 35.0);
+        assert!(closed.transfer_db[7]-closed.transfer_db[2] > 25.0);
+        let mut fingerprints = std::collections::HashSet::new();
+        for _ in 0..12 {
+            let mono=audio.world_source(Sfx::RifleShot).unwrap();
+            let key=format!("world:RifleShot:{:016x}",super::super::buffer_checksum(&mono));
+            assert!(fingerprints.insert(key.clone()));
+            let measured=audio.measured_world_source(key,&mono);
+            let rendered=render_for_ear(&mono,&open,22.0,ReverbParams::OPEN_SNOW);
+            let level=measure_render_window(&rendered,measured.max_frame);
+            let gain=reproduction::voice_gain(open.laf_db,level);
+            let placed:Vec<_>=rendered.iter().map(|x|x*gain).collect();
+            assert!((laf_max_dbfs(&placed)-reproduction::tone_map_dbfs(open.laf_db)).abs()<0.15);
+        }
+        assert_eq!(audio.level_cache.borrow().len(),12,"same-duration variants must not share a stale measurement");
     }
 }
 
@@ -235,6 +304,7 @@ impl Audio {
     /// deterministic procedural identity, with an opted-in v1 character layer mixed in at its
     /// receipt-bound share (so the layer is inside the calibrated level, not added on top).
     pub(super) fn world_source(&self, sfx: Sfx) -> Option<Arc<[f32]>> {
+        if let Some(report) = self.small_arm_reports.next(sfx) { return Some(report); }
         let base = super::feedback::replacement_key(sfx)
             .and_then(|key| self.feedback_source(key))
             .or_else(|| self.world_mono.get(sfx.index()).cloned())?;
@@ -260,7 +330,9 @@ impl Audio {
     /// `ear` comes from `sound_propagation::propagate` for the live path.
     pub fn play_world_at_ear(&self, sfx: Sfx, ear: &EarLevel, bearing_deg: f32, reverb: ReverbParams) {
         let Some(mono) = self.world_source(sfx) else { return };
-        let key = format!("world:{sfx:?}:{}", mono.len());
+        let key = if super::small_arms::is_variant(sfx) {
+            format!("world:{sfx:?}:{:016x}", super::buffer_checksum(&mono))
+        } else { format!("world:{sfx:?}:{}", mono.len()) };
         let measured = self.measured_world_source(key, &mono);
         self.place_world_render(&mono, measured, ear, bearing_deg, reverb, EarBus::World);
     }

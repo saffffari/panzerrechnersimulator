@@ -183,10 +183,10 @@ pub fn stalk_mesh(winter: bool) -> CpuMesh {
     // vegetation instead of isolated black needles. This is albedo, never emitted light.
     let colors = if winter {
         [
-            [121, 111, 75, 255],
-            [110, 103, 66, 255],
-            [85, 79, 51, 255],
-            [65, 60, 42, 255],
+            [145, 135, 116, 255],
+            [132, 123, 104, 255],
+            [117, 108, 91, 255],
+            [100, 93, 81, 255],
         ]
     } else {
         [
@@ -381,10 +381,10 @@ pub fn tuft_mesh(layer: usize, winter: bool) -> CpuMesh {
     }
     let colors = if winter {
         [
-            [121, 111, 75, 255],
-            [110, 103, 66, 255],
-            [85, 79, 51, 255],
-            [65, 60, 42, 255],
+            [145, 135, 116, 255],
+            [132, 123, 104, 255],
+            [117, 108, 91, 255],
+            [100, 93, 81, 255],
         ]
     } else if layer == 2 {
         [

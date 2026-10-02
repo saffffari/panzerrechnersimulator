@@ -1,0 +1,4 @@
+
+### Material normal filtering (consolidated shader)
+
+Normal maps now use the existing linear min/mag/mip sampler at the hardware derivative-selected footprint. Their filtered vector length is retained before normalization. A Toksvig-style angular-spread estimate broadens the GGX width only when the length loss exceeds the RGB8 decoding bound. Constant unit normals therefore retain authored roughness within quantization; the albedo/material texels, final native Bayer grid and nearest presentation are unchanged. This is an isotropic width approximation, not exact GGX normal-distribution convolution, and does not solve sharp geometric-normal/specular alias or alpha-tested texture coverage. RGB8 mip construction can introduce additional rounding error. Native moving-camera acceptance remains pending. Reference: https://download.nvidia.com/developer/SDK/Individual_Samples/MEDIA/docPix/docs/Mipmapping_Normal_Maps.pdf

@@ -15,7 +15,7 @@ pub const RESOLUTIONS: [(u32, u32); 9] = [
     (1920, 1080),
     (2560, 1440),
 ];
-pub const WINDOWS: [(u32, u32); 4] = [(1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
+pub const WINDOWS: [(u32, u32); 6] = [(1280, 720), (1600, 900), (1920, 1080), (2560, 1440), (3840, 2160), (5120, 2880)];
 const SHADOWS: [u32; 5] = [512, 768, 1024, 1536, 2048];
 pub const TABS: [&str; 6] = [
     "Display",
@@ -40,6 +40,7 @@ pub struct Settings {
     pub warmth: f32,
     pub gamma: f32,
     pub display: DisplayTuning,
+    pub dither_pattern: u8,
     pub sun_phase: u8,
     pub sun_speed: f32,
     pub storm: Option<f32>,
@@ -48,6 +49,7 @@ impl Settings {
     pub fn from_renderer(r: &Renderer) -> Self {
         Self {
             resolution: (r.iw, r.ih),
+            dither_pattern: r.display_dither_pattern.clamp(0.0,3.0) as u8,
             window: (1280, 720),
             fullscreen: false,
             vsync: true,
@@ -70,6 +72,7 @@ impl Settings {
     pub fn defaults() -> Self {
         Self {
             resolution: (640, 360),
+            dither_pattern: 0,
             window: (1280, 720),
             fullscreen: false,
             vsync: true,
@@ -99,6 +102,7 @@ impl Settings {
         let mut display = self.display;
         (display.width, display.height) = self.resolution;
         r.display_tuning = Some(display);
+        r.display_dither_pattern = self.dither_pattern as f32;
         r.display_grade = [
             self.exposure_ev.exp2(),
             self.saturation,
@@ -117,7 +121,7 @@ impl Settings {
         "window":[self.window.0,self.window.1],"fullscreen":self.fullscreen,"vsync":self.vsync,
         "shadows":self.shadows,"full_transport":self.full_transport,"optics":self.optics,"fps":self.fps,
         "exposure_ev":self.exposure_ev,"saturation":self.saturation,"warmth":self.warmth,"gamma":self.gamma,
-        "storm":self.storm,"sun_phase":self.sun_phase,"sun_speed":self.sun_speed,"display":self.display.to_json()})
+        "storm":self.storm,"sun_phase":self.sun_phase,"sun_speed":self.sun_speed,"dither_pattern":self.dither_pattern,"display":self.display.to_json()})
     }
     pub fn from_json(v: &Value) -> anyhow::Result<Self> {
         ensure!(v["version"] == 1, "unsupported graphics settings version");
@@ -144,6 +148,12 @@ impl Settings {
         ensure!(SHADOWS.contains(&shadows), "unsupported shadows");
         let optics = usize::try_from(v["optics"].as_u64().context("missing optics")?)?;
         ensure!((1..=4).contains(&optics), "unsupported optics budget");
+        // Preferences saved before the selector existed preserve an explicit launch choice.
+        let dither_pattern=match v.get("dither_pattern") {
+            Some(value) => {let mode=value.as_u64().context("invalid dither pattern")?;
+                ensure!(mode<=3,"unsupported dither pattern");mode as u8},
+            None => crate::renderer::display_dither_mode(&std::env::var("KESSEL_DITHER_PATTERN").unwrap_or_default()).unwrap_or(0),
+        };
         let sun_phase = match v.get("sun_phase") {
             None => 0,
             Some(n) => n.as_u64().context("invalid sun phase")?,
@@ -161,6 +171,7 @@ impl Settings {
                 Some(number("storm", 0.0, 8.0)?)
             },
             sun_phase: sun_phase as u8,
+            dither_pattern,
             sun_speed,
             resolution,
             window,
@@ -235,6 +246,7 @@ impl Settings {
             ),
             (3, 3) => step(&mut self.display.ordered_dither, 0.1, 0.0, 1.0),
             (3, 4) => step(&mut self.display.ldr_dither, 0.1, 0.0, 1.0),
+            (3, 5) => cycle(&mut self.dither_pattern, &[0, 3, 1, 2], up),
             (5, 1) => {
                 let mut n = self.storm.unwrap_or(-0.25);
                 step(&mut n, 0.25, -0.25, 8.0);
@@ -334,6 +346,7 @@ impl Settings {
                 ),
                 ("Ordered dither", percent(self.display.ordered_dither)),
                 ("Smooth gradients", percent(self.display.ldr_dither)),
+                ("Dither pattern", ["Bayer 4 / screen","Blue noise / screen","Bayer 8 / sphere","Bayer 8 / pixel grid"][self.dither_pattern as usize].to_owned()),
             ],
         }
     }
@@ -360,7 +373,7 @@ impl Menu {
     pub fn controls(&self) -> usize {
         if self.tab == 5 {
             1
-        } else if self.tab == 2 {
+        } else if self.tab == 2 || self.tab == 3 {
             5
         } else if self.tab == 4 {
             2
@@ -444,7 +457,7 @@ impl Menu {
             Align::Left,
         );
         r.draw_text(
-            "ARROWS ADJUST / TAB NEXT PAGE / ESC BACK",
+            "CLICK LEFT / RIGHT TO ADJUST · TAB PAGE · ESC BACK",
             0.055,
             0.903,
             0.018,
@@ -493,6 +506,17 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn native_grid_dither_selection_survives_preferences_and_rejects_invalid_modes() {
+        let mut settings=Settings::defaults();settings.resolution=(800,450);
+        settings.adjust(3,5,true);assert_eq!(settings.dither_pattern,3);
+        assert_eq!(settings.rows(3).len(),5);
+        assert_eq!(Settings::from_json(&settings.to_json()).unwrap(),settings);
+        let mut invalid=settings.to_json();invalid["dither_pattern"]=json!(4);
+        assert!(Settings::from_json(&invalid).is_err());
+        assert_eq!(crate::renderer::display_dither_mode("screen_bayer8"),Some(3));
+        assert_eq!(crate::renderer::display_dither_mode("sphere_bayer8"),Some(2));
     }
     #[test]
     fn saved_preferences_reopen() {

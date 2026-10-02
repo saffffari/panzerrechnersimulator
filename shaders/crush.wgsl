@@ -21,15 +21,19 @@ struct Crush {
     exposure: f32,  // the eye's chromatic cone channel per unit radiance
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
-    _grade_pad0: f32,
+    dither_pattern: f32, // 0 screen Bayer4, 1 fixed blue64, 2 sphere Bayer8, 3 native screen Bayer8
     _grade_pad1: f32,
     display_grade: vec4<f32>, // exposure multiplier, saturation, warmth, display gamma
+    dither_right: vec4<f32>, // world basis; w = tan(horizontal half-FOV)
+    dither_up: vec4<f32>, // world basis; w = tan(vertical half-FOV)
+    dither_forward: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
 @group(0) @binding(5) var optic_tex: texture_2d<f32>;   // snapshot of the crushed optic frame (mask mode 4)
 struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
 @group(0) @binding(6) var<uniform> environment_white: EnvironmentWhite;
+@group(0) @binding(7) var blue_noise: texture_2d<u32>;
 
 // A camera white point, not a change to scene lighting. Use the diffuse sky irradiance that
 // already lights the scene; a red flash, painted wall or warm cabin lamp cannot drive this meter.
@@ -92,6 +96,53 @@ var<private> BAYER: array<f32, 16> = array<f32, 16>(
     15.0, 7.0, 13.0, 5.0,
 );
 
+// Inspired by Lucas Pope's Obra Dinn camera-centred, world-oriented sphere mapping:
+// https://dukope.com/devlogs/obra-dinn/tig-32/
+// Our equal-angular latitude rings adapt their longitude count to circumference, in whole
+// Bayer tiles. This is an independent implementation, not Pope's unpublished mapping/code.
+// Camera rotation is represented; translation/object motion cannot be pinned by angular data.
+fn bayer8_rank(cell: vec2<i32>) -> u32 {
+    let x = u32(cell.x & 7);
+    let y = u32(cell.y & 7);
+    var rank = 0u;
+    for (var bit = 0u; bit < 3u; bit += 1u) {
+        let xb = (x >> bit) & 1u;
+        let yb = (y >> bit) & 1u;
+        rank = (rank << 2u) | ((xb ^ yb) << 1u) | yb;
+    }
+    return rank;
+}
+fn sphere_threshold(pixel: vec2<f32>, dimensions: vec2<f32>) -> f32 {
+    let q = pixel / dimensions * 2.0 - vec2(1.0);
+    let direction = normalize(cr.dither_forward.xyz
+        + cr.dither_right.xyz * q.x * cr.dither_right.w
+        - cr.dither_up.xyz * q.y * cr.dither_up.w);
+    let pi = 3.141592653589793;
+    let tau = 6.283185307179586;
+    // One angular cell is approximately one native pixel at the image centre.
+    let density = dimensions.y / max(2.0 * cr.dither_up.w, 0.0001);
+    let latitude = asin(clamp(direction.y, -1.0, 1.0));
+    let row = floor((latitude + 0.5 * pi) * density);
+    let ring_latitude = (row + 0.5) / density - 0.5 * pi;
+    let columns = max(8.0, round(tau * density * max(cos(ring_latitude), 0.0) / 8.0) * 8.0);
+    let longitude = atan2(direction.x, -direction.z);
+    let column = floor((longitude + pi) / tau * columns);
+    return (f32(bayer8_rank(vec2<i32>(i32(column), i32(row)))) + 0.5) / 64.0 - 0.5;
+}
+
+// Pattern coordinates are native screen pixels and never depend on frame/time.
+fn display_threshold(px:vec2<i32>)->f32 {
+    if(cr.dither_pattern>2.5){
+        return (f32(bayer8_rank(px))+0.5)/64.0-0.5;
+    }
+    if(cr.dither_pattern>0.5 && cr.dither_pattern<1.5){
+        let rank=textureLoad(blue_noise,vec2(px.x&63,px.y&63),0).x;
+        return (f32(rank)+0.5)/4096.0-0.5;
+    }
+    let index=(px.y&3)*4+(px.x&3);
+    return (BAYER[index]+0.5)/16.0-0.5;
+}
+
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -113,6 +164,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // silhouettes legible, while the tiny asymmetric pulse prevents it reading as a static filter.
     let concussion = clamp(cr.concussion, 0.0, 1.0);
     let hd = vec2<f32>(textureDimensions(hdr));
+    // One native-pixel decision is reused by both palette and LDR quantization. Screen Bayer8
+    // never enters the sphere mode's four-sample resolve, so its cells stay on the game grid.
+    var native_threshold = 0.0;
+    if (cr.retro > 0.001 || cr.ldr_dither > 0.0) {
+        native_threshold = display_threshold(vec2<i32>(in.pos.xy));
+    }
     let texel = 1.0 / max(hd, vec2(1.0));
     let pulse = vec2(sin(cr.frame * 0.31), cos(cr.frame * 0.27));
     let radius = texel * (1.0 + 4.5 * concussion);
@@ -142,7 +199,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // internal pixel grid: identical radiance must produce identical pixels on every frame.
         // Work in display codes so quantization retains dim transported blue skylight.
         let bi = (px.y & 3) * 4 + (px.x & 3);
-        let ordered = (BAYER[bi] + 0.5) / 16.0 - 0.5;
+        let ordered = native_threshold;
 
         // At the 640x360 internal resolution a Bayer cell becomes a conspicuous display block.
         // Attenuate the ordered component in the deep distance, where continuous gradients matter
@@ -161,9 +218,26 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // Bayer amplitude does not expose wide false-contour bands.
         display_grade = mix(display_grade, continuous_grade, far_field * 0.94);
 
-        // No random recording grain. Transport noise must be resolved upstream, before this
-        // authored ordered pattern; a noise overlay cannot stand in for texture or convergence.
-        m = mix(m, display_decode(display_grade), retro);
+        if (cr.dither_pattern > 1.5 && cr.dither_pattern < 2.5) {
+            // Threshold at 2x in each axis, then resolve. The native scene is unchanged.
+            // Average thresholded samples, not thresholds: the latter loses ordered coverage.
+            var resolved = vec3(0.0);
+            for (var y = 0; y < 2; y += 1) {
+                for (var x = 0; x < 2; x += 1) {
+                    let subpixel = floor(in.pos.xy) + (vec2(f32(x), f32(y)) + vec2(0.5)) * 0.5;
+                    let threshold = sphere_threshold(subpixel, hd);
+                    var grade = floor((continuous_grade
+                        + vec3(threshold * cr.dither * ordered_gain / display_levels))
+                        * display_levels + vec3(0.5)) / display_levels;
+                    grade = mix(grade, continuous_grade, far_field * 0.94);
+                    resolved += display_decode(grade) * 0.25;
+                }
+            }
+            m = mix(m, resolved, retro);
+        } else {
+            // No random recording grain. Transport noise must be resolved upstream.
+            m = mix(m, display_decode(display_grade), retro);
+        }
     }
     if (cr.ldr_dither > 0.0) {
         // The next attachment is linear RGBA8, not an sRGB display-code buffer. Dither its
@@ -172,9 +246,23 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // Less than half a step keeps exact black and white exact after UNORM rounding.
         let px = vec2<i32>(in.pos.xy);
         let bi = (px.y & 3) * 4 + (px.x & 3);
-        let threshold = (BAYER[bi] + 0.5) / 16.0 - 0.5;
-        m = clamp(m + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0) / 255.0),
-                  vec3(0.0), vec3(1.0));
+        if (cr.dither_pattern > 1.5 && cr.dither_pattern < 2.5) {
+            var resolved = vec3(0.0);
+            for (var y = 0; y < 2; y += 1) {
+                for (var x = 0; x < 2; x += 1) {
+                    let subpixel = floor(in.pos.xy) + (vec2(f32(x), f32(y)) + vec2(0.5)) * 0.5;
+                    let threshold = sphere_threshold(subpixel, hd);
+                    let code = clamp(m * 255.0 + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0)),
+                        vec3(0.0), vec3(255.0));
+                    resolved += floor(code + vec3(0.5)) / 255.0 * 0.25;
+                }
+            }
+            m = resolved;
+        } else {
+            let threshold = native_threshold;
+            m = clamp(m + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0) / 255.0),
+                      vec3(0.0), vec3(1.0));
+        }
     }
 
     // TZF 9b/9c Strichbild — etched BLACK glass markings (a real optic's reticle is a dark

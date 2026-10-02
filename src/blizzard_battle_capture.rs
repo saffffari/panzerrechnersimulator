@@ -26,6 +26,11 @@ pub fn run(prefix: &str, seconds: f32, preview: bool) -> anyhow::Result<()> {
 
 pub fn run_with_view(prefix: &str, seconds: f32, preview: bool,
     view: crate::crew_blizzard_capture::View) -> anyhow::Result<()> {
+    run_with_encounter(prefix, seconds, preview, view, false)
+}
+
+pub fn run_with_encounter(prefix: &str, seconds: f32, preview: bool,
+    view: crate::crew_blizzard_capture::View, platoon: bool) -> anyhow::Result<()> {
     ensure!(
         seconds.is_finite() && (6.0..=60.0).contains(&seconds),
         "duration must be 6..60 seconds"
@@ -52,9 +57,17 @@ pub fn run_with_view(prefix: &str, seconds: f32, preview: bool,
     g.reset_match(0xB112_1001, 75.0);
     g.player.pos = Vec3::new(60.0, g.hf.height_at(60.0, -280.0), -280.0);
     // Validate each actual opening lane against terrain/tree/cover before mustering the actors.
-    let positions = [glam::Vec2::new(52.0, -212.0), glam::Vec2::new(72.0, -200.0)];
+    let positions: Vec<glam::Vec2> = if platoon {
+        // Six independently simulated tanks; only the opening formation is authored.
+        [(140.0_f32,-35.0_f32),(155.0,-22.0),(170.0,-8.0),
+         (185.0,10.0),(200.0,25.0),(220.0,38.0)].into_iter().map(|(range,bearing)| {
+            let angle = bearing.to_radians();
+            glam::Vec2::new(g.player.pos.x,g.player.pos.z)
+                + glam::Vec2::new(angle.sin(),angle.cos())*range
+        }).collect()
+    } else { vec![glam::Vec2::new(52.0, -212.0), glam::Vec2::new(72.0, -200.0)] };
     let mut lanes = Vec::new();
-    for position in positions {
+    for &position in &positions {
         let delta = position - glam::Vec2::new(g.player.pos.x, g.player.pos.z);
         lanes.push(g.debug_stage_enemy_discharge_review(
             delta.length(),
@@ -65,8 +78,9 @@ pub fn run_with_view(prefix: &str, seconds: f32, preview: bool,
     }
     g.player.heading = 0.0;
     let active = g.stage_showreel_t34_crossfire_wave(&positions, 0xB112_1001);
+    ensure!(active.len() == positions.len(), "not all requested T-34 actors were staged");
     for (k, &i) in active.iter().enumerate() {
-        g.enemies[i].reload = 2.0 + k as f32 * 2.5;
+        g.enemies[i].reload = (if platoon { 6.0 } else { 2.0 }) + k as f32 * 2.5;
     }
     let policy_path = crate::resource::resolve("assets/ai/weights_academy.bin")?;
     g.enemy_policy = Some(ai::Mlp::load(policy_path.to_str().context("policy path")?)?);
@@ -139,7 +153,7 @@ pub fn run_with_view(prefix: &str, seconds: f32, preview: bool,
     let mut frames = 0;
     let mut maximum_turret_rise = 0.0_f64;
     let mut maximum_turret_correction = 0.0_f64;
-    let initial = json!({"tiger":g.player.pos.to_array(),"t34s":active.iter().map(|&i|
+    let initial = json!({"encounter":if platoon {"six_t34_140_to_220m"} else {"close_pair"},"tiger":g.player.pos.to_array(),"t34s":active.iter().map(|&i|
         g.enemies[i].pos.to_array()).collect::<Vec<_>>()});
     for tick in 0..steps {
         let now = (tick + 1) as f32 / 60.0;

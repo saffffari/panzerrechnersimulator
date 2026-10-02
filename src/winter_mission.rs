@@ -102,7 +102,7 @@ impl Game {
                 self.slot_taken[i] = true;
                 if self.empty_rack_under_aim(eye,(point-eye).normalize_or_zero(),false) == Some(i) {
                     empty.push(i);
-                    self.cartridge_primers.consume(i as u32);
+                    self.cartridge_primers.consume(crate::interior_rig::shell_source_id(i));
                 } else { self.slot_taken[i] = false; }
             }
         }

@@ -4,6 +4,30 @@ Updated: 2026-10-01 (graphics, weather and impact integration). This ledger is a
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
+## Native geometry coverage, 2026-10-01 (consolidated shader renderer)
+
+The shader backend now defaults to four hardware coverage samples per native geometry pixel.
+Main and every raster optical exterior view use the same source meshes/material shader and
+four-sample sky depth gating. Resolved color is an average in linear HDR before exposure,
+bloom, tone mapping and the unchanged native Bayer8 grid. No temporal history or upscaling
+filter is added. Centroid interpolation keeps the shaded material point on a covered primitive.
+`KESSEL_GEOMETRY_AA=off` retains the one-sample diagnostic baseline; `msaa4` is the default.
+
+The depth resolve deliberately retains the nearest of the four real depth samples. Existing
+single-sample fog, particles and SSAO therefore cannot leak through a covered armor edge, but
+can over-occlude the background within a mixed-coverage native pixel. This is a conservative
+one-pixel spatial approximation, **not** per-sample volumetric integration. Transparent glass,
+optical entrance panels and hover outlines still rasterize once per native pixel. Material
+minification/specular aliasing and sub-four-sample thin features remain possible. No claim of
+complete temporal stability follows from MSAA alone.
+
+Gates: `tests/native_geometry_aa.rs` validates the actual resolve WGSL and includes an explicit
+GPU coverage/depth regression; `stylized_raster` validates the unchanged composed material
+shader with centroid interpolation. A deterministic native800 moving-camera Bayer8/continuous
+pair, plus geometry-AA off/on captures, is required for subjective acceptance. Implementation
+saved; CPU/GPU and native visual results are pending at this checkpoint.
+
+
 ## Cannon source and observer microphone revision, 2026-10-01
 
 The shared procedural cannon voice now uses compact pressure-front and low/upper-bass
@@ -354,6 +378,20 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 
 ## Audio (sound levels, 2026-09-28)
 
+Destruction pressure timbre update (2026-10-01, after v6 crew review): the finite authored
+compression/rebound retains a reduced 32–41 Hz displacement and an aligned 98–109 Hz body.
+This redistributes the waveform's energy out of subbass before its existing A-weighted placement;
+it changes no physical source level, propagation/headset law or common master setting. It is
+authored reproduction timbre, not a simulated blast pressure history. The controlled live-graph
+comparison and limits are recorded in `docs/CATASTROPHIC_AUDIO_20261001.md`; regression
+`acoustics::tests::destruction_pressure_keeps_audible_body_through_the_crew_headset` checks the
+calibrated headset path, and the existing catastrophic hierarchy test guards relative scale.
+The player's internal ammunition sound carries explicit source provenance: a Buttoned/HatchOpen
+listener in the same compartment does not receive exterior hull, snow or cover filtering, while
+its headset, air path, travel delay, hearing and steel reverb remain. Identical enemy-wreck sounds
+retain exterior propagation. Escape through a hatch to a head-out/on-foot listener is not solved;
+those views retain the existing exterior transfer approximation.
+
 The owner's rule (28 Sep 2026): "your own gun should be extremely loud ... ultimately everything
 should be as loud as it would be in real life. its a simulator." Every source is calibrated in
 physical units and propagated to the ear; one reproduction transform, named below as such, turns
@@ -602,3 +640,26 @@ steel is not fuel and no CFD is claimed. The source-sampling and connection limi
 geometry/light budgets, and legacy archived-hulk behavior are recorded in
 `docs/SURFACE_WRECK_FIRE_20261001.md`. Actual visibility, contact and audio are checked separately
 from CPU regression results in the capture receipts.
+
+### Combat soundscape reproduction and running gear — 2026-10-01
+
+- The default `balanced` playback curve lifts quiet voices by up to12dB below110dBA while retaining
+  the gun anchor and loud-event curve. `KESSEL_AUDIO_RANGE=reference` selects the previous curve.
+  This is an explicit global reproduction transform, not altered pressure/propagation/hearing; its
+  inverse is used by the ear stage. Captures record the mode. It has no attack/lookahead or source
+  preference and cannot pre-duck a future shot.
+- Running gear now samples14 live ground-to-hull points and actual left/right travel. Track cadence
+  follows travel and ground changes excite short contact kernels. Stationary tracks create no
+  excitation; coasting works with the engine stopped. These are procedural audio approximations,
+  **not** simulated suspension forces. Sample placement,13cm link cadence, contact modes and the
+  nominal -12dB component relative to the existing drivetrain law are authored estimates. Source
+  input displacement is measured, but acoustic calibration/error against a real Tiger is unknown.
+  The vehicle's existing upright terrain-following physics is unchanged.
+
+## Cabin density consolidation, 2026-10-01
+
+The approved playable cabin scattering coefficient0.010 is now shared by the consolidated
+raster medium, physical smoke density, source-to-surface extinction uniform, particles and
+fine-grain attenuation. Source-derived air domains and geometry visibility are retained. This
+restores the accepted cabin density; it does not brighten emitters or suppress outdoor fog
+through apertures. Native consolidated review remains required.

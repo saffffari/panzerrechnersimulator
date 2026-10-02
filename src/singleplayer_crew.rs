@@ -240,6 +240,15 @@ impl Game {
             blood_parent_model(&self.player,frame).inverse().transform_vector3(
                 self.player.hull_model().transform_vector3(Vec3::new(0.17,0.0,0.10)*self.driver_controls.reach()))
         } else {Vec3::ZERO};
+        // A couch commander's raised body uses the same head-out pose as the local eye.
+        // This offset feeds both anatomical contacts and the visible body/helmet transform.
+        if self.mode==Mode::Tank && body.role==crate::lan::LanRole::Commander
+            && self.commander_outside {
+            let (_,segments)=crew_pose_segments_in_frame(&self.player,body.role,frame);
+            let head=blood_parent_model(&self.player,frame).inverse().transform_point3(
+                self.station_eye(Station::Commander)-Vec3::Y*0.06);
+            return head-segments[crew_physics::CrewBodyPart::Head.index()].pos;
+        }
         if !self.singleplayer_crew_active
             || self.mode != Mode::Tank
             || self

@@ -3,13 +3,17 @@
 //! The defence is the winter encounter's own: the two T-34 platoons on the beats the course's street
 //! encounter block names (platoon A of three in the final basin, B of two in the factory arena), driving
 //! the floor the game measures clear for a T-34 (`build_street_nav`) and hearing and seeing by the
-//! ordinary stealth model; one 45 mm gun per choke, chosen among that choke's candidate sites by the
+//! ordinary stealth model; up to two 45 mm guns per choke, chosen among that choke's candidate sites by the
 //! same field-of-fire probe the street encounter uses (`probe_gun_site`) over that choke's kill-zone
 //! line, with its crew of four; riflemen with the tanks, and the rest posted in the ruins. Nothing is
 //! told where the Tiger is. These are opening forces; the adaptive director admits fresh armour
 //! through concealed, navigable approaches throughout the run, retaining every previous casualty.
 use super::*;
 use super::street_encounter::{sample_kill_zone, SitedGun};
+
+fn combat_body_occupied(cover: &impl crate::infantry_combat::CoverSet, p: Vec3) -> bool {
+    cover.occupies(p, 0.35, p.y + 0.08, p.y + crate::foot::STANDING_HEIGHT)
+}
 
 impl Game {
     /// Field the course on a freshly built course workshop: the Tiger at the start, the platoons,
@@ -64,7 +68,7 @@ impl Game {
         }
         anyhow::ensure!(placed.iter().filter(|&&v|v).count() == 5,
             "canyon seed {seed} cannot place both complete platoons on legal ground");
-        // One gun per choke, seeded among that choke's geometrically viable candidates.
+        // A separated pair per choke, seeded among that choke's geometrically viable candidates.
         let routes = [encounter.route(0), encounter.route(1)];
         let legs: Vec<(Vec2, Vec2)> = routes.iter()
             .flat_map(|beat| beat.iter().zip(beat.iter().cycle().skip(1)).map(|(&a, &b)| (a, b))).collect();
@@ -102,23 +106,29 @@ impl Game {
             let peak = viable.iter().map(|(_,g)| g.score).fold(0.0_f32, f32::max);
             viable.retain(|(_,g)| g.score >= peak * 0.60);
             let choices = viable.len();
-            let best = viable.into_iter().max_by_key(|(index, _)|
-                crate::canyon::mix(seed ^ (zone_index as u64 * 0x9e3779b9) ^ *index as u64)).map(|(_,g)|g);
-            zones.push(serde_json::json!({
-                "viable_choices": choices,
-                "zone": zone.id, "candidates": zone.candidates.len(), "fighting": fighting, "rejected": rejected,
-                "gun": best.as_ref().map(|gun| serde_json::json!({
+            viable.sort_by_key(|(index, _)|
+                crate::canyon::mix(seed ^ (zone_index as u64 * 0x9e3779b9) ^ *index as u64));
+            let mut selected = Vec::new();
+            for (_, gun) in viable.into_iter().rev() {
+                if selected.len() >= 2 || guns.len() >= at_guns::AT_GUNS { break; }
+                if guns.iter().any(|(_, other)| other.at.distance(gun.at) < 60.0) { continue; }
+                selected.push(serde_json::json!({
                     "at": [gun.at.x, gun.at.y], "kind": gun.kind.name(), "on": gun.on,
                     "heading_deg": gun.heading.to_degrees(), "score": gun.score,
                     "kill_zone_points_seen": gun.field.len(),
                     "range_m": gun.field.iter().fold([f32::MAX, 0.0f32], |[n, f], p| [n.min(p.range_m), f.max(p.range_m)]),
                     "mean_flank_sine": gun.field.iter().map(|f| f.flank).sum::<f32>() / gun.field.len().max(1) as f32,
-                })),
-            }));
-            match best {
-                Some(gun) => guns.push((zone.id.clone(), gun)),
-                None => eprintln!("[canyon] no candidate of gun zone {} can fight: {rejected:?}", zone.id),
+                }));
+                guns.push((zone.id.clone(), gun));
             }
+            if selected.is_empty() {
+                eprintln!("[canyon] no candidate of gun zone {} can fight: {rejected:?}", zone.id);
+            }
+            zones.push(serde_json::json!({
+                "viable_choices": choices,
+                "zone": zone.id, "candidates": zone.candidates.len(), "fighting": fighting, "rejected": rejected,
+                "gun": selected.first(), "guns": selected,
+            }));
         }
         let sites: Vec<(Vec2, f32)> = guns.iter().map(|(_, gun)| (gun.at, gun.heading)).collect();
         self.field_at_guns(&sites);
@@ -128,31 +138,53 @@ impl Game {
         let riders = |i: usize| i < N_ENEMIES * 2 && winter_encounter_ai::platoon_of(i / 2) == 0
             && self.enemy_active.get(i / 2).copied().unwrap_or(false);
         // Only the Soviet riflemen; Canyon's scene omits the unrelated allied practice squad.
-        let free: Vec<usize> = (0..N_SOLDIERS.min(self.soldiers.len())).filter(|&i| {
+        let free: Vec<usize> = (0..self.soviet_soldier_count.min(self.soldiers.len())).filter(|&i| {
             !riders(i) && !crews.contains(&i)
         }).collect();
         let mut posted = 0usize;
-        let mut used_posts = Vec::new();
-        if !spec.garrison.is_empty() {
-            for (k, &i) in free.iter().enumerate() {
-                let sector = k % 3;
-                let selected = spec.garrison.iter().enumerate()
-                    .filter(|(j, _)| j % 3 == sector && !used_posts.contains(j))
-                    .max_by_key(|(j, _)| crate::canyon::mix(seed ^ 0x61726973 ^ *j as u64 ^ ((k as u64) << 32)))
-                    .map(|(j,_)|j).unwrap_or(k % spec.garrison.len());
-                used_posts.push(selected);
-                let post = spec.garrison[selected];
-                // A second man at a post stands a pace aside of the first.
-                let round = (k / spec.garrison.len()) as f32;
-                let aside = Vec2::new(post.heading.cos(), -post.heading.sin()) * (1.6 * round);
-                let at = post.at + aside;
+        // Seed a whole loose group near one post, with measured body clearance. Selecting each
+        // member independently across a route band created apparent lone wandering riflemen.
+        let mut ordered_posts: Vec<_> = spec.garrison.iter().enumerate().collect();
+        ordered_posts.sort_by(|(_,a),(_,b)| crate::canyon_director::route_progress(&spec.route,a.at)
+            .total_cmp(&crate::canyon_director::route_progress(&spec.route,b.at)));
+        let mut groups = Vec::new();
+        let mut group_centers: Vec<Vec2> = Vec::new();
+        let cover = self.mixed_cover(None);
+        let group_count = free.len().div_ceil(infantry_squad::GARRISON_GROUP_SIZE);
+        for group in 0..group_count {
+            let first = group * free.len() / group_count;
+            let end = (group + 1) * free.len() / group_count;
+            let members = &free[first..end];
+            let lo = group * ordered_posts.len() / group_count;
+            let hi = (group + 1) * ordered_posts.len() / group_count;
+            let mut candidates: Vec<_> = ordered_posts[lo..hi].to_vec();
+            candidates.sort_by_key(|(j,_)| crate::canyon::mix(seed ^ 0x61726973 ^ *j as u64 ^ ((group as u64) << 32)));
+            let deployed = candidates.iter().find_map(|(_,post)| {
+                if group_centers.iter().any(|p|p.distance(post.at)<35.0) { return None; }
+                let origin = Vec3::new(post.at.x,self.hf.height_at(post.at.x,post.at.y)+1.5,post.at.y);
+                let points=infantry_squad::deployment(post.at,post.heading,members.len(),|at| {
+                    let y=self.hf.height_at(at.x,at.y);
+                    let p=Vec3::new(at.x,y,at.y);
+                    [Vec2::X*0.5,-Vec2::X*0.5,Vec2::Y*0.5,-Vec2::Y*0.5].iter()
+                        .all(|off|(self.hf.height_at(at.x+off.x,at.y+off.y)-y).abs()<0.325)
+                        && !combat_body_occupied(&cover,p)
+                        && self.los_clear(origin,p+Vec3::Y*1.5)
+                })?;
+                Some((**post,points))
+            }).ok_or_else(||anyhow::anyhow!("no clear ground for Canyon infantry group {group}"))?;
+            let (post, points)=deployed;
+            for (&i,at) in members.iter().zip(points) {
                 let p = Vec3::new(at.x, self.hf.height_at(at.x, at.y), at.y);
                 let soldier = &mut self.soldiers[i];
                 soldier.escort_enemy = None;
                 soldier.activate_escort([p; 4], &self.hf);
+                soldier.yaw = infantry_squad::actor_yaw(post.heading);
                 posted += 1;
             }
+            group_centers.push(post.at);
+            groups.push(infantry_squad::Squad { members: members.to_vec() });
         }
+        self.mixed_combat.squads = groups;
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.winter_encounter = Some(encounter);
         let fielded = placed.iter().filter(|&&active| active).count();
@@ -163,6 +195,7 @@ impl Game {
             "patrols": self.winter_encounter.as_ref().map(|e|
                 [e.route(0),e.route(1)].map(|route| route.iter().map(|p|p.to_array()).collect::<Vec<_>>())),
             "infantry_positions": free.iter().map(|&i|self.soldiers[i].pos.to_array()).collect::<Vec<_>>(),
+            "infantry_groups": self.mixed_combat.squads.iter().map(|g|g.members.clone()).collect::<Vec<_>>(),
             "guns": zones, "riflemen_posted": posted, "rule": "src/canyon.rs, game/canyon_game.rs",
         });
         println!("[canyon] course fielded: {receipt}");
@@ -510,10 +543,10 @@ mod tests {
             game.enable_singleplayer_crew();
             let receipt = game.canyon_siting.clone().unwrap();
             assert_eq!(receipt["t34s"],5);
-            assert_eq!(game.at_guns.iter().flatten().count(),3,"seed {seed}: {receipt}");
-            assert_eq!(receipt["riflemen_posted"],6);
-            assert_eq!(game.soldiers.len(), N_SOLDIERS, "Canyon has no allied practice squad");
-            assert_eq!(game.mixed_combat.actors.len(), N_SOLDIERS);
+            assert_eq!(game.at_guns.iter().flatten().count(),6,"seed {seed}: {receipt}");
+            assert_eq!(receipt["riflemen_posted"],30);
+            assert_eq!(game.soldiers.len(), CANYON_SOLDIERS, "Canyon has no allied practice squad");
+            assert_eq!(game.mixed_combat.actors.len(), CANYON_SOLDIERS);
             let posted: Vec<_> = game.soldiers.iter().enumerate()
                 .filter(|(i,s)| s.escort_enemy.is_none() && *i < at_guns::FIRST_CREW_SOLDIER)
                 .map(|(i,s)|(i,s.pos)).collect();

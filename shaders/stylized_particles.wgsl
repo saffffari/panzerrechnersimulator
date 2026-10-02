@@ -1,6 +1,8 @@
+// @weather-density
+// @cabin-medium
 // Raster weather carriers: preserve the existing world positions and one-native-pixel footprint.
-// Exact current group0 ABI: uniform b0, depth b1, crush/exposure b2. No group1 / ray query.
-// Snow remains visible; dust is a muted translucent particle, never an emissive glitter source.
+// Group0 owns carriers/depth/eye; groups1/2 share environment/point-source geometry visibility.
+// Snow and dust are lit scattering matter, never palette-colored or emissive glitter sources.
 struct ParticleUniform {
     view_proj: mat4x4<f32>,
     camera: vec4<f32>, // xyz eye, w real overhead roof coverage at eye (raster approximation)
@@ -13,7 +15,16 @@ struct ParticleUniform {
     lights: array<vec4<f32>, 64>,
     world_medium: vec4<f32>, // sigma_t,bottom,top,cabin sigma_t
     cabin_origin: vec4<f32>,
+    cabin_medium: CabinMedium,
+    medium_transport:vec4<f32>,
 };
+
+@group(0) @binding(3) var cabin_air_columns:texture_2d_array<f32>;
+fn cabin_transform(i:u32)->mat4x4<f32> {return u.cabin_medium.world_to_local[i];}
+fn cabin_grid(i:u32)->vec4<f32> {return u.cabin_medium.grid_min_step[i];}
+fn cabin_size(i:u32)->vec4<u32> {return u.cabin_medium.grid_size[i];}
+fn cabin_min(i:u32)->vec3<f32> {return u.cabin_medium.bounds_min[i].xyz;}
+fn cabin_max(i:u32)->vec3<f32> {return u.cabin_medium.bounds_max[i].xyz;}
 struct Exposure {
     levels: f32, dither: f32, reticle: f32, frame: f32,
     rod_exposure: f32, rod_inverse_saturation: f32, removed2: f32, menu: f32,
@@ -30,6 +41,7 @@ fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
 @group(0) @binding(0) var<uniform> u: ParticleUniform;
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
 @group(0) @binding(2) var<uniform> eye: Exposure;
+// @raster-particle-lighting
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) world: vec3<f32>,
@@ -95,27 +107,16 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let pixel=vec2<i32>(in.position.xy);
     if (in.position.z>=textureLoad(depth_tex,pixel,0)) {discard;}
     if (in.kind==0u) {
-        // Camera shelter comes from actual roof triangles, including open bays. Without ray
-        // queries this only removes local flakes; distant weather through an aperture remains.
-        let near_coverage=clamp(u.camera.w,0.0,1.0)
-            *(1.0-smoothstep(16.0,22.0,distance(in.world,u.camera.xyz)));
-        if (near_coverage>=0.999) {discard;}
-        // Root supplies w>0 only for the shader backend's sheltered cabin. This conservative
-        // hull-centered box is an explicit raster approximation, not upstream triangle tracing.
-        let shelter=u.cabin_origin.w;
-        let offset=abs(in.world-u.cabin_origin.xyz);
-        if (shelter>0.0 && all(offset<vec3(0.60,0.55,1.20)*shelter)) {discard;}
-        // This target is display-linear LDR after crush, so a flake receives the same camera
-        // response as the scene: exposure, then the crush ACES curve. A randomly oriented flake
-        // (albedo 0.9) averages half of each hemisphere and a quarter of the beam irradiance.
-        var flake=vec3(0.80,0.83,0.84);
-        if (u.sky_radiances[0].w>0.5) {
-            let radiance=0.9*(0.5*(u.sky_radiances[0].rgb+u.sky_radiances[1].rgb)
-                +0.25/3.14159265*u.solar_irradiance.rgb);
-            flake=flake_camera_response(eye_response(radiance));
-        }
-        return vec4(flake*optic,0.92*(1.0-near_coverage));
+        // The same source air domains partition every pixel, regardless of camera location.
+        if(cabin_contains(in.world)){discard;}
+        let upstream=-normalize(u.snow_velocity.xyz);
+        if(particle_direction_visibility(in.world,upstream)<0.5){discard;}
+        let flake=flake_camera_response(eye_response(particle_radiance(in.world,false)));
+        return vec4(flake*optic,0.92);
     }
-    if (distance(in.world,u.cabin_origin.xyz)>3.35 || u.world_medium.w<=0.0) {discard;}
-    return vec4(vec3(0.18,0.17,0.15)*optic,min(max(u.viewport.z,0.0)*0.24,0.055));
+    if (!cabin_contains(in.world) || u.world_medium.w<=0.0) {discard;}
+    let color=flake_camera_response(eye_response(particle_radiance(in.world,true)));
+    let brightness=max(color.x,max(color.y,color.z));
+    if(brightness<=1e-5){discard;}
+    return vec4(color*optic,min(max(u.viewport.z,0.0)*0.24,0.055)*sqrt(brightness));
 }

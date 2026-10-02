@@ -3,8 +3,13 @@
 //! endpoint-flight helper remains available only to isolated presentation diagnostics.
 use super::*;
 
-pub(super) const PAGES: usize = 9;
+const MATERIAL_PAGES: usize = 9;
+const TRACER_BASE: usize = MATERIAL_PAGES;
+pub(super) const PAGES: usize = MATERIAL_PAGES + 6;
 const FLIGHTS: usize = 160;
+const BULLET_SEGMENTS:usize=4096;
+const BULLET_EXPOSURE_S:f32=1.0/120.0;
+const SMALL_ARM_EVENTS:usize=512;
 const BURSTS: usize = 48;
 const GRAINS: usize = 3072;
 const FRAME_GRAINS: usize = 24_576;
@@ -20,12 +25,12 @@ const SPARK_MAX_LENGTH_M: f32 = 0.32;
 const ARMOR_FLASH_OFFSET_M: f32 = 0.03;
 const ARMOR_RICOCHET_OFFSET_M: f32 = 0.008;
 pub(super) const PAGE_CAPACITY: usize = FRAME_GRAINS + FLIGHTS * 2 + CANNON_DRAWS * 2;
-const COLORS: [[u8; 3]; PAGES] = [
+const COLORS: [[u8; 3]; MATERIAL_PAGES] = [
     [255, 226, 96], [255, 181, 48], [255, 146, 28], [255, 249, 215],
     [255, 202, 62], [255, 191, 52], [142, 143, 136], [76, 79, 82],
     [228, 231, 234], // pale propellant aerosol, separate from blast soot and ground dust
 ];
-const EMISSION: [f32; PAGES] = [4.0, 4.5, 5.0, 9.0, 4.2, 5.2, 0.0, 0.0, 0.0];
+const EMISSION: [f32; MATERIAL_PAGES] = [4.0, 4.5, 5.0, 9.0, 4.2, 5.2, 0.0, 0.0, 0.0];
 
 /// Authored discharge kinematics: forward momentum dominates early, then the plume
 /// entrains a little wind. The barrel direction is captured at discharge, not at render time.
@@ -72,13 +77,13 @@ impl Weapon {
 #[derive(Clone, Copy)]
 struct Flight { from: Vec3, to: Vec3, age: f32, life: f32, weapon: Weapon, armor_normal: Option<Vec3> }
 #[derive(Clone, Copy)]
-enum BurstKind { Muzzle, Blast, InteriorBlast, Impact, ArmorImpact(Vec3), Dust, Ricochet(Vec3) }
+enum BurstKind { Muzzle, Blast, InteriorBlast, Impact, ArmorImpact(Vec3), Dust, Ricochet(Vec3), BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
 impl BurstKind {
-    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet(_)) }
+    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet(_) | Self::BulletArmor{..}) }
 }
 #[derive(Clone, Copy)]
 struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
-    seed: u32, kind: BurstKind, weapon: Weapon }
+    seed: u32, kind: BurstKind, weapon: Weapon, born_s:Option<f32> }
 
 /// Cosmetic armor grains cannot cross the source plate. Test the complete oriented cuboid,
 /// including its speed streak, rather than only its center. Returning grains disappear on
@@ -86,27 +91,68 @@ struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
 fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) -> bool {
     let (normal, offset) = match burst.kind {
         BurstKind::ArmorImpact(normal) => (normal, ARMOR_FLASH_OFFSET_M),
-        BurstKind::Ricochet(normal) => (normal, ARMOR_RICOCHET_OFFSET_M),
+        BurstKind::Ricochet(normal) | BurstKind::BulletArmor {normal,..} => (normal, ARMOR_RICOCHET_OFFSET_M),
         _ => return true,
     };
     let half_support = (rotation.conjugate() * normal).abs().dot(size) * 0.5;
     (pos - burst.pos).dot(normal) + offset >= half_support
 }
 
+/// Read-only history of actual swept substeps. A rendered segment never extends beyond a
+/// resolved contact. Fixed shutter duration is independent of output frame rate.
+#[derive(Clone, Copy, Debug)]
+struct BulletSegment { id:u64, start:Vec3, end:Vec3, at:f32, until:f32 }
+impl BulletSegment {
+    fn exposed(self,now:f32)->Option<(Vec3,Vec3)> {
+        let lo=self.at.max(now-BULLET_EXPOSURE_S);let hi=self.until.min(now);
+        if hi<=lo || self.until<=self.at {return None;}
+        let a=(lo-self.at)/(self.until-self.at);let b=(hi-self.at)/(self.until-self.at);
+        Some((self.start.lerp(self.end,a),self.start.lerp(self.end,b)))
+    }
+}
+#[derive(Default)]
+struct SmallArmsReview {
+    discharges:u64,tracer_selected:u64,armor_contacts:u64,player_armor_contacts:u64,spark_bursts:u64,
+    tracer_segments_submitted:u64,tracer_frames:u64,omitted_segments:u64,
+    structural_armor_calls:u64,structural_armor_mixer_calls:u64,structural_armor_silenced_calls:u64,
+    events:std::collections::VecDeque<serde_json::Value>,
+}
+impl SmallArmsReview {
+    fn event(&mut self,event:serde_json::Value) {
+        if self.events.len()==SMALL_ARM_EVENTS {self.events.pop_front();}
+        self.events.push_back(event);
+    }
+}
+
 pub(super) struct Effects {
     flights: [Option<Flight>; FLIGHTS], bursts: [Option<Burst>; BURSTS],
     next_flight: usize, next_burst: usize, sequence: u32,
     pixel_world_scale: f32,
-    act_id: Option<u8>,
     wind: Vec2,
+    now_s:f32,
+    small_arm_rounds:std::collections::BTreeMap<(u32,u8,u8),u32>,
+    bullet_segments:std::collections::VecDeque<BulletSegment>,
+    bullet_times:std::collections::BTreeMap<u64,f32>,
+    last_bullet_contact_s:Option<f32>,
+    small_arms_review:SmallArmsReview,
     mats: [Vec<Mat4>; PAGES],
+    particle_ids: [Vec<[u32;4]>; PAGES],
 }
 impl Default for Effects {
     fn default() -> Self { Self {
         flights: [None; FLIGHTS], bursts: [None; BURSTS], next_flight: 0, next_burst: 0,
-        sequence: 0, pixel_world_scale: 0.0036, act_id: None, wind: Vec2::ZERO,
+        sequence: 0, pixel_world_scale: 0.0036, wind: Vec2::ZERO,
+        now_s:0.0,small_arm_rounds:Default::default(),bullet_segments:Default::default(),
+        bullet_times:Default::default(),last_bullet_contact_s:None,small_arms_review:Default::default(),
         mats: std::array::from_fn(|_| Vec::with_capacity(PAGE_CAPACITY)),
+        particle_ids: std::array::from_fn(|_| Vec::with_capacity(PAGE_CAPACITY)),
     } }
+}
+/// Authored incandescent ejecta budget, driven by actual normal-impact energy. These tiny
+/// cosmetic grains are not additional damaging fragments or calibrated thermal radiation.
+fn bullet_spark_count(energy_j:f32,cosine:f32)->usize {
+    ((energy_j.max(0.0)*(0.2+0.8*cosine.clamp(0.0,1.0)) / 45.0).sqrt()*8.0)
+        .round().clamp(1.0,96.0) as usize
 }
 fn random(seed: u32) -> f32 {
     let mut s = seed ^ (seed >> 16);
@@ -130,7 +176,7 @@ impl Effects {
         let k = (0..BURSTS).map(|n| (self.next_burst + n) % BURSTS)
             .find(|&i| self.bursts[i].is_none()).unwrap_or(self.next_burst);
         self.bursts[k] = Some(Burst { pos, dir: dir.normalize_or_zero(), age: 0.0,
-            life, radius: radius.clamp(0.02, 9.0), seed: self.sequence, kind, weapon });
+            life, radius: radius.clamp(0.02, 9.0), seed: self.sequence, kind, weapon, born_s:None });
         self.next_burst = (k + 1) % BURSTS;
     }
     pub(super) fn muzzle(&mut self, pos: Vec3, dir: Vec3, weapon: Weapon) {
@@ -158,6 +204,121 @@ impl Effects {
         }
         self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {1.4}else{0.65},BurstKind::Ricochet(normal),weapon);
     }
+    pub(super) fn next_small_arm_round(&mut self,shot:crate::infantry_combat::Shot)->u32 {
+        use crate::infantry_combat::{Team,Weapon as W};
+        let key=(shot.shooter,if shot.team==Team::German {0}else{1},
+            match shot.weapon {W::P08=>0,W::Rifle=>1,W::MachineGun=>2});
+        let round=self.small_arm_rounds.entry(key).or_default();
+        *round=round.wrapping_add(1).max(1);*round
+    }
+    pub(super) fn record_small_arm_discharge(&mut self,p:&AuthoritativeProjectile) {
+        let Some(b)=p.small_arm else {return;};
+        let r=&mut self.small_arms_review;r.discharges+=1;r.tracer_selected+=u64::from(b.tracer);
+        r.event(serde_json::json!({"event":"discharge","projectile_id":p.id,"shooter":b.shot.shooter,
+            "team":if b.shot.team==crate::infantry_combat::Team::German {"German"}else{"Soviet"},
+            "profile":p.shell.name,"round":b.round,"tracer_selected":b.tracer,
+            "origin":p.origin.to_array(),"muzzle_velocity_mps":p.shell.muzzle_velocity,
+            "caliber_mm":p.shell.caliber_mm,"mass_kg":p.shell.mass_kg,"drag_k_per_m":p.shell.drag_k}));
+    }
+    pub(super) fn record_bullet_segment(&mut self,id:u64,tracer:bool,start:Vec3,end:Vec3,
+        at:f32,until:f32,distance:f32,end_distance:f32) {
+        if !start.is_finite() || !end.is_finite() || !at.is_finite() || !until.is_finite(){return;}
+        self.bullet_times.insert(id,until);
+        // Authored visible composition range, not a collision/range alteration. No ball round glow.
+        if !tracer || distance>=800.0 || until<=at {return;}
+        let f=if end_distance>800.0 {(800.0-distance)/(end_distance-distance)}else{1.0};
+        if self.bullet_segments.len()==BULLET_SEGMENTS {
+            self.bullet_segments.pop_front();self.small_arms_review.omitted_segments+=1;
+        }
+        self.bullet_segments.push_back(BulletSegment{id,start,end:start.lerp(end,f),at,until:at+(until-at)*f});
+    }
+    pub(super) fn record_small_arm_contact(&mut self,p:&AuthoritativeProjectile,c:ProjectileContact) {
+        let at=self.bullet_times.remove(&p.id).unwrap_or(self.now_s);
+        self.last_bullet_contact_s=Some(at);
+        let vehicle=if let ProjectileContactKind::Vehicle(a)=c.kind {
+            match a.vehicle {
+                ProjectileVehicle::Player=>{self.small_arms_review.player_armor_contacts+=1;Some("Player".to_owned())},
+                ProjectileVehicle::Enemy(i)=>Some(format!("Enemy({i})")),
+                ProjectileVehicle::Ally(i)=>Some(format!("Ally({i})")),
+            }
+        }else{None};
+        let (kind,normal)=match c.kind {
+            ProjectileContactKind::Vehicle(a)=>("armor",Some(a.world_normal.to_array())),
+            ProjectileContactKind::RangeLimit=>("range_retirement",None),
+            ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..)|ProjectileContactKind::Infantry(_)=>("body",None),
+            _=>("world",None),
+        };
+        if kind=="armor" {self.small_arms_review.armor_contacts+=1;}
+        self.small_arms_review.event(serde_json::json!({"event":"contact","projectile_id":p.id,
+            "kind":kind,"vehicle":vehicle,"world_time_s":at,"flight_time_s":p.age_s,"distance_m":p.distance_m,
+            "position":c.pos.to_array(),"normal":normal,"velocity_mps":p.velocity.length(),
+            "energy_j":0.5*p.shell.mass_kg*p.velocity.length_squared()}));
+    }
+    /// Direct same-hull audio bypasses the delayed world queue. Record the actual call here,
+    /// without pretending it is an acoustic wave arrival or isolated audible contribution.
+    pub(super) fn record_small_arm_structural_sound(&mut self, id:u64, point:Vec3, at:f32,
+        mixer_present:bool, listener_silenced:Option<bool>, listener_peer:Option<u32>,
+        listener_peer_kia:Option<bool>) {
+        let r=&mut self.small_arms_review;
+        r.structural_armor_calls+=1;
+        r.structural_armor_mixer_calls+=u64::from(mixer_present);
+        r.structural_armor_silenced_calls+=u64::from(listener_silenced==Some(true));
+        r.event(serde_json::json!({"event":"structural_armor_sound_submission",
+            "projectile_id":id,"position":point.to_array(),"submitted_at_s":at,
+            "contact_at_s":self.last_bullet_contact_s,
+            "source_route":"same_vehicle_structure_borne_at_ear",
+            "mixer_present":mixer_present,"listener_silenced":listener_silenced,
+            "listener_peer_id":listener_peer,"listener_peer_kia":listener_peer_kia,
+            "scope":"Actual playback-method call; no acoustic wavefront or isolated audibility assertion"}));
+    }
+    pub(super) fn small_arms_receipt(&self)->serde_json::Value {
+        let r=&self.small_arms_review;
+        serde_json::json!({"schema":"small-arms-presentation.v1","discharges":r.discharges,
+            "tracer_selected":r.tracer_selected,"armor_contacts":r.armor_contacts,
+            "player_armor_contacts":r.player_armor_contacts,"armor_spark_bursts":r.spark_bursts,
+            "structural_armor_sound_calls":r.structural_armor_calls,
+            "structural_armor_mixer_calls":r.structural_armor_mixer_calls,
+            "structural_armor_silenced_listener_calls":r.structural_armor_silenced_calls,
+            "tracer_segments_submitted":r.tracer_segments_submitted,"tracer_frames_submitted":r.tracer_frames,
+            "omitted_tracer_segments":r.omitted_segments,"events":r.events,"event_capacity":SMALL_ARM_EVENTS,
+            "tracer_policy":"MG: every fifth round per emitter; rifle/P08 ball unlit; shared family drag estimate",
+            "tracer_exposure_s":BULLET_EXPOSURE_S,"visibility":"submitted geometry only; no pixel visibility assertion"})
+    }
+    pub(super) fn bullet_armor_sparks(&mut self,id:u64,point:Vec3,incoming:Vec3,normal:Vec3,mass:f32,weapon:Weapon) {
+        if !incoming.is_finite() || !normal.is_finite() || !mass.is_finite() || mass<=0.0 {return;}
+        let normal=normal.normalize_or_zero();let incident=incoming.normalize_or_zero();
+        if normal.length_squared()<0.5 || incident.length_squared()<0.5 {return;}
+        // Source triangle orientation may be two-sided. Orient its exterior side against arrival.
+        let normal=if incident.dot(normal)>0.0 {-normal}else{normal};
+        let cosine=(-incident.dot(normal)).clamp(0.0,1.0);
+        let energy_j=0.5*mass*incoming.length_squared();
+        if energy_j<1.0 {return;}
+        let reflected=incident-normal*(2.0*incident.dot(normal));
+        self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.02,0.45,
+            BurstKind::BulletArmor{normal,energy_j,cosine},weapon);
+        let k=(self.next_burst+BURSTS-1)%BURSTS;
+        if let Some(b)=self.bursts[k].as_mut() {b.born_s=self.last_bullet_contact_s;}
+        self.small_arms_review.spark_bursts+=1;
+        self.small_arms_review.event(serde_json::json!({"event":"armor_spark_burst","projectile_id":id,
+            "position":point.to_array(),"normal":normal.to_array(),"energy_j":energy_j,"incidence_cosine":cosine,
+            "requested_sparks":bullet_spark_count(energy_j,cosine)}));
+    }
+    fn draw_bullet_segments(&mut self,eye:Vec3) {
+        let now=self.now_s;
+        self.bullet_segments.retain(|s|s.until>now-BULLET_EXPOSURE_S);
+        let visible:Vec<_>=self.bullet_segments.iter().filter_map(|s|s.exposed(now).map(|(a,b)|(s.id,a,b))).collect();
+        if !visible.is_empty(){self.small_arms_review.tracer_frames+=1;}
+        for (id,a,b) in visible {
+            let delta=b-a;let length=delta.length();if length<1e-5 {continue;}
+            let center=(a+b)*0.5;
+            let width=(center.distance(eye)*self.pixel_world_scale).max(0.002).min(0.65);
+            self.push(TRACER_BASE+1,Vec3::new(width,width,length),center,
+                Quat::from_rotation_arc(Vec3::Z,delta/length));
+            self.small_arms_review.tracer_segments_submitted+=1;
+            self.small_arms_review.event(serde_json::json!({"event":"tracer_segment_submitted",
+                "projectile_id":id,"at_s":now,"start":a.to_array(),"end":b.to_array()}));
+        }
+    }
     pub(super) fn small_arm(&mut self, from: Vec3, to: Vec3, weapon: Weapon) {
         self.small_arm_contact(from,to,weapon,None);
     }
@@ -172,8 +333,14 @@ impl Effects {
         self.muzzle(from, (to-from).normalize(), weapon);
     }
     fn push(&mut self, page: usize, size: Vec3, pos: Vec3, rot: Quat) {
+        // Continuous tracer pages do not use the fine-grain renderer. Keep parallel shape for
+        // all pages anyway; emitted cosmetic parcels always call push_particle with an identity.
+        self.push_particle(page, size, pos, rot, [0;4]);
+    }
+    fn push_particle(&mut self, page: usize, size: Vec3, pos: Vec3, rot: Quat, id:[u32;4]) {
         if self.mats[page].len() < PAGE_CAPACITY && pos.is_finite() && size.is_finite() {
             self.mats[page].push(Mat4::from_scale_rotation_translation(size, rot, pos));
+            self.particle_ids[page].push(id);
         }
     }
     /// A short luminous tail behind a moving head, clipped at the muzzle and terminal endpoint.
@@ -185,16 +352,20 @@ impl Effects {
         let width = weapon.width().max((head.distance(eye) * self.pixel_world_scale * 1.12).min(0.65));
         let center = head - dir * length * 0.5;
         let rot = Quat::from_rotation_arc(Vec3::Z, dir);
-        self.push(weapon.page(), Vec3::new(width, width, length), center, rot);
-        self.push(3, Vec3::new(width * 0.32, width * 0.32, length * 0.78), center, rot);
+        self.push(TRACER_BASE + weapon.page(), Vec3::new(width, width, length), center, rot);
+        self.push(TRACER_BASE + 3, Vec3::new(width * 0.32, width * 0.32, length * 0.78), center, rot);
     }
     fn prepare(&mut self, dt: f32, eye: Vec3) {
         for page in &mut self.mats { page.clear(); }
-        let dt = if dt.is_finite() { dt.clamp(0.0, 0.10) } else { 0.0 };
+        for page in &mut self.particle_ids { page.clear(); }
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        self.now_s+=dt;
         for i in 0..FLIGHTS {
             if let Some(mut flight) = self.flights[i] {
                 flight.age += dt;
                 if flight.age >= flight.life {
+                    let impact_delay=(flight.life-(flight.age-dt)).clamp(0.0,dt);
+                    let sequence_before_impact=self.sequence;
                     self.flights[i] = None;
                     let incoming = (flight.to-flight.from).normalize();
                     if let Some(normal) = flight.armor_normal {
@@ -204,6 +375,12 @@ impl Effects {
                     } else {
                         self.impact(flight.to,incoming,
                             if flight.weapon == Weapon::Pistol { 0.12 } else { 0.20 }, false, flight.weapon);
+                    }
+                    if self.sequence != sequence_before_impact {
+                        let newest=(self.next_burst+BURSTS-1)%BURSTS;
+                        // Bursts advance below by dt; this contact existed only after impact.
+                        // Credit the time before arrival so partitioning a frame does not age it.
+                        if let Some(burst)=self.bursts[newest].as_mut() { burst.age-=impact_delay; }
                     }
                     continue;
                 }
@@ -225,7 +402,8 @@ impl Effects {
         let mut remaining = FRAME_GRAINS;
         for i in order {
             if let Some(mut burst) = self.bursts[i] {
-                burst.age += dt;
+                if burst.born_s.is_some_and(|born|self.now_s<born) { continue; }
+                burst.age = burst.born_s.map_or(burst.age+dt,|born|(self.now_s-born).max(0.0));
                 if burst.age >= burst.life { self.bursts[i] = None; continue; }
                 let count = self.draw_burst(burst, eye, remaining);
                 remaining -= count;
@@ -234,6 +412,27 @@ impl Effects {
         }
     }
     fn draw_burst(&mut self, b: Burst, eye: Vec3, remaining: usize) -> usize {
+        if let BurstKind::BulletArmor{normal,energy_j,cosine}=b.kind {
+            let count=bullet_spark_count(energy_j,cosine).min(remaining);
+            for j in 0..count {
+                let seed=b.seed.wrapping_mul(3948571).wrapping_add(j as u32*977);
+                let rnd=random(seed);let life=0.08+0.22*rnd;
+                if b.age>=life {continue;}
+                let spray=direction(seed.wrapping_add(19));
+                let outward=spray-normal*(2.0*spray.dot(normal).min(0.0));
+                let dir=(b.dir*(1.0-cosine)*0.8+outward*0.55+normal*0.25).normalize_or_zero();
+                let speed=(energy_j/3200.0).sqrt().min(2.0)*(4.0+18.0*rnd)*(0.4+0.6*cosine.sqrt());
+                let age=b.age;let center=b.pos+dir*speed*age-Vec3::Y*4.905*age*age;
+                let width=(0.0015+0.002*rnd)*(1.0-age/life).sqrt();
+                let size=Vec3::new(width,width,(speed*0.002).clamp(width,0.04));
+                let rotation=Quat::from_rotation_arc(Vec3::Z,dir);
+                if armor_grain_is_air_side(b,center,size,rotation) {
+                    let page=if age<0.02 {3}else if age<0.075 {4}else{2};
+                    self.push_particle(page,size,center,rotation,[0x5746_0004,b.seed,j as u32,0]);
+                }
+            }
+            return count;
+        }
         if let BurstKind::Ricochet(normal) = b.kind {
             let cannon=matches!(b.weapon,Weapon::Cannon(_) | Weapon::Rocket);
             let count = remaining.min(if cannon {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS});
@@ -250,7 +449,7 @@ impl Effects {
                 let size=Vec3::new(width,width,(speed*SPARK_EXPOSURE_S).clamp(0.025,SPARK_MAX_LENGTH_M));
                 let rotation=Quat::from_rotation_arc(Vec3::Z,direction);
                 if armor_grain_is_air_side(b,b.pos+offset,size,rotation) {
-                    self.push(page,size,b.pos+offset,rotation);
+                    self.push_particle(page,size,b.pos+offset,rotation,[0x5746_0001,b.seed,j as u32,0]);
                 }
             }
             return count;
@@ -278,7 +477,7 @@ impl Effects {
                 let size=Vec3::new(width,width,(v.length()*SPARK_EXPOSURE_S).min(SPARK_MAX_LENGTH_M));
                 let rotation=Quat::from_rotation_arc(Vec3::Z,v.normalize());
                 if armor_grain_is_air_side(b,pos,size,rotation) {
-                    self.push(page,size,pos,rotation);
+                    self.push_particle(page,size,pos,rotation,[0x5746_0002,b.seed,j as u32,0]);
                 }
             }
         }
@@ -317,7 +516,7 @@ impl Effects {
             };
             let expansion = if blast { 1.0 - (-t * 4.5).exp() } else { 1.0 - (-t * 5.0).exp() };
             let flame = hot && t < flash_life && j % 3 != 0;
-            let wind = self.act_id.map(|act| wind_at(act,b.pos)).unwrap_or(Vec2::ZERO);
+            let wind = self.wind;
             let mut pos = b.pos + radial * b.radius * expansion * (0.25 + rnd * 0.9);
             if muzzle && !flame {
                 pos = b.pos + propellant_offset(b.dir, ray, t, b.radius, rnd, wind);
@@ -340,7 +539,7 @@ impl Effects {
             let size=Vec3::splat(size.max(0.008));
             let rotation=Quat::from_rotation_y(rnd * 1.57 + t * 0.18);
             if armor_grain_is_air_side(b,pos,size,rotation) {
-                self.push(page,size,pos,rotation);
+                self.push_particle(page,size,pos,rotation,[0x5746_0003,b.seed,j as u32,0]);
             }
         }
         count+spark_count
@@ -350,27 +549,32 @@ impl Effects {
 pub(super) fn allocate(device: &wgpu::Device, queue: &wgpu::Queue,
     renderer: &mut Renderer) -> [usize; PAGES] {
     std::array::from_fn(|i| {
-        // Matte smoke grains use a small faceted lobe so their silhouettes do not read as stacks
-        // of solid debris cubes. Fire and luminous tracer pages retain the pixel-like box shape.
-        let mesh = if i >= 6 { crate::prims::faceted_sphere_mesh(COLORS[i]).transformed(Mat4::from_scale(Vec3::splat(0.5))) }
-            else { box_mesh(Vec3::splat(-0.5),Vec3::splat(0.5),COLORS[i]) };
+        // Burst parcels contain 64 static fine grains; shell traces retain continuous geometry.
+        // Parent trajectories, support, total emitting area and authoritative fragments are unchanged.
+        let material = if i >= TRACER_BASE { i - TRACER_BASE } else { i };
+        let mesh = if i >= TRACER_BASE {
+            box_mesh(Vec3::splat(-0.5),Vec3::splat(0.5),COLORS[material])
+        } else if i >= 6 { fine_vfx::smoke_mesh(COLORS[material]) }
+        else { fine_vfx::flame_mesh(COLORS[material]) };
         let slot = renderer.add_dynamic_instanced_pool(device, queue,
             &mesh, PAGE_CAPACITY)
             .expect("bounded weapon particle page");
         // Smoke uses the ordinary matte sun/ambient response. The sustained cabin soot material
         // intentionally receives only weak hemisphere light; reusing it here crushed exterior
         // gun smoke into a black solid-looking blob. Neither smoke page emits or joins physics.
-        renderer.set_batch_flags(slot, if i >= 6 { 0.0 } else { 2.0 });
-        assert!(renderer.set_dynamic_instanced_emissive(slot, EMISSION[i]));
+        renderer.set_batch_flags(slot, if (6..TRACER_BASE).contains(&i) { 0.0 } else { 2.0 });
+        assert!(renderer.set_dynamic_instanced_emissive(slot, EMISSION[material]));
+        if i < TRACER_BASE { renderer.set_fine_vfx_batch(slot,COLORS[material],i >= 6,64); }
         slot
     })
 }
 impl Game {
     pub(super) fn drive_weapon_vfx(&mut self, dt: f32, r: &mut Renderer) {
         self.weapon_vfx.wind=r.weather_wind_world;
-        self.weapon_vfx.act_id = Some(self.act.id);
         self.weapon_vfx.pixel_world_scale = 2.0 * (r.camera.fov_y * 0.5).tan() / r.ih.max(1) as f32;
+        self.weapon_vfx.now_s=r.time-dt;
         self.weapon_vfx.prepare(dt, r.camera.pos);
+        self.weapon_vfx.draw_bullet_segments(r.camera.pos);
         let mut smoke: Vec<_>=self.weapon_vfx.bursts.iter().flatten().copied().collect();
         smoke.sort_by(|a,b|a.pos.distance_squared(r.camera.pos).total_cmp(&b.pos.distance_squared(r.camera.pos)));
         for b in smoke {
@@ -383,22 +587,18 @@ impl Game {
                 else {b.pos+Vec3::new(wind.x*age*0.55,age*b.radius*0.32,wind.y*age*0.55)};
             let density=(1.0-f).powi(2)*(if muzzle {0.16}else{0.45})*smoothstep(0.0,0.08,age);
             for lobe in 0..3 {
-                let phase=b.seed as f32*0.17+lobe as f32*2.1;
+                let phase=crate::particle_motion::seed_phase(b.seed)+lobe as f32*2.1;
                 let offset=Vec3::new(phase.sin(),0.3*phase.cos(),phase.cos())*radius*0.30;
                 r.add_smoke_volume(center+offset,radius*0.76,density,age*0.8+phase,if muzzle {0.55}else{0.08});
             }
         }
-        let (mut cannon_draws,mut bullet_draws)=(0,0);
+        let mut cannon_draws=0;
         for shot in &self.projectiles {
-            let weapon=if let Some(bullet)=shot.small_arm {
-                if bullet_draws>=FLIGHTS { continue; }
-                bullet_draws+=1;
-                bullet.visual_weapon()
-            } else {
-                if cannon_draws>=CANNON_DRAWS { continue; }
-                cannon_draws+=1;
-                Weapon::Cannon(shot.shell.caliber_mm as u16)
-            };
+            // Bullet tracers use the actual swept history above; ball rounds have no luminous tail.
+            if shot.small_arm.is_some() {continue;}
+            if cannon_draws>=CANNON_DRAWS {continue;}
+            cannon_draws+=1;
+            let weapon=Weapon::Cannon(shot.shell.caliber_mm as u16);
             self.weapon_vfx.streak(shot.pos,shot.velocity.normalize_or_zero(),shot.distance_m,weapon,r.camera.pos);
         }
         if self.panzerfaust_shot.active {
@@ -408,6 +608,9 @@ impl Game {
         }
         for (i, page) in self.slots.weapon_vfx.iter().copied().enumerate() {
             assert!(r.set_dynamic_instanced_mats(page, &self.weapon_vfx.mats[i]));
+            if i < TRACER_BASE {
+                assert!(r.set_fine_vfx_particle_ids(page,&self.weapon_vfx.particle_ids[i]));
+            }
         }
         // Retain scene indices for old capture tools, but retire oversized primitive presentation.
         for slot in [self.slots.muzzle, self.slots.tracer, self.slots.impact,
@@ -419,13 +622,192 @@ impl Game {
         }
     }
     pub(super) fn clear_weapon_vfx_render(&self, r: &mut Renderer) {
-        for page in self.slots.weapon_vfx { r.set_dynamic_instanced_mats(page, &[]); }
+        for (i,page) in self.slots.weapon_vfx.into_iter().enumerate() {
+            r.set_dynamic_instanced_mats(page, &[]);
+            if i < TRACER_BASE { assert!(r.set_fine_vfx_particle_ids(page,&[])); }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_tracer_uses_only_travelled_segments_and_ball_is_unlit() {
+        let mut e=Effects::default();
+        e.record_bullet_segment(1,false,Vec3::ZERO,Vec3::Z*20.0,0.0,0.025,0.0,20.0);
+        assert!(e.bullet_segments.is_empty());
+        e.record_bullet_segment(2,true,Vec3::ZERO,Vec3::Z*3.0,0.0,0.004,0.0,3.0);
+        e.record_bullet_segment(2,true,Vec3::Z*3.0,Vec3::new(0.1,-0.001,5.0),0.004,0.006,3.0,5.0);
+        e.now_s=0.007;e.draw_bullet_segments(Vec3::Y*3.0);
+        assert_eq!(e.small_arms_review.tracer_segments_submitted,2);
+        for m in &e.mats[TRACER_BASE+1] {
+            let (scale,rotation,center)=m.to_scale_rotation_translation();
+            let a=center-rotation*Vec3::Z*scale.z*0.5;
+            let b=center+rotation*Vec3::Z*scale.z*0.5;
+            assert!(a.z>=-1e-5 && b.z<=5.00001,"terminal end must clip actual path");
+        }
+        e.now_s=0.006+BULLET_EXPOSURE_S+0.0001;
+        for p in &mut e.mats {p.clear();}
+        e.draw_bullet_segments(Vec3::ZERO);
+        assert!(e.mats[TRACER_BASE..].iter().all(Vec::is_empty));
+        assert_eq!(e.small_arms_review.spark_bursts,0,"flight never manufactures contact sparks");
+    }
+    #[test]
+    fn tracer_selection_is_per_emitter_not_global_projectile_order() {
+        use crate::infantry_combat::{Shot,Team,Weapon as W};
+        let mut e=Effects::default();
+        let shot=|shooter|Shot{shooter,team:Team::German,origin:Vec3::ZERO,direction:Vec3::Z,range:100.0,weapon:W::MachineGun};
+        for n in 1..=10 {
+            assert_eq!(e.next_small_arm_round(shot(7)),n);
+            for _ in 0..3 {e.next_small_arm_round(shot(9));}
+        }
+        assert_eq!(e.next_small_arm_round(shot(7)),11);
+    }
+    #[test]
+    fn structural_armor_audit_keeps_each_contact_call_and_measured_dead_listener_state() {
+        let mut e=Effects::default();
+        let point=Vec3::new(4.0,2.0,-8.0);
+        for id in 1..=3 {
+            e.last_bullet_contact_s=Some(id as f32-0.01);
+            e.record_small_arm_structural_sound(id,point,id as f32,true,
+                Some(id==3),Some(1),Some(id>=2));
+        }
+        let r=e.small_arms_receipt();
+        assert_eq!(r["structural_armor_sound_calls"],3);
+        assert_eq!(r["structural_armor_mixer_calls"],3);
+        assert_eq!(r["structural_armor_silenced_listener_calls"],1);
+        let events=r["events"].as_array().unwrap();
+        assert_eq!(events.len(),3);
+        for (i,event) in events.iter().enumerate() {
+            assert_eq!(event["projectile_id"],i+1);
+            assert_eq!(event["position"],serde_json::json!(point.to_array()));
+            assert_eq!(event["source_route"],"same_vehicle_structure_borne_at_ear");
+            assert!(event.get("speed_of_sound_m_s").is_none(),"a structural call is not an air wave");
+        }
+        assert_eq!(events[1]["listener_peer_kia"],true);
+        assert_eq!(events[1]["listener_silenced"],false,"death and final fade are distinct measured states");
+    }
+    #[test]
+    fn bullet_armor_grains_use_energy_incidence_and_stay_outside_source() {
+        assert!(bullet_spark_count(3000.0,1.0)>bullet_spark_count(300.0,1.0));
+        assert!(bullet_spark_count(3000.0,1.0)>bullet_spark_count(3000.0,0.05));
+        let point=Vec3::new(52.0,7.0,-201.0);
+        for normal in [Vec3::X,Vec3::Y,Vec3::NEG_Z,Vec3::new(0.3,0.8,-0.4).normalize()] {
+            let mut e=Effects::default();e.bullet_armor_sparks(3,point,-normal*820.0,normal,0.0096,Weapon::Rifle);
+            e.prepare(0.025,point+normal*2.0);
+            let mut grains=0;
+            for m in e.mats.iter().flatten() {
+                let (size,rotation,center)=m.to_scale_rotation_translation();
+                let support=(rotation.conjugate()*normal).abs().dot(size)*0.5;
+                assert!((center-point).dot(normal)-support>=-0.00001);
+                assert!(size.max_element()<=0.040001);grains+=1;
+            }
+            assert!(grains>20);assert_eq!(e.small_arms_review.spark_bursts,1);
+            assert!(e.bursts.iter().flatten().all(|b|!b.kind.emits_smoke()));
+        }
+    }
+    #[test]
+    fn bullet_trails_and_contact_sparks_match_at_30_60_144_hz() {
+        let run=|hz:f32| {
+            let mut e=Effects::default();e.last_bullet_contact_s=Some(0.025);
+            e.bullet_armor_sparks(2,Vec3::ZERO,Vec3::Z*840.0,Vec3::NEG_Z,0.0096,Weapon::Rifle);
+            let mut at=0.0f32;
+            while at<0.125-1e-7 {let dt=(1.0/hz).min(0.125-at);e.prepare(dt,Vec3::Y*2.0);at+=dt;}
+            // Same two actual solver segments, independent of the renderer's frame partition.
+            e.record_bullet_segment(3,true,Vec3::Z*80.0,Vec3::Z*83.0,0.117,0.121,80.0,83.0);
+            e.record_bullet_segment(3,true,Vec3::Z*83.0,Vec3::new(0.01,-0.02,86.0),0.121,0.125,83.0,86.0);
+            e.draw_bullet_segments(Vec3::ZERO);
+            (e.bursts[0].unwrap().age,e.mats)
+        };
+        let reference=run(60.0);
+        for hz in [30.0,144.0] {
+            let (age,pages)=run(hz);assert!((age-reference.0).abs()<1e-6);
+            for (a,b) in pages.iter().zip(&reference.1) {
+                assert_eq!(a.len(),b.len());
+                for (ma,mb) in a.iter().zip(b) {assert!(ma.abs_diff_eq(*mb,1e-5));}
+            }
+        }
+    }
+    fn fine_snapshot(effects:&Effects)->std::collections::BTreeMap<[u32;4],(usize,Mat4)> {
+        let mut out=std::collections::BTreeMap::new();
+        for page in 0..TRACER_BASE {
+            assert_eq!(effects.mats[page].len(),effects.particle_ids[page].len());
+            for (&id,&model) in effects.particle_ids[page].iter().zip(&effects.mats[page]) {
+                assert_ne!(id,[0;4],"fine parcels must have source identity");
+                assert!(out.insert(id,(page,model)).is_none(),"duplicate identity {id:?}");
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn cosmetic_lifetimes_and_terminal_age_follow_elapsed_time_not_frame_partition() {
+        let make=|| {let mut e=Effects::default();
+            e.small_arm(Vec3::ZERO,Vec3::Z*76.0,Weapon::Rifle);e};
+        let mut single=make();let mut split=make();
+        single.prepare(0.25,Vec3::X*3.0);
+        for _ in 0..5 {split.prepare(0.05,Vec3::X*3.0);}
+        assert!(single.flights.iter().all(Option::is_none));
+        assert!(split.flights.iter().all(Option::is_none));
+        let snapshots=|e:&Effects|e.bursts.iter().flatten().map(|b|(b.seed,b.age)).collect::<Vec<_>>();
+        let a=snapshots(&single);let b=snapshots(&split);
+        assert_eq!(a.len(),b.len());
+        for ((aid,age),(bid,other)) in a.into_iter().zip(b) {
+            assert_eq!(aid,bid);assert!((age-other).abs()<1e-6,"{age} vs {other}");
+        }
+        assert!((single.bursts[1].unwrap().age-0.15).abs()<1e-6,
+            "76m rifle flight arrives at0.10s; impact is0.15s old at0.25s");
+        single.prepare(7.0,Vec3::ZERO);
+        assert!(single.bursts.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn weapon_parcels_follow_the_same_live_weather_wind_as_the_volume() {
+        let make=|wind| {let mut e=Effects::default();e.wind=wind;e.blast(Vec3::ZERO,1.0);
+            e.prepare(0.10,Vec3::Z*2.0);fine_snapshot(&e)};
+        let calm=make(Vec2::ZERO);let windy=make(Vec2::new(12.0,-5.0));
+        let mut tested=0;
+        for (id,(_,model)) in calm {
+            if id[0]!=0x5746_0003 {continue;}
+            let Some((_,other))=windy.get(&id) else {continue;};
+            let delta=other.w_axis.truncate()-model.w_axis.truncate();
+            assert!(delta.x>0.0 && delta.z<0.0,"live weather drift missing: {delta:?}");
+            tested+=1;
+        }
+        assert!(tested>100);
+    }
+
+    #[test]
+    fn cosmetic_identity_survives_motion_and_cooling_into_another_material_page() {
+        let mut effects=Effects::default();
+        effects.blast(Vec3::ZERO,1.0);
+        effects.prepare(0.03,Vec3::Z*2.0);
+        let first=fine_snapshot(&effects);
+        effects.prepare(0.10,Vec3::Z*2.0);
+        let next=fine_snapshot(&effects);
+        let moved_and_cooled=first.iter().filter(|(id,(page,model))|
+            next.get(*id).is_some_and(|(next_page,next_model)|next_page!=page && next_model!=model)).count();
+        assert!(moved_and_cooled>100,"actual moving sparks must retain IDs while cooling: {moved_and_cooled}");
+    }
+
+    #[test]
+    fn cosmetic_identity_survives_other_emitter_retirement_and_page_compaction() {
+        let mut effects=Effects::default();
+        effects.muzzle(Vec3::ZERO,Vec3::Z,Weapon::Cannon(88));
+        effects.muzzle(Vec3::X*2.0,Vec3::Z,Weapon::Cannon(88));
+        effects.prepare(0.025,Vec3::Z*3.0);
+        let first=fine_snapshot(&effects);
+        let surviving_seed=effects.bursts[1].unwrap().seed;
+        effects.bursts[0]=None; // unrelated emitter has retired; surviving parcel time is held
+        effects.prepare(0.0,Vec3::Z*3.0);
+        let next=fine_snapshot(&effects);
+        let surviving:Vec<_>=first.into_iter().filter(|(id,_)|id[1]==surviving_seed).collect();
+        assert!(!surviving.is_empty());
+        assert_eq!(surviving.len(),next.len());
+        for (id,state) in surviving { assert_eq!(next[&id],state); }
+    }
+
     #[test]
     fn propellant_keeps_barrel_momentum_before_wind_entrainment() {
         for axis in [Vec3::Z, Vec3::X, -Vec3::Z] {
@@ -488,7 +870,7 @@ mod tests {
 
     #[test]
     fn explosion_smoke_follows_world_wind_and_outlives_flash() {
-        let mut still=Effects::default();let mut windy=Effects::default();windy.act_id=Some(1);
+        let mut still=Effects::default();let mut windy=Effects::default();windy.wind=Vec2::new(12.0,-5.0);
         let origin=Vec3::new(1880.0,6.0,165.0);
         still.blast(origin,3.0);windy.blast(origin,3.0);
         for _ in 0..40 {still.prepare(0.1,origin);windy.prepare(0.1,origin);}
@@ -600,6 +982,7 @@ mod tests {
             }
             for (i,page) in g.slots.weapon_vfx.into_iter().enumerate() {
                 assert!(r.set_dynamic_instanced_mats(page,&g.weapon_vfx.mats[i]));
+                if i < TRACER_BASE { assert!(r.set_fine_vfx_particle_ids(page,&g.weapon_vfx.particle_ids[i])); }
             }
             let path=format!("{prefix}_palette.png");
             r.render_to_png_hud(&device,&queue,&path,r.iw*3,r.ih*3)?;
@@ -674,7 +1057,7 @@ mod tests {
         let mut previous = 0.0;
         for _ in 0..4 {
             fx.prepare(0.01, Vec3::ZERO);
-            let m = fx.mats[0][0];
+            let m = fx.mats[TRACER_BASE][0];
             let (size, _, center) = m.to_scale_rotation_translation();
             assert!(center.z > previous);
             assert!(center.z - size.z * 0.5 >= -1e-5);
@@ -740,7 +1123,7 @@ mod tests {
         let eye=Vec3::ZERO;
         let head=Vec3::new(20.0,0.0,20.0);
         fx.streak(head,Vec3::Z,10.0,Weapon::Pistol,eye);
-        let width=fx.mats[0][0].to_scale_rotation_translation().0.x;
+        let width=fx.mats[TRACER_BASE][0].to_scale_rotation_translation().0.x;
         assert!(width / (head.distance(eye)*fx.pixel_world_scale) >= 1.1);
         assert!(width <= 0.65);
         assert_eq!(EMISSION[6],0.0); assert_eq!(EMISSION[7],0.0);

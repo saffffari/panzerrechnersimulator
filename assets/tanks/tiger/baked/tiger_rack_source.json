@@ -1,0 +1,669 @@
+{
+  "source_blend": "assets/tanks/tiger/Panzerkampfwagen_VI_Tiger_Ausf.E.blend",
+  "source_blend_sha256": "c77d62794e20e4988150421b4895955443cc454bcf97b38e67832e6bf11a5c39",
+  "original_hull_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+  "restored_object": "Turret_0125",
+  "hull_origin_blender_m": [
+    -0.004436612129211426,
+    0.01988542079925537,
+    -0.10418009757995605
+  ],
+  "source_vertices": 1737,
+  "source_triangles": 2176,
+  "source_modifiers": 0,
+  "attachment": "hull",
+  "reason": "source fitting lies over fixed sponson racks; exclude only actual cartridges from static hull",
+  "cartridge_count": 64,
+  "source_slots": [
+    {
+      "source_id": 0,
+      "object": "Hull_0748",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.9810389280319214,
+        0.11667254567146301
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 1,
+      "object": "Hull_0551",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9823969006538391,
+        0.16794073581695557
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 2,
+      "object": "Hull_0750",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.9811608791351318,
+        0.11668907105922699
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 3,
+      "object": "Hull_0746",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.9809117913246155,
+        0.11665558069944382
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 4,
+      "object": "Hull_0752",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.9812777638435364,
+        0.11706270277500153
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 5,
+      "object": "Hull_0549",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9824962019920349,
+        0.15328960120677948
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 6,
+      "object": "Hull_0547",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9822604656219482,
+        0.13882693648338318
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 7,
+      "object": "Hull_0544",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9816882014274597,
+        0.1244138702750206
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 8,
+      "object": "Turret_0180",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9810379147529602,
+        0.11679419130086899
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 9,
+      "object": "Turret_0177",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9810389280319214,
+        0.11672256141901016
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 10,
+      "object": "Turret_0179",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9810388088226318,
+        0.1167866513133049
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 11,
+      "object": "Turret_0061",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.9824107885360718,
+        0.16771355271339417
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 12,
+      "object": "Turret_0065",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9824100732803345,
+        0.1677742898464203
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 13,
+      "object": "Turret_0063",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9824057221412659,
+        0.16792218387126923
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 14,
+      "object": "Turret_0186",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9811595678329468,
+        0.11681071668863297
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 15,
+      "object": "Turret_0182",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9811608791351318,
+        0.11673923581838608
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 16,
+      "object": "Turret_0185",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9811601638793945,
+        0.11680317670106888
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 17,
+      "object": "Turret_0174",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9809114933013916,
+        0.11677736788988113
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 18,
+      "object": "Turret_0171",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9809117913246155,
+        0.1167057454586029
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 19,
+      "object": "Turret_0173",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9809116125106812,
+        0.11676953732967377
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 20,
+      "object": "Turret_0192",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9812761545181274,
+        0.11718681454658508
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 21,
+      "object": "Turret_0189",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9812777638435364,
+        0.11706198006868362
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 22,
+      "object": "Turret_0191",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9812769889831543,
+        0.11689002811908722
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 23,
+      "object": "Turret_0055",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.9825066328048706,
+        0.1530621200799942
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 24,
+      "object": "Turret_0059",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9825060963630676,
+        0.15312300622463226
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 25,
+      "object": "Turret_0057",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9825028777122498,
+        0.15327103435993195
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 26,
+      "object": "Turret_0051",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.982267439365387,
+        0.13870297372341156
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 27,
+      "object": "Turret_0053",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9822669625282288,
+        0.13870210945606232
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 28,
+      "object": "Turret_0050",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9822648167610168,
+        0.1385376900434494
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 29,
+      "object": "Turret_0045",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.9816919565200806,
+        0.12428990006446838
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 30,
+      "object": "Turret_0047",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9816916584968567,
+        0.1242888867855072
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 31,
+      "object": "Turret_0044",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9816903471946716,
+        0.12411722540855408
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 32,
+      "object": "Turret_0125",
+      "dimensions_m": [
+        0.09729959070682526,
+        1.9865742921829224,
+        0.08173154294490814
+      ],
+      "is_cartridge": false
+    },
+    {
+      "source_id": 33,
+      "object": "Hull_0545",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.9816919565200806,
+        0.12428990006446838
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 34,
+      "object": "Hull_0753",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9812761545181274,
+        0.11718681454658508
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 35,
+      "object": "Hull_0548",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.982267439365387,
+        0.13870297372341156
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 36,
+      "object": "Hull_0749",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9810379147529602,
+        0.11679419130086899
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 37,
+      "object": "Hull_0747",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9809114933013916,
+        0.11677736788988113
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 38,
+      "object": "Hull_0751",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9811595678329468,
+        0.11681071668863297
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 39,
+      "object": "Hull_0552",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.9824107885360718,
+        0.16771355271339417
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 40,
+      "object": "Hull_0550",
+      "dimensions_m": [
+        0.11663789302110672,
+        0.9825066328048706,
+        0.1530621200799942
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 41,
+      "object": "Turret_0042",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9816882014274597,
+        0.1244138702750206
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 42,
+      "object": "Turret_0046",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9816916584968567,
+        0.1242888867855072
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 43,
+      "object": "Turret_0043",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9816903471946716,
+        0.12411722540855408
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 44,
+      "object": "Turret_0187",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.9812777638435364,
+        0.11706270277500153
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 45,
+      "object": "Turret_0188",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9812777638435364,
+        0.11706198006868362
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 46,
+      "object": "Turret_0190",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9812769889831543,
+        0.11689002811908722
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 47,
+      "object": "Turret_0048",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9822604656219482,
+        0.13882693648338318
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 48,
+      "object": "Turret_0052",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9822669625282288,
+        0.13870210945606232
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 49,
+      "object": "Turret_0049",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9822648167610168,
+        0.1385376900434494
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 50,
+      "object": "Turret_0176",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.9810389280319214,
+        0.11667254567146301
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 51,
+      "object": "Turret_0175",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9810389280319214,
+        0.11672256141901016
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 52,
+      "object": "Turret_0178",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9810388088226318,
+        0.1167866513133049
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 53,
+      "object": "Turret_0170",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.9809117913246155,
+        0.11665558069944382
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 54,
+      "object": "Turret_0169",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9809117913246155,
+        0.1167057454586029
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 55,
+      "object": "Turret_0172",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9809116125106812,
+        0.11676953732967377
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 56,
+      "object": "Turret_0183",
+      "dimensions_m": [
+        0.11663781851530075,
+        0.9811608791351318,
+        0.11668907105922699
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 57,
+      "object": "Turret_0181",
+      "dimensions_m": [
+        0.11668805778026581,
+        0.9811608791351318,
+        0.11673923581838608
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 58,
+      "object": "Turret_0184",
+      "dimensions_m": [
+        0.11675170809030533,
+        0.9811601638793945,
+        0.11680317670106888
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 59,
+      "object": "Turret_0060",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9823969006538391,
+        0.16794073581695557
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 60,
+      "object": "Turret_0064",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9824100732803345,
+        0.1677742898464203
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 61,
+      "object": "Turret_0062",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9824057221412659,
+        0.16792218387126923
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 62,
+      "object": "Turret_0054",
+      "dimensions_m": [
+        0.1167595386505127,
+        0.9824962019920349,
+        0.15328960120677948
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 63,
+      "object": "Turret_0058",
+      "dimensions_m": [
+        0.11668776720762253,
+        0.9825060963630676,
+        0.15312300622463226
+      ],
+      "is_cartridge": true
+    },
+    {
+      "source_id": 64,
+      "object": "Turret_0056",
+      "dimensions_m": [
+        0.11675184965133667,
+        0.9825028777122498,
+        0.15327103435993195
+      ],
+      "is_cartridge": true
+    }
+  ]
+}

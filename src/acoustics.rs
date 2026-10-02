@@ -795,6 +795,56 @@ pub fn synth_small_arm_ground_hit(velocity_mps: f32, caliber_mm: f32, seed: u32)
     mono
 }
 
+/// One real terminal contact with a clothed soft body, dry mono. This restrained authored
+/// pressure/contact sound deliberately has no metallic resonance, cartoon wet layer or blast.
+pub fn synth_small_arm_body_hit(velocity_mps: f32, caliber_mm: f32, seed: u32) -> Vec<f32> {
+    if !velocity_mps.is_finite() || !caliber_mm.is_finite()
+        || velocity_mps <= 0.0 || caliber_mm <= 0.0 { return Vec::new(); }
+    let sr=SAMPLE_RATE as f32;
+    let speed=(velocity_mps/730.0).clamp(0.0,1.6);
+    let size=(caliber_mm/7.92).clamp(0.25,2.5);
+    let gain=(speed.sqrt()*size.powf(0.3)).min(1.35)*0.18;
+    let mut mono=vec![0.0;(0.065*sr) as usize];
+    let (mut cloth,mut body)=(0.0,0.0);
+    let ca=1.0-(-TAU*1900.0/sr).exp();
+    let ba=1.0-(-TAU*270.0/sr).exp();
+    let width=0.0018+0.0004*hash_noise(seed).abs();
+    for (i,out) in mono.iter_mut().enumerate() {
+        let t=i as f32/sr;
+        let n=hash_noise(seed.wrapping_add(i as u32).wrapping_add(0x434c_4f54));
+        cloth+=ca*(n-cloth); body+=ba*(cloth-body);
+        let u=t/width;
+        let pressure=u*(1.0-0.55*u)*(-u).exp();
+        let texture=(cloth-body)*(-t/0.0035).exp()*0.32;
+        *out=gain*smoothstep(0.0,0.0003,t)*(pressure+texture)
+            *(1.0-smoothstep(0.040,0.065,t));
+    }
+    // Soft tissue/clothing damps the contact's upper bands. Two low-pass poles keep the
+    // tiny causal cloth attack from acquiring the bright4–8kHz edge of the steel tick.
+    let a=1.0-(-TAU*1100.0/sr).exp();
+    let (mut low,mut low2)=(0.0,0.0);
+    for x in &mut mono {low+=a*(*x-low);low2+=a*(low-low2);*x=low2;}
+    if let Some(last)=mono.last_mut() { *last=0.0; }
+    mono
+}
+
+/// One actual mounted-MG firing cycle heard through its receiver, bolt and feed mechanism.
+/// Three small mechanical contacts belong to one cycle; this is not another muzzle blast or
+/// a fabricated bullet impact. Cycle timings/timbre are authored, not measured MG34 acoustics.
+pub fn synth_mg_receiver_round(seed:u32)->Vec<f32> {
+    let mut mono=vec![0.0;(0.078*SAMPLE_RATE as f32) as usize];
+    let tuning=0.97+0.06*hash_noise(seed^0x4d47_3334).abs();
+    add_ricker_wavelet(&mut mono,0.0011,980.0*tuning,0.58);
+    add_dark_noise_packet(&mut mono,0.0002,0.0022,3600.0,0.13,seed);
+    add_ricker_wavelet(&mut mono,0.023,1390.0*tuning,0.23);
+    add_ricker_wavelet(&mut mono,0.052,740.0*tuning,0.38);
+    add_damped_chirp(&mut mono,0.052,0.011,0.0003,1720.0*tuning,1270.0*tuning,
+        0.0028,0.055,hash_noise(seed^51)*0.25);
+    if let Some(first)=mono.first_mut(){*first=0.0;}
+    if let Some(last)=mono.last_mut(){*last=0.0;}
+    mono
+}
+
 /// MG rounds on the hull = "light gravel tossed against the tank": a burst of many tiny stochastic
 /// ticks over `dur_s`, panned around the impact bearing. Interleaved stereo.
 pub fn synth_mg_gravel(
@@ -1424,7 +1474,16 @@ fn synth_confined_detonation(profile: DamageSoundProfile, bearing_deg: f32, seed
     let duration = if catastrophic { 0.96 } else { 0.72 };
     let mut mono = vec![0.0f32; (duration * sr) as usize];
     let g = profile.pressure_gain;
-    add_blast_pulse(&mut mono, 0.001, if catastrophic { 0.012 } else { 0.008 }, 0.72 * g);
+    // The caller already delays this entire pressure front to its physical arrival.
+    add_blast_pulse(&mut mono, 0.0, if catastrophic { 0.010 } else { 0.007 }, 0.86 * g);
+    // A compact compression/rebound at audible upper-bass frequencies carries the burst.
+    // The previous high-gain noise response hid this body behind a static-like armor hit.
+    // This changes authored timbre, not the event's calibrated pressure or hearing response.
+    // Causal damped compression begins with the front; a wavelet centered 24 ms later
+    // made the body arrive as a second hit and masked the initial plate strike.
+    let body_hz = if catastrophic { 96.0 } else { 118.0 };
+    add_damped_chirp(&mut mono, 0.0, 0.10, 0.0006, body_hz, body_hz * 0.65,
+        if catastrophic { 0.020 } else { 0.014 }, 1.65 * g, core::f32::consts::FRAC_PI_2);
     let a = |hz: f32| 1.0 - (-TAU * hz / sr).exp();
     let (low_a, body_a, edge_a) = (a(55.0), a(680.0), a(4_600.0));
     let (mut low, mut body, mut edge) = (0.0f32, 0.0f32, 0.0f32);
@@ -1439,7 +1498,7 @@ fn synth_confined_detonation(profile: DamageSoundProfile, bearing_deg: f32, seed
         let finite = 1.0 - smoothstep(duration - 0.14, duration, t);
         // Broadband onset and irregular body carry the explosion; no long sinusoidal bell.
         let rupture = (edge - body) * (-t / 0.024).exp() * 1.20;
-        let gas = (body - low) * (-t / body_decay).exp() * 4.0;
+        let gas = (body - low) * (-t / body_decay).exp() * 1.30;
         // A finite low gas release is part of this burst, not a fabricated persistent fuel fire.
         let vent = (body - low) * smoothstep(0.045, 0.09, t)
             * (-t / (body_decay * 1.7)).exp() * 0.55;
@@ -1528,7 +1587,7 @@ fn synth_damage_event_components(
         .max((body_tail * SAMPLE_RATE as f32) as usize * 2)
         / 2;
     let mut main = vec![0.0f32; frames.max(1) * 2];
-    mix_stereo_at(&mut main, &impact, 0, 0.92);
+    mix_stereo_at(&mut main, &impact, 0, if explosive { 0.48 } else { 0.92 });
     if !matches!(profile.kind, DamageSoundKind::ArmorRicochet) {
         // A confirmed explosive burst is pressure/rupture-dominant; a dry hole remains steel
         // and fragment-dominant. The combined group is calibrated once by the playback caller.
@@ -1536,7 +1595,7 @@ fn synth_damage_event_components(
         // unmodeled. This is mix weighting, not a pressure-to-Pa calibration.
         let proximity = (1.6 / (1.6 + p.station_dist_m.max(0.0))).clamp(0.12, 1.0);
         mix_stereo_at(&mut main, &pressure, pressure_delay_frames,
-            (if explosive { 1.10 } else { 0.22 }) * proximity);
+            (if explosive { 1.42 } else { 0.22 }) * proximity);
     }
     if include_authored_fragments {
         // Fragment telemetry remains a readable detail, never the event's body. The pressure/plate
@@ -1753,22 +1812,49 @@ pub fn synth_impact_signature(signature: ImpactSignature, seed: u32) -> DamageSo
 /// Authored continuous combustion: turbulent low roar and irregular dry crackle.
 /// Synthesis, not a recorded vehicle fire or a thermodynamic pressure calculation.
 pub fn synth_burning_fire(seconds: f32, seed: u32) -> Vec<f32> {
-    let frames=(seconds.clamp(0.1,30.0)*SAMPLE_RATE as f32) as usize;
-    let mut out=Vec::with_capacity(frames*2);
-    let (mut low,mut band,mut crack)=(0.0_f32,0.0_f32,0.0_f32);
-    for n in 0..frames {
-        let t=n as f32/SAMPLE_RATE as f32;
+    let seconds = if seconds.is_finite() { seconds.clamp(0.1,30.0) } else { 0.1 };
+    let frames=(seconds*SAMPLE_RATE as f32) as usize;
+    let mut mono=vec![0.0; frames];
+    let (mut low,mut body,mut gust)=(0.0_f32,0.0_f32,0.0_f32);
+    let a=|hz:f32| 1.0-(-TAU*hz/SAMPLE_RATE as f32).exp();
+    for (n,sample) in mono.iter_mut().enumerate() {
         let noise=hash_noise(seed.wrapping_add(n as u32));
-        low+=0.012*(noise-low);
-        band+=0.12*(noise-band);
-        if hash_noise(seed.wrapping_add(n as u32).wrapping_mul(97))>0.99985 {
-            crack=0.35+noise.abs()*0.65;
-        }
-        crack*=0.993;
-        let surge=0.70+0.16*(t*1.7).sin()+0.14*(t*3.31+0.8).sin();
-        let value=surge*(low*1.9+(band-low)*0.32)+crack*(noise-band)*0.24;
-        out.extend([value,value]);
+        low+=a(38.0)*(noise-low);
+        body+=a(360.0)*(noise-body);
+        gust+=a(1.4)*(hash_noise(seed.wrapping_add(n as u32)^0x524f_4152)-gust);
+        let surge=(0.78+gust*5.0).clamp(0.38,1.22);
+        *sample=surge*((body-low)*0.92+low*0.35);
     }
+    // Sparse irregular snaps and clustered crackles sit above the low combustion roar.
+    // These finite packets have silence between them instead of another white-noise bed.
+    let mut at=0.027;
+    let mut event=0u32;
+    while at < seconds {
+        let hash=|salt| (hash_noise(seed.wrapping_add(event.wrapping_mul(719)).wrapping_add(salt))+1.0)*0.5;
+        let weight=0.22+0.60*hash(11).powf(1.7);
+        let width=0.003+0.008*hash(29);
+        add_dark_noise_packet(&mut mono,at,width,1600.0+1000.0*hash(43),weight*2.5,
+            seed^event.wrapping_mul(4099));
+        add_ricker_wavelet(&mut mono,at+0.004,620.0+560.0*hash(59),weight*0.52);
+        if event%4==0 {
+            add_dark_noise_packet(&mut mono,at+0.014+0.018*hash(71),0.004,
+                2200.0,weight*1.1,seed^event.wrapping_mul(8191)^0x4352_414b);
+        }
+        at+=0.045+0.205*hash(83);
+        event+=1;
+    }
+    let mut out=mono_center(&mono);
+    attenuate_over_peak(&mut out,0.88);
+    out
+}
+
+/// One combustion catch, separate from an ammunition detonation. Its compact breath and snaps
+/// are authored foley; the caller supplies the actual fire-start event and propagated level.
+pub fn synth_fire_ignition(seed:u32) -> Vec<f32> {
+    let mut mono=vec![0.0;(0.55*SAMPLE_RATE as f32) as usize];
+    add_short_ignition(&mut mono,0.0,1.0,seed);
+    let mut out=mono_center(&mono);
+    attenuate_over_peak(&mut out,0.88);
     out
 }
 
@@ -2198,6 +2284,7 @@ pub enum ProceduralSound {
     LugerShot,
     AlarmShout,
     RifleShot,
+    TankMgShot,
     EngineLoop,
     AmbienceInterior,
     AmbienceExterior,
@@ -2452,8 +2539,9 @@ fn add_sparse_debris(dst: &mut [f32], count: u32, gain: f32, seed: u32) {
 /// supplies ignition information without laying a hiss, fry, bubbling loop or broadband wash under
 /// the rest of the event.
 fn add_short_ignition(dst: &mut [f32], at_s: f32, gain: f32, seed: u32) {
-    add_ricker_wavelet(dst, at_s + 0.031, 64.0, gain * 0.18);
-    add_dark_noise_packet(dst, at_s, 0.070, 940.0, gain * 0.26, seed ^ 0x5748_5546);
+    add_ricker_wavelet(dst, at_s + 0.036, 104.0, gain * 0.72);
+    add_dark_noise_packet(dst, at_s + 0.005, 0.085, 680.0, gain * 0.94, seed ^ 0x5748_5546);
+    add_dark_noise_packet(dst, at_s + 0.070, 0.085, 420.0, gain * 0.46, seed ^ 0x5748_5550);
     for index in 0..4u32 {
         let jitter = 0.012 * hash_noise(seed.wrapping_add(index * 271));
         let at = at_s + 0.048 + index as f32 * 0.041 + jitter;
@@ -2462,7 +2550,7 @@ fn add_short_ignition(dst: &mut [f32], at_s: f32, gain: f32, seed: u32) {
             at,
             0.0035 + 0.0015 * index as f32,
             1_400.0 + 180.0 * index as f32,
-            gain * (0.15 - 0.018 * index as f32),
+            gain * (0.40 - 0.045 * index as f32),
             seed.wrapping_add(0x4352_4143 + index * 811),
         );
     }
@@ -2478,9 +2566,16 @@ fn synth_tank_destruction(voice: DestructionVoice, seed: u32) -> Vec<f32> {
     let mut mono = vec![0.0f32; total];
 
     if profile.pressure_gain > 0.0 {
-        // One compression/rebound only. A second oscillating pressure tail would recreate the
-        // rounded "bloop" cadence this rebuild is meant to remove.
-        add_ricker_wavelet(&mut mono, 0.055, profile.pressure_hz, profile.pressure_gain);
+        // One finite compression/rebound with two scales at the same centre, not a second
+        // delayed boom. The deep displacement remains, but the shorter 98–109 Hz component
+        // carries its audible body. The old 32–41 Hz lobe dominated A-weighted normalization:
+        // at 2 m a headset-filtered ammunition blast asked for >30 dB of master limiting and
+        // spent ~80% of its energy below 50 Hz, suppressing the useful impact with it.
+        // These are authored waveform scales, not a solved blast pressure history. Physical
+        // source levels, enclosure/headset transfer and the common master remain unchanged.
+        add_ricker_wavelet(&mut mono, 0.055, profile.pressure_hz, profile.pressure_gain * 0.25);
+        add_ricker_wavelet(&mut mono, 0.055, (profile.pressure_hz * 2.65).max(98.0),
+            profile.pressure_gain);
         add_dark_noise_packet(
             &mut mono,
             0.006,
@@ -3053,11 +3148,19 @@ fn synth_mg_loop(interior: bool, seed: u32) -> Vec<f32> {
 /// used by world playback: live bearing, obstruction and environment reverb are deliberately absent
 /// so the propagation path can apply each exactly once at hear-time.
 pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
+    synth_procedural_dry_variant(sound, 0)
+}
+
+/// Deterministic source variation, before live propagation and ear calibration. Variant zero
+/// retains the existing voice; additional variants change its actual modal/noise seed without
+/// resampling the source onset or adding a second event/tail.
+pub fn synth_procedural_dry_variant(sound: ProceduralSound, variant: u32) -> Vec<f32> {
+    let seed=|base:u32|base.wrapping_add(variant.wrapping_mul(7_919));
     let mut out = match sound {
-        ProceduralSound::GunExterior(v) => synth_gun_punch(false, 1_000 + v as u32 * 71),
-        ProceduralSound::GunInterior(v) => synth_gun_punch(true, 1_200 + v as u32 * 71),
-        ProceduralSound::EnemyGun => synth_gun_report(88.0, 280.0, 0.0, 1_400),
-        ProceduralSound::ImpactGround => synth_ground_impact(2_001),
+        ProceduralSound::GunExterior(v) => synth_gun_punch(false, seed(1_000) + v as u32 * 71),
+        ProceduralSound::GunInterior(v) => synth_gun_punch(true, seed(1_200) + v as u32 * 71),
+        ProceduralSound::EnemyGun => synth_gun_report(88.0, 280.0, 0.0, seed(1_400)),
+        ProceduralSound::ImpactGround => synth_ground_impact(seed(2_001)),
         ProceduralSound::ImpactTank => synth_impact(ImpactParams {
             shell: ShellClass::Ap,
             caliber_mm: 76.0,
@@ -3072,7 +3175,7 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
             penetrated: false,
             bearing_deg: -10.0,
             station_dist_m: 1.1,
-            seed: 2_101,
+            seed: seed(2_101),
         }),
         // Legacy world-space armor callers resolve through the same inharmonic structural
         // voice. The previous generic `synth_metal` fallback was an overt modal/sine clang and could
@@ -3095,7 +3198,7 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
             penetrated: false,
             bearing_deg: if v & 1 == 0 { -28.0 } else { 34.0 },
             station_dist_m: 1.7,
-            seed: 2_200 + v as u32,
+            seed: seed(2_200) + v as u32,
         }),
         ProceduralSound::Penetration => synth_impact(ImpactParams {
             shell: ShellClass::ApHe,
@@ -3111,29 +3214,32 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
             penetrated: true,
             bearing_deg: 28.0,
             station_dist_m: 0.75,
-            seed: 2_301,
+            seed: seed(2_301),
         }),
-        ProceduralSound::NearMiss => synth_flyby(1.0, 2_401, 82.0),
-        ProceduralSound::KillExplosion => synth_tank_destruction(DestructionVoice::Kill, 2_501),
-        ProceduralSound::TurretPop => synth_tank_destruction(DestructionVoice::TurretPop, 2_601),
-        ProceduralSound::TurretRip => synth_tank_destruction(DestructionVoice::TurretRip, 2_701),
-        ProceduralSound::CookOff => synth_tank_destruction(DestructionVoice::CookOff, 2_801),
-        ProceduralSound::ShellShriek => synth_flyby(1.7, 2_901, 65.0),
-        ProceduralSound::EngineDeath => synth_engine_death(3_001),
-        ProceduralSound::BreechClack => synth_metal(330.0, 0.32, 0.08, 0.55, 3_101),
-        ProceduralSound::BrassClatter => synth_metal(510.0, 0.72, 0.18, 0.92, 3_201),
-        ProceduralSound::HammerStrike => synth_metal(178.0, 0.45, 0.14, 0.48, 3_301),
-        ProceduralSound::Pickup => synth_metal(690.0, 0.28, 0.16, 0.55, 3_401),
-        ProceduralSound::LugerShot => synth_small_weapon(false, 3_501),
-        ProceduralSound::AlarmShout => synth_alarm_shout(3_601),
-        ProceduralSound::RifleShot => synth_small_weapon(true, 3_701),
-        ProceduralSound::EngineLoop => synth_engine_loop(3_801),
-        ProceduralSound::AmbienceInterior => synth_ambience(true, 3_901),
-        ProceduralSound::AmbienceExterior => synth_ambience(false, 4_001),
-        ProceduralSound::MgLoopInterior => synth_mg_loop(true, 4_101),
-        ProceduralSound::MgLoopExterior => synth_mg_loop(false, 4_201),
-        ProceduralSound::TurretTraverseLoop => synth_turret_traverse(4.0, 0.72, 4_301),
-        ProceduralSound::T34ExteriorLoop => synth_t34_exterior_loop(4_401),
+        ProceduralSound::NearMiss => synth_flyby(1.0, seed(2_401), 82.0),
+        ProceduralSound::KillExplosion => synth_tank_destruction(DestructionVoice::Kill, seed(2_501)),
+        ProceduralSound::TurretPop => synth_tank_destruction(DestructionVoice::TurretPop, seed(2_601)),
+        ProceduralSound::TurretRip => synth_tank_destruction(DestructionVoice::TurretRip, seed(2_701)),
+        ProceduralSound::CookOff => synth_tank_destruction(DestructionVoice::CookOff, seed(2_801)),
+        ProceduralSound::ShellShriek => synth_flyby(1.7, seed(2_901), 65.0),
+        ProceduralSound::EngineDeath => synth_engine_death(seed(3_001)),
+        ProceduralSound::BreechClack => synth_metal(330.0, 0.32, 0.08, 0.55, seed(3_101)),
+        ProceduralSound::BrassClatter => synth_metal(510.0, 0.72, 0.18, 0.92, seed(3_201)),
+        ProceduralSound::HammerStrike => synth_metal(178.0, 0.45, 0.14, 0.48, seed(3_301)),
+        ProceduralSound::Pickup => synth_metal(690.0, 0.28, 0.16, 0.55, seed(3_401)),
+        ProceduralSound::LugerShot => synth_small_weapon(false, seed(3_501)),
+        ProceduralSound::AlarmShout => synth_alarm_shout(seed(3_601)),
+        ProceduralSound::RifleShot => mono_center(&crate::audio::small_arms::dry_report(
+            crate::audio::small_arms::Report::Rifle, seed(3_701), None)),
+        ProceduralSound::TankMgShot => mono_center(&crate::audio::small_arms::dry_report(
+            crate::audio::small_arms::Report::MachineGun, seed(3_711), None)),
+        ProceduralSound::EngineLoop => synth_engine_loop(seed(3_801)),
+        ProceduralSound::AmbienceInterior => synth_ambience(true, seed(3_901)),
+        ProceduralSound::AmbienceExterior => synth_ambience(false, seed(4_001)),
+        ProceduralSound::MgLoopInterior => synth_mg_loop(true, seed(4_101)),
+        ProceduralSound::MgLoopExterior => synth_mg_loop(false, seed(4_201)),
+        ProceduralSound::TurretTraverseLoop => synth_turret_traverse(4.0, 0.72, seed(4_301)),
+        ProceduralSound::T34ExteriorLoop => synth_t34_exterior_loop(seed(4_401)),
     };
     soft_limit_in_place(&mut out, 0.995);
     out
@@ -3619,6 +3725,40 @@ mod tests {
     }
 
     #[test]
+    fn soft_body_contact_is_single_damped_nonmetallic_and_energy_sensitive() {
+        let cue=synth_small_arm_body_hit(730.0,7.92,31);
+        assert_eq!(cue,synth_small_arm_body_hit(730.0,7.92,31));
+        assert_ne!(cue,synth_small_arm_body_hit(730.0,7.92,32));
+        assert!(cue.iter().all(|x|x.is_finite()&&x.abs()<0.3));
+        assert_eq!(cue.len(),(0.065*SAMPLE_RATE as f32) as usize);
+        assert_eq!(*cue.last().unwrap(),0.0);
+        assert!(rms(&cue)>rms(&synth_small_arm_body_hit(280.0,7.92,31))*1.4);
+        assert!(rms(&cue[..441])>rms(&cue[2205..])*1000.0);
+        let stereo=mono_center(&cue);
+        let contact:f32=band_bins(&stereo,250,2500).iter().sum();
+        let ring:f32=band_bins(&stereo,4000,8000).iter().sum();
+        assert!(contact>ring*8.0,"soft contact must not contain the armor ping");
+        for (v,c) in [(f32::NAN,7.92),(730.0,f32::INFINITY),(0.0,9.0),(500.0,-1.0)] {
+            assert!(synth_small_arm_body_hit(v,c,31).is_empty());
+        }
+    }
+
+    #[test]
+    fn mg_receiver_is_one_short_varied_mechanical_cycle_without_a_firing_loop() {
+        let a=synth_mg_receiver_round(41);let b=synth_mg_receiver_round(42);
+        assert_eq!(a,synth_mg_receiver_round(41));assert_ne!(a,b);
+        assert!(a.iter().all(|x|x.is_finite()&&x.abs()<0.8));
+        assert!(a.len()<=SAMPLE_RATE as usize*80/1000);
+        assert_eq!(a[0],0.0);assert_eq!(*a.last().unwrap(),0.0);
+        let first=rms(&a[..441]);let gap=rms(&a[441..793]);
+        assert!(first>gap*30.0,"mechanical contacts need silence between them, not a noise bed");
+        let level=&crate::sound_levels::MG34_INSIDE;
+        let per_round=level.laf_db-10.0*13.0f32.log10()+crate::sound_levels::LAF_MINUS_LAE_DB;
+        let reconstructed=per_round-crate::sound_levels::LAF_MINUS_LAE_DB+10.0*13.0f32.log10();
+        assert!((reconstructed-level.laf_db).abs()<1e-5);
+    }
+
+    #[test]
     fn small_arm_ground_athena_audition() {
         let Some(directory) = std::env::var_os("KESSEL_SMALL_ARM_GROUND_REVIEW_DIR") else { return; };
         let path = std::path::Path::new(&directory).join("athena_ground_20260925_v1_rifle_snow_soil.wav");
@@ -3826,6 +3966,40 @@ mod tests {
     }
 
     #[test]
+    fn destruction_pressure_keeps_audible_body_through_the_crew_headset() {
+        use crate::{reproduction as r, sound_levels as levels, sound_propagation as p};
+        // Same-compartment reception has a headset but no exterior hull insertion loss. Keep
+        // the real transfer and calibration in this regression: a dry waveform alone missed
+        // the old pressure lobe's enormous headroom demand after A-weighted placement.
+        for (sound, tnt_kg) in [
+            (ProceduralSound::KillExplosion, levels::VEHICLE_KILL_TNT_KG),
+            (ProceduralSound::TurretPop, levels::AMMUNITION_DETONATION_TNT_KG),
+            (ProceduralSound::CookOff, levels::COOK_OFF_TNT_KG),
+        ] {
+            let ear = p::propagate(&p::Emission::blast(tnt_kg), &p::Path {
+                distance_m: 2.0, atmosphere: p::Atmosphere::WINTER, occluded: false,
+                enclosure: p::Enclosure::OnFoot, headset: true,
+            });
+            let mut mono: Vec<_> = synth_procedural_dry(sound).chunks_exact(2)
+                .map(|frame| (frame[0] + frame[1]) * core::f32::consts::FRAC_1_SQRT_2).collect();
+            p::SpectralTransfer::fit(&ear.transfer_db, SAMPLE_RATE as f32).apply_mono(&mut mono);
+            let mut voice = schroeder_reverb(&spatialize_mono(&mono, 0.0, 0.0),
+                ReverbParams::STEEL_INTERIOR);
+            let gain = r::voice_gain(ear.laf_db, r::laf_max_dbfs(&voice));
+            for sample in &mut voice { *sample *= gain; }
+            let (voice, reduction) = r::master_offline(&voice);
+            let deep = cannon_band_energy(&voice, 0, 48);
+            let body = cannon_band_energy(&voice, 48, 180);
+            eprintln!("destruction body {sound:?}: audible/deep={:.2} master={reduction:.2}dB", body/deep);
+            assert!(body > deep, "{sound:?}: subbass consumed audible pressure body");
+            assert!(reduction > -30.0,
+                "{sound:?}: excessive subbass consumed master headroom ({reduction} dB)");
+            finite_stereo(&voice);
+            assert!(voice.iter().all(|x| x.abs() <= r::LIMITER_CEILING + 1.0e-6));
+        }
+    }
+
+    #[test]
     fn rebuilt_destruction_is_dry_sparse_dark_and_non_tonal() {
         let sounds = [
             ProceduralSound::KillExplosion,
@@ -3962,6 +4136,34 @@ mod tests {
             "confined burst must decay, not become a persistent unmodeled fire bed");
         // Same event -> same waveform; the live and offline body path is one implementation.
         assert_eq!(catastrophic.main, synth_damage_impact_with_pressure_delay(p, context, 0.0).main);
+    }
+
+    #[test]
+    fn combustion_has_finite_catch_and_separated_crackle_transients() {
+        let ignition=synth_fire_ignition(0x1a17);
+        finite_stereo(&ignition);
+        assert!(rms(segment(&ignition,0.015,0.20))>0.015);
+        assert!(rms(segment(&ignition,0.40,0.54))<1e-6,
+            "ignition is a finite catch, not another persistent fire loop");
+        let fire=synth_burning_fire(3.0,0xf1ae);
+        finite_stereo(&fire);
+        assert_eq!(fire,synth_burning_fire(3.0,0xf1ae));
+        assert_ne!(fire,synth_burning_fire(3.0,0xf1af));
+        let windows:Vec<_>=fire.chunks((0.008*SAMPLE_RATE as f32) as usize*2).map(rms).collect();
+        let low=windows.iter().copied().fold(f32::INFINITY,f32::min);
+        let high=windows.iter().copied().fold(0.0_f32,f32::max);
+        assert!(high>low*2.0,"crackle must emerge from the roar as separate transients");
+        assert!(fire.iter().all(|x|x.abs()<=0.88));
+    }
+
+    #[test]
+    fn confirmed_burst_retains_audible_bass_body_beneath_rupture() {
+        let (p,context)=impact_signature_params(ImpactSignature::HeavyObliquePenetration,0xb005);
+        let pressure=synth_internal_pressure(damage_sound_profile(p,context),p.bearing_deg,p.seed);
+        let onset=segment(&pressure,0.005,0.11);
+        let body:f32=band_bins(onset,65,350).iter().sum();
+        let edge:f32=band_bins(onset,700,3000).iter().sum();
+        assert!(body>edge*0.35,"explosion body lost beneath noise: body={body} edge={edge}");
     }
 
     #[test]

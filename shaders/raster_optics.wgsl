@@ -33,5 +33,9 @@ struct PaneOutput { @location(0) color: vec4<f32>, @location(1) glow: vec4<f32> 
     if (any(uv < vec2(0.0)) || any(uv > vec2(1.0))) { discard; }
     // 2 identifies a visible exterior relay; 1 remains the ordinary lamp-lens glow mask.
     // Both are depth-tested on the real pane, so a hidden/occluded optic cannot seed bloom.
-    return PaneOutput(vec4(textureSampleLevel(exterior, nearest_sampler, uv, i32(panel.layer.x), 0.0).rgb, 1.0),vec4(0.0,0.0,0.0,2.0));
+    // Only the active upper-left viewport is populated. Clamp at its last texel center so the
+    // nearest sample cannot read the cleared, unused remainder when uv reaches exactly one.
+    let extent=vec2<f32>(panel.layer.zw);let allocated=vec2<f32>(textureDimensions(exterior));
+    let sample_uv=clamp(uv*extent,vec2(0.5),extent-vec2(0.5))/allocated;
+    return PaneOutput(vec4(textureSampleLevel(exterior, nearest_sampler, sample_uv, i32(panel.layer.x), 0.0).rgb, 1.0),vec4(0.0,0.0,0.0,2.0));
 }

@@ -8,6 +8,9 @@ use super::{CameraUniform, RenderWorkStats, Renderer, DEPTH, HDR};
 use glam::{Mat4, Vec3};
 use std::cell::RefCell;
 
+#[path = "renderer_visibility_review.rs"]
+mod visibility_review;
+
 pub const MAX_PORTS: usize = 12;
 const MAX_VISIBLE: usize = MAX_PORTS;
 
@@ -30,6 +33,7 @@ struct Prepared {
     port: usize,
     camera: crate::camera::Camera,
     source_eye: Vec3,
+    extent: [u32; 2],
 }
 
 #[repr(C)]
@@ -104,9 +108,9 @@ fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayo
         label:Some("optic-smoke-layout"),entries:&[depth(0),super::uniform_entry(1,wgpu::ShaderStages::FRAGMENT)]});
     let particles=device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label:Some("optic-particles-layout"),entries:&[super::uniform_entry(0,wgpu::ShaderStages::VERTEX_FRAGMENT),
-            depth(1),super::uniform_entry(2,wgpu::ShaderStages::FRAGMENT)]});
+            depth(1),super::uniform_entry(2,wgpu::ShaderStages::FRAGMENT),super::cabin_medium_texture_entry(3)]});
     let environment=device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label:Some("optic-weather-environment"),entries:&[super::uniform_entry(0,wgpu::ShaderStages::FRAGMENT)]});
+        label:Some("optic-weather-environment"),entries:&[super::uniform_entry(0,wgpu::ShaderStages::FRAGMENT),super::cabin_medium_texture_entry(1)]});
     let smoke_layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label:Some("optic-smoke-pipeline-layout"),bind_group_layouts:&[&smoke,sky_visibility,&environment,cabin_shadows],push_constant_ranges:&[]});
     let smoke_module=super::shader(device,"optic-same-raster-smoke",include_str!("../shaders/stylized_smoke.wgsl"));
@@ -118,7 +122,7 @@ fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayo
         primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview:None,cache:None,
     });
     let particle_layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label:Some("optic-particle-pipeline-layout"),bind_group_layouts:&[&particles],push_constant_ranges:&[]});
+        label:Some("optic-particle-pipeline-layout"),bind_group_layouts:&[&particles,sky_visibility,cabin_shadows],push_constant_ranges:&[]});
     let particle_module=super::shader(device,"optic-shared-raster-particles",&optic_particle_shader_source());
     let particle_pipe=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label:Some("optic-world-particles-hdr"),layout:Some(&particle_layout),
@@ -132,7 +136,7 @@ fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayo
     (WeatherPipelines {smoke:smoke_pipe,particles:particle_pipe},WeatherLayouts {smoke,particles})
 }
 
-fn weather_layer(device: &wgpu::Device, depth: &wgpu::TextureView, layouts: &WeatherLayouts) -> WeatherLayer {
+fn weather_layer(device: &wgpu::Device, depth: &wgpu::TextureView, layouts: &WeatherLayouts, medium:&wgpu::TextureView) -> WeatherLayer {
     let buffer=|label,size| {
         device.create_buffer(&wgpu::BufferDescriptor {label:Some(label),size,
         usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false})
@@ -146,7 +150,8 @@ fn weather_layer(device: &wgpu::Device, depth: &wgpu::TextureView, layouts: &Wea
     let particle_bind=device.create_bind_group(&wgpu::BindGroupDescriptor {label:Some("optic-particle-depth-bind"),layout:&layouts.particles,
         entries:&[wgpu::BindGroupEntry {binding:0,resource:particle_buf.as_entire_binding()},
             wgpu::BindGroupEntry {binding:1,resource:wgpu::BindingResource::TextureView(depth)},
-            wgpu::BindGroupEntry {binding:2,resource:particle_eye_buf.as_entire_binding()}]});
+            wgpu::BindGroupEntry {binding:2,resource:particle_eye_buf.as_entire_binding()},
+            wgpu::BindGroupEntry {binding:3,resource:wgpu::BindingResource::TextureView(medium)}]});
     WeatherLayer {smoke_buf,smoke_bind,particle_buf,particle_eye_buf,particle_bind}
 }
 
@@ -240,6 +245,36 @@ fn capture_camera(
     (area > 1e-7).then_some((camera, area, source_eye))
 }
 
+// Two source samples per native aperture pixel. The source camera still uses exactly the same
+// aspect and angular field; only numerical sampling changes. Common integer divisors keep that
+// aspect exact and give stable resolution buckets as the observer moves.
+fn aperture_extent(spec: &RasterOpticSpec, model: Mat4, viewer: &crate::camera::Camera,
+    native: [u32;2], capacity: [u32;2]) -> [u32;2] {
+    let forward=viewer.forward();let right=viewer.right();let up=right.cross(forward);
+    let tan_y=(viewer.fov_y*0.5).tan();let tan_x=tan_y*viewer.aspect;
+    let mut polygon=spec.entry_corners.iter().map(|&p|model.transform_point3(p)-viewer.pos).collect();
+    for plane in [forward,forward*tan_x+right,forward*tan_x-right,forward*tan_y+up,forward*tan_y-up] {
+        polygon=clip(polygon,plane);
+    }
+    let mut lo=glam::Vec2::splat(f32::INFINITY);let mut hi=glam::Vec2::splat(f32::NEG_INFINITY);
+    for p in polygon {
+        let z=p.dot(forward).max(1e-8);
+        let pixel=glam::Vec2::new(p.dot(right)/(z*tan_x)*native[0] as f32*0.5,
+            p.dot(up)/(z*tan_y)*native[1] as f32*0.5);
+        lo=lo.min(pixel);hi=hi.max(pixel);
+    }
+    let required=(hi-lo).max(glam::Vec2::ONE)*2.0;
+    let mut result=capacity;
+    for divisor in [2,4,5,8,10,20,40] {
+        if capacity[0]%divisor!=0 || capacity[1]%divisor!=0 {continue;}
+        let candidate=[capacity[0]/divisor,capacity[1]/divisor];
+        if candidate[0]>=16 && candidate[1]>=9 && candidate[0] as f32>=required.x && candidate[1] as f32>=required.y {
+            result=candidate;
+        }
+    }
+    result
+}
+
 impl RasterOptics {
     pub(super) fn copy_registrations_from(&mut self, other: &Self) {
         self.specs.clone_from(&other.specs);
@@ -257,7 +292,7 @@ impl RasterOptics {
 
     pub(super) fn new(device: &wgpu::Device, iw: u32, ih: u32,
         terrain: &wgpu::TextureView, terrain_sampler: &wgpu::Sampler,
-        sky_visibility: &wgpu::BindGroupLayout, cabin_shadows: &wgpu::BindGroupLayout) -> Self {
+        sky_visibility: &wgpu::BindGroupLayout, cabin_shadows: &wgpu::BindGroupLayout, medium:&wgpu::TextureView) -> Self {
         let width = iw.clamp(256, 640);
         let height = ih.clamp(128, 360);
         let make_texture = |label, format| {
@@ -325,7 +360,7 @@ impl RasterOptics {
             })
                 };
             let depth_view=view(&depth);
-            let weather=weather_layer(device,&depth_view,&weather_layouts);
+            let weather=weather_layer(device,&depth_view,&weather_layouts,medium);
             Layer {color:view(&color),depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
         }).collect();
         Self {specs:Vec::new(),blocked:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,weather,width,height,_color:color,_depth:depth}
@@ -367,7 +402,8 @@ impl Renderer {
             if !mesh.visible || optics.blocked[port] {return None;}
             capture_camera(spec,mesh.model,&self.camera,optics.width as f32/optics.height as f32)
                 .map(|(camera,area,source_eye)| {
-                    (Prepared {port,camera,source_eye},area)
+                    (Prepared {port,camera,source_eye,extent:aperture_extent(spec,mesh.model,&self.camera,
+                        [self.iw,self.ih],[optics.width,optics.height])},area)
                 })
         }).collect();
         candidates.sort_by(|a,b|b.1.total_cmp(&a.1));
@@ -379,24 +415,25 @@ impl Renderer {
             cam.view_proj=view.camera.relative_view_proj().to_cols_array_2d();
             cam.inv_view_proj=view.camera.relative_view_proj().inverse().to_cols_array_2d();
             cam.cam_pos=view.camera.pos.to_array();cam.interior_light=0.0;
-            cam.snap_res=[optics.width as f32,optics.height as f32];
+            cam.snap_res=[view.extent[0] as f32,view.extent[1] as f32];
             queue.write_buffer(&layer.camera_buf,0,bytemuck::bytes_of(&cam));
             let mesh=&self.meshes[optics.specs[view.port].mesh];
             let panel=PanelUniform {main_view_proj:camera.view_proj,model:mesh.model.to_cols_array_2d(),
                 source_direction_view_proj:(view.camera.relative_view_proj()
                     *relay_rotation(&optics.specs[view.port],mesh.model)).to_cols_array_2d(),
                 eye:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,0.0],
-                source_eye:[view.source_eye.x,view.source_eye.y,view.source_eye.z,0.0],layer:[view.port as u32,0,0,0]};
+                source_eye:[view.source_eye.x,view.source_eye.y,view.source_eye.z,0.0],layer:[view.port as u32,0,view.extent[0],view.extent[1]]};
             queue.write_buffer(&layer.panel_buf,0,bytemuck::bytes_of(&panel));
             let smoke=super::SmokeUniform {
                 inv_view_proj:cam.inv_view_proj,cam_pos:cam.cam_pos,fog_density:self.fog_density.max(0.0),
                 sun_dir:cam.sun_dir,frame:(self.frame&0xffff) as f32,puffs:self.smoke_puffs,breech_gas:self.breech_gas,
                 n_lights:cam.n_lights,night:cam.night,overcast:cam.atmosphere[0],world_max_distance:view.camera.zfar,
-                lights:cam.lights,interior:0.0,dust:0.0,world_snow_fraction:cam.world_medium[1],storm:cam.atmosphere[1],
+                lights:cam.lights,interior:self.atmo_haze,dust:self.atmo_dust,world_snow_fraction:cam.world_medium[1],storm:cam.atmosphere[1],
                 atmo_origin:self.atmo_origin.to_array(),atmo_time:self.time,
-                fog_layer:[cam.world_medium[2],cam.world_medium[3],0.0,0.0],
+                fog_layer:[cam.world_medium[2],cam.world_medium[3],view.extent[0] as f32,view.extent[1] as f32],
                 transport_steps:self.transport_quality.smoke_steps(),
                 weather_motion:[self.weather_offset.x,self.weather_offset.y,self.weather_offset.z,self.time],
+                cabin_medium:self.cabin_medium_uniform,
             };
             queue.write_buffer(&layer.weather.smoke_buf,0,bytemuck::bytes_of(&smoke));
             let gust=super::weather_gust(self.time,self.weather_seed);
@@ -404,12 +441,14 @@ impl Renderer {
                 Vec3::new(self.weather_wind_world.x,0.0,self.weather_wind_world.y)*gust);
             let particles=super::PixelParticleUniform {
                 view_proj:cam.view_proj,camera:[cam.cam_pos[0],cam.cam_pos[1],cam.cam_pos[2],0.0],
-                viewport:[optics.width as f32,optics.height as f32,0.0,cam.n_lights],
+                viewport:[view.extent[0] as f32,view.extent[1] as f32,0.0,cam.n_lights],
                 snow_velocity:[velocity.x,velocity.y,velocity.z,0.0],
                 sun_direction:[cam.sun_dir[0],cam.sun_dir[1],cam.sun_dir[2],0.0],
                 solar_irradiance:[0.0;4],sky_directions:[[0.0;4];6],sky_radiances:[[0.0;4];6],lights:cam.lights,
                 world_medium:[cam.world_medium[0],cam.world_medium[2],cam.world_medium[3],0.0],
-                cabin_origin:[self.atmo_origin.x,self.atmo_origin.y,self.atmo_origin.z,3.35],
+                cabin_origin:[self.atmo_origin.x,self.atmo_origin.y,self.atmo_origin.z,0.0],
+                cabin_medium:self.cabin_medium_uniform,
+                medium_transport:[cam.world_medium[1],cam.medium_transport[1],cam.medium_transport[2],cam.medium_transport[3]],
             };
             queue.write_buffer(&layer.weather.particle_buf,0,bytemuck::bytes_of(&particles));
             // No reticle, binocular mask or concussion is baked into an exterior port image. The
@@ -423,26 +462,59 @@ impl Renderer {
     /// feedback and view-local crew/hands; the preserved armor still occludes the exterior pupil.
     pub(super) fn encode_raster_scene(&self, encoder:&mut wgpu::CommandEncoder,
         camera_bind:&wgpu::BindGroup, view_proj:Mat4, color:&wgpu::TextureView, depth:&wgpu::TextureView,
-        optical_capture:bool, work:&mut RenderWorkStats) {
+        optical_capture:bool, viewport:Option<[u32;2]>, work:&mut RenderWorkStats) {
         let planes=super::frustum_planes(view_proj);
         let visible=self.inst_spatial_index.query(view_proj);
         let ao = if optical_capture { None } else { self.raster_ssao.as_ref() };
-        let mut attachments=vec![Some(super::attachment(color,wgpu::LoadOp::Clear(wgpu::Color::BLACK)))];
-        if let Some(ao)=ao { attachments.push(Some(super::attachment(&ao.ambient,wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)))); }
+        let aa=self.geometry_aa.as_ref();
+        let coverage=aa.map(|aa|if optical_capture {&aa.optic}else{&aa.main});
+        let scene_color=coverage.map_or(color,|c|&c.color);
+        let scene_depth=coverage.map_or(depth,|c|&c.depth);
+        let mut attachments=vec![Some(super::attachment(scene_color,wgpu::LoadOp::Clear(wgpu::Color::BLACK)))];
+        if let Some(ao)=ao {
+            let mut ambient=super::attachment(coverage.map_or(&ao.ambient,|c|&c.ambient),wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT));
+            if coverage.is_some(){ambient.resolve_target=Some(&ao.ambient);}
+            attachments.push(Some(ambient));
+        }
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label:Some(if optical_capture {"raster-optic-exterior"} else {"raster-main-scene"}),
             color_attachments:&attachments,
-            depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:depth,
+            depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:scene_depth,
                 depth_ops:Some(wgpu::Operations {load:wgpu::LoadOp::Clear(1.0),store:wgpu::StoreOp::Store}),stencil_ops:None}),
             // The main scene pass is profiled (KESSEL_GPU_PROFILE) like the physical "mesh" pass.
-            timestamp_writes:if optical_capture {None} else {
-                self.gpu_profile.as_ref().and_then(|p|p.render("raster-main-scene"))},
+            timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render(if optical_capture {"raster-optic-exterior"}else{"raster-main-scene"})),
             occlusion_query_set:None,
         });
+        if let Some([width,height])=viewport {
+            pass.set_viewport(0.0,0.0,width as f32,height as f32,0.0,1.0);
+            pass.set_scissor_rect(0,0,width,height);
+        }
         pass.set_bind_group(0,camera_bind,&[]);
         pass.set_bind_group(2,&self.shadow_bind,&[]);pass.set_bind_group(3,&self.track_bind,&[]);
-        pass.set_pipeline(ao.map_or(&self.mesh_inst_pipe,|a| &a.mesh_inst));
+        pass.set_pipeline(aa.map_or_else(||ao.map_or(&self.mesh_pipe,|a|&a.mesh),
+            |a|if ao.is_some(){&a.ambient_mesh}else{&a.mesh}));
+        let near_eye=view_proj.inverse().project_point3(Vec3::ZERO);
+        let mut loose:Vec<_>=self.meshes.iter().enumerate().filter(|(index,m)|
+            m.visible && !m.glass && m.periscope_kind==0 && !self.raster_optic_panel(*index)
+            && !(optical_capture && m.raster_only) && super::aabb_in_frustum(&planes,m.world_min,m.world_max)).collect();
+        // Opaque armor/interior depth precedes expensive exterior shading. This changes only
+        // draw order, never membership, material alpha, transforms, geometry or lighting.
+        // Stable sorting preserves the previous tie order for coincident loose surfaces.
+        loose.sort_by(|(_,a),(_,b)|a.track_recv.cmp(&b.track_recv).then_with(||
+            near_eye.distance_squared(near_eye.clamp(a.world_min,a.world_max)).total_cmp(
+                &near_eye.distance_squared(near_eye.clamp(b.world_min,b.world_max)))));
+        for (_,m) in loose {
+            let flag=if m.track_recv {3.0}else if m.emissive_own {2.0}else if m.emissive_win {1.0}else {0.0};
+            let push=super::PushData {model:m.model.to_cols_array_2d(),params:[m.emissive,m.metallic_factor,m.roughness_factor,flag]};
+            pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT,0,bytemuck::bytes_of(&push));
+            pass.set_bind_group(1,m.tex_bind.as_ref(),&[]);pass.set_vertex_buffer(0,m.vbuf.slice(..));
+            pass.set_index_buffer(m.ibuf.slice(..),wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..m.index_count,0,0..1);work.scene_mesh_draws+=1;
+        }
+        pass.set_pipeline(aa.map_or_else(||ao.map_or(&self.mesh_inst_pipe,|a|&a.mesh_inst),
+            |a|if ao.is_some(){&a.ambient_inst}else{&a.mesh_inst}));
         for &index in &visible.batches {
+            if self.is_fine_vfx_batch(index) {continue;}
             let b=&self.inst_batches[index];
             if b.inst_count==0 {continue;}
             let p=&self.inst_prototypes[b.prototype];
@@ -452,47 +524,55 @@ impl Renderer {
             pass.set_vertex_buffer(1,b.inst_buf.slice(b.active_instance_bytes()));pass.set_index_buffer(p.ibuf.slice(..),wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..p.index_count,0,0..b.inst_count);work.scene_instanced_draws+=1;
         }
-        pass.set_pipeline(ao.map_or(&self.mesh_pipe,|a| &a.mesh));
-        for (index,m) in self.meshes.iter().enumerate() {
-            if !m.visible || m.glass || m.periscope_kind!=0 || self.raster_optic_panel(index)
-                || (optical_capture && m.raster_only) || !super::aabb_in_frustum(&planes,m.world_min,m.world_max) {continue;}
-            let flag=if m.track_recv {3.0}else if m.emissive_own {2.0}else if m.emissive_win {1.0}else {0.0};
-            let push=super::PushData {model:m.model.to_cols_array_2d(),params:[m.emissive,m.metallic_factor,m.roughness_factor,flag]};
-            pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT,0,bytemuck::bytes_of(&push));
-            pass.set_bind_group(1,m.tex_bind.as_ref(),&[]);pass.set_vertex_buffer(0,m.vbuf.slice(..));
-            pass.set_index_buffer(m.ibuf.slice(..),wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..m.index_count,0,0..1);work.scene_mesh_draws+=1;
-        }
         drop(pass);
         // Sky has no occludable ambient output; keep it out of the surface MRT attachment.
+        let mut sky_color=super::attachment(scene_color,wgpu::LoadOp::Load);
+        if coverage.is_some(){sky_color.resolve_target=Some(color);}
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label:Some("raster-sky"),
-            color_attachments:&[Some(super::attachment(color,wgpu::LoadOp::Load))],
-            depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:depth,
+            color_attachments:&[Some(sky_color)],
+            depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:scene_depth,
                 depth_ops:Some(wgpu::Operations {load:wgpu::LoadOp::Load,store:wgpu::StoreOp::Store}),stencil_ops:None}),
             timestamp_writes:None,occlusion_query_set:None,
         });
+        if let Some([width,height])=viewport {
+            pass.set_viewport(0.0,0.0,width as f32,height as f32,0.0,1.0);
+            pass.set_scissor_rect(0,0,width,height);
+        }
         // Depth-gated sky renders every uncovered aperture pixel with the same atmosphere as main.
-        pass.set_pipeline(&self.sky_depth_pipe);
+        pass.set_pipeline(aa.map_or(&self.sky_depth_pipe,|a|&a.sky));
         pass.set_bind_group(0,camera_bind,&[]);pass.set_bind_group(1,&self.physical_environment_bind,&[]);
         pass.draw(0..3,0..1);work.fullscreen_raster_passes+=1;
         drop(pass);
+        if let Some(aa)=aa {aa.resolve(encoder,optical_capture,depth,work);}
         if let Some(ao)=ao { ao.encode(encoder,color,&self.camera,self.interior_light>0.02,work); }
-        self.encode_raster_glass(encoder,camera_bind,view_proj,color,depth,optical_capture,work);
+        self.encode_raster_glass(encoder,camera_bind,view_proj,color,depth,optical_capture,viewport,work);
     }
 
     pub(super) fn encode_raster_optics(&self, encoder:&mut wgpu::CommandEncoder, work:&mut RenderWorkStats) {
         let Some(optics)=&self.raster_optics else {return;};
         for view in optics.prepared.borrow().iter() {
             let layer=&optics.layers[view.port];
-            self.encode_raster_scene(encoder,&layer.camera_bind,view.camera.view_proj(),&layer.color,&layer.depth,true,work);
-            self.encode_raster_optic_weather(encoder,layer,&optics.weather,work);
+            self.encode_raster_scene(encoder,&layer.camera_bind,view.camera.view_proj(),&layer.color,&layer.depth,true,Some(view.extent),work);
+            self.encode_raster_optic_weather(encoder,layer,&optics.weather,view.extent,work);
+            self.encode_fine_vfx(encoder,view.port,&layer.color,work);
             work.scene_renders+=1;
         }
     }
 
+    pub(super) fn prepare_fine_vfx_ports(&self,device:&wgpu::Device,queue:&wgpu::Queue,
+        frames:&mut std::collections::HashMap<usize,super::renderer_fine_vfx::Frame>) {
+        let Some(optics)=&self.raster_optics else{return;};
+        for view in optics.prepared.borrow().iter() {
+            let layer=&optics.layers[view.port];
+            let prepared=self.prepare_fine_vfx_view(device,queue,&view.camera,view.extent,
+                &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port));
+            frames.insert(view.port,prepared);
+        }
+    }
+
     fn encode_raster_optic_weather(&self, encoder:&mut wgpu::CommandEncoder, layer:&Layer,
-        pipelines:&WeatherPipelines, work:&mut RenderWorkStats) {
+        pipelines:&WeatherPipelines, extent:[u32;2], work:&mut RenderWorkStats) {
         let smoke=self.fog_density>1e-6 || (self.breech_gas.strength>0.0 && self.breech_gas.age<2.2)
             || self.smoke_puffs.iter().any(|p|p.strength>0.0 && p.age<1.0);
         // The shared world carrier buffer is uploaded once after preparation. Each port projects
@@ -504,6 +584,8 @@ impl Renderer {
             color_attachments:&[Some(super::attachment(&layer.color,wgpu::LoadOp::Load))],
             depth_stencil_attachment:None,timestamp_writes:None,occlusion_query_set:None,
         });
+        pass.set_viewport(0.0,0.0,extent[0] as f32,extent[1] as f32,0.0,1.0);
+        pass.set_scissor_rect(0,0,extent[0],extent[1]);
         if smoke {
             pass.set_pipeline(&pipelines.smoke);pass.set_bind_group(0,&layer.weather.smoke_bind,&[]);
             pass.set_bind_group(1,&self.sky_visibility.sampling_bind,&[]);
@@ -513,6 +595,8 @@ impl Renderer {
         }
         if particles>0 && self.precipitation>0.0 {
             pass.set_pipeline(&pipelines.particles);pass.set_bind_group(0,&layer.weather.particle_bind,&[]);
+            pass.set_bind_group(1,&self.sky_visibility.sampling_bind,&[]);
+            pass.set_bind_group(2,&self.cabin_shadows.sampling_bind,&[]);
             pass.set_vertex_buffer(0,self.pixel_particle_vertices.slice(..));
             pass.draw(0..6,0..particles);work.snow_passes+=1;
         }
@@ -595,6 +679,7 @@ impl Renderer {
                 metres.get(((metres.len().saturating_sub(1)) as f32*q) as usize).copied()
             };
             ports.push(serde_json::json!({"port":view.port,"source_mesh":spec.mesh,"png":png_path,"hdr":raw_path,"depth":depth_path,
+                "active_native_extent":view.extent,"allocated_extent":[optics.width,optics.height],
                 "source_entry_index_range":[spec.entry_indices.start,spec.entry_indices.end],
                 "source_entry_world_m":spec.entry_corners.map(|p|model.transform_point3(p).to_array()),
                 "source_objective_world_m":model.transform_point3(spec.objective).to_array(),
@@ -632,6 +717,20 @@ mod tests {
         camera.pos=Vec3::new(0.0,0.0,-distance);camera.set_forward(Vec3::Z);
         camera.fov_y=fov.to_radians();camera
     }
+    #[test]
+    fn aperture_sampling_scales_with_visible_native_extent_without_changing_aspect() {
+        let spec=front_port();let capacity=[640,360];let native=[960,540];
+        let far=aperture_extent(&spec,Mat4::IDENTITY,&viewer(2.0,68.0),native,capacity);
+        let near=aperture_extent(&spec,Mat4::IDENTITY,&viewer(0.04,68.0),native,capacity);
+        assert_eq!(far,[64,36],"a distant aperture must not render a full scene-sized tile");
+        assert_eq!(near,capacity,"an eye held against a pane retains the full tile budget");
+        for distance in [0.04,0.1,0.3,0.5,1.0,2.0] {
+            let extent=aperture_extent(&spec,Mat4::IDENTITY,&viewer(distance,68.0),native,capacity);
+            assert_eq!(extent[0]*capacity[1],extent[1]*capacity[0]);
+            assert!(extent[0]<=capacity[0] && extent[1]<=capacity[1]);
+        }
+    }
+
     #[test]
     fn raster_optic_capture_origins_and_bearings_follow_each_port_and_turret() {
         let spec=front_port();let viewer=viewer(0.3,68.0);
@@ -835,7 +934,7 @@ mod tests {
     }
     #[test]
     fn raster_optic_weather_shared_particle_shader_validates_in_hdr() {
-        let source=optic_particle_shader_source();
+        let source=super::super::terrain_material_shader_source(&optic_particle_shader_source());
         let module=wgpu::naga::front::wgsl::parse_str(&source).expect("composed optic weather parses");
         wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),wgpu::naga::valid::Capabilities::all())
             .validate(&module).expect("composed optic weather validates");

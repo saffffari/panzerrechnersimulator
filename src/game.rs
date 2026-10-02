@@ -20,6 +20,8 @@ mod canyon_game;
 mod canyon_map;
 #[path = "player_capture.rs"]
 mod player_capture;
+#[path = "winter_drive_review.rs"]
+pub(crate) mod winter_drive_review;
 #[path = "canyon_pilot.rs"]
 mod canyon_pilot;
 pub use canyon_pilot::CanyonPilot;
@@ -96,6 +98,8 @@ mod hatch_landing_source_tests;
 mod infantry_pose_runtime;
 #[path = "mechanic_readout.rs"]
 mod mechanic_readout;
+#[path = "infantry_squad.rs"]
+mod infantry_squad;
 #[path = "mixed_combat_runtime.rs"]
 mod mixed_combat_runtime;
 #[path = "p08.rs"]
@@ -141,10 +145,16 @@ pub(crate) mod tiger_periscopes;
 mod tiger_damage;
 #[path = "at_guns.rs"]
 mod at_guns;
+#[path = "at_gun_ballistics.rs"]
+mod at_gun_ballistics;
 #[path = "walk_surfaces.rs"]
 mod walk_surfaces;
 #[path = "weapon_vfx.rs"]
 mod weapon_vfx;
+#[path = "fine_vfx.rs"]
+mod fine_vfx;
+#[path = "track_repair.rs"]
+mod track_repair;
 #[path = "small_arms_runtime.rs"]
 mod small_arms_runtime;
 #[path = "listener_hearing.rs"]
@@ -479,6 +489,7 @@ fn campaign_loot_candidates(act: u8, kind: PickupKind) -> &'static [Vec2] {
 
 /// ABSITZEN enemy infantry: pre-allocated soldier slots (2 meshes each) + return-fire muzzle pool.
 const N_SOLDIERS: usize = 24;
+const CANYON_SOLDIERS: usize = 60;
 const INF_FX: usize = 8; // infantry muzzle-flash boxes, cycled round-robin like the enemy FX pool
 const LUGER_FLASH_FX: usize = 3;
 const PANZERFAUST_RACK: usize = 3;
@@ -610,7 +621,6 @@ const MG_FIRE_INTERVAL: f32 = 0.075; // s between rounds — ~13 rounds/sec (MG3
 const MG_TRACER_EVERY: u32 = 2; // every Nth round is a visible tracer (classic tracer stream)
 const MG_TRACER_SPEED: f32 = 700.0; // m/s — thin, fast streaks (vs the 450 m/s cannon shell)
 const MG_RANGE: f32 = 900.0; // m — maximum simulated MG flight
-const MG_DISP: f32 = 0.010; // fire-cone dispersion (MGs spray, they don't lay a precise bolt)
 const MG_FLASH_DUR: f32 = 0.065; // s — muzzle-flash persistence (≈ the fire interval, so it reads
                                  // as a near-continuous strobing flash while firing, not stutter)
 const MAIN_FLASH_COLOR: [u8; 3] = [255, 150, 45];
@@ -2933,6 +2943,9 @@ struct AuthoritativeProjectile {
     small_arm: Option<small_arms_runtime::Payload>,
     penalty_mm: f32,
     disruption: f32,
+    /// Retained forward speed after a resolved kinetic component penetration.
+    retained_speed:f32,
+    passed_at_gun_part:Option<(usize,u8)>,
     ignored_structure: Option<usize>,
     ignored_tree: Option<usize>,
     closest_player_point: Vec3,
@@ -2971,6 +2984,8 @@ impl AuthoritativeProjectile {
             crosswind_velocity: Vec3::ZERO,
             small_arm: None,
             disruption: 0.0,
+            retained_speed:1.0,
+            passed_at_gun_part:None,
             ignored_structure: None,
             ignored_tree: None,
             closest_player_point: pos,
@@ -2989,14 +3004,16 @@ impl AuthoritativeProjectile {
     fn swept_step_with_wind(&self, dt: f32, wind: Vec3) -> ProjectileStep {
         let dt = dt.max(0.0);
         let flight = self.shell.flight_step(self.distance_m, self.age_s, dt);
-        let (drift, crosswind_velocity) = self.shell.crosswind_step(self.distance_m, dt,
-            self.crosswind_velocity, wind, self.direction);
-        let forward_m = flight.forward_m;
+        let speed=self.shell.velocity_at(self.distance_m)*self.retained_speed;
+        let (drift, crosswind_velocity) = self.shell.crosswind_step_at_speed(speed,dt,
+            self.crosswind_velocity,wind,self.direction);
+        let forward_m=if self.retained_speed==1.0 {flight.forward_m}
+            else {self.shell.flight_step(self.distance_m,self.age_s,dt*self.retained_speed).forward_m};
         let gravity_m = flight.gravity_m;
         let end = self.pos + self.direction * forward_m + Vec3::Y * gravity_m + drift;
         let distance_m = self.distance_m + forward_m;
         let age_s = self.age_s + dt;
-        let velocity = self.direction * self.shell.velocity_at(distance_m)
+        let velocity = self.direction * (self.shell.velocity_at(distance_m)*self.retained_speed)
             - Vec3::Y * (PROJECTILE_GRAVITY_MPS2 * age_s) + crosswind_velocity;
         ProjectileStep {
             start: self.pos,
@@ -3023,7 +3040,7 @@ impl AuthoritativeProjectile {
         self.distance_m += step.forward_m * f;
         self.age_s += (step.age_s - self.age_s) * f;
         self.crosswind_velocity = self.crosswind_velocity.lerp(step.crosswind_velocity, f);
-        self.velocity = self.direction * self.shell.velocity_at(self.distance_m)
+        self.velocity = self.direction * (self.shell.velocity_at(self.distance_m)*self.retained_speed)
             - Vec3::Y * (PROJECTILE_GRAVITY_MPS2 * self.age_s) + self.crosswind_velocity;
     }
 }
@@ -3065,12 +3082,13 @@ struct VehicleArmorContact {
 enum ProjectileContactKind {
     Vehicle(VehicleArmorContact),
     Foot,
+    ExposedCrew(CouchCrewCasualty, crew_physics::CrewBodyPart),
     Infantry(usize),
     Structure(usize),
     HardCover,
     Tree(usize),
-    /// The shield and carriage of a 45 mm anti-tank gun.
-    AtGun(usize),
+    /// Exact rendered component contact of a45mm anti-tank gun.
+    AtGun(at_gun_ballistics::GunContact),
     Terrain,
     /// A rubble mound or burned-floor layer of a building instance (`solid_city`): solid ground a
     /// kinetic round crosses at a cost per metre of its thickness.
@@ -5580,6 +5598,8 @@ const INTERIOR_FIRE_GLOW_RADIUS: f32 = 1.30;
 
 #[derive(Clone, Copy, Debug)]
 struct FireVoxelSample {
+    /// [domain, emitter, parcel, generation]; independent of material page and upload order.
+    particle_id: [u32;4],
     offset: Vec3,
     rotation: Quat,
     size: f32,
@@ -5779,6 +5799,7 @@ fn exterior_flame_parcel_sample(seed: u32, grain: usize, time: f32) -> FireVoxel
         else { 1 };
     let tier = (hash01(spawn ^ 0x27d4_eb2f) * 3.0).floor().min(2.0) as usize;
     FireVoxelSample {
+        particle_id: [0x4658_0001,seed,grain as u32,generation],
         offset: (Vec3::new(horizontal.x,height,horizontal.y) / 0.12).round() * 0.12,
         rotation: Quat::IDENTITY, size: [0.080,0.098,0.115][tier], stage, generation,
     }
@@ -5854,6 +5875,7 @@ fn flame_parcel_sample(
         3
     };
     FireVoxelSample {
+        particle_id: [0x4649_0001,emitter_seed,grain as u32,generation],
         offset: Vec3::new(
             ix as f32 * cell,
             layer as f32 * vertical_cell,
@@ -5929,8 +5951,16 @@ fn surface_wreck_fire_cells(seed:u32,time:f32,strength:f32,origin:Vec3,
         // One shared maximum clearance also lets repeated lattice positions deduplicate even
         // when their randomly chosen grain-size tiers differ.
         let clearance=MAX_CELL_EDGE*0.5*normal.abs().element_sum()+0.004;
-        for grain in used..end {
-            let mut cell=flame_parcel_sample(seed^(patch.id as u32).wrapping_mul(7919),grain,time,patch.strength,true);
+        assert!(patch.id < (1usize<<20) && end-used < 4096,
+            "surface parcel identity exceeds its exact patch/local-index packing");
+        for local_parcel in 0..end-used {
+            // Earlier patch strength/order can change this patch's allocated count, but cannot
+            // renumber its surviving parcels. Hull and turret source surfaces are distinct.
+            let patch_seed=seed^(patch.id as u32).wrapping_mul(7919)
+                ^ u32::from(patch.frame).wrapping_mul(0x85eb_ca6b);
+            let mut cell=flame_parcel_sample(patch_seed,local_parcel,time,patch.strength,true);
+            cell.particle_id=[0x4653_0000|u32::from(patch.frame),seed,
+                ((patch.id as u32)<<12)|local_parcel as u32,cell.generation];
             cell.size*=CELL_SCALE;
             let height=cell.offset.y*CELL_SCALE*(1.0+0.15*patch.strength.clamp(0.0,1.0));
             let drift=Vec3::new(wind.x,0.0,wind.y)*height.powi(2)*0.035;
@@ -5967,6 +5997,7 @@ fn stove_smoke_sample(emitter_seed: u32, grain: usize, time: f32, wind: Vec2) ->
     let spread = 0.03 + 0.09 * age;
     let drift = wind * (0.18 * age);
     FireVoxelSample {
+        particle_id: [0x5354_0002,emitter_seed,grain as u32,generation],
         offset: Vec3::new(
             drift.x + hx * spread * 2.0,
             0.55 * age,
@@ -6096,16 +6127,12 @@ fn register_urban_tableaux(
     Ok(out)
 }
 
-/// One deterministic cubic soot cell above the flame stack. Soot uses smaller fixed cubes than the
-/// luminous base and the same discrete generation rule: a cell holds position/size, then respawns.
-/// Exterior wind shifts whole cells on the same grid instead of leaning or rotating their geometry.
+/// Continuously advected soot parcels. The simulation lifetime, identity and appearance are
+/// deterministic; sample positions update at the same simulation cadence as the flame field.
+/// Strength selects parcel count, never a larger opaque grain. These are prescribed carrier
+/// paths, not a solved fluid or a conserved flame-to-soot chemical conversion.
 fn smoke_voxel_sample(
-    emitter_seed: u32,
-    grain: usize,
-    time: f32,
-    strength: f32,
-    exterior: bool,
-    wind: Vec2,
+    emitter_seed: u32, grain: usize, time: f32, strength: f32, exterior: bool, wind: Vec2,
 ) -> FireVoxelSample {
     let soot_hash = |mut x: u32| {
         x = (x ^ (x >> 16)).wrapping_mul(0x7feb_352d);
@@ -6115,56 +6142,33 @@ fn smoke_voxel_sample(
     let id = (grain as u32).wrapping_mul(0x85eb_ca6b) ^ emitter_seed;
     let h0 = soot_hash(id ^ 0xc2b2_ae35);
     let h1 = soot_hash(id ^ 0x27d4_eb2f);
-    let lifetime = if exterior {
-        0.72 + h1 * 0.90
-    } else {
-        0.42 + h1 * 0.58
-    };
+    let lifetime = if exterior { 0.72 + h1 * 0.90 } else { 0.42 + h1 * 0.58 };
     let clock = time.max(0.0) / lifetime + h0;
     let generation = clock.floor().max(0.0) as u32;
+    let age_t = clock - clock.floor();
+    let age = age_t * lifetime;
     let spawn = id ^ generation.wrapping_mul(0xc2b2_ae35);
-    let hx = soot_hash(spawn ^ 0x1656_67b1);
-    let hz = soot_hash(spawn ^ 0xd3a2_646c);
-    let hl = soot_hash(spawn ^ 0x94d0_49bb);
+    let hx = soot_hash(spawn ^ 0x1656_67b1) * 2.0 - 1.0;
+    let hz = soot_hash(spawn ^ 0xd3a2_646c) * 2.0 - 1.0;
     let hs = soot_hash(spawn ^ 0xa511_e9b3);
-    let _strength = strength.clamp(0.05, 1.4); // density is selected by the caller's bounded count
-    let layer_count = if exterior { 14usize } else { 40usize };
-    let layer = (hl * layer_count as f32)
-        .floor()
-        .min((layer_count - 1) as f32) as usize;
-    let height_t = layer as f32 / (layer_count - 1) as f32;
-    let cell = if exterior { 0.12 } else { 0.012 };
-    let vertical_cell = if exterior { 0.17 } else { 0.014 };
-    // The first soot cell starts just above the tallest flame-stack cell rather than occupying the
-    // luminous base (17 * 0.16 = 2.72 m exterior; 43 * 0.01 = 0.43 m interior).
-    let base_y = if exterior { 2.78 } else { 0.46 };
-    let radius_cells = if exterior {
-        2 + (height_t * 4.0).round() as i32
-    } else {
-        3 + (height_t * 9.0).round() as i32
-    };
-    let span = (radius_cells * 2 + 1) as f32;
-    let mut ix = (hx * span).floor() as i32 - radius_cells;
-    let mut iz = (hz * span).floor() as i32 - radius_cells;
-    if exterior {
-        let drift_cells = wind * (0.054 * height_t * height_t) / cell;
-        ix += drift_cells.x.round() as i32;
-        iz += drift_cells.y.round() as i32;
-    }
+    let _strength = strength.clamp(0.05, 1.4); // caller selects the bounded count
+    // Birth overlaps only the upper flame support; it no longer starts above a separate air gap.
+    let (base_y, rise, base_radius, spread) = if exterior {
+        (2.30, 2.69, 0.24, 0.48)
+    } else { (0.28, 0.726, 0.036, 0.108) };
+    let radius = base_radius + spread * age_t;
+    let drift = if exterior { wind * (0.18 * age) } else { Vec2::ZERO };
+    let smooth = |x: f32| { let t=x.clamp(0.0,1.0); t*t*(3.0-2.0*t) };
+    // Projected area, hence integrated opacity weight, attacks/releases continuously. Identity
+    // and source support change only while that parcel's contribution tends to zero.
+    let coverage = smooth(age_t / 0.12) * smooth((1.0-age_t) / 0.25);
     let tier = (hs * 3.0).floor().min(2.0) as usize;
-    let sizes = if exterior {
-        [0.075, 0.092, 0.110]
-    } else {
-        [0.0025, 0.003, 0.0035]
-    };
+    let sizes = if exterior { [0.075, 0.092, 0.110] } else { [0.0025, 0.003, 0.0035] };
     FireVoxelSample {
-        offset: Vec3::new(
-            ix as f32 * cell,
-            base_y + layer as f32 * vertical_cell,
-            iz as f32 * cell,
-        ),
+        particle_id: [0x5354_0001,emitter_seed,grain as u32,generation],
+        offset: Vec3::new(hx*radius+drift.x, base_y+rise*age_t, hz*radius+drift.y),
         rotation: Quat::IDENTITY,
-        size: sizes[tier],
+        size: sizes[tier]*coverage.sqrt(),
         stage: (soot_hash(spawn ^ 0x7f4a_7c15) >= 0.62) as usize,
         generation,
     }
@@ -7260,7 +7264,7 @@ impl CarriedMesh {
     /// Location IDs shared with `live_ammunition_in_frame`; hands retain the source location.
     fn ammunition_location_id(self) -> u32 {
         match self {
-            Self::RackShell(index) => index as u32,
+            Self::RackShell(index) => crate::interior_rig::shell_source_id(index),
             Self::LooseShell(index) => 0x2_0000 + index as u32,
         }
     }
@@ -7341,9 +7345,9 @@ const EXT_MOUNT_BASE: Vec3 = Vec3::new(-0.350, 0.848, -1.043);
 // ── The BREECH LEVER (user design 2026-07-06): pull UP to open the breech — only then can the
 // hot case come out and a fresh round go in; pull DOWN after ramming to CLOSE, which is what
 // completes the load. The gun fires only closed. Pivots calibrated from the blend (gun-local).
-// The source gunner sight pupil is +0.493 m in the gun's X axis; place the mirrored lever
-// on that same side of the block. The shared pivot also supplies the interaction target.
-const GUNLEVER_POS: Vec3 = Vec3::new(0.252, -0.054, -0.987);
+// Keep the native lever on the loader side, opposite the +X gunner sight pupil.
+// Its shared pivot supplies the interaction target, away from the sight click cone.
+const GUNLEVER_POS: Vec3 = Vec3::new(-0.252, -0.054, -0.987);
 // The source cover has a curved upper cutout, so its overall AABB is not evidence that the
 // chamber is covered. The raised closed pose is checked against rays across the brass base.
 const BREECHCOVER_POS: Vec3 = Vec3::new(0.001, 0.132, -0.886);
@@ -7385,10 +7389,10 @@ fn cupola_hatch_lever_model(turret: Mat4, phase: f32) -> Mat4 {
 // turret walk at its old spot). Hotspot at grab height; mesh sits just below it.
 const TOOLBOX_MOUNT: Vec3 = Vec3::new(-0.75, 1.00, -0.98);
 const TOOLBOX_MESH: Vec3 = Vec3::new(-0.75, 0.88, -0.98);
-// The BREECH LAMP (user design): one annunciator-style lamp ON the breech, loader-side.
+// Two matching BREECH LAMPS (user design), one on each side of the block.
 // GREEN = loaded & lever shut (ready) / ORANGE = lever open (reloading) / RED = shut on a
 // spent case (or empty) — the reload cycle readable at a glance from anywhere in the turret.
-const BREECH_LAMP_POS: Vec3 = Vec3::new(0.20, 0.12, -0.92); // gun-local, right of the block
+const BREECH_LAMP_POSITIONS: [Vec3;2] = [Vec3::new(0.20,0.12,-0.92),Vec3::new(-0.20,0.12,-0.92)];
 const RAM_REACH: f32 = 1.55; // m — arm's reach to the authored tray mouth; crosshair gate does precision
 
 fn gun_lever_model(gun_model: Mat4, lever_open: f32) -> Mat4 {
@@ -7405,14 +7409,6 @@ fn breech_cover_model(gun_model: Mat4, lever_open: f32) -> Mat4 {
 
 fn chambered_round_model(gun_model: Mat4) -> Mat4 {
     gun_model * Mat4::from_translation(crate::interior_rig::ROUND_SEAT - tank::TIGER_PARTS.gun_trunnion)
-}
-
-fn gunner_side_lever_mesh(mesh: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
-    let mut mesh = mesh.transformed(Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)));
-    // Reflection reverses handedness. Retain the original visible faces and normal-map basis.
-    for triangle in mesh.indices.chunks_exact_mut(3) { triangle.swap(1, 2); }
-    for vertex in &mut mesh.vertices { vertex.tangent[3] = -vertex.tangent[3]; }
-    mesh
 }
 
 #[cfg(test)]
@@ -7474,22 +7470,19 @@ mod breech_geometry_tests {
     }
 
     #[test]
-    fn lever_moves_to_measured_sight_side_without_inverting_visible_faces() {
+    fn native_lever_stays_opposite_sight_and_both_lamps_follow_gun() {
         let source = crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_gunlever.glb").unwrap();
-        let mirrored = gunner_side_lever_mesh(source.clone());
         let sight_local = tank::TIGER_SIGHT_EYEPIECE - tank::TIGER_PARTS.gun_trunnion;
-        assert!(sight_local.x > 0.49 && GUNLEVER_POS.x > 0.0);
-        for (&before, after) in source.vertices.iter().zip(&mirrored.vertices) {
-            assert!(Vec3::from(after.pos).abs_diff_eq(Vec3::from(before.pos) * Vec3::new(-1.0, 1.0, 1.0), 1e-6));
-            assert!((after.tangent[3] + before.tangent[3]).abs() < 1e-6);
-        }
-        for (before, after) in source.indices.chunks_exact(3).zip(mirrored.indices.chunks_exact(3)) {
-            assert_eq!(after, &[before[0], before[2], before[1]]);
-        }
+        assert!(sight_local.x > 0.49 && GUNLEVER_POS.x < 0.0);
         for opening in [0.0, 0.5, 1.0] {
-            let transformed = mirrored.clone().transformed(gun_lever_model(Mat4::IDENTITY, opening));
-            assert!(transformed.min.x > 0.11 && transformed.max.x < 0.27,
-                "the complete lever must remain on the gunner sight side");
+            let transformed=source.clone().transformed(gun_lever_model(Mat4::IDENTITY,opening));
+            assert!(transformed.min.x > -0.27 && transformed.max.x < -0.11);
+            assert!(sight_local.x-transformed.max.x > 0.6);
+        }
+        for pitch in [-0.14_f32,0.0,0.26] {
+            let gun=Mat4::from_rotation_y(0.72)*Mat4::from_rotation_x(pitch);
+            let [a,b]=BREECH_LAMP_POSITIONS.map(|p|gun.transform_point3(p));
+            assert!((a.distance(b)-0.4).abs()<1e-5);
         }
     }
 
@@ -8083,6 +8076,7 @@ struct Slots {
     armor_scar: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
     armor_patch: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
+    track_snow: [usize;2],
     weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
     fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // advected hot/yellow/orange/red flame parcels
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
@@ -8109,6 +8103,7 @@ struct Slots {
     loose_shell: [usize; N_LOOSE], // dropped rounds rolling on the basket floor
     loose_shell_he: [usize; N_LOOSE], // yellow SprGr visual twins
     hammer: usize,    // first-person hammer (the track-repair ritual)
+    ring_fragment: usize,
     toolbox: usize,   // persistent mounted/carried/put-down source toolbox
     track_repair_shoes: [usize; N_REPAIR_SHOES], // loose run physically pulled over the wheels
     track_replacement_link: usize, // fresh link moved out of the kit and into the open break
@@ -8117,7 +8112,7 @@ struct Slots {
     casing: [usize; N_CASING], // tumbling ejected casings (rigid body)
     foam_batch: [usize; N_FOAM_BATCHES], // instanced flying/stuck physical extinguisher grains
     annun: [usize; N_LAMP], // interior annunciator lamps (fire/breech/repair/station)
-    breech_lamp: [usize; 3], // ON-BREECH state lamp: [green, orange, red] (one lit at a time)
+    breech_lamp: [[usize; 3];2], // both sides: [green, amber, red], one active lens each
     lan_crew: [usize; 5], // seated living body pool (permanent face identity slots)
     commander_crew: [usize; 5], // upright counterpart for each identity taking the cupola
     crew_helmet: [usize; 5], // source CC0 steel helmet, shared geometry/material, head-attached
@@ -8228,7 +8223,10 @@ fn authoritative_tracer_has_live_owner(projectile_id: Option<u64>, tracer_active
 /// (`sound_levels`); at hear-time it is propagated to the listener's ear (`sound_propagation`:
 /// distance law, air absorption, snow, barrier, hull, headset) and placed by the reproduction
 /// curve. Cheap and deterministic: the queue is a plain Vec drained each frame.
+#[derive(Clone, Copy)]
+struct AcousticWave { emitted_at_s:f32, speed_m_s:f32 }
 struct ScheduledSound {
+    wave: Option<AcousticWave>,
     delay: f32, // seconds of travel time still remaining
     sfx: crate::audio::Sfx,
     /// Physical emission at its reference position (peak, LAF, distance law, spectrum).
@@ -8238,10 +8236,32 @@ struct ScheduledSound {
     /// World origin retained until the wavefront arrives. The listener may have moved or turned in
     /// the intervening seconds, so pan and the direct acoustic ray are resolved at hear-time.
     source: Vec3,
+    /// True only for an event emitted inside the player's fighting compartment. The same Sfx
+    /// on an enemy wreck remains exterior; proximity alone never grants this provenance.
+    source_in_player: bool,
     /// Synthesized stereo buffer (distant gun report etc.) — played INSTEAD of `sfx` when present.
     buf: Option<Vec<f32>>,
     /// Optional identity for the bounded review trace; never controls playback or propagation.
     enemy_report: Option<enemy_discharge_review::ReportStamp>,
+}
+
+impl ScheduledSound {
+    /// Resolve whether an air path crosses the listener's hull. An internal source reaching a
+    /// buttoned/open-hatch crewman traverses the compartment air, not exterior snow or cover.
+    /// Head-out and on-foot aperture transmission retain the existing exterior approximation.
+    fn receiver_path(&self, mut path: crate::sound_propagation::Path)
+        -> (crate::sound_propagation::Path, bool)
+    {
+        use crate::sound_propagation::{Enclosure, Ground};
+        let same_compartment = self.source_in_player
+            && matches!(path.enclosure, Enclosure::Buttoned | Enclosure::HatchOpen);
+        if same_compartment {
+            path.enclosure = Enclosure::OnFoot; // zero exterior insertion loss, not listener mode
+            path.occluded = false;
+            path.atmosphere.ground = Ground::Hard;
+        }
+        (path, same_compartment)
+    }
 }
 
 #[derive(Default)]
@@ -8249,15 +8269,21 @@ struct ScheduledAudioAudit {
     arrivals: u32,
     terminal_arrivals: u32,
     last_arrival: Option<(crate::audio::Sfx, f32)>,
+    events: std::collections::VecDeque<serde_json::Value>,
 }
 
 /// Preserve the same travel-time queue semantics in ordinary play and the terminal audio clock.
 fn take_arrived_sounds(queue: &mut Vec<ScheduledSound>, dt: f32) -> Vec<ScheduledSound> {
+    take_arrived_sounds_at(queue, dt, None)
+}
+fn take_arrived_sounds_at(queue:&mut Vec<ScheduledSound>,dt:f32,receiver:Option<(Vec3,f32)>)->Vec<ScheduledSound> {
     let mut arrived = Vec::new();
     if !dt.is_finite() || dt <= 0.0 { return arrived; }
     let mut i = 0;
     while i < queue.len() {
-        queue[i].delay -= dt;
+        if let (Some(wave),Some((ear,now)))=(queue[i].wave,receiver) {
+            queue[i].delay=queue[i].source.distance(ear)/wave.speed_m_s-(now-wave.emitted_at_s);
+        } else { queue[i].delay -= dt; }
         if queue[i].delay <= 0.0 { arrived.push(queue.swap_remove(i)); }
         else { i += 1; }
     }
@@ -8588,6 +8614,8 @@ pub struct Game {
     /// the campaign director; `None` everywhere else.
     compound: Option<CompoundMission>,
     wrecks: Vec<Wreck>, // per-enemy wreck state (parallel to `enemies`); inert until destroyed
+    track_snow: crate::track_snow::System,
+    track_snow_previous_model: Option<Mat4>,
     weapon_vfx: weapon_vfx::Effects,
     blasts: Vec<Blast>, // pooled fireball light envelopes (len == N_BLAST)
     sparks: Vec<Spark>, // pooled debris FX (len == N_DEBRIS)
@@ -8736,10 +8764,13 @@ pub struct Game {
     casing_pull: f32,              // 0..1 — LMB-held progress working the case out
     drive_cmd: f32,                // the GATED drive command this frame (engine-audio rev source)
     steer_cmd: f32,                // gated steering demand: steering also loads the Maybach/gearbox
+    running_gear_motion: crate::audio::RunningGearMotion,
     turret_audio_prev_yaw: f32,    // prior simulation pose for actual traverse-motor speed
+    gun_elevation_motion: crate::audio::GunElevationMotion,
     /// ENGINE SHUTOFF (Z — Zündung): the silent-watch / scout loop. Off = immobile, engine loop
     /// silent, detection envelope collapsed (see update_stealth). Restart is a crank + a LOUD beat.
     pub engine_on: bool,
+    pub player_powertrain: crate::powertrain::Powertrain,
     pub engine_crank_t: f32, // > 0: the starter is turning; engine catches when it hits 0
     start_noise_t: f32,      // post-start racket: temporarily widens the envelope
     prev_ignition: bool,
@@ -8926,6 +8957,7 @@ pub struct Game {
     pub modules: Vec<Module>,
     /// Running gear, cupola vision blocks, the driver's visor and spare stowage outside the armour.
     exterior: tiger_damage::Exterior,
+    last_exterior_strike: Option<serde_json::Value>,
     /// The rifle battalion's 45 mm anti-tank guns, when an encounter fields them.
     at_guns: [Option<at_guns::AtGun>; at_guns::AT_GUNS],
     /// The manifest revision's street layout for the winter encounter (`street_encounter` in its
@@ -9007,6 +9039,8 @@ pub struct Game {
     held_item: Option<usize>,
     // ── ABSITZEN stealth ──
     soldiers: Vec<Soldier>,
+    /// Soviet ownership boundary; Canyon allocates a larger garrison without changing other maps.
+    soviet_soldier_count: usize,
     mixed_combat: mixed_combat_runtime::MixedCombatRuntime,
     /// One exact, ray-visible fixed-capacity instance pool per authored Soviet pose. `None` means
     /// the complete set failed validation and every soldier uses the procedural body+rifle pair.
@@ -10385,14 +10419,14 @@ impl Game {
         // The breech lever + cover: animated pivot-origin parts in the GUN frame.
         let gunlever = scene.len();
         scene.push(
-            gunner_side_lever_mesh(crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_gunlever.glb")
+            crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_gunlever.glb")
                 .unwrap_or_else(|_| {
                     box_mesh(
                         Vec3::new(-0.02, 0.0, -0.02),
                         Vec3::new(0.02, 0.30, 0.02),
                         [96, 98, 92],
                     )
-                })),
+                }),
         );
         let breechcover = scene.len();
         scene.push(
@@ -10869,13 +10903,14 @@ impl Game {
             scene.push(box_mesh(Vec3::splat(-fixture.half_size_m),
                 Vec3::splat(fixture.half_size_m), fixture.srgb));
         }
-        // Chamber contents: green loaded, bright yellow empty, red spent.
-        let mut breech_lamp = [0usize; 3];
-        for (k, fixture) in crate::interior_rig::BREECH_FIXTURES.iter().enumerate() {
-            breech_lamp[k] = scene.len();
+        // Both physical lenses display the same authoritative breech state.
+        let breech_lamp = std::array::from_fn(|_| std::array::from_fn(|k| {
+            let fixture=crate::interior_rig::BREECH_FIXTURES[k];
+            let slot=scene.len();
             scene.push(box_mesh(Vec3::splat(-fixture.half_size_m),
-                Vec3::splat(fixture.half_size_m), fixture.srgb));
-        }
+                Vec3::splat(fixture.half_size_m),fixture.srgb));
+            slot
+        }));
 
         // Full textured crew bodies live before the legacy FX tail. Each of the five original
         // assignments owns one permanent face identity and both a seated and standing pose slot.
@@ -11158,16 +11193,12 @@ impl Game {
                     )
                 }),
         );
+        let ring_fragment = scene.len();
+        scene.push(equipment::ring_fragment_mesh());
         let toolbox = scene.len();
         scene.push(equipment::toolbox_mesh().clone());
-        // Separate shoes let the broken run visibly sag behind the tank and then articulate
-        // back across the road wheels as the player pulls.  These are intentionally plain steel:
-        // the ritual needs a readable moving silhouette more than another authored prop.
-        let repair_shoe_mesh = box_mesh(
-            Vec3::new(-0.30, -0.045, -0.065),
-            Vec3::new(0.30, 0.045, 0.065),
-            [56, 59, 57],
-        );
+        // Real shoe extracted from the same Tiger hull; no repair-only placeholder blocks.
+        let repair_shoe_mesh = crate::gltf_load::load_glb("assets/tanks/tiger/repair_link.glb")?;
         let track_repair_shoes = std::array::from_fn(|_| {
             let slot = scene.len();
             scene.push(repair_shoe_mesh.clone());
@@ -11180,11 +11211,7 @@ impl Game {
             [lower, lower + 1]
         });
         let track_replacement_link = scene.len();
-        scene.push(box_mesh(
-            Vec3::new(-0.32, -0.055, -0.075),
-            Vec3::new(0.32, 0.055, 0.075),
-            [94, 89, 72],
-        ));
+        scene.push(repair_shoe_mesh.clone());
         let extinguisher = scene.len();
         scene.push(load_extinguisher_mesh()?);
         let luger_flash = std::array::from_fn(|_| {
@@ -11217,9 +11244,12 @@ impl Game {
         // `run_fire_demo`'s `mesh_count()-13` invariant is untouched. These greatcoat-grey body +
         // rifle pairs are the complete fallback when any authored pose frame fails validation;
         // exact mode hides both and uses the shared moving pose pools.
+        let canyon_map = manifest.as_ref().and_then(|m| m.edits())
+            .is_some_and(|edits| edits.get("canyon_course").is_some());
+        let soviet_soldier_count = if canyon_map { CANYON_SOLDIERS } else { N_SOLDIERS };
         let soldier0 = scene.len();
         let soviet_body = soviet_infantry_mesh([78, 82, 70]);
-        for _ in 0..N_SOLDIERS {
+        for _ in 0..soviet_soldier_count {
             scene.push(soviet_body.clone());
             scene.push(box_mesh(
                 Vec3::new(-0.03, -0.03, -0.30),
@@ -11230,8 +11260,7 @@ impl Game {
         // The separate CC0 German body is never put into the Soviet animation pools.
         // Canyon is a lone Tiger against the authored Soviet defence. Omit both the
         // unrelated practice squad's source meshes and its later combat actors.
-        let canyon_map = manifest.as_ref().and_then(|m| m.edits())
-            .is_some_and(|edits| edits.get("canyon_course").is_some());
+
         let allied_infantry = if canyon_map { 0 } else { mixed_combat_runtime::GERMAN_COUNT };
         let german_body = mixed_combat_runtime::german_infantry_mesh();
         for _ in 0..allied_infantry {
@@ -11341,6 +11370,7 @@ impl Game {
             armor_scar,
             armor_patch,
             flame,
+            track_snow: [usize::MAX;2],
             weapon_vfx: [usize::MAX; weapon_vfx::PAGES],
             fire_flame_batch,
             fire_smoke_batch,
@@ -11403,6 +11433,7 @@ impl Game {
             panzerfaust_rack,
             panzerfaust_brackets,
             hammer,
+            ring_fragment,
             toolbox,
             track_repair_shoes,
             track_replacement_link,
@@ -11899,7 +11930,7 @@ impl Game {
         // NOT emissive: the bottle already got the sanctioned signal-red albedo remap at load.
         // The old own-emissive glow stacked on top of that made it the brightest
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
-        for s in breech_lamp {
+        for s in breech_lamp.into_iter().flatten() {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
         }
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
@@ -11935,7 +11966,7 @@ impl Game {
                 for mesh in &meshes {
                     let prototype = renderer.register_instanced_prototype(device, queue, mesh);
                     let Some(batch) =
-                        renderer.add_moving_instanced_pool(device, prototype, N_SOLDIERS)
+                        renderer.add_moving_instanced_pool(device, prototype, soviet_soldier_count)
                     else {
                         batches.clear();
                         break;
@@ -11947,7 +11978,7 @@ impl Game {
                         .try_into()
                         .expect("Soviet pose batch count checked above");
                     println!(
-                        "[panzerrechnersystem] Soviet infantry: exact 17-pose shared character active for {N_SOLDIERS} actors"
+                        "[panzerrechnersystem] Soviet infantry: exact 17-pose shared character active for {soviet_soldier_count} actors"
                     );
                     Some(batches)
                 } else {
@@ -12067,11 +12098,16 @@ impl Game {
         let flame_colors = FIRE_FLAME_COLORS;
         let flame_emissive = FIRE_FLAME_EMISSIVE;
         slots.fire_flame_batch = std::array::from_fn(|i| {
+            let prototype = if i < FIRE_FLAME_STAGES {
+                flame_parcel_mesh(flame_colors[i]) // already 6–8 mm cabin grains
+            } else {
+                fine_vfx::flame_mesh(flame_colors[i])
+            };
             let batch = renderer
                 .add_dynamic_instanced_pool(
                     device,
                     queue,
-                    &flame_parcel_mesh(flame_colors[i]),
+                    &prototype,
                     if i < FIRE_FLAME_STAGES {
                         MAX_INTERIOR_FLAME_CUBES
                     } else {
@@ -12081,6 +12117,8 @@ impl Game {
                 .expect("flame-parcel instance pool allocation");
             renderer.set_batch_flags(batch, 2.0);
             assert!(renderer.set_dynamic_instanced_emissive(batch, flame_emissive[i]));
+            renderer.set_fine_vfx_batch(batch, flame_colors[i], false, if i < FIRE_FLAME_STAGES {1} else {64});
+            assert!(renderer.set_fine_vfx_density(batch,8));
             batch
         });
         // Lift soot just above the near-black compartment so its independent silhouettes survive
@@ -12091,15 +12129,22 @@ impl Game {
                 .add_dynamic_instanced_pool(
                     device,
                     queue,
-                    &crate::prims::faceted_sphere_mesh(smoke_colors[i]).transformed(Mat4::from_scale(Vec3::splat(0.5))),
+                    &fine_vfx::smoke_mesh(smoke_colors[i]),
                     N_FIRE_SMOKE_CUBES,
                 )
                 .expect("voxel-soot instance pool allocation");
             renderer.set_batch_flags(batch, crate::renderer::BATCH_FLAG_SPARSE_CUBIC_SMOKE);
+            renderer.set_fine_vfx_batch(batch, smoke_colors[i], true, 64);
             batch
         });
 
         slots.weapon_vfx = weapon_vfx::allocate(device, queue, &mut renderer);
+        let snow_mesh=crate::track_snow::prototype();
+        let snow_prototype=renderer.register_instanced_prototype(device,queue,&snow_mesh);
+        slots.track_snow[0]=renderer.add_moving_instanced_pool(device,snow_prototype,
+            crate::track_snow::ATTACHED_CAPACITY).expect("retained track snow pool");
+        slots.track_snow[1]=renderer.add_dynamic_instanced_pool(device,queue,&snow_mesh,
+            crate::track_snow::LOOSE_CAPACITY).expect("loose track snow pool");
 
         // Extinguisher grains remain one-to-one physical states but render in only two pages.
         // Both airborne and deposited foam are matte material; neither emits light.
@@ -12425,6 +12470,12 @@ impl Game {
             (13.0, -15.0, 0.2, [(13.0, -15.0); 4]),
         ]);
         debug_assert_eq!(soldier_seeds.len(), N_SOLDIERS);
+        // Canyon will field these extra men at explicit garrison posts before the first frame.
+        // They use the same authored actor meshes, combat rules and persistent casualty state.
+        while soldier_seeds.len() < soviet_soldier_count {
+            let p = player.pos;
+            soldier_seeds.push((p.x, p.z, 0.0, [(p.x,p.z);4]));
+        }
         let mut soldiers: Vec<Soldier> = Vec::with_capacity(N_SOLDIERS);
         for (i, (x, z, yaw, route)) in soldier_seeds.iter().enumerate() {
             let body_slot = soldier0 + 2 * i;
@@ -12467,7 +12518,7 @@ impl Game {
             pickups.clear();
             for enemy in &mut enemies { enemy.alive = false; }
         }
-        let mut mixed_combat = mixed_combat_runtime::MixedCombatRuntime::new(&soldiers);
+        let mut mixed_combat = mixed_combat_runtime::MixedCombatRuntime::new_with_soviet_count(&soldiers, soviet_soldier_count);
         if isolated_population { mixed_combat.enabled = false; }
         for s in inf_flash {
             renderer.set_visible(s, false);
@@ -12526,6 +12577,8 @@ impl Game {
                 .and_then(|manifest| manifest.value().pointer("/authoring/mode"))
                 .and_then(serde_json::Value::as_str)),
             compound: None,
+            track_snow: crate::track_snow::System::load()?,
+            track_snow_previous_model: None,
             weapon_vfx: weapon_vfx::Effects::default(),
             blasts: vec![Blast::default(); N_BLAST],
             sparks: vec![Spark::default(); N_DEBRIS],
@@ -12638,7 +12691,9 @@ impl Game {
             casing_pull: 0.0,
             drive_cmd: 0.0,
             steer_cmd: 0.0,
+            running_gear_motion: crate::audio::RunningGearMotion::default(),
             turret_audio_prev_yaw: 0.0,
+            gun_elevation_motion: crate::audio::GunElevationMotion::default(),
             ext_equipped: false,
             compass_equipped: false,
             compass_raise: 0.0,
@@ -12647,6 +12702,7 @@ impl Game {
             cupola_pistol: cupola_pistol::CupolaPistol::default(),
             primary_pickup_press: false,
             engine_on: true,
+            player_powertrain: crate::powertrain::Powertrain::default(),
             engine_crank_t: 0.0,
             start_noise_t: 0.0,
             prev_ignition: false,
@@ -12754,6 +12810,7 @@ impl Game {
             couch_binocular_raise: 0.0,
             modules: default_modules(),
             exterior: tiger_damage::Exterior::default(),
+            last_exterior_strike: None,
             at_guns: [None; at_guns::AT_GUNS],
             street_plan: manifest.as_ref().and_then(|m| m.street_plan().cloned()),
             canyon_spec: manifest.as_ref().and_then(|m| crate::canyon::from_edits(m.edits())
@@ -12819,6 +12876,7 @@ impl Game {
             pickups,
             held_item: None,
             soldiers,
+            soviet_soldier_count,
             mixed_combat,
             soviet_pose_batches,
             german_pose_batches,
@@ -13049,6 +13107,7 @@ impl Game {
             let d = first_search - start.spawn;
             d.x.atan2(d.y)
         };
+        self.player_powertrain = crate::powertrain::Powertrain::default();
         self.player = Tank::new(
             start.spawn.x,
             start.spawn.y,
@@ -14697,8 +14756,9 @@ impl Game {
                 if resolved.distance_squared(requested) > 1.0e-5 {
                     ally.tank.speed = 0.0;
                 }
-                ally.tank.pos.y = act2_bridge_deck_height(&self.hf, resolved)
-                    .unwrap_or_else(|| self.hf.height_at(resolved.x, resolved.y));
+                crate::vehicle_ground::settle(&mut ally.tank, |x,z|
+                    act2_bridge_deck_height(&self.hf, Vec2::new(x,z))
+                        .unwrap_or_else(|| self.hf.vehicle_height_at(x,z)));
             }
 
             if let Some((target_index, target_pos)) = target {
@@ -14959,6 +15019,24 @@ impl Game {
         self.defer_rtt_to_render = defer;
     }
 
+    /// Physical driver-seat transmission controls. Selection does not start or repair the engine.
+    pub fn driver_shift_gear(&mut self, delta:i8) -> bool {
+        if self.mode != Mode::Tank || self.station != Station::Driver || !self.player.alive
+            || self.switch_t>0.0 || self.activity.is_some() {return false;}
+        self.player_powertrain.shift_manual(delta)
+    }
+
+    pub fn driver_automatic_gears(&mut self) -> bool {
+        if self.mode != Mode::Tank || self.station != Station::Driver || !self.player.alive
+            || self.switch_t>0.0 || self.activity.is_some() {return false;}
+        self.player_powertrain.select_automatic();
+        true
+    }
+
+    pub fn driver_transmission_status(&self) -> (bool,i8,f32) {
+        (self.player_powertrain.automatic,self.player_powertrain.gear,self.player_powertrain.rpm)
+    }
+
     /// Refresh the real driver's eyepiece for the frozen title, without advancing the simulation
     /// or changing the seat/mode that will be restored on resume. Two picks cover a stale-ring tick.
     pub fn refresh_driver_title_optic(&mut self, r: &mut Renderer) {
@@ -15023,7 +15101,7 @@ impl Game {
             && self.player.alive
             && self.module_ok(ModuleKind::Engine)
         {
-            self.driver_controls.request();
+            self.driver_controls.animate();
             if self.engine_on {
                 self.engine_on = false;
                 self.engine_crank_t = 0.0;
@@ -15058,22 +15136,21 @@ impl Game {
             // every one of them (inside / periscope / cupola / sights); the gun is laid and fired
             // only through the SIGHTS; the INSIDE view is where the hands-on work happens (the
             // mouse reload below, extinguisher, repair, the map). Crew man-down rules return later.
-            let mobile = self.engine_on
+            let track_traction = tank::TrackTraction {
+                left: self.module_ok(ModuleKind::LeftTrack),
+                right: self.module_ok(ModuleKind::RightTrack),
+            };
+            let drivetrain_available = self.engine_on
                 && self.module_ok(ModuleKind::Engine)
-                && self.module_ok(ModuleKind::Transmission)
-                && self.module_ok(ModuleKind::LeftTrack)
-                && self.module_ok(ModuleKind::RightTrack);
+                && self.module_ok(ModuleKind::Transmission);
             // INSIDE (Loader) you are ON YOUR FEET: WASD walks the body around the fighting
             // compartment instead of driving the tank (you can't drive from the loader's boots).
             let afoot_inside = at(Station::Loader);
             let drive_cmd = driver_input.map_or(if coop.is_none() { input.drive } else { 0.0 }, |i| i.drive);
             let steer_cmd = driver_input.map_or(if coop.is_none() { input.steer } else { 0.0 }, |i| i.steer);
-            let (drive, steer) =
-                if mobile && (coop.is_some() || (acting.is_some() && !afoot_inside)) {
-                    (drive_cmd, steer_cmd)
-                } else {
-                    (0.0, 0.0)
-                };
+            // Track loss removes ground traction inside Powertrain, not the operator's shaft command.
+            let (drive, steer) = tank::TrackTraction::INTACT.gate_commands(drivetrain_available,
+                coop.is_some() || (acting.is_some() && !afoot_inside), drive_cmd, steer_cmd);
             // The engine-audio rev reads THIS (gated) command, not the raw key — holding W while
             // walking the interior must not roar the engine (it read as "driving from inside").
             self.drive_cmd = drive;
@@ -15160,11 +15237,19 @@ impl Game {
             let previous_tank_pos = self.player.pos;
             let previous_pose = self.player_pose();
             // Holed road wheels and broken arms: slower, and dragging toward the worse side.
-            let drive = drive * self.exterior.speed_factor();
+            let running_gear_factor = self.exterior.speed_factor();
             let steer = steer + self.exterior.steer_pull()
                 * (self.player.speed / tank::TOP_SPEED).clamp(-1.0, 1.0);
-            self.player
-                .update(drive, steer, traverse, elevate, dt, &self.hf);
+            let powertrain_controls = crate::powertrain::Controls {
+                drive, steer,
+                engine_running: self.engine_on && self.module_ok(ModuleKind::Engine),
+                transmission_ok: self.module_ok(ModuleKind::Transmission),
+                left_track: track_traction.left, right_track: track_traction.right,
+                running_gear_factor,
+                parking_brake: !(coop.is_some() || (acting.is_some() && !afoot_inside)),
+            };
+            self.player.update_player_powertrain(&mut self.player_powertrain, powertrain_controls,
+                traverse, elevate, dt, &self.hf);
             // The hull's height is its supports' business (`settle_player_tank`, below), not the
             // terrain's alone.
             self.player.pos.y = previous_tank_pos.y;
@@ -15296,6 +15381,24 @@ impl Game {
             },
         );
 
+    }
+
+    /// Live wall-clock catch-up: consume all elapsed time in stable steps. Mouse deltas are
+    /// apportioned; held controls retain their internal rising-edge detection. Offline captures
+    /// keep the explicit simulation-step API below.
+    pub fn update_realtime(&mut self,input:&TankInput,dt:f32,r:&mut Renderer) {
+        if !dt.is_finite() || dt<=0.0 {return;}
+        let count=(dt/0.05).ceil().max(1.0) as u32;
+        let step=dt/count as f32;
+        let mut partition=*input;
+        partition.look_dx/=count as f32;partition.look_dy/=count as f32;
+        if let Some(crew)=partition.coop.as_mut() {for role in &mut crew.inputs {
+            role.look_dx/=count as f32;role.look_dy/=count as f32;
+        }}
+        for _ in 0..count {
+            if self.game_over().is_some() {break;}
+            self.update(&partition,step,r);
+        }
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
@@ -15554,7 +15657,18 @@ impl Game {
             } else {
                 let previous_tank_pos = self.player.pos;
                 let previous_pose = self.player_pose();
-                self.player.update(0.0, 0.0, 0.0, 0.0, dt, &self.hf);
+                let track_traction = tank::TrackTraction {
+                    left: self.module_ok(ModuleKind::LeftTrack),
+                    right: self.module_ok(ModuleKind::RightTrack),
+                };
+                let powertrain_controls = crate::powertrain::Controls {
+                    drive:0.0,steer:0.0,engine_running:self.engine_on && self.module_ok(ModuleKind::Engine),
+                    transmission_ok:self.module_ok(ModuleKind::Transmission),
+                    left_track:track_traction.left,right_track:track_traction.right,
+                    running_gear_factor:self.exterior.speed_factor(),parking_brake:true,
+                };
+                self.player.update_player_powertrain(&mut self.player_powertrain,powertrain_controls,
+                    0.0,0.0,dt,&self.hf);
                 self.drive_cmd = 0.0;
                 self.steer_cmd = 0.0;
                 self.constrain_act2_player_tank(previous_tank_pos);
@@ -16339,6 +16453,9 @@ impl Game {
         } else {
             0.0
         };
+        let elevation_rate = self.gun_elevation_motion.sample(self.player.gun_pitch, dt, self.player.alive);
+        let running_gear = self.running_gear_motion.sample(self.player.hull_model(), dt,
+            |x,z|self.hf.vehicle_height_at(x,z));
         if let Some(a) = &self.audio {
             let shelter = if buttoned_up {
                 tank_weather_shelter(self.station, false, self.hatch_open)
@@ -16352,60 +16469,28 @@ impl Game {
             let weather_ear = crate::sound_propagation::weather_ear_dba(wind.length(),
                 self.listener_enclosure(), self.listener_headset()) - 15.0 * building;
             a.set_weather_at_ear(r.storm, shelter, wind.length(), weather_ear);
-            // Drivetrain voice: keep road speed, throttle and torque demand separate. A Tiger
-            // pulling away in first should sound heavily loaded even while barely moving; a fast
-            // coast should keep its road/rev character without the old permanent full-volume roar.
-            // Opposing command (braking or changing direction) loads the transmission too.
-            let speed_frac = (self.player.speed / tank::TOP_SPEED).clamp(-1.0, 1.0);
-            let drive_throttle = if self.player.alive && matches!(self.mode, Mode::Tank) {
-                self.drive_cmd.abs().min(1.0)
-            } else {
-                0.0
+            // One authoritative gearbox/engine state supplies both motion and sound. Collision
+            // and terrain constraints may alter chassis speed after the drivetrain integration.
+            let telemetry = crate::audio::EngineTelemetry {
+                speed_norm:(self.player.speed/tank::TOP_SPEED).clamp(-1.0,1.0),
+                throttle:self.player_powertrain.throttle,
+                load:self.player_powertrain.load,
+                gear:self.player_powertrain.gear,
+                rpm_norm:self.player_powertrain.rpm_normalized(),
+                running:self.engine_on && self.player.alive && self.module_ok(ModuleKind::Engine),
             };
-            let steer_demand = if self.player.alive && matches!(self.mode, Mode::Tank) {
-                self.steer_cmd.abs().min(1.0)
-            } else {
-                0.0
-            };
-            // Steering works the gearbox and both tracks even when road speed is near zero. Feed
-            // that demand into the same engine voice so a 57-ton pivot cannot rotate at idle-load.
-            let throttle = (drive_throttle + 0.70 * steer_demand).clamp(0.0, 1.0);
-            let changing_direction = drive_throttle > 0.04
-                && speed_frac.abs() > 0.025
-                && self.drive_cmd.signum() != speed_frac.signum();
-            let launch_load = drive_throttle * (1.0 - 0.58 * speed_frac.abs());
-            let steering_load = steer_demand * (0.44 + 0.38 * (1.0 - speed_frac.abs()));
-            let load = (launch_load + steering_load + if changing_direction { 0.28 } else { 0.0 })
-                .clamp(0.0, 1.0);
-            // At the first stationary frame of a reverse launch there is no signed road velocity
-            // yet. Preserve the driver's requested direction for gear selection so the audio does
-            // not briefly announce first-forward before the tracks begin moving backward.
-            let gearbox_speed = if speed_frac.abs() < 0.005 && self.drive_cmd < -0.04 {
-                -0.006
-            } else {
-                speed_frac
-            };
-            let mut telemetry = crate::audio::EngineTelemetry::automatic(
-                gearbox_speed,
-                throttle,
-                load,
-                self.engine_on && self.player.alive && self.module_ok(ModuleKind::Engine),
-            );
-            if speed_frac.abs() < 0.012 && drive_throttle < 0.04 && steer_demand > 0.04 {
-                // A pivot has no forward/reverse road gear to announce, but it still needs revs and
-                // torque. Keep the voice in neutral while loading it from the steering mechanism.
-                telemetry.gear = 0;
-                telemetry.rpm_norm = (0.20 + 0.58 * steer_demand + 0.12 * load).clamp(0.0, 1.0);
-            }
             // Engine OFF = true silence (not idle); the loop also dies with the tank. A parked
             // Tiger left RUNNING keeps idling while you scout on foot — that's your choice.
             // The Maybach and tracks at their true level at the ear (SL §7), no cap.
             let engine_ear = self.own_engine_ear_laf(telemetry, r.camera.pos);
             self.engine_ear_laf_dba = engine_ear;
             a.set_engine_at_ear(telemetry, engine_ear, dt);
+            a.set_running_gear(running_gear, engine_ear, self.player.alive);
+            a.set_loose_track_voices(&self.loose_track_voices(r.camera.pos,r.camera.forward()),dt);
             // Other tanks' engines and tracks, propagated like every other source.
             let vehicles = self.enemy_vehicle_voices(r.camera.pos, r.camera.forward());
             a.set_vehicle_voices(&vehicles, dt);
+            a.set_gun_elevation_voice(self.gun_elevation_voice(r.camera.pos, r.camera.forward(), elevation_rate), dt);
             a.set_fire_voices(&self.burning_fire_voices(r.camera.pos, r.camera.forward()), dt);
             a.set_starter(self.engine_crank_t > 0.0 && self.player.alive);
             a.set_traverse_jam(self.traverse_jam_active && self.player.alive);
@@ -16414,13 +16499,7 @@ impl Game {
             if !matches!(self.mode, Mode::Tank) {
                 a.update_mg_trigger(false, false, false);
             }
-            let (mg_interior, mg_ear_laf) = self.own_mg_ear_laf();
-            a.set_mg_at_ear(
-                matches!(self.mode, Mode::Tank) && self.mg_hot,
-                mg_interior,
-                mg_ear_laf,
-                dt,
-            );
+            a.set_mg_at_ear(false, buttoned_up, 0.0, dt); // reports follow individual live rounds
             a.set_turret_traverse(
                 if self.engine_on { turret_rate } else { 0.0 },
                 buttoned_up,
@@ -16429,8 +16508,6 @@ impl Game {
             // Bend the outgoing shell shriek's pitch down + fade it over the round's flight.
             a.update_shell_shriek(dt);
         }
-
-        self.drain_scheduled_audio(dt, r, r.time);
 
         // Random booms on the horizon with no simulated source. Removed pending simulated off-map
         // indirect fire; kept only behind a debug-only gate, off in both presets.
@@ -16465,6 +16542,8 @@ impl Game {
         // how the vector projects on screen; it can never flip the storm with the viewpoint.
         r.set_weather_wind(wind_at(self.act.id, r.camera.pos) * self.weather_wind_scale);
 
+        r.set_cabin_medium_pose(self.player.hull_model(), self.player.turret_model());
+
         // Windowed solo/LAN and local four-seat play defer the rolling periscope render until the
         // render graph, where its exterior scene can populate the same shadow map as the main view.
         // Headless tools keep automatic update-time behavior unless they explicitly opt in.
@@ -16490,7 +16569,8 @@ impl Game {
             if matches!(self.mode, Mode::Tank) && std::env::var("KESSEL_NO_ATMO").is_err() {
                 // Anchor the dust to the hull so motes hang still relative to the crew, not the world.
                 let hull_o = self.player.hull_model().transform_point3(Vec3::ZERO);
-                r.set_interior_atmosphere(0.12 + self.interior_haze * 0.78, 0.12, hull_o);
+                // Low background dust; firing/fire accumulation retains its separate strength.
+                r.set_interior_atmosphere(0.025 + self.interior_haze * 0.78, 0.035, hull_o);
                 r.set_interior_atmosphere_enabled(view_inside);
             } else {
                 r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
@@ -16729,6 +16809,7 @@ impl Game {
         self.update_panzerfaust_shot(dt, r);
         self.drive_panzerfaust_rack(r);
         self.update_fx(dt, r);
+        self.update_track_snow(dt,r);
         self.update_scene_environment(r);
         self.drive_lights(r);
         self.drive_interior_parts(r);
@@ -16792,6 +16873,10 @@ impl Game {
         r.crew_ko_dir = self
             .force_crew_ko_dir
             .unwrap_or_else(|| project_screen_dir(self.crew_ko_world_dir, &r.camera));
+
+        // Resolve arrivals after this tick's projectile contacts have emitted their sounds.
+        // Draining before flight added an avoidable extra simulation tick to close impacts.
+        self.drain_scheduled_audio(dt, r, r.time);
 
         // The ears (hearing.rs), last in the frame: every shot, hit, burst and passing round of
         // this frame has been handed to them, and each reaches them where its voice starts to
@@ -17140,12 +17225,12 @@ impl Game {
             } else {
                 self.slots.lan_crew[identity_index]
             };
-            r.set_model(slot, crew_live_model(&self.player, body.casualty.role));
+            r.set_model(slot, self.singleplayer_rig_model(body.casualty));
             r.set_visible(slot, true);
             let helmet_slot = self.slots.crew_helmet[identity_index];
             r.set_model(
                 helmet_slot,
-                crew_live_model(&self.player, body.casualty.role)
+                self.singleplayer_rig_model(body.casualty)
                     * crew_helmet_live_pose(body.casualty.role),
             );
             r.set_visible(helmet_slot, true);
@@ -17413,7 +17498,7 @@ impl Game {
                     self.ram += stroke;
                     if self.ram >= 1.0 {
                         self.ram = 0.0;
-                        self.transfer_cartridge_state(next_slot as u32, 0x1_0000);
+                        self.transfer_cartridge_state(crate::interior_rig::shell_source_id(next_slot), 0x1_0000);
                         self.breech = Breech::Loaded;
                         self.lever_open = 0.0; // …and slams the breech shut
                         self.slot_taken[next_slot] = true; // the auto-crew takes from the rack too
@@ -17715,23 +17800,10 @@ impl Game {
                 radiant_intensity: 8.0 * pulse,
             });
         }
-        // The pressure flash also leaks around the rear of the breech for a few frames. A tight
-        // radius lets it catch the lever, smoke grains and nearby faces without grading the whole
-        // compartment orange.
-        if let Some(age) = self.player.shot_age().filter(|age| transients && *age < 0.065) {
-            let pos = self
-                .player
-                .visual_gun_model()
-                .transform_point3(Vec3::new(0.0, 0.08, -1.06));
-            let intensity = 2.2 * (-age / 0.028).exp();
-            lights.push(PointLight {
-                pos,
-                source_radius: 0.06,
-                color: Vec3::new(1.0, 0.48, 0.16),
-                radiant_intensity: intensity,
-            });
-        }
-        // update_fx built these four bounded sources from the exact visible fire cells before
+        // Firing a closed breech does not create a cabin light. The muzzle is the modeled
+        // discharge emitter; armor and the real openings determine whether its light enters.
+        // Propellant gas released when the breech opens remains a separate local medium.
+        // update_fx built these eight bounded sources from the exact visible fire cells before
         // this light pass. Their emitted area/radiance owns the power; no separate fire wash.
         lights.extend(self.interior_fire_lights.iter().flatten().copied());
         // Incandescent penetration chips are real emitters. Until the path integrator can sample
@@ -17836,24 +17908,26 @@ impl Game {
                 if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
             }
 
-            // Three colour alternatives occupy one physical lens; only the live state exists.
+            // One emitting lens on each side, with matching visible emission and shadowed
+            // inverse-square transport. No camera fill or unshadowed interior light.
             let state = self.breech_lamp_state();
-            let model = self.player.visual_gun_model() * Mat4::from_translation(BREECH_LAMP_POS);
-            for (k, &slot) in self.slots.breech_lamp.iter().enumerate() {
-                if k == state {
-                    let lamp = Self::drive_finite_lamp(r, slot, model,
-                        rig::BREECH_FIXTURES[k].sample(practical_gain));
-                    lights.push(lamp);
-                    shadowed_cabin_lights.push(lamp);
-                    emitting_meshes.push(Some(slot));
-                } else {
-                    r.set_visible(slot, false);
-                    r.set_emissive(slot, 0.0);
+            for (side, lamps) in self.slots.breech_lamp.iter().enumerate() {
+                let model=self.player.visual_gun_model()*Mat4::from_translation(BREECH_LAMP_POSITIONS[side]);
+                for (k,&slot) in lamps.iter().enumerate() {
+                    if k==state {
+                        let lamp=Self::drive_finite_lamp(r,slot,model,
+                            rig::BREECH_FIXTURES[k].sample(practical_gain));
+                        lights.push(lamp); shadowed_cabin_lights.push(lamp);
+                        emitting_meshes.push(Some(slot));
+                    } else {
+                        r.set_visible(slot,false);r.set_emissive(slot,0.0);
+                    }
                 }
             }
             r.set_shadowed_cabin_lights(&shadowed_cabin_lights, &emitting_meshes);
         }
         r.set_shadowed_world_fire_lights(&self.world_fire_lights.iter().flatten().copied().collect::<Vec<_>>());
+        r.set_shadowed_interior_fire_lights(&self.interior_fire_lights);
         lights.extend(self.tank_editor_lights(r));
         let torch = self.drive_hand_torch(r);
         if let Some(light) = torch { lights.push(light); }
@@ -17886,6 +17960,35 @@ impl Game {
 
     /// Interior-haze tuning (user's accumulator + fan model). A shot puffs a little; the BREECH
     /// OPEN on reload puffs more; the fan + an open hatch drain it.
+    fn update_track_snow(&mut self,dt:f32,r:&mut Renderer) {
+        let model=self.player.hull_model();
+        let old=self.track_snow_previous_model.replace(model).unwrap_or(model);
+        let forward=model.transform_vector3(Vec3::Z).normalize_or_zero();
+        let belt=std::array::from_fn(|i| {
+            let point=Vec3::X*if i==0 {crate::tank_support::TIGER_TRACK_X}else{-crate::tank_support::TIGER_TRACK_X};
+            let functional=self.module_ok(if i==0 {ModuleKind::LeftTrack}else{ModuleKind::RightTrack});
+            if dt>0.0 && functional {(model.transform_point3(point)-old.transform_point3(point)).dot(forward)/dt}else{0.0}
+        });
+        let models=self.fire_surface_models();let cabin=&self.cabin_fire;
+        let hf=&self.hf;let covers=&self.occluders;
+        let wind=r.weather_wind_world;
+        self.track_snow.update(dt,model,belt,self.act.season==crate::world::Season::Winter,
+            r.precipitation,wind,|x,z|hf.height_at(x,z),|from,to| {
+                let delta=to-from;let length=delta.length();
+                if length<1e-5 {return false;}
+                if covers.iter().any(|o|ray_aabb(from,delta/length,o.min,o.max,length).is_some_and(|t|t<length-0.006)) {return false;}
+                cabin.sweep(from,to,&models).is_none_or(|hit|
+                    models[hit.frame].transform_point3(hit.point).distance(to)<0.006)
+            });
+        self.refresh_track_snow_render(r);
+    }
+    pub(crate) fn refresh_track_snow_render(&mut self,r:&mut Renderer) {
+        let (attached,loose)=self.track_snow.draw(&r.camera,r.ih);
+        assert!(r.set_moving_instanced_mats(self.slots.track_snow[0],&attached));
+        assert!(r.set_dynamic_instanced_mats(self.slots.track_snow[1],&loose));
+    }
+    pub fn capture_track_snow_receipt(&self)->serde_json::Value {self.track_snow.receipt()}
+
     fn update_haze(&mut self, dt: f32) {
         const FAN_DRAIN: f32 = 0.030; // /s — fumes accumulate across a fast engagement
         const HATCH_VENT: f32 = 0.40; // /s — extra draft while the hatch is open
@@ -17894,7 +17997,7 @@ impl Game {
         // no permanent furnace overlay: suppressing the sources leaves the fan/hatch to clear it.
         let (_, _, enclosure_heat) = self.cabin_fire.enclosure_diagnostics(&self.fire_surface_models());
         self.interior_haze = (self.interior_haze
-            + (enclosure_heat * 0.38 - drain) * dt.min(0.05)).clamp(0.0, 1.0);
+            + (enclosure_heat * 0.38 - drain) * dt).clamp(0.0, 1.0);
     }
 
     fn fire_surface_models(&self) -> [Mat4; surface_fire::FRAMES] {
@@ -17910,6 +18013,8 @@ impl Game {
 
     fn update_fire(&mut self, dt: f32) {
         let models = self.fire_surface_models();
+        let was_combusting=(0..surface_fire::MAX_PATCHES).any(|i|
+            self.cabin_fire.patch_world(i,&models).is_some_and(|(_,power)|power>0.02));
         let rounds = self.live_ammunition_in_frame(BloodFrame::Hull);
         let live_ids: Vec<u32> = rounds.iter().map(|round| round.stable_id).collect();
         if live_ids != self.fire_ammo_ids {
@@ -17942,6 +18047,14 @@ impl Game {
         self.fire_t += dt;
         self.fire = state.strength;
         self.fire_active = state.active;
+        // A real newly burning surface owns the catch sound. Never replay it on each update,
+        // or duplicate the ignition already present in a catastrophic destruction voice.
+        if !was_combusting && self.player.alive {
+            if let Some((source,_))=(0..surface_fire::MAX_PATCHES)
+                .filter_map(|i|self.cabin_fire.patch_world(i,&models)).find(|(_,power)|*power>0.02) {
+                self.hear_fuel_ignition(source,(self.fire_t*1000.0) as u32 ^ 0x1a17_10a0);
+            }
+        }
         let exposed = state.hottest_ammunition.and_then(|i| rounds.get(i)).map(|round| round.stable_id);
         let was_burning = self.ammo_fire.burning_round();
         let detonate = self.ammo_fire.advance(dt, &live_ids, exposed, state.ammo_heat);
@@ -18450,6 +18563,7 @@ impl Game {
                 self.pending_hulk =
                     Some((k, hulk.hull_model(), hulk.turret_model(), hulk.gun_model()));
                 self.abandoned_collision[k].set_pose([hulk.hull_model(), hulk.turret_model()]);
+                self.player_powertrain = crate::powertrain::Powertrain::default();
                 self.player = Tank::new(pos.x, pos.z, heading, &self.hf, tank::TIGER_PARTS);
                 let era = self.act.panzerfaust_in_service();
                 self.panzerfaust_rack_count = if era { PANZERFAUST_RACK as u8 } else { 0 };
@@ -18459,6 +18573,7 @@ impl Game {
                 self.modules = default_modules();
                 // A fresh spare Tiger: its own wheels, blocks and links, not the wreck's.
                 self.exterior = tiger_damage::Exterior::default();
+        self.last_exterior_strike = None;
                 self.fire = 0.0;
                 self.fire_active = false;
                 self.ammo_fire.reset();
@@ -18607,11 +18722,12 @@ impl Game {
         }
     }
 
-    fn finish_hatch_entry(&mut self, index: usize, r: &mut Renderer) {
+    fn finish_hatch_entry(&mut self, index: usize, station: Station, r: &mut Renderer) {
         self.last_access_hatch = index;
         self.climb = Climb { end: ClimbEnd::IntoTank, ..Climb::default() };
         self.finish_climb();
-        self.station = Self::access_hatch_station(index);
+        self.station = station;
+        self.finish_hatch_passage_view();
         self.commander_outside = false;
         self.driver_hatch = false;
         self.foot.airborne = false;
@@ -18624,21 +18740,18 @@ impl Game {
         self.consume_primary_press();
     }
 
-    fn accepted_roof_entry(&self, previous: Vec3, current: Vec3) -> Option<usize> {
-        if !self.player.alive || self.player.speed.abs() >= 0.6 { return None; }
-        [0, 1, 2, 4].into_iter().find(|&index| {
-            if !self.hatch_entry_post_available(index) { return false; }
-            let inverse = self.access_hatch_frame(index).inverse();
-            let before = inverse.transform_point3(previous);
-            let after = inverse.transform_point3(current);
-            if index == 4 {
-                crate::foot::cupola_entry_crossing(before, after,
-                    tiger_periscopes::COMMANDER_EYE, self.access_hatch_open(index))
-            } else {
-                crate::foot::hatch_entry_crossing(before, after,
-                    tiger_hatches::APERTURE_CENTERS[index], tiger_hatches::APERTURE_NORMALS[index],
-                    tiger_hatches::APERTURE_RADII[index], self.access_hatch_open(index))
-            }
+    fn accepted_roof_entry(&self, current: Vec3) -> Option<(usize, Station)> {
+        if !self.player.alive { return None; }
+        let models = self.fire_surface_models();
+        let contacts = self.cabin_fire.source_contacts(&models);
+        [0, 1, 2, 4].into_iter().find_map(|index| {
+            let station = self.natural_hatch_station(index)?;
+            let normal = self.access_hatch_frame(index).transform_vector3(Vec3::Y).normalize();
+            crate::foot::open_roof_entry(current, self.access_hatch_center(index), normal,
+                if index < 4 { tiger_hatches::APERTURE_RADII[index] } else { 0.25 },
+                self.access_hatch_open(index), |from, to|
+                    contacts.sweep_batch(&[[from, to]])[0].is_some())
+                .then_some((index, station))
         })
     }
 
@@ -18703,7 +18816,9 @@ impl Game {
             r.set_hovered_meshes(&slots);
             return;
         }
-        if let Some(index) = self.hover_roof_hatch {
+        if self.outline_physical_repair(r.camera.pos, r.camera.forward(), &mut slots) {
+            // Only the specific serviceable part; surface cue covers points within larger meshes.
+        } else if let Some(index) = self.hover_roof_hatch {
             slots.push(if index < 4 { self.slots.roof_hatches[index] } else { self.slots.hatch });
             if index == 0 { slots.push(self.slots.driver_roof_eyepiece); }
             if index == 2 { slots.push(self.slots.radio_roof_eyepiece); }
@@ -18735,6 +18850,8 @@ impl Game {
                     _ => {},
                 }
             }
+        } else if self.outline_track_repair(r.camera.pos, r.camera.forward(), &mut slots) {
+            // Same exposed link/pin target as input. The outline is depth-tested UI, no emission.
         } else if self.hover == Some(Hotspot::RepairKit) {
             slots.push(self.slots.toolbox);
         } else if let Some(index) = self.portable_item_hover(r.camera.forward(), r.camera.pos) {
@@ -19088,19 +19205,7 @@ impl Game {
         let pulling_at_run = self.carrying_track_kit
             && self.track_repair_phase == TrackRepairPhase::PullEnd
             && input.fire2
-            && [
-                (ModuleKind::LeftTrack, 1.55),
-                (ModuleKind::RightTrack, -1.55),
-            ]
-            .into_iter()
-            .any(|(kind, side)| {
-                !self.module_ok(kind)
-                    && self.foot_pos().distance(
-                        self.player
-                            .hull_model()
-                            .transform_point3(Vec3::new(side, 0.9, -0.4)),
-                    ) < 2.4
-            });
+            && self.track_repair_target(r.camera.pos, r.camera.forward()).is_some();
         // On foot the tank drive/steer are reinterpreted: drive→forward, −steer→strafe (steer is
         // A−D, so strafe-right = D−A = −steer). No second input struct needed.
         let previous_foot_pos = self.foot.pos;
@@ -19196,8 +19301,8 @@ impl Game {
         for collider in &self.abandoned_collision {
             self.foot.pos = collider.resolve_walk(previous_foot_pos, self.foot.pos);
         }
-        if let Some(index) = self.accepted_roof_entry(previous_foot_pos, self.foot.pos) {
-            self.finish_hatch_entry(index, r);
+        if let Some((index, station)) = self.accepted_roof_entry(self.foot.pos) {
+            self.finish_hatch_entry(index, station, r);
             return;
         }
 
@@ -19517,23 +19622,16 @@ impl Game {
         // Progress survives retreating from the exposed flank. LMB belongs to the ritual anywhere
         // near the break, so an accidental Luger round can never skip or contaminate a phase.
         const HAMMER_BLOWS: u8 = 4;
-        let broken_track = if !self.module_ok(ModuleKind::LeftTrack) {
-            Some((ModuleKind::LeftTrack, 1.55_f32))
-        } else if !self.module_ok(ModuleKind::RightTrack) {
-            Some((ModuleKind::RightTrack, -1.55_f32))
-        } else {
-            None
-        };
+        let broken_track = self.broken_repair_track();
+        let target_track = self.track_repair_target(r.camera.pos, r.camera.forward());
         let mut at_break = false;
         let servicing_weapon = self.foot.reload_t > 0.0 || self.foot.panzerfaust_swap_t > 0.0;
+        if target_track.is_some() && !self.carrying_track_kit {
+            self.hover_label = Some("BROKEN TRACK - TAKE REPAIR KIT FROM THE TANK");
+        }
         if self.carrying_track_kit && !servicing_weapon {
-            if let Some((kind, side)) = broken_track {
-                let anchor = self
-                    .player
-                    .hull_model()
-                    .transform_point3(Vec3::new(side + side.signum() * 0.38, 0.9, -0.4));
-                if equipment::repair_in_reach(r.camera.pos, r.camera.forward(), anchor, 0.36)
-                    && self.equipment_path_clear(r.camera.pos, anchor, 0.32) {
+            if let Some((kind, _side)) = broken_track {
+                if target_track == Some(kind) {
                     at_break = true;
                     match self.track_repair_phase {
                         TrackRepairPhase::GrabEnd => {
@@ -19980,16 +20078,15 @@ impl Game {
             }
         }
 
-        let player_eye = self.foot.eye();
         let moving = input.drive.abs() > 0.01 || input.steer.abs() > 0.01;
         // Use resolved movement speed so hearing follows the actual walking/sprinting stance,
         // including crouch/headroom constraints, instead of the requested modifier alone.
         let running = self.foot.speed_frac > 0.65 && !input.crouch;
-        let prof = self.foot.profile(moving, running);
+        let prof = if self.mode==Mode::Foot {self.foot.profile(moving,running)} else {(1.0,0.0)};
         self.reanchor_infantry_escorts(dt);
 
         // Step every soldier. Collect shots + alarm cascades, resolving after the borrow ends.
-        let n = self.soldiers.len().min(N_SOLDIERS);
+        let n = self.soldiers.len().min(self.soviet_soldier_count);
         self.campaign_foot_dagger_tick = self.campaign_foot_dagger_tick.wrapping_add(1);
         // Ten Soviet samples per second across the whole squad, round-robin. Sampling all 24 at
         // 60 Hz would create multi-gigabyte JSONL without adding useful adjacent-frame diversity.
@@ -20005,6 +20102,11 @@ impl Game {
             .as_ref()
             .map_or(0, |runtime| u32::from(runtime.map_sheets.min(2)));
         for i in 0..n {
+            let observer=self.soldiers[i].pos+Vec3::Y*crate::infantry::EYE_H;
+            let Some(player_eye)=self.small_arm_player_aim_point(observer) else {
+                self.soldiers[i].update_passive(&self.hf,dt);
+                continue;
+            };
             let mut live_cover = self.cover.clone();
             // Cover circles feed only this soldier's sight line to the player, so buildings away
             // from that segment cannot change the answer and are skipped.
@@ -20066,11 +20168,14 @@ impl Game {
         self.check_foot_death();
     }
 
-    /// Mounted-player infantry pass: keep patrols, escorts, and corpses persistent, but give rifles
-    /// no man-sized target until somebody dismounts.
+    /// Mounted infantry keeps normal perception and can engage visible armor or an exposed body.
     fn update_infantry_passive(&mut self, dt: f32, r: &mut Renderer) {
         if self.mixed_combat.enabled {
             self.update_mixed_infantry(dt, r);
+            return;
+        }
+        if self.enemy_return_fire_allowed() {
+            self.update_infantry(&TankInput::default(),dt,r);
             return;
         }
         for event in &mut self.noise {
@@ -20085,7 +20190,7 @@ impl Game {
             return;
         }
         self.reanchor_infantry_escorts(dt);
-        for i in 0..self.soldiers.len().min(N_SOLDIERS) {
+        for i in 0..self.soldiers.len().min(self.soviet_soldier_count) {
             let previous = self.soldiers[i].pos;
             self.soldiers[i].update_passive(&self.hf, dt);
             self.constrain_winter_soldier_motion(i,previous);
@@ -20173,8 +20278,8 @@ impl Game {
             // pool. Empty pages are submitted too so a pose vacated this frame disappears from
             // raster, shadow, and exact TLAS visibility without leaving a stale instance behind.
             let mut pose_mats: [Vec<Mat4>; SOVIET_POSE_COUNT] =
-                std::array::from_fn(|_| Vec::with_capacity(N_SOLDIERS));
-            for soldier in self.soldiers.iter_mut().take(N_SOLDIERS) {
+                std::array::from_fn(|_| Vec::with_capacity(self.soviet_soldier_count));
+            for soldier in self.soldiers.iter_mut().take(self.soviet_soldier_count) {
                 r.set_visible(soldier.body_slot, false);
                 r.set_visible(soldier.rifle_slot, false);
                 let pose = soldier.advance_animation(dt);
@@ -20195,15 +20300,15 @@ impl Game {
         // Corpses remain prone with their dropped rifle and loot position; they never disappear on
         // mode transitions. The placeholder is intentionally one rigid procedural silhouette.
         for (i, soldier) in self.soldiers.iter().enumerate() {
-            if i >= N_SOLDIERS && !self.mixed_combat.enabled {
+            if i >= self.soviet_soldier_count && !self.mixed_combat.enabled {
                 r.set_visible(soldier.body_slot, false);
                 r.set_visible(soldier.rifle_slot, false);
                 continue;
             }
-            if i < N_SOLDIERS && self.soviet_pose_batches.is_some() {
+            if i < self.soviet_soldier_count && self.soviet_pose_batches.is_some() {
                 continue;
             }
-            r.set_visible(soldier.body_slot, !(i >= N_SOLDIERS && self.german_pose_batches.is_some() && soldier.alive));
+            r.set_visible(soldier.body_slot, !(i >= self.soviet_soldier_count && self.german_pose_batches.is_some() && soldier.alive));
             r.set_visible(soldier.rifle_slot, true);
             if !soldier.alive {
                 let fall_side = if soldier.ammo_drop == 1 { 1.0 } else { -1.0 };
@@ -20793,7 +20898,8 @@ impl Game {
             local_point, world_normal: normal };
         let plate = crate::ballistics::ArmorScheme::TigerI.plate(facing);
         let event = crate::ballistics::resolve(shell, range_m, plate, 0.0, seed);
-        self.apply_exterior_strike(armor, &event, false, seed);
+        let model=if part==ArmorPart::Hull {self.player.hull_model()}else{self.player.turret_model()};
+        self.apply_exterior_strike(armor, &event, false, seed, -model.transform_vector3(normal).normalize());
     }
 
     /// Headless hook for review films: the documented strikes, each with the first seed that
@@ -20802,7 +20908,7 @@ impl Game {
     pub fn debug_stage_exterior_damage_review(&mut self) -> serde_json::Value {
         use tiger_damage::{Effect, Side, Strike, Zone};
         let seed = |zone: Zone, calibre_mm: f32, want: Effect| (0..100_000u32).find(|&s| {
-            tiger_damage::effects(zone, Strike { calibre_mm, energy_kj: 0.0, penetrated: false,
+            tiger_damage::effects(zone, Strike { calibre_mm, energy_kj: 1800.0, penetrated: false,
                 high_explosive: false }, s).contains(&want)
         }).expect("a shell with that effect");
         let block = seed(Zone::Cupola { block: 2 }, 45.0, Effect::VisionBlock { block: 2, holder: false });
@@ -20817,6 +20923,7 @@ impl Game {
     /// Headless hook: the exterior condition and stowage, for fixtures and review receipts.
     pub fn exterior_damage_receipt(&self) -> serde_json::Value {
         serde_json::json!({
+            "last_source_strike": self.last_exterior_strike,
             "running_gear": self.exterior.running_gear,
             "cupola_blocks": self.exterior.blocks.map(|b| format!("{b:?}")),
             "spare_blocks": self.exterior.spare_blocks,
@@ -21102,10 +21209,13 @@ impl Game {
     /// seeded ring, all combat state cleared. Smoke-test scope — structural damage to the city
     /// (destructibles) intentionally persists; matches are staged on open ground around the spawn.
     pub fn reset_match(&mut self, seed: u32, ring_m: f32) {
+        self.running_gear_motion = crate::audio::RunningGearMotion::default();
+        self.gun_elevation_motion = crate::audio::GunElevationMotion::default();
         self.cartridge_primers = cartridge_primer::Primers::default();
         self.world_doors.reset();
         // Tiger: parked at spawn, whole, loaded.
         let (px, pz) = self.spawn_xz;
+        self.player_powertrain = crate::powertrain::Powertrain::default();
         self.player = Tank::new(px, pz, 0.0, &self.hf, tank::TIGER_PARTS);
         self.crew = default_crew();
         self.reset_singleplayer_crew();
@@ -21121,6 +21231,7 @@ impl Game {
         self.couch_commander_pitch = 0.0;
         self.modules = default_modules();
         self.exterior = tiger_damage::Exterior::default();
+        self.last_exterior_strike = None;
         self.armor_scars = crate::armor_damage::ArmorField::default();
         self.death_cause = None;
         self.last_fatal = None;
@@ -21211,6 +21322,8 @@ impl Game {
         self.player_surface_burn = None;
         self.player_surface_fire_started = 0.0;
         self.projectiles.clear();
+        self.weapon_vfx=weapon_vfx::Effects::default();
+        self.track_snow.reset();self.track_snow_previous_model=None;
         self.projectile_flight_audio = projectile_flight_audio::Runtime::default();
         self.projectile_accumulator_s = 0.0;
         for shot in &mut self.e_shots {
@@ -21218,6 +21331,7 @@ impl Game {
         }
         self.fx = Fx::default();
         self.scheduled.clear();
+        self.scheduled_audio_audit=ScheduledAudioAudit::default();
         self.scheduled_audio_audit = ScheduledAudioAudit::default();
         self.pressure_arrivals.clear();
         self.pressure_reset_pending = true;
@@ -21608,7 +21722,7 @@ impl Game {
                 Quat::from_xyzw(quaternion[0], quaternion[1], quaternion[2], quaternion[3])
                     .normalize();
             push_round(
-                AP_ID_BASE + index as u32,
+                AP_ID_BASE + crate::interior_rig::shell_source_id(index),
                 parent * Mat4::from_rotation_translation(rotation, *position),
                 self.slot_nature_he.get(index).copied().unwrap_or(false),
             );
@@ -21637,7 +21751,7 @@ impl Game {
             let carried_model = self.carried_round_model();
             let (stable_id, high_explosive) = match carried {
                 CarriedMesh::RackShell(index) => (
-                    AP_ID_BASE + index as u32,
+                    AP_ID_BASE + crate::interior_rig::shell_source_id(index),
                     self.slot_nature_he.get(index).copied().unwrap_or(false),
                 ),
                 CarriedMesh::LooseShell(index) => {
@@ -22653,23 +22767,13 @@ impl Game {
     }
     /// World position of a track's repair anchor (where the on-foot hammer ritual happens).
     pub fn player_track_anchor(&self, kind: ModuleKind) -> Vec3 {
-        let side = if matches!(kind, ModuleKind::LeftTrack) {
-            1.55
-        } else {
-            -1.55
-        };
-        self.player
-            .hull_model()
-            .transform_point3(Vec3::new(side, 0.9, -0.4))
+        self.track_repair_point(kind)
     }
-    /// Headless harness diagnosis: is the thrown track's break in reach along `look` from `eye`,
-    /// and is the hand path to it clear (the two tests the repair ritual applies)?
+    /// The recorder uses the same visible pin and reach/occlusion rules as live input.
     pub fn debug_track_break_access(&self, kind: ModuleKind, eye: Vec3, look: Vec3) -> (bool, bool) {
-        let side = if matches!(kind, ModuleKind::LeftTrack) { 1.55_f32 } else { -1.55_f32 };
-        let anchor = self.player.hull_model()
-            .transform_point3(Vec3::new(side + side.signum() * 0.38, 0.9, -0.4));
-        (equipment::repair_in_reach(eye, look, anchor, 0.36),
-            self.equipment_path_clear(eye, anchor, 0.32))
+        let anchor = self.track_repair_point(kind);
+        (equipment::repair_in_reach(eye, look, anchor, 0.34),
+            self.equipment_path_clear(eye, anchor, 0.12))
     }
     /// Loose (dropped) rounds currently on the basket floor — headless drop-physics check.
     pub fn loose_shells_active(&self) -> usize {
@@ -22752,7 +22856,7 @@ impl Game {
     /// Release only already emitted acoustic wavefronts. Shared by ordinary play and the
     /// terminal fade: neither camera nor simulation state is advanced here.
     fn drain_scheduled_audio(&mut self, dt: f32, r: &Renderer, audio_time_s: f32) -> usize {
-        let arrived = take_arrived_sounds(&mut self.scheduled, dt);
+        let arrived = take_arrived_sounds_at(&mut self.scheduled, dt, Some((r.camera.pos,audio_time_s)));
         let count = arrived.len();
         self.scheduled_audio_audit.arrivals += count as u32;
         if !arrived.is_empty() {
@@ -22776,24 +22880,19 @@ impl Game {
             for s in arrived {
                 self.scheduled_audio_audit.last_arrival = Some((s.sfx, audio_time_s));
                 self.enemy_report_audit.arrive(&s, audio_time_s, self.audio.is_some());
+                if self.scheduled_audio_audit.events.len() >= 512 {self.scheduled_audio_audit.events.pop_front();}
+                self.scheduled_audio_audit.events.push_back(serde_json::json!({
+                    "sfx":format!("{:?}",s.sfx),"source_world_m":s.source.to_array(),
+                    "listener_world_m":listener.to_array(),"arrival_s":audio_time_s,
+                    "emitted_at_s":s.wave.map(|w|w.emitted_at_s),
+                    "speed_of_sound_m_s":s.wave.map(|w|w.speed_m_s),
+                    "distance_m":s.source.distance(listener),"mixer_present":self.audio.is_some(),
+                    "timing":"submission at simulation tick, not output-device latency"
+                }));
                 let bearing = bearing_deg_from(facing, s.source - listener);
-                // A wreck blast begins inside its own newly registered hull AABB. Step beyond any
-                // cover box containing the origin so the source cannot occlude itself; buildings
-                // and terrain farther along the path still participate normally.
-                let mut acoustic_origin = s.source + Vec3::new(0.0, 1.2, 0.0);
-                let toward_listener = (listener - acoustic_origin).normalize_or_zero();
-                for cover in &self.occluders {
-                    let inside = acoustic_origin.x >= cover.min.x
-                        && acoustic_origin.x <= cover.max.x
-                        && acoustic_origin.y >= cover.min.y
-                        && acoustic_origin.y <= cover.max.y
-                        && acoustic_origin.z >= cover.min.z
-                        && acoustic_origin.z <= cover.max.z;
-                    if inside {
-                        acoustic_origin +=
-                            toward_listener * ((cover.max - cover.min).length() * 0.5 + 0.25);
-                    }
-                }
+                // Keep the actual source point. Moving every event above/outside cover hid
+                // real barriers. A tiny offset toward the receiver avoids self-contact epsilon.
+                let acoustic_origin=s.source+(listener-s.source).normalize_or_zero()*0.002;
                 // Propagate the source's calibration to the ear where the listener is now: the
                 // distance law, muzzle directivity, air, snow, a blocked ray, hull and headset.
                 let occluded = !self.los_clear(acoustic_origin, listener);
@@ -22805,13 +22904,16 @@ impl Game {
                     emission = emission
                         .with_directivity(crate::sound_levels::muzzle_directivity_db(angle, braked));
                 }
-                let path = crate::sound_propagation::Path {
+                let (path, same_compartment) = s.receiver_path(crate::sound_propagation::Path {
                     distance_m: s.source.distance(listener),
                     atmosphere,
                     occluded,
                     enclosure,
                     headset,
-                };
+                });
+                let reverb = if same_compartment {
+                    crate::acoustics::ReverbParams::STEEL_INTERIOR
+                } else { reverb };
                 let ear = crate::sound_propagation::propagate(&emission, &path);
                 self.hear_world_impulse(&ear, bearing);
                 if let Some(a) = &self.audio {
@@ -22851,11 +22953,17 @@ impl Game {
         if elapsed_s >= crate::DEATH_FADE { self.scheduled.clear(); }
     }
 
+    pub fn capture_small_arms_audio_receipt(&self)->serde_json::Value {
+        serde_json::json!({"bounded_capacity":512,"all_world_arrivals":self.scheduled_audio_audit.arrivals,
+            "arrivals":self.scheduled_audio_audit.events,"identity":"source and event kind; no fabricated projectile join",
+            "clock":"absolute renderer simulation time"})
+    }
     pub fn debug_scheduled_audio(&self) -> serde_json::Value {
         serde_json::json!({
             "pending": self.scheduled.iter().map(|sound| serde_json::json!({
                 "sfx": format!("{:?}",sound.sfx), "remaining_s":sound.delay,
                 "source_world_m":sound.source.to_array(),
+                "source_in_player":sound.source_in_player,
             })).collect::<Vec<_>>(),
             "arrivals":self.scheduled_audio_audit.arrivals,
             "terminal_arrivals":self.scheduled_audio_audit.terminal_arrivals,
@@ -22873,6 +22981,17 @@ impl Game {
         self.schedule_emission(sfx, src, sound_emission_for(sfx), None, None);
     }
 
+    /// Explicit source provenance for the player's resolved ammunition detonation. This remains
+    /// a delayed, calibrated wavefront and is treated as internal only while its listener is
+    /// inside the same fighting compartment at arrival.
+    fn schedule_player_internal_sound(&mut self, sfx: crate::audio::Sfx, src: Vec3) {
+        self.scheduled.push(ScheduledSound {
+            delay: src.distance(self.threat_center()) / speed_of_sound(),
+            sfx, emission: sound_emission_for(sfx), muzzle: None, source: src,
+            source_in_player: true, buf: None, wave: Some(AcousticWave{emitted_at_s:self.enemy_report_audit.clock_s,speed_m_s:speed_of_sound()}), enemy_report: None,
+        });
+    }
+
     /// Queue a sound with an explicit physical emission (a gun by its charge, an HE burst by its
     /// fill, a crack by its N-wave), optionally a gun's muzzle axis for directivity and a
     /// synthesized waveform to play instead of `sfx`.
@@ -22887,8 +23006,9 @@ impl Game {
             emission,
             muzzle,
             source: src,
+            source_in_player: false,
             buf,
-            enemy_report: None,
+            wave: Some(AcousticWave{emitted_at_s:self.enemy_report_audit.clock_s,speed_m_s:speed_of_sound()}), enemy_report: None,
         });
     }
 
@@ -23072,8 +23192,12 @@ impl Game {
         let skip_player_hull = !include_player_hull
             || fired_by_player && (projectile.small_arm.is_none() || mounted_vehicle_gun);
         if !skip_player_hull && (self.player.alive || projectile.small_arm.is_some()) {
-            consider(vehicle_contact(&self.player, ProjectileVehicle::Player,
-                crate::ballistics::ArmorScheme::TigerI, step.start, step.end));
+            consider(if projectile.small_arm.is_some() {self.small_arm_player_armor(step.start,step.end)}
+                else {vehicle_contact(&self.player, ProjectileVehicle::Player,
+                    crate::ballistics::ArmorScheme::TigerI, step.start, step.end)});
+        }
+        if !fired_by_player && projectile.small_arm.is_some() {
+            consider(self.small_arm_exposed_crew_contact(step.start,step.end));
         }
         if !fired_by_player && matches!(self.mode,Mode::Foot) && self.foot.hp>0.0 {
             let min=self.foot.pos+Vec3::new(-0.25,0.0,-0.25);
@@ -23114,7 +23238,7 @@ impl Game {
             ));
         }
 
-        consider(self.at_gun_contact(step.start, step.end));
+        consider(self.at_gun_contact(step.start, step.end,projectile.passed_at_gun_part));
         for (index, soldier) in self.soldiers.iter().enumerate() {
             if projectile.small_arm.is_some_and(|bullet|bullet.ignores_infantry(index)) { continue; }
             let height = self.mixed_combat.actors.get(index)
@@ -23168,6 +23292,7 @@ impl Game {
         if !self.projectile_cover.matches(self.story_cover.len(),self.destructibles.len()) {
             self.projectile_cover=projectile_cover::Index::build(&self.story_cover,&self.destructibles);
         }
+        let frame_audio_clock=self.enemy_report_audit.clock_s;
         self.projectile_accumulator_s += dt;
         while self.projectile_accumulator_s + 1.0e-8 >= PROJECTILE_FIXED_DT {
             self.projectile_accumulator_s -= PROJECTILE_FIXED_DT;
@@ -23177,6 +23302,7 @@ impl Game {
             active.clear();
             let mut flying = std::mem::take(&mut self.projectiles);
             for mut projectile in flying.drain(..) {
+                self.enemy_report_audit.clock_s=flight_at;
                 let limit = projectile.small_arm.map_or(PROJECTILE_MAX_DISTANCE_M, |bullet|bullet.shot.range);
                 let wind = wind_at(self.act.id, projectile.pos) * self.weather_wind_scale;
                 let step_dt = if projectile.small_arm.is_some() {
@@ -23188,6 +23314,7 @@ impl Game {
                 let terminal_end =
                     step.start + (step.end - step.start).normalize_or_zero() * terminal_t.max(0.0);
                 self.record_shell_flight_segment(&projectile, step, terminal_end, step_dt, flight_at);
+                self.record_small_arm_visual_segment(&projectile, step, terminal_end, step_dt, flight_at);
 
                 // Lightweight props are physical but not armor. Query only the portion actually
                 // travelled this tick and impart their shell strike at the same authoritative time.
@@ -23242,12 +23369,22 @@ impl Game {
                 } else {
                     0.0
                 };
+                self.enemy_report_audit.clock_s=flight_at+step_dt*fraction;
                 projectile.commit_fraction(step, fraction, contact.pos);
                 if let Some(bullet) = projectile.small_arm {
                     self.finish_small_arm(&projectile,contact,bullet, &r.camera);
                     continue;
                 }
                 match contact.kind {
+                    ProjectileContactKind::AtGun(hit)
+                        if at_gun_ballistics::penetrate(&mut projectile,hit) =>
+                    {
+                        self.wreck_at_gun(hit.index,projectile.shell.name);
+                        self.weapon_vfx.armor_sparks(contact.pos,projectile.velocity,hit.normal,
+                            weapon_vfx::Weapon::Cannon(projectile.shell.caliber_mm as u16));
+                        self.schedule_sound_from(crate::audio::Sfx::ImpactTank,contact.pos);
+                        active.push(projectile);
+                    }
                     ProjectileContactKind::Structure(index)
                         if projectile.shell.kind != crate::ballistics::ShellKind::He =>
                     {
@@ -23273,6 +23410,7 @@ impl Game {
                             self.chunks
                                 .hole(index, contact.pos, projectile.direction, r);
                             self.damage_structure(index, STRUCT_AP_HOLE_DAMAGE, r);
+                            self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
                             active.push(projectile);
                             continue;
                         }
@@ -23314,6 +23452,7 @@ impl Game {
                                 thickness * solid_city::RUBBLE_AP_COST_MM_PER_M
                             );
                             self.spawn_dust(contact.pos, 0.4);
+                            self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
                             active.push(projectile);
                             continue;
                         }
@@ -23341,6 +23480,7 @@ impl Game {
                         let mut events = Vec::new();
                         self.trees.shot(index, projectile.direction, &mut events);
                         self.route_tree_events(events);
+                        self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
                         active.push(projectile);
                     }
                     _ => self.resolve_authoritative_terminal(&projectile, contact, r),
@@ -23351,6 +23491,7 @@ impl Game {
             self.projectiles = active;
             self.projectile_scratch = flying;
         }
+        self.enemy_report_audit.clock_s=frame_audio_clock;
     }
 
     fn arm_authoritative_impact_presentation(
@@ -23468,12 +23609,9 @@ impl Game {
         let front = crate::pressure_front::Front { id: projectile_id.wrapping_mul(2),
             origin: source, direction: Vec3::Y, emitted_at: r.time, strength: 1.0,
             max_radius: 80.0, cap_cosine: -1.0 };
+        self.schedule_emission(crate::audio::Sfx::KillExplosion,source,burst,None,None);
         if let Some(arrival) = r.pressure_fronts.emit(front, r.camera.pos) {
             let distance = source.distance(r.camera.pos);
-            // The burst's level from its fill (SL §6), propagated to the ear on arrival.
-            self.scheduled.push(ScheduledSound { delay: arrival.at - r.time,
-                sfx: crate::audio::Sfx::KillExplosion, emission: burst, muzzle: None, source,
-                buf: None, enemy_report: None });
             // Never push an exterior pressure response through the player's intact hull. The
             // struck inner surface radiates a distinct, small cabin response in the vehicle path.
             let outside = matches!(self.mode, Mode::Foot)
@@ -23484,8 +23622,6 @@ impl Game {
                 self.pressure_arrivals.push((arrival, arrival.direction *
                     (0.18 / (1.0 + distance * distance * 0.08))));
             }
-        } else if source.distance(r.camera.pos) > 80.0 {
-            self.schedule_emission(crate::audio::Sfx::KillExplosion, source, burst, None, None);
         }
     }
 
@@ -23610,8 +23746,10 @@ impl Game {
                     r,
                 );
             }
+            ProjectileContactKind::ExposedCrew(..) => unreachable!("small arms resolve crew contacts before cannon routing"),
             ProjectileContactKind::Foot => {
                 self.foot.hp = 0.0;
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
                 self.spawn_snow_puff(
                     Vec3::new(
                         contact.pos.x,
@@ -23629,6 +23767,7 @@ impl Game {
                 // A direct cannon strike is lethal to an exposed body for AP and HE alike.
                 // HE already ran the existing blast above; shared casualty handling is idempotent.
                 self.kill_soldier(index, projectile.shell.name);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
             }
             ProjectileContactKind::Structure(index) => {
                 if projectile.shell.kind != crate::ballistics::ShellKind::He {
@@ -23636,9 +23775,10 @@ impl Game {
                     self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
                 }
             }
-            ProjectileContactKind::AtGun(index) => {
-                // A cannon round through the thin shield and carriage wrecks the gun.
-                self.wreck_at_gun(index, projectile.shell.name);
+            ProjectileContactKind::AtGun(hit) => {
+                // Terminal steel/tyre strike, or HE: the contacted gun loses service, but nearby
+                // bodies are affected only by their own projectile contact or the real HE burst.
+                self.wreck_at_gun(hit.index, projectile.shell.name);
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
             }
             ProjectileContactKind::Tree(index) => {
@@ -23742,7 +23882,7 @@ impl Game {
                         scar.facing, scar.kind, scar.local_cm, scar.radius_mm, scar.loss_mm
                     );
                     // What the shell breaks where it lands, whether or not it goes through.
-                    self.apply_exterior_strike(armor, &event, penetrated, projectile.seed);
+                    self.apply_exterior_strike(armor, &event, penetrated, projectile.seed, projectile.velocity.normalize_or_zero());
                 }
 
                 let (bearing, station_distance) = impact_listener_geometry(&r.camera, impact_pos);
@@ -24257,6 +24397,7 @@ impl Game {
     /// Standalone Playtest: use the selected map's authored spawn and ordinary simulation, without campaign
     /// act gates or the garage's inert target rules. Squad/encounter placement is tied to this map.
     pub fn playtest_setup(&mut self) {
+        self.gun_elevation_motion = crate::audio::GunElevationMotion::default();
         self.winter_encounter = None;
         self.winter_mission = None;
         self.targets_only = false;
@@ -24266,6 +24407,7 @@ impl Game {
         self.campaign_channel = false;
         self.compound = None;
         let spawn = self.act.spawn;
+        self.player_powertrain = crate::powertrain::Powertrain::default();
         self.player = Tank::new(spawn.x, spawn.y, std::f32::consts::PI, &self.hf, tank::TIGER_PARTS);
         self.spawn_xz = (spawn.x, spawn.y);
         self.seed_playtest_fuel_cans();
@@ -24309,6 +24451,7 @@ impl Game {
         // fight happens AMONG cover, not on an open field. (Coordinates are the origin ruin
         // dressing, which the act-0 bowl keeps.)
         let (px, pz) = (24.0, -34.0);
+        self.player_powertrain = crate::powertrain::Powertrain::default();
         self.player = Tank::new(
             px,
             pz,
@@ -24348,6 +24491,7 @@ impl Game {
         // Close enough that a demo crew reaches contact in roughly half a minute, but still outside
         // the yard with time to identify stations and bring the gun onto the picket.
         let (px, pz) = (30.0, -300.0);
+        self.player_powertrain = crate::powertrain::Powertrain::default();
         self.player = Tank::new(
             px,
             pz,
@@ -24528,6 +24672,7 @@ impl Game {
     pub fn garage_setup(&mut self) {
         self.targets_only = true;
         let (px, pz) = (0.0f32, -180.0);
+        self.player_powertrain = crate::powertrain::Powertrain::default();
         self.player = Tank::new(px, pz, 0.0, &self.hf, tank::TIGER_PARTS); // hull facing downrange (+Z)
         self.spawn_xz = (px, pz);
         // Enemy targets threaded across the countryside at increasing range (mixed T-34 / SU-100).
@@ -24626,10 +24771,8 @@ impl Game {
         };
         self.mg_round = self.mg_round.wrapping_add(1);
         let n = self.mg_round;
-        // Deterministic fire-cone jitter in [-1,1]^2 (same counter-hash style as the enemy dispersion).
-        let j = |k: u32| ((((k.wrapping_mul(2654435761)) >> 8) & 0xffff) as f32 / 32768.0) - 1.0;
-        let dir = (mdir + Vec3::X * (j(n) * MG_DISP) + Vec3::Y * (j(n.wrapping_add(53)) * MG_DISP))
-            .normalize();
+        let mount_up = self.player.hull_model().transform_vector3(Vec3::Y);
+        let dir = crate::mounted_mg::direction(mdir, mount_up, n);
 
         self.launch_small_arm(crate::infantry_combat::Shot {
             shooter:u32::MAX, team:crate::infantry_combat::Team::German,
@@ -24638,6 +24781,10 @@ impl Game {
         }, 100.0, false, None);
         self.mg_flash_t = MG_FLASH_DUR;
         self.mg_flash_pos = mpos;
+        let mut emission=crate::sound_propagation::Emission::from_level(&crate::sound_levels::MG34_OUTSIDE_1M);
+        emission.laf_db=crate::sound_levels::MG34_OUTSIDE_1M.lae_db.unwrap()
+            +crate::sound_levels::LAF_MINUS_LAE_DB;
+        self.schedule_emission(crate::audio::Sfx::TankMgShot,mpos,emission,Some((mdir,false)),None);
         self.hear_own_mg_round();
     }
 
@@ -24791,9 +24938,13 @@ impl Game {
                 if resolved.distance_squared(requested) > 1.0e-5 {
                     self.enemies[i].speed = 0.0;
                 }
-                self.enemies[i].pos.y = act2_bridge_deck_height(&self.hf, resolved)
-                    .unwrap_or_else(|| self.hf.height_at(resolved.x, resolved.y));
             }
+            // Refit after motion constraints, before gun lay: muzzle, armor and drawing share
+            // this supported chassis transform, including the Act-II bridge deck.
+            let channel = self.campaign_channel;
+            crate::vehicle_ground::settle(&mut self.enemies[i], |x,z|
+                (if channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
+                    .unwrap_or_else(|| self.hf.vehicle_height_at(x,z)));
 
             if !self.player.alive {
                 continue;
@@ -25209,8 +25360,9 @@ impl Game {
             emission: crate::sound_propagation::Emission::gun(charge, braked, 90.0),
             muzzle: Some((direction, braked)),
             source: muzzle,
+            source_in_player: false,
             buf: Some(report),
-            enemy_report: report_stamp,
+            wave: Some(AcousticWave{emitted_at_s:self.enemy_report_audit.clock_s,speed_m_s:speed_of_sound()}), enemy_report: report_stamp,
         });
         // One muzzle discharge owns one propagated report at every range. The synthesized voice
         // already contains its close attack; a second generic EnemyGun below 120 m doubled it.
@@ -25470,8 +25622,9 @@ impl Game {
                 sfx: crate::audio::Sfx::EnemyGun,
                 volume: VOL_ENEMY_GUN * atten,
                 source: mpos,
+                source_in_player: false,
                 buf: Some(report),
-                enemy_report: None,
+                wave: None, enemy_report: None,
             });
             if d < 120.0 {
                 // Close gun: keep the sampled crack layered under the synth body.
@@ -25480,36 +25633,48 @@ impl Game {
         }
     }
 
-    /// Everything a strike does to the outside of the Tiger, penetrating or not: the zone it lands
-    /// in decides which exterior component breaks and what shock goes through the hull
-    /// (`tiger_damage`). Deterministic from the projectile's seed.
+    /// Local exterior failures require a confirmed articulated source surface and deposited normal
+    /// kinetic energy. The coarse armor terminal/penetration model stays separate; remote shock
+    /// failures are not invented without a structural transfer solution.
     fn apply_exterior_strike(
         &mut self,
         armor: VehicleArmorContact,
         event: &crate::ballistics::ImpactEvent,
         penetrated: bool,
         seed: u32,
+        incoming: Vec3,
     ) {
-        // Turret frame relative to the hull frame (pivot + current traverse).
-        let turret_in_hull = self.player.hull_model().inverse() * self.player.turret_model();
-        let (hull_local, turret_local) = match armor.part {
-            ArmorPart::Hull => (armor.local_point, turret_in_hull.inverse().transform_point3(armor.local_point)),
-            ArmorPart::Turret => (turret_in_hull.transform_point3(armor.local_point), armor.local_point),
+        let models=self.fire_surface_models();
+        let armor_model=if armor.part==ArmorPart::Hull {self.player.hull_model()}else{self.player.turret_model()};
+        let point=armor_model.transform_point3(armor.local_point);
+        let Some(contact)=tiger_damage::confirm_source_contact(&self.cabin_fire,&models,point,incoming) else {
+            self.last_exterior_strike=Some(serde_json::json!({"source_confirmed":false,
+                "coarse_contact_world_m":point.to_array(),"seed":seed,"effects":[]}));
+            return;
         };
-        let zone = tiger_damage::zone(hull_local, turret_local, armor.part == ArmorPart::Turret);
-        let strike = tiger_damage::Strike {
-            calibre_mm: event.shell.caliber_mm,
-            energy_kj: 0.5 * event.shell.mass_kg * event.striking_v * event.striking_v / 1000.0,
-            penetrated,
-            high_explosive: event.shell.kind == crate::ballistics::ShellKind::He,
+        let actual=models[contact.frame].transform_point3(contact.point);
+        let normal=models[contact.frame].inverse().transpose().transform_vector3(contact.normal).normalize_or_zero();
+        let hull_local=self.player.hull_model().inverse().transform_point3(actual);
+        let turret_local=self.player.turret_model().inverse().transform_point3(actual);
+        let zone=tiger_damage::source_zone(hull_local,turret_local,contact.frame);
+        let strike=tiger_damage::Strike {
+            calibre_mm:event.shell.caliber_mm,
+            energy_kj:tiger_damage::deposited_normal_energy_kj(event.shell.mass_kg,event.striking_v,
+                if penetrated {event.residual_v}else{0.0},-incoming.normalize_or_zero().dot(normal)),
+            penetrated,high_explosive:event.shell.kind==crate::ballistics::ShellKind::He,
         };
+        let effects=tiger_damage::effects(zone,strike,seed);
+        self.last_exterior_strike=Some(serde_json::json!({"source_confirmed":true,"source_frame":contact.frame,
+            "coarse_contact_world_m":point.to_array(),"source_contact_world_m":actual.to_array(),
+            "normal_deposited_energy_kj":strike.energy_kj,"zone":format!("{zone:?}"),
+            "penetrated":penetrated,"seed":seed,"effects":effects.iter().map(|e|format!("{e:?}")).collect::<Vec<_>>() }));
         if zone == tiger_damage::Zone::TurretRing {
             // The wedged fragment sits where the shell struck, on the ring band.
             let radial = Vec3::new(turret_local.x, 0.0, turret_local.z).normalize_or_zero() * 1.45;
             self.exterior.ring_jam.get_or_insert(Vec3::new(radial.x,
                 tiger_damage::HULL_ROOF_Y - self.player.parts.turret_pivot.y + 0.08, radial.z));
         }
-        for effect in tiger_damage::effects(zone, strike, seed) {
+        for effect in effects {
             self.apply_damage_effect(effect, seed);
         }
         if self.exterior.ring_jam.is_some() && !self.modules.iter().any(|m|
@@ -26057,8 +26222,8 @@ impl Game {
         // Persistent furnace illumination comes from the actual burning cabin cells.
         self.spawn_interior_blast(ammo_blast.origin_world, 0.65, 3.0, 0.11);
         self.spawn_debris(centre, 12, 16.0, self.armor_tick.wrapping_mul(2246822519));
-        self.schedule_sound_from(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
-        self.schedule_sound_from(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
+        self.schedule_player_internal_sound(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
+        self.schedule_player_internal_sound(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
         let mut hit_modules = res.hit_modules;
         if !hit_modules.contains(&ModuleKind::AmmoRack) {
             hit_modules.push(ModuleKind::AmmoRack);
@@ -26126,8 +26291,8 @@ impl Game {
         );
         // The same ammunition reservoir detonated as in a direct rack hit. A heat-triggered
         // catastrophic loss must retain that blast scale, not use a single secondary pop.
-        self.schedule_sound_from(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
-        self.schedule_sound_from(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
+        self.schedule_player_internal_sound(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
+        self.schedule_player_internal_sound(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
         self.death_replay = None;
         self.last_fatal = Some(FatalHit {
             shooter_pos: self.station_eye(self.station),
@@ -26854,6 +27019,11 @@ impl Game {
             if self.enemy_active.get(i).copied().unwrap_or(false) {
                 let p = enemy_before[i];
                 self.constrain_winter_enemy_motion(i, Vec3::new(p.x, self.hf.vehicle_height_at(p.x,p.y),p.y));
+                // Contact projection can translate a vehicle after its AI update. Keep the final
+                // supported pose consistent without re-running movement or fire decisions.
+                crate::vehicle_ground::settle(&mut self.enemies[i], |x,z|
+                    (if campaign_channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
+                        .unwrap_or_else(|| self.hf.vehicle_height_at(x,z)));
             }
         }
         if pushed {
@@ -26931,7 +27101,6 @@ impl Game {
             let pitch_along = self.player.pitch * sgn;
             let gave_way = self.press_on_structure(i, pitch_along, dt, r);
             if gave_way {
-                self.crush_rumble = self.crush_rumble.max(if d.class == Material::Timber { 1.2 } else { 1.5 });
                 continue;
             }
             contact = true;
@@ -26943,7 +27112,6 @@ impl Game {
                     d.min.y + 0.8,
                     nose.z.clamp(d.min.z, d.max.z),
                 );
-                self.crush_rumble = self.crush_rumble.max((speed * 0.045).min(0.25));
                 // Throttled plough FX: masonry chips + dust churning at the contact point.
                 if self.crush_fx_t <= 0.0 {
                     self.crush_fx_t = 0.22;
@@ -27003,8 +27171,8 @@ impl Game {
         self.route_tree_events(tree_events);
 
         // Telephone poles, light fences, carts, crates, barrels and benches are visual resistance,
-        // never static world mass. The Tiger retains at least 93% of its speed through one contact
-        // beat; objects take the motion and stay displaced/down instead of stopping 57 tonnes.
+        // never static world mass. Their estimated mass transfers a small momentum impulse;
+        // objects take the motion and stay displaced/down instead of stopping 57 tonnes.
         let mut scatter_events = Vec::new();
         let sc = self.scatter.push_tank(
             nose,
@@ -28142,8 +28310,7 @@ impl Game {
                 fragment.prev_pos = fragment.pos;
             }
         }
-        self.hot_fragment_accumulator_s =
-            (self.hot_fragment_accumulator_s + dt.max(0.0).min(0.10)).min(0.20);
+        if dt.is_finite() { self.hot_fragment_accumulator_s += dt.max(0.0); }
         while self.hot_fragment_accumulator_s + 1.0e-8 >= HOT_FRAGMENT_FIXED_DT {
             self.hot_fragment_accumulator_s -= HOT_FRAGMENT_FIXED_DT;
             for fragment in &mut self.hot_fragments {
@@ -28682,41 +28849,12 @@ impl Game {
             TrackRepairPhase::PullEnd => self.track_pull,
             TrackRepairPhase::FitLink | TrackRepairPhase::HammerPin => 1.0,
         };
-        // The baked hull already contains its intact-looking track skin. Lift the interactive shoes
-        // just outboard of that skin so the working run is readable and the hammer can meet it.
-        let shoe_x = side + side.signum() * 0.38;
-        let shoe_pos = |material_u: f32| {
-            // Slide one fixed-length chain along a two-part route: loose tail → open break → wheel
-            // crowns. Unlike pointwise lerp, this never compresses all the shoes into one block
-            // halfway through the pull.
-            let route_t = material_u + pull;
-            if route_t <= 1.0 {
-                let v = route_t;
-                Vec3::new(
-                    shoe_x,
-                    0.18 + v * 0.56 - (v * std::f32::consts::PI).sin() * 0.08,
-                    -2.67 + v * 2.25,
-                )
-            } else {
-                let v = route_t - 1.0;
-                Vec3::new(
-                    shoe_x,
-                    0.74 + (v * std::f32::consts::PI).sin() * 0.34,
-                    -0.42 + v * 3.10,
-                )
-            }
-        };
+        // This articulated repair run uses source track-shoe geometry at its original scale.
+        // Arc-distance placement keeps the pitch fixed throughout the pulling gesture.
         for (i, &slot) in self.slots.track_repair_shoes.iter().enumerate() {
-            let u = i as f32 / (N_REPAIR_SHOES - 1) as f32;
-            let p = shoe_pos(u);
-            let q = shoe_pos((u + 0.01).min(1.0));
-            let tangent = q - p;
-            let pitch = -tangent.y.atan2(tangent.z);
-            let local =
-                Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::from_rotation_x(pitch), p);
             r.set_visible(slot, true);
             r.set_emissive(slot, 0.0);
-            r.set_model(slot, hull * local);
+            r.set_model(slot, hull * track_repair::shoe_model(side, pull, i));
         }
 
         let show_link = self.carrying_track_kit && matches!(
@@ -28726,12 +28864,7 @@ impl Game {
         let link_slot = self.slots.track_replacement_link;
         r.set_visible(link_slot, show_link);
         if show_link {
-            let outboard = if self.track_repair_phase == TrackRepairPhase::FitLink {
-                side.signum() * 0.38
-            } else {
-                0.0
-            };
-            let local = Vec3::new(shoe_x + outboard, 0.76, -0.30);
+            let local = track_repair::link_center(side, self.track_repair_phase);
             r.set_emissive(link_slot, 0.0);
             r.set_model(link_slot, hull * Mat4::from_translation(local));
         }
@@ -28923,7 +29056,8 @@ impl Game {
         // a detached turret retains only a small residue reservoir rather than the hull's fuel.
         let turret_age = wreck.fire_t-if wreck.fire_hit_turret {0.0}else{3.0};
         patches.extend(surfaces[1].patches(&burn[1],models[1],turret_age,
-            wreck.ignition_load,strength*if wreck.kind==WreckKind::TurretPop {0.30}else{0.50}));
+            wreck.ignition_load,strength*if wreck.kind==WreckKind::TurretPop {0.30}else{0.50})
+            .into_iter().map(|mut patch| {patch.frame=1;patch}));
         patches
     }
 
@@ -28947,6 +29081,8 @@ impl Game {
         });
         let mut smoke_mats: [Vec<Mat4>; FIRE_SMOKE_BATCHES] =
             std::array::from_fn(|_| Vec::with_capacity(N_FIRE_SMOKE_CUBES));
+        let mut flame_ids: [Vec<[u32;4]>; FIRE_FLAME_BATCHES] = std::array::from_fn(|_| Vec::new());
+        let mut smoke_ids: [Vec<[u32;4]>; FIRE_SMOKE_BATCHES] = std::array::from_fn(|_| Vec::new());
 
         // Frame-bound contacts own flame placement and suppression. Global geometry and light
         // budgets stay fixed as the fire spreads across more connected surface patches.
@@ -28972,10 +29108,12 @@ impl Game {
             let mut source_cells = Vec::with_capacity(n_flame);
             for grain in 0..n_flame {
                 let mut sample = flame_parcel_sample(seed, grain, fx_time, strength, false);
+                sample.particle_id[1]=patch.identity;
                 sample.offset = fire_surface_offset(sample.offset, patch.normal, patch.tangent, patch.bitangent);
                 source_cells.push(sample);
                 flame_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size), sample.rotation, fire_origin + sample.offset));
+                flame_ids[sample.stage].push(sample.particle_id);
             }
             if let Some(light) = fire_aggregate_light(&source_cells, fire_origin, Mat4::IDENTITY, false) {
                 merge_fire_light(&mut self.interior_fire_lights, light);
@@ -28984,7 +29122,9 @@ impl Game {
             let n_smoke = ((smoke_strength.powf(0.70) * smoke_per_patch as f32).ceil()
                 as usize).min(smoke_per_patch);
             let samples: Vec<_> = (0..n_smoke).map(|grain| {
-                    smoke_voxel_sample(seed ^ 0xa3c5_9ac3, grain, fx_time, strength, false, Vec2::ZERO)
+                    let mut sample=smoke_voxel_sample(seed ^ 0xa3c5_9ac3, grain, fx_time, strength, false, Vec2::ZERO);
+                    sample.particle_id[1]=patch.identity;
+                    sample
                 }).collect();
             let source = fire_origin + patch.normal * 0.008;
             let positions: Vec<_> = samples.iter().map(|sample|
@@ -28997,6 +29137,7 @@ impl Game {
                 if !visible { continue; }
                 smoke_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size), sample.rotation, position));
+                smoke_ids[sample.stage].push(sample.particle_id);
             }
         }
 
@@ -29034,7 +29175,8 @@ impl Game {
             let age=(self.stealth.t-self.player_surface_fire_started).max(0.0);
             let burn=self.player_surface_burn.as_ref().unwrap();
             let patches:Vec<_>=(0..2).flat_map(|i|self.player_fire_surfaces[i].patches(
-                &burn[i],models[i],age,1.0,self.fire.clamp(0.0,1.0))).collect();
+                &burn[i],models[i],age,1.0,self.fire.clamp(0.0,1.0)).into_iter()
+                .map(move |mut patch| {patch.frame=i as u8;patch})).collect();
             let pos=self.last_fatal.as_ref().map_or(self.player.center(),|f|f.entry_point);
             surface_patches.insert(0x7400_0000,patches);
             world_sources.push((pos.distance_squared(listener),pos,self.fire.clamp(0.0,1.0),0x7400_0000));
@@ -29084,13 +29226,16 @@ impl Game {
             if source_index<3 {
                 for lobe in 0..3 {
                     let age=lobe as f32*1.35+0.45;
-                    let roll=fx_time*0.55+seed as f32*0.0001;
+                    let roll=crate::particle_motion::advancing_phase(seed,fx_time,0.55);
                     let sway=Vec3::new((roll+age).sin(),0.0,(roll*0.73+age).cos())*0.18*age;
                     let radius=if stove {0.22+age*0.20}else{0.65+age*0.68};
                     let root=surface_patches.get(&seed).and_then(|p|p.get(lobe*3%p.len().max(1)))
                         .map_or(pos,|p|p.position);
                     let center=root+Vec3::new(wind.x*age*0.28,age*if stove {0.75}else{1.2},wind.y*age*0.28)+sway;
-                    r.add_smoke_volume(center,radius,strength*if stove {0.09}else{0.32}/(1.0+age*0.22),roll+age,if stove {0.35}else{0.08});
+                    // Each source patch gets its own continuous carrier path. Do not join
+                    // unrelated fire roots. The support stretch preserves this lobe's optical
+                    // mass and attaches its young end to the emitting surface under strong wind.
+                    r.add_smoke_sweep(root,center,radius,strength*if stove {0.09}else{0.32}/(1.0+age*0.22),roll+age,if stove {0.35}else{0.08});
                 }
             }
             if stove {continue;}
@@ -29104,6 +29249,7 @@ impl Game {
                     sample.rotation,
                     pos + sample.offset,
                 ));
+                flame_ids[FIRE_FLAME_STAGES + sample.stage].push(sample.particle_id);
             }
             self.world_fire_lights[source_index] = fire_aggregate_light(
                 &source_cells, pos, Mat4::IDENTITY, true);
@@ -29112,27 +29258,29 @@ impl Game {
 
         debug_assert!(flame_mats.iter().map(Vec::len).sum::<usize>() <= N_FIRE_FLAME_CUBES);
         debug_assert!(smoke_mats.iter().map(Vec::len).sum::<usize>() <= N_FIRE_SMOKE_CUBES);
-        for (batch, transforms) in self
+        for ((batch, transforms), ids) in self
             .slots
             .fire_flame_batch
             .into_iter()
-            .zip(flame_mats.iter())
+            .zip(flame_mats.iter()).zip(&flame_ids)
         {
             assert!(
                 r.set_dynamic_instanced_mats(batch, transforms),
                 "voxel-flame instance pool exceeded its fixed capacity"
             );
+            assert!(r.set_fine_vfx_particle_ids(batch,ids));
         }
-        for (batch, transforms) in self
+        for ((batch, transforms), ids) in self
             .slots
             .fire_smoke_batch
             .into_iter()
-            .zip(smoke_mats.iter())
+            .zip(smoke_mats.iter()).zip(&smoke_ids)
         {
             assert!(
                 r.set_dynamic_instanced_mats(batch, transforms),
                 "voxel-soot instance pool exceeded its fixed capacity"
             );
+            assert!(r.set_fine_vfx_particle_ids(batch,ids));
         }
     }
 
@@ -30872,7 +31020,7 @@ mod tests {
         // remaining flight also exceeds one tick, so an immediate death sound cannot pass.
         let mut pending = vec![ScheduledSound {
             delay: 3.5 * dt, sfx:Sfx::CookOff, emission:sound_emission_for(Sfx::CookOff),
-            muzzle:None, source:Vec3::X, buf:None, enemy_report:None,
+            muzzle:None, source:Vec3::X, source_in_player:false, buf:None, wave: None, enemy_report:None,
         }];
         let audio = Audio::new_capture();
         let mut hearing = crate::hearing::Hearing::default();
@@ -34453,7 +34601,7 @@ mod tests {
     fn interior_fire_source_tracks_cell_area_radiance_centroid_and_extinction() {
         let cell = FireVoxelSample {
             offset: Vec3::new(0.03, 0.10, -0.02), rotation: Quat::IDENTITY,
-            size: 0.020, stage: 0, generation: 0,
+            size: 0.020, stage: 0, generation: 0, particle_id:[0;4],
         };
         let origin = INTERIOR_FIRE_SPOTS[0];
         let parent = Mat4::from_translation(Vec3::new(3.0, 1.0, -2.0))
@@ -34580,6 +34728,35 @@ mod tests {
         for shader in [include_str!("../shaders/gbuf.wgsl"), include_str!("../shaders/mesh.wgsl")] {
             assert!(shader.contains("sparse_cubic_smoke && distance(in.world, cam.cam_pos) < 0.16"));
         }
+    }
+
+    #[test]
+    fn soot_moves_every_tick_and_disappears_at_generation_boundaries() {
+        let mut moving = 0;
+        let mut boundaries = 0;
+        for grain in 0..512 {
+            let sample=|time|smoke_voxel_sample(0xc001,grain,time,1.0,false,Vec2::ZERO);
+            let a=sample(2.0);let b=sample(2.0+1.0/120.0);
+            if a.generation==b.generation {
+                assert_eq!(a.particle_id,b.particle_id);
+                assert!(b.offset.y>a.offset.y);
+                assert!(b.offset.distance(a.offset)<0.025);
+                moving+=1;
+            }
+            for n in 1..=2000 {
+                let t=n as f32*0.001;
+                let before=sample(t-0.0001);let after=sample(t+0.0001);
+                if before.generation!=after.generation {
+                    assert!(before.size<0.0001 && after.size<0.0001,
+                        "respawn must have vanishing coverage: {before:?} {after:?}");
+                    boundaries+=1;break;
+                }
+            }
+        }
+        assert!(moving>490);assert!(boundaries>150);
+        let young=(0..512).map(|grain|smoke_voxel_sample(0xc001,grain,2.0,1.0,false,Vec2::ZERO))
+            .min_by(|a,b|a.offset.y.total_cmp(&b.offset.y)).unwrap();
+        assert!(young.offset.y<0.43,"soot birth must overlap the upper flame region");
     }
 
     #[test]
@@ -34992,7 +35169,7 @@ mod surface_fire_render_tests {
         for normal in [Vec3::Y,Vec3::NEG_Y,Vec3::X,
             Vec3::new(0.75,-0.6,0.25).normalize()] {
             for wind in [Vec2::ZERO,Vec2::new(-12.0,7.0)] {
-                let patch=wreck_surface_fire::Patch {position:origin,normal,strength:0.8,id:31};
+                let patch=wreck_surface_fire::Patch {position:origin,normal,strength:0.8,id:31,frame:0};
                 let cells=surface_wreck_fire_cells(47,3.7,0.8,origin,&[patch],wind);
                 assert!(!cells.is_empty());
                 assert!(cells.len()<=FLAME_CUBES_PER_WORLD_SOURCE);
@@ -35008,11 +35185,35 @@ mod surface_fire_render_tests {
             }
         }
         let patches:Vec<_>=(0..24).map(|id|wreck_surface_fire::Patch {
-            position:origin+Vec3::X*(id as f32*0.62),normal:Vec3::Y,strength:0.8,id}).collect();
+            position:origin+Vec3::X*(id as f32*0.62),normal:Vec3::Y,strength:0.8,id,frame:0}).collect();
         assert!(surface_wreck_fire_cells(47,3.7,1.0,origin,&patches,Vec2::ZERO).len()
             <=FLAME_CUBES_PER_WORLD_SOURCE);
         assert!(surface_wreck_fire_cells(47,3.7,0.0,origin,&patches,Vec2::ZERO).is_empty());
     }
+    #[test]
+    fn surface_parcel_identity_survives_other_patch_budget_and_order_changes() {
+        let patch=|id,frame,x,strength|wreck_surface_fire::Patch {
+            position:Vec3::new(x,0.0,0.0),normal:Vec3::Y,strength,id,frame};
+        let a=patch(31,0,-3.0,0.8);let b=patch(31,1,3.0,0.8);
+        let snapshot=|patches:&[wreck_surface_fire::Patch]| {
+            let mut map=std::collections::BTreeMap::new();
+            for cell in surface_wreck_fire_cells(47,3.7,1.0,Vec3::ZERO,patches,Vec2::ZERO) {
+                assert!(map.insert(cell.particle_id,(cell.offset,cell.size,cell.stage)).is_none());
+            }
+            map
+        };
+        let initial=snapshot(&[a,b]);let reordered=snapshot(&[b,a]);
+        assert_eq!(initial,reordered,"equal budgets must not depend on selected-patch ordering");
+        let changed=snapshot(&[patch(31,0,-3.0,1.2),b]);
+        let mut compared=0;
+        for (id,value) in &initial {
+            if id[0]!=0x4653_0001 {continue;}
+            if let Some(next)=changed.get(id) {assert_eq!(value,next);compared+=1;}
+        }
+        assert!(compared>100,"surviving turret parcels must not be renumbered by hull strength");
+        assert!(initial.len()<=FLAME_CUBES_PER_WORLD_SOURCE && changed.len()<=FLAME_CUBES_PER_WORLD_SOURCE);
+    }
+
     #[test]
     fn wall_flames_remain_on_the_air_side_and_climb_while_floor_flames_rise() {
         for normal in [Vec3::Y, Vec3::X, -Vec3::Z, -Vec3::Y] {
@@ -35426,5 +35627,30 @@ mod urban_runtime_gpu_tests {
         assert_eq!(module_visibility(&g, &r, h2), before);
         assert_eq!(r.tlas_demand(), demand_before);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod acoustic_wave_arrival_tests {
+    use super::*;
+    fn report() -> ScheduledSound {
+        ScheduledSound {wave:Some(AcousticWave{emitted_at_s:2.0,speed_m_s:320.0}),
+            delay:1.0,sfx:crate::audio::Sfx::RifleShot,emission:sound_emission_for(crate::audio::Sfx::RifleShot),
+            muzzle:None,source:Vec3::ZERO,source_in_player:false,buf:None,enemy_report:None}
+    }
+    #[test]
+    fn wavefront_uses_actual_moving_ear_and_emission_time() {
+        let mut queue=vec![report()];
+        assert!(take_arrived_sounds_at(&mut queue,1.0/60.0,Some((Vec3::Z*340.0,3.0))).is_empty());
+        assert!((queue[0].delay-0.0625).abs()<1e-6);
+        assert_eq!(take_arrived_sounds_at(&mut queue,1.0/60.0,Some((Vec3::Z*340.0,3.0625))).len(),1);
+        let mut queue=vec![report()];
+        assert_eq!(take_arrived_sounds_at(&mut queue,1.0/144.0,Some((Vec3::Z*160.0,2.5))).len(),1);
+    }
+    #[test]
+    fn paused_clock_does_not_release_or_advance_emitted_sound() {
+        let mut queue=vec![report()];
+        assert!(take_arrived_sounds_at(&mut queue,0.0,Some((Vec3::ZERO,4.0))).is_empty());
+        assert_eq!(queue[0].delay,1.0);
     }
 }

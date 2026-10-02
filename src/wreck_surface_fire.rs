@@ -6,7 +6,7 @@ use glam::{Mat4, Vec3};
 use std::collections::{BinaryHeap, HashMap};
 
 #[derive(Clone, Copy, Debug)]
-pub struct Patch { pub position: Vec3, pub normal: Vec3, pub strength: f32, pub id: usize }
+pub struct Patch { pub position: Vec3, pub normal: Vec3, pub strength: f32, pub id: usize, pub frame:u8 }
 #[derive(Default)]
 pub struct Surface { points: Vec<(Vec3, Vec3)>, edges: Vec<Vec<(usize, f32)>> }
 #[derive(Clone, Default)]
@@ -93,7 +93,7 @@ impl Surface {
             let (i,p,n,intensity,_)=candidates.swap_remove(best);
             let position=model.transform_point3(p);
             if selected.iter().any(|q|q.position.distance_squared(position)<0.60_f32.powi(2)) {continue;}
-            selected.push(Patch{position,normal:model.transform_vector3(n).normalize_or_zero(),strength:intensity,id:i});
+            selected.push(Patch{position,normal:model.transform_vector3(n).normalize_or_zero(),strength:intensity,id:i,frame:0});
         }
         selected
     }

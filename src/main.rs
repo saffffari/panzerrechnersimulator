@@ -42,6 +42,8 @@
 //!                                                     five riflemen, live alarm/aim/fire pipeline
 
 mod simulation_uploads;
+mod scene_visibility;
+mod scene_visibility_gpu;
 mod display_preview;
 mod acoustics;
 mod act_manifest;
@@ -105,6 +107,7 @@ mod interior_rig;
 mod lan;
 mod mechanic_capture;
 mod blizzard_battle_capture;
+mod combat_scene_suite;
 mod crew_blizzard_capture;
 mod combat_capture_audio;
 mod shell_flight_audio;
@@ -134,8 +137,11 @@ mod spatial_audio;
 mod spatial_grid;
 mod street_plan;
 mod tank;
+mod vehicle_ground;
+mod powertrain;
 mod tank_push;
 mod tank_support;
+mod track_snow;
 mod tank_dressing;
 mod terrain;
 mod terrain_opening;
@@ -145,6 +151,8 @@ mod turret_disc;
 mod ui;
 mod graphics_menu;
 mod storm_weather;
+mod particle_motion;
+mod mounted_mg;
 mod urban_tableau_meshes;
 mod urban_tableaux;
 mod world;
@@ -238,6 +246,9 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         max_push_constant_size: REQUIRED_PUSH_CONSTANT_SIZE,
         ..Default::default()
     };
+    // Portable exact source visibility needs the same lossless geometry capacity without RT.
+    limits.max_buffer_size = al.max_buffer_size.min(4 * 1024 * 1024 * 1024);
+    limits.max_storage_buffer_binding_size = al.max_storage_buffer_binding_size;
     if rt {
         features |= wgpu::Features::EXPERIMENTAL_RAY_QUERY;
         if vr {
@@ -390,7 +401,15 @@ fn converge_headless_screenshot(
     let mut convergence = HeadlessExposureConvergence::default();
     let mut measured_exposure = None;
     for exposure_frames in 1..=HEADLESS_EXPOSURE_MAX_FRAMES {
-        render_step(renderer)?;
+        // The first metered frame consumes the sentinel. Subsequent frozen-scene renders
+        // must advance the eye, otherwise dt=0 falsely satisfies the stability window.
+        let previous_clock = (exposure_frames > 1)
+            .then(|| renderer.begin_headless_exposure_step(queue));
+        let rendered = render_step(renderer);
+        if let Some(previous_clock) = previous_clock {
+            renderer.finish_headless_exposure_step(queue, previous_clock);
+        }
+        rendered?;
         let [exposure, _last_time_s] = renderer.debug_read_active_exposure(device, queue)?;
         measured_exposure = Some(exposure);
         if convergence.observe(exposure) {
@@ -13117,6 +13136,7 @@ impl WindowState {
                 ui::Align::Left,
             );
         }
+        self.game.draw_repair_cue(&mut self.renderer);
         // A wordless dot where the crosshair rests on something the hands can use.
         if self.game.hover_label_text().is_some() {
             self.renderer.draw_text(
@@ -14029,7 +14049,7 @@ impl ApplicationHandler for App {
                     s.apply_display_preview(Some(index));
                 }
                 self.window_focused = true;
-                s.set_play_cursor(!matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu));
+                s.set_play_cursor(!s.show_controls && !matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu));
                 window.request_redraw();
                 self.state = Some(s);
             }
@@ -14210,7 +14230,8 @@ impl ApplicationHandler for App {
                     AppState::Playing => match code {
                         // Home toggles the controls reference (pauses the game).
                         KeyCode::Home if state.couch_keyboard_has_authority() => {
-                            state.show_controls = !state.show_controls
+                            state.show_controls = !state.show_controls;
+                            state.set_play_cursor(!state.show_controls);
                         }
                         // M pulls out / stows the physical paper map; the war never pauses.
                         KeyCode::KeyM if state.couch_keyboard_has_authority() => {
@@ -14226,9 +14247,12 @@ impl ApplicationHandler for App {
                         // Solo Escape always pauses, including while holding the map. LAN overlays
                         // stay local so opening UI never stalls the shared simulation.
                         KeyCode::Escape if state.lan.is_none() => state.enter_pause(),
-                        KeyCode::Escape if state.show_controls => state.show_controls = false,
+                        KeyCode::Escape if state.show_controls => {
+                            state.show_controls = false;
+                            state.set_play_cursor(true);
+                        },
                         KeyCode::Escape if state.show_map => { state.show_map = false; state.game.set_map_held(false); },
-                        KeyCode::Escape if state.lan.is_some() => state.show_controls = true,
+                        KeyCode::Escape if state.lan.is_some() => { state.show_controls = true; state.set_play_cursor(false); },
                         // Simulation input is already stripped inside Game::update. Direct physical
                         // interaction methods live here, so gate those too once P1 is a casualty.
                         _ if !state.couch_keyboard_has_authority() => {}
@@ -14349,6 +14373,9 @@ impl ApplicationHandler for App {
                                 self.binocs = false;
                             }
                         }
+                        KeyCode::PageUp if state.couch_keyboard_has_authority() => { state.game.driver_shift_gear(1); }
+                        KeyCode::PageDown if state.couch_keyboard_has_authority() => { state.game.driver_shift_gear(-1); }
+                        KeyCode::End if state.couch_keyboard_has_authority() => { state.game.driver_automatic_gears(); }
                         KeyCode::BracketLeft => {
                             state.renderer.master_retro =
                                 (state.renderer.master_retro - 0.1).max(0.0);
@@ -14430,6 +14457,27 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput {
                 state: btn, button, ..
             } => {
+                if state.show_controls {
+                    if btn.is_pressed() && button == winit::event::MouseButton::Left
+                        && state.menu_pointer.is_some_and(|p| (0.34..=0.66).contains(&p.x) && (0.930..=0.984).contains(&p.y)) {
+                        state.show_controls=false;
+                        state.set_play_cursor(matches!(state.state,AppState::Playing));
+                    }
+                    self.keys=Keys::default();
+                    return;
+                }
+                if matches!(state.state, AppState::LanMenu) {
+                    if btn.is_pressed() && button == winit::event::MouseButton::Left {
+                        if let Some(row)=state.menu_pointer.and_then(|p|state.lan_menu.row_at(p.x,p.y,state.lan_session_count())) {
+                            state.lan_menu.selected=row;
+                            if state.lan_menu.editing_address && row != ui::LAN_IDX_MANUAL {
+                                state.lan_menu.editing_address=false;
+                            }
+                            state.lan_menu_key(winit::keyboard::KeyCode::Enter);
+                        }
+                    }
+                    self.keys=Keys::default();return;
+                }
                 if matches!(state.state, AppState::Menu) {
                     if btn.is_pressed() && button == winit::event::MouseButton::Left {
                         if let Some(row) = state.menu_pointer.and_then(|p| state.menu.row_at(p.x, p.y)) {
@@ -14583,8 +14631,10 @@ impl ApplicationHandler for App {
                 let dt = self
                     .last
                     .map(|t| (now - t).as_secs_f32())
-                    .unwrap_or(1.0 / 60.0)
-                    .min(0.1);
+                    .unwrap_or(1.0 / 60.0);
+                // Focus suspension already resets `last`. A multi-second OS suspend is a pause,
+                // not a backlog of unseen combat; ordinary slow frames consume their full time.
+                let dt=if dt>5.0 {1.0/60.0} else {dt};
                 self.last = Some(now);
                 state.frame_counter = state.frame_counter.wrapping_add(1);
                 // Read the frame's input FIRST, then consume the accumulated look delta — zeroing
@@ -14646,6 +14696,7 @@ impl ApplicationHandler for App {
                                 commander,
                             );
                             state.show_controls = overlay.show_controls;
+                            if state.show_controls != previous_controls { state.set_play_cursor(!state.show_controls); }
                             state.show_map = state.game.set_map_held(overlay.show_map);
                             couch_commander_overlay_busy = previous_controls
                                 || previous_map
@@ -14833,6 +14884,7 @@ impl ApplicationHandler for App {
                             self.mouse_haptics.stop();
                             if state.lan.is_some() {
                                 state.show_controls = !state.show_controls;
+                                state.set_play_cursor(!state.show_controls);
                                 state.show_map = false;
                                 state.game.set_map_held(false);
                             } else {
@@ -15072,7 +15124,7 @@ impl ApplicationHandler for App {
                             hands_busy.couch_identities = couch_identities;
                         }
                         let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
-                        state.game.update(&hands_busy, dt, &mut state.renderer);
+                        state.game.update_realtime(&hands_busy, dt, &mut state.renderer);
                         native_input_audit::sample(&state.game,&state.renderer,&hands_busy,state.show_map,&pads.seats);
                         dispatch_solo_haptics(&mut self.gamepads, &mut self.mouse_haptics, pad,
                             haptic_before, state.game.haptic_snapshot());
@@ -15098,7 +15150,7 @@ impl ApplicationHandler for App {
                                 input.couch_crew = true;
                                 input.couch_identities = couch_identities;
                             }
-                            state.game.update(&input, dt, &mut state.renderer);
+                            state.game.update_realtime(&input, dt, &mut state.renderer);
                             native_input_audit::sample(&state.game,&state.renderer,&input,state.show_map,&pads.seats);
                             state.lan_post_update();
                             state.ingest_campaign_signals();
@@ -15225,7 +15277,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
-                        state.game.update(&input, dt, &mut state.renderer);
+                        state.game.update_realtime(&input, dt, &mut state.renderer);
                         native_input_audit::sample(&state.game,&state.renderer,&input,state.show_map,&pads.seats);
                         dispatch_solo_haptics(&mut self.gamepads, &mut self.mouse_haptics, pad,
                             haptic_before, state.game.haptic_snapshot());
@@ -15987,6 +16039,22 @@ fn main() -> anyhow::Result<()> {
         let weights = args.get(3).map(|s| s.as_str());
         return run_brawl(outdir, weights);
     }
+    if args.get(1).is_some_and(|s| s == "winter-drive-review") {
+        let prefix=args.get(2).ok_or_else(||anyhow::anyhow!("winter-drive-review requires PREFIX uphill|manual|broken [preview]"))?;
+        let case=args.get(3).map(String::as_str).unwrap_or("broken");
+        return game::winter_drive_review::run(prefix,case,args.iter().any(|s|s=="preview"));
+    }
+    if args.get(1).is_some_and(|s| s == "combat-scene-suite") {
+        let prefix=args.get(2).ok_or_else(||anyhow::anyhow!("combat-scene-suite requires PREFIX SCENE [SECONDS] [preview] [looks] [dither-video|obra-dinn-video|no-dither-video]"))?;
+        let scene=args.get(3).map(String::as_str).unwrap_or("all");
+        let seconds=args.get(4).filter(|s|!matches!(s.as_str(),"preview"|"looks"|"dither-video"|"obra-dinn-video"|"no-dither-video")).map(|s|s.parse()).transpose()?.unwrap_or(16.0);
+        let preview=args.iter().skip(4).any(|s|s=="preview");
+        let looks=args.iter().skip(4).any(|s|s=="looks");
+        let dither_video=if args.iter().skip(4).any(|s|s=="no-dither-video") {Some(4)}
+            else if args.iter().skip(4).any(|s|s=="obra-dinn-video") {Some(2)}
+            else if args.iter().skip(4).any(|s|s=="dither-video") {Some(1)} else {None};
+        return combat_scene_suite::run(prefix,scene,seconds,preview,looks,dither_video);
+    }
     if args.get(1).is_some_and(|s| s == "blizzard-battle") {
         let prefix = args.get(2).ok_or_else(||anyhow::anyhow!("blizzard-battle requires output prefix"))?;
         let seconds = args.get(3).map(|s|s.parse()).transpose()?.unwrap_or(24.0);
@@ -15996,7 +16064,8 @@ fn main() -> anyhow::Result<()> {
         } else if args.iter().skip(4).any(|s|s == "inside") {
             crew_blizzard_capture::View::Inside
         } else { crew_blizzard_capture::View::External };
-        return blizzard_battle_capture::run_with_view(prefix, seconds, preview, view);
+        let platoon = args.iter().skip(4).any(|s|s == "platoon");
+        return blizzard_battle_capture::run_with_encounter(prefix, seconds, preview, view, platoon);
     }
     if args.len() >= 2 && args[1] == "duel" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);

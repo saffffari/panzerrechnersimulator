@@ -57,3 +57,46 @@ crew occupancy and reload timing can change outcomes relative to the external so
 run. JSON receipts identify the viewpoint, listener KIA time, events, scope and live audio graph.
 
 Heat-triggered detonation of the player's modeled ammunition reservoir now uses the same catastrophic blast/tearing voices as a direct rack hit. Ordinary individual wreck cook-offs keep their smaller secondary voice.
+
+## Pressure body after the v6 crew review
+
+The v6 crew recordings contain the own-gun report and all incoming hit cues. Their first ordinary
+armor strike already has substantial 50–180 Hz energy. The fatal inside event is different:
+94.7% of its first short onset window is below 50 Hz, and the whole run reaches 28.7 dB of master
+limiting. These are measurements of exported audio, not a listening verdict or an attribution of
+every overlapping voice. `captures/crew_v6_bass_diagnostic_20261001.json` preserves those windows.
+
+An isolated healthy-ear render through the actual live graph confirmed a source problem in
+addition to the internal-source routing problem. At 2 m with headset and without exterior hull
+insertion, the old catastrophic source spent 79.1% of its first 250 ms energy below 50 Hz and
+required 31.9 dB of master limiting. Its pressure waveform now retains one quarter of the
+32–41 Hz displacement amplitude and adds a shorter 98–109 Hz compression/rebound at the same
+time. This is one finite transient with audible body, not an added delayed boom or long oscillator.
+The scales are authored timbre; they do not claim a solved physical pressure history.
+
+With the same physical ear level, headset, reverb and common master, the 2 m catastrophic source's
+50–180 Hz band rises from -16.12 to -11.56 dBFS (+4.55 dB), while total first-250-ms RMS falls
+1.6 dB. Below-50-Hz share falls from 79.1% to 27.8%; master reduction falls from 31.9 to 27.1 dB.
+The very close ammunition blast still limits heavily at its existing extreme source calibration.
+No global gain, physical source levels, propagation table, headset, hearing model or master
+parameters changed. The gun recording and ordinary plate impacts are unchanged.
+
+`captures/destruction_pressure_before_after_final_20261001.json` records the controlled comparison,
+input/output levels, band measurements and WAV hashes. The opt-in
+`audio::calibrated::tests::destruction_pressure_path_review` exports the real-graph path matrix
+when `KESSEL_DESTRUCTION_PATH_REVIEW_PREFIX` is set to a new capture prefix. Its healthy ears
+separate source/transfer behavior from accumulated gameplay hearing damage. The same-compartment
+22 m row is a transfer-shape diagnostic, not a literal interior distance. The body regression
+checks the crew-headset path after calibration and the common master; the existing catastrophe
+hierarchy regression covers the observer path. Actual final crew captures remain the acceptance
+evidence for the combined routing and source changes.
+
+Only the player's resolved rack detonation and heat-triggered ammunition detonation now mark
+their TurretPop/TurretRip wavefronts as originating inside its fighting compartment. At arrival,
+a Buttoned or HatchOpen listener in that compartment receives them without an exterior hull,
+snow-ground or exterior-cover transfer. Distance, air absorption, headset, hearing damage/reflex,
+travel time, steel interior reverb and the common master remain active. Enemy wrecks with the
+same sound identity remain exterior. Head-out and on-foot paths keep the existing exterior
+approximation; directional escape through the actual hatch aperture is still unmodeled.
+`game::listener_hearing::tests::internal_ammunition_source_keeps_headset_without_crossing_its_own_hull`
+guards provenance, enclosure selection and headset retention.

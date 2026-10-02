@@ -813,9 +813,21 @@ pub(crate) fn gameplay_frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Devi
     frame(g, r, device, queue, None, None, None, 0.0)
 }
 
+pub(crate) fn gameplay_native_frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device,
+    queue: &wgpu::Queue) -> anyhow::Result<Vec<u8>> {
+    let native=[r.iw,r.ih];
+    frame_at_size(g,r,device,queue,None,None,None,0.0,native)
+}
+
 fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
     map: Option<&ReviewMap>, caption: Option<&str>, witness: Option<CrewWitness>,
     death_fade: f32) -> anyhow::Result<Vec<u8>> {
+    frame_at_size(g,r,device,queue,map,caption,witness,death_fade,[1920,1080])
+}
+
+fn frame_at_size(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+    map: Option<&ReviewMap>, caption: Option<&str>, witness: Option<CrewWitness>,
+    death_fade: f32, size:[u32;2]) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(!g.chase_cam, "first-person recorder refuses chase/photo camera");
     r.begin_coop_shadow_frame(g.player.center());
     let shadow_ready=g.refresh_rtt_periscopes(r);
@@ -866,7 +878,8 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         g.apply_cinematic_camera_impulses(r);
         r.set_active_view(3);r.rt_skip=true;r.set_coop_shadow_reuse(true);
     }
-    let rgba=r.render_to_rgba_with_hud(device,queue,1920,1080);
+    if witness.is_none() {g.draw_repair_cue(r);}
+    let rgba=r.render_to_rgba_with_hud(device,queue,size[0],size[1]);
     r.camera=saved.0;r.reticle=saved.1;r.optic_mask=saved.2;r.precipitation=saved.3;
     r.weather_shelter=saved.4;r.interior_light=saved.5;r.interior_haze=saved.6;r.rt_mix=saved.7;
     r.set_interior_atmosphere_enabled(saved.8);r.rt_skip=saved.9;r.set_active_view(0);
@@ -1067,6 +1080,11 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     require_loader_preview(&spec, std::env::var("KESSEL_LOADER_ARM_PREVIEW").as_deref()==Ok("1"))?;
     let act_one_playtest=validate_act_one_playtest(&spec)?;
     let retained_diagnostic=spec["diagnostic_view"]=="retained_model";
+    anyhow::ensure!(spec.get("native_output").is_none_or(Value::is_boolean),
+        "native_output must be a boolean");
+    let native_output=spec["native_output"].as_bool().unwrap_or(false);
+    anyhow::ensure!(!native_output || !retained_diagnostic,
+        "native_output is supported for ordinary gameplay views only");
     let diagnostic_crew=spec["setup"]["diagnostic_crew"]==true;
     let showcase_crew=ShowcaseCrew::from_spec(&spec)?;
     let crew_witness=CrewWitness::from_spec(&spec)?;
@@ -1145,10 +1163,12 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         anyhow::ensure!(yaw.is_finite(), "player heading must be finite");
         g.player.heading = (yaw as f32).to_radians();
     }
-    // Both shipping shader sensor sizes share the 16:9 presentation; the receipt records
-    // the actual native size, while render_to_rgba produces the 1920x1080 video below.
-    anyhow::ensure!(matches!((r.iw,r.ih),(640,360)|(576,324)),
-        "first-person review requires KESSEL_INTERNAL_RES=640x360 or 576x324");
+    // Native output preserves one encoded pixel per scene pixel for effects/dither review.
+    anyhow::ensure!(matches!((r.iw,r.ih),(640,360)|(576,324)|(800,450)),
+        "first-person review requires KESSEL_INTERNAL_RES=640x360, 576x324 or 800x450");
+    let output_size=if native_output {[r.iw,r.ih]} else {[1920,1080]};
+    let output_dimensions=format!("{}x{}",output_size[0],output_size[1]);
+    let output_pixels=output_size[0] as usize*output_size[1] as usize;
     g.chase_cam=false;g.jump_station(station(spec["station"].as_str().unwrap_or("commander"))?);
     if let Some(crew) = showcase_crew { g.set_lan_role(crew.role); }
     g.set_defer_rtt_to_render(true);
@@ -1308,7 +1328,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         .and_then(|s|s.parse::<f32>().ok()).filter(|v|v.is_finite())
         .unwrap_or(3.0).clamp(0.0,10.0);
     for _ in 0..if record && !retained_diagnostic {24} else {0} {
-        let started=Instant::now();let _=frame(&mut g,&mut r,&device,&queue,None,None,crew_witness,0.0)?;
+        let started=Instant::now();let _=frame_at_size(&mut g,&mut r,&device,&queue,None,None,crew_witness,0.0,output_size)?;
         std::thread::sleep(started.elapsed().mul_f32(idle_factor)
             .max(std::time::Duration::from_millis(pause_ms)).min(std::time::Duration::from_secs(5)));
     }
@@ -1339,7 +1359,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     let output=format!("{prefix}.mp4");let poster=format!("{prefix}.png");
     anyhow::ensure!(!std::path::Path::new(&output).exists(),"refusing to overwrite {output}");
     let mut encoder=if record {Some(std::process::Command::new("ffmpeg").args(["-v","error","-nostdin","-y",
-        "-f","rawvideo","-pixel_format","rgba","-video_size","1920x1080","-framerate","24",
+        "-f","rawvideo","-pixel_format","rgba","-video_size",&output_dimensions,"-framerate","24",
         "-i","pipe:0","-an","-c:v","libx264","-threads","1","-preset","veryfast","-crf","12",
         "-pix_fmt","yuv420p","-movflags","+faststart",&raw]).stdin(std::process::Stdio::piped()).spawn()?)} else {None};
     let frames=(scalar(&spec,"seconds",8.0)*FPS as f64).round() as u32;
@@ -1378,16 +1398,16 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                         }}
                     }
                     let native=image::RgbaImage::from_raw(r.iw,r.ih,pixels).unwrap();
-                    image::imageops::resize(&native,1920,1080,image::imageops::FilterType::Nearest).into_raw()
+                    image::imageops::resize(&native,output_size[0],output_size[1],image::imageops::FilterType::Nearest).into_raw()
                 } else if kia_at.is_some_and(|start| now - start >= crate::DEATH_FADE) {
                     // No recorded shot, or completed replay: hold black. Never invent a hit.
                     profile_kind = "kia_black_no_gpu_render";
-                    let mut black = vec![0u8; 1920 * 1080 * 4];
+                    let mut black = vec![0u8; output_pixels * 4];
                     for pixel in black.chunks_exact_mut(4) { pixel[3] = 255; }
                     black
                 } else if kia_at.is_some() {
                     profile_kind = "kia_black_no_fatal_record";
-                    [0, 0, 0, 255].repeat(1920 * 1080)
+                    [0, 0, 0, 255].repeat(output_pixels)
                 } else if let Some(view) = model_view.as_mut() {
                     profile_kind = "retained_model_diagnostic";
                     let appendix=scalar(&spec,"diagnostic_anatomy_last_s",0.0) as f32;
@@ -1397,7 +1417,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                     view.capture_rgba(&mut r,&device,&queue)?
                 } else {
                     profile_kind = "gameplay";
-                    frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str(),crew_witness,0.0)?
+                    frame_at_size(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str(),crew_witness,0.0,output_size)?
                 };
                 if let Some((start, work_before)) = render_start {
                     // render_to_rgba waits for GPU completion and copies mapped RGBA rows. Stop
@@ -1409,7 +1429,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                         render_readback_ms.push(elapsed);
                     }
                 }
-                if f==0 { image::save_buffer(&poster,&rgba,1920,1080,image::ColorType::Rgba8)?; }
+                if f==0 { image::save_buffer(&poster,&rgba,output_size[0],output_size[1],image::ColorType::Rgba8)?; }
                 encoder.stdin.as_mut().unwrap().write_all(&rgba)?;
                 if diagnostic_layer_frame == Some(f) {
                     r.debug_capture_light_layers(&device,&queue,
@@ -1581,7 +1601,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         "scenario_path":scenario_path,"scenario":spec,"media_recorded":record,
         "video":record.then_some(&output),"poster":record.then_some(&poster),"audio":record.then_some(&wav),
         "fps":FPS,"frames":if record {frames} else {0},"simulation_hz":SIM_HZ,
-        "encoded_resolution":[1920,1080],"native_resolution":[r.iw,r.ih],"first_person":!retained_diagnostic && crew_witness.is_none(),
+        "encoded_resolution":output_size,"native_resolution":[r.iw,r.ih],"first_person":!retained_diagnostic && crew_witness.is_none(),
         "crew_witness":spec.get("crew_witness"),
         "camera":if crew_witness.is_some() {"Disclosed turret-local render-only witness; ordinary live player camera retained for input; actual mortal solo roster, no fabricated animation or authority"}
             else if retained_diagnostic {"Hull-relative diagnostic orbit; gameplay camera and simulation remain unchanged"}
@@ -1617,8 +1637,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "ray_queries_enabled":r.rt_on,"deferred_enabled":r.deferred,
             "timestamp_query_feature_enabled":device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
             "gpu_pass_timestamps_collected":false,
-            "native_scene_resolution":[r.iw,r.ih],"rgba_readback_resolution":record.then_some([1920,1080]),
-            "rgba_bytes_per_rendered_frame":record.then_some(1920u64 * 1080 * 4),
+            "native_scene_resolution":[r.iw,r.ih],"rgba_readback_resolution":record.then_some(output_size),
+            "rgba_bytes_per_rendered_frame":record.then_some(output_pixels as u64 * 4),
             "gpu_fenced_readback":record,"simulation_ticks_per_batch":SIM_HZ/FPS,
             "simulated_seconds_per_batch":1.0 / FPS as f64,"warmup_excluded":true,
             "render_readback_ms":capture_timing_summary(&render_readback_ms),
@@ -1626,7 +1646,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "render_work_total":capture_work_json(r.render_work_stats().delta_since(work_before_capture)),
             "frames":timing_frames,
             "quantiles":"Linear interpolation at (count-1)*p; no discarded slow frames",
-            "render_scope":"Existing render/capture orchestration, GPU completion wait, 1920x1080 RGBA readback and row copy. Includes active periscope/ADS views and HUD. Scene resolution is reported separately. KIA black frames are excluded from render statistics.",
+            "render_scope":"Existing render/capture orchestration, GPU completion wait, declared output-resolution RGBA readback and row copy. Includes active periscope/ADS views and HUD. Scene resolution is reported separately. KIA black frames are excluded from render statistics.",
             "simulation_scope":"Five ordinary 120Hz input/action/Game-update ticks and device-free audio mixing per batch. Includes normal renderer-state uploads; no extra GPU fence.",
             "excluded":"PNG writing, encoder pipe/backpressure, ffmpeg/mux time, deliberate sleeps, diagnostic exports and warmup",
             "interpretation":"Capture/readback timings, not pure GPU timings or interactive window FPS. No presentation/vsync measurement; five simulation ticks per captured frame differ from one interactive frame."})

@@ -65,10 +65,21 @@ impl Game {
         (interior, ear.laf_db)
     }
 
-    /// One own machine-gun round reaches the ears (its peak; the burst's loop only plays it).
+    /// One real own-MG cycle at the cabin crew reference. The published project table is an
+    /// estimated combined mount/receiver path (±10dB), not an identified3Dsource measurement.
+    /// Keep it distinct from the separately propagated exterior muzzle, with no invented locator.
     pub(super) fn hear_own_mg_round(&mut self) {
-        let (_, ear) = self.own_mg_ear();
-        self.hear_own_vehicle_impulse(&ear, 0.0);
+        use crate::sound_propagation::Enclosure;
+        if !matches!(self.listener_enclosure(),Enclosure::Buttoned|Enclosure::HatchOpen) {return;}
+        let level=&crate::sound_levels::MG34_INSIDE;
+        // LAeq of a13round/s burst -> per-round sound exposure -> fast maximum.
+        let per_round=level.laf_db-10.0*13.0f32.log10()+crate::sound_levels::LAF_MINUS_LAE_DB;
+        let ear=self.own_vehicle_ear_level(level.lpk_db,per_round,level.spectrum,level.a_duration_ms);
+        self.hear_own_vehicle_impulse(&ear,0.0);
+        if let Some(audio)=&self.audio {
+            let mono=crate::acoustics::synth_mg_receiver_round(self.mg_round);
+            audio.play_world_mono_at_ear(&mono,&ear,0.0,crate::acoustics::ReverbParams::STEEL_INTERIOR);
+        }
     }
 
     /// The own Maybach and tracks at the listener's ear (dB(A)). Buttoned: the report's interior
@@ -143,6 +154,66 @@ impl Game {
         }).collect()
     }
 
+    /// The manual elevation handwheel/gearbox at its actual retained turret-local source.
+    /// 75dBA at1m/full speed is an authored estimate, not a historical measurement. The
+    /// existing octave-band path supplies distance, air, obstruction, enclosure and headset
+    /// losses; the shared listener bus subsequently applies current hearing state.
+    pub(super) fn gun_elevation_voice(&self, listener: Vec3, facing: Vec3, rate: f32)
+        -> Option<crate::audio::VehicleVoice>
+    {
+        use crate::sound_propagation::{Enclosure, class_spectrum};
+        if !self.player.alive || !rate.is_finite() || rate < 0.002 { return None; }
+        let source = self.player.turret_model().transform_point3(crate::interior_rig::WHEEL1_POS);
+        let level = 75.0 + 20.0 * rate.min(1.0).log10();
+        let emission = Emission {lpk_db:level+9.0,laf_db:level,ref_m:1.0,
+            law:crate::sound_levels::DistanceLaw::Spherical,class:SpectrumClass::Mechanical,
+            spectrum:class_spectrum(SpectrumClass::Mechanical),a_duration_ms:1000.0,
+            tnt_kg:0.0,directivity_db:0.0};
+        let enclosure = self.listener_enclosure();
+        let inside = matches!(self.mode,Mode::Tank)
+            && matches!(enclosure,Enclosure::Buttoned|Enclosure::HatchOpen);
+        // An internal source crosses no armor to another seat. A listener outside receives
+        // the existing open/closed-hull transfer in the reverse direction (reciprocal estimate).
+        let path = Path {distance_m:source.distance(listener).max(0.35),
+            atmosphere:crate::sound_propagation::active_atmosphere(),
+            occluded:!inside && !self.los_clear(source,listener),
+            enclosure:if inside {Enclosure::OnFoot} else if self.hatch_open || self.driver_hatch {
+                Enclosure::HatchOpen } else {Enclosure::Buttoned},
+            headset:self.listener_headset()};
+        let ear = propagate(&emission,&path);
+        Some(crate::audio::VehicleVoice {id:0,ear_laf_dba:ear.laf_db,
+            bearing_deg:bearing_deg_from(facing,source-listener),
+            lowpass_hz:crate::audio::lowpass_for_transfer(&ear.transfer_db),
+            playback_speed:0.55+0.65*rate.min(1.0)})
+    }
+
+    /// Loose-run contacts at the modeled broken link, with the normal exterior propagation.
+    /// Cadence/effort comes from the drivetrain; neither hull travel nor a damage flag creates it.
+    pub(super) fn loose_track_voices(&self,listener:Vec3,facing:Vec3)->Vec<crate::audio::VehicleVoice> {
+        use crate::sound_propagation::class_spectrum;
+        if !self.player.alive {return Vec::new();}
+        self.player_powertrain.broken_track_drive.iter().enumerate().filter_map(|(index,drive)| {
+            let level=crate::audio::loose_track_source_level(drive.belt_speed_mps.abs(),drive.load)?;
+            let kind=if index==0 {ModuleKind::LeftTrack}else{ModuleKind::RightTrack};
+            if self.module_ok(kind) {return None;}
+            let source=self.track_repair_point(kind);
+            let emission=Emission {lpk_db:level+12.0,laf_db:level,ref_m:1.0,
+                law:crate::sound_levels::DistanceLaw::Spherical,class:SpectrumClass::Mechanical,
+                spectrum:class_spectrum(SpectrumClass::Mechanical),a_duration_ms:1000.0,
+                tnt_kg:0.0,directivity_db:0.0};
+            let path=Path {distance_m:source.distance(listener).max(0.35),
+                atmosphere:crate::sound_propagation::active_atmosphere(),
+                occluded:!self.los_clear(source,listener) || (self.mode==Mode::Foot
+                    && self.small_arm_player_armor(source,listener).is_some()),
+                enclosure:self.listener_enclosure(),headset:self.listener_headset()};
+            let ear=propagate(&emission,&path);
+            Some(crate::audio::VehicleVoice {id:index,ear_laf_dba:ear.laf_db,
+                bearing_deg:bearing_deg_from(facing,source-listener),
+                lowpass_hz:crate::audio::lowpass_for_transfer(&ear.transfer_db),
+                playback_speed:drive.belt_speed_mps.abs()/crate::audio::LOOSE_TRACK_REFERENCE_BELT_MPS})
+        }).collect()
+    }
+
     /// Continuous combustion follows the same patches/wreck states as the flames.
     /// Levels and timbre are authored estimates, not historical measurements.
     pub(super) fn burning_fire_voices(&self, listener: Vec3, facing: Vec3)
@@ -172,7 +243,9 @@ impl Game {
         }
         sources.into_iter().filter(|(_,p,_,_)|p.distance_squared(listener)<500.0*500.0)
             .map(|(id,source,strength,inside)| {
-                let level=74.0+10.0*strength.max(0.01_f32).log10();
+                // User-selected stronger combustion presence: an authored86dBA at1m
+                // reference (+12dB from the old understated bed), not a historical measurement.
+                let level=86.0+10.0*strength.max(0.01_f32).log10();
                 let emission=Emission {lpk_db:level+12.0,laf_db:level,ref_m:1.0,
                     law:crate::sound_levels::DistanceLaw::Spherical,class:SpectrumClass::Wind,
                     spectrum:class_spectrum(SpectrumClass::Wind),a_duration_ms:1000.0,
@@ -188,6 +261,20 @@ impl Game {
                     bearing_deg:bearing_deg_from(facing,source-listener),
                     lowpass_hz:crate::audio::lowpass_for_transfer(&ear.transfer_db),playback_speed:1.0}
             }).collect()
+    }
+
+    /// Actual first fuel ignition. Destruction voices already contain their own catch; this
+    /// covers the non-catastrophic fuel/engine transition without replaying every loop update.
+    pub(super) fn hear_fuel_ignition(&mut self, source: Vec3, seed: u32) {
+        let emission=Emission {lpk_db:106.0,laf_db:92.0,ref_m:1.0,
+            law:crate::sound_levels::DistanceLaw::Spherical,class:SpectrumClass::Wind,
+            spectrum:crate::sound_propagation::class_spectrum(SpectrumClass::Wind),
+            a_duration_ms:180.0,tnt_kg:0.0,directivity_db:0.0};
+        self.scheduled.push(ScheduledSound {
+            delay:self.threat_center().distance(source)/speed_of_sound(),
+            sfx:crate::audio::Sfx::ImpactGround, emission, muzzle:None,source,
+            source_in_player:true,buf:Some(crate::acoustics::synth_fire_ignition(seed)),wave: None, enemy_report:None,
+        });
     }
 
     /// A passing supersonic round's conical shock at the listener (SL §3), tested for every round
@@ -222,8 +309,9 @@ impl Game {
             emission,
             muzzle: None,
             source: crack.emission_point,
+            source_in_player: false,
             buf: Some(crate::acoustics::spatialize_mono(&wave, 0.0, 0.0)),
-            enemy_report: None,
+            wave: None, enemy_report: None,
         });
     }
 
@@ -344,6 +432,47 @@ mod tests {
     use super::*;
 
     const C: f32 = 319.0;
+
+    #[test]
+    fn internal_ammunition_source_keeps_headset_without_crossing_its_own_hull() {
+        use crate::sound_propagation::{Atmosphere, Enclosure, Ground};
+        let sound = |source_in_player| ScheduledSound {
+            delay: 0.01, sfx: crate::audio::Sfx::TurretPop,
+            emission: sound_emission_for(crate::audio::Sfx::TurretPop), muzzle: None,
+            source: Vec3::ZERO, source_in_player, buf: None, wave: None, enemy_report: None,
+        };
+        let internal = sound(true);
+        let exterior = sound(false); // identical Sfx and position; provenance decides the path
+        for enclosure in [Enclosure::Buttoned, Enclosure::HatchOpen] {
+            let base = Path { distance_m: 2.0, atmosphere: Atmosphere::WINTER,
+                occluded: true, enclosure, headset: true };
+            let (inside, same_compartment) = internal.receiver_path(base);
+            assert!(same_compartment);
+            assert_eq!(inside.distance_m, base.distance_m);
+            assert_eq!(inside.atmosphere.temperature_c, base.atmosphere.temperature_c);
+            assert_eq!(inside.atmosphere.ground, Ground::Hard);
+            assert!(!inside.occluded && inside.headset);
+            assert_eq!(inside.enclosure, Enclosure::OnFoot);
+            assert_eq!(exterior.receiver_path(base), (base, false));
+            let heard = propagate(&internal.emission, &inside);
+            let bare = propagate(&internal.emission, &Path { headset: false, ..inside });
+            let outside = propagate(&exterior.emission, &base);
+            assert!(heard.laf_db > outside.laf_db + 10.0,
+                "an internal burst inherited exterior cover/hull attenuation");
+            assert!(heard.laf_db < bare.laf_db - 2.0 && heard.lpk_db < bare.lpk_db,
+                "internal provenance bypassed the listener's headset");
+            // Physical hearing still receives this very high incident level; no damage/reflex
+            // bypass is part of the path correction.
+            assert!(crate::hearing::ear_impulses(&heard, 0.0).iter()
+                .all(|ear| ear.lpk_db > crate::hearing::MIN_EFFECTIVE_DB));
+        }
+        for enclosure in [Enclosure::HeadOut, Enclosure::OnFoot] {
+            let base = Path { distance_m: 4.0, atmosphere: Atmosphere::WINTER,
+                occluded: true, enclosure, headset: enclosure == Enclosure::HeadOut };
+            assert_eq!(internal.receiver_path(base), (base, false));
+            assert_eq!(exterior.receiver_path(base), (base, false));
+        }
+    }
 
     #[test]
     fn armour_source_requires_a_resolved_internal_burst_including_heat_and_ammunition() {

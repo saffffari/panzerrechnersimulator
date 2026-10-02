@@ -24,10 +24,11 @@ pub const APERTURE_RADII: [f32; 4] = [0.265, 0.235, 0.265, 0.265];
 pub const LOADER_HINGE: Vec3 = Vec3::new(-0.7036, 2.4564, 0.1235);
 
 pub fn load_player_tiger() -> anyhow::Result<([CpuMesh; 3], [CpuMesh; 4], CpuMesh, Vec<super::tiger_periscopes::OpticalPart>, super::tiger_gunner_sight::Source, super::tiger_driver_shutters::Source, CpuMesh, super::driver_controls::Source)> {
-    let mut hull = crate::gltf_load::load_glb_partitioned_roots_with_material_override(
+    let mut hull = crate::gltf_load::load_glb_partitioned_roots_with_source_addition(
         "assets/tanks/tiger/baked/tiger_hull.glb",
         &["Drivers Hatch Pivot", "MG Operater", "Hull_0189_housing", super::tiger_driver_shutters::SHIELD_ROOT, super::tiger_driver_shutters::WHEEL_ROOT, super::driver_controls::WHEEL_ROOT, super::driver_controls::BUTTON_ROOT],
         Some(crate::tank::tiger_paint_finish),
+        Some((crate::interior_rig::RACK_FITTING_GLB,"Turret_0125")),
     )?;
     let (turret, loader, periscopes, sight_tube, escape, cupola_grip) = super::tiger_periscopes::load_turret()?;
     let sight=super::tiger_gunner_sight::load(sight_tube)?;

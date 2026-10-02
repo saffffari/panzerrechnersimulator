@@ -163,6 +163,7 @@ fn validate_edit_transform(op: &serde_json::Value, field: &str) -> anyhow::Resul
     for key in ["x", "y", "z", "deg"] {
         json_f32(&op[key], &format!("{field}.{key}"))?;
     }
+    crate::assetlib::parse_tilt_deg(op.get("tilt_deg"), &format!("{field}.tilt_deg"))?;
     validate_scale(&op["s"], &format!("{field}.s"))
 }
 
@@ -477,6 +478,7 @@ impl ActManifest {
                 json_f32(&fields[field_index], &format!("placements[{i}].{name}"))?;
             }
             validate_scale(&fields[5], &format!("placements[{i}].scale"))?;
+            crate::assetlib::parse_tilt_deg(fields.get(6), &format!("placements[{i}].tilt_deg"))?;
         }
         ensure!(
             !placements.is_empty(),
@@ -695,6 +697,18 @@ pub(crate) fn live_campaign_payload_installed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placement_tilt_edit_validation_rejects_malformed_and_overflowed_angles() {
+        let mut edit = serde_json::json!({"x":1,"y":2,"z":3,"deg":40,"s":[1,1,1]});
+        assert!(validate_edit_transform(&edit,"test").is_ok());
+        edit["tilt_deg"] = serde_json::json!([10,-4]);
+        assert!(validate_edit_transform(&edit,"test").is_ok());
+        for value in [serde_json::json!([1]),serde_json::json!([1,2,3]),serde_json::json!([1e100,0]),serde_json::json!(null)] {
+            edit["tilt_deg"] = value;
+            assert!(validate_edit_transform(&edit,"test").is_err());
+        }
+    }
 
     fn instance(id: &str, typology: &str, x: f32, z: f32, storeys: u64, width: f32) -> serde_json::Value {
         serde_json::json!({"id": id, "typology": typology, "seed": 5, "width_m": width,

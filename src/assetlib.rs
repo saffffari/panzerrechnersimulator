@@ -720,7 +720,27 @@ pub struct PrefabItem {
     pub hoff: f32,
     pub dz: f32,
     pub deg: f32,
+    pub tilt_deg: [f32; 2], // pitch (nose up), roll (left up)
     pub s: [f32; 3],
+}
+
+/// Optional tilt extends legacy yaw-only placements without changing their rotation convention.
+pub(crate) fn parse_tilt_deg(value: Option<&serde_json::Value>, field: &str) -> anyhow::Result<[f32; 2]> {
+    let Some(value) = value else { return Ok([0.0; 2]); };
+    let values = value.as_array().filter(|v| v.len() == 2)
+        .ok_or_else(|| anyhow::anyhow!("{field} must be [pitch_deg, roll_deg]"))?;
+    let mut result = [0.0; 2];
+    for axis in 0..2 {
+        result[axis] = values[axis].as_f64().map(|v| v as f32).filter(|v| v.is_finite())
+            .ok_or_else(|| anyhow::anyhow!("{field}[{axis}] must be a finite number"))?;
+    }
+    Ok(result)
+}
+
+pub(crate) fn placement_rotation(yaw_deg: f32, tilt_deg: [f32; 2]) -> Quat {
+    Quat::from_rotation_y(yaw_deg.to_radians())
+        * Quat::from_rotation_x(-tilt_deg[0].to_radians())
+        * Quat::from_rotation_z(tilt_deg[1].to_radians())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1035,6 +1055,7 @@ fn legacy_prefab(v: &serde_json::Value, path: &Path) -> anyhow::Result<PrefabSta
             hoff: f("hoff"),
             dz: f("dz"),
             deg: f("deg"),
+            tilt_deg: parse_tilt_deg(it.get("tilt_deg"), "prefab item.tilt_deg")?,
             s: if s.is_array() {
                 [
                     s[0].as_f64().unwrap_or(1.0) as f32,
@@ -1189,6 +1210,7 @@ fn scene_block_with_asset_check(
             hoff,
             dz,
             deg: required_f32(it, "deg", &context)?,
+            tilt_deg: parse_tilt_deg(it.get("tilt_deg"), &format!("{context}.tilt_deg"))?,
             s,
         });
     }
@@ -1462,7 +1484,7 @@ fn bake_prefab_thumbnail(
     entry: &AssetEntry,
     out: PathBuf,
 ) -> anyhow::Result<PathBuf> {
-    use glam::{Mat4, Quat};
+    use glam::Mat4;
     let items = load_prefab(Path::new(&entry.path))?;
     let mut meshes = Vec::new();
     let mut models = Vec::new();
@@ -1472,7 +1494,7 @@ fn bake_prefab_thumbnail(
         };
         models.push(Mat4::from_scale_rotation_translation(
             Vec3::from(it.s),
-            Quat::from_rotation_y(it.deg.to_radians()),
+            placement_rotation(it.deg, it.tilt_deg),
             Vec3::new(it.dx, it.hoff, it.dz),
         ));
         meshes.push(mesh);
@@ -1555,6 +1577,38 @@ pub fn run_thumbs(filter: Option<&str>, force: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placement_tilt_is_optional_finite_and_matches_vehicle_rotation() {
+        assert_eq!(parse_tilt_deg(None, "tilt").unwrap(), [0.0; 2]);
+        for value in [serde_json::json!(null), serde_json::json!([1]), serde_json::json!([1,2,3]),
+            serde_json::json!(["1",2]), serde_json::json!([1e100,2])] {
+            assert!(parse_tilt_deg(Some(&value), "tilt").is_err());
+        }
+        let tilt = parse_tilt_deg(Some(&serde_json::json!([12.5,-7.0])), "tilt").unwrap();
+        let expected = glam::Mat4::from_rotation_y(37.0_f32.to_radians())
+            * glam::Mat4::from_rotation_x(-tilt[0].to_radians())
+            * glam::Mat4::from_rotation_z(tilt[1].to_radians());
+        let actual = glam::Mat4::from_quat(placement_rotation(37.0, tilt));
+        for (a,b) in actual.to_cols_array().into_iter().zip(expected.to_cols_array()) { assert!((a-b).abs()<1e-6); }
+        assert_eq!(placement_rotation(37.0,[0.0;2]), Quat::from_rotation_y(37.0_f32.to_radians()));
+    }
+
+    #[test]
+    fn placement_tilt_survives_legacy_prefab_and_scene_json_roundtrip() {
+        let mut scene = valid_scene("assets/test/neutral.glb");
+        assert_eq!(scene_block_with_asset_check(&scene, Path::new("scene.json"), |_|true).unwrap().items[0].tilt_deg,[0.0;2]);
+        scene["items"][0]["tilt_deg"] = serde_json::json!([8.25,-13.5]);
+        let encoded = serde_json::to_vec(&scene).unwrap();
+        let decoded = serde_json::from_slice(&encoded).unwrap();
+        let loaded = scene_block_with_asset_check(&decoded, Path::new("scene.json"), |_|true).unwrap();
+        assert_eq!(loaded.items[0].tilt_deg,[8.25,-13.5]);
+        let prefab = serde_json::json!({"items":[{"asset":"assets/test/neutral.glb","dx":1,"hoff":2,"dz":3,"deg":37,"s":[1,1,1],"tilt_deg":loaded.items[0].tilt_deg}]});
+        let loaded = legacy_prefab(&prefab,Path::new("prefab.json")).unwrap();
+        assert_eq!(loaded.items[0].tilt_deg,[8.25,-13.5]);
+        scene["items"][0]["tilt_deg"] = serde_json::json!([1e100,0]);
+        assert!(scene_block_with_asset_check(&scene,Path::new("scene.json"), |_|true).is_err());
+    }
 
     fn valid_scene(asset: &str) -> serde_json::Value {
         serde_json::json!({

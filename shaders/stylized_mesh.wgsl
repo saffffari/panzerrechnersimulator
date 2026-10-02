@@ -1,3 +1,7 @@
+// @scene-visibility-mesh
+// @scene-light-visibility
+// @cabin-medium
+// @weather-density
 // Raster surface lighting: deterministic, no ray queries or temporal history. It serves the shader
 // backend and the physical backend without ray queries. Normal transforms, authored geometry and
 // material channels are shared with the ray-traced renderer, and so are the units: HDR holds
@@ -23,7 +27,23 @@ struct Camera {
     lights: array<vec4<f32>, 64>,
     inv_view_proj: mat4x4<f32>,
     atmosphere: vec4<f32>, // overcast, storm, act mood, dawn(-1)/dusk(+1)
+    world_medium:vec4<f32>,
+    transport_passes:vec4<f32>,
+    cabin_medium:CabinMedium,
+    medium_transport:vec4<f32>,
 };
+@group(2) @binding(11) var cabin_air_columns:texture_2d_array<f32>;
+fn cabin_transform(i:u32)->mat4x4<f32> {return cam.cabin_medium.world_to_local[i];}
+fn cabin_grid(i:u32)->vec4<f32> {return cam.cabin_medium.grid_min_step[i];}
+fn cabin_size(i:u32)->vec4<u32> {return cam.cabin_medium.grid_size[i];}
+fn cabin_min(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_min[i].xyz;}
+fn cabin_max(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_max[i].xyz;}
+fn source_background_medium_transmittance(origin:vec3<f32>,direction:vec3<f32>,distance_m:f32)->f32 {
+    let world=weather_optical_depth(origin,direction,distance_m,cam.world_medium.zw,
+        cam.world_medium.x,cam.world_medium.y,cam.medium_transport.yzw,24u);
+    let cabin=max(cam.medium_transport.x,0.0)*cabin_path_length(origin,direction,distance_m);
+    return exp(-world-cabin);
+}
 @group(0) @binding(0) var<uniform> cam: Camera;
 
 @group(1) @binding(0) var albedo_tex: texture_2d<f32>;    // base color, sRGB
@@ -44,9 +64,11 @@ struct NearShadow { view_proj: mat4x4<f32>, scale: vec4<f32> };
 // Near-field environment visibility (src/sky_visibility.rs): 24 sky and 8 ground directions, each an
 // orthographic depth tile of the real scene geometry around the camera. Terrain never occludes.
 struct SkyVisibility {
-    view_proj: array<mat4x4<f32>, 32>,
-    directions: array<vec4<f32>, 32>, // xyz toward the environment, w = solid angle (sr)
-    grid: vec4<f32>,                  // columns, rows, active directions (0 = open), world texel m
+    view_proj:array<mat4x4<f32>,66>,
+    directions:array<vec4<f32>,32>,
+    grid:vec4<f32>,
+    global_grid:vec4<f32>, // coarse world texel, near depth span, global depth span, reserved
+    sun_direction:vec4<f32>,
 };
 @group(2) @binding(6) var sky_visibility_map: texture_depth_2d;
 @group(2) @binding(7) var<uniform> sky_visibility: SkyVisibility;
@@ -132,24 +154,15 @@ fn cascade_shadow(map: texture_depth_2d, matrix: mat4x4<f32>, world: vec3<f32>,
         receiver_plane_shadow_tap(map, uv + texel * vec2( 1.0, 1.0), uv, ref_depth, gradient));
 }
 
-fn sun_shadow(world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
-    let far = cascade_shadow(shadow_map,cam.light_view_proj,world,n,ndl,
-        near_shadow.scale.z,near_shadow.scale.w);
-    let projected = near_shadow.view_proj * vec4(world,1.0);
-    let p = projected.xyz / projected.w;
-    let edge = max(abs(p.x),abs(p.y));
-    if (edge >= 1.0 || p.z <= 0.0 || p.z >= 1.0) { return far; }
-    let near = cascade_shadow(near_shadow_map,near_shadow.view_proj,world,n,ndl,
-        near_shadow.scale.x,near_shadow.scale.y);
-    return mix(near,far,smoothstep(0.88,1.0,edge));
+fn sun_shadow(world:vec3<f32>,n:vec3<f32>,ndl:f32)->vec3<f32> {
+    return scene_environment_transmission(world+n*0.0001,normalize(cam.sun_dir));
 }
 
 // @sky-visibility-sampling
 // Whether direction k's environment reaches this surface point. The receiver is offset along its
 // face normal and toward the environment by texel-scaled amounts so a surface never occludes itself.
-fn sky_direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>) -> f32 {
-    let texel = sky_visibility.grid.w;
-    let receiver = world + receiver_normal * (1.5 * texel) + sky_visibility.directions[k].xyz * texel;
+fn sky_direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>) -> vec3<f32> {
+    let receiver = world + receiver_normal * 0.0001;
     return sky_tile_visibility(sky_visibility_map, shadow_samp, sky_visibility.view_proj[k],
         sky_visibility.grid, k, receiver);
 }
@@ -168,8 +181,8 @@ fn probe_direction(k: i32) -> vec4<f32> {
 
 // Direction k's environment at this receiver: the probe radiance through the visibility atlas
 // (open where the atlas is inactive or the receiver lies outside its footprint).
-fn direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>) -> f32 {
-    if (k >= i32(sky_visibility.grid.z)) { return 1.0; }
+fn direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>) -> vec3<f32> {
+    if (k >= i32(sky_visibility.grid.z)) { return scene_environment_transmission(world+receiver_normal*0.0001,probe_direction(k).xyz); }
     return sky_direction_visibility(k, world, receiver_normal);
 }
 
@@ -185,13 +198,13 @@ fn environment_light(world: vec3<f32>, receiver_normal: vec3<f32>, n: vec3<f32>,
     for (var k = 0; k < 32; k += 1) {
         let d = probe_direction(k);
         let wd = max(dot(n, d.xyz), 0.0) * d.w;
-        let wg = pow(max(dot(mirror, d.xyz), 0.0), sharpness) * d.w;
+        let wg = select(0.0,pow(max(dot(mirror, d.xyz), 0.0), sharpness) * d.w,dot(n,d.xyz)>0.0);
         if (wd <= 0.0 && wg <= 0.0) { continue; }
-        let radiance = probe.lanes[k].xyz * direction_visibility(k, world, receiver_normal);
-        irradiance += radiance * wd;
-        glossy += radiance * wg;
         diffuse_weight += wd;
         glossy_weight += wg;
+        let radiance = scene_environment_radiance(world+receiver_normal*0.0001,d.xyz,k);
+        irradiance += radiance * wd;
+        glossy += radiance * wg;
     }
     return EnvironmentLight(irradiance * (PI / max(diffuse_weight, 1e-6)),
         glossy / max(glossy_weight, 1e-6));
@@ -234,7 +247,7 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
     let pixel = receiver.uv * f32(size) - vec2(0.5);
     let first = vec2<i32>(floor(pixel));
     let fraction = fract(pixel);
-    let near = cabin_shadows.range.x;
+    let near = cabin_shadow_range(lamp).x;
     let plane_distance = dot(n, offset);
     var visibility = 0.0;
     for (var y = 0; y < 2; y += 1) {
@@ -252,7 +265,7 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
                 let major = plane_distance / denominator;
                 if (major > near) {
                     tap = textureSampleCompareLevel(cabin_shadow_maps, shadow_samp, ray, lamp,
-                                                    cabin_shadow_reference(major, bias_m));
+                                                    cabin_shadow_reference(major, bias_m, lamp));
                 }
             }
             let weight = select(1.0 - fraction.x, fraction.x, x == 1)
@@ -263,17 +276,16 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
     return visibility;
 }
 
-fn cabin_light_shadow(source: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
-    let lamp = cabin_fixture_index(source);
-    let gain = hand_torch_gain(source,world);
-    if (lamp < 0) { return gain; }
-    let distance_m = distance(world,source);
-    let bias_m = max(0.0007,min(distance_m,8.0)*cabin_shadows.range.z*0.22)
-        * (1.0 + 0.5*(1.0-ndl));
-    let offset = world + n * bias_m - source;
-    let major = max(max(abs(offset.x),abs(offset.y)),abs(offset.z));
-    if (major <= cabin_shadows.range.x) { return gain; }
-    return gain * cabin_receiver_plane_pcf(offset, n, bias_m, lamp);
+fn cabin_light_shadow(source:vec3<f32>,radius:f32,world:vec3<f32>,n:vec3<f32>,ndl:f32)->vec3<f32> {
+    if(PORTABLE_VISIBILITY){return hand_torch_gain(source,world)*scene_point_transmission(source,radius,world+n*0.0001);}
+    let lamp=cabin_fixture_index(source);
+    if(lamp<0){scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);}
+    let offset=world-source;let major=max(abs(offset.x),max(abs(offset.y),abs(offset.z)));
+    let limits=cabin_shadow_range(lamp);
+    if(major>=limits.y){scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);}
+    if(major<=limits.x){return vec3(hand_torch_gain(source,world));}
+    let bias=max(0.00005,major*0.00000024);
+    return vec3(hand_torch_gain(source,world)*cabin_receiver_plane_pcf(offset,n,bias,lamp));
 }
 
 struct Push {
@@ -290,10 +302,10 @@ var<push_constant> pc: Push;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) uv: vec2<f32>, // perspective-correct source texels
-    @location(1) normal: vec3<f32>,
-    @location(2) world: vec3<f32>,
-    @location(3) tangent: vec4<f32>, // xyz = world tangent, w = bitangent handedness
+    @interpolate(perspective, centroid) @location(0) uv: vec2<f32>, // perspective-correct source texels
+    @interpolate(perspective, centroid) @location(1) normal: vec3<f32>,
+    @interpolate(perspective, centroid) @location(2) world: vec3<f32>,
+    @interpolate(perspective, centroid) @location(3) tangent: vec4<f32>, // xyz = world tangent, w = bitangent handedness
 };
 
 // WGSL has no portable matrix `inverse()` builtin.  For a column-major linear transform M, the
@@ -441,14 +453,34 @@ fn unoccluded(color: vec4<f32>) -> SurfaceOutput {
 fn glowing(color: vec4<f32>) -> SurfaceOutput {
     return SurfaceOutput(color, vec4(0.0,0.0,0.0,1.0));
 }
-@fragment fn fs(in: VsOut) -> @location(0) vec4<f32> { return shade(in).color; }
-@fragment fn fs_ambient(in: VsOut) -> SurfaceOutput { return shade(in); }
+@fragment fn fs(in: VsOut) -> @location(0) vec4<f32> {
+    let result=shade(in);if(scene_visibility_unresolved){return vec4(1000.0,0.0,1000.0,1.0);}
+    return result.color;
+}
+@fragment fn fs_ambient(in: VsOut) -> SurfaceOutput {
+    let result=shade(in);if(scene_visibility_unresolved){return unoccluded(vec4(1000.0,0.0,1000.0,1.0));}
+    return result;
+}
+// A filtered unit-normal map carries unresolved angular spread in its vector length.
+// Toksvig's (1-L)/L estimate is mapped to the GGX width here as an isotropic
+// approximation, not an exact convolution (GGX has long tails). Preserve the
+// authored roughness for constant normals within RGB8 decoding quantization.
+// No extra bias, camera-distance roughness, or presentation blur is applied.
+fn filtered_normal_roughness(roughness: f32, filtered_length: f32) -> f32 {
+    let quantization_bound = 0.006792356; // sqrt(3)/255, half a decoded RGB8 step per axis
+    let l = clamp(filtered_length, 0.0001, 1.0);
+    let angular_spread = max(1.0 - l - quantization_bound, 0.0) / l;
+    let alpha = roughness * roughness;
+    return pow(min(alpha * alpha + angular_spread, 1.0), 0.25);
+}
+
 fn shade(in: VsOut) -> SurfaceOutput {
-    // Resolve all sampled channels before divergent effect branches. The bound material sampler
-    // is nearest; the original scalar/atlas material factors remain authoritative.
+    // Resolve channels before divergent branches. Albedo/material texels retain their sampler;
+    // normals use linear within-level and mip filtering at the actual derivative footprint.
     let raw4 = textureSample(albedo_tex, samp, in.uv);
     let mr = textureSample(mr_tex, samp, in.uv);
-    let mapped_normal = textureSample(normal_tex, samp, in.uv).rgb * 2.0 - vec3(1.0);
+    let mapped_normal = textureSample(normal_tex, terrain_detail_sampler, in.uv).rgb * 2.0 - vec3(1.0);
+    let mapped_normal_length = length(mapped_normal);
     let macro_dx = dpdx(in.uv) * vec2<f32>(textureDimensions(albedo_tex));
     let macro_dy = dpdy(in.uv) * vec2<f32>(textureDimensions(albedo_tex));
     let macro_lod = log2(max(max(length(macro_dx), length(macro_dy)), 1.0));
@@ -502,7 +534,11 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let tangent = in.tangent.xyz - normal * dot(normal, in.tangent.xyz);
     if (dot(tangent, tangent) > 1e-8) {
         let t = normalize(tangent);
-        normal = normalize(mat3x3<f32>(t, cross(normal, t) * in.tangent.w, normal) * mapped_normal);
+        // A fully cancelling footprint has no preferred tangent-space direction.
+        if (mapped_normal_length > 0.0001) {
+            normal = normalize(mat3x3<f32>(t, cross(normal, t) * in.tangent.w, normal) * mapped_normal);
+        }
+        roughness = filtered_normal_roughness(roughness, mapped_normal_length);
     }
     if (terrain) {
         albedo = terrain_material(textureSampleLevel(albedo_tex, terrain_detail_sampler,
@@ -533,24 +569,29 @@ fn shade(in: VsOut) -> SurfaceOutput {
     // shadow cascades of the same direction.
     let key = normalize(cam.sun_dir);
     let beam = probe.lanes[32].xyz;
-    color += surface_response(albedo, metallic, roughness, normal, view, key) * beam
-        * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, key), 0.0));
+    if(dot(normal,key)>0.0 && any(beam>vec3(0.0))){
+        color += surface_response(albedo, metallic, roughness, normal, view, key) * beam
+            * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, key), 0.0));
+    }
 
-    // Finite spherical emitters, inverse-square in their radiant intensity. The named cabin
-    // fixtures and admitted wreck fires use source-geometry cubemap visibility; other sources are unshadowed
-    // (the raster paths' named approximation).
+    // Finite spherical emitters, inverse-square in their radiant intensity. Every admitted source
+    // has source-geometry visibility, including transients, world lamps and the handheld torch.
     let light_count = min(max(i32(cam.n_lights), 0), 32);
     for (var index = 0; index < light_count; index += 1) {
         let source = cam.lights[index * 2];
         let emission = cam.lights[index * 2 + 1];
         let offset = source.xyz - in.world;
         let d2 = dot(offset, offset);
-        if (d2 < 1e-8 || emission.w <= 0.0) { continue; }
+        if (d2 < 1e-8 || emission.w <= 0.0 || all(emission.rgb==vec3(0.0))) { continue; }
         let direction = offset * inverseSqrt(d2);
+        if(dot(normal,direction)<=0.0){continue;}
         let irradiance = emission.rgb * emission.w / max(d2, max(source.w * source.w, 0.0025));
-        color += surface_response(albedo, metallic, roughness, normal, view, direction) * irradiance
-            * cabin_light_shadow(source.xyz,in.world,receiver_normal,max(dot(receiver_normal,direction),0.0));
+        let visibility=cabin_light_shadow(source.xyz,source.w,in.world,receiver_normal,max(dot(receiver_normal,direction),0.0));
+        if(all(visibility<=vec3(0.0))){continue;}
+        color += surface_response(albedo, metallic, roughness, normal, view, direction) * irradiance * visibility
+            *source_background_medium_transmittance(in.world,direction,max(sqrt(d2)-source.w,0.0));
     }
+    if(scene_visibility_unresolved){return unoccluded(vec4(1000.0,0.0,1000.0,1.0));}
     return SurfaceOutput(vec4(max(color, vec3(0.0)), 1.0), vec4(ambient, 0.0));
 }
 

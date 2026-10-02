@@ -1,16 +1,7 @@
-//! Near-field sky visibility from the rendered scene geometry.
-//!
-//! The stylized backend's diffuse sky and ground fill (`hemisphere()` in stylized_mesh.wgsl) is the
-//! environment emitter. Before this module every surface received all of it, so closed armour,
-//! a buttoned turret and a roofed room were lit as if they stood in an open field. Here a fixed set
-//! of world directions (24 over the sky dome, 8 over the ground hemisphere, equal solid angle
-//! within each) is rasterized as orthographic depth tiles of one atlas around the camera. The mesh
-//! pass compares each receiver against every tile, so hull steel, hatch lids and roofs block the
-//! environment while real openings admit it.
-//!
-//! Stated bounds (also in docs/PHYSICAL_TRUTH_AUDIT.md): 32 discrete directions, one bounce-free
-//! visibility test per direction; terrain is the ground emitter and never an occluder; occluders
-//! farther than `REACH_M` beyond the footprint, and receivers outside the footprint, see open sky.
+//! Source-geometry environment visibility. Fine camera-local maps retain cabin apertures;
+//! a second coarse cascade covers loaded source geometry and the camera's complete far support.
+//! Two more tiles contain the actual key-light direction, for surfaces and media alike.
+//! This is finite-resolution raster transport, not an optical refraction/GI solver.
 use super::*;
 use std::cell::Cell;
 
@@ -18,7 +9,8 @@ pub const UP_DIRECTIONS: usize = 24;
 pub const DOWN_DIRECTIONS: usize = 8;
 pub const DIRECTIONS: usize = UP_DIRECTIONS + DOWN_DIRECTIONS;
 const COLS: u32 = 8;
-const ROWS: u32 = 4;
+const ROWS: u32 = 9;
+const TILES: usize = 66;
 const TILE: u32 = 384;
 /// Footprint half extent around the focus. A seated crewman needs the whole hull inside the
 /// footprint at fine texels; on foot a room-scale footprint covers walls and roofs.
@@ -30,11 +22,13 @@ const REACH_M: f32 = 10.0;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniform {
-    pub view_proj: [[[f32; 4]; 4]; DIRECTIONS],
+    pub view_proj: [[[f32; 4]; 4]; TILES],
     /// Unit world direction toward the environment; w = solid angle (sr).
     pub directions: [[f32; 4]; DIRECTIONS],
     /// Atlas columns, rows, active directions (0 = open sky everywhere), world texel size (m).
     pub grid: [f32; 4],
+    pub global_grid: [f32; 4],
+    pub sun_direction: [f32; 4],
 }
 
 /// Equal-area Fibonacci directions: 24 over the upper hemisphere, 8 over the lower. Heights are
@@ -81,7 +75,9 @@ fn region_contains(focus: glam::Vec3, half: f32, lo: glam::Vec3, hi: glam::Vec3)
 struct Prepared {
     focus: glam::Vec3,
     half: f32,
-    matrices: [glam::Mat4; DIRECTIONS],
+    matrices: [glam::Mat4; TILES],
+    global_focus: glam::Vec3,
+    global_half: f32,
 }
 
 pub struct SkyVisibility {
@@ -290,8 +286,8 @@ impl SkyVisibility {
     pub fn set_coop_focus(&self, focus: Option<glam::Vec3>) { self.coop_focus.set(focus); }
 
     fn participates(m: &MeshGpu) -> bool {
-        // Terrain is the ground emitter; view-local split-screen bodies differ per viewport.
-        m.visible && !m.glass && !m.raster_only && !m.track_recv
+        // Opaque terrain, view-local bodies and armor all block environment transport.
+        m.visible && (!m.glass || m.periscope_kind==2)
     }
 
     fn batch_participates(b: &InstBatch) -> bool {
@@ -309,35 +305,51 @@ impl SkyVisibility {
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         for f in prepared.focus.to_array() { f.to_bits().hash(&mut hash); }
         prepared.half.to_bits().hash(&mut hash);
+        for value in prepared.global_focus.to_array() {value.to_bits().hash(&mut hash);}
+        prepared.global_half.to_bits().hash(&mut hash);
+        for value in prepared.matrices[64].to_cols_array() {value.to_bits().hash(&mut hash);}
         hash
     }
 
     /// Moving meshes: vehicles, hatches, carried ammunition, crew.
     fn dynamic_signature(&self, renderer: &Renderer, prepared: &Prepared) -> u64 {
         let mut hash = Self::footprint_hash(prepared);
-        for (i, m) in renderer.meshes.iter().enumerate() {
-            if !Self::participates(m)
-                || !region_contains(prepared.focus, prepared.half, m.world_min, m.world_max) {
+        renderer.menu_mode.hash(&mut hash);
+        for (i, m) in renderer.shadow_source_meshes().iter().enumerate() {
+            if !Self::participates(m) || m.track_recv
+                || !region_contains(prepared.global_focus, prepared.global_half, m.world_min, m.world_max) {
                 continue;
             }
             // Geometry buffers are immutable; their identity is the scene revision.
             i.hash(&mut hash);
             m.index_count.hash(&mut hash);
-            m.vbuf.hash(&mut hash);
+            m.vbuf.hash(&mut hash);m.pose_revision.hash(&mut hash);
             m.ibuf.hash(&mut hash);
             for f in m.model.to_cols_array() { f.to_bits().hash(&mut hash); }
         }
+        if !renderer.menu_mode {for (i,b) in renderer.inst_batches.iter().enumerate() {
+            if !Self::batch_participates(b) || !b.moving_rt_pool {continue;}
+            i.hash(&mut hash);b.inst_count.hash(&mut hash);b.inst_buffer_id.hash(&mut hash);
+            b.prototype.hash(&mut hash);renderer.inst_prototypes[b.prototype].vbuf.hash(&mut hash);
+            for model in b.cpu_mats.iter().take(b.inst_count as usize){for f in model.to_cols_array(){f.to_bits().hash(&mut hash);}}
+            b.hidden.hash(&mut hash);
+        }}
         hash.finish()
     }
 
     /// Instanced static scenery inside the footprint.
     fn static_signature(&self, renderer: &Renderer, prepared: &Prepared) -> u64 {
         let mut hash = Self::footprint_hash(prepared);
-        let pages = renderer.inst_spatial_index.query(Self::region_query(prepared.focus, prepared.half));
+        renderer.menu_mode.hash(&mut hash);
+        for (i,m) in renderer.shadow_source_meshes().iter().enumerate() {
+            if Self::participates(m) && m.track_recv {i.hash(&mut hash);m.vbuf.hash(&mut hash);m.pose_revision.hash(&mut hash);m.ibuf.hash(&mut hash);for value in m.model.to_cols_array(){value.to_bits().hash(&mut hash);}}
+        }
+        if renderer.menu_mode {return hash.finish();}
+        let pages = renderer.inst_spatial_index.query(Self::region_query(prepared.global_focus, prepared.global_half));
         for &index in &pages.batches {
             let b = &renderer.inst_batches[index];
-            if !Self::batch_participates(b)
-                || !region_contains(prepared.focus, prepared.half, b.world_min, b.world_max) {
+            if !Self::batch_participates(b) || b.moving_rt_pool
+                || !region_contains(prepared.global_focus, prepared.global_half, b.world_min, b.world_max) {
                 continue;
             }
             index.hash(&mut hash);
@@ -364,17 +376,31 @@ impl SkyVisibility {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&<Uniform as bytemuck::Zeroable>::zeroed()));
             return;
         }
-        let mut prepared = Prepared { focus, half, matrices: [glam::Mat4::IDENTITY; DIRECTIONS] };
+        let (lo,hi)=source_scene_bounds(renderer);
+        let global_focus=((lo+hi)*0.5/64.0).round()*64.0;
+        let global_half=(((hi-global_focus).length().max((lo-global_focus).length())+2.0)/64.0).ceil()*64.0;
+        // A direction is quantized below a shadow texel's angular footprint. This prevents an
+        // imperceptible ephemeris change from rebuilding all static source geometry each frame.
+        let sun=((renderer.sun_dir.normalize()*10000.0).round()/10000.0).normalize();
+        let mut prepared = Prepared { focus, half, matrices: [glam::Mat4::IDENTITY; TILES],global_focus,global_half };
         let mut uniform = Uniform {
-            view_proj: [[[0.0; 4]; 4]; DIRECTIONS],
+            view_proj: [[[0.0; 4]; 4]; TILES],
             directions: [[0.0; 4]; DIRECTIONS],
             grid: [COLS as f32, ROWS as f32, DIRECTIONS as f32, 2.0 * half / TILE as f32],
+            global_grid:[2.0*global_half/TILE as f32,2.0*(half+REACH_M),2.0*(global_half+REACH_M),0.0],
+            sun_direction:sun.extend(0.0).to_array(),
         };
         for (k, d) in self.directions.iter().enumerate() {
             prepared.matrices[k] = direction_view_proj(d.truncate(), focus, half);
             uniform.view_proj[k] = prepared.matrices[k].to_cols_array_2d();
             uniform.directions[k] = d.to_array();
+            prepared.matrices[k+32]=direction_view_proj(d.truncate(),global_focus,global_half);
+            uniform.view_proj[k+32]=prepared.matrices[k+32].to_cols_array_2d();
         }
+        prepared.matrices[64]=direction_view_proj(sun,focus,half);
+        prepared.matrices[65]=direction_view_proj(sun,global_focus,global_half);
+        uniform.view_proj[64]=prepared.matrices[64].to_cols_array_2d();
+        uniform.view_proj[65]=prepared.matrices[65].to_cols_array_2d();
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.prepared.set(Some(prepared));
         let static_signature = self.static_signature(renderer, &prepared);
@@ -414,13 +440,22 @@ impl SkyVisibility {
                 occlusion_query_set: None,
             });
             work.shadow_passes += 1;
+            pass.set_pipeline(&self.pipe);
+            pass.set_bind_group(0,&self.bind,&[]);
+            for m in renderer.shadow_source_meshes() {
+                if !Self::participates(m) || !m.track_recv {continue;}
+                let push=PushData {model:m.model.to_cols_array_2d(),params:[0.0;4]};
+                pass.set_push_constants(wgpu::ShaderStages::VERTEX,0,bytemuck::bytes_of(&push));
+                pass.set_vertex_buffer(0,m.vbuf.slice(..));pass.set_index_buffer(m.ibuf.slice(..),wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..m.index_count,0,0..TILES as u32);work.shadow_mesh_draws+=1;
+            }
             pass.set_pipeline(&self.inst_pipe);
             pass.set_bind_group(0, &self.bind, &[]);
-            let pages = renderer.inst_spatial_index.query(Self::region_query(prepared.focus, prepared.half));
-            for &index in &pages.batches {
+            let pages = renderer.inst_spatial_index.query(Self::region_query(prepared.global_focus, prepared.global_half));
+            for &index in pages.batches.iter().filter(|_| !renderer.menu_mode) {
                 let b = &renderer.inst_batches[index];
-                if !Self::batch_participates(b)
-                    || !region_contains(prepared.focus, prepared.half, b.world_min, b.world_max) {
+                if !Self::batch_participates(b) || b.moving_rt_pool
+                    || !region_contains(prepared.global_focus, prepared.global_half, b.world_min, b.world_max) {
                     continue;
                 }
                 let p = &renderer.inst_prototypes[b.prototype];
@@ -468,9 +503,9 @@ impl SkyVisibility {
         work.shadow_passes += 1;
         pass.set_pipeline(&self.pipe);
         pass.set_bind_group(0, &self.bind, &[]);
-        for m in &renderer.meshes {
-            if !Self::participates(m)
-                || !region_contains(prepared.focus, prepared.half, m.world_min, m.world_max) {
+        for m in renderer.shadow_source_meshes() {
+            if !Self::participates(m) || m.track_recv
+                || !region_contains(prepared.global_focus, prepared.global_half, m.world_min, m.world_max) {
                 continue;
             }
             let push = PushData { model: m.model.to_cols_array_2d(), params: [0.0; 4] };
@@ -478,22 +513,65 @@ impl SkyVisibility {
             pass.set_vertex_buffer(0, m.vbuf.slice(..));
             pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
             // One instance per direction; the vertex stage places each in its atlas tile.
-            pass.draw_indexed(0..m.index_count, 0, 0..DIRECTIONS as u32);
-            work.shadow_mesh_draws += 1;
+            for (k,matrix) in prepared.matrices.iter().enumerate() {
+                if !shadow_has_sample(*matrix,m.world_min,m.world_max,TILE){continue;}
+                pass.draw_indexed(0..m.index_count,0,k as u32..k as u32+1);
+                work.shadow_mesh_draws+=1;
+            }
             drawn.0 += 1;
+        }
+        pass.set_pipeline(&self.inst_pipe);
+        for b in renderer.inst_batches.iter().filter(|_| !renderer.menu_mode) {
+            if !Self::batch_participates(b) || !b.moving_rt_pool {continue;}
+            let p=&renderer.inst_prototypes[b.prototype];
+            pass.set_vertex_buffer(0,p.vbuf.slice(..));pass.set_vertex_buffer(1,b.inst_buf.slice(b.active_instance_bytes()));
+            pass.set_index_buffer(p.ibuf.slice(..),wgpu::IndexFormat::Uint32);
+            for (k,matrix) in prepared.matrices.iter().enumerate() {
+                if !shadow_has_sample(*matrix,b.world_min,b.world_max,TILE){continue;}
+                let push=PushData {model:glam::Mat4::IDENTITY.to_cols_array_2d(),params:[k as f32,0.0,0.0,0.0]};
+                pass.set_push_constants(wgpu::ShaderStages::VERTEX,0,bytemuck::bytes_of(&push));
+                for range in shadow_instance_ranges(b,p,*matrix,TILE){pass.draw_indexed(0..p.index_count,0,range);work.shadow_instanced_draws+=1;}
+            }
         }
         let rebuilds = self.rebuilds.get() + 1;
         self.rebuilds.set(rebuilds);
         if rebuilds == 1 {
-            println!("[sky-visibility] {DIRECTIONS} directions x {TILE}px, footprint +/-{:.1} m: \
-                {} meshes, {} instanced batches", prepared.half, drawn.0, drawn.1);
+            println!("[sky-visibility] {TILES} source tiles x {TILE}px, local +/-{:.1} m, coarse +/-{:.1} m: {} meshes, {} instanced batches", prepared.half,prepared.global_half, drawn.0, drawn.1);
         }
     }
+}
+
+/// Scene bounds include every visible opaque receiver and the full camera/medium support.
+/// Dynamic particle carriers are receivers within that support, not opaque solid casters.
+/// Outward 64 m snapping keeps fixed scene coverage stable under ordinary head/body movement.
+pub(super) fn source_scene_bounds(renderer:&Renderer)->(glam::Vec3,glam::Vec3) {
+    let reach=renderer.camera.zfar.max(1.0);
+    let mut lo=renderer.camera.pos-glam::Vec3::splat(reach);
+    let mut hi=renderer.camera.pos+glam::Vec3::splat(reach);
+    let meshes=renderer.shadow_source_meshes();
+    for m in meshes {if m.visible && m.world_min.is_finite() && m.world_max.is_finite(){lo=lo.min(m.world_min);hi=hi.max(m.world_max);}}
+    for b in renderer.inst_batches.iter().filter(|_| !renderer.menu_mode) {if b.inst_count>0 && !b.raster_only_dynamic && b.flags<=3.5 && b.world_min.is_finite() && b.world_max.is_finite(){lo=lo.min(b.world_min);hi=hi.max(b.world_max);}}
+    ((lo/64.0).floor()*64.0,(hi/64.0).ceil()*64.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coarse_source_cascade_covers_all_scene_and_camera_support_corners() {
+        let lo=glam::Vec3::new(-1024.0,-512.0,-2048.0);
+        let hi=glam::Vec3::new(3072.0,512.0,2048.0);
+        let focus=((lo+hi)*0.5/64.0).round()*64.0;
+        let half=(((hi-focus).length().max((lo-focus).length())+2.0)/64.0).ceil()*64.0;
+        for d in directions() {let m=direction_view_proj(d.truncate(),focus,half);
+            for x in [lo.x,hi.x] {for y in [lo.y,hi.y] {for z in [lo.z,hi.z] {
+                let p=m.project_point3(glam::Vec3::new(x,y,z));
+                assert!(p.x.abs()<1.0 && p.y.abs()<1.0 && p.z>0.0 && p.z<1.0,"{p:?}");
+            }}}
+        }
+        assert_eq!(std::mem::size_of::<Uniform>(),4784);
+    }
 
     #[test]
     fn directions_are_unit_equal_area_and_split_cleanly_by_hemisphere() {
@@ -532,8 +610,8 @@ mod tests {
 
     #[test]
     fn atlas_layout_and_head_motion_inside_one_snap_cell_reuse_the_footprint() {
-        assert_eq!(std::mem::size_of::<Uniform>(), DIRECTIONS * 64 + DIRECTIONS * 16 + 16);
-        assert_eq!(COLS * ROWS, DIRECTIONS as u32);
+        assert_eq!(std::mem::size_of::<Uniform>(), TILES * 64 + DIRECTIONS * 16 + 48);
+        assert!(COLS * ROWS >= TILES as u32);
         // The inside lattice step is 0.5625 m; a seated crewman's head motion stays in one cell.
         let step = INSIDE_HALF_M / 8.0;
         let centre = glam::Vec3::new(18.0, 4.0, 5.0) * step;

@@ -7,6 +7,7 @@ use crate::foot_ai::{
 };
 use glam::Vec3;
 pub const RIFLE_DAMAGE: f32 = 34.0;
+pub const TURN_RATE_RAD_S: f32 = 3.2;
 pub const RIFLE_INTERVAL: f32 = 1.6;
 pub const RIFLE_RANGE: f32 = 120.0;
 pub const INFANTRY_SENSOR_RANGE: f32 = 45.0;
@@ -153,6 +154,9 @@ pub struct Combatant {
     pub magazine: u32,
     pub reserve: u32,
     pub suppression: f32,
+    /// A source-derived surface or exposed anatomical aim point in a perception-only snapshot.
+    /// It is never inserted into the live actor/damage list. Ordinary humans retain their pose.
+    pub perception_point: Option<Vec3>,
     pub last_seen: Option<Vec3>,
     /// Posture captured by the same visible observation as `last_seen`, never a hidden live lookup.
     pub last_seen_crouched: Option<bool>,
@@ -183,6 +187,7 @@ impl Combatant {
             magazine: 5,
             reserve: 30,
             suppression: 0.0,
+            perception_point: None,
             last_seen: None,
             last_seen_crouched: None,
             last_seen_body_height: None,
@@ -194,6 +199,7 @@ impl Combatant {
         self.hp > 0.0
     }
     pub fn eye(&self) -> Vec3 {
+        if let Some(point) = self.perception_point { return point; }
         if self.pose_support == PoseSupport::GermanArticulatedV1 {
             self.pos
                 + Vec3::Y * GERMAN_EYE_HEIGHTS[self.crouch_stage()]
@@ -220,6 +226,7 @@ impl Combatant {
         }
     }
     pub fn torso_offset(&self) -> Vec3 {
+        if let Some(point) = self.perception_point { return point-self.pos; }
         let retreat = if self.pose_support == PoseSupport::GermanArticulatedV1 {
             -0.22 * self.crouch_stage() as f32 / 4.0
         } else {
@@ -575,7 +582,7 @@ pub fn apply_action<C: CoverSet + ?Sized>(
     let action = action.bounded();
     actor.advance_stance(action.crouch, dt);
     actor.aiming = action.aim && obs.values()[26] > 0.0;
-    actor.yaw += action.turn * 3.2 * dt;
+    actor.yaw += action.turn * TURN_RATE_RAD_S * dt;
     let velocity = (actor.forward() * action.forward
         + Vec3::new(actor.yaw.cos(), 0.0, actor.yaw.sin()) * action.strafe)
         .clamp_length_max(1.0)

@@ -3,7 +3,7 @@
 //! damage, accuracy, ammunition or sight rules change. There is no total-enemy quota or exit timer.
 use glam::Vec2;
 
-pub const MAX_LIVE: usize = 12;
+pub const MAX_LIVE: usize = 6;
 pub const TARGET_SECONDS: f32 = 90.0 * 60.0;
 pub const ENTRY_MIN_M: f32 = 650.0;
 
@@ -82,7 +82,7 @@ impl Director {
         let expected = self.elapsed / TARGET_SECONDS;
         let ahead = (self.progress - expected).max(0.0);
         self.target_live =
-            (3 + (self.progress * 6.0) as usize + (ahead * 5.0) as usize).min(MAX_LIVE);
+            (2 + (self.progress * 3.0) as usize + (ahead * 2.0) as usize).min(MAX_LIVE);
         let stalled = self.elapsed - self.last_progress_s > 420.0;
         if stalled {
             self.target_live = self.target_live.min(4);
@@ -90,7 +90,7 @@ impl Director {
         if s.critical {
             self.target_live = self.target_live.min(4);
         }
-        let interval = (155.0 - self.progress * 70.0 - ahead * 45.0).clamp(65.0, 155.0);
+        let interval = (240.0 - self.progress * 70.0 - ahead * 45.0).clamp(125.0, 240.0);
         self.credit = (self.credit + dt.max(0.0) / interval).min(4.0);
         if s.shots > self.last.shots {
             self.last_shot_s = self.elapsed;
@@ -117,7 +117,7 @@ impl Director {
             return None;
         }
         let desired = (self.target_live - s.live)
-            .min(3)
+            .min(2)
             .min(self.credit.floor() as usize);
         if desired == 0 {
             self.state = "gathering";
@@ -196,7 +196,7 @@ mod tests {
     fn long_run_is_adaptive_reproducible_and_not_a_five_tank_quota() {
         let slow = simulate(29, false);
         let fast = simulate(29, true);
-        assert!(slow.0 > 25 && fast.0 > slow.0, "{slow:?} {fast:?}");
+        assert!(slow.0 > 5 && fast.0 > slow.0, "{slow:?} {fast:?}");
         assert_eq!(fast, simulate(29, true));
         assert_ne!(fast.1, simulate(73, true).1);
         println!("two-hour director model: slow={} fast={}", slow.0, fast.0);

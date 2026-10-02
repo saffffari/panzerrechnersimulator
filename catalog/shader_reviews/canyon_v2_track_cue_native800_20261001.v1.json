@@ -1,0 +1,88 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "canyon_v2_track_cue_native800_20261001",
+  "title": "Broken left track: carry the toolkit, approach the real shoe and grab its loose end",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/canyon-v2-20260930/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 4,
+  "native_output": true,
+  "setup": {
+    "playtest": true,
+    "canyon_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "hold_fire",
+    "player_heading_deg": 0,
+    "on_foot": true,
+    "broken_module": "left_track",
+    "track_repair_post": true
+  },
+  "timeline": [
+    {
+      "from_s": 0,
+      "until_s": 4,
+      "input": {
+        "crouch": true
+      }
+    },
+    {
+      "from_s": 0.2,
+      "until_s": 0.7,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "at_s": 0.9,
+      "action": "look_left_track"
+    },
+    {
+      "from_s": 2.1,
+      "until_s": 2.125,
+      "input": {
+        "fire2": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "toolkit_equipped",
+      "equals": true
+    },
+    {
+      "metric": "left_track_functional",
+      "equals": false
+    },
+    {
+      "metric": "track_repair_phase",
+      "at_s": 1,
+      "equals": "grab"
+    },
+    {
+      "metric": "track_repair_phase",
+      "at_s": 3,
+      "equals": "pull"
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    }
+  ],
+  "input_audit": "Existing setup explicitly breaks the left-track module, equips the carried toolkit and places the body at the existing 2 m track-repair post. Recording uses ordinary crouch/forward movement, head rotation toward the actual track service point and one ordinary primary-use click. No repair progress or outcome is assigned during recording.",
+  "limitations": [
+    "Staged track failure, not a recorded projectile strike; toolkit pickup is not demonstrated.",
+    "Shows the real track shoe, tool and service-point cue plus initial grab only, not completion of the multi-stage repair.",
+    "No existing scenario API stages a genuine RingJammed fault and source fragment; ring-fragment visual validation remains separate."
+  ],
+  "status": "pending_runtime_and_visual_acceptance"
+}

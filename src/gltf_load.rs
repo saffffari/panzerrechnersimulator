@@ -208,6 +208,16 @@ pub(crate) fn load_glb_partitioned_roots_with_material_override(
     moving_roots: &[&str],
     finish: Option<MaterialOverrideFn>,
 ) -> anyhow::Result<Vec<CpuMesh>> {
+    load_glb_partitioned_roots_with_source_addition(path,moving_roots,finish,None)
+}
+
+/// Add one source root omitted from an older bake. It shares the remainder's full material
+/// accumulation, so restored geometry retains its own source material instead of borrowing UVs.
+/// A corrected future bake containing that root needs no addition and never duplicates it.
+pub(crate) fn load_glb_partitioned_roots_with_source_addition(
+    path:&str, moving_roots:&[&str], finish:Option<MaterialOverrideFn>,
+    addition:Option<(&str,&str)>,
+)->anyhow::Result<Vec<CpuMesh>> {
     // Import from bytes so a source path can resolve to the cooker's stable `models/<id>.glb`
     // filename inside an app bundle. Runtime-catalog GLBs are required to be self-contained.
     let resolved = crate::resource::resolve(path)?;
@@ -246,6 +256,35 @@ pub(crate) fn load_glb_partitioned_roots_with_material_override(
                 &mut page.max,
                 true,
             );
+        }
+    }
+
+    if let Some((extra_path,root_name))=addition {
+        if !doc.nodes().any(|node|node.name()==Some(root_name)) {
+            let extra_bytes=crate::resource::read(extra_path)?;
+            let (extra,extra_buffers,extra_images)=gltf::import_slice(&extra_bytes)
+                .with_context(||format!("import omitted source root {root_name:?} from {extra_path}"))?;
+            let scene=extra.default_scene().or_else(||extra.scenes().next())
+                .context("source addition has no scene")?;
+            let roots:Vec<_>=scene.nodes().collect();
+            anyhow::ensure!(roots.len()==1 && roots[0].name()==Some(root_name),
+                "source addition must contain exactly the registered root {root_name}");
+            // This bounded addition is a constant-material fitting. A textured addition needs
+            // a separate material page, not the existing mixed-texture first-material fallback.
+            anyhow::ensure!(extra.materials().all(|m|m.pbr_metallic_roughness().base_color_texture().is_none()
+                &&m.pbr_metallic_roughness().metallic_roughness_texture().is_none()&&m.normal_texture().is_none()),
+                "textured source addition requires its own material page");
+            let page=&mut pages[0];let start=page.mats.source_primitives.len();
+            walk(&roots[0],Mat4::IDENTITY,&extra_buffers,&extra_images,&mut page.vertices,
+                &mut page.indices,&mut page.mats,&mut page.min,&mut page.max,true);
+            let offset=doc.materials().count();
+            for primitive in &mut page.mats.source_primitives[start..] {
+                // Source material indices are local to each document. Paint swatch identities
+                // occupy the top of usize and intentionally remain shared across both documents.
+                if let Some(id)=primitive.material {
+                    if id<extra.materials().count() {primitive.material=Some(offset+id);}
+                }
+            }
         }
     }
 

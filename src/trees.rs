@@ -376,10 +376,10 @@ impl Trees {
             }
             let resist = crate::tank_push::tree(2.0 * t.trunk_r);
             let step = crate::tank_push::press(v, pitch, resist, t.push_work, dt);
+            out.rumble=out.rumble.max(crate::tank_push::collision_rumble(v,step.speed));
             v = step.speed;
             self.trees[i].push_work += step.work_j;
             out.speed = Some(v);
-            out.rumble = out.rumble.max(if self.trees[i].big { 0.55 } else { 0.35 });
             if step.gave_way {
                 self.snap(i, dir, events);
             }
