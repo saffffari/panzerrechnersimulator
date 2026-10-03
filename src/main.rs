@@ -59,6 +59,7 @@ mod audio;
 mod sound_library;
 mod soundscape_director;
 mod soundscape_program;
+mod soundscape_riser;
 mod death_card;
 mod audio_soundscape_fx;
 mod soundscape_review;

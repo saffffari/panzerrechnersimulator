@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "status": "binding_approved_and_saved; runtime implementation owned separately",
+  "listened": false,
+  "originals_modified": false,
+  "runtime_config_modified": true,
+  "candidate_id": "audio_4a383409ba81f8fd25d2ab1c",
+  "source_path": "suspense/riser_transition.wav",
+  "proposed_event": "unnoticed_impact_riser",
+  "event_name_requires_runtime_coordination": false,
+  "playback_sample_rate_hz": 44100,
+  "peak_frame": 239242,
+  "peak_at_s": 5.424988662131519,
+  "marker_basis": "rounded center of strongest nonoverlapping50ms combined-channel RMS window [5.40,5.45]s; not a verified perceptual climax",
+  "sample_peak_at_s": 5.404943310657597,
+  "full_duration_s": 10.5,
+  "end_frame_exclusive": 463050,
+  "loop": false,
+  "pitch_shift": false,
+  "time_stretch": false,
+  "fade_in_s": 0.08,
+  "preserve_authored_tail": true,
+  "rack": {
+    "preset": "dry",
+    "wet": 0
+  },
+  "suggested_leads": [
+    {
+      "lead_s": 1.5,
+      "start_frame": 173092,
+      "start_at_s": 3.9249886621315193,
+      "total_excerpt_duration_s": 6.575011337868481,
+      "start_50ms_rms_dbfs": -20.01776082121563,
+      "peak_50ms_rms_dbfs": -15.075289317966947,
+      "measured_rise_db": 4.942471503248685
+    },
+    {
+      "lead_s": 2.0,
+      "start_frame": 151042,
+      "start_at_s": 3.4249886621315193,
+      "total_excerpt_duration_s": 7.075011337868481,
+      "start_50ms_rms_dbfs": -23.147099333399144,
+      "peak_50ms_rms_dbfs": -15.075289317966947,
+      "measured_rise_db": 8.071810015432197
+    }
+  ],
+  "runtime_requirements": [
+    "Occasional weighted selection/cooldown belongs to actual source state and player awareness, not broad automatic enemy detection.",
+    "Lead can only be forecast before contact; cancel or release when authoritative projectile/occlusion state invalidates the predicted hit.",
+    "An impact callback cannot retroactively align a pre-impact lead; record predicted and actual marker/contact times and do not claim exact synchrony without a measured tolerance.",
+    "Preserve existing physical weapon/impact sounds; this cue is a score accent with no implied world emitter or damage effect.",
+    "Do not start an already-loud late excerpt as a substitute when lead budget is insufficient; skip that occurrence or use a separately authored transient."
+  ],
+  "other_imported_candidate": {
+    "id": "audio_de42714f61b5b1f972d9df28",
+    "source_path": "combat/surprise_contact.wav",
+    "duration_s": 4.8,
+    "reason_not_preferred": "Already energetic at onset and throughout; RMS and sample maxima differ by~0.32s, with no quiet build evident numerically."
+  },
+  "evidence": "artifacts/runtime/audio_library_riser_timing_20261002.json",
+  "approved_binding": {
+    "event": "unnoticed_impact_riser",
+    "asset": "audio_4a383409ba81f8fd25d2ab1c",
+    "role": "stinger",
+    "riser_peak_s": 5.404943,
+    "riser_lead_s": 4.0,
+    "fade_in_s": 0.08,
+    "loop": false,
+    "preserve_natural_tail": true,
+    "rack": {
+      "preset": "dry",
+      "wet": 0.0
+    }
+  },
+  "preferred_runtime_marker_basis": "exact maximum absolute PCM sample at5.404943310657597s, rounded to6decimal seconds in config; earlier envelope markers remain measurement evidence only"
+}

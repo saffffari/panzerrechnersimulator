@@ -6,7 +6,7 @@ import wave
 
 import numpy as np
 
-from suggest_soundscape_cue_policy import envelope, suggest
+from suggest_soundscape_cue_policy import envelope, suggest, IMPACT_RISER_ID
 from merge_soundscape_cue_policy import merge
 
 
@@ -118,6 +118,21 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(dusk["loop"])
         self.assertEqual(dusk["solar_events"], ["dusk"])
         self.assertNotIn("sunset", dusk["solar_events"])
+
+    def test_approved_impact_riser_timing_follows_content_not_generic_name(self):
+        a = asset(role="threat", name="suspense/renamed.wav")
+        a["id"] = IMPACT_RISER_ID
+        a["role_aliases"] = ["threat"]
+        cue = suggest(a, measured(10.5))
+        self.assertEqual(cue["role"], "stinger")
+        self.assertEqual(cue["role_aliases"], ["stinger"])
+        self.assertFalse(cue["loop"])
+        self.assertEqual(cue["riser_peak_s"], 5.404943)
+        self.assertEqual(cue["riser_lead_s"], 4)
+        self.assertEqual(cue["fade_in_s"], .08)
+        self.assertEqual(cue["rack"]["wet"], 0)
+        other = suggest(asset(role="threat", name="suspense/riser_transition.wav"), measured(10.5))
+        self.assertNotIn("riser_peak_s", other)
 
 
 if __name__ == "__main__":

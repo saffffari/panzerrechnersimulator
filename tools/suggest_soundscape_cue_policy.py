@@ -17,6 +17,10 @@ import numpy as np
 
 from catalog_panzer_sounds import apply_filename_loop_instruction, db, pcm_decode, sha256
 
+# User-approved cue timing is content-specific, so a future filename change cannot
+# transfer this measured peak to a different recording. No playback PCM is trimmed.
+IMPACT_RISER_ID = "audio_4a383409ba81f8fd25d2ab1c"
+
 
 def envelope(path: Path) -> dict:
     """Read quarter-second windows, never decode an entire source into memory."""
@@ -59,9 +63,10 @@ def suggest(asset: dict, measured: dict) -> dict:
     # The explicit named event stays outside the continuous combat score pool; the
     # runtime decides when an actual contact episode permits that event.
     combat_start = name == "combat_start"
+    impact_riser = asset["id"] == IMPACT_RISER_ID
     unbound_accent = name in {"surprise_contact", "riser_transition"}
     solar_events = [event for event in ("sunrise", "sunset", "dusk") if asset["source_path"].startswith(event + "/")]
-    if combat_start:
+    if combat_start or impact_riser:
         role = "stinger"
     elif unbound_accent:
         role = "effect"
@@ -77,7 +82,10 @@ def suggest(asset: dict, measured: dict) -> dict:
     end_drop = tail - peak if tail is not None and peak is not None else None
     faded_end = (end_drop is not None and end_drop <= -20) and (last is None or last <= peak - 30)
     basis = []
-    if solar_events:
+    if impact_riser:
+        looping, fade_in, fade_out = False, 0.08, 0.02
+        basis.append("user-approved occasional unnoticed-impact riser; content-specific sample peak5.404943s and preferred4s lead; actual contact/awareness eligibility belongs to runtime; preserve natural source tail")
+    elif solar_events:
         looping, fade_in, fade_out = False, 0.15, 1.0
         basis.append("user-assigned solar event: finite complete-file score cue; trigger belongs to the named solar threshold, not elapsed gameplay or mode entry; dusk is separate from sunset")
     elif explicit_loop:
@@ -145,8 +153,8 @@ def suggest(asset: dict, measured: dict) -> dict:
     result = {
         "id": asset["id"], "source_path": asset["source_path"], "source_sha256": asset["sha256"],
         "role": role, "catalog_role": asset["role"], "contexts": asset.get("contexts", []),
-        "role_aliases": [role] if combat_start or unbound_accent else asset.get("role_aliases", [role]),
-        "role_contexts": {role: [asset.get("contexts", [])]} if combat_start or unbound_accent else asset.get("role_contexts", {}),
+        "role_aliases": [role] if combat_start or unbound_accent or impact_riser else asset.get("role_aliases", [role]),
+        "role_contexts": {role: [asset.get("contexts", [])]} if combat_start or unbound_accent or impact_riser else asset.get("role_contexts", {}),
         "folder_assignments": asset.get("folder_assignments", []),
         "historical_source_paths": asset.get("historical_source_paths", []),
         "filename_usage": asset.get("filename_usage", {}),
@@ -164,6 +172,8 @@ def suggest(asset: dict, measured: dict) -> dict:
         "provisional": True, "listened": False, "originals_modified": False,
         "acceptance": ["audition attack and natural ending", "check seam or end-fade in full mixer", "compare against guns, dialogue, and quiet cabin"],
     }
+    if impact_riser:
+        result.update(riser_peak_s=5.404943, riser_lead_s=4.0)
     levels = measured["window_rms_dbfs"][-12:]
     abrupt = max([0.0] + [a - (b if b is not None else -160.0)
         for a, b in zip(levels, levels[1:]) if a is not None and peak is not None and a > peak - 30])
@@ -231,13 +241,15 @@ def main() -> None:
                    "loops": sum(c["loop"] for c in entries), "one_shots": sum(not c["loop"] for c in entries)},
         "warnings": warnings, "cues": entries,
     }
+    output["events"]["unnoticed_impact_riser"] = [c["id"] for c in entries if c["id"] == IMPACT_RISER_ID]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2, allow_nan=False) + "\n")
     bindings = {"version": 1, "provisional": True, "listened": False,
                 "manifest_sha256": output["manifest_sha256"],
                 "gain_db_contract": output["gain_db_contract"],
                 "cues": [{"asset": c["id"], "enabled": True,
-                          **{k: c[k] for k in ("role", "contexts", "role_aliases", "role_contexts", "loop", "fade_in_s", "fade_out_s", "gain_db", "crossfade_s", "crossfade_curve", "rack")}}
+                          **{k: c[k] for k in ("role", "contexts", "role_aliases", "role_contexts", "loop", "fade_in_s", "fade_out_s", "gain_db", "crossfade_s", "crossfade_curve", "rack")},
+                          **{k: c[k] for k in ("riser_peak_s", "riser_lead_s") if k in c}}
                          for c in entries],
                 "events": output["events"], "effect_registry": output["effect_registry"],
                 "additional_folder_bindings": output["additional_folder_bindings"],

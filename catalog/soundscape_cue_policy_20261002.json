@@ -35,6 +35,9 @@
     "sunset": [],
     "dusk": [
       "audio_c738a81f08c3b22ff78aa296"
+    ],
+    "unnoticed_impact_riser": [
+      "audio_4a383409ba81f8fd25d2ab1c"
     ]
   },
   "effect_registry": [
@@ -42,8 +45,7 @@
     "audio_288d09419c5be9266d4ab4e8",
     "audio_0fee210a8741ebe492640e8d",
     "audio_f73177adcd57f1b450d05afe",
-    "audio_ec9cb8e747e24b8b33a1eb8c",
-    "audio_4a383409ba81f8fd25d2ab1c"
+    "audio_ec9cb8e747e24b8b33a1eb8c"
   ],
   "additional_folder_bindings": [
     {
@@ -62,8 +64,8 @@
     "roles": {
       "explore": 8,
       "combat": 9,
-      "stinger": 6,
-      "effect": 6,
+      "stinger": 7,
+      "effect": 5,
       "intro": 8,
       "blizzard": 1,
       "cabin": 11,
@@ -15027,14 +15029,14 @@
       "id": "audio_4a383409ba81f8fd25d2ab1c",
       "source_path": "suspense/riser_transition.wav",
       "source_sha256": "4a383409ba81f8fd25d2ab1c06331475674a177fd24c4c93cffc4e08d39d1ad5",
-      "role": "effect",
+      "role": "stinger",
       "catalog_role": "threat",
       "contexts": [],
       "role_aliases": [
-        "effect"
+        "stinger"
       ],
       "role_contexts": {
-        "effect": [
+        "stinger": [
           []
         ]
       },
@@ -15064,7 +15066,7 @@
       },
       "solar_events": [],
       "loop": false,
-      "fade_in_s": 0.005,
+      "fade_in_s": 0.08,
       "fade_out_s": 0.02,
       "gain_db": 0.0,
       "catalog_gain_db": -6.991192395575314,
@@ -15075,7 +15077,8 @@
         "user-assigned one-shot category; preserve original end and do not retrigger every game update",
         "last2s window RMS is -32.61dB below the loudest quarter-second window; this is not musical-form recognition",
         "catalog attenuation already aligns RMS/peak; gain_db is an additional runtime offset, never baked compression",
-        "no additional reverb: continuous/periodic source or measured ending already quiet; recorded-room content has not been auditioned"
+        "no additional reverb: continuous/periodic source or measured ending already quiet; recorded-room content has not been auditioned",
+        "user-approved occasional unnoticed-approach cue; runtime may forecast the shot/contact but must observe actual impact and cancel invalidated anticipation; exact sample peak marker, four-second preferred lead, preserve natural tail"
       ],
       "envelope": {
         "window_s": 0.25,
@@ -15156,6 +15159,22 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "riser_peak_s": 5.404943,
+      "riser_lead_s": 4.0,
+      "timing_measurements": {
+        "sample_peak_s": 5.404943310657597,
+        "strongest_50ms_rms_interval_s": [
+          5.4,
+          5.45
+        ],
+        "strongest_50ms_rms_center_s": 5.425,
+        "strongest_100ms_rms_center_s": 5.45,
+        "source_duration_s": 10.5,
+        "full_lead_start_s": 1.404943,
+        "source_trimmed": false,
+        "time_stretch": false,
+        "listened": false
       }
     },
     {

@@ -4,6 +4,7 @@
 use super::{Audio, EarBus};
 use crate::audio_soundscape_fx::{Rack, RackConfig};
 use crate::soundscape_program::{ScoreProgram, SolarEdges};
+use crate::soundscape_riser::{Directive as RiserDirective, RiserPlanner};
 use crate::{
     sound_library::{self as library, Cue, Library, Pcm, RATE},
     soundscape_director::{Context, Director, Plan},
@@ -56,6 +57,7 @@ struct Control {
     retire_at: AtomicU64,
     frames: AtomicU64,
     finished: AtomicBool,
+    peak_at: AtomicU64,
 }
 impl Control {
     fn new(gain: f32, fade: f32) -> Self {
@@ -69,6 +71,7 @@ impl Control {
             retire_at: AtomicU64::new(0),
             frames: AtomicU64::new(0),
             finished: AtomicBool::new(false),
+            peak_at: AtomicU64::new(u64::MAX),
         }
     }
     fn fade_out(&self, seconds: f32) {
@@ -107,6 +110,16 @@ struct BedSource {
     tail_only_frames: usize,
     spatial: bool,
     lateral: f32,
+    aligned_peak: Option<AlignedPeak>,
+}
+/// Normal-rate excerpt with short crossfaded phase corrections. This never stretches
+/// pitch, delays a projectile, or generates a physical collision sound.
+struct AlignedPeak {
+    marker: usize,
+    lead: u64,
+    applied_at: u64,
+    previous_cursor: Option<(usize, usize)>,
+    started: bool,
 }
 impl BedSource {
     fn new(pcm: Pcm, cue: &Cue, control: Arc<Control>, rack: RackConfig) -> Self {
@@ -145,9 +158,20 @@ impl BedSource {
             tail_only_frames: 0,
             spatial: false,
             lateral: 0.0,
+            aligned_peak: None,
         }
     }
     fn spatial(mut self, enabled: bool) -> Self { self.spatial = enabled; self }
+    fn with_aligned_peak(mut self, marker_s: f32, peak_in_s: f32, lead_s: f32) -> Self {
+        let marker = (marker_s * RATE as f32).round() as usize;
+        let peak_at = (peak_in_s.max(0.0) * RATE as f32).round() as u64;
+        let lead = (lead_s.max(0.0) * RATE as f32).round() as u64;
+        self.control.peak_at.store(peak_at, Ordering::Relaxed);
+        self.cursor = marker.saturating_sub(lead.min(peak_at) as usize);
+        self.aligned_peak = Some(AlignedPeak {marker, lead, applied_at:peak_at,
+            previous_cursor:None, started:false});
+        self
+    }
     fn with_tail_reverb(mut self, seconds: f32) -> Self {
         if !self.looping && seconds.is_finite() {
             self.tail_only_frames = (seconds.clamp(0.0, 30.0) * RATE as f32) as usize;
@@ -157,6 +181,28 @@ impl BedSource {
     fn render_frame(&mut self) -> Option<[f32; 2]> {
         let retiring = self.control.retire.load(Ordering::Relaxed)
             && self.elapsed >= self.control.retire_at.load(Ordering::Relaxed);
+        if let Some(alignment) = &mut self.aligned_peak {
+            let requested = self.control.peak_at.load(Ordering::Relaxed);
+            let remaining = requested.saturating_sub(self.elapsed);
+            if !alignment.started && remaining > alignment.lead && !retiring {
+                self.elapsed += 1;
+                self.control.frames.store(self.elapsed, Ordering::Relaxed);
+                return Some([0.0; 2]);
+            }
+            let changed = requested != alignment.applied_at; // planner already debounces forecasts
+            // Ignore late corrections after the peak has already decayed; replaying it
+            // would turn one shell into two dramatic accents.
+            if !alignment.started || (changed && self.cursor < alignment.marker) {
+                let desired = alignment.marker.saturating_sub(remaining as usize)
+                    + self.elapsed.saturating_sub(requested) as usize;
+                if alignment.started {
+                    alignment.previous_cursor = Some((self.cursor, 0));
+                }
+                self.cursor = desired.min(self.pcm.frames());
+                alignment.applied_at = requested;
+                alignment.started = true;
+            }
+        }
         if self.elapsed % 32 == 0 {
             let target = if retiring {
                 0.0
@@ -164,8 +210,9 @@ impl BedSource {
                 get(&self.control.gain).clamp(0.0, 4.0)
             };
             if target.to_bits() != self.target.to_bits() {
+                let first_target = self.target < 0.0;
                 self.target = target;
-                let fade = if self.elapsed == 0 {
+                let fade = if self.elapsed == 0 || first_target {
                     self.birth_fade
                 } else {
                     get(&self.control.fade_s)
@@ -191,6 +238,19 @@ impl BedSource {
         if self.cursor < n {
             for (c, x) in frame.iter_mut().enumerate() {
                 *x = self.pcm.samples[self.cursor * 2 + c];
+            }
+            if let Some(alignment) = &mut self.aligned_peak {
+                if let Some((old, step)) = alignment.previous_cursor {
+                    let duration = RATE as usize / 100; // 10ms, no pitch shift.
+                    let t = (step + 1) as f32 / duration as f32;
+                    for ch in 0..2 {
+                        let previous = self.pcm.samples.get(old * 2 + ch).copied().unwrap_or(0.0);
+                        frame[ch] = previous * (1.0 - t) + frame[ch] * t;
+                    }
+                    alignment.previous_cursor = if step + 1 < duration {
+                        Some((old + 1, step + 1))
+                    } else { None };
+                }
             }
             if self.looping && self.seam > 0 && self.cursor >= n - self.seam {
                 let head = self.cursor - (n - self.seam);
@@ -313,6 +373,8 @@ impl Loader {
 }
 
 struct DeathScore { voice: Voice, duration: f32 }
+#[derive(Clone, Copy)]
+struct RiserCue { peak_s: f32, lead_s: f32 }
 
 pub(super) struct Runtime {
     library: Library,
@@ -350,6 +412,9 @@ pub(super) struct Runtime {
     death_attempted: bool,
     death: Option<DeathScore>,
     completed: HashMap<String, String>,
+    riser: RiserPlanner,
+    riser_cues: HashMap<String, RiserCue>,
+    riser_history: VecDeque<Value>,
 }
 pub fn fresh_seed() -> u64 {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -376,6 +441,7 @@ impl Runtime {
             eprintln!("[soundscape] {error}");
         }
         let mut racks = HashMap::new();
+        let mut riser_cues = HashMap::new();
         let root = std::env::var_os("PANZER_SOUND_LIBRARY")
             .map(std::path::PathBuf::from)
             .or_else(|| crate::resource::resolve("assets/audio/library").ok());
@@ -385,6 +451,11 @@ impl Runtime {
         {
             for c in config["cues"].as_array().into_iter().flatten() {
                 if let Some(id) = c["asset"].as_str() {
+                    if let Some(peak) = c["riser_peak_s"].as_f64().filter(|x| x.is_finite() && *x > 0.0) {
+                        let lead = c["riser_lead_s"].as_f64().filter(|x|x.is_finite()).unwrap_or(4.0);
+                        riser_cues.insert(id.to_owned(), RiserCue {
+                            peak_s: peak as f32, lead_s: (lead as f32).clamp(1.5,4.0).min(peak as f32) });
+                    }
                     let v = &c["rack"];
                     let mut rack = RackConfig::preset(v["preset"].as_str().unwrap_or("dry"));
                     let field = |key: &str, base: f32| {
@@ -444,6 +515,9 @@ impl Runtime {
             death_attempted: false,
             death: None,
             completed: HashMap::new(),
+            riser: RiserPlanner::new(seed ^ 0x5249534552),
+            riser_cues,
+            riser_history: VecDeque::new(),
         }
     }
     fn insert(&mut self, id: String, pcm: Pcm) {
@@ -479,6 +553,7 @@ impl Runtime {
                 && !v.retiring
                 && v.control.finished.load(Ordering::Relaxed)
                 && !v.lane.starts_with("event:")
+                && !v.lane.starts_with("riser:")
             {
                 self.completed.insert(v.lane.clone(), v.id.clone());
             }
@@ -656,6 +731,11 @@ impl Runtime {
             return;
         }
         self.time += dt;
+        let action = self.riser.advance(dt);
+        self.apply_riser(audio, action);
+        for id in self.library.events.get("unnoticed_impact_riser").cloned().unwrap_or_default() {
+            self.request(&id);
+        }
         let SoundscapeInput {
             mut context,
             act,
@@ -676,6 +756,11 @@ impl Runtime {
             context.location = name.clone();
         }
         let plan = self.director.update(dt, &context);
+        let allow_fakeout = !matches!(plan.mode, crate::soundscape_director::Mode::Combat
+            | crate::soundscape_director::Mode::Aftermath) && self.intro_done;
+        let available = self.riser_available_lead();
+        let action = self.riser.idle_fakeout(allow_fakeout, available);
+        self.apply_riser(audio, action);
         let (scene_gain, scene_rack) =
             self.library
                 .scene_environment(&plan.location, act, position);
@@ -836,6 +921,71 @@ impl Runtime {
         }
         self.plan = Some(plan);
     }
+    fn riser_available_lead(&self) -> f32 {
+        self.library.events.get("unnoticed_impact_riser").into_iter().flatten()
+            .filter(|id| self.cache.contains_key(*id))
+            .filter_map(|id| self.riser_cues.get(id).map(|c|c.lead_s))
+            .reduce(f32::min).unwrap_or(0.0)
+    }
+    fn apply_riser(&mut self, audio: &Audio, action: Option<RiserDirective>) {
+        let Some(action) = action else { return; };
+        self.riser_history.push_back(json!({"time_s":self.time,"action":format!("{action:?}")}));
+        while self.riser_history.len() > 32 { self.riser_history.pop_front(); }
+        match action {
+            RiserDirective::Schedule {key, peak_in_s, lead_s, ..} => {
+                self.riser_history.back_mut().unwrap()["admitted"] = json!(false);
+                if self.voices.len() >= MAX_VOICES { return; }
+                let candidates: Vec<_> = self.library.events.get("unnoticed_impact_riser")
+                    .into_iter().flatten().filter(|id|self.cache.contains_key(*id)
+                        && self.riser_cues.contains_key(*id)).cloned().collect();
+                let Some(id) = self.score_selector.choose("impact_riser", &candidates) else { return; };
+                let pcm = self.cache[&id].clone();
+                let mut cue = self.library.cues[&id].clone();
+                let timing = self.riser_cues[&id];
+                if timing.peak_s >= pcm.frames() as f32 / RATE as f32 { return; }
+                let Ok(sink) = audio.create_sink_on(EarBus::Score) else { return; };
+                cue.looping = false;
+                let control = Arc::new(Control::new(cue.gain, cue.fade_in_s.unwrap_or(0.08)));
+                put(&control.master, audio.master_volume);
+                let (rack, tail) = self.racks.get(&id).cloned().unwrap_or_default();
+                sink.append(BedSource::new(pcm,&cue,control.clone(),rack)
+                    .with_tail_reverb(tail).with_aligned_peak(timing.peak_s,peak_in_s,lead_s));
+                self.voices.push(Voice {id,lane:format!("riser:{key}"),sink,control,
+                    gain:cue.gain,music:true,retiring:false,looping:false});
+                let entry=self.riser_history.back_mut().unwrap();
+                entry["admitted"]=json!(true);
+                entry["source_peak_s"]=json!(timing.peak_s);
+                entry["peak_at_frame"]=json!((peak_in_s*RATE as f32).round() as u64);
+            }
+            RiserDirective::Retime {key, peak_in_s} => {
+                if let Some(v) = self.voices.iter().find(|v|v.lane==format!("riser:{key}")&&!v.retiring) {
+                    let at = v.control.frames.load(Ordering::Relaxed)
+                        + (peak_in_s.max(0.01)*RATE as f32).round() as u64;
+                    v.control.peak_at.store(at,Ordering::Relaxed);
+                }
+            }
+            RiserDirective::Complete {key} => {
+                if let Some(v) = self.voices.iter().find(|v|v.lane==format!("riser:{key}")&&!v.retiring) {
+                    // Finish a corrective crossfade just before the marker, rather than
+                    // fading away its attack. This adds at most 10ms for an early contact;
+                    // a peak already played is never rewound or repeated.
+                    v.control.peak_at.store(v.control.frames.load(Ordering::Relaxed)
+                        + u64::from(RATE/100),Ordering::Relaxed);
+                    // Leave the initial accent, then give the factual strike/ring room in
+                    // the mix. This changes only this score voice, never impact calibration.
+                    put(&v.control.fade_s,0.12);
+                    put(&v.control.gain,v.gain*0.32);
+                }
+            }
+            RiserDirective::Cancel {key,..} => {
+                for v in &mut self.voices {
+                    if v.lane==format!("riser:{key}")&&!v.retiring {
+                        v.retiring=true; v.control.fade_out(0.8);
+                    }
+                }
+            }
+        }
+    }
     fn warm_gun_successor(&mut self, mode: crate::soundscape_director::Mode) {
         let role = if mode == crate::soundscape_director::Mode::Combat { "combat" } else { "threat" };
         let mut ids = self.library.pool(role, &self.last_tags);
@@ -895,11 +1045,12 @@ impl Runtime {
     }
     pub fn snapshot(&self) -> Value {
         json!({"seed":self.director.seed(),"director":self.director.snapshot(),
-        "program":self.program.snapshot(),"death":self.death.as_ref().map(|d|json!({"id":d.voice.id,"duration_s":d.duration,"frames":d.voice.control.frames.load(Ordering::Relaxed),"finished":d.voice.control.finished.load(Ordering::Relaxed)})),
+        "program":self.program.snapshot(),"riser":self.riser.snapshot(),"riser_history":self.riser_history,"death":self.death.as_ref().map(|d|json!({"id":d.voice.id,"duration_s":d.duration,"frames":d.voice.control.frames.load(Ordering::Relaxed),"finished":d.voice.control.finished.load(Ordering::Relaxed)})),
         "time_s":self.time,"selections":self.selections,"mode":self.plan.as_ref().map(|p|p.mode.as_str()),
         "enabled_cues":self.library.cues.len(),"pending_loads":self.requested.len(),"failed":self.failed,
         "cache_bytes":self.cache.values().map(|p|p.samples.len()*4).sum::<usize>(),
-        "voices":self.voices.iter().map(|v|json!({"id":v.id,"lane":v.lane,"frames":v.control.frames.load(Ordering::Relaxed),"retiring":v.retiring})).collect::<Vec<_>>()})
+        "voices":self.voices.iter().map(|v|json!({"id":v.id,"lane":v.lane,"frames":v.control.frames.load(Ordering::Relaxed),"retiring":v.retiring,
+            "peak_at_frame":(v.control.peak_at.load(Ordering::Relaxed)!=u64::MAX).then(||v.control.peak_at.load(Ordering::Relaxed))})).collect::<Vec<_>>()})
     }
 }
 
@@ -937,6 +1088,38 @@ impl Audio {
     }
     pub fn soundscape_main_gun_fired(&self) {
         if let Some(state) = self.soundscape.borrow_mut().as_mut() { state.main_gun_fired(self); }
+    }
+    /// These facts annotate music only. Projectile collision continues to own all impact SFX.
+    pub fn soundscape_incoming_opportunity(&self, opportunity: Option<(u64,f32)>) {
+        if let Some(s) = self.soundscape.borrow_mut().as_mut() {
+            if s.paused || s.death_attempted { return; }
+            let lead = s.riser_available_lead();
+            let action = s.riser.opportunity(opportunity,lead);
+            s.apply_riser(self,action);
+        }
+    }
+    pub fn soundscape_incoming_selected(&self, key:u64) -> bool {
+        self.soundscape.borrow().as_ref().is_some_and(|s|
+            !s.paused && !s.death_attempted && s.riser.active_key()==Some(key)
+                && s.voices.iter().any(|v|v.lane==format!("riser:{key}")&&!v.retiring))
+    }
+    pub fn soundscape_incoming_launched(&self, key:u64, projectile_id:u64, eta_s:Option<f32>) {
+        if let Some(s) = self.soundscape.borrow_mut().as_mut() {
+            if s.paused || s.death_attempted { return; }
+            let action = s.riser.launched(key,projectile_id,eta_s); s.apply_riser(self,action);
+        }
+    }
+    pub fn soundscape_incoming_flight(&self, projectile_id:u64, eta_s:Option<f32>) {
+        if let Some(s) = self.soundscape.borrow_mut().as_mut() {
+            if s.paused || s.death_attempted { return; }
+            let action = s.riser.flight(projectile_id,eta_s); s.apply_riser(self,action);
+        }
+    }
+    pub fn soundscape_incoming_resolved(&self, projectile_id:u64, player_tank_hit:bool) {
+        if let Some(s) = self.soundscape.borrow_mut().as_mut() {
+            if s.paused || s.death_attempted { return; }
+            let action = s.riser.resolved(projectile_id,player_tank_hit); s.apply_riser(self,action);
+        }
     }
     pub fn soundscape_seed(&self) -> u64 {
         self.soundscape.borrow().as_ref().map_or(0, |s| s.director.seed())
@@ -986,6 +1169,126 @@ impl Audio {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn riser_source(peak_in: f32, lead: f32) -> (BedSource,Arc<Control>) {
+        let mut c=cue(); c.looping=false; c.fade_out_s=Some(0.005);
+        let mut samples=vec![0.01; RATE as usize*2*6];
+        samples[RATE as usize*2*4]=0.9; samples[RATE as usize*2*4+1]=0.9;
+        let control=Arc::new(Control::new(1.0,0.08));
+        let source=BedSource::new(Pcm{samples:samples.into()},&c,control.clone(),RackConfig::default())
+            .with_aligned_peak(4.0,peak_in,lead);
+        (source,control)
+    }
+    #[test]
+    fn riser_excerpt_peak_is_sample_aligned_and_keeps_natural_tail() {
+        let (s,c)=riser_source(2.0,2.0);
+        let samples:Vec<_>=s.collect();
+        let peak=samples.chunks_exact(2).position(|x|x[0]>0.8).unwrap();
+        assert_eq!(peak,RATE as usize*2);
+        assert_eq!(samples.len()/2,RATE as usize*4+128);
+        assert!(c.finished.load(Ordering::Relaxed));
+    }
+    #[test]
+    fn riser_delayed_birth_and_retime_preserve_pitch_and_peak_deadline() {
+        let (mut s,c)=riser_source(4.0,2.0);
+        let wait:Vec<_>=s.by_ref().take(RATE as usize*2*2).collect();
+        assert!(wait.iter().all(|x|*x==0.0));
+        let birth:Vec<_>=s.by_ref().take(RATE as usize/50*2).collect();
+        assert!(*birth.last().unwrap()<0.003,"80ms fade starts at audible onset");
+        let now=c.frames.load(Ordering::Relaxed);
+        c.peak_at.store(now+RATE as u64,Ordering::Relaxed);
+        let tail:Vec<_>=s.collect();
+        let peak=tail.chunks_exact(2).position(|x|x[0]>0.8).unwrap();
+        assert_eq!(peak,RATE as usize);
+        assert!(tail.iter().all(|x|x.is_finite()));
+    }
+    #[test]
+    fn riser_cancel_during_scheduled_wait_does_not_leak_source() {
+        let (mut s,c)=riser_source(5.0,2.0);
+        s.by_ref().take(100).for_each(drop); c.fade_out(0.1);
+        let samples:Vec<_>=s.collect();
+        assert!(samples.iter().all(|x|*x==0.0));
+        assert!(samples.len()<RATE as usize/2);
+    }
+    #[test]
+    fn riser_late_contact_does_not_replay_a_finished_peak() {
+        let (mut s,c)=riser_source(2.0,2.0);
+        let first:Vec<_>=s.by_ref().take((RATE as f32*2.05) as usize*2).collect();
+        assert_eq!(first.iter().filter(|x|**x>0.8).count(),2);
+        c.peak_at.store(c.frames.load(Ordering::Relaxed),Ordering::Relaxed);
+        assert!(s.all(|x|x<0.8));
+    }
+    #[test]
+    fn riser_early_contact_correction_keeps_attack_within_ten_ms() {
+        let (mut s,c)=riser_source(2.0,2.0);
+        s.by_ref().take(RATE as usize*2).for_each(drop);
+        c.peak_at.store(c.frames.load(Ordering::Relaxed)+u64::from(RATE/100),Ordering::Relaxed);
+        let samples:Vec<_>=s.collect();
+        assert_eq!(samples.chunks_exact(2).position(|x|x[0]>0.8),Some(RATE as usize/100));
+    }
+    #[test]
+    #[ignore = "exports licensed source fixtures; set PANZER_RISER_REVIEW_PREFIX"]
+    fn riser_live_transport_review() {
+        let prefix=std::env::var("PANZER_RISER_REVIEW_PREFIX").expect("explicit unique capture prefix");
+        let key=(1u64<<62)|1;
+        let seed_for=|selected:bool| (1..10000u64).find(|seed| {
+            let mut planner=RiserPlanner::new(*seed ^ 0x5249534552);
+            planner.opportunity(Some((key,4.0)),4.0).is_some()==selected
+        }).unwrap();
+        let mut receipts=Vec::new();
+        for scenario in ["hit","miss","uncued","fakeout"] {
+            let file=format!("{prefix}_{scenario}.wav");
+            assert!(!std::path::Path::new(&file).exists(),"preserve prior review");
+            let audio=Audio::new_capture();
+            let seed=seed_for(scenario!="uncued");
+            audio.prepare_soundscape_review(seed).unwrap();
+            {
+                let mut state=audio.soundscape.borrow_mut(); let s=state.as_mut().unwrap();
+                let ids=s.library.events.get("unnoticed_impact_riser").expect("riser binding").clone();
+                for id in ids {s.request(&id);}
+                assert!(s.riser_available_lead()>=4.0);
+            }
+            let mut samples=Vec::new(); let mut physical_impacts=0;
+            let mut selected=false;
+            for tick in 0..240 {
+                let time=tick as f32*0.05;
+                if tick==20 {
+                    if scenario=="fakeout" {
+                        let mut state=audio.soundscape.borrow_mut();let s=state.as_mut().unwrap();
+                        s.riser.advance(211.0);
+                        let lead=s.riser_available_lead();let action=s.riser.idle_fakeout(true,lead);
+                        assert!(action.is_some());s.apply_riser(&audio,action);
+                    } else {audio.soundscape_incoming_opportunity(Some((key,4.0)));}
+                    selected=audio.soundscape_incoming_selected(key);
+                }
+                if tick==80 {audio.soundscape_incoming_launched(key,91,Some(1.0));}
+                if tick==90 && scenario=="miss" {audio.soundscape_incoming_resolved(91,false);}
+                if tick==100 && matches!(scenario,"hit"|"uncued") {
+                    audio.soundscape_incoming_resolved(91,true);
+                    // Explicit staged collision: existing physical impact path, never from planner.
+                    audio.play_at_ear(super::super::Sfx::ArmorClang1,
+                        crate::sound_levels::HIT_SQUARE_NEAR.laf_db);
+                    physical_impacts+=1;
+                }
+                {
+                    let mut state=audio.soundscape.borrow_mut();let s=state.as_mut().unwrap();
+                    s.time=time;let action=s.riser.advance(0.05);s.apply_riser(&audio,action);s.poll();
+                }
+                samples.extend(audio.render_capture_frames(RATE as usize/20).unwrap());
+            }
+            assert_eq!(selected,matches!(scenario,"hit"|"miss"));
+            assert!(samples.iter().all(|x|x.is_finite()&&x.abs()<=1.0));
+            assert!(samples[samples.len()-RATE as usize..].iter().all(|x|x.abs()<1e-5));
+            crate::acoustics::write_wav_stereo(&file,&samples,RATE).unwrap();
+            receipts.push(json!({"scenario":scenario,"file":file,"seed":seed,"seconds":12,
+                "physical_impacts":physical_impacts,"impact_s":if physical_impacts==1 {Some(5.0)}else{None},
+                "selected":selected,"peak":samples.iter().map(|x|x.abs()).fold(0.0f32,f32::max),
+                "state":audio.soundscape_snapshot()}));
+        }
+        let receipt=format!("{prefix}_receipt.json");
+        assert!(!std::path::Path::new(&receipt).exists());
+        std::fs::write(receipt,serde_json::to_vec_pretty(&json!({"kind":"staged context and collision fixtures through live Audio mixer; not gameplay recordings",
+            "subjective_listening_accepted":false,"fixtures":receipts})).unwrap()).unwrap();
+    }
     fn cue() -> Cue {
         Cue {
             id: "test".into(),

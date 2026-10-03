@@ -278,3 +278,30 @@ and earlier event lists are unchanged; `sunset` remains empty/pending its own so
 Twenty-two Python metadata tests pass. Original hashes and the new playback hash
 were verified, without a listening claim, broad rescan, Cargo, or GPU work.
 Receipt: `artifacts/runtime/audio_library_dusk_validation_20261002.json`.
+
+## Occasional unnoticed-impact riser binding (2026-10-02)
+
+The already imported `suspense/riser_transition.wav`
+(`audio_4a383409ba81f8fd25d2ab1c`) now belongs only to finite `stinger`
+role and named event `unnoticed_impact_riser`; it is removed from the generic effect
+registry and has no continuous threat alias. The complete recording is 10.5 seconds.
+Its exact maximal absolute PCM sample is at 5.404943311 seconds; strongest 50 ms
+RMS window is 5.40–5.45 seconds (center 5.425). These are numerical markers, not a
+listened/perceptually approved climax. The alternate imported `surprise_contact`
+starts energetic and has less useful build in its measured envelope.
+
+Approved config uses `riser_peak_s:5.404943`, `riser_lead_s:4.0`, 80 ms onset fade,
+and dry processing. A full preferred lead would start at source 1.404943 seconds;
+the complete natural tail after the marker lasts 5.095057 seconds. No source file
+is cut, time-stretched, or pitch-shifted. Content-specific policy generation retains
+these approved fields if the original filename later changes, without applying
+this peak to a different file with the same name.
+
+Runtime owns the occasional awareness/contact eligibility, scheduling and any
+release when a predicted hit is invalidated. An actual-impact callback alone cannot
+retroactively play the lead; alignment must be measured against actual contact.
+This is a score accent and does not modify physical reports, impacts or damage.
+All other 72 cue dictionaries, earlier event lists and eight existing tail racks
+are unchanged. Twenty-three Python metadata tests pass; no Cargo/GPU playback or
+listening was performed. Evidence: `artifacts/runtime/audio_library_riser_timing_20261002.json`
+and `artifacts/runtime/audio_library_riser_binding_validation_20261002.json`.

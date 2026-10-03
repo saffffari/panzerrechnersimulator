@@ -134,3 +134,16 @@ subjective sound quality, full gameplay performance or native AI/player visibili
 
 Release receipt: `artifacts/runtime/adaptive_audio_release_20261002.json`. New files added to
 source folders after their inventory still require catalog/import; there is no filesystem watcher.
+
+
+## Occasional incoming-shell risers (2026-10-02)
+
+The licensed `suspense/riser_transition.wav` is now a finite score accent, separate from physical gunshot and impact audio. Its measured sample peak is at 5.404943 s. A normal-speed excerpt supplies 1.5–4 seconds of build, followed by the recording's natural tail. This does not time-stretch or pitch-shift the source.
+
+A currently laid enemy tank or engaging AT crew with at most four seconds until readiness can offer a cue only when a read-only ballistic forecast intersects the player's moving tank. Camera frustum, optical/world visibility and an eight-second recent-sighting memory conservatively approximate whether the player has noticed the source. This is a camera heuristic, not proof of player attention. The source gets one 20% selection attempt per firing cycle, with a shared randomized 60–150-second cooldown. Most attacks therefore have no cue. Rare free suspense phrases use the same recording independently of enemies, without inventing firing or impact sounds.
+
+On discharge the selection binds to the actual dispersed shell. Current geometry, wind, and constant-velocity Tiger prediction update the estimate at 5 Hz; turning, acceleration, moving cover and later collisions can invalidate it. These predictions do not change aim, firing, damage or projectile motion. Lost readiness and misses fade the accent over 0.8 s. Actual collision alone confirms a hit and independently triggers the existing physical impact path.
+
+The audio sample clock places the authored peak at the predicted deadline. Forecast corrections use a 10 ms crossfaded source-phase adjustment, without changing playback rate. Early actual contact can finish that correction in 10 ms; a peak already played is never rewound or repeated. At completion its natural tail eases to32% gain over120ms, leaving room for the factual armor strike without changing physical source calibration; free suspense uses the same release. Native frame timing, device buffering and late predictions prevent a universal sample-exact synchronization claim. The score still obeys pause, master level, voice limits and the ordinary death cut; it cannot invoke terminal/death audio.
+
+Review fixtures are staged through the ordinary Audio sinks/master. They demonstrate selected hit, canceled miss, uncued hit and independent suspense. They are not gameplay recordings or subjective listening acceptance.
