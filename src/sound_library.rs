@@ -28,6 +28,99 @@ const ROLES: &[&str] = &[
     "effect",
 ];
 
+/// Tonic-only filename hints retain Unknown mode; they never imply a major key or safe overlap.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum KeyMode { Major, Minor, Unknown }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub struct MusicalKey { tonic:u8, mode:KeyMode }
+impl MusicalKey {
+    pub fn parse(label:&str)->Option<Self> {
+        let normalized=label.trim().replace('♯',"#").replace('♭',"b");
+        let mut words=normalized.split_whitespace();
+        let tonic=words.next()?;let mode=match words.next().map(str::to_ascii_lowercase).as_deref() {
+            Some("major"|"maj")=>KeyMode::Major,Some("minor"|"min")=>KeyMode::Minor,
+            None=>KeyMode::Unknown,_=>return None};
+        if words.next().is_some(){return None;}
+        let mut letters=tonic.chars();
+        let base:i32=match letters.next()?.to_ascii_uppercase(){
+            'C'=>0,'D'=>2,'E'=>4,'F'=>5,'G'=>7,'A'=>9,'B'=>11,_=>return None};
+        let accidental=match letters.next(){None=>0,Some('#')=>1,Some('b')=>-1,_=>return None};
+        if letters.next().is_some(){return None;}
+        Some(Self{tonic:(base+accidental).rem_euclid(12) as u8,mode})
+    }
+    pub fn tonic(&self)->u8 {self.tonic}
+    pub fn mode(&self)->KeyMode {self.mode}
+}
+impl std::fmt::Display for MusicalKey {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {
+        const NOTES:[&str;12]=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+        let note=NOTES[self.tonic as usize];
+        match self.mode {KeyMode::Major=>write!(f,"{note} major"),KeyMode::Minor=>write!(f,"{note} minor"),
+            KeyMode::Unknown=>write!(f,"{note}")}
+    }
+}
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum KeyCompatibility { Same, Relative, Unknown, Incompatible }
+impl KeyCompatibility {
+    pub fn as_str(self)->&'static str {match self {Self::Same=>"same_key",Self::Relative=>"relative_major_minor",
+        Self::Unknown=>"unknown_key",Self::Incompatible=>"incompatible_key"}}
+}
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum TempoCompatibility { Same, HalfTime, DoubleTime, Unknown, Incompatible }
+impl TempoCompatibility {
+    pub fn as_str(self)->&'static str {match self {Self::Same=>"same_tempo",Self::HalfTime=>"incoming_half_tempo",
+        Self::DoubleTime=>"incoming_double_tempo",Self::Unknown=>"unknown_tempo",Self::Incompatible=>"incompatible_tempo"}}
+}
+/// Metadata-based overlap eligibility, not proof of aligned first downbeats or compatible
+/// arrangement. No helper resamples/time-stretches audio or changes authored source pitch.
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub struct MusicalCompatibility {
+    pub key:KeyCompatibility,
+    pub tempo:TempoCompatibility,
+    pub tempo_ratio:Option<f32>,
+    /// Symmetric relative deviation from the nearest allowed1x/0.5x/2x relationship.
+    pub tempo_error_percent:Option<f32>,
+}
+impl MusicalCompatibility {
+    pub fn can_overlap(self)->bool {
+        matches!(self.key,KeyCompatibility::Same|KeyCompatibility::Relative)
+            && matches!(self.tempo,TempoCompatibility::Same|TempoCompatibility::HalfTime|TempoCompatibility::DoubleTime)
+    }
+    pub fn reason(self)->&'static str {
+        if self.key==KeyCompatibility::Unknown {"clean_handover_unknown_key"}
+        else if self.key==KeyCompatibility::Incompatible {"clean_handover_key_mismatch"}
+        else if self.tempo==TempoCompatibility::Unknown {"clean_handover_unknown_tempo"}
+        else if self.tempo==TempoCompatibility::Incompatible {"clean_handover_tempo_mismatch"}
+        else {"metadata_compatible_overlap"}
+    }
+}
+fn valid_bpm(bpm:Option<f32>)->Option<f32> {
+    bpm.filter(|x|x.is_finite() && (30.0..=300.0).contains(x))
+}
+pub fn musical_compatibility(outgoing_key:Option<MusicalKey>,incoming_key:Option<MusicalKey>,
+    outgoing_bpm:Option<f32>,incoming_bpm:Option<f32>)->MusicalCompatibility {
+    let key=match (outgoing_key,incoming_key) {
+        (Some(a),Some(b)) if a.mode==KeyMode::Unknown||b.mode==KeyMode::Unknown=>KeyCompatibility::Unknown,
+        (Some(a),Some(b)) if a==b=>KeyCompatibility::Same,
+        (Some(a),Some(b))=>{
+            let relative=match (a.mode,b.mode) {
+                (KeyMode::Major,KeyMode::Minor)=>(a.tonic+9)%12==b.tonic,
+                (KeyMode::Minor,KeyMode::Major)=>(b.tonic+9)%12==a.tonic,
+                _=>false};
+            if relative {KeyCompatibility::Relative}else{KeyCompatibility::Incompatible}
+        },_=>KeyCompatibility::Unknown};
+    let (tempo,ratio,error)=match (valid_bpm(outgoing_bpm),valid_bpm(incoming_bpm)) {
+        (Some(a),Some(b))=>{
+            let ratio=f64::from(b)/f64::from(a);
+            let (relation,error)=[(1.0,TempoCompatibility::Same),(0.5,TempoCompatibility::HalfTime),
+                (2.0,TempoCompatibility::DoubleTime)].into_iter().map(|(target,kind)|
+                    (kind,(ratio/target).max(target/ratio)-1.0))
+                .min_by(|a,b|a.1.total_cmp(&b.1)).unwrap();
+            (if error<=0.0200001 {relation}else{TempoCompatibility::Incompatible},Some(ratio as f32),Some((error*100.0) as f32))
+        },_=>(TempoCompatibility::Unknown,None,None)};
+    MusicalCompatibility{key,tempo,tempo_ratio:ratio,tempo_error_percent:error}
+}
+
 #[derive(Clone, Debug)]
 pub struct Cue {
     pub id: String,
@@ -45,10 +138,30 @@ pub struct Cue {
     pub fade_out_s: Option<f32>,
     pub looping: bool,
     pub bpm: Option<f32>,
+    pub musical_key: Option<MusicalKey>,
     pub beats_per_bar: u32,
     pub cooldown_s: f32,
 }
 impl Cue {
+    pub fn compatibility(&self,next:&Self)->MusicalCompatibility {
+        musical_compatibility(self.musical_key,next.musical_key,self.bpm,next.bpm)
+    }
+    pub fn musically_compatible(&self,next:&Self)->bool {self.compatibility(next).can_overlap()}
+    /// Delay to the next outgoing bar, measured from an authored cue origin. BPM/key metadata
+    /// alone cannot verify that origin is the first downbeat; unknown BPM returns no alignment.
+    pub fn beat_delay(&self,elapsed_s:f64)->Option<f64> {
+        if !elapsed_s.is_finite()||elapsed_s<0.0||!(1..=16).contains(&self.beats_per_bar){return None;}
+        let bar=60.0/f64::from(valid_bpm(self.bpm)?)*f64::from(self.beats_per_bar);
+        let phase=elapsed_s.rem_euclid(bar);
+        Some(if phase<=1e-9||bar-phase<=1e-9 {0.0}else{bar-phase})
+    }
+    /// Sample-clock form used by the mixer. Integer modulo preserves exact repeated boundaries.
+    pub fn beat_delay_frames(&self,played_frames:u64,sample_rate:u32)->Option<u64> {
+        if sample_rate==0||!(1..=16).contains(&self.beats_per_bar){return None;}
+        let bar=(f64::from(sample_rate)*60.0/f64::from(valid_bpm(self.bpm)?)*f64::from(self.beats_per_bar)).round() as u64;
+        if bar==0{return None;}
+        let phase=played_frames%bar;Some(if phase==0 {0}else{bar-phase})
+    }
     pub fn music(&self) -> bool {
         matches!(
             self.role.as_str(),
@@ -214,11 +327,22 @@ impl Library {
                 }
                 let db = number(&asset["gain"], "suggested_db", 0.0, -60.0, 0.0)
                     + number(b, "gain_db", 0.0, -60.0, 12.0);
-                let bpm = b["bpm"]
-                    .as_f64()
-                    .or(asset["bpm"].as_f64())
-                    .map(|x| x as f32)
-                    .filter(|x| x.is_finite() && (30.0..=300.0).contains(x));
+                // An explicit null binding means unknown/conflicting metadata. Do not silently
+                // resurrect an older manifest value after the author deliberately cleared it.
+                let bpm=if let Some(value)=b.get("bpm") {valid_bpm(value.as_f64().map(|x|x as f32))}
+                    else if asset["musical_metadata"]["bpm"]["conflict"].as_bool()==Some(true)
+                        || asset["musical_metadata"]["bpm"]["status"]=="conflict" {None}
+                    else {valid_bpm(asset["bpm"].as_f64().map(|x|x as f32))};
+                let musical_key=if let Some(value)=b.get("musical_key") {
+                    value.as_str().and_then(MusicalKey::parse)
+                } else {
+                    let evidence=&asset["musical_metadata"]["key"];
+                    if evidence["conflict"].as_bool()==Some(true)||evidence["status"].as_str()==Some("conflict") {None}
+                    else {asset["musical_key"].as_str().and_then(MusicalKey::parse).or_else(|| {
+                        (evidence["status"].as_str()==Some("tonic_only"))
+                            .then(||evidence["tonic"].as_str().and_then(MusicalKey::parse)).flatten()
+                    })}
+                };
                 // Explicit authored repeat works for effects/stingers too. Terminal Death
                 // playback enforces its own finite presentation without corrupting this cue.
                 let looping = b["loop"]
@@ -260,6 +384,7 @@ impl Library {
                     fade_out_s: fade("fade_out_s"),
                     looping,
                     bpm,
+                    musical_key,
                     beats_per_bar: b["beats_per_bar"].as_u64().unwrap_or(4).clamp(1, 16) as u32,
                     cooldown_s: number(b, "cooldown_s", 3.0, 0.05, 3600.0),
                 })
@@ -335,9 +460,12 @@ impl Library {
             })
             .collect();
         let specificity = eligible.iter().map(|(_, s)| *s).max().unwrap_or(0);
+        // Score tags constrain eligibility, not exclusivity. A single inside/night cue must
+        // not erase all general music and suspense from the per-run shuffle bag.
+        let varied_score=matches!(role,"explore"|"music"|"driving"|"aftermath"|"threat"|"combat");
         let mut ids: Vec<_> = eligible
             .into_iter()
-            .filter(|(_, s)| *s == specificity)
+            .filter(|(_, s)| varied_score || *s == specificity)
             .map(|(c, _)| c.id.clone())
             .collect();
         ids.sort();
@@ -443,6 +571,94 @@ pub fn decode(path: &Path) -> Result<Pcm> {
 mod tests {
     use super::*;
     #[test]
+    fn musical_key_parser_preserves_enharmonics_and_never_guesses_mode() {
+        let csharp=MusicalKey::parse("C# minor").unwrap();
+        assert_eq!(Some(csharp),MusicalKey::parse("Db min"));
+        assert_eq!(Some(csharp),MusicalKey::parse(" C♯ minor "));
+        assert_eq!(MusicalKey::parse("Cb major"),MusicalKey::parse("B major"));
+        assert_eq!(MusicalKey::parse("B# minor"),MusicalKey::parse("C minor"));
+        assert_eq!(csharp.to_string(),"C# minor");
+        let tonic=MusicalKey::parse("E").unwrap();
+        assert_eq!((tonic.tonic(),tonic.mode()),(4,KeyMode::Unknown));
+        for invalid in ["", "H minor", "C dorian", "C major A minor", "C## major", "120", "unknown"] {
+            assert_eq!(MusicalKey::parse(invalid),None,"invalid key: {invalid}");
+        }
+    }
+
+    #[test]
+    fn musical_keys_allow_only_same_or_relative_major_minor() {
+        let compatibility=|a,b|musical_compatibility(MusicalKey::parse(a),MusicalKey::parse(b),Some(120.0),Some(120.0));
+        assert_eq!(compatibility("C major","C major").key,KeyCompatibility::Same);
+        for (a,b) in [("C major","A minor"),("A minor","C major"),("Db major","Bb minor"),("E major","C# minor")] {
+            assert_eq!(compatibility(a,b).key,KeyCompatibility::Relative);assert!(compatibility(a,b).can_overlap());
+        }
+        for (a,b) in [("C major","G major"),("C major","C minor"),("A minor","D minor")] {
+            assert_eq!(compatibility(a,b).key,KeyCompatibility::Incompatible);assert!(!compatibility(a,b).can_overlap());
+        }
+        assert_eq!(compatibility("E","E minor").key,KeyCompatibility::Unknown);
+        assert!(!compatibility("E","E").can_overlap(),"matching tonic is not proof of matching harmony");
+    }
+
+    #[test]
+    fn musical_tempo_tolerance_is_symmetric_with_half_and_double_without_stretch() {
+        let key=MusicalKey::parse("C major");
+        let c=|a,b|musical_compatibility(key,key,Some(a),Some(b));
+        assert_eq!(c(120.0,122.4).tempo,TempoCompatibility::Same);
+        assert_eq!(c(122.4,120.0).tempo,TempoCompatibility::Same);
+        assert_eq!(c(120.0,122.5).tempo,TempoCompatibility::Incompatible);
+        assert_eq!(c(120.0,60.0).tempo,TempoCompatibility::HalfTime);
+        assert_eq!(c(60.0,120.0).tempo,TempoCompatibility::DoubleTime);
+        assert_eq!(c(120.0,244.8).tempo,TempoCompatibility::DoubleTime);
+        assert_eq!(c(120.0,180.0).tempo,TempoCompatibility::Incompatible);
+        for invalid in [0.0,-120.0,f32::NAN,f32::INFINITY,900.0] {
+            assert_eq!(c(120.0,invalid).tempo,TempoCompatibility::Unknown);
+            assert!(!c(120.0,invalid).can_overlap());
+        }
+        let unknown=musical_compatibility(key,key,Some(120.0),None);
+        assert_eq!(unknown.reason(),"clean_handover_unknown_tempo");
+    }
+
+    #[test]
+    fn musical_metadata_null_clears_conflicts_and_partial_tonic_stays_unknown() {
+        let m=json!({"version":1,"assets":[
+            {"id":"known","default_enabled":true,"role":"music","playback_path":"clips/a.wav","bpm":120,"musical_key":"C major"},
+            {"id":"partial","default_enabled":true,"role":"music","playback_path":"clips/b.wav","bpm":100,"musical_key":null,
+             "musical_metadata":{"key":{"status":"tonic_only","tonic":"E","mode":null,"conflict":false}}},
+            {"id":"conflict","default_enabled":true,"role":"music","playback_path":"clips/c.wav","bpm":120,"musical_key":"C major",
+             "musical_metadata":{"key":{"status":"conflict","conflict":true},"bpm":{"conflict":true}}}
+        ]});
+        let original=Library::from_json(Path::new("."),&m,&json!({})).unwrap();
+        assert_eq!(original.cues["partial"].musical_key.unwrap().mode(),KeyMode::Unknown);
+        assert!(!original.cues["partial"].musically_compatible(&original.cues["known"]));
+        assert_eq!(original.cues["conflict"].musical_key,None);assert_eq!(original.cues["conflict"].bpm,None);
+        let edited=Library::from_json(Path::new("."),&m,&json!({"cues":[
+            {"asset":"known","bpm":null,"musical_key":null},
+            {"asset":"partial","musical_key":null},
+            {"asset":"conflict","bpm":90,"musical_key":"A minor"}
+        ]})).unwrap();
+        assert_eq!(edited.cues["known"].bpm,None);assert_eq!(edited.cues["known"].musical_key,None);
+        assert_eq!(edited.cues["partial"].musical_key,None,"explicit null clears inherited tonic hint");
+        assert_eq!(edited.cues["conflict"].bpm,Some(90.0));
+        assert_eq!(edited.cues["conflict"].musical_key,MusicalKey::parse("A minor"));
+        assert!(edited.errors.is_empty(),"unknown music remains usable through a clean handover");
+    }
+
+    #[test]
+    fn musical_bar_delay_uses_outgoing_sample_clock_and_preserves_unknown() {
+        let m=json!({"version":1,"assets":[{"id":"cue","default_enabled":true,"role":"music",
+            "playback_path":"clips/a.wav","bpm":120,"musical_key":"C major"}]});
+        let library=Library::from_json(Path::new("."),&m,&json!({})).unwrap();
+        let mut cue=library.cues["cue"].clone();
+        assert_eq!(cue.beat_delay(0.0),Some(0.0));assert_eq!(cue.beat_delay(4.0),Some(0.0));
+        assert_eq!(cue.beat_delay(1.75),Some(0.25));assert_eq!(cue.beat_delay_frames(77_175,RATE),Some(11_025));
+        assert_eq!(cue.beat_delay_frames(88_200*10_000,RATE),Some(0));
+        assert_eq!(cue.beat_delay_frames(88_200*10_000+1,RATE),Some(88_199));
+        cue.beats_per_bar=3;cue.bpm=Some(90.0);assert_eq!(cue.beat_delay(1.75),Some(0.25));
+        assert_eq!(cue.beat_delay(f64::NAN),None);assert_eq!(cue.beat_delay(-1.0),None);
+        cue.bpm=None;assert_eq!(cue.beat_delay(1.75),None);assert_eq!(cue.beat_delay_frames(77175,RATE),None);
+    }
+
+    #[test]
     fn no_traversal_or_unimported_assets() {
         let m = json!({"version":1,"assets":[{"id":"bad","default_enabled":true,"playback_path":"../outside.wav","role":"night"},{"id":"pending","default_enabled":true,"role":"night"}]});
         let lib = Library::from_json(Path::new("."), &m, &json!({})).unwrap();
@@ -475,8 +691,8 @@ mod tests {
         assert_eq!(lib.cues.len(), 2);
         assert!(lib.cues["shared"].music());
         assert_eq!(lib.pool("intro", "map|spring|day"), vec!["shared"]);
-        assert_eq!(lib.pool("threat", "map|winter|day"), vec!["shared"]);
-        assert_eq!(lib.pool("threat", "map|spring|night"), vec!["shared"]);
+        assert_eq!(lib.pool("threat", "map|winter|day"), vec!["general", "shared"]);
+        assert_eq!(lib.pool("threat", "map|spring|night"), vec!["general", "shared"]);
         assert_eq!(lib.pool("threat", "map|spring|day"), vec!["general"]);
     }
 

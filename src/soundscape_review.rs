@@ -171,41 +171,67 @@ fn death_fixture(prefix: &str, rate: usize) -> anyhow::Result<serde_json::Value>
         &Path { distance_m: 2.0, atmosphere: Atmosphere::WINTER, occluded: false,
             enclosure: Enclosure::OnFoot, headset: true });
     audio.play_world_at_ear(crate::audio::Sfx::TurretPop, &ear, 0.0, ReverbParams::STEEL_INTERIOR);
-    let duration = audio.start_death_score()
+    let duration = audio.prepare_death_score()
         .ok_or_else(|| anyhow::anyhow!("no death chord could be selected/decoded"))?;
     anyhow::ensure!(duration.is_finite() && (1.75..=120.0).contains(&duration),
         "unexpected death cue duration: {duration}");
-    let selected = audio.soundscape_snapshot();
-    let repeated = audio.start_death_score();
-    anyhow::ensure!(repeated == Some(duration) && selected["death"] == audio.soundscape_snapshot()["death"],
-        "repeated terminal entry restarted or changed the cue");
-    let black_after_s = 1.5f32;
-    let mut elapsed = 0.0f32;
+    let prepared = audio.soundscape_snapshot();
+    let card = crate::death_card::Presentation::new(1943, 1943, duration).unwrap();
+    let black_after_s = crate::DEATH_FADE;
+    let reveal_frame = (card.reveal_at_s().max(black_after_s) * rate as f32).ceil() as usize;
+    let reveal_after_s = reveal_frame as f64 / rate as f64;
+    let end_frame = reveal_frame + ((duration + 0.5) * rate as f32).ceil() as usize;
+    let mut frame = 0usize;
+    let mut cue_started = false;
+    let mut selected = serde_json::Value::Null;
+    let mut no_cue_before_text = true;
+    let mut start_once = true;
     let mut cursor_previous = 0.0f32;
     let mut cursor_monotonic = true;
     let mut black_energy = 0.0f64;
+    let mut pre_text_black_energy = 0.0f64;
     let mut frames_in_black = 0usize;
     let mut snapshots = Vec::new();
-    while elapsed < duration + 0.5 {
+    while frame < end_frame {
+        let elapsed = frame as f32 / rate as f32;
         let black = elapsed >= black_after_s;
-        audio.set_listener_level((1.0 - elapsed / black_after_s).clamp(0.0, 1.0));
+        audio.set_listener_level(1.0 - crate::death_fade(elapsed));
         if black { audio.set_silenced(true); }
-        let block = audio.render_capture_frames(rate / 20).unwrap();
-        if black && elapsed < duration - 0.1 {
-            black_energy += block.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>();
-            frames_in_black += block.len() / 2;
+        if frame >= reveal_frame && !cue_started {
+            anyhow::ensure!(card.phase(elapsed, None, false) == crate::death_card::Phase::Identity,
+                "text reveal must precede terminal playback");
+            cue_started = audio.start_death_score() == Some(duration);
+            selected = audio.soundscape_snapshot();
         }
+        if cue_started {
+            let before = audio.death_score_elapsed();
+            start_once &= audio.start_death_score() == Some(duration)
+                && audio.death_score_elapsed() == before;
+        } else {
+            no_cue_before_text &= audio.death_score_elapsed().is_none()
+                && audio.soundscape_snapshot()["death"].is_null();
+        }
+        // Split at the reveal boundary: this fixture starts on its exact rendered-frame clock,
+        // without moving either the fatal sound or the midpoint text deadline.
+        let count = (rate / 20).min(end_frame - frame)
+            .min(if frame < reveal_frame { reveal_frame - frame } else { usize::MAX });
+        let block = audio.render_capture_frames(count).unwrap();
+        let energy = block.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>();
+        if black && cue_started && elapsed < reveal_after_s as f32 + duration - 0.1 {
+            black_energy += energy;
+            frames_in_black += block.len() / 2;
+        } else if black && !cue_started { pre_text_black_energy += energy; }
         pcm.extend(block);
-        elapsed += 0.05;
+        frame += count;
         if let Some(cursor) = audio.death_score_elapsed() {
             cursor_monotonic &= cursor.is_finite() && cursor + 1e-5 >= cursor_previous;
             cursor_previous = cursor;
-        } else if !audio.death_score_finished() {
-            cursor_monotonic = false;
         }
-        if snapshots.len() == 0 || (elapsed * 20.0).round() as usize % 20 == 0 {
-            snapshots.push(json!({"elapsed_s":elapsed,"cue_cursor_s":audio.death_score_elapsed(),
-                "world_cut":black,"finished":audio.death_score_finished()}));
+        let finished = audio.death_score_finished();
+        if snapshots.is_empty() || frame / rate > (frame - count) / rate || frame == reveal_frame {
+            snapshots.push(json!({"elapsed_s":frame as f64/rate as f64,
+                "cue_cursor_s":audio.death_score_elapsed(),"text_visible":cue_started,
+                "world_cut":black,"finished":finished}));
         }
     }
     audio.set_listener_level(0.0);
@@ -221,16 +247,20 @@ fn death_fixture(prefix: &str, rate: usize) -> anyhow::Result<serde_json::Value>
         "fatal_source":"TurretPop; calibrated ammunition detonation, 2m same compartment, headset",
         "fatal_ear_laf_dba":ear.laf_db,"fatal_at_s":fatal_at_s,"cue_duration_s":duration,
         "black_at_s":fatal_at_s+f64::from(black_after_s),
-        "text_midpoint_at_s":fatal_at_s+f64::from(duration)*0.5,
-        "cue_end_at_s":fatal_at_s+f64::from(duration)
+        "text_midpoint_at_s":fatal_at_s+reveal_after_s,
+        "cue_started_at_s":fatal_at_s+reveal_after_s,
+        "cue_end_at_s":fatal_at_s+reveal_after_s+f64::from(duration)
             +crate::reproduction::MASTER_LATENCY_FRAMES as f64/rate as f64,
         "master_latency_s":crate::reproduction::MASTER_LATENCY_FRAMES as f64/rate as f64,
-        "selected":selected,
+        "prepared":prepared,"selected":selected,
+        "pre_text_black_sum_squares":pre_text_black_energy,
         "cursor_snapshots":snapshots,"last_cue_cursor_s":cursor_previous,
         "black_frames":frames_in_black,"black_mean_square":black_energy/(frames_in_black.max(1)*2) as f64,
         "sample_frames":pcm.len()/2,"seconds":pcm.len() as f64/(rate*2) as f64,
         "peak_dbfs":crate::reproduction::peak_dbfs(&pcm),"master":audio.master_telemetry(),
         "checks":{"finite":finite,"bounded":peak<=crate::reproduction::LIMITER_CEILING+1e-5,
+            "no_cue_before_text":no_cue_before_text,"pre_text_black_is_silent":pre_text_black_energy<1e-12,
+            "text_starts_cue_once":cue_started&&start_once,
             "cue_cursor_monotonic":cursor_monotonic,"cue_continues_with_world_cut_and_level_zero":black_energy>1e-8,
             "cue_reaches_complete_clip":(cursor_previous-duration).abs()<=0.051,
             "cue_finished_naturally":audio.death_score_finished(),"post_cue_silence":tail_silent},

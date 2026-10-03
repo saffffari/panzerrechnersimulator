@@ -209,6 +209,7 @@ pub(super) struct Mechanisms {
     hatches: [Option<MechanismVoice>; 6], // cupola, four source lids, and Driver visor shields
     starter: Option<MechanismVoice>,
     jam: Option<MechanismVoice>,
+    named_jam_held:[bool;2],
     mg_trigger_held: [bool; 2],
 }
 
@@ -317,13 +318,16 @@ impl Audio {
     /// One failed-trigger contact per deliberate pull. A working MG keeps its existing burst;
     /// a held disabled/overheated trigger must neither chatter nor repeatedly play dry clicks.
     pub fn update_mg_trigger(&self, pulled: bool, can_fire: bool, coax: bool) {
+        self.update_mg_trigger_for_listener(pulled,can_fire,coax,false);
+    }
+    pub fn update_mg_trigger_for_listener(&self,pulled:bool,can_fire:bool,coax:bool,headset:bool) {
         let index = usize::from(coax);
         let clicked = {
             let mut mechanisms = self.mechanisms.borrow_mut();
             mechanisms.mg_trigger_held[1 - index] = false;
             failed_trigger_edge(&mut mechanisms.mg_trigger_held[index], pulled, can_fire)
         };
-        if clicked { self.play_control("trigger", 0.8); }
+        if clicked { self.play_failed_trigger(headset); }
     }
 
     pub(super) fn feedback_source(&self, key: &str) -> Option<Arc<[f32]>> {
@@ -401,7 +405,30 @@ impl Audio {
         }
     }
 
-    pub fn set_traverse_jam(&self, straining: bool) {
+    pub fn play_failed_trigger(&self,headset:bool) {
+        let level=super::calibrated::control_level_dba("trigger")+super::effort_db(0.8);
+        if !self.play_named_control("trigger_pull_not_loaded",level,headset,0.0) {
+            self.play_control("trigger",0.8);
+        }
+    }
+    /// Finite named recordings trigger once per actual attempted jam, never on idle damage state.
+    pub fn update_elevation_jam(&self,straining:bool,headset:bool) {
+        let pressed={let mut m=self.mechanisms.borrow_mut();
+            let edge=straining&&!m.named_jam_held[1];m.named_jam_held[1]=straining;edge};
+        if pressed && !self.play_named_control("jammed_gun_elevation",
+            super::calibrated::control_level_dba("traverse_jam"),headset,0.0) {
+            self.play_control("traverse_jam",1.0);
+        }
+    }
+    pub fn set_traverse_jam(&self, straining: bool) {self.set_traverse_jam_for_listener(straining,false);}
+    pub fn set_traverse_jam_for_listener(&self,straining:bool,headset:bool) {
+        let (pressed,held)={let mut m=self.mechanisms.borrow_mut();
+            let prior=m.named_jam_held[0];if !straining {m.named_jam_held[0]=false;} (straining&&!prior,prior)};
+        if pressed && self.play_named_control("jammed_traverse",
+            super::calibrated::control_level_dba("traverse_jam"),headset,0.0) {
+            self.mechanisms.borrow_mut().named_jam_held[0]=true;return;
+        }
+        if straining&&held {return;}
         let mut mechanisms = self.mechanisms.borrow_mut();
         if straining && mechanisms.jam.is_none() {
             if let Ok(sink) = self.create_sink() {

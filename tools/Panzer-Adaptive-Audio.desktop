@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Panzer — Adaptive Audio
+Comment=Current winter build with sorted sound library and personal hand items
+Exec=/home/alex/panzer/adaptive-audio-20261002/tools/launch_fixed_playtest.sh --play
+Path=/home/alex/panzer/adaptive-audio-20261002
+Icon=applications-games
+Terminal=false
+Categories=Game;
+StartupNotify=false

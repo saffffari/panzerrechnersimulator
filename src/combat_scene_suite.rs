@@ -301,6 +301,9 @@ fn coax_tracer_observations(receipt:&Value)->Value {
     json!({"selected_player_tracer_ids":selected,"matching_segments_submitted":submitted,
         "scope":"Player projectile-ID matches retained in bounded receipt; not total lifetime counts or visible pixels"})
 }
+fn capture_score_seed(key:&str)->u64 {
+    key.bytes().fold(0x53434f52455f3239,|hash,b|(hash^u64::from(b)).wrapping_mul(0x100000001b3))
+}
 fn initial_enemy_reload(scene:Scene,index:usize)->f32 {
     if scene.enemies>=6 {6.0+index as f32*2.5}
     else if scene.moving {7.0+index as f32*2.0}
@@ -310,13 +313,13 @@ fn description(scene: Scene) -> Value {
     json!({"key":scene.key,"purpose":scene.purpose,"act_id":scene.act,
     "explicit_position_xz":scene.position,"offset_from_authored_spawn":scene.offset,"day_phase":scene.phase.label(),
     "storm_override":scene.storm,"requested_t34_count":scene.enemies,"base_range_m":scene.range,
-    "gun_control":if is_incoming_small_arms(scene) {"no own trigger, lay or breech-service inputs; ordinary incoming AI only"}
-        else if scene.key.starts_with("winter_canyon") {"desired lay through ordinary physical drives"} else {"legacy direct scripted gun lay"},
-    "initial_enemy_reload_s":(0..scene.enemies).map(|index|initial_enemy_reload(scene,index)).collect::<Vec<_>>(),
+    "gun_control":if scene.key=="winter_canyon_night_drive" {"no own trigger or aim commands; ordinary live course defenders"} else if is_incoming_small_arms(scene) {"no own trigger, lay or breech-service inputs; ordinary incoming AI only"}
+        else if scene.key.starts_with("winter_canyon") {"desired lay through ordinary physical drives; armor review retains first live actor with 0.012rad firing tolerance"} else {"legacy direct scripted gun lay"},
+    "initial_enemy_reload_s":if matches!(scene.key,"winter_canyon_course"|"winter_canyon_infantry"|"winter_canyon_infantry_inside"|"winter_canyon_night_drive") || is_incoming_small_arms(scene) {None}else{Some((0..scene.enemies).map(|index|initial_enemy_reload(scene,index)).collect::<Vec<_>>())},
     "camera_motion":if is_incoming_small_arms(scene) {if scene.inside {"stationary occupied Loader, commander hatch closed; ordinary impact feedback retained"} else {"stationary occupied commander head-out; ordinary impact feedback retained"}}
         else if scene.key.starts_with("winter_canyon") && !scene.inside {"12deg commander head-yaw arc1–3s via ordinary input, returns before first shot"} else {"ordinary station camera"},
     "camera":if scene.inside {"occupied Loader station"}else{"occupied Commander head-out"},
-    "driver_input":if scene.moving {"0.38 throttle from0.5s to5s; modest steering after4s; then stop before firing"}else{"stationary"}})
+    "driver_input":if scene.key=="winter_canyon_night_drive" {"0.30 throttle from0.5s to23s through ordinary co-op Driver, then coast; actual terrain/obstacle constraints"} else if scene.moving {"0.38 throttle from0.5s to5s; modest steering after4s; then stop before firing"}else{"stationary"}})
 }
 
 pub fn run(
@@ -380,7 +383,13 @@ pub fn run(
         ensure!(passed,"one or more suite cases failed; retained individual receipts identify missing observations");
         return Ok(());
     }
-    let scene = if key == "winter_canyon_incoming_small_arms" {
+    let scene = if key == "winter_canyon_night_drive" {
+        Scene{key:"winter_canyon_night_drive",purpose:"Authored Canyon winter start at night: ordinary low-throttle driving, full live seeded defenders, layered night/engine/music without own trigger commands",phase:DayPhase::Night,storm:0.10,moving:true,
+            ..*SCENES.iter().find(|s|s.key=="winter_canyon_course").unwrap()}
+    } else if key == "winter_canyon_blizzard_close" {
+        Scene{key:"winter_canyon_blizzard_close",purpose:"Three ordinary T34s on measured-clear nearby Canyon lanes in heavy snow: shared local optical visibility, real AI fire and propagated audio",storm:1.8,enemies:3,range:50.0,
+            ..*SCENES.iter().find(|s|s.key=="winter_canyon").unwrap()}
+    } else if key == "winter_canyon_incoming_small_arms" {
         Scene{key:"winter_canyon_incoming_small_arms",purpose:"Incoming seeded Soviet rifle group without own gun masking: real ballistic flight, armor contacts and delayed sound; other live course defenders retained",..*SCENES.iter().find(|s|s.key=="winter_canyon_infantry").unwrap()}
     } else if key == "winter_canyon_incoming_small_arms_inside" {
         Scene{key:"winter_canyon_incoming_small_arms_inside",purpose:"Same seeded incoming rifle group with the occupied Loader inside and commander hatch closed: ordinary armor protection, structural contact audio and delayed reports; no own guns or invulnerability",inside:true,..*SCENES.iter().find(|s|s.key=="winter_canyon_infantry").unwrap()}
@@ -399,7 +408,7 @@ pub fn run(
             .find(|s| s.key == key)
             .with_context(|| {
                 format!(
-                    "unknown scene {key}; use all, distant_blizzard_inside, winter_canyon_inside, winter_canyon_incoming_small_arms, winter_canyon_incoming_small_arms_inside, winter_canyon_infantry_inside or {}",
+                    "unknown scene {key}; use all, winter_canyon_night_drive, winter_canyon_blizzard_close, distant_blizzard_inside, winter_canyon_inside, winter_canyon_incoming_small_arms, winter_canyon_incoming_small_arms_inside, winter_canyon_infantry_inside or {}",
                     SCENES.map(|s| s.key).join(", ")
                 )
             })?
@@ -407,7 +416,7 @@ pub fn run(
     run_case(&prefix, scene, seconds, preview, look_review, dither_video)
 }
 
-fn choose_lanes(g: &Game, scene: Scene) -> anyhow::Result<(Vec<glam::Vec2>, Vec<Value>)> {
+fn choose_lanes(g: &Game, scene: Scene, weather:&crate::weather_visibility::WeatherView) -> anyhow::Result<(Vec<glam::Vec2>, Vec<Value>)> {
     let origin = glam::Vec2::new(g.player.pos.x, g.player.pos.z);
     let mut positions: Vec<glam::Vec2> = Vec::new();
     let mut evidence = Vec::new();
@@ -424,9 +433,15 @@ fn choose_lanes(g: &Game, scene: Scene) -> anyhow::Result<(Vec<glam::Vec2>, Vec<
             let angle = g.player.heading + bearing.to_radians();
             let p = origin + glam::Vec2::new(angle.sin(), angle.cos()) * range;
             let mut report = g.capture_opening_lane(p);
+            let source=Vec3::new(p.x,g.hf.vehicle_height_at(p.x,p.y)+tank::T34_PARTS.center_h,p.y);
+            let contrast=weather.transmittance(source,g.player.center());
+            report["opening_optical_contrast"]=json!(contrast);
+            report["same_weather_recognition_threshold"]=json!(crate::weather_visibility::RECOGNITION_CONTRAST);
+            let optical=scene.key!="winter_canyon_blizzard_close" || contrast>=crate::weather_visibility::RECOGNITION_CONTRAST;
+            report["optical_staging_required"]=json!(scene.key=="winter_canyon_blizzard_close");
             let separated = positions.iter().all(|q| q.distance(p) > 24.0);
             report["separated_from_selected"] = json!(separated);
-            let accept = report["accepted"] == true && separated;
+            let accept = report["accepted"] == true && separated && optical;
             evidence.push(report);
             if accept {
                 positions.push(p);
@@ -487,7 +502,8 @@ fn run_case(
     let (device, queue) = request_device(&adapter);
     let canyon = scene.key.starts_with("winter_canyon");
     let incoming_small_arms=is_incoming_small_arms(scene);
-    let course_review=matches!(scene.key,"winter_canyon_course"|"winter_canyon_infantry"|"winter_canyon_infantry_inside") || incoming_small_arms;
+    let night_drive=scene.key=="winter_canyon_night_drive";
+    let course_review=night_drive || matches!(scene.key,"winter_canyon_course"|"winter_canyon_infantry"|"winter_canyon_infantry_inside") || incoming_small_arms;
     let infantry_review=matches!(scene.key,"winter_canyon_infantry"|"winter_canyon_infantry_inside") || incoming_small_arms;
     let mut source_heading = 0.0;
     let selected_manifest = if canyon {
@@ -501,7 +517,7 @@ fn run_case(
             "terrain":manifest.value()["terrain"],"source_start_xz":course.start.to_array(),
             "source_heading_deg":course.heading.to_degrees(),
             "build_path":"Game::build_playtest_act; selected exact Canyon V2 manifest",
-            "scope":"Authored map and ordinary simulation with six disclosed review actors; not a full seeded Canyon course run"});
+            "scope":if course_review {"Authored map with full live seeded course defenders; review control/staging is disclosed separately"}else{"Authored map and ordinary simulation with disclosed review actors; not a full seeded Canyon course run"}});
         crate::act_manifest::select_runtime_manifest(Some(path))?;
         Some(evidence)
     } else { None };
@@ -510,8 +526,21 @@ fn run_case(
     } else {
         Game::build_act(&device, &queue, matches!(scene.phase, DayPhase::Night), &world::act(scene.act))?
     };
+    let winter = matches!(g.act.season, world::Season::Winter);
+    r.apply_campaign_atmosphere(scene.act, winter, scene.phase);
+    r.set_weather_seed(g.act.seed);
+    r.set_weather_override(Some(scene.storm));
+    r.advance_sky_clock(0.0); // realize the selected medium before geometry-only opening-lane audit
     let source_spawn = g.act.spawn;
-    let course_setup=if course_review {
+    let course_setup=if night_drive {
+        g.enable_canyon_course_seeded(29)?;
+        source_heading=g.player.heading;
+        Some(json!({"seed":29,"identity":{"kind":"authored_course_start"},
+            "player_world_m":g.player.pos.to_array(),"source_heading_rad":g.player.heading,
+            "active_t34_indices":g.enemies.iter().enumerate().filter(|(i,e)|e.alive&&g.capture_enemy_active(*i)).map(|(i,_)|i).collect::<Vec<_>>(),
+            "initial_course":g.canyon_snapshot(),"initial_defenders":g.capture_course_receipt(),
+            "scope":"Unmoved authored course spawn with full live seeded defenders; ordinary Driver input only, no forced awareness or outcome"}))
+    } else if course_review {
         match g.capture_stage_course(infantry_review) {
             Ok(setup)=>Some(setup),Err(error)=>{
                 save_json(&format!("{prefix}.json"),&json!({"schema":"panzer.combat-scene-case.v1","passed":false,
@@ -530,14 +559,14 @@ fn run_case(
         let position=scene.position.map(glam::Vec2::from).unwrap_or(source_spawn+glam::Vec2::from(scene.offset));
         g.player.pos=Vec3::new(position.x,g.hf.height_at(position.x,position.y),position.y);
         g.player.heading=source_heading;
-        let (positions,evidence)=match choose_lanes(&g,scene) {
+        let (positions,evidence)=match choose_lanes(&g,scene,&r.weather_visibility()) {
             Ok(v)=>v,Err(error)=>{
                 save_json(&format!("{prefix}.json"),&json!({"schema":"panzer.combat-scene-case.v1","passed":false,
                     "scene":description(scene),"failure_stage":"initial_source_geometry","reason":format!("{error:#}"),"media_recorded":false}))?;
                 return Err(error);
             }
         };
-        let active=g.stage_showreel_t34_crossfire_wave(&positions,0x5C3E_1001);
+        let active=g.capture_stage_t34s(&positions);
         ensure!(active.len()==scene.enemies,"requested source actor slots unavailable");
         for (k,&i) in active.iter().enumerate() {g.enemies[i].reload=initial_enemy_reload(scene,k);}
         (active,evidence)
@@ -547,23 +576,21 @@ fn run_case(
     let policy = crate::resource::resolve("assets/ai/weights_academy.bin")?;
     if !course_review {g.enemy_policy = Some(ai::Mlp::load(policy.to_str().context("policy path")?)?);}
     ensure!(!g.god, "scene suite refuses invulnerability");
-    let winter = matches!(g.act.season, world::Season::Winter);
-    r.apply_campaign_atmosphere(scene.act, winter, scene.phase);
-    r.set_weather_seed(g.act.seed);
-    r.set_weather_override(Some(scene.storm));
     let view = if scene.inside {
         crate::crew_blizzard_capture::View::Inside
     } else {
         crate::crew_blizzard_capture::View::Cupola
     };
     view.stage(&mut g);
+    let score_seed=capture_score_seed(scene.key);
+    g.prepare_capture_soundscape(score_seed)?;
     let initial = g.player.pos;
     let initial_clock = r.sky_clock.now().to_iso();
     let small_arms_initial=Some(g.capture_small_arms_receipt());
     let small_arms_audio_initial=Some(g.capture_small_arms_audio_receipt());
     let small_arms_recording_origin=r.time;
     if std::env::var("KESSEL_COMBAT_STILL_ONLY").as_deref() == Ok("1") {
-        let input = if incoming_small_arms {incoming_small_arms_controls()}
+        let input = if incoming_small_arms || night_drive {incoming_small_arms_controls()}
             else if canyon { view.controls_with_slew(&mut g, 0, false) } else { view.controls(&mut g, 0, false) };
         g.update(&input, 1.0 / 60.0, &mut r);
         simulation_uploads::drain(&device, &queue)?;
@@ -579,6 +606,7 @@ fn run_case(
             "weather_seed":g.act.seed,"simulation_seed":0x5C3E_1001u32.wrapping_add(scene.act as u32),
             "opening_lanes":lane_evidence,"active_t34_indices":active,"ordinary_damage_enabled":!g.god,
             "return_fire":g.playtest_return_fire(),"camera_world_m":r.camera.pos.to_array(),
+            "soundscape":g.capture_soundscape_receipt(),"soundscape_seed":score_seed,
             "weather":{"snow":r.precipitation,"fog":r.fog_density,"wind":r.weather_wind_world.to_array()},
             "fine_vfx":r.debug_fine_vfx_receipt(),
             "warmup":{"transport_frames":warmup.transport_frames,"exposure_frames":warmup.exposure_frames,"stable":warmup.stable},
@@ -668,7 +696,7 @@ fn run_case(
     for tick in 0..steps {
         let at = (tick + 1) as f32 / 60.0;
         cooldown = (cooldown - 1.0 / 60.0).max(0.0);
-        let mut input = if incoming_small_arms {incoming_small_arms_controls()}
+        let mut input = if incoming_small_arms || night_drive {incoming_small_arms_controls()}
             else if canyon { view.controls_with_slew(&mut g, tick, cooldown <= 0.0) }
             else { view.controls(&mut g, tick, cooldown <= 0.0) };
         if let Some(target)=course_focus.filter(|_|!incoming_small_arms) {
@@ -691,11 +719,11 @@ fn run_case(
             }
             previous_camera_arc = arc;
         }
-        if scene.moving && (0.5..5.0).contains(&at) {
+        if scene.moving && (0.5..if night_drive {23.0}else{5.0}).contains(&at) {
             if let Some(crew) = input.coop.as_mut() {
                 let driver = &mut crew.inputs[lan::LanRole::Driver as usize];
-                driver.drive = 0.38;
-                driver.steer = if at > 4.0 {
+                driver.drive = if night_drive {0.30}else{0.38};
+                driver.steer = if !night_drive && at > 4.0 {
                     0.10 * ((at - 4.0) * 0.7).sin()
                 } else {
                     0.0
@@ -817,7 +845,7 @@ fn run_case(
                 "enemy_alive":active.iter().map(|&i|g.enemies[i].alive).collect::<Vec<_>>(),"speed_m_s":g.player.speed,
                 "pitch_deg":ground.pitch_deg,"roll_deg":ground.roll_deg,"running_gear":g.capture_running_gear(),"gun_mechanism":g.capture_gun_mechanism(),"breech":g.breech_label(),"engine_on":g.engine_on,
                 "weather":{"snow":r.precipitation,"fog":r.fog_density,"wind":r.weather_wind_world.to_array(),"night":r.night},
-                "course":course_review.then(||g.capture_course_receipt()),"fine_vfx":r.debug_fine_vfx_receipt(),"clock":r.sky_clock.now().to_iso(),"incoming_hits":hits.0,"outgoing_hits":hits.1}));
+                "soundscape":g.capture_soundscape_receipt(),"course":course_review.then(||g.capture_course_receipt()),"fine_vfx":r.debug_fine_vfx_receipt(),"clock":r.sky_clock.now().to_iso(),"incoming_hits":hits.0,"outgoing_hits":hits.1}));
             println!(
                 "[combat-scene] {} {at:.1}s own={tiger_shots} enemy={enemy_shots} hits={hits:?}",
                 scene.key
@@ -893,6 +921,20 @@ fn run_case(
         checks["listener_heard_own_shot"]=json!(own_heard || infantry_review && mg_rounds>0);
         checks["seeded_groups_retained"]=json!(final_course.as_ref().is_some_and(|c|c["groups"].as_array().is_some_and(|g|!g.is_empty())));
     }
+    if night_drive {
+        let fields=checks.as_object_mut().unwrap();
+        for key in ["both_sides_fired","resolved_hit_observed","listener_heard_own_shot","loader_case_cycle_observed"] {fields.remove(key);}
+        fields.insert("own_guns_remained_quiet".into(),json!(tiger_shots==0&&mg_rounds==0));
+        fields.insert("listener_survived_night_drive".into(),json!(listener_kia.is_none()&&view.listener_alive(&g)));
+        fields.insert("night_bed_advanced".into(),json!(samples.iter().any(|s|s["soundscape"]["voices"].as_array().is_some_and(|v|v.iter().any(|v|v["lane"]=="night"&&v["frames"].as_u64().unwrap_or(0)>0)))));
+        // No ballistic particles are promised by a quiet drive; any submitted grains retain strict gates.
+        fields.insert("native_vfx_sample_budget_respected".into(),json!(fine_vfx_saturation_observations==0&&fine_vfx_maximum_weight<=0.5));
+        fields.insert("native_vfx_stable_identities_present".into(),json!(fine_vfx_missing_identity_observations==0));
+    }
+    let score_final=g.capture_soundscape_receipt();
+    checks["sound_library_loaded"]=json!(score_final["enabled_cues"].as_u64().unwrap_or(0)>0);
+    checks["sound_library_no_decode_failure"]=json!(score_final["failed"].as_array().is_some_and(|v|v.is_empty()));
+    checks["layered_sound_sources_advanced"]=json!(samples.iter().any(|s|s["soundscape"]["voices"].as_array().is_some_and(|v|v.iter().filter(|v|v["frames"].as_u64().unwrap_or(0)>0).count()>=2)));
     if infantry_review && !incoming_small_arms {
         let fields=checks.as_object_mut().unwrap();
         fields.remove("loader_case_cycle_observed"); // coax does not operate the main-gun breech
@@ -946,6 +988,7 @@ fn run_case(
     let passed = checks.as_object().unwrap().values().all(|v| v == true);
     let mut receipt = json!({"schema":"panzer.combat-scene-case.v1","passed":passed,"checks":checks,"scene":description(scene),"world_manifest":selected_manifest,
         "geometry_aa":r.geometry_aa_receipt(),"lighting_visibility":r.lighting_visibility_receipt(),"renderer_baseline":"c6bdb33","renderer_changes":"consolidated MAIN: native geometry AA, native fine VFX, source-derived cabin medium, selectable source geometry map / experimental portable visibility, normal-map variance filtering, seasonal terrain, native dither selector; see geometry_aa and source audit for approximation limits","look_review_requested":look_review,"look_snapshots":look_snapshots,
+        "soundscape_capture":{"seed":score_seed,"asset_loading":"synchronous on-demand; ordinary director/transport/mixer","final":score_final,"scope":"Per-second voice sample cursors prove submitted layered sources, not perceptual audibility or a human playthrough"},
         "dither_pattern":std::env::var("KESSEL_DITHER_PATTERN").unwrap_or_else(|_|"bayer4".into()),
         "dither_video":dither_receipt,"course_setup":course_setup,"course_final":final_course,
         "course_defender_discharges":previous_course_shots,"player_mg_rounds":mg_rounds,
@@ -973,6 +1016,7 @@ fn run_case(
         "forced_hits":false,"forced_kills":false,"forced_fire":false,"invulnerability":g.god,
         "scope":"Independent fixed-start combat review. Four occupied mortal co-op identities, automated gun lay (winter uses desired lay through ordinary physical drives; legacy scenes use direct scripted lay) and ordinary breech service,6.5s minimum Tiger firing cycle. Enemy AI, swept shells, armor, damage and collisions remain live. Native occupied camera and live audio listener. Not human gameplay or real-time performance. Camera stays for review after KIA with ordinary terminal audio fade.",
         "visual_review_required":"Physics/audio observation checks do not establish attractive grading, visible firelight, good framing, accurate shadows or ideal storm density. Review six contact cells and native video. If combat produces no wreck, do not call this a wreck-fire test."});
+    if night_drive {provenance["scope"]=json!("Full live seeded Canyon course at unmoved authored winter spawn, night/weather selected for this review. Occupied mortal co-op Driver uses fixed ordinary throttle; all AI/perception/damage remain live. No own shots requested, no combat guaranteed or forced. Simulation-clock native capture, not human gameplay or real-time performance.");}
     if incoming_small_arms {
         provenance["scope"]=json!("Independent fixed-start incoming-fire review. Four occupied mortal co-op identities, stationary requested crew viewpoint, no own trigger/lay/reload inputs. Actual seeded course defenders, perception, swept bullets, source armor, damage and collisions remain live. Native occupied camera and ordinary audio listener. Other course sound sources remain. Not human gameplay or real-time performance. Camera remains for review after KIA with ordinary terminal audio fade.");
         receipt["small_arms_review"]=json!({"recording_origin_renderer_time_s":small_arms_recording_origin,
@@ -1009,6 +1053,23 @@ fn run_case(
 #[cfg(test)]
 mod small_arms_review_tests {
     use super::*;
+    #[test]
+    fn quiet_capture_controls_do_not_command_fire_or_force_aim() {
+        let input=incoming_small_arms_controls();
+        assert!(!input.fire && !input.fire2 && !input.coax && !input.mg_coax);
+        for post in input.coop.unwrap().inputs {
+            assert_eq!(post.flags,0);
+            assert_eq!(post.traverse,0.0);assert_eq!(post.elevate,0.0);
+        }
+    }
+    #[test]
+    fn capture_music_seeds_are_repeatable_and_scene_specific() {
+        let names=["winter_canyon_night_drive","winter_canyon_infantry","winter_canyon_blizzard_close"];
+        let seeds=names.map(capture_score_seed);
+        assert!(seeds.iter().all(|v|*v!=0));
+        for (i,a) in seeds.iter().enumerate() {for b in &seeds[i+1..] {assert_ne!(a,b);}}
+        assert_eq!(capture_score_seed(names[0]),seeds[0]);
+    }
     #[test]
     fn coax_receipt_requires_selected_player_ids_not_enemy_tracers_or_unselected_ball() {
         let discharge=|id:u64,shooter:u32,tracer:bool|json!({"event":"discharge",

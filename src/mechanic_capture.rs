@@ -16,6 +16,7 @@ const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", 
     "weapon_luger", "weapon_panzerfaust", "sight_zoom", "map_open", "map_close", "incoming_impact", "look_fire", "map_pin",
     "look_sentry", "look_left_track", "door", "look_loaded_round",
     "compass",
+    "cigarette", "flashlight", "stow_hand_item", "cigarette_pickup",
     "look_equipment",
     "look_hatch",
     "look_cupola",
@@ -690,6 +691,10 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
             g.consume_primary_press();
             accepted
         }
+        "cigarette" => g.toggle_cigarette(),
+        "flashlight" => g.toggle_hand_flashlight(),
+        "stow_hand_item" => g.stow_personal_hand_item(),
+        "cigarette_pickup" => g.interact_cigarette_pickup(r.camera.forward(), r.camera.pos, r),
         "look_equipment" => g.debug_loader_face_equipment(step["value"].as_str().unwrap_or("")),
         "look_driver_control" => {
             detail = Some(json!({"scope":"Head rotation only toward source hull control; no position, station or mechanical state mutation"}));
@@ -948,6 +953,10 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
         "soldier_0_world_m":(g.n_soldiers()>0).then(||g.soldier_pos(0).to_array()),
         "mg_rounds":g.mg_round_count(),"tank_alive":g.player.alive});
     state["game_over"] = json!(g.game_over().is_some());
+    let hand_items=g.cigarette_snapshot();
+    for (key,value) in hand_items.as_object().expect("hand-item snapshot is an object") {
+        if key!="scope" {state[format!("hand_{key}")]=value.clone();}
+    }
     state["death_cause"] = json!(g.game_over().map(|cause|format!("{cause:?}")));
     // What the Tiger's tracks meet (solid city, 2026-09-29): the hull's tilt, what carries it,
     // the limit refusing its move, and the extremes so far.

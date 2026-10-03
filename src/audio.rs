@@ -49,6 +49,8 @@ pub use soundscape::{SoundscapeInput, LibraryEmitter};
 mod ear;
 #[path = "audio_feedback.rs"]
 mod feedback;
+#[path = "audio_named_effects.rs"]
+mod named_effects;
 #[path = "audio_master.rs"]
 mod master;
 #[path = "audio_timeline.rs"]
@@ -1571,6 +1573,7 @@ pub struct Audio {
     capture: Option<RefCell<capture::CaptureMixer>>,
     clips: Vec<Option<Clip>>,
     feedback_bank: feedback::FeedbackBank,
+    named_effects:named_effects::Bank,
     /// Immutable load-time provenance and route report; never used to select/play a source.
     bank_metadata: serde_json::Value,
     mechanisms: RefCell<feedback::Mechanisms>,
@@ -1806,10 +1809,12 @@ impl Audio {
         ));
 
         let feedback_bank = feedback::FeedbackBank::load();
+        let named_effects=named_effects::Bank::load();
         let rifle_recording = feedback_bank.get("rifle_shot");
         let small_arm_reports = small_arms::SourceBank::new_with_pistol(rifle_recording.as_deref(),feedback_bank.get("luger_shot").as_deref());
         let mut bank_metadata = metadata::bank_metadata(&feedback_bank, &loaded_sources, &pizza_layers);
         bank_metadata["small_arms_reports"] = small_arm_reports.metadata();
+        bank_metadata["named_effects"]=named_effects.metadata();
         eprintln!("{}", metadata::startup_summary(&bank_metadata));
 
         Audio {
@@ -1823,6 +1828,7 @@ impl Audio {
             capture,
             clips,
             feedback_bank,
+            named_effects,
             bank_metadata,
             mechanisms: RefCell::new(feedback::Mechanisms::default()),
             pizza_variant_counters: RefCell::new(vec![0; pizza_layers.len()]),

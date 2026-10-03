@@ -16,10 +16,11 @@ import wave
 import numpy as np
 
 from catalog_panzer_sounds import apply_filename_loop_instruction, db, pcm_decode, sha256
+from soundscape_routing import assignment as runtime_assignment
 
 # User-approved cue timing is content-specific, so a future filename change cannot
 # transfer this measured peak to a different recording. No playback PCM is trimmed.
-IMPACT_RISER_ID = "audio_4a383409ba81f8fd25d2ab1c"
+TRANSITION_RISER_ID = "audio_4a383409ba81f8fd25d2ab1c"
 
 
 def envelope(path: Path) -> dict:
@@ -59,16 +60,20 @@ def envelope(path: Path) -> dict:
 def suggest(asset: dict, measured: dict) -> dict:
     apply_filename_loop_instruction(asset)
     role = asset["role"]
-    name = Path(asset["source_path"]).stem.lower()
+    routing = asset.get("runtime_assignment") or runtime_assignment(asset["source_path"])
+    phrase = bool(routing and routing.get("finite_foreground_phrase"))
+    if phrase:
+        role = routing["role"]
+    name = re.sub(r"[^a-z0-9#]+", "_", Path(asset["source_path"]).stem.lower()).strip("_")
     # The explicit named event stays outside the continuous combat score pool; the
     # runtime decides when an actual contact episode permits that event.
     combat_start = name == "combat_start"
-    impact_riser = asset["id"] == IMPACT_RISER_ID
-    unbound_accent = name in {"surprise_contact", "riser_transition"}
+    transition_riser = asset["id"] == TRANSITION_RISER_ID
+    unbound_accent = bool(re.fullmatch(r"(?:surprise_contact|riser_transition)\d*", name))
     solar_events = [event for event in ("sunrise", "sunset", "dusk") if asset["source_path"].startswith(event + "/")]
-    if combat_start or impact_riser:
+    if combat_start or transition_riser:
         role = "stinger"
-    elif unbound_accent:
+    elif unbound_accent and not phrase:
         role = "effect"
     bpm = asset.get("bpm")
     beats = measured["duration_s"] * bpm / 60 if bpm else None
@@ -82,12 +87,15 @@ def suggest(asset: dict, measured: dict) -> dict:
     end_drop = tail - peak if tail is not None and peak is not None else None
     faded_end = (end_drop is not None and end_drop <= -20) and (last is None or last <= peak - 30)
     basis = []
-    if impact_riser:
+    if transition_riser:
         looping, fade_in, fade_out = False, 0.08, 0.02
-        basis.append("user-approved occasional unnoticed-impact riser; content-specific sample peak5.404943s and preferred4s lead; actual contact/awareness eligibility belongs to runtime; preserve natural source tail")
+        basis.append("user-approved higher-musical-intensity transition riser; content-specific sample peak5.404943s and preferred4s lead; musical programme transition scheduling belongs to runtime; preserve natural source tail")
     elif solar_events:
         looping, fade_in, fade_out = False, 0.15, 1.0
         basis.append("user-assigned solar event: finite complete-file score cue; trigger belongs to the named solar threshold, not elapsed gameplay or mode entry; dusk is separate from sunset")
+    elif phrase:
+        looping, fade_in, fade_out = False, 0.02, 0.02
+        basis.append("explicit finite foreground score phrase through existing programme; no physical event, arbitrary overlay or new scheduler; complete source and unknown musical metadata retained")
     elif explicit_loop:
         looping, fade_in, fade_out = True, 0.08, 1.0
         basis.append("user explicitly defines standalone _loop in original filename or alias as repeat; repeat full source regardless of inferred musical form")
@@ -150,11 +158,16 @@ def suggest(asset: dict, measured: dict) -> dict:
     basis.append("catalog attenuation already aligns RMS/peak; gain_db is an additional runtime offset, never baked compression")
     if extra_gain:
         basis.append("dense low-crest recording gets a provisional extra3dB attenuation to retain mix headroom")
+    contexts = list(asset.get("contexts", []))
+    if phrase and role == "combat" and "combat" not in contexts:
+        contexts.append("combat")
+    single_role = combat_start or unbound_accent or transition_riser or phrase
     result = {
         "id": asset["id"], "source_path": asset["source_path"], "source_sha256": asset["sha256"],
-        "role": role, "catalog_role": asset["role"], "contexts": asset.get("contexts", []),
-        "role_aliases": [role] if combat_start or unbound_accent or impact_riser else asset.get("role_aliases", [role]),
-        "role_contexts": {role: [asset.get("contexts", [])]} if combat_start or unbound_accent or impact_riser else asset.get("role_contexts", {}),
+        "role": role, "catalog_role": asset["role"], "contexts": contexts,
+        "role_aliases": [role] if single_role else asset.get("role_aliases", [role]),
+        "role_contexts": {role: [contexts]} if single_role else asset.get("role_contexts", {}),
+        "runtime_assignment": routing,
         "folder_assignments": asset.get("folder_assignments", []),
         "historical_source_paths": asset.get("historical_source_paths", []),
         "filename_usage": asset.get("filename_usage", {}),
@@ -165,6 +178,8 @@ def suggest(asset: dict, measured: dict) -> dict:
         "crossfade_curve": asset["loop"]["crossfade_curve"] if crossfade else None,
         "basis": basis, "envelope": measured,
         "filename_bpm": bpm, "filename_bpm_unverified": bpm is not None,
+        "bpm": bpm, "musical_key": asset.get("musical_key"),
+        "musical_metadata": asset.get("musical_metadata", {}),
         "estimated_beats_from_filename_bpm": beats, "four_beat_period_residual_beats": bar_residual,
         "periodic_loop_evidence": periodic, "numerically_faded_ending": faded_end,
         "explicit_filename_loop": explicit_loop, "filename_loop_sources": asset["filename_loop_sources"],
@@ -172,7 +187,7 @@ def suggest(asset: dict, measured: dict) -> dict:
         "provisional": True, "listened": False, "originals_modified": False,
         "acceptance": ["audition attack and natural ending", "check seam or end-fade in full mixer", "compare against guns, dialogue, and quiet cabin"],
     }
-    if impact_riser:
+    if transition_riser:
         result.update(riser_peak_s=5.404943, riser_lead_s=4.0)
     levels = measured["window_rms_dbfs"][-12:]
     abrupt = max([0.0] + [a - (b if b is not None else -160.0)
@@ -200,10 +215,30 @@ def suggest(asset: dict, measured: dict) -> dict:
     return result
 
 
+def named_effect_events(entries: list[dict]) -> dict[str, list[str]]:
+    """Register only literal user-named semantics, without inventing gameplay call sites."""
+    names = ("cigarette_pickup", "hammer_pickup", "fire_igniting", "jammed_gun_elevation",
+             "jammed_traverse", "trigger_pull_not_loaded", "impact_stopped", "light_impact",
+             "light_round_impact", "error", "surprise_contact")
+    result = {}
+    for entry in entries:
+        if entry["role"] != "effect":
+            continue
+        name = re.sub(r"[^a-z0-9]+", "_", Path(entry["source_path"]).stem.lower()).strip("_")
+        for event in names:
+            matched = re.search(r"(?:^|_)" + event + r"\d*$", name)
+            if event == "impact_stopped":
+                matched = matched or re.search(r"(?:^|_)stopped_impact\d*$", name)
+            if matched:
+                result.setdefault(event, []).append(entry["id"])
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=Path("assets/audio/library/manifest.json"))
     parser.add_argument("--output", type=Path, default=Path("catalog/soundscape_cue_policy_20261002.json"))
+    parser.add_argument("--library-root", type=Path, help="Playback root for a staged manifest; defaults to manifest parent")
     parser.add_argument("--bindings-output", type=Path, default=Path("catalog/soundscape_runtime_bindings_20261002.json"))
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
@@ -213,7 +248,7 @@ def main() -> None:
         if not asset["default_enabled"] or not asset.get("playback_available"):
             continue
         # Imported playback is content-addressed and stable even if a user moves the source.
-        playback = args.manifest.parent / asset["playback_path"]
+        playback = (args.library_root or args.manifest.parent) / asset["playback_path"]
         if sha256(playback) != asset["playback_sha256"]:
             raise ValueError(f"playback hash changed: {playback}")
         entries.append(suggest(asset, envelope(playback)))
@@ -241,7 +276,15 @@ def main() -> None:
                    "loops": sum(c["loop"] for c in entries), "one_shots": sum(not c["loop"] for c in entries)},
         "warnings": warnings, "cues": entries,
     }
-    output["events"]["unnoticed_impact_riser"] = [c["id"] for c in entries if c["id"] == IMPACT_RISER_ID]
+    output["events"].update(named_effect_events(entries))
+    # Registry is descriptive and can retain explicitly deferred names. Only events are
+    # executable; no inactive identity may remain in those event lists.
+    output["named_effect_registry"] = named_effect_events(entries + [a for a in manifest["assets"]
+        if not a["default_enabled"] and a.get("runtime_assignment", {}).get("enabled") is False])
+    output["deferred_effects"] = [{"asset": a["id"], "source_path": a["source_path"],
+        "enabled": False, "reason": a["runtime_assignment"]["reason"]}
+        for a in manifest["assets"] if a.get("runtime_assignment", {}).get("enabled") is False]
+    output["events"]["intensity_transition_riser"] = [c["id"] for c in entries if c["id"] == TRANSITION_RISER_ID]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2, allow_nan=False) + "\n")
     bindings = {"version": 1, "provisional": True, "listened": False,
@@ -249,9 +292,12 @@ def main() -> None:
                 "gain_db_contract": output["gain_db_contract"],
                 "cues": [{"asset": c["id"], "enabled": True,
                           **{k: c[k] for k in ("role", "contexts", "role_aliases", "role_contexts", "loop", "fade_in_s", "fade_out_s", "gain_db", "crossfade_s", "crossfade_curve", "rack")},
-                          **{k: c[k] for k in ("riser_peak_s", "riser_lead_s") if k in c}}
+                          **{k: c[k] for k in ("riser_peak_s", "riser_lead_s", "bpm", "musical_key", "musical_metadata")
+                             if k in c and (k != "musical_key" or c[k] is not None)}}
                          for c in entries],
                 "events": output["events"], "effect_registry": output["effect_registry"],
+                "named_effect_registry": output["named_effect_registry"],
+                "deferred_effects": output["deferred_effects"],
                 "additional_folder_bindings": output["additional_folder_bindings"],
                 "limits": ["proposal only; merge into runtime bindings explicitly",
                            "death event metadata is registered; dedicated death presentation routing is implemented separately",

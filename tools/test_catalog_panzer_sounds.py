@@ -15,6 +15,100 @@ from import_soundscape_categories import merge_targeted
 
 
 class CatalogTests(unittest.TestCase):
+    def test_unused_folder_overrides_effect_filename_triggers(self):
+        for path in ["unused/heavy_blizzard_loop.wav", "unused/broken_engine_hiss.wav",
+                     "unused/combat_start.wav", "unused/night_ambiance.wav"]:
+            self.assertEqual(TOOL.classify(path)[0], "unused")
+            self.assertFalse(TOOL.folder_assignment(path)["default_enabled"])
+
+    def test_explicit_current_music_intent_restricts_roles_and_contexts(self):
+        for path, role, contexts in [
+            ("music/theme_combat_loop.wav", "combat", ["combat"]),
+            ("music/night_melodic_synth_loop.wav", "music", ["night"]),
+            ("music/vibey_driving_loop.wav", "driving", ["driving"]),
+            ("combat/combat_inside_tank.wav", "combat", ["inside", "combat"]),
+            ("music/PHOTAY_texture_salt_mine_riser_02_D.wav", "music", []),
+        ]:
+            assignment = TOOL.folder_assignment(path)
+            self.assertEqual(assignment["role"], role)
+            self.assertEqual(assignment["contexts"], contexts)
+        a = {"source_path": "music/theme_calm_driving_loop_night.wav", "aliases": [],
+             "historical_source_paths": ["music/old_combat_loop.wav"], "default_enabled": True}
+        TOOL.apply_filename_usage(a)
+        self.assertEqual(a["role_aliases"], ["explore", "driving"])
+        self.assertEqual(a["role_contexts"], {"explore": [["night"]], "driving": [["night"]]})
+        self.assertNotIn("combat", a["contexts"])
+
+    def test_explicit_unprepared_foley_is_inactive_without_disabling_bound_controls(self):
+        from soundscape_routing import DEFERRED, SCORE_PHRASES
+        self.assertEqual(len(DEFERRED), 6)
+        self.assertEqual(len(SCORE_PHRASES), 23)
+        for path in DEFERRED:
+            a = {"source_path": path, "default_enabled": True}
+            TOOL.apply_filename_usage(a)
+            self.assertFalse(a["default_enabled"])
+            self.assertFalse(a["runtime_assignment"]["enabled"])
+        for path in ("effects/fire_igniting.wav", "effects/light_round_impact.wav", "effects/hammer_pickup.wav"):
+            a = {"source_path": path, "default_enabled": True}
+            TOOL.apply_filename_usage(a)
+            self.assertTrue(a["default_enabled"])
+            self.assertNotIn("runtime_assignment", a)
+
+    def test_musical_filename_labels_ignore_vendor_numbers_and_keep_explicit_modes(self):
+        p73 = TOOL.filename_metadata("P73_tonal_loop_rumble_electric_piano_01_120_Gbm.wav")
+        self.assertEqual(p73["bpm"]["value"], 120)
+        self.assertEqual((p73["key"]["tonic"], p73["key"]["mode"]), ("Gb", "minor"))
+        for name, bpm, tonic, mode in [
+            ("theme_128bpm_C#_minor.wav", 128, "C#", "minor"),
+            ("theme_Bb_major_bpm_94.wav", 94, "Bb", "major"),
+            ("theme_87.5bpm_F#m.wav", 87.5, "F#", "minor"),
+            ("oe_drm110_wax_top.wav", 110, None, None),
+            ("factory120_808_01.wav", None, None, None),
+        ]:
+            parsed = TOOL.filename_metadata(name)
+            self.assertEqual(parsed["bpm"]["value"], bpm)
+            self.assertEqual((parsed["key"]["tonic"], parsed["key"]["mode"]), (tonic, mode))
+
+    def test_same_content_renames_preserve_music_but_conflicts_stay_unknown(self):
+        a = {"source_path": "combat/surprise_contact.wav", "historical_source_paths": ["oe_bs100_haunted_Em.wav"]}
+        TOOL.apply_musical_metadata(a)
+        self.assertEqual((a["bpm"], a["musical_key"]), (100, "E minor"))
+        self.assertEqual(a["musical_metadata"]["key"]["sources"][0]["source_kind"], "same_content_historical_filename")
+        a["aliases"] = ["new_110_Fmajor.wav"]
+        TOOL.apply_musical_metadata(a)
+        self.assertIsNone(a["bpm"])
+        self.assertIsNone(a["musical_key"])
+        self.assertEqual(a["musical_metadata"]["bpm"]["status"], "conflict")
+        self.assertEqual(a["musical_metadata"]["key"]["status"], "conflict")
+
+    def test_tonic_only_is_not_major_and_enharmonic_labels_are_not_false_conflicts(self):
+        a = {"source_path": "night/D_-_Calm.wav"}
+        TOOL.apply_musical_metadata(a)
+        self.assertIsNone(a["musical_key"])
+        self.assertEqual(a["musical_metadata"]["key"]["status"], "tonic_only")
+        a = {"source_path": "theme_C#minor.wav", "aliases": ["theme_Dbmin.wav"]}
+        TOOL.apply_musical_metadata(a)
+        self.assertEqual(a["musical_key"], "C# minor")
+        a["aliases"].append("theme_C#major.wav")
+        TOOL.apply_musical_metadata(a)
+        self.assertIsNone(a["musical_key"])
+
+    def test_tempo_conflicts_within_one_filename_are_not_arbitrarily_first_match(self):
+        a = {"source_path": "theme_120_140_Am_Cm.wav"}
+        TOOL.apply_musical_metadata(a)
+        self.assertIsNone(a["bpm"])
+        self.assertIsNone(a["musical_key"])
+
+    def test_reimport_history_requires_same_full_content_hash(self):
+        old = {"assets": [{"id": "a", "sha256": "hash", "source_path": "oe_drm110_a.wav"}]}
+        a = {"id": "a", "sha256": "hash", "source_path": "combat/plain.wav", "loop": {"enabled": True}}
+        TOOL.preserve_musical_history({"assets": [a]}, old)
+        self.assertEqual(a["bpm"], 110)
+        self.assertEqual(a["loop"]["crossfade_s"], 0)
+        other = {"id": "a", "sha256": "different", "source_path": "combat/plain.wav", "loop": {"enabled": False}}
+        TOOL.preserve_musical_history({"assets": [other]}, old)
+        self.assertIsNone(other["bpm"])
+
     def test_pcm24_sign_extension_and_channel_order(self):
         numbers = [-8388608, -1, 0, 1, 8388607, 4194304]
         raw = b"".join((x & 0xffffff).to_bytes(3, "little") for x in numbers)

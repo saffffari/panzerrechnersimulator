@@ -274,10 +274,12 @@ impl Game {
             law:crate::sound_levels::DistanceLaw::Spherical,class:SpectrumClass::Wind,
             spectrum:crate::sound_propagation::class_spectrum(SpectrumClass::Wind),
             a_duration_ms:180.0,tnt_kg:0.0,directivity_db:0.0};
+        let mut voice=crate::acoustics::synth_fire_ignition(seed);
+        if let Some(audio)=&self.audio {audio.blend_named_ignition(&mut voice);}
         self.scheduled.push(ScheduledSound {
             delay:self.threat_center().distance(source)/speed_of_sound(),
             sfx:crate::audio::Sfx::ImpactGround, emission, muzzle:None,source,
-            source_in_player:true,buf:Some(crate::acoustics::synth_fire_ignition(seed)),wave: None, enemy_report:None,
+            source_in_player:true,buf:Some(voice),wave: None, enemy_report:None,
         });
     }
 

@@ -1,0 +1,60 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "held_flashlight_v1",
+  "title": "Held flashlight: physical beam and stow",
+  "act_id": 2,
+  "night": true,
+  "station": "loader",
+  "seconds": 8,
+  "native_output": true,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "playtest": true,
+    "player_xz": [
+      0,
+      180
+    ],
+    "player_heading_deg": 180
+  },
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "mechanics": [
+    "held_flashlight",
+    "physical_beam",
+    "stow"
+  ],
+  "timeline": [
+    {
+      "at_s": 1,
+      "action": "flashlight"
+    },
+    {
+      "from_s": 3,
+      "until_s": 5,
+      "input": {
+        "look_dx": 0.7
+      }
+    },
+    {
+      "at_s": 6,
+      "action": "flashlight"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "hand_flashlight_equipped",
+      "at_s": 2,
+      "equals": true
+    },
+    {
+      "metric": "hand_flashlight_equipped",
+      "at_s": 7,
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "Only ordinary C/F/Q actions and native mouse input; no inventory, burn, smoke or health injected. Opponent fire held for this isolated mechanic inspection. mg_coax is the primary mouse field; aim is held RMB. C at17s inspects the same finite packet.",
+  "status": "scripted_pending_runtime_validation"
+}

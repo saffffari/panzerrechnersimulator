@@ -71,8 +71,12 @@ impl View {
                 game.aim_at_enemy();
                 true
             } else {
-                game.capture_gaze_target(&serde_json::json!({"gaze":"enemy"}))
-                    .is_some_and(|target| game.campaign_ai_order_lay(target, 0.002))
+                // Keep one observed actor while it lives. Re-selecting the nearest actor every
+                // frame made the demonstrator continually abandon its lay as tanks crossed.
+                let target=game.enemies.iter().enumerate()
+                    .find(|(i,e)|e.alive&&game.capture_enemy_active(*i)).map(|(i,_)|i);
+                target.and_then(|i|game.capture_gaze_target(&serde_json::json!({"gaze":"enemy","enemy":i})))
+                    .is_some_and(|target| game.campaign_ai_order_lay(target, 0.012))
             };
             crew.inputs[lan::LanRole::Gunner as usize].flags = if fire_ready && laid && game.auto_can_fire()
             {

@@ -159,6 +159,9 @@ mod turret_disc;
 mod ui;
 mod graphics_menu;
 mod storm_weather;
+mod cigarette;
+mod hand_prop_models;
+mod cigarette_vfx;
 mod particle_motion;
 mod mounted_mg;
 mod urban_tableau_meshes;
@@ -9599,7 +9602,7 @@ struct Keys {
     rmb: bool,
     lmb: bool, // left mouse — MG34 trigger outside / grab-a-shell in the INSIDE view / Luger on foot
 
-    f: bool,     // F — held extinguisher (fire-fighting; locks all stations)
+    f: bool,     // F edge equips/stows the physical flashlight
     g: bool,     // G — held field repair (locks all stations)
     shift: bool, // on-foot run (hold)
     ctrl: bool,  // hold to crouch on foot or while walking inside the tank
@@ -9625,7 +9628,7 @@ impl Keys {
             look_dy: self.mouse_dy,
             binoculars: false, // toggle STATE — injected by App (B; RMB press in tank).
             aim: self.rmb,     // on foot: Luger aim (held)
-            extinguish: self.f, // held F
+            extinguish: false, // extinguisher is physically equipped and sprayed with LMB
             repair: self.g,    // held G
             run: self.shift,   // on foot: run
             fire2: self.lmb,   // on foot: Luger fire
@@ -12865,10 +12868,10 @@ impl WindowState {
             if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
                 self.resolve_campaign_loss(over_cause);
             }
-            // Start the chosen score on the same frame as terminal entry. Its playback clock
-            // controls the black memorial; an unavailable score retains the old replay path.
+            // Select without playing: preserve the midpoint text deadline, then start the
+            // full cue on the first presented text frame. Missing audio retains the old replay.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
-            let card = self.game.start_death_score().and_then(|duration_s|
+            let card = self.game.prepare_death_score().and_then(|duration_s|
                 death_card::Presentation::new(self.game.death_card_seed(),
                     self.game.death_year(), duration_s));
             self.state = AppState::Death { t: 0.0, card };
@@ -13787,9 +13790,9 @@ impl WindowState {
         if let Some(card) = card.filter(|_| t >= DEATH_FADE) {
             let Some((frame, view)) = self.acquire() else { return; };
             self.renderer.ui_reset();
-            if card.phase(self.game.death_score_elapsed(), self.game.death_score_finished())
-                == death_card::Phase::Identity
-            {
+            let show_identity = card.phase(t, self.game.death_score_elapsed(), self.game.death_score_finished())
+                == death_card::Phase::Identity;
+            if show_identity {
                 draw_fallen_card(&mut self.renderer, card.identity);
             } else {
                 ui::draw_black(&mut self.renderer);
@@ -13797,6 +13800,9 @@ impl WindowState {
             self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
                 self.config.format, self.config.width, self.config.height);
             frame.present();
+            // Acquire failures above cannot trigger an unheard/unseen early cue. The API
+            // is idempotent, so repeated text frames never restart it or choose again.
+            if show_identity { self.game.start_death_score(); }
             return;
         }
         if let Some(phase) = terminal_visual_phase(t).filter(|_| self.game.last_fatal.is_some()) {
@@ -14333,8 +14339,9 @@ impl ApplicationHandler for App {
                         {
                             self.keys.lan_hatch_pulse = true;
                         }
-                        KeyCode::KeyL => state.game.toggle_hand_torch(),
+                        KeyCode::KeyF | KeyCode::KeyL => { if state.game.toggle_hand_flashlight() {self.binocs=false;} },
                         KeyCode::KeyV => {
+                            state.game.stow_personal_hand_item();
                             if state.game.toggle_mounted_sidearm() {self.binocs=false;}
                         }
                         // T — swap the loaded shell nature (PzGr AP ↔ SprGr HE).
@@ -14365,7 +14372,8 @@ impl ApplicationHandler for App {
                             let fwd = state.renderer.camera.forward();
                             // A carried physical item always owns Q. With empty hands it becomes the
                             // compact weapon-cycle binding; 1/2 remain unambiguous direct selects.
-                            if state.game.compass_equipped { state.game.toggle_compass(); }
+                            if state.game.stow_personal_hand_item() {}
+                            else if state.game.compass_equipped { state.game.toggle_compass(); }
                             else if state.game.carried_tools() { state.game.interact_equip(); }
                             else if !state.game.throw_portable_item(fwd) {
                                 state.game.cycle_foot_weapon();
@@ -14377,6 +14385,8 @@ impl ApplicationHandler for App {
                             let g = &mut state.game;
                             if self.binocs {
                                 self.binocs = false;
+                            } else if g.stow_personal_hand_item() {
+                                // Q lowers the current physical hand item before leaving the post.
                             } else if g.holster_mounted_sidearm() {
                                 // The pistol is the topmost held item; leave the physical post unchanged.
                             } else if g.compass_equipped { g.toggle_compass(); }
@@ -14401,12 +14411,17 @@ impl ApplicationHandler for App {
                         }
                         // B — binoculars TOGGLE: on foot, head-OUT of the cupola, OR buttoned in the
                         // commander periscope view. NOT in the gunner sight (that has its own optic).
-                        KeyCode::KeyC => { state.game.toggle_compass(); state.game.consume_primary_press(); }
+                        KeyCode::KeyC => {
+                            if self.keys.shift {state.game.stow_personal_hand_item();state.game.toggle_compass();}
+                            else if state.game.toggle_cigarette() {self.binocs=false;}
+                            state.game.consume_primary_press();
+                        }
                         KeyCode::KeyB
                             if state.game.mode == game::Mode::Foot
                                 || (state.game.mode == game::Mode::Tank
                                     && !matches!(state.game.station, game::Station::Gunner)) =>
                         {
+                            state.game.stow_personal_hand_item();
                             self.binocs = !self.binocs;
                         }
                         // (The 1-4 station teleports are GONE — the game is finding the station
@@ -14420,7 +14435,9 @@ impl ApplicationHandler for App {
                         KeyCode::KeyE if !state.game.mounted_sidearm_owns_input(self.keys.rmb) => {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
-                            if state.game.interact_world_door(fwd, pos) {
+                            if state.game.interact_cigarette_pickup(fwd,pos,&mut state.renderer) {
+                                // A finite source packet was removed from this world slot.
+                            } else if state.game.interact_world_door(fwd, pos) {
                                 // opened / closed the source-authored building door under the hand
                             } else if state.game.interact_portable_item(fwd, pos) {
                                 // picked up / placed / refuelled the physical hand prop
@@ -14603,6 +14620,7 @@ impl ApplicationHandler for App {
                         if btn.is_pressed()
                             && p1_can_act
                             && !state.show_map
+                            && !state.game.personal_hand_item_active()
                             && state.game.mode == game::Mode::Tank
                             && !state.game.is_climbing()
                         {
@@ -14630,7 +14648,8 @@ impl ApplicationHandler for App {
                         // the hatch LEVER (work the lid) → a station anchor (gunsight/breech/
                         // cupola → enter it) → the hatch disc (toggle, Commander only).
                         if btn.is_pressed() && p1_can_act && !state.show_map
-                            && !state.game.mounted_sidearm_owns_input(self.keys.rmb) {
+                            && !state.game.mounted_sidearm_owns_input(self.keys.rmb)
+                            && !state.game.personal_hand_item_active() {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
                             if state.game.click_articulated_hatch() {
@@ -15407,7 +15426,7 @@ impl ApplicationHandler for App {
                         let nt = t + dt;
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
                         let finished = card.map_or(nt >= DEATH_END, |card|
-                            card.phase(state.game.death_score_elapsed(),
+                            card.phase(nt, state.game.death_score_elapsed(),
                                 state.game.death_score_finished()) == death_card::Phase::Finished);
                         if finished {
                             // However long the last frame took, the dead Game ends silent.

@@ -8,7 +8,7 @@ import copy
 import json
 from pathlib import Path
 
-from catalog_panzer_sounds import apply_filename_loop_instruction, catalog, import_enabled
+from catalog_panzer_sounds import apply_filename_loop_instruction, apply_musical_metadata, catalog, import_enabled
 
 
 def merge_targeted(existing: dict, addition: dict, categories: list[str]) -> dict:
@@ -24,6 +24,7 @@ def merge_targeted(existing: dict, addition: dict, categories: list[str]) -> dic
             # The actual complete file remains one content identity; physical samples do not
             # duplicate because a source was renamed/moved into a newly assigned category.
             apply_filename_loop_instruction(entry)
+        apply_musical_metadata(entry)
         by_id[entry["id"]] = entry
     out["assets"] = sorted(by_id.values(), key=lambda a: a["source_path"])
     out["inventory"].setdefault("last_full_source_scan", {

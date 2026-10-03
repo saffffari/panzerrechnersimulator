@@ -2,7 +2,7 @@
   "version": 1,
   "provisional": true,
   "listened": false,
-  "manifest_sha256": "c5213d40a0d1c4e613fc2c8447b29f7a9a2319dfc7bdfcc2774ca081c548c24c",
+  "manifest_sha256": "348fad4e44b4c09be698ac29f5a98e7bc531270ce7d71278abb6bc092322bde9",
   "gain_db_contract": "additional gain on top of manifest gain.suggested_db; total_source_gain_db is informational only",
   "cues": [
     {
@@ -33,6 +33,29 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -57,6 +80,46 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 130,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 130,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            130
+          ],
+          "sources": [
+            {
+              "value": 130,
+              "token": "130",
+              "source_path": "calm_ambiance/CLF_130_Atmos_Tubes_F.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "F",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "calm_ambiance/CLF_130_Atmos_Tubes_F.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -81,6 +144,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "calm_ambiance/C_-_Fungal_Depths.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -105,6 +199,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "calm_ambiance/C_-_Fungal_Forest_Transmission.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -129,6 +254,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "calm_ambiance/C_-_Temple_Star_Chamber_2.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -153,6 +309,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D#",
+              "mode": null,
+              "token": "D#",
+              "source_path": "calm_ambiance/D#_-_Dawnlife_2.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -177,6 +364,38 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_key": "A major",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "A",
+          "mode": "major",
+          "conflict": false,
+          "musical_key": "A major",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "A",
+              "mode": "major",
+              "token": "Amaj",
+              "source_path": "calm_ambiance/JVIEWS_fx_meta_pad_Amaj.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -201,6 +420,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "calm_ambiance/OE_Atmos_FX_01_C.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -225,6 +475,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -249,10 +522,41 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "combat/OE_Atmos_FX_04_C.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
-      "asset": "audio_e37854144c77ed0840399142",
+      "asset": "audio_6e6f9eb74236ff90dabca970",
       "enabled": true,
       "role": "combat",
       "contexts": [],
@@ -273,19 +577,230 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "120",
+              "source_path": "combat/PHOTAY_drum_loop_elastic_riddim_02_120.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "120",
+              "source_path": "PHOTAY_drum_loop_elastic_riddim_02_120.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_c189ac40c70601e240de2d7f",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.5585192743764174,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_e37854144c77ed0840399142",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 125,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 125,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            125
+          ],
+          "sources": [
+            {
+              "value": 125,
+              "token": "125",
+              "source_path": "mp_perc_125_moeubius.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_ee428fdc9aaf4f02bcc5cac9",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "inside",
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "inside",
+            "combat"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 90,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 90,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            90
+          ],
+          "sources": [
+            {
+              "value": 90,
+              "token": "90",
+              "source_path": "OS_ORG_90_Extra_Foley_Loop_6.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
       "asset": "audio_2b693377ececa940b0722817",
       "enabled": true,
       "role": "stinger",
-      "contexts": [],
+      "contexts": [
+        "combat"
+      ],
       "role_aliases": [
         "stinger"
       ],
       "role_contexts": {
         "stinger": [
-          []
+          [
+            "combat"
+          ]
         ]
       },
       "loop": false,
@@ -303,6 +818,46 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 1.2973015873015874
+      },
+      "bpm": 148,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 148,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            148
+          ],
+          "sources": [
+            {
+              "value": 148,
+              "token": "148",
+              "source_path": "KRNE_148_E_Movin_Guitar_Palm_Muted.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "E",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "KRNE_148_E_Movin_Guitar_Palm_Muted.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -327,6 +882,38 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "drm110",
+              "source_path": "oe_drm110_wax_top.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -351,6 +938,44 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 125,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 125,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            125
+          ],
+          "sources": [
+            {
+              "value": 125,
+              "token": "125",
+              "source_path": "combat/mp_perc_125_clickka.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 125,
+              "token": "125",
+              "source_path": "mp_perc_125_clickka.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -375,6 +1000,44 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 125,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 125,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            125
+          ],
+          "sources": [
+            {
+              "value": 125,
+              "token": "125",
+              "source_path": "combat/mp_perc_125_tuktuk.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 125,
+              "token": "125",
+              "source_path": "mp_perc_125_tuktuk.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -399,6 +1062,44 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "drm110",
+              "source_path": "combat/oe_drm110_crumbled_stp.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 110,
+              "token": "drm110",
+              "source_path": "oe_drm110_crumbled_stp.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -423,6 +1124,44 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "drm110",
+              "source_path": "combat/oe_drm110_dusted_drum_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 110,
+              "token": "drm110",
+              "source_path": "oe_drm110_dusted_prc.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -447,23 +1186,331 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "fxlp120",
+              "source_path": "combat/oe_fxlp120_electrify.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_3ab20df17c5b710e8c046333",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 100,
+      "musical_key": "A# minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 100,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            100
+          ],
+          "sources": [
+            {
+              "value": 100,
+              "token": "syn100",
+              "source_path": "combat/oe_syn100_flickeringpad_A#m_combat_melodic.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 100,
+              "token": "syn100",
+              "source_path": "oe_syn100_flickeringpad_A#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "A#",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "A# minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "A#",
+              "mode": "minor",
+              "token": "A#m",
+              "source_path": "combat/oe_syn100_flickeringpad_A#m_combat_melodic.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "A#",
+              "mode": "minor",
+              "token": "A#m",
+              "source_path": "oe_syn100_flickeringpad_A#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_e95c582605cfcc23872fcd23",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "top120",
+              "source_path": "combat/oe_top120_corruptperc1_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "top120",
+              "source_path": "oe_top120_corruptperc1.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_e7b022a74eb81049be9ec091",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "top120",
+              "source_path": "combat/oe_top120_corruptperc2.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "top120",
+              "source_path": "oe_top120_corruptperc2.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_ba310e1985c80dc0cdafe204",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 1.6
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "fxlp120",
+              "source_path": "oe_fxlp120_speedupriser.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
       "asset": "audio_de42714f61b5b1f972d9df28",
       "enabled": true,
-      "role": "effect",
-      "contexts": [],
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
       "role_aliases": [
-        "effect"
+        "combat"
       ],
       "role_contexts": {
-        "effect": [
-          []
+        "combat": [
+          [
+            "combat"
+          ]
         ]
       },
       "loop": false,
-      "fade_in_s": 0.005,
+      "fade_in_s": 0.02,
       "fade_out_s": 0.02,
       "gain_db": -3.0,
       "crossfade_s": 0.0,
@@ -477,6 +1524,107 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 0.96
+      },
+      "bpm": 100,
+      "musical_key": "E minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 100,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            100
+          ],
+          "sources": [
+            {
+              "value": 100,
+              "token": "bs100",
+              "source_path": "oe_bs100_haunted_Em.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "E",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "E minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": "minor",
+              "token": "Em",
+              "source_path": "oe_bs100_haunted_Em.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_1149a6694396fa52f5c339db",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "fxlp120",
+              "source_path": "oe_fxlp120_thetunnelriser.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -501,6 +1649,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "death_sounds/JVIEWS_tonal_one_shot_heaven_hit_C.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -525,6 +1704,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "death_sounds/JVIEWS_tonal_one_shot_heaven_hit_D.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -549,23 +1759,308 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "E",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "death_sounds/JVIEWS_tonal_one_shot_heaven_hit_E.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_9c9474bd486345a60a45bd59",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.25,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "A",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "A",
+              "mode": null,
+              "token": "A",
+              "source_path": "death_sounds/PHOTAY_texture_chalk_vocal_01_A.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "A",
+              "mode": null,
+              "token": "A",
+              "source_path": "PHOTAY_texture_chalk_vocal_01_A.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_4e83bafb83b6525c9c1fbf93",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.25,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "A",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "A",
+              "mode": null,
+              "token": "A",
+              "source_path": "death_sounds/PHOTAY_texture_chalk_vocal_02_A.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "A",
+              "mode": null,
+              "token": "A",
+              "source_path": "PHOTAY_texture_chalk_vocal_02_A.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_ae0bd7711b12a95430bee119",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.25,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "fxlp120",
+              "source_path": "death_sounds/oe_fxlp120_demolition.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "fxlp120",
+              "source_path": "oe_fxlp120_demolition.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_c738a81f08c3b22ff78aa296",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger",
+        "music"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ],
+        "music": [
+          [
+            "night"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.15,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "PHOTAY_texture_lost_arpeggio_03_D.wav",
+              "source_kind": "same_content_historical_filename"
+            },
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "PHOTAY_texture_lost_arpeggio_03_D (1).wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
       }
     },
     {
       "asset": "audio_288d09419c5be9266d4ab4e8",
       "enabled": true,
-      "role": "effect",
+      "role": "music",
       "contexts": [],
       "role_aliases": [
-        "effect"
+        "music"
       ],
       "role_contexts": {
-        "effect": [
+        "music": [
           []
         ]
       },
       "loop": false,
-      "fade_in_s": 0.005,
+      "fade_in_s": 0.02,
       "fade_out_s": 0.02,
       "gain_db": 0.0,
       "crossfade_s": 0.0,
@@ -573,11 +2068,221 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "effects/05_PMLCG_Synth_One_Shot_C.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
       "asset": "audio_0fee210a8741ebe492640e8d",
       "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "effects/19_PMLCG_Synth_One_Shot_C.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_9530f94aedc5f7cfcc4cc856",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C#",
+              "mode": null,
+              "token": "C#",
+              "source_path": "effects/PHOTAY_bass_buchla_04_C#.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "C#",
+              "mode": null,
+              "token": "C#",
+              "source_path": "PHOTAY_bass_buchla_04_C#.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_7c08d5eff7a9d73914dda184",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "E",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "effects/PHOTAY_bass_ocean_magnet_mid_E.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "PHOTAY_bass_ocean_magnet_mid_E.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_a2c909b14388cd2c811d36c0",
+      "enabled": true,
       "role": "effect",
       "contexts": [],
       "role_aliases": [
@@ -597,23 +2302,1171 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D#",
+              "mode": null,
+              "token": "D#",
+              "source_path": "effects/PHOTAY_bass_prophet_01_D#_dull_stopped_impact.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "D#",
+              "mode": null,
+              "token": "D#",
+              "source_path": "PHOTAY_bass_prophet_01_D#.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_1eae576bfc8c030d35dfc1ff",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "E",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "effects/PHOTAY_bass_prophet_10_E_impact_stopped.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "PHOTAY_bass_prophet_10_E.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_54ac2f6a30222961ebb1dc01",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_c4bfcb8e488281410903af20",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_0d49da63eec5b1f33795fcbc",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_f38dc412f61822a078b3a6dd",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "effects/PHOTAY_kick_ocean_808_02_D.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "PHOTAY_kick_ocean_808_02_D.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_36ebf20148b51cc494e62488",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_463d2c40c427b9694b0c2f18",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "B",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "B",
+              "mode": null,
+              "token": "B",
+              "source_path": "effects/PHOTAY_melodic_hit_dub_chord_03_B.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "B",
+              "mode": null,
+              "token": "B",
+              "source_path": "PHOTAY_melodic_hit_dub_chord_03_B.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_2827ff04dc2b27b80693fd11",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "effects/PHOTAY_melodic_hit_marimba_01_C.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "PHOTAY_melodic_hit_marimba_01_C.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_4e226af6d27f273ade63ca9c",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "G",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G",
+              "mode": null,
+              "token": "G",
+              "source_path": "effects/PHOTAY_melodic_hit_rubber_buzz_G.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "G",
+              "mode": null,
+              "token": "G",
+              "source_path": "PHOTAY_melodic_hit_rubber_buzz_G.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_61cef753906ae8cf05824d36",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_62bcad1a811be28a6ae49326",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_a50f59fcf5b283180a9e0d3b",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_cf92ca94e768e8c2e558ca3a",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_a257c37d625c2bc27d4b0d0f",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_098c00adbf41258d06e7133c",
+      "enabled": true,
+      "role": "engine_hiss",
+      "contexts": [],
+      "role_aliases": [
+        "engine_hiss"
+      ],
+      "role_contexts": {
+        "engine_hiss": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.08,
+      "fade_out_s": 0.4,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_1e9a16156ce5261a372d5661",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_ea50b831ace444d8dacbbbf3",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_eb959485349594eb4a97f4c7",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_7d88cba2c90b80783dba9190",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "E",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "PHOTAY_melodic_texture_sine_tone_in_snare_02_E.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_a7a568e27227a5f0754b2c4e",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "A#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "A#",
+              "mode": null,
+              "token": "A#",
+              "source_path": "PHOTAY_melodic_texture_sine_tone_in_snare_03_A#.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_8ccd73e7cd5ea1f634956c15",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
       "asset": "audio_f73177adcd57f1b450d05afe",
       "enabled": true,
-      "role": "effect",
+      "role": "music",
       "contexts": [],
       "role_aliases": [
-        "effect"
+        "music"
       ],
       "role_contexts": {
-        "effect": [
+        "music": [
           []
         ]
       },
       "loop": false,
-      "fade_in_s": 0.005,
+      "fade_in_s": 0.02,
       "fade_out_s": 0.02,
       "gain_db": 0.0,
       "crossfade_s": 0.0,
@@ -621,10 +3474,161 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "F",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "effects/oe_bs_psych_F.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "oe_bs_psych_F.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
       }
     },
     {
       "asset": "audio_ec9cb8e747e24b8b33a1eb8c",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "F",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "effects/oe_bs_ufo_F.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "oe_bs_ufo_F.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_abc4f4d4e0fa9d19e710c6e8",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_004d1e1d3b55baedf172d1a3",
       "enabled": true,
       "role": "effect",
       "contexts": [],
@@ -645,6 +3649,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -675,6 +3702,37 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "game_start_atmosphere/C_-_Ascending_the_Pillars.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -705,6 +3763,37 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "game_start_atmosphere/C_-_Entering_the_Cove.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -735,6 +3824,98 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "game_start_atmosphere/C_-_Heart_of_the_Valley.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_f9c49386a193a193e0a63882",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "game_start_atmosphere/C_-_The_Steam_Pillar.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -769,6 +3950,29 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -793,6 +3997,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "F",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "game_start_atmosphere/F_-_Bloomkeeper_Patriarch.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -817,6 +4052,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "F",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "game_start_atmosphere/F_-_Bloomkeeper_s_Ritual.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -841,6 +4107,168 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "F",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F",
+              "mode": null,
+              "token": "F",
+              "source_path": "game_start_atmosphere/F_-_Timeshifting_Bloomkeeper_1.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_1ef24c933276f9665ce7805f",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 90,
+      "musical_key": "F minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 90,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            90
+          ],
+          "sources": [
+            {
+              "value": 90,
+              "token": "90",
+              "source_path": "game_start_atmosphere/OS_ORG_Fmin_90_Dirty_Synth.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 90,
+              "token": "90",
+              "source_path": "OS_ORG_Fmin_90_Dirty_Synth.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "F",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "F minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F",
+              "mode": "minor",
+              "token": "Fmin",
+              "source_path": "game_start_atmosphere/OS_ORG_Fmin_90_Dirty_Synth.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "F",
+              "mode": "minor",
+              "token": "Fmin",
+              "source_path": "OS_ORG_Fmin_90_Dirty_Synth.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_a99634a0ceb48dd70d9be00d",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -871,6 +4299,29 @@
         "lowpass_hz": 22050.0,
         "highpass_hz": 0.0,
         "tail_only_s": 3.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -895,6 +4346,76 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_578fdd8e33bf8e033576c80c",
+      "enabled": true,
+      "role": "blizzard",
+      "contexts": [],
+      "role_aliases": [
+        "blizzard"
+      ],
+      "role_contexts": {
+        "blizzard": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -919,6 +4440,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "A#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "A#",
+              "mode": null,
+              "token": "A#",
+              "source_path": "interior_tank_ambiance/A#_-_Ship_Cryobox.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -943,6 +4495,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -967,6 +4542,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -991,6 +4589,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1015,6 +4636,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1039,6 +4683,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1063,6 +4730,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "interior_tank_ambiance/OE_Atmos_FX_03_C.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1087,6 +4785,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "interior_tank_ambiance/OE_Atmos_FX_05_C.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1111,6 +4840,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1135,6 +4887,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "G",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G",
+              "mode": null,
+              "token": "G",
+              "source_path": "interior_tank_ambiance/OE_Atmos_FX_16_G.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1159,6 +4942,281 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 124,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 124,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            124
+          ],
+          "sources": [
+            {
+              "value": 124,
+              "token": "124",
+              "source_path": "interior_tank_ambiance/OE_Wandering_Eye_124_F#_Atmos.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "F#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F#",
+              "mode": null,
+              "token": "F#",
+              "source_path": "interior_tank_ambiance/OE_Wandering_Eye_124_F#_Atmos.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_0f3125f0d4f6fd503da22481",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.6384,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_fa6b3837a5687ac3292619d6",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_0de3433170cfdab89c9da59c",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_f1d0c78b3b8dc45950747e6b",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_fb6ab3f571733ed55e0857e7",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1183,6 +5241,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1207,6 +5288,1197 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 160,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 160,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            160
+          ],
+          "sources": [
+            {
+              "value": 160,
+              "token": "160",
+              "source_path": "music/JVIEWS_tonal_loop_vhs_scifi_160_Bb.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "Bb",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "Bb",
+              "mode": null,
+              "token": "Bb",
+              "source_path": "music/JVIEWS_tonal_loop_vhs_scifi_160_Bb.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_a0737c83aacf3805cfc2ab21",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 125,
+      "musical_key": "D minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 125,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            125
+          ],
+          "sources": [
+            {
+              "value": 125,
+              "token": "125",
+              "source_path": "music/OS_FE_125_Dmin_Atmos_Chords_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 125,
+              "token": "125",
+              "source_path": "OS_FE_125_Dmin_Atmos_Chords.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "D",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "D minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": "minor",
+              "token": "Dmin",
+              "source_path": "music/OS_FE_125_Dmin_Atmos_Chords_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "D",
+              "mode": "minor",
+              "token": "Dmin",
+              "source_path": "OS_FE_125_Dmin_Atmos_Chords.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_d217fafbe445f88c4d3365c0",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_key": "Gb minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "120",
+              "source_path": "music/P73_tonal_loop_rumble_electric_piano_01_120_Gbm.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "120",
+              "source_path": "P73_tonal_loop_rumble_electric_piano_01_120_Gbm.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "Gb",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "Gb minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "Gb",
+              "mode": "minor",
+              "token": "Gbm",
+              "source_path": "music/P73_tonal_loop_rumble_electric_piano_01_120_Gbm.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "Gb",
+              "mode": "minor",
+              "token": "Gbm",
+              "source_path": "P73_tonal_loop_rumble_electric_piano_01_120_Gbm.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_4a15c6f12725d7f04e48daeb",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 168,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 168,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            168
+          ],
+          "sources": [
+            {
+              "value": 168,
+              "token": "168",
+              "source_path": "music/PHOTAY_drum_loop_buchla_riddim_02_168_B (1).wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 168,
+              "token": "168",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_02_168_B.wav",
+              "source_kind": "same_content_historical_filename"
+            },
+            {
+              "value": 168,
+              "token": "168",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_02_168_B (1).wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "B",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "B",
+              "mode": null,
+              "token": "B",
+              "source_path": "music/PHOTAY_drum_loop_buchla_riddim_02_168_B (1).wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "B",
+              "mode": null,
+              "token": "B",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_02_168_B.wav",
+              "source_kind": "same_content_historical_filename"
+            },
+            {
+              "tonic": "B",
+              "mode": null,
+              "token": "B",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_02_168_B (1).wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_258348b8d7cb12139efc6d4e",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 168,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 168,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            168
+          ],
+          "sources": [
+            {
+              "value": 168,
+              "token": "168",
+              "source_path": "music/PHOTAY_drum_loop_buchla_riddim_03_168_C.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 168,
+              "token": "168",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_03_168_C.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "music/PHOTAY_drum_loop_buchla_riddim_03_168_C.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_03_168_C.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_06fd673ec2c9d6f0c7212711",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "music/PHOTAY_texture_salt_mine_riser_02_D.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "PHOTAY_texture_salt_mine_riser_02_D.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_c62678637eed4fcc1d26c678",
+      "enabled": true,
+      "role": "music",
+      "contexts": [
+        "night"
+      ],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          [
+            "night"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "PHOTAY_texture_lost_arpeggio_01_D.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_d31998e45d9788a2773549b7",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_key": "G# minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "music/oe_mus110_binary_piano_G#m_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "oe_mus110_binary_piano_G#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "G#",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "G# minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G#",
+              "mode": "minor",
+              "token": "G#m",
+              "source_path": "music/oe_mus110_binary_piano_G#m_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "G#",
+              "mode": "minor",
+              "token": "G#m",
+              "source_path": "oe_mus110_binary_piano_G#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_f5123c14ad3d3c9e991ceffa",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_key": "D minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "music/oe_mus110_gluttony_bs_Dm_combat_loop_base.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "oe_mus110_gluttony_bs_Dm.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "D",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "D minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": "minor",
+              "token": "Dm",
+              "source_path": "music/oe_mus110_gluttony_bs_Dm_combat_loop_base.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "D",
+              "mode": "minor",
+              "token": "Dm",
+              "source_path": "oe_mus110_gluttony_bs_Dm.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_edb8bee3ddc33a817ba58e69",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_key": "G# minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "music/oe_mus110_puddles_keys1_G#m_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "oe_mus110_puddles_keys1_G#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "G#",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "G# minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G#",
+              "mode": "minor",
+              "token": "G#m",
+              "source_path": "music/oe_mus110_puddles_keys1_G#m_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "G#",
+              "mode": "minor",
+              "token": "G#m",
+              "source_path": "oe_mus110_puddles_keys1_G#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_e95aafce878e2de7f1e26a59",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_key": "E minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "music/oe_mus110_riviera_brass1_Em_lonelytank_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "oe_mus110_riviera_brass1_Em.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "E",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "E minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": "minor",
+              "token": "Em",
+              "source_path": "music/oe_mus110_riviera_brass1_Em_lonelytank_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "E",
+              "mode": "minor",
+              "token": "Em",
+              "source_path": "oe_mus110_riviera_brass1_Em.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_fd5f5cc16e21bdc279cd090d",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 110,
+      "musical_key": "B minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 110,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            110
+          ],
+          "sources": [
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "music/oe_mus110_twine_brass_Bm_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 110,
+              "token": "mus110",
+              "source_path": "oe_mus110_twine_brass_Bm.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "B",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "B minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "B",
+              "mode": "minor",
+              "token": "Bm",
+              "source_path": "music/oe_mus110_twine_brass_Bm_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "B",
+              "mode": "minor",
+              "token": "Bm",
+              "source_path": "oe_mus110_twine_brass_Bm.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_e6280d806d0eac5ea9f84e27",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [
+        "night"
+      ],
+      "role_aliases": [
+        "explore",
+        "driving"
+      ],
+      "role_contexts": {
+        "explore": [
+          [
+            "night"
+          ]
+        ],
+        "driving": [
+          [
+            "night"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_key": "F# minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "mus120",
+              "source_path": "music/oe_mus120_harpy_chords_F#m_calm_driving_loop_night.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "mus120",
+              "source_path": "oe_mus120_harpy_chords_F#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "F#",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "F# minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F#",
+              "mode": "minor",
+              "token": "F#m",
+              "source_path": "music/oe_mus120_harpy_chords_F#m_calm_driving_loop_night.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "F#",
+              "mode": "minor",
+              "token": "F#m",
+              "source_path": "oe_mus120_harpy_chords_F#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_d1251f6863022bdbeef431f9",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_key": "F# minor",
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "mus120",
+              "source_path": "music/oe_mus120_temple_keys_F#m_lonelytank_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "mus120",
+              "source_path": "oe_mus120_temple_keys_F#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "F#",
+          "mode": "minor",
+          "conflict": false,
+          "musical_key": "F# minor",
+          "status": "filename_key",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F#",
+              "mode": "minor",
+              "token": "F#m",
+              "source_path": "music/oe_mus120_temple_keys_F#m_lonelytank_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "F#",
+              "mode": "minor",
+              "token": "F#m",
+              "source_path": "oe_mus120_temple_keys_F#m.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_ce4fd56aa34a9a792222d380",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [
+        "combat"
+      ],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          [
+            "combat"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "syn120",
+              "source_path": "music/oe_syn120_wonderarp_F#_combat_layer_with_drums_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 120,
+              "token": "syn120",
+              "source_path": "oe_syn120_wonderarp_F#.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "F#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "F#",
+              "mode": null,
+              "token": "F#",
+              "source_path": "music/oe_syn120_wonderarp_F#_combat_layer_with_drums_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "F#",
+              "mode": null,
+              "token": "F#",
+              "source_path": "oe_syn120_wonderarp_F#.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_b69ed15850d59648d81e8c17",
+      "enabled": true,
+      "role": "driving",
+      "contexts": [
+        "driving"
+      ],
+      "role_aliases": [
+        "driving"
+      ],
+      "role_contexts": {
+        "driving": [
+          [
+            "driving"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 168,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 168,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            168
+          ],
+          "sources": [
+            {
+              "value": 168,
+              "token": "168",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_01_168.wav",
+              "source_kind": "same_content_historical_filename"
+            },
+            {
+              "value": 168,
+              "token": "168",
+              "source_path": "PHOTAY_drum_loop_buchla_riddim_01_168 (1).wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1231,6 +6503,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "night_ambiance/D_-_Calm_Dusklife_1.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1255,6 +6558,44 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "night_ambiance/D_-_Corrupted_Dusklife.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "night_ambiance/D_-_Corrupted_Dusklife (1).wav",
+              "source_kind": "current_alias"
+            }
+          ]
+        }
       }
     },
     {
@@ -1279,6 +6620,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "night_ambiance/D_-_Timid_Dusklife_1.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1303,6 +6675,44 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "night_ambiance/D_-_Timid_Dusklife_2.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "night_ambiance/D_-_Timid_Dusklife_2 (1).wav",
+              "source_kind": "current_alias"
+            }
+          ]
+        }
       }
     },
     {
@@ -1327,6 +6737,76 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_38dfd178a901898cb4be4e97",
+      "enabled": true,
+      "role": "night",
+      "contexts": [],
+      "role_aliases": [
+        "night"
+      ],
+      "role_contexts": {
+        "night": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 5.0,
+      "fade_out_s": 5.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1355,6 +6835,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1383,6 +6886,182 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_d2905573329b9f9a68a76d5d",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.15,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 1.92
+      },
+      "bpm": 100,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 100,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            100
+          ],
+          "sources": [
+            {
+              "value": 100,
+              "token": "mus100",
+              "source_path": "sunrise/oe_mus100_delicate_piano_E_sunrise_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 100,
+              "token": "mus100",
+              "source_path": "oe_mus100_delicate_piano_E.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "E",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "sunrise/oe_mus100_delicate_piano_E_sunrise_loop.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "oe_mus100_delicate_piano_E.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "asset": "audio_ddef2db376b74f8b1c1b33a3",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.15,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 1.92
+      },
+      "bpm": 100,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 100,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            100
+          ],
+          "sources": [
+            {
+              "value": 100,
+              "token": "mus100",
+              "source_path": "oe_mus100_hotairballoon_ful_D.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "oe_mus100_hotairballoon_ful_D.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1407,6 +7086,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "D",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "D",
+              "mode": null,
+              "token": "D",
+              "source_path": "PHOTAY_texture_lost_arpeggio_02_D.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1431,6 +7141,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "B",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "B",
+              "mode": null,
+              "token": "B",
+              "source_path": "suspense/B_-_String_Bug.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1455,19 +7196,54 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "C",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "C",
+              "mode": null,
+              "token": "C",
+              "source_path": "suspense/C_-_Subcrust_Rainfall_1.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
       "asset": "audio_ce02260363048f74f6583dfc",
       "enabled": true,
       "role": "threat",
-      "contexts": [],
+      "contexts": [
+        "night"
+      ],
       "role_aliases": [
         "threat"
       ],
       "role_contexts": {
         "threat": [
-          []
+          [
+            "night"
+          ]
         ]
       },
       "loop": true,
@@ -1479,6 +7255,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1503,6 +7302,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "G#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G#",
+              "mode": null,
+              "token": "G#",
+              "source_path": "suspense/G#_-_Red_Crystal_Depths_2.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1527,6 +7357,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "G#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G#",
+              "mode": null,
+              "token": "G#",
+              "source_path": "suspense/G#_-_Red_Crystal_Depths_Fire.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1551,6 +7412,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "G#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G#",
+              "mode": null,
+              "token": "G#",
+              "source_path": "suspense/G#_-_Red_Crystal_Depths_Interference.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1575,6 +7467,91 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
+      }
+    },
+    {
+      "asset": "audio_70e4a476d4a5995f9d0e6d99",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      },
+      "bpm": 90,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 90,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            90
+          ],
+          "sources": [
+            {
+              "value": 90,
+              "token": "90",
+              "source_path": "suspense/OS_ORG_90_Drum_Loop_2__Full_.wav",
+              "source_kind": "current_filename"
+            },
+            {
+              "value": 90,
+              "token": "90",
+              "source_path": "OS_ORG_90_Drum_Loop_2__Full_.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1599,6 +7576,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1623,6 +7623,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1647,6 +7670,38 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": 120,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": 120,
+          "status": "filename_label",
+          "certainty": "filename_declared_unverified",
+          "values": [
+            120
+          ],
+          "sources": [
+            {
+              "value": 120,
+              "token": "fxlp120",
+              "source_path": "suspense/oe_fxlp120_issomebodythere.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1673,7 +7728,38 @@
         "wet": 0.0
       },
       "riser_peak_s": 5.404943,
-      "riser_lead_s": 4.0
+      "riser_lead_s": 4.0,
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "E",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "E",
+              "mode": null,
+              "token": "E",
+              "source_path": "OE_Atmos_FX_12_E.wav",
+              "source_kind": "same_content_historical_filename"
+            }
+          ]
+        }
+      }
     },
     {
       "asset": "audio_d3a9c714900375a3d3952ad3",
@@ -1701,6 +7787,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1729,6 +7838,37 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": "G#",
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "tonic_only",
+          "certainty": "filename_declared_unverified",
+          "sources": [
+            {
+              "tonic": "G#",
+              "mode": null,
+              "token": "G#",
+              "source_path": "winter_atmosphere/G#_-_Distant_Cyclones.wav",
+              "source_kind": "current_filename"
+            }
+          ]
+        }
       }
     },
     {
@@ -1757,6 +7897,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
+      },
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     },
     {
@@ -1785,54 +7948,29 @@
       "rack": {
         "preset": "dry",
         "wet": 0.0
-      }
-    },
-    {
-      "asset": "audio_098c00adbf41258d06e7133c",
-      "enabled": true,
-      "role": "engine_hiss",
-      "contexts": [],
-      "role_aliases": [
-        "engine_hiss"
-      ],
-      "role_contexts": {
-        "engine_hiss": [
-          []
-        ]
       },
-      "loop": false,
-      "fade_in_s": 0.08,
-      "fade_out_s": 0.4,
-      "gain_db": 0.0,
-      "crossfade_s": 0.0,
-      "crossfade_curve": null,
-      "rack": {
-        "preset": "dry",
-        "wet": 0.0
-      }
-    },
-    {
-      "asset": "audio_c738a81f08c3b22ff78aa296",
-      "enabled": true,
-      "role": "stinger",
-      "contexts": [],
-      "role_aliases": [
-        "stinger"
-      ],
-      "role_contexts": {
-        "stinger": [
-          []
-        ]
-      },
-      "loop": false,
-      "fade_in_s": 0.15,
-      "fade_out_s": 1.0,
-      "gain_db": 0.0,
-      "crossfade_s": 0.0,
-      "crossfade_curve": null,
-      "rack": {
-        "preset": "dry",
-        "wet": 0.0
+      "bpm": null,
+      "musical_metadata": {
+        "version": 1,
+        "tempo_analyzed": false,
+        "pitch_analyzed": false,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {
+          "value": null,
+          "status": "unknown",
+          "certainty": null,
+          "values": [],
+          "sources": []
+        },
+        "key": {
+          "tonic": null,
+          "mode": null,
+          "conflict": false,
+          "musical_key": null,
+          "status": "unknown",
+          "certainty": null,
+          "sources": []
+        }
       }
     }
   ],
@@ -1841,45 +7979,168 @@
       "audio_6489a17e50966a62b770a109",
       "audio_7571d97f637cbb88fac00fce",
       "audio_cc4bff3bf04c14250ed127c1",
+      "audio_f9c49386a193a193e0a63882",
       "audio_3c3752c1fb4b522c74e95e5c",
       "audio_c1ec09d43647244b24b3ee8b",
       "audio_26ee26bbb7b5ef6678ab9bd0",
       "audio_0ca2a45dc91e1e0402b3ecbe",
+      "audio_1ef24c933276f9665ce7805f",
+      "audio_a99634a0ceb48dd70d9be00d",
       "audio_024a989d67f6b089bc8f4f7d"
     ],
     "death": [
       "audio_a705b925f216cf3956afa26a",
       "audio_74d587aa1ced5f605ecea4fc",
-      "audio_2031d4091d2e0ac3ac670891"
+      "audio_2031d4091d2e0ac3ac670891",
+      "audio_9c9474bd486345a60a45bd59",
+      "audio_4e83bafb83b6525c9c1fbf93",
+      "audio_ae0bd7711b12a95430bee119"
     ],
     "combat_start": [
       "audio_2b693377ececa940b0722817"
     ],
     "sunrise": [
+      "audio_d2905573329b9f9a68a76d5d",
+      "audio_ddef2db376b74f8b1c1b33a3",
       "audio_d4629c7792488f4b25cca7b4"
     ],
-    "sunset": [],
     "dusk": [
       "audio_c738a81f08c3b22ff78aa296"
     ],
-    "unnoticed_impact_riser": [
+    "intensity_transition_riser": [
       "audio_4a383409ba81f8fd25d2ab1c"
+    ],
+    "impact_stopped": [
+      "audio_a2c909b14388cd2c811d36c0",
+      "audio_1eae576bfc8c030d35dfc1ff"
+    ],
+    "cigarette_pickup": [
+      "audio_cf92ca94e768e8c2e558ca3a"
+    ],
+    "fire_igniting": [
+      "audio_1e9a16156ce5261a372d5661"
+    ],
+    "hammer_pickup": [
+      "audio_ea50b831ace444d8dacbbbf3",
+      "audio_eb959485349594eb4a97f4c7"
+    ],
+    "jammed_gun_elevation": [
+      "audio_7d88cba2c90b80783dba9190"
+    ],
+    "jammed_traverse": [
+      "audio_a7a568e27227a5f0754b2c4e"
+    ],
+    "light_round_impact": [
+      "audio_8ccd73e7cd5ea1f634956c15"
+    ],
+    "trigger_pull_not_loaded": [
+      "audio_004d1e1d3b55baedf172d1a3"
     ]
   },
   "effect_registry": [
-    "audio_de42714f61b5b1f972d9df28",
-    "audio_288d09419c5be9266d4ab4e8",
-    "audio_0fee210a8741ebe492640e8d",
-    "audio_f73177adcd57f1b450d05afe",
-    "audio_ec9cb8e747e24b8b33a1eb8c"
+    "audio_a2c909b14388cd2c811d36c0",
+    "audio_1eae576bfc8c030d35dfc1ff",
+    "audio_cf92ca94e768e8c2e558ca3a",
+    "audio_1e9a16156ce5261a372d5661",
+    "audio_ea50b831ace444d8dacbbbf3",
+    "audio_eb959485349594eb4a97f4c7",
+    "audio_7d88cba2c90b80783dba9190",
+    "audio_a7a568e27227a5f0754b2c4e",
+    "audio_8ccd73e7cd5ea1f634956c15",
+    "audio_004d1e1d3b55baedf172d1a3"
   ],
   "additional_folder_bindings": [
+    {
+      "asset": "audio_ba310e1985c80dc0cdafe204",
+      "source_path": "combat/surprise-contact.wav",
+      "category_folder": "combat",
+      "role": "combat",
+      "contexts": [],
+      "filename_usage": {
+        "roles": null,
+        "contexts": [],
+        "basis": "explicit standalone current filename tokens; not inferred enemy awareness or acoustic analysis",
+        "unbound_descriptive_tokens": []
+      },
+      "default_enabled": true,
+      "basis": "user folder assignment"
+    },
+    {
+      "asset": "audio_de42714f61b5b1f972d9df28",
+      "source_path": "combat/surprise_contact.wav",
+      "category_folder": "combat",
+      "role": "combat",
+      "contexts": [],
+      "filename_usage": {
+        "roles": null,
+        "contexts": [],
+        "basis": "explicit standalone current filename tokens; not inferred enemy awareness or acoustic analysis",
+        "unbound_descriptive_tokens": []
+      },
+      "default_enabled": true,
+      "basis": "user folder assignment"
+    },
+    {
+      "asset": "audio_1149a6694396fa52f5c339db",
+      "source_path": "combat/surprise_contact2.wav",
+      "category_folder": "combat",
+      "role": "combat",
+      "contexts": [],
+      "filename_usage": {
+        "roles": null,
+        "contexts": [],
+        "basis": "explicit standalone current filename tokens; not inferred enemy awareness or acoustic analysis",
+        "unbound_descriptive_tokens": []
+      },
+      "default_enabled": true,
+      "basis": "user folder assignment"
+    },
+    {
+      "asset": "audio_1149a6694396fa52f5c339db",
+      "source_path": "combat/surprise_contact_.wav",
+      "category_folder": "combat",
+      "role": "combat",
+      "contexts": [],
+      "filename_usage": {
+        "roles": null,
+        "contexts": [],
+        "basis": "explicit standalone current filename tokens; not inferred enemy awareness or acoustic analysis",
+        "unbound_descriptive_tokens": []
+      },
+      "default_enabled": true,
+      "basis": "user folder assignment"
+    },
+    {
+      "asset": "audio_c738a81f08c3b22ff78aa296",
+      "source_path": "music/night_music.wav",
+      "category_folder": "music",
+      "role": "music",
+      "contexts": [
+        "night"
+      ],
+      "filename_usage": {
+        "roles": null,
+        "contexts": [
+          "night"
+        ],
+        "basis": "explicit standalone current filename tokens; not inferred enemy awareness or acoustic analysis",
+        "unbound_descriptive_tokens": []
+      },
+      "default_enabled": true,
+      "basis": "user folder assignment"
+    },
     {
       "asset": "audio_3c3752c1fb4b522c74e95e5c",
       "source_path": "suspense/Cavern_Wraiths_4.wav",
       "category_folder": "suspense",
       "role": "threat",
       "contexts": [],
+      "filename_usage": {
+        "roles": null,
+        "contexts": [],
+        "basis": "explicit standalone current filename tokens; not inferred enemy awareness or acoustic analysis",
+        "unbound_descriptive_tokens": []
+      },
       "default_enabled": true,
       "basis": "user folder assignment"
     }
@@ -1890,5 +8151,78 @@
     "scene recordings stay disabled until location authorship"
   ],
   "locations": [],
-  "provenance": "User folder assignments and explicit _loop repeat instructions; numerical gain/fade suggestions remain unauditioned."
+  "provenance": "User folder assignments and explicit _loop repeat instructions; numerical gain/fade suggestions remain unauditioned.",
+  "named_effect_registry": {
+    "impact_stopped": [
+      "audio_a2c909b14388cd2c811d36c0",
+      "audio_1eae576bfc8c030d35dfc1ff"
+    ],
+    "cigarette_pickup": [
+      "audio_cf92ca94e768e8c2e558ca3a"
+    ],
+    "fire_igniting": [
+      "audio_1e9a16156ce5261a372d5661"
+    ],
+    "hammer_pickup": [
+      "audio_ea50b831ace444d8dacbbbf3",
+      "audio_eb959485349594eb4a97f4c7"
+    ],
+    "jammed_gun_elevation": [
+      "audio_7d88cba2c90b80783dba9190"
+    ],
+    "jammed_traverse": [
+      "audio_a7a568e27227a5f0754b2c4e"
+    ],
+    "light_round_impact": [
+      "audio_8ccd73e7cd5ea1f634956c15"
+    ],
+    "trigger_pull_not_loaded": [
+      "audio_004d1e1d3b55baedf172d1a3"
+    ],
+    "error": [
+      "audio_5c74cda6ef668807e026c03b",
+      "audio_e97f0860e4b7026958aec1b6"
+    ],
+    "light_impact": [
+      "audio_72759dda3a53f8ccadac7a13"
+    ]
+  },
+  "deferred_effects": [
+    {
+      "asset": "audio_20c0d3466591c39170849fbd",
+      "source_path": "effects/OS_ORG_Coin_Box_1.wav",
+      "enabled": false,
+      "reason": "No corresponding coin-box interaction exists in this game."
+    },
+    {
+      "asset": "audio_8c45ca2c2e72e1c3110407af",
+      "source_path": "effects/OS_ORG_Footsteps_In_The_Snow.wav",
+      "enabled": false,
+      "reason": "Multi-step recording requires source-step segmentation and actual snow foot contact binding; no fabricated footsteps."
+    },
+    {
+      "asset": "audio_1e496184f2c83c067e2f14c4",
+      "source_path": "effects/PHOTAY_texture_redwood_campfire.wav",
+      "enabled": false,
+      "reason": "Requires an actual spatial burning-source binding; not global ambience or score."
+    },
+    {
+      "asset": "audio_5c74cda6ef668807e026c03b",
+      "source_path": "effects/error.wav",
+      "enabled": false,
+      "reason": "No authored failure action is assigned; not an automatic error alarm."
+    },
+    {
+      "asset": "audio_e97f0860e4b7026958aec1b6",
+      "source_path": "effects/error2.wav",
+      "enabled": false,
+      "reason": "No authored failure action is assigned; not an automatic error alarm."
+    },
+    {
+      "asset": "audio_72759dda3a53f8ccadac7a13",
+      "source_path": "effects/light_impact.wav",
+      "enabled": false,
+      "reason": "Generic impact remains unassigned; do not stack over the bound precise light_round_impact source."
+    }
+  ]
 }

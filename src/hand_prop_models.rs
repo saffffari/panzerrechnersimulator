@@ -1,0 +1,730 @@
+//! Existing Pizza hand props, source-derived articulation, and shared physical VFX anchors.
+//! Asset scale/hand poses and the packet's hinged opening are authored gameplay dimensions;
+//! the modern packet/lighter artwork is not a claim of period reconstruction.
+use crate::{
+    cigarette::View,
+    gltf_load::{CpuImage, CpuMesh, Vertex},
+    renderer::Renderer,
+};
+use anyhow::{Context, Result};
+use glam::{Mat3, Mat4, Quat, Vec2, Vec3};
+const ROOT: &str =
+    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/";
+pub const CIGARETTE_LENGTH_M: f32 = 0.084;
+pub const FILTER_LENGTH_M: f32 = 0.022;
+pub const CIGARETTE_RADIUS_M: f32 = 0.0135 * 0.5 * (0.084 / 0.153);
+const PACK_COUNT: usize = 20;
+const FLAME_HEIGHT_M: f32 = 0.008;
+const FLAME_RADIUS_M: f32 = 0.001;
+const FLAME_LIGHT_HEIGHT_M: f32 = 0.0035;
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Anchors {
+    pub tip: Vec3,
+    pub mouth: Vec3,
+    pub lighter: Vec3,
+    pub forward: Vec3,
+    pub radius: f32,
+    pub cigarette_visible: bool,
+    pub lighter_visible: bool,
+}
+pub struct HandProps {
+    body: usize,
+    lid: usize,
+    stock: [usize; PACK_COUNT],
+    cigarette: usize,
+    lighter: usize,
+    ember: usize,
+    tobacco_cap: usize,
+    charred: usize,
+    ash: usize,
+    flame: usize,
+    source: CpuMesh,
+    pose: Vec<Vertex>,
+    last_length: f32,
+    pack_min: Vec3,
+    pack_max: Vec3,
+}
+fn load(relative: &str) -> Result<CpuMesh> {
+    crate::gltf_load::load_glb(&format!("{ROOT}{relative}"))
+}
+fn push(scene: &mut Vec<CpuMesh>, mesh: CpuMesh) -> usize {
+    let slot = scene.len();
+    scene.push(mesh);
+    slot
+}
+fn subset(mesh: &CpuMesh, keep: impl Fn(&[u32]) -> bool) -> Result<CpuMesh> {
+    let mut out = mesh.clone();
+    out.vertices.clear();
+    out.indices.clear();
+    out.min = Vec3::splat(f32::INFINITY);
+    out.max = Vec3::splat(f32::NEG_INFINITY);
+    for triangle in mesh.indices.chunks_exact(3).filter(|t| keep(t)) {
+        for &i in triangle {
+            let v = mesh.vertices[i as usize];
+            let p = Vec3::from(v.pos);
+            out.indices.push(out.vertices.len() as u32);
+            out.vertices.push(v);
+            out.min = out.min.min(p);
+            out.max = out.max.max(p);
+        }
+    }
+    anyhow::ensure!(
+        !out.indices.is_empty(),
+        "source hand-prop partition is empty"
+    );
+    Ok(out)
+}
+fn flat_mesh(vertices: Vec<Vertex>, indices: Vec<u32>, color: [u8; 3]) -> CpuMesh {
+    let mut lo = Vec3::splat(f32::INFINITY);
+    let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    for v in &vertices {
+        lo = lo.min(Vec3::from(v.pos));
+        hi = hi.max(Vec3::from(v.pos));
+    }
+    CpuMesh::basic(
+        vertices,
+        indices,
+        Some(CpuImage::new(1, 1, vec![color[0], color[1], color[2], 255])),
+        lo,
+        hi,
+    )
+}
+fn vertex(p: Vec3, n: Vec3) -> Vertex {
+    Vertex {
+        pos: p.to_array(),
+        normal: n.to_array(),
+        uv: [0.0; 2],
+        tangent: [1.0, 0.0, 0.0, 1.0],
+    }
+}
+/// Eight-sided cross-section matches the existing source cigarette; no screen-space glow card.
+fn cap_mesh() -> CpuMesh {
+    let mut vertices = vec![vertex(Vec3::ZERO, Vec3::Z)];
+    let mut indices = Vec::new();
+    for i in 0..8 {
+        let a = i as f32 * std::f32::consts::TAU / 8.0;
+        vertices.push(vertex(Vec3::new(a.cos(), a.sin(), 0.0), Vec3::Z));
+    }
+    for i in 0..8 {
+        indices.extend([0, i + 1, (i + 1) % 8 + 1]);
+    }
+    flat_mesh(vertices, indices, [255, 128, 35])
+}
+fn flame_mesh() -> CpuMesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for (ring, (y, radius)) in [
+        (0.0, 0.0004),
+        (0.0025, FLAME_RADIUS_M),
+        (FLAME_HEIGHT_M, 0.00006),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for i in 0..8 {
+            let a = i as f32 * std::f32::consts::TAU / 8.0;
+            let mut v = vertex(
+                Vec3::new(a.cos() * radius, y, a.sin() * radius),
+                Vec3::new(a.cos(), 0.1, a.sin()).normalize(),
+            );
+            v.uv = [0.5, (ring as f32 + 0.5) / 3.0];
+            vertices.push(v);
+        }
+    }
+    for ring in 0..2 {
+        for i in 0..8 {
+            let a = ring * 8 + i;
+            let b = ring * 8 + (i + 1) % 8;
+            indices.extend([a, b, a + 8, b, b + 8, a + 8]);
+        }
+    }
+    let mut mesh = flat_mesh(vertices, indices, [255, 207, 102]);
+    mesh.texture = Some(CpuImage::new(
+        1,
+        3,
+        vec![112, 154, 255, 255, 255, 168, 53, 255, 255, 228, 135, 255],
+    ));
+    mesh
+}
+/// Project-authored small flame output, shared with the real source light. The existing point
+/// transport has inverse-square support and geometry shadows; no invented distance cutoff.
+pub fn lighter_light(view: View, anchors: Anchors) -> Option<crate::renderer::PointLight> {
+    (view.lighter_flame && anchors.lighter_visible).then_some(crate::renderer::PointLight {
+        pos: anchors.lighter + Vec3::Y * FLAME_LIGHT_HEIGHT_M,
+        source_radius: FLAME_RADIUS_M,
+        color: Vec3::new(1.0, 0.67, 0.27),
+        radiant_intensity: 0.00025,
+    })
+}
+fn sleeve_mesh(color: [u8; 3]) -> CpuMesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for i in 0..8 {
+        let a = i as f32 * std::f32::consts::TAU / 8.0;
+        let b = (i + 1) as f32 * std::f32::consts::TAU / 8.0;
+        let n = Vec3::new(((a + b) * 0.5).cos(), ((a + b) * 0.5).sin(), 0.0);
+        let base = vertices.len() as u32;
+        for (angle, z) in [(a, 0.0), (b, 0.0), (b, 1.0), (a, 1.0)] {
+            vertices.push(vertex(Vec3::new(angle.cos(), angle.sin(), z), n));
+        }
+        indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    flat_mesh(vertices, indices, color)
+}
+fn cigarette_source() -> Result<CpuMesh> {
+    let source = load("Small Props/cig_1.glb")?;
+    let size = source.max - source.min;
+    anyhow::ensure!(
+        (size.x - 0.153).abs() < 0.00001 && (size.y - 0.0135).abs() < 0.00001,
+        "source cigarette dimensions changed; review anchors before use"
+    );
+    let scale = CIGARETTE_LENGTH_M / size.x;
+    // Source +X is the pale filter cap; -X is the brown tobacco cap (atlas verified).
+    let matrix = Mat4::from_cols(
+        Vec3::new(0.0, 0.0, -scale).extend(0.0),
+        Vec3::new(0.0, scale, 0.0).extend(0.0),
+        Vec3::new(scale, 0.0, 0.0).extend(0.0),
+        Vec3::new(
+            -(source.min.z + source.max.z) * 0.5 * scale,
+            -(source.min.y + source.max.y) * 0.5 * scale,
+            source.max.x * scale,
+        )
+        .extend(1.0),
+    );
+    Ok(source.transformed(matrix))
+}
+pub fn cigarette_length(burn_remaining: f32) -> f32 {
+    FILTER_LENGTH_M
+        + (CIGARETTE_LENGTH_M - FILTER_LENGTH_M)
+            * if burn_remaining.is_finite() {
+                burn_remaining.clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+}
+/// The source is an eight-sided tube with two end rings. Moving only the burning ring and
+/// interpolating its side UVs clips the paper; the filter/mouth end and diameter stay unchanged.
+fn clipped_cigarette(source: &CpuMesh, length: f32, out: &mut [Vertex]) {
+    for (v, original) in out.iter_mut().zip(&source.vertices) {
+        *v = *original;
+        let p = Vec3::from(original.pos);
+        if p.z < CIGARETTE_LENGTH_M - 0.00001 {
+            continue;
+        }
+        v.pos[2] = length;
+        if original.normal[2].abs() < 0.9 {
+            if let Some(other) = source.vertices.iter().find(|other| {
+                other.pos[2] < 0.00001
+                    && Vec2::new(other.pos[0] - p.x, other.pos[1] - p.y).length_squared() < 1e-10
+                    && Vec3::from(other.normal).dot(Vec3::from(original.normal)) > 0.99
+            }) {
+                v.uv = Vec2::from(other.uv)
+                    .lerp(Vec2::from(original.uv), length / CIGARETTE_LENGTH_M)
+                    .to_array();
+            }
+        }
+    }
+}
+
+/// Hold source props within the ordinary camera frustum, with no overlay or depth override.
+/// The cigarette crosses the lower-right field so its paper/filter remain visible side-on.
+fn cigarette_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, puff: f32) -> (Mat4, Vec3) {
+    let mouth = eye + forward * 0.11 - up * 0.047;
+    let resting = eye + forward * 0.32 + right * 0.125 - up * 0.09;
+    let puff = puff.clamp(0.0, 1.0);
+    let raised = puff * puff * (3.0 - 2.0 * puff);
+    let grip = resting.lerp(mouth, raised);
+    let resting_axis = (forward * 0.30 - right * 0.92 + up * 0.20).normalize();
+    let mouth_axis = (forward * 0.75 - right * 0.55 + up * 0.10).normalize();
+    let axis = resting_axis.lerp(mouth_axis, raised).normalize();
+    (
+        Mat4::from_rotation_translation(Quat::from_rotation_arc(Vec3::Z, axis), grip),
+        mouth,
+    )
+}
+
+/// The source packet's long axis is X. Open its filter-end face, not its broad side,
+/// and face that physical opening toward the eye so all three stock rows can be inspected.
+fn packet_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, lo: Vec3, hi: Vec3) -> Mat4 {
+    let opening = (up * 0.65 - forward * 0.76).normalize();
+    let front = right.cross(opening).normalize();
+    Mat4::from_rotation_translation(
+        Quat::from_mat3(&Mat3::from_cols(opening, front, right)),
+        eye + forward * 0.33 - right * 0.115 - up * 0.055,
+    ) * Mat4::from_translation(-(lo + hi) * 0.5)
+}
+
+fn packet_lid_pose(pack: Mat4, lo: Vec3, hi: Vec3) -> Mat4 {
+    let hinge = Vec3::new(hi.x, lo.y, (lo.z + hi.z) * 0.5);
+    pack * Mat4::from_translation(hinge)
+        * Mat4::from_rotation_z(-2.05)
+        * Mat4::from_translation(-hinge)
+}
+
+impl HandProps {
+    pub fn allocate(scene: &mut Vec<CpuMesh>) -> Result<Self> {
+        // Complete every source load/partition before mutating the shared scene.
+        let full_cigarette = cigarette_source()?;
+        let is_tip = |triangle: &[u32]| {
+            triangle
+                .iter()
+                .all(|&i| full_cigarette.vertices[i as usize].normal[2] > 0.99)
+        };
+        let source = subset(&full_cigarette, |t| !is_tip(t))?;
+        let tobacco_cap_mesh = subset(&full_cigarette, is_tip)?;
+        let scale = CIGARETTE_LENGTH_M / 0.153;
+        let pack = load("Items & Weapons/cigs_packet_1.glb")?
+            .transformed(Mat4::from_scale(Vec3::splat(scale)));
+        let pack_min = pack.min;
+        let pack_max = pack.max;
+        let is_lid = |triangle: &[u32]| {
+            triangle
+                .iter()
+                .all(|&i| (pack.vertices[i as usize].pos[0] - pack.max.x).abs() < 0.00001)
+        };
+        let body_mesh = subset(&pack, |t| !is_lid(t))?;
+        let lid_mesh = subset(&pack, is_lid)?;
+        anyhow::ensure!(
+            lid_mesh.indices.len() == 6,
+            "packet filter-end is not the expected source quad"
+        );
+        let lighter_source = load("Items & Weapons/lighter_mp_1.glb")?;
+        // Existing burner's source location, not the bounding-box tip of the adjacent flint wheel.
+        let nozzle = Vec3::new(-0.010, 0.010, -0.069);
+        let lighter_mesh = lighter_source.transformed(
+            Mat4::from_scale(Vec3::splat(0.55))
+                * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
+                * Mat4::from_translation(-nozzle),
+        );
+        let body = push(scene, body_mesh);
+        let lid = push(scene, lid_mesh);
+        let stock = std::array::from_fn(|_| push(scene, full_cigarette.clone()));
+        let cigarette = push(scene, source.clone());
+        let lighter = push(scene, lighter_mesh);
+        let ember = push(scene, cap_mesh());
+        let tobacco_cap = push(scene, tobacco_cap_mesh);
+        let charred = push(scene, sleeve_mesh([35, 31, 27]));
+        let ash = push(scene, sleeve_mesh([143, 141, 132]));
+        let flame = push(scene, flame_mesh());
+        let pose = source.vertices.clone();
+        Ok(Self {
+            body,
+            lid,
+            stock,
+            cigarette,
+            lighter,
+            ember,
+            tobacco_cap,
+            charred,
+            ash,
+            flame,
+            source,
+            pose,
+            last_length: CIGARETTE_LENGTH_M,
+            pack_min,
+            pack_max,
+        })
+    }
+    pub fn lighter_emitter(&self) -> usize {
+        self.flame
+    }
+
+    pub fn slots(&self) -> impl Iterator<Item = usize> + '_ {
+        [
+            self.body,
+            self.lid,
+            self.cigarette,
+            self.lighter,
+            self.ember,
+            self.tobacco_cap,
+            self.charred,
+            self.ash,
+            self.flame,
+        ]
+        .into_iter()
+        .chain(self.stock)
+    }
+    pub fn initialize(&self, r: &mut Renderer) {
+        for slot in self.slots() {
+            r.mark_raster_only(slot);
+            r.mark_temporal_dynamic(slot);
+            r.set_visible(slot, false);
+            r.set_emissive(slot, 0.0);
+        }
+        r.mark_own_emissive(self.ember);
+        r.mark_own_emissive(self.flame);
+    }
+    pub fn update(&mut self, r: &mut Renderer, view: View, visible: bool) -> Anchors {
+        let visible = visible && view.equipped;
+        let forward = r.camera.forward().normalize_or_zero();
+        let right = forward.cross(Vec3::Y).normalize_or_zero();
+        let up = right.cross(forward).normalize_or_zero();
+        let basis = Quat::from_mat3(&Mat3::from_cols(right, up, -forward));
+        let (model, mouth) = cigarette_pose(r.camera.pos, forward, right, up, view.puff_phase);
+        let length = cigarette_length(view.burn_remaining);
+        if (length - self.last_length).abs() > 0.000002 {
+            clipped_cigarette(&self.source, length, &mut self.pose);
+            if r.upload_pose_vertices(self.cigarette, &self.pose) {
+                self.last_length = length;
+            }
+        }
+        // Anchors use the last uploaded geometry length, including a backend rejecting a pose.
+        let tip = model.transform_point3(Vec3::Z * self.last_length);
+        let cigarette_visible = visible && view.cigarette_present;
+        r.set_model(self.cigarette, model);
+        r.set_visible(self.cigarette, cigarette_visible);
+        r.set_visible(self.tobacco_cap, cigarette_visible && !view.lit);
+        r.set_model(
+            self.tobacco_cap,
+            model * Mat4::from_translation(Vec3::Z * (self.last_length - CIGARETTE_LENGTH_M)),
+        );
+        let surface = crate::cigarette_vfx::surface(view);
+        let cap = model
+            * Mat4::from_translation(Vec3::Z * self.last_length)
+            * Mat4::from_scale(Vec3::new(CIGARETTE_RADIUS_M, CIGARETTE_RADIUS_M, 1.0));
+        r.set_model(self.ember, cap);
+        r.set_visible(self.ember, cigarette_visible && view.lit);
+        r.set_emissive(
+            self.ember,
+            if cigarette_visible && view.lit {
+                surface.ember_intensity
+            } else {
+                0.0
+            },
+        );
+        for (slot, extent, offset) in [
+            (self.charred, surface.char_length_m, 0.00001),
+            (self.ash, surface.ash_length_m, 0.000025),
+        ] {
+            let extent = extent.min((self.last_length - FILTER_LENGTH_M).max(0.0));
+            r.set_visible(slot, cigarette_visible && extent > 0.00005);
+            r.set_model(
+                slot,
+                model
+                    * Mat4::from_translation(Vec3::Z * (self.last_length - extent))
+                    * Mat4::from_scale(Vec3::new(
+                        CIGARETTE_RADIUS_M + offset,
+                        CIGARETTE_RADIUS_M + offset,
+                        extent.max(0.000001),
+                    )),
+            );
+        }
+        let pack_visible = visible && view.pack_open;
+        let pack_model = packet_pose(
+            r.camera.pos,
+            forward,
+            right,
+            up,
+            self.pack_min,
+            self.pack_max,
+        );
+        r.set_model(self.body, pack_model);
+        r.set_visible(self.body, pack_visible);
+        r.set_model(
+            self.lid,
+            packet_lid_pose(pack_model, self.pack_min, self.pack_max),
+        );
+        r.set_visible(self.lid, pack_visible);
+        let stock_positions = pack_positions(self.pack_min, self.pack_max);
+        for (i, &slot) in self.stock.iter().enumerate() {
+            r.set_visible(
+                slot,
+                pack_visible && i < usize::from(view.pack_count.min(PACK_COUNT as u16)),
+            );
+            r.set_model(
+                slot,
+                pack_model
+                    * Mat4::from_translation(stock_positions[i])
+                    * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2),
+            );
+        }
+        let raised = view.lighter_raise.clamp(0.0, 1.0);
+        let lowered = r.camera.pos + forward * 0.24 - right * 0.13 - up * 0.33;
+        let nozzle = lowered.lerp(tip - Vec3::Y * FLAME_HEIGHT_M, raised);
+        r.set_model(
+            self.lighter,
+            Mat4::from_rotation_translation(basis * Quat::from_rotation_y(-0.3), nozzle),
+        );
+        let lighter_visible = visible && !view.pack_open && raised > 0.01;
+        r.set_visible(self.lighter, lighter_visible);
+        let flame_visible = lighter_visible && view.lighter_flame;
+        // Flame rises in world gravity; changing the player's look never turns a flame sideways.
+        r.set_model(self.flame, Mat4::from_translation(nozzle));
+        r.set_visible(self.flame, flame_visible);
+        r.set_emissive(self.flame, if flame_visible { 2.4 } else { 0.0 });
+        Anchors {
+            tip,
+            mouth,
+            lighter: nozzle,
+            forward,
+            radius: CIGARETTE_RADIUS_M,
+            cigarette_visible,
+            lighter_visible,
+        }
+    }
+}
+/// Seven/six/seven physical cigarettes fit the source-derived packet's three rows.
+fn pack_positions(lo: Vec3, hi: Vec3) -> [Vec3; PACK_COUNT] {
+    let diameter = 2.0 * CIGARETTE_RADIUS_M;
+    std::array::from_fn(|i| {
+        let (row, column, count) = if i < 7 {
+            (0, i, 7)
+        } else if i < 13 {
+            (1, i - 7, 6)
+        } else {
+            (2, i - 13, 7)
+        };
+        Vec3::new(
+            (lo.x + hi.x + CIGARETTE_LENGTH_M) * 0.5,
+            lo.y + CIGARETTE_RADIUS_M + 0.0003 + row as f32 * (diameter + 0.00012),
+            (column as f32 - (count - 1) as f32 * 0.5) * (diameter + 0.00015),
+        )
+    })
+}
+/// Reuse the exact source flashlight, partitioning the actual emissive atlas face triangles.
+/// Returned body/lens point along local +Z; the15mm lens is at the existing torch's z=.035m.
+pub fn load_hand_torch() -> Result<[CpuMesh; 2]> {
+    let path = format!("{ROOT}Items & Weapons/flashlight_mp_1.glb");
+    let source = crate::gltf_load::load_glb(&path)?;
+    let bytes = crate::resource::read(&path)?;
+    let gltf = gltf::Gltf::from_slice(&bytes)?;
+    let info = gltf
+        .materials()
+        .find_map(|m| m.emissive_texture())
+        .context("source torch emissive atlas")?;
+    let gltf::image::Source::View { view, .. } = info.texture().source().source() else {
+        anyhow::bail!("embedded torch emissive atlas required")
+    };
+    let blob = gltf.blob.as_deref().context("source torch GLB buffer")?;
+    let image =
+        image::load_from_memory(&blob[view.offset()..view.offset() + view.length()])?.to_rgba8();
+    let luminous = |triangle: &[u32]| {
+        let uv = triangle
+            .iter()
+            .map(|&i| Vec2::from(source.vertices[i as usize].uv))
+            .sum::<Vec2>()
+            / 3.0;
+        let pixel = image.get_pixel(
+            ((uv.x.rem_euclid(1.0) * image.width() as f32) as u32).min(image.width() - 1),
+            ((uv.y.rem_euclid(1.0) * image.height() as f32) as u32).min(image.height() - 1),
+        );
+        pixel.0[..3].iter().copied().max().unwrap_or(0) > 50
+    };
+    let body = subset(&source, |t| !luminous(t))?;
+    let lens = subset(&source, luminous)?;
+    let mut area = 0.0;
+    let mut center = Vec3::ZERO;
+    let mut normal = Vec3::ZERO;
+    for t in lens.indices.chunks_exact(3) {
+        let p: Vec<_> = t
+            .iter()
+            .map(|&i| Vec3::from(lens.vertices[i as usize].pos))
+            .collect();
+        let cross = (p[1] - p[0]).cross(p[2] - p[0]);
+        let a = cross.length();
+        area += a;
+        center += (p[0] + p[1] + p[2]) * (a / 3.0);
+        normal += cross;
+    }
+    anyhow::ensure!(
+        area > 0.00001 && normal.length() > 0.00001,
+        "source torch lens has no finite outward area"
+    );
+    center /= area;
+    normal = normal.normalize();
+    let rotate = Quat::from_rotation_arc(normal, Vec3::Z);
+    let radius = lens
+        .vertices
+        .iter()
+        .map(|v| (rotate * (Vec3::from(v.pos) - center)).truncate().length())
+        .fold(0.0f32, f32::max);
+    anyhow::ensure!(
+        (0.02..0.05).contains(&radius),
+        "source torch lens radius changed"
+    );
+    let model = Mat4::from_translation(Vec3::Z * 0.035)
+        * Mat4::from_scale(Vec3::splat(0.015 / radius))
+        * Mat4::from_quat(rotate)
+        * Mat4::from_translation(-center);
+    Ok([body.transformed(model), lens.transformed(model)])
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn inside_native_field(point: Vec3) -> bool {
+        let half_height = -point.z * 30f32.to_radians().tan();
+        point.z < -0.025
+            && point.y.abs() < half_height * 0.95
+            && point.x.abs() < half_height * (16.0 / 9.0) * 0.95
+    }
+    fn blocks_eye_segment(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> bool {
+        let edge = b - a;
+        let other = c - a;
+        let h = point.cross(other);
+        let determinant = edge.dot(h);
+        if determinant.abs() < 1e-12 {
+            return false;
+        }
+        let from = -a;
+        let u = from.dot(h) / determinant;
+        let v = point.dot(from.cross(edge)) / determinant;
+        let t = other.dot(from.cross(edge)) / determinant;
+        u >= 0.0 && v >= 0.0 && u + v <= 1.0 && t > 0.00001 && t < 0.99999
+    }
+    #[test]
+    fn packet_filter_end_exposes_all_twenty_stock_centers_in_native_view() {
+        let mut scene = Vec::new();
+        let props = HandProps::allocate(&mut scene).unwrap();
+        let model = packet_pose(
+            Vec3::ZERO,
+            -Vec3::Z,
+            Vec3::X,
+            Vec3::Y,
+            props.pack_min,
+            props.pack_max,
+        );
+        let lid = packet_lid_pose(model, props.pack_min, props.pack_max);
+        for (slot, transform) in [(props.body, model), (props.lid, lid)] {
+            assert!(scene[slot]
+                .vertices
+                .iter()
+                .all(|v| inside_native_field(transform.transform_point3(Vec3::from(v.pos)))));
+        }
+        for position in pack_positions(props.pack_min, props.pack_max) {
+            let filter = model.transform_point3(position);
+            assert!(inside_native_field(filter));
+            for (slot, transform) in [(props.body, model), (props.lid, lid)] {
+                for triangle in scene[slot].indices.chunks_exact(3) {
+                    let p = |i| {
+                        transform.transform_point3(Vec3::from(scene[slot].vertices[i as usize].pos))
+                    };
+                    assert!(
+                        !blocks_eye_segment(filter, p(triangle[0]), p(triangle[1]), p(triangle[2])),
+                        "source packet face hides a remaining cigarette"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn cigarette_puff_and_raised_source_lighter_remain_inside_native_view() {
+        let mut scene = Vec::new();
+        let props = HandProps::allocate(&mut scene).unwrap();
+        for puff in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, puff);
+            assert!(scene[props.cigarette]
+                .vertices
+                .iter()
+                .all(|v| inside_native_field(model.transform_point3(Vec3::from(v.pos)))));
+        }
+        let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0);
+        let nozzle =
+            model.transform_point3(Vec3::Z * CIGARETTE_LENGTH_M) - Vec3::Y * FLAME_HEIGHT_M;
+        let lighter = Mat4::from_rotation_translation(Quat::from_rotation_y(-0.3), nozzle);
+        assert!(scene[props.lighter]
+            .vertices
+            .iter()
+            .all(|v| inside_native_field(lighter.transform_point3(Vec3::from(v.pos)))));
+        let flame = &scene[props.flame];
+        assert!((flame.max.y - flame.min.y - FLAME_HEIGHT_M).abs() < 1e-6);
+        assert!(flame.max.x - flame.min.x <= 0.00201);
+        assert!(FLAME_LIGHT_HEIGHT_M > flame.min.y && FLAME_LIGHT_HEIGHT_M < flame.max.y);
+    }
+    #[test]
+    fn source_cigarette_clips_tip_without_moving_filter_or_changing_diameter() {
+        let source = cigarette_source().unwrap();
+        let mut pose = source.vertices.clone();
+        for burn in [1.0, 0.7, 0.1, 0.0] {
+            let length = cigarette_length(burn);
+            clipped_cigarette(&source, length, &mut pose);
+            for (a, b) in source.vertices.iter().zip(&pose) {
+                assert_eq!(&a.pos[..2], &b.pos[..2]);
+                if a.pos[2] < 0.00001 {
+                    assert_eq!(a.pos, b.pos);
+                    assert_eq!(a.uv, b.uv);
+                }
+                assert!(b.pos[2] <= length + 0.00001);
+                assert!(Vec2::from(b.uv).is_finite());
+            }
+        }
+    }
+    #[test]
+    fn source_pack_has_twenty_nonoverlapping_inside_cigarettes() {
+        let source = load("Items & Weapons/cigs_packet_1.glb")
+            .unwrap()
+            .transformed(Mat4::from_scale(Vec3::splat(0.084 / 0.153)));
+        let positions = pack_positions(source.min, source.max);
+        let radius = CIGARETTE_RADIUS_M;
+        for (i, p) in positions.iter().enumerate() {
+            assert!(p.x <= source.max.x && p.x - CIGARETTE_LENGTH_M >= source.min.x);
+            assert!(p.y - radius >= source.min.y && p.y + radius <= source.max.y);
+            assert!(p.z - radius >= source.min.z && p.z + radius <= source.max.z);
+            for q in &positions[..i] {
+                assert!(Vec2::new(p.y - q.y, p.z - q.z).length() >= 2.0 * radius);
+            }
+        }
+    }
+    #[test]
+    fn source_torch_lens_is_partitioned_and_registered_to_existing_emitter() {
+        let [body, lens] = load_hand_torch().unwrap();
+        assert!(!body.indices.is_empty());
+        assert!(!lens.indices.is_empty());
+        assert!(lens.min.z > 0.030 && lens.max.z < 0.040);
+        assert!((lens.max.x - lens.min.x - 0.030).abs() < 0.003);
+        let source = load("Items & Weapons/flashlight_mp_1.glb").unwrap();
+        assert_eq!(
+            source.indices.len(),
+            body.indices.len() + lens.indices.len()
+        );
+    }
+    #[test]
+    fn lighter_source_exists_only_at_the_visible_ignited_nozzle() {
+        let mut view = View::default();
+        let anchors = Anchors {
+            lighter: Vec3::new(2.0, 3.0, 4.0),
+            lighter_visible: true,
+            ..Default::default()
+        };
+        assert!(lighter_light(view, anchors).is_none());
+        view.lighter_flame = true;
+        let light = lighter_light(view, anchors).unwrap();
+        assert!(light
+            .pos
+            .abs_diff_eq(anchors.lighter + Vec3::Y * FLAME_LIGHT_HEIGHT_M, 1e-6));
+        assert_eq!(light.source_radius, FLAME_RADIUS_M);
+        assert!(light.radiant_intensity > 0.0);
+        assert!(lighter_light(
+            view,
+            Anchors {
+                lighter_visible: false,
+                ..anchors
+            }
+        )
+        .is_none());
+    }
+    #[test]
+    fn held_paper_and_tobacco_cap_are_separate_surfaces() {
+        let mut scene = Vec::new();
+        let props = HandProps::allocate(&mut scene).unwrap();
+        assert!(scene[props.cigarette]
+            .vertices
+            .iter()
+            .all(|v| v.normal[2] < 0.99));
+        assert!(scene[props.tobacco_cap]
+            .vertices
+            .iter()
+            .all(|v| v.normal[2] > 0.99));
+        assert_eq!(
+            scene[props.cigarette].indices.len() + scene[props.tobacco_cap].indices.len(),
+            scene[props.stock[0]].indices.len()
+        );
+    }
+    #[test]
+    fn source_allocation_has_a_complete_bounded_slot_set() {
+        let mut scene = Vec::new();
+        let props = HandProps::allocate(&mut scene).unwrap();
+        assert_eq!(scene.len(), 29);
+        assert_eq!(props.stock.len(), 20);
+        assert!(props.slots().all(|s| s < scene.len()));
+    }
+}

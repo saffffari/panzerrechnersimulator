@@ -6,8 +6,9 @@ import wave
 
 import numpy as np
 
-from suggest_soundscape_cue_policy import envelope, suggest, IMPACT_RISER_ID
-from merge_soundscape_cue_policy import merge
+from suggest_soundscape_cue_policy import envelope, suggest, TRANSITION_RISER_ID, named_effect_events
+from merge_soundscape_cue_policy import merge, merge_sorted
+from refresh_soundscape_musical_metadata import refresh
 
 
 def asset(role="music", name="piece.wav", bpm=None):
@@ -22,6 +23,89 @@ def measured(duration):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_final_score_phrases_use_existing_foreground_roles_without_event_or_loop(self):
+        from soundscape_routing import SCORE_PHRASES
+        from collections import Counter
+        self.assertEqual(Counter(SCORE_PHRASES.values()), {"music": 10, "combat": 12, "threat": 1})
+        entries = []
+        for path, role in SCORE_PHRASES.items():
+            p = suggest(asset(role="effect", name=path), measured(5))
+            self.assertEqual(p["role"], role)
+            self.assertEqual(p["role_aliases"], [role])
+            self.assertFalse(p["loop"])
+            self.assertEqual(p["crossfade_s"], 0)
+            self.assertNotIn("riser_peak_s", p)
+            self.assertIsNone(p["bpm"])
+            if role == "combat":
+                self.assertIn("combat", p["contexts"])
+            entries.append(p)
+        self.assertEqual(named_effect_events(entries), {})
+
+    def test_phrase_merge_preserves_treatment_and_registry_does_not_activate_deferred(self):
+        old = {"cues": [{"asset": "phrase", "role": "effect", "gain_db": -3, "rack": {"wet": .08}},
+                         {"asset": "deferred"}], "events": {"error": ["deferred"], "surprise_contact": ["phrase"]}}
+        fresh = {"manifest_sha256": "new", "cues": [{"asset": "phrase", "role": "music", "loop": False,
+            "gain_db": 0, "rack": {"wet": 0}}], "events": {}, "named_effect_registry": {"error": ["deferred"]}}
+        manifest = {"assets": [{"id": "phrase", "role": "effect", "default_enabled": True,
+            "playback_available": True, "runtime_assignment": {"finite_foreground_phrase": True}},
+            {"id": "deferred", "role": "effect", "default_enabled": False}]}
+        out, receipt = merge_sorted(old, old, fresh, manifest)
+        self.assertEqual(out["cues"][0]["gain_db"], -3)
+        self.assertEqual(out["cues"][0]["rack"], {"wet": .08})
+        self.assertFalse(out["cues"][0]["loop"])
+        self.assertEqual(out["events"], {})
+        self.assertEqual(out["named_effect_registry"], {"error": ["deferred"]})
+        self.assertEqual(receipt["retired_cue_ids"], ["deferred"])
+
+    def test_full_sorted_scan_retires_stale_routes_but_keeps_authored_treatment(self):
+        old = {"cues": [{"asset": "keep", "gain_db": 0, "role": "music"}, {"asset": "gone"}]}
+        current = {"cues": [{"asset": "keep", "gain_db": -5, "role": "music", "rack": {"wet": .12},
+                             "riser_peak_s": 5.4}, {"asset": "gone"}, {"asset": "unused"}],
+                   "events": {"custom": ["keep", "gone"], "stale": ["unused"], "incoming_riser": ["keep"]}}
+        fresh = {"manifest_sha256": "new", "cues": [{"asset": "keep", "role": "combat", "contexts": ["combat"],
+                 "gain_db": 0, "rack": {"wet": 0}}], "events": {"intensity_transition_riser": ["keep"]}}
+        manifest = {"assets": [{"id": "keep", "default_enabled": True, "playback_available": True, "role": "combat"},
+                                {"id": "unused", "default_enabled": False, "role": "unused"}]}
+        result, receipt = merge_sorted(old, current, fresh, manifest)
+        self.assertEqual(len(result["cues"]), 1)
+        cue = result["cues"][0]
+        self.assertEqual((cue["gain_db"], cue["rack"], cue["riser_peak_s"]), (-5, {"wet": .12}, 5.4))
+        self.assertEqual((cue["role"], cue["contexts"]), ("combat", ["combat"]))
+        self.assertEqual(result["events"], {"custom": ["keep"], "intensity_transition_riser": ["keep"]})
+        self.assertEqual(receipt["retired_cue_ids"], ["gone", "unused"])
+
+    def test_named_effect_registry_is_literal_and_solar_loops_remain_finite_events(self):
+        entries = [{"id": str(i), "role": "effect", "source_path": "effects/" + name} for i, name in enumerate([
+            "PHOTAY_snare_marble_splash_cigarette_pickup.wav", "hammer_pickup2.wav",
+            "trigger_pull_not_loaded.wav", "PHOTAY_bass_dull_stopped_impact.wav", "ordinary_texture.wav"])]
+        events = named_effect_events(entries)
+        self.assertEqual(events, {"cigarette_pickup": ["0"], "hammer_pickup": ["1"],
+                                 "trigger_pull_not_loaded": ["2"], "impact_stopped": ["3"]})
+        a = asset(role="stinger", name="sunrise/sunrise_loop.wav")
+        policy = suggest(a, measured(18))
+        self.assertTrue(a["explicit_filename_loop"])
+        self.assertTrue(a["loop"]["enabled"])
+        self.assertFalse(policy["loop"])
+        self.assertEqual(policy["envelope"]["duration_s"], 18)
+
+    def test_music_only_refresh_preserves_authored_clear_rack_gain_and_events(self):
+        import copy
+        assets = [{"id": "a", "source_path": "renamed.wav", "historical_source_paths": ["old_120_Am.wav"]},
+                  {"id": "b", "source_path": "D_-_Night.wav"}]
+        proposal = {"cues": [{"asset": "a", "gain_db": 0, "loop": False}, {"asset": "b"}], "events": {"x": ["a"]}}
+        current = copy.deepcopy(proposal)
+        current["cues"][0].update(musical_key=None, gain_db=-5, rack={"wet": .12})
+        policy = {"cues": [{"id": a["id"], "envelope": {"duration_s": 10}} for a in assets]}
+        result = refresh({"assets": assets}, policy, proposal, current)
+        self.assertEqual(result[0]["assets"][0]["musical_key"], "A minor")
+        self.assertEqual(result[3]["cues"][0]["bpm"], 120)
+        self.assertIsNone(result[3]["cues"][0]["musical_key"])
+        self.assertEqual(result[3]["cues"][0]["gain_db"], -5)
+        self.assertEqual(result[3]["cues"][0]["rack"], {"wet": .12})
+        self.assertNotIn("musical_key", result[2]["cues"][1])
+        self.assertEqual(result[2]["cues"][1]["musical_metadata"]["key"]["tonic"], "D")
+        self.assertEqual(result[3]["events"], current["events"])
+
     def test_streamed_quarter_seconds_retain_real_level_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "decay.wav"
@@ -119,9 +203,9 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(dusk["solar_events"], ["dusk"])
         self.assertNotIn("sunset", dusk["solar_events"])
 
-    def test_approved_impact_riser_timing_follows_content_not_generic_name(self):
+    def test_approved_transition_riser_timing_follows_content_not_generic_name(self):
         a = asset(role="threat", name="suspense/renamed.wav")
-        a["id"] = IMPACT_RISER_ID
+        a["id"] = TRANSITION_RISER_ID
         a["role_aliases"] = ["threat"]
         cue = suggest(a, measured(10.5))
         self.assertEqual(cue["role"], "stinger")

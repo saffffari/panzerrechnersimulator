@@ -1,10 +1,15 @@
 # Owned audio library catalog — 2026-10-02
 
+**Current sorted snapshot:** 158 files / 151 unique identities / 137 enabled cues;
+six scenes, two unused identities and six explicitly deferred effects remain disabled. See
+[the completed sorted import and validation](SORTED_AUDIO_LIBRARY_20261002.md).
+The smaller counts below describe earlier catalog/import milestones.
+
 The user explicitly authorizes these owned Splice samples for use in the game. This records
 that declaration; it is not an independent review of license documents or source identity.
 Originals remain unchanged under `/home/alex/panzer/panzer_sounds`.
 
-The latest stable full-source inventory contains 163 PCM WAV files, 1,017,526,458 bytes, reduced by exact file
+The earlier full-source inventory contained 163 PCM WAV files, 1,017,526,458 bytes, reduced by exact file
 SHA-256 to 155 distinct assets and eight duplicate aliases. This is byte identity, not a claim
 that differently packaged recordings are perceptually distinct. All files decoded successfully.
 No sample has been represented as listened to or subjectively approved by this catalog pass.
@@ -279,29 +284,73 @@ Twenty-two Python metadata tests pass. Original hashes and the new playback hash
 were verified, without a listening claim, broad rescan, Cargo, or GPU work.
 Receipt: `artifacts/runtime/audio_library_dusk_validation_20261002.json`.
 
-## Occasional unnoticed-impact riser binding (2026-10-02)
+## Musical-intensity transition riser (2026-10-02)
 
-The already imported `suspense/riser_transition.wav`
-(`audio_4a383409ba81f8fd25d2ab1c`) now belongs only to finite `stinger`
-role and named event `unnoticed_impact_riser`; it is removed from the generic effect
-registry and has no continuous threat alias. The complete recording is 10.5 seconds.
-Its exact maximal absolute PCM sample is at 5.404943311 seconds; strongest 50 ms
+The imported `suspense/riser_transition.wav`
+(`audio_4a383409ba81f8fd25d2ab1c`) belongs only to finite neutral `stinger`
+role and named event `intensity_transition_riser`. It is excluded from the generic
+effect registry and continuous threat pool. Its complete recording is 10.5 seconds.
+The exact maximal absolute PCM sample is at 5.404943311 seconds; the strongest 50 ms
 RMS window is 5.40–5.45 seconds (center 5.425). These are numerical markers, not a
-listened/perceptually approved climax. The alternate imported `surprise_contact`
-starts energetic and has less useful build in its measured envelope.
+listened or perceptually approved climax.
 
-Approved config uses `riser_peak_s:5.404943`, `riser_lead_s:4.0`, 80 ms onset fade,
-and dry processing. A full preferred lead would start at source 1.404943 seconds;
-the complete natural tail after the marker lasts 5.095057 seconds. No source file
-is cut, time-stretched, or pitch-shifted. Content-specific policy generation retains
-these approved fields if the original filename later changes, without applying
-this peak to a different file with the same name.
+Config retains `riser_peak_s:5.404943`, `riser_lead_s:4.0`, 80 ms onset fade and
+dry processing. A full preferred lead starts at source 1.404943 seconds and the
+natural tail after the marker lasts 5.095057 seconds. No original or playback PCM
+is cut, stretched or pitch-shifted. Content-specific policy generation retains
+this measured timing across filename changes without assigning it to other audio.
 
-Runtime owns the occasional awareness/contact eligibility, scheduling and any
-release when a predicted hit is invalidated. An actual-impact callback alone cannot
-retroactively play the lead; alignment must be measured against actual contact.
-This is a score accent and does not modify physical reports, impacts or damage.
-All other 72 cue dictionaries, earlier event lists and eight existing tail racks
-are unchanged. Twenty-three Python metadata tests pass; no Cargo/GPU playback or
-listening was performed. Evidence: `artifacts/runtime/audio_library_riser_timing_20261002.json`
-and `artifacts/runtime/audio_library_riser_binding_validation_20261002.json`.
+The musical programme may use this cue when moving into higher intensity, with
+the following musical phrase scheduled against its marker. Enemy awareness, gun
+fire and physical impacts do not trigger or synchronize the cue. The earlier
+impact-synchronization proposal is withdrawn; old diagnostic receipts are retained
+only as historical numerical evidence, not current runtime behavior. The current
+policy is `catalog/soundscape_transition_riser_policy_20261002.json`.
+
+All 73 cue dictionaries, existing gains and eight tail racks are unchanged by this
+semantic revision. Only the named event and its authoring explanation changed.
+Twenty-three Python metadata tests pass. No Cargo, GPU capture, listening, source
+rescan or original-file modification was performed in this lane. Timing evidence
+remains `artifacts/runtime/audio_library_riser_timing_20261002.json`; the transition
+receipt is `artifacts/runtime/audio_library_transition_riser_validation_20261002.json`.
+
+## Filename BPM and key preservation (2026-10-02)
+
+A metadata-only refresh of the frozen 155-content catalog found 49 declared BPM
+labels and 14 complete major/minor keys. Another 61 files carry only a tonic;
+80 have no key label. The 73 active cues contain 13 declared BPM values, 2 complete
+keys, 40 tonic-only hints and 31 unknown keys. No actual alias conflicts were
+found. These are explicit filename declarations, including conventional vendor
+`drm110`/`fxlp120` and standalone tempo tokens; no tempo, pitch or mode has been
+inferred from the waveform or verified by listening.
+
+`musical_key` is a canonical complete string such as `C# minor`, or null.
+`musical_metadata` records certainty, each exact filename token and source path,
+and whether it is current, a duplicate alias or a same-content historical name.
+A bare `D` is `key.status:"tonic_only"`, `tonic:"D"`, `mode:null`; it never means
+D major. Missing labels remain unknown. Conflicting BPM values, pitch classes or
+explicit modes resolve to null with a conflict receipt, not whichever filename
+happens to come first. Enharmonic spellings of the same declared key agree.
+
+Same-content historical names restore musical labels after descriptive renames:
+`surprise_contact.wav` retains 100 BPM/E minor from `oe_bs100_haunted_Em.wav`;
+`combat_drum_loop.wav`, `combat_start.wav` and `electro_loop.wav` recover 125,
+148 and 110 BPM respectively. Arbitrary embedded vendor numbers such as `P73`
+are not tempos; the affected inactive sample resolves its actual `_120_` label.
+Future imports preserve rename evidence only when the full content SHA-256 agrees.
+
+Runtime proposals omit the `musical_key` field for partial or unknown keys and
+carry their provenance separately. An explicitly authored binding
+`musical_key:null` therefore remains a deliberate clear. A three-way refresh
+preserves authored BPM/key overrides, all 73 existing playback settings, eight
+ending-only tail racks and all event lists. No samples, periods, gains or fades
+were changed by this refresh. Key/BPM compatibility is a separate runtime concern;
+these labels do not authorize pitch shifting, time stretching or inferred modes.
+
+`PYTHONPATH=tools python tools/refresh_soundscape_musical_metadata.py` repeats the
+metadata-only operation from the saved manifest, without scanning the live source
+folder or decoding audio. Twenty-nine Python regressions pass, including decimal
+BPM, vendor prefixes, enharmonic agreement, conflicts, rename hashes and preserving
+an authored null key alongside rack/gain overrides. Evidence:
+`artifacts/runtime/audio_library_musical_metadata_validation_20261002.json` and
+`artifacts/runtime/audio_library_musical_metadata_tests_20261002.log`.

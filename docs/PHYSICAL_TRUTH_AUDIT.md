@@ -663,3 +663,19 @@ raster medium, physical smoke density, source-to-surface extinction uniform, par
 fine-grain attenuation. Source-derived air domains and geometry visibility are retained. This
 restores the accepted cabin density; it does not brighten emitters or suppress outdoor fog
 through apertures. Native consolidated review remains required.
+
+### 2026-10-02 personal hand-prop source boundary
+
+The cigarette/packet/lighter/flashlight implementation reuses existing Pizza source
+meshes. `docs/HAND_PROPS_SOURCE_20261002.md` records the authored physical scale,
+source-derived packet opening, source-atlas triangle lens partition, shared lighter
+point-light anchor and held-item hardware-TLAS exclusion. Cigarette shortening
+clips the burning ring and UVs, preserving filter position and radius. Ember is an
+emissive cap with negligible remote illumination omitted; no GI claim is made.
+The existing geometry shadow-map path remains authoritative for the lighter and
+flashlight. Eight source/pose CPU checks and all15 native cigarette ritual mechanics
+checks pass. Cabin stills remain visually unresolved: the props' camera-facing
+surfaces are too dark to read. Texture/normal import checks found no source fault;
+the forward path omits reflected practical-light bounce. No fill/emission/shadow
+exception was added. A daylight material check and future cabin-light transport
+refinement remain separate acceptance work, as recorded in the hand-prop note.

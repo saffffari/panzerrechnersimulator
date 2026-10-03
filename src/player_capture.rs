@@ -2,6 +2,23 @@
 //! They do not move actors, reload ammunition, aim the gun or alter combat.
 use super::*;
 impl Game {
+    /// Disclosed initial review placement with fresh ordinary perception, unlike the older
+    /// showreel helper that explicitly engages every enemy before the simulation starts.
+    pub fn capture_stage_t34s(&mut self,positions:&[Vec2])->Vec<usize> {
+        let active=self.stage_showreel_t34_wave_at_positions(positions);
+        self.stealth=stealth::Stealth::new(self.enemies.len());
+        active
+    }
+    /// Device-free capture only: decode chosen assets on demand, without wall-clock load races.
+    /// Selection, source envelopes and the ordinary mixer are unchanged.
+    pub fn prepare_capture_soundscape(&self, seed:u64)->anyhow::Result<()> {
+        self.audio.as_ref().ok_or_else(||anyhow::anyhow!("capture audio is missing"))?
+            .prepare_soundscape_review(seed)
+    }
+    pub fn capture_enemy_active(&self,index:usize)->bool {self.enemy_active.get(index).copied().unwrap_or(false)}
+    pub fn capture_soundscape_receipt(&self)->serde_json::Value {
+        self.audio.as_ref().map_or(serde_json::Value::Null,|a|a.soundscape_snapshot())
+    }
     pub fn capture_gun_mechanism(&self) -> serde_json::Value {
         serde_json::json!({"gun_pitch_rad":self.player.gun_pitch,
             "turret_yaw_rad":self.player.turret_yaw,

@@ -191,7 +191,7 @@ impl Game {
                     } else { 0.0 };
                     let cosine = (-projectile.velocity.normalize_or_zero())
                         .dot(armor.world_normal).abs().clamp(0.02, 1.0);
-                    let sound = crate::acoustics::synth_mg_armor_hit(ImpactParams {
+                    let mut sound = crate::acoustics::synth_mg_armor_hit(ImpactParams {
                         shell: ShellClass::Mg, caliber_mm: projectile.shell.caliber_mm,
                         mass_kg: projectile.shell.mass_kg, velocity: projectile.velocity.length(),
                         plate_thickness_mm: thickness, effective_mm: thickness / cosine,
@@ -200,6 +200,7 @@ impl Game {
                         bearing_deg: bearing, station_dist_m: if structure_borne { distance } else { 1.0 },
                         seed: projectile.seed,
                     });
+                    if let Some(audio)=&self.audio {audio.blend_named_light_armor(&mut sound,bearing);}
                     if structure_borne {
                         // Structure-borne arrival is effectively immediate inside the struck hull.
                         // SL §5: 120-140 dB per hit beside the plate, from the bullet's energy,
@@ -335,6 +336,29 @@ pub(super) fn vehicle_contact(tank: &Tank, vehicle: ProjectileVehicle,
 mod tests {
     use super::*;
     #[test]
+    fn small_arm_partial_birth_tick_survives_until_actual_range_budget() {
+        use crate::infantry_combat::{Shot, Team, Weapon};
+        for first_dt in [0.00000048, PROJECTILE_FIXED_DT * 0.25, PROJECTILE_FIXED_DT] {
+            let shell=profiles::profile(Weapon::MachineGun,Team::German);
+            let mut p=AuthoritativeProjectile::new(1,ProjectileShooter::Player,shell,Vec3::ZERO,Vec3::Z,1);
+            p.small_arm=Some(small_arms_runtime::Payload {emitted_at_s:0.0,
+                shot:Shot {shooter:u32::MAX,team:Team::German,origin:Vec3::ZERO,
+                    direction:Vec3::Z,range:120.0,weapon:Weapon::MachineGun},
+                damage:20.0,tracer:true,round:1,mixed:false,telemetry:None});
+            p.commit_step(p.swept_step(first_dt));
+            assert!(!p.range_expired(120.0),"fractional birth must not retire a live bullet");
+            for _ in 0..200 {
+                if p.range_expired(120.0) {break;}
+                let dt=PROJECTILE_FIXED_DT.min((shell.time_of_flight(120.0)-p.age_s).max(0.0));
+                p.commit_step(p.swept_step(dt));
+            }
+            assert!(p.range_expired(120.0));
+            assert!((p.distance_m-120.0).abs()<0.01);
+            assert!((p.age_s-shell.time_of_flight(120.0)).abs()<0.00002);
+        }
+    }
+
+    #[test]
     fn source_cupola_closed_armor_wins_and_open_exposed_body_is_reachable() -> anyhow::Result<()> {
         let(parts,_,_,_,_,_,_,_)=tiger_hatches::load_player_tiger()?;
         let lid=crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hatch.glb")?;
@@ -420,32 +444,38 @@ mod tests {
         g.mixed_combat.actors.push(crate::infantry_combat::Combatant::new(0,Team::Soviet,body,0.0));
         let shot=Shot { shooter:PLAYER,team:Team::German,origin,direction:Vec3::Z,
             range:100.0,weapon:Weapon::MachineGun };
-        let reset=|g:&mut Game| {
+        // Production update advances the simulation/audio clock before ballistic sweeps.
+        // This isolated fixture must advance that same clock instead of holding it at zero.
+        let advance=|g:&mut Game,r:&mut Renderer,dt:f32| {
+            r.time+=dt;g.enemy_report_audit.clock_s=r.time;g.advance_projectiles(dt,r);
+        };
+        let reset=|g:&mut Game,r:&mut Renderer| {
+            r.time=0.0;g.enemy_report_audit.clock_s=0.0;
             g.projectiles.clear();g.projectile_accumulator_s=0.0;
             g.soldiers[0].alive=true;g.soldiers[0].pos=body;
             g.mixed_combat.actors[0].hp=100.0;
             g.mixed_combat.actors[0].pos=body;
         };
-        reset(&mut g);
+        reset(&mut g,&mut r);
         g.launch_small_arm(shot,100.0,false,None);
         assert!(g.soldiers[0].alive,"trigger time must not deal damage");
-        g.advance_projectiles(0.02,&mut r);
+        advance(&mut g,&mut r,0.02);
         assert!(g.soldiers[0].alive,"bullet is still short of the target");
-        g.advance_projectiles(0.06,&mut r);
+        advance(&mut g,&mut r,0.06);
         assert!(!g.soldiers[0].alive,"swept contact must apply terminal damage");
 
-        reset(&mut g);
+        reset(&mut g,&mut r);
         g.story_cover.push((Vec3::new(19.0,floor,19.995),Vec3::new(21.0,floor+2.0,20.005)));
         g.launch_small_arm(shot,100.0,false,None);
-        g.advance_projectiles(0.10,&mut r);
+        advance(&mut g,&mut r,0.10);
         assert!(g.soldiers[0].alive,"a thin wall must block the swept bullet");
         assert!(g.projectiles.is_empty());
         g.story_cover.clear();
 
-        reset(&mut g);
+        reset(&mut g,&mut r);
         g.launch_small_arm(shot,100.0,false,None);
         g.soldiers[0].pos.x+=5.0;
-        g.advance_projectiles(0.20,&mut r);
+        advance(&mut g,&mut r,0.20);
         assert!(g.soldiers[0].alive,"a moving target is tested at flight time");
         assert!(g.projectiles.is_empty(),"flight retires at its range bound");
 

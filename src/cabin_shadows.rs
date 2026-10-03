@@ -10,7 +10,8 @@ pub const COMBAT_LIGHTS: usize = 8;
 pub const INTERIOR_FIRE_LIGHTS: usize = 8;
 const INTERIOR_FIRE_START: usize = CABIN_LIGHTS + WORLD_FIRE_LIGHTS + COMBAT_LIGHTS;
 const TORCH_SLOT: usize = INTERIOR_FIRE_START + INTERIOR_FIRE_LIGHTS;
-const REGISTRATION_SLOTS: usize = TORCH_SLOT + 1;
+const LIGHTER_SLOT: usize = TORCH_SLOT + 1;
+const REGISTRATION_SLOTS: usize = LIGHTER_SLOT + 1;
 pub const MAX_LIGHTS: usize = N_LIGHTS;
 const SIDE: u32 = 512;
 // The smaller dome sits 14 mm below the source fan. A 35 mm near plane erased that blocker.
@@ -376,6 +377,15 @@ impl CabinShadows {
         self.torch_direction = direction.normalize_or_zero();
     }
 
+    fn set_lighter(&self, light: Option<PointLight>, emitter: Option<usize>) {
+        // The point source lies inside its visible flame. Exempt only that source mesh;
+        // the lighter body, held items, crew and armor remain ordinary shadow casters.
+        match light {
+            Some(light) => self.set_range(LIGHTER_SLOT, 1, &[light], &[emitter]),
+            None => self.set_range(LIGHTER_SLOT, 1, &[], &[]),
+        }
+    }
+
     fn set_dynamic_meshes(&mut self, meshes: &[usize]) {
         self.dynamic_meshes.clear();
         self.dynamic_meshes.extend_from_slice(meshes);
@@ -621,6 +631,10 @@ fn copy_cached_depth_face(encoder: &mut wgpu::CommandEncoder, source: &wgpu::Tex
 }
 
 impl Renderer {
+    pub fn set_hand_lighter(&mut self, light: Option<PointLight>, emitter: Option<usize>) {
+        self.cabin_shadows.set_lighter(light, emitter);
+    }
+
     pub fn set_hand_torch(&mut self, light: Option<PointLight>, direction: glam::Vec3, lens: usize) {
         self.cabin_shadows.set_torch(light,direction,lens);
     }
@@ -802,6 +816,30 @@ mod tests {
         assert!(emitters[INTERIOR_FIRE_START..TORCH_SLOT].iter().all(Option::is_none));
         assert_eq!(lights[TORCH_SLOT].pos.x,4.0);
         assert_eq!(lights[CABIN_LIGHTS].pos.x,2.0);
+    }
+
+    #[test]
+    fn lighter_registration_exempts_only_its_flame_and_preserves_torch() {
+        let light = |x| PointLight { pos:glam::Vec3::new(x, 1.0, 0.0), source_radius:0.002,
+            color:glam::Vec3::ONE, radiant_intensity:0.00025 };
+        let mut lights = Vec::new();
+        let mut emitters = Vec::new();
+        set_registration_range(&mut lights, &mut emitters, TORCH_SLOT, 1, &[light(1.0)], &[Some(17)]);
+        set_registration_range(&mut lights, &mut emitters, LIGHTER_SLOT, 1, &[light(2.0)], &[Some(29)]);
+        set_registration_range(&mut lights, &mut emitters, 0, CABIN_LIGHTS, &[light(3.0)], &[Some(7)]);
+        assert!(!casts_for_fixture(29, emitters[LIGHTER_SLOT]));
+        for other_caster in [7, 17, 28, 30] {
+            assert!(casts_for_fixture(other_caster, emitters[LIGHTER_SLOT]));
+        }
+        assert_eq!(lights[TORCH_SLOT].pos.x, 1.0);
+        assert_eq!(emitters[TORCH_SLOT], Some(17));
+        set_registration_range(&mut lights, &mut emitters, LIGHTER_SLOT, 1, &[], &[]);
+        assert!(!active_fixture(&lights[LIGHTER_SLOT]));
+        assert_eq!(emitters[LIGHTER_SLOT], None);
+        assert_eq!(lights[TORCH_SLOT].pos.x, 1.0);
+        assert_eq!(emitters[TORCH_SLOT], Some(17));
+        assert_eq!(lights[0].pos.x, 3.0);
+        assert_eq!(emitters[0], Some(7));
     }
 
     #[test]

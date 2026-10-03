@@ -1,4 +1,4 @@
-//! Fictional memorial identity and audio-clock presentation for the scored death sequence.
+//! Fictional memorial identity and terminal-clock reveal and audio-completion presentation for the scored death sequence.
 //! This module describes presentation only; it cannot change a campaign death or retry.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,17 +90,21 @@ impl Presentation {
         })
     }
 
-    /// The playback clock reveals the identity; only audio completion releases the screen.
-    /// Missing clock data holds black instead of falling back to an unrelated wall-clock timer.
-    pub fn phase(self, audio_elapsed_s: Option<f32>, audio_finished: bool) -> Phase {
-        if audio_finished {
+    /// Preserve the former midpoint delay relative to fatal entry, even though the cue
+    /// now begins at text reveal. The stopped audio clock cannot drive this deadline.
+    pub fn reveal_at_s(self) -> f32 { self.duration_s * 0.5 }
+
+    pub fn phase(self, terminal_elapsed_s: f32, audio_elapsed_s: Option<f32>, audio_finished: bool) -> Phase {
+        let started = audio_elapsed_s.is_some_and(|t| t.is_finite() && t >= 0.0);
+        if started && audio_finished {
             Phase::Finished
-        } else if audio_elapsed_s.is_some_and(|t| t.is_finite() && t >= self.duration_s * 0.5) {
+        } else if started || (terminal_elapsed_s.is_finite() && terminal_elapsed_s >= self.reveal_at_s()) {
             Phase::Identity
         } else {
             Phase::Black
         }
     }
+
 }
 
 #[cfg(test)]
@@ -132,26 +136,29 @@ mod tests {
     }
 
     #[test]
-    fn halfway_reveal_uses_audio_time_and_waits_for_actual_completion() {
+    fn reveal_preserves_midpoint_delay_without_waiting_for_stopped_audio() {
         let card = Presentation::new(3, 1943, 36.0).unwrap();
-        assert_eq!(card.phase(Some(0.0), false), Phase::Black);
-        assert_eq!(card.phase(Some(17.999), false), Phase::Black);
-        assert_eq!(card.phase(Some(18.0), false), Phase::Identity);
-        assert_eq!(card.phase(Some(36.0), false), Phase::Identity);
-        assert_eq!(card.phase(Some(300.0), false), Phase::Identity);
-        assert_eq!(card.phase(Some(36.0), true), Phase::Finished);
-        assert_eq!(card.phase(None, true), Phase::Finished);
+        assert_eq!(card.reveal_at_s(), 18.0);
+        assert_eq!(card.phase(0.0, None, true), Phase::Black);
+        assert_eq!(card.phase(17.999, None, false), Phase::Black);
+        assert_eq!(card.phase(18.0, None, false), Phase::Identity);
+        assert_eq!(card.phase(300.0, None, true), Phase::Identity,
+            "a missing first presented frame cannot complete an unstarted cue");
+        assert_eq!(card.phase(18.0, Some(0.0), false), Phase::Identity);
+        assert_eq!(card.phase(54.0, Some(36.0), false), Phase::Identity,
+            "the entire source and buffered output must finish before release");
+        assert_eq!(card.phase(54.1, Some(36.0), true), Phase::Finished);
     }
 
     #[test]
-    fn missing_or_paused_clock_cannot_advance_the_card() {
+    fn paused_or_missing_playback_cannot_skip_the_full_chord() {
         let card = Presentation::new(8, 1944, 4.0).unwrap();
         for _ in 0..100 {
-            assert_eq!(card.phase(Some(1.0), false), Phase::Black);
-            assert_eq!(card.phase(None, false), Phase::Black);
+            assert_eq!(card.phase(1.0, None, false), Phase::Black);
+            assert_eq!(card.phase(100.0, Some(1.0), false), Phase::Identity);
         }
         for elapsed in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
-            assert_eq!(card.phase(Some(elapsed), false), Phase::Black);
+            assert_eq!(card.phase(elapsed, None, false), Phase::Black);
         }
         for duration in [0.0, -1.0, f32::NAN, f32::INFINITY] {
             assert!(Presentation::new(0, 1943, duration).is_none());

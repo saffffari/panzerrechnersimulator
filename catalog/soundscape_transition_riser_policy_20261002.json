@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "status": "binding_approved_and_saved; runtime implementation owned separately",
+  "status": "musical-intensity-transition binding approved and saved; runtime implementation owned separately",
   "listened": false,
   "originals_modified": false,
   "runtime_config_modified": true,
   "candidate_id": "audio_4a383409ba81f8fd25d2ab1c",
   "source_path": "suspense/riser_transition.wav",
-  "proposed_event": "unnoticed_impact_riser",
+  "proposed_event": "intensity_transition_riser",
   "event_name_requires_runtime_coordination": false,
   "playback_sample_rate_hz": 44100,
   "peak_frame": 239242,
@@ -45,11 +45,11 @@
     }
   ],
   "runtime_requirements": [
-    "Occasional weighted selection/cooldown belongs to actual source state and player awareness, not broad automatic enemy detection.",
-    "Lead can only be forecast before contact; cancel or release when authoritative projectile/occlusion state invalidates the predicted hit.",
-    "An impact callback cannot retroactively align a pre-impact lead; record predicted and actual marker/contact times and do not claim exact synchrony without a measured tolerance.",
-    "Preserve existing physical weapon/impact sounds; this cue is a score accent with no implied world emitter or damage effect.",
-    "Do not start an already-loud late excerpt as a substitute when lead budget is insufficient; skip that occurrence or use a separately authored transient."
+    "Optional neutral score stinger for a selected higher-musical-intensity programme transition.",
+    "Schedule the next musical phrase against the retained source sample marker; no weapon, enemy, projectile, contact or damage event controls this cue.",
+    "The finite excerpt keeps normal playback rate,80ms onset fade and the complete recorded natural tail.",
+    "Record source-marker versus actual musical handoff time; do not claim sample-exact output synchronization without a rendered-audio measurement.",
+    "This cue is a nonliteral score accent, with no implied world emitter or physical change."
   ],
   "other_imported_candidate": {
     "id": "audio_de42714f61b5b1f972d9df28",
@@ -59,7 +59,7 @@
   },
   "evidence": "artifacts/runtime/audio_library_riser_timing_20261002.json",
   "approved_binding": {
-    "event": "unnoticed_impact_riser",
+    "event": "intensity_transition_riser",
     "asset": "audio_4a383409ba81f8fd25d2ab1c",
     "role": "stinger",
     "riser_peak_s": 5.404943,
@@ -72,5 +72,8 @@
       "wet": 0.0
     }
   },
-  "preferred_runtime_marker_basis": "exact maximum absolute PCM sample at5.404943310657597s, rounded to6decimal seconds in config; earlier envelope markers remain measurement evidence only"
+  "preferred_runtime_marker_basis": "exact maximum absolute PCM sample at5.404943310657597s, rounded to6decimal seconds in config; earlier envelope markers remain measurement evidence only",
+  "transition_direction": "higher_musical_intensity",
+  "source_measurements_unchanged": true,
+  "supersedes": "Earlier impact-synchronization proposal is withdrawn; numerical PCM observations remain valid."
 }

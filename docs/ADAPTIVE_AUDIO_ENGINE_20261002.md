@@ -55,8 +55,10 @@ All new voices enter the existing floating-point Audio mixer and common final li
 beds follow the listener's hearing stage. Nondiegetic music has its own bus, still obeying master
 volume, listener fade, pause and sample-exact KIA gating. The explicit death cue is the sole
 exception: it enters the same final limiter through a dedicated terminal mixer, continuing over
-black until its natural end. At its audio midpoint, a bold white DU BIST GEFALLEN card displays
-a deterministic fictional German name and plausible birth/death years. Ordinary battlefield
+black until its natural end. The cue is prepared silently at fatal entry. The original reveal delay
+(half the chosen cue duration) then displays a bold white DU BIST GEFALLEN card with a deterministic
+fictional German name and plausible birth/death years; that first presented text frame starts the
+full heavenly cue. Completion waits for the actual source, effect tail and shared output lookahead. Ordinary battlefield
 audio is removed sample-exactly, including buffered lookahead. Pausing freezes cue phase. Independent
 master smoothing affects events and outgoing fades as well as steady loops.
 
@@ -136,14 +138,12 @@ Release receipt: `artifacts/runtime/adaptive_audio_release_20261002.json`. New f
 source folders after their inventory still require catalog/import; there is no filesystem watcher.
 
 
-## Occasional incoming-shell risers (2026-10-02)
+## Musical intensity bridges (2026-10-02, revised after listening)
 
-The licensed `suspense/riser_transition.wav` is now a finite score accent, separate from physical gunshot and impact audio. Its measured sample peak is at 5.404943 s. A normal-speed excerpt supplies 1.5–4 seconds of build, followed by the recording's natural tail. This does not time-stretch or pitch-shift the source.
+Incoming-hit risers were rejected in listening review and removed, including all enemy readiness, camera-awareness and trajectory probes. The recording now belongs to `intensity_transition_riser`: optional musical bridges when the chosen score moves from calm/driving/music to suspense, or from suspense to combat. No projectile can trigger or retime this cue. Existing actual-contact combat eligibility and the player's immediate main-gun transition remain intact.
 
-A currently laid enemy tank or engaging AT crew with at most four seconds until readiness can offer a cue only when a read-only ballistic forecast intersects the player's moving tank. Camera frustum, optical/world visibility and an eight-second recent-sighting memory conservatively approximate whether the player has noticed the source. This is a camera heuristic, not proof of player attention. The source gets one 20% selection attempt per firing cycle, with a shared randomized 60–150-second cooldown. Most attacks therefore have no cue. Rare free suspense phrases use the same recording independently of enemies, without inventing firing or impact sounds.
+The planner uses a restrained45% draw for eligible upward transitions, a45–95s cooldown, and a1.5–4s normal-speed excerpt ending at the source's measured5.404943s peak. The runtime preloads both cue and target track, reserves voice capacity, and schedules the target entry at the riser peak. A known outgoing BPM can move that boundary to the next bar without stretching or repitching either file. Separate sink admission can introduce small device-buffer timing skew; this is not a universal sample-perfect cross-source guarantee.
 
-On discharge the selection binds to the actual dispersed shell. Current geometry, wind, and constant-velocity Tiger prediction update the estimate at 5 Hz; turning, acceleration, moving cover and later collisions can invalidate it. These predictions do not change aim, firing, damage or projectile motion. Lost readiness and misses fade the accent over 0.8 s. Actual collision alone confirms a hit and independently triggers the existing physical impact path.
+Confirmed same/relative major-minor keys and matching, half-time or double-time BPM within2% allow short musical overlap. Known-compatible candidates are preferred within the requested role. Missing/partial/conflicting labels are not guessed. Unknown or mismatched beds use a clean handover; if the riser itself is incompatible/unknown, the old bed leaves before the build and the riser takes a short120ms exit into the destination instead of a long tonal tail. Compatible natural tails can ring into the new track. These are metadata-based relationships, not analyzed beat-grid or arrangement guarantees; file-origin bar phase still needs listening/authored offsets.
 
-The audio sample clock places the authored peak at the predicted deadline. Forecast corrections use a 10 ms crossfaded source-phase adjustment, without changing playback rate. Early actual contact can finish that correction in 10 ms; a peak already played is never rewound or repeated. At completion its natural tail eases to32% gain over120ms, leaving room for the factual armor strike without changing physical source calibration; free suspense uses the same release. Native frame timing, device buffering and late predictions prevent a universal sample-exact synchronization claim. The score still obeys pause, master level, voice limits and the ordinary death cut; it cannot invoke terminal/death audio.
-
-Review fixtures are staged through the ordinary Audio sinks/master. They demonstrate selected hit, canceled miss, uncued hit and independent suspense. They are not gameplay recordings or subjective listening acceptance.
+The outgoing loop continues silently at its existing phase while a bridge is pending, so a changed context can restore it. Changing the target ID or role cancels a queued track before it plays. The main-gun cue immediately interrupts the bridge and keeps its existing35ms transition. Environmental and physical sound layers continue independently. All scheduling obeys pause and the shared master/death rules.

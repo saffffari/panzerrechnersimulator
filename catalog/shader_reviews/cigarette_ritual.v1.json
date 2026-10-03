@@ -1,0 +1,152 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "cigarette_ritual_v1",
+  "title": "Cigarette: finite packet, lighter held, puff, retreating ember and exhale",
+  "act_id": 2,
+  "night": false,
+  "station": "loader",
+  "seconds": 20,
+  "native_output": true,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "playtest": true,
+    "player_xz": [
+      0,
+      180
+    ],
+    "player_heading_deg": 180
+  },
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "mechanics": [
+    "finite_cigarette",
+    "held_lighter",
+    "ignition",
+    "puff",
+    "tip_burn",
+    "exhale",
+    "stow"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.5,
+      "action": "cigarette"
+    },
+    {
+      "from_s": 2,
+      "until_s": 4,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "from_s": 3.25,
+      "until_s": 3.35,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 5,
+      "until_s": 5.1,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 9,
+      "until_s": 9.1,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 13,
+      "until_s": 13.1,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 17,
+      "action": "cigarette"
+    },
+    {
+      "at_s": 19,
+      "action": "stow_hand_item"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "hand_pack_count",
+      "at_s": 1,
+      "equals": 19
+    },
+    {
+      "metric": "hand_drawn",
+      "equals": 1
+    },
+    {
+      "metric": "hand_total_unconsumed",
+      "equals": 20
+    },
+    {
+      "metric": "hand_lit",
+      "at_s": 3,
+      "equals": false
+    },
+    {
+      "metric": "hand_lighter_flame",
+      "at_s": 3,
+      "equals": true
+    },
+    {
+      "metric": "hand_lit",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "hand_lighter_flame",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "hand_puffs",
+      "equals": 3
+    },
+    {
+      "metric": "hand_exhale",
+      "at_s": 6,
+      "min_value": 0.05
+    },
+    {
+      "metric": "hand_burn_remaining",
+      "at_s": 16,
+      "max_value": 0.91,
+      "min_value": 0.6
+    },
+    {
+      "metric": "hand_lit",
+      "equals": false
+    },
+    {
+      "metric": "hand_equipped",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0,
+      "min_delta": 0
+    },
+    {
+      "metric": "mg_rounds",
+      "max_delta": 0,
+      "min_delta": 0
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "Only ordinary C/F/Q actions and native mouse input; no inventory, burn, smoke or health injected. Opponent fire held for this isolated mechanic inspection. mg_coax is the primary mouse field; aim is held RMB. C at17s inspects the same finite packet.",
+  "status": "scripted_pending_runtime_validation"
+}

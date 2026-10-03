@@ -2423,7 +2423,7 @@ pub fn draw_controls(r: &mut Renderer) {
     row(r, lk, 0.535, "LMB / MMB", "action / coax in gunner sight");
     row(r, lk, 0.580, "RMB / B", "focus or aim / binoculars");
     row(r, lk, 0.625, "Arrow keys", "gunner: traverse / elevation");
-    row(r, lk, 0.670, "V / L", "turret pistol / handheld torch");
+    row(r, lk, 0.670, "V / F", "turret pistol / held flashlight");
     row(r, lk, 0.715, "Z / Shift", "engine start-stop / foot sprint");
 
     // ── Right column: inside work + system ──
@@ -2438,8 +2438,8 @@ pub fn draw_controls(r: &mut Renderer) {
         r,
         rk,
         0.500,
-        "C / M",
-        "hand compass / map",
+        "C / Shift+C",
+        "cigarette / compass",
     );
     row(r, rk, 0.540, "1 / 2", "P08 / Panzerfaust");
     row(r, rk, 0.580, "R", "reload P08 / fresh tube");
@@ -2465,10 +2465,11 @@ pub fn draw_controls(r: &mut Renderer) {
         if crate::graphics::fixed_playtest_graphics() { "screenshot / pause" } else { "retro / shot / pause" },
     );
 
+    r.draw_text("C draw pack/cigarette · hold RMB lighter · LMB light/toke · E pick up · M map",0.5,0.755,0.024,COL_ITEM,Align::Center);
     r.draw_text_bold(
         "CONTROLLER  Xbox / PlayStation",
         0.5,
-        0.755,
+        0.790,
         0.028,
         COL_SUBTITLE,
         Align::Center,
@@ -2476,7 +2477,7 @@ pub fn draw_controls(r: &mut Renderer) {
     r.draw_text(
         "LS drive · RS look/aim · RT action/fire · LT focus · A interact · B back/throw/take over",
         0.5,
-        0.805,
+        0.825,
         0.026,
         COL_ITEM,
         Align::Center,
@@ -2484,7 +2485,7 @@ pub fn draw_controls(r: &mut Renderer) {
     r.draw_text(
         "Y tap head out / hold dismount · X reload/swap tube · D-pad L/R foot weapon · RB coax · View map",
         0.5,
-        0.845,
+        0.860,
         0.024,
         COL_ITEM,
         Align::Center,

@@ -20,6 +20,7 @@ import time
 import wave
 
 import numpy as np
+from soundscape_routing import assignment as runtime_assignment
 
 
 BLOCK_FRAMES = 65_536
@@ -165,23 +166,111 @@ def analyze(path: Path) -> tuple[dict, dict]:
 
 
 def filename_metadata(relative: str) -> dict:
-    stem = Path(relative).stem
-    clean = re.sub(r" \(\d+\)$", "", stem)
-    bpm_match = re.search(r"(?<!\d)([6-9]\d|1\d\d|2[0-4]\d)(?!\d)", clean)
-    # Ignore digits embedded in ordinary words; retain documented-looking vendor codes such as mus110.
-    bpm = int(bpm_match.group()) if bpm_match else None
-    note = re.search(r"(?:^|_)([A-G](?:#|b)?)(maj|min|m)?(?=_|$)", clean)
-    mode = {"maj": "major", "min": "minor", "m": "minor"}.get(note.group(2)) if note else None
+    """Parse declared filename labels, not acoustic tempo or harmonic content."""
+    clean = re.sub(r" \(\d+\)$", "", Path(relative).stem)
+    bpm_labels = []
+    patterns = [
+        r"(?<![A-Za-z0-9.])(?:bpm)[_ -]*(\d{2,3}(?:\.\d+)?)(?![A-Za-z0-9.])",
+        r"(?<![A-Za-z0-9.])(\d{2,3}(?:\.\d+)?)[_ -]*bpm(?![A-Za-z0-9.])",
+        r"(?<![A-Za-z0-9.])(?:mus|drm|fxlp|syn|top|bs|perc)(\d{2,3}(?:\.\d+)?)(?![A-Za-z0-9.])",
+        r"(?<![A-Za-z0-9.])(\d{2,3}(?:\.\d+)?)(?![A-Za-z0-9.])",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, clean, re.IGNORECASE):
+            value = float(match.group(1))
+            # Standalone numbers follow the existing vendor tempo convention. Explicit BPM
+            # labels can cover slower/faster tempos; sample indices and808 are not BPM.
+            explicit = 'bpm' in match.group().lower()
+            if not ((20 <= value <= 400) if explicit else (60 <= value <= 249)):
+                continue
+            label = {"value": int(value) if value.is_integer() else value, "token": match.group()}
+            if label not in bpm_labels:
+                bpm_labels.append(label)
+    key_labels = []
+    pattern = r"(?<![A-Za-z0-9])([A-G])([#b♯♭]?)(?:[_ -]*(major|minor|maj|min|m))?(?![A-Za-z0-9#♯♭])"
+    for match in re.finditer(pattern, clean, re.IGNORECASE):
+        mode_token = match.group(3)
+        # A lowercase standalone article is not a musical label. Explicit lowercase keys
+        # such as c#minor remain accepted, as do uppercase bare pitch-class labels.
+        if match.group(1).islower() and mode_token is None:
+            continue
+        tonic = match.group(1).upper() + match.group(2).lower().replace('♯', '#').replace('♭', 'b')
+        mode = ("major" if mode_token == "M" or mode_token and mode_token.lower() in {"maj", "major"}
+                else "minor" if mode_token else None)
+        label = {"tonic": tonic, "mode": mode, "token": match.group()}
+        if label not in key_labels:
+            key_labels.append(label)
+    bpms = sorted({x["value"] for x in bpm_labels})
+    bpm = bpms[0] if len(bpms) == 1 else None
+    resolved = resolve_key_labels(key_labels)
     return {
-        "bpm": {"value": bpm, "basis": "filename token only" if bpm else "not supplied",
-                "confidence": "inferred_unverified" if bpm else None,
-                "evidence": bpm_match.group() if bpm_match else None},
-        "key": {"tonic": note.group(1) if note else None, "mode": mode,
-                "basis": "filename note token only" if note else "not supplied",
-                "confidence": "inferred_unverified" if note else None,
-                "evidence": note.group() if note else None},
+        "bpm": {"value": bpm, "basis": "filename label only" if bpm_labels else "not supplied",
+                "confidence": "filename_label_unverified" if bpm is not None else None,
+                "evidence": bpm_labels[0]["token"] if bpm_labels else None, "labels": bpm_labels,
+                "conflict": len(bpms) > 1},
+        "key": {"tonic": resolved["tonic"], "mode": resolved["mode"],
+                "basis": "filename note label only" if key_labels else "not supplied",
+                "confidence": "filename_label_unverified" if resolved["tonic"] else None,
+                "evidence": key_labels[0]["token"] if key_labels else None, "labels": key_labels,
+                "conflict": resolved["conflict"]},
         "tempo_analyzed": False, "pitch_analyzed": False,
     }
+
+
+def resolve_key_labels(labels: list[dict]) -> dict:
+    pitch = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+    def pc(tonic):
+        return (pitch[tonic[0]] + (1 if tonic[1:] == '#' else -1 if tonic[1:] == 'b' else 0)) % 12
+    tonics = {pc(x["tonic"]) for x in labels}
+    modes = {x["mode"] for x in labels if x["mode"] is not None}
+    conflict = len(tonics) > 1 or len(modes) > 1
+    tonic = labels[0]["tonic"] if labels and not conflict else None
+    mode = next(iter(modes)) if len(modes) == 1 and not conflict else None
+    return {"tonic": tonic, "mode": mode, "conflict": conflict,
+            "musical_key": f"{tonic} {mode}" if tonic and mode else None}
+
+
+def apply_musical_metadata(asset: dict) -> None:
+    """Preserve labels across verified same-content renames; conflicting labels stay unknown."""
+    sources = list(dict.fromkeys([asset["source_path"], *asset.get("aliases", []),
+                                 *asset.get("historical_source_paths", [])]))
+    tempos, keys = [], []
+    for index, relative in enumerate(sources):
+        parsed = filename_metadata(relative)
+        source_kind = "current_filename" if index == 0 else "current_alias" if relative in asset.get("aliases", []) else "same_content_historical_filename"
+        for name, dest in [("bpm", tempos), ("key", keys)]:
+            dest.extend({**label, "source_path": relative, "source_kind": source_kind}
+                        for label in parsed[name]["labels"])
+    bpms = sorted({x["value"] for x in tempos})
+    bpm = bpms[0] if len(bpms) == 1 else None
+    resolved = resolve_key_labels(keys)
+    asset["filename_metadata"] = filename_metadata(asset["source_path"])
+    asset["bpm"] = bpm
+    asset["musical_key"] = resolved["musical_key"]
+    asset["key"] = (resolved["tonic"] + (" " + resolved["mode"] if resolved["mode"] else "")) if resolved["tonic"] else None
+    asset["musical_metadata"] = {
+        "version": 1, "tempo_analyzed": False, "pitch_analyzed": False,
+        "resolution": "unanimous filename labels across same-content paths; conflicts are unknown; bare notes never imply major/minor",
+        "bpm": {"value": bpm, "status": "conflict" if len(bpms) > 1 else "filename_label" if bpm is not None else "unknown",
+                "certainty": "filename_declared_unverified" if bpm is not None else None, "values": bpms, "sources": tempos},
+        "key": {**resolved, "status": "conflict" if resolved["conflict"] else "filename_key" if resolved["musical_key"] else "tonic_only" if resolved["tonic"] else "unknown",
+                "certainty": "filename_declared_unverified" if resolved["tonic"] else None, "sources": keys},
+    }
+
+
+def preserve_musical_history(result: dict, previous: dict) -> None:
+    previous_by_id = {a["id"]: a for a in previous.get("assets", [])}
+    for asset in result["assets"]:
+        old = previous_by_id.get(asset["id"])
+        if old and old.get("sha256") == asset.get("sha256"):
+            current = {asset["source_path"], *asset.get("aliases", [])}
+            paths = [*old.get("historical_source_paths", []), old["source_path"], *old.get("aliases", [])]
+            asset["historical_source_paths"] = list(dict.fromkeys(x for x in paths if x not in current))
+        apply_musical_metadata(asset)
+        if asset["bpm"] is not None and asset["loop"]["enabled"]:
+            asset["loop"]["crossfade_s"] = 0.0
+            asset["loop"]["crossfade_curve"] = None
+        apply_filename_loop_instruction(asset)
 
 
 def apply_filename_loop_instruction(asset: dict) -> None:
@@ -207,15 +296,74 @@ def apply_filename_loop_instruction(asset: dict) -> None:
         asset["loop"]["crossfade_curve"] = None
 
 
+def filename_usage(relative: str) -> dict:
+    """Explicit current filename intent only; historical musical labels cannot reopen a role."""
+    name = context_token(re.sub(r" \(\d+\)$", "", Path(relative).stem))
+    tokens = set(name.split("_"))
+    contexts = [tag for tag in ("night", "winter") if tag in tokens]
+    if "inside" in tokens and "tank" in tokens:
+        contexts.append("inside")
+    if "combat" in tokens:
+        contexts.append("combat")
+    roles = None
+    if Path(relative).parts[0].lower() == "music":
+        if "combat" in tokens:
+            roles = ["combat"]
+        elif "driving" in tokens:
+            roles = ["explore", "driving"] if "calm" in tokens else ["driving"]
+            if "calm" not in tokens:
+                contexts.append("driving")
+        elif "calm" in tokens:
+            roles = ["explore"]
+    return {"roles": roles, "contexts": contexts,
+            "basis": "explicit standalone current filename tokens; not inferred enemy awareness or acoustic analysis",
+            "unbound_descriptive_tokens": [tag for tag in ("lonelytank", "layer") if tag in tokens]}
+
+
+def apply_filename_usage(asset: dict) -> None:
+    """Reapply current source/alias folder intent to a saved full scan without rescanning PCM."""
+    assignments = [folder_assignment(path) for path in [asset["source_path"], *asset.get("aliases", [])]]
+    asset["folder_assignments"] = assignments
+    primary = assignments[0]
+    asset["role"] = primary["role"]
+    asset["contexts"] = primary["contexts"]
+    memberships = role_memberships(assignments)
+    for assignment in assignments:
+        if not assignment["default_enabled"]:
+            continue
+        for role in assignment["filename_usage"]["roles"] or []:
+            contexts = memberships["role_contexts"].setdefault(role, [])
+            if assignment["contexts"] not in contexts:
+                contexts.append(assignment["contexts"])
+    memberships["role_aliases"] = list(memberships["role_contexts"])
+    asset.update(memberships)
+    asset["filename_usage"] = primary["filename_usage"]
+    if primary["role"] in {"unused", "scene"}:
+        asset["default_enabled"] = False
+        asset["explicit_import_requested"] = False
+    assignment = runtime_assignment(asset["source_path"])
+    asset.pop("runtime_assignment", None)
+    if assignment:
+        asset["runtime_assignment"] = assignment
+        if assignment.get("enabled") is False:
+            asset["default_enabled"] = False
+            asset["explicit_import_requested"] = False
+
+
 def classify(relative: str) -> tuple[str, list[str], str]:
     lower = relative.lower()
     folder = lower.split("/")[0]
+    if folder == "unused":
+        return "unused", ["do_not_activate"], "user explicitly excluded this folder from playback"
     if folder == "engine_hiss" or re.search(r"(?:^|_)(?:broken_engine(?:_hiss)?|engine_hiss|hissbroken)(?:_|$)", Path(lower).stem):
         return "engine_hiss", ["vehicle", "engine_damage", "hiss"], "explicit user broken-engine hiss filename/folder assignment; trigger requires actual source damage state"
     if folder == "heavy_blizzard" or re.search(r"(?:^|_)heavy_blizzard(?:_|$)", Path(lower).stem):
         return "blizzard", ["weather", "heavy_blizzard"], "explicit user heavy-blizzard folder/filename assignment"
     if folder in FOLDER_ROLES:
         role = FOLDER_ROLES[folder]
+        intent = filename_usage(relative)
+        if intent["roles"]:
+            role = intent["roles"][0]
         tags = ["tank_cabin"] if role == "cabin" else [role, "user_selected_folder"]
         return role, tags, "user folder assignment"
     if folder in {"scene", "scenes"}:
@@ -246,9 +394,11 @@ def folder_assignment(relative: str) -> dict:
     parts = Path(relative).parts
     category = parts[0]
     role, _, basis = classify(relative)
+    intent = filename_usage(relative)
     return {"source_path": relative, "category_folder": category, "role": role,
             "contexts": list(dict.fromkeys(FOLDER_CONTEXTS.get(category, [])
-                + [context_token(p) for p in parts[1:-1] if context_token(p)])),
+                + [context_token(p) for p in parts[1:-1] if context_token(p)] + intent["contexts"])),
+            "filename_usage": intent,
             "default_enabled": category in FOLDER_ROLES, "basis": basis}
 
 
@@ -360,6 +510,12 @@ def catalog(source_root: Path, night_target_dbfs: float, peak_limit_dbfs: float,
                        "independent_license_document_verified": False},
         })
     for entry in assets:
+        apply_filename_usage(entry)
+        apply_musical_metadata(entry)
+        # Alias-provided tempo has the same exact-period requirement as a primary label.
+        if entry["bpm"] is not None and entry["loop"]["enabled"]:
+            entry["loop"]["crossfade_s"] = 0.0
+            entry["loop"]["crossfade_curve"] = None
         apply_filename_loop_instruction(entry)
     ids = [a["id"] for a in assets]
     if len(ids) != len(set(ids)):
@@ -472,6 +628,8 @@ def main() -> None:
             print(f"source changed; retrying complete snapshot ({attempt + 1}/3): {error}", file=sys.stderr)
             time.sleep(0.5)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if args.output.exists():
+        preserve_musical_history(result, json.loads(args.output.read_text()))
     import_enabled(result, args.output.parent, create_enabled=args.import_enabled)
     temporary = args.output.with_suffix(args.output.suffix + ".tmp")
     temporary.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")

@@ -359,6 +359,14 @@ impl Game {
     pub(super) fn take_toolbox(&mut self) -> bool {
         if !self.equipment_hands_free() { return false; }
         self.carrying_track_kit = true;
+        if let Some(audio)=&self.audio {
+            let level=crate::sound_levels::QUIET_HANDLING.laf_db;
+            let source=self.toolbox_model().transform_point3(Vec3::ZERO);
+            let bearing=bearing_deg_from(self.equipment_look,source-self.equipment_eye);
+            if !audio.play_named_control("hammer_pickup",level,self.listener_headset(),bearing) {
+                audio.play_at_ear(crate::audio::Sfx::Pickup,level);
+            }
+        }
         self.toolbox_rest = None;
         self.repair_hammer_t = 0.0;
         self.primary_pickup_press = true;
