@@ -809,32 +809,9 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
 // broader legacy support, while a precipitation-driven whiteout is a near-ground blowing-snow
 // layer: it remains deep enough to cover every Act-I ridge, but sunlight from the real environment
 // no longer crosses hundreds of metres of dense snow before reaching the battlefield.
-const WORLD_AEROSOL_BOTTOM_M: f32 = -128.0;
-const WORLD_AEROSOL_TOP_M: f32 = 256.0;
-const BLOWING_SNOW_TOP_M: f32 = 128.0;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct WorldMediumProfile {
-    snow_fraction: f32,
-    layer: [f32; 4],
-}
-
-fn world_medium_profile(precipitation: f32, storm: f32) -> WorldMediumProfile {
-    // This is the effective optical-composition fraction of the homogeneous bulk medium. Density
-    // remains `fog_density` (sigma_t), so changing composition/support cannot secretly extend the
-    // horizontal visibility range selected by the campaign profile.
-    let snow_fraction = precipitation.clamp(0.0, 1.0) * storm.clamp(0.0, 1.0);
-    // A smooth transition avoids an altitude discontinuity if future weather varies storm strength
-    // at runtime. A committed whiteout (Act I = 0.98) reaches the declared snow-layer ceiling.
-    let x = ((snow_fraction - 0.05) / (0.75 - 0.05)).clamp(0.0, 1.0);
-    let snow_layer_weight = x * x * (3.0 - 2.0 * x);
-    let layer_top =
-        WORLD_AEROSOL_TOP_M + (BLOWING_SNOW_TOP_M - WORLD_AEROSOL_TOP_M) * snow_layer_weight;
-    WorldMediumProfile {
-        snow_fraction,
-        layer: [WORLD_AEROSOL_BOTTOM_M, layer_top, 0.0, 0.0],
-    }
-}
+use crate::weather_visibility::{world_medium_profile,WorldMediumProfile};
+#[cfg(test)]
+use crate::weather_visibility::{WORLD_AEROSOL_BOTTOM_M,WORLD_AEROSOL_TOP_M,BLOWING_SNOW_TOP_M};
 
 /// Cone exposure a view holds before its eye has observed a frame: the observer's steady mapping
 /// for a 41 cd/m^2 scene (the former fixed calibration's mid-grey, EV100 8.4). The eye replaces
@@ -1088,7 +1065,7 @@ const PHYSICAL_ENVIRONMENT_SHADER_SOURCE: &str =
 const PHYSICAL_SNOW_LIBRARY_MARKER: &str =
     "// --- Persistent physical snow ---------------------------------------------------------------";
 #[path = "cabin_medium.rs"]
-mod cabin_medium;
+pub(crate) mod cabin_medium;
 #[path = "cabin_shadows.rs"]
 mod cabin_shadows;
 #[path = "sky_visibility.rs"]
@@ -5927,6 +5904,16 @@ impl Renderer {
             self.user_sky_phase = Some((phase,original));
         }
         self.reset_history();
+    }
+
+    /// Read-only gameplay snapshot of the exact optical medium uploaded to main view and ports.
+    pub(crate) fn weather_visibility(&self)->crate::weather_visibility::WeatherView {
+        let profile=world_medium_profile(self.precipitation,self.storm);
+        crate::weather_visibility::WeatherView {
+            sigma:self.fog_density.max(0.0),snow_fraction:profile.snow_fraction,
+            layer:[profile.layer[0],profile.layer[1]],offset:self.weather_offset,
+            cabin:self.cabin_medium.clone(),cabin_uniform:self.cabin_medium_uniform,
+        }
     }
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {

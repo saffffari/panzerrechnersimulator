@@ -42,6 +42,9 @@ pub use vehicles::{lowpass_for_transfer, VehicleVoice, GunElevationMotion};
 
 #[path = "audio_capture.rs"]
 mod capture;
+#[path = "audio_soundscape.rs"]
+mod soundscape;
+pub use soundscape::{SoundscapeInput, LibraryEmitter};
 #[path = "audio_ear.rs"]
 mod ear;
 #[path = "audio_feedback.rs"]
@@ -1555,6 +1558,8 @@ impl<S: Source<Item = f32>> Source for LazyNormalized<S> {
 /// Owns the audio device and all preloaded clips. Keep it alive for the whole
 /// program: dropping it stops all sound.
 pub struct Audio {
+    soundscape: RefCell<Option<soundscape::Runtime>>,
+    terminal_mixer: Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>,
     // `_stream` must outlive `handle`; keep it around even though it's unused.
     _stream: Option<OutputStream>,
     handle: Option<OutputStreamHandle>,
@@ -1638,12 +1643,16 @@ impl Audio {
         eprintln!("[audio] playback range: {} (physical source levels unchanged)", crate::reproduction::playback_range_name());
         let ear = Arc::new(ear::EarControl::default());
         let master = Arc::new(master::MasterTelemetry::default());
+        let (terminal_mixer, terminal_source) = rodio::dynamic_mixer::mixer::<f32>(2, crate::acoustics::SAMPLE_RATE);
+        let mut terminal_source = Some(terminal_source);
         let capture = handle.is_none().then(|| RefCell::new(
-            capture::CaptureMixer::new(Arc::clone(&ear), Arc::clone(&master))));
+            capture::CaptureMixer::new(Arc::clone(&ear), Arc::clone(&master))
+                .with_terminal(terminal_source.take().unwrap())));
         let live_mixer = handle.as_ref().and_then(|handle| {
             let (controller, mixer) =
                 rodio::dynamic_mixer::mixer::<f32>(2, crate::acoustics::SAMPLE_RATE);
-            let stage = master::MasterStage::new(mixer, Arc::clone(&ear), Arc::clone(&master));
+            let stage = master::MasterStage::new(mixer, Arc::clone(&ear), Arc::clone(&master))
+                .with_terminal(terminal_source.take().unwrap());
             match handle.play_raw(stage) {
                 Ok(()) => Some(controller),
                 Err(error) => {
@@ -1804,6 +1813,8 @@ impl Audio {
         eprintln!("{}", metadata::startup_summary(&bank_metadata));
 
         Audio {
+            soundscape: RefCell::new(None),
+            terminal_mixer,
             _stream: stream,
             handle,
             live_mixer,
@@ -2069,7 +2080,8 @@ impl Audio {
     ///
     /// [`set_hearing`]: Self::set_hearing
     pub fn set_master_volume(&mut self, v: f32) {
-        self.master_volume = v.clamp(0.0, 4.0);
+        self.master_volume = if v.is_finite() {v.clamp(0.0, 4.0)} else {1.0};
+        if let Some(state)=self.soundscape.get_mut().as_mut() {state.set_master_volume(self.master_volume);}
         self.weather_state.get_mut().control.set_gain(self.master_volume);
         self.running_gear_state.get_mut().set_master_volume(self.master_volume);
         self.loader_motion.get_mut().set_master_volume(self.master_volume);
@@ -2125,6 +2137,7 @@ impl Audio {
     /// Freeze source playback while solo simulation is paused, retaining every loop and tail.
     /// These sinks have their own playback clock and do not stop merely because Game::update does.
     pub fn set_paused(&self, paused: bool) {
+        if let Some(state) = self.soundscape.borrow_mut().as_mut() { state.set_paused(paused); }
         let apply = |sink: &Sink| {
             if paused { sink.pause(); } else { sink.play(); }
         };

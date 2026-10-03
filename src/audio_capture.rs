@@ -26,6 +26,13 @@ impl CaptureMixer {
             nonfinite_samples: 0 }
     }
 
+    /// Install the same terminal-cue input and shared limiter path as live output.
+    /// The caller owns the controller and only explicit death-cue sources go here.
+    pub fn with_terminal(mut self, terminal: DynamicMixer<f32>) -> Self {
+        self.output = self.output.with_terminal(terminal);
+        self
+    }
+
     pub fn sink(&mut self) -> Sink {
         let (sink, source) = Sink::new_idle();
         self.add_source(source);
@@ -61,6 +68,27 @@ mod tests {
 
     fn mixer() -> CaptureMixer {
         CaptureMixer::new(Arc::new(EarControl::default()), Arc::new(MasterTelemetry::default()))
+    }
+
+    #[test]
+    fn terminal_capture_uses_shared_master_and_survives_only_the_world_kia_cut() {
+        let control = Arc::new(EarControl::default());
+        let telemetry = Arc::new(MasterTelemetry::default());
+        let (terminal_input, terminal) = dynamic_mixer::mixer(2, 44_100);
+        terminal_input.add(SamplesBuffer::new(2, 44_100, vec![0.1f32, -0.1].repeat(900)));
+        let mut capture = CaptureMixer::new(Arc::clone(&control), Arc::clone(&telemetry))
+            .with_terminal(terminal);
+        capture.add_source(SamplesBuffer::new(2, 44_100, vec![0.2f32, 0.2].repeat(1800)));
+        let live = capture.render_frames(300);
+        assert!((live[400] - 0.3).abs() < 1e-6);
+        assert!((live[401] - 0.1).abs() < 1e-6);
+        control.set_silenced(true);
+        let dead = capture.render_frames(300);
+        assert!(dead.chunks_exact(2).all(|p| p == [0.1, -0.1]));
+        let tail = capture.render_frames(800);
+        assert!(tail[800..].iter().all(|x| *x == 0.0));
+        assert_eq!(telemetry.frames(), 1400);
+        assert_eq!(telemetry.limited_frames(), 0);
     }
 
     #[test]

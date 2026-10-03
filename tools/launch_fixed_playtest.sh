@@ -27,6 +27,20 @@ required.extend(root/j['terrain'][k] for k in ('texture','rock_map','snow_map','
 required.extend(root/f'assets/tanks/tiger/baked/tiger_{p}.glb' for p in ('hull','turret','gun'))
 required.extend(root/f'catalog/maps/canyon_v2_survey_20260930.{s}' for s in ('json','png'))
 required.extend(root/p for p in re.findall(r'"(source_assets/[^\"]+)"',(root/'src/terrain_detail.rs').read_text()))
+library=root/'assets/audio/library'
+manifest_audio=json.loads((library/'manifest.json').read_text())
+config_audio=json.loads((library/'soundscape.json').read_text())
+bindings={c['asset']:c for c in config_audio['cues']}
+audio_count=0
+for cue in manifest_audio['assets']:
+    if not bindings.get(cue['id'],{}).get('enabled',cue.get('default_enabled',False)): continue
+    path=(library/cue['playback_path']).resolve()
+    if not path.is_relative_to(library.resolve()) or not path.is_file():
+        raise SystemExit(f'Missing or invalid library cue: {cue["id"]}')
+    with path.open('rb') as stream: actual=hashlib.file_digest(stream,'sha256').hexdigest()
+    if actual!=cue['playback_sha256']: raise SystemExit(f'Changed library PCM: {cue["id"]}')
+    required.append(path); audio_count+=1
+print(f'Verified {audio_count} enabled sound-library imports.')
 missing=[str(p) for p in required if not p.is_file() or p.stat().st_size==0]
 if missing: raise SystemExit('Required assets missing:\n'+'\n'.join(missing))
 print(f'Validated {len(required)} required files; fixed internal grid800x450, Studio Display fullscreen.')
@@ -44,6 +58,8 @@ export KESSEL_FIXED_PLAYTEST_GRAPHICS=1 KESSEL_INTERNAL_RES=800x450 KESSEL_FULLS
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4
 export KESSEL_SOURCE_VISIBILITY=maps KESSEL_TRANSPORT_QUALITY=full
 export KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_CANYON_V2=1
+# Wide playback retains quiet/loud contrast instead of the balanced profile's quiet-source lift.
+export KESSEL_AUDIO_RANGE=reference
 if [[ "$PANZER_MODE" == play ]]; then export KESSEL_CANYON=1; fi
 PANZER_LOG="$PANZER_RUNTIME/fixed-playtest-$(date +%Y%m%d-%H%M%S)-$$.log"
 {

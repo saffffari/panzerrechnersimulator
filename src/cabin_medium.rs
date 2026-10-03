@@ -21,6 +21,8 @@ use std::{
 
 pub const DOMAINS: usize = 3;
 pub const PITCH_M: f32 = 0.02;
+/// Same boundary ownership tolerance as shaders/cabin_medium.wgsl.
+pub(crate) const CABIN_RAY_EPSILON:f32=0.00001;
 const EMPTY: [f32; 2] = [1.0, -1.0];
 
 #[repr(C)]
@@ -460,6 +462,69 @@ impl Medium {
         }
         out
     }
+    /// CPU counterpart of the existing shader column DDA, for gameplay sight through the same
+    /// finite medium domains. AABB rejection never substitutes for the actual source intervals.
+    fn domain_run(&self,u:&Uniform,origin:Vec3,ray:Vec3,start:f32,limit:f32,index:usize)->[f32;2] {
+        let empty=[limit,limit];let grid=u.grid_min_step[index];let size=u.grid_size[index];
+        if grid[3]<0.5 {return empty;}
+        let mut begin=start.max(0.0);let mut end=limit;
+        for axis in 0..3 {
+            let lo=u.bounds_min[index][axis];let hi=u.bounds_max[index][axis];
+            if ray[axis].abs()<1e-8 {if origin[axis]<lo||origin[axis]>hi {return empty;}continue;}
+            let a=(lo-origin[axis])/ray[axis];let b=(hi-origin[axis])/ray[axis];
+            begin=begin.max(a.min(b));end=end.min(a.max(b));
+        }
+        if end<=begin {return empty;}
+        let model=Mat4::from_cols_array_2d(&u.world_to_local[index]);
+        let p=model.transform_point3(origin);let d=model.transform_vector3(ray);
+        let axes=[0,2];
+        for axis in 0..2 {
+            let v=d[axes[axis]];let o=p[axes[axis]];let hi=grid[axis]+size[axis] as f32*grid[2];
+            if v.abs()<1e-8 {if o<grid[axis]||o>=hi {return empty;}continue;}
+            let a=(grid[axis]-o)/v;let b=(hi-o)/v;begin=begin.max(a.min(b));end=end.min(a.max(b));
+        }
+        if end<=begin {return empty;}
+        let mut cursor=begin;let mut run=empty;let mut found=false;
+        while cursor<end {
+            let sample=(cursor+CABIN_RAY_EPSILON).min((cursor+end)*0.5);
+            let mut cell=[0i32;2];
+            for axis in 0..2 {cell[axis]=(((p[axes[axis]]+d[axes[axis]]*sample-grid[axis])/grid[2]).floor() as i32)
+                .clamp(0,size[axis] as i32-1);}
+            let mut next=end;
+            for axis in 0..2 {let v=d[axes[axis]];if v.abs()<1e-8 {continue;}
+                let edge=grid[axis]+(cell[axis]+if v>0.0 {1}else{0}) as f32*grid[2];
+                let crossing=(edge-p[axes[axis]])/v;
+                if crossing>cursor+CABIN_RAY_EPSILON*0.1 {next=next.min(crossing);}}
+            let column=self.source.domains[index].cells[cell[1] as usize*size[0] as usize+cell[0] as usize];
+            let mut lo=cursor;let mut hi=next;
+            if column[1]<=column[0] {hi=lo;}
+            else if d.y.abs()<1e-8 {if p.y<column[0]||p.y>column[1] {hi=lo;}}
+            else {let a=(column[0]-p.y)/d.y;let b=(column[1]-p.y)/d.y;
+                lo=lo.max(a.min(b));hi=hi.min(a.max(b));}
+            if hi>lo {if !found {run=[lo,hi];found=true;}
+                else if lo<=run[1]+CABIN_RAY_EPSILON {run[1]=run[1].max(hi);}
+                else {return run;}}
+            else if found {return run;}
+            if next<=cursor {break;}cursor=next;
+        }
+        run
+    }
+    pub(crate) fn next_span(&self,u:&Uniform,origin:Vec3,ray:Vec3,start:f32,limit:f32)->[f32;2] {
+        let mut runs=[[limit;2];DOMAINS];let mut result=[limit;2];
+        for (i,run) in runs.iter_mut().enumerate() {*run=self.domain_run(u,origin,ray,start,limit,i);
+            if run[0]<result[0] {result=*run;}}
+        if result[1]<=result[0] {return result;}
+        loop {let before=result[1];
+            for (i,run) in runs.iter_mut().enumerate() {
+                if run[1]<result[1]-CABIN_RAY_EPSILON {*run=self.domain_run(u,origin,ray,
+                    start.max(result[1]-CABIN_RAY_EPSILON),limit,i);}
+                if run[0]<=result[1]+CABIN_RAY_EPSILON && run[1]>run[0] {result[1]=result[1].max(run[1]);}
+            }
+            if result[1]<=before+CABIN_RAY_EPSILON {break;}
+        }
+        result
+    }
+
     pub fn diagnostics(&self) -> serde_json::Value {
         serde_json::json!({"representation":"source floor/roof vertical interval grids with source ring-interface membranes",
             "pitch_m":PITCH_M,"texture_size":self.texture_size(),"uniform_bytes":std::mem::size_of::<Uniform>(),
@@ -482,6 +547,26 @@ mod tests {
                 )
         })
     }
+    #[test]
+    fn gameplay_weather_uses_actual_source_cabin_spans_after_articulation() {
+        let medium=Medium::load().unwrap();
+        let hull=Mat4::from_translation(Vec3::new(120.0,9.0,-31.0))*Mat4::from_rotation_y(0.7);
+        let u=medium.uniform(hull,hull);
+        let inside=hull.transform_point3(Vec3::new(0.547,1.738,2.386));
+        let ray=hull.transform_vector3(Vec3::Z);
+        let span=medium.next_span(&u,inside,ray,0.0,100.0);
+        assert_eq!(span[0],0.0);
+        assert!(span[1]>0.0&&span[1]<0.20,"source front recess must reopen exterior weather: {span:?}");
+        let outside=hull.transform_point3(Vec3::new(0.547,1.738,2.8));
+        let clear=medium.next_span(&u,outside,ray,0.0,10.0);
+        assert_eq!(clear,[10.0,10.0]);
+        // A short segment entirely in the sampled source cavity has no exterior optical depth.
+        let v=crate::weather_visibility::WeatherView{sigma:1.0,cabin:Some(Arc::new(medium)),
+            cabin_uniform:u,..Default::default()};
+        assert_eq!(v.transmittance(inside,inside+ray*0.01),1.0);
+        assert!(v.transmittance(inside,inside+ray*10.0)<0.001);
+    }
+
     #[test]
     fn source_columns_remove_front_and_rear_convex_free_air() {
         let medium = Medium::load().unwrap();

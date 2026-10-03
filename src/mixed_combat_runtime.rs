@@ -346,6 +346,7 @@ impl Game {
         self.mixed_combat.hearing.report(origin,range,self.enemy_report_audit.clock_s,speed_of_sound());
     }
     pub(super) fn update_mixed_infantry(&mut self, dt: f32, r: &mut Renderer) {
+        self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
         if !dt.is_finite() || dt <= 0.0 {
             return;
         }
@@ -371,7 +372,7 @@ impl Game {
             pos:a.pos, alive:a.alive(), yaw:a.yaw, contact:if a.memory_s>=4.7 {a.last_seen} else {None},
         }).collect();
         let squad_orders=infantry_squad::orders(&self.mixed_combat.squads,&squad_members,
-            |a,b|self.los_clear(a,b));
+            |a,b|self.optical_los_clear(a,b));
         let now=self.enemy_report_audit.clock_s;
         let mut hearing=std::mem::take(&mut self.mixed_combat.hearing);
         hearing.expire(now);
@@ -417,7 +418,7 @@ impl Game {
                 }
             }
             let seen = sensed_actors(&self.mixed_combat.actors[i], &candidates,
-                |from, to| self.los_clear(from, to));
+                |from, to| self.optical_los_clear(from, to));
             let squad_order=squad_orders[i];
             let maneuver=tactical[i].goal;
             let investigate=heard[i].filter(|point| {
@@ -680,7 +681,7 @@ impl Game {
             let delta = a.eye() - origin;
             delta.length() < 150.0
                 && forward.dot(delta.normalize_or_zero()) > 0.342
-                && self.los_clear(origin, a.eye())
+                && self.optical_los_clear(origin, a.eye())
         });
         let Some(target) = targets
             .iter()

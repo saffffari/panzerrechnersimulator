@@ -12,6 +12,15 @@ const COMBAT: [Sfx; 8] = [Sfx::EnemyGun,Sfx::ImpactGround,Sfx::ImpactTank,Sfx::K
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Report { Rifle, MachineGun, Pistol }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MgTimbre { BodyAndCrack, Sharper, Previous }
+
+impl MgTimbre {
+    pub(crate) fn name(self) -> &'static str {
+        match self { Self::BodyAndCrack => "body_and_crack", Self::Sharper => "sharper", Self::Previous => "previous" }
+    }
+}
+
 fn identity(sfx: Sfx) -> Option<Report> {
     match sfx { Sfx::RifleShot => Some(Report::Rifle), Sfx::TankMgShot => Some(Report::MachineGun), Sfx::LugerShot=>Some(Report::Pistol), _ => None }
 }
@@ -36,13 +45,22 @@ fn recording_onset(recording: &[f32]) -> Option<usize> {
 /// A single causal pressure pulse and damped broad resonances, with optional early owned source.
 /// There is no sustained white-noise bed, 90Hz cannon-like oscillator or built-in room tail.
 pub(crate) fn dry_report(kind: Report, seed: u32, recording: Option<&[f32]>) -> Vec<f32> {
+    dry_report_timbre(kind, seed, recording, MgTimbre::BodyAndCrack)
+}
+
+pub(crate) fn dry_report_timbre(kind: Report, seed: u32, recording: Option<&[f32]>, timbre: MgTimbre) -> Vec<f32> {
     let mg = kind == Report::MachineGun;
+    let revised_mg = mg && timbre != MgTimbre::Previous;
     let pistol=kind==Report::Pistol;
     let duration = if pistol{0.105}else if mg { 0.090 } else { 0.145 };
     let mut mono = vec![0.0; (duration * SR) as usize];
     let detune = 0.97 + 0.06 * random(seed);
     let pulse_width = (if pistol{0.00082}else if mg { 0.00130 } else { 0.00135 }) * (0.90 + 0.20 * random(seed ^ 73));
-    let modes = if pistol{[720.0,1530.0,2910.0]}else if mg { [510.0, 1180.0, 2540.0] } else { [395.0, 970.0, 2140.0] };
+    let modes = if pistol{[720.0,1530.0,2910.0]}else if revised_mg { [410.0, 1850.0, 4100.0] }
+        else if mg { [510.0, 1180.0, 2540.0] } else { [395.0, 970.0, 2140.0] };
+    let edge_a = 1.0 - (-std::f32::consts::TAU * 7_000.0 / SR).exp();
+    let edge_floor_a = 1.0 - (-std::f32::consts::TAU * 1_800.0 / SR).exp();
+    let (mut edge_low, mut edge_floor) = (0.0, 0.0);
     for (i, out) in mono.iter_mut().enumerate() {
         let t = i as f32 / SR;
         // Smooth zero-onset bipolar pressure shape: its short rarefaction is part of the muzzle
@@ -59,11 +77,22 @@ pub(crate) fn dry_report(kind: Report, seed: u32, recording: Option<&[f32]>) -> 
         // Finite receiver/barrel-scale body supports the sharp edge without importing a
         // cannon's sub-bass, extra report or long noise/reverberation tail. Calibrated event
         // level is unchanged; weapon-specific source balance is the authored approximation.
-        let body_hz = if pistol{413.0}else if mg { 263.0 } else { 229.0 };
-        let body_tau = if pistol{0.008}else if mg { 0.014 } else { 0.017 };
+        let body_hz = if pistol{413.0}else if revised_mg { 176.0 } else if mg { 263.0 } else { 229.0 };
+        let body_tau = if pistol{0.008}else if revised_mg { 0.012 } else if mg { 0.014 } else { 0.017 };
         let shoulder = (std::f32::consts::TAU * body_hz * detune * t).sin()
-            * (-t / body_tau).exp() * (1.0 - (-t / 0.0006).exp()) * 0.24;
+            * (-t / body_tau).exp() * (1.0 - (-t / 0.0006).exp())
+            * if revised_mg { 0.44 } else { 0.24 };
         *out = pressure + body + shoulder;
+        if revised_mg {
+            // Only the first4.5ms carry this non-periodic upper crack. It cannot become a
+            // sustained hiss, and the ordinary hull/headset transfer still follows once.
+            let n = random(seed.wrapping_add((i as u32).wrapping_mul(101))) * 2.0 - 1.0;
+            edge_low += edge_a * (n - edge_low);
+            edge_floor += edge_floor_a * (edge_low - edge_floor);
+            let edge = (edge_low - edge_floor) * (1.0 - t / 0.0045).clamp(0.0, 1.0).powi(2)
+                * (t / 0.00018).clamp(0.0, 1.0);
+            *out += edge * if timbre == MgTimbre::Sharper { 0.90 } else { 0.65 };
+        }
     }
     if let Some((source, start)) = recording.and_then(|r| recording_onset(r).map(|s| (r, s))) {
         let crop_s = if pistol{0.045}else if mg { 0.060 } else { 0.110 };
@@ -87,7 +116,10 @@ pub(crate) fn dry_report(kind: Report, seed: u32, recording: Option<&[f32]>) -> 
     }
     // Source shaping only. One live propagation/reverb path and calibrated ear gain follow.
     // Two DC-blocking poles remove rumble from old recordings without creating a bass shelf.
-    let alpha = (-std::f32::consts::TAU * 155.0 / SR).exp();
+    // The old155Hz pair removed much of the finite MG body. Keep DC protection without
+    // manufacturing subbass; rifle/P08 retain their existing transfer exactly.
+    let dc_cut = if revised_mg { if timbre == MgTimbre::Sharper { 90.0 } else { 70.0 } } else { 155.0 };
+    let alpha = (-std::f32::consts::TAU * dc_cut / SR).exp();
     let (mut x1, mut y1, mut x2, mut y2) = (0.0, 0.0, 0.0, 0.0);
     for out in &mut mono {
         let a = alpha * (y1 + *out - x1); x1 = *out; y1 = a;
@@ -142,6 +174,8 @@ impl SourceBank {
             "verified_recording_key":if self.recorded {Some("rifle_shot")} else {None},
             "recording_crop_seconds":[0.110,0.060,0.045], "dry_report_seconds":[0.145,0.090,0.105],
             "pistol_recorded":self.pistol_recorded,"pistol_source_identity":"generic owned pistol early crop plus authored pressure, not a verified P08 recording",
+            "mg_timbre":"body_and_crack", "mg_dc_block_hz":70.0,
+            "mg_upper_crack_max_seconds":0.0045,
             "variants_per_family":VARIANTS,"order":["rifle_shot","tank_mg_shot","luger_shot"],
             "prepared_pcm_fnv1a64":self.reports.iter().map(|bank| bank.iter()
                 .map(|s|format!("{:016x}",super::buffer_checksum(s))).collect::<Vec<_>>()).collect::<Vec<_>>(),
@@ -165,6 +199,36 @@ pub(super) fn is_variant(sfx:Sfx)->bool {is_report(sfx)||is_combat_variant(sfx)}
 mod tests {
     use super::*;
     fn energy(x: &[f32]) -> f32 { x.iter().map(|v| v*v).sum() }
+
+    fn calibrated_band_energy(x:&[f32],lo:u32,hi:u32)->f64 {
+        let gain=10f64.powf((-30.0-crate::reproduction::laf_max_dbfs_mono(x) as f64)/20.0);
+        (lo..hi).step_by(25).map(|hz| {
+            let c=2.0*(std::f64::consts::TAU*hz as f64/SR as f64).cos();
+            let (mut q1,mut q2)=(0.0,0.0);
+            for &sample in x {let q=sample as f64*gain+c*q1-q2;q2=q1;q1=q;}
+            (q1*q1+q2*q2-c*q1*q2).max(0.0)
+        }).sum()
+    }
+
+    #[test]
+    fn mg_body_and_edge_increase_at_equal_calibrated_level_without_touching_other_guns() {
+        for variant in 0..12 {
+            let seed=3701+variant*7919;
+            let previous=dry_report_timbre(Report::MachineGun,seed,None,MgTimbre::Previous);
+            let current=dry_report(Report::MachineGun,seed,None);
+            let low_delta=10.0*(calibrated_band_energy(&current,80,350)
+                /calibrated_band_energy(&previous,80,350)).log10();
+            let high_delta=10.0*(calibrated_band_energy(&current,2500,8000)
+                /calibrated_band_energy(&previous,2500,8000)).log10();
+            assert!(low_delta>1.0,"MG variant{variant}: lower body {low_delta}dB");
+            assert!(high_delta>0.25,"MG variant{variant}: upper crack {high_delta}dB");
+            assert!(current.iter().all(|x|x.is_finite()&&x.abs()<=0.851));
+            assert!(energy(&current[(0.060*SR)as usize..])<energy(&current)*0.0005);
+            for kind in [Report::Rifle,Report::Pistol] {
+                assert_eq!(dry_report(kind,seed,None),dry_report_timbre(kind,seed,None,MgTimbre::Previous));
+            }
+        }
+    }
     #[test]
     fn dry_reports_are_short_causal_distinct_and_have_no_sustained_noise() {
         let rifle=dry_report(Report::Rifle,73,None); let mg=dry_report(Report::MachineGun,73,None);

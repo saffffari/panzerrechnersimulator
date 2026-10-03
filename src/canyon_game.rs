@@ -31,6 +31,7 @@ impl Game {
         anyhow::ensure!(self.act.id == 1 && self.act.season == crate::world::Season::Winter,
             "the canyon course is an Act One winter map");
         self.playtest_setup();
+        if let Some(audio)=&self.audio { audio.reset_soundscape(seed); }
         self.god = false;
         self.set_playtest_return_fire(true);
         self.player = Tank::new(spec.start.x, spec.start.y, spec.heading, &self.hf, tank::TIGER_PARTS);

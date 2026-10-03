@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": "Authoring example only. Replace content IDs and coordinates with imported assets and actual composed scene positions.",
+  "cues": [
+    {
+      "asset": "audio_REPLACE_WITH_SCENE_CONTENT_ID",
+      "enabled": true,
+      "role": "scene",
+      "tags": ["coffee_shop"],
+      "contexts": ["day"],
+      "gain_db": -6,
+      "loop": true,
+      "crossfade_s": 2,
+      "rack": {"preset": "small_room", "wet": 0.12, "decay_s": 0.65}
+    },
+    {
+      "asset": "audio_REPLACE_WITH_ONE_SHOT_ID",
+      "enabled": true,
+      "role": "stinger",
+      "gain_db": -6,
+      "loop": false,
+      "cooldown_s": 30,
+      "rack": {"preset": "dry"}
+    }
+  ],
+  "locations": [
+    {"id": "coffee_shop", "act_id": 2, "center": [0, 0], "radius_m": 8, "fade_m": 10, "priority": 10, "rack": "small_room"}
+  ],
+  "events": {"combat_enter": ["audio_REPLACE_WITH_ONE_SHOT_ID"]}
+}

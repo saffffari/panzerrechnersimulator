@@ -834,6 +834,10 @@ pub fn synth_small_arm_body_hit(velocity_mps: f32, caliber_mm: f32, seed: u32) -
 /// Three small mechanical contacts belong to one cycle; this is not another muzzle blast or
 /// a fabricated bullet impact. Cycle timings/timbre are authored, not measured MG34 acoustics.
 pub fn synth_mg_receiver_round(seed:u32)->Vec<f32> {
+    synth_mg_receiver_round_timbre(seed, true)
+}
+
+pub(crate) fn synth_mg_receiver_round_timbre(seed:u32, fuller:bool)->Vec<f32> {
     let mut mono=vec![0.0;(0.078*SAMPLE_RATE as f32) as usize];
     let tuning=0.97+0.06*hash_noise(seed^0x4d47_3334).abs();
     add_ricker_wavelet(&mut mono,0.0011,980.0*tuning,0.38);
@@ -848,6 +852,37 @@ pub fn synth_mg_receiver_round(seed:u32)->Vec<f32> {
     add_ricker_wavelet(&mut mono,0.052,740.0*tuning,0.38);
     add_damped_chirp(&mut mono,0.052,0.011,0.0003,1720.0*tuning,1270.0*tuning,
         0.0028,0.055,hash_noise(seed^51)*0.25);
+    if fuller {
+        // One finite mount displacement and a short contact edge, attached to this real cycle.
+        // Neither is a second muzzle blast; no long cavity mode or duplicated room tail exists.
+        // Weight the two finite mount displacements against the click/feed contacts. The
+        // downstream physical LAF placement remains unchanged: this redistributes timbre,
+        // not source SPL. A modest first revision was lost in that normalization.
+        add_ricker_wavelet(&mut mono,0.0035,178.0*tuning,0.85);
+        add_ricker_wavelet(&mut mono,0.0055,321.0*tuning,0.50);
+        let edge_a = 1.0 - (-TAU * 6_800.0 / SAMPLE_RATE as f32).exp();
+        let edge_floor_a = 1.0 - (-TAU * 1_800.0 / SAMPLE_RATE as f32).exp();
+        let (mut edge_low, mut edge_floor) = (0.0, 0.0);
+        for (i, sample) in mono.iter_mut().take((0.0018 * SAMPLE_RATE as f32) as usize).enumerate() {
+            let noise = hash_noise((seed ^ 0x4544_4745).wrapping_add(i as u32));
+            edge_low += edge_a * (noise - edge_low);
+            edge_floor += edge_floor_a * (edge_low - edge_floor);
+            let t = i as f32 / SAMPLE_RATE as f32;
+            *sample += (edge_low - edge_floor) * 0.60 * smoothstep(0.0, 0.0001, t)
+                * (1.0 - t / 0.0018).clamp(0.0, 1.0).powi(2);
+        }
+        for (i,sample) in mono.iter_mut().take((0.00035*SAMPLE_RATE as f32)as usize).enumerate() {
+            *sample *= smoothstep(0.0,0.00035,i as f32/SAMPLE_RATE as f32);
+        }
+        // The first receiver stop finishes before the independent feed contact at23ms.
+        // The previous27ms chirp overlapped that gap and made rapid cycles ring together.
+        for (i,sample) in mono.iter_mut().take((0.020*SAMPLE_RATE as f32)as usize).enumerate() {
+            *sample *= 1.0-smoothstep(0.007,0.010,i as f32/SAMPLE_RATE as f32);
+        }
+        // Transparent uniform headroom guard, not clipping/compression. The downstream
+        // measured-LAF placement cancels this scalar and keeps the same physical level.
+        attenuate_over_peak(&mut mono,0.75);
+    }
     if let Some(first)=mono.first_mut(){*first=0.0;}
     if let Some(last)=mono.last_mut(){*last=0.0;}
     mono
@@ -1068,7 +1103,8 @@ fn cannon_source_mono(caliber_mm: f32, interior: bool, seed: u32) -> Vec<f32> {
 /// irregular spacing and short decay avoid either a single bass note or a broadband noise bed.
 /// The exterior response has more upper-body detail; the compartment response is darker.
 /// Source level, enclosure/headset loss, propagation and actual mechanical recoil stay separate.
-fn own_gun_pressure_body(mono: &mut [f32], interior: bool, seed: u32) {
+#[cfg(test)]
+fn previous_own_gun_modal_body(mono: &mut [f32], interior: bool, seed: u32) {
     let sr = SAMPLE_RATE as f32;
     // Excess sub-audible displacement consumed the reproduction headroom while contributing
     // little A-weighted report energy. Preserve the onset and audible low body; remove DC and
@@ -1097,15 +1133,76 @@ fn own_gun_pressure_body(mono: &mut [f32], interior: bool, seed: u32) {
     }
 }
 
-/// The 88's own-gun source: pressure front plus its short near-source response. The same
-/// physical-level calibration applies to both perspectives; this never adds a second event.
-pub fn synth_gun_punch(interior: bool, seed: u32) -> Vec<f32> {
+/// Candidate own-gun source characters. All use one causal shot, the ordinary physical level
+/// and the same playback graph. No reference recording or extra recoil event is embedded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OwnGunTimbre {
+    PressureBody,
+    CompactPressure,
+    #[cfg(test)]
+    PreviousModal,
+}
+
+impl OwnGunTimbre {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::PressureBody => "pressure_body",
+            Self::CompactPressure => "compact_pressure",
+            #[cfg(test)] Self::PreviousModal => "previous_modal",
+        }
+    }
+}
+
+/// Finite, non-periodic pressure response. Filtered deterministic excitation supplies broad gas
+/// and structure energy instead of the old five decaying sine modes. It is an authored source
+/// approximation; no particular Tiger resonance or historical microphone response is claimed.
+fn own_gun_pressure_body(mono: &mut [f32], interior: bool, seed: u32, timbre: OwnGunTimbre) {
+    #[cfg(test)]
+    if timbre == OwnGunTimbre::PreviousModal {
+        previous_own_gun_modal_body(mono, interior, seed);
+        return;
+    }
+    let (amount, decay) = match timbre {
+        OwnGunTimbre::CompactPressure => (0.75, 0.055),
+        _ => (0.55, 0.100),
+    };
+    let sr = SAMPLE_RATE as f32;
+    let high_pass = 1.0 - (-TAU * 90.0 / sr).exp();
+    let body_a = 1.0 - (-TAU * 650.0 * if interior { 1.0 } else { 1.55 } / sr).exp();
+    let floor_a = 1.0 - (-TAU * 90.0 / sr).exp();
+    let edge_a = 1.0 - (-TAU * if interior { 1_900.0 } else { 3_200.0 } / sr).exp();
+    let (mut original_floor, mut low1, mut low2, mut floor, mut high1, mut high2) =
+        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    for (i, sample) in mono.iter_mut().enumerate() {
+        let t = i as f32 / sr;
+        original_floor += high_pass * (*sample - original_floor);
+        *sample -= original_floor;
+        let noise = hash_noise(seed.wrapping_add((i as u32).wrapping_mul(17)));
+        low1 += body_a * (noise - low1);
+        low2 += body_a * (low1 - low2);
+        floor += floor_a * (low2 - floor);
+        high1 += edge_a * (noise - high1);
+        high2 += edge_a * (high1 - high2);
+        let body = (low2 - floor) * 5.0;
+        let edge = (high2 - low2) * 0.55 * (-t / 0.012).exp();
+        let envelope = smoothstep(0.0, 0.0012, t) * (-t / decay).exp()
+            * (1.0 - smoothstep(0.150, 0.230, t));
+        *sample += amount * if interior { 1.0 } else { 1.25 } * (body + edge) * envelope;
+    }
+}
+
+pub(crate) fn synth_gun_punch_timbre(interior: bool, seed: u32, timbre: OwnGunTimbre) -> Vec<f32> {
     let mut mono = cannon_source_mono(88.0, interior, seed);
-    own_gun_pressure_body(&mut mono, interior, seed);
+    own_gun_pressure_body(&mut mono, interior, seed, timbre);
     let mut out = mono_center(&mono);
-    // A transparent peak guard avoids manufacturing harmonics in the bass impulse with tanh.
     attenuate_over_peak(&mut out, 0.92);
     out
+}
+
+/// Live own-gun source. PressureBody is the working recommendation pending actual listening;
+/// technical source/mix checks do not establish an accepted match to the supplied references.
+pub fn synth_gun_punch(interior: bool, seed: u32) -> Vec<f32> {
+    synth_gun_punch_timbre(interior, seed, OwnGunTimbre::PressureBody)
 }
 
 fn mix_stereo_at(dst: &mut [f32], src: &[f32], at_frames: usize, gain: f32) {
@@ -4024,7 +4121,14 @@ mod tests {
                 assert_eq!(dry, synth_gun_punch(interior, seed));
                 let body = cannon_band_energy(&dry, 80, 1_200);
                 let deep = cannon_band_energy(&dry, 20, 80);
-                let hiss = cannon_band_energy(&dry, 3_000, 12_000);
+                // The desired initial pressure crack is not sustained hiss. Inspect the
+                // decay after15ms, tapering the analysis boundary to avoid inventing an edge.
+                let mut decay = segment(&dry,0.015,0.25).to_vec();
+                for (frame,pair) in decay.chunks_exact_mut(2).enumerate().take(88) {
+                    let gain=smoothstep(0.0,87.0,frame as f32);
+                    pair[0]*=gain;pair[1]*=gain;
+                }
+                let hiss = cannon_band_energy(&decay, 3_000, 12_000);
                 assert!(body > deep * 2.0, "own gun: deep displacement consumes audible body");
                 assert!(hiss < body * 0.015, "own gun: body replaced by bright noise");
                 let onset = rms(segment(&dry, 0.0, 0.080));

@@ -1,0 +1,1890 @@
+{
+  "version": 1,
+  "provisional": true,
+  "listened": false,
+  "manifest_sha256": "c5213d40a0d1c4e613fc2c8447b29f7a9a2319dfc7bdfcc2774ca081c548c24c",
+  "gain_db_contract": "additional gain on top of manifest gain.suggested_db; total_source_gain_db is informational only",
+  "cues": [
+    {
+      "asset": "audio_9ce71ea3bde9be8ab60b27ef",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.05,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.12,
+        "decay_s": 1.2,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      }
+    },
+    {
+      "asset": "audio_5435448f3d7bad950faa6110",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_79373cd694fead93b30df875",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_793cd6f918962b0eb913cbf1",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_0404253b36dd695fe3bcae1b",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_a6800d8d64e3db6af8b551d8",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.979766666666667,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_f9243f338557285a7dcf28df",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_b1eec3e0130ae900dc10cccb",
+      "enabled": true,
+      "role": "explore",
+      "contexts": [],
+      "role_aliases": [
+        "explore"
+      ],
+      "role_contexts": {
+        "explore": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_9dcce78facd29635b8bc0ab2",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_8ff5851931426245d0ef3f07",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.5483877551020409,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_e37854144c77ed0840399142",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_2b693377ececa940b0722817",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.02,
+      "fade_out_s": 0.25,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 1.2973015873015874
+      }
+    },
+    {
+      "asset": "audio_ecef6d69f933a96dff7491b5",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_d1bbd4a26f6cdc64b4cf2345",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_d63f68cfd6c3007c3ebb87c1",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_06228723b963524931451d08",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_bc6a6d427171c259f5ca34b2",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_651be7287053331ddbe67a8f",
+      "enabled": true,
+      "role": "combat",
+      "contexts": [],
+      "role_aliases": [
+        "combat"
+      ],
+      "role_contexts": {
+        "combat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_de42714f61b5b1f972d9df28",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": -3.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 0.96
+      }
+    },
+    {
+      "asset": "audio_a705b925f216cf3956afa26a",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.25,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_74d587aa1ced5f605ecea4fc",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.25,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_2031d4091d2e0ac3ac670891",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.25,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_288d09419c5be9266d4ab4e8",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_0fee210a8741ebe492640e8d",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_f73177adcd57f1b450d05afe",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_ec9cb8e747e24b8b33a1eb8c",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_6489a17e50966a62b770a109",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      }
+    },
+    {
+      "asset": "audio_7571d97f637cbb88fac00fce",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      }
+    },
+    {
+      "asset": "audio_cc4bff3bf04c14250ed127c1",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      }
+    },
+    {
+      "asset": "audio_3c3752c1fb4b522c74e95e5c",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro",
+        "threat"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ],
+        "threat": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      }
+    },
+    {
+      "asset": "audio_c1ec09d43647244b24b3ee8b",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": -3.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_26ee26bbb7b5ef6678ab9bd0",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_0ca2a45dc91e1e0402b3ecbe",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_024a989d67f6b089bc8f4f7d",
+      "enabled": true,
+      "role": "intro",
+      "contexts": [],
+      "role_aliases": [
+        "intro"
+      ],
+      "role_contexts": {
+        "intro": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.1,
+      "fade_out_s": 2.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.08,
+        "decay_s": 1.1,
+        "predelay_ms": 14.0,
+        "damping_hz": 4500.0,
+        "lowpass_hz": 22050.0,
+        "highpass_hz": 0.0,
+        "tail_only_s": 3.0
+      }
+    },
+    {
+      "asset": "audio_c8ad7e0388149aee2d3c0ccc",
+      "enabled": true,
+      "role": "blizzard",
+      "contexts": [],
+      "role_aliases": [
+        "blizzard"
+      ],
+      "role_contexts": {
+        "blizzard": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_837d86aa98c061d52a170744",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_dd145d174424341e4547df34",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.6384,
+      "crossfade_curve": "equal_gain",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_f13bbf7e4fe86402ac820462",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_69c5b26f9388f4437c5bb21f",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_7900a4992cd25ad42fb3de45",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_ad1bc07fc07b3aff0e80fa31",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_2d5ffe81ba36ea46d268ff72",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.5483877551020409,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_a0b13c1b54eb1ef9db6c07d9",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.5483877551020409,
+      "crossfade_curve": "equal_gain",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_b83e5e73b3a560c66fd91eb4",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.7741950113378686,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_f94434daa4ea452beb4c5426",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_dee93f92a69e9091d6f0b70d",
+      "enabled": true,
+      "role": "cabin",
+      "contexts": [],
+      "role_aliases": [
+        "cabin"
+      ],
+      "role_contexts": {
+        "cabin": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_5309a9f1c0c30febca2ab281",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.05,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_fd571f39014744f875bc640a",
+      "enabled": true,
+      "role": "music",
+      "contexts": [],
+      "role_aliases": [
+        "music"
+      ],
+      "role_contexts": {
+        "music": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_fef247fa61e38e97719121a1",
+      "enabled": true,
+      "role": "night",
+      "contexts": [],
+      "role_aliases": [
+        "night"
+      ],
+      "role_contexts": {
+        "night": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 5.0,
+      "fade_out_s": 5.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_cef48b6a885c6f5e8b3291b3",
+      "enabled": true,
+      "role": "night",
+      "contexts": [],
+      "role_aliases": [
+        "night"
+      ],
+      "role_contexts": {
+        "night": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 5.0,
+      "fade_out_s": 5.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_bbc72bf6ef5738d620b4d33a",
+      "enabled": true,
+      "role": "night",
+      "contexts": [],
+      "role_aliases": [
+        "night"
+      ],
+      "role_contexts": {
+        "night": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 5.0,
+      "fade_out_s": 5.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_4e39fc90e68356861b1f9a7b",
+      "enabled": true,
+      "role": "night",
+      "contexts": [],
+      "role_aliases": [
+        "night"
+      ],
+      "role_contexts": {
+        "night": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 5.0,
+      "fade_out_s": 5.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_84cef3dee8d90d794acfcc92",
+      "enabled": true,
+      "role": "night",
+      "contexts": [],
+      "role_aliases": [
+        "night"
+      ],
+      "role_contexts": {
+        "night": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 5.0,
+      "fade_out_s": 5.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_166d1701bf6b15460908cdcb",
+      "enabled": true,
+      "role": "day",
+      "contexts": [
+        "spring"
+      ],
+      "role_aliases": [
+        "day"
+      ],
+      "role_contexts": {
+        "day": [
+          [
+            "spring"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_cc6fe6d21b66d5e54659bf7b",
+      "enabled": true,
+      "role": "day",
+      "contexts": [
+        "spring"
+      ],
+      "role_aliases": [
+        "day"
+      ],
+      "role_contexts": {
+        "day": [
+          [
+            "spring"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_d4629c7792488f4b25cca7b4",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.15,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_848ae00471a645960dfdc20e",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_8d01207298d7f7f8cf37e072",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_ce02260363048f74f6583dfc",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_5e6ed41f76c14c6961385be1",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_53fec9f92e4c62b04de7d6b3",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_05cdf3b9eef669b53d7bd2a3",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_39d5af35ea51aa4c037ddbcb",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_cf285d0f8e076fa03d690014",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 2.0,
+      "fade_out_s": 3.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_c7d806a1865fa863d5b92273",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_dd86a528251e9bfee4c6f2b1",
+      "enabled": true,
+      "role": "threat",
+      "contexts": [],
+      "role_aliases": [
+        "threat"
+      ],
+      "role_contexts": {
+        "threat": [
+          []
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 0.08,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_4a383409ba81f8fd25d2ab1c",
+      "enabled": true,
+      "role": "effect",
+      "contexts": [],
+      "role_aliases": [
+        "effect"
+      ],
+      "role_contexts": {
+        "effect": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.005,
+      "fade_out_s": 0.02,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_d3a9c714900375a3d3952ad3",
+      "enabled": true,
+      "role": "day",
+      "contexts": [
+        "winter"
+      ],
+      "role_aliases": [
+        "day"
+      ],
+      "role_contexts": {
+        "day": [
+          [
+            "winter"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 1.2288000000000001,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_ea45bf5038437605ebf60341",
+      "enabled": true,
+      "role": "day",
+      "contexts": [
+        "winter"
+      ],
+      "role_aliases": [
+        "day"
+      ],
+      "role_contexts": {
+        "day": [
+          [
+            "winter"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_14338d6178fac75467ca551e",
+      "enabled": true,
+      "role": "day",
+      "contexts": [
+        "winter"
+      ],
+      "role_aliases": [
+        "day"
+      ],
+      "role_contexts": {
+        "day": [
+          [
+            "winter"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_5dd9e671f70e2d3851bc33cf",
+      "enabled": true,
+      "role": "day",
+      "contexts": [
+        "winter"
+      ],
+      "role_aliases": [
+        "day"
+      ],
+      "role_contexts": {
+        "day": [
+          [
+            "winter"
+          ]
+        ]
+      },
+      "loop": true,
+      "fade_in_s": 3.0,
+      "fade_out_s": 4.0,
+      "gain_db": 0.0,
+      "crossfade_s": 2.0,
+      "crossfade_curve": "equal_power",
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_098c00adbf41258d06e7133c",
+      "enabled": true,
+      "role": "engine_hiss",
+      "contexts": [],
+      "role_aliases": [
+        "engine_hiss"
+      ],
+      "role_contexts": {
+        "engine_hiss": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.08,
+      "fade_out_s": 0.4,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    },
+    {
+      "asset": "audio_c738a81f08c3b22ff78aa296",
+      "enabled": true,
+      "role": "stinger",
+      "contexts": [],
+      "role_aliases": [
+        "stinger"
+      ],
+      "role_contexts": {
+        "stinger": [
+          []
+        ]
+      },
+      "loop": false,
+      "fade_in_s": 0.15,
+      "fade_out_s": 1.0,
+      "gain_db": 0.0,
+      "crossfade_s": 0.0,
+      "crossfade_curve": null,
+      "rack": {
+        "preset": "dry",
+        "wet": 0.0
+      }
+    }
+  ],
+  "events": {
+    "run_start": [
+      "audio_6489a17e50966a62b770a109",
+      "audio_7571d97f637cbb88fac00fce",
+      "audio_cc4bff3bf04c14250ed127c1",
+      "audio_3c3752c1fb4b522c74e95e5c",
+      "audio_c1ec09d43647244b24b3ee8b",
+      "audio_26ee26bbb7b5ef6678ab9bd0",
+      "audio_0ca2a45dc91e1e0402b3ecbe",
+      "audio_024a989d67f6b089bc8f4f7d"
+    ],
+    "death": [
+      "audio_a705b925f216cf3956afa26a",
+      "audio_74d587aa1ced5f605ecea4fc",
+      "audio_2031d4091d2e0ac3ac670891"
+    ],
+    "combat_start": [
+      "audio_2b693377ececa940b0722817"
+    ],
+    "sunrise": [
+      "audio_d4629c7792488f4b25cca7b4"
+    ],
+    "sunset": [],
+    "dusk": [
+      "audio_c738a81f08c3b22ff78aa296"
+    ]
+  },
+  "effect_registry": [
+    "audio_de42714f61b5b1f972d9df28",
+    "audio_288d09419c5be9266d4ab4e8",
+    "audio_0fee210a8741ebe492640e8d",
+    "audio_f73177adcd57f1b450d05afe",
+    "audio_ec9cb8e747e24b8b33a1eb8c",
+    "audio_4a383409ba81f8fd25d2ab1c"
+  ],
+  "additional_folder_bindings": [
+    {
+      "asset": "audio_3c3752c1fb4b522c74e95e5c",
+      "source_path": "suspense/Cavern_Wraiths_4.wav",
+      "category_folder": "suspense",
+      "role": "threat",
+      "contexts": [],
+      "default_enabled": true,
+      "basis": "user folder assignment"
+    }
+  ],
+  "limits": [
+    "proposal only; merge into runtime bindings explicitly",
+    "death event metadata is registered; dedicated death presentation routing is implemented separately",
+    "scene recordings stay disabled until location authorship"
+  ],
+  "locations": [],
+  "provenance": "User folder assignments and explicit _loop repeat instructions; numerical gain/fade suggestions remain unauditioned."
+}

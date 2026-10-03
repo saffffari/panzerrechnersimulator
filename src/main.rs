@@ -11,7 +11,7 @@
 //!   cargo run -- ui menu out.png [sel] [tag|nacht] [frame]  headless title-menu screenshot → PNG
 //!                                                     (frame spins the turntable Tiger for the shot)
 //!   cargo run -- ui death out.png                     headless death-screen screenshot → PNG
-//!                                                     (wordless black since 2026-09-28)
+//!                                                     (fictional memorial; kia-black previews the earlier black hold)
 //!   cargo run -- su100 prefix                         headless: SU-100 overwatch-sniper demo — its
 //!                                                     100 mm penetrates the Tiger FRONT at range +
 //!                                                     it holds/backs off (never charges); → prefix_frame.png
@@ -56,6 +56,12 @@ mod asset_catalog;
 mod asset_yard;
 mod assetlib;
 mod audio;
+mod sound_library;
+mod soundscape_director;
+mod soundscape_program;
+mod death_card;
+mod audio_soundscape_fx;
+mod soundscape_review;
 mod audio_terror_review;
 mod impact_mix_review;
 mod ballistics;
@@ -76,6 +82,7 @@ mod wreck_fire_review;
 mod canyon_director;
 mod playtest_mode;
 mod winter_weather;
+mod weather_visibility;
 mod campaign_ai;
 mod city;
 mod editor;
@@ -2217,7 +2224,8 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             );
             return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
         }
-        "kia-black" | "death" | "actcard" | "ending" | "finaldefeat" => ui::draw_black(&mut r),
+        "death" => draw_fallen_card(&mut r, death_card::identity(1943, 1943)),
+        "kia-black" | "actcard" | "ending" | "finaldefeat" => ui::draw_black(&mut r),
         "controls" => ui::draw_controls(&mut r),
         "stars" | "storm" | "clouds" => {
             r.set_user_sky_phase(if kind=="stars" {4}else{2});
@@ -11054,9 +11062,10 @@ enum AppState {
     Paused,
     LanMenu,
     Playing,
-    // `t` seconds since the fatal update: fade, recorded fatal shot/interior aftermath, black.
+    // Scored death follows the actual audio clock. Without a cue, retain the legacy replay.
     Death {
         t: f32,
+        card: Option<death_card::Presentation>,
     },
     // Between-acts card (also the act-restart card after death): a black, wordless screen. The
     // world for `act` is (re)built at first render, then a keypress or the timer drops into
@@ -11163,6 +11172,18 @@ fn death_fade(t: f32) -> f32 {
 }
 
 fn death_may_skip(t: f32) -> bool { t >= DEATH_SKIP_AFTER }
+
+/// The score's memorial uses fictional names, never a real person's invented biography.
+fn draw_fallen_card(r: &mut renderer::Renderer, person: death_card::Identity) {
+    ui::draw_black(r);
+    let white = [1.0, 1.0, 1.0, 1.0];
+    r.draw_text_bold("DU BIST GEFALLEN", 0.5, 0.395, 0.044, white, ui::Align::Center);
+    r.draw_text(&format!("{} {}", person.first_name, person.surname),
+        0.5, 0.515, 0.043, white, ui::Align::Center);
+    // The existing font atlas includes the em dash, but not an en dash.
+    r.draw_text(&format!("{} — {}", person.birth_year, person.death_year),
+        0.5, 0.58, 0.035, white, ui::Align::Center);
+}
 
 fn death_replay_phase(t: f32) -> Option<f32> {
     (t >= DEATH_FADE && t < DEATH_FADE + REPLAY_DUR)
@@ -12843,11 +12864,13 @@ impl WindowState {
             if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
                 self.resolve_campaign_loss(over_cause);
             }
-            // The fatal update is the last one. From the player's own eye the last picture and
-            // every sound fade out together; no replay camera, no words. The black and silence
-            // then hold before the retry or menu (`render_death`).
+            // Start the chosen score on the same frame as terminal entry. Its playback clock
+            // controls the black memorial; an unavailable score retains the old replay path.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
-            self.state = AppState::Death { t: 0.0 };
+            let card = self.game.start_death_score().and_then(|duration_s|
+                death_card::Presentation::new(self.game.death_card_seed(),
+                    self.game.death_year(), duration_s));
+            self.state = AppState::Death { t: 0.0, card };
             self.render_death(0.0);
             true
         } else if let Some(reason) = self.game.campaign_final_defeat_reason() {
@@ -13748,13 +13771,32 @@ impl WindowState {
         frame.present();
     }
 
-    /// Frozen fatal view, actual recorded shot, then the dead crew and internal explosion.
-    /// The slow-motion replay is silent; already-emitted live audio finishes during the fade.
+    /// Fade the fatal view and world sound, then hold black under the separately routed score.
+    /// Only an unavailable score uses the previous silent casualty replay.
     fn render_death(&mut self, t: f32) {
+        let card = match self.state {
+            AppState::Death { card, .. } => card,
+            _ => None,
+        };
         let fade = death_fade(t);
         self.game.set_audio_level(1.0 - fade);
         if t >= DEATH_FADE {
             self.game.set_audio_silenced(true);
+        }
+        if let Some(card) = card.filter(|_| t >= DEATH_FADE) {
+            let Some((frame, view)) = self.acquire() else { return; };
+            self.renderer.ui_reset();
+            if card.phase(self.game.death_score_elapsed(), self.game.death_score_finished())
+                == death_card::Phase::Identity
+            {
+                draw_fallen_card(&mut self.renderer, card.identity);
+            } else {
+                ui::draw_black(&mut self.renderer);
+            }
+            self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
+                self.config.format, self.config.width, self.config.height);
+            frame.present();
+            return;
         }
         if let Some(phase) = terminal_visual_phase(t).filter(|_| self.game.last_fatal.is_some()) {
             let Some((frame, view)) = self.acquire() else { return; };
@@ -14225,10 +14267,10 @@ impl ApplicationHandler for App {
                         }
                         let _ = act;
                     }
-                    AppState::Death { t } => {
+                    AppState::Death { t, card } => {
                         // Let the player cut the black short once it has held for a beat. A spent
                         // Act-3 attempt still receives its terminal coda; never a retry path.
-                        if death_may_skip(t) && matches!(
+                        if card.is_none() && death_may_skip(t) && matches!(
                             code,
                             KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter
                         ) {
@@ -14963,8 +15005,8 @@ impl ApplicationHandler for App {
                     AppState::ActCard { built: true, .. } if pad.interact_pressed => {
                         state.state = AppState::Playing;
                     }
-                    AppState::Death { t, .. }
-                        if death_may_skip(t) && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
+                    AppState::Death { t, card }
+                        if card.is_none() && death_may_skip(t) && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
                     {
                         if let Some(reason) = state.pending_final_defeat.take() {
                             state.state = AppState::FinalDefeat { t: 0.0, reason };
@@ -15360,10 +15402,13 @@ impl ApplicationHandler for App {
                             state.render_black();
                         }
                     }
-                    AppState::Death { t } => {
+                    AppState::Death { t, card } => {
                         let nt = t + dt;
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
-                        if nt >= DEATH_END {
+                        let finished = card.map_or(nt >= DEATH_END, |card|
+                            card.phase(state.game.death_score_elapsed(),
+                                state.game.death_score_finished()) == death_card::Phase::Finished);
+                        if finished {
                             // However long the last frame took, the dead Game ends silent.
                             state.game.set_audio_silenced(true);
                             // Acts 1/2 restore their entrance checkpoint. Act 3 has spent its single
@@ -15380,7 +15425,7 @@ impl ApplicationHandler for App {
                                 state.render_menu();
                             }
                         } else {
-                            state.state = AppState::Death { t: nt };
+                            state.state = AppState::Death { t: nt, card };
                             state.render_death(nt);
                         }
                     }
@@ -15910,6 +15955,9 @@ fn main() -> anyhow::Result<()> {
             receipt["events"].as_array().map_or(0, Vec::len),
             receipt["checks"].as_array().map_or(0, Vec::len));
         return Ok(());
+    }
+    if args.len() >= 2 && args[1] == "soundscape-review" {
+        return soundscape_review::run(&capture_arg(&args,2,"soundscape_review"));
     }
     if args.len() >= 2 && args[1] == "sfx" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("sfx");

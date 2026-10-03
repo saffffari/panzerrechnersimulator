@@ -377,7 +377,7 @@ impl Game {
             }))
             .filter(|(at, _, centre)| {
                 eye.distance(*centre) < 420.0
-                    && self.los_clear(eye, *centre)
+                    && self.optical_los_clear(eye, *centre)
                     && self
                         .street_line_of_fire_clear(eye + (*at - eye).normalize_or_zero() * 5.0, *at)
                     && self.rubble_segment_contact(eye, *at).is_none()

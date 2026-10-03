@@ -59,6 +59,9 @@ pub(crate) enum EarBus {
     Impact,
     /// Listener-internal percepts (tinnitus). Only the KIA gate applies.
     Trauma,
+    /// Nondiegetic score. Shares master, listener fade and KIA; never pretends to be
+    /// an exterior physical source muffled by armor or hearing trauma.
+    Score,
 }
 
 fn finite(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
@@ -305,7 +308,7 @@ impl<S: Source<Item = f32>> Ear<S> {
         match self.bus {
             EarBus::World => 1.0,
             EarBus::Impact => impact_follow(self.frames as f32 / RATE),
-            EarBus::Trauma => 0.0,
+            EarBus::Trauma | EarBus::Score => 0.0,
         }
     }
 
@@ -329,7 +332,7 @@ impl<S: Source<Item = f32>> Ear<S> {
             self.reflex_per_frame = self.targets.reflex_db_per_s / RATE;
             self.reflex_hold_frames = self.targets.reflex_hold_s * RATE;
         }
-        let impaired = self.bus != EarBus::Trauma
+        let impaired = !matches!(self.bus, EarBus::Trauma | EarBus::Score)
             && (self.targets.impaired() || self.reflex_db > 0.01);
         if impaired && !self.active {
             // Engaging: the split starts from rest; with unity gains the bands sum to the input.
@@ -504,7 +507,7 @@ mod tests {
     fn unimpaired_listener_is_bit_exact_on_every_bus() {
         let control = Arc::new(EarControl::default());
         let input = noise(4_410, 0.25);
-        for bus in [EarBus::World, EarBus::Impact, EarBus::Trauma] {
+        for bus in [EarBus::World, EarBus::Impact, EarBus::Trauma, EarBus::Score] {
             assert_eq!(run(&control, bus, &input), input, "{bus:?}");
         }
     }
@@ -658,7 +661,7 @@ mod tests {
     fn listener_level_fades_every_bus_without_steps() {
         let control = Arc::new(EarControl::default());
         let dc = vec![0.5f32; 2 * RATE as usize / 10];
-        for bus in [EarBus::World, EarBus::Impact, EarBus::Trauma] {
+        for bus in [EarBus::World, EarBus::Impact, EarBus::Trauma, EarBus::Score] {
             control.set_level(1.0);
             let mut ear = Ear::new(SamplesBuffer::new(2, RATE as u32, dc.clone()),
                 Arc::clone(&control), bus);

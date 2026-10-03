@@ -389,8 +389,8 @@ impl Game {
     pub(super) fn update_at_guns(&mut self, dt: f32) {
         let alerted = self.stealth.platoons.iter().any(|p| matches!(p.state, AlertState::Engaged | AlertState::Searching) || p.pending)
             || self.winter_encounter.as_ref().is_some_and(|e| e.sounds_heard > 0 || e.confirmed_sightings > 0);
-        let storm = self.winter_encounter.as_ref().map_or(0.0, |e| e.storm);
-        let reach = winter_encounter_ai::visibility_radius(1000.0, false, storm);
+        // Base target recognition envelope stays finite; local optical weather supplies contrast.
+        let reach = 1000.0;
         let tiger = self.player.center();
         for g in 0..AT_GUNS {
             self.recrew_at_gun(g);
@@ -401,7 +401,7 @@ impl Game {
             let contact = self.player.alive.then(|| Contact {
                 range_m,
                 bearing: bearing(gun.pos, tiger),
-                visible: range_m <= reach && self.los_clear(eye, tiger),
+                visible: range_m <= reach && self.optical_los_clear(eye, tiger),
                 alerted: alerted || gun.heard,
             });
             let fired = gun.step(contact, crew, dt);

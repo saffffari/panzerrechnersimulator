@@ -407,6 +407,10 @@ pub struct TruePeakLimiter {
     ceiling: f32,
     release: f64,
     detector: TruePeakDetector,
+    // Optional protection for the death cue that remains after the battlefield is cut.
+    // It shares the gain envelope; this is not a second output limiter.
+    terminal_detector: Option<TruePeakDetector>,
+    applied_gain: f32,
     delay: VecDeque<[f32; 2]>,
     minima: VecDeque<(u64, f32)>,
     // A single-precision release stalls below unity once its per-sample increment falls below
@@ -431,6 +435,8 @@ impl TruePeakLimiter {
             ceiling: LIMITER_CEILING,
             release: 1.0 - (-1.0 / (f64::from(LIMITER_RELEASE_S) * f64::from(rate))).exp(),
             detector: TruePeakDetector::new(),
+            terminal_detector: None,
+            applied_gain: 1.0,
             delay: VecDeque::from(vec![[0.0f32; 2]; MASTER_LATENCY_FRAMES]),
             minima: VecDeque::new(),
             envelope: 1.0,
@@ -446,8 +452,30 @@ impl TruePeakLimiter {
     }
 
     pub fn process(&mut self, input: [f32; 2]) -> [f32; 2] {
+        self.process_guarded(input, 0.0)
+    }
+
+    /// Prepare the extra true-peak detector off the audio callback. The terminal component
+    /// needs independent protection because removing a cancelling battlefield component can
+    /// expose a larger sample, even though the original sum was below the ceiling.
+    pub(crate) fn with_terminal_protection(mut self) -> Self {
+        self.terminal_detector = Some(TruePeakDetector::new());
+        self
+    }
+
+    pub(crate) fn process_with_terminal(&mut self, input: [f32; 2], terminal: [f32; 2]) -> [f32; 2] {
+        let terminal = terminal.map(|x| if x.is_finite() { x } else { 0.0 });
+        let protected_peak = self.terminal_detector.as_mut()
+            .expect("terminal detector must be prepared before playback").push(terminal);
+        self.process_guarded(input, protected_peak)
+    }
+
+    /// The exact linear gain used for the current delayed output, without a dB round trip.
+    pub(crate) fn applied_gain(&self) -> f32 { self.applied_gain }
+
+    fn process_guarded(&mut self, input: [f32; 2], protected_peak: f32) -> [f32; 2] {
         let input = input.map(|x| if x.is_finite() { x } else { 0.0 });
-        let true_peak = self.detector.push(input);
+        let true_peak = self.detector.push(input).max(protected_peak);
         let need = if true_peak > self.ceiling { self.ceiling / true_peak } else { 1.0 };
         // Sliding minimum of the required gain over WINDOW + 1 frames (monotonic deque).
         let now = self.frame;
@@ -471,6 +499,7 @@ impl TruePeakLimiter {
         let gain = (self.average_sum / LIMITER_WINDOW_FRAMES as f64) as f32;
         // Floating drift cannot creep above unity.
         let gain = if gain > 0.999_999 { 1.0 } else { gain.max(0.0) };
+        self.applied_gain = gain;
         self.delay.push_back(input);
         let out = self.delay.pop_front().unwrap_or([0.0; 2]);
         if gain < 1.0 {

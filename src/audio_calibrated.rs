@@ -144,6 +144,210 @@ mod tests {
     use crate::sound_levels as levels;
     use crate::sound_propagation::{propagate, Atmosphere, Emission, Enclosure, Path};
 
+    /// CPU-only listening fixtures using the actual Audio buses, physical ear placement,
+    /// hearing/reflex and master. No sound device, renderer, offline normalization or film import.
+    /// A fixed2m exterior muzzle path is a declared review geometry, not an authored MG locator.
+    #[test]
+    fn weapon_timbre_candidates_through_live_audio_review() {
+        let Ok(prefix) = std::env::var("KESSEL_WEAPON_TIMBRE_REVIEW_PREFIX") else { return; };
+        use acoustics::OwnGunTimbre as G;
+        use super::super::small_arms::MgTimbre as M;
+        let receipt = format!("{prefix}_receipt.json");
+        assert!(!std::path::Path::new(&receipt).exists(), "preserve previous review");
+        if let Some(parent) = std::path::Path::new(&prefix).parent() { std::fs::create_dir_all(parent).unwrap(); }
+        let rate = acoustics::SAMPLE_RATE as usize;
+        let frames_per_tick = rate / 60;
+        let mut rows = Vec::new();
+        for profile in [G::PreviousModal, G::PressureBody, G::CompactPressure] {
+            for interior in [true, false] {
+                let mut audio = Audio::new_capture();
+                let sfx = if interior { Sfx::PlayerGunInt1 } else { Sfx::PlayerGunExt1 };
+                let mut source = acoustics::synth_gun_punch_timbre(interior,
+                    if interior { 1_271 } else { 1_071 }, profile);
+                // Same preparation as synth_procedural_dry and synth_procedural, then the
+                // same i16 storage conversion as the generated Clip bank. Playback is float.
+                acoustics::soft_limit_in_place(&mut source, 0.995);
+                if interior { source = acoustics::schroeder_reverb(&source, ReverbParams::STEEL_INTERIOR); }
+                acoustics::soft_limit_in_place(&mut source, 0.995);
+                let samples = source.iter().map(|x| (x.clamp(-1.0,1.0)*32767.0) as i16).collect::<Vec<_>>();
+                audio.clips[sfx.index()] = Some(super::super::Clip {
+                    channels:2, sample_rate:acoustics::SAMPLE_RATE, samples:samples.into(),
+                });
+                audio.level_cache.borrow_mut().clear();
+                audio.drive_cache.borrow_mut().clear();
+                let level = if interior { &levels::OWN_88_BUTTONED } else { &levels::OWN_88_HEAD_OUT };
+                let ear = crate::sound_propagation::at_ear(level.lpk_db,level.laf_db,
+                    level.spectrum,level.a_duration_ms,true);
+                let mut hearing = crate::hearing::Hearing::default();
+                let mut pcm = Vec::new();
+                for tick in 0..180 {
+                    if tick == 15 {
+                        let (onset, envelope) = audio.direct_drive(sfx).unwrap();
+                        hearing.impulse_with_envelope(crate::hearing::ear_impulses(&ear,0.0), onset,Some(envelope));
+                        audio.play_at_ear(sfx,ear.laf_db);
+                    }
+                    hearing.advance(1.0/60.0,1.0/60.0,0.0);
+                    audio.set_ear_state(&hearing.render());
+                    pcm.extend(audio.render_capture_frames(frames_per_tick).unwrap());
+                }
+                let route = if interior { "buttoned" } else { "head_out" };
+                let file = format!("{prefix}_gun_{}_{route}.wav",profile.name());
+                assert!(!std::path::Path::new(&file).exists());
+                acoustics::write_wav_stereo(&file,&pcm,acoustics::SAMPLE_RATE).unwrap();
+                rows.push(serde_json::json!({"kind":"main_gun","candidate":profile.name(),"route":route,
+                    "file":file,"onset_s":0.25,"ear_laf_dba":ear.laf_db,
+                    "measured_laf_dbfs":laf_max_dbfs(&pcm),"peak_dbfs":reproduction::peak_dbfs(&pcm),
+                    "master":audio.master_telemetry(),"source_fn":"synth_gun_punch_timbre",
+                    "playback":"candidate installed in generated Clip slot → play_at_ear → hearing → master",
+                    "recoil_and_reload_included":false,"calibration_gain_added":false}));
+            }
+        }
+        for profile in [M::Previous,M::BodyAndCrack,M::Sharper] {
+            let (pcm,mut row)=render_mg_timbre_fixture(profile);
+            let file=format!("{prefix}_mg_{}_buttoned.wav",profile.name());
+            assert!(!std::path::Path::new(&file).exists());
+            acoustics::write_wav_stereo(&file,&pcm,acoustics::SAMPLE_RATE).unwrap();
+            row["file"]=serde_json::json!(file);
+            rows.push(row);
+        }
+        let result=serde_json::json!({"schema":"panzer.weapon-timbre-candidates.v1","sample_rate_hz":acoustics::SAMPLE_RATE,
+            "channels":2,"takes":rows,"subjective_acceptance":"not established",
+            "working_recommendation":"pressure_body + body_and_crack; listening hypothesis only",
+            "reference_audio_imported":false,"export_gain":1.0,
+            "scope":"device-free real Audio graph; fixed fixture geometry, not a live firefight; no artificial bass/master gain"});
+        std::fs::write(&receipt,serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+        eprintln!("weapon timbre review: {receipt}");
+    }
+
+    fn render_mg_timbre_fixture(profile: super::super::small_arms::MgTimbre)
+        -> (Vec<f32>, serde_json::Value)
+    {
+        use super::super::small_arms::{self, MgTimbre as M, Report};
+        let frames_per_tick = acoustics::SAMPLE_RATE as usize / 60;
+        let rounds_per_second = crate::mounted_mg::ROUNDS_PER_SECOND as f32;
+        let burst_rounds = 24usize;
+        let mut exterior = Emission::from_level(&levels::MG34_OUTSIDE_1M);
+        exterior.laf_db = levels::MG34_OUTSIDE_1M.lae_db.unwrap() + levels::LAF_MINUS_LAE_DB;
+        let atmosphere = Atmosphere::WINTER;
+        let muzzle_ear = propagate(&exterior,&Path { distance_m:2.0,atmosphere,occluded:false,
+            enclosure:Enclosure::Buttoned,headset:true });
+        let local = &levels::MG34_INSIDE;
+        let receiver_ear = crate::sound_propagation::at_ear(local.lpk_db,
+            local.laf_db-10.0*rounds_per_second.log10()+levels::LAF_MINUS_LAE_DB,
+            local.spectrum,local.a_duration_ms,true);
+        let delay = 2.0 / atmosphere.speed_of_sound();
+
+            let audio = Audio::new_capture();
+            let recording = audio.feedback_source("rifle_shot");
+            let sources = (0..12).map(|i| small_arms::dry_report_timbre(Report::MachineGun,
+                3701+i*7919,recording.as_deref(),profile)).collect::<Vec<_>>();
+            let mut events = Vec::new();
+            for round in 0..burst_rounds {
+                let at = 0.25 + round as f32/rounds_per_second;
+                events.push((at,round,false));
+                events.push((at+delay,round,true));
+            }
+            events.sort_by(|a,b| a.0.total_cmp(&b.0));
+            let mut event_index = 0;
+            let mut hearing = crate::hearing::Hearing::default();
+            let mut pcm = Vec::new();
+            for tick in 0..180 {
+                let time = tick as f32/60.0;
+                let dt = 1.0/60.0;
+                audio.begin_simulation_audio_frame(time,dt);
+                while event_index < events.len() && events[event_index].0 < time+dt {
+                    let (at,round,muzzle) = events[event_index];
+                    audio.set_simulation_audio_time(at);
+                    let (ear,bearing) = if muzzle { (&muzzle_ear,5.0) } else { (&receiver_ear,0.0) };
+                    hearing.impulse_after(crate::hearing::ear_impulses(ear,bearing),(at-time).max(0.0));
+                    if muzzle {
+                        audio.play_world_mono_at_ear(&sources[round%12],ear,bearing,ReverbParams::STEEL_INTERIOR);
+                    } else if profile != M::Previous {
+                        audio.play_mg_receiver_at_ear(round as u32,ear);
+                    } else {
+                        let mono=acoustics::synth_mg_receiver_round_timbre(3701+(round as u32%12)*7919,false);
+                        audio.play_world_mono_at_ear(&mono,ear,0.0,ReverbParams::DIRECT);
+                    }
+                    event_index += 1;
+                }
+                audio.finish_simulation_audio_frame();
+                hearing.advance(dt,dt,0.0);
+                audio.set_ear_state(&hearing.render());
+                pcm.extend(audio.render_capture_frames(frames_per_tick).unwrap());
+            }
+            assert_eq!(event_index,48,"every real round needs one receiver and one propagated muzzle report");
+            let row=serde_json::json!({"kind":"machine_gun","candidate":profile.name(),"route":"buttoned",
+"rounds":burst_rounds,"rounds_per_second":rounds_per_second,
+                "event_count":event_index,"muzzle_path_m":2.0,"muzzle_delay_s":delay,
+                "receiver_ear_laf_dba":receiver_ear.laf_db,"muzzle_ear_laf_dba":muzzle_ear.laf_db,
+                "measured_laf_dbfs":laf_max_dbfs(&pcm),"peak_dbfs":reproduction::peak_dbfs(&pcm),
+                "master":audio.master_telemetry(),"recorded_rifle_early_crop_present":recording.is_some(),
+                "legacy_loop_used":false,"hull_headset_and_hearing_enabled":true,
+                "playback":"per-round world muzzle plus local receiver → sample-clock timeline → hearing → master"});
+            (pcm,row)
+    }
+
+    #[test]
+    fn mg_interior_body_and_crack_survive_real_listener_path_at_fixed_levels() {
+        use super::super::small_arms::MgTimbre as M;
+        let (old,old_route)=render_mg_timbre_fixture(M::Previous);
+        let (new,new_route)=render_mg_timbre_fixture(M::BodyAndCrack);
+        // Complete FFT-bin integration of the final graph, after hull/headset transfer,
+        // hearing/reflex, per-voice LAF placement and master. Sparse frequency probes alias
+        // the 800-RPM burst's comb and can misreport bass/edge changes by several decibels.
+        let bands=|pcm:&[f32]| -> [f64;2] {
+            let n=(pcm.len()/2).next_power_of_two();
+            let mut bins=vec![(0.0f64,0.0f64);n];
+            let mut time_energy=0.0;
+            for (dst,frame) in bins.iter_mut().zip(pcm.chunks_exact(2)) {
+                dst.0=0.5*f64::from(frame[0]+frame[1]);time_energy+=dst.0*dst.0;
+            }
+            let mut j=0;
+            for i in 1..n {
+                let mut bit=n>>1;
+                while j&bit!=0 {j^=bit;bit>>=1;}
+                j^=bit;if i<j {bins.swap(i,j);}
+            }
+            let mut width=2;
+            while width<=n {
+                let angle=-std::f64::consts::TAU/width as f64;
+                let step=(angle.cos(),angle.sin());
+                for start in (0..n).step_by(width) {
+                    let mut phase=(1.0,0.0);
+                    for k in 0..width/2 {
+                        let odd=bins[start+k+width/2];
+                        let v=(odd.0*phase.0-odd.1*phase.1,odd.0*phase.1+odd.1*phase.0);
+                        let u=bins[start+k];
+                        bins[start+k]=(u.0+v.0,u.1+v.1);
+                        bins[start+k+width/2]=(u.0-v.0,u.1-v.1);
+                        phase=(phase.0*step.0-phase.1*step.1,phase.0*step.1+phase.1*step.0);
+                    }
+                }
+                width*=2;
+            }
+            let frequency_energy=bins.iter().map(|(r,i)|r*r+i*i).sum::<f64>()/n as f64;
+            assert!((frequency_energy/time_energy-1.0).abs()<1e-7,"FFT measurement must conserve energy");
+            [(80.0,350.0),(2500.0,8000.0)].map(|(lo,hi)| {
+                bins.iter().take(n/2+1).enumerate().filter_map(|(i,(r,im))| {
+                    let hz=i as f64*44_100.0/n as f64;
+                    (hz>=lo&&hz<hi).then_some(r*r+im*im)
+                }).sum()
+            })
+        };
+        let old_bands=bands(&old);let new_bands=bands(&new);
+        let bass_db=10.0*(new_bands[0]/old_bands[0]).log10();
+        let edge_db=10.0*(new_bands[1]/old_bands[1]).log10();
+        eprintln!("[actual-MG-interior] 80–350Hz {bass_db:+.3}dB; 2.5–8kHz {edge_db:+.3}dB");
+        assert!(bass_db>=3.0,"calibrated interior MG body gain is only {bass_db:.3}dB");
+        assert!(edge_db>=3.0,"calibrated interior MG edge gain is only {edge_db:.3}dB");
+        for key in ["receiver_ear_laf_dba","muzzle_ear_laf_dba","rounds","event_count","muzzle_delay_s"] {
+            assert_eq!(old_route[key],new_route[key],"physical route/cadence changed: {key}");
+        }
+        assert_eq!(new_route["master"]["limited_frames"],0);
+        assert!(new.iter().all(|x|x.is_finite()&&x.abs()<0.8));
+        assert_eq!(new.len(),3*44_100*2);
+    }
+
     #[test]
     fn local_receiver_cache_preserves_exact_transfer_and_has_no_room_tail() {
         let l=&levels::MG34_INSIDE;

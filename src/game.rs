@@ -2893,6 +2893,22 @@ const PROJECTILE_MAX_DISTANCE_M: f32 = 1500.0;
 const PROJECTILE_GRAVITY_MPS2: f32 = 9.81;
 const PROJECTILE_EXIT_EPSILON_M: f32 = 0.012;
 
+/// Closest point on actual swept travel, never on its untravelled extension or aim ray.
+fn soundscape_near_pass_point(start: Vec3, end: Vec3, target: Vec3, radius: f32) -> Option<Vec3> {
+    if !start.is_finite() || !end.is_finite() || !target.is_finite()
+        || !radius.is_finite() || radius <= 0.0 { return None; }
+    let travel = end - start;
+    let length2 = travel.length_squared();
+    if length2 <= 1.0e-8 { return None; }
+    let toward = (target - start).dot(travel);
+    // A nearby enemy firing away is not incoming fire. A real pass was observed on the
+    // approaching segment; its receding continuation must not manufacture another contact.
+    if toward <= 0.0 { return None; }
+    let t = (toward / length2).clamp(0.0, 1.0);
+    let point = start + travel * t;
+    (point.distance_squared(target) <= radius * radius).then_some(point)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProjectileShooter {
     Player,
@@ -2951,6 +2967,8 @@ struct AuthoritativeProjectile {
     closest_player_distance: f32,
     /// The listener has been reached by this round's conical shock (`hear_passing_round`).
     crack_heard: bool,
+    /// The musical director has already received this round's real player-threatening passage.
+    soundscape_contact_reported: bool,
 }
 
 impl AuthoritativeProjectile {
@@ -2990,7 +3008,13 @@ impl AuthoritativeProjectile {
             closest_player_point: pos,
             closest_player_distance: f32::INFINITY,
             crack_heard: false,
+            soundscape_contact_reported: false,
         }
+    }
+
+    fn hostile_to_player(&self) -> bool {
+        self.small_arm.map_or(self.shooter.soviet(), |bullet|
+            bullet.shot.team == crate::infantry_combat::Team::Soviet)
     }
 
     /// Analytic step for the ShellSpec law `v(x)=v0 exp(-kx)` plus independent gravity. For a
@@ -5517,6 +5541,30 @@ pub struct Module {
     pub kind: ModuleKind,
     pub functional: bool,
     pub fault: tiger_damage::Fault,
+}
+
+fn engine_hiss_active(alive: bool, modules: &[Module]) -> bool {
+    alive && modules.iter().any(|m| m.kind == ModuleKind::Engine && !m.functional)
+}
+
+/// Relative library gain, not a measured source SPL. Zero dB here is only the catalog's authored
+/// amplitude at 1 m; equal octave-band energies approximate broadband hiss until it is calibrated.
+fn engine_hiss_relative_emitter(path: &crate::sound_propagation::Path, facing: Vec3,
+    to_source: Vec3) -> crate::audio::LibraryEmitter {
+    use crate::sound_propagation::{Emission, propagate, BANDS};
+    let emission = Emission {lpk_db:0.0, laf_db:0.0, ref_m:1.0,
+        law:crate::sound_levels::DistanceLaw::Spherical,
+        class:crate::sound_levels::SpectrumClass::Mechanical,
+        spectrum:[0.0; BANDS], a_duration_ms:1000.0, tnt_kg:0.0, directivity_db:0.0};
+    let ear = propagate(&emission, path);
+    let cutoff = crate::audio::lowpass_for_transfer(&ear.transfer_db);
+    // Invert the dry room rack's logarithmic 22,050 -> 800 Hz control. This scalar cannot
+    // reproduce the full octave transfer, or a cutoff below 800 Hz; it only approximates tone.
+    let occlusion = ((cutoff/22_050.0).ln()/(800.0f32/22_050.0).ln()).clamp(0.0,1.0);
+    crate::audio::LibraryEmitter {
+        gain:10.0f32.powf((ear.laf_db-emission.laf_db)/20.0).clamp(0.0,1.0),
+        bearing_deg:bearing_deg_from(facing,to_source), occlusion,
+    }
 }
 
 /// Fresh, undamaged player crew / modules (also used by the spall unit tests).
@@ -8691,6 +8739,7 @@ pub struct Game {
     /// smoke. Pushed to the crush veil, gated by being buttoned up inside.
     interior_haze: f32,
     weather_baseline: Option<(f32, f32)>,
+    weather_view: crate::weather_visibility::WeatherView,
     weather_wind_scale: f32,
     winter_mission: Option<winter_mission::Mission>,
     /// A fired case has one charge of trapped bore gas. The first opening of the block consumes it;
@@ -8868,6 +8917,7 @@ pub struct Game {
     scheduled_audio_audit: ScheduledAudioAudit,
     ambient_t: f32,                 // countdown to the next distant battlefield explosion
     ambient_tick: u32,              // counter-based pseudo-random (interval + bearing + clip pick)
+    soundscape_combat_t: f32,
     audio: Option<crate::audio::Audio>,
     scene_environment: scene_environment::SceneEnvironment,
     /// Tableau pieces, lights and smoke resting on a building module (`urban_tableaux`): gone with
@@ -12648,6 +12698,7 @@ impl Game {
             hover_lever: false,
             interior_haze: 0.0,
             weather_baseline: None,
+            weather_view: crate::weather_visibility::WeatherView::default(),
             weather_wind_scale: 1.0,
             winter_mission: None,
             bore_smoke_pending: false,
@@ -12773,6 +12824,7 @@ impl Game {
             scheduled_audio_audit: ScheduledAudioAudit::default(),
             ambient_t: AMBIENT_EXP_MIN,
             ambient_tick: 0,
+            soundscape_combat_t: 0.0,
             audio: crate::audio::Audio::new(),
             scene_environment: scene_environment::SceneEnvironment::load_with(
                 manifest.as_ref(),
@@ -13100,6 +13152,9 @@ impl Game {
         start: &crate::campaign::ActStart,
         renderer: &mut Renderer,
     ) -> anyhow::Result<()> {
+        // Sector-entry saves already persist this seed; loading the same attempt preserves
+        // soundtrack choices while beginning at the entrance like the rest of the game.
+        if let Some(a) = &self.audio { a.reset_soundscape(start.encounters.seed); }
         assert_eq!(
             self.act.id, start.act_id,
             "campaign start must match the built act"
@@ -13545,7 +13600,7 @@ impl Game {
                 .map(|(g, gun)| (gun.pos + Vec3::Y * 0.6, Some(g))))
             .filter(|&(centre, _)| !self.harness_futile.iter().any(|&(at, from, pulls)| pulls >= 4
                 && at.distance(centre) < 6.0 && from.distance(eye) < 15.0))
-            .filter(|&(centre, _)| centre.distance(eye) < 1_600.0 && self.los_clear(eye, centre)
+            .filter(|&(centre, _)| centre.distance(eye) < 1_600.0 && self.optical_los_clear(eye, centre)
                 && self.street_line_of_fire_clear(muzzle_toward(centre), centre)
                 && self.rubble_segment_contact(muzzle_toward(centre), centre).is_none())
             .min_by(|a, b| a.0.distance_squared(eye).total_cmp(&b.0.distance_squared(eye)))
@@ -13665,7 +13720,7 @@ impl Game {
     pub fn campaign_ai_kv2_in_sight(&self) -> bool {
         let eye = self.player.center() + Vec3::Y * 1.1;
         self.enemies.iter().enumerate().any(|(index, enemy)| self.enemy_active[index] && enemy.alive
-            && enemy.kind == EnemyKind::Kv2 && self.los_clear(eye, enemy.center()))
+            && enemy.kind == EnemyKind::Kv2 && self.optical_los_clear(eye, enemy.center()))
     }
 
     /// Headless campaign harness only: where the nearest live armoured contact stands, so the
@@ -14715,6 +14770,7 @@ impl Game {
     /// armour. Their rounds use the existing in-flight tracer and destruction pipeline, so an ally
     /// kill leaves the same wreck, fire, debris, sound delay and hard cover as the player's kill.
     fn update_allied_tigers(&mut self, dt: f32) {
+        self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
         if self.allies.is_empty() {
             return;
         }
@@ -14733,7 +14789,7 @@ impl Game {
                 .iter()
                 .enumerate()
                 .filter(|(i, enemy)| self.enemy_active[*i] && enemy.alive)
-                .filter(|(_, enemy)| self.los_clear(ally_pos + Vec3::Y * 2.0, enemy.center()))
+                .filter(|(_, enemy)| self.optical_los_clear(ally_pos + Vec3::Y * 2.0, enemy.center()))
                 .min_by(|(_, a), (_, b)| {
                     ally_pos
                         .distance_squared(a.pos)
@@ -15635,6 +15691,8 @@ impl Game {
         self.enemy_report_audit.clock_s = r.time;
         r.time += dt;
         r.advance_sky_clock(dt);
+        self.weather_view=r.weather_visibility();
+        self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
         self.update_world_doors(dt, r);
         let mut pressure_index = 0;
         while pressure_index < self.pressure_arrivals.len() {
@@ -16507,6 +16565,10 @@ impl Game {
         let elevation_rate = self.gun_elevation_motion.sample(self.player.gun_pitch, dt, self.player.alive);
         let running_gear = self.running_gear_motion.sample(self.player.hull_model(), dt,
             |x,z|self.hf.vehicle_height_at(x,z));
+        // Only an observed hostile projectile contact/passage sets this pulse. Own fire,
+        // distant battles and unseen nearby enemies cannot disclose combat through the score.
+        let soundscape_combat=self.soundscape_combat_t>0.0;
+        self.soundscape_combat_t=(self.soundscape_combat_t-dt).max(0.0);
         if let Some(a) = &self.audio {
             let shelter = if buttoned_up {
                 tank_weather_shelter(self.station, false, self.hatch_open)
@@ -16520,6 +16582,26 @@ impl Game {
             let weather_ear = crate::sound_propagation::weather_ear_dba(wind.length(),
                 self.listener_enclosure(), self.listener_headset()) - 15.0 * building;
             a.set_weather_at_ear(r.storm, shelter, wind.length(), weather_ear);
+            if self.tank_editor_scene.is_none() && self.player.alive {
+                let context=crate::soundscape_director::Context {
+                    night:r.celestial().darkness()>0.5,
+                    // Julian days change at noon. Longitude shifts that to local noon so
+                    // midnight never rerolls the bed in the middle of the same night.
+                    night_id:(r.sky_clock.now().jd+r.sky_clock.site.longitude_deg_east/360.0).floor() as i64,
+                    speed_mps:self.player.speed.abs(),
+                    // Nonliteral suspense is a programme choice, not an omniscient enemy sensor.
+                    threat:0.0,
+                    combat:soundscape_combat,location:crate::world::slug(self.act.name),
+                };
+                a.update_soundscape(dt,crate::audio::SoundscapeInput {
+                    context,act:self.act.id,position:[r.camera.pos.x,r.camera.pos.z],shelter,storm:r.storm,
+                    solar_altitude_deg:r.celestial().state.sun.altitude_deg as f32,
+                    engine_hiss:self.engine_hiss_emitter(r.camera.pos,r.camera.forward()),
+                    whiteout:self.weather_view.local_whiteout(r.camera.pos),
+                    inside:matches!(self.mode,Mode::Tank)&&!self.commander_outside,
+                    season:match self.act.season {crate::world::Season::Winter=>"winter",crate::world::Season::Spring=>"spring"},
+                });
+            }
             // One authoritative gearbox/engine state supplies both motion and sound. Collision
             // and terrain constraints may alter chassis speed after the drivetrain integration.
             let telemetry = crate::audio::EngineTelemetry {
@@ -16959,6 +17041,29 @@ impl Game {
     /// True iff module `kind` still works.
     fn module_ok(&self, kind: ModuleKind) -> bool {
         self.modules.iter().any(|m| m.kind == kind && m.functional)
+    }
+
+    /// An authored damaged-engine source at the existing rear-deck repair station. This is not
+    /// a coolant/pressure simulation: only a real failed Engine module admits the cue.
+    fn engine_hiss_emitter(&self, listener: Vec3, facing: Vec3) -> Option<crate::audio::LibraryEmitter> {
+        use crate::sound_propagation::{Enclosure, Path};
+        if !engine_hiss_active(self.player.alive, &self.modules)
+            || !listener.is_finite() || !facing.is_finite() { return None; }
+        let source = self.player.hull_model().transform_point3(ModuleKind::Engine.station());
+        if !source.is_finite() { return None; }
+        let listener_enclosure = self.listener_enclosure();
+        // One own-hull transfer: cabin paths use their existing enclosure, while an outside
+        // listener behind retained armor receives the reciprocal closed-hull approximation.
+        // The own hull is deliberately NOT also counted as the generic world barrier.
+        let inside = matches!(listener_enclosure, Enclosure::Buttoned | Enclosure::HatchOpen);
+        let enclosure = if !inside && self.small_arm_player_armor(source, listener).is_some() {
+            Enclosure::Buttoned
+        } else { listener_enclosure };
+        let path = Path {distance_m:source.distance(listener).max(1.0),
+            atmosphere:crate::sound_propagation::active_atmosphere(),
+            occluded:!self.los_clear(source, listener), enclosure,
+            headset:self.listener_headset()};
+        Some(engine_hiss_relative_emitter(&path, facing, source-listener))
     }
 
     /// The specific fault module `kind` carries.
@@ -18362,7 +18467,7 @@ impl Game {
                         }
                         let ec = self.enemies[i].center();
                         let d = ec.distance(deck);
-                        if d < env && self.los_clear(ec, deck) {
+                        if d < env && self.optical_los_clear(ec, deck) {
                             let bump = if d < 220.0 { 1.0 } else { 0.75 };
                             self.stealth.meters[i] = (self.stealth.meters[i] + bump).min(1.0);
                             println!("[panzerrechnersystem] SEEN EXITING — enemy #{i} at {:.0} m caught you on the deck", d);
@@ -19870,7 +19975,7 @@ impl Game {
                 let cos = to.normalize_or_zero().dot(look);
                 if cos > 0.9990
                     && cos > best.map(|(_, c)| c).unwrap_or(0.0)
-                    && self.los_clear(eye, e.center())
+                    && self.optical_los_clear(eye, e.center())
                 {
                     best = Some((i, cos));
                 }
@@ -20124,6 +20229,7 @@ impl Game {
     /// resolve return fire against the foot player, then push soldier + muzzle-flash transforms.
     /// Foot death is handled at the tail.
     fn update_infantry(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
         if self.mixed_combat.enabled {
             self.update_mixed_infantry(dt, r);
             return;
@@ -20178,11 +20284,14 @@ impl Game {
                 player_eye,
             );
             let previous_soldier_pos = self.soldiers[i].pos;
-            let door_occluded = self.world_doors.blocks_segment(previous_soldier_pos + Vec3::Y * crate::infantry::EYE_H, player_eye);
+            let contrast=self.weather_view.transmittance(observer,player_eye);
+            let door_occluded = self.world_doors.blocks_segment(observer,player_eye)
+                || contrast<crate::weather_visibility::RECOGNITION_CONTRAST;
+            let weather_profile=(prof.0,prof.1*contrast);
             let policy_step = self.soldiers[i].update_controlled_with_visibility(
                 player_eye,
                 self.foot.hp / crate::foot::FOOT_HP,
-                prof,
+                weather_profile,
                 &self.noise,
                 &live_cover,
                 &self.hf,
@@ -21054,7 +21163,7 @@ impl Game {
             e.speed / tank::TOP_SPEED,
             (e.reload / ENEMY_RELOAD).clamp(0.0, 1.0),
             if e.kind == EnemyKind::T34 { 1.0 } else { -1.0 },
-            if tracks && self.los_clear(ec + Vec3::Y * 1.5, pc) {
+            if tracks && self.optical_los_clear(ec + Vec3::Y * 1.5, pc) {
                 1.0
             } else {
                 -1.0
@@ -21500,13 +21609,37 @@ impl Game {
         self.audio = None;
     }
 
-    /// Hard KIA output gate. All current/future voices, including scene and trauma, share it.
+    /// Begin the idempotent terminal score on the ordinary audio graph at fatal UI entry.
+    /// None retains the existing unscored death presentation when no cue/backend is available.
+    pub fn start_death_score(&self) -> Option<f32> {
+        self.audio.as_ref().and_then(|audio| audio.start_death_score())
+    }
+
+    /// Playback-frame time, independent of rendering speed and terminal simulation updates.
+    pub fn death_score_elapsed(&self) -> Option<f32> {
+        self.audio.as_ref().and_then(|audio| audio.death_score_elapsed())
+    }
+
+    pub fn death_score_finished(&self) -> bool {
+        self.audio.as_ref().map_or(true, |audio| audio.death_score_finished())
+    }
+
+    /// Read the existing session seed without advancing gameplay or score random streams.
+    pub fn death_card_seed(&self) -> u64 {
+        self.audio.as_ref().map_or(0, |audio| audio.soundscape_seed())
+    }
+
+    pub fn death_year(&self) -> i32 {
+        if self.act.id == 1 { 1943 } else { 1945 }
+    }
+
+    /// Hard battlefield KIA gate; only the explicit terminal death score survives.
     pub fn set_audio_silenced(&self, silenced: bool) {
         if let Some(audio) = &self.audio { audio.set_silenced(silenced); }
     }
 
-    /// Whole-listener level for the death fade (1 = full, 0 = nothing heard). Every current and
-    /// future voice, scene and trauma included, ramps to it without a simulation update.
+    /// Battlefield listener level for the death fade. Scene and trauma voices ramp without
+    /// a simulation update; the explicit terminal death score retains its own envelope.
     pub fn set_audio_level(&self, level: f32) {
         if let Some(audio) = &self.audio { audio.set_listener_level(level); }
     }
@@ -23350,6 +23483,27 @@ impl Game {
         nearest
     }
 
+    /// Score contact is a presentation fact from a travelled, collision-clipped hostile round.
+    /// This never changes its ballistics, damage, report, crack, or impact sound.
+    fn observe_soundscape_incoming(&mut self, projectile: &mut AuthoritativeProjectile,
+        start: Vec3, end: Vec3, contact: Option<ProjectileContact>) {
+        if projectile.soundscape_contact_reported || !projectile.hostile_to_player() { return; }
+        let direct = contact.is_some_and(|hit| matches!(hit.kind,
+            ProjectileContactKind::Foot | ProjectileContactKind::ExposedCrew(..))
+            || matches!(hit.kind, ProjectileContactKind::Vehicle(armor)
+                if armor.vehicle == ProjectileVehicle::Player));
+        let target = self.threat_center();
+        let radius = if projectile.small_arm.is_some() {
+            if self.winter_foot_target() { 3.0 } else { 6.0 }
+        } else { 12.0 };
+        let near = !direct && soundscape_near_pass_point(start, end, target, radius)
+            .is_some_and(|point| self.los_clear(point, target));
+        if direct || near {
+            projectile.soundscape_contact_reported = true;
+            self.soundscape_combat_t = 0.25;
+        }
+    }
+
     fn advance_projectiles(&mut self, dt: f32, r: &mut Renderer) {
         if !dt.is_finite() || dt <= 0.0 {
             return;
@@ -23381,6 +23535,7 @@ impl Game {
                 let terminal_t = contact.map_or(step.start.distance(step.end), |hit| hit.t_m);
                 let terminal_end =
                     step.start + (step.end - step.start).normalize_or_zero() * terminal_t.max(0.0);
+                self.observe_soundscape_incoming(&mut projectile, step.start, terminal_end, contact);
                 self.record_shell_flight_segment(&projectile, step, terminal_end, step_dt, flight_at);
                 self.record_small_arm_visual_segment(&projectile, step, terminal_end, step_dt, flight_at);
 
@@ -24082,6 +24237,7 @@ impl Game {
         self.fx.smoke_dur = 1.4;
         self.interior_haze = (self.interior_haze + 0.11).min(1.0);
         self.gun_shots = sequence;
+        if let Some(audio)=&self.audio {audio.soundscape_main_gun_fired();}
         if let Some(runtime) = self.campaign.as_mut() {
             runtime.battle_pressure = (runtime.battle_pressure + 14.0).min(100.0);
         }
@@ -24876,6 +25032,7 @@ impl Game {
     /// Deliberately gentler than the player (longer reload, dispersion). Uncoordinated for now —
     /// bounding overwatch / role assignment is the NEXT step.
     fn enemy_ai(&mut self, dt: f32) {
+        self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
         // Garage and Playtest practice have stationary targets. Skip detection and all AI orders,
         // but retain physical braking/terrain settling and the ordinary player-hit damage path.
         if self.targets_only || !self.enemy_return_fire_allowed() {
@@ -25041,7 +25198,7 @@ impl Game {
                     let laid = lay(&mut self.enemies[i], target);
                     if laid && self.enemies[i].reload <= 0.0 && net_fire
                         && self.enemy_return_fire_allowed()
-                        && (winter.is_none() || self.los_clear(self.enemies[i].muzzle().0,target)) {
+                        && self.optical_los_clear(self.enemies[i].muzzle().0,target) {
                         self.enemy_fire(i);
                         let skill =
                             f32::from(self.enemy_skill.get(i).copied().unwrap_or(42)) / 100.0;
@@ -25069,7 +25226,7 @@ impl Game {
     /// everyone else is on PATROL, blissfully unaware of the Tiger in their midst.
     fn enemy_mode(&self, i: usize) -> AiMode {
         if self.stealth.spotted[i] && self.stealth.meters[i] >= 0.9
-            && self.los_clear(self.enemies[i].center(), self.threat_center()) {
+            && self.optical_los_clear(self.enemies[i].center(), self.threat_center()) {
             return AiMode::Track;
         }
         match self.stealth.platoon_state(i) {
@@ -25146,8 +25303,8 @@ impl Game {
             }
         };
 
-        let radius = self.winter_encounter.as_ref().map_or(radius, |encounter|
-            winter_encounter_ai::visibility_radius(radius,self.winter_foot_target(),encounter.storm));
+        // Weather is integrated along each actual observer/target path below. A global storm
+        // radius cannot represent a nearby clearing, drifting whiteout bank, or a sheltered port.
 
         // Compute each living enemy's instantaneous accrual rate from its sightline + LOS; hand the
         // whole vector to the (pure, testable) stealth state machine to accrue meters and transition
@@ -25173,9 +25330,10 @@ impl Game {
             let r = stealth::accrual_rate(cos, dist, radius, move_mult);
             // Line of sight: terrain (a rise, a hull-down position) between the tank and the player
             // kills the accrual — cover is camouflage.
-            rate[i] = if r > 0.0 && self.los_clear(ecenter, player_pos) {
+            let contrast=if r>0.0 {self.weather_view.transmittance(ecenter,player_pos)}else{0.0};
+            rate[i] = if contrast>=crate::weather_visibility::RECOGNITION_CONTRAST && self.los_clear(ecenter, player_pos) {
                 let skill = f32::from(self.enemy_skill.get(i).copied().unwrap_or(42)) / 100.0;
-                r * (0.72 + 0.68 * skill)
+                r * contrast * (0.72 + 0.68 * skill)
             } else {
                 0.0
             };
@@ -25193,6 +25351,10 @@ impl Game {
     /// breaks it outright. Terrain is checked with the raymarch, then standing trunks use the same
     /// cylinder query as shell travel. Once a tree starts falling it leaves that query, reopening
     /// both the optical and ballistic lane together.
+    fn optical_los_clear(&self,from:Vec3,to:Vec3)->bool {
+        self.weather_view.recognizable(from,to) && self.los_clear(from,to)
+    }
+
     fn los_clear(&self, from: Vec3, to: Vec3) -> bool {
         let d = to - from;
         let dist = d.length();
@@ -25356,7 +25518,7 @@ impl Game {
         let (from, _) = self.enemies[i].coax_muzzle();
         let target = self.foot.pos + Vec3::Y * (0.6 + 0.55 * (1.0 - self.foot.crouch_t));
         let range = from.distance(target);
-        if range > 260.0 || !self.los_clear(from, target) { return; }
+        if range > 260.0 || !self.optical_los_clear(from, target) { return; }
         self.enemy_mg_cd[i] = 1.3;
         self.ai_tick = self.ai_tick.wrapping_add(1);
         let aim = (target-from).normalize_or_zero();
@@ -30307,6 +30469,90 @@ fn swept_terrain_contact(start: Vec3, end: Vec3, hf: &Heightfield) -> Option<Pro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_hiss_requires_a_present_failed_engine_and_stops_after_repair_or_death() {
+        let mut modules = default_modules();
+        assert!(!engine_hiss_active(true, &modules));
+        modules.iter_mut().find(|m|m.kind==ModuleKind::Fuel).unwrap().functional=false;
+        assert!(!engine_hiss_active(true, &modules), "fuel failure is not an engine hiss");
+        modules.iter_mut().find(|m|m.kind==ModuleKind::Engine).unwrap().functional=false;
+        assert!(engine_hiss_active(true, &modules));
+        assert!(!engine_hiss_active(false, &modules));
+        modules.iter_mut().find(|m|m.kind==ModuleKind::Engine).unwrap().functional=true;
+        assert!(!engine_hiss_active(true, &modules));
+        modules.retain(|m|m.kind!=ModuleKind::Engine);
+        assert!(!engine_hiss_active(true, &modules));
+    }
+
+    #[test]
+    fn engine_hiss_relative_path_spreads_pans_and_applies_enclosure_once() {
+        use crate::sound_propagation::{Atmosphere, Enclosure, Ground, Path};
+        let mut path=Path {distance_m:1.0,
+            atmosphere:Atmosphere {ground:Ground::Hard,..Atmosphere::WINTER},
+            occluded:false,enclosure:Enclosure::OnFoot,headset:false};
+        let near=engine_hiss_relative_emitter(&path, Vec3::Z, -Vec3::X);
+        assert!((near.gain-1.0).abs()<1e-5);
+        assert!((near.bearing_deg-90.0).abs()<1e-5);
+        path.distance_m=10.0;
+        let far=engine_hiss_relative_emitter(&path, Vec3::Z, Vec3::X);
+        assert!(far.gain>0.08 && far.gain<0.1);
+        assert!((far.bearing_deg-270.0).abs()<1e-5);
+        path.distance_m=1.0;
+        path.enclosure=Enclosure::Buttoned;
+        let hull=engine_hiss_relative_emitter(&path, Vec3::Z, Vec3::Z);
+        assert!(hull.gain<near.gain*0.1 && hull.occlusion>near.occlusion);
+        path.occluded=true;
+        let blocked=engine_hiss_relative_emitter(&path, Vec3::Z, Vec3::Z);
+        assert!(blocked.gain<hull.gain, "a separate wall adds its own path loss");
+        assert!(blocked.gain.is_finite() && (0.0..=1.0).contains(&blocked.occlusion));
+        // The source follows pitch and roll as well as heading; it is never a world-fixed cue.
+        let hull_model=Mat4::from_rotation_translation(
+            Quat::from_rotation_y(0.8)*Quat::from_rotation_x(0.3)*Quat::from_rotation_z(-0.2),
+            Vec3::new(12.0,3.0,-5.0));
+        let source=hull_model.transform_point3(ModuleKind::Engine.station());
+        assert!((hull_model.inverse().transform_point3(source)-ModuleKind::Engine.station()).length()<1e-5);
+        assert!((source-(Vec3::new(12.0,3.0,-5.0)+ModuleKind::Engine.station())).length()>0.5);
+    }
+
+    #[test]
+    fn soundscape_contact_uses_actual_approaching_travel_not_muzzle_proximity_or_aim_extension() {
+        let target = Vec3::ZERO;
+        assert!(soundscape_near_pass_point(Vec3::new(-20.0, 2.0, 0.0),
+            Vec3::new(20.0, 2.0, 0.0), target, 3.0).is_some());
+        assert!(soundscape_near_pass_point(Vec3::new(-20.0, 0.0, 0.0),
+            Vec3::new(-10.0, 0.0, 0.0), target, 3.0).is_none(),
+            "an incoming aim ray has not yet reached the player");
+        assert!(soundscape_near_pass_point(Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(20.0, 0.0, 0.0), target, 3.0).is_none(),
+            "a nearby gun firing away does not imply the player is under fire");
+        assert!(soundscape_near_pass_point(Vec3::new(-20.0, 4.0, 0.0),
+            Vec3::new(20.0, 4.0, 0.0), target, 3.0).is_none());
+        assert!(soundscape_near_pass_point(Vec3::ZERO, Vec3::ZERO, target, 3.0).is_none());
+        assert!(soundscape_near_pass_point(Vec3::NAN, Vec3::ONE, target, 3.0).is_none());
+    }
+
+    #[test]
+    fn soundscape_contact_excludes_player_and_allied_rounds_including_infantry_sentinel() {
+        use crate::infantry_combat::{Shot, Team, Weapon};
+        for (shooter, expected) in [(ProjectileShooter::Player, false),
+            (ProjectileShooter::Ally(0), false), (ProjectileShooter::Enemy(0), true),
+            (ProjectileShooter::AtGun(0), true)] {
+            let projectile = AuthoritativeProjectile::new(1, shooter,
+                &crate::ballistics::PZGR_39, Vec3::ZERO, Vec3::Z, 1);
+            assert_eq!(projectile.hostile_to_player(), expected);
+        }
+        let mut bullet = AuthoritativeProjectile::new(1, ProjectileShooter::Enemy(usize::MAX),
+            &crate::ballistics::PZGR_39, Vec3::ZERO, Vec3::Z, 1);
+        for (team, expected) in [(Team::German, false), (Team::Soviet, true)] {
+            bullet.small_arm = Some(small_arms_runtime::Payload {
+                emitted_at_s:0.0, shot:Shot {shooter:17, team, origin:Vec3::ZERO,
+                    direction:Vec3::Z, range:120.0, weapon:Weapon::Rifle},
+                damage:34.0, tracer:false, round:1, mixed:true, telemetry:None,
+            });
+            assert_eq!(bullet.hostile_to_player(), expected);
+        }
+    }
 
     #[test]
     fn dust_medium_expands_dilutes_and_uses_weather_wind() {

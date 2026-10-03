@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "manifest_sha256": "dedce230a5df1c008a2f0a634720e3aed97aaa89287b4eda7e880cb547709b2d",
+  "one_bounded_source_refresh": true,
+  "renames": [
+    {
+      "id": "audio_e37854144c77ed0840399142",
+      "current_source_path": "combat/combat_drum_loop.wav",
+      "historical_source_paths": [
+        "mp_perc_125_moeubius.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_2b693377ececa940b0722817",
+      "current_source_path": "combat/combat_start.wav",
+      "historical_source_paths": [
+        "KRNE_148_E_Movin_Guitar_Palm_Muted.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_ecef6d69f933a96dff7491b5",
+      "current_source_path": "combat/electro_loop.wav",
+      "historical_source_paths": [
+        "oe_drm110_wax_top.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_d1bbd4a26f6cdc64b4cf2345",
+      "current_source_path": "combat/mp_perc_125_clickka.wav",
+      "historical_source_paths": [
+        "mp_perc_125_clickka.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_d63f68cfd6c3007c3ebb87c1",
+      "current_source_path": "combat/mp_perc_125_tuktuk.wav",
+      "historical_source_paths": [
+        "mp_perc_125_tuktuk.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_06228723b963524931451d08",
+      "current_source_path": "combat/oe_drm110_crumbled_stp.wav",
+      "historical_source_paths": [
+        "oe_drm110_crumbled_stp.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_bc6a6d427171c259f5ca34b2",
+      "current_source_path": "combat/oe_drm110_dusted_drum_loop.wav",
+      "historical_source_paths": [
+        "oe_drm110_dusted_prc.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_de42714f61b5b1f972d9df28",
+      "current_source_path": "combat/surprise_contact.wav",
+      "historical_source_paths": [
+        "oe_bs100_haunted_Em.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_f73177adcd57f1b450d05afe",
+      "current_source_path": "effects/oe_bs_psych_F.wav",
+      "historical_source_paths": [
+        "oe_bs_psych_F.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_ec9cb8e747e24b8b33a1eb8c",
+      "current_source_path": "effects/oe_bs_ufo_F.wav",
+      "historical_source_paths": [
+        "oe_bs_ufo_F.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_dd145d174424341e4547df34",
+      "current_source_path": "interior_tank_ambiance/Campfire_2.wav",
+      "historical_source_paths": [
+        "Campfire_2.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_84cef3dee8d90d794acfcc92",
+      "current_source_path": "night_ambiance/Nighttime_Wanderers.wav",
+      "historical_source_paths": [
+        "Nighttime_Wanderers.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_ba310e1985c80dc0cdafe204",
+      "current_source_path": "surprise-contact.wav",
+      "historical_source_paths": [
+        "oe_fxlp120_speedupriser.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_39d5af35ea51aa4c037ddbcb",
+      "current_source_path": "suspense/Grove_Flyer_Sonar.wav",
+      "historical_source_paths": [
+        "Grove_Flyer_Sonar.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_c7d806a1865fa863d5b92273",
+      "current_source_path": "suspense/heavy_suspense_loop.wav",
+      "historical_source_paths": [
+        "OE_Atmos_FX_09.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_4a383409ba81f8fd25d2ab1c",
+      "current_source_path": "suspense/riser_transition.wav",
+      "historical_source_paths": [
+        "OE_Atmos_FX_12_E.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_8f86fc07ee8825d95fce5e0d",
+      "current_source_path": "unused/OE_Atmos_FX_07_C.wav",
+      "historical_source_paths": [
+        "OE_Atmos_FX_07_C.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_d1c55422b1e3b23a031fa541",
+      "current_source_path": "unused/oe_fxlp110_bells.wav",
+      "historical_source_paths": [
+        "oe_fxlp110_bells.wav"
+      ],
+      "content_sha256_unchanged": true
+    },
+    {
+      "id": "audio_5dd9e671f70e2d3851bc33cf",
+      "current_source_path": "winter_atmosphere/Spinning_Cave_Lights_2.wav",
+      "historical_source_paths": [
+        "Spinning_Cave_Lights_2.wav"
+      ],
+      "content_sha256_unchanged": true
+    }
+  ],
+  "usage_suggestions": [
+    {
+      "id": "audio_e37854144c77ed0840399142",
+      "indication": "repeat complete source",
+      "event_suggestion": null,
+      "requires_trigger_review": false,
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "combat/combat_drum_loop.wav",
+      "automatic_event_binding": false,
+      "folder_role": "combat",
+      "contexts": []
+    },
+    {
+      "id": "audio_2b693377ececa940b0722817",
+      "indication": "combat entry accent",
+      "event_suggestion": "combat_start",
+      "requires_trigger_review": false,
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "combat/combat_start.wav",
+      "automatic_event_binding": false,
+      "folder_role": "combat",
+      "contexts": [],
+      "suggested_runtime_role": "stinger",
+      "trigger_limit": "runtime may play once per actual incoming-contact episode; not combat-mode entry or enemy detection"
+    },
+    {
+      "id": "audio_ecef6d69f933a96dff7491b5",
+      "indication": "repeat complete source",
+      "event_suggestion": null,
+      "requires_trigger_review": false,
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "combat/electro_loop.wav",
+      "automatic_event_binding": false,
+      "folder_role": "combat",
+      "contexts": []
+    },
+    {
+      "id": "audio_bc6a6d427171c259f5ca34b2",
+      "indication": "repeat complete source",
+      "event_suggestion": null,
+      "requires_trigger_review": false,
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "combat/oe_drm110_dusted_drum_loop.wav",
+      "automatic_event_binding": false,
+      "folder_role": "combat",
+      "contexts": []
+    },
+    {
+      "id": "audio_de42714f61b5b1f972d9df28",
+      "indication": "surprise/contact accent",
+      "event_suggestion": null,
+      "requires_trigger_review": true,
+      "ambiguity": "newly detected encounter versus physical impact; no automatic event chosen",
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "combat/surprise_contact.wav",
+      "automatic_event_binding": false,
+      "folder_role": "combat",
+      "contexts": []
+    },
+    {
+      "id": "audio_fd571f39014744f875bc640a",
+      "indication": "repeat complete source",
+      "event_suggestion": null,
+      "requires_trigger_review": false,
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "music/JVIEWS_tonal_loop_vhs_scifi_160_Bb.wav",
+      "automatic_event_binding": false,
+      "folder_role": "music",
+      "contexts": []
+    },
+    {
+      "id": "audio_c7d806a1865fa863d5b92273",
+      "indication": "repeat complete source",
+      "event_suggestion": null,
+      "requires_trigger_review": false,
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "suspense/heavy_suspense_loop.wav",
+      "automatic_event_binding": false,
+      "folder_role": "threat",
+      "contexts": []
+    },
+    {
+      "id": "audio_4a383409ba81f8fd25d2ab1c",
+      "indication": "transition riser",
+      "event_suggestion": null,
+      "requires_trigger_review": true,
+      "ambiguity": "target transition unspecified; no automatic event chosen",
+      "basis": "current user-authored filename; no listening/content authentication",
+      "source_path": "suspense/riser_transition.wav",
+      "automatic_event_binding": false,
+      "folder_role": "threat",
+      "contexts": []
+    }
+  ],
+  "precedence": "Current category and filename determine usage. Historical names are provenance only; explicit standalone _loop instructions also survive historical aliases. No new gameplay triggers are installed."
+}

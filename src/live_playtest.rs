@@ -230,7 +230,7 @@ impl Game {
         // In the streets a leader closing on a report halts where the reported area comes into view:
         // the same sight test the crews see by, to a hull standing there.
         let mut encounter = self.winter_encounter.take().unwrap();
-        let sees = |eye: Vec3, at: Vec2| self.los_clear(eye,
+        let sees = |eye: Vec3, at: Vec2| self.optical_los_clear(eye,
             Vec3::new(at.x, self.hf.height_at(at.x, at.y) + tank::TIGER_PARTS.center_h, at.y));
         let orders = encounter.orders(&hulls, &observations, dt, &sees);
         self.winter_encounter = Some(encounter);
