@@ -306,6 +306,23 @@ struct VsOut {
     @interpolate(perspective, centroid) @location(2) world: vec3<f32>,
     @interpolate(perspective, centroid) @location(3) tangent: vec4<f32>, // xyz = world tangent, w = bitangent handedness
     @interpolate(perspective, centroid) @location(4) relative_world: vec3<f32>, // preserve local receiver-plane precision
+    // Derivatives need pixel-centre interpolation. Coverage centroids can shift/collapse at
+    // primitive edges; they remain correct for the shaded receiver, but not a stable plane basis.
+    @interpolate(perspective, center) @location(5) plane_relative_world: vec3<f32>,
+};
+
+// The selection pass and shaded pass share precisely invariant source clip positions.
+// Fragment-side VsOut deliberately does not carry the vertex-only invariant attribute.
+struct VertexOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @interpolate(perspective, centroid) @location(0) uv: vec2<f32>, // perspective-correct source texels
+    @interpolate(perspective, centroid) @location(1) normal: vec3<f32>,
+    @interpolate(perspective, centroid) @location(2) world: vec3<f32>,
+    @interpolate(perspective, centroid) @location(3) tangent: vec4<f32>, // xyz = world tangent, w = bitangent handedness
+    @interpolate(perspective, centroid) @location(4) relative_world: vec3<f32>, // preserve local receiver-plane precision
+    // Derivatives need pixel-centre interpolation. Coverage centroids can shift/collapse at
+    // primitive edges; they remain correct for the shaded receiver, but not a stable plane basis.
+    @interpolate(perspective, center) @location(5) plane_relative_world: vec3<f32>,
 };
 
 // WGSL has no portable matrix `inverse()` builtin.  For a column-major linear transform M, the
@@ -330,7 +347,7 @@ fn inverse_transpose_3x3(linear: mat3x3<f32>) -> mat3x3<f32> {
 // the fragment stage. Called by both the push-constant path (`vs`) and the instanced path
 // (`vs_inst`, per-instance model matrix from the instance buffer).
 fn project_vertex(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
-                  tangent: vec4<f32>) -> VsOut {
+                  tangent: vec4<f32>) -> VertexOut {
     let world = (model * vec4(pos, 1.0)).xyz;
     let relative_world = camera_relative_position(model, pos, cam.cam_pos);
     let clip = cam.view_proj * vec4(relative_world, 1.0);
@@ -342,19 +359,20 @@ fn project_vertex(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec
     // close-range geometry (the whole interior) into shearing polygons. The retro read comes from
     // the 640×360 internal res + posterize/dither/nearest-upscale; geometry renders faithfully.)
 
-    var out: VsOut;
+    var out: VertexOut;
     out.clip = clip;
     out.uv = uv;
     out.normal = normalize(normal_to_world * normal);
     out.world = world;
     out.relative_world = relative_world;
+    out.plane_relative_world = relative_world;
     out.tangent = vec4(normalize(linear * tangent.xyz), handedness);
     return out;
 }
 
 @vertex
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
-      @location(3) tangent: vec4<f32>) -> VsOut {
+      @location(3) tangent: vec4<f32>) -> VertexOut {
     return project_vertex(pc.model, pos, normal, uv, tangent);
 }
 
@@ -365,7 +383,7 @@ fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) 
 fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
            @location(3) tangent: vec4<f32>,
            @location(4) i0: vec4<f32>, @location(5) i1: vec4<f32>,
-           @location(6) i2: vec4<f32>, @location(7) i3: vec4<f32>) -> VsOut {
+           @location(6) i2: vec4<f32>, @location(7) i3: vec4<f32>) -> VertexOut {
     var p = pos;
     var n = normal;
     var t = tangent.xyz;
@@ -486,12 +504,20 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let macro_dx = dpdx(in.uv) * vec2<f32>(textureDimensions(albedo_tex));
     let macro_dy = dpdy(in.uv) * vec2<f32>(textureDimensions(albedo_tex));
     let macro_lod = log2(max(max(length(macro_dx), length(macro_dy)), 1.0));
-    let footprint = max(length(dpdx(in.relative_world.xz)), length(dpdy(in.relative_world.xz)));
+    let plane_dx = dpdx(in.plane_relative_world);
+    let plane_dy = dpdy(in.plane_relative_world);
+    let footprint = max(length(plane_dx.xz), length(plane_dy.xz));
     // The shadow receiver is the rasterized triangle, not its interpolated shading normal.
     // Evaluate derivatives before any divergent material branch.
     // Absolute world interpolation quantizes sub-mm screen derivatives at battlefield
     // coordinates. This is the same rasterized plane, expressed relative to the eye.
-    let face_cross = cross(dpdx(in.relative_world), dpdy(in.relative_world));
+    // Normalize the basis before crossing so degeneracy is angular, not a world-area cutoff.
+    // A 25 mm eye-relief view has ~14 um pixels at 450p/14 degrees; its valid plane used to
+    // fail the fixed m^4 threshold and feed the smoothed shading normal into shadow PCF.
+    let plane_dx_sq = dot(plane_dx,plane_dx);
+    let plane_dy_sq = dot(plane_dy,plane_dy);
+    let face_cross = cross(plane_dx*inverseSqrt(max(plane_dx_sq,1e-30)),
+                           plane_dy*inverseSqrt(max(plane_dy_sq,1e-30)));
     let sparse_cubic_smoke = pc.params.w < -0.5;
     if (sparse_cubic_smoke && distance(in.world, cam.cam_pos) < 0.16) { discard; }
     if (pc.params.w > 3.5 && pc.params.w < 4.5 && raw4.a < 0.5) { discard; }
@@ -499,10 +525,10 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let view = normalize(-in.relative_world);
     let geometric_normal = normalize(in.normal);
     let face_length_sq = dot(face_cross, face_cross);
-    let face_normal = face_cross * inverseSqrt(max(face_length_sq, 1e-16));
+    let face_normal = face_cross * inverseSqrt(max(face_length_sq, 1e-20));
     let receiver_normal = select(geometric_normal,
         face_normal * select(-1.0, 1.0, dot(face_normal, geometric_normal) >= 0.0),
-        face_length_sq > 1e-16);
+        plane_dx_sq>1e-30 && plane_dy_sq>1e-30 && face_length_sq>1e-12);
     // A transparent pane: premultiplied Fresnel reflection of the physical environment over the
     // transmitted scene. The pane emits nothing of its own.
     if (pc.params.w > 7.5) {

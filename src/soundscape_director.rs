@@ -5,9 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
-const COMBAT_RELEASE_S: f64 = 12.0;
-const AFTERMATH_S: f64 = 15.0;
-const MIN_MODE_HOLD_S: f64 = 3.0;
+const COMBAT_RELEASE_S: f64 = 60.0;
+const MIN_COMBAT_PASSAGE_S: f64 = 90.0;
+const AFTERMATH_S: f64 = 90.0;
+const MIN_MODE_HOLD_S: f64 = 20.0;
 const LOCATION_DEBOUNCE_S: f64 = 2.0;
 const THREAT_ENTER: f64 = 0.45;
 const THREAT_LEAVE: f64 = 0.25;
@@ -176,7 +177,7 @@ impl Director {
             current,
             target,
             dt,
-            if target > current { 0.4 } else { 2.5 },
+            if target > current { 3.0 } else { 12.0 },
         )
         .clamp(0.0, 1.0) as f32;
         self.plan.clone()
@@ -225,7 +226,7 @@ impl Director {
         if combat {
             self.set_mode(Mode::Combat);
             self.mode_age_s += dt;
-            self.combat_release_s = COMBAT_RELEASE_S;
+            self.combat_release_s = COMBAT_RELEASE_S.max(MIN_COMBAT_PASSAGE_S - self.mode_age_s);
             self.aftermath_s = 0.0;
             self.recent_combat = true;
             return;
@@ -375,7 +376,7 @@ impl Director {
                 0.0
             },
             0.0,
-            COMBAT_RELEASE_S,
+            MIN_COMBAT_PASSAGE_S.max(COMBAT_RELEASE_S),
         )?;
         out.aftermath_s = optional_number(
             value,
@@ -581,59 +582,43 @@ mod tests {
     }
 
     #[test]
-    fn combat_interrupts_immediately_then_releases_through_aftermath() {
+    fn short_contact_retains_a_full_combat_passage_and_long_aftermath() {
         let mut d = Director::new(1);
-        let combat = Context {
-            combat: true,
-            ..Context::default()
-        };
+        let combat = Context { combat: true, ..Context::default() };
         assert_eq!(d.update(0.01, &combat).mode, Mode::Combat);
         let quiet = Context::default();
-        assert_eq!(advance(&mut d, 11, &quiet).mode, Mode::Combat);
-        assert_eq!(d.update(0.75, &quiet).mode, Mode::Combat);
-        assert_eq!(d.update(0.25, &quiet).mode, Mode::Aftermath);
-        assert_eq!(advance(&mut d, 14, &quiet).mode, Mode::Aftermath);
-        assert_eq!(advance(&mut d, 1, &quiet).mode, Mode::Explore);
+        assert_eq!(advance(&mut d, 89, &quiet).mode, Mode::Combat);
+        assert_eq!(advance(&mut d, 2, &quiet).mode, Mode::Aftermath);
+        assert_eq!(advance(&mut d, 88, &quiet).mode, Mode::Aftermath);
+        assert_eq!(advance(&mut d, 2, &quiet).mode, Mode::Explore);
         assert!(!d.recent_combat);
     }
 
     #[test]
     fn combat_restarts_grace_and_large_dt_consumes_all_phase_time() {
         let mut d = Director::new(3);
-        let combat = Context {
-            combat: true,
-            ..Context::default()
-        };
+        let combat = Context { combat: true, ..Context::default() };
         let quiet = Context::default();
-        d.update(0.25, &combat);
-        advance(&mut d, 10, &quiet);
-        d.update(0.25, &combat);
-        assert_eq!(advance(&mut d, 11, &quiet).mode, Mode::Combat);
+        advance(&mut d, 120, &combat);
+        advance(&mut d, 50, &quiet);
+        d.update(1.0, &combat);
+        assert_eq!(advance(&mut d, 59, &quiet).mode, Mode::Combat);
         assert_eq!(d.update(2.0, &quiet).mode, Mode::Aftermath);
-        assert_eq!(d.aftermath_s, 14.0);
-        assert_eq!(d.update(20.0, &quiet).mode, Mode::Explore);
-        assert_eq!(d.mode_age_s, 6.0);
+        assert_eq!(d.aftermath_s, AFTERMATH_S - 1.0);
+        assert_eq!(d.update(100.0, &quiet).mode, Mode::Explore);
+        assert_eq!(d.mode_age_s, 11.0);
     }
 
     #[test]
-    fn driving_has_smoothing_hysteresis_and_a_minimum_mode_hold() {
+    fn brief_stops_and_starts_do_not_switch_the_driving_profile() {
         let mut d = Director::new(4);
-        let fast = Context {
-            speed_mps: 5.0,
-            ..Context::default()
-        };
-        assert_eq!(d.update(0.25, &fast).mode, Mode::Explore);
-        assert_eq!(advance(&mut d, 3, &fast).mode, Mode::Driving);
-        let slow = Context {
-            speed_mps: 1.2,
-            ..Context::default()
-        };
-        assert_eq!(advance(&mut d, 8, &slow).mode, Mode::Driving);
+        let fast = Context { speed_mps: 5.0, ..Context::default() };
+        assert_eq!(advance(&mut d, 19, &fast).mode, Mode::Explore);
+        assert_eq!(advance(&mut d, 1, &fast).mode, Mode::Driving);
         let quiet = Context::default();
-        assert_eq!(advance(&mut d, 4, &quiet).mode, Mode::Explore);
-        assert_eq!(advance(&mut d, 8, &slow).mode, Mode::Explore);
-        assert_eq!(advance(&mut d, 4, &fast).mode, Mode::Driving);
-        assert_eq!(d.update(1.0, &quiet).mode, Mode::Driving);
+        assert_eq!(advance(&mut d, 4, &quiet).mode, Mode::Driving);
+        assert_eq!(advance(&mut d, 10, &fast).mode, Mode::Driving);
+        assert_eq!(advance(&mut d, 20, &quiet).mode, Mode::Explore);
     }
 
     #[test]
@@ -644,7 +629,7 @@ mod tests {
             threat: 0.9,
             ..Context::default()
         };
-        assert_eq!(advance(&mut d, 4, &danger).mode, Mode::Threat);
+        assert_eq!(advance(&mut d, 21, &danger).mode, Mode::Threat);
         let middle = Context {
             threat: 0.35,
             ..danger.clone()
@@ -654,7 +639,7 @@ mod tests {
             threat: 0.1,
             ..danger
         };
-        assert_eq!(advance(&mut d, 6, &low).mode, Mode::Driving);
+        assert_eq!(advance(&mut d, 21, &low).mode, Mode::Driving);
         assert_eq!(advance(&mut d, 8, &middle).mode, Mode::Driving);
     }
 

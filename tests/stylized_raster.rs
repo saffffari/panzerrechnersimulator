@@ -275,3 +275,16 @@ fn default_geometry_map_shaders_validate_and_preserve_shared_visibility() {
         assert_eq!(layout(&module,"SkyVisibility").0,4784);
     }
 }
+
+#[test]
+fn shaded_and_hover_geometry_share_invariant_vertex_clip_positions() {
+    let module=parse(&compose(MESH));
+    for entry in module.entry_points.iter().filter(|e|e.name=="vs"||e.name=="vs_inst") {
+        let result=entry.function.result.as_ref().unwrap();
+        let naga::TypeInner::Struct{members,..}=&module.types[result.ty].inner else{panic!("vertex output must retain source varyings");};
+        assert!(members.iter().any(|member|matches!(member.binding.as_ref(),
+            Some(naga::Binding::BuiltIn(naga::BuiltIn::Position{invariant:true})))),
+            "{} must not drift against the re-rasterized selection depth",entry.name);
+    }
+    assert!(MESH.contains("@fragment fn fs_hover()"));
+}

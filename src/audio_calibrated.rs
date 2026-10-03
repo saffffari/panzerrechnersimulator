@@ -62,6 +62,9 @@ pub(super) fn measure_render_window(stereo: &[f32], max_frame: usize) -> f32 {
 pub fn control_level_dba(key: &str) -> f32 {
     use crate::sound_levels as levels;
     match key {
+        // Local boot contact on the steel turret floor, at the player's feet. Explicit
+        // authored estimate; do not inherit the much quieter map-paper class.
+        k if k.starts_with("footstep_metal_") => 78.0,
         "hatch_stop" | "hammer_strike" | "breech" => levels::HAND_MECHANISM.laf_db,
         // A lid rolling on its hinge squeals below its stop.
         "hatch_move" => levels::HAND_MECHANISM.laf_db - 6.0,
@@ -635,6 +638,16 @@ impl Audio {
         self.play_stereo_on(samples, gain, bus);
     }
 
+    /// Authored close interior handling reproduction, after physical level calculation.
+    /// This preserves source/propagation and passes through hearing, death fade and the shared
+    /// limiter. It is not a measured historical sound-pressure adjustment.
+    pub(crate) fn play_handling_at_ear(&self, samples: Vec<f32>, ear_laf_dba: f32) {
+        if samples.is_empty() { return; }
+        let gain = reproduction::voice_gain(ear_laf_dba, laf_max_dbfs(&samples))
+            * 10.0_f32.powf(14.0 / 20.0);
+        self.play_stereo_on(samples, gain, EarBus::World);
+    }
+
     /// The direct (non-spatial) waveform `play(sfx)` starts: the verified recording where one
     /// replaces it, otherwise the loaded clip.
     pub(crate) fn direct_waveform(&self, sfx: Sfx) -> Option<Vec<f32>> {
@@ -708,7 +721,9 @@ impl Audio {
 
     /// Diagnostics: the master stage's limiter telemetry.
     pub fn master_telemetry(&self) -> serde_json::Value {
-        self.master.snapshot()
+        let mut report=self.master.snapshot();
+        report["live_delivery"]=self.live_output_telemetry();
+        report
     }
 
     /// Frames of latency the master stage adds (the limiter's lookahead).

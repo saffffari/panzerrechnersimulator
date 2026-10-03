@@ -21,6 +21,9 @@
 
 use glam::Vec3;
 
+#[path = "ricochet.rs"]
+pub mod ricochet;
+
 // ── Shells ────────────────────────────────────────────────────────────────────────────────────────
 
 /// Terminal-effect class of a shell. Drives penetration law, normalization and post-armor behavior.
@@ -372,8 +375,10 @@ pub fn effective_thickness(shell: &ShellSpec, plate: &Plate, horiz_obliquity_deg
 /// damage layers each branch off this.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Terminal {
-    /// Clean ricochet / defeat: the full CLANNNGG, no interior effect.
+    /// Stopped armor defeat. A grazing continuation is classified separately after contact.
     Bounce,
+    /// A surviving kinetic round deflected into the exterior hemisphere; no interior effect.
+    Ricochet,
     /// The shell SHATTERED on face-hardened plate (uncapped AP, high velocity): a duller crunch.
     Shatter,
     /// Through. Residual fragments + (if filler) the interior burst.
@@ -398,7 +403,7 @@ pub struct ImpactEvent {
     pub effective_mm: f32,
     /// The shell's penetration capability at strike (mm).
     pub pen_mm: f32,
-    /// Residual velocity of penetrator fragments behind the plate (m/s); 0 unless Penetration.
+    /// Surviving penetrator speed (m/s): behind the plate for Penetration, outside for Ricochet.
     pub residual_v: f32,
     /// Post-armor lethality scalar (0..~2): scales the spall cone energy / fragment count, boosted by
     /// filler burst (APCBC) or HE shock. The damage layer maps this onto its spall resolution.
@@ -457,6 +462,11 @@ pub fn resolve(
     seed: u32,
 ) -> ImpactEvent {
     let v = shell.velocity_at(range_m);
+    resolve_at_velocity(shell,range_m,plate,horiz_obliquity_deg,seed,v)
+}
+
+fn resolve_at_velocity(shell:&'static ShellSpec,range_m:f32,plate:Plate,
+    horiz_obliquity_deg:f32,seed:u32,v:f32)->ImpactEvent {
     let eff = effective_thickness(shell, &plate, horiz_obliquity_deg);
     let cv = plate.slope_deg.to_radians().cos();
     let ch = horiz_obliquity_deg.clamp(0.0, 75.0).to_radians().cos();
@@ -598,7 +608,22 @@ pub fn resolve_with_budget_loss(
     loss_mm: f32,
     disruption: f32,
 ) -> ImpactEvent {
-    let mut event = resolve(shell, range_m, plate, horiz_obliquity_deg, seed);
+    apply_budget_loss(resolve(shell, range_m, plate, horiz_obliquity_deg, seed),loss_mm,disruption)
+}
+
+/// Live point-mass contact uses actual speed after deflection. Existing cover bookkeeping may
+/// already represent a resolved speed loss (AT-gun transit); subtract only its unrepresented
+/// remainder, rather than charging that same kinetic loss twice.
+pub fn resolve_with_budget_loss_at_speed(shell:&'static ShellSpec,range_m:f32,plate:Plate,
+    horiz_obliquity_deg:f32,seed:u32,loss_mm:f32,disruption:f32,speed:f32)->ImpactEvent {
+    let speed=if speed.is_finite(){speed.max(0.0)}else{0.0};
+    let represented=(budget_mm(shell,range_m)-shell.pen_flat_at_v(speed)).max(0.0);
+    let remaining=(loss_mm-represented).max(0.0);
+    apply_budget_loss(resolve_at_velocity(shell,range_m,plate,horiz_obliquity_deg,seed,speed),remaining,disruption)
+}
+
+fn apply_budget_loss(mut event:ImpactEvent,loss_mm:f32,disruption:f32)->ImpactEvent {
+    let shell=event.shell;
     if !matches!(shell.kind, ShellKind::Ap | ShellKind::Apcbc | ShellKind::Apcr) {
         return event;
     }

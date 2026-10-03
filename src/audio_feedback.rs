@@ -338,11 +338,16 @@ impl Audio {
     /// operator's ear, `control_level_dba`) with the caller's relative effort (`volume`).
     fn control_gain(&self, key: &str, mono: &[f32], volume: f32) -> f32 {
         let laf = self.cached_laf_dbfs(&format!("control:{key}"), || stereo(mono));
+        // Authored near-field handling balance, shared with case/breech reproduction. This
+        // changes the reproduced mix, not the estimated acoustic source-level metadata.
+        let handling_db = if key.starts_with("footstep_metal_") { 14.0 } else { 0.0 };
         crate::reproduction::voice_gain(
             super::calibrated::control_level_dba(key) + super::calibrated::effort_db(volume), laf)
+            *10.0_f32.powf(handling_db/20.0)
     }
 
     pub fn play_control(&self, key: &str, volume: f32) {
+        if volume > 0.0 { self.protect_interaction(0.65); }
         let mono = self.feedback_bank.get(key).unwrap_or_else(|| fallback(key));
         let gain = self.control_gain(key, &mono, volume);
         self.play_stereo(stereo(&mono), gain);
@@ -351,6 +356,7 @@ impl Audio {
     /// A near-field mechanical contact retains a shared hull contribution in both ears.
     /// Bearing adds a restrained direct-sound bias, preserving the original centre gain/source.
     pub fn play_control_at(&self, key: &str, volume: f32, bearing_deg: f32) {
+        if volume > 0.0 { self.protect_interaction(0.65); }
         let mono = self.feedback_bank.get(key).unwrap_or_else(|| fallback(key));
         let gain = self.control_gain(key, &mono, volume);
         let bearing = if bearing_deg.is_finite() { bearing_deg } else { 0.0 };

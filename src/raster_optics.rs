@@ -14,6 +14,22 @@ mod visibility_review;
 pub const MAX_PORTS: usize = 12;
 const MAX_VISIBLE: usize = MAX_PORTS;
 
+#[derive(Clone,Copy,Debug,PartialEq)]
+struct SourceSurface {glass:bool,optical_kind:u32,own_emission:bool,window_emission:bool,emission:f32}
+impl SourceSurface {
+    fn response(self,blocked:bool)->Self {
+        if blocked {Self {glass:false,optical_kind:0,own_emission:false,window_emission:false,emission:0.0}}
+        else {self}
+    }
+}
+fn transmitting_panel(specs:&[RasterOpticSpec],blocked:&[bool],mesh:usize)->bool {
+    specs.iter().enumerate().any(|(port,s)|s.mesh==mesh && !blocked[port])
+}
+fn opaque_scene_member(visible:bool,glass:bool,optical_kind:u32,transmitting:bool,
+    optical_capture:bool,view_local:bool)->bool {
+    visible && !glass && optical_kind==0 && !transmitting && !(optical_capture && view_local)
+}
+
 #[derive(Clone, Debug)]
 pub struct RasterOpticSpec {
     pub mesh: usize,
@@ -49,6 +65,8 @@ struct PanelUniform {
 
 struct Layer {
     color: wgpu::TextureView,
+    tracer_color: wgpu::TextureView,
+    tracer_bind: wgpu::BindGroup,
     depth: wgpu::TextureView,
     camera_buf: wgpu::Buffer,
     camera_bind: wgpu::BindGroup,
@@ -62,14 +80,17 @@ pub(super) struct RasterOptics {
     /// Ports whose glass no longer transmits (a struck vision block gone opaque). They get no
     /// exterior view; their entrance face keeps its own opaque source material.
     blocked: Vec<bool>,
+    source_surfaces: Vec<SourceSurface>,
     layers: Vec<Layer>,
     prepared: RefCell<Vec<Prepared>>,
     panel_pipe: wgpu::RenderPipeline,
+    tracer_panel_pipe: wgpu::RenderPipeline,
     weather: WeatherPipelines,
     width: u32,
     height: u32,
     // Own the allocation explicitly; no mip generation, TAA or cross-port filtering.
     _color: wgpu::Texture,
+    _tracers: wgpu::Texture,
     _depth: wgpu::Texture,
 }
 
@@ -279,6 +300,7 @@ impl RasterOptics {
     pub(super) fn copy_registrations_from(&mut self, other: &Self) {
         self.specs.clone_from(&other.specs);
         self.blocked.clone_from(&other.blocked);
+        self.source_surfaces.clone_from(&other.source_surfaces);
     }
 
     /// Copy the active view's eye mapping (cone lane 0 to byte 44, rod lanes 2-3 to byte 16) into
@@ -305,6 +327,10 @@ impl RasterOptics {
         };
         let color = make_texture("raster-optic-exterior-array", HDR);
         let depth = make_texture("raster-optic-depth-array", DEPTH);
+        let tracers = make_texture("raster-optic-no-bloom-tracers", HDR);
+        let tracer_array=tracers.create_view(&wgpu::TextureViewDescriptor {
+            dimension:Some(wgpu::TextureViewDimension::D2Array),..Default::default()
+        });
         let color_array = color.create_view(&wgpu::TextureViewDescriptor {
             dimension:Some(wgpu::TextureViewDimension::D2Array), ..Default::default()
         });
@@ -339,6 +365,20 @@ impl RasterOptics {
                 stencil:Default::default(),bias:Default::default()}),
             multisample:Default::default(),multiview:None,cache:None,
         });
+        let tracer_source=format!("{}\n{}",include_str!("../shaders/raster_optics.wgsl")
+            .split("struct PaneOutput").next().unwrap(),include_str!("../shaders/weapon_tracer_panel.wgsl"));
+        let tracer_module=super::shader(device,"raster-optic-tracer-panel",&tracer_source);
+        let tracer_panel_pipe=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label:Some("raster-optic-post-bloom-tracers"),layout:Some(&layout),
+            vertex:wgpu::VertexState {module:&tracer_module,entry_point:Some("vs"),compilation_options:Default::default(),
+                buffers:&[wgpu::VertexBufferLayout {array_stride:std::mem::size_of::<crate::gltf_load::Vertex>() as u64,
+                    step_mode:wgpu::VertexStepMode::Vertex,attributes:&wgpu::vertex_attr_array![0=>Float32x3]}]},
+            fragment:Some(wgpu::FragmentState {module:&tracer_module,entry_point:Some("fs_tracer_panel"),compilation_options:Default::default(),
+                targets:&[Some(wgpu::ColorTargetState {format:HDR,blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
+            primitive:wgpu::PrimitiveState {cull_mode:None,..Default::default()},
+            depth_stencil:Some(wgpu::DepthStencilState {format:DEPTH,depth_write_enabled:false,depth_compare:wgpu::CompareFunction::LessEqual,
+                stencil:Default::default(),bias:Default::default()}),multisample:Default::default(),multiview:None,cache:None,
+        });
         let camera_layout = super::camera_bind_group_layout(device);
         let (weather, weather_layouts) = weather_pipelines(device, sky_visibility, cabin_shadows);
         let layers = (0..MAX_PORTS).map(|i| {
@@ -354,6 +394,10 @@ impl RasterOptics {
                 entries:&[wgpu::BindGroupEntry {binding:0,resource:panel_buf.as_entire_binding()},
                     wgpu::BindGroupEntry {binding:1,resource:wgpu::BindingResource::TextureView(&color_array)},
                     wgpu::BindGroupEntry {binding:2,resource:wgpu::BindingResource::Sampler(&sampler)}]});
+            let tracer_bind=device.create_bind_group(&wgpu::BindGroupDescriptor {label:Some("raster-optic-tracer-panel-bind"),layout:&panel_layout,
+                entries:&[wgpu::BindGroupEntry {binding:0,resource:panel_buf.as_entire_binding()},
+                    wgpu::BindGroupEntry {binding:1,resource:wgpu::BindingResource::TextureView(&tracer_array)},
+                    wgpu::BindGroupEntry {binding:2,resource:wgpu::BindingResource::Sampler(&sampler)}]});
             let view = |texture:&wgpu::Texture| {
                     texture.create_view(&wgpu::TextureViewDescriptor {
                 dimension:Some(wgpu::TextureViewDimension::D2),base_array_layer:i as u32,array_layer_count:Some(1),..Default::default()
@@ -361,9 +405,9 @@ impl RasterOptics {
                 };
             let depth_view=view(&depth);
             let weather=weather_layer(device,&depth_view,&weather_layouts,medium);
-            Layer {color:view(&color),depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
+            Layer {color:view(&color),tracer_color:view(&tracers),tracer_bind,depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
         }).collect();
-        Self {specs:Vec::new(),blocked:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,weather,width,height,_color:color,_depth:depth}
+        Self {specs:Vec::new(),blocked:Vec::new(),source_surfaces:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,tracer_panel_pipe,weather,width,height,_color:color,_tracers:tracers,_depth:depth}
     }
 }
 
@@ -379,6 +423,9 @@ impl Renderer {
                     && spec.entry_indices.end <= self.meshes[spec.mesh].index_count,
                 "optical entrance must name complete triangles in its source mesh"
             );
+            let mesh=&self.meshes[spec.mesh];
+            optics.source_surfaces.push(SourceSurface {glass:mesh.glass,optical_kind:mesh.periscope_kind,
+                own_emission:mesh.emissive_own,window_emission:mesh.emissive_win,emission:mesh.emissive});
             optics.specs.push(spec);
             optics.blocked.push(false);
         }
@@ -386,13 +433,21 @@ impl Renderer {
 
     /// Mark a registered optic port's glass as no longer transmitting (or restored).
     pub fn set_raster_optic_blocked(&mut self, port: usize, blocked: bool) {
-        if let Some(flag) = self.raster_optics.as_mut().and_then(|o| o.blocked.get_mut(port)) {
-            *flag = blocked;
-        }
+        let Some(optics)=self.raster_optics.as_mut() else{return;};
+        let Some(flag)=optics.blocked.get_mut(port) else{return;};
+        if *flag==blocked{return;}
+        *flag=blocked;
+        let state=optics.source_surfaces[port].response(blocked);
+        let mesh=&mut self.meshes[optics.specs[port].mesh];
+        // Damage makes the actual closed source block opaque. Merely dropping its optical
+        // capture left no raster geometry/depth, because all registered panes were excluded.
+        mesh.glass=state.glass;mesh.periscope_kind=state.optical_kind;
+        mesh.emissive_own=state.own_emission;mesh.emissive_win=state.window_emission;mesh.emissive=state.emission;
+        self.rt_surface_dirty=self.rt_on;
     }
 
     pub(super) fn raster_optic_panel(&self, mesh: usize) -> bool {
-        self.raster_optics.as_ref().is_some_and(|o|o.specs.iter().any(|s|s.mesh==mesh))
+        self.raster_optics.as_ref().is_some_and(|o|transmitting_panel(&o.specs,&o.blocked,mesh))
     }
 
     pub(super) fn prepare_raster_optics(&self, queue: &wgpu::Queue, camera: &CameraUniform) {
@@ -495,8 +550,8 @@ impl Renderer {
             |a|if ao.is_some(){&a.ambient_mesh}else{&a.mesh}));
         let near_eye=view_proj.inverse().project_point3(Vec3::ZERO);
         let mut loose:Vec<_>=self.meshes.iter().enumerate().filter(|(index,m)|
-            m.visible && !m.glass && m.periscope_kind==0 && !self.raster_optic_panel(*index)
-            && !(optical_capture && m.raster_only) && super::aabb_in_frustum(&planes,m.world_min,m.world_max)).collect();
+            opaque_scene_member(m.visible,m.glass,m.periscope_kind,self.raster_optic_panel(*index),optical_capture,m.raster_only)
+            && super::aabb_in_frustum(&planes,m.world_min,m.world_max)).collect();
         // Opaque armor/interior depth precedes expensive exterior shading. This changes only
         // draw order, never membership, material alpha, transforms, geometry or lighting.
         // Stable sorting preserves the previous tie order for coincident loose surfaces.
@@ -533,7 +588,8 @@ impl Renderer {
             color_attachments:&[Some(sky_color)],
             depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:scene_depth,
                 depth_ops:Some(wgpu::Operations {load:wgpu::LoadOp::Load,store:wgpu::StoreOp::Store}),stencil_ops:None}),
-            timestamp_writes:None,occlusion_query_set:None,
+            timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render(if optical_capture {"raster-optic-sky"}else{"raster-main-sky"})),
+            occlusion_query_set:None,
         });
         if let Some([width,height])=viewport {
             pass.set_viewport(0.0,0.0,width as f32,height as f32,0.0,1.0);
@@ -544,7 +600,7 @@ impl Renderer {
         pass.set_bind_group(0,camera_bind,&[]);pass.set_bind_group(1,&self.physical_environment_bind,&[]);
         pass.draw(0..3,0..1);work.fullscreen_raster_passes+=1;
         drop(pass);
-        if let Some(aa)=aa {aa.resolve(encoder,optical_capture,depth,work);}
+        if let Some(aa)=aa {aa.resolve(encoder,optical_capture,depth,viewport,work);}
         if let Some(ao)=ao { ao.encode(encoder,color,&self.camera,self.interior_light>0.02,work); }
         self.encode_raster_glass(encoder,camera_bind,view_proj,color,depth,optical_capture,viewport,work);
     }
@@ -556,6 +612,8 @@ impl Renderer {
             self.encode_raster_scene(encoder,&layer.camera_bind,view.camera.view_proj(),&layer.color,&layer.depth,true,Some(view.extent),work);
             self.encode_raster_optic_weather(encoder,layer,&optics.weather,view.extent,work);
             self.encode_fine_vfx(encoder,view.port,&layer.color,work);
+            self.encode_weapon_particles(encoder,view.port,&layer.color,false,false,work);
+            if self.has_weapon_tracers(){self.encode_weapon_particles(encoder,view.port,&layer.tracer_color,true,true,work);}
             work.scene_renders+=1;
         }
     }
@@ -571,6 +629,35 @@ impl Renderer {
         }
     }
 
+    pub(super) fn prepare_weapon_particle_ports(&self,device:&wgpu::Device,queue:&wgpu::Queue,
+        frames:&mut std::collections::HashMap<usize,super::renderer_weapon_particles::Frame>) {
+        let Some(optics)=&self.raster_optics else{return;};
+        for view in optics.prepared.borrow().iter() {
+            let layer=&optics.layers[view.port];
+            let frame=self.prepare_weapon_particle_view(device,queue,&view.camera,view.extent,
+                &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port));
+            frames.insert(view.port,frame);
+        }
+    }
+
+    pub(super) fn encode_raster_optic_tracers(&self,encoder:&mut wgpu::CommandEncoder,work:&mut RenderWorkStats) {
+        if !self.has_weapon_tracers(){return;}
+        let Some(optics)=&self.raster_optics else{return;};
+        let prepared=optics.prepared.borrow();if prepared.is_empty(){return;}
+        let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {label:Some("raster-optic-tracers-after-bloom"),
+            color_attachments:&[Some(super::attachment(&self.hdr_view,wgpu::LoadOp::Load))],
+            depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:&self.depth_view,
+                depth_ops:Some(wgpu::Operations {load:wgpu::LoadOp::Load,store:wgpu::StoreOp::Store}),stencil_ops:None}),
+            timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render("raster-optic-tracers-after-bloom")),occlusion_query_set:None});
+        pass.set_pipeline(&optics.tracer_panel_pipe);
+        for view in prepared.iter() {
+            let spec=&optics.specs[view.port];let mesh=&self.meshes[spec.mesh];
+            pass.set_bind_group(0,&optics.layers[view.port].tracer_bind,&[]);
+            pass.set_vertex_buffer(0,mesh.vbuf.slice(..));pass.set_index_buffer(mesh.ibuf.slice(..),wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(spec.entry_indices.clone(),0,0..1);work.scene_mesh_draws+=1;
+        }
+    }
+
     fn encode_raster_optic_weather(&self, encoder:&mut wgpu::CommandEncoder, layer:&Layer,
         pipelines:&WeatherPipelines, extent:[u32;2], work:&mut RenderWorkStats) {
         let smoke=self.fog_density>1e-6 || (self.breech_gas.strength>0.0 && self.breech_gas.age<2.2)
@@ -582,7 +669,9 @@ impl Renderer {
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label:Some("raster-optic-current-weather"),
             color_attachments:&[Some(super::attachment(&layer.color,wgpu::LoadOp::Load))],
-            depth_stencil_attachment:None,timestamp_writes:None,occlusion_query_set:None,
+            depth_stencil_attachment:None,
+            timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render("raster-optic-current-weather")),
+            occlusion_query_set:None,
         });
         pass.set_viewport(0.0,0.0,extent[0] as f32,extent[1] as f32,0.0,1.0);
         pass.set_scissor_rect(0,0,extent[0],extent[1]);
@@ -612,7 +701,8 @@ impl Renderer {
                 Some(super::attachment(&self.raster_ssao.as_ref().expect("shader ambient mask").ambient,wgpu::LoadOp::Load))],
             depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:&self.depth_view,
                 depth_ops:Some(wgpu::Operations {load:wgpu::LoadOp::Load,store:wgpu::StoreOp::Store}),stencil_ops:None}),
-            timestamp_writes:None,occlusion_query_set:None,
+            timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render("raster-source-optic-panels")),
+            occlusion_query_set:None,
         });
         pass.set_pipeline(&optics.panel_pipe);
         for view in prepared.iter() {
@@ -702,6 +792,23 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn damaged_optic_becomes_opaque_source_and_repair_restores_transmission() {
+        let specs=[front_port()];let source=SourceSurface{glass:true,optical_kind:1,
+            own_emission:false,window_emission:true,emission:0.17};
+        let rendered=|state:SourceSurface,blocked:bool,visible:bool|opaque_scene_member(visible,
+            state.glass,state.optical_kind,transmitting_panel(&specs,&[blocked],2),false,false);
+        assert!(!rendered(source,false,true),"clear glass belongs to the transmitting entrance pass");
+        let damaged=source.response(true);
+        assert!(rendered(damaged,true,true),"a damaged block must write actual opaque source depth");
+        assert!(!rendered(damaged,true,false),"hidden source meshes cannot become phantom casters");
+        assert!(!damaged.glass && damaged.optical_kind==0);
+        assert_eq!(damaged.emission,0.0);assert!(!damaged.own_emission && !damaged.window_emission);
+        let repaired=source.response(false);assert_eq!(repaired,source);
+        assert!(!rendered(repaired,false,true));assert!(transmitting_panel(&specs,&[false],2));
+        assert!(!transmitting_panel(&specs,&[true],2));
+    }
 
     fn front_port() -> RasterOpticSpec {
         RasterOpticSpec {mesh:2,
@@ -857,8 +964,11 @@ mod tests {
         let mut cap = crate::gltf_load::load_glb_partitioned_roots(
             "assets/tanks/tiger/baked/tiger_turret.glb", &["Turret_0116"]).unwrap();
         let cap = cap.pop().unwrap();
+        let fitted_cap=cap.clone().transformed(crate::game::tiger_periscopes::roof_fitting::source_transform(
+            crate::game::tiger_periscopes::roof_fitting::CAP));
         // Exact retained source triangles, two-sided, rather than a fitted blocker box.
-        let cap_hit = |origin: Vec3, direction: Vec3| {
+        let cap_hit = |origin: Vec3, direction: Vec3, fitted:bool| {
+            let cap=if fitted {&fitted_cap}else{&cap};
             cap.indices.chunks_exact(3).any(|tri| {
                 let [a,b,c] = [0,1,2].map(|i| Vec3::from(cap.vertices[tri[i] as usize].pos).as_dvec3());
                 let direction=direction.as_dvec3(); let e1=b-a; let e2=c-a;
@@ -878,18 +988,23 @@ mod tests {
             (0.0, Vec3::new(-0.7813883,0.05233310,0.6218469), false),
             (1.0, Vec3::new(-0.7705734,0.17364574,0.6132404), false),
         ];
-        // The ordinary seated right-front (about two o'clock) ray really meets the retained
-        // roof cap. It is not an unregistered/stale display; held eye relief clears its center.
-        // Preserve this evidence rather than deleting source armor to manufacture visibility.
+        // Reproduce the previous seated obstruction from its actual 2.415 m eye. The lower
+        // seated eye now looks level through all seven original panes and clears
+        // their centres without removing the source cap or changing the optical mapping.
         for (index,spec) in specs.iter().take(7).enumerate() {
             let center=spec.entry_corners.iter().copied().sum::<Vec3>()*0.25;
             let mut ordinary=viewer(0.3,68.0);
-            ordinary.pos=crate::game::tiger_periscopes::COMMANDER_EYE;
-            let direction=(center-ordinary.pos).normalize();ordinary.set_forward(direction);
-            let (capture,_,_)=capture_camera(spec,Mat4::IDENTITY,&ordinary,16.0/9.0)
-                .expect("all seven seated source ports must be admitted when looked at");
-            assert_eq!(cap_hit(capture.pos,direction),index==1,
-                "ordinary source-cap obstruction changed for cupola {index}");
+            for (eye,expected_blocked,fitted) in [
+                (Vec3::new(0.564,2.415,-0.423),index==1,false),
+                (crate::game::tiger_periscopes::COMMANDER_EYE,false,true),
+            ] {
+                ordinary.pos=eye;
+                let direction=(center-ordinary.pos).normalize();ordinary.set_forward(direction);
+                let (capture,_,_)=capture_camera(spec,Mat4::IDENTITY,&ordinary,16.0/9.0)
+                    .expect("all seven seated source ports must be admitted when looked at");
+                assert_eq!(cap_hit(capture.pos,direction,fitted),expected_blocked,
+                    "source-cap centre visibility changed for cupola {index} at {eye:?}");
+            }
         }
         for (index,spec) in specs.iter().take(7).enumerate() {
             let (eye,forward,fov)=crate::game::tiger_periscopes::close_view(index);
@@ -917,6 +1032,10 @@ mod tests {
                         assert!((projected.x/projected.w).abs()<1.001
                             && (projected.y/projected.w).abs()<1.001,
                             "cupola {index} field clipped by exterior capture");
+                        let local_origin=model.inverse().transform_point3(capture.pos);
+                        let local_ray=model.inverse().transform_vector3(outgoing).normalize();
+                        assert!(!cap_hit(local_origin,local_ray,true),
+                            "fitted cap still blocks cupola {index} field ({x},{y})");
                         // The receipt's upper/lower samples use the level turret's up vector.
                         // A pitched camera keeps world-up, so only its center is that same ray;
                         // its full field still has the incident-direction check above.
@@ -926,7 +1045,7 @@ mod tests {
                                 let local=model.inverse().transform_vector3(outgoing).normalize();
                                 assert!(local.distance(*expected)<0.0002,
                                     "raster direction {local:?} differs from source {expected:?} at y={y}");
-                                assert_eq!(cap_hit(model.inverse().transform_point3(capture.pos),local),
+                                assert_eq!(cap_hit(model.inverse().transform_point3(capture.pos),local,false),
                                     *blocked,"source roof-cap intersection changed at vertical field {y}");
                             }
                         }

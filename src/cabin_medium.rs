@@ -105,8 +105,11 @@ fn source_parts(path: &str, roots: &[&str]) -> anyhow::Result<BTreeMap<String, V
         blob: &[u8],
         parts: &mut BTreeMap<String, Vec<Triangle>>,
     ) -> anyhow::Result<()> {
-        let model = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
         let name = node.name().unwrap_or("");
+        // Match the player assembly's bounded roof-fitting authoring correction. The cabin
+        // medium must use the same cap/pedestal surfaces as lighting and collision geometry.
+        let model = parent * crate::game::tiger_periscopes::roof_fitting::source_transform(name)
+            * Mat4::from_cols_array_2d(&node.transform().matrix());
         let selected = if roots.contains(&name) {
             Some(name)
         } else {

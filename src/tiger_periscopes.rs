@@ -6,6 +6,8 @@ use crate::gltf_load::{load_glb_partitioned_roots, CpuMesh, Vertex};
 use glam::Vec3;
 #[path="tiger_side_ports.rs"]
 pub(crate) mod side_ports;
+#[path="tiger_roof_fitting.rs"]
+pub(crate) mod roof_fitting;
 
 pub const WINDOW: u32 = 1;
 pub const MIRROR: u32 = 2;
@@ -21,7 +23,15 @@ impl OpticalPart {
     fn lens(mesh: CpuMesh, focal_m: f32) -> Self { Self {mesh,kind:RELAY_LENS,focal_m} }
 }
 pub(super) const CUPOLA_PART_COUNT: usize = 8;
-pub const COMMANDER_EYE: Vec3 = Vec3::new(0.564, 2.415, -0.423);
+// Seat the observer at the eyepiece centres for a level ordinary view.
+// The former 2.415 m eye was 23 mm above every pane and aimed their central incident rays
+// down into the turret roof. At the front-right block a raised roof fitting filled the view.
+// This is a physical eye-position adjustment: source armor, pupils and ray directions stay
+// intact. The roof-fitting correction below separately clears the held optical field.
+pub const COMMANDER_EYE: Vec3 = Vec3::new(0.564, 2.392244, -0.423);
+// Keep the existing ideal relay prescription fixed when the player's seat height changes.
+// Its calibration ray is an optical construction datum, not the commanded player pose.
+const RELAY_CALIBRATION_EYE: Vec3 = Vec3::new(0.564, 2.415, -0.423);
 pub const LOADER_ENTRY: Vec3 = Vec3::new(-0.7044486, 2.1240446, 0.3969902);
 const LOADER_INDEX: usize = 7;
 const LOADER_HOUSING: &str = "Loader Periscope.001_housing";
@@ -329,7 +339,7 @@ fn first_hit(parts: &[OpticalPart], origin: Vec3, direction: Vec3) -> Option<(us
 /// Build a declared ideal relay from the exact chief-ray intersections, retaining both source
 /// folds and both windows. Two reciprocal afocal pairs keep image orientation and angular scale.
 fn cupola_relay(block:&[OpticalPart],index:usize)->anyhow::Result<Vec<OpticalPart>> {
-    let target=CUPOLA_CENTERS[index];let forward=(target-COMMANDER_EYE).normalize();
+    let target=CUPOLA_CENTERS[index];let forward=(target-RELAY_CALIBRATION_EYE).normalize();
     let mut p=target-forward*0.025;let mut d=forward;let mut inside=None;
     let mut windows=0;let mut mirrors=0;let mut path=Vec::new();
     for _ in 0..12 {
@@ -385,9 +395,9 @@ fn cupola_relay(block:&[OpticalPart],index:usize)->anyhow::Result<Vec<OpticalPar
 }
 
 pub fn load_turret() -> anyhow::Result<(CpuMesh, CpuMesh, Vec<OpticalPart>, CpuMesh, CpuMesh, CpuMesh)> {
-    let mut pages = crate::gltf_load::load_glb_partitioned_roots_with_material_override(
+    let mut pages = crate::gltf_load::load_glb_partitioned_roots_with_source_transforms(
         "assets/tanks/tiger/baked/tiger_turret.glb", &HOUSINGS,
-        Some(crate::tank::tiger_paint_finish),
+        Some(crate::tank::tiger_paint_finish),None,Some(roof_fitting::source_transform),
     )?.into_iter();
     let body = pages.next().unwrap();
     let lid = pages.next().unwrap();
@@ -555,6 +565,8 @@ mod tests {
             assert!(exit.y>2.51 && exit.y<2.55, "{name} exit height {exit:?}");
             assert!(direction.dot((target-COMMANDER_EYE).normalize())>0.9999,
                 "parallel mirror pair must preserve exterior direction");
+            assert!(first_hit(&parts,exit,direction).is_none(),
+                "{name} seated centre must clear the complete fitted source roof");
         }
         for i in 0..7 {
             let (eye, forward, _)=close_view(i);
@@ -566,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn cupola_full_fields_are_reciprocal_and_keep_actual_roof_obstructions() {
+    fn cupola_full_fields_are_reciprocal_and_clear_the_fitted_source_roof_cap() {
         let (body,lid,mut parts,tube,escape,grip)=load_turret().unwrap();
         let optics=parts.clone();
         parts.extend([body,lid,tube,escape,grip].map(|mesh|OpticalPart::new(mesh,0)));
@@ -589,8 +601,7 @@ mod tests {
                     if !blocked {clear+=1;}
                 }
             }
-            assert!(clear>=15,"cupola {i} has only {clear}/25 clear source field samples");
-            if i==1 {assert!(clear<25,"left-front port must retain its real roof fixture in the lower field");}
+            assert_eq!(clear,25,"cupola {i} source field still obstructed after roof-fitting correction");
         }
     }
 

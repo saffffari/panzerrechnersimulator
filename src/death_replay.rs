@@ -131,6 +131,7 @@ impl Game {
         self.stealth.t = scene_time + target;
         self.drive_interior_fire(r);
         self.drive_lights_with_transients(r, false);
+        r.observer_flash_source=!transient_lights.is_empty();
         r.extend_lights(&transient_lights);
         self.stealth.t = live_time;
     }

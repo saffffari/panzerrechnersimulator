@@ -11,6 +11,7 @@ fn exposed_p08_uses_shared_ammo_real_flight_and_no_vehicle_trigger() -> anyhow::
     let (device,queue)=crate::request_device(&adapter);
     let (mut renderer,mut game)=Game::build_tank_editor(&device,&queue,&TankEditorScene::new(TankAssetId::TigerI))?;
     game.mute_audio();
+    game.enable_singleplayer_crew();
     game.jump_station(Station::Commander);
     let dt=1.0/60.0;
     let total=game.foot.total_p08_rounds();
@@ -56,6 +57,17 @@ fn exposed_p08_uses_shared_ammo_real_flight_and_no_vehicle_trigger() -> anyhow::
         }
         renderer.reset_history();
         renderer.render_to_png(&device,&queue,&format!("{prefix}_aimed.png"),1280,720)?;
+        let local_visibility=game.hide_first_person_for_optic(&mut renderer);
+        renderer.reset_history();
+        renderer.render_to_png(&device,&queue,&format!("{prefix}_without_local_body.png"),1280,720)?;
+        for (i,(slot,visible)) in local_visibility.iter().copied().enumerate() {renderer.set_visible(slot,visible && i%2==1);}
+        renderer.reset_history();
+        renderer.render_to_png(&device,&queue,&format!("{prefix}_body_only.png"),1280,720)?;
+        for (i,(slot,visible)) in local_visibility.iter().copied().enumerate() {renderer.set_visible(slot,visible && i%2==0);}
+        renderer.reset_history();
+        renderer.render_to_png(&device,&queue,&format!("{prefix}_arms_only.png"),1280,720)?;
+        for (slot,visible) in local_visibility {renderer.set_visible(slot,visible);}
+        eprintln!("[clearance] eye={:?} forward={:?} receipt={}",renderer.camera.pos,renderer.camera.forward(),game.first_person.as_ref().unwrap().receipt());
     }
 
     // Same magazine and chamber as on foot; a tactical reload cannot create reserve rounds.

@@ -1,0 +1,49 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "interior_regression_ports_20261003",
+  "title": "Commander front-right port ordinary and held focus",
+  "caption": "HEALTHY CUPOLA / SEVEN PORTS / ORDINARY EYE - HOLD RMB - RELEASE",
+  "act_id": 0,
+  "night": false,
+  "station": "commander",
+  "seconds": 5.0,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "banish"
+  },
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_cupola",
+      "value": "block1"
+    },
+    {
+      "from_s": 2.0,
+      "until_s": 3.8,
+      "input": {
+        "aim": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "cupola_focus_index",
+      "at_s": 3,
+      "equals": 1
+    }
+  ],
+  "historical_scope": "Diagnostic comparison of retained source geometry, not a historical validation of the roof fitting or reconstructed optics.",
+  "visual_acceptance": [
+    "Inspect each ordinary, held and released field and the unchanged source casing.",
+    "Left-front cap remains in the lower field; verify the focused centre now agrees with the source direction.",
+    "No head-out transition or damage injection. Healthy state checks do not by themselves prove optical correctness."
+  ]
+}

@@ -1003,7 +1003,9 @@ mod population_tests {
             assert_eq!(flat.layers[kind].roots.len(), snow.layers[kind].roots.len());
             for (a, b) in flat.layers[kind].roots.iter().zip(&snow.layers[kind].roots) {
                 assert_eq!((a.position.x, a.position.z), (b.position.x, b.position.z));
-                assert!((b.position.y - terrain(b.position.x, b.position.z) + 0.006).abs() < 1e-5);
+                // Winter stems are rooted 25mm into snow; the 6mm green-map placement would
+                // expose their bases. Relief must translate the same roots without rerolling.
+                assert!((b.position.y - terrain(b.position.x, b.position.z) + 0.025).abs() < 1e-5);
                 assert!((a.model.y_axis.truncate().length() - b.model.y_axis.truncate().length()).abs() < 1e-5);
                 assert_eq!(a.radius, b.radius);
             }

@@ -16,9 +16,8 @@ use super::crew_physics::CrewBodyPart;
 /// more than the complete pool.
 pub const MAX_BLOOD_CUBES_PER_EVENT: usize = 1024;
 
-/// The existing live fragment resolver treats 0.24 J at an actual crew intersection as lethal.
-/// Retaining that floor keeps casualty/takeover semantics stable while anatomical destruction uses
-/// much higher, part-specific work thresholds.
+/// Provisional minimum injury work at an actual anatomical contact. This is not a universal
+/// lethal threshold: immediate death is decided from the affected vital region and its outcome.
 pub const MIN_INJURY_WORK_J: f32 = 0.24;
 
 /// The armor-side contact and the victim cannot be closer than roughly a body radius in the current

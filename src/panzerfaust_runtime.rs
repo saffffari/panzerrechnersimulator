@@ -66,7 +66,7 @@ fn vehicle_contact(
                 part,
                 facing: facing_from_local_normal(normal, part),
                 local_point: inv.transform_point3(point),
-                world_normal: model.transform_vector3(normal).normalize_or_zero(),
+                surface_plate:None,world_normal: model.transform_vector3(normal).normalize_or_zero(),
             })
         };
         nearer(
@@ -189,7 +189,7 @@ impl Game {
                         part,
                         facing: facing_from_local_normal(local_normal, part),
                         local_point: model.inverse().transform_point3(point),
-                        world_normal: normal,
+                        surface_plate:None,world_normal: normal,
                     })
                 } else {
                     ContactKind::HardCover

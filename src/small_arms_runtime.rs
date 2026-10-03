@@ -61,7 +61,7 @@ fn source_armor_contact(source:&surface_fire::CabinFire,models:&[Mat4;surface_fi
         Some(ProjectileContact {t_m:start.distance(end)*hit.fraction,pos,
             kind:ProjectileContactKind::Vehicle(VehicleArmorContact {vehicle:ProjectileVehicle::Player,
                 part,facing:facing_from_local_normal(inverse.transform_vector3(normal),part),
-                local_point:inverse.transform_point3(pos),world_normal:normal})})
+                local_point:inverse.transform_point3(pos),surface_plate:None,world_normal:normal})})
 }
 
 fn exposed_crew_contact(hull:Mat4,bodies:&[CouchCrewBody],start:Vec3,end:Vec3)->Option<ProjectileContact> {
@@ -242,7 +242,26 @@ impl Game {
                 // Existing crew policy treats an actual energetic body contact as incapacitating.
                 // It is not the foot avatar's HP pool and never damages another occupied post.
                 let energy=0.5*projectile.shell.mass_kg*projectile.velocity.length_squared();
-                if !self.god && energy>=crew_damage::MIN_INJURY_WORK_J {
+                let result=crew_damage::resolve_crew_damage(crew_damage::CrewDamageInput {
+                    part,fragment_energy_j:energy,explosive_energy_j:0.0,blast_distance_m:0.0});
+                let frame=blood_frame_for_role(casualty.role);
+                let parent=blood_parent_model(&self.player,frame);
+                let inverse=parent.inverse();
+                let event=CrewPartDamageEvent {result,strongest_contact:Some(FragmentDamageContact {
+                    fragment_id:projectile.id,target:FragmentDamageTarget::CouchCrew(casualty),body_part:Some(part),
+                    local_point:inverse.transform_point3(contact.pos),local_velocity:inverse.transform_vector3(projectile.velocity),
+                    speed_mps:projectile.velocity.length(),energy_j:energy,internal_blast_origin_local:None}),
+                    wound_local:inverse.transform_point3(contact.pos),
+                    ejection_local:inverse.transform_vector3(projectile.velocity.normalize_or_zero())};
+                if !self.god && result.outcome!=crew_damage::CrewTissueOutcome::None {
+                    if !crew_part_event_is_immediately_fatal(&event) {
+                        if let Some(body)=self.physical_crew_bodies(frame).into_iter().find(|b|b.casualty.peer_id==casualty.peer_id) {
+                            self.living_wounds.detach(&body,&[event],parent,self.player.pos.y+0.5);
+                        }
+                        self.living_wounds.record(casualty,&[event]);
+                        self.spawn_cubic_blood(casualty,Some(contact.pos),projectile.velocity.normalize_or_zero(),
+                            Vec3::ZERO,1.0,1.0,projectile.seed,0,visual_blood_request(result.blood_cube_count).min(64));
+                    }else {
                     let before=self.couch_casualties.len();
                     let wiped=self.record_physical_crew_casualties(&[casualty]);
                     if self.couch_casualties.len()>before {
@@ -257,23 +276,23 @@ impl Game {
                     }
                     if wiped {self.player.alive=false;self.death_cause=Some(DeathCause::CrewLost);}
                     self.recompute_hp();
+                    }
                 }
                 friendly=payload.shot.team==Team::German;
                 self.weapon_vfx.impact(contact.pos,projectile.velocity.normalize_or_zero(),0.10,false,weapon);
             }
             ProjectileContactKind::Infantry(index) => {
-                if let Some(actor) = self.mixed_combat.actors.get_mut(index) {
-                    damage = payload.damage.min(actor.hp.max(0.0));
-                    friendly = actor.team == payload.shot.team;
-                    actor.hp = (actor.hp-damage).max(0.0);
-                    actor.suppression = 1.0;
-                    if actor.hp <= 0.0 { self.kill_soldier(index, "ballistic small arms"); }
-                } else { self.kill_soldier(index, "ballistic small arms"); }
+                friendly=self.mixed_combat.actors.get(index).is_some_and(|a|a.team==payload.shot.team);
+                let before=self.mixed_combat.actors.get(index).map_or(100.0,|a|a.hp);
+                self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg,0.0,false,"ballistic small arms");
+                damage=before-self.mixed_combat.actors.get(index).map_or(before,|a|a.hp);
                 self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.10, false, weapon);
             }
             ProjectileContactKind::RangeLimit => {} // Retirement never invents an impact in air.
             _ => {
-                self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.20, false, weapon);
+                if !matches!(contact.kind,ProjectileContactKind::Terrain) || !self.weapon_vfx.uses_native_ground() {
+                    self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.20, false, weapon);
+                }
                 { // Every actual world contact emits once; no projectile-ID decimation.
                     let mono = crate::acoustics::synth_small_arm_ground_hit(
                         projectile.velocity.length(), projectile.shell.caliber_mm, projectile.seed);
@@ -325,7 +344,7 @@ pub(super) fn vehicle_contact(tank: &Tank, vehicle: ProjectileVehicle,
         let contact = ProjectileContact { t_m:start.distance(end)*fraction, pos:start.lerp(end,fraction),
             kind:ProjectileContactKind::Vehicle(VehicleArmorContact {
                 vehicle, part, facing:facing_from_local_normal(normal,part),
-                local_point:a.lerp(b,fraction), world_normal:model.transform_vector3(normal).normalize_or_zero(),
+                local_point:a.lerp(b,fraction), surface_plate:None,world_normal:model.transform_vector3(normal).normalize_or_zero(),
             }) };
         consider_projectile_contact(&mut nearest,Some(contact),start.distance(end));
     }

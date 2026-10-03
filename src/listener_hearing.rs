@@ -168,7 +168,9 @@ impl Game {
         use crate::sound_propagation::{Enclosure, class_spectrum};
         if !self.player.alive || !rate.is_finite() || rate < 0.002 { return None; }
         let source = self.player.turret_model().transform_point3(crate::interior_rig::WHEEL1_POS);
-        let level = 75.0 + 20.0 * rate.min(1.0).log10();
+        // Contact energy grows with lay rate; square-root amplitude keeps gentle handwheel
+        // movement audible without assigning full-speed power to an almost stationary gear.
+        let level = 78.0 + 10.0 * rate.min(1.0).log10();
         let emission = Emission {lpk_db:level+9.0,laf_db:level,ref_m:1.0,
             law:crate::sound_levels::DistanceLaw::Spherical,class:SpectrumClass::Mechanical,
             spectrum:class_spectrum(SpectrumClass::Mechanical),a_duration_ms:1000.0,

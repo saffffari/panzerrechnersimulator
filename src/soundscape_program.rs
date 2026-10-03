@@ -130,6 +130,7 @@ pub struct ScoreProgram {
     choice: Choice,
     started: bool,
     choice_since_s: f64,
+    last_gun_transition_s: f64,
     phase_end_s: f64,
     envelope_since_s: f64,
     gain_from: f32,
@@ -161,6 +162,7 @@ impl ScoreProgram {
             },
             started: false,
             choice_since_s: 0.0,
+            last_gun_transition_s: -1000.0,
             phase_end_s: 0.0,
             envelope_since_s: 0.0,
             gain_from: 0.5,
@@ -171,10 +173,19 @@ impl ScoreProgram {
         }
     }
 
+    pub fn current_token(&self) -> u64 { self.choice.token }
+
     /// Explicit player main-gun discharge only: no elapsed-time wait, no new enemy knowledge.
     /// The runtime prewarms a distinct successor for this role and performs its sample-clock
     /// cut once on this call. Subsequent update() gains belong to the same cue/token.
     pub fn main_gun_transition(&mut self, mode: Mode) -> Choice {
+        // The first discharge marks a passage. Repeated reload-cycle shots sustain it;
+        // real incoming combat may still escalate immediately from a quieter passage.
+        if self.started && self.elapsed_s - self.last_gun_transition_s < 60.0
+            && !(mode == Mode::Combat && self.active != Mode::Combat) {
+            return self.choice.clone();
+        }
+        self.last_gun_transition_s = self.elapsed_s;
         self.active = mode;
         self.observed = Some(mode);
         self.pending = None;
@@ -199,7 +210,7 @@ impl ScoreProgram {
     /// player, never enemy proximity or the player's own discharge. Only that mode can draw
     /// a high-intensity combat role; calmer suspense remains deliberately nonliteral.
     /// Input changes coalesce until their reaction delay expires;
-    /// ordinary choices hold at least six seconds, while combat may interrupt after 0.5–3 s.
+    /// ordinary choices hold at least sixty seconds, while combat may interrupt after 0.5–3 s.
     /// At most one new audible choice is emitted per call: a stalled update does not replay a
     /// burst of score cues that could not have been heard during the missing updates.
     pub fn update(&mut self, dt: f32, mode: Mode) -> Choice {
@@ -219,10 +230,10 @@ impl ScoreProgram {
                 let delay = if mode == Mode::Combat {
                     self.range(0.5, 3.0)
                 } else {
-                    self.range(3.0, 14.0)
+                    if self.started { self.range(12.0, 24.0) } else { self.range(3.0, 14.0) }
                 };
                 let due_s = if self.started && mode != Mode::Combat {
-                    (self.elapsed_s + delay).max(self.choice_since_s + 6.0)
+                    (self.elapsed_s + delay).max(self.choice_since_s + 120.0)
                 } else {
                     self.elapsed_s + delay
                 };
@@ -239,7 +250,7 @@ impl ScoreProgram {
         self.elapsed_s += f64::from(dt);
         if let Some(mut pending) = self.pending {
             if self.started && pending.mode != Mode::Combat {
-                pending.due_s = pending.due_s.max(self.choice_since_s + 6.0);
+                pending.due_s = pending.due_s.max(self.choice_since_s + 120.0);
                 self.pending = Some(pending);
             }
             if self.elapsed_s >= pending.due_s {
@@ -314,9 +325,9 @@ impl ScoreProgram {
 
     fn start_gain_phrase(&mut self, sustain: bool) {
         let duration = if self.choice.role.is_some() {
-            self.range(20.0, 55.0)
+            self.range(120.0, 180.0)
         } else {
-            self.range(6.0, 18.0)
+            self.range(35.0, 75.0)
         };
         self.phase_end_s = self.elapsed_s + duration;
         self.envelope_since_s = self.elapsed_s;
@@ -335,7 +346,7 @@ impl ScoreProgram {
         } else {
             self.range(3.0, 8.0).min(duration * 0.30)
         };
-        self.gain_release_s = self.range(5.0, 10.0).min(duration * 0.30);
+        self.gain_release_s = self.range(12.0, 24.0).min(duration * 0.30);
     }
 
     fn refresh_gain(&mut self) {
@@ -408,7 +419,6 @@ mod tests {
     #[test]
     fn main_gun_transition_is_immediate_but_cannot_invent_incoming_combat() {
         for seed in 0..200 {
-            let mut program = ScoreProgram::new(seed);
             for mode in [
                 Mode::Explore,
                 Mode::Driving,
@@ -416,6 +426,7 @@ mod tests {
                 Mode::Aftermath,
                 Mode::Combat,
             ] {
+                let mut program = ScoreProgram::new(seed);
                 let before = program.choice.token;
                 let elapsed = program.elapsed_s;
                 let choice = program.main_gun_transition(mode);
@@ -434,10 +445,24 @@ mod tests {
                     })
                 );
                 assert_eq!(choice.gain, 0.5);
-                // A second real shot also changes token while the role remains eligible.
-                assert_eq!(program.main_gun_transition(mode).token, before + 2);
+                // Reload-cycle fire retains the complete musical passage.
+                assert_eq!(program.main_gun_transition(mode).token, before + 1);
             }
         }
+    }
+
+    #[test]
+    fn reload_cycle_fire_sustains_one_cue_but_real_combat_can_escalate() {
+        let mut p=ScoreProgram::new(77);
+        let first=p.main_gun_transition(Mode::Explore);
+        for _ in 0..6 {
+            p.update(8.0,Mode::Explore);
+            assert_eq!(p.main_gun_transition(Mode::Explore).token,first.token);
+        }
+        let contact=p.main_gun_transition(Mode::Combat);
+        assert_eq!(contact.token,first.token+1);
+        assert_eq!(contact.role.as_deref(),Some("combat"));
+        assert_eq!(p.main_gun_transition(Mode::Combat),contact);
     }
 
     #[test]
@@ -748,15 +773,15 @@ mod tests {
         let mut changed_at = 0.0;
         let mut tokens = 0;
         let mut rests = 0;
-        for _ in 0..3600 {
+        for _ in 0..14400 {
             let choice = program.update(0.25, Mode::Explore);
             if choice.token != previous.token {
                 if previous.token != 0 {
                     let held = program.elapsed_s - changed_at;
                     let (low, high) = if previous.role.is_some() {
-                        (20.0, 55.25)
+                        (120.0, 180.25)
                     } else {
-                        (6.0, 18.25)
+                        (35.0, 75.25)
                     };
                     assert!(held >= low && held <= high, "invalid dwell {held}");
                 }
@@ -770,7 +795,7 @@ mod tests {
                 tokens += 1;
             }
         }
-        assert!(tokens > 15);
+        assert!(tokens >= 20 && tokens < 60);
         assert!(rests > 0);
     }
 
@@ -787,7 +812,7 @@ mod tests {
                 if choice.token != token {
                     if token != 0 {
                         assert!(
-                            program.elapsed_s - changed_at >= 6.0,
+                            program.elapsed_s - changed_at >= 35.0,
                             "seed {seed}: mode changes caused rapid reprogramming"
                         );
                     }

@@ -182,6 +182,9 @@ pub struct Soldier {
     /// Some riflemen stay physically grouped around an enemy tank. Game code updates their patrol
     /// loop from that tank's live transform before stepping the ordinary awareness state machine.
     pub escort_enemy: Option<usize>,
+    /// Actual destruction/startle origin; survives policy and squad objective changes.
+    flee_origin: Option<Vec3>,
+    wounded_motion:f32,
     pub fire_cd: f32,
     pub aim_windup: f32,
     /// Physical rifle-shoulder state selected by the authoritative doctrine/policy gate.  Rendering
@@ -225,6 +228,8 @@ impl Soldier {
             ammo_drop: 1 + ((seed.wrapping_mul(1103515245) >> 30) & 1) as u8,
             looted: false,
             escort_enemy: None,
+            flee_origin: None,
+            wounded_motion:1.0,
             fire_cd: 0.0,
             aim_windup: 0.0,
             aiming: false,
@@ -236,6 +241,38 @@ impl Soldier {
             body_slot,
             rifle_slot,
         }
+    }
+
+    pub(crate) fn begin_flee_from(&mut self, origin: Vec3) {
+        if self.alive && origin.is_finite() {
+            self.flee_origin = Some(origin);
+            self.escort_enemy = None;
+            self.aiming = false;
+        }
+    }
+
+    pub(crate) fn is_prone_wounded(&self)->bool {self.wounded_motion<0.2}
+    pub(crate) fn anatomical_eye(&self)->Vec3 {
+        if self.is_prone_wounded() {self.pos+crate::infantry_combat::prone_head_offset(self.yaw)}
+        else{self.pos+Vec3::Y*EYE_H}
+    }
+    pub(crate) fn set_wounded_motion(&mut self,scale:f32){self.wounded_motion=self.wounded_motion.min(scale.clamp(0.05,1.0));}
+    pub(crate) fn is_fleeing(&self) -> bool { self.flee_origin.is_some() }
+
+    /// One terrain-resolved translation; never follows a hidden enemy transform.
+    pub(crate) fn advance_flee(&mut self, hf: &Heightfield, dt: f32) {
+        if !self.alive || !dt.is_finite() || dt <= 0.0 { return; }
+        let Some(origin) = self.flee_origin else { return; };
+        let before = self.pos;
+        let mut away = Vec3::new(before.x-origin.x, 0.0, before.z-origin.z).normalize_or_zero();
+        if away == Vec3::ZERO { away = -self.forward(); }
+        let goal = hf.walk_toward(before, before + away * 12.0);
+        let direction = Vec3::new(goal.x-before.x, 0.0, goal.z-before.z).normalize_or_zero();
+        self.pos = hf.ground_walker(before, before + direction * 2.8 * self.wounded_motion * dt.min(0.25));
+        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        self.yaw = direction.x.atan2(-direction.z);
+        self.aiming = false;
+        self.motion_speed_m_s = measured_ground_speed(before, self.pos, dt);
     }
 
     /// Ground forward vector.
@@ -280,6 +317,7 @@ impl Soldier {
             self.yaw = to.x.atan2(-to.z);
         }
         self.alive = true;
+        self.wounded_motion=1.0;
         self.looted = false;
         self.alert = Alert::Unaware;
         self.detect = 0.0;
@@ -313,6 +351,7 @@ impl Soldier {
     /// Keep infantry alive and moving in the same world while the player is mounted. They cannot
     /// damage the buttoned Tiger, so perception/fire against the foot avatar stays dormant.
     pub fn update_passive(&mut self, hf: &Heightfield, dt: f32) {
+        if self.is_fleeing() { self.advance_flee(hf, dt); return; }
         if !self.alive {
             self.motion_speed_m_s = 0.0;
             return;
@@ -423,14 +462,14 @@ impl Soldier {
     ) -> SoldierPolicyStep {
         // Death and the authored near-impact flinch are hard physical constraints, not policy
         // suggestions. A learned motor command cannot walk or shoulder the rifle through either.
-        let motor_locked = !self.alive || self.flinch_t > 0.0;
+        let motor_locked = !self.alive || self.flinch_t > 0.0 || self.is_fleeing();
         let policy = if !motor_locked { policy } else { None };
         let before_pos = self.pos;
         let before_yaw = self.yaw;
         let before_fire_cd = self.fire_cd;
         let scripted_shot = self.update_scripted(player_eye, prof, noise, cover, hf, dt, external_occluded);
 
-        let eye = before_pos + Vec3::Y * EYE_H;
+        let eye = self.anatomical_eye();
         let to_player = player_eye - eye;
         let player_distance = to_player.length();
         let target_visible = !external_occluded && player_distance > 0.05
@@ -601,6 +640,7 @@ impl Soldier {
         dt: f32,
         external_occluded: bool,
     ) -> Option<InfantryShot> {
+        if self.is_fleeing() { self.advance_flee(hf, dt); return None; }
         if !self.alive {
             return None;
         }
@@ -617,7 +657,7 @@ impl Soldier {
         }
 
         let (noise_radius, visibility) = prof;
-        let eye = self.pos + Vec3::Y * EYE_H;
+        let eye = self.anatomical_eye();
 
         // ── Vision ────────────────────────────────────────────────────────────
         let to = player_eye - eye;
@@ -750,7 +790,7 @@ impl Soldier {
     }
 
     fn fire(&mut self, player_eye: Vec3) -> InfantryShot {
-        let from = self.pos + Vec3::Y * EYE_H;
+        let from = self.anatomical_eye();
         let to = player_eye - from;
         let range = to.length().max(0.01);
         let base = to / range;
@@ -885,6 +925,23 @@ fn seg_circle_hit(a: Vec2, b: Vec2, c: Vec2, r: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destroyed_post_retreat_overrides_patrol_and_never_revives_dead_crew() {
+        let hf = flat_heightfield();
+        let mut soldier = Soldier::new(Vec3::new(2.0,0.0,0.0),0.0,[Vec3::ZERO;4],1,0,1);
+        soldier.escort_enemy=Some(0);
+        soldier.begin_flee_from(Vec3::ZERO);
+        assert!(soldier.is_fleeing());
+        assert!(soldier.escort_enemy.is_none());
+        soldier.update_passive(&hf,0.1);
+        assert!(soldier.pos.x>2.0);
+        assert!(!soldier.aiming);
+        soldier.alive=false;
+        let before=soldier.pos;
+        soldier.advance_flee(&hf,0.1);
+        assert_eq!(soldier.pos,before);
+    }
 
     fn flat_heightfield() -> Heightfield {
         Heightfield {

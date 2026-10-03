@@ -1,7 +1,7 @@
 //! Regression for the eye's clock uniform ABI and its meter contract.
 //!
-//! WGSL `vec3<f32>` has 16-byte alignment. Placing one after a scalar makes the structure span
-//! 32 bytes, which Vulkan correctly rejects when Rust uploads only four contiguous floats.
+//! The source-qualified flash lane expands the clock to eight scalar lanes. Explicit scalar
+//! padding avoids the implicit vec3 alignment which previously mismatched host uploads.
 
 const EXPOSURE_WGSL: &str = include_str!("../shaders/exposure.wgsl");
 const RENDERER_RS: &str = include_str!("../src/renderer.rs");
@@ -18,13 +18,14 @@ fn composed() -> String {
         "OBS_CONE_BLEACH_LOG", "OBS_ROD_BLEACH_LOG", "OBS_CONE_TAU_UP", "OBS_CONE_TAU_DOWN",
         "OBS_ROD_TAU_UP", "OBS_ROD_TAU_DOWN", "OBS_DISPLAY_ADAPTATION", "OBS_DISPLAY_KEY",
         "OBS_ROD_SATURATION_TD", "OBS_FLASH_ABOVE_ADAPTATION", "OBS_FLASH_MEMORY_TAU",
-        "OBS_FLASH_MIN_RECOVERY", "OBS_FLASH_MIN_COVERAGE", "OBS_MAX_STEP"];
+        "OBS_FLASH_MIN_RECOVERY", "OBS_FLASH_MIN_COVERAGE", "OBS_FLASH_ONSET_TAU",
+        "OBS_FLASH_ONSET_RATIO", "OBS_MAX_STEP"];
     let block: String = names.iter().map(|n| format!("const {n}: f32 = 1.0;\n")).collect();
     EXPOSURE_WGSL.replacen("// @observer-constants", &block, 1)
 }
 
 #[test]
-fn exposure_clock_shader_span_matches_the_16_byte_host_upload() {
+fn exposure_clock_shader_span_matches_the_32_byte_host_upload() {
     let source = composed();
     let module = wgpu::naga::front::wgsl::parse_str(&source)
         .unwrap_or_else(|error| panic!("exposure WGSL parse failed: {error}"));
@@ -47,15 +48,15 @@ fn exposure_clock_shader_span_matches_the_16_byte_host_upload() {
         ref other => panic!("ExposureClock must remain a struct, got {other:?}"),
     };
     assert_eq!(
-        span, 16,
-        "shader clock must match the four-float Rust upload"
+        span, 32,
+        "shader clock must match the eight-float Rust upload"
     );
 
     let compact: String = RENDERER_RS.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(compact.contains(
         "constEXPOSURE_CLOCK_UNIFORM_BYTES:u64=std::mem::size_of::<ExposureClockUniform>()asu64;"
     ));
-    assert!(compact.contains("const_:[();16]=[();EXPOSURE_CLOCK_UNIFORM_BYTESasusize];"));
+    assert!(compact.contains("const_:[();32]=[();EXPOSURE_CLOCK_UNIFORM_BYTESasusize];"));
     assert!(
         compact.contains("min_binding_size:wgpu::BufferSize::new(EXPOSURE_CLOCK_UNIFORM_BYTES)")
     );
@@ -79,7 +80,7 @@ fn the_eye_meters_physical_luminance_without_a_campaign_lift() {
 }
 
 #[test]
-fn the_eye_is_view_local_and_reads_only_the_frame() {
+fn the_eye_is_view_local_and_source_admission_adds_no_radiance_resource() {
     let module = wgpu::naga::front::wgsl::parse_str(&composed()).unwrap();
     let bound: Vec<_> = module.global_variables.iter().map(|(_, v)| v)
         .filter_map(|v| v.binding.as_ref().map(|b| (b.group, b.binding, v.name.clone().unwrap())))

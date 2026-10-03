@@ -87,7 +87,7 @@ impl Game {
         let Some(batches) = self.german_pose_batches else { return; };
         let mut transforms: [Vec<Mat4>; POSE_COUNT] = std::array::from_fn(|_| Vec::with_capacity(mixed_combat_runtime::GERMAN_COUNT));
         if self.mixed_combat.enabled {
-            for soldier in self.soldiers.iter().skip(self.soviet_soldier_count).filter(|s| s.alive) {
+            for (_,soldier) in self.soldiers.iter().enumerate().skip(self.soviet_soldier_count).filter(|(i,s)| s.alive&&!self.infantry_casualties.overrides(*i)) {
                 let pose = soldier.crouch_stage + if soldier.aiming { CROUCH_STAGES } else { 0 };
                 transforms[pose].push(Mat4::from_rotation_translation(
                     Quat::from_rotation_arc(Vec3::Z, soldier.forward()), soldier.pos));

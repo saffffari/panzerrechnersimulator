@@ -742,6 +742,18 @@ impl CabinFire {
     pub fn sweep(&self, from: Vec3, to: Vec3, models: &[Mat4; FRAMES]) -> Option<Contact> {
         self.sweep_inverse(from, to, &models.map(|m| m.inverse()))
     }
+    /// Conservative source-bounds clearance, used only to end the launcher's muzzle exemption.
+    /// This is not a cavity/armor hit test: outside every real frame bound proves clearance;
+    /// concave empty space inside a bound may merely keep the initial exemption a little longer.
+    pub fn outside_source_bounds(&self,point:Vec3,models:&[Mat4;FRAMES],margin:f32)->bool {
+        point.is_finite() && self.grids.iter().enumerate().all(|(frame,grid)| {
+            grid.bounds.is_none_or(|(lo,hi)| {
+                let p=models[frame].inverse().transform_point3(point);
+                p.is_finite() && (p.cmplt(lo-Vec3::splat(margin)).any()
+                    || p.cmpgt(hi+Vec3::splat(margin)).any())
+            })
+        })
+    }
     /// Exact source visibility for a bounded soot candidate batch. Frame inverses are computed
     /// once; the first intersected source triangle ends a blocked path, without finding a normal
     /// or nearest contact. Every one of the articulated frames remains eligible to block it.
@@ -1382,6 +1394,17 @@ mod tests {
             Vec3::new(2.0, 0.0, 2.0),
             [128, 128, 128],
         )
+    }
+    #[test]
+    fn muzzle_clearance_requires_departure_from_all_articulated_source_bounds() {
+        let mesh=plane();let fire=CabinFire::new(&[(0,&mesh),(1,&mesh)]);
+        let mut models=[Mat4::IDENTITY;FRAMES];
+        models[0]=Mat4::from_rotation_translation(glam::Quat::from_rotation_y(0.6),Vec3::new(30.0,2.0,-11.0));
+        models[1]=Mat4::from_translation(Vec3::new(30.0,3.0,-11.0));
+        assert!(!fire.outside_source_bounds(models[0].transform_point3(Vec3::new(0.0,-0.05,0.0)),&models,0.002));
+        assert!(!fire.outside_source_bounds(models[1].transform_point3(Vec3::new(0.0,-0.05,0.0)),&models,0.002));
+        assert!(fire.outside_source_bounds(Vec3::new(40.0,3.0,-11.0),&models,0.002));
+        assert!(!fire.outside_source_bounds(Vec3::splat(f32::NAN),&models,0.002));
     }
     #[test]
     fn patch_identity_follows_articulation_but_changes_on_slot_reuse() {

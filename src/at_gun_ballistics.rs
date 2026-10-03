@@ -189,7 +189,7 @@ pub(super) fn penetrate(projectile: &mut AuthoritativeProjectile, hit: GunContac
         - remaining)
         .max(projectile.penalty_mm);
     projectile.velocity = projectile.direction * retained
-        - Vec3::Y * (PROJECTILE_GRAVITY_MPS2 * projectile.age_s)
+        - Vec3::Y * (PROJECTILE_GRAVITY_MPS2 * (projectile.age_s-projectile.flight_epoch_s))
         + projectile.crosswind_velocity;
     projectile.passed_at_gun_part = Some((hit.index, hit.part));
     true

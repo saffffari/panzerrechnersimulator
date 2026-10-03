@@ -321,13 +321,13 @@ impl Game {
         } else {
             self.hf.height_at(xz.x, xz.y)
         };
-        // Estimated 35 mm compression of the winter snowpack under the loaded track.
+        // Authored 127 mm (5 inch) compression of the winter snowpack under the loaded track.
         // This changes the physical support pose, so hull, collision, ports and visuals agree.
         // Cellar floors and the authored bridge remain hard supports.
         if self.act.season == crate::world::Season::Winter
             && self.hf.openings.at(xz.x,xz.y).is_none()
             && !(self.campaign_channel && act2_bridge_deck_height(&self.hf,xz).is_some()) {
-            height -= 0.035;
+            height -= 0.127;
         }
         let mut source = SOURCE_TERRAIN;
         if let Some(hit) = rubble.top_at_from(xz, ref_y + tank_support::TIGER_STEP_M) {

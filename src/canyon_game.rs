@@ -145,9 +145,16 @@ impl Game {
         let mut posted = 0usize;
         // Seed a whole loose group near one post, with measured body clearance. Selecting each
         // member independently across a route band created apparent lone wandering riflemen.
-        let mut ordered_posts: Vec<_> = spec.garrison.iter().enumerate().collect();
-        ordered_posts.sort_by(|(_,a),(_,b)| crate::canyon_director::route_progress(&spec.route,a.at)
-            .total_cmp(&crate::canyon_director::route_progress(&spec.route,b.at)));
+        let mut defense_centers: Vec<Vec2> = spec.gun_zones.iter().filter_map(|zone| {
+            let points: Vec<_> = guns.iter().filter(|(id,_)|id==&zone.id).map(|(_,g)|g.at).collect();
+            (!points.is_empty()).then(||points.iter().copied().sum::<Vec2>() / points.len() as f32)
+        }).collect();
+        if defense_centers.is_empty() {
+            defense_centers = [encounter.route(0),encounter.route(1)].iter()
+                .map(|p|p.iter().copied().sum::<Vec2>()/p.len() as f32).collect();
+        }
+        defense_centers.sort_by(|a,b|crate::canyon_director::route_progress(&spec.route,*a)
+            .total_cmp(&crate::canyon_director::route_progress(&spec.route,*b)));
         let mut groups = Vec::new();
         let mut group_centers: Vec<Vec2> = Vec::new();
         let cover = self.mixed_cover(None);
@@ -156,9 +163,9 @@ impl Game {
             let first = group * free.len() / group_count;
             let end = (group + 1) * free.len() / group_count;
             let members = &free[first..end];
-            let lo = group * ordered_posts.len() / group_count;
-            let hi = (group + 1) * ordered_posts.len() / group_count;
-            let mut candidates: Vec<_> = ordered_posts[lo..hi].to_vec();
+            let center=defense_centers[group % defense_centers.len()];
+            let mut candidates: Vec<_> = spec.garrison.iter().enumerate()
+                .filter(|(_,post)|post.at.distance(center)<=320.0).collect();
             candidates.sort_by_key(|(j,_)| crate::canyon::mix(seed ^ 0x61726973 ^ *j as u64 ^ ((group as u64) << 32)));
             let deployed = candidates.iter().find_map(|(_,post)| {
                 if group_centers.iter().any(|p|p.distance(post.at)<35.0) { return None; }
@@ -190,7 +197,11 @@ impl Game {
         self.winter_encounter = Some(encounter);
         let fielded = placed.iter().filter(|&&active| active).count();
         let receipt = serde_json::json!({
-            "seed": seed, "deployment": "seeded viable sites and patrol phases",
+            "seed": seed, "deployment": "seeded compact defended areas and patrol platoons",
+            "defense_centers": defense_centers.iter().map(|p|[p.x,p.y]).collect::<Vec<_>>(),
+            "infantry_group_centers":group_centers.iter().map(|p|[p.x,p.y]).collect::<Vec<_>>(),
+            "pacing": {"minimum_reinforcement_lull_s":crate::canyon_director::MIN_LULL_S,
+                "reinforcement_platoon":crate::canyon_director::REINFORCEMENT_PLATOON},
             "start": [spec.start.x, spec.start.y], "goal": [spec.goal.x, spec.goal.y], "goal_radius_m": spec.goal_radius_m,
             "length_m": spec.length_m, "t34s": fielded, "platoon_tanks": winter_encounter_ai::PLATOON_TANKS,
             "patrols": self.winter_encounter.as_ref().map(|e|
@@ -218,7 +229,9 @@ impl Game {
             || !self.module_ok(ModuleKind::RightTrack) || self.fire > 0.05;
         let live = self.enemies.iter().enumerate().filter(|(i,e)| e.alive && self.enemy_active[*i]).count();
         let engaged = self.enemies.iter().enumerate().filter(|(i,e)| e.alive && self.enemy_active[*i]
-            && (self.stealth.spotted[*i] || e.pos.distance(self.player.pos) < 430.0)).count();
+            && (self.stealth.spotted[*i] || e.pos.distance(self.player.pos) < 430.0)).count()
+            + self.at_guns.iter().flatten().filter(|g|matches!(g.state,
+                at_guns::GunState::Engaging | at_guns::GunState::ShiftingTrails)).count();
         let kills = self.enemies.iter().enumerate().filter(|(i,e)| !e.alive && self.enemy_active[*i]).count() as u32;
         let Some(run) = self.canyon_run.as_mut() else { return; };
         if !alive { run.failed = true; }
@@ -229,7 +242,10 @@ impl Game {
         }
         let s = crate::canyon_director::Situation {
             progress: crate::canyon_director::route_progress(&run.spec.route,at), live, engaged,
-            kills, shots: self.gun_shots, damage, critical, alive: alive && !run.failed,
+            kills, shots: self.gun_shots,
+            hostile_shots: self.enemy_gun_shots.iter().sum::<u32>()
+                + self.at_guns.iter().flatten().map(|g|g.shots).sum::<u32>(),
+            damage, critical, alive: alive && !run.failed,
             finished: run.finished_s.is_some(),
         };
         let request = run.director.as_mut().and_then(|d| d.step(dt,s));

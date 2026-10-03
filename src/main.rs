@@ -3720,7 +3720,9 @@ fn run_penfx_demo(prefix: &str) -> anyhow::Result<()> {
             g.hide_couch_crew_rigs(r);
             g.configure_crew_render_view(role, true, r);
             r.reset_history();
+            let local_body_visibility = g.hide_first_person_for_optic(r);
             r.render_optic_snapshot(&device, &queue);
+            for (slot, visible) in local_body_visibility { r.set_visible(slot, visible); }
 
             let (eye, fwd, fov) = g.gunner_interior_camera();
             r.camera.pos = eye;
@@ -4265,7 +4267,9 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         r.set_active_view(1);
         g.hide_couch_crew_rigs(&mut r);
         g.configure_crew_render_view(lan::LanRole::Gunner, true, &mut r);
+        let local_body_visibility = g.hide_first_person_for_optic(&mut r);
         r.render_optic_snapshot(&device, &queue);
+        for (slot, visible) in local_body_visibility { r.set_visible(slot, visible); }
         let (ie, ifw, ifov) = g.gunner_interior_camera();
         r.camera.pos = ie;
         r.camera.set_forward(ifw);
@@ -13185,7 +13189,7 @@ impl WindowState {
         }
         self.game.draw_repair_cue(&mut self.renderer);
         // A wordless dot where the crosshair rests on something the hands can use.
-        if self.game.hover_label_text().is_some() {
+        if self.game.hover_label_text().is_some() && !self.game.sidearm_is_drawn() {
             self.renderer.draw_text(
                 "·",
                 0.5,
@@ -13325,8 +13329,12 @@ impl WindowState {
         self.game
             .configure_crew_render_view(lan::LanRole::Gunner, true, &mut self.renderer);
         self.renderer.set_active_view(optic_slot);
+        let local_body_visibility = self.game.hide_first_person_for_optic(&mut self.renderer);
         self.renderer
             .render_optic_snapshot(&self.device, &self.queue);
+        for (slot, visible) in local_body_visibility {
+            self.renderer.set_visible(slot, visible);
+        }
         let saved_cam = self.renderer.camera;
         let saved_reticle = self.renderer.reticle;
         let saved_mask = self.renderer.optic_mask;

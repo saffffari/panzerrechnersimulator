@@ -18,7 +18,7 @@
 //! Parameters cross the simulation/audio boundary as atomic targets, as in `weather_audio.rs`.
 //! Each voice ramps them per sample. With no impairment a voice passes bit-exact.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -104,6 +104,8 @@ pub(super) struct EarControl {
     silenced: AtomicBool,
     /// Whole-listener level on every bus (1 = full); the death fade lowers it to 0.
     level: AtomicU32,
+    rendered_frames: AtomicU64,
+    score_duck_until: AtomicU64,
 }
 
 impl Default for EarControl {
@@ -117,6 +119,8 @@ impl Default for EarControl {
             conductive: [AtomicU32::new(0), AtomicU32::new(0)],
             silenced: AtomicBool::new(false),
             level: AtomicU32::new(1.0f32.to_bits()),
+            rendered_frames: AtomicU64::new(0),
+            score_duck_until: AtomicU64::new(0),
         }
     }
 }
@@ -141,6 +145,18 @@ impl EarTargets {
 }
 
 impl EarControl {
+    pub(super) fn publish_frame(&self, frame: u64) {
+        self.rendered_frames.store(frame, Ordering::Relaxed);
+    }
+    pub(super) fn protect_interaction(&self, seconds: f32) {
+        if !seconds.is_finite() || seconds <= 0.0 { return; }
+        let until = self.rendered_frames.load(Ordering::Relaxed)
+            .saturating_add((seconds.min(5.0) * RATE) as u64);
+        self.score_duck_until.fetch_max(until, Ordering::Relaxed);
+    }
+    fn score_duck_active(&self) -> bool {
+        self.rendered_frames.load(Ordering::Relaxed) < self.score_duck_until.load(Ordering::Relaxed)
+    }
     /// Publish the ear model's state.
     pub fn set_state(&self, render: &EarRender) {
         for ear in 0..2 {
@@ -246,6 +262,8 @@ pub(super) struct Ear<S> {
     /// exactly 1.0 while nothing fades, so unimpaired playback remains bit-exact.
     level: f32,
     level_target: f32,
+    score_duck: f32,
+    score_duck_target: f32,
     /// The reflex as this voice follows it: attenuation now (dB), its change per frame, and the
     /// update it last joined. Between updates it runs on the published rate, so it lands where
     /// the ear model is at the next update.
@@ -277,6 +295,8 @@ impl<S: Source<Item = f32>> Ear<S> {
             repoll: false,
             level: 1.0,
             level_target: 1.0,
+            score_duck: 1.0,
+            score_duck_target: 1.0,
             reflex_db: 0.0,
             reflex_per_frame: 0.0,
             reflex_hold_frames: 0.0,
@@ -323,6 +343,7 @@ impl<S: Source<Item = f32>> Ear<S> {
 
     fn poll(&mut self) {
         self.level_target = self.control.level();
+        self.score_duck_target = if matches!(self.bus, EarBus::Score) && self.control.score_duck_active() { 0.3 } else { 1.0 };
         self.targets = self.control.targets();
         let generation = self.control.generation();
         if generation != self.reflex_generation {
@@ -388,6 +409,8 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
             }
             self.frames += 1;
             self.level += ramp(LISTENER_LEVEL_TAU_S) * (self.level_target - self.level);
+            let duck_tau = if self.score_duck_target < self.score_duck { 0.025 } else { 1.5 };
+            self.score_duck += ramp(duck_tau) * (self.score_duck_target - self.score_duck);
             if self.reflex_hold_frames >= 1.0 {
                 self.reflex_hold_frames -= 1.0;
             } else {
@@ -406,7 +429,7 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
         }
         if !self.active {
             // Unimpaired playback is bit-exact (the level is exactly 1.0 unless a fade runs).
-            return Some(x * self.level);
+            return Some(x * self.level * self.score_duck);
         }
         let bands = self.split[channel].run(x, &self.coef);
         let (level_a, gain_close) = (ramp(LEVEL_TAU_S), ramp(GAIN_TAU_S));
@@ -428,7 +451,7 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
             let reflex = if band < REFLEX_BANDS { self.reflex_gain[band] } else { 1.0 };
             out += bands[band] * *gain * reflex;
         }
-        Some(out * self.level)
+        Some(out * self.level * self.score_duck)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) { self.source.size_hint() }
@@ -468,6 +491,21 @@ pub(crate) const OFFLINE_POLL_FRAMES: usize = POLL_FRAMES as usize;
 mod tests {
     use super::*;
     use rodio::buffer::SamplesBuffer;
+
+    #[test]
+    fn interaction_duck_only_changes_score_and_releases_on_shared_clock() {
+        let control = Arc::new(EarControl::default());
+        let input = vec![0.2; RATE as usize * 2];
+        control.protect_interaction(0.8);
+        let physical = run(&control, EarBus::World, &input);
+        assert_eq!(physical, input, "handling must not attenuate battlefield sources");
+        let score = run(&control, EarBus::Score, &input);
+        assert!(score[score.len()-1] < 0.065);
+        control.publish_frame(RATE as u64);
+        assert!(!control.score_duck_active());
+        let released = run(&control, EarBus::Score, &input);
+        assert_eq!(released, input, "a new score source after hold remains unity");
+    }
 
     fn noise(frames: usize, amplitude: f32) -> Vec<f32> {
         let mut x = 0x1234_5678u32;

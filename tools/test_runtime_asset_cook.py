@@ -154,15 +154,15 @@ def tree_contents(root: Path) -> dict[str, bytes]:
 class RuntimeAssetCookTests(unittest.TestCase):
     def test_live_catalog_locks_the_complete_audited_model_closure(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
-        self.assertEqual(len(catalog["assets"]), 178)
+        self.assertEqual(len(catalog["assets"]), 179)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 56,
                 "campaign_manifest_unique_glbs": 66,
-                "non_pizza_glbs": 38,
+                "non_pizza_glbs": 39,
                 "pizza_glbs": 140,
-                "total_glbs": 178,
+                "total_glbs": 179,
             },
         )
         redistributable = [
@@ -197,14 +197,14 @@ class RuntimeAssetCookTests(unittest.TestCase):
             "GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 178)
+        self.assertEqual(len(records), 179)
         self.assertTrue(all(record["dependencies"] == [] for record in records))
         blockers = [
             entry
             for entry in catalog["assets"]
             if entry["license"] == "kessel-provenance-unrecorded"
         ]
-        self.assertEqual(len(blockers), 18)
+        self.assertEqual(len(blockers), 19)
 
     def test_retired_manifest_models_are_semantic_ids_not_cooked_models(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)

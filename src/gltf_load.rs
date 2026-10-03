@@ -218,6 +218,15 @@ pub(crate) fn load_glb_partitioned_roots_with_source_addition(
     path:&str, moving_roots:&[&str], finish:Option<MaterialOverrideFn>,
     addition:Option<(&str,&str)>,
 )->anyhow::Result<Vec<CpuMesh>> {
+    load_glb_partitioned_roots_with_source_transforms(path,moving_roots,finish,addition,None)
+}
+
+/// Bounded authored corrections to complete source roots, applied before material accumulation.
+/// The source file stays unchanged; positions, normals and tangents follow the same transform.
+pub(crate) fn load_glb_partitioned_roots_with_source_transforms(
+    path:&str, moving_roots:&[&str], finish:Option<MaterialOverrideFn>,
+    addition:Option<(&str,&str)>, source_transform:Option<fn(&str)->Mat4>,
+)->anyhow::Result<Vec<CpuMesh>> {
     // Import from bytes so a source path can resolve to the cooker's stable `models/<id>.glb`
     // filename inside an app bundle. Runtime-catalog GLBs are required to be self-contained.
     let resolved = crate::resource::resolve(path)?;
@@ -246,7 +255,7 @@ pub(crate) fn load_glb_partitioned_roots_with_source_addition(
             let page = &mut pages[selected.map_or(0, |index| index + 1)];
             walk(
                 &node,
-                Mat4::IDENTITY,
+                source_transform.map_or(Mat4::IDENTITY,|transform|transform(node.name().unwrap_or(""))),
                 &buffers,
                 &images,
                 &mut page.vertices,

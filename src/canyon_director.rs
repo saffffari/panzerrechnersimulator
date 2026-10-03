@@ -5,7 +5,10 @@ use glam::Vec2;
 
 pub const MAX_LIVE: usize = 6;
 pub const TARGET_SECONDS: f32 = 90.0 * 60.0;
-pub const ENTRY_MIN_M: f32 = 650.0;
+pub const ENTRY_MIN_M: f32 = 850.0;
+pub const MIN_LULL_S: f32 = 180.0;
+pub const CONTACT_RELEASE_S: f32 = 90.0;
+pub const REINFORCEMENT_PLATOON: usize = 3;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Situation {
@@ -14,6 +17,7 @@ pub struct Situation {
     pub engaged: usize,
     pub kills: u32,
     pub shots: u32,
+    pub hostile_shots: u32,
     pub damage: u32,
     pub critical: bool,
     pub alive: bool,
@@ -35,6 +39,8 @@ pub struct Director {
     pub rejected_entries: u32,
     last_progress_s: f32,
     last_shot_s: f32,
+    last_contact_s: f32,
+    encounter_active: bool,
     last: Situation,
 }
 impl Director {
@@ -45,14 +51,16 @@ impl Director {
             progress: 0.0,
             total_spawned: initial as u32,
             arrivals: 0,
-            next_check: 90.0,
-            rest_until: 90.0,
+            next_check: MIN_LULL_S,
+            rest_until: MIN_LULL_S,
             credit: 0.0,
             target_live: 3,
             state: "opening",
             rejected_entries: 0,
             last_progress_s: 0.0,
             last_shot_s: -1000.0,
+            last_contact_s: -1000.0,
+            encounter_active: false,
             last: Situation {
                 alive: true,
                 ..Default::default()
@@ -72,17 +80,18 @@ impl Director {
         }
         let fresh_damage = s.damage > self.last.damage || (s.critical && !self.last.critical);
         if fresh_damage {
-            self.rest_until = self.rest_until.max(self.elapsed + 120.0);
+            self.rest_until = self.rest_until.max(self.elapsed + MIN_LULL_S);
         }
-        if s.kills > self.last.kills {
-            self.rest_until = self.rest_until.max(self.elapsed + 65.0);
+        if s.kills > self.last.kills && !self.encounter_active {
+            let jitter=(crate::canyon::mix(self.seed ^ s.kills as u64) % 121) as f32;
+            self.rest_until = self.rest_until.max(self.elapsed + MIN_LULL_S + jitter);
         }
         // A crew substantially ahead of the 90-minute reference meets a denser defence. This is
         // a pacing reference, not an enforced duration: a successful breakout can finish sooner.
         let expected = self.elapsed / TARGET_SECONDS;
         let ahead = (self.progress - expected).max(0.0);
         self.target_live =
-            (2 + (self.progress * 3.0) as usize + (ahead * 2.0) as usize).min(MAX_LIVE);
+            MAX_LIVE;
         let stalled = self.elapsed - self.last_progress_s > 420.0;
         if stalled {
             self.target_live = self.target_live.min(4);
@@ -90,12 +99,25 @@ impl Director {
         if s.critical {
             self.target_live = self.target_live.min(4);
         }
-        let interval = (240.0 - self.progress * 70.0 - ahead * 45.0).clamp(125.0, 240.0);
-        self.credit = (self.credit + dt.max(0.0) / interval).min(4.0);
+        let interval = (120.0 - self.progress * 35.0 - ahead * 20.0).clamp(60.0, 120.0);
+        self.credit = (self.credit + dt.max(0.0) / interval).min(MAX_LIVE as f32);
         if s.shots > self.last.shots {
             self.last_shot_s = self.elapsed;
         }
+        if s.engaged > 0 || s.hostile_shots > self.last.hostile_shots {
+            self.encounter_active = true;
+            self.last_contact_s = self.elapsed;
+        }
+        if self.encounter_active && self.elapsed - self.last_contact_s >= CONTACT_RELEASE_S {
+            self.encounter_active = false;
+            let jitter = (crate::canyon::mix(self.seed ^ self.arrivals as u64 ^ s.kills as u64) % 121) as f32;
+            self.rest_until = self.rest_until.max(self.elapsed + MIN_LULL_S + jitter);
+        }
         self.last = s;
+        if self.encounter_active {
+            self.state = "combat_pressure";
+            return None;
+        }
         if self.elapsed < self.rest_until {
             self.state = "recovery";
             return None;
@@ -112,14 +134,14 @@ impl Director {
             self.state = "existing_force";
             return None;
         }
-        if self.elapsed - self.last_shot_s < 35.0 || self.credit < 1.0 {
+        if self.elapsed - self.last_shot_s < 90.0 || self.credit < REINFORCEMENT_PLATOON as f32 {
             self.state = "gathering";
             return None;
         }
         let desired = (self.target_live - s.live)
-            .min(2)
+            .min(REINFORCEMENT_PLATOON)
             .min(self.credit.floor() as usize);
-        if desired == 0 {
+        if desired < REINFORCEMENT_PLATOON {
             self.state = "gathering";
             return None;
         }
@@ -131,7 +153,7 @@ impl Director {
         self.arrivals += 1;
         self.credit = (self.credit - count as f32).max(0.0);
         let jitter = (crate::canyon::mix(self.seed ^ self.arrivals as u64) % 71) as f32;
-        self.next_check = self.elapsed + 100.0 + jitter;
+        self.next_check = self.elapsed + MIN_LULL_S + jitter;
         self.state = "reinforcements_en_route";
     }
     pub fn deferred(&mut self) {
@@ -170,7 +192,7 @@ mod tests {
         let mut kills = 0;
         let mut log = Vec::new();
         for sec in 0..7200 {
-            if sec % 110 == 100 && live > 0 {
+            if sec % (if fast {95} else {150}) == 90 && live > 0 {
                 live -= 1;
                 kills += 1;
             }
@@ -219,7 +241,7 @@ mod tests {
         assert!(d.step(1.0, s).is_none());
         assert_eq!(d.state, "recovery");
         s.engaged = 8;
-        assert!(d.step(130.0, s).is_none());
+        assert!(d.step(190.0, s).is_none());
         assert_eq!(d.state, "combat_pressure");
         s.alive = false;
         let elapsed = d.elapsed;
@@ -230,6 +252,29 @@ mod tests {
         assert!(d.step(500.0, s).is_none());
         assert_eq!(d.elapsed, elapsed);
     }
+    #[test]
+    fn brief_fight_has_a_multiminute_lull_and_arrivals_are_whole_platoons() {
+        let mut d = Director::new(29, 0);
+        let mut s = Situation { alive: true, ..Default::default() };
+        d.step(400.0, s);
+        s.engaged = 1; s.hostile_shots = 1;
+        assert!(d.step(1.0, s).is_none());
+        s.engaged = 0;
+        for _ in 0..(CONTACT_RELEASE_S + MIN_LULL_S - 1.0) as usize {
+            assert!(d.step(1.0, s).is_none(), "an isolated shot must not cause a quick new encounter");
+        }
+        let mut arrivals=Vec::new();
+        for _ in 0..600 {
+            if let Some(n)=d.step(1.0,s) {
+                assert_eq!(n,REINFORCEMENT_PLATOON);
+                arrivals.push(d.elapsed);
+                d.admitted(n);
+            }
+        }
+        assert!(!arrivals.is_empty());
+        assert!(arrivals.windows(2).all(|t|t[1]-t[0]>=MIN_LULL_S));
+    }
+
     #[test]
     fn winding_route_measures_travel_not_proximity_to_finish() {
         let r = [

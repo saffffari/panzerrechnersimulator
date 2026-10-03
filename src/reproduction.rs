@@ -567,6 +567,9 @@ mod tests {
                 p::Emission::blast(levels::AMMUNITION_DETONATION_TNT_KG));
             let rip = voice(a::ProceduralSound::TurretRip, armour);
             for (sample, layer) in catastrophic.iter_mut().zip(&rip) { *sample += layer; }
+            eprintln!("severity before master range={range_m}m: LAF impact/kill/catastrophe={:?}; sample peaks={:?}",
+                [&impact,&kill,&catastrophic].map(|v|laf_max_dbfs(v)),
+                [&impact,&kill,&catastrophic].map(|v|20.0*v.iter().fold(0.0_f32,|peak,s|peak.max(s.abs())).max(1.0e-12).log10()));
             let mut mix = bed.clone();
             let starts = [0.75, 3.0, 5.25];
             for (source, start_s) in [&impact, &kill, &catastrophic].into_iter().zip(starts) {

@@ -54,6 +54,38 @@ mod tests {
         assert!((SOVIET_MG.muzzle_velocity-844.6008).abs()<0.001);
         assert!(SOVIET_RIFLE.time_of_flight(100.0)<GERMAN_RIFLE.time_of_flight(100.0));
     }
+    #[test]
+    fn mounted_cyclic_rounds_and_visible_belt_selection_share_one_count() {
+        fn timeline(dt: f32, frames: usize) -> (usize, Vec<f64>) {
+            let mut phase = 0.0;
+            let mut round = 0_u32;
+            let mut clock = 0.0;
+            let mut tracers = Vec::new();
+            for _ in 0..frames {
+                for offset in crate::mounted_mg::shot_offsets(&mut phase, dt) {
+                    round += 1;
+                    if tracer_round(Weapon::MachineGun, round) {
+                        tracers.push(clock + f64::from(offset));
+                    }
+                }
+                clock += f64::from(dt);
+            }
+            (round as usize, tracers)
+        }
+        let (rounds, tracers) = timeline(0.25, 40);
+        assert_eq!(rounds, 134); // first cycle at t=0, half-open ten-second interval
+        assert_eq!(tracers.len(), 26);
+        for pair in tracers.windows(2) {
+            assert!((pair[1] - pair[0] - 0.375).abs() < 2.0e-6);
+        }
+        for (dt, frames) in [(1.0/60.0, 600), (0.5, 20)] {
+            let (actual_rounds, actual_tracers) = timeline(dt, frames);
+            assert_eq!(actual_rounds, rounds);
+            assert_eq!(actual_tracers.len(), tracers.len());
+            for (a,b) in actual_tracers.iter().zip(&tracers) { assert!((a-b).abs()<2e-6); }
+        }
+    }
+
     #[test] fn ball_is_unlit_and_only_each_fifth_mg_round_is_selected() {
         for w in [Weapon::P08,Weapon::Rifle] {assert!((1..101).all(|n|!tracer_round(w,n)));}
         assert_eq!((1..101).filter(|&n|tracer_round(Weapon::MachineGun,n)).count(),20);

@@ -150,7 +150,8 @@ impl<S: Iterator<Item = f32>> Iterator for MasterStage<S> {
         }
         self.output_peak = self.output_peak.max(output[0].abs()).max(output[1].abs());
         let t = &self.telemetry;
-        t.frames.fetch_add(1, Ordering::Relaxed);
+        let frame = t.frames.fetch_add(1, Ordering::Relaxed) + 1;
+        self.control.publish_frame(frame);
         t.limited_frames.store(self.limiter.limited_frames, Ordering::Relaxed);
         t.frames_over_1db_reduction.store(self.limiter.frames_over_1db_reduction, Ordering::Relaxed);
         t.frames_over_6db_reduction.store(self.limiter.frames_over_6db_reduction, Ordering::Relaxed);

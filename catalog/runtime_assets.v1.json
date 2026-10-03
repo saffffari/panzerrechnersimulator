@@ -13999,6 +13999,84 @@
     {
       "bounds_m": {
         "max": [
+          1.418627,
+          2.074928,
+          0.99358
+        ],
+        "min": [
+          1.321328,
+          1.993197,
+          -0.992995
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/tank.tiger.full.rack_fitting.glb"
+      },
+      "collision_class": "vehicle_part",
+      "destruction_class": "vehicle_module",
+      "dimensions_m": [
+        0.0973,
+        0.081732,
+        1.986574
+      ],
+      "expected": {
+        "bytes": 71924,
+        "sha256": "346046f1565c33e0f6ddfba1a4185bd063957e2d480f86c7e62fc0e637a8bcc4",
+        "vertices": 1791
+      },
+      "external_dependencies": [],
+      "id": "tank.tiger.full.rack_fitting",
+      "license": "kessel-provenance-unrecorded",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          1.369978,
+          2.034062,
+          0.000292
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "tank.tiger.full.rack_fitting",
+          "levels": [
+            {
+              "asset_id": "tank.tiger.full.rack_fitting",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          2400.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/tanks/tiger/baked/tiger_rack_fitting.glb",
+      "source_family": "kessel-local",
+      "tags": [
+        "baked",
+        "glb",
+        "rig-part",
+        "runtime",
+        "tank",
+        "vehicle"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           0.940123,
           1.849193,
           2.387753
@@ -14290,9 +14368,9 @@
   "scope": {
     "campaign_manifest_pizza_glbs": 56,
     "campaign_manifest_unique_glbs": 66,
-    "non_pizza_glbs": 38,
+    "non_pizza_glbs": 39,
     "pizza_glbs": 140,
-    "total_glbs": 178
+    "total_glbs": 179
   },
   "version": 1
 }

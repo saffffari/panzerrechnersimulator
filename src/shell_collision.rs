@@ -230,9 +230,14 @@ impl Body {
                 }
             }
             if report.grounded {
-                self.angular_velocity *= 0.72;
-                self.velocity.x *= 0.92;
-                self.velocity.z *= 0.92;
+                // Continuous rolling loss, independent of the number of substeps. The old
+                // 0.72 per 120 Hz contact erased ~98% of angular motion in 0.1 seconds,
+                // stopping long brass cases before they could roll or make another contact.
+                let angular_loss = (-2.8 * h).exp();
+                let sliding_loss = (-3.2 * h).exp();
+                self.angular_velocity *= angular_loss;
+                self.velocity.x *= sliding_loss;
+                self.velocity.z *= sliding_loss;
             }
             self.velocity = self.velocity.clamp_length_max(12.0);
             self.angular_velocity = self.angular_velocity.clamp_length_max(12.0);

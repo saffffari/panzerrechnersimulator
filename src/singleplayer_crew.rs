@@ -61,7 +61,7 @@ fn roster_receipt(
         .collect::<Vec<_>>())
 }
 
-fn casualty_identity(role: CrewRole) -> CouchCrewCasualty {
+pub(super) fn casualty_identity(role: CrewRole) -> CouchCrewCasualty {
     let post = body_post(role);
     CouchCrewCasualty {
         // The shared physical damage record historically calls this `peer_id`. Here it is an
@@ -326,13 +326,25 @@ impl Game {
             let offset = blood_parent_model(&self.player, frame)
                 .transform_vector3(self.singleplayer_body_offset(body.casualty, frame));
             let model = Mat4::from_translation(offset) * crew_live_model(&self.player, post);
+            if post != crate::lan::LanRole::Commander {
+                let missing=self.living_wounds.missing(body.casualty.identity);
+                let bits=missing.iter().enumerate().fold(0u16,|a,(i,b)|a|((*b as u16)<<i));
+                if self.living_wounds.masks.borrow().get(&slot).copied().unwrap_or(0)!=bits {
+                    if let Ok(indices)=crew_arm_animation::wounded_seated_indices(identity,missing) {
+                        if r.upload_pose_indices(slot,&indices){self.living_wounds.masks.borrow_mut().insert(slot,bits);}
+                    }
+                }
+            }
             r.set_model(slot, model);
-            r.set_visible(slot, true);
+            if post==crate::lan::LanRole::Commander && self.first_person.is_some() {
+                self.first_person.as_ref().unwrap().draw_commander_witness(model,self.living_wounds.missing(body.casualty.identity),r);
+                r.set_visible(slot,false);
+            }else{r.set_visible(slot,true);}
             r.set_model(
                 self.slots.crew_helmet[identity],
                 model * crew_helmet_live_pose(post),
             );
-            r.set_visible(self.slots.crew_helmet[identity], true);
+            r.set_visible(self.slots.crew_helmet[identity], !(post==crate::lan::LanRole::Commander&&self.first_person.is_some()));
         }
         self.drive_physical_crew_casualties(r);
     }

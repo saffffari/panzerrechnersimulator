@@ -2,6 +2,7 @@
 //! Runtime small arms and cannon trails sample authoritative projectile states. The legacy
 //! endpoint-flight helper remains available only to isolated presentation diagnostics.
 use super::*;
+use crate::renderer::renderer_weapon_particles::{Record as GpuWeaponRecord, math as gpu_weapon};
 
 const MATERIAL_PAGES: usize = 9;
 const TRACER_BASE: usize = MATERIAL_PAGES;
@@ -9,6 +10,7 @@ pub(super) const PAGES: usize = MATERIAL_PAGES + 6;
 const FLIGHTS: usize = 160;
 const BULLET_SEGMENTS:usize=4096;
 const BULLET_EXPOSURE_S:f32=1.0/120.0;
+const MAX_BULLET_EXPOSURE_S:f32=1.0/30.0;
 const SMALL_ARM_EVENTS:usize=512;
 const BURSTS: usize = 48;
 const GRAINS: usize = 3072;
@@ -77,20 +79,36 @@ impl Weapon {
 #[derive(Clone, Copy)]
 struct Flight { from: Vec3, to: Vec3, age: f32, life: f32, weapon: Weapon, armor_normal: Option<Vec3> }
 #[derive(Clone, Copy)]
-enum BurstKind { Muzzle, Blast, InteriorBlast, Impact, ArmorImpact(Vec3), Dust, Ricochet(Vec3), BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
+enum BurstKind { Muzzle, Blast, InteriorBlast, PressureVent(Vec3), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet(Vec3), BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
 impl BurstKind {
-    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet(_) | Self::BulletArmor{..}) }
+    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet(_) | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
+}
+#[derive(Clone,Copy)]
+struct SurfaceAnchor {vehicle:ProjectileVehicle,part:ArmorPart,point:Vec3,normal:Vec3,tangent:Vec3}
+impl SurfaceAnchor {
+    fn new(vehicle:ProjectileVehicle,part:ArmorPart,model:Mat4,point:Vec3,normal:Vec3)->Self {
+        let tangent=Quat::from_rotation_arc(Vec3::Z,normal)*Vec3::X;
+        Self {vehicle,part,point:model.inverse().transform_point3(point),
+            normal:model.transpose().transform_vector3(normal).normalize(),
+            tangent:model.inverse().transform_vector3(tangent).normalize()}
+    }
+    fn pose(self,model:Mat4)->(Vec3,Vec3,Vec3) {
+        let normal=model.inverse().transpose().transform_vector3(self.normal).normalize();
+        let tangent=model.transform_vector3(self.tangent).normalize();
+        (model.transform_point3(self.point)+normal*0.002,normal,tangent)
+    }
 }
 #[derive(Clone, Copy)]
 struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
-    seed: u32, kind: BurstKind, weapon: Weapon, born_s:Option<f32> }
+    seed: u32, kind: BurstKind, weapon: Weapon, born_s:Option<f32>,anchor:Option<SurfaceAnchor> }
 
 /// Cosmetic armor grains cannot cross the source plate. Test the complete oriented cuboid,
 /// including its speed streak, rather than only its center. Returning grains disappear on
 /// contact; this source-plane approximation does not simulate secondary hull collisions.
 fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) -> bool {
     let (normal, offset) = match burst.kind {
-        BurstKind::ArmorImpact(normal) => (normal, ARMOR_FLASH_OFFSET_M),
+        BurstKind::Ground{normal,..} => (normal,0.01),
+        BurstKind::ArmorImpact(normal) | BurstKind::PressureVent(normal) | BurstKind::FullCookoff(normal) => (normal, ARMOR_FLASH_OFFSET_M),
         BurstKind::Ricochet(normal) | BurstKind::BulletArmor {normal,..} => (normal, ARMOR_RICOCHET_OFFSET_M),
         _ => return true,
     };
@@ -104,7 +122,10 @@ fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) 
 struct BulletSegment { id:u64, start:Vec3, end:Vec3, at:f32, until:f32 }
 impl BulletSegment {
     fn exposed(self,now:f32)->Option<(Vec3,Vec3)> {
-        let lo=self.at.max(now-BULLET_EXPOSURE_S);let hi=self.until.min(now);
+        self.exposed_for(now,BULLET_EXPOSURE_S)
+    }
+    fn exposed_for(self,now:f32,exposure:f32)->Option<(Vec3,Vec3)> {
+        let lo=self.at.max(now-exposure);let hi=self.until.min(now);
         if hi<=lo || self.until<=self.at {return None;}
         let a=(lo-self.at)/(self.until-self.at);let b=(hi-self.at)/(self.until-self.at);
         Some((self.start.lerp(self.end,a),self.start.lerp(self.end,b)))
@@ -127,7 +148,11 @@ impl SmallArmsReview {
 pub(super) struct Effects {
     flights: [Option<Flight>; FLIGHTS], bursts: [Option<Burst>; BURSTS],
     next_flight: usize, next_burst: usize, sequence: u32,
+    replaced_bursts:u64,
     pixel_world_scale: f32,
+    gpu_analytic: bool,
+    gpu_tracers: Vec<GpuWeaponRecord>,
+    bullet_exposure_s:f32,
     wind: Vec2,
     now_s:f32,
     small_arm_rounds:std::collections::BTreeMap<(u32,u8,u8),u32>,
@@ -141,7 +166,8 @@ pub(super) struct Effects {
 impl Default for Effects {
     fn default() -> Self { Self {
         flights: [None; FLIGHTS], bursts: [None; BURSTS], next_flight: 0, next_burst: 0,
-        sequence: 0, pixel_world_scale: 0.0036, wind: Vec2::ZERO,
+        sequence: 0, replaced_bursts:0, pixel_world_scale: 0.0036, gpu_analytic:false,
+        gpu_tracers:Vec::with_capacity(BULLET_SEGMENTS), bullet_exposure_s:BULLET_EXPOSURE_S, wind: Vec2::ZERO,
         now_s:0.0,small_arm_rounds:Default::default(),bullet_segments:Default::default(),
         bullet_times:Default::default(),last_bullet_contact_s:None,small_arms_review:Default::default(),
         mats: std::array::from_fn(|_| Vec::with_capacity(PAGE_CAPACITY)),
@@ -174,9 +200,16 @@ impl Effects {
         // Prefer expired slots. Under sustained load replace the oldest cosmetic emitter; never
         // grow a vector or borrow a physical body slot to accommodate another burst.
         let k = (0..BURSTS).map(|n| (self.next_burst + n) % BURSTS)
-            .find(|&i| self.bursts[i].is_none()).unwrap_or(self.next_burst);
+            .find(|&i| self.bursts[i].is_none()).unwrap_or_else(|| {
+                // A sustained MG stream must not erase a sixteen-second cookoff plume before
+                // its ballistic apex. Reuse ordinary/muzzle emitters before catastrophe slots.
+                (0..BURSTS).map(|n|(self.next_burst+n)%BURSTS).find(|&i| {
+                    !matches!(self.bursts[i].unwrap().kind,BurstKind::FullCookoff(_)|BurstKind::PressureVent(_))
+                }).unwrap_or(self.next_burst)
+            });
+        if self.bursts[k].is_some(){self.replaced_bursts+=1;}
         self.bursts[k] = Some(Burst { pos, dir: dir.normalize_or_zero(), age: 0.0,
-            life, radius: radius.clamp(0.02, 9.0), seed: self.sequence, kind, weapon, born_s:None });
+            life, radius: radius.clamp(0.02, 9.0), seed: self.sequence, kind, weapon, born_s:None,anchor:None });
         self.next_burst = (k + 1) % BURSTS;
     }
     pub(super) fn muzzle(&mut self, pos: Vec3, dir: Vec3, weapon: Weapon) {
@@ -191,6 +224,33 @@ impl Effects {
     pub(super) fn interior_blast(&mut self, pos: Vec3, radius: f32) {
         self.burst(pos, Vec3::Y, radius, 6.0, BurstKind::InteriorBlast, Weapon::Cannon(88));
     }
+    /// Authored pressure jet only at an actual recorded breach or separated turret-ring opening.
+    /// It does not create an opening, damage or acoustic event by itself.
+    pub(super) fn uses_native_ground(&self)->bool {self.gpu_analytic}
+    pub(super) fn ground_impact(&mut self,id:u64,at:f32,point:Vec3,velocity:Vec3,mass:f32,caliber_mm:f32,normal:Vec3,snow:f32) {
+        let Some(budget)=gpu_weapon::ground_budget(mass,velocity,caliber_mm,snow)else{return;};
+        if !point.is_finite() || !normal.is_finite() || normal.length_squared()<0.5{return;}
+        let n=normal.normalize();
+        self.burst(point+n*0.01,velocity.normalize_or_zero(),0.2,3.0,BurstKind::Ground{normal:n,budget},Weapon::Cannon(caliber_mm as u16));
+        let k=(self.next_burst+BURSTS-1)%BURSTS;
+        if let Some(b)=self.bursts[k].as_mut(){b.born_s=at.is_finite().then_some(at);}
+        self.small_arms_review.event(serde_json::json!({"event":"ground_ejecta_source","projectile_id":id,
+            "at_s":at,"position":point.to_array(),"normal":n.to_array(),"residual_velocity_mps":velocity.to_array(),
+            "projectile_mass_kg":mass,"caliber_mm":caliber_mm,"residual_energy_j":budget.residual_j,
+            "ejecta_energy_cap_j":budget.ejecta_j,"estimated_ejecta_mass_kg":budget.mass_kg,
+            "estimated_material_density_kg_m3":budget.density,"snow_fraction":budget.snow,
+            "requested_grains":budget.base_count*gpu_weapon::SPARK_MULTIPLIER,"height_cap_m":gpu_weapon::GROUND_APEX_TARGET_M}));
+    }
+    pub(super) fn pressure_vent(&mut self,point:Vec3,normal:Vec3) {
+        if !point.is_finite() || !normal.is_finite() || normal.length_squared()<0.5{return;}
+        let n=normal.normalize();self.burst(point+n*ARMOR_FLASH_OFFSET_M,n,0.20,1.90,BurstKind::PressureVent(n),Weapon::Cannon(88));
+    }
+    /// Full-ammunition event only: visual ejecta with a304.8m maximum vertical ballistic rise.
+    /// Authoritative turret and damaging fragments remain in their independent physical solvers.
+    pub(super) fn full_cookoff_plume(&mut self,point:Vec3,normal:Vec3) {
+        if !point.is_finite() || !normal.is_finite() || normal.length_squared()<0.5{return;}
+        let n=normal.normalize();self.burst(point+n*ARMOR_FLASH_OFFSET_M,n,2.0,18.0,BurstKind::FullCookoff(n),Weapon::Cannon(88));
+    }
     pub(super) fn impact(&mut self, pos: Vec3, dir: Vec3, radius: f32, hot: bool, weapon: Weapon) {
         self.burst(pos, -dir, radius, 1.3,
             if hot { BurstKind::Impact } else { BurstKind::Dust }, weapon);
@@ -203,6 +263,79 @@ impl Effects {
             self.burst(point+normal*ARMOR_FLASH_OFFSET_M,normal,0.75,1.2,BurstKind::ArmorImpact(normal),weapon);
         }
         self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {1.4}else{0.65},BurstKind::Ricochet(normal),weapon);
+    }
+    fn stamp_newest(&mut self,at:f32,anchor:Option<SurfaceAnchor>) {
+        if let Some(b)=self.bursts[(self.next_burst+BURSTS-1)%BURSTS].as_mut(){
+            b.born_s=at.is_finite().then_some(at);b.anchor=anchor;
+        }
+    }
+    pub(super) fn steel_perforation_spray(&mut self,point:Vec3,incoming:Vec3,normal:Vec3,
+        deposited_j:f32,caliber_mm:f32,at:f32) {
+        let incident=incoming.normalize_or_zero();let mut normal=normal.normalize_or_zero();
+        if normal.length_squared()<0.5 || incident.length_squared()<0.5{return;}
+        if incident.dot(normal)>0.0 {normal=-normal;}
+        let weapon=Weapon::Cannon(caliber_mm as u16);
+        self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.02,0.45,
+            BurstKind::BulletArmor{normal,energy_j:deposited_j.max(0.0)*0.006,
+                cosine:(-incident.dot(normal)).clamp(0.0,1.0)},weapon);self.stamp_newest(at,None);
+        self.burst(point,normal,(caliber_mm*0.00065).clamp(0.025,0.15),0.9,
+            BurstKind::PenetrationSmoke(normal),weapon);self.stamp_newest(at,None);
+    }
+    /// Consume the resolved terminal classification. Chemical filler behind armor never
+    /// becomes a free exterior fireball here; interior detonation owns its separate route.
+    fn armor_terminal(&mut self,id:u64,at:f32,point:Vec3,incoming:Vec3,normal:Vec3,
+        event:crate::ballistics::ImpactEvent,anchor:SurfaceAnchor,outgoing:Option<Vec3>) {
+        use crate::ballistics::Terminal;
+        let incident=incoming.normalize_or_zero();let mut normal=normal.normalize_or_zero();
+        if !point.is_finite() || !incoming.is_finite() || normal.length_squared()<0.5 || incident.length_squared()<0.5{return;}
+        if incident.dot(normal)>0.0 {normal=-normal;}
+        let weapon=Weapon::Cannon(event.shell.caliber_mm as u16);
+        let kinetic=0.5*event.shell.mass_kg*incoming.length_squared();
+        let residual=if matches!(event.terminal,Terminal::Penetration|Terminal::Ricochet) {0.5*event.shell.mass_kg*event.residual_v.powi(2)}else{0.0};
+        let deposited=(kinetic-residual.min(kinetic)).max(0.0);
+        // The solver also names an armed HE/HEAT charge's thin-plate breach "Penetration".
+        // That actual exterior chemical event is distinct from kinetic AP/APCBC perforation.
+        let exterior_detonation=event.shell.filler_g>0.0 && (event.terminal==Terminal::HeBlast
+            || event.terminal==Terminal::Penetration && matches!(event.shell.kind,
+                crate::ballistics::ShellKind::He|crate::ballistics::ShellKind::Heat));
+        if exterior_detonation {
+            self.blast(point+normal*0.08,(event.shell.filler_g/1000.0).cbrt()*3.0);
+            self.stamp_newest(at,None);
+        }
+        match event.terminal {
+            Terminal::Penetration|Terminal::Shatter if !exterior_detonation=>{
+                // Only a small portion of plate work drives this cosmetic exterior incandescent
+                // dust. These do not duplicate authoritative interior damaging fragments.
+                self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.02,0.45,
+                    BurstKind::BulletArmor{normal,energy_j:deposited*0.006,cosine:(-incident.dot(normal)).clamp(0.0,1.0)},weapon);
+                self.stamp_newest(at,None);
+                self.burst(point,normal,(event.shell.caliber_mm*0.00065).clamp(0.025,0.15),0.9,
+                    BurstKind::PenetrationSmoke(normal),weapon);self.stamp_newest(at,None);
+                if event.terminal==Terminal::Penetration {
+                    if let Some(heat)=gpu_weapon::rim_heat(event.shell.caliber_mm,event.plate.thickness_mm,deposited) {
+                        self.burst(point+normal*0.002,Quat::from_rotation_arc(Vec3::Z,normal)*Vec3::X,heat.radius,6.0,
+                            BurstKind::HotRim{normal,heat},weapon);self.stamp_newest(at,Some(anchor));
+                    }
+                }
+            },
+            Terminal::Ricochet=>{
+                let reflected=outgoing.expect("resolved ricochet carries actual outgoing velocity").normalize_or_zero();
+                self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,1.4,BurstKind::Ricochet(normal),weapon);
+                self.stamp_newest(at,None);
+            },
+            Terminal::Bounce=>{
+                self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.02,0.45,
+                    BurstKind::BulletArmor{normal,energy_j:deposited*0.006,cosine:(-incident.dot(normal)).clamp(0.0,1.0)},weapon);
+                self.stamp_newest(at,None);
+            },
+            _=>{},
+        }
+        self.small_arms_review.event(serde_json::json!({"event":"armor_terminal_presentation","projectile_id":id,
+            "at_s":at,"terminal":format!("{:?}",event.terminal),"position":point.to_array(),"normal":normal.to_array(),
+            "actual_kinetic_j":kinetic,"deposited_kinetic_j":deposited,"filler_g":event.shell.filler_g,
+            "exterior_detonation":exterior_detonation,
+            "outgoing_ricochet_projectile":outgoing.is_some(),"outgoing_velocity_mps":outgoing.map(|v|v.to_array()),
+            "retained_kinetic_j":residual,"ricochet_response_model":if outgoing.is_some(){Some("authored grazing inelastic point-mass response; not measured restitution")}else{None}}));
     }
     pub(super) fn next_small_arm_round(&mut self,shot:crate::infantry_combat::Shot)->u32 {
         use crate::infantry_combat::{Team,Weapon as W};
@@ -282,7 +415,7 @@ impl Effects {
             "tracer_segments_submitted":r.tracer_segments_submitted,"tracer_frames_submitted":r.tracer_frames,
             "omitted_tracer_segments":r.omitted_segments,"events":r.events,"event_capacity":SMALL_ARM_EVENTS,
             "tracer_policy":"MG: every fifth round per emitter; rifle/P08 ball unlit; shared family drag estimate",
-            "tracer_exposure_s":BULLET_EXPOSURE_S,"visibility":"submitted geometry only; no pixel visibility assertion"})
+            "burst_pool_replacements":self.replaced_bursts,"tracer_exposure_s":self.bullet_exposure_s,"tracer_exposure_max_s":MAX_BULLET_EXPOSURE_S,"visibility":"submitted geometry only; no pixel visibility assertion"})
     }
     pub(super) fn bullet_armor_sparks(&mut self,id:u64,point:Vec3,incoming:Vec3,normal:Vec3,mass:f32,weapon:Weapon) {
         if !incoming.is_finite() || !normal.is_finite() || !mass.is_finite() || mass<=0.0 {return;}
@@ -301,19 +434,26 @@ impl Effects {
         self.small_arms_review.spark_bursts+=1;
         self.small_arms_review.event(serde_json::json!({"event":"armor_spark_burst","projectile_id":id,
             "position":point.to_array(),"normal":normal.to_array(),"energy_j":energy_j,"incidence_cosine":cosine,
-            "requested_sparks":bullet_spark_count(energy_j,cosine)}));
+            "requested_sparks":bullet_spark_count(energy_j,cosine)*gpu_weapon::SPARK_MULTIPLIER as usize,
+            "count_scope":"requested raster analytic grains; renderer receipt records submission/omission"}));
     }
     fn draw_bullet_segments(&mut self,eye:Vec3) {
+        self.gpu_tracers.clear();
         let now=self.now_s;
-        self.bullet_segments.retain(|s|s.until>now-BULLET_EXPOSURE_S);
-        let visible:Vec<_>=self.bullet_segments.iter().filter_map(|s|s.exposed(now).map(|(a,b)|(s.id,a,b))).collect();
+        self.bullet_segments.retain(|s|s.until>now-self.bullet_exposure_s);
+        let visible:Vec<_>=self.bullet_segments.iter().filter_map(|s|s.exposed_for(now,self.bullet_exposure_s).map(|(a,b)|(s.id,a,b))).collect();
         if !visible.is_empty(){self.small_arms_review.tracer_frames+=1;}
         for (id,a,b) in visible {
             let delta=b-a;let length=delta.length();if length<1e-5 {continue;}
             let center=(a+b)*0.5;
-            let width=(center.distance(eye)*self.pixel_world_scale).max(0.002).min(0.65);
-            self.push(TRACER_BASE+1,Vec3::new(width,width,length),center,
-                Quat::from_rotation_arc(Vec3::Z,delta/length));
+            if self.gpu_analytic {
+                self.gpu_tracers.push(GpuWeaponRecord::tracer(a,b));
+            } else {
+                // Legacy physical backend fallback; native raster uses per-view projected strips.
+                let width=(center.distance(eye)*self.pixel_world_scale).max(0.002).min(0.65);
+                self.push(TRACER_BASE+1,Vec3::new(width,width,length),center,
+                    Quat::from_rotation_arc(Vec3::Z,delta/length));
+            }
             self.small_arms_review.tracer_segments_submitted+=1;
             self.small_arms_review.event(serde_json::json!({"event":"tracer_segment_submitted",
                 "projectile_id":id,"at_s":now,"start":a.to_array(),"end":b.to_array()}));
@@ -411,8 +551,16 @@ impl Effects {
             }
         }
     }
-    fn draw_burst(&mut self, b: Burst, eye: Vec3, remaining: usize) -> usize {
+    fn gpu_bursts(&self)->Vec<GpuWeaponRecord> {
+        self.bursts.iter().flatten().filter_map(|&b|gpu_burst_record(b)).collect()
+    }
+    fn draw_burst(&mut self, mut b: Burst, eye: Vec3, remaining: usize) -> usize {
+        // Only exterior blast presentation expands; source damage and cabin ignition do not.
+        if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
+        if matches!(b.kind,BurstKind::PressureVent(_)|BurstKind::FullCookoff(_)|BurstKind::Ground{..}|BurstKind::PenetrationSmoke(_)|BurstKind::HotRim{..}) {return 0;}
+        if self.gpu_analytic && matches!(b.kind,BurstKind::BulletArmor{..}|BurstKind::Ricochet(_)) {return 0;}
         if let BurstKind::BulletArmor{normal,energy_j,cosine}=b.kind {
+            if energy_j<0.01 {return 0;}
             let count=bullet_spark_count(energy_j,cosine).min(remaining);
             for j in 0..count {
                 let seed=b.seed.wrapping_mul(3948571).wrapping_add(j as u32*977);
@@ -457,7 +605,7 @@ impl Effects {
         // Long-range incandescent ejecta: separate from the expanding flash and the slow soot.
         // Cosmetic trajectories only. Authoritative shell/armor damage is untouched.
         let mut spark_count=0;
-        if matches!(b.kind,BurstKind::Blast | BurstKind::Impact | BurstKind::ArmorImpact(_)) {
+        if !self.gpu_analytic && matches!(b.kind,BurstKind::Blast | BurstKind::Impact | BurstKind::ArmorImpact(_)) {
             let n=remaining.min(if matches!(b.kind,BurstKind::Blast){BLAST_SPARKS}else{IMPACT_SPARKS});
             spark_count=n;
             for j in 0..n {
@@ -546,6 +694,42 @@ impl Effects {
     }
 }
 
+/// GPU record preserves the existing analytic family and physical source plane. Increasing the
+/// sample count changes cosmetic density, not projectile fragments, damage or light sources.
+fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
+    let heavy=matches!(b.weapon,Weapon::Cannon(_)|Weapon::Rocket);
+    let (kind,count,normal,offset,energy,cosine,scale)=match b.kind {
+        BurstKind::Blast=>(gpu_weapon::BLAST,BLAST_SPARKS,Vec3::ZERO,0.0,0.0,0.0,gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER),
+        BurstKind::Impact=>(gpu_weapon::BLAST,IMPACT_SPARKS,Vec3::ZERO,0.0,0.0,0.0,1.0),
+        BurstKind::ArmorImpact(n)=>(gpu_weapon::ARMOR_IMPACT,IMPACT_SPARKS,n,ARMOR_FLASH_OFFSET_M,0.0,0.0,1.0),
+        BurstKind::Ricochet(n)=>(gpu_weapon::RICOCHET,if heavy {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS},n,ARMOR_RICOCHET_OFFSET_M,0.0,0.0,1.0),
+        BurstKind::BulletArmor{normal,energy_j,cosine}=>{
+            if energy_j<0.01{return None;}
+            (gpu_weapon::BULLET_ARMOR,bullet_spark_count(energy_j,cosine),normal,ARMOR_RICOCHET_OFFSET_M,energy_j,cosine,1.0)
+        },
+        BurstKind::HotRim{normal,heat}=>{
+            let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(b.life).to_array(),
+                normal_offset:normal.extend(0.002).to_array(),parameters:[heat.radius,heat.width,heat.initial_kelvin,2.5],
+                meta:[b.seed,gpu_weapon::RIM_SAMPLES,gpu_weapon::RIM_SAMPLES,gpu_weapon::HOT_RIM]};
+            return r.active().then_some(r);
+        },
+        BurstKind::Ground{normal,budget}=>{
+            let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(b.life).to_array(),
+                normal_offset:normal.extend(0.01).to_array(),parameters:[budget.ejecta_j,budget.mass_kg,budget.snow,budget.density],
+                meta:[b.seed,budget.base_count*gpu_weapon::SPARK_MULTIPLIER,budget.base_count,gpu_weapon::GROUND]};
+            return r.active().then_some(r);
+        },
+        BurstKind::PressureVent(n)=>(gpu_weapon::PRESSURE_VENT,192,n,ARMOR_FLASH_OFFSET_M,0.0,0.0,1.0),
+        BurstKind::FullCookoff(n)=>(gpu_weapon::FULL_COOKOFF,768,n,ARMOR_FLASH_OFFSET_M,
+            crate::sound_levels::AMMUNITION_DETONATION_TNT_KG*4_184_000.0*0.002,5.0,1.0),
+        BurstKind::Muzzle|BurstKind::InteriorBlast|BurstKind::Dust|BurstKind::PenetrationSmoke(_)=>return None,
+    };
+    let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(if matches!(b.kind,BurstKind::PressureVent(_)){b.life-0.65}else{b.life}).to_array(),
+        normal_offset:normal.extend(offset).to_array(),parameters:[energy,cosine,scale,if heavy {1.0}else{0.0}],
+        meta:[b.seed,count as u32*gpu_weapon::SPARK_MULTIPLIER,count as u32,kind]};
+    r.active().then_some(r)
+}
+
 pub(super) fn allocate(device: &wgpu::Device, queue: &wgpu::Queue,
     renderer: &mut Renderer) -> [usize; PAGES] {
     std::array::from_fn(|i| {
@@ -569,16 +753,92 @@ pub(super) fn allocate(device: &wgpu::Device, queue: &wgpu::Queue,
     })
 }
 impl Game {
+    fn weapon_armor_model(&self,vehicle:ProjectileVehicle,part:ArmorPart)->Option<Mat4> {
+        let tank=match vehicle {ProjectileVehicle::Player=>&self.player,
+            ProjectileVehicle::Enemy(i)=>self.enemies.get(i)?,ProjectileVehicle::Ally(i)=>&self.allies.get(i)?.tank};
+        if part==ArmorPart::Hull {return Some(tank.hull_model());}
+        if let ProjectileVehicle::Enemy(i)=vehicle {
+            if let Some(body)=self.wrecks.get(i).and_then(|w|w.t_body.as_ref()) {return Some(body.model());}
+        }
+        Some(tank.turret_model())
+    }
+    pub(super) fn present_source_armor_impact(&mut self,projectile:&AuthoritativeProjectile,
+        contact:ProjectileContact,armor:VehicleArmorContact,event:crate::ballistics::ImpactEvent,outgoing:Option<Vec3>) {
+        let Some(model)=self.weapon_armor_model(armor.vehicle,armor.part) else{return;};
+        let mut normal=armor.world_normal.normalize_or_zero();
+        if projectile.velocity.dot(normal)>0.0 {normal=-normal;}
+        if normal.length_squared()<0.5{return;}
+        let anchor=SurfaceAnchor::new(armor.vehicle,armor.part,model,contact.pos,normal);
+        self.weapon_vfx.armor_terminal(projectile.id,self.enemy_report_audit.clock_s,contact.pos,
+            projectile.velocity,normal,event,anchor,outgoing);
+    }
+    pub(super) fn present_source_ground_impact(&mut self,projectile:&AuthoritativeProjectile,contact:ProjectileContact,r:&Renderer) {
+        if matches!(contact.kind,ProjectileContactKind::Terrain) && r.analytic_weapon_particles_active() {
+            let p=contact.pos;let h=0.05;
+            let dx=(self.hf.height_at(p.x+h,p.z)-self.hf.height_at(p.x-h,p.z))/(2.0*h);
+            let dz=(self.hf.height_at(p.x,p.z+h)-self.hf.height_at(p.x,p.z-h))/(2.0*h);
+            let normal=Vec3::new(-dx,1.0,-dz).normalize();
+            self.weapon_vfx.gpu_analytic=true;
+            self.weapon_vfx.ground_impact(projectile.id,self.enemy_report_audit.clock_s,p,projectile.velocity,projectile.shell.mass_kg,
+                projectile.shell.caliber_mm,normal,if self.act.season==crate::world::Season::Winter {1.0}else{0.0});
+        }
+    }
     pub(super) fn drive_weapon_vfx(&mut self, dt: f32, r: &mut Renderer) {
+        // A glowing wound follows the struck source frame, including a physically detached
+        // turret. Released smoke/fragments retain their independent world-space trajectories.
+        let anchors:Vec<_>=self.weapon_vfx.bursts.iter().enumerate().filter_map(|(i,b)|b.and_then(|b|b.anchor.map(|a|(i,a)))).collect();
+        for (i,anchor) in anchors {
+            if let Some(model)=self.weapon_armor_model(anchor.vehicle,anchor.part) {
+                let (pos,normal,tangent)=anchor.pose(model);
+                if let Some(b)=self.weapon_vfx.bursts[i].as_mut(){
+                    b.pos=pos;b.dir=tangent;
+                    if let BurstKind::HotRim{heat,..}=b.kind {b.kind=BurstKind::HotRim{normal,heat};}
+                }
+            }
+        }
+        self.weapon_vfx.gpu_analytic=r.analytic_weapon_particles_active();
+        self.weapon_vfx.bullet_exposure_s=if dt.is_finite() {dt.clamp(BULLET_EXPOSURE_S,MAX_BULLET_EXPOSURE_S)}else{BULLET_EXPOSURE_S};
         self.weapon_vfx.wind=r.weather_wind_world;
         self.weapon_vfx.pixel_world_scale = 2.0 * (r.camera.fov_y * 0.5).tan() / r.ih.max(1) as f32;
         self.weapon_vfx.now_s=r.time-dt;
         self.weapon_vfx.prepare(dt, r.camera.pos);
         self.weapon_vfx.draw_bullet_segments(r.camera.pos);
+        if self.weapon_vfx.gpu_analytic {
+            r.set_analytic_weapon_particles(&self.weapon_vfx.gpu_bursts(),&self.weapon_vfx.gpu_tracers);
+        } else {r.set_analytic_weapon_particles(&[],&[]);}
         let mut smoke: Vec<_>=self.weapon_vfx.bursts.iter().flatten().copied().collect();
         smoke.sort_by(|a,b|a.pos.distance_squared(r.camera.pos).total_cmp(&b.pos.distance_squared(r.camera.pos)));
-        for b in smoke {
+        for mut b in smoke {
             if !b.kind.emits_smoke(){continue;}
+            if let BurstKind::PenetrationSmoke(normal)=b.kind {
+                let radius=b.radius*(0.4+0.6*b.age.sqrt());
+                let wind=Vec3::new(self.weapon_vfx.wind.x,0.0,self.weapon_vfx.wind.y);
+                let tangent_wind=wind-normal*wind.dot(normal);
+                let source=b.pos+normal*radius;
+                r.add_smoke_sweep(source,source+normal*b.age*0.6+tangent_wind*b.age*0.20,
+                    radius,0.24*(1.0-b.age/b.life).max(0.0).powi(2),
+                    crate::particle_motion::seed_phase(b.seed)+b.age*0.8,0.35);
+                continue;
+            }
+            if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
+            if let BurstKind::PressureVent(normal)=b.kind {
+                let advance=(b.age*26.0).min(12.0);let fade=(1.0-b.age/b.life).max(0.0);
+                r.add_smoke_sweep(b.pos,b.pos+normal*advance,0.35+advance*0.035,0.14*fade,b.age*2.0,0.20);
+                continue;
+            }
+            if let BurstKind::FullCookoff(_)=b.kind {
+                // One source-connected swept support, using the existing optical-mass Jacobian.
+                // The thermal plume stays aloft as visible ejecta falls; this is an authored
+                // envelope, not fluid dynamics or additional damaging fragments.
+                let t=b.age.min(gpu_weapon::COOKOFF_VERTICAL_SPEED_MPS/9.81);
+                let rise=(gpu_weapon::COOKOFF_VERTICAL_SPEED_MPS*t-4.905*t*t).max(0.0);
+                let wind=self.weapon_vfx.wind;
+                let head=b.pos+Vec3::new(wind.x*b.age*0.20,rise,wind.y*b.age*0.20);
+                let radius=2.0+rise*0.025;
+                let fade=(1.0-b.age/b.life).max(0.0);
+                r.add_smoke_sweep(b.pos,head,radius,0.35*fade,crate::particle_motion::seed_phase(b.seed)+b.age*0.4,0.09);
+                continue;
+            }
             let age=b.age;let f=(age/b.life).clamp(0.0,1.0);
             let wind=self.weapon_vfx.wind;
             let muzzle=matches!(b.kind,BurstKind::Muzzle);
@@ -622,6 +882,7 @@ impl Game {
         }
     }
     pub(super) fn clear_weapon_vfx_render(&self, r: &mut Renderer) {
+        r.set_analytic_weapon_particles(&[],&[]);
         for (i,page) in self.slots.weapon_vfx.into_iter().enumerate() {
             r.set_dynamic_instanced_mats(page, &[]);
             if i < TRACER_BASE { assert!(r.set_fine_vfx_particle_ids(page,&[])); }
@@ -632,6 +893,41 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn resolved_terminal_selects_nonpyro_perforation_and_distinct_ricochet() {
+        use crate::ballistics::{ArmorScheme,Facing,Terminal};
+        let point=Vec3::new(21.0,4.0,-61.0);let normal=Vec3::NEG_Z;
+        let incoming=Vec3::Z*760.0;
+        let mut event=crate::ballistics::resolve(&crate::ballistics::PZGR_39,100.0,
+            ArmorScheme::T34_76.plate(Facing::HullSide),0.0,7);
+        let anchor=SurfaceAnchor::new(ProjectileVehicle::Player,ArmorPart::Hull,Mat4::IDENTITY,point,normal);
+        for terminal in [Terminal::Penetration,Terminal::Bounce,Terminal::Ricochet,Terminal::Shatter,Terminal::HeBlast] {
+            event.terminal=terminal;event.residual_v=if terminal==Terminal::Penetration {300.0}else{0.0};
+            let mut fx=Effects::default();fx.gpu_analytic=true;
+            fx.armor_terminal(7,0.0,point,incoming,normal,event,anchor,
+                (terminal==Terminal::Ricochet).then_some(Vec3::new(100.0,200.0,0.0)));fx.prepare(0.02,point);
+            let has=|pred:fn(BurstKind)->bool|fx.bursts.iter().flatten().any(|b|pred(b.kind));
+            assert_eq!(has(|k|matches!(k,BurstKind::Ricochet(_))),terminal==Terminal::Ricochet);
+            assert_eq!(has(|k|matches!(k,BurstKind::HotRim{..})),terminal==Terminal::Penetration);
+            assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),matches!(terminal,Terminal::Penetration|Terminal::Shatter));
+            assert_eq!(has(|k|matches!(k,BurstKind::Blast)),terminal==Terminal::HeBlast);
+            assert!(!has(|k|matches!(k,BurstKind::ArmorImpact(_)|BurstKind::Impact|BurstKind::InteriorBlast)));
+            if terminal==Terminal::Penetration {assert!(fx.mats.iter().all(Vec::is_empty),"no generic exterior flame parcels");}
+        }
+        event.shell=&crate::ballistics::SPRGR_88;event.terminal=Terminal::Penetration;
+        let mut fx=Effects::default();fx.armor_terminal(8,0.0,point,incoming,normal,event,anchor,None);
+        assert!(fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)),"real HE breach retains its chemical detonation");
+        assert!(!fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::HotRim{..}|BurstKind::Ricochet(_))));
+    }
+    #[test] fn entry_rim_follows_the_exact_source_frame_and_outward_normal() {
+        let original=Mat4::from_rotation_translation(Quat::from_rotation_y(0.8),Vec3::new(10.0,4.0,-17.0));
+        let local=Vec3::new(1.35,0.72,0.25);let normal=Vec3::new(0.9,0.3,0.0).normalize();
+        let anchor=SurfaceAnchor::new(ProjectileVehicle::Enemy(2),ArmorPart::Turret,original,
+            original.transform_point3(local),original.transform_vector3(normal));
+        let moved=Mat4::from_rotation_translation(Quat::from_rotation_x(0.6)*Quat::from_rotation_y(-0.4),Vec3::new(13.0,5.0,-15.0));
+        let (point,n,tangent)=anchor.pose(moved);
+        assert!((point-(moved.transform_point3(local)+moved.transform_vector3(normal)*0.002)).length()<0.00001);
+        assert!(n.dot(tangent).abs()<0.00001);assert!((n.length()-1.0).abs()<0.00001);
+    }
     #[test]
     fn live_tracer_uses_only_travelled_segments_and_ball_is_unlit() {
         let mut e=Effects::default();
@@ -901,8 +1197,14 @@ mod tests {
                     let size = m.to_scale_rotation_translation().0;
                     size.max_element() - size.min_element() < 1e-5
                 }).copied().collect();
-                assert_eq!(interior.mats[page], exterior_flash,
-                    "changing the presentation context must preserve the original flash");
+                assert_eq!(interior.mats[page].len(),exterior_flash.len());
+                for (inside,outside) in interior.mats[page].iter().zip(exterior_flash) {
+                    let (inside_size,_,inside_pos)=inside.to_scale_rotation_translation();
+                    let (outside_size,_,outside_pos)=outside.to_scale_rotation_translation();
+                    assert!((outside_pos-inside_pos*gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER).length()<1e-5,
+                        "only exterior flash support expands100x in volume");
+                    assert!(outside_size.min_element()>inside_size.min_element());
+                }
             }
             for _ in 0..4 {
                 interior.prepare(0.10, Vec3::ZERO);
@@ -1118,14 +1420,28 @@ mod tests {
         assert!(fx.mats.iter().all(Vec::is_empty));
     }
     #[test]
-    fn small_arm_native_pixel_floor_prevents_broken_subpixel_dashes() {
-        let mut fx=Effects::default();
-        let eye=Vec3::ZERO;
-        let head=Vec3::new(20.0,0.0,20.0);
-        fx.streak(head,Vec3::Z,10.0,Weapon::Pistol,eye);
-        let width=fx.mats[TRACER_BASE][0].to_scale_rotation_translation().0.x;
-        assert!(width / (head.distance(eye)*fx.pixel_world_scale) >= 1.1);
-        assert!(width <= 0.65);
-        assert_eq!(EMISSION[6],0.0); assert_eq!(EMISSION[7],0.0);
+    fn raster_gpu_path_uploads_one_record_without_duplicate_cpu_sparks_or_tracers() {
+        let mut fx=Effects::default();fx.gpu_analytic=true;
+        fx.bullet_armor_sparks(9,Vec3::ZERO,Vec3::Z*820.0,Vec3::NEG_Z,0.0096,Weapon::Rifle);
+        fx.prepare(0.025,Vec3::new(2.0,1.0,-3.0));
+        assert!(fx.mats.iter().all(Vec::is_empty));
+        let records=fx.gpu_bursts();assert_eq!(records.len(),1);
+        assert_eq!(records[0].meta[1],records[0].meta[2]*1000);
+        fx.record_bullet_segment(10,true,Vec3::Z,Vec3::Z*4.0,0.020,0.025,1.0,4.0);
+        fx.draw_bullet_segments(Vec3::ZERO);
+        assert_eq!(fx.gpu_tracers.len(),1);assert!(fx.mats[TRACER_BASE..].iter().all(Vec::is_empty));
+        assert_eq!(fx.gpu_tracers[0].origin(),Vec3::Z);
+        assert_eq!(&fx.gpu_tracers[0].direction_life[..3],&[0.0,0.0,4.0]);
+        let mut cabin=Effects::default();cabin.gpu_analytic=true;cabin.interior_blast(Vec3::ZERO,3.0);
+        cabin.prepare(0.1,Vec3::ZERO);assert!(cabin.gpu_bursts().is_empty());
+        assert!(cabin.mats[..6].iter().any(|p|!p.is_empty()));
+    }
+    #[test]
+    fn bounded_render_shutter_retains_actual_low_fps_travel_without_extending_contact() {
+        let segment=BulletSegment {id:1,start:Vec3::ZERO,end:Vec3::Z*3.0,at:0.001,until:0.005};
+        assert!(segment.exposed(1.0/30.0).is_none());
+        let (a,b)=segment.exposed_for(1.0/30.0,MAX_BULLET_EXPOSURE_S).unwrap();
+        assert_eq!(a,segment.start);assert_eq!(b,segment.end);
+        assert!(segment.exposed_for(0.05,MAX_BULLET_EXPOSURE_S).is_none(),"bounded shutter never holds stale rounds indefinitely");
     }
 }

@@ -2,7 +2,9 @@
 // transported HDR before bloom and presentation-only particles, advances one view's eye (pupil,
 // cone and rod pigments, neural adaptation, flash afterimage) and writes the display mapping that
 // crush.wgsl applies. It reads only the HDR and writes only its own state; the renderer copies the
-// mapping lanes into the crush uniform. src/observer.rs is the reference implementation and the
+// mapping lanes into the crush uniform. A scene-source flag admits flash detection without
+// supplying any radiance: looking at a static bright aperture must never create a flash event.
+// src/observer.rs is the reference implementation and the
 // source of every constant below (generated, identical in both presets).
 // @observer-constants
 
@@ -24,11 +26,17 @@ struct ExposureClock {
     fov_y: f32,
     aspect: f32,
     monocular: f32,
+    transient_source: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
 
-// Per-thread partial sums: photopic log sums (field, gaussian, fovea, bright luminance),
-// scotopic log sums (field, gaussian, fovea, bright count), weights (field, gaussian, fovea, arithmetic photopic sum).
+// Per-thread partial sums: linear photopic sums (field, gaussian, fovea, bright luminance),
+// linear scotopic sums (field, gaussian, fovea, bright count), weights (field, gaussian,
+// fovea, arithmetic photopic sum). Spatial integration happens before temporal log adaptation:
+// black cabin pixels must not erase the contribution of a small bright opening to the field.
 var<workgroup> partial_p: array<vec4<f32>, 256>;
 var<workgroup> partial_s: array<vec4<f32>, 256>;
 var<workgroup> partial_w: array<vec4<f32>, 256>;
@@ -130,7 +138,8 @@ fn bleach_step(b: f32, retinal: f32, regeneration: f32, photosensitivity: f32, d
     return clamp(bleached - regeneration * bleached / (bleached + OBS_PIGMENT_KM) * dt, 0.0, 1.0);
 }
 
-fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: bool, dt: f32) {
+fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: bool,
+           transient_source: bool, dt: f32) {
     let goal = pupil_diameter(lp, monocular);
     let constricting = goal < state[4];
     state[4] = relax(state[4], goal, select(OBS_PUPIL_DILATE_FAST_TAU, OBS_PUPIL_CONSTRICT_TAU,
@@ -151,7 +160,7 @@ fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: 
     // from threshold-independent field energy so changing adaptation cannot re-arm that window.
     let rising = field > OBS_FLASH_ONSET_RATIO * state[21];
     state[21] = relax(state[21], field, OBS_FLASH_ONSET_TAU, dt);
-    let flashing = rising && coverage > OBS_FLASH_MIN_COVERAGE
+    let flashing = transient_source && rising && coverage > OBS_FLASH_MIN_COVERAGE
         && bright > OBS_FLASH_ABOVE_ADAPTATION * cone_adaptation();
     state[10] = state[10] * exp(-dt / OBS_FLASH_MEMORY_TAU);
     if (flashing) {
@@ -210,10 +219,8 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         let angle = acos(clamp(1.0 / length(ray), -1.0, 1.0));
         let wg = exp(-0.5 * (angle * angle) / (sigma * sigma));
         let wf = select(0.0, 1.0, angle <= fovea);
-        let log_p = log10(lp);
-        let log_s = log10(ls);
-        sp += vec4(log_p, wg * log_p, wf * log_p, 0.0);
-        ss += vec4(log_s, wg * log_s, wf * log_s, 0.0);
+        sp += vec4(lp, wg * lp, wf * lp, 0.0);
+        ss += vec4(ls, wg * ls, wf * ls, 0.0);
         sw += vec4(1.0, wg, wf, lp);
         if (lp > flash_level) {
             sp.w += lp;
@@ -247,10 +254,12 @@ fn cs(@builtin(local_invocation_index) li: u32) {
     let gauss_s = select(field_s, s.y / w.y, w.y > 1e-6);
     let fovea_p = select(gauss_p, p.z / w.z, w.z > 0.5);
     let fovea_s = select(gauss_s, s.z / w.z, w.z > 0.5);
-    let lp = clamp_luminance(pow(10.0, OBS_FOVEA_WEIGHT * fovea_p + OBS_GAUSSIAN_WEIGHT * gauss_p
-        + OBS_FIELD_WEIGHT * field_p));
-    let ls = clamp_luminance(pow(10.0, OBS_FOVEA_WEIGHT * fovea_s + OBS_GAUSSIAN_WEIGHT * gauss_s
-        + OBS_FIELD_WEIGHT * field_s));
+    // One shared view adaptation driven by the incident light in the existing spatial windows.
+    // No aperture classification, independent port exposure, or scene-dependent luminance floor.
+    let lp = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_p + OBS_GAUSSIAN_WEIGHT * gauss_p
+        + OBS_FIELD_WEIGHT * field_p);
+    let ls = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_s + OBS_GAUSSIAN_WEIGHT * gauss_s
+        + OBS_FIELD_WEIGHT * field_s);
     let field = clamp_luminance(w.w / max(w.x, 1.0));
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);
@@ -286,7 +295,7 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         let steps = u32(ceil(dt / OBS_MAX_STEP));
         let h = dt / f32(max(steps, 1u));
         for (var k = 0u; k < steps; k += 1u) {
-            substep(lp, ls, coverage, bright, field, monocular, h);
+            substep(lp, ls, coverage, bright, field, monocular, clock.transient_source > 0.5, h);
         }
     }
     write_mapping(monocular);

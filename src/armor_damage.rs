@@ -123,7 +123,8 @@ impl ArmorField {
 
     /// Record the permanent plate response after the ballistic result has been decided.
     pub fn record(&mut self, facing: Facing, local_hit: Vec3, event: &ImpactEvent) -> ArmorScar {
-        let energy_mj = 0.5 * event.shell.mass_kg * event.striking_v.powi(2) / 1_000_000.0;
+        let escaped_v2=if event.terminal==Terminal::Ricochet {event.residual_v.powi(2)}else{0.0};
+        let energy_mj = 0.5 * event.shell.mass_kg * (event.striking_v.powi(2)-escaped_v2).max(0.0) / 1_000_000.0;
         let normal = event.impact_angle_deg.to_radians().cos().clamp(0.12, 1.0);
         let (kind, radius_m, loss_mm) = match event.terminal {
             Terminal::Penetration => (
@@ -142,7 +143,7 @@ impl ArmorField {
                 (event.shell.caliber_mm * 0.0015).clamp(0.06, 0.22),
                 (energy_mj.sqrt() * 3.2 * normal).clamp(1.0, event.plate.thickness_mm * 0.18),
             ),
-            Terminal::Bounce => (
+            Terminal::Bounce | Terminal::Ricochet => (
                 ScarKind::Dent,
                 (event.shell.caliber_mm * 0.0012).clamp(0.05, 0.18),
                 (energy_mj.sqrt() * 2.0 * normal).clamp(0.5, event.plate.thickness_mm * 0.12),

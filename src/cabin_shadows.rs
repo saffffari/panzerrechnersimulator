@@ -538,9 +538,11 @@ impl CabinShadows {
                         let push = PushData { model: m.model.to_cols_array_2d(), params: [0.0; 4] };
                         pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
                         pass.set_vertex_buffer(0, m.vbuf.slice(..));
-                        pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..m.index_count, 0, 0..1);
-                        work.shadow_mesh_draws += 1;
+                        pass.set_index_buffer(m.shadow_index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+                        for range in m.shadow_index_ranges(matrix, SIDE) {
+                            pass.draw_indexed(range, 0, 0..1);
+                            work.shadow_mesh_draws += 1;
+                        }
                     }
                     pass.set_pipeline(&self.inst_pipe);
                     for &index in pages.batches.iter().filter(|_| !renderer.menu_mode) {
@@ -588,9 +590,11 @@ impl CabinShadows {
                     let push = PushData { model: m.model.to_cols_array_2d(), params: [0.0; 4] };
                     pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
                     pass.set_vertex_buffer(0, m.vbuf.slice(..));
-                    pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..m.index_count, 0, 0..1);
-                    work.shadow_mesh_draws += 1;
+                    pass.set_index_buffer(m.shadow_index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+                    for range in m.shadow_index_ranges(matrix, SIDE) {
+                        pass.draw_indexed(range, 0, 0..1);
+                        work.shadow_mesh_draws += 1;
+                    }
                 }
                 pass.set_pipeline(&self.inst_pipe);
                 for b in moving_batches {

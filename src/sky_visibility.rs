@@ -3,7 +3,7 @@
 //! Two more tiles contain the actual key-light direction, for surfaces and media alike.
 //! This is finite-resolution raster transport, not an optical refraction/GI solver.
 use super::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 pub const UP_DIRECTIONS: usize = 24;
 pub const DOWN_DIRECTIONS: usize = 8;
@@ -12,6 +12,17 @@ const COLS: u32 = 8;
 const ROWS: u32 = 9;
 const TILES: usize = 66;
 const TILE: u32 = 384;
+fn tile_rect(tile: usize) -> [u32; 4] {
+    [(tile as u32 % COLS) * TILE, (tile as u32 / COLS) * TILE, TILE, TILE]
+}
+fn tile_scissor_enabled() -> bool {
+    // Comparison override only; normal rendering limits raster work to the exact tile that
+    // the fragment shader already admits. No caster, direction or shadow sample is removed.
+    std::env::var("KESSEL_SHADOW_TILE_SCISSOR").as_deref() != Ok("0")
+}
+fn retain_rigid_depth_enabled() -> bool {
+    std::env::var("KESSEL_RETAIN_RIGID_SKY_DEPTH").as_deref() != Ok("0")
+}
 /// Footprint half extent around the focus. A seated crewman needs the whole hull inside the
 /// footprint at fine texels; on foot a room-scale footprint covers walls and roofs.
 const INSIDE_HALF_M: f32 = 4.5;
@@ -71,6 +82,108 @@ fn region_contains(focus: glam::Vec3, half: f32, lo: glam::Vec3, hi: glam::Vec3)
         && focus.distance(focus.clamp(lo, hi)) <= half * 3.0_f32.sqrt() + REACH_M
 }
 
+/// A presented frame can contain a distant gun-sight view and a short cabin surround.
+/// These are different camera projections onto the same scene, not different world-light
+/// domains. Retain the complete camera support that was declared before view-local clipping.
+/// Scene geometry is still unioned afresh by `source_scene_bounds` for every view.
+#[derive(Default)]
+struct FrameCameraSupport {
+    bounds: Cell<Option<(glam::Vec3, glam::Vec3)>>,
+}
+impl FrameCameraSupport {
+    fn camera_bounds(camera: &crate::camera::Camera) -> (glam::Vec3, glam::Vec3) {
+        let reach = glam::Vec3::splat(camera.zfar.max(1.0));
+        (camera.pos - reach, camera.pos + reach)
+    }
+    fn begin(&self, tank_center: glam::Vec3, camera: &crate::camera::Camera) {
+        let (camera_lo, camera_hi) = Self::camera_bounds(camera);
+        // Every crew pupil and scope exit belongs to this protected tank-scale domain.
+        // Reserve the full far range at its edges, not only at the first view's pupil.
+        // The actual camera is also unioned so on-foot views remain conservative.
+        let reach = glam::Vec3::splat(camera.zfar.max(1.0) + crate::PROTECTED_INTERIOR_FAR_M);
+        self.bounds.set(Some((camera_lo.min(tank_center - reach),
+            camera_hi.max(tank_center + reach))));
+    }
+    fn end(&self) { self.bounds.set(None); }
+    fn resolve(&self, camera: &crate::camera::Camera) -> (glam::Vec3, glam::Vec3) {
+        self.bounds.get().unwrap_or_else(|| Self::camera_bounds(camera))
+    }
+}
+
+const CACHE_GROUPS: usize = 4;
+fn cache_group(tile: usize) -> usize {
+    match tile { 0..=31 => 0, 32..=63 => 1, 64 => 2, 65 => 3,
+        _ => panic!("invalid source-shadow tile") }
+}
+fn group_rect(group: usize) -> [u32; 4] {
+    match group {
+        0 => [0, 0, COLS * TILE, 4 * TILE],
+        1 => [0, 4 * TILE, COLS * TILE, 4 * TILE],
+        2 => [0, 8 * TILE, TILE, TILE],
+        3 => [TILE, 8 * TILE, TILE, TILE],
+        _ => panic!("invalid source-shadow cache group"),
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct AtlasWork {
+    rebuild_static: [bool; CACHE_GROUPS],
+    compose: bool,
+}
+#[derive(Default)]
+struct AtlasCache {
+    static_keys: [Option<u64>; CACHE_GROUPS],
+    dynamic_key: Option<u64>,
+    pending: AtlasWork,
+}
+impl AtlasCache {
+    fn observe(&mut self, matrices: &[glam::Mat4; TILES], static_source: u64, dynamic_source: u64) {
+        // Near environment, coarse environment, near sun and coarse sun are independent.
+        // A local half-metre footprint step cannot invalidate the unchanged world cascade.
+        let footprint_keys: [u64; CACHE_GROUPS] = std::array::from_fn(|group| {
+            let mut hash=std::collections::hash_map::DefaultHasher::new();
+            for (tile,matrix) in matrices.iter().enumerate().filter(|(tile,_)|cache_group(*tile)==group) {
+                tile.hash(&mut hash);
+                for value in matrix.to_cols_array() {value.to_bits().hash(&mut hash);}
+            }
+            hash.finish()
+        });
+        for (group,&footprint) in footprint_keys.iter().enumerate() {
+            let mut hash=std::collections::hash_map::DefaultHasher::new();
+            footprint.hash(&mut hash);static_source.hash(&mut hash);
+            let key=hash.finish();
+            if self.static_keys[group].replace(key)!=Some(key) {
+                self.pending.rebuild_static[group]=true;
+                self.pending.compose=true;
+            }
+        }
+        let mut hash=std::collections::hash_map::DefaultHasher::new();
+        footprint_keys.hash(&mut hash);dynamic_source.hash(&mut hash);
+        let key=hash.finish();
+        if self.dynamic_key.replace(key)!=Some(key) {self.pending.compose=true;}
+    }
+    fn take(&mut self) -> AtlasWork {std::mem::take(&mut self.pending)}
+}
+
+fn make_group_clear_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
+        // Scissored depth clear retains untouched atlas tiles. Fullscreen geometry writes exact
+        // far depth; no source geometry, bias or sampling law is changed by the cache partition.
+        let clear_module=shader(device,"source-shadow-tile-clear",r#"
+            @vertex fn vs(@builtin(vertex_index) index:u32)->@builtin(position) vec4<f32> {
+                let points=array<vec2<f32>,3>(vec2(-1.0,-1.0),vec2(3.0,-1.0),vec2(-1.0,3.0));
+                return vec4(points[index],1.0,1.0);
+            }
+        "#);
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label:Some("source-shadow-tile-clear"),layout:None,
+            vertex:wgpu::VertexState {module:&clear_module,entry_point:Some("vs"),buffers:&[],
+                compilation_options:Default::default()},primitive:Default::default(),
+            depth_stencil:Some(wgpu::DepthStencilState {format:DEPTH,depth_write_enabled:true,
+                depth_compare:wgpu::CompareFunction::Always,stencil:Default::default(),bias:Default::default()}),
+            multisample:Default::default(),fragment:None,multiview:None,cache:None,
+        })
+}
+
 #[derive(Clone, Copy)]
 struct Prepared {
     focus: glam::Vec3,
@@ -85,8 +198,8 @@ pub struct SkyVisibility {
     pub view: wgpu::TextureView,
     composed: wgpu::Texture,
     target: wgpu::TextureView,
-    /// Instanced static scenery only. It changes when the footprint moves, not when a vehicle
-    /// drives, so moving meshes are drawn over a copy of it rather than redrawing every module.
+    /// Terrain and instanced static scenery. Each footprint group changes independently;
+    /// moving meshes are drawn over a copy rather than redrawing every static module.
     static_depth: wgpu::Texture,
     static_target: wgpu::TextureView,
     pub uniform: wgpu::Buffer,
@@ -97,12 +210,11 @@ pub struct SkyVisibility {
     bind: wgpu::BindGroup,
     pipe: wgpu::RenderPipeline,
     inst_pipe: wgpu::RenderPipeline,
-    static_signature: Cell<Option<u64>>,
-    dynamic_signature: Cell<Option<u64>>,
-    pending_static: Cell<bool>,
-    pending_compose: Cell<bool>,
+    clear_pipe: wgpu::RenderPipeline,
+    cache: RefCell<AtlasCache>,
     prepared: Cell<Option<Prepared>>,
     coop_focus: Cell<Option<glam::Vec3>>,
+    frame_camera_support: FrameCameraSupport,
     directions: [glam::Vec4; DIRECTIONS],
     rebuilds: Cell<u64>,
 }
@@ -259,6 +371,7 @@ impl SkyVisibility {
         };
         let pipe = make("sky-visibility", "vs", &[vertex_layout.clone()]);
         let inst_pipe = make("sky-visibility-inst", "vs_inst", &[vertex_layout, instance_layout]);
+        let clear_pipe = make_group_clear_pipeline(device);
         Self {
             enabled,
             view,
@@ -272,18 +385,25 @@ impl SkyVisibility {
             bind,
             pipe,
             inst_pipe,
-            static_signature: Cell::new(None),
-            dynamic_signature: Cell::new(None),
-            pending_static: Cell::new(false),
-            pending_compose: Cell::new(false),
+            clear_pipe,
+            cache: RefCell::new(AtlasCache::default()),
             prepared: Cell::new(None),
             coop_focus: Cell::new(None),
+            frame_camera_support: FrameCameraSupport::default(),
             directions: directions(),
             rebuilds: Cell::new(0),
         }
     }
 
-    pub fn set_coop_focus(&self, focus: Option<glam::Vec3>) { self.coop_focus.set(focus); }
+    pub fn begin_frame(&self, focus: glam::Vec3, camera: &crate::camera::Camera) {
+        self.coop_focus.set(Some(focus));
+        self.frame_camera_support.begin(focus, camera);
+    }
+
+    pub fn end_frame(&self) {
+        self.coop_focus.set(None);
+        self.frame_camera_support.end();
+    }
 
     fn participates(m: &MeshGpu) -> bool {
         // Opaque terrain, view-local bodies and armor all block environment transport.
@@ -295,28 +415,26 @@ impl SkyVisibility {
         b.inst_count > 0 && !b.raster_only_dynamic && b.flags <= 3.5
     }
 
+    fn retains_static_depth(m: &MeshGpu) -> bool {
+        // The source key below includes the complete transform and geometry revision. A tank
+        // hull is therefore reusable while its crew moves, and is rebuilt immediately when
+        // the hull moves. "Static" describes retained depth, not a fixed gameplay object.
+        m.track_recv || (retain_rigid_depth_enabled() && m.index_count >= 160_000
+            && !m.pose_buffer_private)
+    }
+
     fn region_query(focus: glam::Vec3, half: f32) -> glam::Mat4 {
         let e = half * 3.0_f32.sqrt() + REACH_M;
         glam::Mat4::orthographic_rh(-e, e, -e, e, 0.0, 2.0 * e)
             * glam::Mat4::look_to_rh(focus + glam::Vec3::Y * e, -glam::Vec3::Y, glam::Vec3::Z)
     }
 
-    fn footprint_hash(prepared: &Prepared) -> std::collections::hash_map::DefaultHasher {
-        let mut hash = std::collections::hash_map::DefaultHasher::new();
-        for f in prepared.focus.to_array() { f.to_bits().hash(&mut hash); }
-        prepared.half.to_bits().hash(&mut hash);
-        for value in prepared.global_focus.to_array() {value.to_bits().hash(&mut hash);}
-        prepared.global_half.to_bits().hash(&mut hash);
-        for value in prepared.matrices[64].to_cols_array() {value.to_bits().hash(&mut hash);}
-        hash
-    }
-
     /// Moving meshes: vehicles, hatches, carried ammunition, crew.
     fn dynamic_signature(&self, renderer: &Renderer, prepared: &Prepared) -> u64 {
-        let mut hash = Self::footprint_hash(prepared);
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
         renderer.menu_mode.hash(&mut hash);
         for (i, m) in renderer.shadow_source_meshes().iter().enumerate() {
-            if !Self::participates(m) || m.track_recv
+            if !Self::participates(m) || Self::retains_static_depth(m)
                 || !region_contains(prepared.global_focus, prepared.global_half, m.world_min, m.world_max) {
                 continue;
             }
@@ -330,7 +448,10 @@ impl SkyVisibility {
         if !renderer.menu_mode {for (i,b) in renderer.inst_batches.iter().enumerate() {
             if !Self::batch_participates(b) || !b.moving_rt_pool {continue;}
             i.hash(&mut hash);b.inst_count.hash(&mut hash);b.inst_buffer_id.hash(&mut hash);
-            b.prototype.hash(&mut hash);renderer.inst_prototypes[b.prototype].vbuf.hash(&mut hash);
+            b.prototype.hash(&mut hash);
+            let prototype = &renderer.inst_prototypes[b.prototype];
+            prototype.vbuf.hash(&mut hash); prototype.ibuf.hash(&mut hash);
+            prototype.index_count.hash(&mut hash);
             for model in b.cpu_mats.iter().take(b.inst_count as usize){for f in model.to_cols_array(){f.to_bits().hash(&mut hash);}}
             b.hidden.hash(&mut hash);
         }}
@@ -339,10 +460,10 @@ impl SkyVisibility {
 
     /// Instanced static scenery inside the footprint.
     fn static_signature(&self, renderer: &Renderer, prepared: &Prepared) -> u64 {
-        let mut hash = Self::footprint_hash(prepared);
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
         renderer.menu_mode.hash(&mut hash);
         for (i,m) in renderer.shadow_source_meshes().iter().enumerate() {
-            if Self::participates(m) && m.track_recv {i.hash(&mut hash);m.vbuf.hash(&mut hash);m.pose_revision.hash(&mut hash);m.ibuf.hash(&mut hash);for value in m.model.to_cols_array(){value.to_bits().hash(&mut hash);}}
+            if Self::participates(m) && Self::retains_static_depth(m) {i.hash(&mut hash);m.vbuf.hash(&mut hash);m.pose_revision.hash(&mut hash);m.ibuf.hash(&mut hash);m.index_count.hash(&mut hash);for value in m.model.to_cols_array(){value.to_bits().hash(&mut hash);}}
         }
         if renderer.menu_mode {return hash.finish();}
         let pages = renderer.inst_spatial_index.query(Self::region_query(prepared.global_focus, prepared.global_half));
@@ -356,7 +477,9 @@ impl SkyVisibility {
             b.inst_count.hash(&mut hash);
             b.inst_buffer_id.hash(&mut hash);
             b.prototype.hash(&mut hash);
-            renderer.inst_prototypes[b.prototype].vbuf.hash(&mut hash);
+            let prototype = &renderer.inst_prototypes[b.prototype];
+            prototype.vbuf.hash(&mut hash); prototype.ibuf.hash(&mut hash);
+            prototype.index_count.hash(&mut hash);
             for model in b.cpu_mats.iter().take(b.inst_count as usize) {
                 for f in model.to_cols_array() { f.to_bits().hash(&mut hash); }
             }
@@ -405,24 +528,20 @@ impl SkyVisibility {
         self.prepared.set(Some(prepared));
         let static_signature = self.static_signature(renderer, &prepared);
         let dynamic_signature = self.dynamic_signature(renderer, &prepared);
-        if self.static_signature.replace(Some(static_signature)) != Some(static_signature) {
-            self.pending_static.set(true);
-            self.pending_compose.set(true);
-        }
-        if self.dynamic_signature.replace(Some(dynamic_signature)) != Some(dynamic_signature) {
-            self.pending_compose.set(true);
-        }
+        self.cache.borrow_mut().observe(&prepared.matrices,static_signature,dynamic_signature);
     }
 
     pub fn encode(&self, renderer: &Renderer, encoder: &mut wgpu::CommandEncoder,
         work: &mut RenderWorkStats) {
-        // Take both flags together so a skipped frame can never drop a pending static rebuild.
-        let rebuild_static = self.pending_static.replace(false);
-        let compose = self.pending_compose.replace(false);
-        if !self.enabled || !compose { return; }
-        let Some(prepared) = self.prepared.get() else { return };
+        if !self.enabled {return;}
+        let Some(prepared) = self.prepared.get() else {return;};
+        // A skipped/invalid frame cannot consume pending updates. All dirty groups are retained
+        // across preparation calls until their actual depth is encoded.
+        let changed=self.cache.borrow_mut().take();
+        if !changed.compose {return;}
         let mut drawn = (0u32, 0u32);
-        if rebuild_static {
+        if changed.rebuild_static.iter().any(|&dirty|dirty) {
+            let rebuild_all=changed.rebuild_static.iter().all(|&dirty|dirty);
             let planes: Vec<_> = prepared.matrices.iter().map(|m| frustum_planes(*m)).collect();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sky-visibility-static"),
@@ -430,7 +549,7 @@ impl SkyVisibility {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.static_target,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: if rebuild_all {wgpu::LoadOp::Clear(1.0)} else {wgpu::LoadOp::Load},
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -440,14 +559,32 @@ impl SkyVisibility {
                 occlusion_query_set: None,
             });
             work.shadow_passes += 1;
+            if !rebuild_all {
+                pass.set_pipeline(&self.clear_pipe);
+                for (group,&dirty) in changed.rebuild_static.iter().enumerate() {
+                    if !dirty {continue;}
+                    let [x,y,width,height]=group_rect(group);
+                    pass.set_scissor_rect(x,y,width,height);
+                    pass.draw(0..3,0..1);
+                }
+                pass.set_scissor_rect(0,0,COLS*TILE,ROWS*TILE);
+            }
             pass.set_pipeline(&self.pipe);
             pass.set_bind_group(0,&self.bind,&[]);
             for m in renderer.shadow_source_meshes() {
-                if !Self::participates(m) || !m.track_recv {continue;}
+                if !Self::participates(m) || !Self::retains_static_depth(m) {continue;}
                 let push=PushData {model:m.model.to_cols_array_2d(),params:[0.0;4]};
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX,0,bytemuck::bytes_of(&push));
-                pass.set_vertex_buffer(0,m.vbuf.slice(..));pass.set_index_buffer(m.ibuf.slice(..),wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..m.index_count,0,0..TILES as u32);work.shadow_mesh_draws+=1;
+                pass.set_vertex_buffer(0,m.vbuf.slice(..));
+                pass.set_index_buffer(m.shadow_index_buffer().slice(..),wgpu::IndexFormat::Uint32);
+                for (tile,matrix) in prepared.matrices.iter().enumerate() {
+                    if !changed.rebuild_static[cache_group(tile)] {continue;}
+                    if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(tile); pass.set_scissor_rect(x,y,w,h); }
+                    for range in m.shadow_index_ranges(*matrix,TILE) {
+                        pass.draw_indexed(range,0,tile as u32..tile as u32+1);
+                        work.shadow_mesh_draws+=1;
+                    }
+                }
             }
             pass.set_pipeline(&self.inst_pipe);
             pass.set_bind_group(0, &self.bind, &[]);
@@ -465,7 +602,9 @@ impl SkyVisibility {
                 // Instance-rate matrices already occupy the instance index, so each direction
                 // whose view actually contains the batch is its own draw.
                 for (k, planes) in planes.iter().enumerate() {
-                    if !aabb_in_frustum(planes, b.world_min, b.world_max) { continue; }
+                    if !changed.rebuild_static[cache_group(k)]
+                        || !aabb_in_frustum(planes, b.world_min, b.world_max) { continue; }
+                    if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
                     let push = PushData {
                         model: glam::Mat4::IDENTITY.to_cols_array_2d(),
                         params: [k as f32, 0.0, 0.0, 0.0],
@@ -483,6 +622,8 @@ impl SkyVisibility {
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::DepthOnly,
         };
+        // WebGPU depth copies cover the whole subresource. Recompose every current dynamic
+        // caster after this copy so unchanged groups cannot retain a disappeared/moved caster.
         encoder.copy_texture_to_texture(whole(&self.static_depth), whole(&self.composed),
             self.static_depth.size());
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -504,7 +645,7 @@ impl SkyVisibility {
         pass.set_pipeline(&self.pipe);
         pass.set_bind_group(0, &self.bind, &[]);
         for m in renderer.shadow_source_meshes() {
-            if !Self::participates(m) || m.track_recv
+            if !Self::participates(m) || Self::retains_static_depth(m)
                 || !region_contains(prepared.global_focus, prepared.global_half, m.world_min, m.world_max) {
                 continue;
             }
@@ -515,6 +656,7 @@ impl SkyVisibility {
             // One instance per direction; the vertex stage places each in its atlas tile.
             for (k,matrix) in prepared.matrices.iter().enumerate() {
                 if !shadow_has_sample(*matrix,m.world_min,m.world_max,TILE){continue;}
+                if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
                 pass.draw_indexed(0..m.index_count,0,k as u32..k as u32+1);
                 work.shadow_mesh_draws+=1;
             }
@@ -528,6 +670,7 @@ impl SkyVisibility {
             pass.set_index_buffer(p.ibuf.slice(..),wgpu::IndexFormat::Uint32);
             for (k,matrix) in prepared.matrices.iter().enumerate() {
                 if !shadow_has_sample(*matrix,b.world_min,b.world_max,TILE){continue;}
+                if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
                 let push=PushData {model:glam::Mat4::IDENTITY.to_cols_array_2d(),params:[k as f32,0.0,0.0,0.0]};
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX,0,bytemuck::bytes_of(&push));
                 for range in shadow_instance_ranges(b,p,*matrix,TILE){pass.draw_indexed(0..p.index_count,0,range);work.shadow_instanced_draws+=1;}
@@ -544,10 +687,10 @@ impl SkyVisibility {
 /// Scene bounds include every visible opaque receiver and the full camera/medium support.
 /// Dynamic particle carriers are receivers within that support, not opaque solid casters.
 /// Outward 64 m snapping keeps fixed scene coverage stable under ordinary head/body movement.
+/// Native multi-pass views share the pre-clip camera domain. In particular, gunner ADS must
+/// not alternate 6 km and 24 m shadow projections, rebuilding every static map twice a frame.
 pub(super) fn source_scene_bounds(renderer:&Renderer)->(glam::Vec3,glam::Vec3) {
-    let reach=renderer.camera.zfar.max(1.0);
-    let mut lo=renderer.camera.pos-glam::Vec3::splat(reach);
-    let mut hi=renderer.camera.pos+glam::Vec3::splat(reach);
+    let (mut lo,mut hi)=renderer.sky_visibility.frame_camera_support.resolve(&renderer.camera);
     let meshes=renderer.shadow_source_meshes();
     for m in meshes {if m.visible && m.world_min.is_finite() && m.world_max.is_finite(){lo=lo.min(m.world_min);hi=hi.max(m.world_max);}}
     for b in renderer.inst_batches.iter().filter(|_| !renderer.menu_mode) {if b.inst_count>0 && !b.raster_only_dynamic && b.flags<=3.5 && b.world_min.is_finite() && b.world_max.is_finite(){lo=lo.min(b.world_min);hi=hi.max(b.world_max);}}
@@ -557,6 +700,247 @@ pub(super) fn source_scene_bounds(renderer:&Renderer)->(glam::Vec3,glam::Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_tile_scissors_match_the_shader_atlas_grid_without_overlap() {
+        for k in 0..TILES {
+            let [x,y,w,h]=tile_rect(k);
+            assert_eq!([w,h],[TILE,TILE]);
+            assert!(x+w<=COLS*TILE && y+h<=ROWS*TILE);
+            for j in 0..k {
+                let [a,b,c,d]=tile_rect(j);
+                assert!(x+w<=a || a+c<=x || y+h<=b || b+d<=y);
+            }
+        }
+    }
+
+    #[test]
+    fn gunner_surround_reuses_the_complete_frame_source_support() {
+        let support=FrameCameraSupport::default();
+        let mut sight=crate::camera::Camera::new(16.0/9.0);
+        sight.pos=glam::Vec3::new(-790.2,-7.1,746.4);
+        sight.zfar=6000.0;
+        let tank_center = sight.pos - glam::Vec3::new(0.7, 1.2, -0.3);
+        support.begin(tank_center, &sight);
+        let exterior = support.resolve(&sight);
+        let mut surround=sight;
+        surround.pos+=glam::Vec3::new(-0.6,-0.2,0.8);
+        surround.zfar=24.0;
+        surround.fov_y=70_f32.to_radians();
+        assert_ne!(FrameCameraSupport::camera_bounds(&surround),exterior,
+            "this fixture must exercise the previous ADS cache invalidation");
+        assert_eq!(support.resolve(&sight),exterior);
+        assert_eq!(support.resolve(&surround),exterior,
+            "point-source and environment maps must keep one projection across ADS views");
+        let (lo,hi)=FrameCameraSupport::camera_bounds(&surround);
+        assert!(lo.cmpge(exterior.0).all() && hi.cmple(exterior.1).all(),
+            "the protected view remains within the complete source domain");
+        support.end();
+        assert_eq!(support.resolve(&surround),(lo,hi),
+            "standalone diagnostics outside the native frame retain their own support");
+    }
+
+    #[test]
+    fn next_frame_source_support_follows_the_new_camera_without_stale_extent() {
+        let support=FrameCameraSupport::default();
+        let mut camera=crate::camera::Camera::new(16.0/9.0);
+        support.begin(camera.pos, &camera);
+        let previous=support.resolve(&camera);
+        support.end();
+        camera.pos=glam::Vec3::new(9000.0,35.0,-200.0);
+        camera.zfar=1200.0;
+        support.begin(camera.pos, &camera);
+        let reach = glam::Vec3::splat(camera.zfar + crate::PROTECTED_INTERIOR_FAR_M);
+        assert_eq!(support.resolve(&camera), (camera.pos-reach, camera.pos+reach));
+        assert_ne!(support.resolve(&camera),previous,
+            "the frame transaction cannot reuse another frame's camera domain");
+        support.end();
+        assert!(support.bounds.get().is_none());
+    }
+
+    #[test]
+    fn complete_frame_support_contains_full_far_ranges_at_every_crew_pupil() {
+        let support = FrameCameraSupport::default();
+        let tank_center = glam::Vec3::new(410.0, -7.0, 240.0);
+        let mut camera = crate::camera::Camera::new(16.0 / 9.0);
+        camera.pos = tank_center + glam::Vec3::new(0.7, 1.2, -0.3);
+        support.begin(tank_center, &camera);
+        let (lo, hi) = support.resolve(&camera);
+        let radius = crate::PROTECTED_INTERIOR_FAR_M;
+        for x in [-radius, radius] { for y in [-radius, radius] { for z in [-radius, radius] {
+            camera.pos = tank_center + glam::Vec3::new(x, y, z);
+            let (pupil_lo, pupil_hi) = FrameCameraSupport::camera_bounds(&camera);
+            assert!(pupil_lo.cmpge(lo).all() && pupil_hi.cmple(hi).all(),
+                "a different full-range optic must not escape the retained source domain");
+        }}}
+        // The initial on-foot camera can be outside the crew rig and still requires coverage.
+        camera.pos += glam::Vec3::X * 100.0;
+        support.begin(tank_center, &camera);
+        let (lo, hi) = support.resolve(&camera);
+        let (camera_lo, camera_hi) = FrameCameraSupport::camera_bounds(&camera);
+        assert!(camera_lo.cmpge(lo).all() && camera_hi.cmple(hi).all());
+    }
+
+    fn settled_cache() -> (AtlasCache, [glam::Mat4; TILES]) {
+        let matrices = [glam::Mat4::IDENTITY; TILES];
+        let mut cache = AtlasCache::default();
+        cache.observe(&matrices, 10, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: [true; CACHE_GROUPS], compose: true });
+        (cache, matrices)
+    }
+
+    #[test]
+    fn unchanged_sources_and_footprints_need_no_atlas_work() {
+        let (mut cache, matrices) = settled_cache();
+        cache.observe(&matrices, 10, 20);
+        assert_eq!(cache.take(), AtlasWork::default());
+    }
+
+    #[test]
+    fn moving_local_footprint_does_not_redraw_the_world_cascade() {
+        let (mut cache, mut matrices) = settled_cache();
+        for (tile, matrix) in matrices.iter_mut().enumerate() {
+            if matches!(cache_group(tile), 0 | 2) {
+                *matrix = glam::Mat4::from_translation(glam::Vec3::X * 0.5625);
+            }
+        }
+        cache.observe(&matrices, 10, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: [true, false, true, false], compose: true });
+        cache.observe(&matrices, 10, 20);
+        assert_eq!(cache.take(), AtlasWork::default());
+    }
+
+    #[test]
+    fn world_extent_changes_rebuild_both_coarse_groups() {
+        let (mut cache, mut matrices) = settled_cache();
+        for (tile, matrix) in matrices.iter_mut().enumerate() {
+            if matches!(cache_group(tile), 1 | 3) {
+                *matrix = glam::Mat4::from_scale(glam::Vec3::splat(0.5));
+            }
+        }
+        cache.observe(&matrices, 10, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: [false, true, false, true], compose: true });
+    }
+
+    #[test]
+    fn changing_sun_rebuilds_both_sun_caps_without_redrawing_hemispheres() {
+        let (mut cache, mut matrices) = settled_cache();
+        matrices[64] = glam::Mat4::from_rotation_y(0.001);
+        matrices[65] = glam::Mat4::from_rotation_y(0.002);
+        cache.observe(&matrices, 10, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: [false, false, true, true], compose: true });
+    }
+
+    #[test]
+    fn changing_or_removing_static_sources_invalidates_every_group() {
+        let (mut cache, matrices) = settled_cache();
+        // Signatures include buffer identity, transforms, instance counts and hidden masks.
+        // Both adding a source and returning to its earlier scene signature require a redraw.
+        for source in [11, 10] {
+            cache.observe(&matrices, source, 20);
+            assert_eq!(cache.take(), AtlasWork { rebuild_static: [true; CACHE_GROUPS], compose: true });
+        }
+    }
+
+    #[test]
+    fn moving_or_removing_dynamic_sources_recomposes_without_static_redraw() {
+        let (mut cache, matrices) = settled_cache();
+        for source in [21, 20] {
+            cache.observe(&matrices, 10, source);
+            assert_eq!(cache.take(), AtlasWork { rebuild_static: [false; CACHE_GROUPS], compose: true });
+        }
+    }
+
+    #[test]
+    fn preparation_preserves_dirty_groups_until_depth_is_encoded() {
+        let (mut cache, mut matrices) = settled_cache();
+        matrices[0] = glam::Mat4::from_translation(glam::Vec3::X);
+        cache.observe(&matrices, 10, 20);
+        matrices[65] = glam::Mat4::from_translation(glam::Vec3::Y);
+        cache.observe(&matrices, 10, 20);
+        cache.observe(&matrices, 10, 21);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: [true, false, false, true], compose: true });
+    }
+
+    #[test]
+    #[ignore = "requires GPU; verifies exact retained and cleared atlas depth"]
+    fn partial_clear_gpu_preserves_clean_groups_and_clears_selected_group() -> anyhow::Result<()> {
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let clear_pipe = make_group_clear_pipeline(&device);
+        let width = COLS * TILE;
+        let height = ROWS * TILE;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sky-group-clear-test"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: DEPTH,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sky-group-clear-readback"), size: (width * height * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+        });
+        for group in 0..CACHE_GROUPS {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let [left, top, group_width, group_height] = group_rect(group);
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sky-group-clear-test"), color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &view,
+                        depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.25), store: wgpu::StoreOp::Store }),
+                        stencil_ops: None,
+                    }), timestamp_writes: None, occlusion_query_set: None,
+                });
+                pass.set_pipeline(&clear_pipe);
+                pass.set_scissor_rect(left, top, group_width, group_height);
+                pass.draw(0..3, 0..1);
+            }
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::DepthOnly },
+                wgpu::TexelCopyBufferInfo { buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(width * 4), rows_per_image: Some(height) } },
+                texture.size());
+            queue.submit([encoder.finish()]);
+            let (tx, rx) = std::sync::mpsc::channel();
+            buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| { let _ = tx.send(result); });
+            device.poll(wgpu::PollType::wait_indefinitely())?;
+            rx.recv()??;
+            let data = buffer.slice(..).get_mapped_range();
+            for (index, bytes) in data.chunks_exact(4).enumerate() {
+                let x = index as u32 % width;
+                let y = index as u32 / width;
+                let selected = x >= left && x < left + group_width && y >= top && y < top + group_height;
+                let expected = if selected { 1.0_f32 } else { 0.25_f32 };
+                assert_eq!(f32::from_le_bytes(bytes.try_into().unwrap()), expected,
+                    "group {group}, depth texel ({x}, {y})");
+            }
+            drop(data);
+            buffer.unmap();
+        }
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn partial_clear_rectangles_cover_all_66_tiles_without_overlap() {
+        for tile in 0..TILES {
+            let x = (tile as u32 % COLS) * TILE;
+            let y = (tile as u32 / COLS) * TILE;
+            for group in 0..CACHE_GROUPS {
+                let [left, top, width, height] = group_rect(group);
+                assert!(left + width <= COLS * TILE && top + height <= ROWS * TILE);
+                let covered = x >= left && y >= top && x + TILE <= left + width && y + TILE <= top + height;
+                assert_eq!(covered, cache_group(tile) == group, "tile {tile}, group {group}");
+            }
+        }
+    }
 
     #[test]
     fn coarse_source_cascade_covers_all_scene_and_camera_support_corners() {

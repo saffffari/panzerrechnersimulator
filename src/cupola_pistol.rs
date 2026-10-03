@@ -12,6 +12,7 @@ pub(super) struct CupolaPistol {
     implicit_aim_holstered: bool,
 }
 impl CupolaPistol {
+    pub(super) fn is_drawn(&self) -> bool { self.drawn }
     fn sample(&mut self, eligible: bool, aim: bool, primary: bool) -> bool {
         if !aim {self.implicit_aim_holstered=false;}
         let was_drawn=self.drawn;
@@ -132,7 +133,7 @@ impl Game {
         let forward=r.camera.forward();
         let right=r.camera.right();
         let up=right.cross(forward).normalize_or_zero();
-        let mut rotation=crate::foot::held_weapon_rotation(forward,up);
+        let mut rotation=Quat::from_axis_angle(forward,-0.045)*crate::foot::held_weapon_rotation(forward,up);
         let mut position=if self.cupola_pistol.raised {p08::aimed_origin(r.camera.pos,forward,rotation)}
             else {r.camera.pos+forward*0.35+right*0.16-up*0.20};
         position-=forward*0.045*self.foot.recoil;

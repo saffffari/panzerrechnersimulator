@@ -12,7 +12,7 @@ const INPUTS: &[&str] = &["drive", "steer", "traverse", "elevate", "look_dx", "l
     "fire", "mg_coax", "coax", "binoculars", "extinguish", "repair", "run", "aim", "fire2",
     "crouch", "reload", "jump", "ignition", "hatch_toggle"];
 const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", "station",
-    "round", "portable", "throw", "equip", "look_lever", "look_breech", "look_tray", "look_rack",
+    "round", "portable", "throw", "equip", "look_lever", "look_breech", "look_sight", "look_tray", "look_rack",
     "weapon_luger", "weapon_panzerfaust", "sight_zoom", "map_open", "map_close", "incoming_impact", "look_fire", "map_pin",
     "look_sentry", "look_left_track", "door", "look_loaded_round",
     "compass",
@@ -748,6 +748,10 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
             }
         }
         "look_lever" => {g.debug_loader_face_lever();true},
+        "look_sight" => {
+            detail=Some(json!({"scope":"Head rotation only toward actual laid source telescope; ordinary hover ray chooses the selected source, no forced selection"}));
+            g.debug_face_gunner_sight()
+        },
         "look_breech" => {g.debug_loader_face_breech();true},
         "look_loaded_round" => {g.debug_loader_face_loaded_round();true},
         "look_tray" => {g.debug_loader_face_tray();true},

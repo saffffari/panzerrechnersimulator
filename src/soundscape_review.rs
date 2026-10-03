@@ -46,7 +46,15 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         ("whiteout inside", 12.0, true, 0.0, 0.0, false, 3.0, 2),
         ("clearing outside", 12.0, false, 0.0, 0.0, false, 0.2, 2),
     ];
+    let long_cadence = std::env::var("KESSEL_SOUNDSCAPE_REVIEW_LONG").as_deref() == Ok("1");
     for (label, seconds, inside, speed, threat, combat, storm, night) in phases {
+        // Explicit long fixture verifies musical holds and aftermath in wall-clock scale.
+        // Short auditions remain available for source inspection, never cadence acceptance.
+        let seconds = if long_cadence { match label {
+            "driving inside" | "unseen enemies nearby" | "combat inside" => 180.0,
+            "combat release and aftermath" => 240.0,
+            _ => seconds,
+        }} else { seconds };
         let start = pcm.len() as f64 / (rate * 2) as f64;
         for tick in 0..(seconds * 20.0) as usize {
             if label == "driving inside" && tick == 40 {

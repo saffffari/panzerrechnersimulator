@@ -55,9 +55,15 @@ pub(super) fn driver_arm_meshes() -> anyhow::Result<[CpuMesh;5]> {
     Ok(meshes.try_into().ok().unwrap())
 }
 
+pub(super) fn wounded_seated_indices(identity:usize,missing:[bool;11])->anyhow::Result<Vec<u32>> {
+    let rig=Rig::load()?;let source=crate::gltf_load::load_glb(CREW_SEATED_GLBS[identity])?;
+    anyhow::ensure!(source.vertices.len()==rig.weights.len());
+    let ownership=rig.weights.iter().map(|weights|{let mut w=[0.0;11];for &(b,v) in weights{w[living_crew_wounds::bone_part(&rig.bones[b].name)]+=v;}w}).collect::<Vec<_>>();
+    Ok(living_crew_wounds::mask_indices(&source.indices,&ownership,missing))
+}
 /// A closed two-link chain keeps its authored lengths even for unreachable hand requests. The
 /// elbow pole keeps the elbow out of the chest and supplies a stable plane near full extension.
-fn arm_chain(shoulder: Vec3, elbow: Vec3, hand: Vec3, target: Vec3, pole: Vec3) -> [Vec3; 3] {
+pub(super) fn arm_chain(shoulder: Vec3, elbow: Vec3, hand: Vec3, target: Vec3, pole: Vec3) -> [Vec3; 3] {
     let upper = shoulder.distance(elbow);
     let lower = elbow.distance(hand);
     if !target.is_finite() || upper < 1e-5 || lower < 1e-5 {
@@ -327,7 +333,7 @@ impl Game {
 
     /// Exact current cartridge/case model is shared with the visible object. Hands sit on two
     /// opposite brass-side grasp points rather than following a separate canned loading clock.
-    fn crew_loader_hand_targets(&self) -> [Option<Vec3>; 2] {
+    pub(super) fn crew_loader_hand_targets(&self) -> [Option<Vec3>; 2] {
         let model = if self.carry_mesh.is_some() {
             Some(self.carried_round_model())
         } else if self.carried_casing.is_some() {

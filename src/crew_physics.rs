@@ -420,7 +420,7 @@ fn box_inertia(part: CrewBodyPart, scale: f32) -> Vec3 {
     )
 }
 
-fn fragment_impulse(contact_velocity: Vec3, contact_energy_j: f32) -> Vec3 {
+pub fn fragment_impulse(contact_velocity: Vec3, contact_energy_j: f32) -> Vec3 {
     let speed = contact_velocity.length();
     if speed <= 1.0e-4 {
         return Vec3::ZERO;

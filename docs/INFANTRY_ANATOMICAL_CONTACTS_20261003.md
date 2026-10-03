@@ -1,0 +1,13 @@
+# Infantry contacts and persistent casualties
+
+Small-arm and direct cannon contacts now resolve the first finite swept anatomical OBB, rather than killing every exposed actor by a flat HP subtraction. Contact kinetic work is deposited only once; coherent part impulse uses the existing momentum helper and the body-part mass. Live hits preserve previous missing/pulverized parts. Vital destruction kills; peripheral wounds survive and retreat. Leg loss slows the same terrain-resolved retreat and uses a prone part-body representation. A nearby survivor reacts to a visible casualty origin, not hidden player/enemy coordinates.
+
+HE pressure now checks terrain/world LOS and applies shell filler chemical energy through the existing anatomical blast policy, with severe local outcomes replacing the whole-source animation by bounded original source parts. The old mixed-combat HE HP estimate is retained as telemetry and suppression, not a second fatal rule. AP/solid shot has no invented filler blast.
+
+Two team-specific sets of eleven source-part pools, 128 tracked casualty bodies, and 1024 short-lived blood grains bound memory. Source teams retain their original textures. Source triangles are anatomically partitioned by the existing relaxed-mesh classifier; this is a game approximation, not skeletal-animation quality. Actual segment gravity/joints and terrain support replace terminal-only collapse for anatomically tracked dead bodies. No native footage or hardware timing was produced by this agent.
+
+Limits: the 35% kinetic tissue-work fraction and injury thresholds are provisional, not measured wound-ballistics validation. Blast uses the existing confined transfer policy outside as well; open-air calibration remains needed. Terrain support does not solve all building/wall body collisions. Prone wounded parts do not have a dedicated crawling skeletal animation. The finite projectile stops at the existing capsule terminal contact even if its narrower anatomical sweep misses; continuation through soft tissue is not implemented. Body pool exhaustion does not yet have a separate physical-only fallback. These limitations must not be presented as a complete realistic injury simulation.
+
+## Continuity correction
+
+Prone wounded survivors now use the same pose helper for repeat anatomical contact and the shared projectile sweep. Soldier perception, mixed-combat eye/torso targets and broad body height use the actual prone head/torso placement. Terrain-resolved retreat remains slow without a skeletal crawl clip. Both production escort activation and the fixed-sentry staging route clear the recycled actor's old anatomical record. Startup/recycled bodies cannot inherit a previous identity's corpse.

@@ -53,6 +53,9 @@ mod feedback;
 mod named_effects;
 #[path = "audio_master.rs"]
 mod master;
+#[path = "audio_output_buffer.rs"]
+mod output_buffer;
+pub(crate) use output_buffer::pressure_vent_mono;
 #[path = "audio_timeline.rs"]
 mod timeline;
 #[path = "audio_calibrated.rs"]
@@ -129,7 +132,7 @@ pub fn mechanical_level_dba(cue: crate::acoustics::MechanicalCue, intensity: f32
         return cartridge_contact_level_dba(&contact)+calibrated::effort_db(volume);
     }
     if let Some(gain) = breech_control_gain(cue, intensity, volume) {
-        return calibrated::control_level_dba("hatch_stop") + calibrated::effort_db(gain);
+        return calibrated::control_level_dba("breech") + 6.0 + calibrated::effort_db(gain);
     }
     if let Some(key) = ammunition_control_key(cue) {
         let gain = if intensity.is_finite() && volume.is_finite() {
@@ -153,7 +156,7 @@ fn breech_control_gain(cue: crate::acoustics::MechanicalCue, intensity: f32, vol
         return None;
     }
     Some(if intensity.is_finite() && volume.is_finite() {
-        0.20 * intensity.clamp(0.0, 1.0) * volume.clamp(0.0, 1.0)
+        intensity.clamp(0.0, 1.0) * volume.clamp(0.0, 1.0)
     } else { 0.0 })
 }
 
@@ -1569,6 +1572,7 @@ pub struct Audio {
     /// wrapped around this mixer (`audio_master.rs`).
     live_mixer: Option<Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>>,
     master: Arc<master::MasterTelemetry>,
+    live_output: Arc<output_buffer::Telemetry>,
     transient_timeline: RefCell<timeline::Timeline>,
     capture: Option<RefCell<capture::CaptureMixer>>,
     clips: Vec<Option<Clip>>,
@@ -1618,6 +1622,10 @@ pub struct Audio {
 }
 
 impl Audio {
+    /// Protect tactile handling without changing the physical-effects bus.
+    pub(super) fn protect_interaction(&self, seconds: f32) {
+        self.ear.protect_interaction(seconds);
+    }
     /// Initialize the default output device and preload every [`Sfx`].
     ///
     /// Returns `None` (after logging a warning) when no audio device is
@@ -1651,11 +1659,15 @@ impl Audio {
         let capture = handle.is_none().then(|| RefCell::new(
             capture::CaptureMixer::new(Arc::clone(&ear), Arc::clone(&master))
                 .with_terminal(terminal_source.take().unwrap())));
+        let mut live_output=Arc::new(output_buffer::Telemetry::default());
         let live_mixer = handle.as_ref().and_then(|handle| {
             let (controller, mixer) =
                 rodio::dynamic_mixer::mixer::<f32>(2, crate::acoustics::SAMPLE_RATE);
             let stage = master::MasterStage::new(mixer, Arc::clone(&ear), Arc::clone(&master))
                 .with_terminal(terminal_source.take().unwrap());
+            let stage=output_buffer::BufferedOutput::new(stage);
+            live_output=Arc::clone(&stage.telemetry);
+            eprintln!("[audio] live mixer deadline isolation: 100ms hardware-buffer-derived queue with two scheduling blocks, callback never runs source DSP");
             match handle.play_raw(stage) {
                 Ok(()) => Some(controller),
                 Err(error) => {
@@ -1824,6 +1836,7 @@ impl Audio {
             handle,
             live_mixer,
             master,
+            live_output,
             transient_timeline: RefCell::new(timeline::Timeline::default()),
             capture,
             clips,
@@ -1861,6 +1874,10 @@ impl Audio {
             tinnitus_control: Arc::new(tinnitus::TinnitusControl::default()),
             tinnitus_sink: RefCell::new(None),
         }
+    }
+
+    pub(crate) fn live_output_telemetry(&self)->serde_json::Value {
+        self.live_output.snapshot()
     }
 
     fn create_sink(&self) -> Result<Sink, rodio::PlayError> {
@@ -2227,9 +2244,11 @@ impl Audio {
         debug_assert!(mechanical_level_dba(params.cue, params.intensity, volume).is_finite()
             || volume <= 0.0);
         if let Some(gain) = breech_control_gain(params.cue, params.intensity, volume) {
-            // Use the already verified, low-passed metal-stop recording. A hand-operated lever
-            // is a quiet local contact; the old broadband impact synth sounded like a gunshot.
-            self.play_control_at("hatch_stop", gain, params.bearing_deg);
+            // Breech contact has its own steel body/return, distinct from the rubber-damped
+            // hatch-stop recording. The actual lever contact supplies this cue and timing.
+            self.play_stereo_at_ear(crate::acoustics::synth_mechanical(params),
+                calibrated::control_level_dba("breech") + 6.0 + calibrated::effort_db(gain),
+                EarBus::World);
             return;
         }
         if let Some(key) = ammunition_control_key(params.cue) {
@@ -2805,11 +2824,11 @@ mod tests {
     }
 
     #[test]
-    fn breech_lever_uses_a_bounded_quiet_contact_without_changing_other_mechanics() {
+    fn breech_lever_uses_bounded_dedicated_steel_contact_without_changing_other_mechanics() {
         use crate::acoustics::MechanicalCue as C;
-        assert!((breech_control_gain(C::BreechOpen, 0.88, 0.72).unwrap() - 0.12672).abs() < 1e-6);
-        assert!((breech_control_gain(C::BreechLock, 1.0, 0.82).unwrap() - 0.164).abs() < 1e-6);
-        assert_eq!(breech_control_gain(C::BreechLock, 50.0, 50.0), Some(0.20));
+        assert!((breech_control_gain(C::BreechOpen, 0.88, 0.72).unwrap() - 0.6336).abs() < 1e-6);
+        assert!((breech_control_gain(C::BreechLock, 1.0, 0.82).unwrap() - 0.82).abs() < 1e-6);
+        assert_eq!(breech_control_gain(C::BreechLock, 50.0, 50.0), Some(1.0));
         assert_eq!(breech_control_gain(C::BreechOpen, f32::NAN, 1.0), Some(0.0));
         assert_eq!(breech_control_gain(C::BreechOpen, 1.0, -1.0), Some(0.0));
         for cue in [C::MainGunRecoil, C::CasingExtract, C::CasingDrop, C::ShellRam, C::BodyImpact] {
@@ -2864,6 +2883,179 @@ mod tests {
             assert!(right > left && left > 0.0);
             assert!(pcm[70000..].iter().all(|v| v.abs() < 1e-6));
         }
+    }
+
+    #[test]
+    fn live_device_audio_delivery_review() {
+        let Ok(prefix)=std::env::var("KESSEL_LIVE_AUDIO_REVIEW_PREFIX") else{return;};
+        let (stream,handle)=OutputStream::try_default().expect("live output device required");
+        let audio=Audio::load(Some(stream),Some(handle));
+        let library=crate::sound_library::Library::load().unwrap();
+        let mut cues:Vec<_>=library.cues.values().filter(|c|c.role=="music").collect();
+        cues.sort_by(|a,b|a.id.cmp(&b.id));
+        let cue=cues.first().expect("owned score cue required");
+        let bed=crate::sound_library::decode(&cue.path).unwrap();
+        audio.play_stereo_on(bed.samples.to_vec(),cue.gain*0.08,EarBus::Score);
+        let start=std::time::Instant::now();let mut tick=0_u32;let mut mg=0_u32;let mut pistol=0_u32;
+        let mut next_mg=8.0_f32;let mut events=Vec::new();
+        while start.elapsed().as_secs_f32()<30.0 {
+            let t=start.elapsed().as_secs_f32();let dt=1.0/60.0;
+            audio.set_engine_at_ear(EngineTelemetry::automatic(0.25,0.6,0.65,true),84.0,dt);
+            audio.set_running_gear_drive(RunningGearFrame{speed:[3.0,2.8],terrain_velocity:[0.05,0.04]},84.0,true,0.65);
+            audio.set_turret_traverse(0.08,true,dt);
+            audio.set_gun_elevation_voice(Some(VehicleVoice{id:0,ear_laf_dba:80.0,bearing_deg:15.0,lowpass_hz:6000.0,playback_speed:1.0}),dt);
+            if tick%180==60 {
+                let mono=audio.next_small_arm_direct(Sfx::LugerShot).unwrap();
+                audio.play_stereo_at_ear(mono.iter().flat_map(|v|[*v,*v]).collect(),crate::sound_levels::LUGER_EAR.laf_db,EarBus::World);
+                pistol+=1;events.push(serde_json::json!({"at_s":t,"event":"p08"}));
+            }
+            if (8.0..12.0).contains(&t) {
+                while next_mg<=t {
+                    let mono=audio.next_small_arm_direct(Sfx::TankMgShot).unwrap();
+                    audio.play_stereo_at_ear(mono.iter().flat_map(|v|[*v,*v]).collect(),105.0,EarBus::World);
+                    mg+=1;next_mg+=0.075;
+                }
+            }
+            if tick==180 || tick==1080 {
+                audio.play_at_ear(Sfx::PlayerGunInt1,crate::sound_levels::OWN_88_BUTTONED.laf_db);
+                audio.play_mechanical(crate::acoustics::MechanicalParams{cue:crate::acoustics::MechanicalCue::MainGunRecoil,intensity:1.15,bearing_deg:4.0,seed:tick},0.78);
+                events.push(serde_json::json!({"at_s":t,"event":"main_gun_and_recoil"}));
+            }
+            audio.set_loader_motion(LoaderMotion{extraction_mps:if (4.0..5.0).contains(&t){0.35}else{0.0},ram_mps:if (6.0..7.0).contains(&t){0.35}else{0.0}},78.0,12.0);
+            if tick%90==0 {audio.play_control("footstep_metal_1",0.4);audio.play_mg_case_contact(1.8,0.5,20.0,tick);}
+            tick+=1;
+            let deadline=start+std::time::Duration::from_secs_f64(f64::from(tick)/60.0);
+            if let Some(wait)=deadline.checked_duration_since(std::time::Instant::now()){std::thread::sleep(wait);}
+        }
+        let receipt=serde_json::json!({"schema":"kessel.live_audio_delivery_review.v1","wall_seconds":start.elapsed().as_secs_f32(),"device_backend":"ordinary OutputStream default live device; no GPU", "score_cue":cue.id,"p08_rounds":pistol,"mg_rounds":mg,"mg_round_interval_s":0.075,"events":events,"master":audio.master_telemetry(),"scope":"delivery stress fixture; not gameplay firing authority or perceptual acceptance"});
+        std::fs::write(format!("{prefix}_receipt.json"),serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+        assert!(audio.master.frames()>crate::acoustics::SAMPLE_RATE as u64*20,"device clock failed to advance");
+        assert_eq!(audio.live_output_telemetry()["starved_blocks"].as_u64().unwrap(),0,"live producer missed output deadlines; inspect receipt");
+    }
+
+    #[test]
+    fn pistol_actual_direct_variant_route_reaches_capture_output() {
+        let audio=Audio::new_capture();
+        let mono=audio.next_small_arm_direct(Sfx::LugerShot).expect("pistol bank route");
+        audio.play_stereo_at_ear(mono.iter().flat_map(|v|[*v,*v]).collect(),crate::sound_levels::LUGER_EAR.laf_db,EarBus::World);
+        let pcm=audio.render_capture_frames(crate::acoustics::SAMPLE_RATE as usize).unwrap();
+        assert!(pcm.iter().all(|v|v.is_finite()));
+        assert!(pcm.iter().any(|v|v.abs()>0.01),"P08 route produced no audible samples");
+        assert!(audio.master_telemetry()["output_peak"].as_f64().unwrap()>0.01);
+    }
+
+    #[test]
+    fn complete_gun_reload_floor_and_steps_live_mixer_review() {
+        let Ok(prefix) = std::env::var("KESSEL_COMPLETE_INTERIOR_AUDIO_REVIEW_PREFIX") else { return; };
+        let library = crate::sound_library::Library::load().unwrap();
+        let mut music: Vec<_> = library.cues.values().filter(|c| c.role == "music").collect();
+        music.sort_by(|a,b|a.id.cmp(&b.id));
+        let cue = music.into_iter().find(|c| std::fs::metadata(&c.path)
+            .is_ok_and(|m|m.len() >= 44_100 * 4 * 11 + 44))
+            .expect("owned music cue lasting at least eleven seconds required for duck review");
+        let bed = crate::sound_library::decode(&cue.path).unwrap();
+        let mut receipts = Vec::new();
+        for (label, effects, score) in [("effects",true,false), ("effects_with_score",true,true), ("score_probe",false,true)] {
+            let audio = Audio::new_capture();
+            if score { audio.play_stereo_on(bed.samples.to_vec(), cue.gain*0.08, EarBus::Score); }
+            let mut hearing = crate::hearing::Hearing::default();
+            let level = &crate::sound_levels::OWN_88_BUTTONED;
+            let ear = crate::sound_propagation::at_ear(level.lpk_db,level.laf_db,
+                level.spectrum,level.a_duration_ms,true);
+            let mut pcm = Vec::new();
+            for tick in 0..600 {
+                let t=tick as f32/60.0;
+                if effects {
+                    if tick == 30 {
+                        let sfx = Sfx::PlayerGunInt1;
+                        let (onset,envelope) = audio.direct_drive(sfx).unwrap();
+                        hearing.impulse_with_envelope(crate::hearing::ear_impulses(&ear,0.0),onset,Some(envelope));
+                        audio.play_at_ear(sfx,ear.laf_db);
+                        audio.play_mechanical(crate::acoustics::MechanicalParams {
+                            cue:crate::acoustics::MechanicalCue::MainGunRecoil,intensity:1.15,
+                            bearing_deg:4.0,seed:42 },0.78);
+                    }
+                    for (at,cue) in [(72,crate::acoustics::MechanicalCue::BreechOpen),
+                        (324,crate::acoustics::MechanicalCue::BreechLock)] {
+                        if tick==at {audio.play_mechanical(crate::acoustics::MechanicalParams {
+                            cue,intensity:1.0,bearing_deg:12.0,seed:43 },0.82);}
+                    }
+                    audio.set_loader_motion(LoaderMotion {
+                        extraction_mps:if (1.35..2.15).contains(&t){0.35}else{0.0},
+                        ram_mps:if (4.2..5.2).contains(&t){0.40}else{0.0}},
+                        LOADER_FRICTION_REFERENCE_DBA,12.0);
+                    if tick==144 || tick==312 {
+                        let contact=CartridgeContact {kind:if tick==144{CartridgeKind::EmptyCase}else{CartridgeKind::LiveRound},
+                            normal_speed_mps:if tick==144{1.1}else{0.45},tangential_speed_mps:0.12,
+                            mass_kg:if tick==144{7.0}else{15.0},bearing_deg:12.0,seed:44};
+                        audio.play_cartridge_contact(contact,cartridge_contact_level_dba(&contact));
+                    }
+                    if tick==390 || tick==426 || tick==462 {audio.play_control("footstep_metal_1",0.40);}
+                    if tick==504 || tick==510 || tick==517 {audio.play_mg_case_contact(0.7,0.2,18.0,tick);}
+                }
+                hearing.advance(1.0/60.0,1.0/60.0,0.0);
+                audio.set_ear_state(&hearing.render());
+                pcm.extend(audio.render_capture_frames(735).unwrap());
+            }
+            assert!(pcm.iter().all(|x|x.is_finite()&&x.abs()<1.0));
+            let file=format!("{prefix}_{label}.wav");
+            assert!(!std::path::Path::new(&file).exists(),"preserve prior review");
+            crate::acoustics::write_wav_stereo(&file,&pcm,crate::acoustics::SAMPLE_RATE).unwrap();
+            let windows: Vec<_>=[("shot",0.5,0.8),("breech_open",1.2,1.35),("extract",1.35,2.15),
+                ("case_floor",2.4,2.9),("ram",4.2,5.2),("breech_lock",5.4,5.7),
+                ("steps",6.5,8.0),("mg_case_floor",8.4,8.9)].into_iter().map(|(name,from,to)|{
+                    let segment=&pcm[(from*44100.0) as usize*2..(to*44100.0) as usize*2];
+                    serde_json::json!({"event":name,"from_s":from,"to_s":to,
+                        "peak_dbfs":crate::reproduction::peak_dbfs(segment),
+                        "laf_dbfs":crate::reproduction::laf_max_dbfs(segment)})
+                }).collect();
+            receipts.push(serde_json::json!({"file":file,"profile":label,"windows":windows,
+                "master":audio.master_telemetry(),"audio_bank":audio.capture_metadata().unwrap()["audio_bank"]}));
+        }
+        std::fs::write(format!("{prefix}_receipt.json"),serde_json::to_vec_pretty(&serde_json::json!({
+            "scope":"Actual Audio bank/main-gun report, shot-time recoil, loader motion/contact, footsteps, MG-floor-contact, hearing and master. Controlled timeline, not gameplay timing or listening acceptance.",
+            "reference":"/home/alex/Recordings/main_gun_and_reload_perfect.wav",
+            "score_cue":cue.id,"score_path":cue.path,"score_gain":cue.gain*0.08,
+            "duck_route":"actual Score bus + protect_interaction called by real control/contact APIs",
+            "profiles":receipts})).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn live_loader_motion_and_contact_sequence_review() {
+        let Some(prefix) = std::env::var_os("KESSEL_LOADER_SEQUENCE_REVIEW_PREFIX") else { return; };
+        let prefix = std::path::Path::new(&prefix);
+        let audio = Audio::new_capture();
+        let mut pcm = Vec::new();
+        for tick in 0..600 {
+            let t = tick as f32 / 60.0;
+            let extraction = if (1.2..2.1).contains(&t) { 0.35 } else { 0.0 };
+            let ram = if (4.2..5.2).contains(&t) { 0.40 } else { 0.0 };
+            audio.set_loader_motion(LoaderMotion { extraction_mps: extraction, ram_mps: ram },
+                LOADER_FRICTION_REFERENCE_DBA, 12.0);
+            for (at, cue) in [(30, crate::acoustics::MechanicalCue::MainGunRecoil),
+                (66, crate::acoustics::MechanicalCue::BreechOpen),
+                (324, crate::acoustics::MechanicalCue::BreechLock)] {
+                if tick == at { audio.play_mechanical(crate::acoustics::MechanicalParams {
+                    cue, intensity: 1.0, bearing_deg: 8.0, seed: 42 }, 0.78); }
+            }
+            if tick == 144 || tick == 312 {
+                let contact = CartridgeContact { kind: if tick == 144 { CartridgeKind::EmptyCase }
+                    else { CartridgeKind::LiveRound }, normal_speed_mps: if tick == 144 { 1.1 } else { 0.45 },
+                    tangential_speed_mps: 0.12, mass_kg: if tick == 144 { 7.0 } else { 15.0 },
+                    bearing_deg: 12.0, seed: 43 };
+                audio.play_cartridge_contact(contact, cartridge_contact_level_dba(&contact));
+            }
+            pcm.extend(audio.render_capture_frames(735).unwrap());
+        }
+        assert!(pcm.iter().all(|v| v.is_finite() && v.abs() < 1.0));
+        crate::acoustics::write_wav_stereo(prefix.with_extension("wav"), &pcm,
+            crate::acoustics::SAMPLE_RATE).unwrap();
+        std::fs::write(prefix.with_extension("json"), serde_json::to_vec_pretty(&serde_json::json!({
+            "scope":"Actual live Audio mixer and speed-driven loader sources; authored 10-second controlled timeline, not gameplay capture. Recoil mechanism only, muzzle report excluded.",
+            "events":["0.5 recoil", "1.1 breech open", "1.2–2.1 extraction motion", "2.4 actual empty-case contact", "4.2–5.2 ram motion", "5.2 round seat contact", "5.4 breech lock"],
+            "peak":pcm.iter().fold(0.0_f32, |m,x|m.max(x.abs())),
+            "audio_bank":audio.capture_metadata().unwrap()["audio_bank"]
+        })).unwrap()).unwrap();
     }
 
     #[test]

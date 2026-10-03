@@ -10,7 +10,9 @@
     for(var y=-1;y<=1;y+=1) {for(var x=-1;x<=1;x+=1) {
         edge=max(edge,textureLoad(mask,clamp(pixel+vec2(x,y),vec2(0),size-vec2(1)),0).r);
     }}
-    let alpha=clamp(edge-center,0.0,1.0);
+    // Resolved coverage is an edge mask, not fractional world emission. Use a stable
+    // binary selected silhouette while preserving the actual occluded sample coverage.
+    let alpha=select(0.0,1.0,edge>0.0 && center<=0.0);
     // One internal pixel around the visible silhouette, no filled overlay or X-ray selection.
-    return vec4(vec3(1.25,0.90,0.30)*alpha,alpha);
+    return vec4(vec3(1.0,0.78,0.24)*alpha,alpha);
 }

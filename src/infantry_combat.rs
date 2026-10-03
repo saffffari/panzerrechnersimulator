@@ -5,7 +5,11 @@ use crate::foot_ai::{
     FootAction, FootObservation, GoalKind, ObservationInput, PolicyRole, RelativeCue,
     WeaponSelection,
 };
-use glam::Vec3;
+use glam::{Vec3,Quat};
+/// Dependency-neutral prone pose contract shared with runtime anatomical segments.
+pub fn prone_rotation(yaw:f32)->Quat {Quat::from_rotation_y(yaw)*Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)}
+pub fn prone_head_offset(yaw:f32)->Vec3 {Vec3::Y*0.18+prone_rotation(yaw)*Vec3::new(0.0,1.405,0.0)}
+pub fn prone_torso_offset(yaw:f32)->Vec3 {Vec3::Y*0.18+prone_rotation(yaw)*Vec3::new(0.0,1.045,0.0)}
 pub const RIFLE_DAMAGE: f32 = 34.0;
 pub const TURN_RATE_RAD_S: f32 = 3.2;
 pub const RIFLE_INTERVAL: f32 = 1.6;
@@ -144,6 +148,7 @@ pub struct Combatant {
     pub yaw: f32,
     pub hp: f32,
     pub crouched: bool,
+    pub anatomical_prone:bool,
     pub crouch_requested: bool,
     pub crouch_phase: f32,
     pub pose_support: PoseSupport,
@@ -173,6 +178,7 @@ impl Combatant {
             yaw,
             hp: 100.0,
             crouched: false,
+            anatomical_prone:false,
             crouch_requested: false,
             crouch_phase: 0.0,
             pose_support: if team == Team::German {
@@ -199,6 +205,7 @@ impl Combatant {
         self.hp > 0.0
     }
     pub fn eye(&self) -> Vec3 {
+        if self.anatomical_prone {return self.pos+prone_head_offset(self.yaw);}
         if let Some(point) = self.perception_point { return point; }
         if self.pose_support == PoseSupport::GermanArticulatedV1 {
             self.pos
@@ -219,6 +226,7 @@ impl Combatant {
         Vec3::new(self.yaw.sin(), 0.0, -self.yaw.cos())
     }
     pub fn body_height(&self) -> f32 {
+        if self.anatomical_prone{return 0.45;}
         match self.pose_support {
             PoseSupport::StandingOnly => 1.75,
             PoseSupport::InstantCrouch => body_height(self.crouched),
@@ -226,6 +234,7 @@ impl Combatant {
         }
     }
     pub fn torso_offset(&self) -> Vec3 {
+        if self.anatomical_prone{return prone_torso_offset(self.yaw);}
         if let Some(point) = self.perception_point { return point-self.pos; }
         let retreat = if self.pose_support == PoseSupport::GermanArticulatedV1 {
             -0.22 * self.crouch_stage() as f32 / 4.0

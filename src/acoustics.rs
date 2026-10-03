@@ -459,7 +459,7 @@ fn steel_modes(p: ImpactParams) -> [SteelMode; 16] {
     // More damping after a breach, but a hole does not silence the surrounding structure.
     let breach = if p.penetrated { 0.76 - 0.10 * residual } else { 1.0 };
     let hardness = (p.velocity / 850.0).clamp(0.25, 1.25);
-    let cutoff = (850.0 + 1_400.0 * hardness)
+    let cutoff = (1_250.0 + 2_200.0 * hardness)
         * if p.shell == ShellClass::Apcr { 1.18 } else { 1.0 };
     std::array::from_fn(|i| {
         let detune = 1.0 + 0.007 * hash_noise(p.seed.wrapping_add(8_300 + i as u32 * 101));
@@ -623,9 +623,23 @@ fn synth_impact_with_ring(p: ImpactParams, ring_gain: f32) -> Vec<f32> {
     add_plate_body(&mut mono, p, coupling);
     // Contact: edge, grit and the brief panel flex.
     add_armor_contact(&mut mono, p, coupling);
-    // A dark ceiling keeps the brief contact grit below the modal body; low-pass loss also
-    // reflects listener distance. There is no distortion or per-event upward normalization.
-    let cutoff = 2_600.0 / (1.0 + p.station_dist_m.max(0.0) * 0.065);
+    // Local hard contact excites short upper plate modes as well as the low hull body. These
+    // inharmonic modes are deterministic material proxies, not measured Tiger eigenmodes.
+    // They share the real strike's energy/incidence and arrive with it; no extra collisions.
+    let hard_contact = match p.shell { ShellClass::He => 0.42, ShellClass::Apcr => 1.18, _ => 1.0 };
+    let edge_scale = (p.panel.base_freq() / 130.0).sqrt()
+        * (p.plate_thickness_mm / 80.0).clamp(0.25, 2.0).powf(0.10);
+    for (i, (hz, t60, gain)) in [(1_140.0, 0.28, 0.180), (1_730.0, 0.22, 0.160),
+        (2_610.0, 0.16, 0.120), (3_790.0, 0.11, 0.070)].into_iter().enumerate() {
+        let detune = 1.0 + 0.025 * hash_noise(p.seed.wrapping_add(0x434C_414E + i as u32));
+        add_steel_mode(&mut mono, SteelMode { hz: hz * edge_scale * detune,
+            t60_s: t60 * p.panel.ring_scale().sqrt(), gain },
+            coupling * hard_contact * (0.55 + 0.45 * normal), attack_s * 0.65);
+    }
+    // Structure transmission retains a sharp local steel attack; distance still dulls it.
+    // No airborne hatch muffle is applied to this own-hull structural path.
+    // There is no distortion or per-event upward normalization.
+    let cutoff = 5_200.0 / (1.0 + p.station_dist_m.max(0.0) * 0.065);
     let a = 1.0 - (-TAU * cutoff / sr).exp();
     let (mut lp1, mut lp2) = (0.0f32, 0.0f32);
     for s in &mut mono {
@@ -1708,8 +1722,8 @@ fn synth_damage_event_components(
     let explosive = matches!(profile.kind,
         DamageSoundKind::InternalExplosion | DamageSoundKind::Catastrophic);
     let ring_gain = match profile.kind {
-        DamageSoundKind::InternalExplosion => 0.28,
-        DamageSoundKind::Catastrophic => 0.10,
+        DamageSoundKind::InternalExplosion => 0.40,
+        DamageSoundKind::Catastrophic => 0.18,
         _ => 1.0,
     };
     let impact = synth_impact_with_ring(p, ring_gain);
@@ -1733,7 +1747,7 @@ fn synth_damage_event_components(
         .max((body_tail * SAMPLE_RATE as f32) as usize * 2)
         / 2;
     let mut main = vec![0.0f32; frames.max(1) * 2];
-    mix_stereo_at(&mut main, &impact, 0, if explosive { 0.48 } else { 0.92 });
+    mix_stereo_at(&mut main, &impact, 0, if explosive { 0.65 } else { 0.92 });
     if !matches!(profile.kind, DamageSoundKind::ArmorRicochet) {
         // A confirmed explosive burst is pressure/rupture-dominant; a dry hole remains steel
         // and fragment-dominant. The combined group is calibrated once by the playback caller.
@@ -2019,6 +2033,7 @@ pub fn synth_mechanical(p: MechanicalParams) -> Vec<f32> {
         C::ShellDrop => (0.68, 82.0, 0.34, 0.18, 18.0, [0.0, 0.22, 0.0, 0.0], 2),
         C::BodyImpact => (0.74, 54.0, 0.05, 0.55, 22.0, [0.11, 0.29, 0.0, 0.0], 2),
     };
+    let bearing_base=if p.bearing_deg.is_finite(){p.bearing_deg}else{0.0};
     let sr = SAMPLE_RATE as f32;
     let frames = (duration * sr) as usize;
     let intensity = p.intensity.clamp(0.05, 1.5);
@@ -2039,10 +2054,10 @@ pub fn synth_mechanical(p: MechanicalParams) -> Vec<f32> {
             C::ShellLift | C::BodyImpact => (core::f32::consts::PI * x).sin().max(0.0),
             _ => (-t / 0.16).exp(),
         };
-        let s = scrape * intensity * scrape_env * (band - 0.62 * low) * 0.23;
-        let bearing = p.bearing_deg + drift * x;
-        let pan = ((bearing.to_radians().sin() + 1.0) * core::f32::consts::FRAC_PI_4)
-            .clamp(0.0, core::f32::consts::FRAC_PI_2);
+        let s = scrape * intensity * scrape_env * (band - 0.62 * low) * 0.23
+            * smoothstep(0.0, 0.0004, t);
+        let bearing = bearing_base + drift * x;
+        let pan = core::f32::consts::FRAC_PI_4 + bearing.to_radians().sin()*0.32;
         out[n * 2] += s * pan.cos();
         out[n * 2 + 1] += s * pan.sin();
     }
@@ -2067,15 +2082,14 @@ pub fn synth_mechanical(p: MechanicalParams) -> Vec<f32> {
         } else {
             0.12
         } / (1.0 + hit as f32 * 0.18);
-        let bearing = p.bearing_deg + drift * (at_s / duration) + hit as f32 * drift * 0.22;
-        let pan = ((bearing.to_radians().sin() + 1.0) * core::f32::consts::FRAC_PI_4)
-            .clamp(0.0, core::f32::consts::FRAC_PI_2);
+        let bearing = bearing_base + drift * (at_s / duration) + hit as f32 * drift * 0.22;
+        let pan = core::f32::consts::FRAC_PI_4 + bearing.to_radians().sin()*0.32;
         for n in at..frames {
             let t = (n - at) as f32 / sr;
             if t > decay * 5.0 {
                 break;
             }
-            let env = (-t / decay).exp();
+            let env = smoothstep(0.0, 0.0004, t) * (-t / decay).exp();
             let noise = hash_noise(
                 p.seed
                     .wrapping_add(hit as u32 * 1_009)
@@ -2096,7 +2110,36 @@ pub fn synth_mechanical(p: MechanicalParams) -> Vec<f32> {
             out[n * 2 + 1] += s * pan.sin();
         }
     }
-    soft_limit_in_place(&mut out, 0.94);
+    if matches!(p.cue, C::MainGunRecoil | C::BreechOpen | C::BreechLock) {
+        // Only an actual fired-gun or breech contact mechanism excites this compact steel return. Keep it separate
+        // from muzzle gas and from shell extraction/drop; it cannot ring on unrelated controls.
+        // Authored recoil/breech timbre, not measured Tiger resonant frequencies.
+        let mut steel = vec![0.0; frames];
+        let modes = match p.cue {
+            C::BreechLock => [(1_170.0, 0.20, 0.22), (1_890.0, 0.14, 0.14), (3_030.0, 0.09, 0.07)],
+            C::BreechOpen => [(930.0, 0.14, 0.15), (1_570.0, 0.11, 0.10), (2_530.0, 0.08, 0.06)],
+            _ => [(1_380.0, 0.31, 0.18), (2_070.0, 0.24, 0.13), (3_160.0, 0.17, 0.08)],
+        };
+        for (i, (hz, t60, gain)) in modes.into_iter().enumerate() {
+            let detune = 1.0 + 0.018 * hash_noise(p.seed.wrapping_add(0x5245_434F + i as u32));
+            add_steel_mode(&mut steel, SteelMode { hz: hz * detune, t60_s: t60, gain },
+                intensity, 0.0010);
+        }
+        let pan = core::f32::consts::FRAC_PI_4 + bearing_base.to_radians().sin()*0.32;
+        for (i, sample) in steel.into_iter().enumerate() {
+            out[2 * i] += sample * pan.cos();
+            out[2 * i + 1] += sample * pan.sin();
+        }
+        attenuate_over_peak(&mut out, 0.94);
+    } else {
+        // Apply saturation to stereo magnitude, then pan. Per-ear saturation would change
+        // total source energy just because the player turns toward the same local contact.
+        let ceiling=0.94*core::f32::consts::SQRT_2;
+        for frame in out.chunks_exact_mut(2) {
+            let norm=frame[0].hypot(frame[1]);
+            if norm>0.0 {let scale=ceiling*(norm/ceiling).tanh()/norm;frame[0]*=scale;frame[1]*=scale;}
+        }
+    }
     out
 }
 
@@ -2649,8 +2692,11 @@ fn add_heavy_movement(dst: &mut [f32], voice: DestructionVoice, gain: f32, seed:
             dst,
             at,
             frequency * variation,
-            gain * weight * if index & 1 == 0 { 1.0 } else { -1.0 },
+            gain * weight * 0.30 * if index & 1 == 0 { 1.0 } else { -1.0 },
         );
+        // Keep the mass displacement, but do not let a 43–62 Hz peak dominate
+        // A-weighted calibration and suppress the audible steel contact under the limiter.
+        add_ricker_wavelet(dst,at,(frequency*3.2).max(150.0),gain*weight*0.55);
         add_dark_noise_packet(
             dst,
             at - 0.012,
@@ -2716,14 +2762,14 @@ fn synth_tank_destruction(voice: DestructionVoice, seed: u32) -> Vec<f32> {
 
     if profile.pressure_gain > 0.0 {
         // One finite compression/rebound with two scales at the same centre, not a second
-        // delayed boom. The deep displacement remains, but the shorter 98–109 Hz component
+        // delayed boom. The deep displacement remains, but the shorter 180–197 Hz component
         // carries its audible body. The old 32–41 Hz lobe dominated A-weighted normalization:
         // at 2 m a headset-filtered ammunition blast asked for >30 dB of master limiting and
         // spent ~80% of its energy below 50 Hz, suppressing the useful impact with it.
         // These are authored waveform scales, not a solved blast pressure history. Physical
         // source levels, enclosure/headset transfer and the common master remain unchanged.
-        add_ricker_wavelet(&mut mono, 0.055, profile.pressure_hz, profile.pressure_gain * 0.25);
-        add_ricker_wavelet(&mut mono, 0.055, (profile.pressure_hz * 2.65).max(98.0),
+        add_ricker_wavelet(&mut mono, 0.055, profile.pressure_hz, profile.pressure_gain * 0.10);
+        add_ricker_wavelet(&mut mono, 0.055, (profile.pressure_hz * 4.8).max(180.0),
             profile.pressure_gain);
         add_dark_noise_packet(
             &mut mono,
@@ -2733,6 +2779,13 @@ fn synth_tank_destruction(voice: DestructionVoice, seed: u32) -> Vec<f32> {
             profile.pressure_gain * 0.38,
             seed ^ 0x424C_4153,
         );
+        // The pressure event has an aperiodic audible body under its single onset. A very
+        // narrow lobe alone had excessive crest and asked for >20dB master reduction at10m,
+        // erasing the level ordering of a larger source. This is timbre/crest shaping before
+        // measured LAF calibration, never extra detonation energy or a second timed boom.
+        add_dark_noise_packet(&mut mono,0.018,
+            if matches!(voice,DestructionVoice::TurretPop) {0.18}else{0.12},
+            420.0,profile.pressure_gain*1.35,seed^0x5052_4553);
     }
     add_armor_rupture(&mut mono, profile.rupture_gain, seed ^ 0x4152_4D52);
     add_heavy_movement(&mut mono, voice, profile.movement_gain, seed ^ 0x4D41_5353);
@@ -4619,8 +4672,14 @@ mod tests {
                 "{signature:?} exceeds digital per-cue headroom ({peak:.4})"
             );
 
-            let body: f32 = band_bins(&voice, 28, 3_200).iter().sum();
-            let hiss: f32 = band_bins(&voice, 4_250, 10_000).iter().sum();
+            // The source intentionally gained narrow1140–3790Hz steel modes and a5.2kHz
+            // transfer cutoff. Sparse125Hz probes missed those narrow lines and called their
+            // skirts hiss. Equal10Hz spacing resolves the modes; the out-of-transfer band
+            // remains an independent broadband-noise guard with the original energy limit.
+            let body: f32 = (30..=5200).step_by(10)
+                .map(|hz|goertzel_power(&voice,hz as f32,8192)).sum();
+            let hiss: f32 = (6500..=10000).step_by(10)
+                .map(|hz|goertzel_power(&voice,hz as f32,8192)).sum();
             assert!(
                 hiss < body * 0.035,
                 "{signature:?} regressed toward broadband white noise (body={body:.5} hiss={hiss:.5})"
@@ -4635,10 +4694,21 @@ mod tests {
                 "{signature:?} fails to dissipate structural energy");
         }
 
+        // A deterministic white-noise negative control must fail the same guard. This
+        // prevents the expanded steel-mode body band from merely weakening the regression.
+        let mut random=0x81c039_u32;
+        let white:Vec<f32>=(0..8192).flat_map(|_| {
+            random^=random<<13;random^=random>>17;random^=random<<5;
+            let value=(random as f32/u32::MAX as f32*2.0-1.0)*0.1;[value,value]
+        }).collect();
+        let body:f32=(30..=5200).step_by(10).map(|hz|goertzel_power(&white,hz as f32,8192)).sum();
+        let hiss:f32=(6500..=10000).step_by(10).map(|hz|goertzel_power(&white,hz as f32,8192)).sum();
+        assert!(hiss>=body*0.035,"broadband negative control was falsely accepted as steel resonance");
+
         for variant in [1, 2] {
             let fallback = synth_procedural_dry(ProceduralSound::ArmorClang(variant));
-            let body: f32 = band_bins(&fallback, 28, 3_200).iter().sum();
-            let hiss: f32 = band_bins(&fallback, 4_250, 10_000).iter().sum();
+            let body:f32=(30..=5200).step_by(10).map(|hz|goertzel_power(&fallback,hz as f32,8192)).sum();
+            let hiss:f32=(6500..=10000).step_by(10).map(|hz|goertzel_power(&fallback,hz as f32,8192)).sum();
             assert!(
                 hiss < body * 0.035 && crest_factor(segment(&fallback, 0.0, 0.18)) > 2.0,
                 "legacy armor fallback {variant} bypassed the structural ring"
@@ -4876,6 +4946,25 @@ mod tests {
             l2 += al * (l1 - l2);
             h2 - l2
         }).collect()
+    }
+
+    #[test]
+    fn fired_recoil_keeps_a_short_metallic_return_and_control_cues_separate() {
+        let cue = |cue| synth_mechanical(MechanicalParams {
+            cue, intensity: 1.15, bearing_deg: 4.0, seed: 0xC1A4_0001 });
+        let recoil = cue(MechanicalCue::MainGunRecoil);
+        finite_stereo(&recoil);
+        assert_eq!(recoil, cue(MechanicalCue::MainGunRecoil));
+        assert!(recoil[0].abs() < 1.0e-6);
+        let onset = band_mono(&recoil, 1_000.0, 4_000.0);
+        let late = &onset[(0.45 * SAMPLE_RATE as f32) as usize..];
+        let early = &onset[(0.015 * SAMPLE_RATE as f32) as usize..
+            (0.09 * SAMPLE_RATE as f32) as usize];
+        let mono_rms = |v: &[f32]| (v.iter().map(|x| x*x).sum::<f32>() / v.len() as f32).sqrt();
+        assert!(mono_rms(early) > mono_rms(late) * 3.0,
+            "recoil metal return must decay instead of creating a sustained whine");
+        assert_ne!(recoil, cue(MechanicalCue::CasingDrop));
+        assert_ne!(recoil, cue(MechanicalCue::ShellRam));
     }
 
     #[test]

@@ -346,9 +346,9 @@ impl Game {
     }
 
     fn is_gun_crew(&self, index: usize) -> bool {
-        (0..AT_GUNS).any(|g| self.at_guns[g].is_some()
+        (0..AT_GUNS).any(|g| self.at_guns[g].is_some_and(|gun| gun.state != GunState::Wrecked)
             && (FIRST_CREW_SOLDIER + g * CREW..FIRST_CREW_SOLDIER + (g + 1) * CREW).contains(&index))
-            || self.at_guns.iter().flatten().any(|gun| gun.riflemen.contains(&Some(index)))
+            || self.at_guns.iter().flatten().any(|gun| gun.state != GunState::Wrecked && gun.riflemen.contains(&Some(index)))
     }
 
     /// The artillerymen are dead but the gun still stands: the nearest living riflemen run to it.
@@ -364,7 +364,7 @@ impl Game {
             let taken: Vec<usize> = riflemen.iter().flatten().copied().collect();
             let nearest = (0..self.soldiers.len())
                 .filter(|&i| !self.is_gun_crew(i) && !taken.contains(&i))
-                .filter(|&i| self.soldiers[i].alive && self.soldiers[i].pos.distance(gun.pos) <= RECREW_REACH_M)
+                .filter(|&i| self.soldiers[i].alive && !self.soldiers[i].is_fleeing() && self.soldiers[i].pos.distance(gun.pos) <= RECREW_REACH_M)
                 .min_by(|&a, &b| self.soldiers[a].pos.distance(gun.pos).total_cmp(&self.soldiers[b].pos.distance(gun.pos)));
             let Some(index) = nearest else { break; };
             let spot = gun.carriage().transform_point3(Vec3::new(if slot == 0 { 0.55 } else { -0.55 }, 0.0, -0.7));
@@ -474,12 +474,17 @@ impl Game {
 
     /// A cannon round or a close high-explosive burst wrecks the gun.
     pub(super) fn wreck_at_gun(&mut self, g: usize, cause: &str) {
-        if let Some(gun) = self.at_guns.get_mut(g).and_then(Option::as_mut) {
-            if gun.state != GunState::Wrecked {
-                gun.state = GunState::Wrecked;
-                println!("[at-guns] gun {g} wrecked by {cause}");
+        let Some(gun) = self.at_guns.get(g).copied().flatten() else { return; };
+        if gun.state == GunState::Wrecked { return; }
+        self.at_guns[g].as_mut().unwrap().state = GunState::Wrecked;
+        // Only soldiers actually assigned to this destroyed weapon know to abandon it.
+        for index in (FIRST_CREW_SOLDIER + g * CREW..FIRST_CREW_SOLDIER + (g + 1) * CREW)
+            .chain(gun.riflemen.iter().flatten().copied()) {
+            if let Some(soldier) = self.soldiers.get_mut(index) {
+                soldier.begin_flee_from(gun.pos);
             }
         }
+        println!("[at-guns] gun {g} wrecked by {cause}; surviving crew abandon position");
     }
 
     /// High explosive bursting this close wrecks the gun (tuning; its crew take the blast as

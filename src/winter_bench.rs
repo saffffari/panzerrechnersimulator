@@ -5,13 +5,38 @@ use super::*;
 
 pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     anyhow::ensure!((60..=240).contains(&frames), "winter-bench requires 60..240 frames");
-    anyhow::ensure!(["dense","combat","fire","coop2","idle"].contains(&mode),"unknown winter-bench scenario");
+    anyhow::ensure!(["dense","combat","fire","coop2","idle","commander","gunner"].contains(&mode),"unknown winter-bench scenario");
+    let crew_profile = matches!(mode,"commander"|"gunner");
+    // Native view regressions need the exact same deployment on every run. Other legacy
+    // fixtures retain their existing policy; callers can pin those with the same variable.
+    if crew_profile && std::env::var("KESSEL_CANYON_SEED").is_err() {
+        std::env::set_var("KESSEL_CANYON_SEED","19421003");
+    }
     let instance=create_instance(); let adapter=request_adapter(&instance,None);
     let info=adapter.get_info(); graphics::set_active_preset(graphics::GraphicsPreset::for_adapter(info.device_type));
     let (device,queue)=request_device(&adapter);
+    // Optional final display-sized blit, while all scene work remains at the internal grid.
+    // This exercises native surface encoding, but intentionally has no compositor/vsync.
+    let display_extent=std::env::var("KESSEL_WINTER_BENCH_SURFACE").ok().map(|raw| {
+        let (w,h)=raw.split_once('x').ok_or_else(||anyhow::anyhow!("surface must be WIDTHxHEIGHT"))?;
+        let (w,h)=(w.parse::<u32>()?,h.parse::<u32>()?);
+        anyhow::ensure!((1..=7680).contains(&w) && (1..=4320).contains(&h),"surface dimensions out of bounds");
+        Ok::<_,anyhow::Error>([w,h])
+    }).transpose()?;
+    anyhow::ensure!(display_extent.is_none() || crew_profile,
+        "display blit is supported by commander and gunner modes only");
+    let display_format=wgpu::TextureFormat::Bgra8UnormSrgb;
+    let display_target=display_extent.map(|[width,height]|device.create_texture(&wgpu::TextureDescriptor {
+        label:Some("winter-bench-native-surface-equivalent"),
+        size:wgpu::Extent3d {width,height,depth_or_array_layers:1},mip_level_count:1,sample_count:1,
+        dimension:wgpu::TextureDimension::D2,format:display_format,
+        usage:wgpu::TextureUsages::RENDER_ATTACHMENT,view_formats:&[],
+    }));
+    let display_view=display_target.as_ref().map(|texture|texture.create_view(&Default::default()));
     let path=act_manifest::playtest_manifest_path();
     let act=act_manifest::select_runtime_manifest(Some(path.clone()))?.unwrap();
     let (mut r,mut g)=Game::build_playtest_act(&device,&queue,false,&world::act(act))?;
+    g.enable_singleplayer_crew();
     // A canyon course workshop fields its own defence (src/canyon.rs); any other map the winter one.
     if g.enable_canyon_course().is_err() { g.enable_live_playtest_encounter(); }
     g.mute_audio(); g.set_defer_rtt_to_render(true);
@@ -19,7 +44,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     // replacing the measured workload with a death card; no play-session policy is changed.
     g.god=true;
     let coop=mode=="coop2";
-    let stress=mode!="dense" && mode!="idle";
+    let stress=matches!(mode,"combat"|"fire"|"coop2");
     let unbounded=std::env::var("KESSEL_WINTER_BENCH_UNBOUNDED").as_deref()==Ok("1");
     let update_mode=std::env::var("KESSEL_WINTER_BENCH_UPDATE").unwrap_or_else(|_|"single".into());
     anyhow::ensure!(["single","manual","catchup"].contains(&update_mode.as_str()),"invalid benchmark update mode");
@@ -28,7 +53,9 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     for (role,id) in [(lan::LanRole::Commander,1),(lan::LanRole::Gunner,2)] {
         crew.roster[role as usize]=id; crew.inputs[role as usize].post=role;
     }
-    let input=TankInput { coop:coop.then_some(crew),coop_host:coop,couch_crew:coop,..TankInput::default() };
+    let drive=std::env::var("KESSEL_WINTER_BENCH_DRIVE").ok().map(|value|value.parse::<f32>()).transpose()?.unwrap_or(0.0);
+    anyhow::ensure!(drive.is_finite() && (-1.0..=1.0).contains(&drive),"benchmark drive must be in [-1,1]");
+    let input=TankInput {drive,coop:coop.then_some(crew),coop_host:coop,couch_crew:coop,..TankInput::default() };
     if stress {
         for (i,(x,z)) in [(1820.0,120.0),(1900.0,100.0),(1960.0,190.0)].into_iter().enumerate() {
             g.debug_place_enemy(i,x,z,0.0);
@@ -36,6 +63,8 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     }
     if mode=="fire" || coop { g.station=game::Station::Loader; g.debug_start_fire(); }
     if mode=="idle" { g.station=game::Station::Loader; }
+    if mode=="commander" {g.station=game::Station::Commander;g.commander_outside=false;}
+    if mode=="gunner" {g.station=game::Station::Gunner;g.commander_outside=false;}
     g.update(&input,1.0/120.0,&mut r);
     let (mut totals,mut simulation,mut submit,mut fences)=(Vec::new(),Vec::new(),Vec::new(),Vec::new());
     let mut gpu=gpu_profile::GpuProfileSummary::default();
@@ -78,6 +107,34 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
             g.configure_crew_render_view(lan::LanRole::Gunner,false,&mut r);
             r.set_active_view(3); r.set_coop_shadow_reuse(!unbounded); r.render_offscreen(&device,&queue);
             if !unbounded { r.end_coop_shadow_frame(); }
+        } else if crew_profile {
+            if !unbounded {r.begin_coop_shadow_frame(g.player.center());}
+            let ready=g.refresh_rtt_periscopes(&mut r);
+            r.set_coop_shadow_reuse(!unbounded && ready);
+            if !unbounded && g.protected_main_interior_view() {r.camera.zfar=PROTECTED_INTERIOR_FAR_M;}
+            if mode=="gunner" {
+                anyhow::ensure!(g.optic_composite_active(),"gunner profile did not reach native ADS");
+                r.weather_shelter=1.0;
+                g.configure_crew_render_view(lan::LanRole::Gunner,true,&mut r);
+                r.set_active_view(0);
+                let local_body_visibility = g.hide_first_person_for_optic(&mut r);
+                r.render_optic_snapshot(&device,&queue);
+                for (slot, visible) in local_body_visibility {r.set_visible(slot,visible);}
+                let (eye,forward,fov)=g.gunner_interior_camera();
+                r.camera.pos=eye;r.camera.set_forward(forward);r.camera.fov_y=fov;
+                if !unbounded {r.camera.zfar=PROTECTED_INTERIOR_FAR_M;r.precipitation=0.0;}
+                r.reticle=false;r.optic_mask=4.0;
+                g.configure_crew_render_view(lan::LanRole::Gunner,false,&mut r);
+                g.apply_cinematic_camera_impulses(&mut r);
+                r.set_active_view(3);r.rt_skip=true;r.set_coop_shadow_reuse(!unbounded);
+            }
+            if let (Some(view),Some([width,height]))=(&display_view,display_extent) {
+                // Preserve the gunner surround's temporal context, as render_optic_composite does.
+                r.render_to_surface_view(&device,&queue,view,display_format,&renderer::BlitRect {
+                    src_uv:[0.0,0.0,1.0,1.0],dst_px:[0.0,0.0,width as f32,height as f32],clear:true,
+                });
+            } else {r.render_offscreen(&device,&queue);}
+            if !unbounded {r.end_coop_shadow_frame();}
         } else if mode=="fire" || mode=="idle" {
             if !unbounded { r.begin_coop_shadow_frame(g.player.center()); }
             let ready=g.refresh_rtt_periscopes(&mut r); r.set_coop_shadow_reuse(!unbounded && ready);
@@ -127,8 +184,10 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     let report=serde_json::json!({"schema":"panzer.winter-benchmark/v2","scenario":mode,
         "variant":if unbounded {"no_shared_shadow_or_protected_clipping"} else {"shipping"},
         "adapter":info.name,"backend":format!("{:?}",info.backend),"manifest":path,
-        "internal_resolution":[r.iw,r.ih],"human_views":if coop{2}else{1},
-        "warmup_frames":warmup,"timed_frames":frames,"simulation_dt_s":simulation_dt,"update_mode":update_mode,
+        "internal_resolution":[r.iw,r.ih],"surface_equivalent_blit":display_extent,
+        "station":if mode=="gunner" {"gunner_ads"}else if mode=="commander" {"commander_closed"}else if mode=="idle"||mode=="fire" {"loader"}else {"fixture"},
+        "human_views":if coop{2}else{1},
+        "warmup_frames":warmup,"timed_frames":frames,"simulation_dt_s":simulation_dt,"update_mode":update_mode,"drive_input":drive,
         "requested_canyon_seed":std::env::var("KESSEL_CANYON_SEED").ok(),
         "player_state":{"position":g.player.pos.to_array(),"heading":g.player.heading,
             "turret_yaw":g.player.turret_yaw,"gun_pitch":g.player.gun_pitch,"speed":g.player.speed},
@@ -146,7 +205,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
             "point_lights":{"offered_last_frame":lights_offered,"admitted_last_frame":lights_admitted,
                 "budget":renderer::N_LIGHTS}},"gpu":gpu.report(),
         "mission":g.winter_mission_snapshot(),"contacts":g.winter_encounter_snapshot(),
-        "scope":"Offscreen fenced scene frame at internal_resolution; human_views reports the actual solo/cooperative workload. The cooperative case includes commander, gunner optic and interior views. Per-view crew-rig visibility updates, final desktop blits, HUD, input polling and presentation are excluded. Stress initial enemy positions and scheduled fire are fixtures, not AI validation. Audio muted. God mode holds the measured workload alive. No claim of universal worst case or native frame-rate certification."});
+        "scope":"Offscreen fenced scene frame at internal_resolution; optional surface_equivalent_blit includes desktop-size blit encoding but excludes compositor/vsync; human_views reports the actual solo/cooperative workload. The cooperative case includes commander, gunner optic and interior views. Per-view crew-rig visibility updates, HUD, input polling and presentation are excluded. Final desktop blit is excluded unless surface_equivalent_blit is present. Stress initial enemy positions and scheduled fire are fixtures, not AI validation. Audio muted. God mode holds the measured workload alive. No claim of universal worst case or native frame-rate certification."});
     let out=std::path::Path::new(output); if let Some(parent)=out.parent(){std::fs::create_dir_all(parent)?;}
     std::fs::write(out,serde_json::to_vec_pretty(&report)?)?;
     println!("[winter-bench] {mode}: {}",report["frame_total"]);

@@ -21,6 +21,8 @@ use crate::ui::{Align, Ui};
 
 #[path = "renderer_fine_vfx.rs"]
 mod renderer_fine_vfx;
+#[path = "renderer_weapon_particles.rs"]
+pub(crate) mod renderer_weapon_particles;
 
 #[path = "track_ruts.rs"]
 mod track_ruts;
@@ -33,6 +35,11 @@ mod light_history;
 
 #[path = "renderer_scene_visibility.rs"]
 mod renderer_scene_visibility;
+
+#[path = "terrain_shadow_pages.rs"]
+mod terrain_shadow_pages;
+#[path = "rigid_triangle_pages.rs"]
+mod rigid_triangle_pages;
 
 #[path = "surface_reconstruction.rs"]
 mod surface_reconstruction;
@@ -954,12 +961,14 @@ struct ExposureClockUniform {
     fov_y: f32,
     aspect: f32,
     monocular: f32,
+    transient_source: f32,
+    _pad: [f32;3],
 }
 
-/// The WGSL clock is four scalar lanes. Keep this assertion beside the host declaration so a
+/// The WGSL clock is eight scalar lanes. Keep this assertion beside the host declaration so a
 /// future field/layout edit cannot silently recreate a Vulkan bind-size mismatch.
 const EXPOSURE_CLOCK_UNIFORM_BYTES: u64 = std::mem::size_of::<ExposureClockUniform>() as u64;
-const _: [(); 16] = [(); EXPOSURE_CLOCK_UNIFORM_BYTES as usize];
+const _: [(); 32] = [(); EXPOSURE_CLOCK_UNIFORM_BYTES as usize];
 
 /// A replay dolly is authored continuous motion even when it travels several metres per frame.
 /// Other discontinuities still cut, and the accumulator still checks each reprojected depth/ID.
@@ -1398,6 +1407,9 @@ struct MeshGpu {
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
     index_count: u32,
+    /// Separate exact index ordering for spatially culled terrain shadows; never primary/RT.
+    shadow_pages: Option<(wgpu::Buffer, Arc<terrain_shadow_pages::Pages>)>,
+    rigid_pages: Option<(wgpu::Buffer, Arc<rigid_triangle_pages::Pages>)>,
     tex_bind: Arc<wgpu::BindGroup>,
     model: glam::Mat4,
     visible: bool,
@@ -1444,6 +1456,40 @@ struct MeshGpu {
     /// integrator packs this without simplification so committed BLAS primitive indices address
     /// the same vertices and textures the raster draw uses.
     rt_source: Option<CpuMesh>,
+}
+
+impl MeshGpu {
+    fn rigid_index_buffer(&self) -> &wgpu::Buffer {
+        if !self.temporal_dynamic && !self.visibility_deformable {
+            if let Some((buffer, _)) = &self.rigid_pages { return buffer; }
+        }
+        &self.ibuf
+    }
+    fn primary_index_ranges(&self, matrix: glam::Mat4) -> Vec<std::ops::Range<u32>> {
+        if !self.temporal_dynamic && !self.visibility_deformable {
+            if let Some((_, pages)) = &self.rigid_pages { return pages.primary_ranges(matrix * self.model); }
+        }
+        vec![0..self.index_count]
+    }
+    fn shadow_index_buffer(&self) -> &wgpu::Buffer {
+        if !self.temporal_dynamic && !self.visibility_deformable {
+            if let Some((buffer, _)) = &self.rigid_pages { return buffer; }
+        }
+        if self.track_recv {
+            if let Some((buffer, _)) = &self.shadow_pages { return buffer; }
+        }
+        &self.ibuf
+    }
+
+    fn shadow_index_ranges(&self, matrix: glam::Mat4, size: u32) -> Vec<std::ops::Range<u32>> {
+        if !self.temporal_dynamic && !self.visibility_deformable {
+            if let Some((_, pages)) = &self.rigid_pages { return pages.ranges(matrix * self.model, size); }
+        }
+        if self.track_recv {
+            if let Some((_, pages)) = &self.shadow_pages { return pages.ranges(matrix * self.model, size); }
+        }
+        vec![0..self.index_count]
+    }
 }
 
 /// Immutable GPU geometry/material shared by every spatial page of one instanced asset. Keeping the
@@ -2455,6 +2501,8 @@ pub struct Renderer {
     /// Legacy gunner-optic obscuration envelope. Retained while the game-side producer migrates;
     /// the screen-space snow-dust veil was not a modeled medium and is no longer rendered.
     pub optic_blast: f32,
+    /// Source-qualified admission for the observer's flash detector, never added light energy.
+    pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
     /// renderer: crew injury is represented by physical grains, stains and bodies in scene space.
     pub crew_ko: f32,
@@ -2545,6 +2593,7 @@ pub struct Renderer {
     mesh_pipe: wgpu::RenderPipeline,
     mesh_inst_pipe: wgpu::RenderPipeline,
     fine_vfx: renderer_fine_vfx::FineVfx,
+    weapon_particles: renderer_weapon_particles::WeaponParticles,
     shadow_inst_pipe: wgpu::RenderPipeline,
     meshes: Vec<MeshGpu>,
     inst_prototypes: Vec<InstPrototype>,
@@ -3280,6 +3329,20 @@ fn make_mesh_gpu(
         usage: wgpu::BufferUsages::INDEX | bi,
     });
     let tex_bind = material_cache.bind_for(device, queue, material_bgl, sampler, m);
+    let shadow_pages = terrain_shadow_pages::prepare(m).map(|prepared| {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("exact-terrain-shadow-pages"), contents: bytemuck::cast_slice(&prepared.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        (buffer, Arc::new(prepared.pages))
+    });
+    let rigid_pages = rigid_triangle_pages::prepare(m).map(|prepared| {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("exact-rigid-triangle-pages"), contents: bytemuck::cast_slice(&prepared.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        (buffer, Arc::new(prepared.pages))
+    });
     MeshGpu {
         visibility_geometry: None,
         visibility_source: (m.vertices.len() <= 4096).then(|| m.clone()),
@@ -3289,6 +3352,8 @@ fn make_mesh_gpu(
         vbuf,
         ibuf,
         index_count: m.indices.len() as u32,
+        shadow_pages,
+        rigid_pages,
         tex_bind,
         model: glam::Mat4::IDENTITY,
         visible: true,
@@ -4967,6 +5032,8 @@ impl Renderer {
                 fov_y: 1.0,
                 aspect: 16.0 / 9.0,
                 monocular: 0.0,
+                transient_source: 0.0,
+                _pad: [0.0;3],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -5556,6 +5623,7 @@ impl Renderer {
                     &sky_visibility.sampling_bgl, &cabin_shadows.sampling_bgl, &cabin_medium_view)
             }),
             fine_vfx: renderer_fine_vfx::FineVfx::new(device, &sky_visibility.sampling_bgl, &physical_environment_bgl, &cabin_shadows.sampling_bgl),
+            weapon_particles: renderer_weapon_particles::WeaponParticles::new(device, &sky_visibility.sampling_bgl, &physical_environment_bgl, &cabin_shadows.sampling_bgl),
             geometry_aa: (shader_backend && renderer_aa::enabled()).then(||renderer_aa::GeometryAa::new(
                 device,iw,ih,&mesh_pl,&mesh_shader,&sky_pl,&sky_shader)),
             raster_ssao,
@@ -5579,6 +5647,7 @@ impl Renderer {
             fog_density: 0.02,
             reticle: false,
             optic_blast: 0.0,
+            observer_flash_source: false,
             crew_ko: 0.0,
             crew_ko_dir: [0.72, 0.69],
             concussion: 0.0,
@@ -5816,7 +5885,7 @@ impl Renderer {
         macro_rules! retain { ($($field:ident),* $(,)?) => { $(
             std::mem::swap(&mut next.$field, &mut self.$field);
         )* }; }
-        retain!(camera, master_retro, display_tuning, display_dither_pattern, display_grade, transport_quality, exposure_override, fog_density, reticle, optic_blast,
+        retain!(camera, master_retro, display_tuning, display_dither_pattern, display_grade, transport_quality, exposure_override, fog_density, reticle, optic_blast, observer_flash_source,
             crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
             sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, weather_override, weather_original,
@@ -5835,6 +5904,8 @@ impl Renderer {
         next.cabin_medium_uniform=self.cabin_medium_uniform;
         next.cabin_medium_pose=self.cabin_medium_pose;
         next.fine_vfx.copy_registrations_from(&self.fine_vfx);
+        // View buffers/bindings belong to the new render extents; producer records are resent.
+        // Never retain a depth binding from the renderer being resized.
         next.camera.aspect = size.0 as f32 / size.1 as f32;
         println!("[display] render targets {}x{}; retained {} meshes, {} instance batches",
             size.0, size.1, next.meshes.len(), next.inst_batches.len());
@@ -5985,6 +6056,29 @@ impl Renderer {
     }
     /// Update a bounded articulated actor without changing topology, materials, draw count or
     /// pipelines. Hardware-ray meshes are excluded: their immutable BLAS may not follow vertices.
+    /// Rare anatomical topology mask; retains index capacity and never mutates a shared actor buffer.
+    pub fn upload_pose_indices(&mut self,slot:usize,indices:&[u32])->bool {
+        let Some(mesh)=self.meshes.get_mut(slot) else{return false;};
+        if indices.is_empty() || indices.len()!=mesh.index_count as usize || (self.rt_on&&!mesh.raster_only) {return false;}
+        let vertex_count=mesh.vbuf.size()/std::mem::size_of::<crate::gltf_load::Vertex>() as u64;
+        if indices.iter().any(|i|*i as u64>=vertex_count){return false;}
+        if self.raster_lighting&&self.portable_visibility {
+            let Some(source)=mesh.visibility_source.as_mut() else{return false;};
+            let topology_changed=source.indices.as_slice()!=indices;
+            source.indices.clone_from_slice(indices);
+            if mesh.visibility_deformable && !topology_changed {
+                self.scene_visibility.refit_mesh(mesh.visibility_geometry.unwrap(),source).expect("wounded visibility refit");
+            }else {
+                mesh.visibility_geometry=Some(self.scene_visibility.register_deformable_mesh(source).expect("wounded visibility registration"));
+                mesh.visibility_deformable=true;
+            }
+        }
+        mesh.rigid_pages=None;
+        mesh.ibuf=self.pose_device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:Some("private wounded actor indices"),contents:bytemuck::cast_slice(indices),
+            usage:wgpu::BufferUsages::INDEX|wgpu::BufferUsages::COPY_DST,
+        });true
+    }
     pub fn upload_pose_vertices(&mut self, slot: usize, vertices: &[crate::gltf_load::Vertex]) -> bool {
         let Some(mesh) = self.meshes.get_mut(slot) else { return false; };
         if vertices.len() > 4096 || vertices.is_empty()
@@ -6016,6 +6110,7 @@ impl Renderer {
             });
             mesh.pose_buffer_private=true;
         } else {self.instance_queue.write_buffer(&mesh.vbuf,0,bytemuck::cast_slice(vertices));}
+        mesh.rigid_pages=None;
         mesh.pose_revision=mesh.pose_revision.wrapping_add(1);
         mesh.local_min=lo;mesh.local_max=hi;
         (mesh.world_min,mesh.world_max)=transform_aabb(mesh.model,lo,hi);
@@ -7288,7 +7383,9 @@ impl Renderer {
     pub fn begin_coop_shadow_frame(&mut self, tank_center: glam::Vec3) {
         debug_assert!(tank_center.is_finite());
         self.coop_shadow.begin(self.sun_dir, tank_center);
-        self.sky_visibility.set_coop_focus(Some(tank_center));
+        // Capture complete camera/light support before an interior view narrows its draw
+        // frustum. The gunner optic and surrounding cabin share one source projection.
+        self.sky_visibility.begin_frame(tank_center, &self.camera);
     }
 
     /// Later views in the active co-op frame reuse the first view's depth map and exact light VP.
@@ -7301,7 +7398,7 @@ impl Renderer {
     /// subsequent RTT, solo, menu or next-frame work falls straight back to its own camera cascade.
     pub fn end_coop_shadow_frame(&mut self) {
         self.coop_shadow.end();
-        self.sky_visibility.set_coop_focus(None);
+        self.sky_visibility.end_frame();
     }
 
     /// True when there is a modeled volume to integrate. The retired screen-space optic veil does
@@ -7514,6 +7611,8 @@ impl Renderer {
                 aspect: self.camera.aspect,
                 // The gunner's TZF is one eye at a sight; every other view is both eyes.
                 monocular: if (self.optic_mask - 1.0).abs() < 0.5 { 1.0 } else { 0.0 },
+                transient_source: if self.observer_flash_source {1.0}else{0.0},
+                _pad: [0.0;3],
             }),
         );
 
@@ -7609,6 +7708,7 @@ impl Renderer {
         };
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
         self.prepare_fine_vfx(device, queue);
+        self.prepare_weapon_particles(device, queue);
 
         let m = self.master_retro.clamp(0.0, 1.0);
         // Metered frames receive the eye's mapping from the GPU (copied after this upload). A
@@ -7756,9 +7856,11 @@ impl Renderer {
             );
             pass.set_bind_group(1, m.tex_bind.as_ref(), &[]);
             pass.set_vertex_buffer(0, m.vbuf.slice(..));
-            pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-            work.scene_mesh_draws += 1;
-            pass.draw_indexed(0..m.index_count, 0, 0..1);
+            pass.set_index_buffer(m.rigid_index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            for range in m.primary_index_ranges(camera_view_proj) {
+                work.scene_mesh_draws += 1;
+                pass.draw_indexed(range, 0, 0..1);
+            }
         }
     }
 
@@ -8159,9 +8261,11 @@ impl Renderer {
                 );
                 pass.set_bind_group(1, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
-                pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                work.scene_mesh_draws += 1;
-                pass.draw_indexed(0..m.index_count, 0, 0..1);
+                pass.set_index_buffer(m.rigid_index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+                for range in m.primary_index_ranges(camera_view_proj) {
+                    work.scene_mesh_draws += 1;
+                    pass.draw_indexed(range, 0, 0..1);
+                }
             }
             if self.depth_gate_sky {
                 // The fullscreen triangle sits exactly on the far plane and Equal-tests against
@@ -8261,6 +8365,7 @@ impl Renderer {
         }
 
         self.encode_fine_vfx(encoder, usize::MAX, &self.hdr_view, &mut work);
+        self.encode_weapon_particles(encoder, usize::MAX, &self.hdr_view, false, false, &mut work);
 
         // Snapshot only after both surface and volume histories have consumed the previous frame's
         // reject buffers. The former placement before smoke made a volume reprojection pass read
@@ -8364,8 +8469,6 @@ impl Renderer {
             );
         }
 
-        // Interaction outlines are an interface cue, never an outdoor/fixture light source.
-        if finish_ldr && self.shader_backend { self.encode_hover_outline(encoder, &mut work); }
 
         // Debug-only heat study: refraction outside temporal histories, never a light source.
         if let Some(heat) = &self.heat_gpu {
@@ -8380,6 +8483,13 @@ impl Renderer {
             &self.hdr_view, self.combine_rt_bind.as_ref(), &self.pressure_fronts,
             self.time, self.active_view, self.camera.pos, self.camera.relative_view_proj()) {
             work.fullscreen_raster_passes += 1;
+        }
+
+        // Actual bullet strips are added after bloom and optical distortion, so neither can
+        // widen a one-native-pixel trail. They still use HDR exposure and shared attenuation.
+        if self.shader_backend {
+            self.encode_weapon_particles(encoder, usize::MAX, &self.hdr_view, true, false, &mut work);
+            self.encode_raster_optic_tracers(encoder, &mut work);
         }
 
         if finish_ldr {
@@ -8401,6 +8511,8 @@ impl Renderer {
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
+        // Native-pixel interaction UI remains outside exposure, bloom and scene dithering.
+        if finish_ldr && self.shader_backend { self.encode_hover_outline(encoder, &mut work); }
         if finish_ldr && self.pixel_particle_count.get() > 0 {
             if let Some(pipeline) = &self.pixel_particle_pipe {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -11252,16 +11364,50 @@ mod atmosphere_tests {
         assert!(!source.contains("S-curve contrast"));
         assert!(source.contains("var m = aces(c)"));
         let ordered_branch = &source[retro_branch..source.find("// TZF 9b/9c").unwrap()];
-        assert!(ordered_branch.contains("let bi = (px.y & 3) * 4 + (px.x & 3)"));
-        assert!(ordered_branch.contains("BAYER[bi]"));
         assert!(!ordered_branch.contains("cr.frame"));
         assert!(!ordered_branch.contains("grain_gate"));
+        // The native threshold is shared by palette and LDR rounding. Verify its complete
+        // gated block, not a retired local variable name from the former inline Bayer code.
+        let code=source.lines().map(|line|line.split("//").next().unwrap()).collect::<String>()
+            .chars().filter(|c|!c.is_whitespace()).collect::<String>();
+        let block=|marker:&str| {
+            let start=code.find(marker).unwrap_or_else(||panic!("missing {marker}"));
+            let open=start+code[start..].find('{').unwrap();let mut depth=0;
+            for (offset,byte) in code.as_bytes()[open..].iter().enumerate() {
+                if *byte==b'{' {depth+=1;}
+                if *byte==b'}' {depth-=1;if depth==0 {return &code[open+1..open+offset];}}
+            }
+            panic!("unclosed {marker}");
+        };
+        let enabled=block("if(cr.retro>0.001||cr.ldr_dither>0.0)");
+        let threshold=block("fndisplay_threshold(");
+        let palette=block("if(retro>0.001)");let ldr=block("if(cr.ldr_dither>0.0)");
+        assert_eq!(code.matches("display_threshold(").count(),2,"one definition and one gated call");
+        assert!(code.contains("varnative_threshold=0.0;"));
+        assert!(enabled.contains("native_threshold=display_threshold(vec2<i32>(in.pos.xy));"));
+        assert!(palette.contains("letordered=native_threshold;"));
+        assert!(ldr.contains("letthreshold=native_threshold;"));
+        assert!(threshold.contains("(px.y&3)*4+(px.x&3)"));
+        assert!(threshold.contains("return(BAYER["));
+        assert!(threshold.contains("textureLoad(blue_noise,vec2(px.x&63,px.y&63),0)"));
+        for branch in [enabled,threshold,palette,ldr,block("fnsphere_threshold(")] {assert!(!branch.contains("cr.frame"));}
+        // Read the production Bayer table: each of its16 fixed pixel phases must occur once,
+        // with centred thresholds and neither an omitted rank nor a persistent brightness bias.
+        let table=code.split("var<private>BAYER:").nth(1).unwrap().split("(").nth(1).unwrap()
+            .split(");").next().unwrap();
+        let mut ranks=table.split(',').filter(|s|!s.is_empty()).map(|s|s.parse::<f32>().unwrap()).collect::<Vec<_>>();
+        assert_eq!(ranks.len(),16);ranks.sort_by(f32::total_cmp);
+        assert_eq!(ranks,(0..16).map(|i|i as f32).collect::<Vec<_>>());
+        assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 80);
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 128);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
         assert_eq!(std::mem::offset_of!(CrushUniform, concussion), 52);
         assert_eq!(std::mem::offset_of!(CrushUniform, display_grade), 64);
+        assert_eq!(std::mem::offset_of!(CrushUniform, dither_right), 80);
+        assert_eq!(std::mem::offset_of!(CrushUniform, dither_up), 96);
+        assert_eq!(std::mem::offset_of!(CrushUniform, dither_forward), 112);
     }
 
     #[test]

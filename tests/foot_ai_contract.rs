@@ -1,4 +1,8 @@
 #[allow(dead_code)]
+#[path = "../src/resource.rs"]
+mod resource;
+
+#[allow(dead_code)]
 #[path = "../src/foot_ai.rs"]
 mod foot_ai;
 

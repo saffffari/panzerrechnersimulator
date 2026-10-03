@@ -322,11 +322,12 @@ mod tests {
     #[test]
     fn drivetrain_is_consistent_across_normal_frame_partitions() {
         let mut results=Vec::new();
-        for dt in [1.0/30.0,1.0/60.0,1.0/120.0] {
+        for dt in [1.0/15.0,1.0/30.0,1.0/60.0,1.0/120.0] {
             let mut p=Powertrain::default();let mut speed=0.0;
             let distance=run(&mut p,&mut speed,20.0,0.05,controls(1.0),dt);
             results.push((p.gear,p.rpm,speed,distance));
         }
+        eprintln!("20s full throttle, 0.05rad slope, 15/30/60/120fps (gear,rpm,m/s,m): {results:?}");
         for r in &results[1..] {assert_eq!(r.0,results[0].0);assert!((r.1-results[0].1).abs()<2.0);
             assert!((r.2-results[0].2).abs()<0.01 && (r.3-results[0].3).abs()<0.05,"{results:?}");}
     }

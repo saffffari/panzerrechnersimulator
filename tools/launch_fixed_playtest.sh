@@ -57,6 +57,9 @@ export KESSEL_RENDERER=shader KESSEL_NO_RT=1 KESSEL_GRAPHICS_PRESET=high
 export KESSEL_FIXED_PLAYTEST_GRAPHICS=1 KESSEL_INTERNAL_RES=800x450 KESSEL_FULLSCREEN=1
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4
 export KESSEL_SOURCE_VISIBILITY=maps KESSEL_TRANSPORT_QUALITY=full
+# Retaining whole rigid casters in the terrain cache is still experimental: small
+# vehicle transform changes currently invalidate the large static atlas.
+export KESSEL_RETAIN_RIGID_SKY_DEPTH=0
 export KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_CANYON_V2=1
 # Wide playback retains quiet/loud contrast instead of the balanced profile's quiet-source lift.
 export KESSEL_AUDIO_RANGE=reference

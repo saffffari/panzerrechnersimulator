@@ -1,4 +1,7 @@
 #[allow(dead_code)]
+#[path = "../src/resource.rs"]
+mod resource;
+#[allow(dead_code)]
 #[path = "../src/anti_infantry_ai.rs"]
 mod anti_infantry_ai;
 #[allow(dead_code)]

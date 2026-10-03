@@ -166,7 +166,8 @@ mod tests {
                 // Placed at its estimated physical level at the walker's ear, through the one
                 // reproduction curve: a footstep is quiet (tens of dB below the tank's bed).
                 let want = crate::reproduction::tone_map_dbfs(crate::audio::control_level_dba(key)
-                    + crate::audio::effort_db(0.45));
+                    + crate::audio::effort_db(0.45))
+                    + if surface==Surface::Metal {14.0}else{0.0};
                 let got = crate::reproduction::laf_max_dbfs(&pcm);
                 assert!((got - want).abs() < 0.5, "{key}: {got} vs {want} dBFS(A)");
             }

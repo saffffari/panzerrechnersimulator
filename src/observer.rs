@@ -7,13 +7,16 @@
 //! from this reference. Sources and tags follow `LIGHT_NIGHT_ADAPTATION_20260929.md` section 6:
 //!
 //! - meter: photopic and scotopic luminance from the three spectral samples (section 1.2), a
-//!   log-average blending a 2 deg fovea, a 20 deg Gaussian and the whole field (0.5/0.3/0.2 [E]);
+//!   linear spatial average blending a 2 deg fovea, a 20 deg Gaussian and the whole field
+//!   (0.50/0.30/0.20 [E]). This bounded reproduction approximation retains light from peripheral
+//!   apertures in a dark cabin; it is not a spatially resolved retinal adaptation model;
 //! - pupil: Watson & Yellott 2012's unified formula [R] (Stanley-Davies with the age term, age
 //!   25), constricting with 0.3 s, dilating with 2 s plus a 15 s tail (30 %) [M/E];
 //! - pigments: rate-limited regeneration (Mahroo & Lamb 2004 [M] for cones: K_m 0.2,
 //!   0.5 /min, 2.1e6 td s; rods [R/D]: 0.045 /min, 1e7 scotopic td s); bleaching raises the
 //!   threshold by 3 (cones) and 20 (rods) log units per unit fraction bleached (Rushton [M]);
-//! - neural: log-domain first-order adaptation, cones 0.1 s up / 1 s down, rods 0.2 s / 3 s [E];
+//! - neural: log-domain display adaptation, cones 1.2 s up / 2.5 s down, rods 1.8 s / 4 s [E];
+//!   these are deliberate gameplay reproduction timings, not claimed physiological measurements;
 //! - threshold-versus-intensity: Ferwerda, Pattanaik, Shirley & Greenberg 1996 [R];
 //! - mesopic weighting: CIE 191:2010 [R] decides how much the rods add;
 //! - display: Ferwerda's visibility-matching scale TVI(L_da)/TVI(A) with the display adapted to
@@ -39,9 +42,9 @@ pub const METER_MIN_CD_M2: f64 = 1.0e-7;
 pub const METER_MAX_CD_M2: f64 = 1.0e7;
 pub const METER_FOVEA_RADIUS_DEG: f64 = 1.0;
 pub const METER_GAUSSIAN_SIGMA_DEG: f64 = 10.0;
-pub const METER_FOVEA_WEIGHT: f64 = 0.5;
-pub const METER_GAUSSIAN_WEIGHT: f64 = 0.3;
-pub const METER_FIELD_WEIGHT: f64 = 0.2;
+pub const METER_FOVEA_WEIGHT: f64 = 0.50;
+pub const METER_GAUSSIAN_WEIGHT: f64 = 0.30;
+pub const METER_FIELD_WEIGHT: f64 = 0.20;
 /// Sample grid of the GPU meter, identical in both presets.
 pub const METER_GRID: (u32, u32) = (256, 144);
 
@@ -66,10 +69,10 @@ pub const ROD_PHOTOSENSITIVITY_SCOT_TD_S: f64 = 1.0e7;
 pub const CONE_BLEACH_LOG_UNITS: f64 = 3.0;
 pub const ROD_BLEACH_LOG_UNITS: f64 = 20.0;
 
-pub const CONE_TAU_UP_S: f64 = 0.1;
-pub const CONE_TAU_DOWN_S: f64 = 1.0;
-pub const ROD_TAU_UP_S: f64 = 0.2;
-pub const ROD_TAU_DOWN_S: f64 = 3.0;
+pub const CONE_TAU_UP_S: f64 = 1.2;
+pub const CONE_TAU_DOWN_S: f64 = 2.5;
+pub const ROD_TAU_UP_S: f64 = 1.8;
+pub const ROD_TAU_DOWN_S: f64 = 4.0;
 
 pub const DISPLAY_ADAPTATION_CD_M2: f64 = 100.0;
 pub const DISPLAY_KEY: f64 = 0.18;
@@ -94,9 +97,9 @@ pub const MAX_STEP_S: f64 = 0.25;
 /// What the meter reports for one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Meter {
-    /// Field-weighted log-average photopic luminance, cd/m^2.
+    /// Field-weighted arithmetic-average photopic luminance, cd/m^2.
     pub photopic_cd_m2: f64,
-    /// Field-weighted log-average scotopic luminance, scotopic cd/m^2.
+    /// Field-weighted arithmetic-average scotopic luminance, scotopic cd/m^2.
     pub scotopic_cd_m2: f64,
     /// Fraction of the field brighter than `FLASH_ABOVE_ADAPTATION` times the cone adaptation.
     pub bright_coverage: f64,
@@ -105,12 +108,16 @@ pub struct Meter {
     /// Unweighted arithmetic field luminance. Unlike thresholded bright coverage, it does not
     /// disappear/reappear when the eye's flash threshold crosses a steady bright aperture.
     pub field_cd_m2: f64,
+    /// At least one genuine transient emitting source exists in this scene observation.
+    /// This only admits flash detection; measured visible radiance still supplies its energy.
+    pub transient_source: bool,
 }
 
 impl Meter {
     /// A uniform field of the given luminances.
     pub fn uniform(photopic_cd_m2: f64, scotopic_cd_m2: f64) -> Self {
-        Self { photopic_cd_m2, scotopic_cd_m2, bright_coverage: 0.0, bright_cd_m2: 0.0, field_cd_m2:photopic_cd_m2 }
+        Self { photopic_cd_m2, scotopic_cd_m2, bright_coverage: 0.0, bright_cd_m2: 0.0,
+            field_cd_m2:photopic_cd_m2,transient_source:false }
     }
 
     fn clamped(self) -> Self {
@@ -120,6 +127,7 @@ impl Meter {
             bright_coverage: if self.bright_coverage.is_finite() { self.bright_coverage.clamp(0.0, 1.0) } else { 0.0 },
             bright_cd_m2: if self.bright_cd_m2.is_finite() { self.bright_cd_m2.clamp(0.0, METER_MAX_CD_M2) } else { 0.0 },
             field_cd_m2:clamp_luminance(self.field_cd_m2),
+            transient_source:self.transient_source,
         }
     }
 }
@@ -346,7 +354,7 @@ impl Eye {
         let rising=meter.field_cd_m2 > FLASH_ONSET_RATIO*self.flash_field_reference_cd_m2;
         self.flash_field_reference_cd_m2=relax(self.flash_field_reference_cd_m2,
             meter.field_cd_m2,FLASH_ONSET_TAU_S);
-        let flashing = rising && meter.bright_coverage > FLASH_MIN_COVERAGE
+        let flashing = meter.transient_source && rising && meter.bright_coverage > FLASH_MIN_COVERAGE
             && meter.bright_cd_m2 > FLASH_ABOVE_ADAPTATION * cone_adaptation;
         self.flash_energy_td_s *= (-dt / FLASH_MEMORY_TAU_S).exp();
         if flashing {
@@ -528,6 +536,10 @@ fn obs_rod_response(scotopic: f32, gain: f32, inverse_saturation: f32) -> f32 {
 "#);
     out
 }
+
+#[cfg(test)]
+#[path = "observer_meter_tests.rs"]
+mod spatial_meter_tests;
 
 #[cfg(test)]
 mod tests {
@@ -716,7 +728,7 @@ mod tests {
         let mut eye = Eye::adapted(night, Viewing::Binocular);
         let before = snow(&eye);
         let flash = Meter { photopic_cd_m2: 60.0, scotopic_cd_m2: 30.0, bright_coverage: 0.2,
-            bright_cd_m2: 3_000.0, field_cd_m2:600.0 };
+            bright_cd_m2: 3_000.0, field_cd_m2:600.0,transient_source:true };
         run(&mut eye, flash, 0.065, 1.0 / 240.0);
         assert!(eye.flash_energy_td_s > 1_000.0, "{eye:?}");
         run(&mut eye, night, 0.5, 1.0 / 60.0);
@@ -819,10 +831,10 @@ mod tests {
 
     #[test]
     fn steady_bright_aperture_never_retriggers_flash_afterimage() {
-        // 95% dark compartment and 5% bright exterior. The gaze-weighted log mean can
-        // remain dark while this static aperture exceeds 30x adaptation indefinitely.
-        let port=Meter {photopic_cd_m2:0.11,scotopic_cd_m2:0.23,
-            bright_coverage:0.05,bright_cd_m2:1000.0,field_cd_m2:50.095};
+        // 95% dark compartment and 5% bright exterior. A peripheral aperture can remain
+        // above the flash threshold, even after the arithmetic field drives adaptation.
+        let port=Meter {photopic_cd_m2:24.04,scotopic_cd_m2:50.5,
+            bright_coverage:0.05,bright_cd_m2:1000.0,field_cd_m2:50.095,transient_source:false};
         let mut eye=Eye::adapted(port,Viewing::Binocular);
         run(&mut eye,port,30.0,1.0/60.0);
         assert_eq!(eye.flash_energy_td_s,0.0,"a steady source has no flash onset");
@@ -830,17 +842,73 @@ mod tests {
 
         let mut arriving=Eye::adapted(Meter::uniform(0.1,0.21),Viewing::Binocular);
         run(&mut arriving,port,1.0,1.0/240.0);
-        let first=arriving.flash_energy_td_s;
-        assert!(first>0.0,"a sudden bright opening may produce a transient response");
+        assert_eq!(arriving.flash_energy_td_s,0.0,
+            "looking toward static daylight must not create a weapons-flash afterimage");
         run(&mut arriving,port,10.0,1.0/60.0);
-        assert!(arriving.flash_energy_td_s<first,"static port must not keep charging flash energy");
+        assert_eq!(arriving.flash_energy_td_s,0.0,"static port must not keep charging flash energy");
         assert!(arriving.since_flash_s>10.0,"static port must not reset recovery");
+    }
+
+    #[test]
+    fn brief_glances_do_not_complete_display_adaptation_and_are_frame_rate_independent() {
+        let cabin = Meter::uniform(0.5, 0.8);
+        let daylight = Meter::uniform(500.0, 800.0);
+        let mut reference: Option<[f64; 2]> = None;
+        for fps in [30.0, 60.0, 120.0] {
+            // Integer frame counts avoid the older duration helper's possible extra frame
+            // when an accumulated floating-point time lands just below its endpoint.
+            let advance = |eye: &mut Eye, meter: Meter, seconds: f64| {
+                for _ in 0..(seconds * fps).round() as usize {
+                    eye.step(meter, Viewing::Binocular, 1.0 / fps);
+                }
+            };
+            let mut eye = Eye::adapted(cabin, Viewing::Binocular);
+            let start = eye.cone_neural_log;
+            let span = daylight.photopic_cd_m2.log10() - start;
+            advance(&mut eye, daylight, 0.1);
+            let glance_fraction = (eye.cone_neural_log - start) / span;
+            assert!((0.02..0.12).contains(&glance_fraction),
+                "a 100 ms glance must start, not complete adaptation: {glance_fraction}");
+            advance(&mut eye, daylight, 0.9);
+            let held_fraction = (eye.cone_neural_log - start) / span;
+            assert!((0.4..0.7).contains(&held_fraction),
+                "holding a bright view must still adapt: {held_fraction}");
+            let before_return = eye.cone_neural_log;
+            advance(&mut eye, cabin, 0.1);
+            assert!(eye.cone_neural_log < before_return);
+            assert!(eye.cone_neural_log > start + 0.9 * (before_return - start),
+                "returning to the cabin must not snap its gain in one glance");
+            assert_eq!(eye.flash_energy_td_s, 0.0);
+            let final_logs = [eye.cone_neural_log, eye.rod_neural_log];
+            if let Some(previous) = reference {
+                for (a, b) in final_logs.into_iter().zip(previous) {
+                    // Pupil area changes during each integration step, so the coupled
+                    // neural target is not constant. Bound 30–120 Hz convergence to
+                    // 0.005 log10 units (under 1.2% luminance), not bit equality.
+                    assert!((a - b).abs() < 0.005, "frame-dependent adaptation: {a} vs {b}");
+                }
+            }
+            reference = Some(final_logs);
+        }
+    }
+
+    #[test]
+    fn a_transient_source_without_a_visible_radiance_onset_cannot_blind_the_observer() {
+        let static_port = Meter { photopic_cd_m2: 24.04, scotopic_cd_m2: 50.5,
+            bright_coverage: 0.05, bright_cd_m2: 1000.0, field_cd_m2: 50.095,
+            transient_source: false };
+        let mut eye = Eye::adapted(static_port, Viewing::Binocular);
+        // A gun can fire behind armor while a bright exterior opening remains in view.
+        // Merely admitting that source must not borrow the steady port's radiance as a flash.
+        run(&mut eye, Meter { transient_source: true, ..static_port }, 0.2, 1.0 / 120.0);
+        assert_eq!(eye.flash_energy_td_s, 0.0);
+        assert_eq!(eye.mapping(Viewing::Binocular).afterimage_cd_m2, 0.0);
     }
 
     #[test]
     fn the_model_has_one_set_of_constants_for_every_preset() {
         let generated = wgsl_constants();
-        assert!(generated.contains("const OBS_CONE_TAU_DOWN: f32 = 1e0;"), "{generated}");
+        assert!(generated.contains("const OBS_CONE_TAU_DOWN: f32 = 2.5e0;"), "{generated}");
         let source = include_str!("observer.rs");
         let body = source.split("#[cfg(test)]").next().unwrap();
         for forbidden in ["GraphicsPreset", "Laptop", "graphics::", "shader_backend"] {

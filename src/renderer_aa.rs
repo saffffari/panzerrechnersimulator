@@ -106,7 +106,8 @@ impl GeometryAa {
         println!("[renderer] native geometry AA:4xMSAA; linear HDR resolve; conservative nearest depth for media");
         Self{main,optic,mesh,mesh_inst,ambient_mesh,ambient_inst,sky,resolve_depth}
     }
-    pub fn resolve(&self,encoder:&mut wgpu::CommandEncoder,optic:bool,depth:&wgpu::TextureView,work:&mut RenderWorkStats) {
+    pub fn resolve(&self,encoder:&mut wgpu::CommandEncoder,optic:bool,depth:&wgpu::TextureView,
+        viewport:Option<[u32;2]>,work:&mut RenderWorkStats) {
         let targets=if optic{&self.optic}else{&self.main};
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label:Some("native-aa-depth-resolve"),color_attachments:&[],
@@ -114,6 +115,13 @@ impl GeometryAa {
                 depth_ops:Some(wgpu::Operations{load:wgpu::LoadOp::Clear(1.0),store:wgpu::StoreOp::Store}),stencil_ops:None}),
             timestamp_writes:None,occlusion_query_set:None,
         });
+        if let Some([width,height])=viewport {
+            // The opaque/sky passes populated only this top-left native-pixel rectangle.
+            // Fragment position still addresses the identical MSAA texel; the full attachment
+            // clear above leaves unused scratch pixels at sky depth without resolving them.
+            pass.set_viewport(0.0,0.0,width as f32,height as f32,0.0,1.0);
+            pass.set_scissor_rect(0,0,width,height);
+        }
         pass.set_pipeline(&self.resolve_depth);pass.set_bind_group(0,&targets.depth_bind,&[]);
         pass.draw(0..3,0..1);work.fullscreen_raster_passes+=1;
     }
@@ -135,6 +143,40 @@ fn depth_state(write:bool,compare:wgpu::CompareFunction)->wgpu::DepthStencilStat
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn close_optic_receiver_plane_remains_valid_below_old_world_area_cutoff() {
+        use glam::Vec3;
+        // Analytic planar receiver, sampled by perspective rays at adjacent pixel centres.
+        // Its plane is valid at a held eyepiece as well as a normal cabin view. This witnesses
+        // the old absolute m^4 cutoff rejecting small projected pixels without GPU timing.
+        let normal=Vec3::new(0.31,0.52,-0.8).normalize();
+        let mut old_rejected=0;
+        for (distance,fov,height) in [(0.025_f32,14_f32,450_f32),(0.15,14.0,450.0),
+            (0.5,68.0,450.0),(0.025,14.0,1080.0)] {
+            let point=Vec3::Z*distance;
+            let step=2.0*(fov.to_radians()*0.5).tan()/height;
+            let on_plane=|x:f32,y:f32| {
+                let ray=Vec3::new(x,y,1.0);
+                ray*(normal.dot(point)/normal.dot(ray))
+            };
+            let p=on_plane(0.0,0.0);
+            let dx=on_plane(step,0.0)-p;
+            let dy=on_plane(0.0,step)-p;
+            if dx.cross(dy).length_squared()<=1e-16 {old_rejected+=1;}
+            let recovered=dx.normalize().cross(dy.normalize()).normalize();
+            assert!(recovered.dot(normal).abs()>0.99999,
+                "real planar receiver lost its normal at {distance}m/{fov}deg/{height}p");
+            // The plane predicts the depth of a neighboring shadow texel with the same
+            // normal regardless of this player's native pixel footprint or optic zoom.
+            let light=Vec3::new(0.17,0.21,-0.13);
+            let ray=(p-light+Vec3::new(0.001,-0.001,0.0)).normalize();
+            let expected=normal.dot(p-light)/normal.dot(ray);
+            let predicted=recovered.dot(p-light)/recovered.dot(ray);
+            assert!((predicted-expected).abs()<0.000001);
+        }
+        assert!(old_rejected>=2,"the regression must witness the old ADS failure");
+    }
+
     #[test]
     fn native_aa_depth_is_conservative_for_partial_armor_and_clear_sky() {
         let nearest=|samples:[f32;4]|samples.into_iter().fold(1.0_f32,f32::min);

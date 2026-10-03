@@ -343,13 +343,14 @@ const TIGER_PAINTED_NODES: &[&str] = &[
 
 pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
     // Alex's 2026-09-09 choice: muted gunmetal cabin instead of historical ivory paint.
+    // Named painted surfaces are dielectric pigment; bare machinery retains its source steel.
     // Select named surface materials, never the shared atlas or bright instrument faces.
     let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
     if matches!(material, Some("Interior Paint" | "Turret Floor")) {
         let (swatch, rgb, metallic, roughness) = if material == Some("Turret Floor") {
-            (2, [76.0, 81.0, 89.0], 0.65, 0.82)
+            (2, [58.0, 70.0, 64.0], 0.0, 0.84)
         } else {
-            (1, [104.0, 110.0, 118.0], 0.60, 0.72)
+            (1, [104.0, 110.0, 118.0], 0.0, 0.78)
         };
         return Some(crate::gltf_load::MaterialOverride {
             swatch,
@@ -1137,7 +1138,8 @@ mod tests {
             assert_eq!((paint.metallic, paint.roughness), (0.0, 0.75));
             let cabin = tiger_paint_finish(node, Some("Interior Paint")).unwrap();
             assert_ne!(paint.swatch, cabin.swatch);
-            assert!(cabin.metallic > paint.metallic && cabin.base != paint.base);
+            assert_eq!(cabin.metallic, 0.0, "pigmented cabin paint is not bare metal");
+            assert!(cabin.base != paint.base);
         }
         for node in ["Breech", "Gun_0035", "TURRET FLOOR", "Turret_0088", "unknown replacement panel"] {
             assert!(tiger_paint_finish(node, Some("Material.001")).is_none());
@@ -1215,7 +1217,7 @@ mod tests {
                     let expected = match finish.swatch {
                         0 => [72, 74, 78, 255],
                         1 => [104, 110, 118, 255],
-                        2 => [76, 81, 89, 255],
+                        2 => [58, 70, 64, 255],
                         3 => [58, 58, 56, 255],
                         4 => [73, 72, 68, 255],
                         _ => panic!("unreviewed Tiger finish"),

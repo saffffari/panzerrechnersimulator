@@ -70,17 +70,19 @@ impl FiniteCubeLamp {
 }
 
 pub const DOME_FIXTURE: FiniteCubeLamp = FiniteCubeLamp {
-    half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 171, 66], emission: 1.15,
+    // Authored orange practical, shared by the visible lens and transported illumination.
+    // Keep the red-band output; lower the yellow/blue contribution instead of tinting the view.
+    half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 145, 48], emission: 1.15,
 };
 pub const ANNUNCIATOR_FIXTURES: [FiniteCubeLamp; 4] = [
     FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 46, 30], emission: 1.0 },
-    FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 172, 44], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 145, 36], emission: 1.0 },
     FiniteCubeLamp { half_size_m: 0.012, srgb: [70, 128, 255], emission: 1.0 },
     FiniteCubeLamp { half_size_m: 0.012, srgb: [70, 255, 96], emission: 1.0 },
 ];
 pub const BREECH_FIXTURES: [FiniteCubeLamp; 3] = [
     FiniteCubeLamp { half_size_m: 0.010, srgb: [60, 235, 90], emission: 1.2 },
-    FiniteCubeLamp { half_size_m: 0.010, srgb: [255, 245, 20], emission: 1.2 },
+    FiniteCubeLamp { half_size_m: 0.010, srgb: [255, 164, 32], emission: 1.2 },
     FiniteCubeLamp { half_size_m: 0.010, srgb: [235, 45, 30], emission: 1.2 },
 ];
 
@@ -104,7 +106,7 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
     (
         Frame::Turret,
         Vec3::new(0.841, 1.752, 0.598),
-        Vec3::new(1.0, 0.50, 0.08),
+        Vec3::new(1.0, 0.34, 0.035),
         0.055 * CABIN_PRACTICAL_POWER_SCALE,
         0.015,
     ),

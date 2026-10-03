@@ -1,0 +1,15 @@
+# Sustained layered score cadence
+
+Sources: `audio_soundscape.rs`, `soundscape_layers.rs`, narrow duration adjustment in `soundscape_program.rs`. Root's gameplay contact/director cadence and new score duck are preserved.
+
+- Score source levels multiply by 0.25; night/day/weather/cabin/scene beds multiply by 0.33. Physical effects and death chord gain are unchanged. This is source mixing before the existing score-only interaction duck and output graph.
+- Foreground phrases last 120–180 simulated seconds with a 120-second normal retention. Actual incoming combat adds layers instead of chopping an existing loop. Main-gun discharge preserves the active loop/sample clock and changes programme intensity.
+- A real incoming-contact episode holds layer intensity for 90 seconds after the latest contact. Texture releases over the next 60 seconds; rhythm lasts and releases over 90 seconds. Recontact resumes the same episode without switching loops. No proximity, enemy-state or invisible target query occurs in this module.
+- Two fixed extra mixer lanes, with total voices bounded to16, retain original authored looping. Finite cues are never converted to loops. New rhythmic layers start at the outgoing foreground's metadata-derived sample-clock bar boundary; audio is not pitch-shifted/time-stretched.
+- Tonal layers require the existing known same/relative key and matching/half/double BPM policy. Explicit unpitched drum/percussion filename loops omit the key requirement but still require BPM agreement when the foreground has a pulse. Explicitly named atmosphere/ambient/storm/foggy/rainfall/trickling backgrounds without BPM can retain their non-pulse bed under percussion. This filename declaration is not an acoustic analysis.
+- Source fade limits now allow120 seconds rather than truncating long release ramps at30 seconds. Normal continuous gain changes take several seconds; scene/weather attenuation uses their smooth spatial fade.
+- Runtime snapshot includes layer episode, envelopes and source scaling. Tests exercise real capture-mixer admission of a compatible foreground/texture/drum trio, finite-cue rejection, tempo/key conflict, sample-clock retention,90-second release and the long fade cap.
+
+## Limits
+
+The sorted library has many cues with unknown key/BPM and filename-only metadata. Missing or incompatible layer candidates remain silent; this pass does not manufacture musical facts or analyze pitch. Some selected foreground atmospheres therefore support only percussion, or no layers. Filename percussion classification must receive audible review before declaring those sources unpitched. Texture layers require complete metadata; no compatible texture is guaranteed for every run. Existing one-shot sources finish naturally and retain their authored reverb tail; a 20-second finite cue cannot become a2-minute loop just because the programme owns that role for120 seconds. Root must compile/run tests and produce an audible real-library sequence; a source change or synthetic mixer fixture is not subjective audio acceptance.

@@ -37,7 +37,11 @@ pub struct SoundscapeInput {
     pub solar_altitude_deg: f32,
     pub season: &'static str,
 }
-const MAX_VOICES: usize = 12;
+#[path = "soundscape_layers.rs"]
+mod layers;
+const MUSIC_LEVEL:f32=0.25;
+const ATMOSPHERE_LEVEL:f32=0.33;
+const MAX_VOICES: usize = 16;
 const CACHE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_REQUESTS: usize = 4;
 fn put(a: &AtomicU32, x: f32) {
@@ -206,7 +210,7 @@ impl BedSource {
                 } else {
                     get(&self.control.fade_s)
                 };
-                self.remaining = (fade.clamp(1.0 / RATE as f32, 30.0) * RATE as f32) as u64;
+                self.remaining = (fade.clamp(1.0 / RATE as f32, 120.0) * RATE as f32) as u64;
                 self.step = (target - self.gain) / self.remaining.max(1) as f32;
             }
             self.rack.set_occlusion(get(&self.control.occlusion));
@@ -404,6 +408,9 @@ pub(super) struct Runtime {
     music_role: Option<String>,
     music_bridge: Option<MusicBridge>,
     music_delay_frames: u64,
+    layers:layers::Layers,
+    layer_gains:layers::Gains,
+    foreground_since:f32,
 }
 pub fn fresh_seed() -> u64 {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -511,6 +518,9 @@ impl Runtime {
             music_role: None,
             music_bridge: None,
             music_delay_frames: 0,
+            layers:layers::Layers::default(),
+            layer_gains:layers::Gains::default(),
+            foreground_since:0.0,
         }
     }
     fn insert(&mut self, id: String, pcm: Pcm) {
@@ -613,6 +623,11 @@ impl Runtime {
         occlusion: f32,
         fade: f32,
     ) -> bool {
+        let multiplier=if lane.starts_with("music") || lane.starts_with("score_layer")
+            || id.as_ref().and_then(|id|self.library.cues.get(id)).is_some_and(Cue::music) {MUSIC_LEVEL}
+            else if matches!(lane,"night"|"day"|"blizzard"|"cabin"|"scene") {ATMOSPHERE_LEVEL}
+            else {1.0};
+        let volume=volume*multiplier;
         let active = self
             .voices
             .iter()
@@ -620,7 +635,7 @@ impl Runtime {
         if let Some(i) = active {
             if id.as_deref() == Some(&self.voices[i].id) {
                 let v = &self.voices[i];
-                put(&v.control.fade_s, 0.3);
+                put(&v.control.fade_s, if lane.starts_with("score_layer") {3.0}else if v.music {8.0}else{fade});
                 put(&v.control.gain, volume * v.gain);
                 put(&v.control.master, audio.master_volume);
                 put(&v.control.occlusion, if v.music { 0.0 } else { occlusion });
@@ -656,15 +671,18 @@ impl Runtime {
             return false;
         };
         // Admission succeeded. Only now retire the outgoing bed, keeping it audible through load.
-        let mut delay_frames = if lane=="music_pending" {self.music_delay_frames} else {0};
+        let mut delay_frames = if lane=="music_pending" {self.music_delay_frames}
+            else if lane.starts_with("score_layer") {self.voices.iter().find(|v|v.lane=="music"&&!v.retiring)
+                .and_then(|v|self.library.cues.get(&v.id).and_then(|c|c.beat_delay_frames(v.control.frames.load(Ordering::Relaxed),RATE))).unwrap_or(0)}
+            else {0};
         if let Some(i) = active {
             let v=&self.voices[i];
             let previous=self.library.cues.get(&v.id);
             let elapsed=v.control.frames.load(Ordering::Relaxed);
             let clean=lane=="music"&&!self.instant_music
                 && previous.is_none_or(|prior|!prior.musically_compatible(cue));
-            let release=if clean {0.3}else if self.instant_music&&lane=="music" {0.035}
-                else{previous.and_then(|c|c.fade_out_s).unwrap_or(fade)};
+            let release=if clean {6.0}else if self.instant_music&&lane=="music" {0.035}
+                else{previous.and_then(|c|c.fade_out_s).unwrap_or(fade).max(if lane=="music" {8.0}else{fade})};
             if lane=="music"&&!self.instant_music {
                 let before=if clean {(release*RATE as f32) as u64}else{0};
                 delay_frames=before+previous.and_then(|c|c.beat_delay_frames(elapsed+before,RATE)).unwrap_or(0);
@@ -676,7 +694,7 @@ impl Runtime {
         }
         let control = Arc::new(Control::new(
             volume * cue.gain,
-            if lane=="music_pending" {0.12} else if self.instant_music && lane == "music" { 0.035 } else { cue.fade_in_s.unwrap_or(fade) },
+            if lane=="music_intro" {cue.fade_in_s.unwrap_or(fade).max(12.0)} else if lane=="music_pending" {0.12} else if self.instant_music && lane == "music" { 0.035 } else { cue.fade_in_s.unwrap_or(fade).max(if lane=="music" {8.0}else{fade}) },
         ));
         put(&control.master, audio.master_volume);
         put(
@@ -705,6 +723,7 @@ impl Runtime {
         if self.paused {
             sink.pause();
         }
+        if lane=="music" {self.foreground_since=self.time;}
         self.voices.push(Voice {
             id: id.clone(),
             lane: lane.into(),
@@ -750,6 +769,7 @@ impl Runtime {
         if let Some((name, _)) = &zone {
             context.location = name.clone();
         }
+        self.layer_gains=self.layers.update(dt,context.combat);
         let plan = self.director.update(dt, &context);
         let (scene_gain, scene_rack) =
             self.library
@@ -860,6 +880,7 @@ impl Runtime {
         if mode=="combat" && self.music_role.as_deref()==Some("combat") && !self.combat_accent_played {
             self.combat_accent_played=true;self.event("combat_start");
         }
+        self.update_score_layers(audio,&tags);
         self.warm_gun_successor(plan.mode);
         // Events are explicit authored cue bindings, bounded and rate-limited; no fake battle shots.
         let count = self.events.len();
@@ -909,6 +930,28 @@ impl Runtime {
         }
         self.plan = Some(plan);
     }
+    fn update_score_layers(&mut self,audio:&Audio,tags:&str) {
+        let anchor=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring&&v.looping)
+            .and_then(|v|self.library.cues.get(&v.id)).cloned();
+        for (lane,gain,rhythm) in [("score_layer_texture",self.layer_gains.texture*0.30,false),
+            ("score_layer_rhythm",self.layer_gains.rhythm*0.55,true)] {
+            if gain<=0.00001 {self.lane(audio,lane,None,0.0,0.0,8.0);continue;}
+            let Some(anchor)=&anchor else{continue;};
+            let mut ids=self.library.pool("combat",tags);
+            ids.retain(|id|self.library.cues.get(id).is_some_and(|c|layers::compatible(anchor,c)
+                && (if rhythm {layers::explicit_percussion(c)}else{!layers::explicit_percussion(c)}))
+                && !self.voices.iter().any(|v|v.lane!=lane&&!v.retiring&&v.id==*id));
+            // All concurrent layers must agree with each other as well as the foreground.
+            ids.retain(|id|self.voices.iter().filter(|v|v.lane.starts_with("score_layer")&&!v.retiring&&v.lane!=lane)
+                .all(|v|self.library.cues.get(&v.id).zip(self.library.cues.get(id))
+                    .is_some_and(|(a,b)|layers::compatible(a,b)||layers::compatible(b,a))));
+            let key=format!("{}:{}:{}",self.layers.episode,anchor.id,lane);
+            let id=if let Some((old,id))=self.selections.get(lane).filter(|(old,_)|*old==key) {let _=old;id.clone()}
+                else{let id=self.score_selector.choose(lane,&ids);self.selections.insert(lane.into(),(key,id.clone()));id};
+            if let Some(id)=&id {self.request(id);}
+            self.lane(audio,lane,id,gain,0.0,8.0);
+        }
+    }
     fn riser_available_lead(&self) -> f32 {
         self.library.events.get("intensity_transition_riser").into_iter().flatten()
             .filter(|id| self.cache.contains_key(*id))
@@ -925,7 +968,7 @@ impl Runtime {
         if timing.peak_s>=pcm.frames() as f32/RATE as f32{return false;}
         let Ok(sink)=audio.create_sink_on(EarBus::Score) else{return false;};
         cue.looping=false;
-        let control=Arc::new(Control::new(cue.gain,cue.fade_in_s.unwrap_or(0.08)));
+        let control=Arc::new(Control::new(cue.gain*MUSIC_LEVEL,cue.fade_in_s.unwrap_or(0.08)));
         put(&control.master,audio.master_volume);
         let (rack,tail)=self.racks.get(&id).cloned().unwrap_or_default();
         sink.append(BedSource::new(pcm,&cue,control.clone(),rack).with_tail_reverb(tail)
@@ -961,15 +1004,38 @@ impl Runtime {
         for v in &mut self.voices {
             if v.lane=="music_pending"&&!v.retiring {v.lane="music".into();}
             if v.lane==format!("riser:{key}")&&!v.retiring {
-                put(&v.control.fade_s,0.35);put(&v.control.gain,v.gain*0.45);
+                put(&v.control.fade_s,0.35);put(&v.control.gain,v.gain*0.45*MUSIC_LEVEL);
             }
         }
         self.music_role=bridge.role;
     }
     fn update_music(&mut self,audio:&Audio,dt:f32,mode:crate::soundscape_director::Mode,
         choice:&crate::soundscape_program::Choice,music:Option<String>) {
+        // Cancel a queued destination against the requested programme before
+        // foreground retention can substitute the still-playing anchor.
         if self.music_bridge.as_ref().is_some_and(|bridge|Some(bridge.id.as_str())!=music.as_deref()) {
             self.riser.interrupt();self.cancel_music_bridge();
+        }
+        if let Some(current)=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring&&v.looping) {
+            if self.time-self.foreground_since<120.0 || self.layer_gains.anchor_held {
+                let id=current.id.clone();
+                // A changed score role adds layers while this actual phrase continues;
+                // never schedule a transition whose destination is this same source.
+                self.riser.interrupt();self.cancel_music_bridge();
+                self.lane(audio,"music",Some(id),choice.gain.max(0.45),0.0,8.0);
+                self.instant_music=false;
+                return;
+            }
+        }
+        if self.music_bridge.as_ref().is_some_and(|bridge|Some(bridge.id.as_str())!=music.as_deref()) {
+            self.riser.interrupt();self.cancel_music_bridge();
+        }
+        if let Some(current)=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring&&Some(v.id.as_str())==music.as_deref()) {
+            let id=current.id.clone();
+            self.riser.interrupt();self.cancel_music_bridge();
+            self.lane(audio,"music",Some(id),choice.gain,0.0,8.0);
+            self.music_role=choice.role.clone();self.instant_music=false;
+            return;
         }
         if let Some(id)=&music {self.request(id);}
         let available=if music.as_ref().is_some_and(|id|self.cache.contains_key(id))
@@ -1034,11 +1100,12 @@ impl Runtime {
         }
         if self.music_bridge.is_some() {
             if let Some(v)=self.voices.iter().find(|v|v.lane=="music_pending"&&!v.retiring) {
-                put(&v.control.gain,choice.gain*v.gain);put(&v.control.master,audio.master_volume);
+                put(&v.control.gain,choice.gain*v.gain*MUSIC_LEVEL);put(&v.control.master,audio.master_volume);
             }
             return;
         }
-        if self.lane(audio,"music",music,choice.gain,0.0,2.0) {
+        let gain=if self.layer_gains.anchor_held {choice.gain.max(0.45)}else{choice.gain};
+        if self.lane(audio,"music",music,gain,0.0,8.0) {
             self.music_role=choice.role.clone();self.instant_music=false;
         }
     }
@@ -1064,11 +1131,23 @@ impl Runtime {
     fn main_gun_fired(&mut self, audio: &Audio) {
         if self.death_attempted || self.paused { return; }
         let mode = self.plan.as_ref().map_or(crate::soundscape_director::Mode::Explore, |p|p.mode);
+        let before = self.program.current_token();
+        let choice = self.program.main_gun_transition(mode);
+        if before == choice.token { return; }
         self.riser.interrupt();
         self.cancel_music_bridge();
-        let choice = self.program.main_gun_transition(mode);
         self.warm_gun_successor(mode);
         self.intro_done = true;
+        let retained=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring&&v.looping)
+            .map(|v|v.id.clone());
+        if let Some(id)=retained {
+            // A shot raises the programme without chopping the existing loop mid phrase.
+            self.forced_music=Some((choice.token,id.clone()));
+            self.completed.remove("music");
+            self.lane(audio,"music",Some(id),choice.gain,0.0,4.0);
+            self.instant_music=false;
+            return;
+        }
         for voice in &mut self.voices {
             if voice.lane == "music" || voice.lane == "music_intro" {
                 voice.retiring = true;
@@ -1111,7 +1190,7 @@ impl Runtime {
         }
     }
     pub fn snapshot(&self) -> Value {
-        json!({"seed":self.director.seed(),"director":self.director.snapshot(),
+        json!({"layer_episode":self.layers.episode,"layer_gains":{"texture":self.layer_gains.texture,"rhythm":self.layer_gains.rhythm,"anchor_held":self.layer_gains.anchor_held},"music_level":MUSIC_LEVEL,"atmosphere_level":ATMOSPHERE_LEVEL,"seed":self.director.seed(),"director":self.director.snapshot(),
         "program":self.program.snapshot(),"riser":self.riser.snapshot(),"riser_history":self.riser_history,"prepared_death":self.prepared_death.as_ref().map(|d|json!({"id":d.cue.id,"duration_s":d.duration})),"death":self.death.as_ref().map(|d|json!({"id":d.voice.id,"duration_s":d.duration,"frames":d.voice.control.frames.load(Ordering::Relaxed),"finished":d.voice.control.finished.load(Ordering::Relaxed)})),
         "time_s":self.time,"selections":self.selections,"mode":self.plan.as_ref().map(|p|p.mode.as_str()),
         "enabled_cues":self.library.cues.len(),"pending_loads":self.requested.len(),"failed":self.failed,
@@ -1240,6 +1319,8 @@ mod tests {
             .update(0.05,Some("explore"),&choice,false,4.0).is_some()).unwrap();
         r.riser=RiserPlanner::new(seed);r.music_role=Some("explore".into());
         r.lane(&audio,"music",Some("calm".into()),0.5,0.0,0.01);
+        // Bridge tests observe an eligible phrase after its minimum dwell, not a retained intro.
+        r.time=121.0;
         (audio,r,choice)
     }
     #[test]
@@ -1526,7 +1607,47 @@ mod tests {
         assert_ne!(r.selections["night"].1, night);
     }
     #[test]
-    fn main_gun_music_cut_is_immediate_and_leaves_environment_tracks_running() {
+    fn compatible_combat_layers_mix_without_restarting_the_foreground() {
+        let audio=Audio::new_capture();let mut r=runtime_fixture();
+        for (id,path,key) in [("anchor","tonal_loop.wav",Some("F# minor")),
+            ("texture","tonal_texture_loop.wav",Some("F# minor")),
+            ("rhythm","drum_loop_120.wav",None)] {
+            let mut c=cue();c.id=id.into();c.path=path.into();c.role="combat".into();
+            c.bpm=Some(120.0);c.musical_key=key.and_then(crate::sound_library::MusicalKey::parse);
+            r.library.cues.insert(id.into(),c);
+            r.insert(id.into(),Pcm{samples:vec![0.1;RATE as usize*2].into()});
+        }
+        r.lane(&audio,"music",Some("anchor".into()),0.8,0.0,0.01);
+        let anchor=r.voices.iter().find(|v|v.lane=="music").unwrap().control.clone();
+        r.layer_gains=r.layers.update(8.0,true);r.update_score_layers(&audio,"");
+        assert!(r.voices.iter().any(|v|v.lane=="score_layer_texture"&&v.id=="texture"));
+        assert!(r.voices.iter().any(|v|v.lane=="score_layer_rhythm"&&v.id=="rhythm"));
+        let start=anchor.frames.load(Ordering::Relaxed);audio.render_capture_frames(4410).unwrap();
+        assert!(anchor.frames.load(Ordering::Relaxed)>start);assert!(!anchor.retire.load(Ordering::Relaxed));
+        let music=r.voices.iter().find(|v|v.lane=="music").unwrap();
+        assert!((get(&music.control.gain)-0.2).abs()<1e-6,"score source is quarter gain");
+    }
+    #[test]
+    fn finite_cues_and_key_conflicts_cannot_enter_loop_layers() {
+        let mut anchor=cue();anchor.id="anchor".into();anchor.bpm=Some(120.0);
+        anchor.musical_key=crate::sound_library::MusicalKey::parse("F# minor");
+        let mut next=anchor.clone();next.id="other".into();next.looping=false;
+        assert!(!layers::compatible(&anchor,&next));next.looping=true;
+        next.musical_key=crate::sound_library::MusicalKey::parse("C minor");
+        assert!(!layers::compatible(&anchor,&next));
+        next.musical_key=None;next.path="drum_loop_120.wav".into();
+        assert!(layers::compatible(&anchor,&next));next.bpm=Some(97.0);
+        assert!(!layers::compatible(&anchor,&next));
+    }
+    #[test]
+    fn long_release_is_not_truncated_to_thirty_seconds() {
+        let c=cue();let control=Arc::new(Control::new(1.0,0.001));
+        let mut source=BedSource::new(Pcm{samples:vec![0.1;RATE as usize*2].into()},&c,control.clone(),RackConfig::default());
+        for _ in 0..1000 {source.next();}control.fade_out(90.0);
+        for _ in 0..32 {source.next();}assert!(source.remaining>RATE as u64*89);
+    }
+    #[test]
+    fn main_gun_keeps_the_existing_loop_and_leaves_environment_tracks_running() {
         let a = Audio::new_capture();
         let mut r = runtime_fixture();
         for id in ["suspense_a", "suspense_b"] {
@@ -1540,13 +1661,34 @@ mod tests {
         r.main_gun_fired(&a);
         let bed_before=r.voices.iter().find(|v|v.lane=="night").unwrap().control.frames.load(Ordering::Relaxed);
         let music=r.voices.iter().find(|v|v.lane=="music"&&!v.retiring).unwrap();
-        assert_eq!(music.id,"suspense_b");
+        assert_eq!(music.id,"suspense_a");
         assert_eq!(r.program.update(0.0,crate::soundscape_director::Mode::Explore).role.as_deref(),Some("threat"));
         a.render_capture_frames(4410).unwrap();
-        assert!(music.control.frames.load(Ordering::Relaxed)>4000,"no waiting for the next musical bar");
+        assert!(music.control.frames.load(Ordering::Relaxed)>4000,"existing sample clock continues across the shot");
         let bed=r.voices.iter().find(|v|v.lane=="night").unwrap();
         assert!(!bed.retiring && bed.control.frames.load(Ordering::Relaxed)>bed_before);
     }
+    #[test]
+    fn repeated_main_gun_fire_keeps_the_playing_music_source_and_ambient_beds() {
+        let a=Audio::new_capture(); let mut r=runtime_fixture();
+        for id in ["suspense_a","suspense_b"] {
+            let mut c=cue(); c.id=id.into(); c.role="threat".into();
+            r.library.cues.insert(id.into(),c);
+            r.insert(id.into(),Pcm{samples:vec![0.1; RATE as usize*4].into()});
+        }
+        r.update(&a,0.1,input(true,7,true,false));
+        r.main_gun_fired(&a);
+        let control=r.voices.iter().find(|v|v.lane=="music"&&!v.retiring).unwrap().control.clone();
+        let token=r.program.current_token();
+        for _ in 0..5 {
+            r.update(&a,8.0,input(true,7,true,false));
+            r.main_gun_fired(&a);
+            assert_eq!(r.program.current_token(),token);
+            assert!(r.voices.iter().any(|v|v.lane=="music"&&!v.retiring&&Arc::ptr_eq(&v.control,&control)));
+        }
+        assert!(r.voices.iter().any(|v|v.lane=="night"&&!v.retiring));
+    }
+
     #[test]
     fn finite_engine_effect_finishes_once_and_rearms_only_after_repair() {
         let a=Audio::new_capture(); let mut r=runtime_fixture();

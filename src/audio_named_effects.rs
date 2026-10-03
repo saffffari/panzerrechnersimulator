@@ -81,7 +81,7 @@ impl Bank {
 /// Small source-character windows, not complete replacement blasts or full recorded rooms.
 /// Ratios bound character pressure to the existing physical voice's peak before energy matching.
 fn stopped_terminal(terminal:crate::ballistics::Terminal)->bool {
-    matches!(terminal,crate::ballistics::Terminal::Bounce|crate::ballistics::Terminal::Shatter)
+    matches!(terminal,crate::ballistics::Terminal::Bounce|crate::ballistics::Terminal::Ricochet|crate::ballistics::Terminal::Shatter)
 }
 fn contact_policy(name:&str)->Option<(f32,f32)> {Some(match name {
     "fire_igniting"=>(0.40,0.18),"impact_stopped"=>(0.45,0.12),
@@ -197,7 +197,7 @@ impl Audio {
     }
     #[test]fn stopped_character_never_admits_penetration_or_he_blast(){
         use crate::ballistics::Terminal;
-        assert!(stopped_terminal(Terminal::Bounce));assert!(stopped_terminal(Terminal::Shatter));
+        assert!(stopped_terminal(Terminal::Bounce));assert!(stopped_terminal(Terminal::Ricochet));assert!(stopped_terminal(Terminal::Shatter));
         assert!(!stopped_terminal(Terminal::Penetration));assert!(!stopped_terminal(Terminal::HeBlast));
     }
     #[test]fn contact_excerpts_are_finite_and_do_not_keep_the_full_recorded_room(){

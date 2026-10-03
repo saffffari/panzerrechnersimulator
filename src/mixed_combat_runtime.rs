@@ -307,6 +307,8 @@ impl Game {
                 fresh.cooldown = 0.5;
                 *actor = fresh;
             }
+            actor.anatomical_prone=soldier.is_prone_wounded();
+            actor.perception_point=if soldier.is_prone_wounded(){Some(soldier.anatomical_eye())}else{None};
             actor.pos = soldier.pos;
             actor.yaw = soldier.yaw;
             // Loading is transactional: absent derivative geometry cannot grant an invisible
@@ -404,6 +406,19 @@ impl Game {
         let return_fire = self.enemy_return_fire_allowed();
         for i in 0..self.mixed_combat.actors.len() {
             if !self.mixed_combat.actors[i].alive() {
+                continue;
+            }
+            if self.soldiers[i].is_fleeing() {
+                let before = self.soldiers[i].pos;
+                self.soldiers[i].advance_flee(&self.hf, dt);
+                self.soldiers[i].pos = self.world_doors.resolve_walk(before, self.soldiers[i].pos, crate::foot::STANDING_HEIGHT);
+                self.constrain_winter_soldier_motion(i, before);
+                let actor = &mut self.mixed_combat.actors[i];
+                actor.pos = self.soldiers[i].pos;
+                actor.yaw = self.soldiers[i].yaw;
+                actor.velocity = (actor.pos-before)/dt;
+                actor.aiming = false;
+                self.soldiers[i].apply_combat_pose(actor.pos, actor.yaw, actor.velocity, false, actor.crouch_stage(), false);
                 continue;
             }
             // Terrain/trees participate in sight, not just in the later bullet collision test.
@@ -608,10 +623,9 @@ impl Game {
             } else {
                 self.mixed_combat.friendly_damage[source_index] += damage;
             }
-            self.mixed_combat.actors[i].hp = (self.mixed_combat.actors[i].hp - damage).max(0.0);
-            if self.mixed_combat.actors[i].hp <= 0.0 {
-                self.kill_soldier(i, "HE fragments/blast");
-            }
+            // Anatomical pressure resolution in apply_authoritative_he_blast already owns
+            // survival. This policy estimate is telemetry, never a second fatal HP route.
+            self.mixed_combat.actors[i].suppression=1.0;
         }
         if let Some(player) = self.mixed_player_actor() {
             let delta = player.eye() - origin;
