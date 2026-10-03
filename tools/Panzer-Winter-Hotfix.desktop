@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Panzer — Winter Hotfix
+Comment=Current 800x450 fullscreen winter playtest
+Exec=/home/alex/panzer/playtest-hotfix-20261002/tools/launch_fixed_playtest.sh --play
+Path=/home/alex/panzer/playtest-hotfix-20261002
+Icon=applications-games
+Terminal=false
+Categories=Game;
+StartupNotify=false

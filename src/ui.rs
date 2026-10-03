@@ -411,9 +411,13 @@ impl Default for MenuModel {
 }
 
 impl MenuModel {
-    pub fn row_count(&self) -> usize { if self.editor_page { EDITOR_LABELS.len() } else { MENU_COUNT } }
+    pub fn row_count(&self) -> usize {
+        if self.editor_page { EDITOR_LABELS.len() }
+        else { title_row_count(crate::graphics::fixed_playtest_graphics()) }
+    }
     pub fn action(&self) -> Option<MenuAction> {
-        if self.editor_page { None } else { MENU_ACTIONS.get(self.selected).copied() }
+        if self.editor_page || self.selected >= self.row_count() { None }
+        else { MENU_ACTIONS.get(self.selected).copied() }
     }
     pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
         if !(MENU_ROW_LEFT..=MENU_ROW_RIGHT).contains(&x) { return None; }
@@ -423,6 +427,10 @@ impl MenuModel {
             (top..top + step - 0.005).contains(&y)
         })
     }
+}
+
+fn title_row_count(fixed_graphics: bool) -> usize {
+    MENU_COUNT - usize::from(fixed_graphics)
 }
 
 #[cfg(test)]
@@ -507,9 +515,15 @@ impl PauseMenuModel {
     pub fn row_count(&self) -> usize {
         match self.page {
             PausePage::Main => PauseAction::ALL.len(),
+            PausePage::Settings if crate::graphics::fixed_playtest_graphics() => 4,
             PausePage::Settings | PausePage::Display | PausePage::Graphics => 6,
             PausePage::ConfirmExit => 2,
         }
+    }
+
+    /// Preserve the action IDs used by the input handler after hiding display/graphics pages.
+    pub fn action_row(&self) -> usize {
+        pause_action_row(self.page, self.selected, crate::graphics::fixed_playtest_graphics())
     }
 
     pub fn action(&self) -> Option<PauseAction> {
@@ -526,7 +540,10 @@ impl PauseMenuModel {
     }
 
     pub fn show(&mut self, page: PausePage) {
-        self.page = page;
+        self.page = if crate::graphics::fixed_playtest_graphics()
+            && matches!(page, PausePage::Display | PausePage::Graphics) {
+            PausePage::Settings
+        } else { page };
         self.selected = 0;
         self.message.clear();
     }
@@ -543,9 +560,25 @@ impl PauseMenuModel {
     }
 }
 
+fn pause_action_row(page: PausePage, row: usize, fixed_graphics: bool) -> usize {
+    if page == PausePage::Settings && fixed_graphics { row + 2 } else { row }
+}
+
 #[cfg(test)]
 mod pause_menu_tests {
     use super::*;
+
+    #[test]
+    fn fixed_profile_removes_only_graphics_routes_and_preserves_setting_actions() {
+        assert_eq!(title_row_count(true), 7);
+        assert_eq!(title_row_count(false), 8);
+        assert!(!MENU_ACTIONS[..title_row_count(true)].contains(&MenuAction::Graphics));
+        for row in 0..4 {
+            assert_eq!(pause_action_row(PausePage::Settings, row, true), row + 2);
+            assert_eq!(pause_action_row(PausePage::Settings, row, false), row);
+            assert_eq!(pause_action_row(PausePage::Main, row, true), row);
+        }
+    }
 
     #[test]
     fn pause_main_buttons_share_mouse_keyboard_actions_without_overlapping_details() {
@@ -1490,7 +1523,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         r.draw_text("MOUSE OR ARROWS / ENTER    ESC BACK", 0.50, 0.94, 0.021, COL_HINT, Align::Center);
         return;
     }
-    for (i, label) in MENU_LABELS.iter().enumerate() {
+    for (i, label) in MENU_LABELS.iter().take(m.row_count()).enumerate() {
         let selected = i == m.selected;
         let text = if selected { format!(">  {label}  <") } else { (*label).to_owned() };
         let enabled = i != IDX_LOAD_CHECKPOINT || m.checkpoint_available;
@@ -1577,7 +1610,7 @@ pub fn draw_pause_menu(
                 Some(true) => "On", Some(false) => "Off", None => "Live combat",
             }), playtest_return_fire.is_some()),
             ("Back".to_owned(), true),
-        ],
+        ].into_iter().skip(if crate::graphics::fixed_playtest_graphics() { 2 } else { 0 }).collect(),
         PausePage::Display => {
             let mut rows = vec![(if display.active.is_some() { "Restore desktop window".to_owned() }
                 else { format!("Desktop: {}", if fullscreen { "Fullscreen" } else { "Windowed" }) }, true)];
@@ -1611,9 +1644,9 @@ pub fn draw_pause_menu(
                 "NO SAVED CAMPAIGN CHECKPOINT",
             PausePage::Main if matches!(m.action(), Some(PauseAction::SaveCheckpoint | PauseAction::LoadCheckpoint)) =>
                 "CHECKPOINTS RESTART AT THE CURRENT SECTOR ENTRANCE",
-            PausePage::Settings if m.selected == 2 =>
+            PausePage::Settings if m.action_row() == 2 =>
                 "SHOWS FRAME RATE AND TIMING — GRAPHICS QUALITY IS UNCHANGED",
-            PausePage::Settings if m.selected == 4 => match playtest_return_fire {
+            PausePage::Settings if m.action_row() == 4 => match playtest_return_fire {
                 Some(false) => "PRACTICE TARGETS — ENEMY WEAPONS ARE HELD",
                 Some(true) => "LIVE FIRE — ENEMIES CAN SHOOT BACK",
                 None => "ENEMY FIRE FOLLOWS THE CURRENT MISSION",
@@ -2386,13 +2419,12 @@ pub fn draw_controls(r: &mut Renderer) {
     row(r, lk, 0.365, "Space", "climb / enter / leave hatch");
     row(r, lk, 0.405, "H / LS+A", "open / close own hatch");
     header(r, lh, 0.44, "FIGHTING");
-    row(r, lk, 0.500, "W S A D", "drive - from every view");
-    row(r, lk, 0.545, "LMB", "fire weapon / use hands");
-    row(r, lk, 0.590, "RMB", "focus / aim (B: glasses)");
-    row(r, lk, 0.635, "MMB hold", "coax MG (gunner sight)");
-    row(r, lk, 0.680, "Z", "engine off / start");
-    row(r, lk, 0.720, "Shift hold", "sprint on foot");
-    row(r, lk, 0.775, "L", "handheld torch on / off");
+    row(r, lk, 0.490, "W S A D", "drive / walk at own station");
+    row(r, lk, 0.535, "LMB / MMB", "action / coax in gunner sight");
+    row(r, lk, 0.580, "RMB / B", "focus or aim / binoculars");
+    row(r, lk, 0.625, "Arrow keys", "gunner: traverse / elevation");
+    row(r, lk, 0.670, "V / L", "turret pistol / handheld torch");
+    row(r, lk, 0.715, "Z / Shift", "engine start-stop / foot sprint");
 
     // ── Right column: inside work + system ──
     let (rk, rh) = (0.78, 0.575);
@@ -2429,8 +2461,8 @@ pub fn draw_controls(r: &mut Renderer) {
         r,
         rk,
         0.700,
-        "[ ] · F12 · Esc",
-        "retro / shot / pause",
+        if crate::graphics::fixed_playtest_graphics() { "F12 · Esc" } else { "[ ] · F12 · Esc" },
+        if crate::graphics::fixed_playtest_graphics() { "screenshot / pause" } else { "retro / shot / pause" },
     );
 
     r.draw_text_bold(

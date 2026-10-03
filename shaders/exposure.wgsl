@@ -13,7 +13,8 @@
 // [9] rod neural log10 scot cd/m^2, [10] flash energy td s, [11] seconds since the flash,
 // [12] cone adaptation cd/m^2, [13] rod adaptation scot cd/m^2, [14] mesopic m,
 // [15] metered photopic cd/m^2, [16] metered scotopic, [17] pupil mm, [18] afterimage cd/m^2,
-// [19] bright coverage, [20] bright luminance cd/m^2.
+// [19] bright coverage, [20] bright luminance cd/m^2, [21] arithmetic field onset reference.
+// Lanes 22..31 remain reserved; renderer already allocates 32 lanes.
 @group(0) @binding(1) var<storage, read_write> state: array<f32>;
 
 struct ExposureClock {
@@ -27,7 +28,7 @@ struct ExposureClock {
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
 
 // Per-thread partial sums: photopic log sums (field, gaussian, fovea, bright luminance),
-// scotopic log sums (field, gaussian, fovea, bright count), weights (field, gaussian, fovea, -).
+// scotopic log sums (field, gaussian, fovea, bright count), weights (field, gaussian, fovea, arithmetic photopic sum).
 var<workgroup> partial_p: array<vec4<f32>, 256>;
 var<workgroup> partial_s: array<vec4<f32>, 256>;
 var<workgroup> partial_w: array<vec4<f32>, 256>;
@@ -129,7 +130,7 @@ fn bleach_step(b: f32, retinal: f32, regeneration: f32, photosensitivity: f32, d
     return clamp(bleached - regeneration * bleached / (bleached + OBS_PIGMENT_KM) * dt, 0.0, 1.0);
 }
 
-fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, monocular: bool, dt: f32) {
+fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: bool, dt: f32) {
     let goal = pupil_diameter(lp, monocular);
     let constricting = goal < state[4];
     state[4] = relax(state[4], goal, select(OBS_PUPIL_DILATE_FAST_TAU, OBS_PUPIL_CONSTRICT_TAU,
@@ -146,7 +147,11 @@ fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, monocular: bool, dt: f3
         select(OBS_CONE_TAU_DOWN, OBS_CONE_TAU_UP, cone_target > state[8]), dt);
     state[9] = relax(state[9], rod_target,
         select(OBS_ROD_TAU_DOWN, OBS_ROD_TAU_UP, rod_target > state[9]), dt);
-    let flashing = coverage > OBS_FLASH_MIN_COVERAGE
+    // Contrast alone mistakes a steady window for a new flash every frame. Detect onset
+    // from threshold-independent field energy so changing adaptation cannot re-arm that window.
+    let rising = field > OBS_FLASH_ONSET_RATIO * state[21];
+    state[21] = relax(state[21], field, OBS_FLASH_ONSET_TAU, dt);
+    let flashing = rising && coverage > OBS_FLASH_MIN_COVERAGE
         && bright > OBS_FLASH_ABOVE_ADAPTATION * cone_adaptation();
     state[10] = state[10] * exp(-dt / OBS_FLASH_MEMORY_TAU);
     if (flashing) {
@@ -209,7 +214,7 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         let log_s = log10(ls);
         sp += vec4(log_p, wg * log_p, wf * log_p, 0.0);
         ss += vec4(log_s, wg * log_s, wf * log_s, 0.0);
-        sw += vec4(1.0, wg, wf, 0.0);
+        sw += vec4(1.0, wg, wf, lp);
         if (lp > flash_level) {
             sp.w += lp;
             ss.w += 1.0;
@@ -246,6 +251,7 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         + OBS_FIELD_WEIGHT * field_p));
     let ls = clamp_luminance(pow(10.0, OBS_FOVEA_WEIGHT * fovea_s + OBS_GAUSSIAN_WEIGHT * gauss_s
         + OBS_FIELD_WEIGHT * field_s));
+    let field = clamp_luminance(w.w / max(w.x, 1.0));
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);
     let monocular = clock.monocular > 0.5;
@@ -267,6 +273,7 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         state[9] = log10(ls);
         state[10] = 0.0;
         state[11] = 1.0e6;
+        state[21] = field;
         state[1] = clock.time_s;
         write_mapping(monocular);
         return;
@@ -279,7 +286,7 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         let steps = u32(ceil(dt / OBS_MAX_STEP));
         let h = dt / f32(max(steps, 1u));
         for (var k = 0u; k < steps; k += 1u) {
-            substep(lp, ls, coverage, bright, monocular, h);
+            substep(lp, ls, coverage, bright, field, monocular, h);
         }
     }
     write_mapping(monocular);

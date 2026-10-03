@@ -617,7 +617,6 @@ fn binocular_prop_model(camera: &crate::camera::Camera, raise: f32) -> Option<Ma
 // gun (the radio-operator's forward MG). RAPID automatic fire paced by a firing-rate timer so rounds
 // aren't spawned one-per-frame. MGs are USELESS against armour — they only clatter + spark off a
 // T-34; they are lethal to persistent SOFT targets (see `mg_hit`).
-const MG_FIRE_INTERVAL: f32 = 0.075; // s between rounds — ~13 rounds/sec (MG34 cyclic-rate feel)
 const MG_TRACER_EVERY: u32 = 2; // every Nth round is a visible tracer (classic tracer stream)
 const MG_TRACER_SPEED: f32 = 700.0; // m/s — thin, fast streaks (vs the 450 m/s cannon shell)
 const MG_RANGE: f32 = 900.0; // m — maximum simulated MG flight
@@ -7613,6 +7612,27 @@ fn casing_pull_step(progress: f32, dt: f32, held: bool, eligible: bool, aimed: b
         else { (progress - dt * 3.0).max(0.0) };
     (next, gripping)
 }
+
+/// Use chamber-relative travel, including the final interval before a progress reset.
+/// Weapon/hull motion is not rubbing against the chamber; empty resets are silent.
+fn loader_contact_motion(before: (Breech, f32, f32, bool), after: (Breech, f32, f32, bool), dt: f32)
+    -> crate::audio::LoaderMotion
+{
+    if !dt.is_finite() || dt <= 0.0 { return Default::default(); }
+    let extraction = if matches!(before.0, Breech::Spent) {
+        let end = if matches!(after.0, Breech::Empty) { 1.0 }
+            else if matches!(after.0, Breech::Spent) { after.1 } else { before.1 };
+        (end - before.1) * CASE_EXTRACT_TRAVEL / dt
+    } else { 0.0 };
+    let ram = if matches!(before.0, Breech::Empty)
+        && (after.3 || matches!(after.0, Breech::Loaded)) {
+        let end = if matches!(after.0, Breech::Loaded) { 1.0 } else { after.2 };
+        let guided = |p: f32| ((p - 0.10) / 0.90).clamp(0.0, 1.0);
+        (guided(end) - guided(before.2))
+            * crate::interior_rig::ROUND_READY.distance(crate::interior_rig::ROUND_SEAT) / dt
+    } else { 0.0 };
+    crate::audio::LoaderMotion { extraction_mps: extraction, ram_mps: ram }
+}
 // Two bounded instance pages: a dense 12 mm jet and persistent surface-owned deposited grains.
 const N_FOAM: usize = surface_fire::MAX_DEPOSITS;
 const N_FOAM_BATCHES: usize = 2;
@@ -7772,7 +7792,7 @@ struct Casing {
     vel: Vec3,
     rotation: Quat,
     angular_vel: Vec3,
-    bounced: bool,
+    impact_cooldown: f32,
     /// Riding the loader's hands: the lightweight hand spring supplies its pose.
     carried: bool,
     drop_rest: shell_collision::DropRest,
@@ -8625,7 +8645,7 @@ pub struct Game {
     mg_impacts: Vec<MgImpact>, // pooled MG impact spurts (len == N_MG_IMPACT)
     next_mg_tracer: usize,     // round-robin cursor into mg_tracers / mg_tracer mesh slots
     next_mg_impact: usize,     // round-robin cursor into mg_impacts / mg_impact mesh slots
-    mg_timer: f32,             // countdown to the next MG round while the trigger is held
+    mg_timer: f64,             // phase to the next MG round, retained across render catch-up
     mg_round: u32, // rounds fired — tracer cadence + dispersion + sound pacing (no rand)
     mg_flash_t: f32, // muzzle-flash flicker persistence (re-armed each round)
     mg_flash_pos: Vec3, // world position of the live MG's muzzle flash this frame
@@ -8803,6 +8823,9 @@ pub struct Game {
     /// Windowed play defers RTT submission until the render graph can share its shadow pass with
     /// the main/optic view. Headless verification leaves this false and preserves legacy behavior.
     defer_rtt_to_render: bool,
+    /// Live catch-up keeps source/physics clocks current but publishes expensive fire/grass
+    /// particle pages once, from the final completed simulation state.
+    defer_presentation_rebuild: bool,
     cabin_fire: surface_fire::CabinFire,
     cupola_grip_source: CpuMesh, // same hatch-local triangles used for visible handle and picking
     foam_emit_t: f32,
@@ -10812,7 +10835,7 @@ impl Game {
             "assets/tanks/tiger/baked/tiger_part_wheel2.glb",
             [60, 60, 60],
         ));
-        let driver_fuel_panel = driver_panel::FuelPanel::append(&mut scene);
+        let driver_fuel_panel = driver_panel::FuelPanel::append(&mut scene, tpz_needle);
         // Project-authored low-poly 88 mm rounds: no imported-ordnance fallback or runtime payload.
         let ap_round = round_88_mesh(false);
         let he_round = round_88_mesh(true);
@@ -12721,6 +12744,7 @@ impl Game {
             rtt_refresh_tick: 0,
             rtt_last_refresh,
             defer_rtt_to_render: false,
+            defer_presentation_rebuild: false,
             cabin_fire,
             cupola_grip_source,
             foam_emit_t: 0.0,
@@ -15388,6 +15412,7 @@ impl Game {
     /// keep the explicit simulation-step API below.
     pub fn update_realtime(&mut self,input:&TankInput,dt:f32,r:&mut Renderer) {
         if !dt.is_finite() || dt<=0.0 {return;}
+        if let Some(audio)=&self.audio {audio.begin_simulation_audio_frame(r.time,dt);}
         let count=(dt/0.05).ceil().max(1.0) as u32;
         let step=dt/count as f32;
         let mut partition=*input;
@@ -15395,13 +15420,38 @@ impl Game {
         if let Some(crew)=partition.coop.as_mut() {for role in &mut crew.inputs {
             role.look_dx/=count as f32;role.look_dy/=count as f32;
         }}
+        let deferred=count>1;
+        let previous_presentation=self.defer_presentation_rebuild;
+        let previous_rtt=self.defer_rtt_to_render;
+        if deferred {
+            self.defer_presentation_rebuild=true;
+            // No view may render an intermediate state with retained particle pages.
+            self.defer_rtt_to_render=true;
+        }
+        let mut advanced=false;
         for _ in 0..count {
             if self.game_over().is_some() {break;}
+            if let Some(audio)=&self.audio {audio.set_simulation_audio_time(r.time);}
             self.update(&partition,step,r);
+            advanced=true;
+        }
+        if let Some(audio)=&self.audio {audio.finish_simulation_audio_frame();}
+        self.defer_presentation_rebuild=previous_presentation;
+        self.defer_rtt_to_render=previous_rtt;
+        if deferred && advanced && !previous_presentation {
+            // A fatal substep can stop the loop before its planned final iteration. Publish the
+            // last completed state here rather than running or discarding another physics step.
+            if let Some(grass)=self.grass.as_mut() {grass.present(r);}
+            // Smoke supports were composed in their existing priority order on the last step;
+            // only particle matrices, identities and their matching source lights rebuild here.
+            self.drive_fire_presentation(r,true,false);
+            self.drive_lights(r);
+            if !previous_rtt && !self.couch_crew_active {self.refresh_rtt_periscopes(r);}
         }
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
         if !input.mg_coax && !input.fire2 { self.primary_pickup_press = false; }
@@ -15492,6 +15542,8 @@ impl Game {
             effective_input.binoculars = false;
             effective_input.reload = false;
         }
+        let sidearm_input = self.route_mounted_sidearm_input(&mut effective_input);
+        coop = effective_input.coop;
         let input = &effective_input;
         let primary_was_held = self.prev_primary;
         self.prev_primary = input.mg_coax;
@@ -15636,7 +15688,11 @@ impl Game {
             let hf = &self.hf;
             let act_id = self.act.id;
             let wind_scale = self.weather_wind_scale;
-            g.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act_id, p) * wind_scale);
+            if self.defer_presentation_rebuild {
+                g.advance(r.camera.pos,dt,r.time,|x,z|hf.height_at(x,z),|p|wind_at(act_id,p)*wind_scale);
+            } else {
+                g.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act_id, p) * wind_scale);
+            }
         }
 
         // ABSITZEN: dispatch on mode. Foot = walk the dismounted soldier + a third camera branch;
@@ -15846,13 +15902,8 @@ impl Game {
                             self.grab = false;
                             if self.drop_carried_round(true) {
                                 self.ram = 0.0;
-                                if let Some(a) = &self.audio {
-                                    a.play_mechanical(crate::acoustics::MechanicalParams {
-                                        cue: crate::acoustics::MechanicalCue::ShellDrop,
-                                        intensity: 0.82, bearing_deg: 318.0,
-                                        seed: self.kill_tick ^ 0x5E11_D012,
-                                    }, 0.54);
-                                }
+                                // A release is not a floor contact. The swept body emits
+                                // its own sound when it actually strikes a surface.
                             }
                         }
                         if self.grab {
@@ -16485,7 +16536,14 @@ impl Game {
             let engine_ear = self.own_engine_ear_laf(telemetry, r.camera.pos);
             self.engine_ear_laf_dba = engine_ear;
             a.set_engine_at_ear(telemetry, engine_ear, dt);
-            a.set_running_gear(running_gear, engine_ear, self.player.alive);
+            let loader_motion = loader_contact_motion(loader_before,
+                (self.breech, self.casing_pull, self.ram, self.grab), dt);
+            let loader_level = crate::audio::LOADER_FRICTION_REFERENCE_DBA;
+            let loader_ear = self.own_vehicle_ear_level(loader_level + 8.0, loader_level,
+                crate::sound_levels::SpectrumClass::Mechanical, 125.0);
+            a.set_loader_motion(loader_motion, loader_ear.laf_db,
+                bearing_deg_from(r.camera.forward(), self.reload_mouth_world() - r.camera.pos));
+            a.set_running_gear_drive(running_gear, engine_ear, self.player.alive, telemetry.load);
             a.set_loose_track_voices(&self.loose_track_voices(r.camera.pos,r.camera.forward()),dt);
             // Other tanks' engines and tracks, propagated like every other source.
             let vehicles = self.enemy_vehicle_voices(r.camera.pos, r.camera.forward());
@@ -16824,7 +16882,7 @@ impl Game {
         self.drive_local_binocular_prop(r);
         self.drive_hand_map(r);
         self.drive_hand_compass(dt, r);
-        self.update_cupola_pistol(input,dt,r);
+        self.update_cupola_pistol(&sidearm_input,dt,r);
         self.update_winter_mission(dt);
         self.update_canyon_run(dt, r);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
@@ -17598,7 +17656,7 @@ impl Game {
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
         let fuel_liters = self.tank_fuel_liters();
-        self.driver_fuel_panel.drive(fuel_liters, hm, r);
+        self.driver_fuel_panel.drive(fuel_liters, hm, tm, r);
         let enigma_model = self.enigma_dressing.as_ref()
             .map(|prop| prop.visual_world_model(&self.player))
             .unwrap_or_else(|| enigma_radio_model(hm));
@@ -17612,7 +17670,7 @@ impl Game {
         r.set_visible(self.slots.turret_disc, true);
         r.set_emissive(self.slots.turret_disc, 0.0);
         // TPZ needle: 1:1 turret bearing, about the dial-face axis (from the backing's transform).
-        let tpz_axis = Vec3::new(0.772, 0.0, 0.636).normalize();
+        let tpz_axis = driver_panel::tpz_axis();
         r.set_model(
             self.slots.tpz_needle,
             tm * Mat4::from_translation(rig::TPZ_NEEDLE_POS)
@@ -19882,6 +19940,10 @@ impl Game {
     /// Resolve one P08 round against the same live geometry that protects infantry from rifle fire.
     /// It is lethal to soft targets and deliberately has no armor-damage path.
     fn fire_luger(&mut self, o: Vec3, d: Vec3, right: Vec3, up: Vec3, visual_muzzle: Vec3) {
+        if !self.p08_muzzle_path_clear(o,visual_muzzle) {
+            self.hover_label=Some("P08 — MUZZLE OBSTRUCTED");
+            return;
+        }
         if !self.foot.discharge_p08() { return; }
         self.foot.cooldown = 0.25;
         self.foot.flash_t = 0.075;
@@ -22878,6 +22940,9 @@ impl Game {
                 crate::acoustics::ReverbParams::OPEN_SNOW
             };
             for s in arrived {
+                // `delay` is negative by the exact amount this wave crossed the receiver during
+                // the current tick. Preserve that arrival within the live device-clock batch.
+                if let Some(audio)=&self.audio {audio.set_simulation_audio_time(audio_time_s+s.delay);}
                 self.scheduled_audio_audit.last_arrival = Some((s.sfx, audio_time_s));
                 self.enemy_report_audit.arrive(&s, audio_time_s, self.audio.is_some());
                 if self.scheduled_audio_audit.events.len() >= 512 {self.scheduled_audio_audit.events.pop_front();}
@@ -22931,7 +22996,7 @@ impl Game {
                 }
             }
         }
-
+        if let Some(audio)=&self.audio {audio.set_simulation_audio_time(self.enemy_report_audit.clock_s);}
         count
     }
 
@@ -23302,11 +23367,14 @@ impl Game {
             active.clear();
             let mut flying = std::mem::take(&mut self.projectiles);
             for mut projectile in flying.drain(..) {
+                let flight_at=projectile.small_arm.map_or(flight_at,|bullet|flight_at.max(bullet.emitted_at_s));
+                let available_dt=(r.time-self.projectile_accumulator_s-flight_at).clamp(0.0,PROJECTILE_FIXED_DT);
+                if available_dt<=0.0 {active.push(projectile);continue;}
                 self.enemy_report_audit.clock_s=flight_at;
                 let limit = projectile.small_arm.map_or(PROJECTILE_MAX_DISTANCE_M, |bullet|bullet.shot.range);
                 let wind = wind_at(self.act.id, projectile.pos) * self.weather_wind_scale;
                 let step_dt = if projectile.small_arm.is_some() {
-                    PROJECTILE_FIXED_DT.min((projectile.shell.time_of_flight(limit)-projectile.age_s).max(0.0))
+                    available_dt.min((projectile.shell.time_of_flight(limit)-projectile.age_s).max(0.0))
                 } else { PROJECTILE_FIXED_DT };
                 let step = projectile.swept_step_with_wind(step_dt, Vec3::new(wind.x,0.0,wind.y));
                 let contact = self.nearest_projectile_contact(&projectile, step);
@@ -24737,15 +24805,16 @@ impl Game {
             if self.mg_heat >= 1.0 {
                 self.mg_overheated = true;
             }
-            // Emit as many rounds as the elapsed time allows (usually 0–1 per frame at 60 fps) so the
-            // cyclic rate is frame-rate independent without ever bursting a whole belt in one frame.
-            self.mg_timer -= dt;
-            let mut guard = 0;
-            while self.mg_timer <= 0.0 && guard < 4 {
-                self.mg_timer += MG_FIRE_INTERVAL;
+            // Source timestamps determine cadence and the muzzle wave's departure. Keep the
+            // existing 800 rpm and every residual interval across render catch-up steps.
+            let frame_start=self.enemy_report_audit.clock_s;
+            for offset in crate::mounted_mg::shot_offsets(&mut self.mg_timer,dt) {
+                self.enemy_report_audit.clock_s=frame_start+offset;
+                if let Some(audio)=&self.audio {audio.set_simulation_audio_time(frame_start+offset);}
                 self.fire_mg_round(coax);
-                guard += 1;
             }
+            self.enemy_report_audit.clock_s=frame_start;
+            if let Some(audio)=&self.audio {audio.set_simulation_audio_time(frame_start);}
         } else {
             // Not firing: shed heat, clear the overheat lock once cool enough, and reset the
             // sub-interval so the first round after re-pulling the trigger fires promptly.
@@ -27270,7 +27339,7 @@ impl Game {
             vel,
             rotation: self.carry_rotation,
             angular_vel: Vec3::new(s(4) - 0.5, s(5) - 0.5, s(6) - 0.5).normalize_or_zero() * (3.0 + 6.0 * s(7)),
-            bounced: false,
+            impact_cooldown: 0.0,
             drop_rest: shell_collision::DropRest::default(),
         };
         Some(k)
@@ -27281,7 +27350,7 @@ impl Game {
         let case = &mut self.casings[k];
         case.carried = false;
         case.drop_rest = shell_collision::DropRest::default();
-        case.bounced = false;
+        case.impact_cooldown = 0.0;
         case.pos = self.carry_pos;
         case.vel = self.carry_vel;
         case.rotation = self.carry_rotation;
@@ -28227,7 +28296,7 @@ impl Game {
         let source = self.cabin_fire.source_contacts(&models);
         let signature = shell_collision::scene_signature(&models);
         let mut budget = shell_collision::DropBudget::default();
-        let mut played_drop = false;
+        let mut contacts = Vec::new();
         for offset in 0..N_LOOSE {
             let k = (self.drop_physics_frame + offset) % N_LOOSE;
             let ap_slot = self.slots.loose_shell[k];
@@ -28254,19 +28323,16 @@ impl Game {
             sh.rotation = (turret_rotation.conjugate() * body.rotation).normalize();
             sh.angular_vel = inv.transform_vector3(body.angular_velocity);
             sh.impact_cooldown = (sh.impact_cooldown - dt.max(0.0).min(0.1)).max(0.0);
-            if report.impact_speed > 0.7 && sh.impact_cooldown <= 0.0 {
-                sh.impact_cooldown = 0.30;
-                if !played_drop {
-                    played_drop = true;
-                    if let Some(a) = &self.audio {
-                        a.play_mechanical(crate::acoustics::MechanicalParams {
-                            cue: crate::acoustics::MechanicalCue::ShellDrop,
-                            intensity: (report.impact_speed * 0.12).clamp(0.2,0.8),
-                            bearing_deg: 330.0,
-                            seed: self.kill_tick ^ k as u32 ^ 0x5E11_D204,
-                        }, 0.52);
-                    }
-                }
+            if report.impact_speed > 0.28 && sh.impact_cooldown <= 0.0 {
+                sh.impact_cooldown = 0.045;
+                contacts.push(crate::audio::CartridgeContact {
+                    kind: crate::audio::CartridgeKind::LiveRound,
+                    normal_speed_mps: report.impact_speed,
+                    tangential_speed_mps: report.tangential_speed,
+                    mass_kg: body.mass,
+                    bearing_deg: bearing_deg_from(r.camera.forward(), report.contact_point - r.camera.pos),
+                    seed: self.kill_tick ^ k as u32 ^ self.drop_physics_frame as u32 ^ 0x5E11_D204,
+                });
             }
             let slot = if sh.nature_he { he_slot } else { ap_slot };
             r.set_visible(ap_slot, !sh.nature_he);
@@ -28275,6 +28341,7 @@ impl Game {
             r.set_model(ap_slot, body.model());
             r.set_model(he_slot, body.model());
         }
+        self.play_cartridge_contacts(&contacts);
     }
 
     /// Exact swept source contacts and deposited foam layers. Airborne grains are world-space;
@@ -28697,7 +28764,7 @@ impl Game {
         let source = self.cabin_fire.source_contacts(&models);
         let signature = shell_collision::scene_signature(&models);
         let mut budget = shell_collision::DropBudget::default();
-        let mut played_drop = false;
+        let mut contacts = Vec::new();
         self.drop_physics_frame = self.drop_physics_frame.wrapping_add(1);
         for offset in 0..N_CASING {
             let k = (self.drop_physics_frame + offset) % N_CASING;
@@ -28710,6 +28777,7 @@ impl Game {
             }
             let c = &mut self.casings[k];
             if !c.active { r.set_visible(slot, false); continue; }
+            c.impact_cooldown = (c.impact_cooldown - dt.max(0.0)).max(0.0);
             if c.carried {
                 c.pos = self.carry_pos;
                 c.rotation = self.carry_rotation;
@@ -28726,23 +28794,33 @@ impl Game {
                 c.vel = body.velocity;
                 c.rotation = body.rotation;
                 c.angular_vel = body.angular_velocity;
-                if report.impact_speed > 0.7 && !c.bounced {
-                    c.bounced = true;
-                    if !played_drop {
-                        played_drop = true;
-                        if let Some(a) = &self.audio {
-                            a.play_mechanical(crate::acoustics::MechanicalParams {
-                                cue: crate::acoustics::MechanicalCue::CasingDrop,
-                                intensity: 0.78, bearing_deg: 72.0,
-                                seed: self.kill_tick ^ k as u32 ^ 0xCA5E_D203,
-                            }, 0.58);
-                        }
-                    }
+                if report.impact_speed > 0.28 && c.impact_cooldown <= 0.0 {
+                    c.impact_cooldown = 0.045;
+                    contacts.push(crate::audio::CartridgeContact {
+                        kind: crate::audio::CartridgeKind::EmptyCase,
+                        normal_speed_mps: report.impact_speed,
+                        tangential_speed_mps: report.tangential_speed,
+                        mass_kg: body.mass,
+                        bearing_deg: bearing_deg_from(r.camera.forward(), report.contact_point - r.camera.pos),
+                        seed: self.kill_tick ^ k as u32 ^ self.drop_physics_frame as u32 ^ 0xCA5E_D203,
+                    });
                 }
             }
             r.set_visible(slot, true);
             r.set_emissive(slot, 0.0);
             r.set_model(slot, Mat4::from_rotation_translation(c.rotation, c.pos));
+        }
+        self.play_cartridge_contacts(&contacts);
+    }
+
+    fn play_cartridge_contacts(&self, contacts: &[crate::audio::CartridgeContact]) {
+        let Some(audio) = &self.audio else { return; };
+        for &contact in contacts {
+            let level = crate::audio::cartridge_contact_level_dba(&contact);
+            if !level.is_finite() { continue; }
+            let ear = self.own_vehicle_ear_level(level + 10.0, level,
+                crate::sound_levels::SpectrumClass::Mechanical, 125.0);
+            audio.play_cartridge_contact(contact, ear.laf_db);
         }
     }
 
@@ -29065,22 +29143,30 @@ impl Game {
     /// flames/soot plus the nearest burning wrecks and archived hulks. Ten shared dynamic pages keep
     /// the count bounded and make all four couch views see the exact same grains.
     fn drive_interior_fire(&mut self, r: &mut Renderer) {
-        self.interior_fire_lights.fill(None);
-        self.world_fire_lights.fill(None);
-        r.heat_sources.clear();
+        self.drive_fire_presentation(r,!self.defer_presentation_rebuild,true);
+    }
+
+    /// Source origins/timestamps and ordered smoke supports remain current on every simulation
+    /// step. Expensive cell generation/visibility/uploads can be published once after catch-up.
+    /// `volumes=false` prevents that final publication from duplicating the last step's supports.
+    fn drive_fire_presentation(&mut self,r:&mut Renderer,particles:bool,volumes:bool) {
+        if particles {
+            self.interior_fire_lights.fill(None);
+            self.world_fire_lights.fill(None);
+        }
         let heat_review = crate::debug_gates::DebugGates::active().heat_haze;
         let fx_time = self.stealth.t;
-        r.heat_sources.time = fx_time;
+        if volumes {r.heat_sources.clear();r.heat_sources.time=fx_time;}
         let mut flame_mats: [Vec<Mat4>; FIRE_FLAME_BATCHES] =
             std::array::from_fn(|i| {
-            Vec::with_capacity(if i < FIRE_FLAME_STAGES {
+            Vec::with_capacity(if !particles {0} else if i < FIRE_FLAME_STAGES {
                 MAX_INTERIOR_FLAME_CUBES
             } else {
                 MAX_WORLD_FIRE_SOURCES * FLAME_CUBES_PER_WORLD_SOURCE
             })
         });
         let mut smoke_mats: [Vec<Mat4>; FIRE_SMOKE_BATCHES] =
-            std::array::from_fn(|_| Vec::with_capacity(N_FIRE_SMOKE_CUBES));
+            std::array::from_fn(|_| Vec::with_capacity(if particles {N_FIRE_SMOKE_CUBES}else{0}));
         let mut flame_ids: [Vec<[u32;4]>; FIRE_FLAME_BATCHES] = std::array::from_fn(|_| Vec::new());
         let mut smoke_ids: [Vec<[u32;4]>; FIRE_SMOKE_BATCHES] = std::array::from_fn(|_| Vec::new());
 
@@ -29095,7 +29181,7 @@ impl Game {
         for (k, patch) in patches {
             let fire_origin = patch.position;
             let strength = patch.intensity.clamp(0.0, 1.0);
-            if heat_review {
+            if volumes && heat_review {
                 let source = fire_origin + patch.normal * 0.02;
                 // Stop the prescribed plume at the first source-mesh contact above its origin.
                 let ends: Vec<_> = (1..=12).map(|i|source+Vec3::Y*(i as f32*0.065)).collect();
@@ -29103,6 +29189,7 @@ impl Game {
                 let height = clear.into_iter().take_while(|v|*v).count() as f32 * 0.065;
                 r.heat_sources.add(source,0.20,height,strength,k as f32*1.37);
             }
+            if !particles {continue;}
             let seed = (k as u32).wrapping_mul(0x9e37_79b9) ^ 0x51ed_19a1;
             let n_flame = ((strength.powf(0.62) * per_patch as f32).ceil() as usize).min(per_patch);
             let mut source_cells = Vec::with_capacity(n_flame);
@@ -29223,7 +29310,7 @@ impl Game {
         for (source_index, (_, pos, strength, seed)) in world_sources.into_iter().enumerate() {
             let stove=stoves.contains(&seed);
             let wind=r.weather_wind_world;
-            if source_index<3 {
+            if volumes && source_index<3 {
                 for lobe in 0..3 {
                     let age=lobe as f32*1.35+0.45;
                     let roll=crate::particle_motion::advancing_phase(seed,fx_time,0.55);
@@ -29239,7 +29326,8 @@ impl Game {
                 }
             }
             if stove {continue;}
-            if heat_review { r.heat_sources.add(pos,0.72,3.2,strength,seed as f32*0.0001); }
+            if volumes && heat_review { r.heat_sources.add(pos,0.72,3.2,strength,seed as f32*0.0001); }
+            if !particles {continue;}
             let source_cells = if let Some(patches)=surface_patches.get(&seed) {
                 surface_wreck_fire_cells(seed,fx_time,strength,pos,patches,wind)
             } else {world_fire_cells(seed, fx_time, strength)};
@@ -29256,6 +29344,7 @@ impl Game {
 
         }
 
+        if !particles {return;}
         debug_assert!(flame_mats.iter().map(Vec::len).sum::<usize>() <= N_FIRE_FLAME_CUBES);
         debug_assert!(smoke_mats.iter().map(Vec::len).sum::<usize>() <= N_FIRE_SMOKE_CUBES);
         for ((batch, transforms), ids) in self

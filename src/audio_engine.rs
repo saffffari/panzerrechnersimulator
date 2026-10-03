@@ -9,26 +9,32 @@ use std::time::Duration;
 
 const RATE: u32 = crate::acoustics::SAMPLE_RATE;
 const SEED: u32 = 3_801;
-const SPEEDS: [f32; 7] = [0.6, 0.8, 1.0, 1.3, 1.7, 2.2, 2.8];
+const SPEEDS: [f32; 7] = [0.6, 1.0, 1.4, 2.0, 2.8, 3.6, 4.5];
+const LOADS:[f32;3]=[0.0,0.4,1.0];
 
 pub(super) struct Control {
     speed: AtomicU32,
+    load: AtomicU32,
 }
 impl Default for Control {
     fn default() -> Self {
         Self {
             speed: AtomicU32::new(1.0f32.to_bits()),
+            load: AtomicU32::new(0.4f32.to_bits()),
         }
     }
 }
 impl Control {
     pub fn set_speed(&self, speed: f32) {
         let speed = if speed.is_finite() {
-            speed.clamp(0.5, 3.0)
+            speed.clamp(0.5, 5.0)
         } else {
             1.0
         };
         self.speed.store(speed.to_bits(), Ordering::Relaxed);
+    }
+    pub fn set_load(&self,load:f32){
+        self.load.store(if load.is_finite(){load.clamp(0.0,1.0).to_bits()}else{0.4f32.to_bits()},Ordering::Relaxed);
     }
 }
 
@@ -36,12 +42,14 @@ pub(super) struct EngineSource {
     control: Arc<Control>,
     synthesis: crate::acoustics::EngineSynthesis,
     speed: f32,
+    load:f32,
     right: Option<f32>,
 }
 impl EngineSource {
     pub fn new(control: Arc<Control>) -> Self {
         Self {
             speed: f32::from_bits(control.speed.load(Ordering::Relaxed)),
+            load:f32::from_bits(control.load.load(Ordering::Relaxed)),
             control,
             synthesis: crate::acoustics::EngineSynthesis::new(SEED),
             right: None,
@@ -57,7 +65,9 @@ impl Iterator for EngineSource {
         let target = f32::from_bits(self.control.speed.load(Ordering::Relaxed));
         // Sample-rate smoothing prevents simulation frame steps in the combustion clock.
         self.speed += (1.0 - (-1.0 / (0.020 * RATE as f32)).exp()) * (target - self.speed);
-        let [left, right] = self.synthesis.frame(self.speed);
+        let load=f32::from_bits(self.control.load.load(Ordering::Relaxed));
+        self.load+=(load-self.load)*(1.0-(-1.0/(0.035*RATE as f32)).exp());
+        let [left, right] = self.synthesis.frame_loaded(self.speed,self.load);
         self.right = Some(right);
         Some(left)
     }
@@ -77,27 +87,28 @@ impl Source for EngineSource {
     }
 }
 
-fn render(speed: f32, warmup_frames: usize, frames: usize) -> Vec<f32> {
+fn render(speed:f32,warmup_frames:usize,frames:usize)->Vec<f32>{render_loaded(speed,0.4,warmup_frames,frames)}
+fn render_loaded(speed:f32,load:f32,warmup_frames:usize,frames:usize)->Vec<f32> {
     let mut voice = crate::acoustics::EngineSynthesis::new(SEED);
     for _ in 0..warmup_frames {
-        voice.frame(speed);
+        voice.frame_loaded(speed,load);
     }
-    (0..frames).flat_map(|_| voice.frame(speed)).collect()
+    (0..frames).flat_map(|_| voice.frame_loaded(speed,load)).collect()
 }
 
 /// Measured level of the complete procedural source, including all existing components. No stem
 /// is independently normalised or mixed louder. One-second warmup removes filter startup bias.
-pub(super) fn measured_laf(speed: f32) -> f32 {
-    static TABLE: OnceLock<[f32; 7]> = OnceLock::new();
-    let table = TABLE.get_or_init(|| {
-        SPEEDS.map(|speed| {
-            crate::reproduction::laf_max_dbfs(&render(speed, RATE as usize, RATE as usize * 4))
-        })
-    });
-    let x = speed.clamp(SPEEDS[0], SPEEDS[6]).ln();
-    let i = SPEEDS.iter().rposition(|s| s.ln() <= x).unwrap_or(0).min(5);
-    let fraction = ((x - SPEEDS[i].ln()) / (SPEEDS[i + 1].ln() - SPEEDS[i].ln())).clamp(0.0, 1.0);
-    table[i] + fraction * (table[i + 1] - table[i])
+pub(super) fn measured_laf(speed:f32)->f32 {measured_laf_loaded(speed,0.4)}
+pub(super) fn measured_laf_loaded(speed:f32,load:f32)->f32 {
+    static TABLE:OnceLock<[[f32;7];3]>=OnceLock::new();
+    let table=TABLE.get_or_init(|| LOADS.map(|load|SPEEDS.map(|speed|
+        crate::reproduction::laf_max_dbfs(&render_loaded(speed,load,RATE as usize,RATE as usize*4)))));
+    let x=speed.clamp(SPEEDS[0],SPEEDS[6]).ln();
+    let i=SPEEDS.iter().rposition(|s|s.ln()<=x).unwrap_or(0).min(5);
+    let f=((x-SPEEDS[i].ln())/(SPEEDS[i+1].ln()-SPEEDS[i].ln())).clamp(0.0,1.0);
+    let load=if load.is_finite(){load.clamp(0.0,1.0)}else{0.4};
+    let j=if load<0.4{0}else{1};let g=(load-LOADS[j])/(LOADS[j+1]-LOADS[j]);
+    let at=|j:usize|table[j][i]+f*(table[j][i+1]-table[j][i]);at(j)+g*(at(j+1)-at(j))
 }
 
 #[cfg(test)]

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Validated hotfix, one fixed 12900K / RTX4090 profile. No build or asset generation.
+set -euo pipefail
+case "${1:---play}" in
+  --play) PANZER_MODE=play ;;
+  --menu) PANZER_MODE=menu ;;
+  --check) PANZER_MODE=check ;;
+  *) printf 'Usage: %s [--play|--menu|--check]\n' "$0" >&2; exit 2 ;;
+esac
+readonly PANZER_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+readonly PANZER_BINARY="$PANZER_ROOT/target/release/panzerrechnersystem"
+readonly PANZER_MANIFEST="$PANZER_ROOT/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json"
+readonly PANZER_RUNTIME="$PANZER_ROOT/artifacts/runtime"
+cd "$PANZER_ROOT"
+python3 - "$PANZER_ROOT" <<'PY'
+import json, re, hashlib, sys
+from pathlib import Path
+root=Path(sys.argv[1]); binary=root/'target/release/panzerrechnersystem'
+if binary.is_symlink() or binary.read_bytes()[:4]!=b'\x7fELF':
+    raise SystemExit('Expected a local native release executable')
+manifest=root/'assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json'
+j=json.loads(manifest.read_text())
+assert j['act_id']==1 and j['terrain']['grass_season']=='winter'
+required=[manifest.parent/j['terrain']['heights']]
+required.extend(root/p for p in j['assets'])
+required.extend(root/j['terrain'][k] for k in ('texture','rock_map','snow_map','ground_class'))
+required.extend(root/f'assets/tanks/tiger/baked/tiger_{p}.glb' for p in ('hull','turret','gun'))
+required.extend(root/f'catalog/maps/canyon_v2_survey_20260930.{s}' for s in ('json','png'))
+required.extend(root/p for p in re.findall(r'"(source_assets/[^\"]+)"',(root/'src/terrain_detail.rs').read_text()))
+missing=[str(p) for p in required if not p.is_file() or p.stat().st_size==0]
+if missing: raise SystemExit('Required assets missing:\n'+'\n'.join(missing))
+print(f'Validated {len(required)} required files; fixed internal grid800x450, Studio Display fullscreen.')
+with binary.open('rb') as f: print('Release SHA256:',hashlib.file_digest(f,'sha256').hexdigest())
+PY
+[[ "$PANZER_MODE" != check ]] || exit 0
+mkdir -p "$PANZER_RUNTIME"
+exec 9>"$PANZER_RUNTIME/fixed-playtest.lock"
+flock -n 9 || { printf 'This playtest is already running.\n' >&2; exit 1; }
+# Keep old saved settings intact; fixed mode ignores them. Remove inherited experiment flags.
+while IFS= read -r PANZER_ENV_NAME; do unset "$PANZER_ENV_NAME"; done < <(compgen -A variable KESSEL_)
+export KESSEL_ASSET_ROOT="$PANZER_ROOT" KESSEL_PLAYTEST_MANIFEST="$PANZER_MANIFEST"
+export KESSEL_RENDERER=shader KESSEL_NO_RT=1 KESSEL_GRAPHICS_PRESET=high
+export KESSEL_FIXED_PLAYTEST_GRAPHICS=1 KESSEL_INTERNAL_RES=800x450 KESSEL_FULLSCREEN=1
+export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4
+export KESSEL_SOURCE_VISIBILITY=maps KESSEL_TRANSPORT_QUALITY=full
+export KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_CANYON_V2=1
+if [[ "$PANZER_MODE" == play ]]; then export KESSEL_CANYON=1; fi
+PANZER_LOG="$PANZER_RUNTIME/fixed-playtest-$(date +%Y%m%d-%H%M%S)-$$.log"
+{
+  printf '[launcher] root=%s mode=%s fixed_profile=12900K-4090 internal=800x450 fullscreen=1\n' "$PANZER_ROOT" "$PANZER_MODE"
+  sha256sum -- "$PANZER_BINARY"
+} > "$PANZER_LOG"
+ln -sfn "$(basename -- "$PANZER_LOG")" "$PANZER_RUNTIME/fixed-playtest-latest.log"
+"$PANZER_BINARY" >> "$PANZER_LOG" 2>&1 &
+PANZER_GAME_PID=$!
+printf '[launcher] game_pid=%s\n' "$PANZER_GAME_PID" >> "$PANZER_LOG"
+printf 'Playtest PID %s; log: %s\n' "$PANZER_GAME_PID" "$PANZER_LOG"
+trap 'kill -TERM "$PANZER_GAME_PID" 2>/dev/null || true' TERM INT
+PANZER_STATUS=0
+wait "$PANZER_GAME_PID" || PANZER_STATUS=$?
+printf '[launcher] exit_status=%s\n' "$PANZER_STATUS" >> "$PANZER_LOG"
+exit "$PANZER_STATUS"

@@ -34,7 +34,7 @@ struct Exposure {
 // The same eye as crush.wgsl (src/observer.rs): colour-keeping cones plus saturating rods.
 fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
-    let rods = eye.rod_exposure * scotopic / (1.0 + scotopic * eye.rod_inverse_saturation);
+    let rods = obs_rod_response(scotopic, eye.rod_exposure, eye.rod_inverse_saturation);
     return radiance * eye.exposure + vec3(rods);
 }
 @group(0) @binding(0) var<uniform> u: ParticleUniform;

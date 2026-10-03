@@ -76,3 +76,47 @@ fn quantized_channel_error_is_bounded_in_display_codes_and_keeps_channel_order()
     assert!(shader.contains("var m = aces(c);"));
     assert!(!shader.contains("m = floor(m * cr.levels"));
 }
+
+#[test]
+fn native_ldr_preserves_the_first_dark_palette_code_at_every_threshold() {
+    // Complete storage transfer, not just the preceding 31-step palette quantizer.
+    // The former linear attachment maps part of this valid display step to zero.
+    let first = decode(1.0 / 31.0);
+    let mut old_black_pixels = 0;
+    for rank in 0..64 {
+        let threshold = (rank as f64 + 0.5) / 64.0 - 0.5;
+        old_black_pixels += usize::from((first * 255.0 + threshold).round() == 0.0);
+        let stored = (encode(first) * 255.0 + threshold).round() / 255.0;
+        assert!(stored > 0.0, "valid palette code erased at threshold {rank}");
+        assert!((stored - 1.0 / 31.0).abs() <= 1.0 / 255.0);
+        // Sampling the sRGB intermediate and writing an sRGB final target is idempotent.
+        assert!((encode(decode(stored)) - stored).abs() < 1e-12);
+    }
+    assert!(old_black_pixels > 0, "fixture must expose the prior storage error");
+    assert!(include_str!("../src/renderer.rs").contains(
+        "const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;"));
+}
+
+fn camera_shoulder(x: f64) -> f64 {
+    if x <= 0.6 { (x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14) }
+    else { let z=(1.0+3.047601074*(x-0.6)).ln();
+        0.673290473+0.326709527*z/(z+2.0) }
+}
+#[test]
+fn global_shoulder_keeps_bright_port_detail_and_has_no_knee_discontinuity() {
+    let knee=camera_shoulder(0.6);
+    assert!((camera_shoulder(0.600001)-knee).abs()<1e-6);
+    let before=(knee-camera_shoulder(0.59999))/0.00001;
+    let after=(camera_shoulder(0.60001)-knee)/0.00001;
+    assert!((before-after).abs()<0.0001);
+    let mut previous=0.0;
+    for i in 0..1000 {
+        let x=10_f64.powf(-6.0+i as f64*0.012);
+        let y=camera_shoulder(x);
+        assert!(y>previous && y<1.0); previous=y;
+    }
+    // Previous hard shoulder produced white for all three transported highlight levels.
+    let values=[10.0,42.62,200.0].map(camera_shoulder);
+    assert!(values[0]<values[1] && values[1]<values[2] && values[2]<1.0);
+    assert_eq!(camera_shoulder(0.0),0.0);
+}

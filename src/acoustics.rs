@@ -681,7 +681,9 @@ pub fn synth_mg_armor_hit(p: ImpactParams) -> Vec<f32> {
         // A glancing bullet makes one brief scrape at the same collision. It is continuous
         // contact texture, not another synthesized burst/impact that could fake projectile hits.
         let scrape = (high - low) * (-t / 0.006).exp() * (1.0 - normal) * 0.12;
-        *sample = energy * attack * release * (grit + ping + scrape);
+        let panel_hz=(p.panel.base_freq()*1.7+185.0)*plate.powf(0.08);
+        let body=(TAU*panel_hz*t).sin()*(-t/0.009).exp()*0.17*normal;
+        *sample = energy * attack * release * (grit + ping + scrape + body);
     }
     spatialize_armor_mono(mono, p.bearing_deg, p.station_dist_m, 0.55)
 }
@@ -834,7 +836,13 @@ pub fn synth_small_arm_body_hit(velocity_mps: f32, caliber_mm: f32, seed: u32) -
 pub fn synth_mg_receiver_round(seed:u32)->Vec<f32> {
     let mut mono=vec![0.0;(0.078*SAMPLE_RATE as f32) as usize];
     let tuning=0.97+0.06*hash_noise(seed^0x4d47_3334).abs();
-    add_ricker_wavelet(&mut mono,0.0011,980.0*tuning,0.58);
+    add_ricker_wavelet(&mut mono,0.0011,980.0*tuning,0.38);
+    // Compact bolt/mount displacement, not another gas blast. These finite modes retain
+    // lower mechanical weight after the headset removes some of the sharp contact edge.
+    add_damped_chirp(&mut mono,0.0003,0.027,0.0004,271.0*tuning,245.0*tuning,
+        0.0065,0.18,hash_noise(seed^0x424f_4c54)*0.15);
+    add_damped_chirp(&mut mono,0.0010,0.019,0.0003,493.0*tuning,470.0*tuning,
+        0.004,0.12,hash_noise(seed^0x4d4f_554e)*0.15);
     add_dark_noise_packet(&mut mono,0.0002,0.0022,3600.0,0.13,seed);
     add_ricker_wavelet(&mut mono,0.023,1390.0*tuning,0.23);
     add_ricker_wavelet(&mut mono,0.052,740.0*tuning,0.38);
@@ -1010,15 +1018,20 @@ pub fn interior_muffle(buf: &mut [f32], amount: f32) {
 /// caller. This is a designed source timbre, not a measured muzzle-pressure reconstruction.
 fn cannon_source_mono(caliber_mm: f32, interior: bool, seed: u32) -> Vec<f32> {
     let sr = SAMPLE_RATE as f32;
-    let size = (caliber_mm / 88.0).clamp(0.5, 2.0).sqrt();
-    let duration = 0.52 * size;
+    let charge_shape = 1.0 + 0.035 * hash_noise(seed ^ 0x4341_4e4e);
+    let size = (caliber_mm / 88.0).clamp(0.5, 2.0).sqrt() * charge_shape;
+    let duration = 0.52 * (caliber_mm / 88.0).clamp(0.5, 2.0).sqrt();
     let mut mono = vec![0.0; (duration * sr) as usize];
     let body = if interior { 1.10 } else { 1.0 };
     add_blast_pulse(&mut mono, 0.0, 0.0065 * size, 0.86 * body);
+    // Brake/chamber-scale report identity uses short, irregular upper-body resonances. The
+    // propellant source level and directivity remain in sound_propagation, not this timbre.
+    add_ricker_wavelet(&mut mono, 0.010 * size, (if caliber_mm < 82.0 { 360.0 } else { 287.0 })
+        * (1.0 + 0.045 * hash_noise(seed ^ 0x4252_414b)), if interior {0.13}else{0.19});
     add_ricker_wavelet(&mut mono, 0.025 * size, 49.0 / size, 0.88 * body);
     // This compact upper-bass displacement carries the gun on smaller loudspeakers as well as
     // headphones. It is a single compression/rebound, with no oscillator or pitch sweep.
-    add_ricker_wavelet(&mut mono, 0.014 * size, 118.0 / size, 0.44 * body);
+    add_ricker_wavelet(&mut mono, 0.014 * size, 118.0 / size, 0.49 * body);
     add_ricker_wavelet(&mut mono, 0.008 * size, 245.0 / size, 0.24 * body);
     // The pressure edge is compact enough to read as a crack while the slower displacement
     // carries the mass; no bright layer survives into the decaying body.
@@ -1050,10 +1063,46 @@ fn cannon_source_mono(caliber_mm: f32, interior: bool, seed: u32) -> Vec<f32> {
     mono
 }
 
-/// The 88's own-gun source. The same pressure impulse underlies exterior and compartment voices;
-/// a sealed compartment reduces the crack without replacing the body with more noise.
+/// The own-gun recording perspective retains the pressure front, followed by a finite coupled
+/// pressure/structure response. These are authored modes, not measured Tiger resonances. Their
+/// irregular spacing and short decay avoid either a single bass note or a broadband noise bed.
+/// The exterior response has more upper-body detail; the compartment response is darker.
+/// Source level, enclosure/headset loss, propagation and actual mechanical recoil stay separate.
+fn own_gun_pressure_body(mono: &mut [f32], interior: bool, seed: u32) {
+    let sr = SAMPLE_RATE as f32;
+    // Excess sub-audible displacement consumed the reproduction headroom while contributing
+    // little A-weighted report energy. Preserve the onset and audible low body; remove DC and
+    // the deepest part only, with a causal first-order source filter (no peak compression).
+    let high_pass_a = 1.0 - (-TAU * 45.0 / sr).exp();
+    let mut low = 0.0;
+    for sample in mono.iter_mut() {
+        low += high_pass_a * (*sample - low);
+        *sample -= low;
+    }
+    const MODES: [(f32, f32, f32); 5] = [
+        (113.0, 0.50, 1.00), (179.0, 0.42, 0.86), (251.0, 0.34, 0.75),
+        (347.0, 0.27, 0.62), (487.0, 0.16, 0.48),
+    ];
+    let frequency_scale = if interior { 1.25 } else { 2.0 };
+    for (i, sample) in mono.iter_mut().enumerate() {
+        let t = i as f32 / sr;
+        if t >= 0.230 { break; }
+        let envelope = smoothstep(0.0, 0.004, t) * (1.0 - smoothstep(0.150, 0.230, t));
+        for (j, &(frequency, weight, decay_scale)) in MODES.iter().enumerate() {
+            let detune = 1.0 + 0.045 * hash_noise(seed ^ ((j as u32 + 1) * 773));
+            let phase = 0.37 * j as f32 + 0.20 * hash_noise(seed ^ ((j as u32 + 1) * 173));
+            *sample += 1.5 * weight * envelope * (-t / (0.120 * decay_scale)).exp()
+                * (TAU * frequency * frequency_scale * detune * (t - 0.018 * t * t) + phase).sin();
+        }
+    }
+}
+
+/// The 88's own-gun source: pressure front plus its short near-source response. The same
+/// physical-level calibration applies to both perspectives; this never adds a second event.
 pub fn synth_gun_punch(interior: bool, seed: u32) -> Vec<f32> {
-    let mut out = mono_center(&cannon_source_mono(88.0, interior, seed));
+    let mut mono = cannon_source_mono(88.0, interior, seed);
+    own_gun_pressure_body(&mut mono, interior, seed);
+    let mut out = mono_center(&mono);
     // A transparent peak guard avoids manufacturing harmonics in the bass impulse with tanh.
     attenuate_over_peak(&mut out, 0.92);
     out
@@ -1866,10 +1915,10 @@ pub fn synth_mechanical(p: MechanicalParams) -> Vec<f32> {
         C::MainGunRecoil => (0.72, 72.0, 0.72, 0.16, -8.0, [0.0, 0.055, 0.36, 0.61], 4),
         C::BreechOpen => (0.42, 158.0, 0.68, 0.58, 5.0, [0.03, 0.22, 0.0, 0.0], 2),
         C::BreechLock => (0.38, 205.0, 0.82, 0.12, -4.0, [0.0, 0.064, 0.0, 0.0], 2),
-        C::CasingExtract => (0.62, 165.0, 0.85, 0.76, 14.0, [0.28, 0.44, 0.0, 0.0], 2),
+        C::CasingExtract => (0.12, 265.0, 0.78, 0.0, 0.0, [0.0, 0.023, 0.0, 0.0], 2),
         C::CasingDrop => (0.92, 485.0, 1.0, 0.10, -32.0, [0.0, 0.18, 0.49, 0.0], 3),
-        C::ShellLift => (0.46, 112.0, 0.26, 0.34, 8.0, [0.02, 0.24, 0.0, 0.0], 2),
-        C::ShellRam => (0.52, 94.0, 0.42, 0.62, -3.0, [0.30, 0.37, 0.0, 0.0], 2),
+        C::ShellLift => (0.16, 212.0, 0.16, 0.06, 0.0, [0.0, 0.037, 0.0, 0.0], 2),
+        C::ShellRam => (0.14, 134.0, 0.52, 0.0, 0.0, [0.0, 0.019, 0.0, 0.0], 2),
         C::ShellDrop => (0.68, 82.0, 0.34, 0.18, 18.0, [0.0, 0.22, 0.0, 0.0], 2),
         C::BodyImpact => (0.74, 54.0, 0.05, 0.55, 22.0, [0.11, 0.29, 0.0, 0.0], 2),
     };
@@ -2060,6 +2109,9 @@ pub struct ReverbParams {
 }
 
 impl ReverbParams {
+    /// A local source which already contains its own finite mechanical damping. All ordinary
+    /// propagation/headset filtering remains active; only the synthetic diffuse room tail is off.
+    pub const DIRECT:ReverbParams=ReverbParams{rt60_s:0.08,wet:0.0,damping:1.0};
     /// Snow absorbs reflections aggressively: a small, dark tail.
     pub const OPEN_SNOW: ReverbParams = ReverbParams {
         rt60_s: 0.24,
@@ -2870,8 +2922,15 @@ impl EngineSynthesis {
         }
     }
     pub(crate) fn frame(&mut self, speed: f32) -> [f32; 2] {
+        self.frame_loaded(speed, 0.4)
+    }
+
+    /// Actual combustion cadence and independently changing torque/exhaust character. Load
+    /// does not invent a second RPM droop; the powertrain has already solved the crank speed.
+    pub(crate) fn frame_loaded(&mut self, speed:f32, load:f32) -> [f32;2] {
         let sr = SAMPLE_RATE as f32;
-        let speed = if speed.is_finite() { speed.clamp(0.5, 3.0) } else { 1.0 };
+        let speed = if speed.is_finite() { speed.clamp(0.5, 5.0) } else { 1.0 };
+        let load = if load.is_finite() { load.clamp(0.0,1.0) } else { 0.4 };
         const FIRING_HZ: f32 = 72.0;
         const CYLINDER_GAIN: [f32; 12] = [
             0.78, 1.08, 0.91, 1.18, 0.73, 1.03, 0.86, 1.13, 0.76, 0.99, 0.89, 1.10,
@@ -2973,10 +3032,10 @@ impl EngineSynthesis {
 
         let core = 0.19 * self.block
             + 0.31 * self.hull
-            + 0.25 * chuff
-            + 0.23 * (self.gear - self.gear_floor)
+            + (0.13 + 0.30 * load) * chuff
+            + (0.15 + 0.20 * load) * (self.gear - self.gear_floor)
             + 0.66 * (self.rumble - self.rumble_floor)
-            + 0.52 * lash;
+            + (0.32 + 0.50 * load) * lash;
         self.dc += self.dc_a * (core - self.dc);
         let centered_core = core - self.dc;
         let left_raw = centered_core + 0.026 * (self.stereo_l - self.stereo_l_floor);
@@ -3926,8 +3985,6 @@ mod tests {
             for (name, cue) in [
                 ("76 mm report", synth_gun_report(76.2, 0.0, 0.0, seed)),
                 ("88 mm report", synth_gun_report(88.0, 0.0, 0.0, seed)),
-                ("own exterior", synth_gun_punch(false, seed)),
-                ("own interior", synth_gun_punch(true, seed)),
             ] {
                 finite_stereo(&cue);
                 let bass = cannon_band_energy(&cue, 20, 160);
@@ -3945,6 +4002,58 @@ mod tests {
                 assert!(tail < onset * 0.003, "{name}: prolonged hiss/oscillator tail");
                 assert!(crest_factor(segment(&cue, 0.0, 0.20)) > 3.0,
                     "{name}: compressed into a sustained wash");
+            }
+        }
+    }
+
+    #[test]
+    fn own_gun_pressure_body_preserves_transient_and_calibrated_headroom() {
+        use crate::{reproduction as r, sound_levels as levels, sound_propagation as p};
+        let render_at_level = |cue: &[f32], level: &levels::SourceLevel| {
+            let ear = p::at_ear(level.lpk_db, level.laf_db, level.spectrum,
+                level.a_duration_ms, true);
+            let gain = r::voice_gain(ear.laf_db, r::laf_max_dbfs(cue));
+            r::master_offline(&cue.iter().map(|s| s * gain).collect::<Vec<_>>())
+        };
+        let mut buttoned_laf = None;
+        for interior in [true, false] {
+            for variant in 1..=if interior { 2 } else { 4 } {
+                let seed = if interior { 1_200 } else { 1_000 } + variant as u32 * 71;
+                let dry = synth_gun_punch(interior, seed);
+                finite_stereo(&dry);
+                assert_eq!(dry, synth_gun_punch(interior, seed));
+                let body = cannon_band_energy(&dry, 80, 1_200);
+                let deep = cannon_band_energy(&dry, 20, 80);
+                let hiss = cannon_band_energy(&dry, 3_000, 12_000);
+                assert!(body > deep * 2.0, "own gun: deep displacement consumes audible body");
+                assert!(hiss < body * 0.015, "own gun: body replaced by bright noise");
+                let onset = rms(segment(&dry, 0.0, 0.080));
+                assert!(onset > 0.12, "own gun lost its finite pressure onset");
+                assert!(rms(segment(&dry, 0.25, 0.45)) < onset * 0.003,
+                    "own gun: source response must end, not become a sustained bed");
+
+                let sound = if interior { ProceduralSound::GunInterior(variant) }
+                    else { ProceduralSound::GunExterior(variant) };
+                let cue = synth_procedural(sound);
+                let crest = r::peak_dbfs(&cue) - r::laf_max_dbfs(&cue);
+                assert!((12.0..18.0).contains(&crest),
+                    "{sound:?}: authored source crest {crest} consumes playback headroom");
+                let level = if interior { &levels::OWN_88_BUTTONED }
+                    else { &levels::OWN_88_HEAD_OUT };
+                let (out, reduction) = render_at_level(&cue, level);
+                assert!(reduction > if interior { -1.5 } else { -6.0 },
+                    "{sound:?}: excessive master reduction {reduction}");
+                assert!(r::peak_dbfs(&out) <= -0.99);
+                if interior && variant == 1 {
+                    let laf = r::laf_max_dbfs(&out);
+                    buttoned_laf = Some(laf);
+                    let (hatch, _) = render_at_level(&cue, &levels::OWN_88_HATCH_OPEN);
+                    assert!(r::laf_max_dbfs(&hatch) - laf > 0.3,
+                        "hatch-open pressure difference must survive reproduction");
+                } else if !interior {
+                    assert!(r::laf_max_dbfs(&out) - buttoned_laf.unwrap() > 1.0,
+                        "head-out report must remain stronger than buttoned report");
+                }
             }
         }
     }

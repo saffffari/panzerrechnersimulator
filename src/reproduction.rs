@@ -34,18 +34,19 @@ pub const KNEE_LOW_DBA: f32 = 110.0;
 pub const KNEE_HIGH_DBA: f32 = 150.0;
 /// The report's offset: the mounted bed (110 dB(A)) lands at −45 dBFS(A).
 pub const REPORT_OFFSET_DB: f32 = -155.0;
-/// Target peak of the buttoned own-gun report: just under the limiter's ceiling, so the gun
-/// itself is never limited buttoned up (SL §11 table: "no limiting").
+/// Historical reproduction-reference peak, just below the master ceiling. This fixes the
+/// shared playback exposure; it is not a claim that every current gun waveform avoids limiting.
 pub const OWN_GUN_PEAK_DBFS: f32 = -1.5;
-/// Measured crest factor of the verified `gun_interior` recording: its peak minus its own
-/// LAF,max, both dBFS (−2.77 and −18.46; `own_gun_recording_crest_matches_the_exposure_constant`
-/// re-measures it when the verified bank is present).
+/// Historical reference crest: peak minus LAF,max of the retained `gun_interior` bank entry
+/// (−2.77 and −18.46 dBFS). The active own-gun route uses distinct loaded/generated variants,
+/// not this old generic-explosion replacement. Changing this anchor moves every source, so
+/// active-waveform headroom and master limiting are tested separately from the reference.
 pub const CREST_GUN_INTERIOR_DB: f32 = 15.69;
 
-/// Exposure added to the report's curve, once for every source. The owner-verified own-gun
-/// recording, buttoned up, is placed at its ear level — 139 dB(A) (SL §1 row 1) through the crew
-/// headset — and its peak must land at OWN_GUN_PEAK_DBFS; the exposure is whatever makes that so.
-/// Every other source keeps its curve-given relation to the gun.
+/// Fixed playback exposure from the historical reference at the buttoned-gun ear level.
+/// Every source retains the same physical-level mapping. New source waveforms can have a
+/// different crest; they must remain floating point through the shared limiter rather than
+/// saturating an integer clip or silently moving this global exposure to hide the overload.
 pub fn exposure_db() -> f32 {
     static EXPOSURE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *EXPOSURE.get_or_init(|| {

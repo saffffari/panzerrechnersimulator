@@ -99,7 +99,11 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    periscope and **hold RMB** to bring your eye to it; release to return to the cabin view.
    Driver: **hold RMB** to lean toward the visor; look down-left and click its handwheel to open
    or close the physical shutters. Head-out Commander: hold RMB to raise/aim the P08;
-   LMB fires it while aimed. A carried cartridge takes priority over the pistol.
+   LMB fires it while aimed. **V** draws/holsters the P08 inside the turret or at the cupola;
+   with it drawn, LMB fires, RMB aims and R reloads. **Q** holsters before leaving the post.
+   Holster it to use a sight block, hatch handle or other hand equipment. A carried cartridge
+   takes priority over the pistol. Closed armor blocks the bullet; an obstructed muzzle cannot
+   launch a round through it. The side escape opening can be fired through while standing inside.
    **B** explicitly toggles binoculars at eligible stations; held interior RMB stows them first.
    On foot: aim down the selected weapon's physical sights (hold).
 3. **E = interact with physical equipment and the tank's body.** Pick up the looked-at toolbox,

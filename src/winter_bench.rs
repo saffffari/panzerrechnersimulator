@@ -5,7 +5,7 @@ use super::*;
 
 pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     anyhow::ensure!((60..=240).contains(&frames), "winter-bench requires 60..240 frames");
-    anyhow::ensure!(["dense","combat","fire","coop2"].contains(&mode),"unknown winter-bench scenario");
+    anyhow::ensure!(["dense","combat","fire","coop2","idle"].contains(&mode),"unknown winter-bench scenario");
     let instance=create_instance(); let adapter=request_adapter(&instance,None);
     let info=adapter.get_info(); graphics::set_active_preset(graphics::GraphicsPreset::for_adapter(info.device_type));
     let (device,queue)=request_device(&adapter);
@@ -19,8 +19,11 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     // replacing the measured workload with a death card; no play-session policy is changed.
     g.god=true;
     let coop=mode=="coop2";
-    let stress=mode!="dense";
+    let stress=mode!="dense" && mode!="idle";
     let unbounded=std::env::var("KESSEL_WINTER_BENCH_UNBOUNDED").as_deref()==Ok("1");
+    let update_mode=std::env::var("KESSEL_WINTER_BENCH_UPDATE").unwrap_or_else(|_|"single".into());
+    anyhow::ensure!(["single","manual","catchup"].contains(&update_mode.as_str()),"invalid benchmark update mode");
+    let simulation_dt=if update_mode=="single" {1.0/120.0}else{0.25};
     let mut crew=lan::CrewFrame::default();
     for (role,id) in [(lan::LanRole::Commander,1),(lan::LanRole::Gunner,2)] {
         crew.roster[role as usize]=id; crew.inputs[role as usize].post=role;
@@ -32,6 +35,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
         }
     }
     if mode=="fire" || coop { g.station=game::Station::Loader; g.debug_start_fire(); }
+    if mode=="idle" { g.station=game::Station::Loader; }
     g.update(&input,1.0/120.0,&mut r);
     let (mut totals,mut simulation,mut submit,mut fences)=(Vec::new(),Vec::new(),Vec::new(),Vec::new());
     let mut gpu=gpu_profile::GpuProfileSummary::default();
@@ -45,7 +49,9 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
         if stress && i%48==0 {
             for ei in 0..3 { g.debug_enemy_fire_at_player(ei); }
         }
-        g.update(&input,1.0/120.0,&mut r);
+        if update_mode=="catchup" {g.update_realtime(&input,simulation_dt,&mut r);}
+        else if update_mode=="manual" {for _ in 0..5 {g.update(&input,simulation_dt/5.0,&mut r);}}
+        else {g.update(&input,simulation_dt,&mut r);}
         anyhow::ensure!(g.player.alive,"benchmark workload died; reject timing rather than measuring a death screen");
         let sim=elapsed_ms(sim_begin);
         let draw_begin=Instant::now();
@@ -72,7 +78,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
             g.configure_crew_render_view(lan::LanRole::Gunner,false,&mut r);
             r.set_active_view(3); r.set_coop_shadow_reuse(!unbounded); r.render_offscreen(&device,&queue);
             if !unbounded { r.end_coop_shadow_frame(); }
-        } else if mode=="fire" {
+        } else if mode=="fire" || mode=="idle" {
             if !unbounded { r.begin_coop_shadow_frame(g.player.center()); }
             let ready=g.refresh_rtt_periscopes(&mut r); r.set_coop_shadow_reuse(!unbounded && ready);
             if !unbounded && g.protected_main_interior_view() {
@@ -122,7 +128,10 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
         "variant":if unbounded {"no_shared_shadow_or_protected_clipping"} else {"shipping"},
         "adapter":info.name,"backend":format!("{:?}",info.backend),"manifest":path,
         "internal_resolution":[r.iw,r.ih],"human_views":if coop{2}else{1},
-        "warmup_frames":warmup,"timed_frames":frames,"simulation_dt_s":1.0/120.0,
+        "warmup_frames":warmup,"timed_frames":frames,"simulation_dt_s":simulation_dt,"update_mode":update_mode,
+        "requested_canyon_seed":std::env::var("KESSEL_CANYON_SEED").ok(),
+        "player_state":{"position":g.player.pos.to_array(),"heading":g.player.heading,
+            "turret_yaw":g.player.turret_yaw,"gun_pitch":g.player.gun_pitch,"speed":g.player.speed},
         "frame_total":timing,"simulation":cpu_profile_stats(&simulation),
         "render_submission":cpu_profile_stats(&submit),"queue_tail_wait":cpu_profile_stats(&fences),
         "work_per_frame":{"scene_renders":scenes as f64/frames as f64,
@@ -137,7 +146,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
             "point_lights":{"offered_last_frame":lights_offered,"admitted_last_frame":lights_admitted,
                 "budget":renderer::N_LIGHTS}},"gpu":gpu.report(),
         "mission":g.winter_mission_snapshot(),"contacts":g.winter_encounter_snapshot(),
-        "scope":"Offscreen fenced scene frame. Two-person commander+gunner includes optic and interior pass, one simulation and rolling periscope RTT. Per-view crew-rig visibility updates, final desktop cell blits, HUD, input polling and presentation are excluded. Stress initial enemy positions and scheduled fire are fixtures, not AI validation. Audio muted. God mode holds the measured workload alive. 960x540 is full source resolution per view before native top/bottom crops. No claim of universal worst case or native frame-rate certification."});
+        "scope":"Offscreen fenced scene frame at internal_resolution; human_views reports the actual solo/cooperative workload. The cooperative case includes commander, gunner optic and interior views. Per-view crew-rig visibility updates, final desktop blits, HUD, input polling and presentation are excluded. Stress initial enemy positions and scheduled fire are fixtures, not AI validation. Audio muted. God mode holds the measured workload alive. No claim of universal worst case or native frame-rate certification."});
     let out=std::path::Path::new(output); if let Some(parent)=out.parent(){std::fs::create_dir_all(parent)?;}
     std::fs::write(out,serde_json::to_vec_pretty(&report)?)?;
     println!("[winter-bench] {mode}: {}",report["frame_total"]);

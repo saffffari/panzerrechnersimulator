@@ -10,13 +10,14 @@ const KNEE: Vec3 = Vec3::new(0.0, 0.061163053, -0.062189594);
 const BOLT: Vec3 = Vec3::new(0.0, 0.062249073, -0.021320468);
 const ROOTS: [&str; 4] = ["Cube.007", "Cylinder.010", "Cylinder.012", "Circle.001"];
 
-/// Keep the unchanged source sight line on the camera centre. At 640x360 / 45 degrees,
-/// the old 52 cm hold projected the V-notch to <2 pixels deep: the front post covered
-/// every raster sample inside it. A 40 cm hold resolves daylight on both sides without
-/// widening the model, replacing its sights, or adding a screen-space crosshair.
+/// A rigid 40 cm hold with the unchanged source sight line 12 mm below the camera centre.
+/// This leaves the central aiming region visible at native pixel resolution. The same origin
+/// drives the complete pistol and its physical muzzle in both on-foot and mounted paths;
+/// no screen-space move, altered source geometry or separate projectile origin is used.
 pub fn aimed_origin(eye: Vec3, forward: Vec3, rotation: Quat) -> Vec3 {
     const SIGHT_HEIGHT_M: f32 = 0.069_835;
-    eye + forward * 0.40 - rotation * Vec3::new(0.0, SIGHT_HEIGHT_M, 0.0)
+    const AIM_CLEARANCE_M: f32 = 0.012;
+    eye + forward * 0.40 - rotation * Vec3::new(0.0, SIGHT_HEIGHT_M + AIM_CLEARANCE_M, 0.0)
 }
 
 
@@ -225,7 +226,7 @@ mod tests {
         }
     }
     #[test]
-    fn authored_sight_retains_daylight_around_post_at_native_aim_resolution() {
+    fn lowered_aim_clears_native_centre_without_removing_source_sights() {
         if !crate::resource::exists(ASSET) { return; }
         let parts = load().unwrap();
         // Trace the actual source triangles at the native pixel centres, including the
@@ -248,14 +249,42 @@ mod tests {
             }))
         };
         let eye = -aimed_origin(Vec3::ZERO, Vec3::Z, Quat::IDENTITY);
+        for height in [360.0_f32,450.0,540.0] {
+            let focal=(height*0.5)/22.5_f32.to_radians().tan();
+            for x in [-2.5_f32,-0.5,0.5,2.5] {
+                for y in [-2.5_f32,-0.5,0.5,2.5] {
+                    assert!(clear(eye,Vec3::new(x/focal,y/focal,1.0)),
+                        "real pistol must clear central aiming samples at {height}px, ({x},{y})");
+                }
+            }
+        }
+        // The authored notch/post are preserved below the centre. Looking from the former
+        // sight-aligned pose still resolves the same narrow opening and source obstructions.
+        let sight_eye=eye-Vec3::Y*0.012;
         let focal_pixels = 180.0 / 22.5_f32.to_radians().tan();
         let ray = |x: f32| Vec3::new(x / focal_pixels, -0.5 / focal_pixels, 1.0);
         for side in [-1.0, 1.0] {
-            assert!(clear(eye, ray(side * 1.5)), "gap beside front post must survive native pixels");
-            assert!(!clear(eye, ray(side * 0.5)), "retain the real front post");
-            assert!(!clear(eye, ray(side * 5.5)), "retain the real rear sight shoulders");
+            assert!(clear(sight_eye, ray(side * 1.5)), "gap beside front post must survive native pixels");
+            assert!(!clear(sight_eye, ray(side * 0.5)), "retain the real front post");
+            assert!(!clear(sight_eye, ray(side * 5.5)), "retain the real rear sight shoulders");
             let old_eye = Vec3::new(0.0, 0.069_835, -0.52);
             assert!(!clear(old_eye, ray(side * 1.5)), "regression reproduces former closed notch");
+        }
+    }
+
+    #[test]
+    fn lower_hold_moves_source_muzzle_with_the_whole_pistol_at_any_orientation() {
+        for (yaw,pitch) in [(0.0_f32,0.0_f32),(1.7,0.6),(-2.4,-0.8)] {
+            let rotation=Quat::from_rotation_y(yaw)*Quat::from_rotation_x(pitch);
+            let forward=rotation*Vec3::Z;let up=rotation*Vec3::Y;
+            let eye=Vec3::new(12.0,3.0,-8.0);
+            let old=eye+forward*0.40-rotation*Vec3::new(0.0,0.069_835,0.0);
+            let new=aimed_origin(eye,forward,rotation);
+            let muzzle_local=Vec3::new(0.0,0.052_598_275,0.110);
+            let before=old+rotation*muzzle_local;let after=new+rotation*muzzle_local;
+            assert!((after-before+up*0.012).length()<2e-6);
+            assert!(((after-eye).dot(forward)-0.510).abs()<2e-6);
+            assert!((rotation*Vec3::Z-forward).length()<1e-6);
         }
     }
 

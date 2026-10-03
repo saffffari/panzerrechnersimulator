@@ -48,6 +48,8 @@ mod ear;
 mod feedback;
 #[path = "audio_master.rs"]
 mod master;
+#[path = "audio_timeline.rs"]
+mod timeline;
 #[path = "audio_calibrated.rs"]
 mod calibrated;
 #[path = "audio_small_arms.rs"]
@@ -60,11 +62,14 @@ mod engine;
 mod continuous;
 #[path = "audio_running_gear.rs"]
 mod running_gear;
+#[path = "audio_ammunition.rs"]
+mod ammunition;
+pub use ammunition::{LoaderMotion, CartridgeKind, CartridgeContact, LOADER_FRICTION_REFERENCE_DBA, cartridge_contact_level_dba};
 #[path = "audio_loose_track.rs"]
 mod loose_track;
 pub use loose_track::source_level as loose_track_source_level;
 pub use loose_track::REFERENCE_BELT_MPS as LOOSE_TRACK_REFERENCE_BELT_MPS;
-pub use running_gear::MotionSampler as RunningGearMotion;
+pub use running_gear::{MotionSampler as RunningGearMotion,Motion as RunningGearFrame,RunningGearVoice};
 #[path = "audio_tinnitus.rs"]
 mod tinnitus;
 #[path = "audio_offline.rs"]
@@ -112,6 +117,12 @@ const PIZZA_AUDIO_MAX_VARIANTS: usize = 4;
 /// levels, the synthesized mechanisms at `sound_levels::HAND_MECHANISM` (the 88's recoil stroke
 /// heavier, a body lighter) [E, unsourced].
 pub fn mechanical_level_dba(cue: crate::acoustics::MechanicalCue, intensity: f32, volume: f32) -> f32 {
+    if matches!(cue,crate::acoustics::MechanicalCue::CasingDrop|crate::acoustics::MechanicalCue::ShellDrop) {
+        let empty=cue==crate::acoustics::MechanicalCue::CasingDrop;
+        let contact=CartridgeContact{kind:if empty{CartridgeKind::EmptyCase}else{CartridgeKind::LiveRound},
+            normal_speed_mps:intensity,tangential_speed_mps:0.0,mass_kg:if empty{7.0}else{15.0},bearing_deg:0.0,seed:0};
+        return cartridge_contact_level_dba(&contact)+calibrated::effort_db(volume);
+    }
     if let Some(gain) = breech_control_gain(cue, intensity, volume) {
         return calibrated::control_level_dba("hatch_stop") + calibrated::effort_db(gain);
     }
@@ -141,16 +152,11 @@ fn breech_control_gain(cue: crate::acoustics::MechanicalCue, intensity: f32, vol
     } else { 0.0 })
 }
 
-/// Short lift/drop contacts retain their verified recordings. The long extraction scrape and
-/// heavy seating stroke have their own synthesized voices; pistol controls cannot stand in for
-/// an 88 mm cartridge moving through the chamber. Never layer both routes on one event.
-pub(super) fn ammunition_control_key(cue: crate::acoustics::MechanicalCue) -> Option<&'static str> {
-    use crate::acoustics::MechanicalCue as C;
-    match cue {
-        C::CasingDrop | C::ShellDrop => Some("hatch_stop"),
-        C::ShellLift => Some("p08_mag_in"),
-        _ => None,
-    }
+/// Ammunition contacts use dedicated authored sources; no unrelated control recording is selected.
+fn ammunition_control_key(_cue: crate::acoustics::MechanicalCue) -> Option<&'static str> {
+    // Cases and full rounds have their own modal contacts. Pistol magazines and hatch stops
+    // remain available for their original controls; they no longer stand in for ammunition.
+    None
 }
 
 fn explicit_env_opt_in(value: Option<&OsStr>) -> bool {
@@ -225,8 +231,8 @@ const AMBIENCE_FADE_SECS: f32 = 1.4;
 /// cross-country, 115 on the road, buttoned), placed by the reproduction curve. There is no
 /// "fatigue-safe" cap: the running Tiger is the loudest steady thing its crew hears.
 const FILE_ENGINE: &str = "assets/sounds/engine_loop.ogg";
-const ENGINE_IDLE_SPEED: f32 = 0.78; // source-loop pitch at ~600 rpm idle
-const ENGINE_MAX_SPEED: f32 = 2.42; // upper governed rev range
+const ENGINE_IDLE_SPEED: f32 = crate::powertrain::IDLE_RPM / 720.0; // actual crank/source RPM
+const ENGINE_MAX_SPEED: f32 = crate::powertrain::RATED_RPM / 720.0;
 const ENGINE_RPM_SMOOTH: f32 = 5.2;
 const ENGINE_LOAD_SMOOTH: f32 = 3.1;
 
@@ -766,6 +772,13 @@ impl Clip {
     /// A fresh, playable source starting from the beginning.
     fn source(&self) -> rodio::buffer::SamplesBuffer<i16> {
         rodio::buffer::SamplesBuffer::new(self.channels, self.sample_rate, self.samples.to_vec())
+    }
+
+    /// Convert before handing the source to Sink: Rodio applies its volume amplifier in the
+    /// input sample type. Amplifying i16 first silently clips calibrated voices before the
+    /// floating-point ear/master chain can manage their headroom.
+    fn source_f32(&self) -> impl Source<Item = f32> + Send + 'static {
+        self.source().convert_samples::<f32>()
     }
 }
 
@@ -1444,10 +1457,10 @@ pub fn tiger_engine_interior_dba(telemetry: EngineTelemetry) -> f32 {
 /// Pitch (playback speed) of the engine loop, and the buttoned interior level it runs at.
 fn engine_mix_targets(telemetry: EngineTelemetry) -> (f32, f32) {
     let volume = tiger_engine_interior_dba(telemetry);
-    let rpm = telemetry.rpm_norm.clamp(0.0, 1.0).powf(0.84);
-    // A loaded engine droops a few percent rather than acquiring a harsh higher pitch.
-    let speed = (ENGINE_IDLE_SPEED + (ENGINE_MAX_SPEED - ENGINE_IDLE_SPEED) * rpm)
-        * (1.0 - 0.035 * telemetry.load.clamp(0.0, 1.0));
+    let rpm = telemetry.rpm_norm.clamp(0.0, 1.0);
+    // The physics state already owns load-dependent RPM. Reconstruct its crank speed exactly;
+    // applying a second authored pitch droop here would disagree with gear changes and the dash.
+    let speed = ENGINE_IDLE_SPEED + (ENGINE_MAX_SPEED - ENGINE_IDLE_SPEED) * rpm;
     (volume, speed)
 }
 
@@ -1549,6 +1562,7 @@ pub struct Audio {
     /// wrapped around this mixer (`audio_master.rs`).
     live_mixer: Option<Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>>,
     master: Arc<master::MasterTelemetry>,
+    transient_timeline: RefCell<timeline::Timeline>,
     capture: Option<RefCell<capture::CaptureMixer>>,
     clips: Vec<Option<Clip>>,
     feedback_bank: feedback::FeedbackBank,
@@ -1574,6 +1588,8 @@ pub struct Audio {
     weather_state: RefCell<WeatherState>,
     engine_state: RefCell<EngineState>,
     running_gear_state: RefCell<running_gear::State>,
+    loader_motion: RefCell<ammunition::State>,
+    vehicle_running_gear:RefCell<running_gear::Vehicles>,
     mg_state: RefCell<MgState>,
     traverse_state: RefCell<TraverseState>,
     shriek_state: RefCell<ShriekState>,
@@ -1782,7 +1798,7 @@ impl Audio {
 
         let feedback_bank = feedback::FeedbackBank::load();
         let rifle_recording = feedback_bank.get("rifle_shot");
-        let small_arm_reports = small_arms::SourceBank::new(rifle_recording.as_deref());
+        let small_arm_reports = small_arms::SourceBank::new_with_pistol(rifle_recording.as_deref(),feedback_bank.get("luger_shot").as_deref());
         let mut bank_metadata = metadata::bank_metadata(&feedback_bank, &loaded_sources, &pizza_layers);
         bank_metadata["small_arms_reports"] = small_arm_reports.metadata();
         eprintln!("{}", metadata::startup_summary(&bank_metadata));
@@ -1792,6 +1808,7 @@ impl Audio {
             handle,
             live_mixer,
             master,
+            transient_timeline: RefCell::new(timeline::Timeline::default()),
             capture,
             clips,
             feedback_bank,
@@ -1812,6 +1829,8 @@ impl Audio {
             weather_state: RefCell::new(WeatherState::default()),
             engine_state: RefCell::new(EngineState::default()),
             running_gear_state: RefCell::new(running_gear::State::default()),
+            loader_motion: RefCell::new(ammunition::State::default()),
+            vehicle_running_gear:RefCell::new(running_gear::Vehicles::default()),
             mg_state: RefCell::new(MgState::default()),
             traverse_state: RefCell::new(TraverseState::default()),
             shriek_state: RefCell::new(ShriekState::default()),
@@ -1894,6 +1913,7 @@ impl Audio {
             } else { "not started" },
             "clips": "same verified feedback replacements, resolved generated/legacy voices and optional v1 layers as live Audio; see audio_bank",
             "audio_bank": self.bank_metadata,
+            "preparation": calibrated::preparation_metadata(),
         }))
     }
 
@@ -1928,7 +1948,7 @@ impl Audio {
                 return;
             }
         };
-        sink.append(layer.clip.source());
+        sink.append(layer.clip.source_f32());
         self.retain_transient(sink, volume.max(0.0) * layer.gain);
     }
 
@@ -1971,7 +1991,7 @@ impl Audio {
                 return;
             }
         };
-        sink.append(clip.source());
+        sink.append(clip.source_f32());
         self.retain_transient(sink, 1.0);
         self.play_pizza_layer(sfx, 1.0);
     }
@@ -1998,7 +2018,7 @@ impl Audio {
                 return false;
             }
         };
-        sink.append(clip.source());
+        sink.append(clip.source_f32());
         self.retain_transient(sink, volume.max(0.0));
         true
     }
@@ -2052,6 +2072,8 @@ impl Audio {
         self.master_volume = v.clamp(0.0, 4.0);
         self.weather_state.get_mut().control.set_gain(self.master_volume);
         self.running_gear_state.get_mut().set_master_volume(self.master_volume);
+        self.loader_motion.get_mut().set_master_volume(self.master_volume);
+        self.vehicle_running_gear.get_mut().set_master_volume(self.master_volume);
         let engine = self.engine_state.get_mut();
         engine.loop_control.set_gain(engine.base_gain * self.master_volume);
         let traverse = self.traverse_state.get_mut();
@@ -2111,6 +2133,8 @@ impl Audio {
         if let Some(sink) = &self.weather_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.engine_state.borrow().sink { apply(sink); }
         self.running_gear_state.borrow().set_paused(paused);
+        self.loader_motion.borrow().set_paused(paused);
+        self.vehicle_running_gear.borrow().set_paused(paused);
         if let Some(sink) = &self.mg_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.traverse_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.shriek_state.borrow().sink { apply(sink); }
@@ -2121,6 +2145,10 @@ impl Audio {
         self.elevation_voices.borrow().set_paused(paused);
         self.loose_track_voices.borrow().set_paused(paused);
         if let Some(sink) = &*self.tinnitus_sink.borrow() { apply(sink); }
+    }
+
+    pub(crate) fn next_small_arm_direct(&self,sfx:Sfx)->Option<Arc<[f32]>> {
+        if !small_arms::is_report(sfx){return None;}self.small_arm_reports.next(sfx)
     }
 
     /// Play a SYNTHESIZED interleaved-stereo f32 buffer (44.1 kHz) fire-and-forget — the parametric
@@ -2135,6 +2163,28 @@ impl Audio {
         if samples.is_empty() {
             return;
         }
+        if let Some(batch)=self.transient_timeline.borrow_mut().batch.as_mut() {
+            batch.events.push(timeline::Event{at_s:batch.now_s,samples,volume,bus});
+            return;
+        }
+        self.play_stereo_at_frame(samples,volume,bus,None);
+    }
+
+    /// Live catch-up publishes a batch to the shared device clock. Ordinary explicit-step
+    /// offline rendering retains its existing sample-consumption clock, without a second delay.
+    pub(crate) fn begin_simulation_audio_frame(&self,start_s:f32,dt:f32) {
+        self.transient_timeline.borrow_mut().begin(f64::from(start_s),f64::from(dt));
+    }
+    pub(crate) fn set_simulation_audio_time(&self,time_s:f32) {
+        self.transient_timeline.borrow_mut().set_time(f64::from(time_s));
+    }
+    pub(crate) fn finish_simulation_audio_frame(&self) {
+        let events=self.transient_timeline.borrow_mut().finish(self.master.frames());
+        for (frame,event) in events {
+            self.play_stereo_at_frame(event.samples,event.volume,event.bus,Some(frame));
+        }
+    }
+    fn play_stereo_at_frame(&self,samples:Vec<f32>,volume:f32,bus:EarBus,frame:Option<u64>) {
         let sink = match self.create_sink_on(bus) {
             Ok(s) => s,
             Err(e) => {
@@ -2142,11 +2192,14 @@ impl Audio {
                 return;
             }
         };
-        sink.append(rodio::buffer::SamplesBuffer::new(
+        let source=rodio::buffer::SamplesBuffer::new(
             2,
             crate::acoustics::SAMPLE_RATE,
             samples,
-        ));
+        );
+        if let Some(frame)=frame {
+            sink.append(timeline::AtFrame::new(source,Arc::clone(&self.master),frame));
+        } else {sink.append(source);}
         self.retain_transient(sink, volume.max(0.0));
     }
 
@@ -2167,6 +2220,17 @@ impl Audio {
             // play_control resolves the verified recording first and a short tonal contact
             // without broadband noise if the owner-private bank is unavailable or disabled.
             self.play_control_at(key, gain, params.bearing_deg);
+            return;
+        }
+        if matches!(params.cue, crate::acoustics::MechanicalCue::CasingDrop | crate::acoustics::MechanicalCue::ShellDrop) {
+            let kind = if params.cue == crate::acoustics::MechanicalCue::CasingDrop {
+                CartridgeKind::EmptyCase
+            } else { CartridgeKind::LiveRound };
+            let contact = CartridgeContact { kind, normal_speed_mps:params.intensity,
+                tangential_speed_mps:0.0, mass_kg:if kind==CartridgeKind::EmptyCase {7.0}else{15.0},
+                bearing_deg:params.bearing_deg, seed:params.seed };
+            self.play_cartridge_contact(contact, cartridge_contact_level_dba(&contact)
+                + calibrated::effort_db(volume));
             return;
         }
         // The synthesized mechanism at its estimated level at the ear with the caller's effort.
@@ -2195,7 +2259,7 @@ impl Audio {
             if let Some(clip) = self.ambience.get(amb.index()).and_then(|c| c.as_ref()) {
                 if let Ok(sink) = self.create_sink() {
                     sink.set_volume(0.0);
-                    sink.append(clip.source().repeat_infinite());
+                    sink.append(clip.source_f32().repeat_infinite());
                     st.active = Some((sink, 0.0));
                 }
             }
@@ -2341,9 +2405,10 @@ impl Audio {
         let gain = if self.engine_recorded {
             self.engine_gain(clip, level, target_speed)
         } else {
-            crate::reproduction::voice_gain(level, engine::measured_laf(target_speed))
+            crate::reproduction::voice_gain(level, engine::measured_laf_loaded(target_speed,st.load))
         };
         st.procedural.set_speed(target_speed);
+        st.procedural.set_load(st.load);
         st.base_gain = gain * st.off_fade;
         st.loop_control.set_gain(st.base_gain * self.master_volume);
         // Only optional recorded engines are resampled. Procedural structure filters retain
@@ -2409,7 +2474,7 @@ impl Audio {
             let clip = self.mg_clips[if interior { 0 } else { 1 }].as_ref();
             if let (Some(clip), Ok(sink)) = (clip, self.create_sink()) {
                 sink.set_volume(0.0);
-                sink.append(clip.source().repeat_infinite());
+                sink.append(clip.source_f32().repeat_infinite());
                 st.sink = Some(sink);
                 st.vol = 0.0;
                 st.interior = interior;
@@ -2545,7 +2610,7 @@ impl Audio {
         if let Ok(sink) = self.create_sink() {
             sink.set_speed(SHRIEK_START_SPEED);
             sink.set_volume(SHRIEK_START_VOLUME * self.master_volume);
-            sink.append(clip.source()); // single-shot; the Doppler ramp does the rest
+            sink.append(clip.source_f32()); // single-shot; the Doppler ramp does the rest
             st.sink = Some(sink);
             st.t = 0.0;
             st.dur = flight_secs.max(0.15);
@@ -2581,6 +2646,77 @@ impl Audio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caught_up_mg_cycles_reach_the_actual_mixer_as_spaced_events() {
+        let audio=Audio::new_capture();
+        audio.begin_simulation_audio_frame(0.0,0.25);
+        for at in [0.0,0.075,0.15,0.225] {
+            audio.set_simulation_audio_time(at);
+            audio.play_stereo_on(vec![0.04;64],1.0,EarBus::World);
+        }
+        audio.finish_simulation_audio_frame();
+        let samples=audio.render_capture_frames(15000).unwrap();
+        let mut onsets=Vec::new();let mut previous=false;
+        for (frame,pair) in samples.chunks_exact(2).enumerate() {
+            let audible=pair.iter().any(|v|v.abs()>0.001);
+            if audible && !previous {onsets.push(frame);}
+            previous=audible;
+        }
+        assert_eq!(onsets.len(),4,"distinct cycles, not one stacked report: {onsets:?}");
+        for pair in onsets.windows(2) {
+            assert!((3307..=3308).contains(&(pair[1]-pair[0])),"800 rpm at44100Hz: {onsets:?}");
+        }
+    }
+
+    #[test]
+    fn pausing_retains_the_remaining_spacing_of_scheduled_mg_reports() {
+        let audio=Audio::new_capture();
+        audio.begin_simulation_audio_frame(0.0,0.25);
+        for at in [0.0,0.075,0.15,0.225] {
+            audio.set_simulation_audio_time(at);
+            audio.play_stereo_on(vec![0.04;64],1.0,EarBus::World);
+        }
+        audio.finish_simulation_audio_frame();
+        let _=audio.render_capture_frames(900).unwrap();
+        audio.set_paused(true);
+        let paused=audio.render_capture_frames(18000).unwrap();
+        assert!(paused[2000..].iter().all(|v|v.abs()<1e-7));
+        audio.set_paused(false);
+        let resumed=audio.render_capture_frames(15000).unwrap();
+        let mut onsets=Vec::new();let mut previous=false;
+        for (frame,pair) in resumed.chunks_exact(2).enumerate() {
+            let audible=pair.iter().any(|v|v.abs()>0.001);
+            if audible&&!previous {onsets.push(frame);}
+            previous=audible;
+        }
+        assert_eq!(onsets.len(),3,"unplayed reports survive pause: {onsets:?}");
+        for pair in onsets.windows(2) {
+            assert!((3307..=3308).contains(&(pair[1]-pair[0])),"pause cannot collapse queued cycles: {onsets:?}");
+        }
+    }
+
+    #[test]
+    fn loaded_clip_gain_preserves_float_headroom_until_the_shared_master() {
+        let source:Vec<f32>=(0..4410).flat_map(|i| {
+            let left=0.55*(i as f32*0.071).sin();
+            [left,-left*0.73]
+        }).collect();
+        let clip=Clip::from_stereo_f32(source);
+        let actual=Audio::new_capture();let expected=Audio::new_capture();
+        let gain=4.0;
+        let sink=actual.create_sink().unwrap();
+        sink.append(clip.source_f32());
+        actual.retain_transient(sink,gain);
+        expected.play_stereo_on(clip.source_f32().collect(),gain,EarBus::World);
+        let actual_pcm=actual.render_capture_frames(6000).unwrap();
+        let expected_pcm=expected.render_capture_frames(6000).unwrap();
+        assert_eq!(actual_pcm,expected_pcm,"a loaded clip cannot clip in integer space before the common master");
+        let stats=actual.master_telemetry();
+        assert!(stats["input_peak"].as_f64().unwrap()>2.0,"regression must exercise pre-master headroom");
+        assert!(stats["limited_frames"].as_u64().unwrap()>0);
+        assert!(actual_pcm.iter().all(|x|x.is_finite() && x.abs()<=crate::reproduction::LIMITER_CEILING+1e-4));
+    }
 
     #[test]
     fn fresh_stereo_voice_preserves_channels_from_its_first_sample() {
@@ -2663,27 +2799,35 @@ mod tests {
     }
 
     #[test]
-    fn ammunition_gestures_replace_the_entire_noise_voice_in_the_actual_mixer() {
+    fn ammunition_contacts_use_their_own_modal_voice_in_the_actual_mixer() {
         use crate::acoustics::{MechanicalCue as C, MechanicalParams};
-        // Comparing the decoded mixer output catches an accidentally retained synth layer,
-        // a double-play, or the wrong recording; merely checking the routing table would not.
-        for (cue, key) in [(C::CasingDrop, "hatch_stop"),
-            (C::ShellLift, "p08_mag_in"),
-            (C::ShellDrop, "hatch_stop")]
-        {
-            let actual = Audio::new_capture();
-            let expected = Audio::new_capture();
-            let params = MechanicalParams { cue, intensity: 0.76, bearing_deg: 64.0, seed: 1234 };
-            actual.play_mechanical(params, 0.58);
-            expected.play_control_at(key, 0.76 * 0.58, params.bearing_deg);
-            let a = actual.render_capture_frames(44100).unwrap();
-            let b = expected.render_capture_frames(44100).unwrap();
-            assert_eq!(a, b, "{cue:?} must contain only its selected contact recording/fallback");
-            assert!(a.iter().all(|v| v.is_finite()));
-            assert!(a.iter().any(|v| v.abs() > 1e-5));
+        for (cue,kind,mass_kg) in [(C::CasingDrop,CartridgeKind::EmptyCase,7.0),
+            (C::ShellDrop,CartridgeKind::LiveRound,15.0)] {
+            let actual=Audio::new_capture();let expected=Audio::new_capture();
+            let params=MechanicalParams{cue,intensity:0.76,bearing_deg:64.0,seed:1234};
+            actual.play_mechanical(params,0.58);
+            let contact=CartridgeContact{kind,normal_speed_mps:0.76,tangential_speed_mps:0.0,
+                mass_kg,bearing_deg:64.0,seed:1234};
+            expected.play_cartridge_contact(contact,cartridge_contact_level_dba(&contact)+calibrated::effort_db(0.58));
+            let a=actual.render_capture_frames(44100).unwrap();
+            assert_eq!(a,expected.render_capture_frames(44100).unwrap());
+            assert!(a.iter().all(|v|v.is_finite()));assert!(a.iter().any(|v|v.abs()>1e-5));
+            assert_eq!(ammunition_control_key(cue),None);
         }
-        assert_eq!(ammunition_control_key(C::MainGunRecoil), None);
-        assert_eq!(ammunition_control_key(C::BodyImpact), None);
+        assert_eq!(ammunition_control_key(C::ShellLift),None);
+    }
+
+    #[test]
+    fn tiger_reports_keep_distinct_loaded_variants_without_generic_explosion_replacement() {
+        let audio=Audio::new_capture();
+        let mut seen=std::collections::HashSet::new();
+        for sfx in Sfx::PLAYER_GUNS_EXT.into_iter().chain(Sfx::PLAYER_GUNS_INT) {
+            assert_eq!(feedback::replacement_key(sfx),None);
+            let pcm=audio.direct_waveform(sfx).expect("own report is always available");
+            assert!(pcm.iter().all(|v|v.is_finite()));
+            assert!(seen.insert(buffer_checksum(&pcm)),"distinct report identity collapsed: {sfx:?}");
+            assert!(pcm[..882].iter().any(|v|v.abs()>0.001),"report onset must be within10ms");
+        }
     }
 
     #[test]
@@ -2712,9 +2856,7 @@ mod tests {
         let audio = Audio::new_capture();
         let metadata = audio.capture_metadata().unwrap();
         for route in metadata["audio_bank"]["ammunition_mechanisms"].as_array().unwrap() {
-            let heavy = matches!(route["cue"].as_str(), Some("CasingExtract" | "ShellRam"));
-            assert_eq!(route["source"], if heavy { "heavy_mechanism_synthesis" }
-                else { "verified_feedback_recording" });
+            assert_eq!(route["source"], "authored_ammunition_contact");
             assert_eq!(route["broadband_mechanical_layer"], false);
         }
         let mut pcm = audio.render_capture_frames((SAMPLE_RATE / 4) as usize).unwrap();
@@ -3274,10 +3416,8 @@ mod tests {
         let (coast_level, coast_pitch) = engine_mix_targets(coast);
         let (load_level, load_pitch) = engine_mix_targets(loaded);
         assert!(load_level > coast_level + 2.0, "load is louder: {load_level} vs {coast_level}");
-        assert!(
-            load_pitch < coast_pitch,
-            "load should bog rather than brighten"
-        );
+        assert_eq!(load_pitch, coast_pitch,
+            "identical authoritative RPM must retain cadence; load changes timbre and level");
         // The physical interior level, not a capped mix gain (SL §7 anchors, buttoned).
         assert!(load_level > 100.0 && load_level < 118.0, "{load_level}");
         assert!(load_pitch <= ENGINE_MAX_SPEED);

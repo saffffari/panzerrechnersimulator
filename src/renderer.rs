@@ -439,7 +439,11 @@ fn configured_camera_exposure_override() -> Option<f32> {
 }
 
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+// Keep the tone-mapped frame in display codes. Linear RGBA8 erased the first
+// 31-level palette entry in dark interiors and its compensating dither made
+// alternating black holes. Attachment writes encode; sampling decodes, so the
+// blit, particle blend, UI and optic snapshot continue to work in linear light.
+const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Shadow-map side is selected once with the renderer: Laptop uses 512², High/4090 uses 2048².

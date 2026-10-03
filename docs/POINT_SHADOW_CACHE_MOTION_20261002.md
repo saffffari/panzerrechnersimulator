@@ -1,0 +1,11 @@
+# Point-shadow static cache correction
+
+The fire benchmark's captured GPU profile (`artifacts/runtime/hotfix_candidate_fire_20261002_profile.json`) measured 119.8 static cube-face passes per frame taking 77.927 ms in aggregate, versus 119.8 dynamic face passes taking 0.934 ms. This is the measured motivation, not the result of this correction.
+
+The static cache included regular player/enemy vehicle parts and other animated mechanisms unless their producer explicitly registered them as ammunition or temporal actors. Any changed model in that shared key invalidated static scenery for every admitted point source. The game's explicit dynamic list covered ammunition, driver controls and the torch; it did not enumerate every articulated or moving regular mesh.
+
+`src/cabin_shadows.rs` now observes exact regular-mesh model, pose revision and visibility values. A changed mesh is permanently promoted into the existing dynamic composition layer. On the first promotion the static signature changes, rebuilding static depth without the old pose. Subsequent movement restores static depth and draws the current dynamic geometry. A stopped or newly hidden promoted caster stays in that layer, avoiding migration churn and stale shadows. Independent menu mesh slots do not overwrite gameplay observations. Resize retains the observed classification but rebuilds the new depth banks normally.
+
+This changes caching only. Light admission, source positions, point-map resolution, geometry, material participation, bias and source coverage stay unchanged. Actual lamp movement still invalidates its maps. A moving static world instance still changes the existing static key. Two CPU regressions cover moving-occluder depth equivalence against an unpartitioned scene, removal of its previous depth, stable-world reuse, deformation-only changes, visibility changes and permanent promotion after stopping. They are saved but await the coordinated Rust test build. Rust syntax was parsed with rustfmt; no GPU validation has run for this candidate yet.
+
+Packed light reorder can still move a source between cache indices, and a moving source still redraws all source scenery. These are separate remaining costs; no approximate source quantization or caster suppression was introduced here.

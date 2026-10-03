@@ -31,8 +31,8 @@ var<push_constant> pc: BloomPush;
 // receive the same optical halo as an equally bright lamp, regardless of raw world radiance.
 const THRESHOLD: f32 = 1.30;
 const KNEE: f32 = 0.7;
-const INTENSITY: f32 = 0.14;
-const SPREAD: f32 = 0.8; // a restrained halo preserves the boundary of small emissive cells
+const INTENSITY: f32 = 0.06;
+const SPREAD: f32 = 0.4; // a restrained halo preserves the boundary of small emissive cells
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,

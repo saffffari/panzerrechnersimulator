@@ -148,7 +148,13 @@ fn sample_request(area:f32,minimum:u32)->(u64,u64) {
     (required,wanted.checked_next_power_of_two().unwrap_or(u64::MAX))
 }
 fn dense_sample_request(area:f32,minimum:u32,density:u32)->(u64,u64) {
-    let (required,desired)=sample_request(area,minimum);
+    // The producer's minimum is optional quadrature, not additional particles or radiance.
+    // Do not rasterize 64*8 samples of a parcel smaller than one native pixel: those quads
+    // repeatedly shade the same pixel and each repeats the full medium integral. Bound this
+    // minimum by its actual projected pixel support. Required coverage remains unchanged;
+    // area/count weights and the stable source sample prefix still conserve parcel energy.
+    let visible_minimum=minimum.min(area.ceil().max(1.0) as u32);
+    let (required,desired)=sample_request(area,visible_minimum);
     (required,desired.saturating_mul(u64::from(density.max(1))))
 }
 fn sample_chunks(total:u32)->impl Iterator<Item=(u32,u32)> {
@@ -303,7 +309,7 @@ impl Renderer {
     }
     pub(super) fn encode_fine_vfx(&self,encoder:&mut wgpu::CommandEncoder,key:usize,color:&wgpu::TextureView,work:&mut RenderWorkStats) {
         let Some(frame)=self.fine_vfx.frames.get(&key) else{return;};if !frame.active || frame.draws.is_empty(){return;}
-        let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {label:Some("native-pixel-hdr-effects"),color_attachments:&[Some(attachment(color,wgpu::LoadOp::Load))],depth_stencil_attachment:None,timestamp_writes:None,occlusion_query_set:None});
+        let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {label:Some("native-pixel-hdr-effects"),color_attachments:&[Some(attachment(color,wgpu::LoadOp::Load))],depth_stencil_attachment:None,timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render("native-pixel-hdr-effects")),occlusion_query_set:None});
         let [width,height]=frame.receipt.extent;
         pass.set_viewport(0.0,0.0,width as f32,height as f32,0.0,1.0);
         pass.set_scissor_rect(0,0,width,height);
@@ -372,6 +378,28 @@ mod tests {
         let shader=include_str!("../shaders/fine_vfx.wgsl");
         assert!(shader.contains("let edge=(pixel+corners[corner])/grain_cam.extent.xy"));
         assert!(shader.contains("out.weight=parameters.x/parameters.y"));
+    }
+    #[test]
+    fn subpixel_fire_uses_projected_sampling_without_hot_pixels_or_energy_loss() {
+        for area in [0.00001_f32,0.001,0.05,0.1,0.49,0.5,0.51,0.99,1.0,1.01,15.0,32.0,32000.0] {
+            let (old_required,old_base)=sample_request(area,64);
+            let (required,samples)=dense_sample_request(area,64,8);
+            assert_eq!(required,old_required,"the minimum coverage budget must never shrink");
+            assert!(samples>=required && samples<=old_base*8);
+            let weight=f64::from(area)/samples as f64;
+            assert!(weight<=0.0625,"8x coverage cannot concentrate a parcel into a hot pixel");
+            let radiance=[0.0001_f64,0.2,4.0,9.0];
+            for emission in radiance {
+                let old=emission*f64::from(area)/(old_base*8) as f64*(old_base*8) as f64;
+                let new=emission*weight*samples as f64;
+                assert!((old-new).abs()<1e-9+old.abs()*1e-12);
+            }
+            let old_transmission=(-f64::from(area)/(old_base*8) as f64).exp().powi((old_base*8) as i32);
+            let new_transmission=(-weight).exp().powi(samples as i32);
+            assert!((old_transmission-new_transmission).abs()<1e-11);
+            if area<=0.5 {assert_eq!(samples,8,"subpixel cells do not need 512 transport evaluations");}
+            if area>=32.0 {assert_eq!(samples,old_base*8,"resolved parcels retain the previous quadrature");}
+        }
     }
     #[test]
     fn near_plane_clips_crossing_triangles_and_reconstructs_source_cut_face() {

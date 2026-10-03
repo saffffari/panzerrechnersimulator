@@ -206,6 +206,16 @@ fn point_depth_keeps_thin_armor_resolution_across_battle_distance() {
         assert!((plate*far-range).abs()<0.000062);
     }
     assert!(source.contains("in.face_distance/cam.far"));
+    assert!(source.contains("linear*position+(model[3].xyz-cam.cam_pos)"));
+    assert!(!source.contains("project(pc.model*vec4"));
+    let host=include_str!("../src/cabin_shadows.rs");
+    assert!(host.contains("face_view_proj_range(glam::Vec3::ZERO, face, (NEAR,far))"));
+    assert!(host.contains("cam_pos: lamp.pos.to_array()"));
+    // CPU culling remains in absolute world space; only GPU vertex arithmetic is relative.
+    assert!(host.contains("let matrix = face_view_proj_range(lamp.pos, face, (NEAR,far));"));
+    assert!(MESH.contains("cross(dpdx(in.relative_world), dpdy(in.relative_world))"));
+    assert!(MESH.contains("in.relative_world + (cam.cam_pos - source.xyz)"));
+    assert!(MESH.contains("max(0.00005,major*0.00000024)"));
 }
 
 #[test]

@@ -9,6 +9,7 @@
 //! and the listener's environment tail; the result is measured and placed.
 
 use std::sync::Arc;
+use std::cell::RefCell;
 
 use super::{Audio, EarBus, Sfx};
 use crate::acoustics::{self, ReverbParams};
@@ -92,11 +93,72 @@ pub(super) fn render_for_ear(mono: &[f32], ear: &EarLevel, bearing_deg: f32, rev
     acoustics::schroeder_reverb(&dry, reverb)
 }
 
+// Preparation runs on the game thread, never the device callback. Keep exact transfer bits:
+// caching must not approximate the headset/path or bypass its calibrated level.
+#[derive(Default)]
+struct ReceiverCache {
+    entries: Vec<([u32;10], Arc<[f32]>, f32)>,
+    hits:u64, misses:u64, max_prepare_us:u64,
+}
+thread_local! { static RECEIVER_CACHE:RefCell<ReceiverCache>=RefCell::new(ReceiverCache::default()); }
+
+fn prepared_receiver(seed:u32,ear:&EarLevel)->(Arc<[f32]>,f32) {
+    let mut key=[0u32;10]; key[0]=seed%12;
+    for (target,value) in key[1..].iter_mut().zip(ear.transfer_db) {*target=value.to_bits();}
+    RECEIVER_CACHE.with(|cache| {
+        let mut cache=cache.borrow_mut();
+        if let Some((_,pcm,level))=cache.entries.iter().find(|(found,_,_)|*found==key) {
+            let found=(pcm.clone(),*level);cache.hits+=1;return found;
+        }
+        let start=std::time::Instant::now();
+        let mono=acoustics::synth_mg_receiver_round(3701+key[0]*7919);
+        let pcm:Arc<[f32]>=render_for_ear(&mono,ear,0.0,ReverbParams::DIRECT).into();
+        let level=laf_max_dbfs(&pcm);
+        cache.misses+=1;cache.max_prepare_us=cache.max_prepare_us.max(start.elapsed().as_micros() as u64);
+        if cache.entries.len()==32 {cache.entries.remove(0);}
+        cache.entries.push((key,pcm.clone(),level));(pcm,level)
+    })
+}
+
+pub(super) fn preparation_metadata()->serde_json::Value {
+    RECEIVER_CACHE.with(|c| {let c=c.borrow();serde_json::json!({
+        "scope":"current game thread local MG receiver preparation; not device underrun telemetry",
+        "receiver_cache_entries":c.entries.len(),"receiver_cache_capacity":32,
+        "receiver_cache_hits":c.hits,"receiver_cache_misses":c.misses,
+        "maximum_receiver_prepare_us":c.max_prepare_us,"variants":12,
+        "backend_buffer_policy":"rodio 0.20 default device configuration; host quantum unchanged",
+    })})
+}
+
+impl Audio {
+    pub(crate) fn play_mg_receiver_at_ear(&self,seed:u32,ear:&EarLevel) {
+        if !ear.laf_db.is_finite(){return;}
+        let (pcm,level)=prepared_receiver(seed,ear);
+        self.play_stereo_on(pcm.to_vec(),reproduction::voice_gain(ear.laf_db,level),EarBus::World);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sound_levels as levels;
     use crate::sound_propagation::{propagate, Atmosphere, Emission, Enclosure, Path};
+
+    #[test]
+    fn local_receiver_cache_preserves_exact_transfer_and_has_no_room_tail() {
+        let l=&levels::MG34_INSIDE;
+        let ear=crate::sound_propagation::at_ear(l.lpk_db,l.laf_db,l.spectrum,l.a_duration_ms,true);
+        let (a,level)=prepared_receiver(19,&ear);
+        let (b,again)=prepared_receiver(31,&ear);
+        assert!(Arc::ptr_eq(&a,&b));assert_eq!(level,again);
+        let mono=acoustics::synth_mg_receiver_round(3701+(19%12)*7919);
+        assert_eq!(a.len(),mono.len()*2);
+        assert_eq!(&*a,render_for_ear(&mono,&ear,0.0,ReverbParams::DIRECT));
+        let mut changed=ear;changed.transfer_db[3]+=0.25;
+        let (c,_)=prepared_receiver(19,&changed);assert_ne!(&*a,&*c);
+        assert!(a.iter().all(|v|v.is_finite()));
+        assert_ne!(&*a,&*prepared_receiver(20,&ear).0);
+    }
 
     /// Isolated source/path audit. It deliberately leaves hearing healthy to distinguish source
     /// timbre and hull transfer from the actual crew's accumulated damage in gameplay captures.
@@ -165,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn own_gun_recording_crest_matches_the_exposure_constant() {
+    fn historical_reproduction_reference_crest_matches_its_documented_constant() {
         let audio = Audio::new_capture();
         let Some(mono) = audio.feedback_source("gun_interior") else {
             eprintln!("verified bank absent: crest check skipped");
@@ -178,35 +240,33 @@ mod tests {
     }
 
     #[test]
-    fn own_gun_peaks_near_full_scale_buttoned_and_head_out_meets_the_limiter() {
-        let render = |sfx: Sfx, level: &levels::SourceLevel| {
-            let audio = Audio::new_capture();
-            audio.play_at_ear(sfx, own_gun_ear(level));
-            let out = audio.render_capture_frames(3 * 44_100).unwrap();
-            (out, audio.master_telemetry())
-        };
-        let verified = Audio::new_capture().feedback_source("gun_interior").is_some();
-        let (buttoned, t_buttoned) = render(Sfx::PlayerGunInt1, &levels::OWN_88_BUTTONED);
-        let (head_out, t_head_out) = render(Sfx::PlayerGunExt1, &levels::OWN_88_HEAD_OUT);
-        let peak = reproduction::peak_dbfs(&buttoned);
-        if verified {
-            // The owner-verified recording: its peak stays near full scale, unlimited.
-            assert!((-2.5..=-1.0).contains(&peak), "buttoned peak {peak} dBFS");
-            assert_eq!(t_buttoned["limited_frames"], 0, "the buttoned gun is not limited");
-            // Head-out its LAF is 13 dB higher physically, ~6 dB after the curve: it meets the
-            // limiter, which trims its peak (SL §11: ~6 dB).
-            assert!(t_head_out["deepest_gain_reduction_db"].as_f64().unwrap() < -2.0);
-        }
-        assert!(reproduction::peak_dbfs(&head_out) <= 20.0 * reproduction::LIMITER_CEILING.log10() + 0.01);
-        // Short-term level: the curve puts head-out 6.5 dB above buttoned (13 dB physical); the
-        // limiter, holding the head-out peak at −1 dBFS with its 200 ms release, takes part of
-        // that back. Head-out stays louder; the ear model carries the rest (182 dB vs 163 dB).
-        let difference = laf_max_dbfs(&head_out) - laf_max_dbfs(&buttoned);
-        let curve = reproduction::tone_map_dbfs(own_gun_ear(&levels::OWN_88_HEAD_OUT))
-            - reproduction::tone_map_dbfs(own_gun_ear(&levels::OWN_88_BUTTONED));
-        assert!((curve - 6.5).abs() < 0.1, "{curve}");
-        if verified {
-            assert!(difference > 1.0 && difference < curve, "head-out minus buttoned {difference}");
+    fn own_gun_active_variants_match_the_calibrated_float_chain_and_master() {
+        let frames=3*crate::acoustics::SAMPLE_RATE as usize;
+        for (sounds,level) in [
+            (&Sfx::PLAYER_GUNS_INT[..],&levels::OWN_88_BUTTONED),
+            (&Sfx::PLAYER_GUNS_INT[..],&levels::OWN_88_HATCH_OPEN),
+            (&Sfx::PLAYER_GUNS_EXT[..],&levels::OWN_88_HEAD_OUT),
+        ] {
+            for &sfx in sounds {
+                let audio=Audio::new_capture();
+                let waveform=audio.direct_waveform(sfx).expect("active gun route");
+                let ear=own_gun_ear(level);
+                let gain=reproduction::voice_gain(ear,laf_max_dbfs(&waveform));
+                let crest=reproduction::peak_dbfs(&waveform)-laf_max_dbfs(&waveform);
+                let mut placed:Vec<f32>=waveform.iter().map(|x|x*gain).collect();
+                placed.resize(frames*2,0.0);
+                let (expected,expected_limiting)=reproduction::master_offline(&placed);
+                audio.play_at_ear(sfx,ear);
+                let actual=audio.render_capture_frames(frames+reproduction::MASTER_LATENCY_FRAMES).unwrap();
+                let actual=&actual[reproduction::MASTER_LATENCY_FRAMES*2..];
+                let maximum_error=actual.iter().zip(&expected).map(|(a,b)|(a-b).abs()).fold(0.0f32,f32::max);
+                assert!(maximum_error<2e-5,"{sfx:?}: live source differs from calibrated float/master route by {maximum_error}");
+                let limiting=audio.master_telemetry()["deepest_gain_reduction_db"].as_f64().unwrap() as f32;
+                assert!((limiting-expected_limiting).abs()<0.001);
+                assert!(reproduction::peak_dbfs(actual)<=20.0*reproduction::LIMITER_CEILING.log10()+0.01);
+                eprintln!("[active-gun-calibration] {sfx:?} ear={ear:.2} crest={crest:.3} target_LAF={:.3} measured_LAF={:.3} master={limiting:.3}dB",
+                    reproduction::tone_map_dbfs(ear),laf_max_dbfs(actual));
+            }
         }
     }
 
@@ -378,8 +438,9 @@ impl Audio {
             return Some(mono.iter().flat_map(|v| [*v, *v]).collect());
         }
         let clip = self.clips.get(sfx.index()).and_then(|c| c.as_ref())?;
-        let samples: Vec<f32> = clip.source().map(|s: i16| f32::from(s) / f32::from(i16::MAX)).collect();
-        Some(if clip.channels == 1 { samples.iter().flat_map(|v| [*v, *v]).collect() } else { samples })
+        // Match the live sink's float conversion, channel conversion and source-rate handling.
+        Some(rodio::source::UniformSourceIterator::new(clip.source_f32(),2,
+            crate::acoustics::SAMPLE_RATE).collect())
     }
 
     /// Measured LAF,max (dBFS(A)) of `play(sfx)`'s waveform at unity gain, cached.
@@ -435,9 +496,8 @@ impl Audio {
     /// Linear gain placing a loaded loop/clip at `ear_laf_dba`.
     pub(super) fn clip_gain(&self, key: &str, clip: &super::Clip, ear_laf_dba: f32) -> f32 {
         let laf = self.cached_laf_dbfs(key, || {
-            let samples: Vec<f32> =
-                clip.source().map(|s: i16| f32::from(s) / f32::from(i16::MAX)).collect();
-            if clip.channels == 1 { samples.iter().flat_map(|v| [*v, *v]).collect() } else { samples }
+            rodio::source::UniformSourceIterator::new(clip.source_f32(),2,
+                crate::acoustics::SAMPLE_RATE).collect()
         });
         reproduction::voice_gain(ear_laf_dba, laf)
     }

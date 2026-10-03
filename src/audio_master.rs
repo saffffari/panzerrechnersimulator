@@ -30,6 +30,8 @@ pub(super) struct MasterTelemetry {
 }
 
 impl MasterTelemetry {
+    /// Device/capture frames already consumed from the common stereo mixer.
+    pub(super) fn frames(&self) -> u64 { self.frames.load(Ordering::Relaxed) }
     pub fn snapshot(&self) -> serde_json::Value {
         let f = |v: &AtomicU32| f32::from_bits(v.load(Ordering::Relaxed));
         serde_json::json!({

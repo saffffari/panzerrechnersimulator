@@ -23,9 +23,10 @@
 //!   log t = log 20 + 0.53 log(E/9e5) - 0.4 log(L/0.19), inverted into a decaying afterimage
 //!   background; global (coverage-weighted), not a retinal map.
 //!
-//! The composition (a cone channel at full weight plus a (1 - m)-weighted rod channel) is this
-//! model's reading of section 6.9: the research notes that a fire-lit patch stays cone-mediated
-//! and coloured in a rod-mediated surround, which a globally m-weighted cone channel would erase.
+//! The composition keeps the cone channel at full weight and bounds the (1 - m)-weighted rod
+//! channel by the existing TVI response at the local saturating stimulus. This is a bounded
+//! reproduction approximation, not instantaneous local physiological adaptation: globally dark
+//! surroundings must not give a bright coloured lamp an arbitrarily large achromatic pedestal.
 
 /// Photopic luminance per unit of each band, cd m^-2 per W m^-2 sr^-1 nm^-1 (section 1.2).
 pub const PHOTOPIC_WEIGHTS: [f64; 3] = [12_458.6, 52_558.9, 7_965.8];
@@ -82,6 +83,10 @@ pub const FLASH_MEMORY_TAU_S: f64 = 180.0;
 pub const FLASH_MIN_RECOVERY_S: f64 = 0.2;
 /// Coverage below which a frame holds no flash.
 pub const FLASH_MIN_COVERAGE: f64 = 1.0e-3;
+/// Flash detection requires a temporal field-energy rise, not merely contrast with a dark cabin.
+/// This 120ms onset reference is a bounded reproduction detector, not another adaptation state.
+pub const FLASH_ONSET_TAU_S: f64 = 0.12;
+pub const FLASH_ONSET_RATIO: f64 = 1.5;
 
 /// Largest step the integrator takes; longer frames are substepped.
 pub const MAX_STEP_S: f64 = 0.25;
@@ -97,12 +102,15 @@ pub struct Meter {
     pub bright_coverage: f64,
     /// Mean photopic luminance of that bright part, cd/m^2.
     pub bright_cd_m2: f64,
+    /// Unweighted arithmetic field luminance. Unlike thresholded bright coverage, it does not
+    /// disappear/reappear when the eye's flash threshold crosses a steady bright aperture.
+    pub field_cd_m2: f64,
 }
 
 impl Meter {
     /// A uniform field of the given luminances.
     pub fn uniform(photopic_cd_m2: f64, scotopic_cd_m2: f64) -> Self {
-        Self { photopic_cd_m2, scotopic_cd_m2, bright_coverage: 0.0, bright_cd_m2: 0.0 }
+        Self { photopic_cd_m2, scotopic_cd_m2, bright_coverage: 0.0, bright_cd_m2: 0.0, field_cd_m2:photopic_cd_m2 }
     }
 
     fn clamped(self) -> Self {
@@ -111,6 +119,7 @@ impl Meter {
             scotopic_cd_m2: clamp_luminance(self.scotopic_cd_m2),
             bright_coverage: if self.bright_coverage.is_finite() { self.bright_coverage.clamp(0.0, 1.0) } else { 0.0 },
             bright_cd_m2: if self.bright_cd_m2.is_finite() { self.bright_cd_m2.clamp(0.0, METER_MAX_CD_M2) } else { 0.0 },
+            field_cd_m2:clamp_luminance(self.field_cd_m2),
         }
     }
 }
@@ -238,6 +247,7 @@ pub struct Eye {
     pub rod_neural_log: f64,
     pub flash_energy_td_s: f64,
     pub since_flash_s: f64,
+    pub flash_field_reference_cd_m2:f64,
 }
 
 /// What the display transform needs from the eye, and what the eye is doing.
@@ -274,6 +284,7 @@ impl Eye {
             rod_neural_log: meter.scotopic_cd_m2.log10(),
             flash_energy_td_s: 0.0,
             since_flash_s: 1.0e6,
+            flash_field_reference_cd_m2:meter.field_cd_m2,
         }
     }
 
@@ -330,7 +341,12 @@ impl Eye {
             if rod_target > self.rod_neural_log { ROD_TAU_UP_S } else { ROD_TAU_DOWN_S });
         // Flash energy on the part of the retina that saw it.
         let cone_adaptation = self.cone_adaptation_cd_m2();
-        let flashing = meter.bright_coverage > FLASH_MIN_COVERAGE
+        // A steady high-contrast port is not a new flash on every frame. The detector uses
+        // all transported field energy, independent of the adaptation-dependent bright mask.
+        let rising=meter.field_cd_m2 > FLASH_ONSET_RATIO*self.flash_field_reference_cd_m2;
+        self.flash_field_reference_cd_m2=relax(self.flash_field_reference_cd_m2,
+            meter.field_cd_m2,FLASH_ONSET_TAU_S);
+        let flashing = rising && meter.bright_coverage > FLASH_MIN_COVERAGE
             && meter.bright_cd_m2 > FLASH_ABOVE_ADAPTATION * cone_adaptation;
         self.flash_energy_td_s *= (-dt / FLASH_MEMORY_TAU_S).exp();
         if flashing {
@@ -388,9 +404,29 @@ impl Mapping {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn aces_input(&self, radiance: [f64; 3]) -> [f64; 3] {
         let scotopic: f64 = (0..3).map(|i| radiance[i] * SCOTOPIC_WEIGHTS[i]).sum();
-        let rods = self.rod_exposure * scotopic / (1.0 + scotopic * self.rod_inverse_saturation);
+        let rods = rod_response(scotopic, self.rod_exposure, self.rod_inverse_saturation);
         radiance.map(|c| c * self.cone_exposure + rods)
     }
+}
+
+/// Display-only rod response. Preserve the view's adaptation when it is less sensitive, but do
+/// not apply its dark-field threshold gain beyond the local stimulus's existing rod TVI curve.
+/// Both candidate responses are nondecreasing with stimulus, so their minimum is nondecreasing.
+/// No light, eye state, cone gain, or display encoding is changed here. This does not make the
+/// subsequent peak-channel tone curve luminance-preserving for every saturated RGB spectrum.
+pub fn rod_response(scotopic: f64, gain: f64, inverse_saturation: f64) -> f64 {
+    let stimulus = scotopic.max(0.0);
+    let signal = stimulus / (1.0 + stimulus * inverse_saturation);
+    let local_key = DISPLAY_KEY / DISPLAY_ADAPTATION_CD_M2
+        * 10f64.powf(cone_tvi_log(DISPLAY_ADAPTATION_CD_M2.log10()));
+    let raw_local_response = local_key * signal
+        / 10f64.powf(rod_tvi_log(signal.max(METER_MIN_CD_M2).log10()));
+    // The published rounded TVI coefficients leave a 16 ppm downward response step at the
+    // absolute-threshold knee. Its monotone envelope closes that rounding seam only; the
+    // eye's adaptation TVI and the response on either side remain unchanged.
+    let absolute_response = local_key * signal.min(10f64.powf(-3.94)) / 10f64.powf(-2.86);
+    let local_response = raw_local_response.max(absolute_response);
+    (gain * signal).min(local_response)
 }
 
 /// The ACES fit `crush.wgsl` applies (Narkowicz), the one tone curve of the display.
@@ -453,7 +489,43 @@ pub fn wgsl_constants() -> String {
     push("OBS_FLASH_MEMORY_TAU", FLASH_MEMORY_TAU_S);
     push("OBS_FLASH_MIN_RECOVERY", FLASH_MIN_RECOVERY_S);
     push("OBS_FLASH_MIN_COVERAGE", FLASH_MIN_COVERAGE);
+    push("OBS_FLASH_ONSET_TAU", FLASH_ONSET_TAU_S);
+    push("OBS_FLASH_ONSET_RATIO", FLASH_ONSET_RATIO);
     push("OBS_MAX_STEP", MAX_STEP_S);
+    push("OBS_ROD_LOCAL_TVI_KEY", DISPLAY_KEY / DISPLAY_ADAPTATION_CD_M2
+        * 10f64.powf(cone_tvi_log(DISPLAY_ADAPTATION_CD_M2.log10())));
+    push("OBS_ROD_ABSOLUTE_KNEE", 10f64.powf(-3.94));
+    push("OBS_ROD_ABSOLUTE_THRESHOLD", 10f64.powf(-2.86));
+    push("OBS_ROD_WEBER_KNEE", 10f64.powf(-1.44));
+    push("OBS_ROD_WEBER_RESPONSE", DISPLAY_KEY / DISPLAY_ADAPTATION_CD_M2
+        * 10f64.powf(cone_tvi_log(DISPLAY_ADAPTATION_CD_M2.log10()) + 0.395));
+    // Inject one implementation into every observer-aware shader. It operates on linear
+    // display input, before tone mapping/encoding, and does not modify the exposure meter.
+    out.push_str(r#"
+fn obs_local_rod_tvi_log(l: f32) -> f32 {
+    if (l <= -3.94) { return -2.86; }
+    if (l < -1.44) { return pow(0.405 * l + 1.6, 2.18) - 2.86; }
+    return l - 0.395;
+}
+fn obs_rod_response(scotopic: f32, gain: f32, inverse_saturation: f32) -> f32 {
+    let stimulus = max(scotopic, 0.0);
+    let signal = stimulus / (1.0 + stimulus * inverse_saturation);
+    // Exact algebraic branches avoid logarithms/powers for black, deep night and bright pixels.
+    if (signal <= OBS_ROD_ABSOLUTE_KNEE) {
+        return min(gain * signal, OBS_ROD_LOCAL_TVI_KEY * signal / OBS_ROD_ABSOLUTE_THRESHOLD);
+    }
+    if (signal >= OBS_ROD_WEBER_KNEE) {
+        return min(gain * signal, OBS_ROD_WEBER_RESPONSE);
+    }
+    let local_log = log2(max(signal, OBS_METER_MIN)) * 0.30102999566;
+    let raw_local_response = OBS_ROD_LOCAL_TVI_KEY * signal
+        / pow(10.0, obs_local_rod_tvi_log(local_log));
+    let absolute_response = OBS_ROD_LOCAL_TVI_KEY * min(signal, OBS_ROD_ABSOLUTE_KNEE)
+        / OBS_ROD_ABSOLUTE_THRESHOLD;
+    let local_response = max(raw_local_response, absolute_response);
+    return min(gain * signal, local_response);
+}
+"#);
     out
 }
 
@@ -644,7 +716,7 @@ mod tests {
         let mut eye = Eye::adapted(night, Viewing::Binocular);
         let before = snow(&eye);
         let flash = Meter { photopic_cd_m2: 60.0, scotopic_cd_m2: 30.0, bright_coverage: 0.2,
-            bright_cd_m2: 3_000.0 };
+            bright_cd_m2: 3_000.0, field_cd_m2:600.0 };
         run(&mut eye, flash, 0.065, 1.0 / 240.0);
         assert!(eye.flash_energy_td_s > 1_000.0, "{eye:?}");
         run(&mut eye, night, 0.5, 1.0 / 60.0);
@@ -654,6 +726,115 @@ mod tests {
         eprintln!("moonlit snow shown {before:.4} before, {blinded:.4} 0.5 s after, {recovered:.4} 30 s after");
         assert!(blinded < 0.3 * before, "{blinded} vs {before}");
         assert!(recovered > 0.8 * before, "{recovered} vs {before}");
+    }
+
+    #[test]
+    fn local_rod_response_preserves_black_photopic_bypass_and_unsaturated_dark_samples() {
+        for gain in [0.0, 0.1, 1.0, 7.860959529876709] {
+            assert_eq!(rod_response(0.0, gain, 0.028473004698753357), 0.0);
+        }
+        for stimulus in [0.0, 1e-8, 1e-4, 1.0, 1000.0] {
+            assert_eq!(rod_response(stimulus, 0.0, 0.028), 0.0);
+        }
+        let stimulus = 1e-8;
+        let gain = 1.0;
+        assert_eq!(rod_response(stimulus, gain, 0.028),
+            gain * stimulus / (1.0 + stimulus * 0.028));
+    }
+
+    #[test]
+    fn local_rod_response_bounds_the_recorded_cabin_without_changing_cone_color() {
+        // GPU eye state from hotfix_cabin_eye_diagnostic_20261002_turret_photometry.json.
+        let (gain, inverse_saturation) = (7.860959529876709, 0.028473004698753357);
+        let plateau = DISPLAY_KEY / DISPLAY_ADAPTATION_CD_M2
+            * 10f64.powf(cone_tvi_log(DISPLAY_ADAPTATION_CD_M2.log10()) + 0.395);
+        assert!((plateau - 0.024846916762851935).abs() < 1e-14);
+        assert!(gain / inverse_saturation > 276.0);
+        assert!((rod_response(1000.0, gain, inverse_saturation) - plateau).abs() < 1e-12);
+
+        let mut mapping = Eye::adapted(Meter::uniform(0.0000553732425, 0.000050396975),
+            Viewing::Binocular).mapping(Viewing::Binocular);
+        mapping.cone_exposure = 4156.2275390625;
+        mapping.rod_exposure = gain;
+        mapping.rod_inverse_saturation = inverse_saturation;
+        // Fixed warm spectrum at the captured bright-region average. The cone channel must
+        // remain dominant here while a dim neutral sample still receives its rod signal.
+        let spectrum = [1.0, 0.30, 0.03];
+        let luminance: f64 = (0..3).map(|i| spectrum[i] * PHOTOPIC_WEIGHTS[i]).sum();
+        let radiance = spectrum.map(|v| v * 43.00748062133789 / luminance);
+        let mapped = mapping.aces_input(radiance);
+        assert!(mapped[0] / mapped[2] > 10.0, "bright warm patch lost chroma: {mapped:?}");
+        assert!(mapped[0] / mapped[1] > 2.5, "bright warm patch lost chroma: {mapped:?}");
+        assert!((mapped[0] - mapped[1] - mapping.cone_exposure
+            * (radiance[0] - radiance[1])).abs() < 1e-12);
+        let dark = flat_radiance(1e-6);
+        assert!(mapping.aces_input(dark)[0] > dark[0] * mapping.cone_exposure);
+    }
+
+    #[test]
+    fn local_rod_response_is_nondecreasing_including_rounded_tvi_knees() {
+        for gain in [0.0, 0.01, 0.1, 1.0, 7.860959529876709, 100.0] {
+            for inverse_saturation in [0.0, 0.01, 0.028473004698753357, 0.04] {
+                let mut stimuli: Vec<f64> = (0..=20_000).map(|i|
+                    10f64.powf(-10.0 + f64::from(i) * 17.0 / 20_000.0)).collect();
+                for knee in [10f64.powf(-3.94), 10f64.powf(-1.44)] {
+                    for i in -1000..=1000 {
+                        let signal = knee * (1.0 + f64::from(i) * 1e-7);
+                        stimuli.push(signal / (1.0 - signal * inverse_saturation));
+                    }
+                    for signal in [f64::from_bits(knee.to_bits() - 1), knee,
+                        f64::from_bits(knee.to_bits() + 1)] {
+                        stimuli.push(signal / (1.0 - signal * inverse_saturation));
+                    }
+                }
+                stimuli.sort_by(f64::total_cmp);
+                let mut previous = 0.0;
+                for stimulus in stimuli {
+                    let response = rod_response(stimulus, gain, inverse_saturation);
+                    assert!(response + 1e-14 >= previous,
+                        "gain={gain} saturation={inverse_saturation} stimulus={stimulus}: {previous} -> {response}");
+                    previous = response;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn local_rod_shader_helper_is_shared_and_stays_before_display_encoding() {
+        let generated = wgsl_constants();
+        let module = wgpu::naga::front::wgsl::parse_str(&generated).unwrap();
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all()).validate(&module).unwrap();
+        for shader in [include_str!("../shaders/crush.wgsl"),
+            include_str!("../shaders/stylized_particles.wgsl"),
+            include_str!("../shaders/pixel_particles.wgsl")] {
+            assert!(shader.contains("let rods = obs_rod_response(scotopic,"));
+            assert!(!shader.contains("let rods = cr.rod_exposure *"));
+            assert!(!shader.contains("let rods = eye.rod_exposure *"));
+        }
+        let helper = generated.split("fn obs_rod_response").nth(1).unwrap();
+        assert!(!helper.contains("display_encode"));
+        assert!(!helper.contains("display_decode"));
+    }
+
+    #[test]
+    fn steady_bright_aperture_never_retriggers_flash_afterimage() {
+        // 95% dark compartment and 5% bright exterior. The gaze-weighted log mean can
+        // remain dark while this static aperture exceeds 30x adaptation indefinitely.
+        let port=Meter {photopic_cd_m2:0.11,scotopic_cd_m2:0.23,
+            bright_coverage:0.05,bright_cd_m2:1000.0,field_cd_m2:50.095};
+        let mut eye=Eye::adapted(port,Viewing::Binocular);
+        run(&mut eye,port,30.0,1.0/60.0);
+        assert_eq!(eye.flash_energy_td_s,0.0,"a steady source has no flash onset");
+        assert_eq!(eye.mapping(Viewing::Binocular).afterimage_cd_m2,0.0);
+
+        let mut arriving=Eye::adapted(Meter::uniform(0.1,0.21),Viewing::Binocular);
+        run(&mut arriving,port,1.0,1.0/240.0);
+        let first=arriving.flash_energy_td_s;
+        assert!(first>0.0,"a sudden bright opening may produce a transient response");
+        run(&mut arriving,port,10.0,1.0/60.0);
+        assert!(arriving.flash_energy_td_s<first,"static port must not keep charging flash energy");
+        assert!(arriving.since_flash_s>10.0,"static port must not reset recovery");
     }
 
     #[test]

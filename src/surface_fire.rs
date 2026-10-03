@@ -143,6 +143,11 @@ impl TriangleBvh {
         tree
     }
     fn visit_segment(&self, from: Vec3, to: Vec3, visit: &mut impl FnMut(usize)) {
+        // A nearest-hit caller still visits every intersected leaf in the original order.
+        self.any_segment(from, to, &mut |index| { visit(index); false });
+    }
+    /// Same finite segment broad phase, with exact early exit for visibility-only callers.
+    fn any_segment(&self, from: Vec3, to: Vec3, hit: &mut impl FnMut(usize) -> bool) -> bool {
         fn intersects(from: Vec3, delta: Vec3, lo: Vec3, hi: Vec3) -> bool {
             let mut near = 0.0_f32;
             let mut far = 1.0_f32;
@@ -164,22 +169,18 @@ impl TriangleBvh {
             true
         }
         fn walk(tree: &TriangleBvh, index: usize, from: Vec3, delta: Vec3,
-            visit: &mut impl FnMut(usize)) {
+            hit: &mut impl FnMut(usize) -> bool) -> bool {
             let node = &tree.nodes[index];
-            if !intersects(from,delta,node.lo,node.hi) { return; }
+            if !intersects(from,delta,node.lo,node.hi) { return false; }
             match node.contents {
-                TriangleNodeContents::Leaf { start,end } => {
-                    for &id in &tree.indices[start..end] { visit(id); }
-                }
-                TriangleNodeContents::Branch { left,right } => {
-                    walk(tree,left,from,delta,visit);
-                    walk(tree,right,from,delta,visit);
-                }
+                TriangleNodeContents::Leaf { start,end } =>
+                    tree.indices[start..end].iter().any(|&id| hit(id)),
+                TriangleNodeContents::Branch { left,right } =>
+                    walk(tree,left,from,delta,hit) || walk(tree,right,from,delta,hit),
             }
         }
-        if !self.nodes.is_empty() && from.is_finite() && to.is_finite() {
-            walk(self,0,from,to-from,visit);
-        }
+        !self.nodes.is_empty() && from.is_finite() && to.is_finite()
+            && walk(self,0,from,to-from,hit)
     }
     fn visit_overlaps(&self, triangles: &[Triangle], lo: Vec3, hi: Vec3,
         node_budget: &mut usize, visit: &mut impl FnMut(usize) -> bool) -> bool {
@@ -292,13 +293,39 @@ impl Grid {
             }
         }
     }
-    fn sweep(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
-        // Explicit diagnostic control enables a same-binary old/new profile. Normal play
-        // never changes ray count, source geometry, nearest-hit semantics or fire budgets.
+    fn reference_sweep_enabled() -> bool {
+        // Both nearest-contact and boolean queries honor the same diagnostic control.
         static REFERENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *REFERENCE.get_or_init(|| std::env::var("KESSEL_FIRE_REFERENCE_SWEEP").as_deref() == Ok("1")) {
-            self.sweep_binned_reference(from,to)
-        } else { self.sweep_bvh(from,to) }
+        *REFERENCE.get_or_init(|| std::env::var("KESSEL_FIRE_REFERENCE_SWEEP").as_deref() == Ok("1"))
+    }
+    fn sweep(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
+        if Self::reference_sweep_enabled() { self.sweep_binned_reference(from,to) }
+        else { self.sweep_bvh(from,to) }
+    }
+    fn occluded(&self, from: Vec3, to: Vec3) -> bool {
+        if Self::reference_sweep_enabled() { self.sweep_binned_reference(from,to).is_some() }
+        else { self.occluded_bvh(from,to) }
+    }
+    fn occluded_bvh(&self, from: Vec3, to: Vec3) -> bool {
+        let delta = to-from;
+        self.body_bvh.any_segment(from,to,&mut |index| {
+            // Identical inclusive finite Moller-Trumbore predicate to sweep_bvh. Visibility
+            // needs neither the nearest fraction nor its normal, so the first real hit ends it.
+            let Triangle { a,b,c } = self.triangles[index];
+            let e1 = b-a;
+            let e2 = c-a;
+            let cross = delta.cross(e2);
+            let det = e1.dot(cross);
+            if det.abs() < 1e-10 { return false; }
+            let t = from-a;
+            let u = t.dot(cross)/det;
+            if !(0.0..=1.0).contains(&u) { return false; }
+            let q = t.cross(e1);
+            let v = delta.dot(q)/det;
+            if v < 0.0 || u+v > 1.0 { return false; }
+            let fraction = e2.dot(q)/det;
+            (0.0..=1.0).contains(&fraction)
+        })
     }
     fn sweep_bvh(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
         let delta = to-from;
@@ -715,8 +742,9 @@ impl CabinFire {
     pub fn sweep(&self, from: Vec3, to: Vec3, models: &[Mat4; FRAMES]) -> Option<Contact> {
         self.sweep_inverse(from, to, &models.map(|m| m.inverse()))
     }
-    /// Reuse the source triangle bins for a bounded soot candidate batch. Frame inverses are
-    /// calculated once for the whole batch; this never scans every source triangle per grain.
+    /// Exact source visibility for a bounded soot candidate batch. Frame inverses are computed
+    /// once; the first intersected source triangle ends a blocked path, without finding a normal
+    /// or nearest contact. Every one of the articulated frames remains eligible to block it.
     /// The path endpoint should include the caller's small cell-radius margin.
     pub fn clear_source_paths(
         &self,
@@ -730,7 +758,11 @@ impl CabinFire {
             .map(|&point| {
                 origin.is_finite()
                     && point.is_finite()
-                    && self.sweep_inverse(origin, point, &inverse).is_none()
+                    && !(0..FRAMES).any(|frame| {
+                        let from = inverse[frame].transform_point3(origin);
+                        let to = inverse[frame].transform_point3(point);
+                        self.grids[frame].occluded(from,to)
+                    })
             })
             .collect()
     }
@@ -1364,17 +1396,21 @@ mod tests {
         assert_ne!(fire.patch_surface(0,&models).unwrap().identity,first);
     }
 
-    fn sweep_parity(grid: &Grid, rays: &[[Vec3; 2]]) -> (usize, f64, f64) {
+    fn sweep_parity(grid: &Grid, rays: &[[Vec3; 2]]) -> (usize, f64, f64, f64) {
         let begin = std::time::Instant::now();
         let expected: Vec<_> = rays.iter().map(|p| grid.sweep_binned_reference(p[0],p[1])).collect();
         let reference_ms = begin.elapsed().as_secs_f64()*1000.0;
         let begin = std::time::Instant::now();
         let actual: Vec<_> = rays.iter().map(|p| grid.sweep_bvh(p[0],p[1])).collect();
         let bvh_ms = begin.elapsed().as_secs_f64()*1000.0;
+        let begin = std::time::Instant::now();
+        let blocked: Vec<_> = rays.iter().map(|p| grid.occluded_bvh(p[0],p[1])).collect();
+        let any_hit_ms = begin.elapsed().as_secs_f64()*1000.0;
         for (i,(old,new)) in expected.iter().zip(&actual).enumerate() {
             assert_eq!(old,new,"finite source sweep {i} changed: {:?}",rays[i]);
+            assert_eq!(old.is_some(),blocked[i],"boolean source visibility {i} changed: {:?}",rays[i]);
         }
-        (actual.iter().filter(|hit| hit.is_some()).count(),reference_ms,bvh_ms)
+        (actual.iter().filter(|hit| hit.is_some()).count(),reference_ms,bvh_ms,any_hit_ms)
     }
     fn query_random(seed: &mut u32) -> f32 {
         *seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -1401,7 +1437,7 @@ mod tests {
             };
             rays.push([from,to]);
         }
-        let (hits,_,_)=sweep_parity(&grid,&rays);
+        let (hits,_,_,_)=sweep_parity(&grid,&rays);
         assert!(hits>1000,"fixture must cover real wall/floor/roof contacts");
     }
     #[test]
@@ -1453,11 +1489,12 @@ mod tests {
                 rays.push([from,from+delta]);
                 if i%8==0 {rays.push([from,from-normal*0.016]);}
             }
-            let (hits,reference_ms,bvh_ms)=sweep_parity(&grid,&rays);
-            println!("[fire-query-profile] {part}: {} triangles, {} identical rays / {hits} hits; reference {reference_ms:.3}ms BVH {bvh_ms:.3}ms",grid.triangles.len(),rays.len());
+            let (hits,reference_ms,bvh_ms,any_hit_ms)=sweep_parity(&grid,&rays);
+            println!("[fire-query-profile] {part}: {} triangles, {} identical rays / {hits} hits; reference {reference_ms:.3}ms BVH {bvh_ms:.3}ms any-hit {any_hit_ms:.3}ms",grid.triangles.len(),rays.len());
             results.push(serde_json::json!({"part":part,"triangles":grid.triangles.len(),
                 "rays":rays.len(),"hits":hits,"bit_exact_hits_and_normals":true,
-                "reference_ms":reference_ms,"bvh_ms":bvh_ms}));
+                "boolean_visibility_equal":true,
+                "reference_ms":reference_ms,"bvh_ms":bvh_ms,"any_hit_ms":any_hit_ms}));
         }
         if let Ok(path)=std::env::var("KESSEL_FIRE_QUERY_REVIEW") {
             std::fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({
@@ -1466,6 +1503,65 @@ mod tests {
             }))?)?;
         }
         Ok(())
+    }
+    #[test]
+    fn boolean_source_visibility_preserves_inclusive_endpoints_and_degenerate_segments() {
+        let mut grid=Grid::default();
+        grid.triangles.push(Triangle {a:Vec3::ZERO,b:Vec3::X,c:Vec3::Z});
+        grid.body_bvh=TriangleBvh::new(&grid.triangles);
+        let surface=Vec3::new(0.25,0.0,0.25);
+        let edge=Vec3::new(0.5,0.0,0.5);
+        for (from,to,blocked) in [
+            (surface,surface+Vec3::Y,true), // exact start contact, moving away
+            (surface+Vec3::Y,surface,true), // exact end contact
+            (surface,surface-Vec3::Y,true),
+            (surface-Vec3::Y,surface,true),
+            (Vec3::Y,Vec3::ZERO,true), // triangle vertex
+            (edge+Vec3::Y,edge-Vec3::Y,true), // triangle edge
+            (surface+Vec3::Y,surface+Vec3::Y*0.000001,false),
+            (surface+Vec3::Y,surface-Vec3::Y*0.000001,true),
+            (surface,surface,false), // no normal segment, unchanged determinant rule
+            (surface,surface+Vec3::X*0.1,false), // coplanar
+            (Vec3::splat(f32::NAN),surface,false),
+            (surface,Vec3::splat(f32::INFINITY),false),
+        ] {
+            assert_eq!(grid.sweep_bvh(from,to).is_some(),blocked,"nearest {from:?}->{to:?}");
+            assert_eq!(grid.occluded_bvh(from,to),blocked,"boolean {from:?}->{to:?}");
+        }
+    }
+    #[test]
+    fn boolean_source_visibility_checks_every_articulated_frame_and_rejects_invalid_paths() {
+        let mesh=plane();
+        for frame in 0..FRAMES {
+            let fire=CabinFire::new(&[(frame,&mesh)]);
+            for motion in [Mat4::IDENTITY,Mat4::from_rotation_translation(
+                glam::Quat::from_rotation_y(0.37)*glam::Quat::from_rotation_z(0.19),
+                Vec3::new(frame as f32*0.73,2.3,-5.1))] {
+                let mut models=[Mat4::IDENTITY;FRAMES];models[frame]=motion;
+                let origin=motion.transform_point3(Vec3::Y);
+                let endpoints=[Vec3::NEG_Y,Vec3::Y*2.0,Vec3::new(0.4,2.0,0.3)]
+                    .map(|point|motion.transform_point3(point));
+                let expected:Vec<_>=endpoints.iter().map(|&to|fire.sweep(origin,to,&models).is_none()).collect();
+                assert_eq!(expected,vec![false,true,true],"frame {frame}");
+                assert_eq!(fire.clear_source_paths(origin,&endpoints,&models),expected,"frame {frame}");
+                assert_eq!(fire.clear_source_paths(Vec3::splat(f32::NAN),&endpoints,&models),vec![false;3]);
+                assert_eq!(fire.clear_source_paths(origin,&[Vec3::splat(f32::INFINITY)],&models),vec![false]);
+            }
+        }
+    }
+    #[test]
+    fn boolean_source_traversal_stops_after_first_blocker_but_nearest_visits_all_candidates() {
+        let triangles:Vec<_>=(0..64).map(|i| {
+            let a=Vec3::Y*(i as f32*0.01);
+            Triangle {a,b:a+Vec3::X,c:a+Vec3::Z}
+        }).collect();
+        let tree=TriangleBvh::new(&triangles);
+        let from=Vec3::new(0.25,-1.0,0.25);let to=Vec3::new(0.25,2.0,0.25);
+        let mut any_visits=0;
+        assert!(tree.any_segment(from,to,&mut |_|{any_visits+=1;true}));
+        let mut all_visits=0;tree.visit_segment(from,to,&mut |_|all_visits+=1);
+        assert_eq!(any_visits,1);
+        assert_eq!(all_visits,triangles.len());
     }
     #[test]
     fn body_bvh_selects_one_triangle_from_dense_source_without_scanning_the_mesh() {

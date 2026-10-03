@@ -2,7 +2,7 @@
 use std::cell::{Cell, RefCell};
 
 pub const ENV: &str = "KESSEL_GPU_PROFILE";
-const MAX_PASSES: u32 = 256;
+const MAX_PASSES: u32 = 1024;
 
 pub fn requested() -> bool {
     std::env::var(ENV).is_ok_and(|value| value == "1")

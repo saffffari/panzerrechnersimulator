@@ -4,6 +4,8 @@
 //! reconstructions because the export labels the internal faces as opaque `Material.001`.
 use crate::gltf_load::{load_glb_partitioned_roots, CpuMesh, Vertex};
 use glam::Vec3;
+#[path="tiger_side_ports.rs"]
+pub(crate) mod side_ports;
 
 pub const WINDOW: u32 = 1;
 pub const MIRROR: u32 = 2;
@@ -54,6 +56,11 @@ pub struct FocusState {
 /// Physical eye relief is kept outside the glass. The narrow display field frames the usable
 /// objective view; this is a close-inspection camera crop, not a claim of optical magnification.
 pub fn close_view(index: usize) -> (Vec3, Vec3, f32) {
+    if let Some(view)=side_ports::close_view(index) {return view;}
+    if index >= side_ports::FIRST_INDEX {
+        // A missing/changed optional source must not index cupola arrays or select another port.
+        return (COMMANDER_EYE,Vec3::Z,66_f32.to_radians());
+    }
     if index == LOADER_INDEX {
         // The relay preserves angular scale. This eye frames the clear hood opening with a
         // small downward gaze; the exterior roof and hood remain present outside its field.
@@ -92,15 +99,27 @@ impl super::Game {
         if self.cupola_focus.index.is_none() {
             let eye = renderer.camera.pos;
             let look = renderer.camera.forward();
-            let candidates: &[(usize, Vec3)] = if loader { &[(LOADER_INDEX, LOADER_ENTRY)] } else { &[] };
-            let candidate = CUPOLA_CENTERS.iter().copied().enumerate().filter(|_|commander)
-                .chain(candidates.iter().copied()).map(|(i, p)| {
+            let mut candidates:Vec<(usize,Vec3)>=CUPOLA_CENTERS.iter().copied().enumerate()
+                .filter(|_|commander).collect();
+            if loader {
+                candidates.push((LOADER_INDEX,LOADER_ENTRY));
+                if let Some(ports)=side_ports::ports() {for (i,port) in ports.iter().enumerate() {
+                    let world=model.transform_point3(port.inner_center);
+                    // Reach the local slit from inside. Do not pull a distant or exterior eye
+                    // through the turret, and leave its source glass/armor fully rendered.
+                    let to=world-eye;let axis=model.transform_vector3(port.outward);
+                    if to.length()<1.25 && to.dot(axis)>0.005 {
+                        candidates.push((side_ports::FIRST_INDEX+i,port.inner_center));
+                    }
+                }}
+            }
+            let candidate = candidates.into_iter().map(|(i, p)| {
                 (i, (model.transform_point3(p)-eye).normalize_or_zero().dot(look))
             }).max_by(|a,b|a.1.total_cmp(&b.1));
             if let Some((i, dot)) = candidate.filter(|(_, d)|*d > 0.95) {
                 let _ = dot;
-                self.hover_label = Some(if loader { "PERISCOPE - HOLD RMB" }
-                    else { "VISION BLOCK - HOLD RMB" });
+                self.hover_label = Some(if i>=side_ports::FIRST_INDEX {"SIDE VISION PORT - HOLD RMB"}
+                    else if loader { "PERISCOPE - HOLD RMB" } else { "VISION BLOCK - HOLD RMB" });
                 if aim {
                     self.cupola_focus.index = Some(i);
                     self.cupola_focus.saved_near = Some(renderer.camera.znear);

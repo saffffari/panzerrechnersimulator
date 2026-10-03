@@ -46,6 +46,22 @@ pub struct Settings {
     pub storm: Option<f32>,
 }
 impl Settings {
+    /// Fixed i9-12900K / RTX 4090 playtest profile. `surface` is the actual monitor framebuffer,
+    /// never an assumed 5K size or the internal render size. This profile is session-only, so old
+    /// saved preferences remain available outside the fixed playtest launcher.
+    pub fn fixed_playtest(surface: (u32, u32)) -> Self {
+        let resolution = crate::graphics::FIXED_PLAYTEST_RESOLUTION;
+        Self {
+            resolution,
+            window: surface,
+            fullscreen: true,
+            fps: true,
+            dither_pattern: 3,
+            display: DisplayTuning::at_resolution(resolution.0, resolution.1),
+            ..Self::defaults()
+        }
+    }
+
     pub fn from_renderer(r: &Renderer) -> Self {
         Self {
             resolution: (r.iw, r.ih),
@@ -96,23 +112,28 @@ impl Settings {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> anyhow::Result<()> {
-        if self.resolution != (r.iw, r.ih) || self.shadows != r.shadow_res {
-            r.resize_shader_targets(device, queue, self.resolution, self.shadows)?;
+        let fixed;
+        let settings = if crate::graphics::fixed_playtest_graphics() {
+            fixed = Self::fixed_playtest(self.window);
+            &fixed
+        } else { self };
+        if settings.resolution != (r.iw, r.ih) || settings.shadows != r.shadow_res {
+            r.resize_shader_targets(device, queue, settings.resolution, settings.shadows)?;
         }
-        let mut display = self.display;
-        (display.width, display.height) = self.resolution;
+        let mut display = settings.display;
+        (display.width, display.height) = settings.resolution;
         r.display_tuning = Some(display);
-        r.display_dither_pattern = self.dither_pattern as f32;
+        r.display_dither_pattern = settings.dither_pattern as f32;
         r.display_grade = [
-            self.exposure_ev.exp2(),
-            self.saturation,
-            self.warmth,
-            self.gamma,
+            settings.exposure_ev.exp2(),
+            settings.saturation,
+            settings.warmth,
+            settings.gamma,
         ];
-        r.set_full_transport_quality(self.full_transport);
-        r.sky_time_scale = self.sun_speed;
-        r.set_user_sky_phase(self.sun_phase);
-        r.set_weather_override(self.storm);
+        r.set_full_transport_quality(settings.full_transport);
+        r.sky_time_scale = settings.sun_speed;
+        r.set_user_sky_phase(settings.sun_phase);
+        r.set_weather_override(settings.storm);
         r.invalidate_title_backdrop();
         Ok(())
     }
@@ -189,6 +210,7 @@ impl Settings {
         })
     }
     pub fn load(path: &std::path::Path) -> anyhow::Result<Option<Self>> {
+        if crate::graphics::fixed_playtest_graphics() { return Ok(None); }
         match std::fs::read(path) {
             Ok(bytes) => Ok(Some(Self::from_json(&serde_json::from_slice(&bytes)?)?)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -196,6 +218,7 @@ impl Settings {
         }
     }
     pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        if crate::graphics::fixed_playtest_graphics() { return Ok(()); }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -205,6 +228,7 @@ impl Settings {
         Ok(())
     }
     pub fn adjust(&mut self, tab: usize, row: usize, up: bool) {
+        if crate::graphics::fixed_playtest_graphics() { return; }
         fn cycle<T: Copy + PartialEq>(v: &mut T, choices: &[T], up: bool) {
             let i = choices.iter().position(|n| n == v).unwrap_or(0);
             *v = choices[(i + if up { 1 } else { choices.len() - 1 }) % choices.len()];
@@ -470,6 +494,23 @@ impl Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fixed_playtest_keeps_native_grid_separate_from_actual_monitor_surface() {
+        for surface in [(5120, 2880), (3840, 2160), (3012, 1694)] {
+            let settings = Settings::fixed_playtest(surface);
+            assert_eq!(settings.resolution, (800, 450));
+            assert_eq!(settings.window, surface);
+            assert!(settings.fullscreen && settings.vsync && settings.fps);
+            assert_eq!(settings.shadows, 2048);
+            assert!(settings.full_transport);
+            assert_eq!(settings.optics, 1);
+            assert_eq!(settings.dither_pattern, 3);
+            assert_eq!((settings.display.width, settings.display.height), (800, 450));
+            assert_eq!(settings.display.palette_levels, 31.0);
+            assert_eq!(settings.exposure_ev, 0.0);
+            assert_eq!(settings.storm, None);
+        }
+    }
     #[test]
     fn preferences_validate_roundtrip_and_reject_corruption() {
         let s = Settings::defaults();

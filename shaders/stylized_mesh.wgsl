@@ -39,10 +39,9 @@ fn cabin_size(i:u32)->vec4<u32> {return cam.cabin_medium.grid_size[i];}
 fn cabin_min(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_min[i].xyz;}
 fn cabin_max(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_max[i].xyz;}
 fn source_background_medium_transmittance(origin:vec3<f32>,direction:vec3<f32>,distance_m:f32)->f32 {
-    let world=weather_optical_depth(origin,direction,distance_m,cam.world_medium.zw,
-        cam.world_medium.x,cam.world_medium.y,cam.medium_transport.yzw,24u);
-    let cabin=max(cam.medium_transport.x,0.0)*cabin_path_length(origin,direction,distance_m);
-    return exp(-world-cabin);
+    let depth=weather_and_cabin_optical_depth(origin,direction,distance_m,cam.world_medium.zw,
+        cam.world_medium.x,cam.world_medium.y,cam.medium_transport.yzw,24u,cam.medium_transport.x);
+    return exp(-depth.x-depth.y);
 }
 @group(0) @binding(0) var<uniform> cam: Camera;
 
@@ -276,11 +275,11 @@ fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: 
     return visibility;
 }
 
-fn cabin_light_shadow(source:vec3<f32>,radius:f32,world:vec3<f32>,n:vec3<f32>,ndl:f32)->vec3<f32> {
+fn cabin_light_shadow(source:vec3<f32>,radius:f32,world:vec3<f32>,offset:vec3<f32>,n:vec3<f32>)->vec3<f32> {
     if(PORTABLE_VISIBILITY){return hand_torch_gain(source,world)*scene_point_transmission(source,radius,world+n*0.0001);}
     let lamp=cabin_fixture_index(source);
     if(lamp<0){scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);}
-    let offset=world-source;let major=max(abs(offset.x),max(abs(offset.y),abs(offset.z)));
+    let major=max(abs(offset.x),max(abs(offset.y),abs(offset.z)));
     let limits=cabin_shadow_range(lamp);
     if(major>=limits.y){scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);}
     if(major<=limits.x){return vec3(hand_torch_gain(source,world));}
@@ -306,6 +305,7 @@ struct VsOut {
     @interpolate(perspective, centroid) @location(1) normal: vec3<f32>,
     @interpolate(perspective, centroid) @location(2) world: vec3<f32>,
     @interpolate(perspective, centroid) @location(3) tangent: vec4<f32>, // xyz = world tangent, w = bitangent handedness
+    @interpolate(perspective, centroid) @location(4) relative_world: vec3<f32>, // preserve local receiver-plane precision
 };
 
 // WGSL has no portable matrix `inverse()` builtin.  For a column-major linear transform M, the
@@ -332,7 +332,8 @@ fn inverse_transpose_3x3(linear: mat3x3<f32>) -> mat3x3<f32> {
 fn project_vertex(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
                   tangent: vec4<f32>) -> VsOut {
     let world = (model * vec4(pos, 1.0)).xyz;
-    let clip = cam.view_proj * vec4(camera_relative_position(model, pos, cam.cam_pos), 1.0);
+    let relative_world = camera_relative_position(model, pos, cam.cam_pos);
+    let clip = cam.view_proj * vec4(relative_world, 1.0);
     let linear = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
     let normal_to_world = inverse_transpose_3x3(linear);
     let handedness = tangent.w * select(-1.0, 1.0, determinant(linear) >= 0.0);
@@ -346,6 +347,7 @@ fn project_vertex(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec
     out.uv = uv;
     out.normal = normalize(normal_to_world * normal);
     out.world = world;
+    out.relative_world = relative_world;
     out.tangent = vec4(normalize(linear * tangent.xyz), handedness);
     return out;
 }
@@ -484,15 +486,17 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let macro_dx = dpdx(in.uv) * vec2<f32>(textureDimensions(albedo_tex));
     let macro_dy = dpdy(in.uv) * vec2<f32>(textureDimensions(albedo_tex));
     let macro_lod = log2(max(max(length(macro_dx), length(macro_dy)), 1.0));
-    let footprint = max(length(dpdx(in.world.xz)), length(dpdy(in.world.xz)));
+    let footprint = max(length(dpdx(in.relative_world.xz)), length(dpdy(in.relative_world.xz)));
     // The shadow receiver is the rasterized triangle, not its interpolated shading normal.
     // Evaluate derivatives before any divergent material branch.
-    let face_cross = cross(dpdx(in.world), dpdy(in.world));
+    // Absolute world interpolation quantizes sub-mm screen derivatives at battlefield
+    // coordinates. This is the same rasterized plane, expressed relative to the eye.
+    let face_cross = cross(dpdx(in.relative_world), dpdy(in.relative_world));
     let sparse_cubic_smoke = pc.params.w < -0.5;
     if (sparse_cubic_smoke && distance(in.world, cam.cam_pos) < 0.16) { discard; }
     if (pc.params.w > 3.5 && pc.params.w < 4.5 && raw4.a < 0.5) { discard; }
 
-    let view = normalize(cam.cam_pos - in.world);
+    let view = normalize(-in.relative_world);
     let geometric_normal = normalize(in.normal);
     let face_length_sq = dot(face_cross, face_cross);
     let face_normal = face_cross * inverseSqrt(max(face_length_sq, 1e-16));
@@ -580,13 +584,16 @@ fn shade(in: VsOut) -> SurfaceOutput {
     for (var index = 0; index < light_count; index += 1) {
         let source = cam.lights[index * 2];
         let emission = cam.lights[index * 2 + 1];
-        let offset = source.xyz - in.world;
+        // Keep the interpolated surface detail before adding the camera-to-lamp translation.
+        // The source map uses the matching lamp-relative vertex construction.
+        let receiver_offset = in.relative_world + (cam.cam_pos - source.xyz);
+        let offset = -receiver_offset;
         let d2 = dot(offset, offset);
         if (d2 < 1e-8 || emission.w <= 0.0 || all(emission.rgb==vec3(0.0))) { continue; }
         let direction = offset * inverseSqrt(d2);
         if(dot(normal,direction)<=0.0){continue;}
         let irradiance = emission.rgb * emission.w / max(d2, max(source.w * source.w, 0.0025));
-        let visibility=cabin_light_shadow(source.xyz,source.w,in.world,receiver_normal,max(dot(receiver_normal,direction),0.0));
+        let visibility=cabin_light_shadow(source.xyz,source.w,in.world,receiver_offset,receiver_normal);
         if(all(visibility<=vec3(0.0))){continue;}
         color += surface_response(albedo, metallic, roughness, normal, view, direction) * irradiance * visibility
             *source_background_medium_transmittance(in.world,direction,max(sqrt(d2)-source.w,0.0));

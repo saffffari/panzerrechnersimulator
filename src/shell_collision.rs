@@ -28,6 +28,9 @@ pub struct Carry {
 #[derive(Default, Debug)]
 pub struct Report {
     pub impact_speed: f32,
+    /// Resolved contact belonging to the strongest impulse in this step, before response.
+    pub tangential_speed: f32,
+    pub contact_point: Vec3,
     pub grounded: bool,
     pub budget_limited: bool,
 }
@@ -298,7 +301,11 @@ impl Body {
         let point_velocity = self.velocity + self.angular_velocity.cross(arm);
         let inward = point_velocity.dot(normal);
         report.grounded |= normal.y > 0.5;
-        report.impact_speed = report.impact_speed.max(-inward);
+        if -inward > report.impact_speed {
+            report.impact_speed = -inward;
+            report.tangential_speed = (point_velocity - normal * inward).length();
+            report.contact_point = self.position + arm;
+        }
         if inward >= 0.0 { return; }
         let effective = 1.0 / self.mass + normal.dot(self.inverse_inertia(arm.cross(normal)).cross(arm));
         let bounce = if inward < -0.7 { restitution } else { 0.0 };

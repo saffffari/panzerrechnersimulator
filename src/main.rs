@@ -6020,6 +6020,12 @@ fn run_cabin_light_demo(prefix: &str, night: bool, sunlight_probe: bool) -> anyh
         }
         let path = format!("{prefix}_{tag}.png");
         r.render_to_png(&device, &queue, &path, r.iw * 3, r.ih * 3)?;
+        let photometry = r.debug_frame_photometry(&device, &queue)?;
+        let mut receipt = photometry.to_json();
+        receipt["eye_state_lanes"] = serde_json::json!(photometry.eye.to_vec());
+        receipt["capture"] = serde_json::json!(path);
+        std::fs::write(format!("{prefix}_{tag}_photometry.json"),
+            serde_json::to_vec_pretty(&receipt)?)?;
         println!(
             "[cabin-light] {path}: exposure={:?}, transport_frames={}, exposure_frames={}",
             warmup.measured_exposure, warmup.transport_frames, warmup.exposure_frames,
@@ -11344,7 +11350,10 @@ impl WindowState {
             "[panzerrechnersystem] adapter: {} ({:?}, {:?})",
             info.name, info.device_type, info.backend
         );
-        let default_graphics = graphics::GraphicsPreset::for_adapter(info.device_type);
+        let default_graphics = if graphics::fixed_playtest_graphics() {
+            renderer::set_display_internal_resolution(Some(graphics::FIXED_PLAYTEST_RESOLUTION));
+            graphics::GraphicsPreset::High
+        } else { graphics::GraphicsPreset::for_adapter(info.device_type) };
         graphics::set_active_preset(default_graphics);
         println!(
             "[graphics] auto-selected {} for {:?}",
@@ -11457,7 +11466,10 @@ impl WindowState {
             canyon_finish: None,
             canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
         };
-        match graphics_menu::config_path().and_then(|p| graphics_menu::Settings::load(&p)) {
+        let initial_graphics = if graphics::fixed_playtest_graphics() {
+            Ok(Some(graphics_menu::Settings::fixed_playtest((out.config.width, out.config.height))))
+        } else { graphics_menu::config_path().and_then(|p| graphics_menu::Settings::load(&p)) };
+        match initial_graphics {
             Ok(Some(settings)) => {
                 out.graphics_settings = Some(settings);
                 out.apply_graphics_preferences(true);
@@ -11682,6 +11694,7 @@ impl WindowState {
     }
 
     fn apply_display_preview(&mut self, panel: Option<usize>) {
+        if graphics::fixed_playtest_graphics() { return; }
         self.pause_menu.message.clear();
         if let Err(error) = self.display_preview.apply(panel, &self.window, &mut self.renderer,
             &self.device, &self.queue) {
@@ -11695,6 +11708,7 @@ impl WindowState {
     }
 
     fn toggle_fullscreen(&mut self) {
+        if graphics::fixed_playtest_graphics() { return; }
         if self.display_preview.active.is_some() {
             self.apply_display_preview(None);
             return;
@@ -11705,6 +11719,10 @@ impl WindowState {
     }
 
     fn apply_graphics_preferences(&mut self, window_options: bool) {
+        if graphics::fixed_playtest_graphics() {
+            self.graphics_settings = Some(graphics_menu::Settings::fixed_playtest(
+                (self.config.width, self.config.height)));
+        }
         let Some(settings) = self.graphics_settings.as_ref() else { return; };
         if let Err(error) = settings.apply(&mut self.renderer, &self.device, &self.queue) {
             self.graphics_menu.message = "TARGET CHANGE UNAVAILABLE FOR THIS RENDERER".into();
@@ -11730,6 +11748,7 @@ impl WindowState {
     }
 
     fn open_graphics(&mut self, from_title: bool) {
+        if graphics::fixed_playtest_graphics() { return; }
         if self.display_preview.active.is_some() { self.apply_display_preview(None); }
         if self.graphics_settings.is_none() {
             let mut settings = graphics_menu::Settings::from_renderer(&self.renderer);
@@ -11750,6 +11769,7 @@ impl WindowState {
     }
 
     fn graphics_key(&mut self, code: winit::keyboard::KeyCode) {
+        if graphics::fixed_playtest_graphics() { return; }
         use winit::keyboard::KeyCode;
         let controls = self.graphics_menu.controls();
         let back = code == KeyCode::Escape || (code == KeyCode::Enter && self.graphics_menu.selected == controls + 3);
@@ -11815,7 +11835,7 @@ impl WindowState {
                         return;
                     }
                 }
-                match (self.pause_menu.page, self.pause_menu.selected) {
+                match (self.pause_menu.page, self.pause_menu.action_row()) {
                     (ui::PausePage::Settings, 0) if activate => self.pause_menu.show(ui::PausePage::Display),
                     (ui::PausePage::Display, 0) if activate => {
                         if self.display_preview.active.is_some() { self.apply_display_preview(None); }
@@ -12983,8 +13003,8 @@ impl WindowState {
             return;
         }
         match code {
-            KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + ui::MENU_COUNT - 1) % ui::MENU_COUNT,
-            KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % ui::MENU_COUNT,
+            KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + self.menu.row_count() - 1) % self.menu.row_count(),
+            KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % self.menu.row_count(),
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.action() {
                 Some(ui::MenuAction::Graphics) => self.open_graphics(true),
                 Some(ui::MenuAction::Singleplayer) => self.start_play(PlayMode::Kampagne),
@@ -13007,9 +13027,9 @@ impl WindowState {
             KeyCode::F6 => self.start_play(PlayMode::Garage),
             KeyCode::F7 => self.start_play(PlayMode::TestAct2),
             KeyCode::F8 => self.start_play(PlayMode::TestAct3),
-            KeyCode::F9 => self.menu.time = self.menu.time.toggled(),
+            KeyCode::F9 if !graphics::fixed_playtest_graphics() => self.menu.time = self.menu.time.toggled(),
             KeyCode::F10 => self.menu.invincible = !self.menu.invincible,
-            KeyCode::F11 => {
+            KeyCode::F11 if !graphics::fixed_playtest_graphics() => {
                 self.menu.graphics = self.menu.graphics.toggled();
                 graphics::set_active_preset(self.menu.graphics);
             },
@@ -14033,7 +14053,8 @@ impl ApplicationHandler for App {
         // moved, or sent to another monitor through the ordinary KWin frame. 1280×720 is the
         // restored size and exact 2× of the 640×360 internal buffer. KESSEL_FULLSCREEN=1 remains
         // the explicit borderless-fullscreen takeover.
-        let fullscreen = std::env::var("KESSEL_FULLSCREEN").is_ok_and(|v| v == "1");
+        let fullscreen = graphics::fixed_playtest_graphics()
+            || std::env::var("KESSEL_FULLSCREEN").is_ok_and(|v| v == "1");
         let attrs = Window::default_attributes()
             .with_title("Panzerrechnersystem")
             .with_decorations(true)
@@ -14270,6 +14291,9 @@ impl ApplicationHandler for App {
                             self.keys.lan_hatch_pulse = true;
                         }
                         KeyCode::KeyL => state.game.toggle_hand_torch(),
+                        KeyCode::KeyV => {
+                            if state.game.toggle_mounted_sidearm() {self.binocs=false;}
+                        }
                         // T — swap the loaded shell nature (PzGr AP ↔ SprGr HE).
                         KeyCode::KeyT if state.game.mode == game::Mode::Tank => {
                             state.game.request_nature_swap();
@@ -14310,6 +14334,8 @@ impl ApplicationHandler for App {
                             let g = &mut state.game;
                             if self.binocs {
                                 self.binocs = false;
+                            } else if g.holster_mounted_sidearm() {
+                                // The pistol is the topmost held item; leave the physical post unchanged.
                             } else if g.compass_equipped { g.toggle_compass(); }
                             else if g.ext_equipped || g.carried_tools() || g.carried_panzerfaust() {
                                 g.interact_equip(); // racks the extinguisher back on the wall
@@ -14348,7 +14374,7 @@ impl ApplicationHandler for App {
                         // E — INTERACT with the tank's body: enter a hovered station anchor,
                         // work the hatch / start the climb out, or mount from the ground.
                         // (The LMB click path does the same — E is the keyboard hand.)
-                        KeyCode::KeyE => {
+                        KeyCode::KeyE if !state.game.mounted_sidearm_owns_input(self.keys.rmb) => {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
                             if state.game.interact_world_door(fwd, pos) {
@@ -14376,12 +14402,12 @@ impl ApplicationHandler for App {
                         KeyCode::PageUp if state.couch_keyboard_has_authority() => { state.game.driver_shift_gear(1); }
                         KeyCode::PageDown if state.couch_keyboard_has_authority() => { state.game.driver_shift_gear(-1); }
                         KeyCode::End if state.couch_keyboard_has_authority() => { state.game.driver_automatic_gears(); }
-                        KeyCode::BracketLeft => {
+                        KeyCode::BracketLeft if !graphics::fixed_playtest_graphics() => {
                             state.renderer.master_retro =
                                 (state.renderer.master_retro - 0.1).max(0.0);
                             println!("[panzerrechnersystem] MasterRetro {:.2}", state.renderer.master_retro);
                         }
-                        KeyCode::BracketRight => {
+                        KeyCode::BracketRight if !graphics::fixed_playtest_graphics() => {
                             state.renderer.master_retro =
                                 (state.renderer.master_retro + 0.1).min(1.0);
                             println!("[panzerrechnersystem] MasterRetro {:.2}", state.renderer.master_retro);
@@ -14561,7 +14587,7 @@ impl ApplicationHandler for App {
                         // the hatch LEVER (work the lid) → a station anchor (gunsight/breech/
                         // cupola → enter it) → the hatch disc (toggle, Commander only).
                         if btn.is_pressed() && p1_can_act && !state.show_map
-                            && !(self.keys.rmb && state.game.exposed_commander_sidearm_post()) {
+                            && !state.game.mounted_sidearm_owns_input(self.keys.rmb) {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
                             if state.game.click_articulated_hatch() {

@@ -878,6 +878,19 @@ mod tests {
             (0.0, Vec3::new(-0.7813883,0.05233310,0.6218469), false),
             (1.0, Vec3::new(-0.7705734,0.17364574,0.6132404), false),
         ];
+        // The ordinary seated right-front (about two o'clock) ray really meets the retained
+        // roof cap. It is not an unregistered/stale display; held eye relief clears its center.
+        // Preserve this evidence rather than deleting source armor to manufacture visibility.
+        for (index,spec) in specs.iter().take(7).enumerate() {
+            let center=spec.entry_corners.iter().copied().sum::<Vec3>()*0.25;
+            let mut ordinary=viewer(0.3,68.0);
+            ordinary.pos=crate::game::tiger_periscopes::COMMANDER_EYE;
+            let direction=(center-ordinary.pos).normalize();ordinary.set_forward(direction);
+            let (capture,_,_)=capture_camera(spec,Mat4::IDENTITY,&ordinary,16.0/9.0)
+                .expect("all seven seated source ports must be admitted when looked at");
+            assert_eq!(cap_hit(capture.pos,direction),index==1,
+                "ordinary source-cap obstruction changed for cupola {index}");
+        }
         for (index,spec) in specs.iter().take(7).enumerate() {
             let (eye,forward,fov)=crate::game::tiger_periscopes::close_view(index);
             let center=spec.entry_corners.iter().copied().sum::<Vec3>()*0.25;

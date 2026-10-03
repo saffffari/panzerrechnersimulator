@@ -55,3 +55,22 @@ fn weather_optical_moment(origin:vec3<f32>,ray:vec3<f32>,limit:f32,layer:vec2<f3
 fn weather_optical_depth(origin:vec3<f32>,ray:vec3<f32>,limit:f32,layer:vec2<f32>,sigma:f32,snow:f32,offset:vec3<f32>,steps:u32)->f32 {
     return weather_optical_moment(origin,ray,limit,layer,sigma,snow,offset,steps).x;
 }
+
+// Point-source transport needs exterior weather AND interior extinction along the same ray.
+// Share the exact cavity interval walk, retaining the existing exterior integration endpoints,
+// per-segment sample positions/count, summation order and cabin endpoint epsilon. The two optical
+// depths stay separate so the caller retains the same exp(-world-cabin) evaluation order.
+fn weather_and_cabin_optical_depth(origin:vec3<f32>,ray:vec3<f32>,limit:f32,layer:vec2<f32>,sigma:f32,snow:f32,offset:vec3<f32>,steps:u32,cabin_sigma:f32)->vec2<f32> {
+    if(sigma<=0.0 && cabin_sigma<=0.0){return vec2(0.0);}
+    var cursor=0.0;var depth=vec2(0.0);var interior_length=0.0;
+    loop {
+        if(cursor>=limit){break;}
+        let segment=cabin_next_span(origin,ray,cursor,limit);
+        let exterior_end=select(segment.x,limit,segment.y<=segment.x);
+        if(sigma>0.0 && exterior_end>cursor){let moment=weather_unpartitioned_optical_moment(origin+ray*cursor,ray,exterior_end-cursor,layer,sigma,snow,offset,steps);depth+=moment+vec2(0.0,moment.x*cursor);}
+        if(segment.y<=segment.x){break;}
+        interior_length+=segment.y-segment.x;
+        cursor=segment.y+CABIN_RAY_EPSILON;
+    }
+    return vec2(depth.x,max(cabin_sigma,0.0)*min(interior_length,max(limit,0.0)));
+}

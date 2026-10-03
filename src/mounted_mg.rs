@@ -2,6 +2,27 @@
 //! bore direction, sight offset and projectile drop; none are a random aim penalty.
 use glam::Vec3;
 
+/// MG34 cyclic rate, not practical aimed-burst rate. US War Department Intelligence Bulletin,
+/// December 1943, p32 gives 800–900 rpm. Retain the existing lower end; this is not an MG42.
+pub(crate) const ROUNDS_PER_MINUTE: f64 = 800.0;
+pub(crate) const ROUNDS_PER_SECOND: f64 = ROUNDS_PER_MINUTE / 60.0;
+pub(crate) const FIRE_INTERVAL_S: f64 = 1.0 / ROUNDS_PER_SECOND;
+
+/// Shot offsets in the half-open elapsed interval. Keep the residual phase across updates,
+/// including catch-up frames; never discard rounds with a per-render-frame shot cap.
+pub(crate) fn shot_offsets(until_next: &mut f64, dt: f32) -> Vec<f32> {
+    if !dt.is_finite() || dt <= 0.0 { return Vec::new(); }
+    let duration = f64::from(dt);
+    let mut next = until_next.max(0.0);
+    let mut shots = Vec::new();
+    while next < duration - 1e-9 {
+        shots.push(next as f32);
+        next += FIRE_INTERVAL_S;
+    }
+    *until_next = (next - duration).max(0.0);
+    shots
+}
+
 /// Per-axis standard deviation, radians. Authored tuning pending an actual MG34 tank-mount
 /// grouping table, NOT a historical measurement. 95% circular diameter is about0.59m at100m.
 pub(crate) const SIGMA_RAD: f32 = 0.0012;
@@ -27,6 +48,29 @@ pub(crate) fn direction(forward: Vec3, mount_up: Vec3, shot: u32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cyclic_phase_and_count_survive_low_frame_rates_without_catchup_caps() {
+        fn sample(dt: f32, frames: usize) -> Vec<f64> {
+            let mut phase = 0.0; let mut elapsed = 0.0;
+            let mut result = Vec::new();
+            for _ in 0..frames {
+                result.extend(shot_offsets(&mut phase, dt).into_iter().map(|t|elapsed+f64::from(t)));
+                elapsed += f64::from(dt);
+            }
+            result
+        }
+        let reference = sample(0.25, 40);
+        assert_eq!(reference.len(), 134);
+        for actual in [sample(1.0/60.0,600),sample(0.5,20),sample(1.0,10)] {
+            assert_eq!(actual.len(), reference.len());
+            for (a,b) in actual.into_iter().zip(&reference) {assert!((a-b).abs()<2e-6);}
+        }
+        let mut phase=0.0;
+        assert_eq!(shot_offsets(&mut phase,0.25),vec![0.0,0.075,0.15,0.225]);
+        assert!((phase-0.05).abs()<1e-8);
+        assert!(shot_offsets(&mut phase,f32::NAN).is_empty());
+        assert!((phase-0.05).abs()<1e-8);
+    }
     #[test]
     fn grouping_rotates_with_the_mount_at_every_heading_and_slope() {
         for angle in [0.0,0.7,1.57,2.5,3.8] {

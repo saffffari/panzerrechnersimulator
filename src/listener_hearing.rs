@@ -72,13 +72,17 @@ impl Game {
         use crate::sound_propagation::Enclosure;
         if !matches!(self.listener_enclosure(),Enclosure::Buttoned|Enclosure::HatchOpen) {return;}
         let level=&crate::sound_levels::MG34_INSIDE;
-        // LAeq of a13round/s burst -> per-round sound exposure -> fast maximum.
-        let per_round=level.laf_db-10.0*13.0f32.log10()+crate::sound_levels::LAF_MINUS_LAE_DB;
+        // Burst LAeq -> exposure per actual MG34 cycle -> fast maximum.
+        let per_round=level.laf_db-10.0*(crate::mounted_mg::ROUNDS_PER_SECOND as f32).log10()
+            +crate::sound_levels::LAF_MINUS_LAE_DB;
         let ear=self.own_vehicle_ear_level(level.lpk_db,per_round,level.spectrum,level.a_duration_ms);
         self.hear_own_vehicle_impulse(&ear,0.0);
         if let Some(audio)=&self.audio {
-            let mono=crate::acoustics::synth_mg_receiver_round(self.mg_round);
-            audio.play_world_mono_at_ear(&mono,&ear,0.0,crate::acoustics::ReverbParams::STEEL_INTERIOR);
+            // Local receiver/mount vibration is already a finite damped mechanical response.
+            // Repeating a29–44ms Schroeder comb tail on every round made the13Hz burst ring
+            // like a hollow chamber. Keep the ordinary headset transfer and calibration once;
+            // the separate exterior muzzle wave still crosses armor and the room normally.
+            audio.play_mg_receiver_at_ear(self.mg_round,&ear);
         }
     }
 
@@ -332,6 +336,13 @@ impl Game {
     pub(super) fn play_and_hear_at_ear(&mut self, sfx: crate::audio::Sfx, ear: &EarLevel,
         bearing_deg: f32)
     {
+        if sfx==crate::audio::Sfx::LugerShot {
+            if let Some(mono)=self.audio.as_ref().and_then(|a|a.next_small_arm_direct(sfx)) {
+                let stereo=mono.iter().flat_map(|v|[*v,*v]).collect();
+                self.play_stereo_and_hear_at_ear(stereo,ear,bearing_deg,crate::audio::EarBus::World);
+                return;
+            }
+        }
         let (onset, envelope) = match self.audio.as_ref().and_then(|a| a.direct_drive(sfx)) {
             Some((onset, envelope)) => (onset, Some(envelope)),
             None => (0.0, None),

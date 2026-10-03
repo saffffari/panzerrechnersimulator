@@ -194,11 +194,8 @@ pub(super) fn tone(mono: &mut [f32], cutoff: f32, bass: f32, gain: f32) {
 
 pub(super) fn replacement_key(sfx: Sfx) -> Option<&'static str> {
     Some(match sfx {
-        Sfx::LugerShot => "luger_shot",
         Sfx::RifleShot => "rifle_shot",
         Sfx::HammerStrike => "hammer_strike",
-        Sfx::PlayerGunInt1 | Sfx::PlayerGunInt2 => "gun_interior",
-        Sfx::PlayerGunExt1 | Sfx::PlayerGunExt2 | Sfx::PlayerGunExt3 | Sfx::PlayerGunExt4 => "gun_exterior",
         _ => return None,
     })
 }
@@ -377,7 +374,7 @@ impl Audio {
             let mono = self.feedback_bank.get("hatch_move").unwrap_or_else(|| fallback("hatch_move"));
             if let Ok(sink) = self.create_sink() {
                 let gain = self.control_gain("hatch_move", &mono, 1.0);
-                sink.append(Clip::from_stereo_f32(stereo(&mono)).source().repeat_infinite());
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32().repeat_infinite());
                 sink.set_volume(gain * self.master_volume);
                 *slot = Some((sink, gain));
             }
@@ -395,7 +392,7 @@ impl Audio {
             if let Ok(sink) = self.create_sink() {
                 let mono = fallback("starter");
                 let gain = self.control_gain("starter", &mono, 1.0);
-                sink.append(Clip::from_stereo_f32(stereo(&mono)).source());
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32());
                 sink.set_volume(gain * self.master_volume);
                 mechanisms.starter = Some((sink, gain));
             }
@@ -410,7 +407,7 @@ impl Audio {
             if let Ok(sink) = self.create_sink() {
                 let mono = fallback("traverse_jam");
                 let gain = self.control_gain("traverse_jam", &mono, 1.0);
-                sink.append(Clip::from_stereo_f32(stereo(&mono)).source().repeat_infinite());
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32().repeat_infinite());
                 sink.set_volume(gain * self.master_volume);
                 mechanisms.jam = Some((sink, gain));
             }

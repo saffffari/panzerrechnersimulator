@@ -7,6 +7,14 @@
 
 use std::cell::Cell;
 
+/// The Studio Display playtest uses one authored profile. The desktop surface still comes from
+/// the monitor; these dimensions describe only the game's native pixel grid.
+pub const FIXED_PLAYTEST_RESOLUTION: (u32, u32) = (800, 450);
+
+pub fn fixed_playtest_graphics() -> bool {
+    std::env::var("KESSEL_FIXED_PLAYTEST_GRAPHICS").is_ok_and(|value| value == "1")
+}
+
 /// Separate rendering architectures, independent of the scene/detail preset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RendererBackend { Physical, Shader }
@@ -22,6 +30,7 @@ impl RendererBackend {
 }
 
 pub fn renderer_backend() -> RendererBackend {
+    if fixed_playtest_graphics() { return RendererBackend::Shader; }
     match std::env::var("KESSEL_RENDERER") {
         Ok(value) => RendererBackend::parse(&value)
             .unwrap_or_else(|| panic!("Unknown KESSEL_RENDERER={value:?}; use shader or physical")),
@@ -118,7 +127,11 @@ thread_local! {
 }
 
 pub fn set_active_preset(preset: GraphicsPreset) {
-    ACTIVE_PRESET.with(|active| active.set(preset));
+    ACTIVE_PRESET.with(|active| active.set(if fixed_playtest_graphics() {
+        GraphicsPreset::High
+    } else {
+        preset
+    }));
 }
 
 pub fn active_preset() -> GraphicsPreset {

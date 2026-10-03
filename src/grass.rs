@@ -494,6 +494,13 @@ impl Grass {
         ground: impl Fn(f32, f32) -> f32,
         wind_at: impl Fn(Vec3) -> Vec2,
     ) {
+        self.advance(cam,dt,r.time,ground,wind_at);
+        self.present(r);
+    }
+
+    /// Integrate every substep, even when several updates share one presented frame.
+    pub fn advance(&mut self,cam:Vec3,dt:f32,time:f32,
+        ground:impl Fn(f32,f32)->f32,wind_at:impl Fn(Vec3)->Vec2) {
         self.rebuild(Vec2::new(cam.x, cam.z), &ground);
         if self.contact_revision != self.tracks.revision {
             for root in self.layers.iter_mut().flat_map(|l| &mut l.roots) {
@@ -506,16 +513,27 @@ impl Grass {
         for (&(x, z), bend) in &mut self.wind {
             let point = Vec3::new((x as f32 + 0.5) * 8.0, 0.0, (z as f32 + 0.5) * 8.0);
             let wind = wind_at(point);
-            let phase = r.time * 1.4 - point.x * 0.075 - point.z * 0.052;
+            let phase = time * 1.4 - point.x * 0.075 - point.z * 0.052;
             let gust = 0.78 + 0.18 * phase.sin() + 0.07 * (phase * 2.17 + 0.8).sin();
             bend.update(
                 wind.normalize_or_zero() * (wind.length_squared() * 0.005 * gust).min(0.19),
                 dt,
             );
         }
+        for (kind,layer) in self.layers.iter_mut().enumerate() {
+            for root in &mut layer.roots {
+                if visibility(kind,root.radius,
+                    Vec2::new(root.position.x,root.position.z).distance(self.focus))<=0.0001 {continue;}
+                root.compression += (root.target_compression-root.compression)
+                    * (1.0-(-dt.clamp(0.0,0.1)*18.0).exp());
+            }
+        }
+    }
+
+    fn build_mats(&mut self) {
         for (kind, layer) in self.layers.iter_mut().enumerate() {
             layer.mats.clear();
-            for root in &mut layer.roots {
+            for root in &layer.roots {
                 let visible = visibility(
                     kind,
                     root.radius,
@@ -524,8 +542,6 @@ impl Grass {
                 if visible <= 0.0001 {
                     continue;
                 }
-                root.compression += (root.target_compression - root.compression)
-                    * (1.0 - (-dt.clamp(0.0, 0.1) * 18.0).exp());
                 let flat = root.compression;
                 let target = Vec3::new(
                     root.direction.x * 0.98 * flat,
@@ -551,6 +567,13 @@ impl Grass {
                 m.z_axis.w = displacement.y;
                 layer.mats.push(m);
             }
+        }
+    }
+
+    /// Presentation reads the final state; it never integrates wind or tread compression.
+    pub fn present(&mut self,r:&mut Renderer) {
+        self.build_mats();
+        for layer in &self.layers {
             let uploaded = r.set_dynamic_instanced_mats(layer.batch, &layer.mats);
             debug_assert!(uploaded);
         }
@@ -579,6 +602,48 @@ mod population_tests {
             h: 1,
             rgba: vec![rgb[0], rgb[1], rgb[2], 255],
             half_extent: 384.0,
+        }
+    }
+    #[test]
+    fn deferred_grass_presentation_preserves_all_substeps_and_final_matrices() {
+        let mut every=population(Some(constant_mask([255,0,0])),42);
+        let mut deferred=population(Some(constant_mask([255,0,0])),42);
+        for step in 0..5 {
+            let camera=Vec3::new(0.4+step as f32*0.015,1.7,0.4);
+            let track=Vec3::new(0.6,0.0,step as f32*0.02);
+            every.trample(track,0.2);deferred.trample(track,0.2);
+            let time=(step+1) as f32*0.05;
+            let wind=|_:Vec3|Vec2::new(3.0+step as f32*0.4,-2.0);
+            every.advance(camera,0.05,time,|_,_|0.0,wind);
+            deferred.advance(camera,0.05,time,|_,_|0.0,wind);
+            every.build_mats();
+        }
+        deferred.build_mats();
+        let mut compressed=0;
+        for (a,b) in every.layers.iter().zip(&deferred.layers) {
+            assert_eq!(a.mats,b.mats,"presentation cadence must not change final grass geometry");
+            assert_eq!(a.roots.len(),b.roots.len());
+            for (a,b) in a.roots.iter().zip(&b.roots) {
+                assert_eq!(a.compression,b.compression);
+                assert_eq!(a.target_compression,b.target_compression);
+                compressed+=usize::from(a.compression>0.0);
+            }
+        }
+        assert!(compressed>0,"fixture must exercise persistent tread integration");
+        for (key,a) in &every.wind {
+            let b=&deferred.wind[key];
+            assert_eq!(a.displacement,b.displacement);
+            let mut a=*a;let mut b=*b;
+            for _ in 0..3 {
+                a.update(Vec2::new(-0.03,0.05),0.05);
+                b.update(Vec2::new(-0.03,0.05),0.05);
+                assert_eq!(a.displacement,b.displacement,"retained spring velocity must also agree");
+            }
+        }
+        let before:Vec<_>=deferred.layers.iter().map(|layer|layer.mats.clone()).collect();
+        deferred.build_mats();
+        for (before,layer) in before.iter().zip(&deferred.layers) {
+            assert_eq!(before,&layer.mats,"presentation alone must not advance the simulation");
         }
     }
     #[test]

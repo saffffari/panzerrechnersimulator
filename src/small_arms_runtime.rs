@@ -31,6 +31,7 @@ pub(super) mod profiles;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Payload {
+    pub emitted_at_s:f32,
     pub shot: Shot,
     pub damage: f32,
     pub tracer: bool,
@@ -135,7 +136,8 @@ impl Game {
             return;
         }
         let round=self.weapon_vfx.next_small_arm_round(shot);
-        let payload = Payload { shot, damage, tracer:profiles::tracer_round(shot.weapon,round), round, mixed, telemetry };
+        let payload = Payload { emitted_at_s:self.enemy_report_audit.clock_s,
+            shot, damage, tracer:profiles::tracer_round(shot.weapon,round), round, mixed, telemetry };
         let shell=profiles::profile(shot.weapon,shot.team);
         let shooter = if payload.is_player() { ProjectileShooter::Player }
             else if (TANK_BASE..TANK_BASE+N_ENEMIES as u32).contains(&shot.shooter) {
@@ -457,7 +459,7 @@ mod tests {
         assert!(surface.world_normal.y>0.5);
         let mut bullet=AuthoritativeProjectile::new(9,ProjectileShooter::Enemy(0),&profiles::GERMAN_RIFLE,
             center+Vec3::Y*10.0,Vec3::NEG_Y,9);
-        bullet.small_arm=Some(Payload {shot,damage:100.0,tracer:false,round:1,mixed:false,telemetry:None});
+        bullet.small_arm=Some(Payload {emitted_at_s:0.0,shot,damage:100.0,tracer:false,round:1,mixed:false,telemetry:None});
         let alive=g.player.alive;
         let hp=g.player.hp;
         let scars=g.armor_scars.clone();

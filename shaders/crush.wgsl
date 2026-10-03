@@ -58,7 +58,7 @@ fn camera_white_gain() -> vec3<f32> {
 // leaves it black until the eye adapts; a muzzle flash leaves an afterimage that fades.
 fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
-    let rods = cr.rod_exposure * scotopic / (1.0 + scotopic * cr.rod_inverse_saturation);
+    let rods = obs_rod_response(scotopic, cr.rod_exposure, cr.rod_inverse_saturation);
     return radiance * camera_white_gain() * cr.exposure + vec3(rods);
 }
 
@@ -71,13 +71,20 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     // grains white. Neutral radiance keeps the identical filmic response; black stays black.
     let positive = max(x, vec3(0.0));
     let peak = max(positive.r, max(positive.g, positive.b));
-    let mapped = clamp((peak * (a * peak + b)) / (peak * (c * peak + d) + e), 0.0, 1.0);
+    var mapped = clamp((peak * (a * peak + b)) / (peak * (c * peak + d) + e), 0.0, 1.0);
+    // Display shoulder only: retain the existing toe/midtones and a continuous
+    // first derivative, then compress highlights without clipping bright apertures
+    // to one white value. This does not change scene light or port transmission.
+    if (peak > 0.6) {
+        let shoulder = log(1.0 + 3.047601074 * (peak - 0.6));
+        mapped = 0.673290473 + 0.326709527 * shoulder / (shoulder + 2.0);
+    }
     return positive * (mapped / max(peak, 1e-12));
 }
 
-// Quantization is a property of display codes, not scene-linear light. The LDR intermediate is
-// linear UNORM and the final sRGB target performs the display encoding, so return to linear after
-// all optional recording treatment. Native linear-LDR dithering uses neither conversion.
+// Quantization is a property of display codes, not scene-linear light. The LDR intermediate
+// stores sRGB codes. Return linear light to the attachment: its hardware conversion encodes
+// once, and subsequent sampling decodes before linear particle/UI blending or final blitting.
 fn display_encode(linear_rgb: vec3<f32>) -> vec3<f32> {
     let x = clamp(linear_rgb, vec3(0.0), vec3(1.0));
     return select(12.92 * x, 1.055 * pow(x, vec3(1.0 / 2.4)) - vec3(0.055),
@@ -240,10 +247,11 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
     if (cr.ldr_dither > 0.0) {
-        // The next attachment is linear RGBA8, not an sRGB display-code buffer. Dither its
-        // actual 1/255 step with one shared RGB threshold. No posterization, exposure change,
-        // frame noise or distant fade: identical radiance yields identical native pixels.
-        // Less than half a step keeps exact black and white exact after UNORM rounding.
+        // Round at the actual sRGB attachment precision. Dithering a LINEAR 1/255 step here
+        // used to turn the dim first palette entry into black/bright pixel coverage, even
+        // after the intended palette quantizer had retained it. Keep the native fixed phase
+        // and half-code error bound without discarding transported shadow detail.
+        let display_code = display_encode(m);
         let px = vec2<i32>(in.pos.xy);
         let bi = (px.y & 3) * 4 + (px.x & 3);
         if (cr.dither_pattern > 1.5 && cr.dither_pattern < 2.5) {
@@ -252,16 +260,17 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                 for (var x = 0; x < 2; x += 1) {
                     let subpixel = floor(in.pos.xy) + (vec2(f32(x), f32(y)) + vec2(0.5)) * 0.5;
                     let threshold = sphere_threshold(subpixel, hd);
-                    let code = clamp(m * 255.0 + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0)),
+                    let code = clamp(display_code * 255.0 + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0)),
                         vec3(0.0), vec3(255.0));
-                    resolved += floor(code + vec3(0.5)) / 255.0 * 0.25;
+                    resolved += display_decode(floor(code + vec3(0.5)) / 255.0) * 0.25;
                 }
             }
             m = resolved;
         } else {
             let threshold = native_threshold;
-            m = clamp(m + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0) / 255.0),
-                      vec3(0.0), vec3(1.0));
+            m = display_decode(clamp(display_code
+                + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0) / 255.0),
+                vec3(0.0), vec3(1.0)));
         }
     }
 

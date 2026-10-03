@@ -10,10 +10,10 @@ const COMBAT: [Sfx; 8] = [Sfx::EnemyGun,Sfx::ImpactGround,Sfx::ImpactTank,Sfx::K
     Sfx::TurretPop,Sfx::TurretRip,Sfx::CookOff,Sfx::PenetrationHit];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Report { Rifle, MachineGun }
+pub(crate) enum Report { Rifle, MachineGun, Pistol }
 
 fn identity(sfx: Sfx) -> Option<Report> {
-    match sfx { Sfx::RifleShot => Some(Report::Rifle), Sfx::TankMgShot => Some(Report::MachineGun), _ => None }
+    match sfx { Sfx::RifleShot => Some(Report::Rifle), Sfx::TankMgShot => Some(Report::MachineGun), Sfx::LugerShot=>Some(Report::Pistol), _ => None }
 }
 
 fn random(seed: u32) -> f32 {
@@ -37,11 +37,12 @@ fn recording_onset(recording: &[f32]) -> Option<usize> {
 /// There is no sustained white-noise bed, 90Hz cannon-like oscillator or built-in room tail.
 pub(crate) fn dry_report(kind: Report, seed: u32, recording: Option<&[f32]>) -> Vec<f32> {
     let mg = kind == Report::MachineGun;
-    let duration = if mg { 0.090 } else { 0.145 };
+    let pistol=kind==Report::Pistol;
+    let duration = if pistol{0.105}else if mg { 0.090 } else { 0.145 };
     let mut mono = vec![0.0; (duration * SR) as usize];
     let detune = 0.97 + 0.06 * random(seed);
-    let pulse_width = (if mg { 0.0010 } else { 0.00135 }) * (0.90 + 0.20 * random(seed ^ 73));
-    let modes = if mg { [510.0, 1180.0, 2540.0] } else { [395.0, 970.0, 2140.0] };
+    let pulse_width = (if pistol{0.00082}else if mg { 0.00130 } else { 0.00135 }) * (0.90 + 0.20 * random(seed ^ 73));
+    let modes = if pistol{[720.0,1530.0,2910.0]}else if mg { [510.0, 1180.0, 2540.0] } else { [395.0, 970.0, 2140.0] };
     for (i, out) in mono.iter_mut().enumerate() {
         let t = i as f32 / SR;
         // Smooth zero-onset bipolar pressure shape: its short rarefaction is part of the muzzle
@@ -55,10 +56,17 @@ pub(crate) fn dry_report(kind: Report, seed: u32, recording: Option<&[f32]>) -> 
             body += (std::f32::consts::TAU * hz * t).sin() * (-t / tau).exp()
                 * (1.0 - (-t / 0.00018).exp()) * [0.22, 0.16, 0.11][j];
         }
-        *out = pressure + body;
+        // Finite receiver/barrel-scale body supports the sharp edge without importing a
+        // cannon's sub-bass, extra report or long noise/reverberation tail. Calibrated event
+        // level is unchanged; weapon-specific source balance is the authored approximation.
+        let body_hz = if pistol{413.0}else if mg { 263.0 } else { 229.0 };
+        let body_tau = if pistol{0.008}else if mg { 0.014 } else { 0.017 };
+        let shoulder = (std::f32::consts::TAU * body_hz * detune * t).sin()
+            * (-t / body_tau).exp() * (1.0 - (-t / 0.0006).exp()) * 0.24;
+        *out = pressure + body + shoulder;
     }
     if let Some((source, start)) = recording.and_then(|r| recording_onset(r).map(|s| (r, s))) {
-        let crop_s = if mg { 0.060 } else { 0.110 };
+        let crop_s = if pistol{0.045}else if mg { 0.060 } else { 0.110 };
         let rate = detune * if mg { 1.025 } else { 1.0 };
         let crop = (crop_s * SR) as usize;
         let source_peak = source[start..(start + crop + 256).min(source.len())]
@@ -72,10 +80,10 @@ pub(crate) fn dry_report(kind: Report, seed: u32, recording: Option<&[f32]>) -> 
             let t = i as f32 / SR;
             let fade = ((crop_s - t) / (crop_s * 0.30)).clamp(0.0, 1.0);
             let attack = (t / 0.00020).clamp(0.0, 1.0);
-            *out = *out * 0.20 + sample / source_peak * 0.80 * fade * fade * attack;
+            *out = *out * 0.45 + sample / source_peak * 0.55 * fade * fade * attack;
         }
         // Do not let the synthesized component jump back up at the recording crop boundary.
-        for out in &mut mono[crop..] { *out *= 0.20; }
+        for out in &mut mono[crop..] { *out *= 0.45; }
     }
     // Source shaping only. One live propagation/reverb path and calibrated ear gain follow.
     // Two DC-blocking poles remove rumble from old recordings without creating a bass shelf.
@@ -95,19 +103,22 @@ pub(crate) fn dry_report(kind: Report, seed: u32, recording: Option<&[f32]>) -> 
 }
 
 pub(super) struct SourceBank {
-    reports: [Vec<Arc<[f32]>>; 2],
-    counters: [Cell<usize>; 2],
+    reports: [Vec<Arc<[f32]>>; 3],
+    counters: [Cell<usize>; 3],
+    pistol_recorded:bool,
     recorded: bool,
     combat: Vec<(Sfx, Vec<Arc<[f32]>>, Cell<usize>)>,
 }
 
 impl SourceBank {
-    pub(super) fn new(recording: Option<&[f32]>) -> Self {
+    pub(super) fn new(recording: Option<&[f32]>) -> Self {Self::new_with_pistol(recording,None)}
+    pub(super) fn new_with_pistol(recording:Option<&[f32]>,pistol:Option<&[f32]>)->Self {
         let recorded = recording.and_then(recording_onset).is_some();
         Self {
-            reports: [Report::Rifle, Report::MachineGun].map(|kind| (0..VARIANTS)
-                .map(|i| Arc::from(dry_report(kind, 3701 + i as u32 * 7919, recording))).collect()),
-            counters: [Cell::new(0), Cell::new(0)], recorded,
+            reports: [Report::Rifle, Report::MachineGun,Report::Pistol].map(|kind| (0..VARIANTS)
+                .map(|i| Arc::from(dry_report(kind, 3701 + i as u32 * 7919, if kind==Report::Pistol{pistol}else{recording}))).collect()),
+            counters: [Cell::new(0), Cell::new(0),Cell::new(0)], recorded,
+            pistol_recorded:pistol.and_then(recording_onset).is_some(),
             combat:COMBAT.into_iter().map(|sfx|(sfx,(0..COMBAT_VARIANTS)
                 .map(|i|Arc::from(super::stereo_source_to_mono(
                     &crate::acoustics::synth_procedural_dry_variant(sfx.procedural(),i as u32))))
@@ -119,7 +130,7 @@ impl SourceBank {
             let at=index.get(); index.set((at+1)%voices.len());
             return Some(voices[at].clone());
         }
-        let index = match identity(sfx)? { Report::Rifle => 0, Report::MachineGun => 1 };
+        let index = match identity(sfx)? { Report::Rifle => 0, Report::MachineGun => 1,Report::Pistol=>2 };
         let next = self.counters[index].get();
         self.counters[index].set((next + 1) % VARIANTS);
         Some(self.reports[index][next].clone())
@@ -129,8 +140,9 @@ impl SourceBank {
             "schema":"kessel.small-arms-source", "version":1,
             "source":if self.recorded {"verified_rifle_early_crop_and_pressure_synthesis"} else {"pressure_and_modal_synthesis"},
             "verified_recording_key":if self.recorded {Some("rifle_shot")} else {None},
-            "recording_crop_seconds":[0.110,0.060], "dry_report_seconds":[0.145,0.090],
-            "variants_per_family":VARIANTS,"order":["rifle_shot","tank_mg_shot"],
+            "recording_crop_seconds":[0.110,0.060,0.045], "dry_report_seconds":[0.145,0.090,0.105],
+            "pistol_recorded":self.pistol_recorded,"pistol_source_identity":"generic owned pistol early crop plus authored pressure, not a verified P08 recording",
+            "variants_per_family":VARIANTS,"order":["rifle_shot","tank_mg_shot","luger_shot"],
             "prepared_pcm_fnv1a64":self.reports.iter().map(|bank| bank.iter()
                 .map(|s|format!("{:016x}",super::buffer_checksum(s))).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "retained_early_reflections_possible":self.recorded,
@@ -188,6 +200,19 @@ mod tests {
         assert_eq!(&*first,&*bank.next(Sfx::RifleShot).unwrap());
         assert_ne!(&*mg,&*bank.next(Sfx::TankMgShot).unwrap());
         assert!(bank.next(Sfx::HammerStrike).is_none());
+    }
+
+    #[test]
+    fn pistol_report_uses_only_early_owned_attack_and_keeps_independent_variation() {
+        let source=(0..(SR*4.0)as usize).map(|i| (i as f32*0.71).sin()*0.5).collect::<Vec<_>>();
+        let mut changed=source.clone();changed[(SR*0.1)as usize..].fill(0.99);
+        let a=dry_report(Report::Pistol,11,Some(&source));
+        assert_eq!(a,dry_report(Report::Pistol,11,Some(&changed)));
+        assert_eq!(a.len(),(SR*0.105)as usize);
+        assert_eq!(a[0],0.0);assert_eq!(*a.last().unwrap(),0.0);
+        assert!(a.iter().all(|x|x.is_finite()));
+        assert_ne!(a,dry_report(Report::Pistol,12,Some(&source)));
+        assert!(energy(&a[(SR*0.065)as usize..])<energy(&a)*0.001);
     }
 
     #[test]

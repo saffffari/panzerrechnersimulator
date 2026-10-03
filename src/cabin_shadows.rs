@@ -58,6 +58,42 @@ impl LampCache {
     fn take_work(&mut self) -> CacheWork { std::mem::take(&mut self.pending) }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CasterPose {
+    model: glam::Mat4,
+    pose_revision: u64,
+    visible: bool,
+}
+
+/// Unregistered articulated parts used to invalidate the complete static world whenever they
+/// moved. Promote an observed change once, then keep that exact mesh in the composed layer.
+/// This is a cache partition only: no caster, transform, light, or shadow sample is removed.
+#[derive(Clone, Default)]
+struct ObservedMotion {
+    previous: Vec<CasterPose>,
+    dynamic: Vec<bool>,
+}
+impl ObservedMotion {
+    fn observe(&mut self, poses: impl IntoIterator<Item = CasterPose>) {
+        let mut count = 0;
+        for (index, pose) in poses.into_iter().enumerate() {
+            count = index + 1;
+            if let Some(previous) = self.previous.get_mut(index) {
+                self.dynamic[index] |= *previous != pose;
+                *previous = pose;
+            } else {
+                self.previous.push(pose);
+                self.dynamic.push(false);
+            }
+        }
+        self.previous.truncate(count);
+        self.dynamic.truncate(count);
+    }
+    fn contains(&self, index: usize) -> bool {
+        self.dynamic.get(index).copied().unwrap_or(false)
+    }
+}
+
 pub struct CabinShadows {
     render_maps: bool,
     pub view: wgpu::TextureView,
@@ -78,6 +114,7 @@ pub struct CabinShadows {
     caches: RefCell<[LampCache; MAX_LIGHTS]>,
     dynamic_meshes: Vec<usize>,
     dynamic_flags: Vec<bool>,
+    observed_motion: RefCell<ObservedMotion>,
     torch_direction: glam::Vec3,
     far_ranges: RefCell<[f32;MAX_LIGHTS]>,
 }
@@ -287,6 +324,7 @@ impl CabinShadows {
             caches: RefCell::new([LampCache::default(); MAX_LIGHTS]),
             dynamic_meshes: Vec::new(),
             dynamic_flags: Vec::new(),
+            observed_motion: RefCell::new(ObservedMotion::default()),
             torch_direction: glam::Vec3::Z,
         }
     }
@@ -323,6 +361,7 @@ impl CabinShadows {
         *self.emitting_meshes.borrow_mut() = old.emitting_meshes.borrow().clone();
         self.dynamic_meshes = old.dynamic_meshes.clone();
         self.dynamic_flags = old.dynamic_flags.clone();
+        *self.observed_motion.borrow_mut() = old.observed_motion.borrow().clone();
         self.torch_direction = old.torch_direction;
     }
 
@@ -353,11 +392,11 @@ impl CabinShadows {
     // All source bounds are inside every admitted lamp's far plane. Hash each geometry layer
     // once, then combine with the lamp pose. Including the excluded emitter in this shared key
     // can only cause an extra rebuild; it cannot suppress a changed occluder.
-    fn source_signature(&self, renderer: &Renderer, dynamic: bool) -> u64 {
+    fn source_signature(&self, renderer: &Renderer, dynamic: bool, motion: &ObservedMotion) -> u64 {
         let mut hash=std::collections::hash_map::DefaultHasher::new();
         renderer.menu_mode.hash(&mut hash);
         for (i, m) in renderer.shadow_source_meshes().iter().enumerate() {
-            if (!renderer.menu_mode && (self.is_dynamic(i) || m.temporal_dynamic)) != dynamic || !m.visible || (m.glass && m.periscope_kind!=2) {
+            if (!renderer.menu_mode && (self.is_dynamic(i) || m.temporal_dynamic || motion.contains(i))) != dynamic || !m.visible || (m.glass && m.periscope_kind!=2) {
                 continue;
             }
             // Geometry buffers are immutable. Their identity acts as the scene revision, so a
@@ -411,8 +450,16 @@ impl CabinShadows {
             range: [NEAR, FAR, 2.0 / SIDE as f32, 0.0],
         };
         let mut caches = self.caches.borrow_mut();
+        let mut motion = self.observed_motion.borrow_mut();
+        // Menu meshes have an independent slot namespace. They neither promote gameplay slots
+        // nor erase the observed gameplay history when entering or leaving the title scene.
+        if self.render_maps && !renderer.menu_mode {
+            motion.observe(renderer.shadow_source_meshes().iter().map(|m| CasterPose {
+                model: m.model, pose_revision: m.pose_revision, visible: m.visible,
+            }));
+        }
         let source_keys=if self.render_maps && !active.is_empty() {
-            [self.source_signature(renderer,false),self.source_signature(renderer,true)]
+            [self.source_signature(renderer,false,&motion),self.source_signature(renderer,true,&motion)]
         }else{[0;2]};
         let (lo,hi)=sky_visibility::source_scene_bounds(renderer);
         let mut ranges=self.far_ranges.borrow_mut();
@@ -428,7 +475,10 @@ impl CabinShadows {
             if !changed.compose { continue; }
             for face in 0..6 {
                 let cam = CameraUniform {
-                    light_view_proj: face_view_proj_range(lamp.pos, face, (NEAR,far)).to_cols_array_2d(),
+                    // The source shader subtracts the lamp before transforming a local vertex.
+                    // Keep the absolute matrix below for CPU source-caster culling only.
+                    light_view_proj: face_view_proj_range(glam::Vec3::ZERO, face, (NEAR,far)).to_cols_array_2d(),
+                    cam_pos: lamp.pos.to_array(),
                     fog_density:far, // point-shadow Camera.far shares this prefix lane
                     ..*camera
                 };
@@ -446,6 +496,7 @@ impl CabinShadows {
     ) {
         if !self.render_maps {return;}
         let active = self.active.borrow();
+        let motion = self.observed_motion.borrow();
         for (light, &(lamp,emitting_mesh)) in active.iter().enumerate() {
             if !active_fixture(&lamp) { continue; }
             let changed = self.caches.borrow_mut()[light].take_work();
@@ -471,7 +522,7 @@ impl CabinShadows {
                     pass.set_pipeline(&self.pipe);
                     pass.set_bind_group(0, &self.binds[layer], &[]);
                     for (index, m) in renderer.shadow_source_meshes().iter().enumerate() {
-                        if !casts_for_fixture(index, emitting_mesh) || (!renderer.menu_mode && (self.is_dynamic(index) || m.temporal_dynamic)) || !m.visible || (m.glass && m.periscope_kind!=2)
+                        if !casts_for_fixture(index, emitting_mesh) || (!renderer.menu_mode && (self.is_dynamic(index) || m.temporal_dynamic || motion.contains(index))) || !m.visible || (m.glass && m.periscope_kind!=2)
                             || !near_box(lamp.pos, m.world_min, m.world_max, far)
                             || !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
                         let push = PushData { model: m.model.to_cols_array_2d(), params: [0.0; 4] };
@@ -500,7 +551,7 @@ impl CabinShadows {
                 // loose case becomes hidden. Loading last frame's composed depth leaves trails.
                 copy_cached_depth_face(encoder, &self.static_depth, &self.composed_depth, layer as u32);
                 let visible_dynamic: Vec<_> = renderer.shadow_source_meshes().iter().enumerate().filter_map(|(index,m)| {
-                    (!renderer.menu_mode && (self.is_dynamic(index) || m.temporal_dynamic)
+                    (!renderer.menu_mode && (self.is_dynamic(index) || m.temporal_dynamic || motion.contains(index))
                         && casts_for_fixture(index, emitting_mesh) && m.visible && (!m.glass || m.periscope_kind==2)
                         && near_box(lamp.pos,m.world_min,m.world_max,far)
                         && shadow_has_sample(matrix,m.world_min,m.world_max,SIDE)).then_some(m)
@@ -603,6 +654,64 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_motion_preserves_casters_and_reuses_static_world_depth() {
+        let pose = |z, visible| CasterPose {
+            model: glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)),
+            pose_revision: 0, visible,
+        };
+        let mut motion = ObservedMotion::default();
+        let mut cache = LampCache::default();
+        let mut static_depth = 1.0f32;
+        let mut composed_depth = 1.0f32;
+        let mut static_rebuilds = 0;
+        // A stationary wall and a vehicle crossing the same point-light ray. Depth composition
+        // must always equal rendering both source surfaces directly, including its disappearance.
+        for frame in 0..80 {
+            let poses = [pose(20.0, true), pose(2.0 + frame as f32 * 0.1, frame < 70)];
+            motion.observe(poses);
+            let key = |dynamic| {
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                for (index, p) in poses.iter().enumerate() {
+                    if p.visible && motion.contains(index) == dynamic {
+                        index.hash(&mut hash);
+                        bytemuck::bytes_of(&p.model.to_cols_array()).hash(&mut hash);
+                    }
+                }
+                hash.finish()
+            };
+            let work = cache.observe(key(false), key(true));
+            let depth = |dynamic: Option<bool>| poses.iter().enumerate()
+                .filter(|(i,p)| p.visible && dynamic.is_none_or(|d| motion.contains(*i) == d))
+                .map(|(_,p)| p.model.w_axis.z / 100.0).fold(1.0, f32::min);
+            if work.rebuild_static { static_depth = depth(Some(false)); static_rebuilds += 1; }
+            if work.compose { composed_depth = static_depth.min(depth(Some(true))); }
+            assert_eq!(composed_depth, depth(None), "no missing caster or stale vehicle depth at {frame}");
+            cache.take_work();
+        }
+        assert_eq!(static_rebuilds, 2, "initial depth plus one transfer; no rebuild for subsequent motion");
+        assert!(!motion.contains(0));
+        assert!(motion.contains(1));
+    }
+
+    #[test]
+    fn observed_motion_catches_deformation_visibility_and_keeps_promotion_when_stopped() {
+        let original = CasterPose { model: glam::Mat4::IDENTITY, pose_revision: 0, visible: true };
+        let mut motion = ObservedMotion::default();
+        motion.observe([original; 3]);
+        assert!((0..3).all(|i| !motion.contains(i)));
+        let states = [CasterPose { pose_revision: 1, ..original },
+            CasterPose { visible: false, ..original }, original];
+        motion.observe(states);
+        assert!(motion.contains(0) && motion.contains(1) && !motion.contains(2));
+        motion.observe(states);
+        motion.observe([original; 3]);
+        assert!(motion.contains(0) && motion.contains(1) && !motion.contains(2));
+        motion.observe([original]);
+        motion.observe([original; 2]);
+        assert!(motion.contains(0) && !motion.contains(1), "new slots start with a fresh snapshot");
+    }
 
     #[test]
     fn shared_source_keys_preserve_layer_changes_and_lamp_identity() {
@@ -888,6 +997,38 @@ mod tests {
                 assert!((clip.w/FAR-reference).abs()<=tolerance,
                     "face {face}: linear depth {}, reference {reference}",clip.w/FAR);
                 assert!(p.x.abs() < 0.0001 && p.y.abs() < 0.0001);
+            }
+        }
+    }
+
+    #[test]
+    fn lamp_relative_vertices_keep_local_depth_after_world_translation() {
+        // Match point_shadow.wgsl's real caster expression. The independent reference uses
+        // f64 on the represented source transform, not an already rounded world vertex.
+        let source_local = glam::Vec3::new(0.375, 1.625, -0.8125);
+        for origin in [glam::Vec3::ZERO, glam::Vec3::new(0.0, 0.0, 178.0),
+            glam::Vec3::new(985.0, 5.5, 1205.0), glam::Vec3::new(5000.0, 4.0, 5000.0)] {
+            let source = origin + source_local;
+            let model = glam::Mat4::from_rotation_translation(
+                glam::Quat::from_rotation_y(0.37), origin);
+            let linear = glam::Mat3::from_mat4(model);
+            for (face, axis) in [glam::Vec3::X, -glam::Vec3::X,
+                glam::Vec3::Y, -glam::Vec3::Y, glam::Vec3::Z, -glam::Vec3::Z]
+                .into_iter().enumerate() {
+                for distance in [0.006, 0.027, 0.2, 1.0, 6.0] {
+                    let local = linear.transpose() * (source_local + axis * distance);
+                    let relative = linear * local + (model.w_axis.truncate() - source);
+                    let expected = model.as_dmat4().transform_point3(local.as_dvec3())
+                        - source.as_dvec3();
+                    let clip = face_view_proj_range(glam::Vec3::ZERO, face, (NEAR, 32768.0))
+                        * relative.extend(1.0);
+                    let expected_major = expected.dot(axis.as_dvec3());
+                    assert!((clip.w as f64 - expected_major).abs() < 0.000002,
+                        "origin={origin:?}, face={face}, d={distance}");
+                    let reference = (clip.w - 0.00005) / 32768.0;
+                    let blocker = ((expected_major - 0.001) / 32768.0) as f32;
+                    assert!(reference > blocker, "a separate 1 mm nearer blocker must survive");
+                }
             }
         }
     }

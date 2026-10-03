@@ -35,7 +35,7 @@ struct Exposure {
 // The same eye as crush.wgsl (src/observer.rs): colour-keeping cones plus saturating rods.
 fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
-    let rods = eye.rod_exposure * scotopic / (1.0 + scotopic * eye.rod_inverse_saturation);
+    let rods = obs_rod_response(scotopic, eye.rod_exposure, eye.rod_inverse_saturation);
     return radiance * eye.exposure + vec3(rods);
 }
 @group(0) @binding(0) var<uniform> u: ParticleUniform;
@@ -98,7 +98,14 @@ fn optic_transmission(pixel: vec2<f32>) -> f32 {
 
 // crush.wgsl's filmic curve, applied once to this post-response carrier.
 fn flake_camera_response(x: vec3<f32>) -> vec3<f32> {
-    return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),vec3(0.0),vec3(1.0));
+    let positive=max(x,vec3(0.0));
+    let peak=max(positive.r,max(positive.g,positive.b));
+    var mapped=clamp((peak*(2.51*peak+0.03))/(peak*(2.43*peak+0.59)+0.14),0.0,1.0);
+    if(peak>0.6){
+        let shoulder=log(1.0+3.047601074*(peak-0.6));
+        mapped=0.673290473+0.326709527*shoulder/(shoulder+2.0);
+    }
+    return positive*(mapped/max(peak,1e-12));
 }
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
