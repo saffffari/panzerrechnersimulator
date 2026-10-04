@@ -42,16 +42,25 @@ impl Game {
         if active {self.personal_primary_guard=true;self.consume_primary_press();}active
     }
     pub(super) fn route_personal_hand_input(&mut self,input:&mut TankInput,dt:f32) {
-        let primary=input.fire2||input.mg_coax;
+        // The trigger works the item in hand. An interaction (E) is never the trigger, so a
+        // cigarette between the fingers does not stop the hands reaching for anything.
+        let interaction=input.interaction&&input.mg_coax;
+        let primary=input.trigger||input.fire2||(input.mg_coax&&!input.interaction);
         if !primary {self.personal_primary_guard=false;}
         if self.personal_hand_item_active()&&!self.personal_hands_remain_available() {self.stow_personal_hand_item();}
         // A cigarette that burns out frees the hand mid-hold; that held press belonged to the
         // cigarette and must not become a weapon trigger on the same frame.
-        if self.cigarettes.advance(dt,primary,input.aim)==crate::cigarette::Action::BurnedOut&&primary {
-            self.personal_primary_guard=true;
+        let action=self.cigarettes.advance(dt,primary,input.aim);
+        if action==crate::cigarette::Action::BurnedOut&&primary {self.personal_primary_guard=true;}
+        // Each inhaled second restores the body; one whole cigarette is one full bar.
+        let dose=self.cigarettes.take_dose();
+        if dose>0.0 {
+            self.foot.hp=(self.foot.hp+dose*crate::foot::FOOT_HP/crate::cigarette::TOKE_SECONDS_PER_CIGARETTE)
+                .min(crate::foot::FOOT_HP);
         }
         if self.personal_hand_item_active()||self.personal_primary_guard {
             mask_hand_input(input,self.lan_local_role);
+            if interaction&&!self.hand_torch_on {input.mg_coax=true;}
         }
     }
     pub fn cigarette_snapshot(&self)->serde_json::Value {

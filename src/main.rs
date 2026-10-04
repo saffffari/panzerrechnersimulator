@@ -9642,6 +9642,8 @@ impl Keys {
             coax: self.mmb,    // gunner sights: middle mouse = coax MG34
             reload: self.r,    // on foot: Luger magazine change
             jump: self.space,  // Space: chassis/roof/hatch/cabin traversal, otherwise foot jump.
+            trigger: self.lmb,
+            interaction: false, // set after the E key is resolved against the game
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
             coop: None,
@@ -14955,6 +14957,8 @@ impl ApplicationHandler for App {
                 };
                 if !controller_only {
                     input.mg_coax = interaction_primary(&mut self.interact_latch, self.keys.e, self.keys.lmb, &mut state.game, dt);
+                    input.interaction = !state.game.interaction_tool_in_hand()
+                        && (self.interact_latch.held || state.game.interact_kind() != game::InteractKind::None);
                 }
                 if pad.connected && !couch {
                     input.drive = stronger_axis(input.drive, pad.drive);

@@ -7246,6 +7246,10 @@ pub struct TankInput {
     pub crouch: bool, // ctrl — on-foot crouch (lower eye, slower, quieter, smaller target)
     pub reload: bool, // R — on-foot Luger magazine change
     pub jump: bool, // Space: chassis, roof, open hatch or cabin; otherwise jump on foot
+    /// The raw trigger (left mouse), whatever `mg_coax` has been turned into by the E key.
+    pub trigger: bool,
+    /// `mg_coax` is this frame an E interaction (a control click or a carried load), not a trigger.
+    pub interaction: bool,
     pub ignition: bool, // Z — engine shutoff / crank (the silent-watch scout loop)
     pub hatch_toggle: bool, // occupied station hatch request; shared solo/LAN rising edge
     /// LAN crew authority for this frame. `None` preserves the exact solo control path. When set,
@@ -18426,6 +18430,10 @@ impl Game {
         let lighter=crate::hand_prop_models::lighter_light(self.cigarettes.view(),self.hand_prop_anchors);
         r.set_hand_lighter(lighter,self.hand_props.as_ref().map(|props|props.lighter_emitter()));
         if let Some(light)=lighter {lights.push(light);}
+        // The burning tip is a dimmer light of its own, brighter while a toke is drawn.
+        let tip=crate::hand_prop_models::cigarette_tip_light(self.cigarettes.view(),self.hand_prop_anchors);
+        r.set_hand_cigarette(tip);
+        if let Some(light)=tip {lights.push(light);}
         r.set_lights(&lights);
     }
 
@@ -30300,8 +30308,9 @@ impl Game {
     }
     /// A tool or personal item is in the hand: left mouse uses it, E stows it.
     pub fn interaction_tool_in_hand(&self) -> bool {
+        // A cigarette is not a tool in this sense: it never takes the hands away from E.
         self.ext_equipped || self.carrying_track_kit || self.compass_equipped
-            || self.panzerfaust_claimed || self.personal_hand_item_active()
+            || self.panzerfaust_claimed || self.hand_torch_on
     }
     /// The carried round is lined up at the open, empty breech.
     pub fn ram_ready(&self) -> bool { self.carry_mesh.is_some() && self.ram_ready }

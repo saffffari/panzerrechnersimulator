@@ -45,6 +45,7 @@ Two requests here change standing project rules, and are recorded as owner decis
 | If the driver is killed, the tank can only be driven from the driver's seat, or by moving another crewman into it, which gives up that man's old job for the player to take on. The same rule holds for every seat. | open |
 | A dead crewman's body stays in his seat. To use that seat the player must pull the body out and drag it out of the tank. | open |
 | After a hit the player has to find out what happened by looking. A dead or unconscious gunner or loader has collapsed onto the turret floor; a driver or radio operator has slid down and slumped in his seat. No status readout. | partly done: crew casualties, wounds and witness bodies exist; the collapse and slump poses need checking against this. |
+| A lightly wounded crewman is healed by lighting a cigarette and giving it to him. A man the damage model kills outright cannot be helped that way. Historical note: tanks carried a first-aid box of dressings and each man had field dressing packets; a purpose-made tourniquet was not standard individual issue, so a belt or strap is the plausible form. | open |
 | Medical supplies are reinstated, so a wounded crewman can be treated and kept alive. | open: the earlier medical mechanic has to be found and restored. |
 
 ## 2. Controls: one interaction key
@@ -78,12 +79,12 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | Health is litres of blood, starting at a realistic volume for a six-foot man. | open |
 | Wounds drain blood by severity and location. Organs, major arteries and veins, and other vital parts set the loss rate. | open |
 | Blood drops are cube pixels that behave roughly like a fluid and stain what they touch, inside and outside the tank. | partly done: blood cubes and stains exist for casualties; no fluid behaviour, no player blood volume. |
-| Cigarette tokes restore blood. One cigarette is one full bar. | open |
-| At full health the player can chain smoke; the reward is a vision boost. The game is about visibility. | open |
-| Held like the Luger, then raised to centre screen, bottom third, while lighting and toking. | open |
+| Cigarette tokes restore blood. One cigarette is one full bar. | partly done: each inhaled second restores body health and a whole cigarette restores a full bar. It heals the existing health value; litres of blood are not modelled yet. |
+| At full health the player can chain smoke; the reward is a vision boost. The game is about visibility. | partly done: chain smoking works and a boost level (rises with tokes, fades over 50 s) is tracked. It is not yet applied to the picture. |
+| Held like the Luger, then raised to centre screen, bottom third, while lighting and toking. | done |
 | The pack sits in the left hand; holding RMB pulls one out and holds it. | open |
-| Toking: the tip glows more orange, an inhale sound plays. Release exhales a smoke cloud from that spot, sized by the toke length. Toking too long causes coughing. | open |
-| Lighter and cigarette are light sources on the interior: lighter dim, cigarette dimmer but noticeable. The cigarette in hand stays a faint light and never blocks interaction. | partly done: the lighter is a shadowed light; a burnt-out cigarette no longer blocks the hands. |
+| Toking: the tip glows more orange, an inhale sound plays. Release exhales a smoke cloud from that spot, sized by the toke length. Toking too long causes coughing. | partly done: hold to toke, brighter tip, exhale from the held position scaled by the toke, cough after 4.5 s and a forced stop at 6 s. No inhale or cough sound yet. |
+| Lighter and cigarette are light sources on the interior: lighter dim, cigarette dimmer but noticeable. The cigarette in hand stays a faint light and never blocks interaction. | done: the tip is a shadowed light, brighter during a toke, and E works with a cigarette in hand (it is pocketed when both hands are needed for a round). |
 | The torch is the bright spotlight, centred on the crosshair, mostly for outdoor night use, and it alerts enemies. The cigarette is the low-visibility light for close work on foot at night. | open |
 | Sounds: inhale, lighter, pulling out the pack, and sounds for the other inventory items. | open |
 | The Luger's cowboy-style draw rotation is liked; apply it wherever the Luger is drawn. | open |

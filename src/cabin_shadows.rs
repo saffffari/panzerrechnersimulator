@@ -11,7 +11,8 @@ pub const INTERIOR_FIRE_LIGHTS: usize = 8;
 const INTERIOR_FIRE_START: usize = CABIN_LIGHTS + WORLD_FIRE_LIGHTS + COMBAT_LIGHTS;
 const TORCH_SLOT: usize = INTERIOR_FIRE_START + INTERIOR_FIRE_LIGHTS;
 const LIGHTER_SLOT: usize = TORCH_SLOT + 1;
-const REGISTRATION_SLOTS: usize = LIGHTER_SLOT + 1;
+const CIGARETTE_SLOT: usize = LIGHTER_SLOT + 1;
+const REGISTRATION_SLOTS: usize = CIGARETTE_SLOT + 1;
 pub const MAX_LIGHTS: usize = N_LIGHTS;
 const SIDE: u32 = 512;
 // The smaller dome sits 14 mm below the source fan. A 35 mm near plane erased that blocker.
@@ -478,6 +479,13 @@ impl CabinShadows {
         }
     }
 
+    fn set_cigarette(&self, light: Option<PointLight>) {
+        match light {
+            Some(light) => self.set_range(CIGARETTE_SLOT, 1, &[light], &[None]),
+            None => self.set_range(CIGARETTE_SLOT, 1, &[], &[]),
+        }
+    }
+
     fn set_dynamic_meshes(&mut self, meshes: &[usize]) {
         self.dynamic_meshes.clear();
         self.dynamic_meshes.extend_from_slice(meshes);
@@ -609,8 +617,10 @@ impl CabinShadows {
             // battlefield around it redrew every world caster, six faces per lamp, on each frame
             // the tank moved. Its transport is bounded at CABIN_FIXTURE_REACH_M: receivers past
             // that take exactly zero from the lamp (flag in lane z), never an unshadowed value.
-            let reach_limited=registered.iter().take(CABIN_LIGHTS)
-                .any(|r|active_fixture(r) && r.pos.abs_diff_eq(lamp.pos,0.0001));
+            // The hand lighter and the cigarette tip are as weak and as local as a cabin fixture.
+            let reach_limited=registered.iter().enumerate()
+                .filter(|(slot,_)|*slot<CABIN_LIGHTS || *slot==LIGHTER_SLOT || *slot==CIGARETTE_SLOT)
+                .any(|(_,r)|active_fixture(r) && r.pos.abs_diff_eq(lamp.pos,0.0001));
             let far=if reach_limited {source_far_range(lamp.pos,lo,hi).min(CABIN_FIXTURE_REACH_M)}
                 else {source_far_range(lamp.pos,lo,hi)};
             ranges[i]=far;uniform.projections[i]=[NEAR,far,if reach_limited {1.0} else {0.0},0.0];
@@ -803,6 +813,10 @@ fn copy_cached_depth_face(encoder: &mut wgpu::CommandEncoder, source: &wgpu::Tex
 }
 
 impl Renderer {
+    /// The cigarette's burning tip: a registered, reach-limited source like the lighter flame.
+    pub fn set_hand_cigarette(&mut self, light: Option<PointLight>) {
+        self.cabin_shadows.set_cigarette(light);
+    }
     pub fn set_hand_lighter(&mut self, light: Option<PointLight>, emitter: Option<usize>) {
         self.cabin_shadows.set_lighter(light, emitter);
     }

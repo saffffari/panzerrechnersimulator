@@ -156,6 +156,21 @@ pub fn lighter_light(view: View, anchors: Anchors) -> Option<crate::renderer::Po
         radiant_intensity: 0.00025,
     })
 }
+/// Radiant intensity of the burning tip at rest and at the peak of a toke [E]. The cabin dome
+/// lamp is about 0.000004 and the lighter flame 0.00025 in the same units, so the tip is dimmer
+/// than the flame and still enough to read a dial or a face at arm's length.
+pub const TIP_INTENSITY_IDLE: f32 = 0.000006;
+pub const TIP_INTENSITY_TOKE: f32 = 0.000024;
+pub fn cigarette_tip_light(view: View, anchors: Anchors) -> Option<crate::renderer::PointLight> {
+    (view.equipped && view.lit && view.cigarette_present && anchors.cigarette_visible
+        && anchors.tip.is_finite()).then_some(crate::renderer::PointLight {
+        pos: anchors.tip,
+        source_radius: 0.004,
+        color: Vec3::new(1.0, 0.36 + 0.14 * view.puff_phase.clamp(0.0, 1.0), 0.07),
+        radiant_intensity: TIP_INTENSITY_IDLE
+            + (TIP_INTENSITY_TOKE - TIP_INTENSITY_IDLE) * view.puff_phase.clamp(0.0, 1.0),
+    })
+}
 fn sleeve_mesh(color: [u8; 3]) -> CpuMesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
@@ -227,19 +242,26 @@ fn clipped_cigarette(source: &CpuMesh, length: f32, out: &mut [Vertex]) {
 }
 
 /// Hold source props within the ordinary camera frustum, with no overlay or depth override.
-/// The cigarette crosses the lower-right field so its paper/filter remain visible side-on.
-fn cigarette_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, puff: f32) -> (Mat4, Vec3) {
-    let mouth = eye + forward * 0.11 - up * 0.047;
+/// At rest the cigarette crosses the lower-right field so its paper and filter stay visible
+/// side-on. While it is being lit or drawn on it comes to the centre of the view on the lower
+/// third line, where the flame and the brightening tip can be watched; the exhale leaves from
+/// that same place. `raise` is the larger of the lighter's raise and the toke.
+fn cigarette_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, raise: f32, tan_half_fov: f32) -> (Mat4, Vec3) {
+    const RAISED_DISTANCE_M: f32 = 0.28;
+    let tan_half_fov = if tan_half_fov.is_finite() { tan_half_fov.clamp(0.1, 1.5) } else { 0.65 };
+    // One third of the half-height below the centre is the lower third line of the frame.
+    let raised_at = eye + forward * RAISED_DISTANCE_M - up * (RAISED_DISTANCE_M * tan_half_fov / 3.0);
     let resting = eye + forward * 0.32 + right * 0.125 - up * 0.09;
-    let puff = puff.clamp(0.0, 1.0);
-    let raised = puff * puff * (3.0 - 2.0 * puff);
-    let grip = resting.lerp(mouth, raised);
+    let raise = raise.clamp(0.0, 1.0);
+    let raised = raise * raise * (3.0 - 2.0 * raise);
+    let grip = resting.lerp(raised_at, raised);
     let resting_axis = (forward * 0.30 - right * 0.92 + up * 0.20).normalize();
-    let mouth_axis = (forward * 0.75 - right * 0.55 + up * 0.10).normalize();
-    let axis = resting_axis.lerp(mouth_axis, raised).normalize();
+    let raised_axis = (forward * 0.75 - right * 0.55 + up * 0.10).normalize();
+    let axis = resting_axis.lerp(raised_axis, raised).normalize();
     (
         Mat4::from_rotation_translation(Quat::from_rotation_arc(Vec3::Z, axis), grip),
-        mouth,
+        // The breath leaves from where the cigarette is held while drawn on.
+        raised_at,
     )
 }
 
@@ -360,7 +382,8 @@ impl HandProps {
         let right = forward.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(forward).normalize_or_zero();
         let basis = Quat::from_mat3(&Mat3::from_cols(right, up, -forward));
-        let (model, mouth) = cigarette_pose(r.camera.pos, forward, right, up, view.puff_phase);
+        let (model, mouth) = cigarette_pose(r.camera.pos, forward, right, up,
+            view.puff_phase.max(view.lighter_raise), (r.camera.fov_y * 0.5).tan());
         let length = cigarette_length(view.burn_remaining);
         if (length - self.last_length).abs() > 0.000002 {
             clipped_cigarette(&self.source, length, &mut self.pose);
@@ -607,17 +630,32 @@ mod tests {
         }
     }
     #[test]
+    fn a_raised_cigarette_sits_at_centre_on_the_lower_third_line() {
+        for tan_half in [0.36_f32, 0.65, 0.9] {
+            let (model, breath) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 1.0, tan_half);
+            let grip = model.transform_point3(Vec3::ZERO);
+            let depth = -grip.z;
+            // Normalised view coordinates: 0 centre, -1 bottom edge.
+            assert!((grip.x / depth).abs() < 1e-4, "not centred: {grip:?}");
+            assert!((grip.y / (depth * tan_half) + 1.0 / 3.0).abs() < 1e-4, "not on the lower third: {grip:?}");
+            assert!(breath.distance(grip) < 1e-5, "the exhale leaves from where it was held");
+        }
+        // At rest it is off to the lower right, clear of the centre.
+        let (rest, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65);
+        assert!(rest.transform_point3(Vec3::ZERO).x > 0.1);
+    }
+    #[test]
     fn cigarette_puff_and_raised_source_lighter_remain_inside_native_view() {
         let mut scene = Vec::new();
         let props = HandProps::allocate(&mut scene).unwrap();
         for puff in [0.0, 0.25, 0.5, 0.75, 1.0] {
-            let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, puff);
+            let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, puff, 0.65);
             assert!(scene[props.cigarette]
                 .vertices
                 .iter()
                 .all(|v| inside_native_field(model.transform_point3(Vec3::from(v.pos)))));
         }
-        let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0);
+        let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65);
         let nozzle =
             model.transform_point3(Vec3::Z * CIGARETTE_LENGTH_M) - Vec3::Y * FLAME_HEIGHT_M;
         let lighter = Mat4::from_rotation_translation(Quat::from_rotation_y(-0.3), nozzle);
