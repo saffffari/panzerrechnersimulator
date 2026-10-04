@@ -218,6 +218,10 @@ enum AiMode {
     Track,  // spotted / Engaged — flanks + fires the player (the classic combat behaviour)
 }
 
+/// A sweep must stop at least this far short of a port's face to count as hiding it; the
+/// port's own block and bezel sit inside this margin.
+const PORT_OCCLUSION_MARGIN_M: f32 = 0.08;
+
 /// What the interaction key acts on (see `Game::interact_kind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InteractKind { None, Click, Holdable, Carrying }
@@ -16805,6 +16809,7 @@ impl Game {
         self.update_ignition_hover(r);
         self.update_equipment_hover(r);
         self.update_hatch_hover(r);
+        self.update_port_occlusion(r);
         self.update_hatch_access_prompt(r);
         self.update_interaction_outline(r);
         if self.player.alive {
@@ -19269,6 +19274,33 @@ impl Game {
                     contacts.sweep_batch(&[[from, to]])[0].is_some())
                 .then_some((index, station))
         })
+    }
+
+    /// A vision port whose entrance face is wholly hidden from the eye by the tank's own source
+    /// geometry needs no exterior render this frame. Five swept lines (the face centre and four
+    /// points a quarter of the way in from its corners) against the same triangles collision
+    /// uses; the port is skipped only when every line is stopped well short of the face.
+    fn update_port_occlusion(&mut self, r: &mut Renderer) {
+        let entries = r.raster_optic_entries();
+        if entries.is_empty() { return; }
+        // The sight composite and on-foot views use other eyes; do not cull for them.
+        let test = self.mode == Mode::Tank && self.player.alive && !self.optic_composite_active()
+            && !self.climb.active && self.switch_t <= 0.0;
+        let eye = r.camera.pos;
+        let models = self.fire_surface_models();
+        for (port, corners) in entries.iter().enumerate() {
+            let centre = corners.iter().copied().sum::<Vec3>() * 0.25;
+            let hidden = test && std::iter::once(centre)
+                .chain(corners.iter().map(|corner| corner.lerp(centre, 0.25)))
+                .all(|point| {
+                    let distance = point.distance(eye);
+                    distance > PORT_OCCLUSION_MARGIN_M * 2.0
+                        && self.cabin_fire.sweep(eye, point, &models).is_some_and(|hit|
+                            models[hit.frame].transform_point3(hit.point).distance(eye)
+                                < distance - PORT_OCCLUSION_MARGIN_M)
+                });
+            r.set_raster_optic_occluded(port, hidden);
+        }
     }
 
     /// Point selection uses the same visible, articulated source triangles as collision. A wall

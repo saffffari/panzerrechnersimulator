@@ -86,6 +86,9 @@ pub(super) struct RasterOptics {
     /// Ports whose glass no longer transmits (a struck vision block gone opaque). They get no
     /// exterior view; their entrance face keeps its own opaque source material.
     blocked: Vec<bool>,
+    /// The viewer cannot see this port's entrance face at all (armour or machinery in the way),
+    /// so its exterior view is not rendered this frame. Set by the game from source sweeps.
+    occluded: Vec<bool>,
     source_surfaces: Vec<SourceSurface>,
     layers: Vec<Layer>,
     prepared: RefCell<Vec<Prepared>>,
@@ -436,7 +439,7 @@ impl RasterOptics {
             let weather=weather_layer(device,&depth_view,&weather_layouts,medium);
             Layer {color:view(&color),tracer_color:view(&tracers),tracer_bind,depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
         }).collect();
-        Self {specs:Vec::new(),blocked:Vec::new(),source_surfaces:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,tracer_panel_pipe,weather,width,height,_color:color,_tracers:tracers,_depth:depth}
+        Self {specs:Vec::new(),blocked:Vec::new(),occluded:Vec::new(),source_surfaces:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,tracer_panel_pipe,weather,width,height,_color:color,_tracers:tracers,_depth:depth}
     }
 }
 
@@ -457,6 +460,23 @@ impl Renderer {
                 own_emission:mesh.emissive_own,window_emission:mesh.emissive_win,emission:mesh.emissive});
             optics.specs.push(spec);
             optics.blocked.push(false);
+            optics.occluded.push(false);
+        }
+    }
+
+    /// World corners of every registered port's entrance face, in registration order.
+    pub fn raster_optic_entries(&self) -> Vec<[Vec3; 4]> {
+        let Some(optics) = &self.raster_optics else { return Vec::new(); };
+        optics.specs.iter().map(|spec| {
+            let model = self.meshes[spec.mesh].model;
+            spec.entry_corners.map(|corner| model.transform_point3(corner))
+        }).collect()
+    }
+    /// Skip a port's exterior capture while its entrance face is wholly hidden from the viewer.
+    /// The pane itself stays in the scene; nothing that can be seen changes.
+    pub fn set_raster_optic_occluded(&mut self, port: usize, occluded: bool) {
+        if let Some(flag) = self.raster_optics.as_mut().and_then(|o| o.occluded.get_mut(port)) {
+            *flag = occluded;
         }
     }
 
@@ -483,7 +503,7 @@ impl Renderer {
         let Some(optics) = &self.raster_optics else {return;};
         let mut candidates:Vec<_> = optics.specs.iter().enumerate().filter_map(|(port,spec)| {
             let mesh=&self.meshes[spec.mesh];
-            if !mesh.visible || optics.blocked[port] {return None;}
+            if !mesh.visible || optics.blocked[port] || optics.occluded[port] {return None;}
             capture_camera(spec,mesh.model,&self.camera,optics.width as f32/optics.height as f32)
                 .map(|(camera,area,source_eye)| {
                     (Prepared {port,camera,source_eye,extent:aperture_extent(spec,mesh.model,&self.camera,
