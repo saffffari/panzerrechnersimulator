@@ -187,14 +187,19 @@ fn pizza_audio_enabled() -> bool {
 
 // ── Present (cut from the recordings) ──
 /// Main gun, heard from OUTSIDE (commander/driver head out) — 4 shot variants.
+/// The earlier exterior recordings (4 shot variants). They are now the blast outside the tank:
+/// a second layer under the main recording, dulled by the hull for a listener inside.
 const FILE_GUN_EXT: [&str; 4] = [
     "main_gun_fire_ext_1.ogg",
     "main_gun_fire_ext_2.ogg",
     "main_gun_fire_ext_3.ogg",
     "main_gun_fire_ext_4.ogg",
 ];
-/// Main gun, heard from INSIDE the buttoned-up tank — 2 shot variants.
-const FILE_GUN_INT: [&str; 2] = ["main_gun_fire_int_1.ogg", "main_gun_fire_int_2.ogg"];
+/// The Tiger's main gun (owner's `tiger_main_gun.wav`, 2026-10-03). One dry recording serves
+/// every listening position: the hull's high-frequency loss and the cabin's reverberation inside,
+/// and the air, ground, bearing and surroundings outside, are applied when it is played
+/// (`Game::play_player_main_gun_report`). The two slots are the same file.
+const FILE_GUN_INT: [&str; 2] = ["tiger_main_gun_20261003.ogg", "tiger_main_gun_20261003.ogg"];
 /// Enemy gun report — the same 120 mm shot low-passed to read as distance
 /// (stand-in until a true distant report is sourced).
 const FILE_ENEMY_GUN: &str = "main_gun_fire_distant.ogg";

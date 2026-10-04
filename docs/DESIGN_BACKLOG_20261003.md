@@ -66,6 +66,7 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | Small pixel-font interaction hint at the bottom centre, in the outline colour, naming the action and its button. | done |
 | The driver brakes when no drive is asked for, so the tank stops in seconds and holds on slopes. | done |
 | Loose brass rides with the tank and cannot sound again without moving, to stop the endless clinking. | done, not yet confirmed by ear. |
+| New Tiger main gun recording. Inside: high end taken off and a room effect. Outside: shaped by surroundings, air, position, view and each ear. The earlier recording kept as the blast outside the tank, dulled. Dulling much lower with hatches open, stacking per hatch. | done in code, not yet judged by ear. No discrete echoes off terrain faces yet. |
 | At the cupola Shift is head out and in, and held Space (1.5 s) climbs out, from either position. Both need the hatch already open; nothing opens it automatically. The lever pivot cylinder is part of the hatch lever target and outline. | done |
 | C is the cigarette. The compass moves onto M, coupled with the map. | done |
 | Arrow keys traverse and elevate the gun from the cupola and head-out, and remain available in the sights where the mouse also works. | done |

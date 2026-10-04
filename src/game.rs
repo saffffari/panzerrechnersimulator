@@ -2748,6 +2748,37 @@ fn enemy_armor(kind: EnemyKind) -> crate::ballistics::ArmorScheme {
 
 /// Bearing (deg, 0 = dead ahead, 90 = right, 270 = left) of a world direction relative to a facing.
 /// Drives the stereo pan of hull impacts — a hit from the left CLANGS in the left ear.
+/// The earlier exterior gun recording sits this far under the main recording [E, by ear].
+const OUTSIDE_BLAST_LAYER_DB: f32 = -6.0;
+
+/// Share of the horizon, 0 to 1, that the ground closes off around a listener: sixteen bearings,
+/// each looked along at 60, 150 and 320 m for ground standing above a 6 degree line of sight.
+fn terrain_enclosure(hf: &Heightfield, listener: Vec3) -> f32 {
+    const BEARINGS: usize = 16;
+    let closed = (0..BEARINGS).filter(|&i| {
+        let a = i as f32 * std::f32::consts::TAU / BEARINGS as f32;
+        [60.0_f32, 150.0, 320.0].into_iter().any(|range| {
+            let h = hf.height_at(listener.x + a.sin() * range, listener.z + a.cos() * range);
+            h.is_finite() && h - listener.y > range * 0.105
+        })
+    }).count();
+    closed as f32 / BEARINGS as f32
+}
+
+/// Late reverberation outdoors from what surrounds the listener (see `Game::surroundings_reverb`).
+/// Open snow is the floor; walls and enclosing ground lengthen and thicken the tail; snow cover
+/// keeps it darker than bare ground.
+fn outdoor_reverb(hard_surfaces: usize, terrain_enclosure: f32, snow: bool) -> crate::acoustics::ReverbParams {
+    let walls = (hard_surfaces as f32 / 6.0).min(1.0);
+    let ground = if terrain_enclosure.is_finite() { terrain_enclosure.clamp(0.0, 1.0) } else { 0.0 };
+    let open = crate::acoustics::ReverbParams::OPEN_SNOW;
+    crate::acoustics::ReverbParams {
+        rt60_s: open.rt60_s + 0.54 * walls + 1.10 * ground + if snow { 0.0 } else { 0.25 },
+        wet: (open.wet + 0.14 * walls + 0.20 * ground + if snow { 0.0 } else { 0.04 }).min(0.45),
+        damping: (if snow { 0.72 } else { 0.48 } - 0.22 * walls - 0.10 * ground).max(0.25),
+    }
+}
+
 fn bearing_deg_from(facing_forward: Vec3, to_source: Vec3) -> f32 {
     let f = Vec3::new(facing_forward.x, 0.0, facing_forward.z).normalize_or_zero();
     let t = Vec3::new(to_source.x, 0.0, to_source.z).normalize_or_zero();
@@ -9426,6 +9457,9 @@ pub struct Game {
     brass_dt: f32,
     /// Sounds the loose brass may still make this moment (`BRASS_SOUNDS_PER_SECOND`).
     brass_sound_credit: f32,
+    /// The listener's ears at the last audio update: position and the way the head faces.
+    ear_pos: Vec3,
+    ear_forward: Vec3,
     casings: Vec<Casing>,   // pooled rigid-body casings (len == N_CASING)
     next_casing: usize,     // round-robin cursor into casings / casing mesh slots
     pub driver_hatch: bool, // driver hatched out (exposed) to re-set a thrown track
@@ -13323,6 +13357,8 @@ impl Game {
             brass_steps: [Mat4::IDENTITY; 2],
             brass_dt: 0.0,
             brass_sound_credit: BRASS_SOUND_BURST,
+            ear_pos: Vec3::ZERO,
+            ear_forward: Vec3::Z,
             casings: vec![Casing::default(); N_CASING],
             next_casing: 0,
             driver_hatch: false,
@@ -23712,7 +23748,49 @@ impl Game {
 
     /// Release only already emitted acoustic wavefronts. Shared by ordinary play and the
     /// terminal fade: neither camera nor simulation state is advanced here.
+    /// How the place the listener is in answers a sound. Inside the closed tank it is the steel
+    /// cabin. Outside it is built from what is actually around him: walls and wrecks within 85 m,
+    /// and how much of the horizon the ground itself closes off (a gully or a canyon floor rings;
+    /// an open field does not). Snow on the ground keeps the tail short and dark; bare ground
+    /// lets it carry. An estimate of late reverberation, not a traced impulse response [E].
+    fn surroundings_reverb(&self, listener: Vec3, enclosure: crate::sound_propagation::Enclosure)
+        -> crate::acoustics::ReverbParams
+    {
+        use crate::acoustics::ReverbParams;
+        if matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned) {
+            return ReverbParams::STEEL_INTERIOR;
+        }
+        let hard_surfaces = self.occluders.iter()
+            .filter(|o| ((o.min + o.max) * 0.5).distance(listener) < 85.0).count();
+        let snow = matches!(crate::sound_propagation::active_atmosphere().ground,
+            crate::sound_propagation::Ground::Snow);
+        outdoor_reverb(hard_surfaces, terrain_enclosure(&self.hf, listener), snow)
+    }
+
+    /// The own main gun as it reaches this listener. One dry recording; everything else is the
+    /// path: where the muzzle is from the head and which way the head is turned, the air and
+    /// ground between them, the hull if he is inside it, and the place's reverberation.
+    fn own_gun_path(&self, muzzle: Vec3) -> (f32, crate::sound_propagation::Bands, crate::acoustics::ReverbParams) {
+        let enclosure = self.listener_enclosure();
+        let path = crate::sound_propagation::Path {
+            distance_m: muzzle.distance(self.ear_pos).max(1.0),
+            atmosphere: crate::sound_propagation::active_atmosphere(),
+            occluded: false,
+            enclosure,
+            headset: self.listener_headset(),
+        };
+        let shaped = crate::sound_propagation::propagate(
+            &crate::sound_propagation::Emission::gun(2.5, true, 90.0), &path);
+        (bearing_deg_from(self.ear_forward, muzzle - self.ear_pos), shaped.transfer_db,
+            self.surroundings_reverb(self.ear_pos, enclosure))
+    }
+
     fn drain_scheduled_audio(&mut self, dt: f32, r: &Renderer, audio_time_s: f32) -> usize {
+        // Every open hatch is another way in for outside sound.
+        crate::sound_propagation::set_open_hatches(self.open_hatch_count());
+        // Where the ears are and which way the head is turned, for sounds played between drains.
+        self.ear_pos = r.camera.pos;
+        self.ear_forward = r.camera.forward();
         let arrived = take_arrived_sounds_at(&mut self.scheduled, dt, Some((r.camera.pos,audio_time_s)));
         let count = arrived.len();
         self.scheduled_audio_audit.arrivals += count as u32;
@@ -23722,18 +23800,7 @@ impl Game {
             let enclosure = self.listener_enclosure();
             let headset = self.listener_headset();
             let atmosphere = crate::sound_propagation::active_atmosphere();
-            let hard_surfaces = self
-                .occluders
-                .iter()
-                .filter(|o| ((o.min + o.max) * 0.5).distance(listener) < 85.0)
-                .count();
-            let reverb = if matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned) {
-                crate::acoustics::ReverbParams::STEEL_INTERIOR
-            } else if hard_surfaces >= 3 {
-                crate::acoustics::ReverbParams::VILLAGE
-            } else {
-                crate::acoustics::ReverbParams::OPEN_SNOW
-            };
+            let reverb = self.surroundings_reverb(listener, enclosure);
             for s in arrived {
                 // `delay` is negative by the exact amount this wave crossed the receiver during
                 // the current tick. Preserve that arrival within the live device-clock batch.
@@ -25229,24 +25296,43 @@ impl Game {
             crate::sound_propagation::Enclosure::Buttoned => Some(&crate::sound_levels::OWN_88_BUTTONED),
             crate::sound_propagation::Enclosure::OnFoot => None,
         };
-        let pick = if head_out {
-            let g = crate::audio::Sfx::PLAYER_GUNS_EXT;
-            g[shot_sequence as usize % g.len()]
-        } else {
+        // Two layers of one shot: the main recording, and the earlier exterior recording as the
+        // blast outside the hull, a little under it.
+        let pick = {
             let g = crate::audio::Sfx::PLAYER_GUNS_INT;
+            g[shot_sequence as usize % g.len()]
+        };
+        let outside_blast = {
+            let g = crate::audio::Sfx::PLAYER_GUNS_EXT;
             g[shot_sequence as usize % g.len()]
         };
         let Some(level) = own_gun else {
             let (muzzle, axis) = self.player.muzzle();
-            self.schedule_emission(crate::audio::Sfx::PlayerGunExt1, muzzle,
-                crate::sound_propagation::Emission::gun(2.5, true, 90.0), Some((axis, true)), None);
+            let emission = crate::sound_propagation::Emission::gun(2.5, true, 90.0);
+            self.schedule_emission(pick, muzzle, emission, Some((axis, true)), None);
+            self.schedule_emission(outside_blast, muzzle, emission.shifted(OUTSIDE_BLAST_LAYER_DB),
+                Some((axis, true)), None);
             return;
         };
-        let ear = self.own_vehicle_ear_level(level.lpk_db, level.laf_db, level.spectrum,
+        let mut ear = self.own_vehicle_ear_level(level.lpk_db, level.laf_db, level.spectrum,
             level.a_duration_ms);
-        // The ears take the shot where the recording's sound begins, and the recording, as
-        // heard, drives the middle-ear reflex.
-        self.play_and_hear_at_ear(pick, &ear, 0.0);
+        // The level at the ear is the calibrated one above. Its colour, direction and tail come
+        // from the path: buttoned up, the hull takes the high end and the cabin rings; head out,
+        // the air, the ground and the surroundings decide, and each ear by where the muzzle is.
+        let (muzzle, _) = self.player.muzzle();
+        let (bearing, transfer, reverb) = self.own_gun_path(muzzle);
+        ear.transfer_db = transfer;
+        self.play_world_and_hear_at_ear(pick, &ear, bearing, reverb);
+        // The blast outside: the same path (so the hull dulls it for a man inside), but ringing
+        // in the open ground around the tank and not in the cabin. One impulse reaches the ears
+        // per shot, from the main layer above.
+        if let Some(audio) = &self.audio {
+            let mut outside = ear;
+            outside.laf_db += OUTSIDE_BLAST_LAYER_DB;
+            outside.lpk_db += OUTSIDE_BLAST_LAYER_DB;
+            let open_air = self.surroundings_reverb(self.ear_pos, crate::sound_propagation::Enclosure::HeadOut);
+            audio.play_world_at_ear(outside_blast, &outside, bearing, open_air);
+        }
         if let Some(a) = &self.audio {
             a.play_mechanical(
                 crate::acoustics::MechanicalParams {
@@ -26004,6 +26090,11 @@ impl Game {
         } else {
             Enclosure::Buttoned
         }
+    }
+
+    /// Hatches standing open: the cupola lid and the four roof and side hatches.
+    fn open_hatch_count(&self) -> usize {
+        usize::from(self.hatch_t > 0.2) + self.roof_hatches.phase.iter().filter(|phase| **phase > 0.2).count()
     }
 
     /// Aboard, the crewman wears the Dfh.b headset (SL §8); on foot he does not.
@@ -32536,6 +32627,45 @@ mod tests {
         assert_eq!(near.transfer_db[5], -20.0);
         let mut flat = ear(60.0); flat.transfer_db = [-2.0; p::BANDS];
         assert_eq!(presented_world_ear(crate::audio::Sfx::ImpactTank, flat, 50.0).transfer_db[0], 0.0);
+    }
+    #[test]
+    fn each_open_hatch_lets_more_of_the_outside_in() {
+        use crate::sound_propagation as p;
+        let loss = |count: usize| { p::set_open_hatches(count); p::Enclosure::HatchOpen.insertion_loss_bands() };
+        let (one, two, five) = (loss(1), loss(2), loss(5));
+        assert_eq!(one, [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.0]);
+        for band in 0..p::BANDS {
+            assert!(two[band] <= one[band] && five[band] <= two[band]);
+            assert!(five[band] >= 0.0);
+            assert!(one[band] < p::Enclosure::Buttoned.insertion_loss_bands()[band]);
+        }
+        assert!((one[8] - two[8] - 3.0103).abs() < 1e-3);
+        assert!((one[8] - five[8] - 6.9897).abs() < 1e-3);
+        assert_eq!(five[0], 0.0);
+        // Out of range counts are held to the tank's five hatches; the buttoned hull is unchanged.
+        assert_eq!(loss(40), five);
+        assert_eq!(loss(0), one);
+        p::set_open_hatches(5);
+        assert_eq!(p::Enclosure::Buttoned.insertion_loss_bands()[8], 42.0);
+        assert!(p::Enclosure::HatchOpen.peak_loss_db(crate::sound_levels::SpectrumClass::LowFrequencyBlast) < 5.0);
+        p::set_open_hatches(1);
+    }
+    #[test]
+    fn the_place_shapes_the_tail_outdoors() {
+        let open = outdoor_reverb(0, 0.0, true);
+        assert_eq!(open.rt60_s, crate::acoustics::ReverbParams::OPEN_SNOW.rt60_s);
+        assert_eq!(open.wet, crate::acoustics::ReverbParams::OPEN_SNOW.wet);
+        // Walls and enclosing ground each lengthen and thicken it, and brighten it.
+        let village = outdoor_reverb(6, 0.0, true);
+        let canyon = outdoor_reverb(0, 0.8, true);
+        assert!(village.rt60_s > open.rt60_s + 0.4 && village.wet > open.wet && village.damping < open.damping);
+        assert!(canyon.rt60_s > village.rt60_s && canyon.wet > open.wet);
+        // Bare ground carries further than snow; nothing runs away.
+        let bare = outdoor_reverb(0, 0.0, false);
+        assert!(bare.rt60_s > open.rt60_s && bare.damping < open.damping);
+        let most = outdoor_reverb(99, 1.0, false);
+        assert!(most.wet <= 0.45 && most.damping >= 0.25 && most.rt60_s < 2.5);
+        assert_eq!(outdoor_reverb(0, f32::NAN, true).rt60_s, open.rt60_s);
     }
     #[test]
     fn widened_bearing_exaggerates_small_offsets_and_keeps_front_back() {

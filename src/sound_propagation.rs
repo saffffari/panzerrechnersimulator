@@ -88,6 +88,25 @@ pub fn set_active_atmosphere(atmosphere: Atmosphere) {
     ACTIVE_ATMOSPHERE.with(|active| active.set(atmosphere));
 }
 
+thread_local! {
+    static OPEN_HATCHES: Cell<u8> = const { Cell::new(1) };
+}
+/// How many of the tank's hatches stand open (the game keeps this current). Each one is another
+/// opening for outside sound: see `Enclosure::insertion_loss_bands`.
+pub fn set_open_hatches(count: usize) {
+    OPEN_HATCHES.with(|open| open.set(count.clamp(1, MAX_OPEN_HATCHES) as u8));
+}
+pub fn open_hatches() -> usize {
+    OPEN_HATCHES.with(Cell::get) as usize
+}
+/// The cupola lid and the four roof and side hatches.
+pub const MAX_OPEN_HATCHES: usize = 5;
+/// Loss through `count` equal openings, given the loss through one: the openings' transmitted
+/// energies add, so each doubling of open area takes 3 dB off, never below no loss at all [E].
+pub fn loss_through_openings_db(one_opening_db: f32, count: usize) -> f32 {
+    (one_opening_db - 10.0 * (count.clamp(1, MAX_OPEN_HATCHES) as f32).log10()).max(0.0)
+}
+
 pub fn active_atmosphere() -> Atmosphere {
     ACTIVE_ATMOSPHERE.with(Cell::get)
 }
@@ -233,7 +252,9 @@ impl Enclosure {
     pub fn insertion_loss_bands(self) -> Bands {
         match self {
             Self::Buttoned => [15.0, 25.0, 28.0, 32.0, 36.0, 37.0, 40.0, 42.0, 42.0],
-            Self::HatchOpen => [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.0],
+            // One open hatch is the report's figure; each further open hatch is another opening.
+            Self::HatchOpen => [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.0]
+                .map(|one| loss_through_openings_db(one, open_hatches())),
             Self::HeadOut | Self::OnFoot => [0.0; BANDS],
         }
     }
@@ -247,8 +268,8 @@ impl Enclosure {
         match (self, low_frequency) {
             (Self::Buttoned, true) => 25.0,
             (Self::Buttoned, false) => 35.0,
-            (Self::HatchOpen, true) => 5.0,
-            (Self::HatchOpen, false) => 8.0,
+            (Self::HatchOpen, true) => loss_through_openings_db(5.0, open_hatches()),
+            (Self::HatchOpen, false) => loss_through_openings_db(8.0, open_hatches()),
             _ => 0.0,
         }
     }

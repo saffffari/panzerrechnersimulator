@@ -357,6 +357,22 @@ impl Game {
         }
     }
 
+    /// Play a recording through the world renderer: the path's loss in each band, the bearing of
+    /// its source from the live head, and the reverberation of where the listener is. Its impulse
+    /// goes to the ears where its sound begins, each ear by whether it faces the source.
+    pub(super) fn play_world_and_hear_at_ear(&mut self, sfx: crate::audio::Sfx, ear: &EarLevel,
+        bearing_deg: f32, reverb: crate::acoustics::ReverbParams)
+    {
+        let (onset, envelope) = match self.audio.as_ref().and_then(|a| a.direct_drive(sfx)) {
+            Some((onset, envelope)) => (onset, Some(envelope)),
+            None => (0.0, None),
+        };
+        self.hear_impulse_with(ear, bearing_deg, onset, envelope);
+        if let Some(audio) = &self.audio {
+            audio.play_world_at_ear(sfx, ear, bearing_deg, reverb);
+        }
+    }
+
     /// Play a synthesized voice at the ear on `bus` (a strike on the own hull, a bullet on its
     /// steel) and hand its impulse to the ears where its sound begins; the voice, as heard,
     /// drives the middle-ear reflex.
