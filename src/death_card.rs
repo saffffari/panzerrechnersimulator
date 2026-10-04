@@ -100,6 +100,8 @@ impl Presentation {
             schedule: Some((reveal_at_s.max(0.0), hold_s.max(0.0))) }
     }
     pub fn is_silent(self) -> bool { self.schedule.is_some() }
+    /// Seconds after the fatal frame at which a silent card is put away.
+    pub fn card_end_s(self) -> Option<f32> { self.schedule.map(|(reveal, hold)| reveal + hold) }
 
     /// Preserve the former midpoint delay relative to fatal entry, even though the cue
     /// now begins at text reveal. The stopped audio clock cannot drive this deadline.

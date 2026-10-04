@@ -11176,6 +11176,23 @@ const DEATH_FADE: f32 = 1.5; // picture and sound fade to nothing over this
 /// After the fade: this long in black, then the fallen card for this long.
 const DEATH_BLACK_SECONDS: f32 = 2.0;
 const DEATH_CARD_SECONDS: f32 = 5.0;
+/// After the card: the fixed aerial shot of the round coming in, then the interior aftermath.
+const DEATH_EXTERIOR_SECONDS: f32 = 5.0;
+
+/// What the death sequence shows `t` seconds after the fatal frame, with a silent card.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DeathShot { Fade, Black, Card, Exterior(f32), Interior(f32), Done }
+fn death_shot(card: death_card::Presentation, t: f32, has_replay: bool) -> DeathShot {
+    let Some(card_end) = card.card_end_s() else { return DeathShot::Black; };
+    if t < DEATH_FADE { DeathShot::Fade }
+    else if t < card.reveal_at_s() { DeathShot::Black }
+    else if t < card_end { DeathShot::Card }
+    else if !has_replay { DeathShot::Done }
+    else if t < card_end + DEATH_EXTERIOR_SECONDS { DeathShot::Exterior((t - card_end) / DEATH_EXTERIOR_SECONDS) }
+    else if t < card_end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR {
+        DeathShot::Interior((t - card_end - DEATH_EXTERIOR_SECONDS) / REPLAY_DUR)
+    } else { DeathShot::Done }
+}
 const DEATH_SKIP_AFTER: f32 = DEATH_FADE + REPLAY_DUR * 0.65;
 const DEATH_END: f32 = DEATH_FADE + REPLAY_DUR + KIA_BLACK_SECONDS;
 const ENDING_HOLD: f32 = 12.0;
@@ -11267,6 +11284,21 @@ fn terminal_visual_phase(t: f32) -> Option<f32> {
 #[cfg(test)]
 mod local_presentation_tests {
     use super::*;
+
+    #[test]
+    fn silent_death_runs_fade_black_card_then_two_replay_shots() {
+        let card = death_card::Presentation::silent(1, 1943, DEATH_FADE + DEATH_BLACK_SECONDS, DEATH_CARD_SECONDS);
+        let end = card.card_end_s().unwrap();
+        assert_eq!(death_shot(card, 0.5, true), DeathShot::Fade);
+        assert_eq!(death_shot(card, DEATH_FADE + 1.0, true), DeathShot::Black);
+        assert_eq!(death_shot(card, end - 0.1, true), DeathShot::Card);
+        assert!(matches!(death_shot(card, end + 0.1, true), DeathShot::Exterior(p) if p < 0.1));
+        assert!(matches!(death_shot(card, end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR * 0.5, true),
+            DeathShot::Interior(p) if (p - 0.5).abs() < 1e-4));
+        assert_eq!(death_shot(card, end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR, true), DeathShot::Done);
+        // A death with no recorded killing round (on foot, burned) ends with the card.
+        assert_eq!(death_shot(card, end, false), DeathShot::Done);
+    }
 
     #[test]
     fn terminal_camera_has_an_interior_phase_from_the_first_fatal_frame() {
@@ -13911,6 +13943,30 @@ impl WindowState {
         if t >= DEATH_FADE {
             self.game.set_audio_silenced(true);
         }
+        // The silent card is followed by two replay shots: the round coming in, seen from behind
+        // and above, and then what it did inside.
+        if let Some(card) = card.filter(|card| card.is_silent()) {
+            match death_shot(card, t, self.game.last_fatal.is_some()) {
+                DeathShot::Exterior(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.render_replay_exterior(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view,
+                        self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                DeathShot::Interior(phase) => {
+                    let Some((frame, view)) = self.acquire() else { return; };
+                    self.game.end_replay_exterior(&mut self.renderer);
+                    self.game.render_replay(phase, &mut self.renderer);
+                    self.renderer.render_replay_to_surface(&self.device, &self.queue, &view,
+                        self.config.format, t);
+                    frame.present();
+                    return;
+                }
+                _ => {}
+            }
+        }
         if let Some(card) = card.filter(|_| t >= DEATH_FADE) {
             let Some((frame, view)) = self.acquire() else { return; };
             self.renderer.ui_reset();
@@ -14466,6 +14522,20 @@ impl ApplicationHandler for App {
                             state.state = AppState::Playing;
                         }
                         let _ = act;
+                    }
+                    AppState::Death { t, card: Some(card) } if card.is_silent() => {
+                        // Space, Enter or Escape puts the card away at once, and pressed again
+                        // during the replay shots ends them. The fade and the black are not cut.
+                        if matches!(code, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape) {
+                            let has_replay = state.game.last_fatal.is_some();
+                            let card_end = card.card_end_s().unwrap_or(t);
+                            match death_shot(card, t, has_replay) {
+                                DeathShot::Card => state.state = AppState::Death { t: card_end, card: Some(card) },
+                                DeathShot::Exterior(_) | DeathShot::Interior(_) => state.state = AppState::Death {
+                                    t: card_end + DEATH_EXTERIOR_SECONDS + REPLAY_DUR, card: Some(card) },
+                                _ => {}
+                            }
+                        }
                     }
                     AppState::Death { t, card } => {
                         // Let the player cut the black short once it has held for a beat. A spent
@@ -15596,9 +15666,12 @@ impl ApplicationHandler for App {
                     AppState::Death { t, card } => {
                         let nt = t + dt;
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
-                        let finished = card.map_or(nt >= DEATH_END, |card|
+                        let finished = card.map_or(nt >= DEATH_END, |card| if card.is_silent() {
+                            death_shot(card, nt, state.game.last_fatal.is_some()) == DeathShot::Done
+                        } else {
                             card.phase(nt, state.game.death_score_elapsed(),
-                                state.game.death_score_finished()) == death_card::Phase::Finished);
+                                state.game.death_score_finished()) == death_card::Phase::Finished
+                        });
                         if finished {
                             // However long the last frame took, the dead Game ends silent.
                             state.game.set_audio_silenced(true);
