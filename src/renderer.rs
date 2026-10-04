@@ -123,6 +123,7 @@ impl TransportQuality {
     }
 
     fn smoke_steps(self) -> [f32; 4] {
+        if let Some(steps) = experiment_values::<4>("KESSEL_RT_EXPERIMENT_SMOKE") { return steps; }
         match self {
             Self::Full => [18.0, 22.0, 26.0, 6.0],
             Self::Gameplay => [8.0, 8.0, 12.0, 4.0],
@@ -130,6 +131,7 @@ impl TransportQuality {
     }
 
     fn glass_world_steps(self) -> f32 {
+        if let Some([steps]) = experiment_values::<1>("KESSEL_RT_EXPERIMENT_GLASS") { return steps; }
         match self {
             Self::Full => 12.0,
             Self::Gameplay => 6.0,
@@ -137,11 +139,22 @@ impl TransportQuality {
     }
 
     fn surface_passes(self) -> [f32; 4] {
+        if let Some(passes) = experiment_values::<4>("KESSEL_RT_EXPERIMENT_PASSES") { return passes; }
         match self {
             Self::Full => [2.0, 2.0, 1.0, 0.0],
             Self::Gameplay => [2.0, 2.0, 4.0, 0.0],
         }
     }
+}
+
+/// Render-push experiments only: a comma-separated override of one sample-count table, read
+/// once. Unset in every launcher; the shipping tables above are what play uses.
+fn experiment_values<const N: usize>(name: &'static str) -> Option<[f32; N]> {
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<&'static str, Option<Vec<f32>>>>> = OnceLock::new();
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    let values = cache.entry(name).or_insert_with(|| std::env::var(name).ok().and_then(|raw|
+        raw.split(',').map(|v| v.trim().parse::<f32>().ok()).collect::<Option<Vec<_>>>()));
+    values.as_ref().filter(|v| v.len() == N).map(|v| std::array::from_fn(|i| v[i]))
 }
 
 fn ensure_output_parent(path: &str) -> anyhow::Result<()> {

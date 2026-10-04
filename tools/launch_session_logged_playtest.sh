@@ -45,6 +45,13 @@ export KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_AUDIO_RANGE=reference
 # renderer's lower sample counts (same scene, emitters and materials).
 if [[ "$MAP" == steppe ]]; then export KESSEL_CANYON_MANIFEST="$MANIFEST" KESSEL_TRANSPORT_QUALITY=gameplay; else export KESSEL_CANYON_V2=1; fi
 if [[ "$PANZER_MODE" == play ]]; then export KESSEL_CANYON=1; fi
+# PANZER_RENDER=rt tries the ray-traced backend (render push, 2026-10-04) at lean sample counts:
+# one surface sample a frame, accumulated over time. Experimental: expect grain in shadows.
+if [[ "${PANZER_RENDER:-}" == rt ]]; then
+  unset KESSEL_NO_RT KESSEL_FIXED_PLAYTEST_GRAPHICS
+  export KESSEL_RENDERER=physical KESSEL_TRANSPORT_QUALITY=gameplay
+  export KESSEL_RT_EXPERIMENT_PASSES=1,1,1,0 KESSEL_RT_EXPERIMENT_SMOKE=4,4,6,2 KESSEL_RT_EXPERIMENT_GLASS=3
+fi
 # Telemetry: one JSON line per second; one fenced GPU pass-timing frame every two seconds.
 export KESSEL_SESSION_LOG="$LOG_DIR/session-$STAMP.jsonl" KESSEL_GPU_PROFILE=1
 CONSOLE="$LOG_DIR/session-$STAMP.console.log"
