@@ -153,6 +153,7 @@ fn cascade_shadow(map: texture_depth_2d, matrix: mat4x4<f32>, world: vec3<f32>,
         receiver_plane_shadow_tap(map, uv + texel * vec2( 1.0, 1.0), uv, ref_depth, gradient));
 }
 
+const TERRAIN_VISIBILITY_LIFT_M: f32 = 0.25;
 fn sun_shadow(world:vec3<f32>,n:vec3<f32>,ndl:f32)->vec3<f32> {
     return scene_environment_transmission(world+n*0.0001,normalize(cam.sun_dir));
 }
@@ -562,6 +563,12 @@ fn shade(in: VsOut) -> SurfaceOutput {
     }
 
     let terrain = pc.params.w > 2.5 && pc.params.w < 3.5;
+    // The ground is a coarse mesh (cells of several metres) standing in for a smooth surface.
+    // Asked from exactly on a facet, the sky and the Sun are hidden or shown by that one facet's
+    // tilt, and every triangle shows as its own shade. The visibility question is asked from a
+    // little above the smooth surface instead, clear of the facets' own planes. A receiver bias,
+    // measured in metres; it removes contact shadow on the ground below that height.
+    let visibility_origin = in.world + select(vec3(0.0), geometric_normal * TERRAIN_VISIBILITY_LIFT_M, terrain);
     var albedo = raw4.rgb;
     var roughness = clamp(mr.g * pc.params.z, 0.12, 1.0);
     let metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
@@ -585,7 +592,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
         }
     }
     let mirror = reflect(-view, normal);
-    let environment = environment_light(in.world, receiver_normal, normal, mirror,
+    let environment = environment_light(visibility_origin, receiver_normal, normal, mirror,
         mix(6.0, 1.0, roughness));
     if (sparse_cubic_smoke) {
         return unoccluded(vec4(albedo / PI * environment.irradiance, 1.0));
@@ -606,7 +613,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let beam = probe.lanes[32].xyz;
     if(dot(normal,key)>0.0 && any(beam>vec3(0.0))){
         color += surface_response(albedo, metallic, roughness, normal, view, key) * beam
-            * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, key), 0.0));
+            * sun_shadow(visibility_origin, receiver_normal, max(dot(receiver_normal, key), 0.0));
     }
 
     // Finite spherical emitters, inverse-square in their radiant intensity. Every admitted source

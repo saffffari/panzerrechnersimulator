@@ -38,8 +38,8 @@ impl Game {
             .ok_or_else(|| anyhow::anyhow!("this map declares no canyon course (canyon_course block)"))?;
         let plan = self.street_plan.clone()
             .ok_or_else(|| anyhow::anyhow!("the canyon course needs its street_encounter block"))?;
-        anyhow::ensure!(self.act.id == 1 && self.act.season == crate::world::Season::Winter,
-            "the canyon course is an Act One winter map");
+        // The run mode plays on any Act One course: the winter canyon or the spring steppe.
+        anyhow::ensure!(self.act.id == 1, "the run course is an Act One map");
         self.playtest_setup();
         if let Some(audio)=&self.audio { audio.reset_soundscape(seed); }
         self.god = false;

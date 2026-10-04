@@ -14943,7 +14943,7 @@ impl ApplicationHandler for App {
                         // and cabin controls are handled in Game::update through the same button.
                         if btn.is_pressed() && p1_can_act && !state.show_map
                             && !state.game.mounted_sidearm_owns_input(self.keys.rmb)
-                            && !state.game.personal_hand_item_active()
+                            && !state.game.personal_item_blocks_interaction()
                             && !state.game.primary_loader_owns_click()
                             && interact_under_crosshair(state, &mut self.keys, false) {
                             state.game.consume_primary_press();

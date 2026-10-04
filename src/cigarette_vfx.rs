@@ -34,7 +34,8 @@ pub fn surface(view: View) -> Surface {
     let tap = finite_unit(view.ash_tap);
     let ash_cycle = if tap > 0.0 && tap < ASH_FALLS_AT { 1.0 } else { finite_unit(view.quarter_progress) };
     Surface {
-        ember_intensity: if burning { 2.2 + 7.0 * puff } else { 0.0 },
+        // Bright enough to read as a coal, not so bright that bloom swells it past the paper.
+        ember_intensity: if burning { 0.06 + 0.24 * puff } else { 0.0 },
         ember_color: [255, (112.0 + 56.0 * puff) as u8, (18.0 + 14.0 * puff) as u8],
         char_length_m: if view.cigarette_present && (burning || consumed > 0.00001) {
             0.0007 + 0.0006 * puff

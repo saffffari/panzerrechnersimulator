@@ -1,4 +1,5 @@
-//! Visible-surface selection mask and a crisp one-pixel silhouette. Uses actual hovered mesh IDs.
+//! Selection mask of the whole hovered object and a crisp one-pixel silhouette round it. Uses
+//! actual hovered mesh IDs.
 use super::{Renderer, LDR, DEPTH, Vertex, PushData, RenderWorkStats};
 pub(super) struct HoverOutline { mask:wgpu::TextureView, mask_msaa:Option<wgpu::TextureView>, mesh:wgpu::RenderPipeline,
     edge:wgpu::RenderPipeline, bind:wgpu::BindGroup }
@@ -21,7 +22,10 @@ impl HoverOutline {
                     step_mode:wgpu::VertexStepMode::Vertex,attributes:&wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x2,3=>Float32x4]}]},
             primitive:wgpu::PrimitiveState{cull_mode:None,..Default::default()},
             depth_stencil:Some(wgpu::DepthStencilState{format:DEPTH,depth_write_enabled:false,
-                depth_compare:wgpu::CompareFunction::LessEqual,stencil:Default::default(),bias:Default::default()}),
+                // The whole selected object is outlined, including the part a rack or bracket
+                // hides (owner, 2026-10-04: a round in its rack showed only fragments of outline,
+                // so it was not clear which round was hovered). Hover itself still needs sight.
+                depth_compare:wgpu::CompareFunction::Always,stencil:Default::default(),bias:Default::default()}),
             multisample:wgpu::MultisampleState{count:samples,..Default::default()},fragment:Some(wgpu::FragmentState{module:shader,entry_point:Some("fs_hover"),
                 compilation_options:Default::default(),targets:&[Some(super::color_target(wgpu::TextureFormat::Rgba8Unorm))]}),
             multiview:None,cache:None});

@@ -12,6 +12,12 @@ fn mask_hand_input(input:&mut TankInput,local_role:Option<crate::lan::LanRole>) 
 }
 impl Game {
     pub fn personal_hand_item_active(&self)->bool {self.cigarettes.active()||self.hand_torch_on}
+    /// What takes the left button away from the world: the torch, and the open packet (the
+    /// button picks a cigarette). A cigarette between the fingers takes nothing: stations,
+    /// hatches, sights and every control stay within reach.
+    pub fn personal_item_blocks_interaction(&self)->bool {
+        self.hand_torch_on||{let v=self.cigarettes.view();v.equipped&&v.pack_open}
+    }
     fn personal_hands_available(&self)->bool {self.switch_t<=0.0&&self.personal_hands_remain_available()}
     fn personal_hands_remain_available(&self)->bool {
         (if self.mode==Mode::Foot {self.foot.hp>0.0}else{self.player.alive})

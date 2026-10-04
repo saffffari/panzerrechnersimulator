@@ -7657,8 +7657,8 @@ fn cupola_hatch_lever_model(turret: Mat4, phase: f32) -> Mat4 {
 }
 // Toolbox re-homed beside the extinguisher on the rear-left wall (playtest: it blocked the
 // turret walk at its old spot). Hotspot at grab height; mesh sits just below it.
-const TOOLBOX_MOUNT: Vec3 = Vec3::new(-0.75, 1.00, -0.98);
-const TOOLBOX_MESH: Vec3 = Vec3::new(-0.75, 0.88, -0.98);
+const TOOLBOX_MOUNT: Vec3 = Vec3::new(0.02, 1.00, -1.02);
+const TOOLBOX_MESH: Vec3 = Vec3::new(0.02, 0.88, -1.02);
 // Two matching BREECH LAMPS (user design), one on each side of the block.
 // GREEN = loaded & lever shut (ready) / ORANGE = lever open (reloading) / RED = shut on a
 // spent case (or empty) — the reload cycle readable at a glance from anywhere in the turret.
@@ -30667,7 +30667,7 @@ impl Game {
 
     /// Physical loader targets own LMB before nearby hatch/station anchors can steal the click.
     pub fn primary_loader_owns_click(&self) -> bool {
-        if self.personal_hand_item_active()||self.personal_primary_guard {return true;}
+        if self.personal_item_blocks_interaction()||self.personal_primary_guard {return true;}
         if self.carrying_track_kit || (self.mode == Mode::Foot && self.hover == Some(Hotspot::RepairKit)) {
             return true;
         }

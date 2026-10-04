@@ -72,7 +72,7 @@ impl FiniteCubeLamp {
 pub const DOME_FIXTURE: FiniteCubeLamp = FiniteCubeLamp {
     // Authored orange practical, shared by the visible lens and transported illumination.
     // Keep the red-band output; lower the yellow/blue contribution instead of tinting the view.
-    half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 145, 48], emission: 1.15,
+    half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 145, 48], emission: 1.75,
 };
 pub const ANNUNCIATOR_FIXTURES: [FiniteCubeLamp; 4] = [
     FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 46, 30], emission: 1.0 },
@@ -187,7 +187,7 @@ mod lighting_tests {
         let low = DOME_FIXTURE.sample(dome_lamp_state(3.0*std::f32::consts::FRAC_PI_2/5.0));
         assert!((low.visible_emissive/high.visible_emissive-0.92).abs()<1e-6);
         assert!((low.radiant_intensity/high.radiant_intensity-0.92).abs()<1e-6);
-        assert!((high.radiant_intensity-0.0000040572).abs()<1e-10);
+        assert!((high.radiant_intensity-0.0000061740).abs()<1e-9);
     }
 }
 

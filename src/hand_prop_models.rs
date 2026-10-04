@@ -17,6 +17,9 @@ const PACK_COUNT: usize = 20;
 /// Butts thrown down persist; past this many the oldest is given up.
 pub const BUTT_CAPACITY: usize = 160;
 pub const BUTT_LENGTH_M: f32 = FILTER_LENGTH_M + 0.004;
+/// The glowing length of paper behind the coal: a sliver at rest, a few millimetres on a draw.
+const LIT_LENGTH_IDLE_M: f32 = 0.0009;
+const LIT_LENGTH_TOKE_M: f32 = 0.0042;
 /// The open packet stays where it was brought out; the view may turn this far before it follows.
 const PACK_LEASH_RAD: f32 = 0.38;
 const FLAME_HEIGHT_M: f32 = 0.008;
@@ -43,6 +46,7 @@ pub struct HandProps {
     charred: usize,
     ash: usize,
     flame: usize,
+    glow: usize,
     source: CpuMesh,
     pose: Vec<Vertex>,
     last_length: f32,
@@ -168,8 +172,8 @@ pub fn lighter_light(view: View, anchors: Anchors) -> Option<crate::renderer::Po
 /// Radiant intensity of the burning tip at rest and at the peak of a toke [E]. The cabin dome
 /// lamp is about 0.000004 and the lighter flame 0.00025 in the same units, so the tip is dimmer
 /// than the flame and still enough to read a dial or a face at arm's length.
-pub const TIP_INTENSITY_IDLE: f32 = 0.000018;
-pub const TIP_INTENSITY_TOKE: f32 = 0.000070;
+pub const TIP_INTENSITY_IDLE: f32 = 0.000012;
+pub const TIP_INTENSITY_TOKE: f32 = 0.000045;
 pub fn cigarette_tip_light(view: View, anchors: Anchors) -> Option<crate::renderer::PointLight> {
     (view.lit && view.cigarette_present && anchors.cigarette_visible
         && anchors.tip.is_finite()).then_some(crate::renderer::PointLight {
@@ -349,6 +353,7 @@ impl HandProps {
         let charred = push(scene, sleeve_mesh([35, 31, 27]));
         let ash = push(scene, sleeve_mesh([143, 141, 132]));
         let flame = push(scene, flame_mesh());
+        let glow = push(scene, sleeve_mesh([255, 118, 30]));
         let pose = source.vertices.clone();
         // A butt is the same source paper clipped to just past the filter.
         let mut butt_mesh = source.clone();
@@ -371,6 +376,7 @@ impl HandProps {
             charred,
             ash,
             flame,
+            glow,
             source,
             pose,
             last_length: CIGARETTE_LENGTH_M,
@@ -417,6 +423,7 @@ impl HandProps {
             self.charred,
             self.ash,
             self.flame,
+            self.glow,
         ]
         .into_iter()
         .chain(self.stock)
@@ -430,6 +437,7 @@ impl HandProps {
             r.set_emissive(slot, 0.0);
         }
         r.mark_own_emissive(self.ember);
+        r.mark_own_emissive(self.glow);
         r.mark_own_emissive(self.flame);
     }
     /// `hands` is whether the hands may be shown; `face` whether the view is the naked eye (a
@@ -461,11 +469,19 @@ impl HandProps {
             model * Mat4::from_translation(Vec3::Z * (self.last_length - CIGARETTE_LENGTH_M)),
         );
         let surface = crate::cigarette_vfx::surface(view);
-        // The coal swells a little past the paper as it is drawn on.
-        let coal = CIGARETTE_RADIUS_M * (1.12 + 0.28 * view.puff_phase.clamp(0.0, 1.0));
+        // The coal is exactly the cigarette's own width. A draw makes it brighter and makes the
+        // lit length of paper behind it longer; it never grows wider.
         let cap = model
             * Mat4::from_translation(Vec3::Z * (self.last_length + 0.0002))
-            * Mat4::from_scale(Vec3::new(coal, coal, 1.0));
+            * Mat4::from_scale(Vec3::new(CIGARETTE_RADIUS_M, CIGARETTE_RADIUS_M, 1.0));
+        let lit_length = (LIT_LENGTH_IDLE_M + (LIT_LENGTH_TOKE_M - LIT_LENGTH_IDLE_M)
+            * view.puff_phase.clamp(0.0, 1.0)).min((self.last_length - FILTER_LENGTH_M).max(0.0));
+        r.set_model(self.glow, model
+            * Mat4::from_translation(Vec3::Z * (self.last_length - lit_length))
+            * Mat4::from_scale(Vec3::new(CIGARETTE_RADIUS_M + 0.00004, CIGARETTE_RADIUS_M + 0.00004,
+                lit_length.max(0.000001))));
+        r.set_visible(self.glow, cigarette_visible && view.lit);
+        r.set_emissive(self.glow, if cigarette_visible && view.lit { surface.ember_intensity * 0.6 } else { 0.0 });
         r.set_model(self.ember, cap);
         r.set_visible(self.ember, cigarette_visible && view.lit);
         r.set_emissive(
@@ -855,7 +871,7 @@ mod tests {
     fn source_allocation_has_a_complete_bounded_slot_set() {
         let mut scene = Vec::new();
         let props = HandProps::allocate(&mut scene).unwrap();
-        assert_eq!(scene.len(), 29 + BUTT_CAPACITY);
+        assert_eq!(scene.len(), 30 + BUTT_CAPACITY);
         assert_eq!(props.stock.len(), 20);
         assert!(props.slots().all(|s| s < scene.len()));
     }
