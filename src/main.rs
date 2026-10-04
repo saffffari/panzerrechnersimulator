@@ -14692,15 +14692,10 @@ impl ApplicationHandler for App {
                         // E — INTERACT with the tank's body: enter a hovered station anchor,
                         // work the hatch / start the climb out, or mount from the ground.
                         // (The LMB click path does the same — E is the keyboard hand.)
-                        // E enters and exits: a hovered seat or sight first, then a hatch, the cabin,
-                        // a spare tank or the next move of a climb (those run in Game::update on
-                        // this same press). With none of those it is a second interact key.
+                        // E is a second interact key: whatever the action button would work under
+                        // the crosshair. It never takes the player through a hatch (Space does).
                         KeyCode::KeyE if !state.game.mounted_sidearm_owns_input(self.keys.rmb) => {
-                            if state.game.click_station() {
-                                state.game.consume_enter_press();
-                            } else if state.game.enter_exit_available(&state.renderer) {
-                                // Game::update takes the passage.
-                            } else if state.game.interact_kind() != game::InteractKind::None
+                            if state.game.interact_kind() != game::InteractKind::None
                                 && !state.game.interaction_tool_in_hand() {
                                 // A hovered breech, rack, case or control, or a load in the
                                 // hands: Game::update acts on it through the interaction primary.

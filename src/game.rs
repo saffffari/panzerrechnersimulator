@@ -8623,15 +8623,15 @@ const CLIMB_STEP_S: f32 = 0.55;
 fn climb_prompt(mounting: bool, step: usize, n: usize) -> &'static str {
     if mounting {
         match step {
-            0 => "CLIMB ONTO THE HULL [E]",
-            1 => "UP ONTO THE TURRET [E]",
-            _ => "DROP INTO THE HATCH [E]",
+            0 => "CLIMB ONTO THE HULL [SPACE]",
+            1 => "UP ONTO THE TURRET [SPACE]",
+            _ => "DROP INTO THE HATCH [SPACE]",
         }
     } else {
         let _ = n;
         match step {
-            0 => "PULL UP OUT OF THE CUPOLA [E]",
-            _ => "PULL OVER — ONTO THE ROOF [E]",
+            0 => "PULL UP OUT OF THE CUPOLA [SPACE]",
+            _ => "PULL OVER — ONTO THE ROOF [SPACE]",
         }
     }
 }
@@ -16062,9 +16062,11 @@ impl Game {
         // the shared tail) so the abandoned Tiger and the swarm keep rendering while dismounted.
         // A body on fire cannot jump or climb: Space beats the flames out instead.
         let burning = self.update_player_burn(dt, input.jump && !self.prev_jump);
-        // E is the way in and out: hatches, the cabin, a spare tank. Space is only a jump, so the
-        // key that jumps up is never the key that climbs down.
-        if !burning && input.enter && !self.prev_enter { self.try_space_traversal(r); }
+        // Space is the way in and out of hatches, the cabin and a spare tank (owner's second
+        // revision: E for this kept bailing him out of the tank in combat).
+        if !burning && input.jump && !self.prev_jump && self.try_space_traversal(r) {
+            self.prev_jump = true; // contextual Space cannot also become an ordinary foot jump
+        }
         if self.climb.active || (!matches!(self.mode, Mode::Foot) && self.station != Station::Loader) {
             self.walk_sounds.reset();
         }
@@ -16115,8 +16117,8 @@ impl Game {
                 {
                     // Offer Space only where Space really enters (gaze through the fully open
                     // aperture, within reach); elsewhere it is a jump and LMB works the lid.
-                    self.hover_label = Some(if !self.hatch_open { "OPEN HATCH [LMB] - THEN ENTER [E]" }
-                        else if self.space_hatch_target(r) == Some(4) { "ENTER CUPOLA [E]" }
+                    self.hover_label = Some(if !self.hatch_open { "OPEN HATCH [LMB] - THEN ENTER [SPACE]" }
+                        else if self.space_hatch_target(r) == Some(4) { "ENTER CUPOLA [SPACE]" }
                         else { "CLOSE HATCH [LMB] - STEP TO THE OPENING TO ENTER" });
                 }
             }
@@ -16833,7 +16835,7 @@ impl Game {
                 });
                 if aimed {
                     self.hover_station = Some(Station::Gunner);
-                    self.hover_label = Some("GUNNER - TAKE THE SIGHTS [E]");
+                    self.hover_label = Some("GUNNER - TAKE THE SIGHTS [LMB]");
                 }
             }
 
@@ -19018,8 +19020,7 @@ impl Game {
         self.foot.panzerfaust_flash_t = 0.0;
         r.set_visible(self.slots.hammer, false);
 
-        // Each move of the climb is an E press; Space still works for hands used to it.
-        let jump_edge = (input.jump && !self.prev_jump) || (input.enter && !self.prev_enter);
+        let jump_edge = input.jump && !self.prev_jump;
         let n = self.climb.cams.len();
         if self.climb.anim {
             self.climb.t += dt / if self.climb.automatic { 0.28 } else { CLIMB_STEP_S };
@@ -23638,6 +23639,11 @@ impl Game {
                     crate::acoustics::ReverbParams::STEEL_INTERIOR
                 } else { reverb };
                 let ear = crate::sound_propagation::propagate(&emission, &path);
+                // Owner-directed presentation, after the physical propagation: explosions and
+                // strikes keep an audible floor and more low end, and every world sound is panned
+                // harder so its direction can be judged by ear (docs/PHYSICAL_TRUTH_AUDIT.md).
+                let ear = presented_world_ear(s.sfx, ear, path.distance_m);
+                let bearing = widened_bearing_deg(bearing);
                 self.hear_world_impulse(&ear, bearing);
                 if let Some(a) = &self.audio {
                     if let Some(buf) = s.buf {
@@ -31079,6 +31085,46 @@ fn segment_local_aabb_contact(start: Vec3, end: Vec3, min: Vec3, max: Vec3) -> O
     Some((enter.max(0.0), normal))
 }
 
+/// OWNER-DIRECTED PRESENTATION (2026-10-03), not acoustics. Through a buttoned hull and a
+/// headset a vehicle blowing up 200 m away arrives under the engine noise, physically correctly
+/// and uselessly for play. Kills and strikes therefore keep a minimum level at the ear, falling
+/// 3 dB per doubling of distance beyond 150 m, and their three lowest octave bands are lifted so
+/// they carry weight. The physically propagated level is used whenever it is higher.
+fn presented_world_ear(sfx: crate::audio::Sfx, mut ear: crate::sound_propagation::EarLevel,
+    distance_m: f32) -> crate::sound_propagation::EarLevel {
+    use crate::audio::Sfx as S;
+    let (floor_dba, bass_db) = match sfx {
+        S::TurretPop | S::TurretRip => (102.0, 5.0),
+        S::KillExplosion | S::CookOff => (98.0, 5.0),
+        S::PenetrationHit => (94.0, 6.0),
+        S::ImpactTank | S::ArmorClang1 | S::ArmorClang2 => (90.0, 6.0),
+        S::ImpactGround => (86.0, 6.0),
+        _ => return ear,
+    };
+    if !ear.laf_db.is_finite() || !distance_m.is_finite() { return ear; }
+    let floor = (floor_dba - 10.0 * (distance_m.max(150.0) / 150.0).log10()).max(floor_dba - 16.0);
+    if ear.laf_db < floor {
+        ear.lpk_db += floor - ear.laf_db;
+        ear.laf_db = floor;
+    }
+    // 31.5, 63 and 125 Hz: less of the path's low-frequency loss, never a net gain above flat.
+    for (band, lift) in ear.transfer_db.iter_mut().zip([bass_db, bass_db, bass_db * 0.6]) {
+        *band = (*band + lift).min(0.0f32.max(*band));
+    }
+    ear
+}
+
+/// OWNER-DIRECTED PRESENTATION: exaggerate how far to the side a world sound sits, so a source a
+/// little off the nose is clearly left or right. Front and back are kept; dead ahead and dead
+/// abeam are unchanged.
+fn widened_bearing_deg(bearing_deg: f32) -> f32 {
+    if !bearing_deg.is_finite() { return bearing_deg; }
+    let (sin, cos) = bearing_deg.to_radians().sin_cos();
+    let lateral = sin.signum() * sin.abs().powf(0.55);
+    let forward = cos.signum() * (1.0 - lateral * lateral).max(0.0).sqrt();
+    lateral.atan2(forward).to_degrees()
+}
+
 /// Offset a laid gun line by small azimuth and elevation errors measured about the gun's own
 /// axes. World-axis offsets made the azimuth error vanish for a gun laid along world X, so hit
 /// probability depended on compass bearing.
@@ -32248,6 +32294,46 @@ mod tests {
         let end = site + body[site..].find("\n    }\n").expect("end of the collapse site");
         assert!(body[site..end].contains("structure_collapse_emission()"));
         assert!(!body[site..end].contains("schedule_sound_from(crate::audio::Sfx::KillExplosion"));
+    }
+
+    #[test]
+    fn distant_kills_keep_an_audible_floor_and_close_ones_are_untouched() {
+        use crate::sound_propagation as p;
+        let ear = |laf: f32| p::EarLevel { lpk_db: laf + 12.0, laf_db: laf, transfer_db: [-20.0; p::BANDS],
+            spectrum: [0.0; p::BANDS], class: p::propagate(&p::Emission::blast(1.0), &p::Path { distance_m: 10.0,
+                atmosphere: p::Atmosphere::WINTER, occluded: false, enclosure: p::Enclosure::OnFoot, headset: false }).class,
+            a_duration_ms: 5.0 };
+        // A faint arrival is lifted to the floor; the floor falls with distance but not without limit.
+        let near = presented_world_ear(crate::audio::Sfx::KillExplosion, ear(60.0), 150.0);
+        let far = presented_world_ear(crate::audio::Sfx::KillExplosion, ear(60.0), 1200.0);
+        let very_far = presented_world_ear(crate::audio::Sfx::KillExplosion, ear(60.0), 50_000.0);
+        assert_eq!(near.laf_db, 98.0);
+        assert!(far.laf_db < near.laf_db && far.laf_db > 85.0);
+        assert_eq!(very_far.laf_db, 82.0);
+        assert_eq!(near.lpk_db - near.laf_db, 12.0, "the crest is preserved");
+        // A loud physical arrival is not turned down, and an unrelated sound is not changed.
+        assert_eq!(presented_world_ear(crate::audio::Sfx::KillExplosion, ear(120.0), 50.0).laf_db, 120.0);
+        assert_eq!(presented_world_ear(crate::audio::Sfx::RifleShot, ear(40.0), 50.0).laf_db, 40.0);
+        // The catastrophic kill sits above the ordinary one; bass loss is reduced, never inverted.
+        assert!(presented_world_ear(crate::audio::Sfx::TurretPop, ear(60.0), 300.0).laf_db
+            > presented_world_ear(crate::audio::Sfx::KillExplosion, ear(60.0), 300.0).laf_db);
+        assert_eq!(near.transfer_db[0], -15.0);
+        assert_eq!(near.transfer_db[5], -20.0);
+        let mut flat = ear(60.0); flat.transfer_db = [-2.0; p::BANDS];
+        assert_eq!(presented_world_ear(crate::audio::Sfx::ImpactTank, flat, 50.0).transfer_db[0], 0.0);
+    }
+    #[test]
+    fn widened_bearing_exaggerates_small_offsets_and_keeps_front_back() {
+        assert!(widened_bearing_deg(0.0).abs() < 1e-3);
+        assert!((widened_bearing_deg(90.0) - 90.0).abs() < 1e-2);
+        assert!((widened_bearing_deg(-90.0) + 90.0).abs() < 1e-2);
+        let small = widened_bearing_deg(15.0);
+        assert!(small > 25.0 && small < 60.0, "15 degrees became {small}");
+        assert!((widened_bearing_deg(-15.0) + small).abs() < 1e-3);
+        // A source behind stays behind, on the same side.
+        let behind = widened_bearing_deg(165.0);
+        assert!(behind > 90.0 && behind < 180.0, "{behind}");
+        assert!(widened_bearing_deg(f32::NAN).is_nan());
     }
 
     #[test]

@@ -55,7 +55,7 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 
 | Item | Status |
 |---|---|
-| One consistent action button. Owner's revision after trying E: constant E next to WASD is awkward. Left mouse is the action button (interact when the crosshair dot shows, otherwise fire or use the item in hand). E enters and exits hatches, seats and sights. Space only jumps, so the jump key is never the way down. | done (not yet play-tested by hand) |
+| One consistent action button. Left mouse is the action button (interact when the crosshair dot shows, otherwise fire or use the item in hand). Space enters and exits hatches, as it always did: E was tried for that and kept bailing the owner out in combat. E is only a second interact key. | done |
 | E enters a spot (sight, hatch, seat); E again leaves it. | partly done: E enters. Leaving a spot still uses its existing key. |
 | Items stow only in their own starting stowage spot. That spot lights up while the item is in hand and the cursor is over it. | open |
 | Cupola hatch is worked by E on the lever below it. The H key is removed. | done |
@@ -99,6 +99,14 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | The fallen card shows a pixel black-and-white portrait of the same character model in his helmet with no face, so the card never reads as a tribute to a tank ace. | done as a hand-drawn pixel bust. A portrait rendered from the actual model is open. |
 | The fallen card can be skipped with Space. After it come two replay shots. First a fixed aerial view from behind the Tiger (or the man on foot) with the gun that fired in frame, showing the round coming in. Then the interior, from the centre rear of the turret looking forward: commander and gunner on the left, loader on the right, and the driver and radio operator in frame if they can be. This is the shot that shows what the hit did, with every effect available. | partly done: both shots run after the card and Space skips the card and the shots. The exterior shot is a fixed raised camera with the round shown as a slow tracer and a flash at the strike. The interior shot is the existing rear-turret slow-motion aftermath. Neither has been seen running yet, and the interior framing has not been widened to take in the hull crew. |
 | The interior death explosion sounds more explosive and catastrophic. | done: the ammunition detonation has a sustained roar and keeps its loudness through the mixer (a test that was failing before today now passes). Not yet judged by ear. |
+
+## 4c. Sound
+
+| Item | Status |
+|---|---|
+| T-34s blowing up must be heard. | done as an audibility floor on kills, cook-offs and strikes after the physical propagation. Not yet judged by ear. |
+| Impacts need more bass. | done: the three lowest octave bands lose up to 6 dB less on the path for strikes and explosions. |
+| More stereo panning, to judge direction by ear. | done: every world sound's bearing is widened (15 degrees off the nose plays at about 35). |
 
 ## 5. Fire
 

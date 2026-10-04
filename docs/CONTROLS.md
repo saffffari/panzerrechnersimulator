@@ -407,13 +407,12 @@ size, and stitch-apron rules.
 - **Left mouse is the one action button.** With something usable under the crosshair (the dot
   shows) it interacts; otherwise it fires or works the tool in hand. A carried load is a toggle:
   click to take a round or case, click again to ram a lined-up round or let go.
-- **E enters and exits:** hatches, the turret cabin, seats and sights, a spare tank, and each
-  move of the climb. With none of those available it is a second interact key.
-- **Arrow keys lay the gun** from the cupola, buttoned or head out, as well as in the sights. In the
-  sights the mouse lays it too. The commander's view itself moves only with the mouse.
-- **Space only jumps.** It also beats out the flames if the player's clothes are alight.
+- **Space enters and exits** hatches, the turret cabin, a spare tank and each move of the climb,
+  as it did before. (E was tried for this and kept bailing the player out in combat.) On open
+  ground Space jumps; with clothes alight it beats out the flames.
+- **E is a second interact key**: it does whatever the action button would do under the crosshair.
 - **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
-  E to go through.
+  Space to go through.
 - **Reload:** take a rack round, carry it to the open breech and line it up, press again to ram
   it, then work the lever to close the breech.
 - **C** is the cigarette: hold the action button to draw on it, release to exhale. The compass

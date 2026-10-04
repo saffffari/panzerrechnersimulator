@@ -230,13 +230,13 @@ impl Game {
         if self.hover_roof_hatch.is_some() || self.hover_lever || self.hover.is_some() { return; }
         if self.mode == Mode::Tank && self.station == Station::Commander
             && !self.commander_outside && !self.climb.active {
-            self.hover_label = Some("DESCEND INTO TURRET CABIN [E]");
+            self.hover_label = Some("DESCEND INTO TURRET CABIN [SPACE]");
             return;
         }
         let Some(index) = self.space_hatch_target(r) else {
             self.blocked_hatch_exit = None;
             if self.spare_mount_target(r).is_some() {
-                self.hover_label = Some("CLIMB ABANDONED TIGER [E]");
+                self.hover_label = Some("CLIMB ABANDONED TIGER [SPACE]");
             }
             return;
         };
@@ -245,16 +245,16 @@ impl Game {
             return;
         }
         self.hover_label = Some(match (self.mode == Mode::Foot, index) {
-            (true, 0) => "ENTER DRIVER HATCH [E]",
-            (true, 1) => "ENTER LOADER HATCH [E]",
-            (true, 2) => "ENTER RADIO HATCH [E]",
-            (true, 3) => "ENTER SIDE ESCAPE HATCH [E]",
-            (true, _) => "ENTER CUPOLA [E]",
-            (false, 0) => "EXIT DRIVER HATCH [E]",
-            (false, 1) => "EXIT LOADER HATCH [E]",
-            (false, 2) => "EXIT RADIO HATCH [E]",
-            (false, 3) => "EXIT SIDE ESCAPE HATCH [E]",
-            (false, _) => "EXIT CUPOLA [E]",
+            (true, 0) => "ENTER DRIVER HATCH [SPACE]",
+            (true, 1) => "ENTER LOADER HATCH [SPACE]",
+            (true, 2) => "ENTER RADIO HATCH [SPACE]",
+            (true, 3) => "ENTER SIDE ESCAPE HATCH [SPACE]",
+            (true, _) => "ENTER CUPOLA [SPACE]",
+            (false, 0) => "EXIT DRIVER HATCH [SPACE]",
+            (false, 1) => "EXIT LOADER HATCH [SPACE]",
+            (false, 2) => "EXIT RADIO HATCH [SPACE]",
+            (false, 3) => "EXIT SIDE ESCAPE HATCH [SPACE]",
+            (false, _) => "EXIT CUPOLA [SPACE]",
         });
     }
 
