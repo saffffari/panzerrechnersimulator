@@ -1,0 +1,52 @@
+{
+ "schema": "kessel.first-person-mechanic.v1",
+ "act_id": 1,
+ "world_manifest": "/home/alex/panzer/adaptive-audio-20261002/assets/worldgen/workshops/trailer-steppe-dusk-20261004/manifest.v1.json",
+ "night": false,
+ "id": "trailer_onfoot_20261004",
+ "title": "Trailer beat: onfoot",
+ "station": "commander",
+ "seconds": 12,
+ "status": "trailer_capture",
+ "setup": {
+  "playtest": true,
+  "singleplayer_crew": true,
+  "enemy_policy": "hold_fire",
+  "on_foot": true,
+  "player_xz": [
+   -1622.0,
+   1627.0
+  ],
+  "player_heading_deg": 135,
+  "foot_xz": [
+   -1613.0,
+   1620.0
+  ],
+  "look_at_xz": [
+   -1622.0,
+   1627.0
+  ]
+ },
+ "timeline": [
+  {
+   "from_s": 1.0,
+   "until_s": 6.0,
+   "input": {
+    "drive": 0.6,
+    "steer": 0.0
+   }
+  },
+  {
+   "from_s": 6.0,
+   "until_s": 10.0,
+   "input": {
+    "look_dx": 0.12,
+    "look_dy": 0.0
+   }
+  }
+ ],
+ "historical_scope": "Staged trailer footage of the present build; not a historical reconstruction.",
+ "limitations": [
+  "Scripted Game inputs, not native mouse/keyboard capture. Gameplay audio is retained."
+ ]
+}

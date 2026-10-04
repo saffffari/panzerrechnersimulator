@@ -1,0 +1,62 @@
+{
+ "schema": "kessel.first-person-mechanic.v1",
+ "act_id": 1,
+ "world_manifest": "/home/alex/panzer/adaptive-audio-20261002/assets/worldgen/workshops/trailer-steppe-dusk-20261004/manifest.v1.json",
+ "night": false,
+ "id": "trailer_smoke_20261004",
+ "title": "Trailer beat: smoke",
+ "station": "loader",
+ "seconds": 14,
+ "status": "trailer_capture",
+ "setup": {
+  "playtest": true,
+  "singleplayer_crew": true,
+  "enemy_policy": "hold_fire",
+  "canyon_session": true
+ },
+ "timeline": [
+  {
+   "at_s": 0.5,
+   "action": "cigarette"
+  },
+  {
+   "from_s": 2,
+   "until_s": 4,
+   "input": {
+    "aim": true
+   }
+  },
+  {
+   "from_s": 3.25,
+   "until_s": 3.35,
+   "input": {
+    "mg_coax": true
+   }
+  },
+  {
+   "from_s": 5,
+   "until_s": 5.1,
+   "input": {
+    "mg_coax": true
+   }
+  },
+  {
+   "from_s": 6.5,
+   "until_s": 8.5,
+   "input": {
+    "fire2": true
+   }
+  },
+  {
+   "from_s": 10.5,
+   "until_s": 12.5,
+   "input": {
+    "fire2": true
+   }
+  }
+ ],
+ "historical_scope": "Staged trailer footage of the present build; not a historical reconstruction.",
+ "limitations": [
+  "Scripted Game inputs, not native mouse/keyboard capture. Gameplay audio is retained."
+ ]
+}

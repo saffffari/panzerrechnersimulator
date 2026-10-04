@@ -1,0 +1,106 @@
+{
+ "schema": "kessel.first-person-mechanic.v1",
+ "act_id": 1,
+ "world_manifest": "/home/alex/panzer/adaptive-audio-20261002/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json",
+ "night": false,
+ "id": "trailer_reload_20261004",
+ "title": "Trailer beat: reload",
+ "station": "gunner",
+ "seconds": 14,
+ "status": "trailer_capture",
+ "setup": {
+  "playtest": true,
+  "singleplayer_crew": true,
+  "enemy_policy": "hold_fire",
+  "canyon_session": true
+ },
+ "timeline": [
+  {
+   "from_s": 0.5,
+   "until_s": 0.55,
+   "input": {
+    "mg_coax": true
+   }
+  },
+  {
+   "at_s": 1,
+   "action": "station",
+   "value": "loader"
+  },
+  {
+   "at_s": 2,
+   "action": "look_lever"
+  },
+  {
+   "from_s": 2.1,
+   "until_s": 2.15,
+   "input": {
+    "mg_coax": true
+   }
+  },
+  {
+   "at_s": 2.8,
+   "action": "look_breech"
+  },
+  {
+   "from_s": 3,
+   "until_s": 4.2,
+   "input": {
+    "mg_coax": true
+   }
+  },
+  {
+   "at_s": 4.6,
+   "action": "look_rack"
+  },
+  {
+   "from_s": 4.8,
+   "until_s": 9.1,
+   "input": {
+    "mg_coax": true
+   }
+  },
+  {
+   "at_s": 5.5,
+   "action": "look_tray"
+  },
+  {
+   "from_s": 6.7,
+   "until_s": 6.775,
+   "input": {
+    "look_dy": -4.0
+   }
+  },
+  {
+   "at_s": 9.4,
+   "action": "look_lever"
+  },
+  {
+   "from_s": 9.7,
+   "until_s": 9.75,
+   "input": {
+    "mg_coax": true
+   }
+  },
+  {
+   "at_s": 10,
+   "action": "look_breech"
+  },
+  {
+   "at_s": 11,
+   "action": "station",
+   "value": "gunner"
+  },
+  {
+   "from_s": 12.3,
+   "until_s": 12.35,
+   "input": {
+    "mg_coax": true
+   }
+  }
+ ],
+ "historical_scope": "Staged trailer footage of the present build; not a historical reconstruction.",
+ "limitations": [
+  "Scripted Game inputs, not native mouse/keyboard capture. Gameplay audio is retained."
+ ]
+}

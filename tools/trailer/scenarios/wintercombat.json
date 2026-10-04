@@ -1,0 +1,58 @@
+{
+ "schema": "kessel.first-person-mechanic.v1",
+ "act_id": 1,
+ "world_manifest": "/home/alex/panzer/adaptive-audio-20261002/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json",
+ "night": false,
+ "id": "trailer_wintercombat_20261004",
+ "title": "Trailer beat: wintercombat",
+ "station": "commander",
+ "seconds": 18,
+ "status": "trailer_capture",
+ "setup": {
+  "playtest": true,
+  "singleplayer_crew": true,
+  "enemy_policy": "live",
+  "canyon_session": true,
+  "canyon_stage": {
+   "gun": 0,
+   "range_m": 180,
+   "lay_on_gun": true
+  }
+ },
+ "timeline": [
+  {
+   "at_s": 0.3,
+   "action": "hatch"
+  },
+  {
+   "at_s": 1.2,
+   "action": "head_out",
+   "allow_rejected": true
+  },
+  {
+   "from_s": 1.5,
+   "until_s": 10,
+   "input": {
+    "drive": 0.1,
+    "steer": 0.0
+   }
+  },
+  {
+   "at_s": 5.5,
+   "action": "staged_discharge"
+  },
+  {
+   "at_s": 13,
+   "action": "lay_on_at_gun",
+   "value": "0"
+  },
+  {
+   "at_s": 14,
+   "action": "staged_discharge"
+  }
+ ],
+ "historical_scope": "Staged trailer footage of the present build; not a historical reconstruction.",
+ "limitations": [
+  "Scripted Game inputs, not native mouse/keyboard capture. Gameplay audio is retained."
+ ]
+}

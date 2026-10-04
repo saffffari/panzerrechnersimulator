@@ -1,0 +1,48 @@
+{
+ "schema": "kessel.first-person-mechanic.v1",
+ "act_id": 1,
+ "world_manifest": "/home/alex/panzer/adaptive-audio-20261002/assets/worldgen/workshops/trailer-steppe-night-20261004/manifest.v1.json",
+ "night": false,
+ "id": "trailer_moon_20261004",
+ "title": "Trailer beat: moon",
+ "station": "commander",
+ "seconds": 16,
+ "status": "trailer_capture",
+ "setup": {
+  "playtest": true,
+  "singleplayer_crew": true,
+  "enemy_policy": "hold_fire",
+  "canyon_session": true
+ },
+ "timeline": [
+  {
+   "at_s": 0.3,
+   "action": "hatch"
+  },
+  {
+   "at_s": 1.2,
+   "action": "head_out",
+   "allow_rejected": true
+  },
+  {
+   "from_s": 2,
+   "until_s": 16,
+   "input": {
+    "drive": 0.7,
+    "steer": 0.0
+   }
+  },
+  {
+   "from_s": 4.0,
+   "until_s": 9.0,
+   "input": {
+    "look_dx": 0.25,
+    "look_dy": 0.0
+   }
+  }
+ ],
+ "historical_scope": "Staged trailer footage of the present build; not a historical reconstruction.",
+ "limitations": [
+  "Scripted Game inputs, not native mouse/keyboard capture. Gameplay audio is retained."
+ ]
+}
