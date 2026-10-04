@@ -14,7 +14,7 @@ esac
 readonly HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 # A git worktree under <checkout>/.claude/worktrees/<name> has no large untracked assets of its own.
 DEFAULT_ASSETS=$HERE
-if [[ ! -d "$HERE/assets/audio/library" && "$HERE" == */.claude/worktrees/* ]]; then
+if [[ ! -f "$HERE/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json" && "$HERE" == */.claude/worktrees/* ]]; then
   DEFAULT_ASSETS=${HERE%%/.claude/worktrees/*}
 fi
 readonly ASSETS=${KESSEL_ASSET_ROOT:-$DEFAULT_ASSETS}
