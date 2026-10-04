@@ -177,9 +177,9 @@ What makes this work:
 - **Names the player chose.** Naming is the cheapest emotional investment in games.
 - **Delegation that is missed, not superhuman skill.** The crew are no better than the player
   at any job. What they give is the ability to be in two places: mark a point from the cupola and
-  the gunner lays on it, drive from any seat because a driver is at the controls. When a man is
-  lost the player either takes his seat or moves another man into it and inherits that man's old
-  job. Every death narrows what can be done at once.
+  the gunner lays on it, drive from any seat because a driver is at the controls. Crew cannot be
+  moved between seats: each man is his job. When he is lost the player takes that seat himself,
+  after pulling the body out, and every death narrows what can be done at once.
 - **Small differences.** One habit each, shown not told: how a man sits, what he keeps by his
   seat. The empty seat keeps the object.
 - **The two companion tanks extend it.** Their crews are voices on the radio, and they can be
