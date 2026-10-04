@@ -13241,6 +13241,11 @@ impl WindowState {
             );
         }
         self.game.draw_repair_cue(&mut self.renderer);
+        // The one line of survival text: the player's own body is on fire.
+        if let Some(prompt) = self.game.burn_prompt() {
+            let pulse = 0.75 + 0.25 * (self.renderer.time * 9.0).sin();
+            self.renderer.draw_text(prompt, 0.5, 0.90, 0.020, [1.0, 0.55, 0.18, pulse], ui::Align::Center);
+        }
         // A wordless dot where the crosshair rests on something the hands can use.
         if self.game.hover_label_text().is_some() && !self.game.sidearm_is_drawn() {
             self.renderer.draw_text(

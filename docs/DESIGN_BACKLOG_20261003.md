@@ -6,9 +6,9 @@ This is a requirements list. It describes targets, not implemented behaviour.
 
 Two requests here change standing project rules, and are recorded as owner decisions:
 
-- **On-screen text is now allowed where it serves play.** The fire prompt and the Enigma
-  machine's messages are text. `CLAUDE.md`'s first principle (no written words) needs amending
-  to say what text is permitted: short control prompts and the Enigma machine's printed output.
+- **On-screen text is now allowed where it serves play.** The fire prompt and radio messages
+  are text. `CLAUDE.md`'s first principle (no written words) needs amending
+  to say what text is permitted: short control prompts and radio messages.
 - **Gameplay may depart from the historical model when the model makes dead time.** The uphill
   speed boost is the first such departure and is recorded in `docs/PHYSICAL_TRUTH_AUDIT.md`.
 
@@ -28,9 +28,10 @@ Two requests here change standing project rules, and are recorded as owner decis
 | Decided: the farmhouse is empty and exactly as he left it. No damage, no sign of what happened to them. The player searches the ground floor and the upper floor, finds no one, then sits on the porch and chain smokes until the sun is down. The reunion is dropped. | open |
 | The last scene is the porch at sunset over untouched farmland, with a pack of cigarettes to chain smoke until the sun is under the horizon. The cigarette has no effect there. It is only a cigarette. | open |
 | Theme: an anti-war piece about the individual in the machine. To fight is to die. To not is to live in peace. | open |
-| The Enigma machine (model exists) sits at the front right seat and is the narrative text interface, driven by a language model, as the route toward a real story. | open |
+| Messages go by radio. (The Enigma machine idea is dropped as inaccurate.) While the radio operator is alive the player can send a message from anywhere in the vehicle with Enter. With him dead the player has to go to the radio set. A language model handles the exchange, as the route toward a real story. | open |
+| The radio set is a physical object at the radio operator's position with dials, knobs, switches and lights, and a headset, handset or microphone. Use an existing asset from the pizza packs or the other asset folders. Interacting with the headphones opens the message prompt. | open |
 | Once the blizzard clears, a spring map. The player links up with a friendly AI-controlled tank. Through a language model the player sends and receives messages with it about the story, the current fight and enemy positions. | open |
-| Third map (owner's revision): the player's own Tiger breaks down. The player links up with another Tiger and a King Tiger and commands the platoon of three. The companion tanks are friendly AI (chatbots, or a mix of a chatbot and another kind of AI). They must respond to and accurately carry out instructions typed on the Enigma machine, and send text back. The platoon makes the last stand at the Reichstag. | open |
+| Third map (owner's revision): the player's own Tiger breaks down. The player links up with another Tiger and a King Tiger and commands the platoon of three. The companion tanks are friendly AI (chatbots, or a mix of a chatbot and another kind of AI). They must respond to and accurately carry out instructions sent by radio, and send text back. The platoon makes the last stand at the Reichstag. | open |
 | Berlin is deferred: it is the largest build. When built it must be true to life, reconstructed from historical maps with real building footprints and roads. Not the whole city: the player enters at one point on the perimeter and fights through dense urban blocks toward the Reichstag. Ground beyond is not playable, but the area must span enough blocks for the player and the enemy to manoeuvre. | open, deferred |
 | Canyon run contents are procedurally generated and carry more action. Driving across empty land is wasted playtest time. | partly done: director fields up to 12 tanks, shorter lulls, reinforcements advance toward the Tiger. Map contents are still authored. |
 | Very prominent, large landmarks, man-made and natural, that are marked on the map. | open |
@@ -43,6 +44,7 @@ Two requests here change standing project rules, and are recorded as owner decis
 | The crew have no abilities beyond the player's own. What they add is delegation: from the cupola the commander marks a point and the gunner traverses onto it without the player entering the sights, and the tank can be driven from the cupola or any other seat while the driver lives. | partly done: driving from every station exists. Marking a point for the gunner does not. |
 | If the driver is killed, the tank can only be driven from the driver's seat, or by moving another crewman into it, which gives up that man's old job for the player to take on. The same rule holds for every seat. | open |
 | A dead crewman's body stays in his seat. To use that seat the player must pull the body out and drag it out of the tank. | open |
+| After a hit the player has to find out what happened by looking. A dead or unconscious gunner or loader has collapsed onto the turret floor; a driver or radio operator has slid down and slumped in his seat. No status readout. | partly done: crew casualties, wounds and witness bodies exist; the collapse and slump poses need checking against this. |
 | Medical supplies are reinstated, so a wounded crewman can be treated and kept alive. | open: the earlier medical mechanic has to be found and restored. |
 
 ## 2. Controls: one interaction key
@@ -51,12 +53,12 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 
 | Item | Status |
 |---|---|
-| **E** interacts: pick up, equip, stow, hatches, gun sight, seats. LMB only fires or uses the item in hand. | open |
-| E enters a spot (sight, hatch, seat); E again leaves it. | open |
+| **E** interacts: pick up, equip, stow, hatches, gun sight, seats. LMB only fires or uses the item in hand. | done (not yet play-tested by hand) |
+| E enters a spot (sight, hatch, seat); E again leaves it. | partly done: E enters. Leaving a spot still uses its existing key. |
 | Items stow only in their own starting stowage spot. That spot lights up while the item is in hand and the cursor is over it. | open |
-| Cupola hatch is worked by LMB (then E) on the lever below it. The H key is removed. | open |
-| C is the cigarette. The compass moves onto M, coupled with the map. | partly done: C is the cigarette; compass is still Shift+C. |
-| Jump is disabled while the player is on fire. | open |
+| Cupola hatch is worked by E on the lever below it. The H key is removed. | done |
+| C is the cigarette. The compass moves onto M, coupled with the map. | done |
+| Jump is disabled while the player is on fire. | done |
 | Ignition is a solid red illuminated button, not a ring. The engine can only be restarted from that button at the driver's seat. | open |
 | Physical dials for engine rpm and road speed, on the driver's right. Fuel is a dial, not text. | open |
 
@@ -64,8 +66,8 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 
 | Item | Status |
 |---|---|
-| Faster ram and faster ejection. | open |
-| E equips a round; move it roughly onto the axis of the open breech; E rams it; E on the lever closes the breech. | open |
+| Faster ram and faster ejection. | done: the case pulls in 0.3 s and a lined-up round rams in 0.35 s. |
+| E equips a round; move it roughly onto the axis of the open breech; E rams it; E on the lever closes the breech. | done (not yet play-tested by hand) |
 | Spent casings can be thrown out of the escape hatch or any open hatch to clear the floor. | open |
 | Racks start visibly full. | partly done: they are logically full (64 of 64). The model has 64 cartridges where a Tiger carried 92, so some tray positions look empty. |
 
@@ -93,7 +95,7 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | Louder ignition, and a burning, crackling, hissing chemical fire sound that grows as the fire does. | open |
 | Fire light moves from dull orange to bright red as the tank heats, by the size and place of the fire. | open |
 | Fire reaching the ammunition, or the tank getting too hot, blows the whole tank up, turret pop included. | partly done: cook-off and turret pop exist; heat-driven escalation does not. |
-| If the player catches fire, small centre-bottom text: press Space to pat down. Outside the tank, mashing Space goes prone and puts it out much faster, in the open and exposed. | open |
+| If the player catches fire, small centre-bottom text: press Space to pat down. Outside the tank, mashing Space goes prone and puts it out much faster, in the open and exposed. | done as rules and prompt (`src/player_burn.rs`). No flame visuals or sound on the body yet. |
 
 ## 6. Track repair
 
@@ -149,7 +151,7 @@ Tigers. Status: **open**.
 | Vision ports are light sources for the interior and adapt to what is outside. The cupola ring must not be pitch black. | partly done: ports stay lit from every angle. They do not yet illuminate the interior. |
 | Ports out of frame are not rendered; slits can be approximated as light sources. | partly done: ports outside the view are already skipped. Ports hidden behind cabin geometry are still rendered. |
 | The game looks blurry. | open: the cause is the bloom halo, not the anti-aliasing. |
-| Frame rate. | partly done: cabin-lamp shadows fixed. Next are the sky-visibility atlas and the port and sight views. The gunner sight ran at 13 fps in the 3 October log. |
+| Frame rate. | partly done. In the moving-commander benchmark the frame went from 66 ms to 28 ms and the gunner sight to 33 ms: cabin-lamp shadows ride the turret at 20 Hz, hidden ports are skipped, the arms no longer invalidate caches at the sights. The fine environment-visibility cascade (about 7 ms) is the largest cost left. Not yet measured in live play. |
 | Experimental graphics upgrades, as render stills to choose from. | open |
 
 ## Suggested build order
@@ -162,4 +164,4 @@ Tigers. Status: **open**.
 4. **Blood, fire on the player, and the cigarette loop.** One connected survival system.
 5. **Track repair**, then **weapons and loot**.
 6. **Map and landmarks**, which lead into the Berlin route.
-7. **Enigma narrative interface** and the two endings.
+7. **Radio messages and companion tanks**, and the two endings.

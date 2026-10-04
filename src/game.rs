@@ -185,6 +185,8 @@ mod enemy_crew;
 mod first_person_arms;
 #[path = "session_telemetry.rs"]
 mod session_telemetry;
+#[path = "player_burn.rs"]
+pub mod player_burn;
 #[path="living_crew_wounds.rs"]
 mod living_crew_wounds;
 #[path="infantry_casualties.rs"]
@@ -9068,6 +9070,8 @@ pub struct Game {
     primary_pickup_press: bool,
     /// The carried round is at the open tray and lined up (set each frame it is carried).
     ram_ready: bool,
+    /// The player's own body alight (see `player_burn.rs`).
+    player_burn: player_burn::PlayerBurn,
     /// The canyon's seeded approach platoons have been fielded for this run.
     canyon_opening_fielded: bool,
     /// The interaction key was pressed with the round lined up: drive it home without a flick.
@@ -13023,6 +13027,7 @@ impl Game {
             cupola_pistol: cupola_pistol::CupolaPistol::default(),
             primary_pickup_press: false,
             ram_ready: false,
+            player_burn: player_burn::PlayerBurn::default(),
             canyon_opening_fielded: false,
             auto_ram: false,
             engine_on: true,
@@ -16036,7 +16041,9 @@ impl Game {
         // Tank = the original stations + drive + fire + per-station camera. In BOTH modes the world
         // stays live below (enemy AI runs in each arm; FX pools + tank/enemy transform pushes run in
         // the shared tail) so the abandoned Tiger and the swarm keep rendering while dismounted.
-        if input.jump && !self.prev_jump && self.try_space_traversal(r) {
+        // A body on fire cannot jump or climb: Space beats the flames out instead.
+        let burning = self.update_player_burn(dt, input.jump && !self.prev_jump);
+        if !burning && input.jump && !self.prev_jump && self.try_space_traversal(r) {
             self.prev_jump = true; // contextual Space cannot also become an ordinary foot jump
         }
         if self.climb.active || (!matches!(self.mode, Mode::Foot) && self.station != Station::Loader) {
@@ -19776,13 +19783,14 @@ impl Game {
                         // A building's lintel over the soldier: stay crouched under it.
                         || self.buildings.blocks_vertical(from, to)
                 });
-        let crouching = input.crouch || !headroom;
+        // Rolling on the ground to put out burning clothes keeps the body down.
+        let crouching = input.crouch || !headroom || self.player_burn.prone();
         self.foot.update(
             input.drive,
             -input.steer,
             input.run,
             crouching,
-            input.jump && !self.prev_jump, // jump on the Space rising edge
+            input.jump && !self.prev_jump && !self.player_burn.burning(), // Space rising edge
             if pulling_at_run { 0.0 } else { input.look_dx },
             if pulling_at_run { 0.0 } else { input.look_dy },
             dt,
@@ -30241,6 +30249,39 @@ impl Game {
     /// A world interaction consumes this whole press so picking up or setting down a prop cannot
     /// discharge the sidearm now or on the following frame after the prop leaves the hand.
     pub fn consume_primary_press(&mut self) { self.primary_pickup_press = true; }
+
+    /// Advance the fire on the player's own body. Inside a burning cabin the body catches after a
+    /// moment; Space pats it down. Returns whether the body is alight (Space is then spent).
+    fn update_player_burn(&mut self, dt: f32, space_edge: bool) -> bool {
+        let alive = if self.mode == Mode::Foot { self.foot.hp > 0.0 } else { self.player.alive };
+        if !alive || self.god { self.player_burn.extinguish(); return false; }
+        let outside = self.mode == Mode::Foot;
+        // The cabin fire reaches the body only inside the hull; head out of the cupola it does not.
+        let exposure = if self.mode == Mode::Tank && !self.commander_outside && self.fire > 0.0 {
+            (self.fire / FIRE_MAX).clamp(0.0, 1.0)
+        } else { 0.0 };
+        let was_burning = self.player_burn.burning();
+        if was_burning && space_edge { self.player_burn.pat(outside); }
+        let damage = self.player_burn.update(dt, exposure);
+        if self.player_burn.burning() && !was_burning {
+            println!("[fire] the player's clothing has caught");
+        }
+        if damage > 0.0 {
+            self.foot.hp = (self.foot.hp - damage).max(0.0);
+            if self.foot.hp <= 0.0 && self.mode == Mode::Tank && self.player.alive {
+                // Burned at his post: the tank is lost with him.
+                self.player.alive = false;
+                self.death_cause = Some(DeathCause::FuelFire);
+            }
+        }
+        was_burning
+    }
+    /// Small centre-bottom text while the player's body is alight.
+    pub fn burn_prompt(&self) -> Option<&'static str> {
+        self.player_burn.prompt(self.mode == Mode::Foot)
+    }
+    /// Flames on the player's body, 0 to 1 (telemetry and presentation).
+    pub fn player_burn_heat(&self) -> f32 { self.player_burn.heat }
 
     /// What the interaction key would act on right now inside the tank. The application shell
     /// turns E into the game's primary-interaction signal from this: a toggle for things that are

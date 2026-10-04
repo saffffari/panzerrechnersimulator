@@ -77,6 +77,7 @@ impl Game {
                 "enemies": enemies,
             },
             "on_foot_hp": self.foot.hp,
+            "body_burn": self.player_burn.heat,
             "canyon": self.canyon_snapshot(),
         })
     }

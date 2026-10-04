@@ -131,8 +131,8 @@ This answers two of the open questions below and sharpens the rest of this docum
 - **The second ending must be discoverable, not announced.** Every earlier bail-out, every time
   the player chose the hatch over the gun, should quietly teach that leaving the tank is
   possible. The on-foot systems, the spare-tank climb and the cigarette already exist for this.
-- **The Enigma machine as the story's voice.** Orders arrive as decoded strips at the radio
-  operator's seat. This is the one place written words enter the game, which makes them carry
+- **The The radio as the story's voice (the Enigma machine idea was dropped as inaccurate).** Orders and the companion crews' voices arrive by radio. While the radio operator lives
+  the player can answer from any seat; after he dies, only from the set itself. This is the one place written words enter the game, which makes them carry
   weight. Generated text needs a fixed script underneath it: the same orders for everyone, with
   generation only colouring them. A model that invents events would break the grounding in real
   history that the project requires, and a shipped game cannot depend on a live service.
@@ -182,7 +182,7 @@ What makes this work:
   job. Every death narrows what can be done at once.
 - **Small differences.** One habit each, shown not told: how a man sits, what he keeps by his
   seat. The empty seat keeps the object.
-- **The two companion tanks extend it.** Their crews are voices on the Enigma, and they can be
+- **The two companion tanks extend it.** Their crews are voices on the radio, and they can be
   lost at any time.
 
 ## 4. Price and positioning
