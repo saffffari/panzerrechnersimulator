@@ -183,6 +183,8 @@ mod solid_city;
 mod enemy_crew;
 #[path = "first_person_arms.rs"]
 mod first_person_arms;
+#[path = "session_telemetry.rs"]
+mod session_telemetry;
 #[path="living_crew_wounds.rs"]
 mod living_crew_wounds;
 #[path="infantry_casualties.rs"]

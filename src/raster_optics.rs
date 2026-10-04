@@ -13,6 +13,12 @@ mod visibility_review;
 
 pub const MAX_PORTS: usize = 12;
 const MAX_VISIBLE: usize = MAX_PORTS;
+/// Half-angle from a port's exterior bearing inside which the relay is sampled exactly, and the
+/// capture field used once the viewer is outside it (see `capture_camera`) [E].
+const OFF_AXIS_ACCEPTANCE: f32 = 0.35;
+/// Elevation bounds (down, up) of the exact relay about the horizontal exterior bearing [E].
+const OFF_AXIS_ELEVATION: (f32, f32) = (-0.30, 0.20);
+const OFF_AXIS_FIELD: f32 = 0.45;
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 struct SourceSurface {glass:bool,optical_kind:u32,own_emission:bool,window_emission:bool,emission:f32}
@@ -218,7 +224,7 @@ fn capture_camera(
     let center = model.transform_point3(center);
     let axis = model.transform_vector3(spec.entry_outward).normalize();
     let to = center - viewer.pos;
-    if to.dot(axis) <= 0.005 || to.length_squared() > 9.0 { return None; }
+    if to.dot(axis) <= 0.005 || to.length_squared() > 36.0 { return None; }
     let forward = viewer.forward();
     let right = viewer.right();
     let up = right.cross(forward);
@@ -239,9 +245,31 @@ fn capture_camera(
         else { center - axis * to.dot(axis) };
     let relay=relay_rotation(spec,model);
     let source_rays: Vec<_> = polygon.iter().map(|&p| relay.transform_vector3(p + viewer.pos - source_eye)).collect();
-    let chief = (source_rays.iter().copied().sum::<Vec3>() / source_rays.len() as f32).normalize();
+    let mut chief = (source_rays.iter().copied().sum::<Vec3>() / source_rays.len() as f32).normalize();
     let exit_axis = objective_view_axis(spec, model);
-    if chief.dot(exit_axis) <= 0.05 { return None; }
+    // Within the block's acceptance the relay is exact. A viewer far off the axis (below the
+    // cupola, beside a slit) used to get no capture at all, or a capture of the hood above the
+    // objective, and the pane read as a black hole. Daylight still fills a thick glass block
+    // seen obliquely, so beyond OFF_AXIS_ACCEPTANCE the capture stays on the acceptance
+    // boundary and the pane shows that boundary radiance. This is a named approximation of
+    // off-axis scatter in the block, not a traced path through it.
+    // Bearing and elevation are bounded separately: a steep upward ray must not aim the capture
+    // into the armoured hood over the objective, which is what made the pane dark from below.
+    let up = model.transform_vector3(Vec3::Y).normalize();
+    let side = up.cross(exit_axis).normalize_or_zero();
+    let forward_part = chief.dot(exit_axis);
+    let bearing = chief.dot(side).atan2(forward_part);
+    let elevation = chief.dot(up).clamp(-1.0, 1.0).asin();
+    let bounded_bearing = if forward_part <= 0.0 { OFF_AXIS_ACCEPTANCE.copysign(bearing) }
+        else { bearing.clamp(-OFF_AXIS_ACCEPTANCE, OFF_AXIS_ACCEPTANCE) };
+    let bounded_elevation = elevation.clamp(OFF_AXIS_ELEVATION.0, OFF_AXIS_ELEVATION.1);
+    let off_axis = side != Vec3::ZERO
+        && ((bounded_bearing - bearing).abs() > 1e-4 || (bounded_elevation - elevation).abs() > 1e-4
+            || forward_part <= 0.0);
+    if off_axis {
+        chief = ((exit_axis * bounded_bearing.cos() + side * bounded_bearing.sin())
+            * bounded_elevation.cos() + up * bounded_elevation.sin()).normalize();
+    }
     let mut camera = crate::camera::Camera::new(aspect);
     // Past the measured exterior face and its closed glass, never at a generic offset above tank.
     camera.pos = model.transform_point3(spec.objective)
@@ -256,7 +284,8 @@ fn capture_camera(
         let z = p.dot(camera.forward()).max(1e-5);
         needed = needed.max((p.dot(up) / z).abs()).max((p.dot(right) / z).abs() / aspect);
     }
-    camera.fov_y = (2.0 * (needed * 1.025).atan()).clamp(0.01, 155_f32.to_radians());
+    camera.fov_y = (2.0 * (needed * 1.025).atan()).clamp(0.01,
+        if off_axis { OFF_AXIS_FIELD } else { 155_f32.to_radians() });
     let projected: Vec<_> = polygon.iter().map(|p| {
         let z = p.dot(forward).max(1e-5);
         glam::Vec2::new(p.dot(viewer.right()) / z, p.dot(viewer.right().cross(forward)) / z)

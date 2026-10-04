@@ -28,9 +28,13 @@ struct Out {
 }
 struct PaneOutput { @location(0) color: vec4<f32>, @location(1) glow: vec4<f32> };
 @fragment fn fs(in: Out) -> PaneOutput {
-    if (in.source.w <= 0.0) { discard; }
-    let uv = in.source.xy / in.source.w * vec2(0.5, -0.5) + vec2(0.5);
-    if (any(uv < vec2(0.0)) || any(uv > vec2(1.0))) { discard; }
+    // A pane direction outside the captured field takes the nearest captured direction instead
+    // of leaving a black hole in a daylit block (see OFF_AXIS_ACCEPTANCE in raster_optics.rs).
+    // A direction behind the capture camera has no nearest edge; it takes the field centre.
+    var uv = vec2(0.5);
+    if (in.source.w > 0.0) {
+        uv = clamp(in.source.xy / in.source.w * vec2(0.5, -0.5) + vec2(0.5), vec2(0.0), vec2(1.0));
+    }
     // 2 identifies a visible exterior relay; 1 remains the ordinary lamp-lens glow mask.
     // Both are depth-tested on the real pane, so a hidden/occluded optic cannot seed bloom.
     // Only the active upper-left viewport is populated. Clamp at its last texel center so the

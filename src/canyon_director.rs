@@ -3,12 +3,19 @@
 //! damage, accuracy, ammunition or sight rules change. There is no total-enemy quota or exit timer.
 use glam::Vec2;
 
-pub const MAX_LIVE: usize = 6;
+// Owner direction 2026-10-03: the run felt empty and slow. Armour must operate in numbers to be
+// dangerous, so the living cap doubles, the lulls shorten, and fresh platoons are sent along the
+// corridor toward the Tiger (see `canyon_reinforcement_entry`) instead of circling their entry.
+pub const MAX_LIVE: usize = 12;
 pub const TARGET_SECONDS: f32 = 90.0 * 60.0;
-pub const ENTRY_MIN_M: f32 = 850.0;
-pub const MIN_LULL_S: f32 = 180.0;
-pub const CONTACT_RELEASE_S: f32 = 90.0;
+pub const ENTRY_MIN_M: f32 = 600.0;
+pub const MIN_LULL_S: f32 = 60.0;
+pub const CONTACT_RELEASE_S: f32 = 40.0;
 pub const REINFORCEMENT_PLATOON: usize = 3;
+/// No fresh platoon is requested this soon after the Tiger's own main gun fired.
+pub const QUIET_AFTER_OWN_SHOT_S: f32 = 25.0;
+/// A stalled or crippled Tiger still faces this many living tanks at most.
+pub const RELIEVED_LIVE: usize = 6;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Situation {
@@ -83,7 +90,7 @@ impl Director {
             self.rest_until = self.rest_until.max(self.elapsed + MIN_LULL_S);
         }
         if s.kills > self.last.kills && !self.encounter_active {
-            let jitter=(crate::canyon::mix(self.seed ^ s.kills as u64) % 121) as f32;
+            let jitter=(crate::canyon::mix(self.seed ^ s.kills as u64) % 41) as f32;
             self.rest_until = self.rest_until.max(self.elapsed + MIN_LULL_S + jitter);
         }
         // A crew substantially ahead of the 90-minute reference meets a denser defence. This is
@@ -94,12 +101,12 @@ impl Director {
             MAX_LIVE;
         let stalled = self.elapsed - self.last_progress_s > 420.0;
         if stalled {
-            self.target_live = self.target_live.min(4);
+            self.target_live = self.target_live.min(RELIEVED_LIVE);
         }
         if s.critical {
-            self.target_live = self.target_live.min(4);
+            self.target_live = self.target_live.min(RELIEVED_LIVE);
         }
-        let interval = (120.0 - self.progress * 35.0 - ahead * 20.0).clamp(60.0, 120.0);
+        let interval = (40.0 - self.progress * 12.0 - ahead * 8.0).clamp(20.0, 40.0);
         self.credit = (self.credit + dt.max(0.0) / interval).min(MAX_LIVE as f32);
         if s.shots > self.last.shots {
             self.last_shot_s = self.elapsed;
@@ -110,7 +117,7 @@ impl Director {
         }
         if self.encounter_active && self.elapsed - self.last_contact_s >= CONTACT_RELEASE_S {
             self.encounter_active = false;
-            let jitter = (crate::canyon::mix(self.seed ^ self.arrivals as u64 ^ s.kills as u64) % 121) as f32;
+            let jitter = (crate::canyon::mix(self.seed ^ self.arrivals as u64 ^ s.kills as u64) % 41) as f32;
             self.rest_until = self.rest_until.max(self.elapsed + MIN_LULL_S + jitter);
         }
         self.last = s;
@@ -134,7 +141,7 @@ impl Director {
             self.state = "existing_force";
             return None;
         }
-        if self.elapsed - self.last_shot_s < 90.0 || self.credit < REINFORCEMENT_PLATOON as f32 {
+        if self.elapsed - self.last_shot_s < QUIET_AFTER_OWN_SHOT_S || self.credit < REINFORCEMENT_PLATOON as f32 {
             self.state = "gathering";
             return None;
         }
@@ -152,7 +159,7 @@ impl Director {
         self.total_spawned += count as u32;
         self.arrivals += 1;
         self.credit = (self.credit - count as f32).max(0.0);
-        let jitter = (crate::canyon::mix(self.seed ^ self.arrivals as u64) % 71) as f32;
+        let jitter = (crate::canyon::mix(self.seed ^ self.arrivals as u64) % 31) as f32;
         self.next_check = self.elapsed + MIN_LULL_S + jitter;
         self.state = "reinforcements_en_route";
     }

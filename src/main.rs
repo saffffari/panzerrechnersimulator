@@ -42,6 +42,7 @@
 //!                                                     five riflemen, live alarm/aim/fire pipeline
 
 mod simulation_uploads;
+mod session_log;
 mod scene_visibility;
 mod scene_visibility_gpu;
 mod display_preview;
@@ -11369,6 +11370,9 @@ struct WindowState {
     /// A synchronous world build just replaced the Game. The frame clock restarts so the
     /// build's wall time is never replayed as simulated time on the first frame.
     clock_reset: bool,
+    /// Opt-in playtest telemetry (`KESSEL_SESSION_LOG`); None in ordinary play.
+    session_log: Option<session_log::SessionLog>,
+    last_sim_ms: f32,
     /// The solo controls reference froze the world and paused its audio; cleared on resume.
     controls_audio_paused: bool,
 }
@@ -11500,6 +11504,8 @@ impl WindowState {
             canyon_finish: None,
             canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
             clock_reset: false,
+            session_log: session_log::SessionLog::from_env(),
+            last_sim_ms: 0.0,
             controls_audio_paused: false,
         };
         let initial_graphics = if graphics::fixed_playtest_graphics() {
@@ -13113,6 +13119,8 @@ impl WindowState {
             }
         }
         self.ft_last = Some(now);
+        let gpu_sampling = self.session_log.as_ref().is_some_and(|log| log.gpu_due());
+        if gpu_sampling { self.renderer.begin_gpu_profile_frame(); }
         // The live RTT tile and the presented view are two cameras on the same machine. Bracket
         // them as one frame so whichever renders first populates the single shared shadow map.
         self.renderer
@@ -13134,6 +13142,39 @@ impl WindowState {
         self.renderer.camera.zfar = saved_far;
         self.renderer.end_coop_shadow_frame();
         self.encode_ms = now.elapsed().as_secs_f32() * 1000.0;
+        if self.session_log.is_some() {
+            if gpu_sampling {
+                // One fenced frame: wait for the GPU so its pass timestamps can be read.
+                self.device.poll(wgpu::PollType::wait_indefinitely()).ok();
+                let passes = self.renderer.read_gpu_profile_frame(&self.device, &self.queue).unwrap_or_default();
+                let fenced_ms = now.elapsed().as_secs_f32() * 1000.0;
+                if let Some(log) = self.session_log.as_mut() { log.gpu_sample(passes, fenced_ms); }
+            }
+            let frame_ms = self.ft_hist.last().copied().unwrap_or(0.0);
+            let (sim_ms, encode_ms) = (self.last_sim_ms, self.encode_ms);
+            let due = self.session_log.as_mut().is_some_and(|log| { log.frame(frame_ms, sim_ms, encode_ms); log.line_due() });
+            if due {
+                let work = self.renderer.render_work_stats();
+                self.renderer.reset_render_work_stats();
+                let (lights_offered, lights_admitted) = self.renderer.light_budget_stats();
+                let (instance_batches, instances) = self.renderer.instanced_stats();
+                let render = serde_json::json!({
+                    "internal_resolution": [self.renderer.iw, self.renderer.ih],
+                    "surface": [self.config.width, self.config.height],
+                    "work_since_last_line": {
+                        "scene_renders": work.scene_renders, "shadow_passes": work.shadow_passes,
+                        "shadow_mesh_draws": work.shadow_mesh_draws, "shadow_instanced_draws": work.shadow_instanced_draws,
+                        "scene_mesh_draws": work.scene_mesh_draws, "scene_instanced_draws": work.scene_instanced_draws,
+                        "fullscreen_raster_passes": work.fullscreen_raster_passes, "compute_passes": work.compute_passes,
+                        "smoke_passes": work.smoke_passes, "bloom_passes": work.bloom_passes, "snow_passes": work.snow_passes,
+                    },
+                    "point_lights": {"offered": lights_offered, "admitted": lights_admitted},
+                    "instances": {"batches": instance_batches, "live": instances},
+                });
+                let game = self.game.session_telemetry();
+                if let Some(log) = self.session_log.as_mut() { log.write(game, render); }
+            }
+        }
         if let Some(fade) = self.death_fade {
             // Dying: the fatal frame darkens to black with nothing drawn over it.
             self.renderer.ui_reset();
@@ -15395,7 +15436,9 @@ impl ApplicationHandler for App {
                             }
                         }
                         let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
+                        let sim_begin = Instant::now();
                         state.game.update_realtime(&input, dt, &mut state.renderer);
+                        state.last_sim_ms = sim_begin.elapsed().as_secs_f32() * 1000.0;
                         native_input_audit::sample(&state.game,&state.renderer,&input,state.show_map,&pads.seats);
                         dispatch_solo_haptics(&mut self.gamepads, &mut self.mouse_haptics, pad,
                             haptic_before, state.game.haptic_snapshot());

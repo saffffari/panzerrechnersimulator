@@ -679,3 +679,10 @@ surfaces are too dark to read. Texture/normal import checks found no source faul
 the forward path omits reflected practical-light bounce. No fill/emission/shadow
 exception was added. A daylight material check and future cabin-light transport
 refinement remain separate acceptance work, as recorded in the hand-prop note.
+
+## Owner-directed gameplay departures
+
+| Departure (date) | What it does | Where | Why |
+| --- | --- | --- | --- |
+| Powered-climb grade share (2026-10-03) | While the player's Tiger drives up a slope under power, only half of the weight's downhill pull is applied (`CLIMB_GRADE_SHARE = 0.5`). Coasting, braking, rolling back and descending feel the full grade. Enemy vehicles are unaffected. | `src/powertrain.rs` | The owner asked for hill speed above the historical estimate so long canyon climbs are not dead time. This is a deliberate, named gameplay value, not a claim about the vehicle. Set the constant to 1.0 to restore the unmodified model. |
+

@@ -14,6 +14,12 @@ const REVERSE_KMH: [f32; 4] = [2.8,4.4,7.0,11.0];
 const SHIFT_SECONDS: f32 = 0.24;
 const SHIFT_COOLDOWN_SECONDS: f32 = 0.6;
 const STEP_SECONDS: f32 = 1.0 / 120.0;
+/// OWNER-DIRECTED GAMEPLAY DEPARTURE (2026-10-03), not physics: the share of the weight's
+/// downhill pull the player's Tiger must overcome while climbing under power. At 1.0 the model
+/// is the unmodified historical estimate, which leaves long canyon climbs at a walking pace with
+/// nothing to do. Only a powered climb is eased; coasting, braking, rolling back and descending
+/// feel the full grade. Recorded in docs/PHYSICAL_TRUTH_AUDIT.md.
+pub const CLIMB_GRADE_SHARE: f32 = 0.5;
 /// Wheel rpm below which the automatic box drops a gear; an upshift must be predicted to recover
 /// above `UPSHIFT_RECOVERED_RPM` by the time the next selection is allowed.
 const DOWNSHIFT_RPM: f32 = 1400.0;
@@ -135,7 +141,9 @@ impl Powertrain {
         let magnitude=self.gear.abs();
         let belt_speed=speed.abs()*if self.single_track {2.0}else{1.0};
         let rpm=belt_speed/gear_speed(self.gear)*RATED_RPM;
-        let resistance=TIGER_MASS_KG*G*(direction as f32*pitch.sin()+ROLLING_RESISTANCE*pitch.cos()).max(0.0);
+        let climb=direction as f32*pitch.sin();
+        let climb=if climb>0.0 && demand.abs()>0.1 {climb*CLIMB_GRADE_SHARE}else{climb};
+        let resistance=TIGER_MASS_KG*G*(climb+ROLLING_RESISTANCE*pitch.cos()).max(0.0);
         let maximum=if direction>0 {8}else{4};
         if demand.abs()>0.1 && rpm>UPSHIFT_RPM && magnitude<maximum {
             let next=direction*(magnitude+1);
@@ -224,7 +232,11 @@ impl Powertrain {
             let compression=if coupled && self.throttle<0.02 && wheel_rpm>IDLE_RPM {
                 wheel_force(self.gear,self.rpm)*0.10
             }else{0.0};
-            let grade=TIGER_MASS_KG*G*pitch.sin();
+            // See CLIMB_GRADE_SHARE: eased only while the tracks are driving up the slope.
+            // Keyed on the selected direction, not the instantaneous force, so the open clutch of
+            // a gear change does not hand the full grade back and make the box hunt.
+            let powered_climb=self.throttle>0.02 && controls.engine_running && (self.gear as f32)*pitch.sin()>0.0;
+            let grade=TIGER_MASS_KG*G*pitch.sin()*if powered_climb {CLIMB_GRADE_SHARE}else{1.0};
             let rolling=normal*ROLLING_RESISTANCE+SPEED_DRAG_N_S2_PER_M2*v*v;
             let braking=if opposing || controls.parking_brake {normal*0.65}else{0.0};
             let motive=force-grade;
@@ -323,6 +335,21 @@ mod tests {
         }
     }
     #[test]
+    fn climb_assist_eases_only_a_powered_climb() {
+        // Powered climb at 10 degrees is faster than the unassisted model's 5 degree result
+        // would allow at share 1.0, and never faster than level running.
+        let mut p=Powertrain::default();let mut speed=0.0;
+        run(&mut p,&mut speed,60.0,10.0_f32.to_radians(),controls(1.0),1.0/60.0);
+        let mut flat=Powertrain::default();let mut flat_speed=0.0;
+        run(&mut flat,&mut flat_speed,60.0,0.0,controls(1.0),1.0/60.0);
+        assert!(speed>3.0 && speed<flat_speed,"climb {speed} flat {flat_speed}");
+        // Throttle released on the same slope: the full grade acts and the tank loses speed
+        // at least as fast as gravity along a 10 degree slope allows without any assist.
+        let before=speed;
+        run(&mut p,&mut speed,0.5,10.0_f32.to_radians(),controls(0.0),1.0/60.0);
+        assert!(before-speed>0.5*9.81*10.0_f32.to_radians().sin()*0.9,"coasting kept the assist: {before} -> {speed}");
+    }
+    #[test]
     fn level_running_reaches_top_gear_and_the_calibrated_top_speed() {
         let mut p=Powertrain::default();let mut speed=0.0;
         run(&mut p,&mut speed,420.0,0.0,controls(1.0),1.0/60.0);
@@ -335,7 +362,8 @@ mod tests {
         let flat_speed=speed;let flat_gear=flat.gear;
         run(&mut flat,&mut speed,25.0,15.0_f32.to_radians(),controls(1.0),1.0/60.0);
         assert!(speed>0.1 && speed<flat_speed*0.5 && flat.gear<flat_gear,"{flat:?} speed={speed}");
-        assert!(flat.resistance_force_n>100_000.0 && flat.load>0.0,"{flat:?} speed={speed}");
+        // 15 degrees through the owner-directed CLIMB_GRADE_SHARE: (sin 15 * share + rolling) * weight.
+        assert!(flat.resistance_force_n>80_000.0 && flat.load>0.0,"{flat:?} speed={speed}");
         assert!((flat.load-flat.drive_force_n/wheel_force(flat.gear,flat.rpm)).abs()<1e-4,
             "audio load must report the torque actually transmitted, including governor reduction");
         assert!((flat.drive_force_n-flat.resistance_force_n).abs()<flat.resistance_force_n*0.02,

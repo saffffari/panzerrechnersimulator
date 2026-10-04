@@ -64,6 +64,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     if mode=="fire" || coop { g.station=game::Station::Loader; g.debug_start_fire(); }
     if mode=="idle" { g.station=game::Station::Loader; }
     if mode=="commander" {g.station=game::Station::Commander;g.commander_outside=false;}
+    if std::env::var("KESSEL_WINTER_BENCH_HATCH").as_deref()==Ok("open") {g.toggle_hatch();}
     if mode=="gunner" {g.station=game::Station::Gunner;g.commander_outside=false;}
     g.update(&input,1.0/120.0,&mut r);
     let (mut totals,mut simulation,mut submit,mut fences)=(Vec::new(),Vec::new(),Vec::new(),Vec::new());

@@ -285,7 +285,13 @@ impl Game {
         for j in entries {
             let distance = source[j].distance(tiger);
             if !(crate::canyon_director::ENTRY_MIN_M..=1550.0).contains(&distance) { continue; }
-            let route: Option<Vec<_>> = (0..=5).map(|k| source[j-k*10])
+            // The platoon's beat runs back down the corridor to just short of where the Tiger is
+            // now, so it comes to find the Tiger instead of circling 400 m from its entry. It
+            // still has no fix on the player: this is a patrol along the one road in.
+            let tiger_knot = (0..source.len()).min_by(|&a,&b| source[a].distance_squared(tiger)
+                .total_cmp(&source[b].distance_squared(tiger))).unwrap_or(0);
+            let legs = (j.saturating_sub(tiger_knot + 8) / 10).clamp(5, 60);
+            let route: Option<Vec<_>> = (0..=legs).filter(|k| j >= k*10).map(|k| source[j-k*10])
                 .map(|p| nav.nearest_clear(p,12.0).filter(|&q|self.winter_patrol_point_clear(q))).collect();
             let Some(route) = route else { continue; };
             if route.windows(2).any(|edge|nav.path(edge[0],edge[1]).is_none()) {continue;}

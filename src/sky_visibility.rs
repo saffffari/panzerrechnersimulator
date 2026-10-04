@@ -18,10 +18,14 @@ fn tile_rect(tile: usize) -> [u32; 4] {
 fn tile_scissor_enabled() -> bool {
     // Comparison override only; normal rendering limits raster work to the exact tile that
     // the fragment shader already admits. No caster, direction or shadow sample is removed.
-    std::env::var("KESSEL_SHADOW_TILE_SCISSOR").as_deref() != Ok("0")
+    // Read once: this is asked per caster and per tile, and an environment lookup takes a
+    // process-wide lock and scans the whole block each time.
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("KESSEL_SHADOW_TILE_SCISSOR").as_deref() != Ok("0"))
 }
 fn retain_rigid_depth_enabled() -> bool {
-    std::env::var("KESSEL_RETAIN_RIGID_SKY_DEPTH").as_deref() != Ok("0")
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("KESSEL_RETAIN_RIGID_SKY_DEPTH").as_deref() != Ok("0"))
 }
 /// Footprint half extent around the focus. A seated crewman needs the whole hull inside the
 /// footprint at fine texels; on foot a room-scale footprint covers walls and roofs.
