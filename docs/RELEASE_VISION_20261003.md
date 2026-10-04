@@ -163,6 +163,25 @@ Why this works, and what it asks of the rest of the game:
 - **The request must be heard, not shown as an objective.** No marker, no map pin. The car is
   simply there to be found.
 
+### 3.9 Stakes before the ending: a named crew (owner's decision)
+
+The house is the stake of the last ten minutes. For the hours before it, the stake is the crew.
+The game starts with every seat filled by a named man who does his job. When one is killed, his
+job becomes the player's. The tank gets harder to fight as it gets emptier, so each loss is felt
+twice: as a person gone and as work that no one else will do. Medical supplies return so that a
+wounded man can sometimes be saved, which makes a death the result of a choice or a shortage and
+not only of a hit.
+
+What makes this work:
+
+- **Names the player chose.** Naming is the cheapest emotional investment in games.
+- **Competence that is missed.** The gunner should lay faster than the player can, the loader
+  load faster. Their absence must be mechanically obvious for the rest of the run.
+- **Small differences.** One habit each, shown not told: how a man sits, what he keeps by his
+  seat. The empty seat keeps the object.
+- **The two companion tanks extend it.** Their crews are voices on the Enigma, and they can be
+  lost at any time.
+
 ## 4. Price and positioning
 
 **Recommendation: 12.99 USD, with a 10 to 15 percent launch discount.**

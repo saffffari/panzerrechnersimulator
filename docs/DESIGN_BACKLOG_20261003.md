@@ -35,6 +35,13 @@ Two requests here change standing project rules, and are recorded as owner decis
 | Canyon run contents are procedurally generated and carry more action. Driving across empty land is wasted playtest time. | partly done: director fields up to 12 tanks, shorter lulls, reinforcements advance toward the Tiger. Map contents are still authored. |
 | Very prominent, large landmarks, man-made and natural, that are marked on the map. | open |
 
+### Stakes before the ending: the crew
+
+| Item | Status |
+|---|---|
+| The game starts with a full crew. Each man has a name (the player names them, as in FTL) and performs his seat's job until he is killed. After that the player has to do that job himself. Loneliness is arrived at, not given at the start. | partly done: an AI crew with per-seat casualties and wounds exists (`singleplayer_crew`); there are no names and the solo start is the default. |
+| Medical supplies are reinstated, so a wounded crewman can be treated and kept alive. | open: the earlier medical mechanic has to be found and restored. |
+
 ## 2. Controls: one interaction key
 
 LMB currently means both "interact" and "use what is in the hand", which is confusing.
