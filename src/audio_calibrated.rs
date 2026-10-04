@@ -566,6 +566,55 @@ mod tests {
     }
 }
 
+/// THE OWN GUN, BUTTONED UP, FITTED TO THE OWNER'S LISTENING REFERENCES (2026-10-04).
+///
+/// Measured with `tools/audio_reference_bands.py` on `listening_reference_main_gun_firing_inside`
+/// and `listening_reference_main_gun_and_reload_perfect` (the shot's octave bands with each
+/// clip's own background removed, averaged): a roar strongest at 31.5 to 63 Hz that falls about
+/// 3 dB an octave, `[-0.8, -2.2, -6.7, -11.6, -11.3, -11.3, -14.3, -17.7, -22.0]` dB, and holds
+/// within 4 dB of its peak for 0.7 s. Each layer's loss below is (its recording's measured
+/// shape) minus (that reference shape), so the layer comes out with the reference's balance.
+/// These replace the hull-and-headset path for this one sound: the reference is what is heard at
+/// the ear in the cabin. OWNER-DIRECTED PRESENTATION, not a measured hull transmission.
+/// The tables were then corrected once by the measured error of the rendered result
+/// (`cabin_gun_capture_for_reference_measurement`), since the band filter and the tail colour it.
+pub(crate) const CABIN_GUN_MAIN_LOSS_DB: crate::sound_propagation::Bands = CABIN_GUN_FIT[0];
+pub(crate) const CABIN_GUN_OUTSIDE_LOSS_DB: crate::sound_propagation::Bands = CABIN_GUN_FIT[1];
+pub(crate) const CABIN_GUN_INSIDE_LOSS_DB: crate::sound_propagation::Bands = CABIN_GUN_FIT[2];
+const CABIN_GUN_FIT: [crate::sound_propagation::Bands; 3] = [
+    [18.2, 29.4, 32.1, 36.5, 30.1, 27.0, 19.0, 4.0, 0.0],
+    [13.6, 34.2, 39.7, 42.3, 34.0, 30.1, 24.0, 10.0, 0.0],
+    [14.4, 28.1, 32.3, 35.7, 35.2, 31.9, 23.8, 8.2, 0.0],
+];
+/// The cabin holds the shot: a long tail under the reference's sustained roar.
+pub(crate) const CABIN_GUN_REVERB: ReverbParams = ReverbParams { rt60_s: 1.7, wet: 0.5, damping: 0.20 };
+/// The reference roar holds near its peak for this long; the recordings fall away in a third of
+/// that. The hold is made of the recording itself, repeated densely over this span.
+pub(crate) const CABIN_GUN_HOLD_S: f32 = 0.90;
+
+/// Hold a recording's body for `hold_s`: many copies of it at scattered delays inside that span,
+/// with scattered signs, on top of the original. The attack stays where it was; what follows is
+/// the same sound sustained, as a closed steel box sustains a blast. Deterministic.
+pub(crate) fn sustain_roar(mono: &[f32], hold_s: f32) -> Vec<f32> {
+    const TAPS: u32 = 56;
+    let span = (hold_s.max(0.0) * reproduction::SAMPLE_RATE as f32) as usize;
+    if mono.is_empty() || span == 0 { return mono.to_vec(); }
+    let mut out = vec![0.0_f32; mono.len() + span];
+    out[..mono.len()].copy_from_slice(mono);
+    // Strong enough that the held body sits just under the attack, as in the reference.
+    let gain = 1.7 / (TAPS as f32).sqrt();
+    for tap in 0..TAPS {
+        let hash = tap.wrapping_mul(2654435761).rotate_left(13) ^ 0x9E37_79B9;
+        // Later copies are a little weaker, so the hold sags gently and never swells.
+        let place = (tap as f32 + 0.5 + ((hash >> 8) % 1000) as f32 / 1000.0 - 0.5) / TAPS as f32;
+        let delay = ((place * span as f32) as usize).max(64);
+        let sign = if hash & 1 == 0 { 1.0 } else { -1.0 };
+        let weight = gain * sign * (1.0 - 0.45 * place);
+        for (i, x) in mono.iter().enumerate() { out[i + delay] += x * weight; }
+    }
+    out
+}
+
 impl Audio {
     /// The dry world source for `sfx`: the verified recording where one replaces it, otherwise the
     /// deterministic procedural identity, with an opted-in v1 character layer mixed in at its
@@ -602,6 +651,18 @@ impl Audio {
         } else { format!("world:{sfx:?}:{}", mono.len()) };
         let measured = self.measured_world_source(key, &mono);
         self.place_world_render(&mono, measured, ear, bearing_deg, reverb, EarBus::World);
+    }
+
+    /// One layer of the own gun as heard buttoned up: the recording held for the reference's
+    /// roar, coloured by `ear.transfer_db`, in the cabin's tail (or dry where `held` is false).
+    pub(crate) fn play_cabin_gun_layer(&self, sfx: Sfx, ear: &EarLevel, bearing_deg: f32, held: bool) {
+        let Some(mono) = self.world_source(sfx) else { return };
+        if held {
+            let roar = sustain_roar(&mono, CABIN_GUN_HOLD_S);
+            self.play_world_mono_at_ear(&roar, ear, bearing_deg, CABIN_GUN_REVERB);
+        } else {
+            self.play_world_mono_at_ear(&mono, ear, bearing_deg, ReverbParams::DIRECT);
+        }
     }
 
     /// Play a synthesized mono world voice (a parametric report, a small-arms contact) at its

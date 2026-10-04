@@ -25352,8 +25352,19 @@ impl Game {
         // the air, the ground and the surroundings decide, and each ear by where the muzzle is.
         let (muzzle, _) = self.player.muzzle();
         let (bearing, transfer, reverb) = self.own_gun_path(muzzle);
+        // Buttoned up, the shot is voiced to the owner's listening references: a dark roar that
+        // the cabin holds. With a hatch open or the head out, the path decides as before.
+        let buttoned = matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned);
+        let (transfer, reverb) = if buttoned {
+            (crate::audio::CABIN_GUN_MAIN_LOSS_DB, crate::audio::CABIN_GUN_REVERB)
+        } else { (transfer, reverb) };
         ear.transfer_db = transfer;
-        self.play_world_and_hear_at_ear(pick, &ear, bearing, reverb);
+        if buttoned {
+            self.hear_recording_at_ear(pick, &ear, bearing);
+            if let Some(audio) = &self.audio { audio.play_cabin_gun_layer(pick, &ear, bearing, true); }
+        } else {
+            self.play_world_and_hear_at_ear(pick, &ear, bearing, reverb);
+        }
         // The blast outside: the same path (so the hull dulls it for a man inside), but ringing
         // in the open ground around the tank and not in the cabin. One impulse reaches the ears
         // per shot, from the main layer above.
@@ -25362,7 +25373,12 @@ impl Game {
             outside.laf_db += OUTSIDE_BLAST_LAYER_DB;
             outside.lpk_db += OUTSIDE_BLAST_LAYER_DB;
             let open_air = self.surroundings_reverb(self.ear_pos, crate::sound_propagation::Enclosure::HeadOut);
-            audio.play_world_at_ear(outside_blast, &outside, bearing, open_air);
+            if buttoned {
+                outside.transfer_db = crate::audio::CABIN_GUN_OUTSIDE_LOSS_DB;
+                audio.play_cabin_gun_layer(outside_blast, &outside, bearing, true);
+            } else {
+                audio.play_world_at_ear(outside_blast, &outside, bearing, open_air);
+            }
             // Inside the hull, the recording made inside a firing tank. It was captured in a
             // cabin, so it gets no hull filter and no added room: only the headset and its level.
             if matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned
@@ -25371,6 +25387,7 @@ impl Game {
                     level.a_duration_ms);
                 inside.laf_db += INSIDE_RECORDING_LAYER_DB;
                 inside.lpk_db += INSIDE_RECORDING_LAYER_DB;
+                if buttoned { inside.transfer_db = crate::audio::CABIN_GUN_INSIDE_LOSS_DB; }
                 audio.play_world_at_ear(crate::audio::Sfx::PlayerGunInt2, &inside, 0.0,
                     crate::acoustics::ReverbParams::DIRECT);
             }

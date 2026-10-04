@@ -357,6 +357,16 @@ impl Game {
         }
     }
 
+    /// Hand the impulse a recording carries to the ears where its sound begins, without playing
+    /// it (the caller plays it its own way).
+    pub(super) fn hear_recording_at_ear(&mut self, sfx: crate::audio::Sfx, ear: &EarLevel, bearing_deg: f32) {
+        let (onset, envelope) = match self.audio.as_ref().and_then(|a| a.direct_drive(sfx)) {
+            Some((onset, envelope)) => (onset, Some(envelope)),
+            None => (0.0, None),
+        };
+        self.hear_impulse_with(ear, bearing_deg, onset, envelope);
+    }
+
     /// Play a recording through the world renderer: the path's loss in each band, the bearing of
     /// its source from the live head, and the reverberation of where the listener is. Its impulse
     /// goes to the ears where its sound begins, each ear by whether it faces the source.

@@ -36,6 +36,9 @@ pub(crate) use ear::EarBus;
 pub(crate) use offline::OfflineMix;
 pub(crate) use tinnitus::tinnitus_dbfs;
 pub(crate) use calibrated::effort_db;
+pub(crate) use calibrated::{CABIN_GUN_INSIDE_LOSS_DB, CABIN_GUN_MAIN_LOSS_DB, CABIN_GUN_OUTSIDE_LOSS_DB, CABIN_GUN_REVERB};
+#[cfg(test)]
+use calibrated::{sustain_roar, CABIN_GUN_HOLD_S};
 #[cfg(test)]
 pub(crate) use calibrated::control_level_dba;
 pub use vehicles::{lowpass_for_transfer, VehicleVoice, GunElevationMotion};
@@ -2985,6 +2988,37 @@ mod tests {
         assert!(pcm.iter().all(|v|v.is_finite()));
         assert!(pcm.iter().any(|v|v.abs()>0.01),"P08 route produced no audible samples");
         assert!(audio.master_telemetry()["output_peak"].as_f64().unwrap()>0.01);
+    }
+
+    /// Renders the buttoned-up own gun exactly as the game layers it, to a WAV, so its octave
+    /// bands and decay can be measured against the listening references
+    /// (`tools/audio_reference_bands.py`). Gated: KESSEL_CABIN_GUN_CAPTURE=<output.wav>.
+    #[test]
+    fn cabin_gun_capture_for_reference_measurement() {
+        let Ok(file) = std::env::var("KESSEL_CABIN_GUN_CAPTURE") else { return; };
+        let audio = Audio::new_capture();
+        let level = &crate::sound_levels::OWN_88_BUTTONED;
+        let mut mix: Vec<f32> = Vec::new();
+        for (sfx, loss, offset_db, held) in [
+            (Sfx::PlayerGunInt1, CABIN_GUN_MAIN_LOSS_DB, 0.0_f32, true),
+            (Sfx::PlayerGunExt1, CABIN_GUN_OUTSIDE_LOSS_DB, -6.0, true),
+            (Sfx::PlayerGunInt2, CABIN_GUN_INSIDE_LOSS_DB, -3.0, false),
+        ] {
+            let mut ear = crate::sound_propagation::at_ear(level.lpk_db, level.laf_db, level.spectrum,
+                level.a_duration_ms, true);
+            ear.transfer_db = loss;
+            let mono = audio.world_source(sfx).expect("gun recording installed");
+            let rendered = if held {
+                calibrated::render_for_ear(&sustain_roar(&mono, CABIN_GUN_HOLD_S), &ear, 4.0, CABIN_GUN_REVERB)
+            } else {
+                calibrated::render_for_ear(&mono, &ear, 4.0, crate::acoustics::ReverbParams::DIRECT)
+            };
+            let gain = 10.0_f32.powf((offset_db - crate::reproduction::laf_max_dbfs(&rendered)) / 20.0) * 0.25;
+            if mix.len() < rendered.len() { mix.resize(rendered.len(), 0.0); }
+            for (out, x) in mix.iter_mut().zip(&rendered) { *out += x * gain; }
+        }
+        assert!(mix.iter().all(|v| v.is_finite()));
+        crate::acoustics::write_wav_stereo(&file, &mix, crate::acoustics::SAMPLE_RATE).unwrap();
     }
 
     #[test]
