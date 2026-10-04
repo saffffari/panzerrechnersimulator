@@ -218,6 +218,10 @@ enum AiMode {
     Track,  // spotted / Engaged — flanks + fires the player (the classic combat behaviour)
 }
 
+/// What the interaction key acts on (see `Game::interact_kind`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InteractKind { None, Click, Holdable, Carrying }
+
 /// ABSITZEN: which body the player is driving — the Tiger, or the dismounted soldier.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -7792,7 +7796,9 @@ const CARRY_K_ROUND: f32 = 48.0; // spring stiffness — heavy, visible lag
 const CARRY_D_ROUND: f32 = 8.5;
 const CARRY_K_CASE: f32 = 90.0; // the empty case is light — snappier in the hands
 const CARRY_D_CASE: f32 = 11.0;
-const CASING_PULL_TIME: f32 = 0.55; // s of held LMB to work the hot case out of the chamber
+const CASING_PULL_TIME: f32 = 0.30; // s to work the hot case out of the chamber
+/// Time for a lined-up round to be driven home once the interaction key commits the ram.
+const AUTO_RAM_SECONDS: f32 = 0.35;
 
 // Centre of the actual circular rear bore in the source `tiger_gun.glb` Breech mesh.
 // Gun-local, so the case and its grip follow elevation and recoil with the breech.
@@ -9056,6 +9062,10 @@ pub struct Game {
     cupola_pistol: cupola_pistol::CupolaPistol,
     /// The press that picked up a tool or operated a world object cannot also fire/use it.
     primary_pickup_press: bool,
+    /// The carried round is at the open tray and lined up (set each frame it is carried).
+    ram_ready: bool,
+    /// The interaction key was pressed with the round lined up: drive it home without a flick.
+    auto_ram: bool,
     /// Breech lever position: 0 = closed/down (fireable), 1 = fully open (breech workable).
     lever_open: f32,
     lever_pulling: bool, // LMB is working the lever THIS frame — freezes the head-look (ram-style)
@@ -13006,6 +13016,8 @@ impl Game {
             hand_map_view: hand_map::MapView::default(),
             cupola_pistol: cupola_pistol::CupolaPistol::default(),
             primary_pickup_press: false,
+            ram_ready: false,
+            auto_ram: false,
             engine_on: true,
             player_powertrain: crate::powertrain::Powertrain::default(),
             engine_crank_t: 0.0,
@@ -16070,9 +16082,9 @@ impl Game {
                 {
                     // Offer Space only where Space really enters (gaze through the fully open
                     // aperture, within reach); elsewhere it is a jump and LMB works the lid.
-                    self.hover_label = Some(if !self.hatch_open { "OPEN HATCH [LMB] - THEN ENTER [SPACE]" }
+                    self.hover_label = Some(if !self.hatch_open { "OPEN HATCH [E] - THEN ENTER [SPACE]" }
                         else if self.space_hatch_target(r) == Some(4) { "ENTER CUPOLA [SPACE]" }
-                        else { "CLOSE HATCH [LMB] - STEP TO THE OPENING TO ENTER" });
+                        else { "CLOSE HATCH [E] - STEP TO THE OPENING TO ENTER" });
                 }
             }
             self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
@@ -16237,6 +16249,16 @@ impl Game {
                                 self.carry_pos.distance(mouth), if self.ram > 0.0 { 1.0 } else { r.camera.forward().dot(line) });
                             (self.ram, ram_consumed_look) = manual_ram_step(
                                 self.ram, dt, input.mg_coax, eligible, Vec2::new(input.look_dx, input.look_dy));
+                            self.ram_ready = eligible;
+                            if self.auto_ram {
+                                if eligible {
+                                    // manual_ram_step bled a little off; the committed ram outruns it.
+                                    self.ram = (self.ram + dt * (1.0 / AUTO_RAM_SECONDS + RAM_DECAY)).min(1.0);
+                                    ram_consumed_look = true;
+                                } else {
+                                    self.auto_ram = false;
+                                }
+                            }
                             if eligible {
                                 let seated = chambered_round_model(self.player.visual_gun_model());
                                 let carried_pose = self.carried_round_model();
@@ -16254,6 +16276,8 @@ impl Game {
                                     self.ram = 0.0;
                                     self.grab = false;
                                     self.carry_mesh = None;
+                                    self.auto_ram = false;
+                                    self.ram_ready = false;
                                     if let Some(a) = &self.audio {
                                         a.play_mechanical(
                                             crate::acoustics::MechanicalParams {
@@ -16464,16 +16488,16 @@ impl Game {
                     if to.length() < 1.8 && to.normalize_or_zero().dot(look) > 0.88 {
                         let label = if self.lever_open < LEVER_OPEN {
                             Some(if matches!(self.breech, Breech::Loaded) {
-                                "OPEN BREECH TO UNLOAD ROUND [LMB]"
+                                "OPEN BREECH TO UNLOAD ROUND [E]"
                             } else {
-                                "OPEN BREECH [LMB]"
+                                "OPEN BREECH [E]"
                             })
                         } else if self.lever_open > LEVER_SHUT
                             && matches!(self.breech, Breech::Loaded)
                         {
-                            Some("CLOSE BREECH [LMB]")
+                            Some("CLOSE BREECH [E]")
                         } else if self.lever_open > LEVER_SHUT {
-                            Some("CLOSE BREECH [LMB]")
+                            Some("CLOSE BREECH [E]")
                         } else {
                             None
                         };
@@ -16494,7 +16518,7 @@ impl Game {
                         && to.normalize_or_zero().dot(look) > 0.98)
                     {
                         self.hover = Some(Hotspot::SpentCasing);
-                        self.hover_label = Some("PULL HOT CASE [HOLD LMB]");
+                        self.hover_label = Some("PULL HOT CASE [E]");
                     }
                 }
                 // Pick the actual cartridge surface. A wide cone around the chamber used to
@@ -16506,7 +16530,7 @@ impl Game {
                     if ray_loader_round(eye, look,
                         chambered_round_model(self.player.visual_gun_model()), 2.0).is_some() {
                         self.hover = Some(Hotspot::LoadedRound);
-                        self.hover_label = Some("PULL LOADED ROUND [HOLD LMB]");
+                        self.hover_label = Some("PULL LOADED ROUND [E]");
                     }
                 }
                 // A direct hit on the visible cartridge wins over broad control-anchor cones.
@@ -16526,7 +16550,7 @@ impl Game {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::RackSlot(i));
-                                self.hover_label = Some("PICK UP ROUND [HOLD LMB]");
+                                self.hover_label = Some("PICK UP ROUND [E]");
                             }
                         }
                     }
@@ -16537,7 +16561,7 @@ impl Game {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::FloorShell(i));
-                                self.hover_label = Some("PICK UP ROUND [HOLD LMB]");
+                                self.hover_label = Some("PICK UP ROUND [E]");
                             }
                         }
                     }
@@ -16548,7 +16572,7 @@ impl Game {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::FloorCasing(i));
-                                self.hover_label = Some("PICK UP SPENT CASE [HOLD LMB]");
+                                self.hover_label = Some("PICK UP SPENT CASE [E]");
                             }
                         }
                     }
@@ -16559,7 +16583,7 @@ impl Game {
                     self.hover_label = Some("EXTINGUISHER - HOLD LMB TO SPRAY; Q/E TO STOW");
                 } else if self.carried_casing.is_some() {
                     self.hover = None;
-                    self.hover_label = Some("CASE IN HAND - RELEASE LMB TO DROP");
+                    self.hover_label = Some("CASE IN HAND - E TO LET GO");
                 } else if self.grab {
                     self.hover = None;
                     let mouth = self.reload_mouth_world();
@@ -16567,20 +16591,20 @@ impl Game {
                     // say so — the old label said "pull up" while the ram silently ignored you.
                     let lined = self.ram > 0.0 || r.camera.forward().dot((mouth - eye).normalize_or_zero()) > 0.86;
                     self.hover_label = Some(if self.carried_round_can_stow(eye, r.camera.forward()) {
-                        "EMPTY RACK - RELEASE LMB TO STOW ROUND"
+                        "EMPTY RACK - E TO STOW ROUND"
                     } else if matches!(self.breech, Breech::Loaded) {
-                        "BREECH LOADED - RELEASE LMB TO DROP ROUND"
+                        "BREECH LOADED - E TO PUT ROUND DOWN"
                     } else if matches!(self.breech, Breech::Spent) {
-                        "CASE IN BREECH - RELEASE LMB TO DROP ROUND"
+                        "CASE IN BREECH - E TO PUT ROUND DOWN"
                     } else if self.carry_pos.distance(mouth) >= RAM_REACH {
-                        "CARRY ROUND TO BREECH - KEEP HOLDING LMB"
+                        "CARRY ROUND TO THE OPEN BREECH"
                     } else if !lined {
-                        "AIM AT LOAD HERE - KEEP HOLDING LMB"
+                        "LINE THE ROUND UP WITH THE BREECH"
                     } else if self.lever_open < LEVER_OPEN {
                         "BREECH CLOSED - OPEN LEVER"
                     } else {
-                        if self.ram >= 1.0 { "SEATING ROUND - KEEP HOLDING LMB" }
-                        else { "HOLD LMB + FLICK MOUSE / RIGHT STICK TO RAM" }
+                        if self.ram >= 1.0 { "SEATING ROUND" }
+                        else { "RAM ROUND [E]" }
                     });
                 }
                 // Interaction feedback stays in the prompt/reticle; it never changes material
@@ -16692,9 +16716,9 @@ impl Game {
             self.hover_lever = !loader_round_owns_input && self.cupola_grip_hover(r);
             if self.hover_lever {
                 self.hover_label = Some(if self.hatch_open {
-                    "HATCH LEVER - CLOSE HATCH [LMB/E]"
+                    "HATCH LEVER - CLOSE HATCH [E]"
                 } else {
-                    "HATCH LEVER - OPEN HATCH [LMB/E]"
+                    "HATCH LEVER - OPEN HATCH [E]"
                 });
             }
             self.hover_hatch = false;
@@ -17430,10 +17454,10 @@ impl Game {
         if to.length() < 1.0 && to.normalize_or_zero().dot(r.camera.forward()) > 0.985 {
             self.hover = Some(Hotspot::DriverVisor);
             self.hover_label = Some(if self.exterior.visor_jammed {
-                "VISOR JAMMED - LOOSEN THE HOUSING AND FREE IT [HOLD LMB]"
+                "VISOR JAMMED - LOOSEN THE HOUSING AND FREE IT [HOLD E]"
             } else if self.driver_shutters.open {
-                "CLOSE VISOR SHUTTERS [LMB]"
-            } else { "OPEN VISOR SHUTTERS [LMB]" });
+                "CLOSE VISOR SHUTTERS [E]"
+            } else { "OPEN VISOR SHUTTERS [E]" });
         }
     }
 
@@ -19271,16 +19295,16 @@ impl Game {
         self.hover_hatch = false;
         self.hover = None;
         self.hover_label = Some(match (index, if index < 4 { self.roof_hatches.open[index] } else { self.hatch_open }) {
-            (0, false) => "OPEN DRIVER HATCH [LMB]",
-            (0, true) => "CLOSE DRIVER HATCH [LMB]",
-            (1, false) => "OPEN LOADER HATCH [LMB]",
-            (1, true) => "CLOSE LOADER HATCH [LMB]",
-            (2, false) => "OPEN RADIO HATCH [LMB]",
-            (2, true) => "CLOSE RADIO HATCH [LMB]",
-            (3, false) => "OPEN SIDE ESCAPE HATCH [LMB]",
-            (3, true) => "CLOSE SIDE ESCAPE HATCH [LMB]",
-            (_, false) => "OPEN CUPOLA HATCH [LMB]",
-            (_, true) => "CLOSE CUPOLA HATCH [LMB]",
+            (0, false) => "OPEN DRIVER HATCH [E]",
+            (0, true) => "CLOSE DRIVER HATCH [E]",
+            (1, false) => "OPEN LOADER HATCH [E]",
+            (1, true) => "CLOSE LOADER HATCH [E]",
+            (2, false) => "OPEN RADIO HATCH [E]",
+            (2, true) => "CLOSE RADIO HATCH [E]",
+            (3, false) => "OPEN SIDE ESCAPE HATCH [E]",
+            (3, true) => "CLOSE SIDE ESCAPE HATCH [E]",
+            (_, false) => "OPEN CUPOLA HATCH [E]",
+            (_, true) => "CLOSE CUPOLA HATCH [E]",
         });
     }
 
@@ -30182,6 +30206,31 @@ impl Game {
     /// A world interaction consumes this whole press so picking up or setting down a prop cannot
     /// discharge the sidearm now or on the following frame after the prop leaves the hand.
     pub fn consume_primary_press(&mut self) { self.primary_pickup_press = true; }
+
+    /// What the interaction key would act on right now inside the tank. The application shell
+    /// turns E into the game's primary-interaction signal from this: a toggle for things that are
+    /// carried, a single press for things that are clicked.
+    pub fn interact_kind(&self) -> InteractKind {
+        if !self.player.alive || self.mode != Mode::Tank { return InteractKind::None; }
+        if self.carry_mesh.is_some() || self.carried_casing.is_some() || self.casing_pull > 0.0 {
+            return InteractKind::Carrying;
+        }
+        match self.hover {
+            Some(Hotspot::RackSlot(_) | Hotspot::LoadedRound | Hotspot::SpentCasing
+                | Hotspot::FloorShell(_) | Hotspot::FloorCasing(_)) => InteractKind::Holdable,
+            Some(_) => InteractKind::Click,
+            None => InteractKind::None,
+        }
+    }
+    /// A tool or personal item is in the hand: left mouse uses it, E stows it.
+    pub fn interaction_tool_in_hand(&self) -> bool {
+        self.ext_equipped || self.carrying_track_kit || self.compass_equipped
+            || self.panzerfaust_claimed || self.personal_hand_item_active()
+    }
+    /// The carried round is lined up at the open, empty breech.
+    pub fn ram_ready(&self) -> bool { self.carry_mesh.is_some() && self.ram_ready }
+    /// Commit the lined-up round: it is driven home over `AUTO_RAM_SECONDS`.
+    pub fn begin_auto_ram(&mut self) { if self.ram_ready() { self.auto_ram = true; } }
 
     /// Click takes the extinguisher; E/Q stows it. LMB after release uses the equipped tool.
     pub fn interact_equip(&mut self) -> bool {

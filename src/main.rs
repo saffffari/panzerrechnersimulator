@@ -9608,6 +9608,7 @@ struct Keys {
     lmb: bool, // left mouse — MG34 trigger outside / grab-a-shell in the INSIDE view / Luger on foot
 
     f: bool,     // F edge equips/stows the physical flashlight
+    e: bool,     // E held: the one interaction key (see App::interaction_primary)
     g: bool,     // G — held field repair (locks all stations)
     shift: bool, // on-foot run (hold)
     ctrl: bool,  // hold to crouch on foot or while walking inside the tank
@@ -14129,6 +14130,51 @@ impl WindowState {
     }
 }
 
+/// E carries as a toggle: first press takes a round or case, the next rams or lets go.
+#[derive(Default)]
+struct InteractLatch { held: bool, age: f32, key_was_down: bool }
+
+/// The game's primary-interaction signal for this frame. Left mouse is the trigger: it fires
+/// and uses the tool in hand. E is interaction: a single press on a control, and a toggle
+/// for anything carried (press to take, press again to ram a lined-up round or let go).
+fn interaction_primary(latch: &mut InteractLatch, e_down: bool, lmb_down: bool,
+    game: &mut game::Game, dt: f32) -> bool {
+    use game::InteractKind as Kind;
+    let edge = e_down && !latch.key_was_down;
+    latch.key_was_down = e_down;
+    let kind = game.interact_kind();
+    if game.interaction_tool_in_hand() {
+        // E stows through the key handler; the trigger works the tool.
+        latch.held = false;
+        return lmb_down;
+    }
+    if edge {
+        if latch.held && kind == Kind::Carrying {
+            if game.ram_ready() { game.begin_auto_ram(); } else { latch.held = false; }
+        } else {
+            latch.held = false;
+            match kind {
+                Kind::Holdable => { latch.held = true; latch.age = 0.0; }
+                Kind::Click | Kind::Carrying | Kind::None => {}
+            }
+        }
+    }
+    if latch.held {
+        latch.age += dt.max(0.0);
+        // The load left the hands (rammed, stowed, station change): the grip is over.
+        if kind != Kind::Carrying && latch.age > 0.15 { latch.held = false; }
+    }
+    if latch.held { return true; }
+    match kind {
+        // A control reads the key itself, so a press is one click and a hold is a hold.
+        Kind::Click => e_down,
+        // Nothing to interact with: the trigger is the trigger.
+        Kind::None => lmb_down,
+        // A load without a grip on it is let go.
+        Kind::Holdable | Kind::Carrying => false,
+    }
+}
+
 #[derive(Default)]
 struct App {
     state: Option<WindowState>,
@@ -14146,6 +14192,7 @@ struct App {
     /// out on foot (the HUD ring fills while it runs). Only counts at Commander + hatch open.
     x_hold: f32,
     x_was_down: bool,
+    interact_latch: InteractLatch,
     /// Controller-only couch equivalent, keyed to the living player currently manning Commander.
     couch_commander_exit: CommanderExitTracker,
     /// Hot-plug Xbox / PlayStation input.  The semantic layout is shared by both pads.
@@ -14297,6 +14344,7 @@ impl ApplicationHandler for App {
                     KeyCode::Space => self.keys.space = down,
                     // F/G: held extinguisher / field-repair (level-triggered — you hold to work).
                     KeyCode::KeyF => self.keys.f = down,
+                    KeyCode::KeyE => self.keys.e = down,
                     KeyCode::KeyG => self.keys.g = down,
                     // Shift/Ctrl: on-foot run + crouch (held). Shift ALSO edge-cycles the gun
                     // sights while in the tank (see the Playing match below, Tank-mode gated).
@@ -14395,12 +14443,7 @@ impl ApplicationHandler for App {
                         // native input and mechanic replay (one edge across entry/exit).
                         // H works the lid belonging to the occupied post. The shared Game router
                         // enforces readiness/ownership and the LAN host applies the same request.
-                        KeyCode::KeyH
-                            if state.couch_keyboard_has_authority()
-                                && state.game.mode == game::Mode::Tank =>
-                        {
-                            self.keys.lan_hatch_pulse = true;
-                        }
+                        // The hatch has no key of its own: E on its lever or lid works it.
                         KeyCode::KeyF | KeyCode::KeyL => { if state.game.toggle_hand_flashlight() {self.binocs=false;} },
                         KeyCode::KeyV => {
                             state.game.stow_personal_hand_item();
@@ -14474,8 +14517,8 @@ impl ApplicationHandler for App {
                         // B — binoculars TOGGLE: on foot, head-OUT of the cupola, OR buttoned in the
                         // commander periscope view. NOT in the gunner sight (that has its own optic).
                         KeyCode::KeyC => {
-                            if self.keys.shift {state.game.stow_personal_hand_item();state.game.toggle_compass();}
-                            else if state.game.toggle_cigarette() {self.binocs=false;}
+                            // The compass rides with the map on M; C is the cigarette alone.
+                            if state.game.toggle_cigarette() {self.binocs=false;}
                             state.game.consume_primary_press();
                         }
                         KeyCode::KeyB
@@ -14497,7 +14540,13 @@ impl ApplicationHandler for App {
                         KeyCode::KeyE if !state.game.mounted_sidearm_owns_input(self.keys.rmb) => {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
-                            if state.game.interact_cigarette_pickup(fwd,pos,&mut state.renderer) {
+                            if state.game.interact_kind() != game::InteractKind::None
+                                && !state.game.interaction_tool_in_hand() {
+                                // A hovered breech, rack, case or control, or a load in the
+                                // hands: Game::update acts on it through the interaction primary.
+                            } else if state.game.click_articulated_hatch() {
+                                // Exact source lid/handle selection also works from outside.
+                            } else if state.game.interact_cigarette_pickup(fwd,pos,&mut state.renderer) {
                                 // A finite source packet was removed from this world slot.
                             } else if state.game.interact_world_door(fwd, pos) {
                                 // opened / closed the source-authored building door under the hand
@@ -14706,41 +14755,8 @@ impl ApplicationHandler for App {
                     }
                     MouseButton::Left => {
                         self.keys.lmb = btn.is_pressed();
-                        // Click a hovered interactable, same priority as the hover pass:
-                        // the hatch LEVER (work the lid) → a station anchor (gunsight/breech/
-                        // cupola → enter it) → the hatch disc (toggle, Commander only).
-                        if btn.is_pressed() && p1_can_act && !state.show_map
-                            && !state.game.mounted_sidearm_owns_input(self.keys.rmb)
-                            && !state.game.personal_hand_item_active() {
-                            let fwd = state.renderer.camera.forward();
-                            let pos = state.renderer.camera.pos;
-                            if state.game.click_articulated_hatch() {
-                                // Exact source lid/handle selection also works from outside.
-                            } else if state.game.primary_loader_owns_click() {
-                                // The update owns held ammunition, click levers and equipped tools.
-                            } else if state.game.interact_world_door(fwd, pos)
-                                || state.game.interact_portable_item(fwd, pos)
-                            {
-                                state.game.consume_primary_press();
-                            } else if state.lan.is_some() && state.game.hover_hatch_lever() {
-                                self.keys.lan_hatch_pulse = true;
-                                state.game.consume_primary_press();
-                            } else if state.game.interact_hatch_lever(fwd, pos) {
-                                // worked the cupola hatch lever (hatch open/close)
-                            } else if state.game.click_station() {
-                                // entered a station
-                            } else if state.game.hover_hatch() {
-                                // push the lid: toggle open/close (never exits)
-                                if state.lan.is_some() {
-                                    self.keys.lan_hatch_pulse = true;
-                                } else {
-                                    state.game.click_hatch_or_exit();
-                                }
-                            } else if state.game.click_mount(fwd, pos) {
-                                // on foot: one click on the cupola mounts the tank
-                                self.binocs = false;
-                            }
-                        }
+                        // Left mouse fires and uses what is in the hand. Hatches, sights, seats,
+                        // rounds, levers and pickups all belong to E (see the KeyE arm).
                     }
                     _ => {}
                 }
@@ -14932,6 +14948,9 @@ impl ApplicationHandler for App {
                 } else {
                     self.keys.tank_input()
                 };
+                if !controller_only {
+                    input.mg_coax = interaction_primary(&mut self.interact_latch, self.keys.e, self.keys.lmb, &mut state.game, dt);
+                }
                 if pad.connected && !couch {
                     input.drive = stronger_axis(input.drive, pad.drive);
                     input.steer = stronger_axis(input.steer, pad.steer);

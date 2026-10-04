@@ -176,7 +176,8 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **arrows** | fine gun-lay nudge (gunner) / fast scan (commander) |
 | **MMB** (hold) | coax MG34 |
 | **C** | take out / put away the cigarette pack and cigarette |
-| **Shift+C** | raise/stow the handheld compass; requires free hands |
+| **E** | the one interaction key: take, stow, hatches and their levers, sights, seats, breech lever, rounds and cases. Press once to take a round or case, again to ram a lined-up round or let go. E on a spot you occupy leaves it. |
+| **LMB** | the trigger: fire, or use the tool in hand (extinguisher, hammer, pistol). It never picks things up. |
 | **F** or **L** | take out / put away the hand flashlight |
 | **PageUp / PageDown** | driver: shift up / down by hand |
 | **End** | driver: return the gearbox to automatic selection |
@@ -187,7 +188,7 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **T** | ammunition reminder; actual AP/HE choice is the grey/yellow physical rack round you equip |
 | **LMB with a tool equipped** | use the extinguisher or repair the actual broken component within reach |
 | **E / Q with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
-| **M** | raise/stow the held paper map; world keeps moving (Shift+C separately holds the compass) |
+| **M** | raise/stow the held paper map; world keeps moving; the compass comes out with the map |
 | **LMB on map** | draw permanent graphite with the pencil; there is no eraser |
 | **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play) |
 | **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
@@ -268,7 +269,7 @@ Equipping a portable item occupies both hands and suppresses the selected weapon
 placed or thrown. Refueling transfers only what the tank can accept; any remainder stays in the
 same physical can. An emptied can remains in the world and can still be carried, placed, or thrown.
 
-In Kampagne, **M** opens the held map; **Shift+C** raises the handheld compass. The world keeps moving. Its **?** marks the next
+In Kampagne, **M** opens the held map together with the compass. The world keeps moving. Its **?** marks the next
 search area. Clear the guards, dismount, approach the map case and press **R** when its search hint
 appears. Recovering all three sheets reveals the exit pin. **Home** opens the controls reference
 and pauses solo play.
@@ -400,3 +401,13 @@ size, and stitch-apron rules.
   live turret interior (two-pass render, crush mask 4) instead of floating in black.
 - The mouse at the gunner writes the *desired* lay; the turret **chases it at the real rates
   above** — flick to the target and wait for the hydraulics. That lag is the game.
+
+## Changes of 3 October 2026
+
+- **E is the single interaction key.** Left mouse no longer picks up, opens or enters anything.
+- **The hatch key H is removed.** Work a hatch with E on its lever or lid.
+- **Reload:** E on a rack round takes it, carry it to the open breech and line it up, E rams it,
+  E on the lever closes the breech. E on the hot case pulls it; E again lets it go.
+- **On foot, Space** while facing an untaken abandoned Tiger within 6 m climbs into it. With the
+  Tiger lost and no spare left, the run ends.
+- **C** is the cigarette. The compass comes out with the map on **M**.

@@ -310,7 +310,7 @@ impl Game {
                     if self.equipment_path_clear(eye, eye + look * distance, 0.04) {
                         nearest = distance;
                         self.hover = Some(Hotspot::Extinguisher);
-                        self.hover_label = Some("PICK UP EXTINGUISHER [LMB]");
+                        self.hover_label = Some("PICK UP EXTINGUISHER [E]");
                     }
                 }
             }
@@ -320,7 +320,7 @@ impl Game {
             if t < nearest && self.equipment_path_clear(eye, eye + look * t, 0.04) {
                 nearest = t;
                 self.hover = Some(Hotspot::RepairKit);
-                self.hover_label = Some("TAKE TOOLBOX + HAMMER [LMB]");
+                self.hover_label = Some("TAKE TOOLBOX + HAMMER [E]");
             }
         }
         // The body mesh, not the rack's whole bounding rectangle, owns each pickup.
@@ -333,7 +333,7 @@ impl Game {
                     if t < nearest && self.equipment_path_clear(eye, eye + look * t, 0.035) {
                         nearest = t;
                         self.hover = Some(Hotspot::PanzerfaustRack(i));
-                        self.hover_label = Some("TAKE PANZERFAUST + SPARE AMMO [LMB]");
+                        self.hover_label = Some("TAKE PANZERFAUST + SPARE AMMO [E]");
                     }
                 }
             }
