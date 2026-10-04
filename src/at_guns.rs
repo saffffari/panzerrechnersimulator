@@ -241,6 +241,11 @@ pub(super) fn dispersion(tiger_speed_frac: f32, crew: usize, riflemen: bool) -> 
 
 /// Whether one artilleryman is actually serving his piece: alive, not routed, and within
 /// the same breech reach `at_gun_riflemen` requires of replacement riflemen.
+/// Explosive filler of the ready rounds at a 45 mm gun in action, and how far their burst
+/// reaches [E]: about three 45 mm HE rounds.
+const READY_ROUNDS_FILLER_G: f32 = 360.0;
+const READY_ROUNDS_BLAST_RADIUS_M: f32 = 5.0;
+
 pub(super) fn artilleryman_serving(alive: bool, fleeing: bool, distance_to_gun_m: f32) -> bool {
     alive && !fleeing && distance_to_gun_m < 3.0
 }
@@ -495,6 +500,24 @@ impl Game {
             }
         }
         println!("[at-guns] gun {g} wrecked by {cause}; surviving crew abandon position");
+    }
+
+    /// A cannon round striking the piece sets off the ready rounds stacked at its trails: the gun
+    /// is wrecked in a burst that the crew around it take as ordinary infantry. The ready stock
+    /// (`READY_ROUNDS_FILLER_G`) is an authored estimate for a 45 mm crew in action.
+    pub(super) fn explode_at_gun(&mut self, g: usize, struck: Vec3, incoming: Vec3, cause: &str) {
+        let Some(gun) = self.at_guns.get(g).copied().flatten() else { return; };
+        if gun.state == GunState::Wrecked { return; }
+        self.wreck_at_gun(g, cause);
+        let centre = gun.pos + Vec3::Y * 0.55;
+        // Hot fragments off the struck steel, then the ammunition going up behind the shield.
+        self.weapon_vfx.impact(struck - incoming.normalize_or_zero() * 0.08, incoming, 1.25, true,
+            weapon_vfx::Weapon::Cannon(88));
+        self.spawn_blast(centre, 2.4, 7.5, 0.55);
+        self.infantry_pressure_blast(centre, incoming, READY_ROUNDS_BLAST_RADIUS_M,
+            READY_ROUNDS_FILLER_G * 4184.0, "anti-tank gun ammunition");
+        self.schedule_sound_from(crate::audio::Sfx::KillExplosion, centre);
+        println!("[at-guns] gun {g} ready ammunition detonated");
     }
 
     /// High explosive bursting this close wrecks the gun (tuning; its crew take the blast as

@@ -24131,7 +24131,7 @@ impl Game {
                     ProjectileContactKind::AtGun(hit)
                         if at_gun_ballistics::penetrate(&mut projectile,hit) =>
                     {
-                        self.wreck_at_gun(hit.index,projectile.shell.name);
+                        self.explode_at_gun(hit.index,contact.pos,armor_incident_velocity,projectile.shell.name);
                         if hit.steel {
                             let deposited=0.5*projectile.shell.mass_kg
                                 *(armor_incident_velocity.length_squared()-projectile.velocity.length_squared()).max(0.0);
@@ -24564,7 +24564,7 @@ impl Game {
             ProjectileContactKind::AtGun(hit) => {
                 // Terminal steel/tyre strike, or HE: the contacted gun loses service, but nearby
                 // bodies are affected only by their own projectile contact or the real HE burst.
-                self.wreck_at_gun(hit.index, projectile.shell.name);
+                self.explode_at_gun(hit.index, contact.pos, travel_direction, projectile.shell.name);
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
             }
             ProjectileContactKind::Tree(index) => {
