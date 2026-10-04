@@ -258,7 +258,7 @@ def build(dest, plan=None):
         scope='Generative mechanics course, not a recorded engagement.')
     # A clear late afternoon in early summer: a low sun, long shadows, broken cloud.
     edits['environment_lighting'] = dict(enabled=True, fog_density=0.0007, overcast=0.32, storm=0.0,
-        schema='kessel.environment-authoring', utc='1943-07-06T14:40:00Z', version=2)
+        schema='kessel.environment-authoring', utc='1943-07-16T14:40:00Z', version=2)
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     (dest/'manifest.v1.json').write_text(cc.dumps(manifest, indent=None))

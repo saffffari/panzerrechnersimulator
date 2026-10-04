@@ -351,6 +351,12 @@ fn physical_first_planet_hit(
         environment.planet_center_radius.xyz,
         environment.planet_center_radius.w,
     );
+    // A ray that misses the sphere comes back as the empty interval (+inf, -inf). Its near end
+    // is not a hit: read as one, every ray that cleared the planet was in the planet's shadow,
+    // which put all the air above (R sin^2 h)/2 in darkness under a low Sun and left no twilight.
+    if (interval.x > interval.y) {
+        return -1.0;
+    }
     if (interval.x > PHYSICAL_ENV_RAY_EPSILON_M) {
         return interval.x;
     }

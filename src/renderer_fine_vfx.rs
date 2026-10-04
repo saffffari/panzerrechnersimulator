@@ -59,7 +59,7 @@ impl FineVfx {
             label:Some("native-hdr-grains"),layout:Some(&pipeline_layout),
             vertex:wgpu::VertexState {module:&shader,entry_point:Some("vs_grain"),compilation_options:Default::default(),buffers:&[wgpu::VertexBufferLayout {array_stride:96,step_mode:wgpu::VertexStepMode::Instance,attributes:&attrs}]},
             primitive:wgpu::PrimitiveState {cull_mode:None,..Default::default()},depth_stencil:None,multisample:Default::default(),
-            fragment:Some(wgpu::FragmentState {module:&shader,entry_point:Some("fs_grain"),compilation_options:Default::default(),targets:&[Some(wgpu::ColorTargetState {format:HDR,blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),multiview:None,cache:None,
+            fragment:Some(wgpu::FragmentState {module:&shader,entry_point:Some("fs_grain"),compilation_options:Default::default(),targets:&[Some(wgpu::ColorTargetState {format:hdr_format(),blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),multiview:None,cache:None,
         });
         Self {layout,pipeline,materials:HashMap::new(),particle_ids:HashMap::new(),frames:HashMap::new()}
     }

@@ -255,10 +255,16 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     if pipeline_cache {
         features |= wgpu::Features::PIPELINE_CACHE;
     }
+    // A 32-bit float frame where the adapter offers what it needs (see renderer::hdr_format).
+    if adapter.features().contains(renderer::HDR_FULL_FLOAT_FEATURES) {
+        features |= renderer::HDR_FULL_FLOAT_FEATURES;
+    }
     let mut limits = wgpu::Limits {
         max_push_constant_size: REQUIRED_PUSH_CONSTANT_SIZE,
         ..Default::default()
     };
+    // Several 32-bit float targets in one pass exceed the default 32 bytes per sample.
+    limits.max_color_attachment_bytes_per_sample = al.max_color_attachment_bytes_per_sample.min(96);
     // Portable exact source visibility needs the same lossless geometry capacity without RT.
     limits.max_buffer_size = al.max_buffer_size.min(4 * 1024 * 1024 * 1024);
     limits.max_storage_buffer_binding_size = al.max_storage_buffer_binding_size;
@@ -308,6 +314,7 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
             limits.max_storage_buffers_per_shader_stage,
         );
     }
+    println!("[panzerrechnersystem] HDR frame format: {:?}", renderer::choose_hdr_format(adapter, features));
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("panzerrechnersystem-device"),
         required_features: features,

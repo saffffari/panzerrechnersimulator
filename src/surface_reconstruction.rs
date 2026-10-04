@@ -60,7 +60,7 @@ impl Gpu {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
+            format: crate::renderer::hdr_format(),
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
@@ -86,7 +86,7 @@ impl Gpu {
             sampled(wgpu::TextureSampleType::Depth),
             sampled(wgpu::TextureSampleType::Uint),
             wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly,
-                format: wgpu::TextureFormat::Rgba16Float,
+                format: crate::renderer::hdr_format(),
                 view_dimension: wgpu::TextureViewDimension::D2 },
         ];
         let entries: Vec<_> = types.into_iter().enumerate().map(|(binding, ty)| {
@@ -98,7 +98,7 @@ impl Gpu {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("diffuse-reconstruction"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(crate::renderer::hdr_storage_source(SHADER).into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("diffuse-reconstruction-pipeline-layout"),

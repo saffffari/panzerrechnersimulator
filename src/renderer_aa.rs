@@ -27,8 +27,8 @@ impl Targets {
             usage:wgpu::TextureUsages::RENDER_ATTACHMENT|wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats:&[],
         }).create_view(&Default::default());
-        let color=view("native-aa-color",HDR);
-        let ambient=view("native-aa-ambient",HDR);
+        let color=view("native-aa-color",hdr_format());
+        let ambient=view("native-aa-ambient",hdr_format());
         let depth=view("native-aa-depth",DEPTH);
         let depth_bind=device.create_bind_group(&wgpu::BindGroupDescriptor {
             label:Some("native-aa-depth-resolve"),layout,
@@ -68,8 +68,8 @@ impl GeometryAa {
             step_mode:wgpu::VertexStepMode::Vertex,attributes:&attrs},
             wgpu::VertexBufferLayout{array_stride:64,step_mode:wgpu::VertexStepMode::Instance,attributes:&inst_attrs}];
         let pipeline=|inst:bool,ambient:bool| {
-            let mut targets=vec![Some(color_target(HDR))];
-            if ambient {targets.push(Some(color_target(HDR)));}
+            let mut targets=vec![Some(color_target(hdr_format()))];
+            if ambient {targets.push(Some(color_target(hdr_format())));}
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label:Some("native-aa-mesh"),layout:Some(mesh_layout),
                 vertex:wgpu::VertexState{module:mesh_shader,entry_point:Some(if inst{"vs_inst"}else{"vs"}),
@@ -90,7 +90,7 @@ impl GeometryAa {
             primitive:Default::default(),depth_stencil:Some(depth_state(false,wgpu::CompareFunction::Equal)),
             multisample:wgpu::MultisampleState{count:SAMPLES,..Default::default()},
             fragment:Some(wgpu::FragmentState{module:sky_shader,entry_point:Some("fs"),
-                targets:&[Some(color_target(HDR))],compilation_options:Default::default()}),multiview:None,cache:None,
+                targets:&[Some(color_target(hdr_format()))],compilation_options:Default::default()}),multiview:None,cache:None,
         });
         let resolve_layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label:Some("native-aa-depth-pipeline-layout"),bind_group_layouts:&[&layout],push_constant_ranges:&[],

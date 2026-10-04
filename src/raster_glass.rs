@@ -1,6 +1,6 @@
 //! Cheap, deterministic glazing for the explicit shader renderer. The opaque scene/sky are
 //! already present; panes add only a weak premultiplied sheen and never replace scene depth.
-use super::{DEPTH, HDR, PushData, RenderWorkStats, Renderer};
+use super::{DEPTH, hdr_format, PushData, RenderWorkStats, Renderer};
 use glam::Mat4;
 
 fn glass_depth() -> wgpu::DepthStencilState {
@@ -15,7 +15,7 @@ fn glass_depth() -> wgpu::DepthStencilState {
 
 fn glass_target() -> wgpu::ColorTargetState {
     wgpu::ColorTargetState {
-        format: HDR,
+        format: hdr_format(),
         blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
         write_mask: wgpu::ColorWrites::ALL,
     }
@@ -25,7 +25,7 @@ pub(super) fn pipeline(
     device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, glow: bool,
 ) -> wgpu::RenderPipeline {
     let mut targets=vec![Some(glass_target())];
-    if glow { targets.push(Some(wgpu::ColorTargetState {format:HDR,blend:None,write_mask:wgpu::ColorWrites::ALPHA})); }
+    if glow { targets.push(Some(wgpu::ColorTargetState {format:hdr_format(),blend:None,write_mask:wgpu::ColorWrites::ALPHA})); }
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("raster-glass"),
         layout: Some(layout),

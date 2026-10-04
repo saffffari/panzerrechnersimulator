@@ -4,7 +4,7 @@
 //! retain their centered virtual-pupil approximation. Finite internal aperture rejection,
 //! glass/prism aberration and sub-aperture lateral exit parallax remain raster limitations;
 //! preserved hoods and roof fixtures still occlude the exterior objective.
-use super::{CameraUniform, RenderWorkStats, Renderer, DEPTH, HDR};
+use super::{CameraUniform, RenderWorkStats, Renderer, DEPTH, hdr_format};
 use glam::{Mat4, Vec3};
 use std::cell::RefCell;
 
@@ -148,7 +148,7 @@ fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayo
         label:Some("optic-deterministic-smoke-over"),layout:Some(&smoke_layout),
         vertex:wgpu::VertexState {module:&smoke_module,entry_point:Some("vs"),buffers:&[],compilation_options:Default::default()},
         fragment:Some(wgpu::FragmentState {module:&smoke_module,entry_point:Some("fs"),compilation_options:Default::default(),
-            targets:&[Some(wgpu::ColorTargetState {format:HDR,blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
+            targets:&[Some(wgpu::ColorTargetState {format:hdr_format(),blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
         primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview:None,cache:None,
     });
     let particle_layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -160,7 +160,7 @@ fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayo
             buffers:&[wgpu::VertexBufferLayout {array_stride:16,step_mode:wgpu::VertexStepMode::Instance,
                 attributes:&wgpu::vertex_attr_array![0=>Float32x3,1=>Uint32]}]},
         fragment:Some(wgpu::FragmentState {module:&particle_module,entry_point:Some("fs_hdr"),compilation_options:Default::default(),
-            targets:&[Some(wgpu::ColorTargetState {format:HDR,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
+            targets:&[Some(wgpu::ColorTargetState {format:hdr_format(),blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
         primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview:None,cache:None,
     });
     (WeatherPipelines {smoke:smoke_pipe,particles:particle_pipe},WeatherLayouts {smoke,particles})
@@ -357,9 +357,9 @@ impl RasterOptics {
             view_formats:&[],
         })
         };
-        let color = make_texture("raster-optic-exterior-array", HDR);
+        let color = make_texture("raster-optic-exterior-array", hdr_format());
         let depth = make_texture("raster-optic-depth-array", DEPTH);
-        let tracers = make_texture("raster-optic-no-bloom-tracers", HDR);
+        let tracers = make_texture("raster-optic-no-bloom-tracers", hdr_format());
         let tracer_array=tracers.create_view(&wgpu::TextureViewDescriptor {
             dimension:Some(wgpu::TextureViewDimension::D2Array),..Default::default()
         });
@@ -390,8 +390,8 @@ impl RasterOptics {
                 buffers:&[wgpu::VertexBufferLayout {array_stride:std::mem::size_of::<crate::gltf_load::Vertex>() as u64,
                     step_mode:wgpu::VertexStepMode::Vertex,attributes:&wgpu::vertex_attr_array![0=>Float32x3]}]},
             fragment:Some(wgpu::FragmentState {module:&shader,entry_point:Some("fs"),compilation_options:Default::default(),
-                targets:&[Some(wgpu::ColorTargetState {format:HDR,blend:None,write_mask:wgpu::ColorWrites::ALL}),
-                    Some(wgpu::ColorTargetState {format:HDR,blend:None,write_mask:wgpu::ColorWrites::ALL})]}),
+                targets:&[Some(wgpu::ColorTargetState {format:hdr_format(),blend:None,write_mask:wgpu::ColorWrites::ALL}),
+                    Some(wgpu::ColorTargetState {format:hdr_format(),blend:None,write_mask:wgpu::ColorWrites::ALL})]}),
             primitive:wgpu::PrimitiveState {cull_mode:None,..Default::default()},
             depth_stencil:Some(wgpu::DepthStencilState {format:DEPTH,depth_write_enabled:true,depth_compare:wgpu::CompareFunction::LessEqual,
                 stencil:Default::default(),bias:Default::default()}),
@@ -406,7 +406,7 @@ impl RasterOptics {
                 buffers:&[wgpu::VertexBufferLayout {array_stride:std::mem::size_of::<crate::gltf_load::Vertex>() as u64,
                     step_mode:wgpu::VertexStepMode::Vertex,attributes:&wgpu::vertex_attr_array![0=>Float32x3]}]},
             fragment:Some(wgpu::FragmentState {module:&tracer_module,entry_point:Some("fs_tracer_panel"),compilation_options:Default::default(),
-                targets:&[Some(wgpu::ColorTargetState {format:HDR,blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
+                targets:&[Some(wgpu::ColorTargetState {format:hdr_format(),blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
             primitive:wgpu::PrimitiveState {cull_mode:None,..Default::default()},
             depth_stencil:Some(wgpu::DepthStencilState {format:DEPTH,depth_write_enabled:false,depth_compare:wgpu::CompareFunction::LessEqual,
                 stencil:Default::default(),bias:Default::default()}),multisample:Default::default(),multiview:None,cache:None,

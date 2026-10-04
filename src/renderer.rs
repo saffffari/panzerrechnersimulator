@@ -491,7 +491,34 @@ fn configured_camera_exposure_override() -> Option<f32> {
     Some(value)
 }
 
-const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The scene-referred frame's storage format. Half floats hold radiance down to 6e-8 units
+/// (0.004 cd/m2) and only in steps of that size, so a moonlit field stored as exactly zero and
+/// the night sky in a handful of steps. Where the adapter can blend, filter and multisample
+/// 32-bit float targets the frame is stored in those; the light and every shader are the same.
+static HDR_FORMAT: std::sync::OnceLock<wgpu::TextureFormat> = std::sync::OnceLock::new();
+pub(crate) fn hdr_format() -> wgpu::TextureFormat {
+    *HDR_FORMAT.get().unwrap_or(&wgpu::TextureFormat::Rgba16Float)
+}
+/// A compute shader that stores into a frame-format target names that format in its source.
+pub(crate) fn hdr_storage_source(source: &str) -> String {
+    if hdr_format() == wgpu::TextureFormat::Rgba32Float { source.replace("rgba16float", "rgba32float") }
+    else { source.to_owned() }
+}
+/// The device features a 32-bit float frame needs. `KESSEL_HDR_HALF=1` keeps half floats.
+pub(crate) const HDR_FULL_FLOAT_FEATURES: wgpu::Features = wgpu::Features::FLOAT32_FILTERABLE
+    .union(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+/// Call once, before any renderer exists, with the features the device was granted.
+pub(crate) fn choose_hdr_format(adapter: &wgpu::Adapter, granted: wgpu::Features) -> wgpu::TextureFormat {
+    let full = wgpu::TextureFormat::Rgba32Float;
+    let flags = adapter.get_texture_format_features(full).flags;
+    let able = granted.contains(HDR_FULL_FLOAT_FEATURES)
+        && flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4)
+        && flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
+        && flags.contains(wgpu::TextureFormatFeatureFlags::BLENDABLE)
+        && flags.contains(wgpu::TextureFormatFeatureFlags::FILTERABLE)
+        && std::env::var_os("KESSEL_HDR_HALF").is_none();
+    *HDR_FORMAT.get_or_init(|| if able { full } else { wgpu::TextureFormat::Rgba16Float })
+}
 // Keep the tone-mapped frame in display codes. Linear RGBA8 erased the first
 // 31-level palette entry in dark interiors and its compensating dither made
 // alternating black holes. Attachment writes encode; sampling decodes, so the
@@ -2950,9 +2977,42 @@ fn debug_light_aces(v: f32) -> f32 {
 fn debug_read_rgba16f(
     device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture,
 ) -> anyhow::Result<Vec<u8>> {
+    // A 32-bit float frame is narrowed to the half floats these diagnostics were written for.
+    if texture.format() == wgpu::TextureFormat::Rgba32Float {
+        return Ok(debug_read_rgba_f32(device, queue, texture)?.into_iter().flatten()
+            .flat_map(|v| debug_f32_to_half(v).to_le_bytes()).collect());
+    }
     anyhow::ensure!(texture.format() == wgpu::TextureFormat::Rgba16Float,
         "light-layer readback requires RGBA16F");
     debug_read_light_target(device, queue, texture)
+}
+
+/// The frame's texels at the precision they are stored in, whichever float format holds them.
+fn debug_read_rgba_f32(
+    device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture,
+) -> anyhow::Result<Vec<[f32; 4]>> {
+    let raw = debug_read_light_target(device, queue, texture)?;
+    Ok(match texture.format() {
+        wgpu::TextureFormat::Rgba32Float => raw.chunks_exact(16).map(|p| std::array::from_fn(|c|
+            f32::from_le_bytes([p[c * 4], p[c * 4 + 1], p[c * 4 + 2], p[c * 4 + 3]]))).collect(),
+        _ => raw.chunks_exact(8).map(|p| std::array::from_fn(|c|
+            debug_half_to_f32(u16::from_le_bytes([p[c * 2], p[c * 2 + 1]])))).collect(),
+    })
+}
+
+/// Round a float to the nearest half float (diagnostic narrowing only).
+fn debug_f32_to_half(value: f32) -> u16 {
+    let sign = if value.is_sign_negative() { 0x8000u16 } else { 0 };
+    let v = value.abs();
+    if v.is_nan() { return sign | 0x7e00; }
+    if v >= 65520.0 { return sign | 0x7c00; }
+    if v < 6.103_515_6e-5 { return sign | (v / 5.960_464_5e-8).round() as u16; }
+    let bits = v.to_bits();
+    let exponent = ((bits >> 23) as i32 - 127 + 15) as u32;
+    let mantissa = bits & 0x007f_ffff;
+    let mut half = (exponent << 10) | (mantissa >> 13);
+    if mantissa & 0x1000 != 0 { half += 1; }
+    sign | half as u16
 }
 
 /// Copy only tightly packed original words. In particular, object IDs must never pass through
@@ -2962,6 +3022,7 @@ fn debug_read_light_target(
 ) -> anyhow::Result<Vec<u8>> {
     let bytes_per_pixel = match texture.format() {
         wgpu::TextureFormat::Rgba16Float => 8,
+        wgpu::TextureFormat::Rgba32Float => 16,
         wgpu::TextureFormat::R32Uint => 4,
         format => anyhow::bail!("unsupported light diagnostic format: {format:?}"),
     };
@@ -3540,7 +3601,7 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: HDR,
+            format: hdr_format(),
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC, // RTT periscope tiles crop out of this
@@ -3864,7 +3925,7 @@ impl Renderer {
         let sky_compile_start = std::time::Instant::now();
         println!("[renderer] compiling sky pipeline");
         let sky_pipe =
-            fullscreen_pipe_cached(device, &sky_shader, &sky_pl, HDR, pipeline_cache.as_ref());
+            fullscreen_pipe_cached(device, &sky_shader, &sky_pl, hdr_format(), pipeline_cache.as_ref());
         let sky_depth_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky-depth-gated"),
             layout: Some(&sky_pl),
@@ -3886,7 +3947,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState {
                 module: &sky_shader,
                 entry_point: Some("fs"),
-                targets: &[Some(color_target(HDR))],
+                targets: &[Some(color_target(hdr_format()))],
                 compilation_options: Default::default(),
             }),
             multiview: None,
@@ -4079,7 +4140,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState {
                 module: &mesh_shader,
                 entry_point: Some("fs"),
-                targets: &[Some(color_target(HDR))],
+                targets: &[Some(color_target(hdr_format()))],
                 compilation_options: Default::default(),
             }),
             multiview: None,
@@ -4256,7 +4317,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState {
                 module: &mesh_shader,
                 entry_point: Some("fs"),
-                targets: &[Some(color_target(HDR))],
+                targets: &[Some(color_target(hdr_format()))],
                 compilation_options: Default::default(),
             }),
             multiview: None,
@@ -4271,8 +4332,8 @@ impl Renderer {
         // Rgba8Unorm clamped it at 1.0 and the parity gate caught the darkening immediately.
         // Drops back to 8-bit once the S-calib slice moves the lift to texture-load time.
         const G0F: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-        const G1F: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-        const G2F: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+        let G1F: wgpu::TextureFormat = hdr_format();
+        let G2F: wgpu::TextureFormat = hdr_format();
         const G3F: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
         let g0_view = make_target(
             device,
@@ -4567,7 +4628,7 @@ impl Renderer {
         debug_assert_eq!(combine_pipe.is_some(), rt_on);
 
         // ---------- S3: temporal accumulation (accum.wgsl compute) + resolve ----------
-        let accum_shader = shader(device, "accum", include_str!("../shaders/accum.wgsl"));
+        let accum_shader = shader(device, "accum", &hdr_storage_source(include_str!("../shaders/accum.wgsl")));
         let resolve_shader = shader(device, "resolve", include_str!("../shaders/resolve.wgsl"));
         let lit_diff_view = make_target(
             device,
@@ -4721,7 +4782,7 @@ impl Renderer {
         let volume_accum_shader = shader(
             device,
             "volume-accum",
-            include_str!("../shaders/volume_accum.wgsl"),
+            &hdr_storage_source(include_str!("../shaders/volume_accum.wgsl")),
         );
         let volume_accum_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("volume-accum"),
@@ -5056,7 +5117,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState {
                 module: &resolve_shader,
                 entry_point: Some("fs"),
-                targets: &[Some(color_target(HDR))],
+                targets: &[Some(color_target(hdr_format()))],
                 compilation_options: Default::default(),
             }),
             multiview: None,
@@ -5222,7 +5283,7 @@ impl Renderer {
             "bloom-a",
             bw,
             bh,
-            HDR,
+            hdr_format(),
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
         let bloom_b_view = make_target(
@@ -5230,7 +5291,7 @@ impl Renderer {
             "bloom-b",
             bw,
             bh,
-            HDR,
+            hdr_format(),
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
         // Bilinear-clamp sampler for the bright pass / blur taps / half-res upsample.
@@ -5435,7 +5496,7 @@ impl Renderer {
                 module: &smoke_shader,
                 entry_point: Some("fs"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR,
+                    format: hdr_format(),
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -5476,7 +5537,7 @@ impl Renderer {
                     module: &volume_composite_shader,
                     entry_point: Some("fs"),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR,
+                        format: hdr_format(),
                         blend: Some(over_blend),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -10278,11 +10339,10 @@ impl Renderer {
     pub fn debug_frame_photometry(&self, device: &wgpu::Device, queue: &wgpu::Queue)
         -> anyhow::Result<FramePhotometry>
     {
-        let raw = debug_read_rgba16f(device, queue, &self.hdr_tex)?;
+        let raw = debug_read_rgba_f32(device, queue, &self.hdr_tex)?;
         let weights = crate::observer::PHOTOPIC_WEIGHTS;
-        let mut luminance: Vec<f64> = raw.chunks_exact(8).map(|pixel| {
-            (0..3).map(|c| debug_half_to_f32(u16::from_le_bytes([pixel[c * 2], pixel[c * 2 + 1]]))
-                as f64 * weights[c]).sum::<f64>().max(0.0)
+        let mut luminance: Vec<f64> = raw.iter().map(|pixel| {
+            (0..3).map(|c| pixel[c] as f64 * weights[c]).sum::<f64>().max(0.0)
         }).map(|v| if v.is_finite() { v } else { 0.0 }).collect();
         anyhow::ensure!(!luminance.is_empty(), "empty HDR frame");
         // Mean luminance of an 8 x 4 grid of image regions (row-major from the top left).
@@ -11068,7 +11128,7 @@ fn bloom_pipe(
             module,
             entry_point: Some(entry),
             targets: &[Some(wgpu::ColorTargetState {
-                format: HDR,
+                format: hdr_format(),
                 blend,
                 write_mask: wgpu::ColorWrites::ALL,
             })],

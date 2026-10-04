@@ -1,6 +1,6 @@
 //! Ambient-only raster SSAO: opaque geometry writes its ambient term alongside HDR in one draw.
 //! A bounded deterministic depth kernel removes occluded ambient before glass/optic composition.
-use super::{Camera, HDR, DEPTH, Vertex, RenderWorkStats};
+use super::{Camera, hdr_format, DEPTH, Vertex, RenderWorkStats};
 
 pub(super) struct RasterSsao {
     pub ambient: wgpu::TextureView,
@@ -16,7 +16,7 @@ impl RasterSsao {
         mesh_layout:&wgpu::PipelineLayout,mesh_shader:&wgpu::ShaderModule)->Self {
         let ambient=device.create_texture(&wgpu::TextureDescriptor {
             label:Some("raster-ambient"),size:wgpu::Extent3d{width,height,depth_or_array_layers:1},
-            mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,format:HDR,
+            mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,format:hdr_format(),
             usage:wgpu::TextureUsages::RENDER_ATTACHMENT|wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats:&[],
         }).create_view(&Default::default());
@@ -34,7 +34,7 @@ impl RasterSsao {
                 depth_compare:wgpu::CompareFunction::Less,stencil:Default::default(),bias:Default::default()}),
             multisample:Default::default(),fragment:Some(wgpu::FragmentState{module:mesh_shader,
                 entry_point:Some("fs_ambient"),compilation_options:Default::default(),
-                targets:&[Some(super::color_target(HDR)),Some(super::color_target(HDR))]}),
+                targets:&[Some(super::color_target(hdr_format())),Some(super::color_target(hdr_format()))]}),
             multiview:None,cache:None,
         });
         let mesh=mesh_pipe(false);let mesh_inst=mesh_pipe(true);
@@ -60,7 +60,7 @@ impl RasterSsao {
             vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[],compilation_options:Default::default()},
             primitive:Default::default(),depth_stencil:None,multisample:Default::default(),
             fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),compilation_options:Default::default(),
-                targets:&[Some(wgpu::ColorTargetState{format:HDR,write_mask:wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::BLUE,
+                targets:&[Some(wgpu::ColorTargetState{format:hdr_format(),write_mask:wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::BLUE,
                     blend:Some(wgpu::BlendState{color:wgpu::BlendComponent{src_factor:wgpu::BlendFactor::One,
                         dst_factor:wgpu::BlendFactor::One,operation:wgpu::BlendOperation::ReverseSubtract},
                         alpha:wgpu::BlendComponent::REPLACE})})]}),multiview:None,cache:None,

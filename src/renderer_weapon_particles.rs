@@ -42,7 +42,7 @@ impl WeaponParticles {
                 array_stride:std::mem::size_of::<Record>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&attrs}]},
             primitive:wgpu::PrimitiveState {cull_mode:None,..Default::default()},depth_stencil:None,multisample:Default::default(),
             fragment:Some(wgpu::FragmentState {module:&module,entry_point:Some("fs_weapon"),compilation_options:Default::default(),targets:&[Some(wgpu::ColorTargetState {
-                format:HDR,blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
+                format:hdr_format(),blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
             multiview:None,cache:None,
         });
         Self {sparks:pipeline("analytic-sparks","vs_spark"),tracers:pipeline("one-pixel-tracers","vs_tracer"),layout,

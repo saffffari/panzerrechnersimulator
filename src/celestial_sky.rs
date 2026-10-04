@@ -276,6 +276,23 @@ mod tests {
     }
 
     #[test]
+    fn the_light_falls_steadily_through_dusk() {
+        // Steppe, 16 July 1943: the Sun sets about 16:55 UT with a full Moon rising.
+        let mut last = f64::INFINITY;
+        for when in ["16:40", "16:50", "17:00", "17:10", "17:20", "17:40", "18:00", "18:30"] {
+            let (mut atmosphere, lighting) = sky_at(&format!("1943-07-16T{when}:00Z"), false);
+            atmosphere.cloud.coverage = 0.32;
+            let lux = horizontal_illuminance_lux(&atmosphere);
+            eprintln!("{when} sun {:+.2} moon {:+.2} key {:?} secondary {} : {lux:.5} lx",
+                lighting.state.sun.altitude_deg, lighting.state.moon.altitude_deg, lighting.key.body,
+                lighting.secondary.is_some());
+            assert!(lux < last * 1.05, "{when}: {lux} lx after {last}");
+            assert!(lux > last / 40.0 || last.is_infinite(), "{when}: {lux} lx after {last}: a cliff");
+            last = lux;
+        }
+    }
+
+    #[test]
     fn named_phases_are_instants_of_the_ephemeris() {
         let day = CelestialState::at(phase_instant(1, ClockPhase::Day), STALINGRAD);
         assert!((day.sun.altitude_deg - 17.85).abs() < 0.1, "{:?}", day.sun);

@@ -80,6 +80,13 @@ pub const ROD_TAU_DOWN_S: f64 = 8.0;
 pub const DISPLAY_ADAPTATION_CD_M2: f64 = 100.0;
 pub const DISPLAY_KEY: f64 = 0.18;
 pub const ROD_SATURATION_SCOT_TD: f64 = 1_700.0;
+/// How much brighter than the threshold-matched level the screen shows the rod signal. At 1 a
+/// moonlit field is reproduced as dim as it is to a dark-adapted eye, which on a monitor in a
+/// lit room is too dark to play by (owner, 2026-10-04). This is a reproduction choice named in
+/// docs/PHYSICAL_TRUTH_AUDIT.md: it changes no light, no adaptation state and no daylight
+/// frame (the rod share is zero in photopic light). `Mapping::aces_input` stays the eye model
+/// without it, so the research gates still test the model; only `crush.wgsl` applies it.
+pub const ROD_DISPLAY_GAIN: f64 = 6.0;
 
 /// A sample brighter than this multiple of the cone adaptation counts as flash light [E].
 pub const FLASH_ABOVE_ADAPTATION: f64 = 30.0;
@@ -496,6 +503,8 @@ pub fn wgsl_constants() -> String {
     push("OBS_DISPLAY_ADAPTATION", DISPLAY_ADAPTATION_CD_M2);
     push("OBS_DISPLAY_KEY", DISPLAY_KEY);
     push("OBS_ROD_SATURATION_TD", ROD_SATURATION_SCOT_TD);
+    push("OBS_ROD_DISPLAY_GAIN", std::env::var("KESSEL_ROD_DISPLAY_GAIN").ok()
+        .and_then(|v| v.parse().ok()).unwrap_or(ROD_DISPLAY_GAIN));
     push("OBS_FLASH_ABOVE_ADAPTATION", FLASH_ABOVE_ADAPTATION);
     push("OBS_FLASH_MEMORY_TAU", FLASH_MEMORY_TAU_S);
     push("OBS_FLASH_MIN_RECOVERY", FLASH_MIN_RECOVERY_S);
@@ -601,6 +610,16 @@ mod tests {
             assert!((after.cone_exposure / before.cone_exposure - 1.0).abs() < 1e-3,
                 "an adapted eye stays adapted: {before:?} {after:?}");
         }
+    }
+
+    #[test]
+    fn the_night_display_gain_is_a_named_bounded_departure_applied_only_by_the_display() {
+        assert!((1.0..=8.0).contains(&ROD_DISPLAY_GAIN));
+        let crush = include_str!("../shaders/crush.wgsl");
+        assert_eq!(crush.matches("OBS_ROD_DISPLAY_GAIN").count(), 1);
+        assert!(crush.contains("vec3(rods * OBS_ROD_DISPLAY_GAIN)"));
+        assert!(wgsl_constants().contains("const OBS_ROD_DISPLAY_GAIN: f32 = "));
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_GAIN"));
     }
 
     #[test]

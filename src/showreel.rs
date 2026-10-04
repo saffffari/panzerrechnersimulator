@@ -2549,7 +2549,7 @@ fn record_campaign_wave_take(
          final layout: {} at {:.1} m\n\
          death wave: {}\n\
          Act-I fog density: {act_fog_density:.5}\n\
-         camera exposure: measured HDR eye adaptation (continuous across camera cuts)\n\
+         camera exposure: measured hdr_format() eye adaptation (continuous across camera cuts)\n\
          retro response: {showreel_retro:.3}\n\
          exterior cameras: {:.2} s\n\
          interior cameras: {:.2} s\n\

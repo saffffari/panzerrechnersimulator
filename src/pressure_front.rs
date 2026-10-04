@@ -185,7 +185,7 @@ impl Gpu {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
+            format: crate::renderer::hdr_format(),
             usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -291,7 +291,7 @@ impl Gpu {
                     module: &shader,
                     entry_point: Some("fs"),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
+                        format: crate::renderer::hdr_format(),
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
