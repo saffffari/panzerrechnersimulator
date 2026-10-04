@@ -2750,6 +2750,8 @@ fn enemy_armor(kind: EnemyKind) -> crate::ballistics::ArmorScheme {
 /// Drives the stereo pan of hull impacts — a hit from the left CLANGS in the left ear.
 /// The earlier exterior gun recording sits this far under the main recording [E, by ear].
 const OUTSIDE_BLAST_LAYER_DB: f32 = -6.0;
+/// The recording made inside a firing tank, for a listener inside, relative to the main one.
+const INSIDE_RECORDING_LAYER_DB: f32 = -3.0;
 
 /// Share of the horizon, 0 to 1, that the ground closes off around a listener: sixteen bearings,
 /// each looked along at 60, 150 and 320 m for ground standing above a 6 degree line of sight.
@@ -25298,10 +25300,7 @@ impl Game {
         };
         // Two layers of one shot: the main recording, and the earlier exterior recording as the
         // blast outside the hull, a little under it.
-        let pick = {
-            let g = crate::audio::Sfx::PLAYER_GUNS_INT;
-            g[shot_sequence as usize % g.len()]
-        };
+        let pick = crate::audio::Sfx::PlayerGunInt1;
         let outside_blast = {
             let g = crate::audio::Sfx::PLAYER_GUNS_EXT;
             g[shot_sequence as usize % g.len()]
@@ -25332,6 +25331,17 @@ impl Game {
             outside.lpk_db += OUTSIDE_BLAST_LAYER_DB;
             let open_air = self.surroundings_reverb(self.ear_pos, crate::sound_propagation::Enclosure::HeadOut);
             audio.play_world_at_ear(outside_blast, &outside, bearing, open_air);
+            // Inside the hull, the recording made inside a firing tank. It was captured in a
+            // cabin, so it gets no hull filter and no added room: only the headset and its level.
+            if matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned
+                | crate::sound_propagation::Enclosure::HatchOpen) {
+                let mut inside = self.own_vehicle_ear_level(level.lpk_db, level.laf_db, level.spectrum,
+                    level.a_duration_ms);
+                inside.laf_db += INSIDE_RECORDING_LAYER_DB;
+                inside.lpk_db += INSIDE_RECORDING_LAYER_DB;
+                audio.play_world_at_ear(crate::audio::Sfx::PlayerGunInt2, &inside, 0.0,
+                    crate::acoustics::ReverbParams::DIRECT);
+            }
         }
         if let Some(a) = &self.audio {
             a.play_mechanical(

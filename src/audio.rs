@@ -198,8 +198,10 @@ const FILE_GUN_EXT: [&str; 4] = [
 /// The Tiger's main gun (owner's `tiger_main_gun.wav`, 2026-10-03). One dry recording serves
 /// every listening position: the hull's high-frequency loss and the cabin's reverberation inside,
 /// and the air, ground, bearing and surroundings outside, are applied when it is played
-/// (`Game::play_player_main_gun_report`). The two slots are the same file.
-const FILE_GUN_INT: [&str; 2] = ["tiger_main_gun_20261003.ogg", "tiger_main_gun_20261003.ogg"];
+/// (`Game::play_player_main_gun_report`). The second slot is a recording made inside a tank as
+/// its gun fired (owner's `recording_inside_tank_firing_main_gun.wav`): it already carries the
+/// cabin, so it is added for a listener inside almost as it is.
+const FILE_GUN_INT: [&str; 2] = ["tiger_main_gun_20261003.ogg", "tiger_main_gun_inside_20261003.ogg"];
 /// Enemy gun report — the same 120 mm shot low-passed to read as distance
 /// (stand-in until a true distant report is sourced).
 const FILE_ENEMY_GUN: &str = "main_gun_fire_distant.ogg";
