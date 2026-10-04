@@ -7855,6 +7855,12 @@ fn casing_pull_step(progress: f32, dt: f32, held: bool, eligible: bool, aimed: b
 /// Weapon/hull motion is not rubbing against the chamber; empty resets are silent.
 /// Real settled-body taps remain audible during rolling, but gravity/support microcontacts
 /// alone do not become an endless rattle. Per-body cooldown is applied at the call sites.
+/// Anti-tank and tank gun rounds. A crew does not stay in a hull one of these has come through.
+const ABANDON_CALIBRE_MM: f32 = 37.0;
+fn penetration_makes_crew_abandon(shell: &crate::ballistics::ShellSpec) -> bool {
+    shell.caliber_mm >= ABANDON_CALIBRE_MM
+}
+
 /// A body that has not travelled since it last sounded is jittering on its support, not
 /// striking anything: it stays silent unless the blow is a real one. `place` and `sounded_at`
 /// are in the frame the body rides in.
@@ -24772,7 +24778,16 @@ impl Game {
                         projectile.shell.name,
                         projectile.distance_m
                     );
-                    let damage=self.enemy_crew.resolve(index,&self.enemies[index],projectile,event,impact_pos,false);
+                    let mut damage=self.enemy_crew.resolve(index,&self.enemies[index],projectile,event,impact_pos,false);
+                    // CREW BEHAVIOUR, not ballistics: a tank holed by a gun round is abandoned.
+                    // Whoever the fragments spared climbs out; they do not fight on in a
+                    // penetrated hull. Before this a hit through the front plate that killed only
+                    // the two hull crew left the tank shooting as if untouched.
+                    if !damage.disabled && penetration_makes_crew_abandon(&projectile.shell) {
+                        println!("[panzerrechnersystem] {} #{} abandoned by its surviving crew.",
+                            self.enemies[index].kind.name(), index);
+                        damage.disabled = true;
+                    }
                     if damage.disabled {self.destroy_enemy_damage(index,damage.ammo,damage.fuel);}
                     self.wrecks[index].absorb_impact(&event);
                     self.wrecks[index].set_turret_impact(impact_pos, armor.world_normal);
@@ -24784,6 +24799,13 @@ impl Game {
                     self.schedule_sound_from(crate::audio::Sfx::ImpactTank, impact_pos);
                     self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
                 } else {
+                    if matches!(projectile.shooter, ProjectileShooter::Player) && self.enemies[index].alive {
+                        println!(
+                            "[armor] {} #{} {:?} hit by Tiger: {}, {:.1} m, {:.1} deg, penetration {:.1} mm / effective {:.1} mm, {:?}",
+                            self.enemies[index].kind.name(), index, armor.facing, event.shell.name, event.range_m,
+                            event.impact_angle_deg, event.pen_mm, event.effective_mm, event.terminal,
+                        );
+                    }
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
                     let pick = clangs[projectile.seed as usize % clangs.len()];
                     let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(pick,event.terminal));

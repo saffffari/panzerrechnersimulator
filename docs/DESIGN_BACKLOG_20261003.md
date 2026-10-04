@@ -60,6 +60,12 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | Items stow only in their own starting stowage spot. That spot lights up while the item is in hand and the cursor is over it. | open |
 | Cupola hatch is worked by E on the lever below it. The H key is removed. | done |
 | X throws the carried spent case, out of any open hatch ahead, to clear room in the tank. | done for the case in the loader's hands. A case cannot yet be carried to another station. |
+| A penetrating gun hit knocks an enemy tank out: the crew the fragments spared abandon it and climb out. | done. A penetration through the front that killed only the hull crew used to leave the tank fighting. |
+| Surviving enemy crew who bail out become infantry and fight on foot. | not done: they climb out and walk away unarmed. The infantry pool is a fixed set, so this needs a way to add a soldier at run time. |
+| Cigarette: C brings out the whole packet, each cigarette is outlined and taken with LMB, one is inverted; RMB lights and tokes; a lit one lasts a minute, goes to the mouth when the hands are needed, is tapped at each quarter, and leaves a butt on the floor; each toke adds 10 s of brighter sight, stacking to 120 s. | done, not yet judged in play. |
+| Small pixel-font interaction hint at the bottom centre, in the outline colour, naming the action and its button. | done |
+| The driver brakes when no drive is asked for, so the tank stops in seconds and holds on slopes. | done |
+| Loose brass rides with the tank and cannot sound again without moving, to stop the endless clinking. | done, not yet confirmed by ear. |
 | At the cupola Shift is head out and in, and held Space (1.5 s) climbs out, from either position. Both need the hatch already open; nothing opens it automatically. The lever pivot cylinder is part of the hatch lever target and outline. | done |
 | C is the cigarette. The compass moves onto M, coupled with the map. | done |
 | Arrow keys traverse and elevate the gun from the cupola and head-out, and remain available in the sights where the mouse also works. | done |
