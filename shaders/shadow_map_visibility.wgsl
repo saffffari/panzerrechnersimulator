@@ -43,7 +43,10 @@ fn scene_point_transmission(source:vec3<f32>,radius:f32,receiver:vec3<f32>)->vec
     if(lamp<0){scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);}
     let offset=receiver-source;let major=max(abs(offset.x),max(abs(offset.y),abs(offset.z)));
     let limits=cabin_shadow_range(lamp);
-    if(major>=limits.y){scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);}
+    if(major>=limits.y){
+        if(cabin_shadow_reach_limited(lamp)){return vec3(0.0);}
+        scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);
+    }
     // Only the numerical 5 mm source-near support is unsampled, never an 8 m light cutoff.
     if(major<=limits.x){return vec3(1.0);}
     let bias=max(0.00005,major*0.00000024);

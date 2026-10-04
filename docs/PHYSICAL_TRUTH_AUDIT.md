@@ -680,6 +680,12 @@ the forward path omits reflected practical-light bounce. No fill/emission/shadow
 exception was added. A daylight material check and future cabin-light transport
 refinement remain separate acceptance work, as recorded in the hand-prop note.
 
+## Bounded transport (2026-10-03)
+
+| Bound | What it does | Where | Error |
+| --- | --- | --- | --- |
+| Cabin fixture reach | The registered cabin practical lamps (dome, dial illuminator, status lamps) transport light and cast source-geometry shadows out to 24 m. A receiver farther away takes exactly zero from them. Every other point source keeps the whole-scene range. No lamp is ever unshadowed. | `src/cabin_shadows.rs` (`CABIN_FIXTURE_REACH_M`), `shaders/cabin_visibility.wgsl` | At the bound a lamp delivers 1/576 of its 1 m irradiance, so the step is 0.17 percent of an already dim source. Before this bound each lamp's six shadow faces redrew every world caster on every frame the tank moved (about 47,000 shadow draws per frame in the canyon). |
+
 ## Owner-directed gameplay departures
 
 | Departure (date) | What it does | Where | Why |

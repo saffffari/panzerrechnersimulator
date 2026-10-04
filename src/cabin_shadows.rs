@@ -19,13 +19,17 @@ const SIDE: u32 = 512;
 // Linear face-distance Depth32Float bounds worst quantization below 0.062 mm at 512 m.
 const NEAR: f32 = 0.005;
 const FAR: f32 = 512.0;
+/// Transport bound of the registered cabin fixtures (dome, dial and status lamps), the same 24 m
+/// the protected interior view already uses as its far plane. At the bound a lamp delivers
+/// 1/576 of its 1 m irradiance; the discontinuity is that fraction of an already dim source.
+pub const CABIN_FIXTURE_REACH_M: f32 = 24.0;
 // Distant muzzle/impact rays must also capture the receiving tank, not only the source vehicle.
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniform {
     pub lamps: [[f32; 4]; MAX_LIGHTS], // world position; enabled, matched to packed source position
-    pub projections: [[f32;4];MAX_LIGHTS], // near, far, unused, unused
+    pub projections: [[f32;4];MAX_LIGHTS], // near, far, reach-limited flag, unused
     pub torch_position: [f32; 4], // xyz, enabled
     pub torch_direction: [f32; 4], // xyz, outer cone cosine
     pub range: [f32; 4],               // near, far, texel angular scale, active lights
@@ -478,8 +482,15 @@ impl CabinShadows {
             uniform.lamps[i] = [lamp.pos.x, lamp.pos.y, lamp.pos.z, emitter.map_or(1.0,|id|id as f32+2.0)];
             uniform.range[3] += 1.0;
             if !self.render_maps {continue;}
-            let far=source_far_range(lamp.pos,lo,hi);
-            ranges[i]=far;uniform.projections[i]=[NEAR,far,0.0,0.0];
+            // A cabin practical lamp radiates a few microwatts per steradian. Mapping the whole
+            // battlefield around it redrew every world caster, six faces per lamp, on each frame
+            // the tank moved. Its transport is bounded at CABIN_FIXTURE_REACH_M: receivers past
+            // that take exactly zero from the lamp (flag in lane z), never an unshadowed value.
+            let reach_limited=registered.iter().take(CABIN_LIGHTS)
+                .any(|r|active_fixture(r) && r.pos.abs_diff_eq(lamp.pos,0.0001));
+            let far=if reach_limited {source_far_range(lamp.pos,lo,hi).min(CABIN_FIXTURE_REACH_M)}
+                else {source_far_range(lamp.pos,lo,hi)};
+            ranges[i]=far;uniform.projections[i]=[NEAR,far,if reach_limited {1.0} else {0.0},0.0];
             let changed = caches[i].observe(lamp_signature(source_keys[0],lamp,emitter,far),
                 lamp_signature(source_keys[1],lamp,emitter,far));
             if !changed.compose { continue; }

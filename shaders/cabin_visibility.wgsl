@@ -20,6 +20,11 @@ fn cabin_fixture_index(source: vec3<f32>) -> i32 {
 fn cabin_shadow_range(lamp: i32) -> vec2<f32> {
     return cabin_shadows.projections[lamp].xy;
 }
+// A registered cabin fixture has a declared transport bound (CABIN_FIXTURE_REACH_M). Beyond it
+// the lamp contributes exactly nothing; that is a bounded source, not unresolved visibility.
+fn cabin_shadow_reach_limited(lamp: i32) -> bool {
+    return cabin_shadows.projections[lamp].z > 0.5;
+}
 fn cabin_shadow_reference(major: f32, bias_m: f32, lamp: i32) -> f32 {
     let limits = cabin_shadow_range(lamp);
     let near = limits.x;
