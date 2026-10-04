@@ -413,8 +413,10 @@ size, and stitch-apron rules.
 - **E is a second interact key**: it does whatever the action button would do under the crosshair.
 - **At the cupola, Shift puts the head out and back in, and held Space climbs out.** Both need
   the hatch already open; neither opens it. A tap of Space there does nothing, so a stray press
-  cannot leave the tank. Q still drops back into the turret. The X key is no longer used.
+  cannot leave the tank. Q still drops back into the turret. X is now the throw key.
 - **The hatch lever's target is the grip and the pivot cylinder it turns**, outlined together.
+- **X throws the spent case in your hands** where you are looking. Through an open hatch it
+  leaves the tank and lies on the ground. LMB still just lets go of it.
 - **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
   Space to go through.
 - **Reload:** take a rack round, carry it to the open breech and line it up, press again to ram

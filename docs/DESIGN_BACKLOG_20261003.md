@@ -59,6 +59,7 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | E enters a spot (sight, hatch, seat); E again leaves it. | partly done: E enters. Leaving a spot still uses its existing key. |
 | Items stow only in their own starting stowage spot. That spot lights up while the item is in hand and the cursor is over it. | open |
 | Cupola hatch is worked by E on the lever below it. The H key is removed. | done |
+| X throws the carried spent case, out of any open hatch ahead, to clear room in the tank. | done for the case in the loader's hands. A case cannot yet be carried to another station. |
 | At the cupola Shift is head out and in, and held Space (1.5 s) climbs out, from either position. Both need the hatch already open; nothing opens it automatically. The lever pivot cylinder is part of the hatch lever target and outline. | done |
 | C is the cigarette. The compass moves onto M, coupled with the map. | done |
 | Arrow keys traverse and elevate the gun from the cupola and head-out, and remain available in the sights where the mouse also works. | done |

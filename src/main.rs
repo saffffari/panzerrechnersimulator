@@ -9615,7 +9615,7 @@ struct Keys {
     mmb: bool,   // middle mouse held — coax MG34 at the gunner sights
     r: bool,     // R — on-foot Luger magazine change
     z: bool,     // Z — engine shutoff / crank (Zündung)
-    x: bool,     // unused since 2026-10-03: Shift is head out/in, held Space climbs out
+    x: bool,     // not polled: X is a press (throw the carried spent case)
     lan_hatch_pulse: bool,
     mouse_dx: f32,
     mouse_dy: f32,
@@ -14604,6 +14604,11 @@ impl ApplicationHandler for App {
                         KeyCode::KeyV => {
                             state.game.stow_personal_hand_item();
                             if state.game.toggle_mounted_sidearm() {self.binocs=false;}
+                        }
+                        // X throws the spent case in the hands, out of a hatch if one is open ahead.
+                        KeyCode::KeyX if state.game.mode == game::Mode::Tank => {
+                            let forward = state.renderer.camera.forward();
+                            state.game.throw_carried_casing(forward);
                         }
                         // T — swap the loaded shell nature (PzGr AP ↔ SprGr HE).
                         KeyCode::KeyT if state.game.mode == game::Mode::Tank => {

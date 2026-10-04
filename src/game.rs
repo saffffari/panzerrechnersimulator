@@ -7862,6 +7862,32 @@ fn cartridge_contact_audible(report: &shell_collision::Report) -> bool {
 mod cartridge_audio_gate_tests {
     use super::*;
     #[test]
+    fn brass_in_the_tank_rides_with_it_and_brass_outside_does_not() {
+        let hull = |x: f32, yaw: f32| Mat4::from_translation(Vec3::new(x, 10.0, -40.0))
+            * Mat4::from_rotation_y(yaw);
+        let (before, after) = (hull(100.0, 0.3), hull(100.4, 0.35));
+        let step = after * before.inverse();
+        // A case at rest on the floor keeps its place in the tank and gains no velocity.
+        let local = Vec3::new(0.4, 0.9, -0.6);
+        let (mut p, mut q, mut v, mut w) = (before.transform_point3(local), Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO);
+        assert!(brass_aboard(before.inverse(), p));
+        carry_with_frame(step, &mut p, &mut q, &mut v, &mut w);
+        assert!(p.distance(after.transform_point3(local)) < 1e-3);
+        assert_eq!(v, Vec3::ZERO);
+        assert!((q.to_euler(glam::EulerRot::YXZ).0 - 0.05).abs() < 1e-3, "it turns with the floor");
+        // A rolling case keeps its speed, turned with the frame.
+        let mut v = before.transform_vector3(Vec3::X * 0.5);
+        carry_with_frame(step, &mut p, &mut q, &mut v, &mut w);
+        assert!(v.distance(after.transform_vector3(Vec3::X * 0.5)) < 1e-3);
+        // Ground beside the tank and the air above it are not aboard; a respawn is not motion.
+        assert!(!brass_aboard(before.inverse(), before.transform_point3(Vec3::new(3.0, 0.5, 0.0))));
+        assert!(!brass_aboard(before.inverse(), before.transform_point3(Vec3::new(0.0, 4.0, 0.0))));
+        let far = hull(900.0, 0.0) * before.inverse();
+        let mut still = p;
+        carry_with_frame(far, &mut still, &mut q, &mut v, &mut w);
+        assert_eq!(still, p);
+    }
+    #[test]
     fn floor_contact_gate_retains_real_roll_taps_and_rejects_support_jitter() {
         let contact = |normal, tangent, grounded| shell_collision::Report {
             impact_speed: normal, tangential_speed: tangent, grounded,
@@ -8056,7 +8082,33 @@ struct Casing {
     /// Riding the loader's hands: the lightweight hand spring supplies its pose.
     carried: bool,
     drop_rest: shell_collision::DropRest,
+    /// Inside the tank's envelope: the case is solved in the turret's co-moving frame and its
+    /// velocity is relative to the turret. Outside, it is a world body with a world velocity.
+    aboard: bool,
+    /// Thrown clear and come to rest on the ground: no further solving.
+    outside_rest: bool,
 }
+
+/// The tank's envelope in hull coordinates. Brass inside it rides with the vehicle.
+fn brass_aboard(hull_inverse: Mat4, position: Vec3) -> bool {
+    let local = hull_inverse.transform_point3(position);
+    local.x.abs() < 1.95 && local.z.abs() < 3.6 && local.y > 0.15 && local.y < 3.3
+}
+
+/// Carry a loose body with the frame it lies in: `step` is that frame's rigid motion over the
+/// last update. NAMED SIMPLIFICATION (docs/PHYSICAL_TRUTH_AUDIT.md): the body is then solved as
+/// if that frame were at rest, so braking and turning do not throw it about.
+fn carry_with_frame(step: Mat4, position: &mut Vec3, rotation: &mut Quat, velocity: &mut Vec3,
+    angular_velocity: &mut Vec3) {
+    let moved = step.transform_point3(*position);
+    if !moved.is_finite() || moved.distance(*position) > 3.0 { return; } // a teleport, not motion
+    let (_, turn, _) = step.to_scale_rotation_translation();
+    *position = moved;
+    *rotation = (turn * *rotation).normalize();
+    *velocity = turn * *velocity;
+    *angular_velocity = turn * *angular_velocity;
+}
+const CASING_THROW_SPEED: f32 = 5.5; // m/s, a two-handed heave of an empty 8.8 cm case
 
 /// The two surviving Tigers which join the player for Halbe. They are deliberately lightweight
 /// compared with the player's embodied machine: formation driving and a slow, visible gun cycle are
@@ -9332,6 +9384,10 @@ pub struct Game {
     hatch_edges: hatch_control::HatchEdges,
     mg_cases: Vec<mg_case_runtime::Case>,
     next_mg_case: usize,
+    /// Turret and hull poses at the last brass update, and their rigid motion since the one before.
+    brass_frames: Option<[Mat4; 2]>,
+    brass_steps: [Mat4; 2],
+    brass_dt: f32,
     casings: Vec<Casing>,   // pooled rigid-body casings (len == N_CASING)
     next_casing: usize,     // round-robin cursor into casings / casing mesh slots
     pub driver_hatch: bool, // driver hatched out (exposed) to re-set a thrown track
@@ -13220,6 +13276,9 @@ impl Game {
             hatch_edges: hatch_control::HatchEdges::default(),
             mg_cases: vec![mg_case_runtime::Case::default(); mg_case_runtime::CAPACITY],
             next_mg_case: 0,
+            brass_frames: None,
+            brass_steps: [Mat4::IDENTITY; 2],
+            brass_dt: 0.0,
             casings: vec![Casing::default(); N_CASING],
             next_casing: 0,
             driver_hatch: false,
@@ -16628,7 +16687,7 @@ impl Game {
                     self.hover_label = Some("EXTINGUISHER - HOLD LMB TO SPRAY; Q/E TO STOW");
                 } else if self.carried_casing.is_some() {
                     self.hover = None;
-                    self.hover_label = Some("CASE IN HAND - LMB TO LET GO");
+                    self.hover_label = Some("CASE IN HAND - LMB TO LET GO, X TO THROW");
                 } else if self.grab {
                     self.hover = None;
                     let mouth = self.reload_mouth_world();
@@ -28189,6 +28248,8 @@ impl Game {
             angular_vel: Vec3::new(s(4) - 0.5, s(5) - 0.5, s(6) - 0.5).normalize_or_zero() * (3.0 + 6.0 * s(7)),
             impact_cooldown: 0.0,
             drop_rest: shell_collision::DropRest::default(),
+            aboard: false,
+            outside_rest: false,
         };
         Some(k)
     }
@@ -28203,6 +28264,19 @@ impl Game {
         case.vel = self.carry_vel;
         case.rotation = self.carry_rotation;
         case.angular_vel = self.carry_angular_vel;
+        // The hands move in the world; the solver converts on the next update if it is aboard.
+        case.aboard = false;
+        case.outside_rest = false;
+        true
+    }
+
+    /// X with a spent case in the hands: heave it where the player is looking. Through an open
+    /// hatch it leaves the tank and lies on the ground; against steel it comes back.
+    pub fn throw_carried_casing(&mut self, forward: Vec3) -> bool {
+        let Some(k) = self.carried_casing else { return false; };
+        if !forward.is_finite() || !self.release_carried_casing() { return false; }
+        let case = &mut self.casings[k];
+        case.vel += forward.normalize_or_zero() * CASING_THROW_SPEED + Vec3::Y * 1.0;
         true
     }
 
@@ -29614,6 +29688,17 @@ impl Game {
         let signature = shell_collision::scene_signature(&models);
         let mut budget = shell_collision::DropBudget::default();
         let mut contacts = Vec::new();
+        // Brass lying in the tank rides with it. Solved as world bodies against a hull that
+        // moved under them, every case was struck by the floor and walls on every update of a
+        // drive or a traverse and clinked without end.
+        let frames = [self.player.turret_model(), self.player.hull_model()];
+        self.brass_steps = match self.brass_frames.replace(frames) {
+            Some(previous) => [frames[0] * previous[0].inverse(), frames[1] * previous[1].inverse()],
+            None => [Mat4::IDENTITY; 2],
+        };
+        self.brass_dt = dt;
+        let (turret_step, brass_dt) = (self.brass_steps[0], dt);
+        let hull_inverse = frames[1].inverse();
         self.drop_physics_frame = self.drop_physics_frame.wrapping_add(1);
         for offset in 0..N_CASING {
             let k = (self.drop_physics_frame + offset) % N_CASING;
@@ -29631,7 +29716,22 @@ impl Game {
                 c.pos = self.carry_pos;
                 c.rotation = self.carry_rotation;
                 c.angular_vel = self.carry_angular_vel;
-            } else {
+            } else if !c.outside_rest {
+                let aboard = brass_aboard(hull_inverse, c.pos);
+                if aboard != c.aboard {
+                    // Crossing the envelope changes which frame the velocity is measured in.
+                    let frame_velocity = if brass_dt > 1e-4 {
+                        (turret_step.transform_point3(c.pos) - c.pos) / brass_dt
+                    } else { Vec3::ZERO };
+                    let frame_velocity = if frame_velocity.is_finite() && frame_velocity.length() < 60.0 {
+                        frame_velocity } else { Vec3::ZERO };
+                    if aboard { c.vel -= frame_velocity; } else { c.vel += frame_velocity; }
+                    c.aboard = aboard;
+                }
+                if aboard {
+                    carry_with_frame(turret_step, &mut c.pos, &mut c.rotation, &mut c.vel,
+                        &mut c.angular_vel);
+                }
                 let mut body = shell_collision::Body {
                     position: c.pos, rotation: c.rotation, velocity: c.vel,
                     angular_velocity: c.angular_vel,
@@ -29643,6 +29743,17 @@ impl Game {
                 c.vel = body.velocity;
                 c.rotation = body.rotation;
                 c.angular_vel = body.angular_velocity;
+                if !aboard {
+                    // Clear of the tank: the ground stops it and it stays where it fell.
+                    let ground = self.hf.height_at(c.pos.x, c.pos.z) + SPENT_CASE_RADIUS;
+                    if c.pos.y <= ground {
+                        c.pos.y = ground;
+                        c.vel = Vec3::ZERO;
+                        c.angular_vel = Vec3::ZERO;
+                        c.outside_rest = true;
+                        c.drop_rest.sleeping = true;
+                    }
+                }
                 if cartridge_contact_audible(&report) && c.impact_cooldown <= 0.0 {
                     c.impact_cooldown = 0.080;
                     contacts.push(crate::audio::CartridgeContact {

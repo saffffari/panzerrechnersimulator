@@ -4,11 +4,13 @@ use super::*;
 pub(super) const CAPACITY:usize=48;
 #[derive(Clone)]
 pub(super) struct Case { pub active:bool, pub body:shell_collision::Body,
-    pub rest:shell_collision::DropRest, pub cooldown:f32, pub seed:u32 }
+    pub rest:shell_collision::DropRest, pub cooldown:f32, pub seed:u32,
+    /// Which frame the case lies in and rides with: the turret (coaxial gun) or the hull (bow gun).
+    pub turret:bool }
 impl Default for Case {fn default()->Self {Self {active:false,
     body:shell_collision::Body {position:Vec3::ZERO,rotation:Quat::IDENTITY,
         velocity:Vec3::ZERO,angular_velocity:Vec3::ZERO,half:Vec3::new(0.006,0.006,0.029),mass:0.012},
-    rest:Default::default(),cooldown:0.0,seed:0}}}
+    rest:Default::default(),cooldown:0.0,seed:0,turret:false}}}
 pub(super) fn mesh()->CpuMesh {
     let mut mesh=spent_88_case_mesh();
     let extent=mesh.max-mesh.min;
@@ -25,7 +27,7 @@ impl Game {
         let origin=if coax {Vec3::new(-0.36,-0.20,-0.20)}else{Vec3::new(-0.72,1.10,2.30)};
         let n=self.mg_round;let scatter=hash01(n^0xCA5E_7920);
         let c=&mut self.mg_cases[self.next_mg_case];self.next_mg_case=(self.next_mg_case+1)%CAPACITY;
-        *c=Case::default();c.active=true;c.seed=n;
+        *c=Case::default();c.active=true;c.seed=n;c.turret=coax;
         c.body.position=frame.transform_point3(origin);
         let (_,rotation,_)=frame.to_scale_rotation_translation();c.body.rotation=rotation;
         c.body.velocity=frame.transform_vector3(Vec3::new(-0.55-0.30*scatter,-0.35,0.20));
@@ -35,10 +37,18 @@ impl Game {
         let models=self.fire_surface_models();let source=self.cabin_fire.source_contacts(&models);
         let signature=shell_collision::scene_signature(&models);let mut budget=shell_collision::DropBudget::default();
         let mut sounds=Vec::new();
+        // `drive_casings` ran first this update and measured both frames' motion.
+        let steps=self.brass_steps;let hull_inverse=self.player.hull_model().inverse();
+        let ground_floor=self.player.pos.y-50.0;
         for (i,c) in self.mg_cases.iter_mut().enumerate() {
             let slot=self.slots.mg_case[i];r.set_visible(slot,c.active);
             if !c.active {continue;}
             c.cooldown=(c.cooldown-dt.max(0.0)).max(0.0);
+            // The ejection velocity is already relative to the gun; the case rides with its frame.
+            if brass_aboard(hull_inverse,c.body.position) {
+                carry_with_frame(steps[if c.turret {0} else {1}],&mut c.body.position,&mut c.body.rotation,
+                    &mut c.body.velocity,&mut c.body.angular_velocity);
+            } else if c.body.position.y<ground_floor {c.active=false;r.set_visible(slot,false);continue;}
             let hit=c.body.advance_dropped(dt,&source,signature,&mut c.rest,&mut budget,0.34);
             if cartridge_contact_audible(&hit)&&c.cooldown<=0.0 {
                 c.cooldown=0.10;
