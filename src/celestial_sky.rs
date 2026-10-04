@@ -101,6 +101,9 @@ impl CelestialLighting {
 
     /// 0 while the Sun is up, 1 once civil twilight has ended (Sun at -6 deg). It gates the
     /// legacy emissive-window material only; it never scales a light source.
+    /// The Sun's altitude above the horizon, degrees.
+    pub fn sun_altitude_deg(&self) -> f64 { self.state.sun.altitude_deg }
+
     pub fn darkness(&self) -> f32 {
         ((-0.8333 - self.state.sun.altitude_deg) / (6.0 - 0.8333)).clamp(0.0, 1.0) as f32
     }

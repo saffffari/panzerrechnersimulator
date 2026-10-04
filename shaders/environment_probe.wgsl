@@ -5,7 +5,8 @@
 // radiance W m^-2 sr^-1 nm^-1 at 680/550/440 nm).
 //
 // Named approximations (docs/PHYSICAL_TRUTH_AUDIT.md, raster environment row):
-//   * sky and beam are evaluated once at the camera, not per receiver;
+//   * sky is evaluated once at the camera and the beam as a mean over a 450 m disc round it,
+//     not per receiver;
 //   * each direction is the mean over a cone of its cell's solid angle (16 samples);
 //   * the ground directions carry the local terrain's hemispheric albedo times the downwelling
 //     irradiance over pi (no aerial perspective over the atlas footprint);
@@ -35,6 +36,8 @@ const PROBE_SNOW_PHASE_G = 0.76;
 const PROBE_AEROSOL_SINGLE_SCATTER_ALBEDO = 0.88;
 const PROBE_SNOW_SINGLE_SCATTER_ALBEDO = 0.995;
 const PROBE_SAMPLES: u32 = 16u;
+const PROBE_BEAM_SAMPLES: u32 = 12u;
+const PROBE_BEAM_RADIUS_M: f32 = 450.0;
 
 fn probe_medium_albedo() -> f32 {
     return mix(PROBE_AEROSOL_SINGLE_SCATTER_ALBEDO, PROBE_SNOW_SINGLE_SCATTER_ALBEDO,
@@ -136,7 +139,20 @@ fn probe_finish() {
     }
     // The discrete cosine quadrature is normalised so a uniform sky gives exactly pi L.
     let diffuse = sky * (PHYSICAL_ENV_PI / max(weight, 1.0e-6));
-    let solar = probe_solar(origin);
+    // The beam is the mean over a disc of ground round the camera, not the one ray from the
+    // camera. A single ray makes every cloud edge that crosses it switch the whole scene's
+    // sunlight at once; over the disc the light rises and falls as the cloud cover over the
+    // area does.
+    var beam_direct = vec3(0.0);
+    var beam_scattered = vec3(0.0);
+    for (var i = 0u; i < PROBE_BEAM_SAMPLES; i += 1u) {
+        let radius = PROBE_BEAM_RADIUS_M * sqrt((f32(i) + 0.5) / f32(PROBE_BEAM_SAMPLES));
+        let angle = f32(i) * 2.399963229728653;
+        let sample = probe_solar(origin + vec3(cos(angle) * radius, 0.0, sin(angle) * radius));
+        beam_direct += sample.direct;
+        beam_scattered += sample.diffuse_radiance;
+    }
+    let solar = ProbeSolar(beam_direct / f32(PROBE_BEAM_SAMPLES), beam_scattered / f32(PROBE_BEAM_SAMPLES));
     let key = normalize(environment.sun_direction_water_density.xyz);
     let downwelling = diffuse + solar.direct * max(key.y, 0.0);
     let ground = probe_in.ground_albedo.rgb * downwelling / PHYSICAL_ENV_PI;

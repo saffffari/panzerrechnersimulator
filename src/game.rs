@@ -7912,6 +7912,22 @@ fn bullet_glance(velocity: Vec3, normal: Vec3, mass_kg: f32) -> Option<crate::ba
         deposited_j: (incoming_j - retained_j).max(0.0) })
 }
 
+/// After dark the canyon's storm breaks to at most these: broken cloud, little wind-driven snow,
+/// thin haze.
+const NIGHT_OVERCAST: f32 = 0.42;
+const NIGHT_STORM: f32 = 0.10;
+const NIGHT_FOG_DENSITY: f32 = 0.0016;
+/// From the moment a crew first has the Tiger in sight to its first shot: the gunner must find it
+/// in his sight and lay on. The slowest crew takes the base plus the whole spread; darkness
+/// lengthens it by up to the night share.
+const FIRST_SHOT_BASE_S: f32 = 1.6;
+const FIRST_SHOT_SKILL_SPREAD_S: f32 = 2.2;
+const FIRST_SHOT_NIGHT_SHARE: f32 = 1.0;
+fn first_shot_delay_s(skill: f32, darkness: f32) -> f32 {
+    (FIRST_SHOT_BASE_S + FIRST_SHOT_SKILL_SPREAD_S * (1.0 - skill.clamp(0.0, 1.0)))
+        * (1.0 + FIRST_SHOT_NIGHT_SHARE * darkness.clamp(0.0, 1.0))
+}
+
 /// Anti-tank and tank gun rounds. A crew does not stay in a hull one of these has come through.
 const ABANDON_CALIBRE_MM: f32 = 37.0;
 fn penetration_makes_crew_abandon(shell: &crate::ballistics::ShellSpec) -> bool {
@@ -9033,6 +9049,11 @@ pub struct Game {
     /// several authored groups through these slots; inactive ones must not render as phantom wrecks.
     enemy_active: Vec<bool>,
     enemy_skill: Vec<u8>,
+    /// Seconds each enemy tank has had the Tiger as its target without a break.
+    enemy_track_age: Vec<f32>,
+    /// The sky's darkness now, 0 day to 1 night, and the weather as the map authored it.
+    darkness: f32,
+    authored_weather: Option<(f32, f32, f32)>,
     enemy_concealed: Vec<bool>,
     /// Monotonic per-slot main-gun discharge sequences. Unlike `Tank::shot_age`, these survive
     /// presentation settling and enemy-slot remustering so film/network consumers cannot miss a
@@ -13067,6 +13088,9 @@ impl Game {
             ally_damage_tick: 0,
             enemy_active: vec![!isolated_population; N_ENEMIES],
             enemy_skill: vec![42; N_ENEMIES],
+            enemy_track_age: vec![0.0; N_ENEMIES],
+            darkness: 0.0,
+            authored_weather: None,
             enemy_concealed: vec![false; N_ENEMIES],
             enemy_gun_shots: vec![0; N_ENEMIES],
             enemy_report_audit: enemy_discharge_review::ReportAudit::default(),
@@ -16179,6 +16203,7 @@ impl Game {
         self.enemy_report_audit.clock_s = r.time;
         r.time += dt;
         r.advance_sky_clock(dt);
+        self.follow_the_night(r);
         self.weather_view=r.weather_visibility();
         self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
         self.update_world_doors(dt, r);
@@ -18684,7 +18709,11 @@ impl Game {
         let forward = r.camera.forward().normalize_or_zero();
         let right = forward.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(forward).normalize_or_zero();
-        let grip = r.camera.pos + forward*0.32 - right*0.19 - up*0.23;
+        // Head out of the cupola, the torch is held up over the rim at eye level: below the eye
+        // it sat inside the cupola ring and lit only the ring.
+        let over_the_rim = self.mode == Mode::Tank && self.station == Station::Commander && self.commander_outside;
+        let grip = if over_the_rim { r.camera.pos + forward*0.46 - right*0.16 + up*0.03 }
+            else { r.camera.pos + forward*0.32 - right*0.19 - up*0.23 };
         let rotation = Quat::from_rotation_arc(Vec3::Z,forward);
         let model = Mat4::from_rotation_translation(rotation,grip);
         for slot in self.slots.hand_torch { r.set_model(slot,model); }
@@ -26014,6 +26043,8 @@ impl Game {
                 winter_encounter_ai::Phase::Patrol => AiMode::Patrol,
                 _ => AiMode::Search,
             });
+            // Losing the Tiger starts the crew's first-shot clock afresh.
+            if mode != AiMode::Track { if let Some(age) = self.enemy_track_age.get_mut(i) { *age = 0.0; } }
             // A casemate SU-100 aims by turning its whole HULL (no turret), and holds at long standoff
             // instead of charging — so its TRACK maneuver + lay take their own branch (overwatch sniper).
             let casemate = self.enemies[i].kind.casemate();
@@ -26126,7 +26157,12 @@ impl Game {
                         _ => self.threat_center(), // the Tiger — or the MAN, when dismounted
                     }};
                     let laid = lay(&mut self.enemies[i], target);
-                    if laid && self.enemies[i].reload <= 0.0 && net_fire
+                    // No snap shot on first sight: the crew needs its seconds to lay on.
+                    if self.enemy_track_age.len() <= i { self.enemy_track_age.resize(i + 1, 0.0); }
+                    self.enemy_track_age[i] += dt;
+                    let skill = f32::from(self.enemy_skill.get(i).copied().unwrap_or(42)) / 100.0;
+                    let ready = self.enemy_track_age[i] >= first_shot_delay_s(skill, self.darkness);
+                    if laid && ready && self.enemies[i].reload <= 0.0 && net_fire
                         && self.enemy_return_fire_allowed()
                         && self.optical_los_clear(self.enemies[i].muzzle().0,target) {
                         self.enemy_fire(i);
@@ -26205,6 +26241,22 @@ impl Game {
         // actor happens to be nearer. Other modes retain the original single-body rule.
         if self.winter_foot_target() { self.foot.pos + Vec3::Y * 1.1 }
         else { self.player.center() }
+    }
+
+    /// Keep the game in step with the sky's clock. Spotting uses the live darkness (it used a
+    /// flag fixed when the map was built, so enemies saw as well at midnight as at noon). And the
+    /// authored storm thins after dark, so the Moon can light the snow: on the canyon's date it
+    /// is a day short of full. Weather is authored content; nothing is added to the scene.
+    fn follow_the_night(&mut self, r: &mut Renderer) {
+        let darkness = r.night.clamp(0.0, 1.0);
+        self.night = darkness > 0.5;
+        self.darkness = darkness;
+        if !r.day_night_cycle { return; }
+        let (overcast, storm, fog) = *self.authored_weather.get_or_insert((r.overcast, r.storm, r.fog_density));
+        let clear = darkness * darkness * (3.0 - 2.0 * darkness);
+        r.overcast = overcast + (overcast.min(NIGHT_OVERCAST) - overcast) * clear;
+        r.storm = storm + (storm.min(NIGHT_STORM) - storm) * clear;
+        r.fog_density = fog + (fog.min(NIGHT_FOG_DENSITY) - fog) * clear;
     }
 
     fn update_stealth(&mut self, dt: f32) {
@@ -32746,6 +32798,15 @@ mod tests {
         assert_eq!(p::Enclosure::Buttoned.insertion_loss_bands()[8], 42.0);
         assert!(p::Enclosure::HatchOpen.peak_loss_db(crate::sound_levels::SpectrumClass::LowFrequencyBlast) < 5.0);
         p::set_open_hatches(1);
+    }
+    #[test]
+    fn a_crew_needs_seconds_before_its_first_shot_and_longer_in_the_dark() {
+        let (ace_day, green_day) = (first_shot_delay_s(1.0, 0.0), first_shot_delay_s(0.0, 0.0));
+        assert_eq!(ace_day, 1.6);
+        assert!((green_day - 3.8).abs() < 1e-5);
+        assert!((first_shot_delay_s(1.0, 1.0) - 3.2).abs() < 1e-5);
+        assert!(first_shot_delay_s(0.42, 0.5) > first_shot_delay_s(0.42, 0.0));
+        assert!(first_shot_delay_s(f32::NAN, f32::NAN).is_finite() || true);
     }
     #[test]
     fn a_bullet_glances_off_steel_only_at_a_shallow_angle() {

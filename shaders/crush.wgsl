@@ -62,6 +62,24 @@ fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     return radiance * camera_white_gain() * cr.exposure + vec3(rods);
 }
 
+// The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright
+// field through a port, each region on its own gain. The single exposure above cannot do that,
+// so parts of the picture more than EYE_RANGE_KNEE_STOPS from the adapted level are drawn in
+// toward it: the dark is lifted and the bright is held down, with colour kept. Within the knee
+// the picture is untouched. OWNER-DIRECTED PRESENTATION of local adaptation
+// (docs/PHYSICAL_TRUTH_AUDIT.md); it changes no light in the scene.
+const EYE_RANGE_KNEE_STOPS: f32 = 1.5;
+const EYE_RANGE_SLOPE: f32 = 0.32;
+fn eye_range(x: vec3<f32>) -> vec3<f32> {
+    let positive = max(x, vec3(0.0));
+    let peak = max(positive.r, max(positive.g, positive.b));
+    if (peak <= 1e-9) { return positive; }
+    let stops = log2(peak / OBS_DISPLAY_KEY);
+    let beyond = max(abs(stops) - EYE_RANGE_KNEE_STOPS, 0.0);
+    let drawn_in = sign(stops) * (min(abs(stops), EYE_RANGE_KNEE_STOPS) + beyond * EYE_RANGE_SLOPE);
+    return positive * (OBS_DISPLAY_KEY * exp2(drawn_in) / peak);
+}
+
 // ACES-ish filmic tonemap: real toe/shoulder for dynamic range. Deep shadows, snow highlights that
 // roll off cleanly, and emissive sources retain their relative RGB colour through the shoulder.
 fn aces(x: vec3<f32>) -> vec3<f32> {
@@ -189,6 +207,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var c = eye_response(mix(centre, blur, concussion));
     // Explicit user camera/display reproduction. Identity by default; black stays black.
     c *= cr.display_grade.x * vec3(1.0 + 0.2 * cr.display_grade.z, 1.0, 1.0 - 0.2 * cr.display_grade.z);
+    c = eye_range(c);
     var m = aces(c); // filmic tonemap (the only one — blit is a pass-through)
     let display_luma = dot(m, vec3(0.2126, 0.7152, 0.0722));
     m = clamp(mix(vec3(display_luma), m, cr.display_grade.y), vec3(0.0), vec3(1.0));

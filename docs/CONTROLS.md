@@ -428,8 +428,8 @@ size, and stitch-apron rules.
 - **Leaving by the cupola needs the cupola view first.** From below, click the cupola to climb
   into its seat; only there does held Space climb out. The hatch lever itself can be worked from
   below as well as from the seat. Q drops back down.
-- **Day and night.** Every mode now runs a twenty minute day: ten minutes of daylight and ten
-  of night. The Sun and Moon keep their true positions for the map's date and place; only the
+- **Day and night.** Every mode now runs a fifteen minute day: five minutes of full day,
+  two and a half each of sunrise and sunset, and five of night. The Sun and Moon keep their true positions for the map's date and place; only the
   clock runs fast. `KESSEL_DAY_NIGHT=0` restores the real-time clock.
 - **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
   Space to go through.

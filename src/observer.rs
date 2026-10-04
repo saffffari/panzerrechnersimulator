@@ -42,9 +42,12 @@ pub const METER_MIN_CD_M2: f64 = 1.0e-7;
 pub const METER_MAX_CD_M2: f64 = 1.0e7;
 pub const METER_FOVEA_RADIUS_DEG: f64 = 1.0;
 pub const METER_GAUSSIAN_SIGMA_DEG: f64 = 10.0;
-pub const METER_FOVEA_WEIGHT: f64 = 0.50;
-pub const METER_GAUSSIAN_WEIGHT: f64 = 0.30;
-pub const METER_FIELD_WEIGHT: f64 = 0.20;
+// OWNER-DIRECTED (2026-10-04): the eye followed the spot under the crosshair so closely that a
+// glance at a port blew the port out and blacked the cabin, and a glance back reversed it.
+// The whole field now carries most of the weight, and the adaptation rates below are slower.
+pub const METER_FOVEA_WEIGHT: f64 = 0.15;
+pub const METER_GAUSSIAN_WEIGHT: f64 = 0.35;
+pub const METER_FIELD_WEIGHT: f64 = 0.50;
 /// Sample grid of the GPU meter, identical in both presets.
 pub const METER_GRID: (u32, u32) = (256, 144);
 
@@ -52,7 +55,7 @@ pub const PUPIL_AGE_YEARS: f64 = 25.0;
 pub const BINOCULAR_FIELD_DEG2: f64 = 3_000.0;
 /// One eye at a 25 deg sight field (section 6.3).
 pub const SIGHT_FIELD_DEG2: f64 = 491.0;
-pub const PUPIL_CONSTRICT_TAU_S: f64 = 0.3;
+pub const PUPIL_CONSTRICT_TAU_S: f64 = 1.2;
 pub const PUPIL_DILATE_FAST_TAU_S: f64 = 2.0;
 pub const PUPIL_DILATE_SLOW_TAU_S: f64 = 15.0;
 pub const PUPIL_SLOW_SHARE: f64 = 0.3;
@@ -69,10 +72,10 @@ pub const ROD_PHOTOSENSITIVITY_SCOT_TD_S: f64 = 1.0e7;
 pub const CONE_BLEACH_LOG_UNITS: f64 = 3.0;
 pub const ROD_BLEACH_LOG_UNITS: f64 = 20.0;
 
-pub const CONE_TAU_UP_S: f64 = 1.2;
-pub const CONE_TAU_DOWN_S: f64 = 2.5;
-pub const ROD_TAU_UP_S: f64 = 1.8;
-pub const ROD_TAU_DOWN_S: f64 = 4.0;
+pub const CONE_TAU_UP_S: f64 = 4.5;
+pub const CONE_TAU_DOWN_S: f64 = 6.0;
+pub const ROD_TAU_UP_S: f64 = 5.0;
+pub const ROD_TAU_DOWN_S: f64 = 8.0;
 
 pub const DISPLAY_ADAPTATION_CD_M2: f64 = 100.0;
 pub const DISPLAY_KEY: f64 = 0.18;
@@ -573,9 +576,9 @@ mod tests {
         assert!((sight - 7.1).abs() < 0.2, "monocular sight {sight}");
         // Constriction completes in about a second; dilation takes seconds and has a slow tail.
         let mut eye = Eye::adapted(Meter::uniform(0.05, 0.12), Viewing::Binocular);
-        run(&mut eye, Meter::uniform(500.0, 1175.0), 1.0, 1.0 / 60.0);
+        run(&mut eye, Meter::uniform(500.0, 1175.0), 4.0, 1.0 / 60.0);
         let bright = pupil_diameter_mm(500.0, Viewing::Binocular);
-        // 0.3 s constriction: within 5 % of the swing after one second.
+        // 1.2 s constriction: within 5 % of the swing after four seconds.
         let swing = pupil_diameter_mm(0.05, Viewing::Binocular) - bright;
         assert!(eye.pupil_mm() - bright < 0.05 * swing, "constricted {} vs {bright}", eye.pupil_mm());
         run(&mut eye, Meter::uniform(0.05, 0.12), 2.0, 1.0 / 60.0);
@@ -871,7 +874,7 @@ mod tests {
                 "a 100 ms glance must start, not complete adaptation: {glance_fraction}");
             advance(&mut eye, daylight, 0.9);
             let held_fraction = (eye.cone_neural_log - start) / span;
-            assert!((0.4..0.7).contains(&held_fraction),
+            assert!((0.15..0.35).contains(&held_fraction),
                 "holding a bright view must still adapt: {held_fraction}");
             let before_return = eye.cone_neural_log;
             advance(&mut eye, cabin, 0.1);
@@ -908,7 +911,7 @@ mod tests {
     #[test]
     fn the_model_has_one_set_of_constants_for_every_preset() {
         let generated = wgsl_constants();
-        assert!(generated.contains("const OBS_CONE_TAU_DOWN: f32 = 2.5e0;"), "{generated}");
+        assert!(generated.contains("const OBS_CONE_TAU_DOWN: f32 = 6e0;"), "{generated}");
         let source = include_str!("observer.rs");
         let body = source.split("#[cfg(test)]").next().unwrap();
         for forbidden in ["GraphicsPreset", "Laptop", "graphics::", "shader_backend"] {

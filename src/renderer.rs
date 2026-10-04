@@ -439,9 +439,18 @@ fn configured_master_retro() -> f32 {
 /// A fixed camera exposure in place of the eye exists only behind the debug gate
 /// (`debug_gates`, `KESSEL_CAMERA_EXPOSURE` in a debug build). Shipping frames are always shown by
 /// the crewman's eye.
-/// Daylight lasts this long with the day and night cycle on, and so does the night: a twenty
-/// minute day, as in Minecraft (whose split is ten of day, seven of night and two twilights).
-pub const DAY_NIGHT_HALF_S: f64 = 600.0;
+/// With the day and night cycle on: five minutes of full day, two and a half each of sunrise
+/// and sunset, five of night. Fifteen minutes in all, ten of them with daylight.
+pub const FULL_DAY_S: f64 = 300.0;
+pub const TWILIGHT_S: f64 = 150.0;
+pub const NIGHT_S: f64 = 300.0;
+/// Sunrise and sunset run from the end of civil twilight to the end of the golden hour.
+const TWILIGHT_FROM_DEG: f64 = -6.0;
+const TWILIGHT_TO_DEG: f64 = 8.0;
+/// 0 night, 1 sunrise or sunset, 2 full day, by the Sun's altitude.
+fn day_phase(sun_altitude_deg: f64) -> usize {
+    if sun_altitude_deg < TWILIGHT_FROM_DEG { 0 } else if sun_altitude_deg < TWILIGHT_TO_DEG { 1 } else { 2 }
+}
 /// On in play. Off for unit tests and wherever `KESSEL_DAY_NIGHT=0` asks for the real-time clock
 /// (stills and films that must hold their authored light).
 fn day_night_cycle_enabled() -> bool {
@@ -2517,7 +2526,8 @@ pub struct Renderer {
     pub sky_time_scale: f32,
     /// The accelerated day and night cycle, and the share of the current day that is daylight.
     pub day_night_cycle: bool,
-    daylight_fraction: Option<f64>,
+    /// Real seconds the Sun spends at night, in twilight and in full day over the current date.
+    day_phase_seconds: Option<[f64; 3]>,
     weather_offset: glam::Vec3,
     pub weather_override: Option<f32>,
     weather_original: Option<(f32,f32,f32,f32,glam::Vec2)>,
@@ -5688,7 +5698,7 @@ impl Renderer {
             display_dither_pattern: configured_display_dither(),
             sky_time_scale: 1.0,
             day_night_cycle: day_night_cycle_enabled(),
-            daylight_fraction: None,
+            day_phase_seconds: None,
             weather_offset: glam::Vec3::ZERO,
             weather_override: None,
             weather_original: None,
@@ -6041,23 +6051,33 @@ impl Renderer {
 
     /// How fast the sky's clock runs now. With the day and night cycle on, the Sun and Moon
     /// still stand exactly where the ephemeris puts them for the date and place; only the rate
-    /// of the clock changes, so that daylight lasts `DAY_NIGHT_HALF_S` and so does the night
-    /// (owner, 2026-10-04: a cycle of about Minecraft's length in every mode).
+    /// of the clock changes, so that full day, each twilight and the night last their set times
+    /// (owner, 2026-10-04).
     fn sky_clock_rate(&mut self) -> f64 {
         if !self.day_night_cycle { return self.sky_time_scale as f64; }
-        let day_fraction = *self.daylight_fraction.get_or_insert_with(|| {
-            // One day sampled every ten minutes from now: the share of it the Sun is up.
+        let phases = *self.day_phase_seconds.get_or_insert_with(|| {
+            // One day sampled every two minutes from now: how long the Sun spends in each phase.
             let mut probe = self.sky_clock;
-            let lit = (0..144).filter(|_| {
-                probe.advance(600.0);
-                crate::celestial_sky::CelestialLighting::at(probe.now(), probe.site,
-                    AtmosphereParameters::default().solar_irradiance).darkness() < 0.5
-            }).count();
-            (lit as f64 / 144.0).clamp(0.08, 0.92)
+            let mut seconds = [0.0_f64; 3];
+            for _ in 0..720 {
+                probe.advance(120.0);
+                let altitude = crate::celestial_sky::CelestialLighting::at(probe.now(), probe.site,
+                    AtmosphereParameters::default().solar_irradiance).sun_altitude_deg();
+                seconds[day_phase(altitude)] += 120.0;
+            }
+            seconds
         });
-        let rate = |share: f64| share * 86_400.0 / DAY_NIGHT_HALF_S;
-        let night = f64::from(self.night.clamp(0.0, 1.0));
-        (rate(day_fraction) * (1.0 - night) + rate(1.0 - day_fraction) * night) * self.sky_time_scale as f64
+        // Real seconds of each phase over its play seconds. A phase the date lacks runs at the
+        // day's mean rate.
+        let mean = 86_400.0 / (FULL_DAY_S + 2.0 * TWILIGHT_S + NIGHT_S);
+        let rate = |phase: usize, play_s: f64| if phases[phase] > 60.0 { phases[phase] / play_s } else { mean };
+        let rates = [rate(0, NIGHT_S), rate(1, 2.0 * TWILIGHT_S), rate(2, FULL_DAY_S)];
+        // Blend across a degree at each boundary so the clock never jumps.
+        let altitude = self.celestial.sun_altitude_deg();
+        let ramp = |edge: f64| ((altitude - edge) / 1.0 + 0.5).clamp(0.0, 1.0);
+        let (above_night, above_twilight) = (ramp(TWILIGHT_FROM_DEG), ramp(TWILIGHT_TO_DEG));
+        (rates[0] * (1.0 - above_night) + rates[1] * (above_night - above_twilight).max(0.0)
+            + rates[2] * above_twilight) * self.sky_time_scale as f64
     }
 
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
@@ -12196,7 +12216,7 @@ mod atmosphere_tests {
         let meter = Meter::uniform(500.0, 1175.0);
         let mut stepped = initial;
         let mut frozen = initial;
-        for _ in 0..60 {
+        for _ in 0..360 {
             let [current, previous, restored] = headless_exposure_step_clocks(0.0);
             stepped.step(meter, viewing, (current - previous) as f64);
             frozen.step(meter, viewing, 0.0);
