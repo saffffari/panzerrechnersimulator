@@ -968,7 +968,7 @@ impl Runtime {
         let anchor=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring&&v.looping)
             .and_then(|v|self.library.cues.get(&v.id)).cloned();
         for (lane,gain,rhythm) in [("score_layer_texture",self.layer_gains.texture*0.30,false),
-            ("score_layer_rhythm",self.layer_gains.rhythm*0.55,true)] {
+            ("score_layer_rhythm",self.layer_gains.rhythm*0.35,true)] {
             if gain<=0.00001 {self.lane(audio,lane,None,0.0,0.0,8.0);continue;}
             let Some(anchor)=&anchor else{continue;};
             let mut ids=self.library.pool("combat",tags);

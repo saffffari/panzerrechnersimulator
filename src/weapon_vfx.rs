@@ -643,6 +643,9 @@ impl Effects {
         let grain_scale = (GRAINS as f32 / desired as f32).sqrt().clamp(1.0, 3.5);
         let flash_life = if muzzle { 0.11 } else if blast { 0.28 } else { 0.24 };
         let age = b.age;
+        // Past the flash (and a blast's delayed lobes) nothing below is drawn. Returning the
+        // full grain count here starved newer flashes of the frame budget for seconds.
+        if age >= flash_life + if blast { 0.13 } else { 0.0 } { return spark_count; }
         for j in 0..count {
             let seed = b.seed.wrapping_mul(3948571).wrapping_add(j as u32 * 977);
             let ray = direction(seed);

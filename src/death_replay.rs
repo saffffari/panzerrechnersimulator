@@ -129,6 +129,7 @@ impl Game {
         }
         let live_time = self.stealth.t;
         self.stealth.t = scene_time + target;
+        r.clear_smoke();
         self.drive_interior_fire(r);
         self.drive_lights_with_transients(r, false);
         r.observer_flash_source=!transient_lights.is_empty();

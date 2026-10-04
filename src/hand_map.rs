@@ -202,7 +202,8 @@ impl super::Game {
     }
 
     pub(super) fn drive_hand_map(&self, renderer: &mut Renderer) {
-        renderer.set_visible(self.slots.held_map, self.map_held && self.player.alive);
+        let alive = if self.mode == super::Mode::Foot { self.foot.hp > 0.0 } else { self.player.alive };
+        renderer.set_visible(self.slots.held_map, self.map_held && alive);
         if !self.map_held {
             return;
         }

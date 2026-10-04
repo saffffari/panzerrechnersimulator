@@ -431,7 +431,9 @@ impl FirstPerson {
         for slot in self.slots.into_iter().flatten() {
             r.set_visible(slot, false);
         }
-        if !game.singleplayer_crew_active || !game.player.alive {
+        // On foot the walker's own life decides; the abandoned Tiger may already be a wreck.
+        let alive = if game.mode == Mode::Foot { game.foot.hp > 0.0 } else { game.player.alive };
+        if !game.singleplayer_crew_active || !alive {
             return;
         }
         let transition = game.climb.active || game.switch_t > 0.0;

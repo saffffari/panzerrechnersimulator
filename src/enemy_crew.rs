@@ -503,7 +503,8 @@ impl Aftermath {
                     let radius = part.part.half_extents().min_element();
                     if part.pos.y < floor + radius {
                         part.pos.y = floor + radius;
-                        part.vel *= 0.6;
+                        // Ground friction per second of contact, not per frame.
+                        part.vel *= 0.6f32.powf(dt * 60.0);
                         part.vel.y = 0.0;
                         part.grounded = true;
                     }

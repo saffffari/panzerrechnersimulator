@@ -945,8 +945,10 @@ mod tests {
         assert_eq!(COMBAT_LIGHTS, 8);
         assert_eq!(INTERIOR_FIRE_LIGHTS, 8);
         assert_eq!(MAX_LIGHTS, N_LIGHTS);
-        assert_eq!(std::mem::size_of::<Uniform>(), 1072);
+        // 1072 plus the 16-byte vehicle-frame quaternion appended on 2026-10-03.
+        assert_eq!(std::mem::size_of::<Uniform>(), 1088);
         assert_eq!(std::mem::offset_of!(Uniform, range), 1056);
+        assert_eq!(std::mem::offset_of!(Uniform, cabin_frame), 1072);
     }
 
 
@@ -1162,9 +1164,47 @@ mod tests {
         }
         assert_eq!(std::mem::size_of::<NearShadowUniform>(), 80);
         assert_eq!(COMBAT_LIGHTS, 8);
-        assert_eq!(std::mem::size_of::<Uniform>(), 1072);
+        assert_eq!(std::mem::size_of::<Uniform>(), 1088);
     }
 
+    #[test]
+    fn vehicle_frame_cube_survives_rigid_motion_and_notices_relative_motion() {
+        let caster = |m: glam::Mat4| vec![RelativeCaster { kind: 0, index: 7, revision: 3, poses: vec![m] }];
+        let local = glam::Mat4::from_rotation_translation(glam::Quat::from_rotation_y(0.4), glam::Vec3::new(0.3, -0.8, 1.1));
+        // The same caster seen from a lamp that has driven 900 m and turned with its vehicle.
+        let relative = |frame: glam::Mat4, lamp: glam::Vec3| {
+            let world = frame * glam::Mat4::from_translation(lamp) * local;
+            let lamp_world = frame.transform_point3(lamp);
+            let (_, rotation, _) = frame.to_scale_rotation_translation();
+            glam::Mat4::from_rotation_translation(rotation, lamp_world).inverse() * world
+        };
+        let lamp = glam::Vec3::new(0.2, 2.0, 0.4);
+        let parked = relative(glam::Mat4::IDENTITY, lamp);
+        let driven = relative(glam::Mat4::from_rotation_translation(
+            glam::Quat::from_euler(glam::EulerRot::YXZ, 1.9, 0.12, -0.07), glam::Vec3::new(912.0, 31.0, -1440.0)), lamp);
+        assert!(same_relative_scene(&caster(parked), &caster(driven)), "rigid vehicle motion invalidated the cube");
+        let nudged = parked * glam::Mat4::from_translation(glam::Vec3::X * 0.004);
+        assert!(!same_relative_scene(&caster(parked), &caster(nudged)), "a 4 mm relative move was ignored");
+        let mut revised = caster(parked);
+        revised[0].revision = 4;
+        assert!(!same_relative_scene(&caster(parked), &revised));
+    }
+    #[test]
+    fn reach_limited_lamps_admit_only_casters_wholly_inside_their_reach() {
+        let lamp = glam::Vec3::new(100.0, 5.0, -40.0);
+        let near = (lamp - glam::Vec3::splat(2.0), lamp + glam::Vec3::splat(2.0));
+        let terrain = (glam::Vec3::splat(-2000.0), glam::Vec3::splat(2000.0));
+        assert!(admits(true, lamp, near.0, near.1, CABIN_FIXTURE_REACH_M));
+        assert!(!admits(true, lamp, terrain.0, terrain.1, CABIN_FIXTURE_REACH_M));
+        // Every other source keeps the old rule: anything touching its range casts.
+        assert!(admits(false, lamp, terrain.0, terrain.1, 512.0));
+        // The framed face matrix with no rotation is the legacy absolute face matrix.
+        for face in 0..6 {
+            let a = framed_face_view_proj(lamp, glam::Quat::IDENTITY, face, (NEAR, 12.0));
+            let b = face_view_proj_range(lamp, face, (NEAR, 12.0));
+            assert!(a.abs_diff_eq(b, 1e-3), "face {face}");
+        }
+    }
     #[test]
     fn close_dome_fan_remains_a_blocker_but_only_own_emitter_is_excluded() {
         let position = crate::interior_rig::TURRET_DOME_LAMP_POS;

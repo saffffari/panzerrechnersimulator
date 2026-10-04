@@ -8,6 +8,9 @@ pub struct Layers {
     quiet: f32,
     engaged: bool,
 }
+/// Seconds of a contact episode the percussion layer plays at full level, and its fade after.
+pub const RHYTHM_SWELL_HOLD_S: f32 = 20.0;
+pub const RHYTHM_SWELL_FADE_S: f32 = 15.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Gains {
     pub texture: f32,
@@ -45,9 +48,13 @@ impl Layers {
         }
         let release = (self.quiet - 90.0).max(0.0);
         let rise = (self.age / 8.0).clamp(0.0, 1.0);
+        // Percussion is a swell at the start of a contact episode, not a bed. The library's
+        // percussion tops are four-second loops; held for the whole episode (which sustained
+        // fire never lets end) one of them read as a metal clinking that would not stop.
+        let swell = (1.0 - (self.age - RHYTHM_SWELL_HOLD_S) / RHYTHM_SWELL_FADE_S).clamp(0.0, 1.0);
         Gains {
             texture: rise * (1.0 - release / 60.0).clamp(0.0, 1.0),
-            rhythm: rise * (1.0 - release / 90.0).clamp(0.0, 1.0),
+            rhythm: rise * swell * (1.0 - release / 90.0).clamp(0.0, 1.0),
             anchor_held: release < 90.0,
         }
     }
@@ -101,18 +108,31 @@ pub fn compatible(anchor: &Cue, layer: &Cue) -> bool {
 mod tests {
     use super::*;
     #[test]
-    fn one_short_incoming_contact_holds_then_drums_peel_last() {
+    fn one_short_incoming_contact_swells_drums_then_holds_texture() {
         let mut p = Layers::default();
         p.update(1.0, true);
-        let hold = p.update(89.0, false);
-        assert!(hold.texture > 0.99 && hold.rhythm > 0.99);
+        let swell = p.update(14.0, false);
+        assert!(swell.texture > 0.99 && swell.rhythm > 0.99);
+        // The percussion is gone well inside the episode; the texture and anchor hold on.
+        let hold = p.update(75.0, false);
+        assert!(hold.texture > 0.99 && hold.anchor_held);
+        assert_eq!(hold.rhythm, 0.0);
         let middle = p.update(61.0, false);
         assert_eq!(middle.texture, 0.0);
-        assert!(middle.rhythm > 0.3);
         assert!(middle.anchor_held);
         let end = p.update(30.0, false);
-        assert_eq!(end.rhythm, 0.0);
         assert!(!end.anchor_held);
+    }
+    #[test]
+    fn sustained_fire_cannot_keep_the_percussion_loop_going() {
+        let mut p = Layers::default();
+        let mut audible = 0.0;
+        // Ten minutes with a hostile round every eight seconds: one unbroken episode.
+        for second in 0..600 {
+            if p.update(1.0, second % 8 == 0).rhythm > 0.0 { audible += 1.0; }
+        }
+        assert_eq!(p.episode, 1);
+        assert!(audible <= RHYTHM_SWELL_HOLD_S + RHYTHM_SWELL_FADE_S, "percussion audible for {audible} s");
     }
     #[test]
     fn proximity_cannot_start_any_layer() {
@@ -129,6 +149,8 @@ mod tests {
         let episode = p.episode;
         let again = p.update(1.0, true);
         assert_eq!(p.episode, episode);
-        assert_eq!(again.rhythm, 1.0);
+        // Same episode: the texture recovers at once, the spent percussion swell does not return.
+        assert_eq!(again.texture, 1.0);
+        assert_eq!(again.rhythm, 0.0);
     }
 }
