@@ -2,7 +2,7 @@
 // 512 m is an explicit raster transport bound. Missing/out-of-range visibility is unresolved/dark,
 // never an unshadowed fallback. The actual armor/terrain/apertures are the casters.
 const CABIN_SHADOW_LIGHTS: i32 = 32;
-struct CabinShadows { lamps: array<vec4<f32>,32>, projections:array<vec4<f32>,32>, torch_position: vec4<f32>, torch_direction: vec4<f32>, range: vec4<f32> };
+struct CabinShadows { lamps: array<vec4<f32>,32>, projections:array<vec4<f32>,32>, torch_position: vec4<f32>, torch_direction: vec4<f32>, range: vec4<f32>, cabin_frame: vec4<f32> };
 // Angular emission of the handheld reflector. This multiplies the same emitter in surface
 // and participating-medium transport; it is not a screen-space brightness patch.
 fn hand_torch_gain(source: vec3<f32>, point: vec3<f32>) -> f32 {
@@ -24,6 +24,13 @@ fn cabin_shadow_range(lamp: i32) -> vec2<f32> {
 // the lamp contributes exactly nothing; that is a bounded source, not unresolved visibility.
 fn cabin_shadow_reach_limited(lamp: i32) -> bool {
     return cabin_shadows.projections[lamp].z > 0.5;
+}
+// A reach-limited fixture's cube is rendered in the vehicle frame (cabin_frame, a unit
+// quaternion). Rotate a world vector about the lamp into that frame before any cube lookup.
+fn cabin_lamp_local(lamp: i32, world_vector: vec3<f32>) -> vec3<f32> {
+    if (!cabin_shadow_reach_limited(lamp)) { return world_vector; }
+    let q = vec4(-cabin_shadows.cabin_frame.xyz, cabin_shadows.cabin_frame.w);
+    return world_vector + 2.0 * cross(q.xyz, cross(q.xyz, world_vector) + q.w * world_vector);
 }
 fn cabin_shadow_reference(major: f32, bias_m: f32, lamp: i32) -> f32 {
     let limits = cabin_shadow_range(lamp);

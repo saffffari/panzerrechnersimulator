@@ -18375,6 +18375,8 @@ impl Game {
                     }
                 }
             }
+            // The fixtures ride the turret; their shadow cubes are kept in its frame.
+            r.set_cabin_light_frame(Quat::from_mat4(&self.player.turret_model()));
             r.set_shadowed_cabin_lights(&shadowed_cabin_lights, &emitting_meshes);
         }
         r.set_shadowed_world_fire_lights(&self.world_fire_lights.iter().flatten().copied().collect::<Vec<_>>());

@@ -19,10 +19,10 @@ const SIDE: u32 = 512;
 // Linear face-distance Depth32Float bounds worst quantization below 0.062 mm at 512 m.
 const NEAR: f32 = 0.005;
 const FAR: f32 = 512.0;
-/// Transport bound of the registered cabin fixtures (dome, dial and status lamps), the same 24 m
-/// the protected interior view already uses as its far plane. At the bound a lamp delivers
-/// 1/576 of its 1 m irradiance; the discontinuity is that fraction of an already dim source.
-pub const CABIN_FIXTURE_REACH_M: f32 = 24.0;
+/// Transport bound of the registered cabin fixtures (dome, dial and status lamps). The cabin
+/// is under 4 m across; at the 12 m bound a lamp delivers 1/144 of its 1 m irradiance, and the
+/// discontinuity is that fraction of an already dim source.
+pub const CABIN_FIXTURE_REACH_M: f32 = 12.0;
 // Distant muzzle/impact rays must also capture the receiving tank, not only the source vehicle.
 
 #[repr(C)]
@@ -33,6 +33,9 @@ pub struct Uniform {
     pub torch_position: [f32; 4], // xyz, enabled
     pub torch_direction: [f32; 4], // xyz, outer cone cosine
     pub range: [f32; 4],               // near, far, texel angular scale, active lights
+    /// Unit quaternion (xyzw) of the frame the reach-limited cabin fixtures' cubes are rendered
+    /// in: the turret. Their receivers rotate into it before the cube lookup.
+    pub cabin_frame: [f32; 4],
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -122,6 +125,87 @@ pub struct CabinShadows {
     observed_motion: RefCell<ObservedMotion>,
     torch_direction: glam::Vec3,
     far_ranges: RefCell<[f32;MAX_LIGHTS]>,
+    /// Rotation of the vehicle frame the cabin fixtures ride (identity until the game sets it).
+    cabin_frame: std::cell::Cell<glam::Quat>,
+    /// Per packed lamp this frame: cube frame and whether it is a reach-limited cabin fixture.
+    frames: RefCell<[(glam::Quat, bool); MAX_LIGHTS]>,
+    /// What each reach-limited lamp's cached cube was rendered from, in the lamp's own frame.
+    relative: RefCell<Vec<RelativeCache>>,
+}
+
+/// One caster as a reach-limited lamp sees it: identity plus its pose(s) in the lamp frame.
+#[derive(Clone, PartialEq)]
+struct RelativeCaster { kind: u8, index: usize, revision: u64, poses: Vec<glam::Mat4> }
+#[derive(Clone, Default)]
+struct RelativeCache { valid: bool, emitter: Option<usize>, far: f32, scenes: [Vec<RelativeCaster>; 2],
+    /// Renderer time before which a changed scene is not yet redrawn (update cadence).
+    next_update_s: f32 }
+/// Update cadence of a cabin fixture's shadow cube. Casters outside the armour (track links,
+/// objects the tank drives past) change in the vehicle frame on every frame although an
+/// interior lamp cannot light them, so a per-frame redraw bought nothing. A changed cube is
+/// redrawn at most this often, lamps staggered across frames; a moving caster's shadow from
+/// these lamps therefore lags by at most one period.
+pub const CABIN_FIXTURE_UPDATE_HZ: f32 = 20.0;
+/// A cube rendered in the vehicle frame stays valid while every admitted caster keeps its pose
+/// in that frame. World-space float noise at battlefield coordinates is about 0.1 mm, so poses
+/// are compared against the pose the cube was RENDERED from (never the previous frame, which
+/// would let slow motion drift unnoticed) within 1 mm and 0.2 mrad: under a quarter of a cube
+/// texel at one metre.
+const RELATIVE_TRANSLATION_TOLERANCE_M: f32 = 0.001;
+const RELATIVE_ROTATION_TOLERANCE: f32 = 0.0002;
+fn same_relative_pose(a: &glam::Mat4, b: &glam::Mat4) -> bool {
+    (a.w_axis - b.w_axis).abs().max_element() <= RELATIVE_TRANSLATION_TOLERANCE_M
+        && (a.x_axis - b.x_axis).abs().max_element() <= RELATIVE_ROTATION_TOLERANCE
+        && (a.y_axis - b.y_axis).abs().max_element() <= RELATIVE_ROTATION_TOLERANCE
+        && (a.z_axis - b.z_axis).abs().max_element() <= RELATIVE_ROTATION_TOLERANCE
+}
+fn same_relative_scene(a: &[RelativeCaster], b: &[RelativeCaster]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.kind == b.kind && a.index == b.index
+        && a.revision == b.revision && a.poses.len() == b.poses.len()
+        && a.poses.iter().zip(&b.poses).all(|(a, b)| same_relative_pose(a, b)))
+}
+/// A reach-limited lamp admits only casters lying wholly inside its reach. That keeps the
+/// vehicle, its crew and nearby small objects, and leaves out the terrain and district-sized
+/// batches, whose pose in the vehicle frame changes on every frame the vehicle moves.
+/// Diagnostic only (`KESSEL_DEBUG_CABIN_SHADOW=1`): name what invalidated a vehicle-frame cube.
+fn relative_debug() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("KESSEL_DEBUG_CABIN_SHADOW").as_deref() == Ok("1"))
+}
+fn report_relative_change(lamp: usize, old: &[Vec<RelativeCaster>; 2], new: &[Vec<RelativeCaster>; 2]) {
+    for layer in 0..2 {
+        let (a, b) = (&old[layer], &new[layer]);
+        if a.len() != b.len() {
+            eprintln!("[cabin-shadow] lamp {lamp} layer {layer}: caster count {} -> {}", a.len(), b.len());
+            continue;
+        }
+        let mut shown = 0;
+        for (a, b) in a.iter().zip(b) {
+            let moved = a.poses.len() != b.poses.len()
+                || !a.poses.iter().zip(&b.poses).all(|(a, b)| same_relative_pose(a, b));
+            if a.kind != b.kind || a.index != b.index || a.revision != b.revision || moved {
+                if shown < 6 {
+                    eprintln!("[cabin-shadow] lamp {lamp} layer {layer}: kind {} index {} -> {} revision_changed {} moved {} at {:?} was {:?}",
+                        b.kind, a.index, b.index, a.revision != b.revision, moved,
+                        b.poses.first().map(|m| m.w_axis.truncate()), a.poses.first().map(|m| m.w_axis.truncate()));
+                }
+                shown += 1;
+            }
+        }
+        if shown > 6 { eprintln!("[cabin-shadow] lamp {lamp} layer {layer}: {shown} casters changed in all"); }
+    }
+}
+fn wholly_within(position: glam::Vec3, lo: glam::Vec3, hi: glam::Vec3, far: f32) -> bool {
+    lo.is_finite() && hi.is_finite() && !lo.cmpgt(hi).any()
+        && (lo - position).abs().max((hi - position).abs()).max_element() <= far
+}
+fn admits(limited: bool, position: glam::Vec3, lo: glam::Vec3, hi: glam::Vec3, far: f32) -> bool {
+    if limited { wholly_within(position, lo, hi, far) } else { near_box(position, lo, hi, far) }
+}
+/// World-to-clip matrix of one cube face rendered in `frame` about `position`.
+fn framed_face_view_proj(position: glam::Vec3, frame: glam::Quat, face: usize, range: (f32, f32)) -> glam::Mat4 {
+    face_view_proj_range(glam::Vec3::ZERO, face, range) * glam::Mat4::from_quat(frame.inverse())
+        * glam::Mat4::from_translation(-position)
 }
 
 #[cfg(test)]
@@ -312,6 +396,9 @@ impl CabinShadows {
         Self {
             render_maps: enabled,
             far_ranges:RefCell::new([FAR;MAX_LIGHTS]),
+            cabin_frame: std::cell::Cell::new(glam::Quat::IDENTITY),
+            frames: RefCell::new([(glam::Quat::IDENTITY, false); MAX_LIGHTS]),
+            relative: RefCell::new(vec![RelativeCache::default(); MAX_LIGHTS]),
             view,
             sampling_bgl,
             sampling_bind,
@@ -368,6 +455,7 @@ impl CabinShadows {
         self.dynamic_flags = old.dynamic_flags.clone();
         *self.observed_motion.borrow_mut() = old.observed_motion.borrow().clone();
         self.torch_direction = old.torch_direction;
+        self.cabin_frame.set(old.cabin_frame.get());
     }
 
     fn set_torch(&mut self, light: Option<PointLight>, direction: glam::Vec3, lens: usize) {
@@ -444,6 +532,38 @@ impl CabinShadows {
         hash.finish()
     }
 
+    /// The casters one reach-limited lamp admits, with their poses in the lamp's own frame.
+    fn relative_scene(&self, renderer: &Renderer, dynamic: bool, motion: &ObservedMotion,
+        lamp: glam::Vec3, frame: glam::Quat, far: f32) -> Vec<RelativeCaster> {
+        let to_frame = glam::Mat4::from_rotation_translation(frame, lamp).inverse();
+        let revision = |parts: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            parts(&mut hash);
+            hash.finish()
+        };
+        let mut scene = Vec::new();
+        for (i, m) in renderer.shadow_source_meshes().iter().enumerate() {
+            if (!renderer.menu_mode && (self.is_dynamic(i) || m.temporal_dynamic || motion.contains(i))) != dynamic
+                || !m.visible || (m.glass && m.periscope_kind != 2)
+                || !wholly_within(lamp, m.world_min, m.world_max, far) { continue; }
+            scene.push(RelativeCaster { kind: 0, index: i,
+                revision: revision(&|hash| { m.index_count.hash(hash); m.vbuf.hash(hash);
+                    m.ibuf.hash(hash); m.pose_revision.hash(hash); }),
+                poses: vec![to_frame * m.model] });
+        }
+        if renderer.menu_mode { return scene; }
+        for (i, b) in renderer.inst_batches.iter().enumerate() {
+            if b.moving_rt_pool != dynamic || b.inst_count == 0 || b.raster_only_dynamic || b.flags > 3.5
+                || !wholly_within(lamp, b.world_min, b.world_max, far) { continue; }
+            scene.push(RelativeCaster { kind: 1, index: i,
+                revision: revision(&|hash| { b.inst_count.hash(hash); b.inst_buffer_id.hash(hash);
+                    b.prototype.hash(hash); renderer.inst_prototypes[b.prototype].vbuf.hash(hash);
+                    renderer.inst_prototypes[b.prototype].ibuf.hash(hash); b.hidden.hash(hash); }),
+                poses: b.cpu_mats.iter().take(b.inst_count as usize).map(|model| to_frame * *model).collect() });
+        }
+        scene
+    }
+
     pub fn prepare(&self, renderer: &Renderer, queue: &wgpu::Queue, camera: &CameraUniform) {
         let registered = self.lights.borrow();
         let emitting_meshes = self.emitting_meshes.borrow();
@@ -462,7 +582,10 @@ impl CabinShadows {
             torch_position: registered.get(TORCH_SLOT).filter(|l|active_fixture(l)).map_or([0.0;4],|l|[l.pos.x,l.pos.y,l.pos.z,1.0]),
             torch_direction: [self.torch_direction.x,self.torch_direction.y,self.torch_direction.z,28f32.to_radians().cos()],
             range: [NEAR, FAR, 2.0 / SIDE as f32, 0.0],
+            cabin_frame: self.cabin_frame.get().to_array(),
         };
+        let mut frames = self.frames.borrow_mut();
+        let mut relative = self.relative.borrow_mut();
         let mut caches = self.caches.borrow_mut();
         let mut motion = self.observed_motion.borrow_mut();
         // Menu meshes have an independent slot namespace. They neither promote gameplay slots
@@ -491,14 +614,47 @@ impl CabinShadows {
             let far=if reach_limited {source_far_range(lamp.pos,lo,hi).min(CABIN_FIXTURE_REACH_M)}
                 else {source_far_range(lamp.pos,lo,hi)};
             ranges[i]=far;uniform.projections[i]=[NEAR,far,if reach_limited {1.0} else {0.0},0.0];
-            let changed = caches[i].observe(lamp_signature(source_keys[0],lamp,emitter,far),
-                lamp_signature(source_keys[1],lamp,emitter,far));
+            let frame=if reach_limited {self.cabin_frame.get()} else {glam::Quat::IDENTITY};
+            frames[i]=(frame,reach_limited);
+            let changed = if reach_limited {
+                // The cube rides the vehicle: it is redrawn only when something moves relative
+                // to the lamp, not whenever the vehicle moves through the world.
+                let scenes=[self.relative_scene(renderer,false,&motion,lamp.pos,frame,far),
+                    self.relative_scene(renderer,true,&motion,lamp.pos,frame,far)];
+                let cache=&mut relative[i];
+                let reset=!cache.valid || cache.emitter!=emitter || cache.far!=far;
+                let rebuild_static=reset || !same_relative_scene(&cache.scenes[0],&scenes[0]);
+                let compose=rebuild_static || !same_relative_scene(&cache.scenes[1],&scenes[1]);
+                // Cadence: a cube that is merely stale waits for its next slot. A new lamp, a
+                // new emitter or a new range is drawn at once.
+                let period=1.0/CABIN_FIXTURE_UPDATE_HZ;
+                let waiting=compose && !reset && renderer.time>=cache.next_update_s-period*2.0
+                    && renderer.time<cache.next_update_s;
+                let (rebuild_static,compose)=if waiting {(false,false)} else {(rebuild_static,compose)};
+                if compose && cache.valid && relative_debug() {
+                    report_relative_change(i,&cache.scenes,&scenes);
+                }
+                if compose {
+                    // First draw staggers the lamps so they do not all refresh on one frame.
+                    let next_update_s=renderer.time+period*if reset {1.0+(i%8) as f32/8.0} else {1.0};
+                    *cache=RelativeCache {valid:true,emitter,far,scenes,next_update_s};
+                }
+                // The world-space signature path must start afresh if this slot changes kind.
+                caches[i].static_signature=None;caches[i].dynamic_signature=None;
+                caches[i].pending.rebuild_static|=rebuild_static;caches[i].pending.compose|=compose;
+                CacheWork {rebuild_static,compose}
+            } else {
+                relative[i].valid=false;
+                caches[i].observe(lamp_signature(source_keys[0],lamp,emitter,far),
+                    lamp_signature(source_keys[1],lamp,emitter,far))
+            };
             if !changed.compose { continue; }
             for face in 0..6 {
                 let cam = CameraUniform {
                     // The source shader subtracts the lamp before transforming a local vertex.
                     // Keep the absolute matrix below for CPU source-caster culling only.
-                    light_view_proj: face_view_proj_range(glam::Vec3::ZERO, face, (NEAR,far)).to_cols_array_2d(),
+                    light_view_proj: (face_view_proj_range(glam::Vec3::ZERO, face, (NEAR,far))
+                        * glam::Mat4::from_quat(frame.inverse())).to_cols_array_2d(),
                     cam_pos: lamp.pos.to_array(),
                     fog_density:far, // point-shadow Camera.far shares this prefix lane
                     ..*camera
@@ -523,9 +679,10 @@ impl CabinShadows {
             let changed = self.caches.borrow_mut()[light].take_work();
             if !changed.compose { continue; }
             let far = self.far_ranges.borrow()[light];
+            let (frame, limited) = self.frames.borrow()[light];
             for face in 0..6 {
                 let layer = light * 6 + face;
-                let matrix = face_view_proj_range(lamp.pos, face, (NEAR,far));
+                let matrix = framed_face_view_proj(lamp.pos, frame, face, (NEAR,far));
                 let planes = frustum_planes(matrix);
                 if changed.rebuild_static {
                     let pages = renderer.inst_spatial_index.query(matrix);
@@ -544,7 +701,7 @@ impl CabinShadows {
                     pass.set_bind_group(0, &self.binds[layer], &[]);
                     for (index, m) in renderer.shadow_source_meshes().iter().enumerate() {
                         if !casts_for_fixture(index, emitting_mesh) || (!renderer.menu_mode && (self.is_dynamic(index) || m.temporal_dynamic || motion.contains(index))) || !m.visible || (m.glass && m.periscope_kind!=2)
-                            || !near_box(lamp.pos, m.world_min, m.world_max, far)
+                            || !admits(limited, lamp.pos, m.world_min, m.world_max, far)
                             || !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
                         let push = PushData { model: m.model.to_cols_array_2d(), params: [0.0; 4] };
                         pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
@@ -559,7 +716,7 @@ impl CabinShadows {
                     for &index in pages.batches.iter().filter(|_| !renderer.menu_mode) {
                         let b = &renderer.inst_batches[index];
                         if b.moving_rt_pool || b.inst_count == 0 || b.raster_only_dynamic || b.flags > 3.5
-                            || !near_box(lamp.pos, b.world_min, b.world_max, far) { continue; }
+                            || !admits(limited, lamp.pos, b.world_min, b.world_max, far) { continue; }
                         let p = &renderer.inst_prototypes[b.prototype];
                         let push = PushData { model: glam::Mat4::IDENTITY.to_cols_array_2d(), params: [0.0; 4] };
                         pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
@@ -576,12 +733,12 @@ impl CabinShadows {
                 let visible_dynamic: Vec<_> = renderer.shadow_source_meshes().iter().enumerate().filter_map(|(index,m)| {
                     (!renderer.menu_mode && (self.is_dynamic(index) || m.temporal_dynamic || motion.contains(index))
                         && casts_for_fixture(index, emitting_mesh) && m.visible && (!m.glass || m.periscope_kind==2)
-                        && near_box(lamp.pos,m.world_min,m.world_max,far)
+                        && admits(limited,lamp.pos,m.world_min,m.world_max,far)
                         && shadow_has_sample(matrix,m.world_min,m.world_max,SIDE)).then_some(m)
                 }).collect();
                 let moving_batches:Vec<_>=renderer.inst_batches.iter().filter(|b|!renderer.menu_mode && b.moving_rt_pool
                     && !b.raster_only_dynamic && b.inst_count>0 && b.flags<=3.5
-                    && near_box(lamp.pos,b.world_min,b.world_max,far)
+                    && admits(limited,lamp.pos,b.world_min,b.world_max,far)
                     && shadow_has_sample(matrix,b.world_min,b.world_max,SIDE)).collect();
                 if visible_dynamic.is_empty() && moving_batches.is_empty() { continue; }
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -659,6 +816,14 @@ impl Renderer {
     /// Register the actual finite pool once; visibility/model changes drive composed depth later.
     pub fn set_cabin_shadow_dynamic_meshes(&mut self, meshes: &[usize]) {
         self.cabin_shadows.set_dynamic_meshes(meshes);
+    }
+    /// Rotation of the vehicle frame the cabin fixtures are mounted in (the player's turret).
+    /// Their shadow cubes are rendered and sampled in this frame so that driving does not
+    /// invalidate them; only motion relative to the lamp does.
+    pub fn set_cabin_light_frame(&mut self, frame: glam::Quat) {
+        if frame.is_finite() && frame.length_squared() > 0.5 {
+            self.cabin_shadows.cabin_frame.set(frame.normalize());
+        }
     }
     pub fn set_shadowed_cabin_lights(&mut self, lights: &[PointLight], emitting_meshes: &[Option<usize>]) {
         self.cabin_shadows.set_lights(lights, emitting_meshes);

@@ -279,7 +279,9 @@ fn cabin_light_shadow(source:vec3<f32>,radius:f32,world:vec3<f32>,offset:vec3<f3
     if(PORTABLE_VISIBILITY){return hand_torch_gain(source,world)*scene_point_transmission(source,radius,world+n*0.0001);}
     let lamp=cabin_fixture_index(source);
     if(lamp<0){scene_visibility_unresolved=true;return vec3(1.0,0.0,1.0);}
-    let major=max(abs(offset.x),max(abs(offset.y),abs(offset.z)));
+    let local_offset=cabin_lamp_local(lamp,offset);
+    let local_normal=cabin_lamp_local(lamp,n);
+    let major=max(abs(local_offset.x),max(abs(local_offset.y),abs(local_offset.z)));
     let limits=cabin_shadow_range(lamp);
     if(major>=limits.y){
         if(cabin_shadow_reach_limited(lamp)){return vec3(0.0);}
@@ -287,7 +289,7 @@ fn cabin_light_shadow(source:vec3<f32>,radius:f32,world:vec3<f32>,offset:vec3<f3
     }
     if(major<=limits.x){return vec3(hand_torch_gain(source,world));}
     let bias=max(0.00005,major*0.00000024);
-    return vec3(hand_torch_gain(source,world)*cabin_receiver_plane_pcf(offset,n,bias,lamp));
+    return vec3(hand_torch_gain(source,world)*cabin_receiver_plane_pcf(local_offset,local_normal,bias,lamp));
 }
 
 struct Push {
