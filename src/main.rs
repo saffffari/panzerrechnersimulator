@@ -157,6 +157,7 @@ mod terrain_opening;
 mod texelsplat;
 mod trees;
 mod turret_disc;
+mod pixel_font;
 mod ui;
 mod graphics_menu;
 mod storm_weather;
@@ -2230,6 +2231,13 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
         }
         "death" => draw_fallen_card(&mut r, death_card::identity(1943, 1943)),
+        "hint" => {
+            ui::draw_black(&mut r);
+            let hint = interaction_hint("OPEN CUPOLA HATCH [LMB]", game::InteractKind::Click);
+            pixel_font::draw_centered(&mut r, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
+            pixel_font::draw_centered(&mut r, "CASE IN HAND - LMB TO LET GO, X TO THROW 0123456789", 0.5, 0.80, 1, HOVER_OUTLINE_RGBA);
+            pixel_font::draw_centered(&mut r, "YOU ARE ON FIRE - SPACE", 0.5, 0.60, 2, [1.0, 0.55, 0.18, 1.0]);
+        }
         "kia-black" | "actcard" | "ending" | "finaldefeat" => ui::draw_black(&mut r),
         "controls" => ui::draw_controls(&mut r),
         "stars" | "storm" | "clouds" => {
@@ -13334,13 +13342,13 @@ impl WindowState {
         // The one line of survival text: the player's own body is on fire.
         if let Some(prompt) = self.game.burn_prompt() {
             let pulse = 0.75 + 0.25 * (self.renderer.time * 9.0).sin();
-            self.renderer.draw_text(prompt, 0.5, 0.90, 0.020, [1.0, 0.55, 0.18, pulse], ui::Align::Center);
+            pixel_font::draw_centered(&mut self.renderer, prompt, 0.5, 0.895, 2, [1.0, 0.55, 0.18, pulse]);
         }
         // What the outlined thing is and which button works it: small, bottom centre, in the
         // outline's own colour (owner, 2026-10-03; play is otherwise wordless).
         if let Some(label) = self.game.hover_label_text() {
             let hint = interaction_hint(&label, self.game.interact_kind());
-            self.renderer.draw_text(&hint, 0.5, 0.945, 0.016, HOVER_OUTLINE_RGBA, ui::Align::Center);
+            pixel_font::draw_centered(&mut self.renderer, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
         }
         // A dot where the crosshair rests on something the hands can use.
         if self.game.hover_label_text().is_some() && !self.game.sidearm_is_drawn() {
