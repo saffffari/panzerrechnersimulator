@@ -439,6 +439,18 @@ fn configured_master_retro() -> f32 {
 /// A fixed camera exposure in place of the eye exists only behind the debug gate
 /// (`debug_gates`, `KESSEL_CAMERA_EXPOSURE` in a debug build). Shipping frames are always shown by
 /// the crewman's eye.
+/// Daylight lasts this long with the day and night cycle on, and so does the night: a twenty
+/// minute day, as in Minecraft (whose split is ten of day, seven of night and two twilights).
+pub const DAY_NIGHT_HALF_S: f64 = 600.0;
+/// On in play. Off for unit tests and wherever `KESSEL_DAY_NIGHT=0` asks for the real-time clock
+/// (stills and films that must hold their authored light).
+fn day_night_cycle_enabled() -> bool {
+    match std::env::var("KESSEL_DAY_NIGHT").ok().as_deref() {
+        Some("0") => false,
+        Some("1") => true,
+        _ => !cfg!(test),
+    }
+}
 /// Exposure and saturation of the display grade at full boost.
 pub const VISION_BOOST_EXPOSURE: f32 = 1.9;
 pub const VISION_BOOST_SATURATION: f32 = 1.18;
@@ -2503,6 +2515,9 @@ pub struct Renderer {
     /// Optional live display comparison; transport and lighting are unchanged.
     pub display_dither_pattern: f32,
     pub sky_time_scale: f32,
+    /// The accelerated day and night cycle, and the share of the current day that is daylight.
+    pub day_night_cycle: bool,
+    daylight_fraction: Option<f64>,
     weather_offset: glam::Vec3,
     pub weather_override: Option<f32>,
     weather_original: Option<(f32,f32,f32,f32,glam::Vec2)>,
@@ -5672,6 +5687,8 @@ impl Renderer {
             display_grade: [1.0, 1.0, 0.0, 1.0],
             display_dither_pattern: configured_display_dither(),
             sky_time_scale: 1.0,
+            day_night_cycle: day_night_cycle_enabled(),
+            daylight_fraction: None,
             weather_offset: glam::Vec3::ZERO,
             weather_override: None,
             weather_original: None,
@@ -6022,8 +6039,30 @@ impl Renderer {
         }
     }
 
+    /// How fast the sky's clock runs now. With the day and night cycle on, the Sun and Moon
+    /// still stand exactly where the ephemeris puts them for the date and place; only the rate
+    /// of the clock changes, so that daylight lasts `DAY_NIGHT_HALF_S` and so does the night
+    /// (owner, 2026-10-04: a cycle of about Minecraft's length in every mode).
+    fn sky_clock_rate(&mut self) -> f64 {
+        if !self.day_night_cycle { return self.sky_time_scale as f64; }
+        let day_fraction = *self.daylight_fraction.get_or_insert_with(|| {
+            // One day sampled every ten minutes from now: the share of it the Sun is up.
+            let mut probe = self.sky_clock;
+            let lit = (0..144).filter(|_| {
+                probe.advance(600.0);
+                crate::celestial_sky::CelestialLighting::at(probe.now(), probe.site,
+                    AtmosphereParameters::default().solar_irradiance).darkness() < 0.5
+            }).count();
+            (lit as f64 / 144.0).clamp(0.08, 0.92)
+        });
+        let rate = |share: f64| share * 86_400.0 / DAY_NIGHT_HALF_S;
+        let night = f64::from(self.night.clamp(0.0, 1.0));
+        (rate(day_fraction) * (1.0 - night) + rate(1.0 - day_fraction) * night) * self.sky_time_scale as f64
+    }
+
     pub fn advance_sky_clock(&mut self, dt_s: f32) {
-        self.sky_clock.advance(dt_s as f64 * self.sky_time_scale as f64);
+        let rate = self.sky_clock_rate();
+        self.sky_clock.advance(dt_s as f64 * rate);
         self.apply_weather_override();
         self.weather_offset += glam::Vec3::new(self.weather_wind_world.x,0.0,self.weather_wind_world.y)
             *weather_gust(self.time,self.weather_seed)*dt_s.max(0.0);

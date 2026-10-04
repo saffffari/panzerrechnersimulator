@@ -62,7 +62,10 @@ impl Game {
             r.set_emissive(slot,0.0);r.set_model(slot,c.body.model());
         }
         strongest_first(&mut sounds);
-        let allowed=(self.brass_sound_credit.floor().max(0.0) as usize).min(sounds.len()).min(4);
+        // Owner, 2026-10-04: the machine-gun cases' clinking "needs to stop". They still fall and
+        // lie where they land; they are silent.
+        const MG_CASES_AUDIBLE:bool=false;
+        let allowed=if MG_CASES_AUDIBLE {(self.brass_sound_credit.floor().max(0.0) as usize).min(sounds.len()).min(4)} else {0};
         self.brass_sound_credit-=allowed as f32;
         if let Some(audio)=&self.audio {for &(normal,slide,bearing,seed) in sounds.iter().take(allowed) {
             audio.play_mg_case_contact(normal,slide,bearing,seed);

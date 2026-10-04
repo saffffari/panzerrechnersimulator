@@ -9678,6 +9678,11 @@ impl Game {
             Some(manifest) => crate::world::resolve_manifest(act.clone(), manifest)?,
             None => act.clone(),
         };
+        // A map states its own season. A spring course loaded in the winter act's slot is spring:
+        // no snowfall, no snow thrown by the tracks, and the warm air's speed of sound.
+        if manifest.as_ref().is_some_and(|m| m.value()["terrain"]["grass_season"].as_str() == Some("spring")) {
+            resolved_act.season = crate::world::Season::Spring;
+        }
         if let Some(start) = campaign_start {
             resolved_act.spawn = Vec2::new(start.route.start.x as f32, start.route.start.z as f32);
             resolved_act.goal = Vec2::new(start.route.exit.x as f32, start.route.exit.z as f32);

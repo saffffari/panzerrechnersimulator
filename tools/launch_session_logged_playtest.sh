@@ -20,7 +20,14 @@ fi
 readonly ASSETS=${KESSEL_ASSET_ROOT:-$DEFAULT_ASSETS}
 readonly BINARY=${PANZER_BINARY:-${CARGO_TARGET_DIR:-$HERE/target}/release/panzerrechnersystem}
 readonly LOG_DIR=${PANZER_LOG_DIR:-$ASSETS/artifacts/runtime}
-readonly MANIFEST="$ASSETS/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json"
+# PANZER_MAP=steppe plays map 2 (the spring steppe, tools/worldgen/steppe_spring.py); the
+# default is the winter canyon.
+readonly MAP=${PANZER_MAP:-canyon}
+if [[ "$MAP" == steppe ]]; then
+  readonly MANIFEST="$ASSETS/assets/worldgen/workshops/steppe-spring-v1/manifest.v1.json"
+else
+  readonly MANIFEST="$ASSETS/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json"
+fi
 [[ -x "$BINARY" ]] || { printf 'No release executable at %s\n' "$BINARY" >&2; exit 1; }
 [[ -f "$MANIFEST" ]] || { printf 'No canyon manifest at %s\n' "$MANIFEST" >&2; exit 1; }
 mkdir -p "$LOG_DIR"
@@ -33,7 +40,10 @@ export KESSEL_FIXED_PLAYTEST_GRAPHICS=1 KESSEL_INTERNAL_RES=800x450 KESSEL_FULLS
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4
 export KESSEL_SOURCE_VISIBILITY=maps KESSEL_TRANSPORT_QUALITY=full
 export KESSEL_RETAIN_RIGID_SKY_DEPTH=0
-export KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_CANYON_V2=1 KESSEL_AUDIO_RANGE=reference
+export KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_AUDIO_RANGE=reference
+# Broken cloud costs far more sky samples than the canyon's overcast: the steppe uses the
+# renderer's lower sample counts (same scene, emitters and materials).
+if [[ "$MAP" == steppe ]]; then export KESSEL_CANYON_MANIFEST="$MANIFEST" KESSEL_TRANSPORT_QUALITY=gameplay; else export KESSEL_CANYON_V2=1; fi
 if [[ "$PANZER_MODE" == play ]]; then export KESSEL_CANYON=1; fi
 # Telemetry: one JSON line per second; one fenced GPU pass-timing frame every two seconds.
 export KESSEL_SESSION_LOG="$LOG_DIR/session-$STAMP.jsonl" KESSEL_GPU_PROFILE=1
