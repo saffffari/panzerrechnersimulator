@@ -17,8 +17,11 @@ pub fn into_hatch_frame(grip: CpuMesh) -> CpuMesh {
     grip.transformed(Mat4::from_translation(-super::CUPOLA_HINGE))
 }
 
+/// The lever is worked from the cupola seat with the head in, or reached up to from the
+/// loader's place below it. Aiming at the grip or its pivot works the hatch; anywhere else on
+/// the cupola from below still climbs up into it.
 fn controls_available(station: super::Station, head_out: bool, switching: f32) -> bool {
-    station == super::Station::Commander && !head_out && switching <= 0.0
+    matches!(station, super::Station::Commander | super::Station::Loader) && !head_out && switching <= 0.0
 }
 
 fn visible_grip_hit(
@@ -173,7 +176,8 @@ mod tests {
 
     #[test]
     fn cupola_entry_is_separate_from_hatch_operation_and_other_hatches_keep_working() {
-        assert!(!controls_available(super::super::Station::Loader, false, 0.0));
+        assert!(controls_available(super::super::Station::Loader, false, 0.0), "the lever is reachable from below");
+        assert!(!controls_available(super::super::Station::Gunner, false, 0.0));
         assert!(!controls_available(super::super::Station::Commander, false, 0.1));
         assert!(!controls_available(super::super::Station::Commander, true, 0.0));
         assert!(controls_available(super::super::Station::Commander, false, 0.0));

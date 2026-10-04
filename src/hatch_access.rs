@@ -103,6 +103,8 @@ impl Game {
         for index in 0..5 {
             if !self.access_hatch_open(index) { continue; }
             if entering && !self.hatch_entry_post_available(index) { continue; }
+            // The cupola is left from the cupola: a man below it must first climb into its seat.
+            if !entering && index == 4 && self.station != Station::Commander { continue; }
             let aperture = self.access_aperture(index);
             let Some(score) = target_score(r.camera.pos, r.camera.forward(),
                 entering.then_some(self.foot.pos), aperture, entering) else { continue; };

@@ -176,7 +176,12 @@ impl super::Audio {
     }
 
     pub fn play_cartridge_contact(&self,contact:CartridgeContact,ear_laf_dba:f32) {
+        /// Slower contacts are taps and rolls: they keep the short synthesized voice.
+        const RECORDED_DROP_MPS:f32=0.6;
         self.protect_interaction(0.8);
+        // A real drop (not a rolling tap) is the owner's recording of a shell or case on the floor.
+        if contact.normal_speed_mps>=RECORDED_DROP_MPS
+            && self.play_owner_local("shell_floor",ear_laf_dba+14.0,contact.bearing_deg) {return;}
         self.play_handling_at_ear(synth_contact(contact),ear_laf_dba);
     }
 }

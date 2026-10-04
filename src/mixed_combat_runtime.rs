@@ -875,7 +875,8 @@ impl Game {
             let braked=crate::sound_levels::gun_is_braked(shell.caliber_mm,shell.muzzle_velocity);
             self.schedule_emission(crate::audio::Sfx::EnemyGun,muzzle,
                 crate::sound_propagation::Emission::gun(charge,braked,90.0),Some((direction,braked)),
-                Some(crate::acoustics::synth_gun_report(shell.caliber_mm,0.0,0.0,self.ai_tick.wrapping_mul(977))));
+                Some(self.recorded_gun_report("t34_gun",muzzle,
+                    crate::acoustics::synth_gun_report(shell.caliber_mm,0.0,0.0,self.ai_tick.wrapping_mul(977)))));
         }
         true
     }

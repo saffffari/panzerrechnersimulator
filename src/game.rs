@@ -2748,6 +2748,8 @@ fn enemy_armor(kind: EnemyKind) -> crate::ballistics::ArmorScheme {
 
 /// Bearing (deg, 0 = dead ahead, 90 = right, 270 = left) of a world direction relative to a facing.
 /// Drives the stereo pan of hull impacts — a hit from the left CLANGS in the left ear.
+/// Beyond this range a gun or a strike is voiced by a recording made at a distance.
+const DISTANT_RECORDING_M: f32 = 700.0;
 /// The earlier exterior gun recording sits this far under the main recording [E, by ear].
 const OUTSIDE_BLAST_LAYER_DB: f32 = -6.0;
 /// The recording made inside a firing tank, for a listener inside, relative to the main one.
@@ -15619,11 +15621,19 @@ impl Game {
                 self.engine_on = false;
                 self.engine_crank_t = 0.0;
                 if let Some(a) = &self.audio {
-                    a.play_at_ear(crate::audio::Sfx::EngineDeath, crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db + crate::audio::effort_db(0.4)); // the wind-down IS the shutoff
+                    let level = crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db + crate::audio::effort_db(0.4);
+                    // The owner's recording of the engine being shut down; the earlier wind-down otherwise.
+                    if !a.play_owner_local("engine_shutdown", level, 180.0) {
+                        a.play_at_ear(crate::audio::Sfx::EngineDeath, level);
+                    }
                 }
                 println!("[panzerrechnersystem] MOTOR AUS — silent watch (Z cranks it back up)");
             } else if self.engine_crank_t <= 0.0 && self.tank_fuel_liters().is_none_or(|fuel| fuel > 0.0) {
                 self.engine_crank_t = 1.8;
+                // The owner's recording of the engine being started, from the engine behind him.
+                if let Some(a) = &self.audio {
+                    a.play_owner_local("engine_start", crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db, 180.0);
+                }
                 println!("[panzerrechnersystem] ANLASSER — cranking…");
             }
         }
@@ -23788,6 +23798,10 @@ impl Game {
     }
 
     fn drain_scheduled_audio(&mut self, dt: f32, r: &Renderer, audio_time_s: f32) -> usize {
+        if let Some(audio) = &self.audio {
+            audio.set_local_acoustics(self.surroundings_reverb(r.camera.pos, self.listener_enclosure()),
+                self.listener_headset());
+        }
         // Every open hatch is another way in for outside sound.
         crate::sound_propagation::set_open_hatches(self.open_hatch_count());
         // Where the ears are and which way the head is turned, for sounds played between drains.
@@ -23912,7 +23926,20 @@ impl Game {
     /// calibration for `sfx` (`sound_emission_for`), propagated at hear-time. The player's OWN main
     /// gun bypasses this (it is calibrated at the ear).
     fn schedule_sound_from(&mut self, sfx: crate::audio::Sfx, src: Vec3) {
-        self.schedule_emission(sfx, src, sound_emission_for(sfx), None, None);
+        // A strike far off is the owner's recording of one heard at a distance.
+        let far = src.distance(self.threat_center()) >= DISTANT_RECORDING_M
+            && matches!(sfx, crate::audio::Sfx::ImpactGround | crate::audio::Sfx::ImpactTank);
+        let buf = if far { self.audio.as_ref().and_then(|a| a.owner_stereo("impact_distant")) } else { None };
+        self.schedule_emission(sfx, src, sound_emission_for(sfx), None, buf);
+    }
+
+    /// The voice of another gun's report: the owner's recording (`close_key` near, the distant
+    /// recordings far off), or the synthesized report where none is installed. Its level,
+    /// filtering, bearing and tail still come from the propagation on arrival.
+    fn recorded_gun_report(&self, close_key: &str, source: Vec3, synthesized: Vec<f32>) -> Vec<f32> {
+        let key = if source.distance(self.threat_center()) >= DISTANT_RECORDING_M { "tank_gun_distant" }
+            else { close_key };
+        self.audio.as_ref().and_then(|a| a.owner_stereo(key)).unwrap_or(synthesized)
     }
 
     /// Explicit source provenance for the player's resolved ammunition detonation. This remains
@@ -26422,12 +26449,12 @@ impl Game {
         // the near-field report; air absorption, snow and the hull filter it on the way.
         let distance = muzzle.distance(self.threat_center());
         let shell = enemy_shell(kind);
-        let report = crate::acoustics::synth_gun_report(
+        let report = self.recorded_gun_report("t34_gun", muzzle, crate::acoustics::synth_gun_report(
             shell.caliber_mm,
             0.0,
             0.0,
             self.ai_tick.wrapping_mul(977),
-        );
+        ));
         let charge = crate::sound_levels::propellant_charge_kg(shell.caliber_mm, shell.mass_kg,
             shell.muzzle_velocity);
         let braked = crate::sound_levels::gun_is_braked(shell.caliber_mm, shell.muzzle_velocity);

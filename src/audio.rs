@@ -49,6 +49,8 @@ pub use soundscape::{SoundscapeInput, LibraryEmitter};
 mod ear;
 #[path = "audio_feedback.rs"]
 mod feedback;
+#[path = "audio_owner.rs"]
+mod owner;
 #[path = "audio_named_effects.rs"]
 mod named_effects;
 #[path = "audio_master.rs"]
@@ -220,7 +222,8 @@ const FILE_IMPACT_GROUND: &str = "shell_impact_ground.ogg";
 const FILE_ARMOR_CLANG_1: &str = "armor_clang_1.ogg";
 const FILE_ARMOR_CLANG_2: &str = "armor_clang_2.ogg";
 const FILE_PENETRATION: &str = "penetration_hit.ogg";
-const FILE_NEAR_MISS: &str = "near_miss.ogg";
+/// Owner's `incoming-tank-round-near-miss.wav` (2026-10-03).
+const FILE_NEAR_MISS: &str = "near_miss_20261003.ogg";
 const FILE_KILL_EXPLOSION: &str = "kill_explosion.ogg";
 const FILE_TURRET_POP: &str = "turret_pop.ogg";
 const FILE_TURRET_RIP: &str = "turret_rip.ogg";
@@ -1584,6 +1587,9 @@ pub struct Audio {
     capture: Option<RefCell<capture::CaptureMixer>>,
     clips: Vec<Option<Clip>>,
     feedback_bank: feedback::FeedbackBank,
+    /// The owner's own cut field recordings, and the acoustics of where the listener is now.
+    owner_bank: owner::OwnerBank,
+    local_acoustics: std::cell::Cell<(crate::acoustics::ReverbParams, bool)>,
     named_effects:named_effects::Bank,
     /// Immutable load-time provenance and route report; never used to select/play a source.
     bank_metadata: serde_json::Value,
@@ -1828,6 +1834,7 @@ impl Audio {
         ));
 
         let feedback_bank = feedback::FeedbackBank::load();
+        let owner_bank = owner::OwnerBank::load();
         let named_effects=named_effects::Bank::load();
         let rifle_recording = feedback_bank.get("rifle_shot");
         let small_arm_reports = small_arms::SourceBank::new_with_pistol(rifle_recording.as_deref(),feedback_bank.get("luger_shot").as_deref());
@@ -1848,6 +1855,8 @@ impl Audio {
             capture,
             clips,
             feedback_bank,
+            owner_bank,
+            local_acoustics: std::cell::Cell::new((crate::acoustics::ReverbParams::STEEL_INTERIOR, true)),
             named_effects,
             bank_metadata,
             mechanisms: RefCell::new(feedback::Mechanisms::default()),
@@ -2261,6 +2270,22 @@ impl Audio {
     pub fn play_mechanical(&self, params: crate::acoustics::MechanicalParams, volume: f32) {
         debug_assert!(mechanical_level_dba(params.cue, params.intensity, volume).is_finite()
             || volume <= 0.0);
+        // The owner's recordings of the real mechanism, where one is installed for this cue. It is
+        // played at the level the synthesized voice would have had, in the listener's place.
+        let recorded = match params.cue {
+            crate::acoustics::MechanicalCue::BreechOpen => Some("breech_open"),
+            crate::acoustics::MechanicalCue::BreechLock => Some("breech_lock"),
+            crate::acoustics::MechanicalCue::CasingExtract => Some("case_extract"),
+            crate::acoustics::MechanicalCue::ShellRam => Some("shell_ram"),
+            _ => None,
+        };
+        if let Some(key) = recorded {
+            let level = match breech_control_gain(params.cue, params.intensity, volume) {
+                Some(gain) => calibrated::control_level_dba("breech") + 6.0 + calibrated::effort_db(gain),
+                None => mechanical_level_dba(params.cue, params.intensity, volume),
+            };
+            if self.play_owner_local(key, level, params.bearing_deg) { return; }
+        }
         if let Some(gain) = breech_control_gain(params.cue, params.intensity, volume) {
             // Breech contact has its own steel body/return, distinct from the rubber-damped
             // hatch-stop recording. The actual lever contact supplies this cue and timing.

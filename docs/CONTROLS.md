@@ -425,6 +425,9 @@ size, and stitch-apron rules.
   the left button to take it. Hold the right button to light it, then hold the right button to
   toke; the left button and every interaction stay free. C with one in the mouth takes it back in
   the hand. A lit cigarette goes to the mouth by itself when the hands are needed.
+- **Leaving by the cupola needs the cupola view first.** From below, click the cupola to climb
+  into its seat; only there does held Space climb out. The hatch lever itself can be worked from
+  below as well as from the seat. Q drops back down.
 - **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
   Space to go through.
 - **Reload:** take a rack round, carry it to the open breech and line it up, press again to ram

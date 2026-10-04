@@ -467,7 +467,8 @@ impl Game {
         self.present_external_projectile(id, muzzle, direction);
         // The 45 mm's muzzle blast from its 0.36 kg charge (SL §1 row 6), directivity about the
         // laid axis; the near-field report is filtered by its propagation on arrival.
-        let report = crate::acoustics::synth_gun_report(shell.caliber_mm, 0.0, 0.0, seed.wrapping_mul(977));
+        let report = self.recorded_gun_report("cannon_generic", muzzle,
+            crate::acoustics::synth_gun_report(shell.caliber_mm, 0.0, 0.0, seed.wrapping_mul(977)));
         let charge = crate::sound_levels::propellant_charge_kg(shell.caliber_mm, shell.mass_kg,
             shell.muzzle_velocity);
         let braked = crate::sound_levels::gun_is_braked(shell.caliber_mm, shell.muzzle_velocity);

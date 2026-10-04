@@ -394,11 +394,20 @@ impl Audio {
             if let Some((sink, _)) = slot.take() { sink.stop(); }
         }
         drop(mechanisms);
-        if moving && at_stop { self.play_control("hatch_stop", if after == 0.0 { 0.95 } else { 0.8 }); }
+        if moving && at_stop {
+            // The owner's recordings of a tank hatch thrown open and pulled shut, in the place the
+            // listener is in; the earlier stop contact if they are not installed.
+            let (key, effort) = if after == 0.0 { ("hatch_close", 0.95) } else { ("hatch_open", 0.8) };
+            let level = super::calibrated::control_level_dba("hatch_stop") + super::calibrated::effort_db(effort);
+            if !self.play_owner_local(key, level, 0.0) { self.play_control("hatch_stop", effort); }
+        }
     }
 
     pub fn set_starter(&self, cranking: bool) {
         let mut mechanisms = self.mechanisms.borrow_mut();
+        // The owner's engine-start recording carries the starter; the game plays it when cranking
+        // begins, so the synthesized starter stays silent.
+        if cranking && self.owner_bank.has("engine_start") { return; }
         if cranking && mechanisms.starter.is_none() {
             if let Ok(sink) = self.create_sink() {
                 let mono = fallback("starter");
