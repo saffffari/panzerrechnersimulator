@@ -9615,7 +9615,7 @@ struct Keys {
     mmb: bool,   // middle mouse held — coax MG34 at the gunner sights
     r: bool,     // R — on-foot Luger magazine change
     z: bool,     // Z — engine shutoff / crank (Zündung)
-    x: bool,     // X held — tap: head out/in; HELD 1.5s at the open cupola: climb out on foot
+    x: bool,     // unused since 2026-10-03: Shift is head out/in, held Space climbs out
     lan_hatch_pulse: bool,
     mouse_dx: f32,
     mouse_dy: f32,
@@ -11426,7 +11426,7 @@ struct WindowState {
     ft_last: Option<std::time::Instant>,
     /// CPU cost of the last render_to_surface call (encode + submit), ms.
     encode_ms: f32,
-    /// X-hold exit progress 0..1 (fed per frame by the App input loop; draws the HUD ring).
+    /// Space-hold exit progress 0..1 (fed per frame by the App input loop; draws the HUD ring).
     x_exit_frac: f32,
     /// Optional dependency-free LAN crew session. The host owns simulation authority; every
     /// process renders from its claimed physical station.
@@ -13347,7 +13347,7 @@ impl WindowState {
                 ui::Align::Center,
             );
         }
-        // X-hold exit ring: 16 pips fill clockwise from 12 o'clock while X is held at the open
+        // Space-hold exit ring: 16 pips fill clockwise from 12 o'clock while Space is held at the open
         // cupola; the full circle (1.5 s) climbs you out. PS1-blocky on purpose — square pips.
         if self.x_exit_frac > 0.0 {
             let aspect = self.config.height as f32 / self.config.width.max(1) as f32;
@@ -14042,7 +14042,7 @@ impl WindowState {
     }
 }
 
-/// Hold X this long at the open cupola to climb out on foot (the HUD ring fills meanwhile).
+/// Hold Space this long at the open cupola to climb out on foot (the HUD ring fills meanwhile).
 const X_EXIT_HOLD: f32 = 1.5;
 
 /// Shared solo/couch starting sensitivity; D-pad fine lay remains an independent axis.
@@ -14329,10 +14329,11 @@ struct App {
     /// Binocular TOGGLE state (playtest: toggle, not hold) — flipped by B / RMB press in the
     /// tank and Left Shift press on foot; injected into TankInput each frame.
     binocs: bool,
-    /// X hold timer (s): tap toggles head out/in; a FULL 1.5 s hold at the open cupola climbs
+    /// Space hold timer (s) (pad: dismount button, whose tap toggles the head): a FULL 1.5 s hold at the open cupola climbs
     /// out on foot (the HUD ring fills while it runs). Only counts at Commander + hatch open.
     x_hold: f32,
     x_was_down: bool,
+    shift_was_down: bool,
     interact_latch: InteractLatch,
     /// Controller-only couch equivalent, keyed to the living player currently manning Commander.
     couch_commander_exit: CommanderExitTracker,
@@ -15517,11 +15518,7 @@ impl ApplicationHandler for App {
                                     self.couch_commander_exit.advance(source, can_exit, dt);
                                 match intent {
                                     Some(CommanderExitIntent::ToggleHead { peer_id }) => {
-                                        let out = !g.commander_outside;
-                                        if out && !g.hatch_is_open() {
-                                            g.toggle_hatch();
-                                        }
-                                        g.commander_outside = out && g.hatch_is_open();
+                                        g.toggle_commander_head();
                                         println!(
                                             "[panzerrechnersystem] couch peer {peer_id} view: {}",
                                             if g.commander_outside {
@@ -15550,14 +15547,27 @@ impl ApplicationHandler for App {
                                     && !g.is_climbing()
                                     && !couch
                                     && g.can_climb_out();
-                                let exit_held = local_x_enabled
-                                    && (self.keys.x || (!couch && pad.dismount_held));
+                                // Held Space (or the pad's dismount button) climbs out, and only
+                                // through a lid that is already open. Shift is head out and in.
+                                let pad_held = local_x_enabled && !couch && pad.dismount_held;
+                                let at_cupola = g.mode == game::Mode::Tank
+                                    && matches!(g.station, game::Station::Commander)
+                                    && !g.is_climbing();
+                                let shift_down = local_x_enabled && self.keys.shift;
+                                if shift_down && !self.shift_was_down && at_cupola {
+                                    let out = g.toggle_commander_head();
+                                    println!("[panzerrechnersystem] view: {}",
+                                        if out { "CUPOLA (head out, exposed)" } else { "PERISCOPE (safe)" });
+                                }
+                                self.shift_was_down = shift_down;
+                                let exit_held = (local_x_enabled && self.keys.space && at_cupola)
+                                    || pad_held;
                                 if exit_held {
                                     if can_exit {
                                         self.x_hold += dt;
                                         if self.x_hold >= X_EXIT_HOLD {
                                             self.x_hold = 0.0;
-                                            self.keys.x = false; // consume keyboard side of this hold
+                                            self.keys.space = false; // consume keyboard side of this hold
                                             g.climb_out();
                                         }
                                     } else {
@@ -15572,13 +15582,7 @@ impl ApplicationHandler for App {
                                         && !g.is_climbing()
                                         && self.x_hold < 0.35
                                     {
-                                        let out = !g.commander_outside;
-                                        // Heading out needs the hatch open; X opens it (the reliable
-                                        // fallback — a broken lever can never trap you inside).
-                                        if out && !g.hatch_is_open() {
-                                            g.toggle_hatch();
-                                        }
-                                        g.commander_outside = out && g.hatch_is_open();
+                                        g.toggle_commander_head();
                                         println!(
                                             "[panzerrechnersystem] view: {}",
                                             if g.commander_outside {
@@ -15590,7 +15594,7 @@ impl ApplicationHandler for App {
                                     }
                                     self.x_hold = 0.0;
                                 }
-                                self.x_was_down = exit_held;
+                                self.x_was_down = pad_held;
                                 state.x_exit_frac = if exit_held && self.x_hold > 0.0 {
                                     (self.x_hold / X_EXIT_HOLD).min(1.0)
                                 } else {

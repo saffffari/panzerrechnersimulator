@@ -115,7 +115,7 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    Open a hatch with **LMB**, then press **Space** at its opening to climb through. This works
    both ways for the driver, radio, loader, side escape and cupola hatches. Roof entry requires
    climbing onto the tank first. Space remains jump away from an opening; holding it cannot
-   reverse a completed climb. **Hold X for 1.5 seconds** remains a cupola exit shortcut.
+   reverse a completed climb. **Hold Space for 1.5 seconds** at the open cupola is the exit.
 
 ## Xbox / PlayStation controller
 
@@ -183,8 +183,8 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **End** | driver: return the gearbox to automatic selection |
 | **F3** | performance statistics overlay (also works over the map and controls sheet) |
 | **Ctrl** (hold) | crouch inside or outside; release stands only with headroom |
-| **X** (tap) | head out of the cupola ↔ duck back in (commander; opens the hatch if needed) |
-| **X** (hold 1.5 s) | climb OUT on foot — only in the cupola view with the hatch open; the HUD ring fills while you hold |
+| **Shift** | head out of the cupola ↔ duck back in (commander; only through a hatch already opened at its lever) |
+| **Space** (hold 1.5 s) | climb OUT on foot, head in or head out, only with the cupola hatch open; the HUD ring fills while you hold. Nothing opens the hatch for you |
 | **T** | ammunition reminder; actual AP/HE choice is the grey/yellow physical rack round you equip |
 | **LMB with a tool equipped** | use the extinguisher or repair the actual broken component within reach |
 | **E / Q with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
@@ -411,6 +411,10 @@ size, and stitch-apron rules.
   as it did before. (E was tried for this and kept bailing the player out in combat.) On open
   ground Space jumps; with clothes alight it beats out the flames.
 - **E is a second interact key**: it does whatever the action button would do under the crosshair.
+- **At the cupola, Shift puts the head out and back in, and held Space climbs out.** Both need
+  the hatch already open; neither opens it. A tap of Space there does nothing, so a stray press
+  cannot leave the tank. Q still drops back into the turret. The X key is no longer used.
+- **The hatch lever's target is the grip and the pivot cylinder it turns**, outlined together.
 - **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
   Space to go through.
 - **Reload:** take a rack round, carry it to the open breech and line it up, press again to ram

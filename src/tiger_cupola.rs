@@ -86,8 +86,12 @@ impl super::Game {
             return false;
         }
         let models = self.fire_surface_models();
-        visible_grip_hit(renderer.camera.pos, renderer.camera.forward(), models[6],
-            &self.cupola_grip_source, |from, to| self.cabin_fire.sweep(from, to, &models).is_some())
+        // The thin grip or the pivot cylinder it turns: both are the hatch control. The grip alone
+        // was too small a target (owner, 2026-10-03).
+        let (eye, forward) = (renderer.camera.pos, renderer.camera.forward());
+        [&self.cupola_grip_source, &self.cupola_spindle_source].into_iter().any(|part|
+            visible_grip_hit(eye, forward, models[6], part,
+                |from, to| self.cabin_fire.sweep(from, to, &models).is_some()))
     }
 }
 

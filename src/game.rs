@@ -7611,6 +7611,7 @@ fn cupola_hatch_model(turret: Mat4, phase: f32) -> Mat4 {
         * Mat4::from_rotation_y(swing)
 }
 
+const CUPOLA_CLOSED_HINT: &str = "CUPOLA HATCH CLOSED - WORK THE LEVER [LMB]";
 fn cupola_hatch_lever_model(turret: Mat4, phase: f32) -> Mat4 {
     // The baked lid assembly includes the long stem down to this crank. Parent the separately
     // exported crank to that assembly so both ends of their joint lift and swing together.
@@ -9110,6 +9111,10 @@ pub struct Game {
     projectile_player_armor:surface_fire::CabinFire,
     projectile_enemy_armor:surface_fire::CabinFire,
     cupola_grip_source: CpuMesh, // same hatch-local triangles used for visible handle and picking
+    /// The lever's pivot cylinder in the same hatch frame: part of the hatch control's target.
+    cupola_spindle_source: CpuMesh,
+    /// Seconds left on the "hatch is closed" hint after Shift or Space was refused at the cupola.
+    cupola_closed_hint_t: f32,
     foam_emit_t: f32,
     ext_want_spray: bool, // trigger squeezed this frame (foam FX answers it, fire or not)
     surface_blood: surface_blood::SurfaceBlood,
@@ -13073,6 +13078,8 @@ impl Game {
             projectile_player_armor,
             projectile_enemy_armor,
             cupola_grip_source,
+            cupola_spindle_source,
+            cupola_closed_hint_t: 0.0,
             foam_emit_t: 0.0,
             surface_blood: surface_blood::SurfaceBlood::new(),
             hot_fragments: [HotFragment::default(); N_HOT_FRAGMENTS],
@@ -16488,6 +16495,12 @@ impl Game {
             // imperceptible at 60 Hz). The rack glints when looked at — the "you can grab this" tell.
             self.hover = None;
             self.hover_label = None;
+            if self.cupola_closed_hint_t > 0.0 {
+                self.cupola_closed_hint_t -= dt;
+                if self.mode == Mode::Tank && self.station == Station::Commander && !self.hatch_open {
+                    self.hover_label = Some(CUPOLA_CLOSED_HINT);
+                } else { self.cupola_closed_hint_t = 0.0; }
+            }
             // Mode-gated: the INSIDE hotspots exist only while you're actually IN the tank — the
             // station freezes on dismount, and walking past the hull outside was popping the
             // breech-reload prompts through the armor.
@@ -19222,6 +19235,21 @@ impl Game {
     pub fn hatch_is_open(&self) -> bool {
         self.hatch_open
     }
+    /// Shift at the commander's post: head out through the open hatch, or back down. The lid is
+    /// never opened for him; with it closed he is told to work the lever. Returns the new state.
+    pub fn toggle_commander_head(&mut self) -> bool {
+        if self.mode != Mode::Tank || self.station != Station::Commander || self.climb.active {
+            return self.commander_outside;
+        }
+        if self.commander_outside { self.commander_outside = false; }
+        else if self.hatch_open { self.commander_outside = true; }
+        else { self.cupola_closed_hint_t = 2.0; }
+        self.commander_outside
+    }
+    /// Space was pressed at the cupola with the lid shut: say why nothing happens.
+    pub fn hint_cupola_closed(&mut self) {
+        if !self.hatch_open { self.cupola_closed_hint_t = 2.0; }
+    }
     pub fn dbg_open_hatch(&mut self) {
         self.hatch_open = true;
     }
@@ -19236,7 +19264,7 @@ impl Game {
         self.toggle_hatch();
     }
 
-    /// True when `climb_out` would actually go (drives the X-hold HUD ring: it must never
+    /// True when `climb_out` would actually go (drives the Space-hold HUD ring: it must never
     /// fill and then do nothing — e.g. rolling too fast to dismount without burning).
     pub fn can_climb_out(&self) -> bool {
         self.access_hatch_open(self.chosen_exit_hatch()) && self.player.alive
@@ -19431,7 +19459,7 @@ impl Game {
             if index == 0 { slots.push(self.slots.driver_roof_eyepiece); }
             if index == 2 { slots.push(self.slots.radio_roof_eyepiece); }
         } else if self.mode == Mode::Tank {
-            if self.hover_lever { slots.push(self.slots.cupola_grip); }
+            if self.hover_lever { slots.push(self.slots.cupola_grip); slots.push(self.slots.hatchlever); }
             else if self.hover_hatch { slots.push(self.slots.hatch); }
             else if let Some(spot) = self.hover {
                 match spot {

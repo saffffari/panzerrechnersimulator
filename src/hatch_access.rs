@@ -32,10 +32,13 @@ impl Game {
         if self.climb.active || !self.player.alive || self.activity.is_some()
             || self.switch_t > 0.0 || self.carried_casing.is_some()
         { return false; }
-        if self.mode == Mode::Tank
-            && (self.station == Station::Gunner
-                || (self.station == Station::Commander && !self.commander_outside))
-        {
+        // The commander leaves by HOLDING Space with the lid open (the shell runs the hold and its
+        // ring). A tap does nothing here, and never opens the lid; Q drops back into the turret.
+        if self.mode == Mode::Tank && self.station == Station::Commander {
+            self.hint_cupola_closed();
+            return true;
+        }
+        if self.mode == Mode::Tank && self.station == Station::Gunner {
             if !self.hatch_entry_post_available(1) {
                 self.hover_label = Some("TURRET CABIN OCCUPIED - CREWMAN BLOCKS THE WAY");
                 return true;
