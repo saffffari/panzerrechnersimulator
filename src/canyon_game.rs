@@ -15,6 +15,12 @@ fn combat_body_occupied(cover: &impl crate::infantry_combat::CoverSet, p: Vec3) 
     cover.occupies(p, 0.35, p.y + 0.08, p.y + crate::foot::STANDING_HEIGHT)
 }
 
+/// Where along the corridor (fraction of its length) the opening approach platoons stand, before
+/// the seeded shift. The authored plan's own two platoons are at 60-69 and 84-92 percent.
+const OPENING_PLATOON_FRACTIONS: [f32; 3] = [0.16, 0.31, 0.46];
+/// No opening platoon starts closer to the Tiger than this.
+const OPENING_PLATOON_MIN_M: f32 = 450.0;
+
 impl Game {
     /// Field the course on a freshly built course workshop: the Tiger at the start, the platoons,
     /// the guns and the riflemen, and start the run's clock. Needs the manifest's `canyon_course`
@@ -33,6 +39,7 @@ impl Game {
         self.playtest_setup();
         if let Some(audio)=&self.audio { audio.reset_soundscape(seed); }
         self.god = false;
+        self.canyon_opening_fielded = false;
         self.set_playtest_return_fire(true);
         self.player = Tank::new(spec.start.x, spec.start.y, spec.heading, &self.hf, tank::TIGER_PARTS);
         self.spawn_xz = (spec.start.x, spec.start.y);
@@ -230,6 +237,9 @@ impl Game {
     /// Advance the run and request reinforcements without altering any combatant's laws.
     pub(super) fn update_canyon_run(&mut self, dt: f32, r: &mut Renderer) {
         if self.canyon_run.is_none() { return; }
+        if !std::mem::replace(&mut self.canyon_opening_fielded, true) {
+            self.field_canyon_opening_platoons(r);
+        }
         let alive = self.player.alive && self.game_over().is_none();
         let at = Vec2::new(self.player.pos.x, self.player.pos.z);
         let damage = self.modules.iter().filter(|m| !m.functional).count() as u32
@@ -285,38 +295,84 @@ impl Game {
         for j in entries {
             let distance = source[j].distance(tiger);
             if !(crate::canyon_director::ENTRY_MIN_M..=1550.0).contains(&distance) { continue; }
-            // The platoon's beat runs back down the corridor to just short of where the Tiger is
-            // now, so it comes to find the Tiger instead of circling 400 m from its entry. It
-            // still has no fix on the player: this is a patrol along the one road in.
-            let tiger_knot = (0..source.len()).min_by(|&a,&b| source[a].distance_squared(tiger)
-                .total_cmp(&source[b].distance_squared(tiger))).unwrap_or(0);
-            let legs = (j.saturating_sub(tiger_knot + 8) / 10).clamp(5, 60);
-            let route: Option<Vec<_>> = (0..=legs).filter(|k| j >= k*10).map(|k| source[j-k*10])
-                .map(|p| nav.nearest_clear(p,12.0).filter(|&q|self.winter_patrol_point_clear(q))).collect();
-            let Some(route) = route else { continue; };
-            if route.windows(2).any(|edge|nav.path(edge[0],edge[1]).is_none()) {continue;}
-            let direction = (route[1]-route[0]).normalize_or_zero();
-            let positions: Option<Vec<_>> = (0..count).map(|k| {
-                nav.nearest_clear(route[0]-direction*(k as f32*36.0),18.0)
-                    .filter(|&q|self.winter_patrol_point_clear(q))
-            }).collect();
-            let Some(positions) = positions else {continue;};
-            if positions.iter().enumerate().any(|(i,p)| {
+            if let Some(site) = self.canyon_platoon_site(j, count, Some(eye)) { return Some(site); }
+        }
+        None
+    }
+
+    /// A platoon's beat and start positions at corridor knot `j`: the beat runs back down the
+    /// corridor to just short of where the Tiger is now, so the platoon comes to find the Tiger
+    /// instead of circling its entry. It has no fix on the player: this is a patrol along the one
+    /// road in. With `hidden_from` the start positions must be out of sight of that eye and of
+    /// the Tiger and at least the director's entry distance away (a reinforcement arriving
+    /// mid-run); without it they only need clear, connected ground (the opening deployment).
+    fn canyon_platoon_site(&self, j: usize, count: usize, hidden_from: Option<Vec3>) -> Option<(Vec<Vec2>,Vec<Vec2>)> {
+        let run = self.canyon_run.as_ref()?;
+        let nav = self.winter_encounter.as_ref()?.streets()?.nav();
+        let source = &run.spec.route;
+        let tiger = Vec2::new(self.player.pos.x,self.player.pos.z);
+        let tiger_knot = (0..source.len()).min_by(|&a,&b| source[a].distance_squared(tiger)
+            .total_cmp(&source[b].distance_squared(tiger))).unwrap_or(0);
+        let legs = (j.saturating_sub(tiger_knot + 8) / 10).clamp(5, 60);
+        let route: Option<Vec<_>> = (0..=legs).filter(|k| j >= k*10).map(|k| source[j-k*10])
+            .map(|p| nav.nearest_clear(p,12.0).filter(|&q|self.winter_patrol_point_clear(q))).collect();
+        let route = route?;
+        if route.len() < 2 || route.windows(2).any(|edge|nav.path(edge[0],edge[1]).is_none()) { return None; }
+        let direction = (route[1]-route[0]).normalize_or_zero();
+        let positions: Option<Vec<_>> = (0..count).map(|k| {
+            nav.nearest_clear(route[0]-direction*(k as f32*36.0),18.0)
+                .filter(|&q|self.winter_patrol_point_clear(q))
+        }).collect();
+        let positions = positions?;
+        let rejected = positions.iter().enumerate().any(|(i,p)| {
+            positions[..i].iter().any(|q|p.distance(*q)<18.0)
+            || self.enemies.iter().enumerate().any(|(k,e)|self.enemy_active[k]
+                && p.distance(Vec2::new(e.pos.x,e.pos.z))<18.0)
+            || nav.path(*p,route[1]).is_none()
+            || hidden_from.is_some_and(|eye| {
+                let observer = Vec2::new(eye.x,eye.z);
                 p.distance(tiger)<crate::canyon_director::ENTRY_MIN_M
                 || p.distance(observer)<crate::canyon_director::ENTRY_MIN_M
-                || positions[..i].iter().any(|q|p.distance(*q)<18.0)
-                || self.enemies.iter().enumerate().any(|(k,e)|self.enemy_active[k]
-                    && p.distance(Vec2::new(e.pos.x,e.pos.z))<18.0)
-                || nav.path(*p,route[1]).is_none()
                 || [Vec2::ZERO,Vec2::X*3.5,-Vec2::X*3.5,Vec2::Y*3.5,-Vec2::Y*3.5].iter().any(|off| {
                     let q=*p+*off;
                     let roof=Vec3::new(q.x,self.hf.height_at(q.x,q.y)+3.3,q.y);
                     self.los_clear(eye,roof) || self.los_clear(self.player.center()+Vec3::Y*2.0,roof)
                 })
-            }) {continue;}
-            return Some((route,positions));
+            })
+        });
+        (!rejected).then_some((route,positions))
+    }
+
+    /// Opening deployment along the whole corridor, drawn from the run seed: platoons at
+    /// intervals from the first kilometre on, so no playtest minute is spent on empty ground.
+    /// The authored plan fields its two platoons deep in the corridor; these fill the approach.
+    fn field_canyon_opening_platoons(&mut self, r: &mut Renderer) {
+        let Some((seed, knots)) = self.canyon_run.as_ref()
+            .and_then(|run| Some((run.director.as_ref()?.seed, run.spec.route.len()))) else { return; };
+        let tiger = Vec2::new(self.player.pos.x,self.player.pos.z);
+        let mut fielded = 0usize;
+        for (slot, fraction) in OPENING_PLATOON_FRACTIONS.iter().enumerate() {
+            // A seeded shift of up to +/-3 percent of the route, then the nearest workable knot.
+            let jitter = (crate::canyon::mix(seed ^ 0x6f70656e ^ slot as u64) % 61) as f32 / 1000.0 - 0.03;
+            let centre = (((fraction + jitter).clamp(0.05, 0.95)) * knots as f32) as usize;
+            let site = (0..12).flat_map(|step| [centre + step * 4, centre.saturating_sub(step * 4)])
+                .filter(|&j| j >= 60 && j + 12 < knots)
+                .find_map(|j| {
+                    let run = self.canyon_run.as_ref()?;
+                    if run.spec.route[j].distance(tiger) < OPENING_PLATOON_MIN_M { return None; }
+                    self.canyon_platoon_site(j, crate::canyon_director::REINFORCEMENT_PLATOON, None)
+                });
+            if let Some((route, positions)) = site {
+                let count = crate::canyon_director::REINFORCEMENT_PLATOON;
+                self.append_canyon_platoon(route, positions, count, r);
+                if let Some(d) = self.canyon_run.as_mut().and_then(|run| run.director.as_mut()) {
+                    d.total_spawned += count as u32;
+                }
+                fielded += 1;
+            }
         }
-        None
+        println!("[canyon] opening deployment: {fielded} of {} approach platoons fielded",
+            OPENING_PLATOON_FRACTIONS.len());
     }
 
     fn append_canyon_platoon(&mut self, route: Vec<Vec2>, positions: Vec<Vec2>, count: usize, r: &mut Renderer) {

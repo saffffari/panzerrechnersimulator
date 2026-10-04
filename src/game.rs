@@ -9064,6 +9064,8 @@ pub struct Game {
     primary_pickup_press: bool,
     /// The carried round is at the open tray and lined up (set each frame it is carried).
     ram_ready: bool,
+    /// The canyon's seeded approach platoons have been fielded for this run.
+    canyon_opening_fielded: bool,
     /// The interaction key was pressed with the round lined up: drive it home without a flick.
     auto_ram: bool,
     /// Breech lever position: 0 = closed/down (fireable), 1 = fully open (breech workable).
@@ -13017,6 +13019,7 @@ impl Game {
             cupola_pistol: cupola_pistol::CupolaPistol::default(),
             primary_pickup_press: false,
             ram_ready: false,
+            canyon_opening_fielded: false,
             auto_ram: false,
             engine_on: true,
             player_powertrain: crate::powertrain::Powertrain::default(),
