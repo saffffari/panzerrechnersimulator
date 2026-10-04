@@ -295,6 +295,22 @@ impl Game {
         }
     }
 
+    /// A living AI gunner sits at the sights (the player is some other crewman).
+    pub(super) fn gunner_at_his_sights(&self) -> bool {
+        self.singleplayer_crew_active
+            && self.singleplayer_embodied_role() != Some(CrewRole::Gunner)
+            && role_alive(&self.crew, CrewRole::Gunner)
+    }
+    /// The drawn body of the AI gunner, when there is one aboard.
+    pub(super) fn gunner_body_slot(&self) -> Option<usize> {
+        if !self.gunner_at_his_sights() { return None; }
+        let aboard = self.singleplayer_crew?.identity;
+        aboard_bodies(&self.crew, aboard, role_for_station(self.station), self.singleplayer_embodied_role())
+            .into_iter()
+            .find(|body| body.casualty.role == crate::lan::LanRole::Gunner)
+            .map(|body| self.slots.lan_crew[crew_identity_index(body.casualty.identity)])
+    }
+
     pub(super) fn drive_singleplayer_crew_rigs(&self, r: &mut Renderer) {
         self.drive_singleplayer_crew_rigs_for_view(self.singleplayer_embodied_role(), r);
     }

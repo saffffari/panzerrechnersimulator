@@ -220,6 +220,10 @@ enum AiMode {
     Track,  // spotted / Engaged — flanks + fires the player (the classic combat behaviour)
 }
 
+/// How far and how widely the cupola's E reaches for the seated gunner's figure.
+const GUNNER_FIGURE_REACH_M: f32 = 2.4;
+const GUNNER_FIGURE_CONE_COS: f32 = 0.90;
+
 /// A sweep must stop at least this far short of a port's face to count as hiding it; the
 /// port's own block and bezel sit inside this margin.
 const PORT_OCCLUSION_MARGIN_M: f32 = 0.08;
@@ -16799,6 +16803,32 @@ impl Game {
                 }
             }
 
+            // From the buttoned cupola a living gunner is the way to the sights: look at the man
+            // and press E. His whole figure is the target, so it is generous and easy to find.
+            if !self.hover_lever && self.station == Station::Commander && !self.commander_outside
+                && self.player.alive && self.switch_t <= 0.0 && !self.climb.active
+                && self.gunner_at_his_sights()
+            {
+                let eyepiece = self.player.gun_model()
+                    .transform_point3(tank::TIGER_SIGHT_EYEPIECE - tank::TIGER_PARTS.gun_trunnion);
+                let turret = self.player.turret_model();
+                let back = turret.transform_vector3(-Vec3::Z).normalize_or_zero();
+                let down = turret.transform_vector3(-Vec3::Y).normalize_or_zero();
+                // Head, chest and lap of the seated man behind the eyepiece.
+                let figure = [eyepiece + back * 0.16, eyepiece + back * 0.22 + down * 0.30,
+                    eyepiece + back * 0.20 + down * 0.60];
+                let fwd = r.camera.forward();
+                let aimed = figure.iter().any(|point| {
+                    let to = *point - r.camera.pos;
+                    to.length() <= GUNNER_FIGURE_REACH_M
+                        && to.normalize_or_zero().dot(fwd) >= GUNNER_FIGURE_CONE_COS
+                });
+                if aimed {
+                    self.hover_station = Some(Station::Gunner);
+                    self.hover_label = Some("GUNNER - TAKE THE SIGHTS [E]");
+                }
+            }
+
             // Non-campaign modes retain the simple red-X sandbox exit. A campaign attempt routes through
             // the director below, where reaching the same place cannot bypass live contacts or story.
             if self.tank_editor_scene.is_none() && self.campaign.is_none() && self.standalone_fuel_liters.is_none()
@@ -19406,7 +19436,13 @@ impl Game {
                 }
             } else if let Some(station) = self.hover_station {
                 match station {
-                    Station::Gunner => slots.extend(self.slots.gunner_sight),
+                    Station::Gunner => {
+                        // From the cupola the outlined thing is the gunner himself.
+                        match self.gunner_body_slot().filter(|_| self.station == Station::Commander) {
+                            Some(slot) => slots.push(slot),
+                            None => slots.extend(self.slots.gunner_sight),
+                        }
+                    }
                     Station::Loader => slots.push(self.slots.breechcover),
                     Station::Commander => slots.extend(self.slots.tiger_periscopes.iter()
                         .step_by(tiger_periscopes::CUPOLA_PART_COUNT).take(7).copied()),
@@ -19448,8 +19484,11 @@ impl Game {
     /// LMB on a hovered station anchor → enter that station (click-to-enter). Returns true if the
     /// click was consumed (so the front-end doesn't also treat it as a trigger pull).
     pub fn click_station(&mut self) -> bool {
-        if self.mode == Mode::Tank && self.station == Station::Commander {
-            return false; // Space descends first; the cupola's only reachable control is its hatch.
+        if self.mode == Mode::Tank && self.station == Station::Commander
+            && self.hover_station != Some(Station::Gunner) {
+            // Space descends first; from the cupola the only station reached directly is the
+            // gun sight, through a living gunner.
+            return false;
         }
         if let Some(s) = self.hover_station {
             self.commander_outside = false;
