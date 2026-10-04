@@ -72,6 +72,11 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | Map 2: a spring, Kursk-like landscape of rolling hills with patches of dense woods. | first pass done: `tools/worldgen/steppe_spring.py` generates the terrain, ravines, strip fields, dirt road, villages, about 9,000 wood trees and the run's defence; `PANZER_MAP=steppe` launches it. Not yet played. Ravines and field strips are crude; trees and houses reuse the winter set; no map-specific story content. |
 | A day and night cycle in every mode, about Minecraft's length. | done: ten minutes of daylight, ten of night, true Sun and Moon positions. |
 | Machine-gun cases stop clinking. | done: they are silent. |
+| Machine-gun rounds: enemy tanks' hit shape felt like a box; rounds should deflect at an angle; sparks on anti-tank gun shields. | done: bullets strike the T-34's real hull and turret surfaces, glance off steel struck at more than 62 degrees from the normal (once), and spark on gun shields. Other enemy vehicle types still use boxes. |
+| The older blood splatter was better; restore it. | not done: which blood is meant is not yet identified (ground stains round the dead, blood when infantry are hit, or crew blood in the tank). |
+| Listening references from Der Tiger are the target sound. | started: the buttoned-up own gun is fitted to them by measurement. Reload, machine gun, incoming rounds, engine and hatch are not yet fitted. |
+| Brighter cabin light; round outlines not masked by racks; repair kit to the centre rear of the turret, left of the extinguisher; cigarette tip no wider than the paper; a held cigarette blocks nothing. | done |
+| Diagonal triangle lines visible on the ground. | done: sky and Sun visibility for terrain is evaluated 0.25 m above the smooth surface. |
 | At the cupola Shift is head out and in, and held Space (1.5 s) climbs out, from either position. Both need the hatch already open; nothing opens it automatically. The lever pivot cylinder is part of the hatch lever target and outline. | done |
 | C is the cigarette. The compass moves onto M, coupled with the map. | done |
 | Arrow keys traverse and elevate the gun from the cupola and head-out, and remain available in the sights where the mouse also works. | done |

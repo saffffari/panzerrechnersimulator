@@ -289,6 +289,14 @@ impl Game {
                 self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.10, false, weapon);
             }
             ProjectileContactKind::RangeLimit => {} // Retirement never invents an impact in air.
+            // A gun shield or any other steel of an anti-tank gun: sparks, as on tank armour.
+            ProjectileContactKind::AtGun(hit) if hit.steel => {
+                self.weapon_vfx.bullet_armor_sparks(projectile.id, contact.pos, projectile.velocity,
+                    hit.normal, projectile.shell.mass_kg, weapon);
+                self.schedule_emission(crate::audio::Sfx::ArmorClang1, contact.pos,
+                    crate::sound_propagation::Emission::from_level(&crate::sound_levels::BULLET_ON_STEEL_1M),
+                    None, None);
+            }
             _ => {
                 if !matches!(contact.kind,ProjectileContactKind::Terrain) || !self.weapon_vfx.uses_native_ground() {
                     self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.20, false, weapon);

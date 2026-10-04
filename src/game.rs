@@ -7890,6 +7890,28 @@ fn casing_pull_step(progress: f32, dt: f32, held: bool, eligible: bool, aimed: b
 /// Weapon/hull motion is not rubbing against the chamber; empty resets are silent.
 /// Real settled-body taps remain audible during rolling, but gravity/support microcontacts
 /// alone do not become an endless rattle. Per-body cooldown is applied at the call sites.
+/// Bullets glance off steel struck at more than this angle from the plate's normal.
+const BULLET_GLANCE_FROM_NORMAL_DEG: f32 = 62.0;
+/// A glancing bullet keeps this share of its speed along the plate and a little of its bounce.
+const BULLET_GLANCE_SPEED_KEPT: f32 = 0.55;
+const BULLET_GLANCE_RESTITUTION: f32 = 0.25;
+
+/// The onward flight of a bullet that strikes steel at a shallow angle, or nothing if it meets
+/// the plate squarely enough to break up on it. `normal` points out of the plate.
+fn bullet_glance(velocity: Vec3, normal: Vec3, mass_kg: f32) -> Option<crate::ballistics::ricochet::Response> {
+    let speed = velocity.length();
+    let normal = normal.normalize_or_zero();
+    if !(speed > 1.0) || normal == Vec3::ZERO { return None; }
+    let into = velocity.dot(normal);
+    // Leaving the plate already, or squarer than the glancing angle: no deflection.
+    if into >= 0.0 || -into / speed > BULLET_GLANCE_FROM_NORMAL_DEG.to_radians().cos() { return None; }
+    let along = velocity - normal * into;
+    let out = along * BULLET_GLANCE_SPEED_KEPT - normal * into * BULLET_GLANCE_RESTITUTION;
+    let (incoming_j, retained_j) = (0.5 * mass_kg * speed * speed, 0.5 * mass_kg * out.length_squared());
+    Some(crate::ballistics::ricochet::Response { velocity: out, outward: normal, incoming_j, retained_j,
+        deposited_j: (incoming_j - retained_j).max(0.0) })
+}
+
 /// Anti-tank and tank gun rounds. A crew does not stay in a hull one of these has come through.
 const ABANDON_CALIBRE_MM: f32 = 37.0;
 fn penetration_makes_crew_abandon(shell: &crate::ballistics::ShellSpec) -> bool {
@@ -24182,7 +24204,10 @@ impl Game {
             {
                 continue;
             }
-            if projectile.small_arm.is_none() && enemy.kind==EnemyKind::T34 {
+            // Shells and bullets alike strike the T-34's real hull and turret surfaces. Bullets
+            // used to stop on two boxes round them, so rounds aimed past a fender or under the
+            // gun sparked in mid-air.
+            if enemy.kind==EnemyKind::T34 {
                 let mut models=[Mat4::IDENTITY;surface_fire::FRAMES];
                 models[0]=enemy.hull_model();models[1]=enemy.turret_model();
                 consider(projectile_armor_source::contact(&self.projectile_enemy_armor,&models,enemy,
@@ -24381,6 +24406,19 @@ impl Game {
                 if let Some(bullet) = projectile.small_arm {
                     self.present_source_ground_impact(&projectile,contact,r);
                     self.finish_small_arm(&projectile,contact,bullet, &r.camera);
+                    // A bullet that meets steel at a shallow angle glances off and flies on,
+                    // slower and off line. One glance only; a second strike stops it.
+                    let steel_normal = match contact.kind {
+                        ProjectileContactKind::Vehicle(armor) => Some(armor.world_normal),
+                        ProjectileContactKind::AtGun(hit) if hit.steel => Some(hit.normal),
+                        _ => None,
+                    };
+                    if let Some(response) = steel_normal.filter(|_| projectile.ricochet_count == 0)
+                        .and_then(|normal| bullet_glance(projectile.velocity, normal, projectile.shell.mass_kg))
+                    {
+                        projectile.continue_ricochet(contact.pos, response);
+                        active.push(projectile);
+                    }
                     continue;
                 }
                 let armor_incident_velocity=projectile.velocity;
@@ -32708,6 +32746,24 @@ mod tests {
         assert_eq!(p::Enclosure::Buttoned.insertion_loss_bands()[8], 42.0);
         assert!(p::Enclosure::HatchOpen.peak_loss_db(crate::sound_levels::SpectrumClass::LowFrequencyBlast) < 5.0);
         p::set_open_hatches(1);
+    }
+    #[test]
+    fn a_bullet_glances_off_steel_only_at_a_shallow_angle() {
+        let normal = Vec3::Y;
+        let strike = |degrees_from_normal: f32| {
+            let a = degrees_from_normal.to_radians();
+            bullet_glance(Vec3::new(a.sin(), -a.cos(), 0.0) * 800.0, normal, 0.0128)
+        };
+        assert!(strike(0.0).is_none() && strike(45.0).is_none() && strike(60.0).is_none());
+        let glance = strike(75.0).expect("a 75 degree strike glances");
+        assert!(glance.velocity.y > 0.0, "it leaves the plate");
+        assert!(glance.velocity.x > 0.0, "it keeps going the way it was going");
+        assert!(glance.velocity.length() < 800.0 * 0.6 && glance.velocity.length() > 300.0);
+        assert!(glance.retained_j < glance.incoming_j && glance.deposited_j > 0.0);
+        // Already leaving, stationary or degenerate: nothing.
+        assert!(bullet_glance(Vec3::Y * 800.0, normal, 0.0128).is_none());
+        assert!(bullet_glance(Vec3::ZERO, normal, 0.0128).is_none());
+        assert!(bullet_glance(Vec3::NEG_Y * 800.0, Vec3::ZERO, 0.0128).is_none());
     }
     #[test]
     fn the_place_shapes_the_tail_outdoors() {
