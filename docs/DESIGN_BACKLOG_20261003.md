@@ -42,6 +42,7 @@ Two requests here change standing project rules, and are recorded as owner decis
 | The game starts with a full crew. Each man has a name (the player names them, as in FTL) and performs his seat's job until he is killed. After that the player has to do that job himself. Loneliness is arrived at, not given at the start. | partly done: an AI crew with per-seat casualties and wounds exists (`singleplayer_crew`); there are no names and the solo start is the default. |
 | The crew have no abilities beyond the player's own. What they add is delegation: from the cupola the commander marks a point and the gunner traverses onto it without the player entering the sights, and the tank can be driven from the cupola or any other seat while the driver lives. | partly done: driving from every station exists. Marking a point for the gunner does not. |
 | If the driver is killed, the tank can only be driven from the driver's seat, or by moving another crewman into it, which gives up that man's old job for the player to take on. The same rule holds for every seat. | open |
+| A dead crewman's body stays in his seat. To use that seat the player must pull the body out and drag it out of the tank. | open |
 | Medical supplies are reinstated, so a wounded crewman can be treated and kept alive. | open: the earlier medical mechanic has to be found and restored. |
 
 ## 2. Controls: one interaction key

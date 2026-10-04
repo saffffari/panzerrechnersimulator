@@ -115,6 +115,15 @@ impl FrameCameraSupport {
 }
 
 const CACHE_GROUPS: usize = 4;
+/// Tiles of the coarse, whole-scene cascade (32 directions and its sun tile).
+fn coarse_tile(tile: usize) -> bool { (32..64).contains(&tile) || tile == 65 }
+/// A moving caster smaller than one texel of the coarse cascade cannot be represented there: it
+/// would only flicker in and out as it crossed a sample centre. It is drawn into the fine
+/// cascade around the viewer, where it resolves, and left out of the coarse one. A vehicle part
+/// is a few metres; a coarse texel on a kilometre-scale map is over ten.
+fn below_coarse_texel(lo: glam::Vec3, hi: glam::Vec3, global_half: f32) -> bool {
+    lo.is_finite() && hi.is_finite() && (hi - lo).max_element() < 2.0 * global_half / TILE as f32
+}
 fn cache_group(tile: usize) -> usize {
     match tile { 0..=31 => 0, 32..=63 => 1, 64 => 2, 65 => 3,
         _ => panic!("invalid source-shadow tile") }
@@ -658,7 +667,9 @@ impl SkyVisibility {
             pass.set_vertex_buffer(0, m.vbuf.slice(..));
             pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
             // One instance per direction; the vertex stage places each in its atlas tile.
+            let sub_texel = below_coarse_texel(m.world_min, m.world_max, prepared.global_half);
             for (k,matrix) in prepared.matrices.iter().enumerate() {
+                if sub_texel && coarse_tile(k) {continue;}
                 if !shadow_has_sample(*matrix,m.world_min,m.world_max,TILE){continue;}
                 if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
                 pass.draw_indexed(0..m.index_count,0,k as u32..k as u32+1);
@@ -672,7 +683,9 @@ impl SkyVisibility {
             let p=&renderer.inst_prototypes[b.prototype];
             pass.set_vertex_buffer(0,p.vbuf.slice(..));pass.set_vertex_buffer(1,b.inst_buf.slice(b.active_instance_bytes()));
             pass.set_index_buffer(p.ibuf.slice(..),wgpu::IndexFormat::Uint32);
+            let sub_texel = below_coarse_texel(b.world_min, b.world_max, prepared.global_half);
             for (k,matrix) in prepared.matrices.iter().enumerate() {
+                if sub_texel && coarse_tile(k) {continue;}
                 if !shadow_has_sample(*matrix,b.world_min,b.world_max,TILE){continue;}
                 if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
                 let push=PushData {model:glam::Mat4::IDENTITY.to_cols_array_2d(),params:[k as f32,0.0,0.0,0.0]};
