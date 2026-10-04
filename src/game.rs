@@ -7250,6 +7250,8 @@ pub struct TankInput {
     pub crouch: bool, // ctrl — on-foot crouch (lower eye, slower, quieter, smaller target)
     pub reload: bool, // R — on-foot Luger magazine change
     pub jump: bool, // Space: chassis, roof, open hatch or cabin; otherwise jump on foot
+    /// E held: enter and exit (hatches, the climb, a spare tank). Space is only a jump.
+    pub enter: bool,
     /// The raw trigger (left mouse), whatever `mg_coax` has been turned into by the E key.
     pub trigger: bool,
     /// `mg_coax` is this frame an E interaction (a control click or a carried load), not a trigger.
@@ -8621,15 +8623,15 @@ const CLIMB_STEP_S: f32 = 0.55;
 fn climb_prompt(mounting: bool, step: usize, n: usize) -> &'static str {
     if mounting {
         match step {
-            0 => "CLIMB ONTO THE HULL [SPACE]",
-            1 => "UP ONTO THE TURRET [SPACE]",
-            _ => "DROP INTO THE HATCH [SPACE]",
+            0 => "CLIMB ONTO THE HULL [E]",
+            1 => "UP ONTO THE TURRET [E]",
+            _ => "DROP INTO THE HATCH [E]",
         }
     } else {
         let _ = n;
         match step {
-            0 => "PULL UP OUT OF THE CUPOLA [SPACE]",
-            _ => "PULL OVER — ONTO THE ROOF [SPACE]",
+            0 => "PULL UP OUT OF THE CUPOLA [E]",
+            _ => "PULL OVER — ONTO THE ROOF [E]",
         }
     }
 }
@@ -9078,6 +9080,7 @@ pub struct Game {
     primary_pickup_press: bool,
     /// The carried round is at the open tray and lined up (set each frame it is carried).
     ram_ready: bool,
+    prev_enter: bool,
     /// The player's own body alight (see `player_burn.rs`).
     player_burn: player_burn::PlayerBurn,
     /// The canyon's seeded approach platoons have been fielded for this run.
@@ -13035,6 +13038,7 @@ impl Game {
             cupola_pistol: cupola_pistol::CupolaPistol::default(),
             primary_pickup_press: false,
             ram_ready: false,
+            prev_enter: false,
             player_burn: player_burn::PlayerBurn::default(),
             canyon_opening_fielded: false,
             auto_ram: false,
@@ -16051,9 +16055,9 @@ impl Game {
         // the shared tail) so the abandoned Tiger and the swarm keep rendering while dismounted.
         // A body on fire cannot jump or climb: Space beats the flames out instead.
         let burning = self.update_player_burn(dt, input.jump && !self.prev_jump);
-        if !burning && input.jump && !self.prev_jump && self.try_space_traversal(r) {
-            self.prev_jump = true; // contextual Space cannot also become an ordinary foot jump
-        }
+        // E is the way in and out: hatches, the cabin, a spare tank. Space is only a jump, so the
+        // key that jumps up is never the key that climbs down.
+        if !burning && input.enter && !self.prev_enter { self.try_space_traversal(r); }
         if self.climb.active || (!matches!(self.mode, Mode::Foot) && self.station != Station::Loader) {
             self.walk_sounds.reset();
         }
@@ -16104,9 +16108,9 @@ impl Game {
                 {
                     // Offer Space only where Space really enters (gaze through the fully open
                     // aperture, within reach); elsewhere it is a jump and LMB works the lid.
-                    self.hover_label = Some(if !self.hatch_open { "OPEN HATCH [E] - THEN ENTER [SPACE]" }
-                        else if self.space_hatch_target(r) == Some(4) { "ENTER CUPOLA [SPACE]" }
-                        else { "CLOSE HATCH [E] - STEP TO THE OPENING TO ENTER" });
+                    self.hover_label = Some(if !self.hatch_open { "OPEN HATCH [LMB] - THEN ENTER [E]" }
+                        else if self.space_hatch_target(r) == Some(4) { "ENTER CUPOLA [E]" }
+                        else { "CLOSE HATCH [LMB] - STEP TO THE OPENING TO ENTER" });
                 }
             }
             self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
@@ -16510,16 +16514,16 @@ impl Game {
                     if to.length() < 1.8 && to.normalize_or_zero().dot(look) > 0.88 {
                         let label = if self.lever_open < LEVER_OPEN {
                             Some(if matches!(self.breech, Breech::Loaded) {
-                                "OPEN BREECH TO UNLOAD ROUND [E]"
+                                "OPEN BREECH TO UNLOAD ROUND [LMB]"
                             } else {
-                                "OPEN BREECH [E]"
+                                "OPEN BREECH [LMB]"
                             })
                         } else if self.lever_open > LEVER_SHUT
                             && matches!(self.breech, Breech::Loaded)
                         {
-                            Some("CLOSE BREECH [E]")
+                            Some("CLOSE BREECH [LMB]")
                         } else if self.lever_open > LEVER_SHUT {
-                            Some("CLOSE BREECH [E]")
+                            Some("CLOSE BREECH [LMB]")
                         } else {
                             None
                         };
@@ -16540,7 +16544,7 @@ impl Game {
                         && to.normalize_or_zero().dot(look) > 0.98)
                     {
                         self.hover = Some(Hotspot::SpentCasing);
-                        self.hover_label = Some("PULL HOT CASE [E]");
+                        self.hover_label = Some("PULL HOT CASE [LMB]");
                     }
                 }
                 // Pick the actual cartridge surface. A wide cone around the chamber used to
@@ -16552,7 +16556,7 @@ impl Game {
                     if ray_loader_round(eye, look,
                         chambered_round_model(self.player.visual_gun_model()), 2.0).is_some() {
                         self.hover = Some(Hotspot::LoadedRound);
-                        self.hover_label = Some("PULL LOADED ROUND [E]");
+                        self.hover_label = Some("PULL LOADED ROUND [LMB]");
                     }
                 }
                 // A direct hit on the visible cartridge wins over broad control-anchor cones.
@@ -16572,7 +16576,7 @@ impl Game {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::RackSlot(i));
-                                self.hover_label = Some("PICK UP ROUND [E]");
+                                self.hover_label = Some("PICK UP ROUND [LMB]");
                             }
                         }
                     }
@@ -16583,7 +16587,7 @@ impl Game {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::FloorShell(i));
-                                self.hover_label = Some("PICK UP ROUND [E]");
+                                self.hover_label = Some("PICK UP ROUND [LMB]");
                             }
                         }
                     }
@@ -16594,7 +16598,7 @@ impl Game {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::FloorCasing(i));
-                                self.hover_label = Some("PICK UP SPENT CASE [E]");
+                                self.hover_label = Some("PICK UP SPENT CASE [LMB]");
                             }
                         }
                     }
@@ -16605,7 +16609,7 @@ impl Game {
                     self.hover_label = Some("EXTINGUISHER - HOLD LMB TO SPRAY; Q/E TO STOW");
                 } else if self.carried_casing.is_some() {
                     self.hover = None;
-                    self.hover_label = Some("CASE IN HAND - E TO LET GO");
+                    self.hover_label = Some("CASE IN HAND - LMB TO LET GO");
                 } else if self.grab {
                     self.hover = None;
                     let mouth = self.reload_mouth_world();
@@ -16613,11 +16617,11 @@ impl Game {
                     // say so — the old label said "pull up" while the ram silently ignored you.
                     let lined = self.ram > 0.0 || r.camera.forward().dot((mouth - eye).normalize_or_zero()) > 0.86;
                     self.hover_label = Some(if self.carried_round_can_stow(eye, r.camera.forward()) {
-                        "EMPTY RACK - E TO STOW ROUND"
+                        "EMPTY RACK - LMB TO STOW ROUND"
                     } else if matches!(self.breech, Breech::Loaded) {
-                        "BREECH LOADED - E TO PUT ROUND DOWN"
+                        "BREECH LOADED - LMB TO PUT ROUND DOWN"
                     } else if matches!(self.breech, Breech::Spent) {
-                        "CASE IN BREECH - E TO PUT ROUND DOWN"
+                        "CASE IN BREECH - LMB TO PUT ROUND DOWN"
                     } else if self.carry_pos.distance(mouth) >= RAM_REACH {
                         "CARRY ROUND TO THE OPEN BREECH"
                     } else if !lined {
@@ -16626,7 +16630,7 @@ impl Game {
                         "BREECH CLOSED - OPEN LEVER"
                     } else {
                         if self.ram >= 1.0 { "SEATING ROUND" }
-                        else { "RAM ROUND [E]" }
+                        else { "RAM ROUND [LMB]" }
                     });
                 }
                 // Interaction feedback stays in the prompt/reticle; it never changes material
@@ -16738,9 +16742,9 @@ impl Game {
             self.hover_lever = !loader_round_owns_input && self.cupola_grip_hover(r);
             if self.hover_lever {
                 self.hover_label = Some(if self.hatch_open {
-                    "HATCH LEVER - CLOSE HATCH [E]"
+                    "HATCH LEVER - CLOSE HATCH [LMB]"
                 } else {
-                    "HATCH LEVER - OPEN HATCH [E]"
+                    "HATCH LEVER - OPEN HATCH [LMB]"
                 });
             }
             self.hover_hatch = false;
@@ -16846,6 +16850,7 @@ impl Game {
 
         // A held Space is consumed in both modes, including across the end of a climb.
         self.prev_jump = input.jump;
+        self.prev_enter = input.enter;
         self.update_driver_visor_hover(r);
         self.update_ignition_hover(r);
         self.update_equipment_hover(r);
@@ -17503,10 +17508,10 @@ impl Game {
         if to.length() < 1.0 && to.normalize_or_zero().dot(r.camera.forward()) > 0.985 {
             self.hover = Some(Hotspot::DriverVisor);
             self.hover_label = Some(if self.exterior.visor_jammed {
-                "VISOR JAMMED - LOOSEN THE HOUSING AND FREE IT [HOLD E]"
+                "VISOR JAMMED - LOOSEN THE HOUSING AND FREE IT [HOLD LMB]"
             } else if self.driver_shutters.open {
-                "CLOSE VISOR SHUTTERS [E]"
-            } else { "OPEN VISOR SHUTTERS [E]" });
+                "CLOSE VISOR SHUTTERS [LMB]"
+            } else { "OPEN VISOR SHUTTERS [LMB]" });
         }
     }
 
@@ -19009,7 +19014,8 @@ impl Game {
         self.foot.panzerfaust_flash_t = 0.0;
         r.set_visible(self.slots.hammer, false);
 
-        let jump_edge = input.jump && !self.prev_jump;
+        // Each move of the climb is an E press; Space still works for hands used to it.
+        let jump_edge = (input.jump && !self.prev_jump) || (input.enter && !self.prev_enter);
         let n = self.climb.cams.len();
         if self.climb.anim {
             self.climb.t += dt / if self.climb.automatic { 0.28 } else { CLIMB_STEP_S };
@@ -19375,16 +19381,16 @@ impl Game {
         self.hover_hatch = false;
         self.hover = None;
         self.hover_label = Some(match (index, if index < 4 { self.roof_hatches.open[index] } else { self.hatch_open }) {
-            (0, false) => "OPEN DRIVER HATCH [E]",
-            (0, true) => "CLOSE DRIVER HATCH [E]",
-            (1, false) => "OPEN LOADER HATCH [E]",
-            (1, true) => "CLOSE LOADER HATCH [E]",
-            (2, false) => "OPEN RADIO HATCH [E]",
-            (2, true) => "CLOSE RADIO HATCH [E]",
-            (3, false) => "OPEN SIDE ESCAPE HATCH [E]",
-            (3, true) => "CLOSE SIDE ESCAPE HATCH [E]",
-            (_, false) => "OPEN CUPOLA HATCH [E]",
-            (_, true) => "CLOSE CUPOLA HATCH [E]",
+            (0, false) => "OPEN DRIVER HATCH [LMB]",
+            (0, true) => "CLOSE DRIVER HATCH [LMB]",
+            (1, false) => "OPEN LOADER HATCH [LMB]",
+            (1, true) => "CLOSE LOADER HATCH [LMB]",
+            (2, false) => "OPEN RADIO HATCH [LMB]",
+            (2, true) => "CLOSE RADIO HATCH [LMB]",
+            (3, false) => "OPEN SIDE ESCAPE HATCH [LMB]",
+            (3, true) => "CLOSE SIDE ESCAPE HATCH [LMB]",
+            (_, false) => "OPEN CUPOLA HATCH [LMB]",
+            (_, true) => "CLOSE CUPOLA HATCH [LMB]",
         });
     }
 
@@ -30329,6 +30335,18 @@ impl Game {
     }
     /// Flames on the player's body, 0 to 1 (telemetry and presentation).
     pub fn player_burn_heat(&self) -> f32 { self.player_burn.heat }
+
+    /// The E press has been used by the shell (a seat or sight was entered); it must not also
+    /// start a hatch passage this frame.
+    pub fn consume_enter_press(&mut self) { self.prev_enter = true; }
+    /// E would take the player through a hatch, down into the cabin, up a spare tank, or on to
+    /// the next move of a climb.
+    pub fn enter_exit_available(&self, r: &Renderer) -> bool {
+        self.climb.active || self.spare_mount_target(r).is_some() || self.space_hatch_target(r).is_some()
+            || (self.mode == Mode::Tank && self.player.alive
+                && (self.station == Station::Gunner
+                    || (self.station == Station::Commander && !self.commander_outside)))
+    }
 
     /// What the interaction key would act on right now inside the tank. The application shell
     /// turns E into the game's primary-interaction signal from this: a toggle for things that are

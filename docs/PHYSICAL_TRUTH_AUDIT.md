@@ -688,6 +688,8 @@ refinement remain separate acceptance work, as recorded in the hand-prop note.
 
 | Sub-texel movers in the coarse environment cascade | A moving caster whose largest extent is under one texel of the whole-scene visibility cascade is not drawn into that cascade. It is still drawn into the fine cascade around the viewer and into every lamp and sun shadow. | `src/sky_visibility.rs` (`below_coarse_texel`) | Such a caster could cover at most one coarse sample, and only when it happened to straddle a sample centre, so it was aliasing rather than resolved occlusion. Removing it removes that flicker and about half of the per-frame environment-visibility draws. |
 
+| Clustered occluder in the environment-visibility atlas | A rigid mesh of 160,000 indices or more (the Tiger hull and turret) is drawn into the per-frame dynamic layer of the environment-visibility atlas from a vertex-clustered copy generated from its own source triangles at load: 6 mm cells, the first source vertex in a cell stands for the cell, collapsed triangles dropped. The rendered mesh, collision, sun shadows and lamp shadows still use the source triangles. | `src/sky_visibility.rs` (`clustered_occluder`), `src/renderer.rs` | No vertex moves more than 10.4 mm, under half of the fine cascade's 23 mm texel. Used only when clustering at least halves the triangle count. |
+
 ## Owner-directed gameplay departures
 
 | Departure (date) | What it does | Where | Why |

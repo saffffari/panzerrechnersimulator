@@ -9643,6 +9643,7 @@ impl Keys {
             reload: self.r,    // on foot: Luger magazine change
             jump: self.space,  // Space: chassis/roof/hatch/cabin traversal, otherwise foot jump.
             trigger: self.lmb,
+            enter: self.e,
             interaction: false, // set after the E key is resolved against the game
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
@@ -11172,6 +11173,9 @@ const ACT_CARD_DUR: f32 = 4.0;
 // The fatal view fades, then the recorded shot and embodied crew aftermath play once.
 // Replay is presentation only: it cannot restart the permadeath run or apply damage again.
 const DEATH_FADE: f32 = 1.5; // picture and sound fade to nothing over this
+/// After the fade: this long in black, then the fallen card for this long.
+const DEATH_BLACK_SECONDS: f32 = 2.0;
+const DEATH_CARD_SECONDS: f32 = 5.0;
 const DEATH_SKIP_AFTER: f32 = DEATH_FADE + REPLAY_DUR * 0.65;
 const DEATH_END: f32 = DEATH_FADE + REPLAY_DUR + KIA_BLACK_SECONDS;
 const ENDING_HOLD: f32 = 12.0;
@@ -11186,15 +11190,68 @@ fn death_fade(t: f32) -> f32 {
 fn death_may_skip(t: f32) -> bool { t >= DEATH_SKIP_AFTER }
 
 /// The score's memorial uses fictional names, never a real person's invented biography.
+/// A pixel portrait for the fallen card: the crewman's bust in his helmet, with no face. The
+/// man is anyone; the card is not a memorial to a named ace. `#` helmet, `o` the blank face,
+/// `.` shadow, `:` collar, space the photograph's dark ground.
+const FALLEN_PORTRAIT: [&str; 30] = [
+    "                          ",
+    "         ########         ",
+    "       ############       ",
+    "      ##############      ",
+    "     ################     ",
+    "    ##################    ",
+    "    ##################    ",
+    "   ####################   ",
+    "   ####################   ",
+    "   ####################   ",
+    "  ######################  ",
+    "  ####oooooooooooooo####  ",
+    " ####oooooooooooooooo#### ",
+    " ###.oooooooooooooooo.### ",
+    "  ##.oooooooooooooooo.##  ",
+    "    .oooooooooooooooo.    ",
+    "    .oooooooooooooooo.    ",
+    "     oooooooooooooooo     ",
+    "     .oooooooooooooo.     ",
+    "      .oooooooooooo.      ",
+    "       .oooooooooo.       ",
+    "        ..oooooo..        ",
+    "         .oooooo.         ",
+    "       ...::::::...       ",
+    "    ......::::::......    ",
+    "  ........::::::........  ",
+    " ..........::::.......... ",
+    "..........................",
+    "..........................",
+    "..........................",
+];
+
 fn draw_fallen_card(r: &mut renderer::Renderer, person: death_card::Identity) {
     ui::draw_black(r);
     let white = [1.0, 1.0, 1.0, 1.0];
-    r.draw_text_bold("DU BIST GEFALLEN", 0.5, 0.395, 0.044, white, ui::Align::Center);
+    // The photograph: square pixels, a pale border, grey tones only.
+    let aspect = r.iw as f32 / r.ih.max(1) as f32;
+    let cell_w = 0.0062;
+    let cell_h = cell_w * aspect;
+    let (cols, rows) = (FALLEN_PORTRAIT[0].len() as f32, FALLEN_PORTRAIT.len() as f32);
+    let (left, top) = (0.5 - cols * cell_w * 0.5, 0.085);
+    let border = cell_w * 1.5;
+    r.fill_rect(left - border, top - border * aspect, cols * cell_w + border * 2.0,
+        rows * cell_h + border * aspect * 2.0, [0.80, 0.80, 0.78, 1.0]);
+    r.fill_rect(left, top, cols * cell_w, rows * cell_h, [0.10, 0.10, 0.10, 1.0]);
+    for (row, line) in FALLEN_PORTRAIT.iter().enumerate() {
+        for (col, tone) in line.bytes().enumerate() {
+            let grey = match tone { b'#' => 0.52, b'o' => 0.78, b'.' => 0.24, b':' => 0.38, _ => continue };
+            r.fill_rect(left + col as f32 * cell_w, top + row as f32 * cell_h, cell_w, cell_h,
+                [grey, grey, grey, 1.0]);
+        }
+    }
+    r.draw_text_bold("DU BIST GEFALLEN", 0.5, 0.515, 0.044, white, ui::Align::Center);
     r.draw_text(&format!("{} {}", person.first_name, person.surname),
-        0.5, 0.515, 0.043, white, ui::Align::Center);
+        0.5, 0.615, 0.043, white, ui::Align::Center);
     // The existing font atlas includes the em dash, but not an en dash.
     r.draw_text(&format!("{} — {}", person.birth_year, person.death_year),
-        0.5, 0.58, 0.035, white, ui::Align::Center);
+        0.5, 0.68, 0.035, white, ui::Align::Center);
 }
 
 fn death_replay_phase(t: f32) -> Option<f32> {
@@ -12892,12 +12949,11 @@ impl WindowState {
             if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
                 self.resolve_campaign_loss(over_cause);
             }
-            // Select without playing: preserve the midpoint text deadline, then start the
-            // full cue on the first presented text frame. Missing audio retains the old replay.
+            // The fatal view fades, the screen is black for two seconds, the card is held for
+            // five, and the run ends. No score plays over it.
             println!("[panzerrechnersystem] killed: {over_cause:?}");
-            let card = self.game.prepare_death_score().and_then(|duration_s|
-                death_card::Presentation::new(self.game.death_card_seed(),
-                    self.game.death_year(), duration_s));
+            let card = Some(death_card::Presentation::silent(self.game.death_card_seed(),
+                self.game.death_year(), DEATH_FADE + DEATH_BLACK_SECONDS, DEATH_CARD_SECONDS));
             self.state = AppState::Death { t: 0.0, card };
             self.render_death(0.0);
             true
@@ -13870,7 +13926,7 @@ impl WindowState {
             frame.present();
             // Acquire failures above cannot trigger an unheard/unseen early cue. The API
             // is idempotent, so repeated text frames never restart it or choose again.
-            if show_identity { self.game.start_death_score(); }
+            if show_identity && !card.is_silent() { self.game.start_death_score(); }
             return;
         }
         if let Some(phase) = terminal_visual_phase(t).filter(|_| self.game.last_fatal.is_some()) {
@@ -14137,16 +14193,38 @@ impl WindowState {
     }
 }
 
-/// E carries as a toggle: first press takes a round or case, the next rams or lets go.
+/// Work whatever usable thing is under the crosshair: a hatch lid or its lever, a door, a
+/// carried item, a tool on its bracket, a seat, the tank from outside. Shared by the action
+/// button and by E. `with_pickups` adds the things only E collects (cigarette packs, tools).
+fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_pickups: bool) -> bool {
+    let fwd = state.renderer.camera.forward();
+    let pos = state.renderer.camera.pos;
+    if state.game.click_articulated_hatch() { return true; }
+    if with_pickups && state.game.interact_cigarette_pickup(fwd, pos, &mut state.renderer) { return true; }
+    if state.game.interact_world_door(fwd, pos) || state.game.interact_portable_item(fwd, pos) { return true; }
+    if state.lan.is_some() && state.game.hover_hatch_lever() { keys.lan_hatch_pulse = true; return true; }
+    if state.game.interact_hatch_lever(fwd, pos) { return true; }
+    if with_pickups && state.game.interact_equip() { return true; }
+    if state.game.click_station() { return true; }
+    if state.game.hover_hatch() {
+        if state.lan.is_some() { keys.lan_hatch_pulse = true; } else { state.game.click_hatch_or_exit(); }
+        return true;
+    }
+    state.game.click_mount(fwd, pos)
+}
+
+/// A carried load is a toggle: first press takes a round or case, the next rams or lets go.
 #[derive(Default)]
 struct InteractLatch { held: bool, age: f32, key_was_down: bool }
 
-/// The game's primary-interaction signal for this frame. Left mouse is the trigger: it fires
-/// and uses the tool in hand. E is interaction: a single press on a control, and a toggle
-/// for anything carried (press to take, press again to ram a lined-up round or let go).
+/// The game's primary-interaction signal for this frame. Left mouse is the one action button:
+/// with a usable thing under the crosshair it interacts, otherwise it fires or works the tool
+/// in hand. E does the same for interaction. A control takes a single press; anything carried
+/// is a toggle (press to take, press again to ram a lined-up round or let go).
 fn interaction_primary(latch: &mut InteractLatch, e_down: bool, lmb_down: bool,
     game: &mut game::Game, dt: f32) -> bool {
     use game::InteractKind as Kind;
+    let e_down = e_down || (lmb_down && game.interact_kind() != Kind::None);
     let edge = e_down && !latch.key_was_down;
     latch.key_was_down = e_down;
     let kind = game.interact_kind();
@@ -14544,36 +14622,19 @@ impl ApplicationHandler for App {
                         // E — INTERACT with the tank's body: enter a hovered station anchor,
                         // work the hatch / start the climb out, or mount from the ground.
                         // (The LMB click path does the same — E is the keyboard hand.)
+                        // E enters and exits: a hovered seat or sight first, then a hatch, the cabin,
+                        // a spare tank or the next move of a climb (those run in Game::update on
+                        // this same press). With none of those it is a second interact key.
                         KeyCode::KeyE if !state.game.mounted_sidearm_owns_input(self.keys.rmb) => {
-                            let fwd = state.renderer.camera.forward();
-                            let pos = state.renderer.camera.pos;
-                            if state.game.interact_kind() != game::InteractKind::None
+                            if state.game.click_station() {
+                                state.game.consume_enter_press();
+                            } else if state.game.enter_exit_available(&state.renderer) {
+                                // Game::update takes the passage.
+                            } else if state.game.interact_kind() != game::InteractKind::None
                                 && !state.game.interaction_tool_in_hand() {
                                 // A hovered breech, rack, case or control, or a load in the
                                 // hands: Game::update acts on it through the interaction primary.
-                            } else if state.game.click_articulated_hatch() {
-                                // Exact source lid/handle selection also works from outside.
-                            } else if state.game.interact_cigarette_pickup(fwd,pos,&mut state.renderer) {
-                                // A finite source packet was removed from this world slot.
-                            } else if state.game.interact_world_door(fwd, pos) {
-                                // opened / closed the source-authored building door under the hand
-                            } else if state.game.interact_portable_item(fwd, pos) {
-                                // picked up / placed / refuelled the physical hand prop
-                            } else if state.lan.is_some() && state.game.hover_hatch_lever() {
-                                self.keys.lan_hatch_pulse = true;
-                            } else if state.game.interact_hatch_lever(fwd, pos) {
-                                // worked the cupola hatch lever (hatch open/close)
-                            } else if state.game.interact_equip() {
-                                // took the extinguisher off the wall / put it back
-                            } else if state.game.click_station() {
-                                // entered a hovered station
-                            } else if state.game.hover_hatch() {
-                                if state.lan.is_some() {
-                                    self.keys.lan_hatch_pulse = true;
-                                } else {
-                                    state.game.click_hatch_or_exit();
-                                }
-                            } else if state.game.click_mount(fwd, pos) {
+                            } else if interact_under_crosshair(state, &mut self.keys, true) {
                                 self.binocs = false;
                             }
                         }
@@ -14762,8 +14823,17 @@ impl ApplicationHandler for App {
                     }
                     MouseButton::Left => {
                         self.keys.lmb = btn.is_pressed();
-                        // Left mouse fires and uses what is in the hand. Hatches, sights, seats,
-                        // rounds, levers and pickups all belong to E (see the KeyE arm).
+                        // The one action button: with something usable under the crosshair it
+                        // interacts, otherwise it fires or works the tool in hand. Rounds, cases
+                        // and cabin controls are handled in Game::update through the same button.
+                        if btn.is_pressed() && p1_can_act && !state.show_map
+                            && !state.game.mounted_sidearm_owns_input(self.keys.rmb)
+                            && !state.game.personal_hand_item_active()
+                            && !state.game.primary_loader_owns_click()
+                            && interact_under_crosshair(state, &mut self.keys, false) {
+                            state.game.consume_primary_press();
+                            self.binocs = false;
+                        }
                     }
                     _ => {}
                 }

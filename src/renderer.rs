@@ -1403,6 +1403,9 @@ struct MeshGpu {
     visibility_source: Option<CpuMesh>,
     visibility_deformable: bool,
     pose_buffer_private: bool,
+    /// Clustered occluder for the environment-visibility atlas's dynamic layer (vertex buffer,
+    /// index buffer, index count); see `sky_visibility::clustered_occluder` for its error bound.
+    visibility_occluder: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
     /// Left out of the gunner's exterior optic raster only. It stays a shadow and environment
     /// caster in every pass, so hiding it does not invalidate any shadow or visibility cache.
     optic_hidden: bool,
@@ -3348,7 +3351,20 @@ fn make_mesh_gpu(
         });
         (buffer, Arc::new(prepared.pages))
     });
+    let visibility_occluder = sky_visibility::clustered_occluder(&m.vertices, &m.indices).map(|(vertices, indices)| {
+        println!("[sky-visibility] clustered occluder: {} -> {} triangles ({:.1}%), max vertex error {:.1} mm",
+            m.indices.len() / 3, indices.len() / 3, 100.0 * indices.len() as f32 / m.indices.len() as f32,
+            sky_visibility::OCCLUDER_MAX_ERROR_M * 1000.0);
+        (device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("visibility-occluder-vertices"), contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        }), device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("visibility-occluder-indices"), contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        }), indices.len() as u32)
+    });
     MeshGpu {
+        visibility_occluder,
         visibility_geometry: None,
         visibility_source: (m.vertices.len() <= 4096).then(|| m.clone()),
         visibility_deformable: false,

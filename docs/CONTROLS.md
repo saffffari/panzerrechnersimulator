@@ -404,10 +404,17 @@ size, and stitch-apron rules.
 
 ## Changes of 3 October 2026
 
-- **E is the single interaction key.** Left mouse no longer picks up, opens or enters anything.
-- **The hatch key H is removed.** Work a hatch with E on its lever or lid.
-- **Reload:** E on a rack round takes it, carry it to the open breech and line it up, E rams it,
-  E on the lever closes the breech. E on the hot case pulls it; E again lets it go.
-- **On foot, Space** while facing an untaken abandoned Tiger within 6 m climbs into it. With the
-  Tiger lost and no spare left, the run ends.
-- **C** is the cigarette. The compass comes out with the map on **M**.
+- **Left mouse is the one action button.** With something usable under the crosshair (the dot
+  shows) it interacts; otherwise it fires or works the tool in hand. A carried load is a toggle:
+  click to take a round or case, click again to ram a lined-up round or let go.
+- **E enters and exits:** hatches, the turret cabin, seats and sights, a spare tank, and each
+  move of the climb. With none of those available it is a second interact key.
+- **Space only jumps.** It also beats out the flames if the player's clothes are alight.
+- **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
+  E to go through.
+- **Reload:** take a rack round, carry it to the open breech and line it up, press again to ram
+  it, then work the lever to close the breech.
+- **C** is the cigarette: hold the action button to draw on it, release to exhale. The compass
+  comes out with the map on **M**.
+- **Death:** the view fades, two seconds of black, five seconds of the fallen card, then the
+  run ends. No music plays over it.

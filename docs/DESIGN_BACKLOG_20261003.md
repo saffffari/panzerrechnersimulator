@@ -55,7 +55,7 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 
 | Item | Status |
 |---|---|
-| **E** interacts: pick up, equip, stow, hatches, gun sight, seats. LMB only fires or uses the item in hand. | done (not yet play-tested by hand) |
+| One consistent action button. Owner's revision after trying E: constant E next to WASD is awkward. Left mouse is the action button (interact when the crosshair dot shows, otherwise fire or use the item in hand). E enters and exits hatches, seats and sights. Space only jumps, so the jump key is never the way down. | done (not yet play-tested by hand) |
 | E enters a spot (sight, hatch, seat); E again leaves it. | partly done: E enters. Leaving a spot still uses its existing key. |
 | Items stow only in their own starting stowage spot. That spot lights up while the item is in hand and the cursor is over it. | open |
 | Cupola hatch is worked by E on the lever below it. The H key is removed. | done |
@@ -89,6 +89,14 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | The torch is the bright spotlight, centred on the crosshair, mostly for outdoor night use, and it alerts enemies. The cigarette is the low-visibility light for close work on foot at night. | open |
 | Sounds: inhale, lighter, pulling out the pack, and sounds for the other inventory items. | open |
 | The Luger's cowboy-style draw rotation is liked; apply it wherever the Luger is drawn. | open |
+
+## 4b. Death
+
+| Item | Status |
+|---|---|
+| Remove the heavenly sound on death and shorten the black screen. | done: no score plays; fade, two seconds of black, five seconds of card. |
+| The fallen card shows a pixel black-and-white portrait of the same character model in his helmet with no face, so the card never reads as a tribute to a tank ace. | done as a hand-drawn pixel bust. A portrait rendered from the actual model is open. |
+| The interior death explosion sounds more explosive and catastrophic. | done: the ammunition detonation has a sustained roar and keeps its loudness through the mixer (a test that was failing before today now passes). Not yet judged by ear. |
 
 ## 5. Fire
 

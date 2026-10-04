@@ -115,6 +115,47 @@ impl FrameCameraSupport {
 }
 
 const CACHE_GROUPS: usize = 4;
+/// Vertex-cluster cell of the environment-visibility occluder (see `clustered_occluder`).
+pub(super) const OCCLUDER_CELL_M: f32 = 0.006;
+/// The largest distance a clustered vertex can lie from its source vertex: the cell diagonal.
+pub(super) const OCCLUDER_MAX_ERROR_M: f32 = OCCLUDER_CELL_M * 1.732_050_8;
+/// Meshes at least this large get a clustered occluder.
+const OCCLUDER_MIN_INDICES: usize = 160_000;
+
+/// An occluder for the environment-visibility atlas, generated from the source mesh by vertex
+/// clustering: every source vertex is replaced by the first source vertex that fell in its
+/// 6 mm cell, and triangles that collapse are dropped. No vertex moves more than
+/// `OCCLUDER_MAX_ERROR_M` (10.4 mm), under half of the fine cascade's 23 mm texel, so the
+/// atlas cannot resolve the difference. It is used ONLY for the per-frame dynamic layer of this
+/// atlas. The rendered mesh, collision, sun shadows and lamp shadows keep the source triangles.
+/// Returns nothing when the mesh is small or clustering would not at least halve it.
+pub(super) fn clustered_occluder(vertices: &[Vertex], indices: &[u32]) -> Option<(Vec<Vertex>, Vec<u32>)> {
+    if indices.len() < OCCLUDER_MIN_INDICES { return None; }
+    let cell = |v: &Vertex| {
+        let p = glam::Vec3::from(v.pos) / OCCLUDER_CELL_M;
+        (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32)
+    };
+    let mut representative: std::collections::HashMap<(i32, i32, i32), u32> = std::collections::HashMap::new();
+    let mut remap = Vec::with_capacity(vertices.len());
+    let mut kept: Vec<Vertex> = Vec::new();
+    for vertex in vertices {
+        if !glam::Vec3::from(vertex.pos).is_finite() { return None; }
+        let next = kept.len() as u32;
+        let index = *representative.entry(cell(vertex)).or_insert(next);
+        if index == next { kept.push(*vertex); }
+        remap.push(index);
+    }
+    let mut triangles = Vec::with_capacity(indices.len() / 2);
+    for triangle in indices.chunks_exact(3) {
+        let Some(mapped) = (|| Some([*remap.get(triangle[0] as usize)?, *remap.get(triangle[1] as usize)?,
+            *remap.get(triangle[2] as usize)?]))() else { return None; };
+        if mapped[0] != mapped[1] && mapped[1] != mapped[2] && mapped[0] != mapped[2] {
+            triangles.extend_from_slice(&mapped);
+        }
+    }
+    (triangles.len() >= 3 && triangles.len() * 2 <= indices.len()).then_some((kept, triangles))
+}
+
 /// Tiles of the coarse, whole-scene cascade (32 directions and its sun tile).
 fn coarse_tile(tile: usize) -> bool { (32..64).contains(&tile) || tile == 65 }
 /// A moving caster smaller than one texel of the coarse cascade cannot be represented there: it
@@ -657,6 +698,7 @@ impl SkyVisibility {
         work.shadow_passes += 1;
         pass.set_pipeline(&self.pipe);
         pass.set_bind_group(0, &self.bind, &[]);
+        pass.set_scissor_rect(0, 0, COLS * TILE, ROWS * TILE);
         for m in renderer.shadow_source_meshes() {
             if !Self::participates(m) || Self::retains_static_depth(m)
                 || !region_contains(prepared.global_focus, prepared.global_half, m.world_min, m.world_max) {
@@ -664,15 +706,29 @@ impl SkyVisibility {
             }
             let push = PushData { model: m.model.to_cols_array_2d(), params: [0.0; 4] };
             pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
-            pass.set_vertex_buffer(0, m.vbuf.slice(..));
-            pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            // A large rigid mesh is drawn from its clustered occluder (see `clustered_occluder`);
+            // a mesh whose vertices have been re-posed since upload keeps its own buffers.
+            let (vertex_buffer, index_buffer, index_count) = match &m.visibility_occluder {
+                Some((vertices, indices, count)) if !m.pose_buffer_private && m.pose_revision == 0 =>
+                    (vertices, indices, *count),
+                _ => (&m.vbuf, &m.ibuf, m.index_count),
+            };
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             // One instance per direction; the vertex stage places each in its atlas tile.
             let sub_texel = below_coarse_texel(m.world_min, m.world_max, prepared.global_half);
-            for (k,matrix) in prepared.matrices.iter().enumerate() {
-                if sub_texel && coarse_tile(k) {continue;}
-                if !shadow_has_sample(*matrix,m.world_min,m.world_max,TILE){continue;}
-                if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
-                pass.draw_indexed(0..m.index_count,0,k as u32..k as u32+1);
+            // The instance index is the tile, and the fragment stage discards anything outside
+            // its own tile, so consecutive admitted tiles go out as ONE instanced draw. A tile
+            // per draw with its own scissor issued several thousand draws a frame for a single
+            // vehicle; the scissor only trimmed raster work the fragment stage already rejects.
+            let admitted = |k: usize| !(sub_texel && coarse_tile(k))
+                && shadow_has_sample(prepared.matrices[k],m.world_min,m.world_max,TILE);
+            let mut k = 0;
+            while k < TILES {
+                if !admitted(k) { k += 1; continue; }
+                let first = k;
+                while k < TILES && admitted(k) { k += 1; }
+                pass.draw_indexed(0..index_count,0,first as u32..k as u32);
                 work.shadow_mesh_draws+=1;
             }
             drawn.0 += 1;

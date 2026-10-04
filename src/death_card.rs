@@ -80,6 +80,9 @@ pub enum Phase {
 pub struct Presentation {
     pub identity: Identity,
     duration_s: f32,
+    /// A silent card on a fixed clock: (seconds after the fatal frame at which the card appears,
+    /// seconds it is held). `None` is the older scored card that follows its audio cue.
+    schedule: Option<(f32, f32)>,
 }
 
 impl Presentation {
@@ -87,14 +90,26 @@ impl Presentation {
         (duration_s.is_finite() && duration_s > 0.0).then(|| Self {
             identity: identity(seed, death_year),
             duration_s,
+            schedule: None,
         })
     }
 
+    /// The card with no music: black until `reveal_at_s`, the card for `hold_s`, then finished.
+    pub fn silent(seed: u64, death_year: i32, reveal_at_s: f32, hold_s: f32) -> Self {
+        Self { identity: identity(seed, death_year), duration_s: hold_s.max(0.0),
+            schedule: Some((reveal_at_s.max(0.0), hold_s.max(0.0))) }
+    }
+    pub fn is_silent(self) -> bool { self.schedule.is_some() }
+
     /// Preserve the former midpoint delay relative to fatal entry, even though the cue
     /// now begins at text reveal. The stopped audio clock cannot drive this deadline.
-    pub fn reveal_at_s(self) -> f32 { self.duration_s * 0.5 }
+    pub fn reveal_at_s(self) -> f32 { self.schedule.map_or(self.duration_s * 0.5, |(reveal, _)| reveal) }
 
     pub fn phase(self, terminal_elapsed_s: f32, audio_elapsed_s: Option<f32>, audio_finished: bool) -> Phase {
+        if let Some((reveal, hold)) = self.schedule {
+            if !terminal_elapsed_s.is_finite() || terminal_elapsed_s < reveal { return Phase::Black; }
+            return if terminal_elapsed_s < reveal + hold { Phase::Identity } else { Phase::Finished };
+        }
         let started = audio_elapsed_s.is_some_and(|t| t.is_finite() && t >= 0.0);
         if started && audio_finished {
             Phase::Finished
@@ -148,6 +163,18 @@ mod tests {
         assert_eq!(card.phase(54.0, Some(36.0), false), Phase::Identity,
             "the entire source and buffered output must finish before release");
         assert_eq!(card.phase(54.1, Some(36.0), true), Phase::Finished);
+    }
+
+    #[test]
+    fn silent_card_runs_on_its_own_clock_with_no_audio() {
+        let card = Presentation::silent(3, 1943, 3.5, 5.0);
+        assert!(card.is_silent());
+        assert_eq!(card.phase(0.0, None, false), Phase::Black);
+        assert_eq!(card.phase(3.49, None, false), Phase::Black);
+        assert_eq!(card.phase(3.5, None, false), Phase::Identity);
+        assert_eq!(card.phase(8.49, Some(1.0), true), Phase::Identity, "audio state is ignored");
+        assert_eq!(card.phase(8.5, None, false), Phase::Finished);
+        assert_eq!(card.phase(f32::NAN, None, false), Phase::Black);
     }
 
     #[test]

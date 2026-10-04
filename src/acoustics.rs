@@ -2786,6 +2786,17 @@ fn synth_tank_destruction(voice: DestructionVoice, seed: u32) -> Vec<f32> {
         add_dark_noise_packet(&mut mono,0.018,
             if matches!(voice,DestructionVoice::TurretPop) {0.18}else{0.12},
             420.0,profile.pressure_gain*1.35,seed^0x5052_4553);
+        if matches!(voice,DestructionVoice::TurretPop) {
+            // An ammunition detonation is not one crack: the propellant and filler keep
+            // burning for a good part of a second. A long dark roar and a harsher mid layer
+            // under the same single onset give the event the sustained body that fast-weighted
+            // loudness and the ear both read as size. With only the short lobe the master
+            // limiter cut it by 15 dB and left it barely louder than an ordinary armour strike.
+            // Crest shaping before the measured level calibration; no added source energy
+            // and no second timed boom.
+            add_dark_noise_packet(&mut mono,0.020,0.52,260.0,profile.pressure_gain*2.4,seed^0x524F_4152);
+            add_dark_noise_packet(&mut mono,0.024,0.34,950.0,profile.pressure_gain*1.1,seed^0x4352_434B);
+        }
     }
     add_armor_rupture(&mut mono, profile.rupture_gain, seed ^ 0x4152_4D52);
     add_heavy_movement(&mut mono, voice, profile.movement_gain, seed ^ 0x4D41_5353);
@@ -2799,6 +2810,17 @@ fn synth_tank_destruction(voice: DestructionVoice, seed: u32) -> Vec<f32> {
         add_short_ignition(&mut mono, at_s, 1.0, seed ^ 0x4649_5245);
     }
 
+    if matches!(voice, DestructionVoice::TurretPop) {
+        // Overdrive the detonation against its own peak. A pressure this size saturates the
+        // ear and any microphone: the onset flattens and the roar behind it comes up. That
+        // lowers the crest by several decibels, so the same calibrated loudness asks far less
+        // of the master limiter and the event keeps its size against smaller ones.
+        let peak = mono.iter().fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+        if peak > 1.0e-6 {
+            const DRIVE: f32 = 4.0;
+            for sample in &mut mono { *sample = peak * (DRIVE * *sample / peak).tanh() / DRIVE.tanh(); }
+        }
+    }
     let mut out = mono_center(&mono);
     soft_limit_in_place(&mut out, 0.96);
     out
