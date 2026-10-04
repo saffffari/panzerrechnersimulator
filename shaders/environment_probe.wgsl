@@ -28,7 +28,13 @@ struct ProbeInput {
 // [0..32] radiance per atlas direction; [32] key beam irradiance (normal incidence) at the camera,
 // w = 1; [33] diffuse horizontal sky irradiance, w = 1; [34] mean upper-hemisphere radiance, w = 1;
 // [35] mean lower-hemisphere radiance, w = 1; [36..68] the directions (xyz, solid angle).
-@group(0) @binding(2) var<storage, read_write> probe: array<vec4<f32>, 68>;
+// [68 .. 68 + 48*48) the cloud layer's transmittance toward the key body over a grid of ground
+// round the camera (x = transmittance); [2372] that grid's frame: centre x, centre z, half extent
+// (m), and the mean transmittance over the beam's disc (what lane 32 already contains).
+@group(0) @binding(2) var<storage, read_write> probe: array<vec4<f32>, 2373>;
+const PROBE_CLOUD_GRID: u32 = 48u;
+const PROBE_CLOUD_HALF_EXTENT_M: f32 = 6000.0;
+const PROBE_CLOUD_STEPS: u32 = 8u;
 
 // combine.wgsl's world-medium optics (tests keep the two identical).
 const PROBE_AEROSOL_PHASE_G = 0.42;
@@ -85,6 +91,57 @@ fn probe_sky(origin: vec3<f32>, direction: vec3<f32>, solar_scattered: vec3<f32>
     let diffuse = physical_bounded_diffuse_scattered_transmittance(optical_depth,
         probe_medium_albedo(), probe_medium_asymmetry());
     return receiver * (directional + diffuse.y) + solar_scattered;
+}
+
+// Beer-Lambert transmittance of the cloud layer from a point on the ground toward the key body:
+// eight samples along the ray's passage through the layer (flat-layer geometry; the grid is
+// 12 km across).
+fn probe_cloud_transmittance(ground: vec3<f32>) -> f32 {
+    let toward = normalize(environment.sun_direction_water_density.xyz);
+    let bottom = environment.atmosphere_cloud_bottom.w;
+    let top = environment.cloud_top_lwc_radius_coverage.x;
+    let extinction = physical_cloud_extinction_m_inv(environment);
+    if (toward.y <= 0.03 || top <= bottom || extinction <= 0.0
+        || environment.cloud_top_lwc_radius_coverage.w <= 0.0) { return 1.0; }
+    let altitude = physical_altitude_m(environment, ground);
+    let enter = max(bottom - altitude, 0.0) / toward.y;
+    let leave = max(top - altitude, 0.0) / toward.y;
+    let step_m = (leave - enter) / f32(PROBE_CLOUD_STEPS);
+    var depth = 0.0;
+    for (var i = 0u; i < PROBE_CLOUD_STEPS; i += 1u) {
+        let point = ground + toward * (enter + (f32(i) + 0.5) * step_m);
+        depth += extinction * physical_cloud_relative_density(environment, point) * step_m;
+    }
+    return exp(-depth);
+}
+
+// Where each patch of ground stands under the clouds. The grid is snapped to whole cells so it
+// does not swim as the camera moves.
+fn probe_cloud_grid_centre() -> vec2<f32> {
+    let cell = 2.0 * PROBE_CLOUD_HALF_EXTENT_M / f32(PROBE_CLOUD_GRID);
+    return floor(probe_in.camera.xz / cell + vec2(0.5)) * cell;
+}
+
+@compute @workgroup_size(8, 8)
+fn probe_cloud_shadows(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= PROBE_CLOUD_GRID || id.y >= PROBE_CLOUD_GRID) { return; }
+    let cell = 2.0 * PROBE_CLOUD_HALF_EXTENT_M / f32(PROBE_CLOUD_GRID);
+    let centre = probe_cloud_grid_centre();
+    let xz = centre + (vec2<f32>(id.xy) + vec2(0.5)) * cell - vec2(PROBE_CLOUD_HALF_EXTENT_M);
+    let ground = vec3(xz.x, probe_in.camera.y, xz.y);
+    probe[68u + id.y * PROBE_CLOUD_GRID + id.x] = vec4(probe_cloud_transmittance(ground), 0.0, 0.0, 1.0);
+    if (id.x == 0u && id.y == 0u) {
+        // The mean over the same disc the beam in lane 32 was averaged over.
+        var mean = 0.0;
+        for (var i = 0u; i < PROBE_BEAM_SAMPLES; i += 1u) {
+            let radius = PROBE_BEAM_RADIUS_M * sqrt((f32(i) + 0.5) / f32(PROBE_BEAM_SAMPLES));
+            let angle = f32(i) * 2.399963229728653;
+            mean += probe_cloud_transmittance(probe_in.camera.xyz
+                + vec3(cos(angle) * radius, 0.0, sin(angle) * radius));
+        }
+        probe[68u + PROBE_CLOUD_GRID * PROBE_CLOUD_GRID] = vec4(centre, PROBE_CLOUD_HALF_EXTENT_M,
+            mean / f32(PROBE_BEAM_SAMPLES));
+    }
 }
 
 var<workgroup> partial: array<vec3<f32>, 16>;

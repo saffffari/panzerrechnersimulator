@@ -230,6 +230,8 @@ fn physical_cloud_extinction_m_inv(environment: PhysicalEnvironment) -> f32 {
         / (4.0 * water_density * effective_radius);
 }
 
+// How much of a cloud's footprint is lost between its base and the top of the layer.
+const CLOUD_TAPER: f32 = 0.30;
 fn physical_cloud_relative_density(
     environment: PhysicalEnvironment,
     position_m: vec3<f32>,
@@ -244,19 +246,32 @@ fn physical_cloud_relative_density(
     if (altitude <= bottom || altitude >= top) {
         return 0.0;
     }
+    // Heaped cloud, not an extruded sheet. A slow horizontal field marks each cloud's footprint;
+    // how far inside the footprint a point is sets how high the cloud stands there, so every
+    // cloud has a flat base, thin edges and a domed top over its core. A finer three-dimensional
+    // field bites into the surface, more toward the top, for the billows. Near full coverage the
+    // domes merge into the old unbroken layer.
     let thickness = top - bottom;
-    let edge = clamp(0.12 * thickness, 20.0, 220.0);
-    let vertical = smoothstep(bottom, bottom + edge, altitude)
-        * (1.0 - smoothstep(top - edge, top, altitude));
+    let height = (altitude - bottom) / thickness;
     let large_scale = max(environment.cloud_optics_scales.z, 1.0);
     let small_scale = max(environment.cloud_optics_scales.w, 1.0);
     let advected = position_m - environment.cloud_motion.xyz;
-    let large = physical_value_noise(advected / large_scale, 0x51f15e5du);
-    let small = physical_value_noise((advected + vec3(0.0,environment.cloud_motion.w*0.7,0.0)) / small_scale, 0xa17c9e37u);
-    let structure = large * 0.72 + small * 0.28;
-    let threshold = 1.0 - coverage;
-    let occupied = smoothstep(threshold - 0.08, threshold + 0.08, structure);
-    return clamp(vertical * occupied, 0.0, 1.0);
+    let footprint = physical_value_noise(vec3(advected.x, 0.0, advected.z) / large_scale, 0x51f15e5du);
+    let core = footprint - (1.0 - coverage);
+    if (core <= -0.06) {
+        return 0.0;
+    }
+    // The footprint shrinks with height: only the core of a cloud reaches the top, so each one
+    // is a heap and not a pillar. Two scales of billow bite into the surface, more toward the top.
+    let base = smoothstep(0.0, 0.05, height);
+    let dome = 1.0 - smoothstep(0.86, 1.0, height);
+    let detail_position = advected + vec3(0.0,environment.cloud_motion.w*0.7,0.0);
+    let billow = physical_value_noise(detail_position / small_scale, 0xa17c9e37u);
+    let puff = physical_value_noise(detail_position / (small_scale * 0.37), 0x3c6ef372u);
+    let taper = CLOUD_TAPER * pow(height, 0.8);
+    let eroded = core - taper + ((billow - 0.5) * 0.30 + (puff - 0.5) * 0.11) * (0.30 + height);
+    let occupied = smoothstep(0.0, 0.06, eroded);
+    return clamp(base * dome * occupied, 0.0, 1.0);
 }
 
 fn physical_medium_coefficients(

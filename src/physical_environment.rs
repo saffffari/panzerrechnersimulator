@@ -133,8 +133,8 @@ impl Default for AtmosphereParameters {
                 single_scattering_albedo: 0.999,
                 asymmetry: 0.85,
                 coverage: 0.0,
-                structure_scale_large_m: 900.0,
-                structure_scale_small_m: 260.0,
+                structure_scale_large_m: 1_700.0,
+                structure_scale_small_m: 420.0,
             },
         }
     }
@@ -337,6 +337,8 @@ fn value_noise(position: DVec3, seed: u32) -> f64 {
 
 /// World-space cloud density. Coverage changes the amount of water in a spherical participating
 /// layer; it never blends toward an authored cloud color.
+/// How much of a cloud's footprint is lost between its base and the top of the layer.
+const CLOUD_TAPER: f64 = 0.30;
 pub fn cloud_relative_density(atmosphere: &AtmosphereParameters, position_m: DVec3) -> f64 {
     let cloud = atmosphere.cloud;
     let coverage = cloud.coverage.clamp(0.0, 1.0);
@@ -347,24 +349,27 @@ pub fn cloud_relative_density(atmosphere: &AtmosphereParameters, position_m: DVe
     if altitude <= cloud.bottom_altitude_m || altitude >= cloud.top_altitude_m {
         return 0.0;
     }
+    // The same heaped-cloud field as `physical_cloud_relative_density` in the shader: a flat
+    // base, thin edges and a domed top over each footprint's core, bitten by a finer field.
     let thickness = cloud.top_altitude_m - cloud.bottom_altitude_m;
-    let edge = (0.12 * thickness).clamp(20.0, 220.0);
-    let vertical = smoothstep(
-        cloud.bottom_altitude_m,
-        cloud.bottom_altitude_m + edge,
-        altitude,
-    ) * (1.0
-        - smoothstep(cloud.top_altitude_m - edge, cloud.top_altitude_m, altitude));
-
+    let height = (altitude - cloud.bottom_altitude_m) / thickness;
     let large_scale = cloud.structure_scale_large_m.max(1.0);
     let small_scale = cloud.structure_scale_small_m.max(1.0);
     let advected = position_m - atmosphere.cloud_offset_m;
-    let large = value_noise(advected / large_scale, 0x51f1_5e5d);
-    let small = value_noise((advected + DVec3::Y*atmosphere.cloud_evolution_s*0.7) / small_scale, 0xa17c_9e37);
-    let structure = large * 0.72 + small * 0.28;
-    let threshold = 1.0 - coverage;
-    let occupied = smoothstep(threshold - 0.08, threshold + 0.08, structure);
-    (vertical * occupied).clamp(0.0, 1.0)
+    let footprint = value_noise(DVec3::new(advected.x, 0.0, advected.z) / large_scale, 0x51f1_5e5d);
+    let core = footprint - (1.0 - coverage);
+    if core <= -0.06 {
+        return 0.0;
+    }
+    let base = smoothstep(0.0, 0.05, height);
+    let dome = 1.0 - smoothstep(0.86, 1.0, height);
+    let detail_position = advected + DVec3::Y*atmosphere.cloud_evolution_s*0.7;
+    let billow = value_noise(detail_position / small_scale, 0xa17c_9e37);
+    let puff = value_noise(detail_position / (small_scale * 0.37), 0x3c6e_f372);
+    let taper = CLOUD_TAPER * height.powf(0.8);
+    let eroded = core - taper + ((billow - 0.5) * 0.30 + (puff - 0.5) * 0.11) * (0.30 + height);
+    let occupied = smoothstep(0.0, 0.06, eroded);
+    (base * dome * occupied).clamp(0.0, 1.0)
 }
 
 pub fn medium_coefficients_at(
@@ -1674,7 +1679,19 @@ mod tests {
         let initial=cloud_relative_density(&a,point);
         a.cloud_offset_m=DVec3::new(145.0,0.0,-97.0);
         assert!((cloud_relative_density(&a,point+a.cloud_offset_m)-initial).abs()<1e-10);
-        assert_eq!(cloud_relative_density(&a,DVec3::new(0.0,a.cloud.bottom_altitude_m-1.0,0.0)),0.0);
+        // Just under the layer, measured from the planet's surface, at many places: never cloud.
+        for k in 0..40 {
+            let below=DVec3::new(k as f64*371.0,(a.planet_center_m.y+a.planet_radius_m)+a.cloud.bottom_altitude_m-1.0,k as f64*-213.0);
+            if (altitude_m(&a,below)-a.cloud.bottom_altitude_m)<0.0 {assert_eq!(cloud_relative_density(&a,below),0.0);}
+        }
+        // A heaped cloud: somewhere in the layer there is cloud low down with clear air above it.
+        let mut heaped=false;
+        for k in 0..400 {
+            let (x,z)=(k as f64*173.0,k as f64*-97.0);
+            let at=|h:f64|cloud_relative_density(&a,DVec3::new(x,(a.planet_center_m.y+a.planet_radius_m)+a.cloud.bottom_altitude_m+h*(a.cloud.top_altitude_m-a.cloud.bottom_altitude_m),z));
+            if at(0.12)>0.5 && at(0.9)==0.0 {heaped=true;break;}
+        }
+        assert!(heaped,"clouds must have domed tops below the layer top");
     }
 
     #[test]

@@ -10,7 +10,13 @@
 //! and in the ledger's raster-environment row.
 use super::*;
 
-pub const PROBE_LANES: usize = 68;
+/// Cloud-shadow grid appended to the probe: CLOUD_GRID x CLOUD_GRID cells of the cloud layer's
+/// transmittance toward the key body, centred on the camera, then one lane of its frame
+/// (centre x, centre z, half extent in metres, mean transmittance over the beam's disc).
+pub const CLOUD_GRID: usize = 48;
+pub const CLOUD_GRID_HALF_EXTENT_M: f32 = 6_000.0;
+pub const PROBE_BASE_LANES: usize = 68;
+pub const PROBE_LANES: usize = PROBE_BASE_LANES + CLOUD_GRID * CLOUD_GRID + 1;
 /// Lanes of the probe output (see `environment_probe.wgsl`).
 pub const PROBE_BEAM: usize = 32;
 pub const PROBE_HORIZONTAL: usize = 33;
@@ -47,6 +53,7 @@ pub struct EnvironmentProbe {
     bind: wgpu::BindGroup,
     directions_pipe: wgpu::ComputePipeline,
     finish_pipe: wgpu::ComputePipeline,
+    cloud_shadow_pipe: wgpu::ComputePipeline,
 }
 
 impl EnvironmentProbe {
@@ -118,6 +125,7 @@ impl EnvironmentProbe {
             bind,
             directions_pipe: pipe("probe_directions"),
             finish_pipe: pipe("probe_finish"),
+            cloud_shadow_pipe: pipe("probe_cloud_shadows"),
         }
     }
 
@@ -143,9 +151,11 @@ impl EnvironmentProbe {
         pass.dispatch_workgroups(sky_visibility::DIRECTIONS as u32, 1, 1);
         pass.set_pipeline(&self.finish_pipe);
         pass.dispatch_workgroups(1, 1, 1);
+        pass.set_pipeline(&self.cloud_shadow_pipe);
+        pass.dispatch_workgroups((CLOUD_GRID as u32).div_ceil(8), (CLOUD_GRID as u32).div_ceil(8), 1);
         drop(pass);
         encoder.copy_buffer_to_buffer(&self.output, 0, &self.uniform, 0, (PROBE_LANES * 16) as u64);
-        work.compute_passes += 2;
+        work.compute_passes += 3;
     }
 
     /// Read the probe back (diagnostics and the backend-agreement regression only).

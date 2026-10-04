@@ -172,8 +172,30 @@ fn sky_direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>
 // irradiance at the camera, 33 the diffuse horizontal sky irradiance, 34/35 the mean sky and
 // ground radiance, 36-67 the directions themselves (xyz, solid angle). The same atmosphere the
 // ray-traced path and the visible sky query; no palette.
-struct EnvironmentProbe { lanes: array<vec4<f32>, 68> };
+struct EnvironmentProbe { lanes: array<vec4<f32>, 2373> };
 @group(2) @binding(8) var<uniform> probe: EnvironmentProbe;
+
+// Cloud shadow on the ground (src/environment_probe.rs): lanes 68.. hold the cloud layer's
+// transmittance toward the key body over a 48 x 48 grid round the camera, lane 2372 its frame.
+// Lane 32's beam already carries the mean cloud transmittance over the area, so a receiver's
+// sunlight is that beam times (its own cloud transmittance / the mean): bright in the gaps, dark
+// under the clouds, and unchanged under an even overcast.
+const CLOUD_GRID: i32 = 48;
+fn cloud_grid_cell(x: i32, z: i32) -> f32 {
+    return probe.lanes[68 + clamp(z, 0, CLOUD_GRID - 1) * CLOUD_GRID + clamp(x, 0, CLOUD_GRID - 1)].x;
+}
+fn cloud_shadow(world: vec3<f32>) -> f32 {
+    let frame = probe.lanes[68 + CLOUD_GRID * CLOUD_GRID];
+    if (frame.z <= 0.0) { return 1.0; }
+    let cell = 2.0 * frame.z / f32(CLOUD_GRID);
+    let at = (world.xz - frame.xy + vec2(frame.z)) / cell - vec2(0.5);
+    let base = vec2<i32>(floor(at));
+    let f = fract(at);
+    let local = mix(mix(cloud_grid_cell(base.x, base.y), cloud_grid_cell(base.x + 1, base.y), f.x),
+                    mix(cloud_grid_cell(base.x, base.y + 1), cloud_grid_cell(base.x + 1, base.y + 1), f.x), f.y);
+    // Bounded so a single clear gap under heavy cover cannot become many suns.
+    return clamp(local / max(frame.w, 0.02), 0.0, 6.0);
+}
 
 fn probe_direction(k: i32) -> vec4<f32> {
     return probe.lanes[36 + k];
@@ -613,7 +635,8 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let beam = probe.lanes[32].xyz;
     if(dot(normal,key)>0.0 && any(beam>vec3(0.0))){
         color += surface_response(albedo, metallic, roughness, normal, view, key) * beam
-            * sun_shadow(visibility_origin, receiver_normal, max(dot(receiver_normal, key), 0.0));
+            * sun_shadow(visibility_origin, receiver_normal, max(dot(receiver_normal, key), 0.0))
+            * cloud_shadow(in.world);
     }
 
     // Finite spherical emitters, inverse-square in their radiant intensity. Every admitted source
