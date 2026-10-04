@@ -12,6 +12,8 @@ const SMOKE_COLOR: [u8; 3] = [142, 148, 151];
 const ASH_COLOR: [u8; 3] = [87, 83, 76];
 // Authored smoke/ember presentation, not a calibrated combustion or health simulation.
 const TOBACCO_LENGTH_M: f32 = 0.062;
+/// Phase of the tap at which the ash column lets go.
+const ASH_FALLS_AT: f32 = 0.35;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Surface {
@@ -28,17 +30,19 @@ pub fn surface(view: View) -> Surface {
     let consumed = (1.0 - finite_unit(view.burn_remaining)) * TOBACCO_LENGTH_M;
     let puff = finite_unit(view.puff_phase);
     let burning = view.cigarette_present && view.lit;
-    let ash_cycle = (consumed / 0.0015).fract();
+    // The ash grows through each quarter and is knocked off at the tap that ends it.
+    let tap = finite_unit(view.ash_tap);
+    let ash_cycle = if tap > 0.0 && tap < ASH_FALLS_AT { 1.0 } else { finite_unit(view.quarter_progress) };
     Surface {
-        ember_intensity: if burning { 0.55 + 4.2 * puff } else { 0.0 },
-        ember_color: [255, (100.0 + 76.0 * puff) as u8, (28.0 + 24.0 * puff) as u8],
+        ember_intensity: if burning { 2.2 + 7.0 * puff } else { 0.0 },
+        ember_color: [255, (112.0 + 56.0 * puff) as u8, (18.0 + 14.0 * puff) as u8],
         char_length_m: if view.cigarette_present && (burning || consumed > 0.00001) {
             0.0007 + 0.0006 * puff
         } else {
             0.0
         },
         ash_length_m: if view.cigarette_present {
-            (0.00012 + ash_cycle * 0.0013).min(consumed)
+            (0.00012 + ash_cycle * 0.0060).min(consumed)
         } else {
             0.0
         },
@@ -121,6 +125,7 @@ pub struct Effects {
     breath_credit: f64,
     ash_credit: f64,
     previous_burn: Option<f32>,
+    previous_tap: f32,
     previous_anchors: Option<Anchors>,
     previous_hull: Option<Mat4>,
     smoke_mats: Vec<Mat4>,
@@ -138,6 +143,7 @@ impl Effects {
             breath_credit: 0.0,
             ash_credit: 0.0,
             previous_burn: None,
+            previous_tap: 0.0,
             previous_anchors: None,
             previous_hull: None,
             smoke_mats: Vec::with_capacity(MAX_SMOKE),
@@ -180,7 +186,7 @@ impl Effects {
         }
         self.particles
             .retain(|p| p.age < f64::from(p.life) && p.pos.is_finite());
-        let visible = view.equipped && view.cigarette_present && anchors.cigarette_visible;
+        let visible = view.cigarette_present && anchors.cigarette_visible;
         let mut previous = self.previous_anchors.unwrap_or(*anchors);
         if air.inside {
             previous.tip = delta.transform_point3(previous.tip);
@@ -218,7 +224,7 @@ impl Effects {
         } else {
             self.tip_credit = 0.0;
         }
-        if view.equipped && finite_unit(view.exhale) > 0.0 && anchors.mouth.is_finite() {
+        if finite_unit(view.exhale) > 0.0 && anchors.mouth.is_finite() {
             let rate = 120.0 * finite_unit(view.exhale);
             let (count, remainder) = emission_budget(self.breath_credit, rate, dt);
             self.breath_credit = remainder;
@@ -258,6 +264,14 @@ impl Effects {
         } else {
             self.ash_credit = 0.0;
         }
+        // The tap: the whole column of ash comes off at once.
+        let tap = finite_unit(view.ash_tap);
+        if visible && tap >= ASH_FALLS_AT && self.previous_tap < ASH_FALLS_AT {
+            for _ in 0..12 {
+                self.birth(Kind::Ash, anchors.tip, anchors.forward, air.inside, flow, 0.0);
+            }
+        }
+        self.previous_tap = tap;
         self.previous_burn = view.cigarette_present.then_some(remaining);
         self.previous_anchors = Some(*anchors);
         self.previous_hull = Some(hull);

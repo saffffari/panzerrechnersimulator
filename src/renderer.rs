@@ -439,6 +439,14 @@ fn configured_master_retro() -> f32 {
 /// A fixed camera exposure in place of the eye exists only behind the debug gate
 /// (`debug_gates`, `KESSEL_CAMERA_EXPOSURE` in a debug build). Shipping frames are always shown by
 /// the crewman's eye.
+/// Exposure and saturation of the display grade at full boost.
+pub const VISION_BOOST_EXPOSURE: f32 = 1.9;
+pub const VISION_BOOST_SATURATION: f32 = 1.18;
+fn boosted_display_grade(grade: [f32; 4], boost: f32) -> [f32; 4] {
+    let boost = if boost.is_finite() { boost.clamp(0.0, 1.0) } else { 0.0 };
+    [grade[0] * (1.0 + (VISION_BOOST_EXPOSURE - 1.0) * boost),
+     grade[1] * (1.0 + (VISION_BOOST_SATURATION - 1.0) * boost), grade[2], grade[3]]
+}
 fn configured_camera_exposure_override() -> Option<f32> {
     let value = crate::debug_gates::DebugGates::active().fixed_camera_exposure?;
     println!("[renderer] fixed camera exposure {value:.3} ({CAMERA_EXPOSURE_ENV}, debug gate); the eye is bypassed");
@@ -2502,6 +2510,9 @@ pub struct Renderer {
     /// Optional fixed capture exposure. Normal play uses DEFAULT_CAMERA_EXPOSURE without any
     /// adaptation. Deterministic photo harnesses can explicitly select another fixed HDR key.
     pub exposure_override: Option<f32>,
+    /// 0..1 sharper, brighter eye (the cigarette). OWNER-DIRECTED PRESENTATION on the display
+    /// grade only: no emitter, medium or material changes. See docs/PHYSICAL_TRUTH_AUDIT.md.
+    pub vision_boost: f32,
     pub fog_density: f32,
     pub reticle: bool,
     /// Legacy gunner-optic obscuration envelope. Retained while the game-side producer migrates;
@@ -5666,6 +5677,7 @@ impl Renderer {
             weather_original: None,
             user_sky_phase: None,
             exposure_override: configured_camera_exposure_override(),
+            vision_boost: 0.0,
             fog_density: 0.02,
             reticle: false,
             optic_blast: 0.0,
@@ -7769,7 +7781,7 @@ impl Renderer {
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
             _grade_pad: [self.display_dither_pattern, 0.0],
-            display_grade: self.display_grade,
+            display_grade: boosted_display_grade(self.display_grade, self.vision_boost),
             dither_right: self.camera.right().extend((self.camera.fov_y * 0.5).tan() * self.camera.aspect).to_array(),
             dither_up: self.camera.right().cross(self.camera.forward()).extend((self.camera.fov_y * 0.5).tan()).to_array(),
             dither_forward: self.camera.forward().extend(0.0).to_array(),

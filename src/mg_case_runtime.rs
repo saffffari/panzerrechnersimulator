@@ -6,11 +6,13 @@ pub(super) const CAPACITY:usize=48;
 pub(super) struct Case { pub active:bool, pub body:shell_collision::Body,
     pub rest:shell_collision::DropRest, pub cooldown:f32, pub seed:u32,
     /// Which frame the case lies in and rides with: the turret (coaxial gun) or the hull (bow gun).
-    pub turret:bool }
+    pub turret:bool,
+    /// Where it was, in its frame, when it last made a sound.
+    pub sounded_at:Vec3 }
 impl Default for Case {fn default()->Self {Self {active:false,
     body:shell_collision::Body {position:Vec3::ZERO,rotation:Quat::IDENTITY,
         velocity:Vec3::ZERO,angular_velocity:Vec3::ZERO,half:Vec3::new(0.006,0.006,0.029),mass:0.012},
-    rest:Default::default(),cooldown:0.0,seed:0,turret:false}}}
+    rest:Default::default(),cooldown:0.0,seed:0,turret:false,sounded_at:Vec3::splat(f32::MAX)}}}
 pub(super) fn mesh()->CpuMesh {
     let mut mesh=spent_88_case_mesh();
     let extent=mesh.max-mesh.min;
@@ -40,6 +42,7 @@ impl Game {
         // `drive_casings` ran first this update and measured both frames' motion.
         let steps=self.brass_steps;let hull_inverse=self.player.hull_model().inverse();
         let ground_floor=self.player.pos.y-50.0;
+        let frame_inverse=[self.player.turret_model().inverse(),hull_inverse];
         for (i,c) in self.mg_cases.iter_mut().enumerate() {
             let slot=self.slots.mg_case[i];r.set_visible(slot,c.active);
             if !c.active {continue;}
@@ -50,15 +53,18 @@ impl Game {
                     &mut c.body.velocity,&mut c.body.angular_velocity);
             } else if c.body.position.y<ground_floor {c.active=false;r.set_visible(slot,false);continue;}
             let hit=c.body.advance_dropped(dt,&source,signature,&mut c.rest,&mut budget,0.34);
-            if cartridge_contact_audible(&hit)&&c.cooldown<=0.0 {
-                c.cooldown=0.10;
+            let place=frame_inverse[if c.turret {0} else {1}].transform_point3(c.body.position);
+            if cartridge_contact_audible(&hit)&&c.cooldown<=0.0&&contact_has_travelled(&hit,place,c.sounded_at) {
+                c.cooldown=0.15;c.sounded_at=place;
                 sounds.push((hit.impact_speed,hit.tangential_speed,
                     bearing_deg_from(r.camera.forward(),hit.contact_point-r.camera.pos),c.seed^self.drop_physics_frame as u32));
             }
             r.set_emissive(slot,0.0);r.set_model(slot,c.body.model());
         }
         strongest_first(&mut sounds);
-        if let Some(audio)=&self.audio {for &(normal,slide,bearing,seed) in sounds.iter().take(4) {
+        let allowed=(self.brass_sound_credit.floor().max(0.0) as usize).min(sounds.len()).min(4);
+        self.brass_sound_credit-=allowed as f32;
+        if let Some(audio)=&self.audio {for &(normal,slide,bearing,seed) in sounds.iter().take(allowed) {
             audio.play_mg_case_contact(normal,slide,bearing,seed);
         }}
     }

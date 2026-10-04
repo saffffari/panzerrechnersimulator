@@ -85,6 +85,8 @@ mod destruction_review;
 mod enemy_discharge_review;
 #[path = "hand_items.rs"]
 mod hand_items;
+#[path = "cigarette_butts.rs"]
+mod cigarette_butts;
 #[path = "hand_compass.rs"]
 mod hand_compass;
 #[path = "hand_map.rs"]
@@ -7531,6 +7533,7 @@ struct LooseShell {
     nature_he: bool,
     drop_rest: shell_collision::DropRest,
     impact_cooldown: f32,
+    sounded_at: Vec3, // turret-local place of its last contact sound
 }
 
 // Every cartridge in the initial physical inventory can be set down without deleting another
@@ -7852,6 +7855,19 @@ fn casing_pull_step(progress: f32, dt: f32, held: bool, eligible: bool, aimed: b
 /// Weapon/hull motion is not rubbing against the chamber; empty resets are silent.
 /// Real settled-body taps remain audible during rolling, but gravity/support microcontacts
 /// alone do not become an endless rattle. Per-body cooldown is applied at the call sites.
+/// A body that has not travelled since it last sounded is jittering on its support, not
+/// striking anything: it stays silent unless the blow is a real one. `place` and `sounded_at`
+/// are in the frame the body rides in.
+const CONTACT_RESOUND_TRAVEL_M: f32 = 0.02;
+const CONTACT_RESOUND_SPEED_MPS: f32 = 0.6;
+fn contact_has_travelled(report: &shell_collision::Report, place: Vec3, sounded_at: Vec3) -> bool {
+    report.impact_speed > CONTACT_RESOUND_SPEED_MPS
+        || !(place.distance(sounded_at) < CONTACT_RESOUND_TRAVEL_M)
+}
+/// All loose brass together may sound this often, with a short burst allowed after a quiet spell.
+const BRASS_SOUNDS_PER_SECOND: f32 = 5.0;
+const BRASS_SOUND_BURST: f32 = 3.0;
+
 fn cartridge_contact_audible(report: &shell_collision::Report) -> bool {
     report.impact_speed.is_finite() && report.tangential_speed.is_finite()
         && (report.impact_speed > 0.12
@@ -7898,6 +7914,11 @@ mod cartridge_audio_gate_tests {
         assert!(!cartridge_contact_audible(&contact(0.0, 1.0, true)));
         assert!(!cartridge_contact_audible(&contact(0.07, 0.4, false)));
         assert!(!cartridge_contact_audible(&contact(f32::NAN, 0.4, true)));
+        // Jitter in place is silent; a roll that has covered ground, or a real blow, is not.
+        let here = Vec3::new(0.3, 0.9, -0.2);
+        assert!(!contact_has_travelled(&contact(0.2, 0.3, true), here, here + Vec3::X * 0.005));
+        assert!(contact_has_travelled(&contact(0.2, 0.3, true), here, here + Vec3::X * 0.03));
+        assert!(contact_has_travelled(&contact(0.9, 0.0, true), here, here));
     }
 }
 
@@ -8087,6 +8108,8 @@ struct Casing {
     aboard: bool,
     /// Thrown clear and come to rest on the ground: no further solving.
     outside_rest: bool,
+    /// Where it was, in the turret's frame, when it last made a sound.
+    sounded_at: Vec3,
 }
 
 /// The tank's envelope in hull coordinates. Brass inside it rides with the vehicle.
@@ -8915,6 +8938,13 @@ pub struct Game {
     hand_props:Option<crate::hand_prop_models::HandProps>,
     hand_prop_anchors:crate::hand_prop_models::Anchors,
     cigarette_fx:crate::cigarette_vfx::Effects,
+    /// The cigarette in the open packet under the crosshair, the left button's previous state
+    /// for taking it, and butts thrown down (they stay where they land).
+    cigarette_pick:Option<u8>,
+    cigarette_left_was_down:bool,
+    cigarette_butt_pending:bool,
+    cigarette_butts:Vec<cigarette_butts::Butt>,
+    next_cigarette_butt:usize,
     cigarette_fx_slots:crate::cigarette_vfx::Slots,
     pub hf: Heightfield,
     /// The act this world was built from — the paper map (M) and act-flow logic read it.
@@ -9388,6 +9418,8 @@ pub struct Game {
     brass_frames: Option<[Mat4; 2]>,
     brass_steps: [Mat4; 2],
     brass_dt: f32,
+    /// Sounds the loose brass may still make this moment (`BRASS_SOUNDS_PER_SECOND`).
+    brass_sound_credit: f32,
     casings: Vec<Casing>,   // pooled rigid-body casings (len == N_CASING)
     next_casing: usize,     // round-robin cursor into casings / casing mesh slots
     pub driver_hatch: bool, // driver hatched out (exposed) to re-set a thrown track
@@ -13123,6 +13155,11 @@ impl Game {
             hand_props,
             hand_prop_anchors:crate::hand_prop_models::Anchors::default(),
             cigarette_fx:crate::cigarette_vfx::Effects::new(0xC16A_2026),
+            cigarette_pick:None,
+            cigarette_left_was_down:false,
+            cigarette_butt_pending:false,
+            cigarette_butts:vec![cigarette_butts::Butt::default();crate::hand_prop_models::BUTT_CAPACITY],
+            next_cigarette_butt:0,
             cigarette_fx_slots,
             rtt_updates_per_frame,
             rtt_priority_enabled,
@@ -13279,6 +13316,7 @@ impl Game {
             brass_frames: None,
             brass_steps: [Mat4::IDENTITY; 2],
             brass_dt: 0.0,
+            brass_sound_credit: BRASS_SOUND_BURST,
             casings: vec![Casing::default(); N_CASING],
             next_casing: 0,
             driver_hatch: false,
@@ -17994,6 +18032,7 @@ impl Game {
             angular_vel: if inherit_swing { inv.transform_vector3(self.carry_angular_vel) } else { Vec3::ZERO },
             drop_rest: shell_collision::DropRest::default(),
             impact_cooldown: 0.0,
+            sounded_at: Vec3::splat(f32::MAX),
         };
         self.ram = 0.0;
         self.grab = false;
@@ -19511,7 +19550,11 @@ impl Game {
             r.set_hovered_meshes(&slots);
             return;
         }
-        if self.outline_physical_repair(r.camera.pos, r.camera.forward(), &mut slots) {
+        if let Some(slot) = self.cigarette_pick.and_then(|pick|
+            self.hand_props.as_ref().and_then(|props| props.stock_slot(pick))) {
+            // The one cigarette in the open packet that the left button would take.
+            slots.push(slot);
+        } else if self.outline_physical_repair(r.camera.pos, r.camera.forward(), &mut slots) {
             // Only the specific serviceable part; surface cue covers points within larger meshes.
         } else if let Some(index) = self.hover_roof_hatch {
             slots.push(if index < 4 { self.slots.roof_hatches[index] } else { self.slots.hatch });
@@ -28250,6 +28293,7 @@ impl Game {
             drop_rest: shell_collision::DropRest::default(),
             aboard: false,
             outside_rest: false,
+            sounded_at: Vec3::splat(f32::MAX),
         };
         Some(k)
     }
@@ -29246,8 +29290,10 @@ impl Game {
             sh.rotation = (turret_rotation.conjugate() * body.rotation).normalize();
             sh.angular_vel = inv.transform_vector3(body.angular_velocity);
             sh.impact_cooldown = (sh.impact_cooldown - dt.max(0.0).min(0.1)).max(0.0);
-            if cartridge_contact_audible(&report) && sh.impact_cooldown <= 0.0 {
-                sh.impact_cooldown = 0.080;
+            if cartridge_contact_audible(&report) && sh.impact_cooldown <= 0.0
+                && contact_has_travelled(&report, sh.pos, sh.sounded_at) {
+                sh.impact_cooldown = 0.120;
+                sh.sounded_at = sh.pos;
                 contacts.push(crate::audio::CartridgeContact {
                     kind: crate::audio::CartridgeKind::LiveRound,
                     normal_speed_mps: report.impact_speed,
@@ -29697,6 +29743,9 @@ impl Game {
             None => [Mat4::IDENTITY; 2],
         };
         self.brass_dt = dt;
+        self.brass_sound_credit = (self.brass_sound_credit + dt.max(0.0) * BRASS_SOUNDS_PER_SECOND)
+            .min(BRASS_SOUND_BURST);
+        let turret_inverse = frames[0].inverse();
         let (turret_step, brass_dt) = (self.brass_steps[0], dt);
         let hull_inverse = frames[1].inverse();
         self.drop_physics_frame = self.drop_physics_frame.wrapping_add(1);
@@ -29754,8 +29803,11 @@ impl Game {
                         c.drop_rest.sleeping = true;
                     }
                 }
-                if cartridge_contact_audible(&report) && c.impact_cooldown <= 0.0 {
-                    c.impact_cooldown = 0.080;
+                let place = turret_inverse.transform_point3(c.pos);
+                if cartridge_contact_audible(&report) && c.impact_cooldown <= 0.0
+                    && contact_has_travelled(&report, place, c.sounded_at) {
+                    c.impact_cooldown = 0.120;
+                    c.sounded_at = place;
                     contacts.push(crate::audio::CartridgeContact {
                         kind: crate::audio::CartridgeKind::EmptyCase,
                         normal_speed_mps: report.impact_speed,
@@ -29773,14 +29825,16 @@ impl Game {
         self.play_cartridge_contacts(&contacts);
     }
 
-    fn play_cartridge_contacts(&self, contacts: &[crate::audio::CartridgeContact]) {
+    fn play_cartridge_contacts(&mut self, contacts: &[crate::audio::CartridgeContact]) {
+        let allowed = (self.brass_sound_credit.floor().max(0.0) as usize).min(contacts.len());
+        self.brass_sound_credit -= allowed as f32;
         let Some(audio) = &self.audio else { return; };
         // One bounded contact group per physical update; simultaneous floor bodies must not
         // allocate a voice per cartridge during a vehicle jolt. Retain the strongest contacts.
         let mut selected: Vec<_> = contacts.iter().copied().collect();
         selected.sort_by(|a, b| crate::audio::cartridge_contact_level_dba(b)
             .total_cmp(&crate::audio::cartridge_contact_level_dba(a)));
-        for contact in selected.into_iter().take(4) {
+        for contact in selected.into_iter().take(allowed.min(4)) {
             let level = crate::audio::cartridge_contact_level_dba(&contact);
             if !level.is_finite() { continue; }
             let ear = self.own_vehicle_ear_level(level + 10.0, level,

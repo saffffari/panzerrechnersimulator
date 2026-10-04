@@ -26,8 +26,25 @@ impl Game {
         if self.cigarettes.total_unconsumed()==0 {return false;}
         self.hand_torch_on=false;self.compass_equipped=false;self.holster_mounted_sidearm();
         if self.mode==Mode::Tank&&self.station==Station::Gunner {self.jump_station(Station::Loader);}
-        self.cigarettes.draw_or_inspect();self.personal_primary_guard=true;self.consume_primary_press();
+        self.cigarettes.toggle_pack();self.personal_primary_guard=true;self.consume_primary_press();
         true
+    }
+    /// Review aid for headless stills: put the cigarette kit into a named state.
+    pub fn debug_cigarette(&mut self,state:&str) {
+        use crate::cigarette::Action;
+        if !self.cigarettes.active() {self.cigarettes.toggle_pack();}
+        if state=="pack" {return;}
+        self.cigarettes.take(3);self.cigarettes.advance(0.1,false);
+        if state=="hand" {return;}
+        for _ in 0..400 {if self.cigarettes.advance(0.01,true)==Action::Light {break;}}
+        self.cigarettes.advance(0.4,false);
+        match state {
+            "toke" => {for _ in 0..80 {self.cigarettes.advance(0.01,true);}}
+            "mouth" => {self.cigarettes.stow();}
+            "boost" => {for _ in 0..3 {for _ in 0..100 {self.cigarettes.advance(0.01,true);}
+                self.cigarettes.advance(0.01,false);self.cigarettes.advance(3.0,false);}}
+            _ => {}
+        }
     }
     pub fn toggle_hand_flashlight(&mut self)->bool {
         if self.hand_torch_on {self.hand_torch_on=false;self.personal_primary_guard=true;return true;}
@@ -42,44 +59,74 @@ impl Game {
         if active {self.personal_primary_guard=true;self.consume_primary_press();}active
     }
     pub(super) fn route_personal_hand_input(&mut self,input:&mut TankInput,dt:f32) {
-        // The trigger works the item in hand. An interaction (E) is never the trigger, so a
-        // cigarette between the fingers does not stop the hands reaching for anything.
-        let interaction=input.interaction&&input.mg_coax;
-        let primary=input.trigger||input.fire2||(input.mg_coax&&!input.interaction);
-        if !primary {self.personal_primary_guard=false;}
+        // The right button works the cigarette (light, then toke), so the left button and every
+        // interaction stay free with one between the fingers. Only the open packet takes the
+        // left button: it picks the cigarette the eye rests on.
+        let torch_interaction=input.interaction&&input.mg_coax;
+        let left=input.trigger||input.fire2||input.mg_coax;
+        let right=input.aim||input.binoculars;
+        if !left {self.personal_primary_guard=false;}
+        // Hands needed elsewhere: a lit cigarette goes to the mouth and keeps burning.
         if self.personal_hand_item_active()&&!self.personal_hands_remain_available() {self.stow_personal_hand_item();}
-        // A cigarette that burns out frees the hand mid-hold; that held press belonged to the
-        // cigarette and must not become a weapon trigger on the same frame.
-        let action=self.cigarettes.advance(dt,primary,input.aim);
-        if action==crate::cigarette::Action::BurnedOut&&primary {self.personal_primary_guard=true;}
-        // Each inhaled second restores the body; one whole cigarette is one full bar.
+        let before=self.cigarettes.view();
+        if before.pack_open&&left&&!self.cigarette_left_was_down&&!self.personal_primary_guard {
+            if let Some(slot)=self.cigarette_pick {
+                if self.cigarettes.take(slot)==crate::cigarette::Action::Draw {
+                    self.personal_primary_guard=true;self.cigarette_pick=None;
+                    if let Some(a)=&self.audio {
+                        a.play_at_ear(crate::audio::Sfx::Pickup,
+                            crate::sound_levels::QUIET_HANDLING.laf_db+crate::audio::effort_db(0.3));
+                    }
+                }
+            }
+        }
+        self.cigarette_left_was_down=left;
+        self.cigarettes.advance(dt,right&&self.cigarettes.active());
+        if self.cigarettes.take_butt() {self.cigarette_butt_pending=true;}
+        // Each inhaled second restores the body; one cigarette's worth of tokes is one full bar.
         let dose=self.cigarettes.take_dose();
         if dose>0.0 {
             self.foot.hp=(self.foot.hp+dose*crate::foot::FOOT_HP/crate::cigarette::TOKE_SECONDS_PER_CIGARETTE)
                 .min(crate::foot::FOOT_HP);
         }
-        if self.personal_hand_item_active()||self.personal_primary_guard {
+        if self.hand_torch_on||self.personal_primary_guard||before.pack_open {
             mask_hand_input(input,self.lan_local_role);
-            if interaction&&!self.hand_torch_on {input.mg_coax=true;}
+            if torch_interaction&&self.hand_torch_on {input.mg_coax=true;}
+        }else if self.cigarettes.active() {
+            // The right button is the cigarette's; everything else is untouched.
+            input.aim=false;input.binoculars=false;
+            if let (Some(frame),Some(role))=(&mut input.coop,self.lan_local_role) {
+                frame.inputs[role as usize].flags&=!crate::lan::F_BINOCULARS;
+            }
         }
     }
     pub fn cigarette_snapshot(&self)->serde_json::Value {
         let v=self.cigarettes.view();
         serde_json::json!({"equipped":v.equipped,"pack_open":v.pack_open,"pack_count":v.pack_count,
             "reserve_count":v.reserve_count,"cigarette_present":v.cigarette_present,"lit":v.lit,
-            "burn_remaining":v.burn_remaining,"lighter_raise":v.lighter_raise,"lighter_flame":v.lighter_flame,
+            "burn_remaining":v.burn_remaining,"in_mouth":v.in_mouth,"boost_seconds":v.boost_seconds,
+            "butts":self.cigarette_butts.iter().filter(|b|b.active).count(),"lighter_raise":v.lighter_raise,"lighter_flame":v.lighter_flame,
             "puff_phase":v.puff_phase,"exhale":v.exhale,"drawn":self.cigarettes.drawn(),
             "consumed":self.cigarettes.consumed(),"puffs":self.cigarettes.puffs(),"lights":self.cigarettes.lit_count(),
             "total_unconsumed":self.cigarettes.total_unconsumed(),"flashlight_equipped":self.hand_torch_on,
             "effects":self.cigarette_fx.receipt(),"named_audio":self.audio.as_ref().map(|audio|audio.named_effect_snapshot()),"source_props_loaded":self.hand_props.is_some(),
             "collected_world_packs":self.pickups.iter().filter(|p|p.kind==PickupKind::Cigarettes&&p.collected).count(),
-            "scope":"Finite physical inventory and actual simulation timers;20 per pack,240s idle burn and5x extra inhale burn are authored estimates"})
+            "scope":"Finite physical inventory and actual simulation timers;20 per pack and a 60s burn are authored estimates"})
     }
     pub(super) fn update_personal_hand_presentation(&mut self,dt:f32,r:&mut Renderer) {
         let view=self.cigarettes.view();
-        let visible=self.personal_hands_remain_available()&&r.optic_mask==0.0;
+        let face=r.optic_mask==0.0;
+        let visible=self.personal_hands_remain_available()&&face;
         self.hand_prop_anchors=self.hand_props.as_mut().map_or_else(
-            crate::hand_prop_models::Anchors::default,|props|props.update(r,view,visible));
+            crate::hand_prop_models::Anchors::default,|props|props.update(r,view,visible,face));
+        self.cigarette_pick=if visible {self.hand_props.as_ref()
+            .and_then(|props|props.pick(r.camera.pos,r.camera.forward(),view))}else{None};
+        // OWNER-DIRECTED PRESENTATION: recent tokes sharpen and brighten the eye's picture.
+        r.vision_boost=view.vision_boost;
+        if std::mem::take(&mut self.cigarette_butt_pending) {
+            self.throw_cigarette_butt(self.hand_prop_anchors.tip,r.camera.forward());
+        }
+        self.drive_cigarette_butts(dt,r);
         let tip=self.hand_prop_anchors.tip;
         // Classify the actual source tip in the same hull/turret cabin domain used by weather,
         // rather than guessing from the camera role or sending blizzard wind through armor.
@@ -124,6 +171,15 @@ impl Game {
     pub(super) fn update_cigarette_pickup_prompt(&mut self,r:&Renderer) {
         if self.cigarette_pickup_hover(r.camera.forward(),r.camera.pos).is_some() {
             self.hover_label=Some("CIGARETTE PACK [E]");
+        }
+        let view=self.cigarettes.view();
+        if view.pack_open&&!view.cigarette_present {
+            self.hover_label=Some(if self.cigarette_pick.is_some() {"TAKE CIGARETTE [LMB]"}
+                else{"LOOK AT A CIGARETTE - C PUTS THE PACK AWAY"});
+        }else if view.equipped&&view.cigarette_present&&!view.pack_open&&self.hover_label.is_none() {
+            // Once the eye is already sharpened the reminder is dropped.
+            if !view.lit {self.hover_label=Some("LIGHT [HOLD RMB]");}
+            else if view.boost_seconds<=0.0&&view.toke_seconds<=0.0 {self.hover_label=Some("TOKE [HOLD RMB]");}
         }
     }
 }

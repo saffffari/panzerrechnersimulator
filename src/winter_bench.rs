@@ -66,6 +66,9 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     if mode=="commander" {g.station=game::Station::Commander;g.commander_outside=false;}
     if std::env::var("KESSEL_WINTER_BENCH_HATCH").as_deref()==Ok("open") {g.toggle_hatch();}
     if mode=="gunner" {g.station=game::Station::Gunner;g.commander_outside=false;}
+    if let Ok(state)=std::env::var("KESSEL_WINTER_BENCH_CIG") {g.debug_cigarette(&state);}
+    let mut input=input;
+    if std::env::var("KESSEL_WINTER_BENCH_CIG").as_deref()==Ok("toke") {input.aim=true;}
     g.update(&input,1.0/120.0,&mut r);
     let (mut totals,mut simulation,mut submit,mut fences)=(Vec::new(),Vec::new(),Vec::new(),Vec::new());
     let mut gpu=gpu_profile::GpuProfileSummary::default();

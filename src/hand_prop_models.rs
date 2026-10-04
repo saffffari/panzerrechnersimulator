@@ -14,6 +14,11 @@ pub const CIGARETTE_LENGTH_M: f32 = 0.084;
 pub const FILTER_LENGTH_M: f32 = 0.022;
 pub const CIGARETTE_RADIUS_M: f32 = 0.0135 * 0.5 * (0.084 / 0.153);
 const PACK_COUNT: usize = 20;
+/// Butts thrown down persist; past this many the oldest is given up.
+pub const BUTT_CAPACITY: usize = 160;
+pub const BUTT_LENGTH_M: f32 = FILTER_LENGTH_M + 0.004;
+/// The open packet stays where it was brought out; the view may turn this far before it follows.
+const PACK_LEASH_RAD: f32 = 0.38;
 const FLAME_HEIGHT_M: f32 = 0.008;
 const FLAME_RADIUS_M: f32 = 0.001;
 const FLAME_LIGHT_HEIGHT_M: f32 = 0.0035;
@@ -43,6 +48,10 @@ pub struct HandProps {
     last_length: f32,
     pack_min: Vec3,
     pack_max: Vec3,
+    butts: Vec<usize>,
+    /// View direction the open packet is held out along, and its pose this frame.
+    pack_anchor: Option<Vec3>,
+    pack_model: Mat4,
 }
 fn load(relative: &str) -> Result<CpuMesh> {
     crate::gltf_load::load_glb(&format!("{ROOT}{relative}"))
@@ -159,14 +168,14 @@ pub fn lighter_light(view: View, anchors: Anchors) -> Option<crate::renderer::Po
 /// Radiant intensity of the burning tip at rest and at the peak of a toke [E]. The cabin dome
 /// lamp is about 0.000004 and the lighter flame 0.00025 in the same units, so the tip is dimmer
 /// than the flame and still enough to read a dial or a face at arm's length.
-pub const TIP_INTENSITY_IDLE: f32 = 0.000006;
-pub const TIP_INTENSITY_TOKE: f32 = 0.000024;
+pub const TIP_INTENSITY_IDLE: f32 = 0.000018;
+pub const TIP_INTENSITY_TOKE: f32 = 0.000070;
 pub fn cigarette_tip_light(view: View, anchors: Anchors) -> Option<crate::renderer::PointLight> {
-    (view.equipped && view.lit && view.cigarette_present && anchors.cigarette_visible
+    (view.lit && view.cigarette_present && anchors.cigarette_visible
         && anchors.tip.is_finite()).then_some(crate::renderer::PointLight {
         pos: anchors.tip,
         source_radius: 0.004,
-        color: Vec3::new(1.0, 0.36 + 0.14 * view.puff_phase.clamp(0.0, 1.0), 0.07),
+        color: Vec3::new(1.0, 0.40 + 0.12 * view.puff_phase.clamp(0.0, 1.0), 0.05),
         radiant_intensity: TIP_INTENSITY_IDLE
             + (TIP_INTENSITY_TOKE - TIP_INTENSITY_IDLE) * view.puff_phase.clamp(0.0, 1.0),
     })
@@ -242,22 +251,27 @@ fn clipped_cigarette(source: &CpuMesh, length: f32, out: &mut [Vertex]) {
 }
 
 /// Hold source props within the ordinary camera frustum, with no overlay or depth override.
-/// At rest the cigarette crosses the lower-right field so its paper and filter stay visible
-/// side-on. While it is being lit or drawn on it comes to the centre of the view on the lower
-/// third line, where the flame and the brightening tip can be watched; the exhale leaves from
-/// that same place. `raise` is the larger of the lighter's raise and the toke.
-fn cigarette_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, raise: f32, tan_half_fov: f32) -> (Mat4, Vec3) {
+/// The cigarette lies almost along the line of sight, filter toward the eye: tipped up ten
+/// degrees and a few to the left. At rest it is held low and a little right; while it is being
+/// lit or drawn on it comes to the centre of the view on the lower third line, where the flame
+/// and the brightening tip can be watched; the exhale leaves from that same place. `raise` is
+/// the larger of the lighter's raise and the toke. `tap` is the 0..1 phase of knocking the ash
+/// off (0 when idle).
+fn cigarette_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, raise: f32, tan_half_fov: f32, tap: f32) -> (Mat4, Vec3) {
     const RAISED_DISTANCE_M: f32 = 0.28;
     let tan_half_fov = if tan_half_fov.is_finite() { tan_half_fov.clamp(0.1, 1.5) } else { 0.65 };
     // One third of the half-height below the centre is the lower third line of the frame.
     let raised_at = eye + forward * RAISED_DISTANCE_M - up * (RAISED_DISTANCE_M * tan_half_fov / 3.0);
-    let resting = eye + forward * 0.32 + right * 0.125 - up * 0.09;
+    let resting = eye + forward * 0.27 + right * 0.075 - up * 0.085;
     let raise = raise.clamp(0.0, 1.0);
     let raised = raise * raise * (3.0 - 2.0 * raise);
-    let grip = resting.lerp(raised_at, raised);
-    let resting_axis = (forward * 0.30 - right * 0.92 + up * 0.20).normalize();
-    let raised_axis = (forward * 0.75 - right * 0.55 + up * 0.10).normalize();
-    let axis = resting_axis.lerp(raised_axis, raised).normalize();
+    let tap = if tap.is_finite() { tap.clamp(0.0, 1.0) } else { 0.0 };
+    // Two quick knocks: the hand dips aside and the tip flicks down twice.
+    let dip = (std::f32::consts::PI * tap).sin();
+    let flick = (std::f32::consts::TAU * 2.0 * tap).sin().max(0.0) * 0.45 * dip;
+    let grip = resting.lerp(raised_at, raised) + (right * 0.035 - up * 0.02) * dip;
+    let axis = (forward + up * (10.0_f32.to_radians().tan() - flick) - right * 4.0_f32.to_radians().tan())
+        .normalize();
     (
         Mat4::from_rotation_translation(Quat::from_rotation_arc(Vec3::Z, axis), grip),
         // The breath leaves from where the cigarette is held while drawn on.
@@ -265,14 +279,21 @@ fn cigarette_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, raise: f32, t
     )
 }
 
+/// Between the lips: the filter just under the eye, the cigarette pointing where the head points.
+fn mouth_pose(eye: Vec3, forward: Vec3, up: Vec3) -> Mat4 {
+    Mat4::from_rotation_translation(Quat::from_rotation_arc(Vec3::Z, forward),
+        eye + forward * 0.10 - up * 0.065)
+}
+
 /// The source packet's long axis is X. Open its filter-end face, not its broad side,
 /// and face that physical opening toward the eye so all three stock rows can be inspected.
+/// It is held out in front, just under the line of sight, close enough to pick one out.
 fn packet_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, lo: Vec3, hi: Vec3) -> Mat4 {
     let opening = (up * 0.65 - forward * 0.76).normalize();
     let front = right.cross(opening).normalize();
     Mat4::from_rotation_translation(
         Quat::from_mat3(&Mat3::from_cols(opening, front, right)),
-        eye + forward * 0.33 - right * 0.115 - up * 0.055,
+        eye + forward * 0.26 - up * 0.085,
     ) * Mat4::from_translation(-(lo + hi) * 0.5)
 }
 
@@ -329,6 +350,16 @@ impl HandProps {
         let ash = push(scene, sleeve_mesh([143, 141, 132]));
         let flame = push(scene, flame_mesh());
         let pose = source.vertices.clone();
+        // A butt is the same source paper clipped to just past the filter.
+        let mut butt_mesh = source.clone();
+        clipped_cigarette(&source, BUTT_LENGTH_M, &mut butt_mesh.vertices);
+        butt_mesh.min = Vec3::splat(f32::INFINITY);
+        butt_mesh.max = Vec3::splat(f32::NEG_INFINITY);
+        for v in &butt_mesh.vertices {
+            butt_mesh.min = butt_mesh.min.min(Vec3::from(v.pos));
+            butt_mesh.max = butt_mesh.max.max(Vec3::from(v.pos));
+        }
+        let butts = (0..BUTT_CAPACITY).map(|_| push(scene, butt_mesh.clone())).collect();
         Ok(Self {
             body,
             lid,
@@ -345,10 +376,34 @@ impl HandProps {
             last_length: CIGARETTE_LENGTH_M,
             pack_min,
             pack_max,
+            butts,
+            pack_anchor: None,
+            pack_model: Mat4::IDENTITY,
         })
     }
     pub fn lighter_emitter(&self) -> usize {
         self.flame
+    }
+    pub fn butt_slots(&self) -> &[usize] {
+        &self.butts
+    }
+    pub fn stock_slot(&self, slot: u8) -> Option<usize> {
+        self.stock.get(usize::from(slot)).copied()
+    }
+    /// The cigarette in the open packet that the line of sight rests on: the nearest filter end
+    /// within a little more than its own radius of the ray.
+    pub fn pick(&self, eye: Vec3, forward: Vec3, view: View) -> Option<u8> {
+        if !view.pack_open || view.cigarette_present || self.pack_anchor.is_none() { return None; }
+        let forward = forward.normalize_or_zero();
+        pack_positions(self.pack_min, self.pack_max).iter().enumerate()
+            .filter(|(i, _)| view.pack_slots & (1 << i) != 0)
+            .filter_map(|(i, &position)| {
+                let end = self.pack_model.transform_point3(position);
+                let along = (end - eye).dot(forward);
+                let miss = (eye + forward * along - end).length();
+                (along > 0.05 && along < 0.8 && miss <= CIGARETTE_RADIUS_M * 1.3).then_some((i as u8, miss))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i)
     }
 
     pub fn slots(&self) -> impl Iterator<Item = usize> + '_ {
@@ -365,6 +420,7 @@ impl HandProps {
         ]
         .into_iter()
         .chain(self.stock)
+        .chain(self.butts.iter().copied())
     }
     pub fn initialize(&self, r: &mut Renderer) {
         for slot in self.slots() {
@@ -376,14 +432,17 @@ impl HandProps {
         r.mark_own_emissive(self.ember);
         r.mark_own_emissive(self.flame);
     }
-    pub fn update(&mut self, r: &mut Renderer, view: View, visible: bool) -> Anchors {
-        let visible = visible && view.equipped;
+    /// `hands` is whether the hands may be shown; `face` whether the view is the naked eye (a
+    /// cigarette in the mouth needs no hands, only no optic over the eye).
+    pub fn update(&mut self, r: &mut Renderer, view: View, hands: bool, face: bool) -> Anchors {
+        let visible = hands && view.equipped;
         let forward = r.camera.forward().normalize_or_zero();
         let right = forward.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(forward).normalize_or_zero();
         let basis = Quat::from_mat3(&Mat3::from_cols(right, up, -forward));
-        let (model, mouth) = cigarette_pose(r.camera.pos, forward, right, up,
-            view.puff_phase.max(view.lighter_raise), (r.camera.fov_y * 0.5).tan());
+        let (hand_model, mouth) = cigarette_pose(r.camera.pos, forward, right, up,
+            view.puff_phase.max(view.lighter_raise), (r.camera.fov_y * 0.5).tan(), view.ash_tap);
+        let model = if view.in_mouth { mouth_pose(r.camera.pos, forward, up) } else { hand_model };
         let length = cigarette_length(view.burn_remaining);
         if (length - self.last_length).abs() > 0.000002 {
             clipped_cigarette(&self.source, length, &mut self.pose);
@@ -393,7 +452,7 @@ impl HandProps {
         }
         // Anchors use the last uploaded geometry length, including a backend rejecting a pose.
         let tip = model.transform_point3(Vec3::Z * self.last_length);
-        let cigarette_visible = visible && view.cigarette_present;
+        let cigarette_visible = view.cigarette_present && if view.in_mouth { face } else { visible };
         r.set_model(self.cigarette, model);
         r.set_visible(self.cigarette, cigarette_visible);
         r.set_visible(self.tobacco_cap, cigarette_visible && !view.lit);
@@ -402,9 +461,11 @@ impl HandProps {
             model * Mat4::from_translation(Vec3::Z * (self.last_length - CIGARETTE_LENGTH_M)),
         );
         let surface = crate::cigarette_vfx::surface(view);
+        // The coal swells a little past the paper as it is drawn on.
+        let coal = CIGARETTE_RADIUS_M * (1.12 + 0.28 * view.puff_phase.clamp(0.0, 1.0));
         let cap = model
-            * Mat4::from_translation(Vec3::Z * self.last_length)
-            * Mat4::from_scale(Vec3::new(CIGARETTE_RADIUS_M, CIGARETTE_RADIUS_M, 1.0));
+            * Mat4::from_translation(Vec3::Z * (self.last_length + 0.0002))
+            * Mat4::from_scale(Vec3::new(coal, coal, 1.0));
         r.set_model(self.ember, cap);
         r.set_visible(self.ember, cigarette_visible && view.lit);
         r.set_emissive(
@@ -433,14 +494,31 @@ impl HandProps {
             );
         }
         let pack_visible = visible && view.pack_open;
+        // The open packet is held out where it was brought out, so the eye can move over it and
+        // rest on one cigarette. Turn far enough and the hand follows.
+        let held_along = if pack_visible {
+            let mut along = self.pack_anchor.filter(|a| a.is_finite()).unwrap_or(forward);
+            let angle = along.angle_between(forward);
+            if angle > PACK_LEASH_RAD {
+                along = along.lerp(forward, 1.0 - PACK_LEASH_RAD / angle).normalize_or_zero();
+            }
+            self.pack_anchor = Some(along);
+            along
+        } else {
+            self.pack_anchor = None;
+            forward
+        };
+        let held_right = held_along.cross(Vec3::Y).normalize_or_zero();
+        let held_up = held_right.cross(held_along).normalize_or_zero();
         let pack_model = packet_pose(
             r.camera.pos,
-            forward,
-            right,
-            up,
+            held_along,
+            held_right,
+            held_up,
             self.pack_min,
             self.pack_max,
         );
+        self.pack_model = pack_model;
         r.set_model(self.body, pack_model);
         r.set_visible(self.body, pack_visible);
         r.set_model(
@@ -450,16 +528,8 @@ impl HandProps {
         r.set_visible(self.lid, pack_visible);
         let stock_positions = pack_positions(self.pack_min, self.pack_max);
         for (i, &slot) in self.stock.iter().enumerate() {
-            r.set_visible(
-                slot,
-                pack_visible && i < usize::from(view.pack_count.min(PACK_COUNT as u16)),
-            );
-            r.set_model(
-                slot,
-                pack_model
-                    * Mat4::from_translation(stock_positions[i])
-                    * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2),
-            );
+            r.set_visible(slot, pack_visible && view.pack_slots & (1 << i) != 0);
+            r.set_model(slot, pack_model * stock_model(stock_positions[i], i));
         }
         let raised = view.lighter_raise.clamp(0.0, 1.0);
         let lowered = r.camera.pos + forward * 0.24 - right * 0.13 - up * 0.33;
@@ -484,6 +554,16 @@ impl HandProps {
             cigarette_visible,
             lighter_visible,
         }
+    }
+}
+/// A cigarette in its slot, filter toward the opening. The one in the inverted slot is the
+/// other way up: tobacco toward the opening, as a smoker turns one over in a fresh packet.
+fn stock_model(position: Vec3, slot: usize) -> Mat4 {
+    if slot == usize::from(crate::cigarette::INVERTED_SLOT) {
+        Mat4::from_translation(position - Vec3::X * CIGARETTE_LENGTH_M)
+            * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
+    } else {
+        Mat4::from_translation(position) * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
     }
 }
 /// Seven/six/seven physical cigarettes fit the source-derived packet's three rows.
@@ -632,7 +712,7 @@ mod tests {
     #[test]
     fn a_raised_cigarette_sits_at_centre_on_the_lower_third_line() {
         for tan_half in [0.36_f32, 0.65, 0.9] {
-            let (model, breath) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 1.0, tan_half);
+            let (model, breath) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 1.0, tan_half, 0.0);
             let grip = model.transform_point3(Vec3::ZERO);
             let depth = -grip.z;
             // Normalised view coordinates: 0 centre, -1 bottom edge.
@@ -641,21 +721,35 @@ mod tests {
             assert!(breath.distance(grip) < 1e-5, "the exhale leaves from where it was held");
         }
         // At rest it is off to the lower right, clear of the centre.
-        let (rest, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65);
-        assert!(rest.transform_point3(Vec3::ZERO).x > 0.1);
+        let (rest, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65, 0.0);
+        assert!(rest.transform_point3(Vec3::ZERO).x > 0.05);
+        // It lies almost along the line of sight: ten degrees up, a few to the left.
+        let axis = rest.transform_vector3(Vec3::Z);
+        assert!((axis.y.atan2(-axis.z).to_degrees() - 10.0).abs() < 0.5, "{axis:?}");
+        assert!(((-axis.x).atan2(-axis.z).to_degrees() - 4.0).abs() < 0.5, "{axis:?}");
+        // The ash tap moves it and puts it back.
+        let (tapped, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65, 0.4);
+        assert!(tapped.transform_point3(Vec3::ZERO).distance(rest.transform_point3(Vec3::ZERO)) > 0.01);
+        let (done, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65, 1.0);
+        assert!(done.transform_point3(Vec3::Z * 0.08).distance(rest.transform_point3(Vec3::Z * 0.08)) < 1e-4);
+        // In the mouth it sits under the eye, inside the view, pointing ahead.
+        let mouth = mouth_pose(Vec3::ZERO, -Vec3::Z, Vec3::Y);
+        let (filter, tip) = (mouth.transform_point3(Vec3::ZERO), mouth.transform_point3(Vec3::Z * CIGARETTE_LENGTH_M));
+        assert!(filter.x.abs() < 1e-5 && filter.y < 0.0 && tip.z < filter.z);
+        assert!(inside_native_field(tip));
     }
     #[test]
     fn cigarette_puff_and_raised_source_lighter_remain_inside_native_view() {
         let mut scene = Vec::new();
         let props = HandProps::allocate(&mut scene).unwrap();
         for puff in [0.0, 0.25, 0.5, 0.75, 1.0] {
-            let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, puff, 0.65);
+            let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, puff, 0.65, 0.0);
             assert!(scene[props.cigarette]
                 .vertices
                 .iter()
                 .all(|v| inside_native_field(model.transform_point3(Vec3::from(v.pos)))));
         }
-        let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65);
+        let (model, _) = cigarette_pose(Vec3::ZERO, -Vec3::Z, Vec3::X, Vec3::Y, 0.0, 0.65, 0.0);
         let nozzle =
             model.transform_point3(Vec3::Z * CIGARETTE_LENGTH_M) - Vec3::Y * FLAME_HEIGHT_M;
         let lighter = Mat4::from_rotation_translation(Quat::from_rotation_y(-0.3), nozzle);
@@ -761,7 +855,7 @@ mod tests {
     fn source_allocation_has_a_complete_bounded_slot_set() {
         let mut scene = Vec::new();
         let props = HandProps::allocate(&mut scene).unwrap();
-        assert_eq!(scene.len(), 29);
+        assert_eq!(scene.len(), 29 + BUTT_CAPACITY);
         assert_eq!(props.stock.len(), 20);
         assert!(props.slots().all(|s| s < scene.len()));
     }
