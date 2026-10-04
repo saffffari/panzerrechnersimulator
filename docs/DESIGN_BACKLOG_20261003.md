@@ -20,6 +20,9 @@ Two requests here change standing project rules, and are recorded as owner decis
 | The route ends at the Reichstag against an impossible number of enemy. | open |
 | Ending one: the tank is destroyed and the player dies. | open |
 | Ending two: the player bails out, runs to safety, escapes Berlin, finds a running car, and drives with direction guidance to a pristine farmhouse on a prairie. Home. | open |
+| A pixelated black-and-white photograph of the commander's wife and son is taped to the left wall of the turret from the first minute. They are who is at the farmhouse. | open |
+| The choice to leave exists only at the end, after both companion Tigers are knocked out. One of their crews sends a dying request: get out, find a vehicle, go home. Nothing else is said. The game never states that there is a choice, so staying or leaving is the player's own. | open |
+| The farmhouse ending: the son runs out to meet him. The last scene is the porch at sunset over untouched farmland, with a pack of cigarettes to chain smoke until the sun is under the horizon. The cigarette has no effect there. It is only a cigarette. | open |
 | Theme: an anti-war piece about the individual in the machine. To fight is to die. To not is to live in peace. | open |
 | The Enigma machine (model exists) sits at the front right seat and is the narrative text interface, driven by a language model, as the route toward a real story. | open |
 | Once the blizzard clears, a spring map. The player links up with a friendly AI-controlled tank. Through a language model the player sends and receives messages with it about the story, the current fight and enemy positions. | open |

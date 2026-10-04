@@ -139,6 +139,30 @@ This answers two of the open questions below and sharpens the rest of this docum
 - **The drive home is the reward.** After hours of slits and darkness, the last sequence is an
   open windscreen, daylight and no enemy. The contrast is the ending.
 
+### 3.8 The ending as the owner has set it
+
+- A pixelated black-and-white photograph of the commander's wife and son is taped to the left
+  wall of the turret for the whole game.
+- The way out opens only after both companion Tigers are knocked out. A dying crewman asks the
+  player to get out, find a vehicle and go home. The game says nothing more. Staying to fight
+  and leaving are both possible and neither is labelled.
+- At the farmhouse the son comes out to meet him. The final scene is the porch at sunset, a
+  pack of cigarettes, and nothing to do but smoke until the sun is gone.
+
+Why this works, and what it asks of the rest of the game:
+
+- **The photograph does the work a hundred lines of dialogue would.** It should be in view at
+  the commander's seat without being pointed at, catch the lamp light, and stay there through
+  every fight. If it can be damaged, burned at the edge or blood-spotted, it carries the cost.
+- **The cigarette pays off.** For the whole game it is a tool: it restores blood and sharpens
+  sight. On the porch it does nothing. The player keeps lighting them anyway. That is the
+  ending's meaning in one action, and it needs no text.
+- **An unlabelled choice only works if leaving the tank is already a habit.** The exit is new
+  at the end, but getting out must not be. Every earlier bail-out, fire and spare-tank climb
+  teaches the hands what to do, so that when the request comes the player already knows how.
+- **The request must be heard, not shown as an objective.** No marker, no map pin. The car is
+  simply there to be found.
+
 ## 4. Price and positioning
 
 **Recommendation: 12.99 USD, with a 10 to 15 percent launch discount.**
