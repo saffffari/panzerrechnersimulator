@@ -20,6 +20,13 @@ const STEP_SECONDS: f32 = 1.0 / 120.0;
 /// nothing to do. Only a powered climb is eased; coasting, braking, rolling back and descending
 /// feel the full grade. Recorded in docs/PHYSICAL_TRUTH_AUDIT.md.
 pub const CLIMB_GRADE_SHARE: f32 = 0.5;
+/// Braking force as a share of the weight on the tracks: full application, and the driver's
+/// lighter foot when the tank is merely let roll to a stop. Below the hold speed he is fully on
+/// the brakes; above the ease speed he uses the lighter figure. [E] driver behaviour, estimated.
+const BRAKE_GRIP: f32 = 0.65;
+const IDLE_BRAKE_ROLLING: f32 = 0.18;
+const IDLE_BRAKE_HOLD_MPS: f32 = 0.6;
+const IDLE_BRAKE_EASE_MPS: f32 = 2.5;
 /// Wheel rpm below which the automatic box drops a gear; an upshift must be predicted to recover
 /// above `UPSHIFT_RECOVERED_RPM` by the time the next selection is allowed.
 const DOWNSHIFT_RPM: f32 = 1400.0;
@@ -238,7 +245,16 @@ impl Powertrain {
             let powered_climb=self.throttle>0.02 && controls.engine_running && (self.gear as f32)*pitch.sin()>0.0;
             let grade=TIGER_MASS_KG*G*pitch.sin()*if powered_climb {CLIMB_GRADE_SHARE}else{1.0};
             let rolling=normal*ROLLING_RESISTANCE+SPEED_DRAG_N_S2_PER_M2*v*v;
-            let braking=if opposing || controls.parking_brake {normal*0.65}else{0.0};
+            // The driver's foot. With no drive asked for he brakes: firmly enough at a crawl to
+            // hold the tank on a slope, more gently at speed so it comes to rest like 57 tonnes
+            // and not like a dropped anchor. Without this a stopped Tiger rolled away on any
+            // slope past the rolling resistance (about 2 degrees), and with one track off it
+            // turned as it rolled.
+            let idle_brake=if demand.abs()<0.02 {
+                let hold=1.0-((v.abs()-IDLE_BRAKE_HOLD_MPS)/(IDLE_BRAKE_EASE_MPS-IDLE_BRAKE_HOLD_MPS)).clamp(0.0,1.0);
+                normal*(IDLE_BRAKE_ROLLING+(BRAKE_GRIP-IDLE_BRAKE_ROLLING)*hold)
+            }else{0.0};
+            let braking=if opposing || controls.parking_brake {normal*BRAKE_GRIP}else{idle_brake};
             let motive=force-grade;
             let direction=if v.abs()>1e-5 {v.signum()}else{motive.signum()};
             let resistance=rolling+compression+braking;
@@ -314,6 +330,31 @@ mod tests {
         assert!(detached.broken_track_drive.iter().all(|side|side.load==0.0));
         state.advance(0.0,0.4,0.0,c);
         assert!(state.broken_track_drive.iter().all(|side|side.load==0.0));
+    }
+    #[test]
+    fn a_tank_left_alone_on_a_slope_stays_put_and_a_rolling_one_stops() {
+        // Stopped on slopes up to 25 degrees, facing up or down, both tracks or one: no creep.
+        for degrees in [-25.0_f32,-10.0,-3.0,3.0,10.0,25.0] {
+            for one_track in [false,true] {
+                let mut p=Powertrain::default();let mut speed=0.0;
+                let mut input=controls(0.0);input.left_track=!one_track;
+                let mut yaw=0.0;let mut distance=0.0;
+                for _ in 0..600 {let m=p.advance(1.0/60.0,speed,degrees.to_radians(),input);
+                    speed=m.speed;yaw+=m.yaw;distance+=m.distance;}
+                assert_eq!((speed,distance,yaw),(0.0,0.0,0.0),"degrees={degrees} one_track={one_track}");
+            }
+        }
+        // Let go of the drive at speed on level ground: it stops in a few seconds, not a coast
+        // of half a minute, and not instantly.
+        let mut p=Powertrain::default();let mut speed=0.0;
+        run(&mut p,&mut speed,45.0,0.0,controls(1.0),1.0/60.0);
+        let top=speed;let mut seconds=0.0;
+        while speed>0.0 && seconds<60.0 {run(&mut p,&mut speed,0.1,0.0,controls(0.0),1.0/60.0);seconds+=0.1;}
+        assert!(seconds>2.5 && seconds<8.0,"from {top} m/s took {seconds} s");
+        // Rolling downhill with the drive released, it still comes to rest.
+        let mut p=Powertrain::default();let mut speed=6.0;
+        run(&mut p,&mut speed,20.0,(-12.0_f32).to_radians(),controls(0.0),1.0/60.0);
+        assert_eq!(speed,0.0);
     }
     #[test]
     fn automatic_gears_accelerate_and_use_actual_ratio_rpm() {
