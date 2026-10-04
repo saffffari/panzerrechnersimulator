@@ -11,6 +11,9 @@ mod infantry_aim;
 /// Keep allies available to the shared observation, but query terrain, cover and physical doors
 /// only for enemies the same sensor could admit. Rejected enemies cannot affect observe's target,
 /// memory or ally selection, so this changes work rather than perception or policy cadence.
+/// No point of the Tiger is farther than this from its centre (hull half-diagonal with the gun).
+const PLAYER_HULL_REACH_M: f32 = 6.5;
+
 fn sensed_actors(
     actor: &Combatant,
     snapshot: &[Combatant],
@@ -428,7 +431,13 @@ impl Game {
             // Mounted targets are source points, not fabricated human bodies. Each observer
             // samples the actual visible hull face; head-out anatomy takes priority when clear.
             let mut candidates=snapshot.clone();
-            if self.mode==Mode::Tank {
+            // The aim point lies on the Tiger, and nothing beyond the sensor range can be sensed, so
+            // a man farther away than that range plus the hull's reach cannot produce a target.
+            // Asking anyway swept the hull's source triangles for every soldier on the map on
+            // every step, which was most of the simulation's cost once a battle was on.
+            let within_sight=self.mixed_combat.actors[i].eye().distance(self.player.center())
+                <=crate::infantry_combat::INFANTRY_SENSOR_RANGE+PLAYER_HULL_REACH_M;
+            if self.mode==Mode::Tank && within_sight {
                 if let Some(point)=self.small_arm_player_aim_point(self.mixed_combat.actors[i].eye()) {
                     let mut target=Combatant::new(PLAYER_ACTOR_ID,Team::German,point,0.0);
                     target.perception_point=Some(point);

@@ -18,6 +18,10 @@ fn combat_body_occupied(cover: &impl crate::infantry_combat::CoverSet, p: Vec3) 
 /// Where along the corridor (fraction of its length) the opening approach platoons stand, before
 /// the seeded shift. The authored plan's own two platoons are at 60-69 and 84-92 percent.
 const OPENING_PLATOON_FRACTIONS: [f32; 3] = [0.16, 0.31, 0.46];
+/// How many leading legs of a platoon's beat are path-searched when it is sited.
+const ROUTE_LEGS_SEARCHED: usize = 5;
+/// How many candidate entries one director request examines before deferring.
+const ENTRY_CANDIDATES_PER_REQUEST: usize = 6;
 /// No opening platoon starts closer to the Tiger than this.
 const OPENING_PLATOON_MIN_M: f32 = 450.0;
 
@@ -292,9 +296,9 @@ impl Game {
             .filter(|&j| j as f32 / source.len() as f32 > director.progress + 0.035)
             .collect();
         entries.sort_by_key(|&j| crate::canyon::mix(director.seed ^ ((director.arrivals as u64)<<32) ^ j as u64));
-        for j in entries {
-            let distance = source[j].distance(tiger);
-            if !(crate::canyon_director::ENTRY_MIN_M..=1550.0).contains(&distance) { continue; }
+        let in_range = entries.into_iter().filter(|&j|
+            (crate::canyon_director::ENTRY_MIN_M..=1550.0).contains(&source[j].distance(tiger)));
+        for j in in_range.take(ENTRY_CANDIDATES_PER_REQUEST) {
             if let Some(site) = self.canyon_platoon_site(j, count, Some(eye)) { return Some(site); }
         }
         None
@@ -317,7 +321,7 @@ impl Game {
         let route: Option<Vec<_>> = (0..=legs).filter(|k| j >= k*10).map(|k| source[j-k*10])
             .map(|p| nav.nearest_clear(p,12.0).filter(|&q|self.winter_patrol_point_clear(q))).collect();
         let route = route?;
-        if route.len() < 2 || route.windows(2).any(|edge|nav.path(edge[0],edge[1]).is_none()) { return None; }
+        if route.len() < 2 { return None; }
         let direction = (route[1]-route[0]).normalize_or_zero();
         let positions: Option<Vec<_>> = (0..count).map(|k| {
             nav.nearest_clear(route[0]-direction*(k as f32*36.0),18.0)
@@ -328,7 +332,6 @@ impl Game {
             positions[..i].iter().any(|q|p.distance(*q)<18.0)
             || self.enemies.iter().enumerate().any(|(k,e)|self.enemy_active[k]
                 && p.distance(Vec2::new(e.pos.x,e.pos.z))<18.0)
-            || nav.path(*p,route[1]).is_none()
             || hidden_from.is_some_and(|eye| {
                 let observer = Vec2::new(eye.x,eye.z);
                 p.distance(tiger)<crate::canyon_director::ENTRY_MIN_M
@@ -340,7 +343,16 @@ impl Game {
                 })
             })
         });
-        (!rejected).then_some((route,positions))
+        if rejected { return None; }
+        if positions.iter().any(|p| nav.path(*p,route[1]).is_none()) { return None; }
+        // Path searches are the expensive part, so they run last and only for the first legs,
+        // where the platoon forms up. A later corner the grid cannot reach is skipped by the
+        // patrol itself (`WinterEncounter` walks on to the next). Searching every leg of a long
+        // beat for every candidate entry stalled the frame for a third of a second.
+        if route.windows(2).take(ROUTE_LEGS_SEARCHED).any(|edge|nav.path(edge[0],edge[1]).is_none()) {
+            return None;
+        }
+        Some((route,positions))
     }
 
     /// Opening deployment along the whole corridor, drawn from the run seed: platoons at

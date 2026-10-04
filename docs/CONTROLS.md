@@ -409,6 +409,8 @@ size, and stitch-apron rules.
   click to take a round or case, click again to ram a lined-up round or let go.
 - **E enters and exits:** hatches, the turret cabin, seats and sights, a spare tank, and each
   move of the climb. With none of those available it is a second interact key.
+- **Arrow keys lay the gun** from the cupola, buttoned or head out, as well as in the sights. In the
+  sights the mouse lays it too. The commander's view itself moves only with the mouse.
 - **Space only jumps.** It also beats out the flames if the player's clothes are alight.
 - **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
   E to go through.

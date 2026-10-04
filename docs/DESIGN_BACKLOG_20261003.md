@@ -60,6 +60,7 @@ LMB currently means both "interact" and "use what is in the hand", which is conf
 | Items stow only in their own starting stowage spot. That spot lights up while the item is in hand and the cursor is over it. | open |
 | Cupola hatch is worked by E on the lever below it. The H key is removed. | done |
 | C is the cigarette. The compass moves onto M, coupled with the map. | done |
+| Arrow keys traverse and elevate the gun from the cupola and head-out, and remain available in the sights where the mouse also works. | done |
 | Jump is disabled while the player is on fire. | done |
 | Ignition is a solid red illuminated button, not a ring. The engine can only be restarted from that button at the driver's seat. | open |
 | Physical dials for engine rpm and road speed, on the driver's right. Fuel is a dial, not text. | open |

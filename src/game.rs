@@ -15558,6 +15558,13 @@ impl Game {
                     -look_dx * sens + traverse_cmd * 0.9 * dt);
                 self.lay_pitch = (self.lay_pitch - look_dy * sens + elevate_cmd * 0.25 * dt)
                     .clamp(-0.139, 0.261);
+            } else if coop.is_none() && at(Station::Commander) && !self.carrying_track_kit
+                && !self.panzerfaust_claimed && !self.map_held {
+                // From the cupola, buttoned or head out, the arrow keys lay the gun: the same
+                // rates as in the sights, with no mouse. The view is still the commander's own.
+                self.lay_yaw = advance_lay_yaw(self.lay_yaw, self.player.turret_yaw,
+                    input.traverse * 0.9 * dt);
+                self.lay_pitch = (self.lay_pitch + input.elevate * 0.25 * dt).clamp(-0.139, 0.261);
             } else {
                 self.lay_yaw = self.player.turret_yaw;
                 self.lay_pitch = self.player.gun_pitch;
@@ -16438,16 +16445,13 @@ impl Game {
                     (forward, fov, false)
                 },
                 Station::Commander => {
-                    // PERISCOPE (buttoned, safe) / CUPOLA HEAD-OUT (exposed): free look with the mouse,
-                    // and the ARROW KEYS whip the view around fast — the "glance over your shoulder"
-                    // the user asked for. Head-out gets the widest field; the periscope is nearly as
-                    // wide and turns just as fast, but keeps your skull behind armor.
+                    // PERISCOPE (buttoned, safe) / CUPOLA HEAD-OUT (exposed): free look with the mouse.
+                    // The arrow keys no longer swing the view here: from the cupola they lay the
+                    // gun (see the lay section of `update_crew_vehicle_controls`), so the commander
+                    // looks with the mouse and points the turret with the arrows at once.
                     const SENS: f32 = 0.0022;
-                    const ARROW_LOOK: f32 = 2.6; // rad/s — fast scan on the arrow keys
-                    self.head_yaw += input.look_dx * SENS - input.traverse * ARROW_LOOK * dt;
-                    self.head_pitch = (self.head_pitch - input.look_dy * SENS
-                        + input.elevate * ARROW_LOOK * 0.5 * dt)
-                        .clamp(-0.5, 0.7);
+                    self.head_yaw += input.look_dx * SENS;
+                    self.head_pitch = (self.head_pitch - input.look_dy * SENS).clamp(-0.5, 0.7);
                     let optics_ready = binocular_optics_ready(self.binocular_raise);
                     let fov = if optics_ready {
                         BINOCULAR_FOV_DEG.to_radians()
@@ -19334,6 +19338,7 @@ impl Game {
     fn update_port_occlusion(&mut self, r: &mut Renderer) {
         let entries = r.raster_optic_entries();
         if entries.is_empty() { return; }
+        let timer = std::time::Instant::now();
         // The sight composite and on-foot views use other eyes; do not cull for them.
         let test = self.mode == Mode::Tank && self.player.alive && !self.optic_composite_active()
             && !self.climb.active && self.switch_t <= 0.0;
@@ -19351,6 +19356,9 @@ impl Game {
                                 < distance - PORT_OCCLUSION_MARGIN_M)
                 });
             r.set_raster_optic_occluded(port, hidden);
+        }
+        if std::env::var_os("KESSEL_DEBUG_PORT_OCCLUSION_TIMING").is_some() {
+            eprintln!("[port-occlusion] {:.3} ms test={test}", timer.elapsed().as_secs_f64()*1e3);
         }
     }
 
