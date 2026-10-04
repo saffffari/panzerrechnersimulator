@@ -168,7 +168,7 @@ impl Game {
         self.hide_p08(r);
         r.set_visible(self.slots.panzerfaust, false);
         self.update_carry(r, dt, CARRY_K_ROUND, CARRY_D_ROUND);
-        self.hover_label = Some("88MM ROUND - HOLD LMB TO CARRY / RELEASE TO SET DOWN");
+        self.hover_label = Some("PICK UP 88MM ROUND [LMB]");
         if !input.mg_coax { self.drop_carried_round(true); }
         true
     }

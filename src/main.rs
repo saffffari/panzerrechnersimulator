@@ -13336,7 +13336,13 @@ impl WindowState {
             let pulse = 0.75 + 0.25 * (self.renderer.time * 9.0).sin();
             self.renderer.draw_text(prompt, 0.5, 0.90, 0.020, [1.0, 0.55, 0.18, pulse], ui::Align::Center);
         }
-        // A wordless dot where the crosshair rests on something the hands can use.
+        // What the outlined thing is and which button works it: small, bottom centre, in the
+        // outline's own colour (owner, 2026-10-03; play is otherwise wordless).
+        if let Some(label) = self.game.hover_label_text() {
+            let hint = interaction_hint(&label, self.game.interact_kind());
+            self.renderer.draw_text(&hint, 0.5, 0.945, 0.016, HOVER_OUTLINE_RGBA, ui::Align::Center);
+        }
+        // A dot where the crosshair rests on something the hands can use.
         if self.game.hover_label_text().is_some() && !self.game.sidearm_is_drawn() {
             self.renderer.draw_text(
                 "·",
@@ -14270,6 +14276,36 @@ fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_picku
 }
 
 /// A carried load is a toggle: first press takes a round or case, the next rams or lets go.
+/// The hover outline's colour (`shaders/hover_outline.wgsl`), for the hint that names it.
+const HOVER_OUTLINE_RGBA: [f32; 4] = [1.0, 0.78, 0.24, 0.95];
+
+/// The hint under an outlined interaction: the label with its button in parentheses. Labels
+/// that name no button get the action button when the thing is one the hands can work.
+fn interaction_hint(label: &str, kind: game::InteractKind) -> String {
+    let mut hint = label.replace('[', "(").replace(']', ")");
+    let names_button = hint.contains('(') || ["LMB", "RMB", "SPACE", "Q/E", " R:", "CLICK", " X "]
+        .iter().any(|button| hint.contains(button));
+    if !names_button && matches!(kind, game::InteractKind::Click | game::InteractKind::Holdable) {
+        hint.push_str(" (LMB)");
+    }
+    hint
+}
+
+#[cfg(test)]
+mod interaction_hint_tests {
+    use super::*;
+    #[test]
+    fn hint_puts_the_button_in_parentheses_and_adds_one_only_when_missing() {
+        use game::InteractKind as K;
+        assert_eq!(interaction_hint("OPEN BREECH [LMB]", K::Click), "OPEN BREECH (LMB)");
+        assert_eq!(interaction_hint("SEARCH SHELF [R]", K::None), "SEARCH SHELF (R)");
+        assert_eq!(interaction_hint("RADIO", K::Click), "RADIO (LMB)");
+        assert_eq!(interaction_hint("HATCH EXIT BLOCKED", K::None), "HATCH EXIT BLOCKED");
+        assert_eq!(interaction_hint("CASE IN HAND - LMB TO LET GO, X TO THROW", K::Carrying),
+            "CASE IN HAND - LMB TO LET GO, X TO THROW");
+    }
+}
+
 #[derive(Default)]
 struct InteractLatch { held: bool, age: f32, key_was_down: bool }
 

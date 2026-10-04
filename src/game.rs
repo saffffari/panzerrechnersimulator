@@ -18938,7 +18938,7 @@ impl Game {
                     }
                     self.begin_climb(false, ClimbEnd::Afoot);
                 } else {
-                    self.hover_label = Some("HATCH IS CLOSED — look at it and CLICK");
+                    self.hover_label = Some("HATCH IS CLOSED - OPEN IT FIRST [LMB]");
                     println!("[panzerrechnersystem] can't bail — the hatch is closed (click it to open)");
                 }
             }

@@ -417,6 +417,8 @@ size, and stitch-apron rules.
 - **The hatch lever's target is the grip and the pivot cylinder it turns**, outlined together.
 - **X throws the spent case in your hands** where you are looking. Through an open hatch it
   leaves the tank and lies on the ground. LMB still just lets go of it.
+- **Interaction hint.** While something is outlined, a small line at the bottom centre of the
+  screen, in the outline's colour, names what it is or does and the button for it in parentheses.
 - **The hatch key H is removed.** Open a hatch with the action button on its lever or lid, then
   Space to go through.
 - **Reload:** take a rack round, carry it to the open breech and line it up, press again to ram
