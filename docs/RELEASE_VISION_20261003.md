@@ -116,6 +116,29 @@ phrase instead of swapping every shot. Next: one recurring musical figure per cr
 silence as a deliberate tool after losses, and the engine as the constant that makes its
 stopping frightening.
 
+### 3.7 The owner's arc: the road to Berlin (added later on 3 October)
+
+The owner has since set the spine. The game opens in the blizzard with one order: head west and
+defend Berlin. Everything after is the journey back, ending at the Reichstag against a force
+that cannot be beaten. The tank is destroyed and the player dies. Or the player bails out, runs,
+finds a running car, and drives out of the city to a farmhouse on open land. Home. To fight is to
+die; to refuse is to live.
+
+This answers two of the open questions below and sharpens the rest of this document:
+
+- **The places of section 3.2 become stations on a retreat.** Each one is further west and worse
+  than the last, and the crew's rituals wear down with them.
+- **The second ending must be discoverable, not announced.** Every earlier bail-out, every time
+  the player chose the hatch over the gun, should quietly teach that leaving the tank is
+  possible. The on-foot systems, the spare-tank climb and the cigarette already exist for this.
+- **The Enigma machine as the story's voice.** Orders arrive as decoded strips at the radio
+  operator's seat. This is the one place written words enter the game, which makes them carry
+  weight. Generated text needs a fixed script underneath it: the same orders for everyone, with
+  generation only colouring them. A model that invents events would break the grounding in real
+  history that the project requires, and a shipped game cannot depend on a live service.
+- **The drive home is the reward.** After hours of slits and darkness, the last sequence is an
+  open windscreen, daylight and no enemy. The contrast is the ending.
+
 ## 4. Price and positioning
 
 **Recommendation: 12.99 USD, with a 10 to 15 percent launch discount.**
