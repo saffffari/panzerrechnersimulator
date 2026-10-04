@@ -189,6 +189,42 @@ fn environment_incident(origin: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
     ).inscattered_radiance;
 }
 
+// One local light for this point and this frame, chosen in proportion to its unshadowed diffuse
+// contribution there (power x distance falloff x cosine). The caller traces the one shadow ray and
+// multiplies by `inverse_probability`, so the mean over frames is the sum over every light;
+// temporal accumulation supplies that mean. Tracing a ray at every light for every pixel cost
+// more than the rest of the frame.
+struct LightPick { first: i32, last: i32, inverse_probability: f32, };
+fn light_pick_weight(i: i32, position: vec3<f32>, n: vec3<f32>) -> f32 {
+    let pr = cam.lights[i * 2];
+    let ci = cam.lights[i * 2 + 1];
+    let to_light = pr.xyz - position;
+    let d2 = dot(to_light, to_light);
+    if (d2 <= 1e-8 || ci.w <= 0.0) { return 0.0; }
+    let cosine = max(dot(n, to_light / sqrt(d2)), 0.0);
+    return dot(max(ci.rgb * ci.w, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722))
+        * spherical_emitter_attenuation(d2, max(pr.w, 0.005)) * cosine;
+}
+fn pick_light(position: vec3<f32>, n: vec3<f32>, u: f32) -> LightPick {
+    let nl = i32(cam.n_lights);
+    var total = 0.0;
+    for (var i = 0; i < nl; i = i + 1) { total += light_pick_weight(i, position, n); }
+    if (!(total > 0.0)) { return LightPick(0, 0, 0.0); }
+    let goal = clamp(u, 0.0, 0.999999) * total;
+    var cumulative = 0.0;
+    var chosen = 0;
+    var chosen_weight = 0.0;
+    for (var i = 0; i < nl; i = i + 1) {
+        let weight = light_pick_weight(i, position, n);
+        if (weight <= 0.0) { continue; }
+        chosen = i;
+        chosen_weight = weight;
+        cumulative += weight;
+        if (cumulative >= goal) { break; }
+    }
+    return LightPick(chosen, chosen + 1, total / max(chosen_weight, 1e-20));
+}
+
 fn tangent_basis(n: vec3<f32>) -> mat3x3<f32> {
     let up = select(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), abs(n.y) > 0.9);
     let t = normalize(cross(up, n));
@@ -819,8 +855,8 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>,
         radiance += (kd * albedo / PI + spec) * solar_irradiance * NdotL;
     }
 
-    let nl = i32(cam.n_lights);
-    for (var i = 0; i < nl; i = i + 1) {
+    let secondary_pick = pick_light(hit.position, n, hash13(seed + vec3(71.3, 9.1, 33.7)));
+    for (var i = secondary_pick.first; i < secondary_pick.last; i = i + 1) {
         let pr = cam.lights[i * 2];
         let ci = cam.lights[i * 2 + 1];
         let to_light = pr.xyz - hit.position;
@@ -842,7 +878,7 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>,
         let kd = (vec3(1.0) - F) * (1.0 - hit.metallic);
         let source = ci.rgb * ci.w * spherical_emitter_attenuation(d2, source_radius)
             * world_medium_source_transmittance(ro, light_dir, distance_to_light);
-        radiance += (kd * albedo / PI + spec) * source * lNdotL;
+        radiance += (kd * albedo / PI + spec) * source * lNdotL * secondary_pick.inverse_probability;
     }
 
     // Both diffuse and GGX lobes need environment illumination at an optical/secondary hit.
@@ -1185,8 +1221,8 @@ fn fs(in: VsOut) -> CombineOut {
     // second cosine SKY sample added this identical integral again without MIS or averaging.
     var diff_col = direct_diff;
 
-    let nl = i32(cam.n_lights);
-    for (var i = 0; i < nl; i = i + 1) {
+    let primary_pick = pick_light(world, n, hash13(seed + vec3(47.9, 83.3, 5.7)));
+    for (var i = primary_pick.first; i < primary_pick.last; i = i + 1) {
         let pr = cam.lights[i * 2];
         let ci = cam.lights[i * 2 + 1];
         let lp = pr.xyz;
@@ -1215,7 +1251,7 @@ fn fs(in: VsOut) -> CombineOut {
                 occluded(ro, ldir, ray_skip, max(ld - source_radius, ray_skip)),
             );
             if (visible <= 0.0) { continue; }
-            let li = ci.rgb * ci.w * lNdotL * attenuation * visible
+            let li = ci.rgb * ci.w * lNdotL * attenuation * visible * primary_pick.inverse_probability
                 * world_medium_source_transmittance(ro, ldir, ld);
             diff_col = diff_col + lkd * albedo * li / PI;
             spec_col = spec_col + lspec * li;

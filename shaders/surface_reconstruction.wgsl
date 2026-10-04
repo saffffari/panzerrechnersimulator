@@ -88,7 +88,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let guide = textureLoad(guide_light, q, 0).rgb;
             // Contrast guidance is explicitly a spatial heuristic, not Monte Carlo variance.
             // Use the unfiltered temporal carrier for BOTH passes to limit shadow-edge erosion.
-            let scale = 0.002 + 0.30 * max(length(original.rgb), length(guide));
+            // Young history is mostly noise: a pixel a few frames old accepts neighbours far from
+            // its own value; a settled one keeps the tighter tolerance and its shadow edges.
+            let settled = clamp(original.a / 32.0, 0.0, 1.0);
+            let scale = 0.002 + mix(1.6, 0.55, settled) * max(length(original.rgb), length(guide));
             let contrast_weight = exp(-length(original.rgb - guide) / scale);
             let weight = kernel(x) * kernel(y) * contrast_weight;
             weighted += textureLoad(input_light, q, 0).rgb * weight;

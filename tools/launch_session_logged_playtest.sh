@@ -51,6 +51,7 @@ if [[ "${PANZER_RENDER:-}" == rt ]]; then
   unset KESSEL_NO_RT KESSEL_FIXED_PLAYTEST_GRAPHICS
   export KESSEL_RENDERER=physical KESSEL_TRANSPORT_QUALITY=gameplay
   export KESSEL_RT_EXPERIMENT_PASSES=1,1,1,0 KESSEL_RT_EXPERIMENT_SMOKE=4,4,6,2 KESSEL_RT_EXPERIMENT_GLASS=3
+  export KESSEL_DIFFUSE_RECONSTRUCTION=1
 fi
 # Telemetry: one JSON line per second; one fenced GPU pass-timing frame every two seconds.
 export KESSEL_SESSION_LOG="$LOG_DIR/session-$STAMP.jsonl" KESSEL_GPU_PROFILE=1

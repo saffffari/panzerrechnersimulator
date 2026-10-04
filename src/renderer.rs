@@ -110,6 +110,10 @@ impl TransportQuality {
     }
 
     fn environment(self, preset: crate::graphics::GraphicsPreset) -> IntegrationQuality {
+        if let Some([view, source, disk, cloud]) = experiment_values::<4>("KESSEL_RT_EXPERIMENT_ENVIRONMENT") {
+            return IntegrationQuality { view_steps: view as u32, source_steps: source as u32,
+                solar_disk_samples: disk as u32, cloud_column_steps: cloud as u32 };
+        }
         if self == Self::Gameplay || preset == crate::graphics::GraphicsPreset::Laptop {
             IntegrationQuality {
                 view_steps: 12,

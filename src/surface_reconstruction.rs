@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 
 pub const ENV: &str = "KESSEL_DIFFUSE_RECONSTRUCTION";
 pub const SHADER: &str = include_str!("../shaders/surface_reconstruction.wgsl");
-pub type Bindings = [[wgpu::BindGroup; 2]; 2]; // history flip, spatial step
+pub type Bindings = [[wgpu::BindGroup; 3]; 2]; // history flip; temporal->scratch, scratch->output, output->scratch
 
 pub fn requested() -> bool {
     std::env::var(ENV).is_ok_and(|value| value == "1")
@@ -119,8 +119,11 @@ impl Gpu {
 
     pub fn bindings(&self, device: &wgpu::Device, inputs: Inputs<'_>) -> Bindings {
         std::array::from_fn(|flip| std::array::from_fn(|step| {
-            let input = if step == 0 { &inputs.temporal[flip] } else { &self.scratch };
-            let output = if step == 0 { &self.scratch } else { &self.output };
+            let (input, output) = match step {
+                0 => (&inputs.temporal[flip], &self.scratch),
+                1 => (&self.scratch, &self.output),
+                _ => (&self.output, &self.scratch),
+            };
             let views = [input, &inputs.temporal[flip], inputs.current, inputs.normal,
                 inputs.depth, inputs.id, output];
             let mut entries = vec![wgpu::BindGroupEntry {
@@ -144,16 +147,21 @@ impl Gpu {
     /// neither target ever binds as a temporal-history input. Original per-view histories persist.
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, bindings: &Bindings, flip: usize,
                   profile: Option<&crate::gpu_profile::GpuProfile>) -> u64 {
-        for (index, label) in ["diffuse-reconstruct-1", "diffuse-reconstruct-2"].iter().enumerate() {
+        // Four passes of the same 5x5 gather at widths 1, 2, 4 and 8 pixels: an a-trous filter
+        // reaching 30 pixels, enough to settle one-sample-a-frame ray tracing. The last pass
+        // writes the output target that resolve reads.
+        const STEPS: [(usize, &str); 4] = [(0, "diffuse-reconstruct-1"), (1, "diffuse-reconstruct-2"),
+            (2, "diffuse-reconstruct-3"), (1, "diffuse-reconstruct-4")];
+        for (index, (binding, label)) in STEPS.iter().enumerate() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label), timestamp_writes: profile.and_then(|p| p.compute(label)),
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &bindings[flip][index], &[]);
+            pass.set_bind_group(0, &bindings[flip][*binding], &[]);
             pass.set_push_constants(0, bytemuck::bytes_of(&(1_u32 << index)));
             pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);
         }
-        2
+        STEPS.len() as u64
     }
 }
 
