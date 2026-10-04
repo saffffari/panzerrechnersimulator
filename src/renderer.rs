@@ -1403,6 +1403,9 @@ struct MeshGpu {
     visibility_source: Option<CpuMesh>,
     visibility_deformable: bool,
     pose_buffer_private: bool,
+    /// Left out of the gunner's exterior optic raster only. It stays a shadow and environment
+    /// caster in every pass, so hiding it does not invalidate any shadow or visibility cache.
+    optic_hidden: bool,
     pose_revision: u64,
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
@@ -2719,6 +2722,8 @@ pub struct Renderer {
     /// camera-independent) — set true before their renders, cleared after. Never skips the very
     /// first build (the guard checks a TLAS exists).
     pub rt_skip: bool,
+    /// True only while the gunner's exterior optic snapshot is being rasterised.
+    optic_hide_pass: bool,
     /// The scene TLAS, rebuilt every frame from mesh/instance transforms (wgpu 27 has no refit;
     /// full rebuild is the only mode and is ~0.1–0.3 ms at this instance count). Created lazily
     /// on the first frame — instanced batches arrive after Renderer::new.
@@ -3348,6 +3353,7 @@ fn make_mesh_gpu(
         visibility_source: (m.vertices.len() <= 4096).then(|| m.clone()),
         visibility_deformable: false,
         pose_buffer_private: false,
+        optic_hidden: false,
         pose_revision: 0,
         vbuf,
         ibuf,
@@ -5828,6 +5834,7 @@ impl Renderer {
             gpu_profile: crate::gpu_profile::GpuProfile::new(device),
             rt_on,
             rt_skip: false,
+            optic_hide_pass: false,
             rt_tlas: None,
             rt_tlas_cap: 0,
             rt_overflow_frames: 0,
@@ -6150,6 +6157,13 @@ impl Renderer {
             self.rt_surface_dirty = self.rt_on;
         }
         slot
+    }
+    /// Exclude a mesh from the gunner's exterior optic raster without changing its visibility,
+    /// so it remains a caster and the shadow and sky-visibility caches are not disturbed.
+    pub fn set_optic_hidden(&mut self, idx: usize, hidden: bool) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.optic_hidden = hidden;
+        }
     }
     pub fn set_visible(&mut self, idx: usize, v: bool) {
         if let Some(g) = self.meshes.get_mut(idx) {
@@ -10066,7 +10080,9 @@ impl Renderer {
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
         self.accum_prepare(device, queue);
+        self.optic_hide_pass = true;
         self.render_internal(&mut encoder, true);
+        self.optic_hide_pass = false;
         encoder.copy_texture_to_texture(
             self.ldr_tex.as_image_copy(),
             self.optic_tex.as_image_copy(),

@@ -412,7 +412,19 @@ impl FirstPerson {
     pub(super) fn hold_pistol(&self, gun: Mat4, magazine: Mat4) {
         self.desired_hand.set(Some((gun, magazine)));
     }
+    /// The local body must not appear in the gunner's exterior optic image. On the shader
+    /// backend it is excluded from that one raster and stays a caster everywhere, so nothing is
+    /// returned to restore and no shadow or visibility cache sees a change. Other backends keep
+    /// the visibility toggle, restored by the caller.
     pub(super) fn hide_for_optic(&self, r: &mut Renderer) -> Vec<(usize, bool)> {
+        if r.shader_backend {
+            for slot in self.slots.into_iter().flatten() { r.set_optic_hidden(slot, true); }
+            return Vec::new();
+        }
+        self.hide_all(r)
+    }
+    /// Hide the local body outright (review captures); returns the visibility to restore.
+    pub(super) fn hide_all(&self, r: &mut Renderer) -> Vec<(usize, bool)> {
         let visible = self.local_visibility.get();
         self.slots
             .iter()
@@ -637,5 +649,9 @@ impl Game {
             .as_ref()
             .map(|arms| arms.hide_for_optic(r))
             .unwrap_or_default()
+    }
+    /// Review captures: remove the local body from the view entirely.
+    pub fn hide_first_person_body(&self, r: &mut Renderer) -> Vec<(usize, bool)> {
+        self.first_person.as_ref().map(|arms| arms.hide_all(r)).unwrap_or_default()
     }
 }

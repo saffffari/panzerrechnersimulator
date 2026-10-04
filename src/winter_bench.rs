@@ -144,7 +144,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
                     r.camera.set_forward(target-r.camera.pos);
                 }
                 if let Ok(raw)=std::env::var("KESSEL_WINTER_BENCH_FOV") {r.camera.fov_y=raw.parse::<f32>()?.to_radians();}
-                if std::env::var("KESSEL_WINTER_BENCH_NO_BODY").as_deref()==Ok("1") {g.hide_first_person_for_optic(&mut r);}
+                if std::env::var("KESSEL_WINTER_BENCH_NO_BODY").as_deref()==Ok("1") {g.hide_first_person_body(&mut r);}
             }
             if let (Some(view),Some([width,height]))=(&display_view,display_extent) {
                 // Preserve the gunner surround's temporal context, as render_optic_composite does.

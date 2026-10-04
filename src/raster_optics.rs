@@ -579,7 +579,8 @@ impl Renderer {
             |a|if ao.is_some(){&a.ambient_mesh}else{&a.mesh}));
         let near_eye=view_proj.inverse().project_point3(Vec3::ZERO);
         let mut loose:Vec<_>=self.meshes.iter().enumerate().filter(|(index,m)|
-            opaque_scene_member(m.visible,m.glass,m.periscope_kind,self.raster_optic_panel(*index),optical_capture,m.raster_only)
+            !(self.optic_hide_pass && m.optic_hidden)
+            && opaque_scene_member(m.visible,m.glass,m.periscope_kind,self.raster_optic_panel(*index),optical_capture,m.raster_only)
             && super::aabb_in_frustum(&planes,m.world_min,m.world_max)).collect();
         // Opaque armor/interior depth precedes expensive exterior shading. This changes only
         // draw order, never membership, material alpha, transforms, geometry or lighting.
