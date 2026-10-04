@@ -334,8 +334,15 @@ impl WinterEncounter {
                     } else if let Some(leader) = (0..self.routes.len()).map(|p| slot(p, 0))
                         .find(|&l| hulls[l].is_some() && self.crews[l].role == Role::Leader)
                     {
-                        let place = 1 + (0..self.crews.len()).filter(|&j| hulls[j].is_some() && matches!(
-                            self.crews[j].role, Role::Wingman { leader: l, .. } if l == leader)).count();
+                        // The lowest column place no living wingman of this leader holds. Counting
+                        // wingmen instead handed out a place that a surviving wingman still
+                        // occupied whenever an earlier place had been vacated.
+                        let held: Vec<usize> = (0..self.crews.len()).filter(|&j| hulls[j].is_some())
+                            .filter_map(|j| match self.crews[j].role {
+                                Role::Wingman { leader: l, place } if l == leader => Some(place),
+                                _ => None,
+                            }).collect();
+                        let place = (1..).find(|p| !held.contains(p)).unwrap_or(1);
                         Role::Wingman { leader, place }
                     } else {
                         Role::Straggler
@@ -449,7 +456,14 @@ impl WinterEncounter {
             let (drive, steer) = if c.dwell > 0.0 { (0.0, 0.0) }
                 else if let Some(streets) = self.streets.as_mut() {
                     match streets.drive_to(i, xz(pos), heading, corner, 0.12, 5.0) {
-                        Some((drive, steer, _)) => (drive, steer),
+                        // The street route reports arrival at a corner it can only reach to within
+                        // its own tolerance; without this the patrol halted there for good.
+                        Some((_, _, true)) => {
+                            c.waypoint = (c.waypoint + 1) % self.routes[platoon].len();
+                            c.dwell = 10.0 + (platoon % 2) as f32 * 4.0;
+                            (0.0, 0.0)
+                        }
+                        Some((drive, steer, false)) => (drive, steer),
                         None => {
                             // No street leads to this corner from here: walk on to the next.
                             c.waypoint = (c.waypoint + 1) % self.routes[platoon].len();

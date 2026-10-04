@@ -1951,6 +1951,13 @@ impl Audio {
         }))
     }
 
+    /// Rodio reads a Sink's volume on the first sample it pulls and then every 5 ms. The mix
+    /// thread may pull as soon as a source is appended, so the calibrated volume must be in
+    /// place before `append`, or a one-shot's attack can play at the Sink's default unity gain.
+    fn preset_transient_volume(&self, sink: &Sink, base_volume: f32) {
+        sink.set_volume((base_volume * self.master_volume).max(0.0));
+    }
+
     fn retain_transient(&self, sink: Sink, base_volume: f32) {
         let mut live = self.transients.borrow_mut();
         live.retain(|voice| !voice.sink.empty());
@@ -1982,6 +1989,7 @@ impl Audio {
                 return;
             }
         };
+        self.preset_transient_volume(&sink, volume.max(0.0) * layer.gain);
         sink.append(layer.clip.source_f32());
         self.retain_transient(sink, volume.max(0.0) * layer.gain);
     }
@@ -2025,6 +2033,7 @@ impl Audio {
                 return;
             }
         };
+        self.preset_transient_volume(&sink, 1.0);
         sink.append(clip.source_f32());
         self.retain_transient(sink, 1.0);
         self.play_pizza_layer(sfx, 1.0);
@@ -2052,6 +2061,7 @@ impl Audio {
                 return false;
             }
         };
+        self.preset_transient_volume(&sink, volume.max(0.0));
         sink.append(clip.source_f32());
         self.retain_transient(sink, volume.max(0.0));
         true
@@ -2233,6 +2243,7 @@ impl Audio {
             crate::acoustics::SAMPLE_RATE,
             samples,
         );
+        self.preset_transient_volume(&sink, volume.max(0.0));
         if let Some(frame)=frame {
             sink.append(timeline::AtFrame::new(source,Arc::clone(&self.master),frame));
         } else {sink.append(source);}

@@ -460,10 +460,31 @@ impl FirstPerson {
             self.last_mask.set((pose, bits));
         }
 
+        // `Quat::from_rotation_y(a) * Z` is (sin a, 0, cos a): the source body's +Z front then
+        // matches `Tank::forward` at the vehicle heading with no half-turn. The on-foot yaw is
+        // the camera convention (forward (sin y, 0, -cos y)) and keeps its existing half-turn.
+        // The former shared +PI seated every crew body facing the turret rear, putting the back
+        // of the torso between the commander's eye and the forward instruments.
         let heading = if game.mode == Mode::Foot {
-            game.foot.yaw + std::f32::consts::PI
+            // Foot/camera forward is (sin y, 0, -cos y) = from_rotation_y(PI - y) * Z. The
+            // former `y + PI` mirrored X, so the body counter-rotated as the walker turned.
+            std::f32::consts::PI - game.foot.yaw
         } else {
-            game.player.heading + game.player.turret_yaw + std::f32::consts::PI
+            match game.station {
+                // Hull posts do not ride the turret ring.
+                Station::Driver | Station::Radioman => game.player.heading,
+                // The cupola and loader posts look all round; the operator turns with his view
+                // rather than leaving a fixed torso in front of a rearward eye.
+                Station::Commander | Station::Loader if !transition => {
+                    let look = r.camera.forward();
+                    if look.x.abs() + look.z.abs() > 1.0e-4 {
+                        look.x.atan2(look.z)
+                    } else {
+                        game.player.heading + game.player.turret_yaw
+                    }
+                }
+                _ => game.player.heading + game.player.turret_yaw,
+            }
         };
         let rotation = Quat::from_rotation_y(heading);
         // Body belongs to the physical operating post. The composite gun optic and port
@@ -475,7 +496,10 @@ impl FirstPerson {
         let origin = if game.climb.active {
             r.camera.pos - Vec3::Y * crate::foot::EYE
         } else if game.mode == Mode::Foot {
+            // A crouching eye drops below the standing source shoulders; lower the same body
+            // with it instead of leaving the camera inside the torso.
             game.foot.pos
+                - Vec3::Y * (crate::foot::EYE - crate::foot::EYE_CROUCH) * game.foot.crouch_t
         } else {
             let physical_eye = if game.switch_t > 0.0 {
                 r.camera.pos

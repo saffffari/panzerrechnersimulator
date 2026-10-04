@@ -48,6 +48,8 @@ impl State {
             self.wait_for_release=true;return Action::None;
         }
         if self.pack==0 {let transfer=self.reserve.min(PACK_SIZE);self.pack=transfer;self.reserve-=transfer;}
+        // Nothing left to hold: empty hands stay empty rather than occupied by an absent item.
+        if self.held_burn_s.is_none()&&self.pack==0 {return Action::None;}
         self.equipped=true;self.pack_open=true;self.pack_reveal_s=0.85;
         self.lighter_held=false;self.puff_s=0.0;self.wait_for_release=true;
         if self.held_burn_s.is_none()&&self.pack>0 {
@@ -88,6 +90,8 @@ impl State {
         if self.lit {if let Some(burn)=self.held_burn_s.as_mut() {
             *burn-=dt+active_inhale*5.0;
             if *burn<=0.0 {self.held_burn_s=None;self.lit=false;self.puff_s=0.0;
+                // The hand is physically empty again; it must not keep owning the controls.
+                self.equipped=false;self.pack_open=false;self.pack_reveal_s=0.0;self.lighter_held=false;
                 self.consumed=self.consumed.saturating_add(1);action=Action::BurnedOut;}
         }}
         if !self.equipped||!pressed {return action;}
@@ -129,6 +133,17 @@ impl State {
         h.advance(120.0,false,false);assert!((h.view().burn_remaining-result[0]).abs()<1e-5);
         h.advance(400.0,false,false);assert!(!h.view().cigarette_present);assert_eq!(h.consumed(),1);
         assert_eq!(h.total_unconsumed()+h.consumed(),20);}
+    #[test]fn burnout_and_an_empty_supply_leave_the_hands_free(){let mut s=light();
+        assert!(s.active());assert_eq!(s.advance(400.0,false,false),Action::BurnedOut);
+        assert!(!s.active(),"a consumed cigarette must not keep the hands occupied");
+        assert!(!s.view().cigarette_present&&!s.view().pack_open&&!s.view().lighter_flame);
+        let mut empty=State::default();empty.pack=0;empty.reserve=0;
+        assert_eq!(empty.draw_or_inspect(),Action::None);
+        assert!(!empty.active(),"drawing from an empty supply cannot equip nothing");
+        assert_eq!(empty.total_unconsumed(),0);
+        // A reserve packet still refills the pack and draws one.
+        empty.reserve=PACK_SIZE;assert_eq!(empty.draw_or_inspect(),Action::Draw);
+        assert!(empty.active());assert_eq!(empty.total_unconsumed(),u32::from(PACK_SIZE));}
     #[test]fn pickup_capacity_never_silently_loses_a_packet(){let mut s=State::default();
         for _ in 0..19 {assert!(s.accept_packet());}assert!(!s.accept_packet());assert_eq!(s.total_unconsumed(),400);}
     #[test]fn pickup_capacity_counts_the_cigarette_already_in_hand(){let mut s=State::default();

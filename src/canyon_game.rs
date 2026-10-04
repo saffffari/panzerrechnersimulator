@@ -63,7 +63,10 @@ impl Game {
         for attempt in 1..16u64 {
             if placed.iter().filter(|&&v|v).count() == 5 { break; }
             for i in 0..2 {
-                encounter.set_route(i, beat(self,i,seed ^ i as u64 ^ (attempt << 32)));
+                // `WinterEncounter::start` reads the beat's first leg; a degenerate re-roll with
+                // fewer than two corners would index past its end.
+                let route = beat(self,i,seed ^ i as u64 ^ (attempt << 32));
+                if route.len() >= 2 { encounter.set_route(i, route); }
             }
             placed = self.muster_winter_platoons(&mut encounter);
         }
@@ -167,6 +170,12 @@ impl Game {
             let mut candidates: Vec<_> = spec.garrison.iter().enumerate()
                 .filter(|(_,post)|post.at.distance(center)<=320.0).collect();
             candidates.sort_by_key(|(j,_)| crate::canyon::mix(seed ^ 0x61726973 ^ *j as u64 ^ ((group as u64) << 32)));
+            // When no post near the defended zone has clear ground for this seed, fall back to
+            // the remaining posts nearest first instead of refusing to field the whole course.
+            let mut farther: Vec<_> = spec.garrison.iter().enumerate()
+                .filter(|(_,post)|post.at.distance(center)>320.0).collect();
+            farther.sort_by(|a,b|a.1.at.distance(center).total_cmp(&b.1.at.distance(center)));
+            candidates.extend(farther);
             let deployed = candidates.iter().find_map(|(_,post)| {
                 if group_centers.iter().any(|p|p.distance(post.at)<35.0) { return None; }
                 let origin = Vec3::new(post.at.x,self.hf.height_at(post.at.x,post.at.y)+1.5,post.at.y);

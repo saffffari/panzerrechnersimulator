@@ -185,33 +185,39 @@ pub fn press(speed: f32, pitch: f32, obstacle: Resistance, absorbed: f32, dt: f3
         return PushStep { speed: 0.0, work_j: 0.0, gave_way: false };
     }
     let remaining = (obstacle.work_j - absorbed).max(0.0);
-    let net = drive_force(v, pitch) - obstacle.force_n;
-    if net <= 0.0 && v < STATIC_CREEP_M_S {
+    // The drive, rolling resistance and grade were already integrated into `speed` by the
+    // powertrain this step (`Tank::update_player_powertrain`). Only the obstacle acts here;
+    // adding the tractive effort again would push with a closed throttle or a dead engine.
+    if obstacle.force_n >= drive_force(v, pitch) && v <= static_creep_m_s(pitch, dt) {
         // Pressing against something stronger than the push with no momentum to speak of: static
         // equilibrium, nothing moves and nothing is deformed (the drive's creep from rest is not
         // energy the obstacle can take).
         return PushStep { speed: 0.0, work_j: 0.0, gave_way: false };
     }
-    // Work the obstacle takes over this frame's travel at the current speed.
-    let travel = v * dt;
-    let take = obstacle.force_n * travel;
-    if take >= remaining {
-        // It gives way within the frame: the tank loses the remaining work's worth of energy.
-        let push = drive_force(v, pitch) * (remaining / obstacle.force_n.max(1.0));
-        let energy = 0.5 * MASS_KG * v * v + push - remaining;
+    // Constant deceleration F/m over the step, integrated exactly so the result does not depend
+    // on how the time is partitioned: only the travel actually made deforms the obstacle.
+    let decel = obstacle.force_n.max(0.0) / MASS_KG;
+    let travel = if decel * dt >= v { v * v / (2.0 * decel) } else { v * dt - 0.5 * decel * dt * dt };
+    let work = obstacle.force_n.max(0.0) * travel;
+    if work >= remaining {
+        // It gives way within the step: the tank loses the remaining work's worth of energy.
+        let energy = 0.5 * MASS_KG * v * v - remaining;
         let after = (2.0 * energy.max(0.0) / MASS_KG).sqrt();
         return PushStep { speed: dir * after, work_j: remaining, gave_way: true };
     }
-    let accel = net / MASS_KG;
-    let after = v + accel * dt;
-    // Only the travel actually made deforms the obstacle: to rest, v^2 / 2|a|.
-    let travel = if after < 0.0 { v * v / (2.0 * -accel) } else { 0.5 * (v + after) * dt };
-    let work = obstacle.force_n * travel;
-    PushStep { speed: dir * after.max(0.0), work_j: work.min(remaining), gave_way: false }
+    let after = (v - decel * dt).max(0.0);
+    PushStep { speed: dir * after, work_j: work, gave_way: false }
 }
 
 /// Below this speed a tank pressing on something stronger than its push is at rest against it.
 pub const STATIC_CREEP_M_S: f32 = 0.15;
+
+/// The rest threshold for one step of `dt`: the powertrain restarts a held tank from zero every
+/// step, by at most its traction clamp (0.8 g, `powertrain::advance`) plus the grade, so the
+/// speed it reaches in one step is the drive's creep and not momentum, whatever the step length.
+fn static_creep_m_s(pitch: f32, dt: f32) -> f32 {
+    STATIC_CREEP_M_S.max((0.8 + pitch.sin().abs()) * G * dt * 1.02)
+}
 
 /// Tractive coefficient lost and drag gained when a share of the weight rests on the belly: the
 /// tracks carry only what the belly does not (their grip falls with it) and the belly slides on
@@ -302,5 +308,68 @@ mod tests {
         assert!(broke, "the second ram finishes the cracked wall");
         let (broke, v, _) = ram(5.0, 0.0);
         assert!(broke && v > 1.0 && v < 5.0, "after the ram {v} m/s");
+    }
+
+    /// One second of the powertrain's drive (integrated before `press`, as in the game) against
+    /// an obstacle, at `hz` steps per second: (speed, work absorbed, gave way).
+    fn drive_against(obstacle: Resistance, start: f32, drive_accel: f32, hz: u32, seconds: f32) -> (f32, f32, bool) {
+        let dt = 1.0 / hz as f32;
+        let (mut v, mut absorbed) = (start, 0.0);
+        for _ in 0..(seconds * hz as f32) as u32 {
+            v += drive_accel * dt;
+            let s = press(v, 0.0, obstacle, absorbed, dt);
+            v = s.speed;
+            absorbed += s.work_j;
+            if s.gave_way { return (v, absorbed, true); }
+        }
+        (v, absorbed, false)
+    }
+
+    #[test]
+    fn the_obstacle_alone_acts_so_a_coasting_tank_is_never_accelerated() {
+        // A light belly contact with the throttle closed: the hull slows and stops.
+        for share in [0.02, 0.1, 0.3, 0.45, 0.8] {
+            let drag = belly_drag(share, 0.0);
+            let mut v = 2.0_f32;
+            for _ in 0..1200 {
+                let s = press(v, 0.0, drag, 0.0, 1.0 / 60.0);
+                assert!(s.speed <= v,"belly share {share} sped the tank up: {v} -> {}", s.speed);
+                v = s.speed;
+            }
+            assert!(v == 0.0, "belly share {share} never stopped the coasting tank: {v}");
+        }
+        assert_eq!(press(-1.5, 0.0, TIMBER, 0.0, 1.0 / 60.0).speed.signum(), -1.0);
+    }
+
+    #[test]
+    fn holding_and_ramming_give_the_same_outcome_at_30_and_60_steps_per_second() {
+        let bearing = restrained_brick(0.4, 4.0, 3.2);
+        assert!(bearing.force_n > drive_force(0.0, 0.0));
+        // Held against a load-bearing wall in first gear (0.8 g is the powertrain's most): the
+        // wall stands and takes no work at either rate, for a minute.
+        for hz in [20, 30, 60, 144] {
+            let (v, absorbed, broke) = drive_against(bearing, 0.0, 0.8 * G, hz, 60.0);
+            assert!(!broke && v == 0.0 && absorbed == 0.0, "{hz} Hz: v {v}, {absorbed} J");
+        }
+        // A ram with the throttle closed: momentum alone, identical at every rate.
+        for speed in [2.0_f32, 3.0, 6.0] {
+            let slow = drive_against(bearing, speed, 0.0, 30, 5.0);
+            let fast = drive_against(bearing, speed, 0.0, 60, 5.0);
+            assert_eq!(slow.2, fast.2, "ram at {speed} m/s breached at one rate only");
+            assert!((slow.0 - fast.0).abs() < 1.0e-3, "ram at {speed}: {} vs {} m/s", slow.0, fast.0);
+            // The last creep below the step's rest threshold is not momentum the wall takes; that
+            // residue (the kinetic energy at 0.8 g x dt, about 2 kJ at 30 steps) is the only
+            // difference between rates.
+            let creep = 0.5 * MASS_KG * static_creep_m_s(0.0, 1.0 / 30.0).powi(2);
+            assert!((slow.1 - fast.1).abs() <= creep, "ram at {speed}: {} vs {} J", slow.1, fast.1);
+        }
+        // Momentum is already in the speed: a fast ram still breaches and comes out slower.
+        let (v, _, broke) = drive_against(bearing, 6.0, 0.0, 60, 5.0);
+        assert!(broke && v > 1.0 && v < 6.0, "{v}");
+        // A weak obstacle is ploughed from rest at either rate.
+        for hz in [30, 60] {
+            let (v, _, broke) = drive_against(free_standing_brick(0.25, 4.0, 2.0), 0.0, 3.0, hz, 5.0);
+            assert!(broke && v > 0.0, "{hz} Hz garden wall held the Tiger");
+        }
     }
 }

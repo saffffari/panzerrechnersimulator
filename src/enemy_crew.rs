@@ -47,7 +47,8 @@ pub(super) struct DamageOutcome {
     pub engine: bool,
 }
 fn module_contacts(fragments: &[HotFragment]) -> DamageOutcome {
-    // Explicit coarse enemy compartment boxes, hull-local metres. A module only
+    // Explicit coarse enemy compartment boxes, hull-local metres, +Z toward the bow
+    // (`Tank::forward`): engine and fuel aft, hull crew forward. A module only
     // reacts to a solved fragment contact with deposited kinetic work, never a roll.
     let mut result = DamageOutcome::default();
     for f in fragments {
@@ -56,9 +57,9 @@ fn module_contacts(fragments: &[HotFragment]) -> DamageOutcome {
             continue;
         }
         for (i, center, half) in [
-            (0, Vec3::new(0.0, 0.9, 2.0), Vec3::new(0.85, 0.6, 0.7)),
+            (0, Vec3::new(0.0, 0.9, -2.0), Vec3::new(0.85, 0.6, 0.7)),
             (1, Vec3::new(1.0, 0.7, 0.3), Vec3::new(0.25, 0.45, 1.2)),
-            (2, Vec3::new(-1.1, 0.65, 1.8), Vec3::new(0.22, 0.4, 0.75)),
+            (2, Vec3::new(-1.1, 0.65, -1.8), Vec3::new(0.22, 0.4, 0.75)),
         ] {
             let volume = damage::CrewHitVolume::new(
                 physics::CrewBodyPart::Torso,
@@ -88,8 +89,8 @@ fn seats(kind: EnemyKind) -> Vec<Vec3> {
     // Enemy rigs have no authored seated interiors. These stations are broad compartment
     // approximations, not measured historic seat coordinates. All are in hull-local metres.
     let mut seats = vec![
-        Vec3::new(-0.65, 0.45, -1.4),
-        Vec3::new(0.65, 0.45, -1.4),
+        Vec3::new(-0.65, 0.45, 1.4),
+        Vec3::new(0.65, 0.45, 1.4),
         Vec3::new(-0.60, 1.15, 0.0),
         Vec3::new(0.60, 1.15, 0.30),
     ];
@@ -410,7 +411,8 @@ impl Aftermath {
             if wreck.cooked && matches!(person.phase, Phase::Waiting | Phase::Climbing) {
                 person.phase = Phase::Dead;
             }
-            let escape = Vec3::new(person.heading.sin(), 0.0, -person.heading.cos());
+            // `person.heading` is in the tank convention: forward (sin h, 0, cos h).
+            let escape = Vec3::new(person.heading.sin(), 0.0, person.heading.cos());
             if person.phase == Phase::Seated {
                 person.phase = Phase::Waiting;
                 person.age = 0.0;

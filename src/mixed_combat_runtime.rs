@@ -418,6 +418,9 @@ impl Game {
                 actor.yaw = self.soldiers[i].yaw;
                 actor.velocity = (actor.pos-before)/dt;
                 actor.aiming = false;
+                // A routed man no longer reports a contact to his squad's tactics.
+                actor.memory_s = 0.0;
+                actor.last_seen = None;
                 self.soldiers[i].apply_combat_pose(actor.pos, actor.yaw, actor.velocity, false, actor.crouch_stage(), false);
                 continue;
             }

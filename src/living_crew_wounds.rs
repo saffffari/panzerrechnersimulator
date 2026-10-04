@@ -23,6 +23,12 @@ pub(super) struct LivingWounds {
     pub masks: std::cell::RefCell<std::collections::HashMap<usize, u16>>,
 }
 impl LivingWounds {
+    /// Fresh crew for a reset match. Uploaded masks are kept as the record of what the GPU
+    /// holds, so the next draw sees the difference and restores the unmasked topology.
+    pub fn reset(&mut self) {
+        self.people.clear();
+        self.loose.clear();
+    }
     pub fn allocate(device: &wgpu::Device, queue: &wgpu::Queue, r: &mut Renderer) -> Self {
         let source=crate::gltf_load::load_glb("assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb").ok();
         let pools = source.map(|source| {

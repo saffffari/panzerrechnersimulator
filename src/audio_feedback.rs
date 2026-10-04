@@ -384,8 +384,9 @@ impl Audio {
             let mono = self.feedback_bank.get("hatch_move").unwrap_or_else(|| fallback("hatch_move"));
             if let Ok(sink) = self.create_sink() {
                 let gain = self.control_gain("hatch_move", &mono, 1.0);
-                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32().repeat_infinite());
+                // Volume first: the mix thread may read it on the first appended sample.
                 sink.set_volume(gain * self.master_volume);
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32().repeat_infinite());
                 *slot = Some((sink, gain));
             }
         }
@@ -402,8 +403,8 @@ impl Audio {
             if let Ok(sink) = self.create_sink() {
                 let mono = fallback("starter");
                 let gain = self.control_gain("starter", &mono, 1.0);
-                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32());
                 sink.set_volume(gain * self.master_volume);
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32());
                 mechanisms.starter = Some((sink, gain));
             }
         } else if !cranking {
@@ -440,8 +441,9 @@ impl Audio {
             if let Ok(sink) = self.create_sink() {
                 let mono = fallback("traverse_jam");
                 let gain = self.control_gain("traverse_jam", &mono, 1.0);
-                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32().repeat_infinite());
+                // Volume first: the mix thread may read it on the first appended sample.
                 sink.set_volume(gain * self.master_volume);
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source_f32().repeat_infinite());
                 mechanisms.jam = Some((sink, gain));
             }
         } else if !straining {

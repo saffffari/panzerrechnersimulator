@@ -23,10 +23,13 @@ impl CupolaPistol {
         fire
     }
     fn holster(&mut self) {
+        // Only a pistol that was actually out can hand a held trigger to a tank weapon. Posts
+        // and on-foot frames holster every update; latching there would swallow every held LMB.
+        let was_out=self.equipped||self.drawn;
         self.equipped=false;
         self.drawn=false;
         self.raised=false;
-        self.wait_for_release|=self.previous_primary;
+        if was_out {self.wait_for_release|=self.previous_primary;}
         self.implicit_aim_holstered=true;
     }
 }
@@ -251,6 +254,24 @@ mod tests {
         assert!(!pistol.sample(true,true,true),"redrawing with a held trigger is safe");
         assert!(!pistol.sample(true,true,false));
         assert!(pistol.sample(true,true,true));
+    }
+
+    #[test]
+    fn repeated_holster_without_a_drawn_pistol_never_latches_a_held_primary() {
+        // On foot and at Gunner/Driver/Radio the pistol is holstered every update while the
+        // player's ordinary LMB hold (track pull, repair, aimed shot) is sampled.
+        let mut pistol=CupolaPistol::default();
+        for _ in 0..8 {
+            pistol.holster();
+            assert!(!pistol.sample(false,false,true));
+            assert!(!pistol.wait_for_release,"an undrawn pistol must not mask a held LMB");
+        }
+        // A pistol that really was out still consumes the held trigger through holstering.
+        pistol.sample(false,false,false);
+        pistol.equipped=true;
+        pistol.sample(true,false,true);
+        pistol.holster();
+        assert!(pistol.wait_for_release);
     }
 
     #[test]

@@ -30,6 +30,12 @@ pub(super) struct Hit {
     pub leg_loss: bool,
 }
 impl Casualties {
+    /// Remove every body and blood grain for a reset match.
+    pub fn reset(&mut self) {
+        self.bodies.clear();
+        self.grains.clear();
+    }
+
     pub fn allocate(device: &wgpu::Device, queue: &wgpu::Queue, r: &mut Renderer) -> Self {
         let sources=[SOVIET_POSE_PATHS[0],"assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb"];
         let pools = sources.map(|path| {
@@ -124,7 +130,15 @@ impl Casualties {
         let contact = if blast_only {
             None
         } else {
-            first_contact(&body.parts, point - dir * 0.7, point + dir * 2.0)
+            // The round has already been stopped by the soldier's contact volume, which stands
+            // taller than this anatomy. When the swept line passes above or beside every
+            // segment, deposit into the nearest present part instead of consuming the round
+            // with no effect. This is a named approximation until the anatomy is posed at the
+            // visible body's full height.
+            first_contact(&body.parts, point - dir * 0.7, point + dir * 2.0).or_else(|| {
+                let nearest = physics::nearest_body_part(&body.parts, point, 1.0);
+                body.parts.iter().position(|p| p.present && p.part == nearest)
+            })
         };
         let mut output = Hit::default();
         for p in 0..COUNT {
@@ -296,7 +310,9 @@ pub(super) fn posed_segments(soldier: &Soldier) -> [physics::CrewSegment; COUNT]
     let rotation = if prone {
         crate::infantry_combat::prone_rotation(soldier.yaw)
     } else {
-        Quat::from_rotation_y(soldier.yaw)
+        // Soldier forward is (sin y, 0, -cos y) = from_rotation_y(PI - y) * Z, the same facing
+        // the drawn figure gets from `from_rotation_arc(Z, forward)`. A bare `y` mirrored it.
+        Quat::from_rotation_y(std::f32::consts::PI - soldier.yaw)
     };
     physics::rest_segments(
         soldier.pos + if prone { Vec3::Y * 0.18 } else { Vec3::ZERO },

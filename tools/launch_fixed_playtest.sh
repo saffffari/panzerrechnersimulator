@@ -45,6 +45,14 @@ missing=[str(p) for p in required if not p.is_file() or p.stat().st_size==0]
 if missing: raise SystemExit('Required assets missing:\n'+'\n'.join(missing))
 print(f'Validated {len(required)} required files; fixed internal grid800x450, Studio Display fullscreen.')
 with binary.open('rb') as f: print('Release SHA256:',hashlib.file_digest(f,'sha256').hexdigest())
+# The launcher never builds. Say so loudly when the source is newer than what is about to run.
+built=binary.stat().st_mtime
+newer=[p for pattern in ('src/**/*.rs','shaders/*') for p in root.glob(pattern) if p.is_file() and p.stat().st_mtime>built]
+if newer:
+    print('\n*** WARNING: STALE BINARY ***\n'
+          f'{len(newer)} source file(s) are newer than target/release/panzerrechnersystem '
+          f'(e.g. {newer[0].relative_to(root)}).\n'
+          'This session runs the OLD build. Rebuild with: cargo build --release --offline --locked\n',file=sys.stderr)
 PY
 [[ "$PANZER_MODE" != check ]] || exit 0
 mkdir -p "$PANZER_RUNTIME"

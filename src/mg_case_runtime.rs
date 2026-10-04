@@ -47,12 +47,27 @@ impl Game {
             }
             r.set_emissive(slot,0.0);r.set_model(slot,c.body.model());
         }
+        strongest_first(&mut sounds);
         if let Some(audio)=&self.audio {for &(normal,slide,bearing,seed) in sounds.iter().take(4) {
             audio.play_mg_case_contact(normal,slide,bearing,seed);
         }}
     }
 }
+/// Order contacts by the same collision energy `play_mg_case_contact` calibrates from, so the
+/// per-update voice limit keeps the strongest contacts and not the lowest pool indices.
+fn strongest_first(sounds:&mut [(f32,f32,f32,u32)]) {
+    let energy=|s:&(f32,f32,f32,u32)|s.0*s.0+0.018*s.1*s.1;
+    sounds.sort_by(|a,b|energy(b).total_cmp(&energy(a)));
+}
 #[cfg(test)]mod tests {use super::*;
+    #[test]fn voice_limit_keeps_the_strongest_case_contacts_not_the_first_pool_slots(){
+        let mut sounds:Vec<(f32,f32,f32,u32)>=(0..6).map(|i|(0.05,0.2,0.0,i)).collect();
+        sounds.push((1.8,0.1,0.0,6));sounds.push((0.04,4.0,0.0,7));
+        strongest_first(&mut sounds);
+        let kept:Vec<u32>=sounds.iter().take(4).map(|s|s.3).collect();
+        assert_eq!(&kept[..2],&[6,7],"hard bounce, then fast slide, lead: {kept:?}");
+        assert_eq!(&kept[2..],&[0,1],"equal contacts keep pool order");
+    }
     #[test]fn case_mesh_matches_dedicated_small_body_and_pool_is_bounded(){let m=mesh();
         assert!((m.max.z-m.min.z-0.058).abs()<1e-6);
         assert!((m.max.x-m.min.x-0.012).abs()<1e-6);

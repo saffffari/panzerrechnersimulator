@@ -243,6 +243,9 @@ impl Soldier {
         }
     }
 
+    /// Horizontal distance from the casualty at which an unwounded routed man rallies.
+    pub(crate) const RALLY_DISTANCE_M: f32 = 40.0;
+
     pub(crate) fn begin_flee_from(&mut self, origin: Vec3) {
         if self.alive && origin.is_finite() {
             self.flee_origin = Some(origin);
@@ -264,6 +267,14 @@ impl Soldier {
         if !self.alive || !dt.is_finite() || dt <= 0.0 { return; }
         let Some(origin) = self.flee_origin else { return; };
         let before = self.pos;
+        // An unwounded man who has put RALLY_DISTANCE_M between himself and the casualty
+        // stops running and returns to his ordinary behaviour. Wounded men stay routed.
+        if self.wounded_motion >= 1.0
+            && Vec3::new(before.x-origin.x, 0.0, before.z-origin.z).length() > Self::RALLY_DISTANCE_M {
+            self.flee_origin = None;
+            self.motion_speed_m_s = 0.0;
+            return;
+        }
         let mut away = Vec3::new(before.x-origin.x, 0.0, before.z-origin.z).normalize_or_zero();
         if away == Vec3::ZERO { away = -self.forward(); }
         let goal = hf.walk_toward(before, before + away * 12.0);
@@ -318,6 +329,8 @@ impl Soldier {
         }
         self.alive = true;
         self.wounded_motion=1.0;
+        // A recycled slot is a new man: he must not inherit the previous occupant's rout.
+        self.flee_origin = None;
         self.looted = false;
         self.alert = Alert::Unaware;
         self.detect = 0.0;

@@ -102,10 +102,13 @@ pub struct PadsPoll {
 }
 
 /// Per-pad edge memory (previous button levels + the discovery baseline latch).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct PadEdges {
     previous: Buttons,
     armed: bool,
+    /// Buttons whose press event arrived since the last frame. A tap shorter than one slow
+    /// frame is already released when levels are sampled; the event still counts as a press.
+    tapped: Vec<Button>,
 }
 
 pub struct Gamepads {
@@ -198,8 +201,18 @@ impl Gamepads {
                     }
                     self.edges.retain(|(id, _)| *id != event.id);
                 }
-                EventType::ButtonPressed(..)
-                | EventType::ButtonChanged(..)
+                EventType::ButtonPressed(button, _) => {
+                    // Only an armed pad records taps, so the focus-regain baseline still
+                    // swallows whatever was held or pressed while the window was away.
+                    if let Some((_, edges)) = self.edges.iter_mut().find(|(id, e)| *id == event.id && e.armed) {
+                        if !edges.tapped.contains(&button) { edges.tapped.push(button); }
+                    }
+                    if self.active != Some(event.id) {
+                        self.active = Some(event.id);
+                        println!("[controller] active pad: {}", gilrs.gamepad(event.id).name());
+                    }
+                }
+                EventType::ButtonChanged(..)
                 | EventType::AxisChanged(..) => {
                     // Whichever pad the player touches is the pad that owns the MENU/solo frame.
                     // Couch seats are positional and unaffected by who touched last.
@@ -264,8 +277,10 @@ fn reset_edges(edges: &mut Vec<(GamepadId, PadEdges)>, id: GamepadId) {
 }
 
 fn read_frame(pad: gilrs::Gamepad<'_>, edges: &mut PadEdges) -> PadFrame {
+    let tapped = std::mem::take(&mut edges.tapped);
     let down = |button: Button| {
-        pad.is_pressed(button)
+        tapped.contains(&button)
+            || pad.is_pressed(button)
             || pad
                 .button_data(button)
                 .is_some_and(|value| value.value() > 0.24)

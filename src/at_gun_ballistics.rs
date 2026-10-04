@@ -167,7 +167,9 @@ pub(super) fn penetrate(projectile: &mut AuthoritativeProjectile, hit: GunContac
         slope_deg: 0.0,
         material: ArmorMaterial::Rha,
     };
-    let event = crate::ballistics::resolve_with_budget_loss(
+    // Strike at the speed the projectile actually retains after earlier plates or a ricochet,
+    // not the undisturbed range-law speed.
+    let event = crate::ballistics::resolve_with_budget_loss_at_speed(
         projectile.shell,
         projectile.distance_m,
         plate,
@@ -175,6 +177,7 @@ pub(super) fn penetrate(projectile: &mut AuthoritativeProjectile, hit: GunContac
         projectile.seed,
         projectile.penalty_mm,
         projectile.disruption,
+        projectile.shell.velocity_at(projectile.distance_m) * projectile.retained_speed,
     );
     if event.terminal != Terminal::Penetration || event.residual_v <= 0.0 {
         return false;

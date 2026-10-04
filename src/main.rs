@@ -11366,6 +11366,11 @@ struct WindowState {
     /// Seconds since the CANYON run reached its goal (the finish fade), while it plays out.
     canyon_finish: Option<f32>,
     canyon_v2: bool,
+    /// A synchronous world build just replaced the Game. The frame clock restarts so the
+    /// build's wall time is never replayed as simulated time on the first frame.
+    clock_reset: bool,
+    /// The solo controls reference froze the world and paused its audio; cleared on resume.
+    controls_audio_paused: bool,
 }
 
 impl WindowState {
@@ -11494,6 +11499,8 @@ impl WindowState {
             death_fade: None,
             canyon_finish: None,
             canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
+            clock_reset: false,
+            controls_audio_paused: false,
         };
         let initial_graphics = if graphics::fixed_playtest_graphics() {
             Ok(Some(graphics_menu::Settings::fixed_playtest((out.config.width, out.config.height))))
@@ -11679,6 +11686,7 @@ impl WindowState {
                     renderer.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
                     self.renderer = renderer;
                     self.game = game;
+                    self.clock_reset = true;
                     self.apply_graphics_preferences(false);
                     true
                 }
@@ -12324,6 +12332,7 @@ impl WindowState {
         renderer.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
         self.renderer = renderer;
         self.game = game;
+        self.clock_reset = true;
         self.apply_graphics_preferences(false);
         self.play_mode = Some(match mission {
             lan::LanMission::Garage => PlayMode::Garage,
@@ -12782,6 +12791,7 @@ impl WindowState {
                 r.master_retro = self.renderer.master_retro;
                 self.renderer = r;
                 self.game = g;
+                self.clock_reset = true;
                 self.apply_graphics_preferences(false);
                 // The menu's Invincible toggle rides the existing god flag — set on EVERY world
                 // build (this is the one funnel all modes and act transitions pass through).
@@ -12813,6 +12823,7 @@ impl WindowState {
                 r.master_retro = self.renderer.master_retro;
                 self.renderer = r;
                 self.game = g;
+                self.clock_reset = true;
                 self.apply_graphics_preferences(false);
                 self.renderer.fog_density = 0.0016;
                 println!("[garage] dev garage ready");
@@ -14336,7 +14347,9 @@ impl ApplicationHandler for App {
                         _ if !state.couch_keyboard_has_authority() => {}
                         // An open overlay consumes game-mutating keys below. The map branch still
                         // advances the sim with neutral input; the controls reference pauses solo.
-                        _ if state.show_map || state.show_controls => {}
+                        // The stats overlay and screenshot keys never mutate the game.
+                        _ if (state.show_map || state.show_controls)
+                            && !matches!(code, KeyCode::F3 | KeyCode::F12) => {}
                         // Space is routed through TankInput.jump in Game::update for both
                         // native input and mechanic replay (one edge across entry/exit).
                         // H works the lid belonging to the occupied post. The shared Game router
@@ -14723,14 +14736,15 @@ impl ApplicationHandler for App {
                     self.last = None;
                     return;
                 }
+                // A world built since the previous frame (menu start, restart, retry) blocked for
+                // its whole load; that interval is not simulated time.
+                if std::mem::take(&mut state.clock_reset) {
+                    self.last = None;
+                    // A new life or world never starts with the previous one's binoculars raised.
+                    self.binocs = false;
+                }
                 let now = Instant::now();
-                let dt = self
-                    .last
-                    .map(|t| (now - t).as_secs_f32())
-                    .unwrap_or(1.0 / 60.0);
-                // Focus suspension already resets `last`. A multi-second OS suspend is a pause,
-                // not a backlog of unseen combat; ordinary slow frames consume their full time.
-                let dt=if dt>5.0 {1.0/60.0} else {dt};
+                let dt = frame_dt(self.last.map(|t| (now - t).as_secs_f32()));
                 self.last = Some(now);
                 state.frame_counter = state.frame_counter.wrapping_add(1);
                 // Read the frame's input FIRST, then consume the accumulated look delta — zeroing
@@ -15253,6 +15267,11 @@ impl ApplicationHandler for App {
                             settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
                         }
                         // Solo pauses here; LAN/couch keeps the shared machine alive underneath.
+                        // A frozen solo world must not keep its loops and scheduled voices playing.
+                        else if !state.controls_audio_paused {
+                            state.game.set_audio_paused(true);
+                            state.controls_audio_paused = true;
+                        }
                         if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
                         } else if state.show_controls {
@@ -15264,6 +15283,9 @@ impl ApplicationHandler for App {
                         }
                     }
                     AppState::Playing => {
+                        if std::mem::take(&mut state.controls_audio_paused) {
+                            state.game.set_audio_paused(false);
+                        }
                         state.pencil_down = false;
                         state.lan_pre_update(&mut input);
                         if let Some(crew) = couch_crew {
@@ -15507,6 +15529,48 @@ impl ApplicationHandler for App {
                 self.keys.mouse_dy += dy as f32;
             }
         }
+    }
+}
+
+/// Longest wall interval one redraw hands to the simulation. `Game::update_realtime` runs one
+/// full update per 50 ms, so this bounds catch-up at five updates; a longer hitch or OS suspend
+/// is a pause, not a backlog whose own cost makes the next frame slower still.
+const MAX_FRAME_DT: f32 = 0.25;
+
+/// Simulated seconds for a redraw whose previous frame started `elapsed` seconds ago. A frame
+/// with no predecessor (first frame, focus regain, fresh world) advances one nominal 60 Hz step.
+fn frame_dt(elapsed: Option<f32>) -> f32 {
+    match elapsed {
+        Some(dt) if dt.is_finite() && dt > 0.0 => dt.min(MAX_FRAME_DT),
+        _ => 1.0 / 60.0,
+    }
+}
+
+#[cfg(test)]
+mod frame_clock_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_frames_consume_their_full_wall_time() {
+        for dt in [1.0 / 144.0, 1.0 / 60.0, 0.05, 0.1, 0.25] {
+            assert_eq!(frame_dt(Some(dt)), dt);
+        }
+    }
+
+    #[test]
+    fn a_hitch_is_capped_at_five_catch_up_updates() {
+        for dt in [0.2501, 1.0, 4.9, 5.1, 3600.0] {
+            let capped = frame_dt(Some(dt));
+            assert_eq!(capped, MAX_FRAME_DT);
+            assert!((capped / 0.05).ceil() <= 5.0);
+        }
+    }
+
+    #[test]
+    fn a_restarted_clock_advances_one_nominal_step() {
+        assert_eq!(frame_dt(None), 1.0 / 60.0);
+        assert_eq!(frame_dt(Some(0.0)), 1.0 / 60.0);
+        assert_eq!(frame_dt(Some(f32::NAN)), 1.0 / 60.0);
     }
 }
 

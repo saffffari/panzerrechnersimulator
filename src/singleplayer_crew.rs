@@ -330,8 +330,14 @@ impl Game {
                 let missing=self.living_wounds.missing(body.casualty.identity);
                 let bits=missing.iter().enumerate().fold(0u16,|a,(i,b)|a|((*b as u16)<<i));
                 if self.living_wounds.masks.borrow().get(&slot).copied().unwrap_or(0)!=bits {
-                    if let Ok(indices)=crew_arm_animation::wounded_seated_indices(identity,missing) {
-                        if r.upload_pose_indices(slot,&indices){self.living_wounds.masks.borrow_mut().insert(slot,bits);}
+                    // One attempt per wound state. A refused upload (a ray-traced slot) or an
+                    // unreadable source would otherwise re-decode the rig and GLBs every frame.
+                    self.living_wounds.masks.borrow_mut().insert(slot,bits);
+                    match crew_arm_animation::wounded_seated_indices(identity,missing) {
+                        Ok(indices)=>if !r.upload_pose_indices(slot,&indices) {
+                            eprintln!("[crew] wound mask {bits:#05x} for body {identity} not applied: slot refuses index upload");
+                        },
+                        Err(error)=>eprintln!("[crew] wound mask for body {identity} unavailable: {error:#}"),
                     }
                 }
             }

@@ -669,6 +669,18 @@ fn finite_unit(value: f32) -> f32 {
     }
 }
 
+/// Sum look motion into a pending pair, ignoring non-finite input and bounding the total.
+fn accumulate_look(pending: &mut [f32; 2], dx: f32, dy: f32) {
+    pending[0] = finite_clamp(pending[0] + finite_clamp(dx, 4096.0), 4096.0);
+    pending[1] = finite_clamp(pending[1] + finite_clamp(dy, 4096.0), 4096.0);
+}
+
+/// Hand out pending look motion exactly once.
+fn take_look(pending: &mut [f32; 2]) -> (f32, f32) {
+    let [dx, dy] = std::mem::take(pending);
+    (dx, dy)
+}
+
 fn finite_clamp(value: f32, cap: f32) -> f32 {
     if value.is_finite() {
         value.clamp(-cap, cap)
@@ -846,6 +858,8 @@ struct Peer {
     role: LanRole,
     name: String,
     input: RoleInput,
+    /// Look motion received since the host last built a crew frame; consumed exactly once.
+    pending_look: [f32; 2],
     hello_nonce: u64,
     last_seq: u32,
     last_seen: Instant,
@@ -897,6 +911,8 @@ pub struct LanSession {
     last_building_seq: Option<u32>,
     pending_buildings: Option<NetBuildingSync>,
     pending_pulses: u16,
+    /// Client look motion accumulated across frames between 20 ms input packets.
+    pending_look: [f32; 2],
     status: String,
 }
 
@@ -1007,6 +1023,7 @@ impl LanSession {
             last_building_seq: None,
             pending_buildings: None,
             pending_pulses: 0,
+            pending_look: [0.0; 2],
             status,
         })
     }
@@ -1084,9 +1101,14 @@ impl LanSession {
                 let mut frame = CrewFrame::default();
                 frame.roster[self.local_role as usize] = self.local_id;
                 frame.inputs[self.local_role as usize] = local_input.sanitized();
-                for peer in peers.iter() {
+                for peer in peers.iter_mut() {
                     frame.roster[peer.role as usize] = peer.id;
-                    frame.inputs[peer.role as usize] = peer.input;
+                    // Buttons and axes are levels and persist; look is a delta and is applied
+                    // once. Re-copying the last packet's delta every host frame scaled a remote
+                    // gunner's sensitivity with host frame rate and kept the lay turning.
+                    let mut input = peer.input;
+                    (input.look_dx, input.look_dy) = take_look(&mut peer.pending_look);
+                    frame.inputs[peer.role as usize] = input;
                 }
                 self.latest_crew = fill_empty_roles(frame);
                 self.connected = true;
@@ -1110,6 +1132,12 @@ impl LanSession {
             }
             SessionKind::Client { server } => {
                 self.pending_pulses |= local_input.flags & F_HATCH_TOGGLE;
+                // Packets leave every 20 ms; frames between sends must not lose their motion.
+                if self.connected {
+                    accumulate_look(&mut self.pending_look, local_input.look_dx, local_input.look_dy);
+                } else {
+                    self.pending_look = [0.0; 2];
+                }
                 if !self.connected && now.duration_since(self.last_hello) >= HELLO_PERIOD {
                     let _ = self.socket.send_to(
                         &encode_hello(
@@ -1127,6 +1155,7 @@ impl LanSession {
                     self.seq = self.seq.wrapping_add(1);
                     let mut outbound = local_input.sanitized();
                     outbound.flags |= self.pending_pulses;
+                    [outbound.look_dx, outbound.look_dy] = self.pending_look;
                     if self
                         .socket
                         .send_to(
@@ -1136,6 +1165,7 @@ impl LanSession {
                         .is_ok()
                     {
                         self.pending_pulses = 0;
+                        self.pending_look = [0.0; 2];
                     }
                     self.last_input = now;
                 }
@@ -1317,6 +1347,7 @@ impl LanSession {
             role,
             name,
             input: RoleInput::default(),
+            pending_look: [0.0; 2],
             hello_nonce,
             last_seq: 0,
             last_seen: Instant::now(),
@@ -1412,6 +1443,7 @@ impl LanSession {
         }
         peer.last_seq = seq;
         peer.input = input.sanitized();
+        accumulate_look(&mut peer.pending_look, peer.input.look_dx, peer.input.look_dy);
         peer.last_seen = Instant::now();
     }
 
@@ -2310,6 +2342,20 @@ pub fn run_loopback_verify() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn look_motion_between_packets_is_summed_and_delivered_once() {
+        let mut pending = [0.0; 2];
+        for (dx, dy) in [(3.0, -1.0), (4.0, 0.5), (-2.0, 2.5)] {
+            super::accumulate_look(&mut pending, dx, dy);
+        }
+        assert_eq!(super::take_look(&mut pending), (5.0, 2.0));
+        assert_eq!(super::take_look(&mut pending), (0.0, 0.0));
+        super::accumulate_look(&mut pending, f32::NAN, f32::INFINITY);
+        assert_eq!(pending, [0.0, 0.0]);
+        super::accumulate_look(&mut pending, 9000.0, -9000.0);
+        assert_eq!(pending, [4096.0, -4096.0]);
+    }
+
     use super::*;
 
     fn test_record(instance: u16, modules: usize, partial: usize, revision: u32) -> NetBuildingRecord {

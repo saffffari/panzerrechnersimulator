@@ -3,7 +3,7 @@
 //! tireless-track adhesion and yaw inertia are explicit engineering estimates, not measurements.
 //! This state drives both chassis motion and the engine mixer. AI retains its existing controller.
 
-use crate::tank_support::{DRIVE_EFFICIENCY, ROLLING_RESISTANCE, TIGER_ENGINE_W, TIGER_MASS_KG, TIGER_TRACK_X};
+use crate::tank_support::{DRIVE_EFFICIENCY, ROLLING_RESISTANCE, SPEED_DRAG_N_S2_PER_M2, TIGER_ENGINE_W, TIGER_MASS_KG, TIGER_TRACK_X};
 
 pub const IDLE_RPM: f32 = 800.0;
 pub const RATED_RPM: f32 = 3000.0;
@@ -12,7 +12,26 @@ const FORWARD_KMH: [f32; 8] = [2.8,4.2,6.1,9.1,14.0,20.8,30.1,45.0];
 // Only the 10–12 km/h reverse maximum is supported by the project spec; intermediate bands [E].
 const REVERSE_KMH: [f32; 4] = [2.8,4.4,7.0,11.0];
 const SHIFT_SECONDS: f32 = 0.24;
+const SHIFT_COOLDOWN_SECONDS: f32 = 0.6;
 const STEP_SECONDS: f32 = 1.0 / 120.0;
+/// Wheel rpm below which the automatic box drops a gear; an upshift must be predicted to recover
+/// above `UPSHIFT_RECOVERED_RPM` by the time the next selection is allowed.
+const DOWNSHIFT_RPM: f32 = 1400.0;
+const UPSHIFT_RECOVERED_RPM: f32 = 1500.0;
+/// A short shift at `UPSHIFT_RPM` is taken only when the next gear keeps this acceleration reserve
+/// (m/s^2); with less, the present gear is wound out to `WOUND_OUT_RPM` (the governor) first [E].
+const UPSHIFT_RPM: f32 = 2650.0;
+const WOUND_OUT_RPM: f32 = 2950.0;
+const SHORT_SHIFT_RESERVE_MPS2: f32 = 0.10;
+/// Engine speed above idle a slipping clutch holds at full throttle when the wheels turn slower [E].
+const CLUTCH_SLIP_RPM: f32 = 700.0;
+/// Share of rated power the torque curve below delivers in top gear at `tank::TOP_SPEED`
+/// (2880 rpm: torque factor 1.007 at 0.96 of rated speed). `tank_support::ROLLING_RESISTANCE`
+/// is derived from it, so the level power limit in 8th gear is that speed.
+pub const TOP_SPEED_POWER_FRACTION: f32 = {
+    let rpm = RATED_RPM * crate::tank::TOP_SPEED / (FORWARD_KMH[7] / 3.6);
+    (1.07 - 0.07 * (rpm - 1800.0) / 1200.0) * rpm / RATED_RPM
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Controls {
@@ -84,7 +103,7 @@ impl Powertrain {
         if self.gear != gear {
             self.gear=gear;
             self.shift_remaining=SHIFT_SECONDS;
-            self.shift_cooldown=0.6;
+            self.shift_cooldown=SHIFT_COOLDOWN_SECONDS;
         }
     }
 
@@ -118,18 +137,38 @@ impl Powertrain {
         let rpm=belt_speed/gear_speed(self.gear)*RATED_RPM;
         let resistance=TIGER_MASS_KG*G*(direction as f32*pitch.sin()+ROLLING_RESISTANCE*pitch.cos()).max(0.0);
         let maximum=if direction>0 {8}else{4};
-        if demand.abs()>0.1 && rpm>2650.0 && magnitude<maximum {
+        if demand.abs()>0.1 && rpm>UPSHIFT_RPM && magnitude<maximum {
             let next=direction*(magnitude+1);
             // Do not upshift into a bog after the clutch-open interval loses climbing momentum.
-            let coast_loss=resistance/TIGER_MASS_KG*SHIFT_SECONDS*if self.single_track {2.0}else{1.0};
-            let next_rpm=(belt_speed-coast_loss).max(0.0)/gear_speed(next)*RATED_RPM;
-            let available=wheel_force(next,next_rpm)*traction*demand.abs();
-            if next_rpm>=1500.0 && available>resistance*1.02+TIGER_MASS_KG*0.015 {self.select(next);}
+            // The test is the wheel rpm the next gear will have recovered to when the box may
+            // select again, not the rpm at the instant the clutch closes: on a grade the hull
+            // slows through the open clutch, the clutch then slips at `CLUTCH_SLIP_RPM` (as in
+            // `advance`) and the next gear's surplus force pulls the speed back up. Requiring
+            // 1500 rpm at clutch-in held a Tiger starting on any grade over about 3 degrees in
+            // first gear for good, with several times the needed force available in second.
+            let belt_scale=if self.single_track {2.0}else{1.0};
+            let coast_loss=resistance/TIGER_MASS_KG*SHIFT_SECONDS*belt_scale;
+            let after=(belt_speed-coast_loss).max(0.0);
+            let next_rpm=after/gear_speed(next)*RATED_RPM;
+            let engaged_rpm=next_rpm.max(IDLE_RPM+CLUTCH_SLIP_RPM*demand.abs());
+            let available=wheel_force(next,engaged_rpm)*traction*demand.abs();
+            let effective_mass=TIGER_MASS_KG*if self.single_track {3.4}else{1.0};
+            let recovered=after+(available-resistance)/effective_mass*belt_scale
+                *(SHIFT_COOLDOWN_SECONDS-SHIFT_SECONDS);
+            let recovered_rpm=recovered/gear_speed(next)*RATED_RPM;
+            // The next gear must also clear the downshift's own bogging margin (1.05), or the
+            // box hunts between the two; and a gear that would leave almost no acceleration
+            // reserve is taken only once the present one is wound out.
+            let holds=available>(resistance*1.02+TIGER_MASS_KG*0.015).max(resistance*1.05);
+            let reserve=available-resistance>TIGER_MASS_KG*SHORT_SHIFT_RESERVE_MPS2;
+            if recovered_rpm>=UPSHIFT_RECOVERED_RPM && holds && (reserve || rpm>=WOUND_OUT_RPM) {
+                self.select(next);
+            }
         } else if magnitude>1 {
             let previous=direction*(magnitude-1);
             let previous_rpm=belt_speed/gear_speed(previous)*RATED_RPM;
             let bogging=demand.abs()>0.4 && rpm<2450.0 && wheel_force(self.gear,rpm)*traction<resistance*1.05;
-            if (rpm<1400.0 || bogging) && previous_rpm<2850.0 {self.select(previous);}
+            if (rpm<DOWNSHIFT_RPM || bogging) && previous_rpm<2850.0 {self.select(previous);}
         }
     }
 
@@ -164,7 +203,7 @@ impl Powertrain {
             let wheel_rpm=belt_speed/gear_speed(self.gear)*RATED_RPM;
             let steering=if capable && !one {steer.abs()}else{0.0};
             let rpm_target=if !controls.engine_running {0.0}
-                else if coupled && any {wheel_rpm.max(IDLE_RPM+700.0*self.throttle+850.0*steering)}
+                else if coupled && any {wheel_rpm.max(IDLE_RPM+CLUTCH_SLIP_RPM*self.throttle+850.0*steering)}
                 else {IDLE_RPM+2200.0*self.throttle+850.0*steering};
             let response=1.0-(-h/if coupled {0.09}else{0.24}).exp();
             self.rpm+=(rpm_target.min(3600.0)-self.rpm)*response;
@@ -186,7 +225,7 @@ impl Powertrain {
                 wheel_force(self.gear,self.rpm)*0.10
             }else{0.0};
             let grade=TIGER_MASS_KG*G*pitch.sin();
-            let rolling=normal*ROLLING_RESISTANCE+2.0*v*v;
+            let rolling=normal*ROLLING_RESISTANCE+SPEED_DRAG_N_S2_PER_M2*v*v;
             let braking=if opposing || controls.parking_brake {normal*0.65}else{0.0};
             let motive=force-grade;
             let direction=if v.abs()>1e-5 {v.signum()}else{motive.signum()};
@@ -270,6 +309,24 @@ mod tests {
         run(&mut p,&mut speed,45.0,0.0,controls(1.0),1.0/60.0);
         assert!(p.gear>=7 && speed>8.0 && speed<13.0,"{p:?} speed={speed}");
         assert!((p.rpm-speed/gear_speed(p.gear)*RATED_RPM).abs()<150.0);
+    }
+    #[test]
+    fn a_standing_start_on_a_grade_leaves_first_gear() {
+        // Stopping to fire on a slope must not strand the Tiger at first-gear crawl (0.8 m/s).
+        for (degrees,min_gear,min_speed) in [(5.0_f32,3,3.0_f32),(8.0,3,2.0),(12.0,2,1.0)] {
+            let mut p=Powertrain::default();let mut speed=0.0;
+            run(&mut p,&mut speed,60.0,degrees.to_radians(),controls(1.0),1.0/60.0);
+            assert!(p.gear>=min_gear && speed>min_speed,"{degrees} degrees: gear {} speed {speed}",p.gear);
+            // Settled, not hunting: the same gear a second later.
+            let gear=p.gear;run(&mut p,&mut speed,1.0,degrees.to_radians(),controls(1.0),1.0/60.0);
+            assert_eq!(p.gear,gear,"{degrees} degrees hunts between gears");
+        }
+    }
+    #[test]
+    fn level_running_reaches_top_gear_and_the_calibrated_top_speed() {
+        let mut p=Powertrain::default();let mut speed=0.0;
+        run(&mut p,&mut speed,420.0,0.0,controls(1.0),1.0/60.0);
+        assert!(p.gear==8 && speed>11.3 && speed<12.5,"gear {} speed {speed}",p.gear);
     }
     #[test]
     fn uphill_resistance_causes_downshift_and_lower_speed() {

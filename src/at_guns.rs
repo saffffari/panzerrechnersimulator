@@ -239,6 +239,12 @@ pub(super) fn dispersion(tiger_speed_frac: f32, crew: usize, riflemen: bool) -> 
         * if riflemen { RIFLEMAN_DISPERSION } else { 1.0 }
 }
 
+/// Whether one artilleryman is actually serving his piece: alive, not routed, and within
+/// the same breech reach `at_gun_riflemen` requires of replacement riflemen.
+pub(super) fn artilleryman_serving(alive: bool, fleeing: bool, distance_to_gun_m: f32) -> bool {
+    alive && !fleeing && distance_to_gun_m < 3.0
+}
+
 pub(super) fn wrap(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
@@ -331,7 +337,10 @@ impl Game {
     }
 
     fn at_gun_artillerymen(&self, g: usize) -> usize {
-        (0..CREW).filter(|&k| self.soldiers.get(FIRST_CREW_SOLDIER + g * CREW + k).is_some_and(|s| s.alive)).count()
+        // A gunner serves the piece only while he is alive, not routed, and at the gun.
+        let Some(gun) = self.at_guns[g] else { return 0; };
+        (0..CREW).filter(|&k| self.soldiers.get(FIRST_CREW_SOLDIER + g * CREW + k)
+            .is_some_and(|s| artilleryman_serving(s.alive, s.is_fleeing(), s.pos.distance(gun.pos)))).count()
     }
 
     /// Riflemen alive and at the gun (within reach of the breech).
@@ -357,12 +366,13 @@ impl Game {
         if gun.state == GunState::Wrecked || self.at_gun_artillerymen(g) > 0 { return; }
         let mut riflemen = gun.riflemen;
         riflemen.iter_mut().for_each(|slot| {
-            if slot.is_some_and(|i| !self.soldiers.get(i).is_some_and(|s| s.alive)) { *slot = None; }
+            if slot.is_some_and(|i| !self.soldiers.get(i).is_some_and(|s| s.alive && !s.is_fleeing())) { *slot = None; }
         });
         for slot in 0..RIFLEMEN {
             if riflemen[slot].is_some() { continue; }
             let taken: Vec<usize> = riflemen.iter().flatten().copied().collect();
-            let nearest = (0..self.soldiers.len())
+            // Only Soviet infantry re-crew a Soviet gun; allied soldiers follow in the same pool.
+            let nearest = (0..self.soviet_soldier_count.min(self.soldiers.len()))
                 .filter(|&i| !self.is_gun_crew(i) && !taken.contains(&i))
                 .filter(|&i| self.soldiers[i].alive && !self.soldiers[i].is_fleeing() && self.soldiers[i].pos.distance(gun.pos) <= RECREW_REACH_M)
                 .min_by(|&a, &b| self.soldiers[a].pos.distance(gun.pos).total_cmp(&self.soldiers[b].pos.distance(gun.pos)));

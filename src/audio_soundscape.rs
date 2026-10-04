@@ -44,6 +44,11 @@ const ATMOSPHERE_LEVEL:f32=0.33;
 const MAX_VOICES: usize = 16;
 const CACHE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_REQUESTS: usize = 4;
+/// Minimum simulated dwell of one foreground passage before a programme change may replace it.
+const FOREGROUND_RETENTION_S: f32 = 120.0;
+/// Cabin and day beds chosen once per process, so death-and-retry does not re-roll the ambience.
+/// Keyed by lane and eligible pool; a different act season or library picks independently.
+static SESSION_BEDS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
 fn put(a: &AtomicU32, x: f32) {
     a.store(x.to_bits(), Ordering::Relaxed)
 }
@@ -411,6 +416,7 @@ pub(super) struct Runtime {
     layers:layers::Layers,
     layer_gains:layers::Gains,
     foreground_since:f32,
+    session_beds:bool,
 }
 pub fn fresh_seed() -> u64 {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -521,6 +527,7 @@ impl Runtime {
             layers:layers::Layers::default(),
             layer_gains:layers::Gains::default(),
             foreground_since:0.0,
+            session_beds:true,
         }
     }
     fn insert(&mut self, id: String, pcm: Pcm) {
@@ -586,10 +593,18 @@ impl Runtime {
             }
         }
     }
-    pub fn prepare_review(&mut self) { self.offline = true; }
+    // Seeded reviews stay reproducible: they never inherit another run's bed choice.
+    pub fn prepare_review(&mut self) { self.offline = true; self.session_beds = false; }
     fn select(&mut self, lane: &str, key: &str, role: &str, tag: &str) -> Option<String> {
         let mut ids = self.library.pool(role, tag);
-        let key = if lane == "night" {
+        let score = matches!(lane, "music" | "music_fallback");
+        if score {
+            // One-shot hits are accents, not a foreground passage followed by minutes of silence.
+            ids.retain(|id| self.library.cues.get(id).is_some_and(Cue::foreground));
+        }
+        // A foreground choice belongs to its programme token: context tags (driving, inside,
+        // combat, night) entering or leaving the pool must not re-roll it mid passage.
+        let key = if lane == "night" || score {
             key.to_owned()
         } else {
             format!("{key}:{}", ids.join(","))
@@ -608,9 +623,21 @@ impl Runtime {
             }
         }
         self.completed.remove(lane);
-        let id = if lane.starts_with("music") || lane == "intro" {
+        let session = (self.session_beds && matches!(lane, "cabin" | "day") && !ids.is_empty())
+            .then(|| format!("{lane}:{}", ids.join(",")));
+        let held = session.as_ref().and_then(|slot| {
+            let beds = SESSION_BEDS.lock().unwrap_or_else(|e| e.into_inner());
+            beds.iter().find(|(name, _)| name == slot).map(|(_, id)| id.clone())
+        });
+        let id = if held.is_some() {
+            held
+        } else if lane.starts_with("music") || lane == "intro" {
             self.score_selector.choose(role, &ids)
         } else { self.director.choose(role, &ids) };
+        if let (Some(slot), Some(id)) = (session, &id) {
+            let mut beds = SESSION_BEDS.lock().unwrap_or_else(|e| e.into_inner());
+            if !beds.iter().any(|(name, _)| *name == slot) { beds.push((slot, id.clone())); }
+        }
         self.selections.insert(lane.into(), (key, id.clone()));
         id
     }
@@ -820,7 +847,8 @@ impl Runtime {
         for voice in &self.voices {
             if voice.lane == "engine_hiss" { put(&voice.control.bearing, source.bearing_deg); }
         }
-        let day = self.select("day", &plan.night_id.to_string(), "day", &tags);
+        // The night identity changes at local noon; a day bed keyed on it would swap mid-day.
+        let day = self.select("day", season, "day", &tags);
         self.lane(
             audio,
             "day",
@@ -841,7 +869,7 @@ impl Runtime {
             cabin,
             if inside { 0.85 } else { 0.0 },
             0.0,
-            2.0,
+            6.0,
         );
         let scene = self.select("scene", &plan.location, "scene", &tags);
         self.lane(
@@ -859,7 +887,9 @@ impl Runtime {
         // Only incoming hostile contact can enter this factual mode; proximity never can.
         if !self.intro_done {
             let intro = self.select("intro", "run_start", "intro", &tags);
-            if intro.is_none() || mode == "combat" || self.completed.contains_key("music_intro") {
+            // The authored opening plays through; contact and shots do not chop it.
+            if intro.as_ref().is_none_or(|id| self.failed.contains(id))
+                || self.completed.contains_key("music_intro") {
                 self.intro_done = true;
                 self.lane(audio, "music_intro", None, 0.0, 0.0, 1.0);
             } else {
@@ -877,7 +907,11 @@ impl Runtime {
             }
             self.update_music(audio,dt,plan.mode,&choice,music);
         }
-        if mode=="combat" && self.music_role.as_deref()==Some("combat") && !self.combat_accent_played {
+        // A retained foreground never takes the combat role itself; its layers do.
+        let combat_passage=self.music_role.as_deref()==Some("combat")
+            || (choice.role.as_deref()==Some("combat") && self.layer_gains.anchor_held
+                && self.voices.iter().any(|v|v.lane=="music"&&!v.retiring));
+        if mode=="combat" && combat_passage && !self.combat_accent_played {
             self.combat_accent_played=true;self.event("combat_start");
         }
         self.update_score_layers(audio,&tags);
@@ -1002,7 +1036,11 @@ impl Runtime {
         let bridge=self.music_bridge.take().unwrap();
         if let Some(old)=bridge.old {old.hold_silent.store(false,Ordering::Relaxed);}
         for v in &mut self.voices {
-            if v.lane=="music_pending"&&!v.retiring {v.lane="music".into();}
+            if v.lane=="music_pending"&&!v.retiring {
+                v.lane="music".into();
+                // The bridged passage starts its own minimum dwell now.
+                self.foreground_since=self.time;
+            }
             if v.lane==format!("riser:{key}")&&!v.retiring {
                 put(&v.control.fade_s,0.35);put(&v.control.gain,v.gain*0.45*MUSIC_LEVEL);
             }
@@ -1016,8 +1054,9 @@ impl Runtime {
         if self.music_bridge.as_ref().is_some_and(|bridge|Some(bridge.id.as_str())!=music.as_deref()) {
             self.riser.interrupt();self.cancel_music_bridge();
         }
-        if let Some(current)=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring&&v.looping) {
-            if self.time-self.foreground_since<120.0 || self.layer_gains.anchor_held {
+        // Finite pieces are held too: they end naturally, never by a programme change.
+        if let Some(current)=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring) {
+            if self.time-self.foreground_since<FOREGROUND_RETENTION_S || self.layer_gains.anchor_held {
                 let id=current.id.clone();
                 // A changed score role adds layers while this actual phrase continues;
                 // never schedule a transition whose destination is this same source.
@@ -1113,7 +1152,9 @@ impl Runtime {
         let Some((held_token,id))=&self.forced_music else {return None;};
         let mut eligible=role.map_or_else(Vec::new,|role|self.library.pool(role,tags));
         if eligible.is_empty() && role.is_some() {eligible=self.library.pool("explore",tags);}
-        if *held_token==token && eligible.contains(id) {return Some(id.clone());}
+        // A passage retained across the shot stays for this token whatever role it came from.
+        let playing=self.voices.iter().any(|v|v.lane=="music"&&!v.retiring&&v.id==*id);
+        if *held_token==token && (playing || eligible.contains(id)) {return Some(id.clone());}
         self.forced_music=None;
         None
     }
@@ -1121,6 +1162,7 @@ impl Runtime {
         let role = if mode == crate::soundscape_director::Mode::Combat { "combat" } else { "threat" };
         let mut ids = self.library.pool(role, &self.last_tags);
         if ids.is_empty() { ids = self.library.pool("explore", &self.last_tags); }
+        ids.retain(|id| self.library.cues.get(id).is_some_and(Cue::foreground));
         ids.retain(|id| !self.voices.iter().any(|v| !v.retiring
             && (v.lane == "music" || v.lane == "music_intro") && v.id == *id));
         if self.gun_successor.as_ref().is_none_or(|id| !ids.contains(id)) {
@@ -1137,8 +1179,10 @@ impl Runtime {
         self.riser.interrupt();
         self.cancel_music_bridge();
         self.warm_gun_successor(mode);
+        // The opening piece plays through; the raised programme follows it.
+        if !self.intro_done && self.voices.iter().any(|v|v.lane=="music_intro"&&!v.retiring) { return; }
         self.intro_done = true;
-        let retained=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring&&v.looping)
+        let retained=self.voices.iter().find(|v|v.lane=="music"&&!v.retiring)
             .map(|v|v.id.clone());
         if let Some(id)=retained {
             // A shot raises the programme without chopping the existing loop mid phrase.
@@ -1407,6 +1451,8 @@ mod tests {
             musical_key: None,
             beats_per_bar: 4,
             cooldown_s: 1.0,
+            source_name: String::new(),
+            duration_s: 0.0,
         }
     }
     #[test]
@@ -1703,6 +1749,232 @@ mod tests {
         r.update(&a,0.1,input(true,1,false,false));
         r.update(&a,0.1,damaged());
         assert!(r.voices.iter().any(|v|v.lane=="engine_hiss"&&!v.retiring));
+    }
+    /// Looping score cues named and stored like the imported library: hashed playback clips,
+    /// authored labels only in `source_name`.
+    fn cadence_fixture() -> Runtime {
+        let mut r = runtime_fixture();
+        let mut add = |id: &str, role: &str, source: &str, contexts: &[&str], looping: bool| {
+            let mut c = cue();
+            c.id = id.into();
+            c.role = role.into();
+            c.path = format!("clips/audio_{id}.wav").into();
+            c.source_name = source.into();
+            c.contexts = contexts.iter().map(|x| (*x).to_owned()).collect();
+            c.looping = looping;
+            c.duration_s = if looping { 8.0 } else { 1.0 };
+            c.fade_in_s = Some(0.05);
+            r.library.cues.insert(id.into(), c);
+            let frames = if looping { RATE as usize } else { RATE as usize / 5 };
+            r.insert(id.into(), Pcm { samples: vec![0.01; frames * 2].into() });
+        };
+        for i in 0..3 { add(&format!("explore_{i}"), "explore", "OE_Atmos_FX_01_C.wav", &[], true); }
+        for i in 0..2 { add(&format!("music_{i}"), "music", "ambient_keys.wav", &[], true); }
+        for i in 0..2 { add(&format!("threat_{i}"), "threat", "Disturbed_Storm_Voices.wav", &[], true); }
+        add("combat_base", "combat", "combat_bass.wav", &["combat"], true);
+        add("combat_inside", "combat", "combat_inside_tank.wav", &["inside", "combat"], true);
+        add("combat_drums", "combat", "oe_drm110_dusted_drum_loop.wav", &[], true);
+        add("driving_loop", "driving", "vibey_driving.wav", &["driving"], true);
+        add("music_hit", "music", "melodic_hit.wav", &[], false);
+        add("combat_hit", "combat", "kick.wav", &["combat"], false);
+        add("threat_hit", "threat", "fx_hit.wav", &[], false);
+        add("day_a", "day", "wind_a.wav", &[], true);
+        add("day_b", "day", "wind_b.wav", &[], true);
+        r
+    }
+    fn foreground(r: &Runtime) -> Option<String> {
+        r.voices.iter().find(|v| v.lane == "music" && !v.retiring).map(|v| v.id.clone())
+    }
+    #[test]
+    fn live_cadence_changes_the_foreground_at_most_once_per_retention_window() {
+        let a = Audio::new_capture();
+        let mut r = cadence_fixture();
+        let dt = 0.25f32;
+        let mut starts: Vec<(f32, String)> = Vec::new();
+        let mut previous: Option<String> = None;
+        let mut beds: Option<(Option<String>, Option<String>)> = None;
+        let mut held: Option<String> = None;
+        let mut layered = false;
+        for tick in 0..3600u32 {
+            let t = tick as f32 * dt;
+            // Stop/start driving every 40 s, hatch every 15 s, the gun every 10 s for five
+            // minutes, and one 0.25 s incoming-contact pulse every 5 s for two minutes.
+            let firing = (200.0..500.0).contains(&t);
+            let contact = (300.0..420.0).contains(&t) && tick % 20 == 0;
+            if firing && tick % 40 == 0 { r.main_gun_fired(&a); }
+            let mut i = input(false, 7 + (t / 450.0) as i64, (t / 15.0) as u32 % 2 == 0, contact);
+            i.context.speed_mps = if (t / 40.0) as u32 % 2 == 0 { 5.0 } else { 0.0 };
+            r.update(&a, dt, i);
+            // A fifth of real time is enough to finish fades between the permitted changes.
+            a.render_capture_frames(RATE as usize / 20).unwrap();
+            let now = foreground(&r);
+            if let Some(id) = &now {
+                assert!(r.library.cues[id].looping, "one-shot {id} became the foreground at {t}s");
+                if previous.as_ref() != Some(id) { starts.push((t, id.clone())); }
+            }
+            if (300.0..590.0).contains(&t) {
+                // From the first contact until the 90 s hold and its release have run out.
+                if held.is_none() { held = now.clone(); }
+                if held.is_some() { assert_eq!(now, held, "contact swapped the foreground at {t}s"); }
+                layered |= r.voices.iter().any(|v| v.lane == "score_layer_rhythm" && !v.retiring);
+            }
+            let chosen = (r.selections["cabin"].1.clone(), r.selections["day"].1.clone());
+            assert_eq!(beds.get_or_insert_with(|| chosen.clone()), &chosen, "bed re-rolled at {t}s");
+            previous = now;
+        }
+        assert!(starts.len() >= 2, "the programme must still move on: {starts:?}");
+        for pair in starts.windows(2) {
+            assert!(pair[1].0 - pair[0].0 >= FOREGROUND_RETENTION_S - dt,
+                "foreground changed twice inside one retention window: {starts:?}");
+        }
+        assert!(held.is_some() && layered, "contact must add a rhythm layer to the held loop: {starts:?}");
+        assert_eq!(r.voices.iter().filter(|v| v.lane == "cabin").count(), 1);
+        assert_eq!(r.voices.iter().filter(|v| v.lane == "day").count(), 1);
+    }
+    #[test]
+    fn hashed_playback_paths_keep_authored_percussion_and_atmosphere_labels() {
+        let m = json!({"version":1,"assets":[
+            {"id":"drums","default_enabled":true,"role":"combat","bpm":110,
+             "source_path":"tense_combat/oe_drm110_dusted_drum_loop.wav",
+             "playback_path":"clips/audio_0a1b2c3d4e5f.wav","loop":{"enabled":true},
+             "format":{"duration_s":4.4}},
+            {"id":"bed","default_enabled":true,"role":"explore",
+             "source_path":"calm_ambiance/OE_Atmos_FX_01_C.wav",
+             "playback_path":"clips/audio_9f8e7d6c5b4a.wav","loop":{"enabled":true},
+             "format":{"duration_s":61.9}},
+            {"id":"hit","default_enabled":true,"role":"music","source_path":"music/melodic_hit_C.wav",
+             "playback_path":"clips/audio_112233445566.wav","loop":{"enabled":false},
+             "format":{"duration_s":1.7}}]});
+        let lib = Library::from_json(std::path::Path::new("."), &m, &json!({})).unwrap();
+        assert!(lib.errors.is_empty(), "{:?}", lib.errors);
+        assert_eq!(lib.cues["drums"].source_name, "oe_drm110_dusted_drum_loop.wav");
+        assert!(layers::explicit_percussion(&lib.cues["drums"]));
+        assert!(!layers::explicit_percussion(&lib.cues["bed"]));
+        assert!(layers::compatible(&lib.cues["bed"], &lib.cues["drums"]),
+            "declared atmosphere keeps its bed under percussion");
+        assert!(lib.cues["bed"].foreground() && lib.cues["drums"].foreground());
+        assert!(!lib.cues["hit"].foreground());
+        // The same library through the real mixer admission.
+        let audio = Audio::new_capture();
+        let mut r = runtime_fixture();
+        r.library = lib;
+        for id in ["drums", "bed"] {
+            r.insert(id.into(), Pcm { samples: vec![0.05; RATE as usize * 2].into() });
+        }
+        r.lane(&audio, "music", Some("bed".into()), 0.8, 0.0, 0.01);
+        r.layer_gains = r.layers.update(8.0, true);
+        r.update_score_layers(&audio, "");
+        assert!(r.voices.iter().any(|v| v.lane == "score_layer_rhythm" && v.id == "drums"));
+    }
+    #[test]
+    fn foreground_selection_skips_one_shots_and_ignores_context_flips_within_a_token() {
+        let mut r = cadence_fixture();
+        for token in 0..40 {
+            let id = r.select("music", &format!("{token}:map"), "music", "map|winter|explore|day|inside|clear");
+            assert!(id.is_some_and(|id| id != "music_hit"));
+        }
+        // The only driving cue needs the `driving` tag; a stop/start must not flap the choice.
+        assert_eq!(r.select("music", "50:map", "driving", "map|winter|explore|day|inside|clear"), None);
+        assert_eq!(r.select("music", "50:map", "driving", "map|winter|driving|day|inside|clear"), None);
+        assert_eq!(r.select("music", "51:map", "driving", "map|winter|driving|day|inside|clear").as_deref(),
+            Some("driving_loop"));
+        assert_eq!(r.select("music", "51:map", "driving", "map|winter|explore|day|inside|clear").as_deref(),
+            Some("driving_loop"));
+        // Hatch and combat-tag changes move cues in and out of the combat pool.
+        let combat = r.select("music", "52:map", "combat", "map|winter|combat|day|inside|clear");
+        assert!(combat.as_deref().is_some_and(|id| id != "combat_hit"));
+        assert_eq!(r.select("music", "52:map", "combat", "map|winter|combat|day|exterior|clear"), combat);
+        assert_eq!(r.select("music", "52:map", "combat", "map|winter|aftermath|day|exterior|clear"), combat);
+    }
+    #[test]
+    fn main_gun_keeps_an_old_loop_of_another_role_for_the_whole_token() {
+        let a = Audio::new_capture();
+        let mut r = cadence_fixture();
+        r.update(&a, 0.25, input(false, 7, true, false));
+        r.lane(&a, "music", Some("explore_0".into()), 0.5, 0.0, 0.05);
+        let control = r.voices.iter().find(|v| v.lane == "music").unwrap().control.clone();
+        // Well past the minimum dwell: only the shot's own retention can keep this loop.
+        r.time += 500.0;
+        r.main_gun_fired(&a);
+        assert_eq!(r.program.update(0.0, crate::soundscape_director::Mode::Explore).role.as_deref(), Some("threat"));
+        for _ in 0..80 {
+            r.update(&a, 0.25, input(false, 7, true, false));
+            a.render_capture_frames(RATE as usize / 20).unwrap();
+            assert!(r.voices.iter().any(|v| v.lane == "music" && !v.retiring && Arc::ptr_eq(&v.control, &control)),
+                "the shot replaced an explore loop");
+        }
+        assert!(!control.retire.load(Ordering::Relaxed));
+    }
+    #[test]
+    fn opening_piece_survives_the_first_shot_and_first_incoming_contact() {
+        let a = Audio::new_capture();
+        let mut r = cadence_fixture();
+        let mut c = cue();
+        c.id = "opening".into(); c.role = "intro".into(); c.looping = false; c.duration_s = 40.0;
+        r.library.cues.insert(c.id.clone(), c);
+        r.insert("opening".into(), Pcm { samples: vec![0.01; RATE as usize * 2 * 6].into() });
+        r.update(&a, 0.25, input(false, 7, true, false));
+        let control = r.voices.iter().find(|v| v.lane == "music_intro").unwrap().control.clone();
+        r.main_gun_fired(&a);
+        for tick in 0..16 {
+            r.update(&a, 0.25, input(false, 7, true, tick % 4 == 0));
+            a.render_capture_frames(RATE as usize / 4).unwrap();
+            assert!(!control.retire.load(Ordering::Relaxed), "opening was cut at tick {tick}");
+            assert!(foreground(&r).is_none(), "a second piece started over the opening");
+        }
+        // It ends by itself, and only then does the programme's foreground enter.
+        for _ in 0..40 {
+            a.render_capture_frames(RATE as usize / 4).unwrap();
+            r.update(&a, 0.25, input(false, 7, true, false));
+        }
+        assert!(r.intro_done && control.finished.load(Ordering::Relaxed));
+        assert!(!control.retire.load(Ordering::Relaxed));
+    }
+    #[test]
+    fn bridged_foreground_starts_its_own_minimum_dwell() {
+        let (audio,mut r,choice)=transition_fixture();
+        r.update_music(&audio,0.05,crate::soundscape_director::Mode::Explore,&choice,Some("intense".into()));
+        assert!(r.music_bridge.is_some());
+        let wait=r.music_delay_frames as f32/RATE as f32+0.1;
+        r.time+=wait;
+        r.update_music(&audio,wait,crate::soundscape_director::Mode::Explore,&choice,Some("intense".into()));
+        assert!(r.music_bridge.is_none());
+        assert_eq!(foreground(&r).as_deref(),Some("intense"));
+        assert_eq!(r.foreground_since,r.time);
+        // A new programme request moments later cannot replace the bridged passage.
+        r.time+=5.0;
+        let next=crate::soundscape_program::Choice{role:Some("explore".into()),token:3,gain:0.6};
+        r.update_music(&audio,5.0,crate::soundscape_director::Mode::Explore,&next,Some("calm".into()));
+        assert_eq!(foreground(&r).as_deref(),Some("intense"));
+    }
+    #[test]
+    fn cabin_and_day_beds_survive_a_retry_and_the_day_bed_ignores_local_noon() {
+        let a = Audio::new_capture();
+        let build = |seed: u64| {
+            let mut r = Runtime::new(seed);
+            r.library = Library::default();
+            for i in 0..8 {
+                for role in ["cabin", "day"] {
+                    let mut c = cue();
+                    c.id = format!("retry_{role}_{i}"); c.role = role.into();
+                    r.insert(c.id.clone(), Pcm { samples: vec![0.01; RATE as usize * 2].into() });
+                    r.library.cues.insert(c.id.clone(), c);
+                }
+            }
+            r
+        };
+        let mut first = build(1);
+        first.update(&a, 0.25, input(false, 7, true, false));
+        let beds = (first.selections["cabin"].1.clone(), first.selections["day"].1.clone());
+        assert!(beds.0.is_some() && beds.1.is_some());
+        // The night identity advances at local noon while the same day continues.
+        first.update(&a, 0.25, input(false, 8, true, false));
+        assert_eq!(first.selections["day"].1, beds.1);
+        for seed in 2..12 {
+            let mut retry = build(seed);
+            retry.update(&a, 0.25, input(false, 7, true, false));
+            assert_eq!((retry.selections["cabin"].1.clone(), retry.selections["day"].1.clone()), beds);
+        }
     }
     #[test]
     fn full_voice_budget_defers_event_and_does_not_retire_bed() {

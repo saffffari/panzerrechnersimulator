@@ -141,8 +141,24 @@ pub struct Cue {
     pub musical_key: Option<MusicalKey>,
     pub beats_per_bar: u32,
     pub cooldown_s: f32,
+    /// Authored source filename. `path` is the hashed playback clip and carries no labels.
+    pub source_name: String,
+    /// Source duration in seconds; zero when the manifest does not state one.
+    pub duration_s: f32,
 }
 impl Cue {
+    /// A foreground score passage is a loop or a complete piece, never a one-shot hit.
+    pub fn foreground(&self) -> bool {
+        self.looping || self.duration_s >= 20.0
+    }
+    /// Lower-case authored filename for explicit label checks; falls back to the playback path.
+    pub fn label(&self) -> String {
+        if self.source_name.is_empty() {
+            self.path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase()
+        } else {
+            self.source_name.to_ascii_lowercase()
+        }
+    }
     pub fn compatibility(&self,next:&Self)->MusicalCompatibility {
         musical_compatibility(self.musical_key,next.musical_key,self.bpm,next.bpm)
     }
@@ -387,6 +403,15 @@ impl Library {
                     musical_key,
                     beats_per_bar: b["beats_per_bar"].as_u64().unwrap_or(4).clamp(1, 16) as u32,
                     cooldown_s: number(b, "cooldown_s", 3.0, 0.05, 3600.0),
+                    source_name: asset["source_path"]
+                        .as_str()
+                        .and_then(|p| p.rsplit(['/', '\\']).next())
+                        .unwrap_or("")
+                        .to_owned(),
+                    duration_s: asset["format"]["duration_s"]
+                        .as_f64()
+                        .filter(|x| x.is_finite() && *x > 0.0)
+                        .map_or(0.0, |x| x as f32),
                 })
             })();
             match result {

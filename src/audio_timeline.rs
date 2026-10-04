@@ -18,7 +18,11 @@ pub(super) struct Timeline {
     pub batch:Option<Batch>,
     anchor:Option<(f64,u64)>,
     last_end_s:Option<f64>,
+    /// Start frame of the latest event already handed to the mixer.
+    pending_until_frame:u64,
 }
+/// Lead beyond one batch that is only ever left behind by an earlier late batch.
+const EXCESS_LEAD_S:f64=0.030;
 impl Timeline {
     pub fn begin(&mut self,start_s:f64,dt:f64) {
         self.batch=Some(Batch{start_s,end_s:start_s+dt,now_s:start_s,events:Vec::new()});
@@ -35,14 +39,26 @@ impl Timeline {
         self.last_end_s=Some(batch.end_s);
         batch.events.sort_by(|a,b|a.at_s.total_cmp(&b.at_s));
         let Some(first)=batch.events.first() else {return Vec::new();};
-        let (anchor_s,mut anchor_frame)=self.anchor.unwrap_or((batch.start_s,now_frame));
+        let (anchor_s,anchor_frame)=self.anchor.unwrap_or((batch.start_s,now_frame));
         let offset=|at:f64|((at-anchor_s).max(0.0)*sr).round() as u64;
         let first_frame=anchor_frame.saturating_add(offset(first.at_s));
-        // A missed device deadline moves every event by the same amount. No events are thrown
-        // away, time-compressed into a single hit, or sped up to recover render performance.
-        anchor_frame=anchor_frame.saturating_add(now_frame.saturating_sub(first_frame));
+        // A late batch leaves every later event scheduled that far ahead. Keep that lead while
+        // earlier events are still waiting, so a continuous burst retains its spacing; at the
+        // first gap, return to the ordinary one-batch lead instead of staying late for good.
+        let max_lead=((batch.end_s-batch.start_s).max(0.0)+EXCESS_LEAD_S)*sr;
+        let (anchor_s,anchor_frame)=if first_frame.saturating_sub(now_frame) as f64>max_lead
+            && self.pending_until_frame<=now_frame {
+            (batch.start_s,now_frame)
+        } else {
+            // A missed device deadline moves every event by the same amount. No events are thrown
+            // away, time-compressed into a single hit, or sped up to recover render performance.
+            (anchor_s,anchor_frame.saturating_add(now_frame.saturating_sub(first_frame)))
+        };
+        let offset=|at:f64|((at-anchor_s).max(0.0)*sr).round() as u64;
         self.anchor=Some((anchor_s,anchor_frame));
-        batch.events.into_iter().map(|event|(anchor_frame.saturating_add(offset(event.at_s)),event)).collect()
+        let events:Vec<_>=batch.events.into_iter().map(|event|(anchor_frame.saturating_add(offset(event.at_s)),event)).collect();
+        if let Some(last)=events.last() {self.pending_until_frame=self.pending_until_frame.max(last.0);}
+        events
     }
 }
 
@@ -86,5 +102,46 @@ impl<S:Source<Item=f32>> Source for AtFrame<S> {
         clock.batch.as_mut().unwrap().events=vec![event(0.525),event(0.6),event(0.675)];
         let late:Vec<_>=clock.finish(50000).into_iter().map(|v|v.0).collect();
         assert_eq!(late,vec![50000,53307,56615]);
+    }
+    #[test] fn lead_left_by_one_long_batch_survives_a_burst_and_ends_at_the_first_gap() {
+        // Wall clock and simulation advance together; each batch is finished just after the
+        // wall interval it simulates. `now` is the master frame at that moment.
+        let now=|end_s:f64|(end_s*44100.0).round() as u64+1000;
+        let tick=1.0/60.0;
+        let mut clock=Timeline::default();
+        let mut run=|start:f64,dt:f64,at:&[f64]|->Vec<(u64,u64)> {
+            clock.begin(start,dt);
+            clock.batch.as_mut().unwrap().events=at.iter().map(|at|event(*at)).collect();
+            let finished=now(start+dt);
+            clock.finish(finished).into_iter().map(|v|(v.0,v.0-finished)).collect()
+        };
+        assert_eq!(run(0.0,tick,&[0.0])[0].1,0,"ordinary lead before the hitch");
+        // One half-second frame containing seven 800 rpm rounds.
+        let hitch_start=tick;
+        let rounds:Vec<f64>=(0..7).map(|i|hitch_start+i as f64*0.075).collect();
+        let mut frames:Vec<u64>=run(hitch_start,0.5,&rounds).into_iter().map(|v|v.0).collect();
+        // The burst continues over ordinary 60 Hz frames: one round every 75 ms.
+        let mut start=hitch_start+0.5;
+        let mut next=hitch_start+7.0*0.075;
+        let mut lead=0;
+        for _ in 0..40 {
+            let inside:Vec<f64>=if next<start+tick {let at=next;next+=0.075;vec![at]} else {Vec::new()};
+            for (frame,ahead) in run(start,tick,&inside) {frames.push(frame);lead=ahead;}
+            start+=tick;
+        }
+        assert!(frames.len()>=14);
+        for pair in frames.windows(2) {
+            assert!((3307..=3308).contains(&(pair[1]-pair[0])),"burst spacing changed: {frames:?}");
+        }
+        assert!(lead>44100/3,"the burst keeps the late batch's lead while rounds are pending: {lead}");
+        // Trigger released for one second, then a single new event.
+        for _ in 0..60 {assert!(run(start,tick,&[]).is_empty());start+=tick;}
+        let after=run(start,tick,&[start+0.004]);
+        assert!(after[0].1<=(0.004*44100.0_f64).round() as u64+1,
+            "lead must return to its position inside the batch after a gap: {after:?}");
+        // Later ordinary batches stay there.
+        start+=tick;
+        let later=run(start,tick,&[start+0.010]);
+        assert!(later[0].1<44100/20,"latency ratcheted again: {later:?}");
     }
 }

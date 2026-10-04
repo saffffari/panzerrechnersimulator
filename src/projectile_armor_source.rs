@@ -7,12 +7,25 @@ pub(super) struct SurfacePlate {
     pub manufacture:&'static str,
     pub provenance:&'static str,
 }
+/// cos(20 degrees): a plate this close to horizontal is roof or belly, not sloped armor.
+const HORIZONTAL_PLATE_NORMAL_Y:f32=0.94;
+/// Hull-local Z of the Tiger driver's front plate (visor aperture at z=2.386). Upward-facing
+/// hull plate ahead of it is the 60 mm glacis, not the 25 mm hull roof.
+const TIGER_GLACIS_MIN_Z:f32=2.45;
 fn plate(scheme:crate::ballistics::ArmorScheme,part:ArmorPart,point:Vec3,normal:Vec3)->SurfacePlate {
     use crate::ballistics::{ArmorScheme as A,ArmorMaterial as M};
     let facing=facing_from_local_normal(normal,part);
     let mut p=scheme.plate(facing);p.slope_deg=0.0; // angle is measured from the actual source normal
     let (mut coverage,mut provenance)=("plate-class mapping; source triangle verified, local variation unresolved","existing armor scheme; not a per-triangle measured thickness map");
-    if normal.y.abs()>0.65 {
+    // Roof and belly are the plates within about 20 degrees of horizontal. The former 0.65
+    // cut (49 degrees) also swallowed real sloped armor: a T-34 glacis at 60 degrees from the
+    // vertical has normal.y 0.87 and resolved as a 20 mm roof instead of its 45 mm plate.
+    if scheme==A::TigerI && part==ArmorPart::Hull && normal.y>HORIZONTAL_PLATE_NORMAL_Y
+        && point.z>TIGER_GLACIS_MIN_Z {
+        p.thickness_mm=60.0;p.name="Tiger glacis";
+        coverage="Tiger glacis nominal class; fore-and-aft boundary authored at the driver's front plate";
+        provenance="US War Department TT&T34 Sep23 1943 glacis 2.44in (~62mm) near horizontal; nominal60mm";
+    }else if normal.y.abs()>HORIZONTAL_PLATE_NORMAL_Y {
         p=crate::ballistics::Plate{name:if normal.y>0.0 {"source roof plate"}else{"source belly plate"},
             thickness_mm:match scheme {A::TigerI=>25.0,A::T34_76|A::T34_85=>20.0,_=>25.0},slope_deg:0.0,material:M::Rha};
         if scheme==A::TigerI {
@@ -54,6 +67,24 @@ mod tests {
         assert_eq!(lower.plate.thickness_mm,60.0);assert_eq!(upper.plate.thickness_mm,80.0);
         for p in [roof,belly,lower,upper] {assert_eq!(p.plate.slope_deg,0.0);}
         assert!(plate(A::T34_76,ArmorPart::Hull,Vec3::Y,Vec3::Y).coverage.contains("unverified"));
+    }
+    #[test]
+    fn sloped_front_plates_are_not_classified_as_roof() {
+        use crate::ballistics::ArmorScheme as A;
+        // T-34 glacis: 60 degrees from the vertical, so normal.y is sin(60 deg) = 0.866.
+        let glacis_normal=Vec3::new(0.0,0.866,0.5);
+        let t34=plate(A::T34_76,ArmorPart::Hull,Vec3::new(0.0,1.1,2.4),glacis_normal);
+        let front=A::T34_76.plate(facing_from_local_normal(glacis_normal,ArmorPart::Hull));
+        assert_eq!(t34.plate.thickness_mm,front.thickness_mm);
+        assert!(t34.plate.thickness_mm>=45.0,"T-34 glacis resolved as {} mm",t34.plate.thickness_mm);
+        // T-34 rear upper plate, about 47 degrees: also sloped armor, not a 20 mm roof.
+        assert!(plate(A::T34_76,ArmorPart::Hull,Vec3::new(0.0,1.2,-2.6),Vec3::new(0.0,0.73,-0.68)).plate.thickness_mm>20.0);
+        // Tiger near-horizontal glacis ahead of the driver's plate is 60 mm; hull roof stays 25 mm.
+        let tiger_glacis=plate(A::TigerI,ArmorPart::Hull,Vec3::new(0.0,1.45,2.8),Vec3::new(0.0,0.985,0.17));
+        assert_eq!(tiger_glacis.plate.thickness_mm,60.0);
+        assert_eq!(plate(A::TigerI,ArmorPart::Hull,Vec3::new(0.0,1.8,0.5),Vec3::Y).plate.thickness_mm,25.0);
+        // A truly horizontal T-34 roof keeps the authored horizontal fallback.
+        assert_eq!(plate(A::T34_76,ArmorPart::Hull,Vec3::Y,Vec3::Y).plate.thickness_mm,20.0);
     }
     #[test]
     fn swept_source_horizontal_armor_is_not_discarded_and_follows_hull_rotation() {

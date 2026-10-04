@@ -53,12 +53,8 @@ impl Layers {
     }
 }
 pub fn explicit_percussion(c: &Cue) -> bool {
-    let name = c
-        .path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    // The authored filename, not the hashed playback clip, carries the declaration.
+    let name = c.label();
     c.looping
         && c.musical_key.is_none()
         && (name.contains("drum")
@@ -76,12 +72,7 @@ pub fn compatible(anchor: &Cue, layer: &Cue) -> bool {
     // Explicit unpitched percussion has no tonal requirement, but known anchor pulse
     // still must match/half/double BPM. No pitch or time-stretch is manufactured.
     if explicit_percussion(layer) {
-        let name = anchor
-            .path
-            .file_name()
-            .and_then(|p| p.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
+        let name = anchor.label();
         let declared_atmosphere = anchor.bpm.is_none()
             && [
                 "ambiance",

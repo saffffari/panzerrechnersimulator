@@ -128,6 +128,23 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
                 g.apply_cinematic_camera_impulses(&mut r);
                 r.set_active_view(3);r.rt_skip=true;r.set_coop_shadow_reuse(!unbounded);
             }
+            // Review aid: aim the closed-cupola commander at a turret-local point, optionally with
+            // the local source body excluded, so body/camera obstruction can be compared natively.
+            if mode=="commander" {
+                if let Ok(raw)=std::env::var("KESSEL_WINTER_BENCH_EYE") {
+                    let v=raw.split(',').map(|x|x.trim().parse::<f32>()).collect::<Result<Vec<_>,_>>()?;
+                    anyhow::ensure!(v.len()==3,"eye must be turret-local X,Y,Z");
+                    r.camera.pos=g.player.turret_model().transform_point3(Vec3::new(v[0],v[1],v[2]));
+                }
+                if let Ok(raw)=std::env::var("KESSEL_WINTER_BENCH_LOOK") {
+                    let v=raw.split(',').map(|x|x.trim().parse::<f32>()).collect::<Result<Vec<_>,_>>()?;
+                    anyhow::ensure!(v.len()==3,"look target must be turret-local X,Y,Z");
+                    let target=g.player.turret_model().transform_point3(Vec3::new(v[0],v[1],v[2]));
+                    r.camera.set_forward(target-r.camera.pos);
+                }
+                if let Ok(raw)=std::env::var("KESSEL_WINTER_BENCH_FOV") {r.camera.fov_y=raw.parse::<f32>()?.to_radians();}
+                if std::env::var("KESSEL_WINTER_BENCH_NO_BODY").as_deref()==Ok("1") {g.hide_first_person_for_optic(&mut r);}
+            }
             if let (Some(view),Some([width,height]))=(&display_view,display_extent) {
                 // Preserve the gunner surround's temporal context, as render_optic_composite does.
                 r.render_to_surface_view(&device,&queue,view,display_format,&renderer::BlitRect {

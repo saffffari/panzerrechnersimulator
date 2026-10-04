@@ -54,6 +54,34 @@ fn record_of(source: u32) -> Option<usize> {
     (source & RUBBLE_FLAG == 0).then_some(source as usize)
 }
 
+/// The hull centre stops this far inside the last row of the terrain grid: the bow's contact disc
+/// (3.2 m ahead, 1.4 m radius) stays on drawn ground. Beyond the grid the height query only
+/// repeats its edge row, an undrawn surface with nothing on it.
+pub(super) const TERRAIN_EDGE_CLEARANCE_M: f32 = 4.6;
+
+/// Where a vehicle step that would leave the terrain grid ends instead: on the limit, or `None`
+/// when the step stays inside (or began outside, e.g. a staged fixture, which is left alone).
+pub(super) fn terrain_edge_step(hf: &Heightfield, previous: Vec2, requested: Vec2) -> Option<Vec2> {
+    let limit = (hf.res.saturating_sub(1)) as f32 * 0.5 * hf.spacing - TERRAIN_EDGE_CLEARANCE_M;
+    if !(limit > 0.0) || !requested.is_finite() || previous.abs().max_element() > limit {
+        return None;
+    }
+    (requested.abs().max_element() > limit)
+        .then(|| requested.clamp(Vec2::splat(-limit), Vec2::splat(limit)))
+}
+
+impl Game {
+    /// The player Tiger stops at the edge of the modelled ground as at an unyielding obstacle.
+    pub(super) fn constrain_player_to_terrain(&mut self, previous: Vec3) {
+        let requested = Vec2::new(self.player.pos.x, self.player.pos.z);
+        if let Some(resolved) = terrain_edge_step(&self.hf, Vec2::new(previous.x, previous.z), requested) {
+            self.player.pos.x = resolved.x;
+            self.player.pos.z = resolved.y;
+            self.player.speed = 0.0;
+        }
+    }
+}
+
 /// Radius around the hull origin whose building solids a settle considers (the hull's 3.6 m half
 /// length plus a frame's travel).
 const TANK_SOLID_REACH_M: f32 = 5.5;
@@ -1190,6 +1218,25 @@ pub(super) mod district {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_vehicle_stops_at_the_edge_of_the_terrain_grid() {
+        // 201 samples at 5 m: the grid spans +-500 m.
+        let hf = Heightfield { res: 201, spacing: 5.0, heights: vec![0.0; 201 * 201],
+            min_h: 0.0, max_h: 0.0, openings: Default::default() };
+        let limit = 500.0 - TERRAIN_EDGE_CLEARANCE_M;
+        assert_eq!(terrain_edge_step(&hf, Vec2::new(10.0, 0.0), Vec2::new(11.0, 0.5)), None);
+        assert_eq!(terrain_edge_step(&hf, Vec2::new(limit - 0.1, 40.0), Vec2::new(limit + 0.3, 40.2)),
+            Some(Vec2::new(limit, 40.2)), "the step ends on the limit and may still slide along it");
+        assert_eq!(terrain_edge_step(&hf, Vec2::new(0.0, -limit + 0.05), Vec2::new(3.0, -limit - 9.0)),
+            Some(Vec2::new(3.0, -limit)));
+        // A fixture staged beyond the grid is not dragged back; a degenerate grid constrains nothing.
+        assert_eq!(terrain_edge_step(&hf, Vec2::new(600.0, 0.0), Vec2::new(601.0, 0.0)), None);
+        let tiny = Heightfield { res: 2, spacing: 1.0, heights: vec![0.0; 4],
+            min_h: 0.0, max_h: 0.0, openings: Default::default() };
+        assert_eq!(terrain_edge_step(&tiny, Vec2::ZERO, Vec2::new(50.0, 0.0)), None);
+        assert_eq!(terrain_edge_step(&hf, Vec2::ZERO, Vec2::new(f32::NAN, 0.0)), None);
+    }
 
     #[test]
     #[ignore = "exploration: requires a GPU and the generated urban district"]

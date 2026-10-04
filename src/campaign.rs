@@ -863,6 +863,12 @@ impl EncounterPlan {
             // Guard the approaches rather than spawning armour inside the searched structure.
             encounter.anchor = site_pos - approach * 105.0 + flank * (index as f32 - 1.0) * 24.0;
             encounter.activation_radius_m = encounter.activation_radius_m.max(430.0);
+            // The first guard must not already contain the point the route starts from, or it
+            // materialises on the first tick beside the Tiger.
+            if index == 0 {
+                encounter.activation_radius_m = encounter.activation_radius_m
+                    .min((previous.distance(encounter.anchor) - 100.0).max(120.0));
+            }
             encounter.trigger = EncounterTrigger::EnterRadius;
             encounter.mandatory = true;
             encounter.scale = EncounterScale::Engagement;

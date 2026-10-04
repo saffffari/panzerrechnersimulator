@@ -7,7 +7,9 @@ use crate::foot_ai::{
 };
 use glam::{Vec3,Quat};
 /// Dependency-neutral prone pose contract shared with runtime anatomical segments.
-pub fn prone_rotation(yaw:f32)->Quat {Quat::from_rotation_y(yaw)*Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)}
+/// Yaw is the foot convention, forward (sin y, 0, -cos y) = from_rotation_y(PI - y) * Z, so the
+/// prone body lies head-forward along the soldier's real facing rather than its mirror image.
+pub fn prone_rotation(yaw:f32)->Quat {Quat::from_rotation_y(std::f32::consts::PI-yaw)*Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)}
 pub fn prone_head_offset(yaw:f32)->Vec3 {Vec3::Y*0.18+prone_rotation(yaw)*Vec3::new(0.0,1.405,0.0)}
 pub fn prone_torso_offset(yaw:f32)->Vec3 {Vec3::Y*0.18+prone_rotation(yaw)*Vec3::new(0.0,1.045,0.0)}
 pub const RIFLE_DAMAGE: f32 = 34.0;

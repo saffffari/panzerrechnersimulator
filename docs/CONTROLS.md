@@ -175,14 +175,19 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **mouse** | lay the gun (gunner) / head-look (commander, loader, foot) |
 | **arrows** | fine gun-lay nudge (gunner) / fast scan (commander) |
 | **MMB** (hold) | coax MG34 |
-| **C** | raise/stow the handheld compass; requires free hands |
+| **C** | take out / put away the cigarette pack and cigarette |
+| **Shift+C** | raise/stow the handheld compass; requires free hands |
+| **F** or **L** | take out / put away the hand flashlight |
+| **PageUp / PageDown** | driver: shift up / down by hand |
+| **End** | driver: return the gearbox to automatic selection |
+| **F3** | performance statistics overlay (also works over the map and controls sheet) |
 | **Ctrl** (hold) | crouch inside or outside; release stands only with headroom |
 | **X** (tap) | head out of the cupola ↔ duck back in (commander; opens the hatch if needed) |
 | **X** (hold 1.5 s) | climb OUT on foot — only in the cupola view with the hatch open; the HUD ring fills while you hold |
 | **T** | ammunition reminder; actual AP/HE choice is the grey/yellow physical rack round you equip |
 | **LMB with a tool equipped** | use the extinguisher or repair the actual broken component within reach |
 | **E / Q with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
-| **M** | raise/stow the held paper map; world keeps moving (C separately holds the compass) |
+| **M** | raise/stow the held paper map; world keeps moving (Shift+C separately holds the compass) |
 | **LMB on map** | draw permanent graphite with the pencil; there is no eraser |
 | **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play) |
 | **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
@@ -263,7 +268,7 @@ Equipping a portable item occupies both hands and suppresses the selected weapon
 placed or thrown. Refueling transfers only what the tank can accept; any remainder stays in the
 same physical can. An emptied can remains in the world and can still be carried, placed, or thrown.
 
-In Kampagne, **M** opens the held map; **C** raises the handheld compass. The world keeps moving. Its **?** marks the next
+In Kampagne, **M** opens the held map; **Shift+C** raises the handheld compass. The world keeps moving. Its **?** marks the next
 search area. Clear the guards, dismount, approach the map case and press **R** when its search hint
 appears. Recovering all three sheets reveals the exit pin. **Home** opens the controls reference
 and pauses solo play.

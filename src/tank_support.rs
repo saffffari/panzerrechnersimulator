@@ -67,11 +67,19 @@ pub const TIGER_ENGINE_W: f32 = 478_000.0;
 /// and track losses). An engineering estimate [I], not a measurement.
 pub const DRIVE_EFFICIENCY: f32 = 0.6;
 const G: f32 = 9.81;
-/// Rolling resistance on the level, chosen so the power limit there equals the model's governed
-/// top speed (`tank::TOP_SPEED`, 12 m/s): 0.043, within the 0.03-0.1 usually quoted for steel
-/// tracks from roads to firm soil [I]. On a grade the weight's downhill pull adds to it.
-pub const ROLLING_RESISTANCE: f32 =
-    TIGER_ENGINE_W * DRIVE_EFFICIENCY / (TIGER_MASS_KG * G * crate::tank::TOP_SPEED);
+/// Speed-squared running-gear and air drag of the drivetrain model, N per (m/s)^2 [E].
+pub const SPEED_DRAG_N_S2_PER_M2: f32 = 2.0;
+/// Rolling resistance on the level, chosen so the drivetrain's power limit there equals the
+/// model's governed top speed (`tank::TOP_SPEED`, 12 m/s) in top gear: the wheel force the torque
+/// curve delivers at that speed (`powertrain::TOP_SPEED_POWER_FRACTION` of rated power), less the
+/// speed drag, over the weight. 0.041, within the 0.03-0.1 usually quoted for steel tracks from
+/// roads to firm soil [I]. On a grade the weight's downhill pull adds to it. Until 2026-10-03 it
+/// was rated power over weight times top speed (0.043), which left nothing for the speed drag or
+/// the torque curve, so the drivetrain topped out at 8.4 m/s in 7th gear.
+pub const ROLLING_RESISTANCE: f32 = (TIGER_ENGINE_W * DRIVE_EFFICIENCY
+    * crate::powertrain::TOP_SPEED_POWER_FRACTION / crate::tank::TOP_SPEED
+    - SPEED_DRAG_N_S2_PER_M2 * crate::tank::TOP_SPEED * crate::tank::TOP_SPEED)
+    / (TIGER_MASS_KG * G);
 
 /// Lateral centre and half width of each track band on the baked hull (|x| from 1.15 to 1.93 m).
 pub const TIGER_TRACK_X: f32 = 1.54;
@@ -956,7 +964,11 @@ mod tests {
     fn grade_speed_limit_matches_first_gear_at_the_gradient_limit() {
         let v = grade_speed_limit(TIGER_GRADIENT_DEG.to_radians());
         assert!((v * 3.6 - 2.9).abs() < 0.3, "{} km/h", v * 3.6);
-        assert!((grade_speed_limit(0.0) - crate::tank::TOP_SPEED).abs() < 1e-3);
+        // The level power limit sits just above the governed top speed: the resistance is now
+        // calibrated with the drivetrain's speed drag and torque curve included, which this
+        // pure power-over-resistance limit does not subtract.
+        let level = grade_speed_limit(0.0);
+        assert!(level >= crate::tank::TOP_SPEED && level < crate::tank::TOP_SPEED * 1.08, "{level}");
     }
 
     #[test]

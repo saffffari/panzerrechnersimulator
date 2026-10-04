@@ -20,6 +20,15 @@ impl Game {
     /// Outside, Space is an ordinary jump unless the player aims at a reachable open hatch.
     /// Tank proximity alone never starts an assisted climb or consumes the jump.
     pub(super) fn try_space_traversal(&mut self, r: &Renderer) -> bool {
+        // A dismounted man at an untaken spare Tiger climbs it by the existing mount ritual.
+        // His own living Tiger's aimed hatch keeps priority; a lost Tiger never blocks this.
+        if self.spare_mount_target(r).is_some()
+            && (!self.player.alive || self.space_hatch_target(r).is_none())
+        {
+            self.toggle_dismount();
+            self.consume_primary_press();
+            return true;
+        }
         if self.climb.active || !self.player.alive || self.activity.is_some()
             || self.switch_t > 0.0 || self.carried_casing.is_some()
         { return false; }
@@ -42,6 +51,16 @@ impl Game {
             return true;
         }
         false
+    }
+
+    /// The untaken spare Tiger a living dismounted man stands at and faces. Proximity alone does
+    /// not take the jump: he must be looking at the hull he means to climb.
+    pub(super) fn spare_mount_target(&self, r: &Renderer) -> Option<usize> {
+        if self.mode != Mode::Foot || self.climb.active || self.foot.hp <= 0.0
+            || self.activity.is_some() || self.switch_t > 0.0 || self.carried_casing.is_some()
+        { return None; }
+        let spare = self.nearest_spare(6.0)?;
+        faces_spare_hull(r.camera.pos, r.camera.forward(), self.abandoned[spare].0).then_some(spare)
     }
 
     pub(super) fn natural_hatch_station(&self, index: usize) -> Option<Station> {
@@ -216,6 +235,9 @@ impl Game {
         }
         let Some(index) = self.space_hatch_target(r) else {
             self.blocked_hatch_exit = None;
+            if self.spare_mount_target(r).is_some() {
+                self.hover_label = Some("CLIMB ABANDONED TIGER [SPACE]");
+            }
             return;
         };
         if self.blocked_hatch_exit == Some(index) {
@@ -286,9 +308,54 @@ fn natural_hatch_station(index: usize, occupied: u8) -> Option<Station> {
     })
 }
 
+/// Foot (yaw, pitch) that continues an in-tank head view: the exact inverse of
+/// `Game::finish_hatch_passage_view`, which maps a foot view back onto the head.
+pub(super) fn hatch_exit_foot_view(turret_forward: Vec3, head_yaw: f32, head_pitch: f32,
+    commander: bool) -> (f32, f32) {
+    let yaw = head_yaw + turret_forward.x.atan2(-turret_forward.z);
+    let pitch = if commander { head_pitch - 0.10 }
+        else { head_pitch + turret_forward.y.clamp(-1.0, 1.0).asin() };
+    if yaw.is_finite() && pitch.is_finite() { (yaw, pitch.clamp(-1.4, 1.4)) } else { (0.0, 0.0) }
+}
+
+/// The view is turned toward the spare's hull (its ground origin, taken at deck height).
+fn faces_spare_hull(eye: Vec3, forward: Vec3, spare_pos: Vec3) -> bool {
+    let to = spare_pos + Vec3::Y * 1.5 - eye;
+    to.normalize_or_zero().dot(forward.normalize_or_zero()) > 0.5
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn climbing_out_keeps_the_head_view_and_round_trips_with_the_entry_mapping() {
+        let base = (Quat::from_rotation_y(0.7) * Quat::from_rotation_x(-0.05) * Vec3::Z).normalize();
+        for (head_yaw, head_pitch, commander) in [(0.0, 0.0, true), (1.2, 0.3, true),
+            (-2.0, -0.2, false), (0.4, 0.5, false)] {
+            let (yaw, pitch) = hatch_exit_foot_view(base, head_yaw, head_pitch, commander);
+            // `finish_hatch_passage_view`, restated.
+            let back_yaw = yaw - base.x.atan2(-base.z);
+            let back_pitch = if commander { pitch + 0.10 } else { pitch - base.y.asin() };
+            assert!((back_yaw - head_yaw).abs() < 1.0e-5 && (back_pitch - head_pitch).abs() < 1.0e-5);
+        }
+        // Looking straight along the turret gives the camera-convention yaw of that direction.
+        let (yaw, _) = hatch_exit_foot_view(Vec3::X, 0.0, 0.0, true);
+        assert!((Vec3::new(yaw.sin(), 0.0, -yaw.cos()) - Vec3::X).length() < 1.0e-5);
+        assert_eq!(hatch_exit_foot_view(Vec3::NAN, 0.0, 0.0, false), (0.0, 0.0));
+    }
+
+    #[test]
+    fn spare_mount_needs_the_view_on_the_hull_not_mere_proximity() {
+        let spare = Vec3::new(10.0, 0.0, 0.0);
+        let eye = Vec3::new(6.0, 1.7, 0.0);
+        assert!(faces_spare_hull(eye, Vec3::X, spare));
+        assert!(faces_spare_hull(eye, Vec3::new(1.0, 0.0, 0.5).normalize(), spare));
+        assert!(!faces_spare_hull(eye, -Vec3::X, spare), "back turned: Space stays a jump");
+        assert!(!faces_spare_hull(eye, Vec3::Z, spare));
+        assert!(!faces_spare_hull(eye, Vec3::ZERO, spare));
+        assert!(!faces_spare_hull(Vec3::NAN, Vec3::X, spare));
+    }
 
     #[test]
     fn natural_open_hatch_entry_uses_a_free_post_even_when_the_hatch_post_is_occupied() {

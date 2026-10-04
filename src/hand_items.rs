@@ -22,6 +22,8 @@ impl Game {
     }
     pub fn toggle_cigarette(&mut self)->bool {
         if !self.personal_hands_available()||self.hand_props.is_none() {return false;}
+        // With no cigarette anywhere, C must not stow the torch or pull the gunner off his sights.
+        if self.cigarettes.total_unconsumed()==0 {return false;}
         self.hand_torch_on=false;self.compass_equipped=false;self.holster_mounted_sidearm();
         if self.mode==Mode::Tank&&self.station==Station::Gunner {self.jump_station(Station::Loader);}
         self.cigarettes.draw_or_inspect();self.personal_primary_guard=true;self.consume_primary_press();
@@ -43,7 +45,11 @@ impl Game {
         let primary=input.fire2||input.mg_coax;
         if !primary {self.personal_primary_guard=false;}
         if self.personal_hand_item_active()&&!self.personal_hands_remain_available() {self.stow_personal_hand_item();}
-        self.cigarettes.advance(dt,primary,input.aim);
+        // A cigarette that burns out frees the hand mid-hold; that held press belonged to the
+        // cigarette and must not become a weapon trigger on the same frame.
+        if self.cigarettes.advance(dt,primary,input.aim)==crate::cigarette::Action::BurnedOut&&primary {
+            self.personal_primary_guard=true;
+        }
         if self.personal_hand_item_active()||self.personal_primary_guard {
             mask_hand_input(input,self.lan_local_role);
         }

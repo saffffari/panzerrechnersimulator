@@ -5597,6 +5597,119 @@ fn engine_hiss_active(alive: bool, modules: &[Module]) -> bool {
     alive && modules.iter().any(|m| m.kind == ModuleKind::Engine && !m.functional)
 }
 
+/// The gunner's commanded lay may lead the slow turret, but an input can never push that lead
+/// past the half-turn where the chase would pick the opposite direction. A lead that is already
+/// larger (a scripted lay) is left as set; only the input's own contribution is bounded.
+const MAX_LAY_LEAD_RAD: f32 = 2.6;
+fn advance_lay_yaw(lay_yaw: f32, turret_yaw: f32, delta: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let mut lead = (lay_yaw - turret_yaw) % TAU;
+    if lead > PI { lead -= TAU; }
+    if lead < -PI { lead += TAU; }
+    if !lead.is_finite() || !delta.is_finite() { return turret_yaw; }
+    let (lo, hi) = ((-MAX_LAY_LEAD_RAD).min(lead), MAX_LAY_LEAD_RAD.max(lead));
+    turret_yaw + (lead + delta).clamp(lo, hi)
+}
+
+/// A cannon round is lethal to a man on foot, except under the menu's Invincible setting, which
+/// every other on-foot damage route (bullets, blast, Panzerfaust) already honours.
+fn foot_hp_after_cannon_hit(god: bool, hp: f32) -> f32 {
+    if god { hp } else { 0.0 }
+}
+
+/// (AP-like, HE) live 88 mm rounds aboard but outside the racks and chamber: those lying on the
+/// turret floor and the one in the loader's hands. World-space rounds are outside the tank.
+fn unracked_88mm_aboard(loose: &[LooseShell], carried: Option<CarriedMesh>, rack_nature_he: &[bool]) -> (u16, u16) {
+    let (mut ap, mut he) = (0u16, 0u16);
+    let mut count = |nature_he: bool| if nature_he { he = he.saturating_add(1) } else { ap = ap.saturating_add(1) };
+    for shell in loose.iter().filter(|shell| shell.active && !shell.world_space) {
+        count(shell.nature_he);
+    }
+    if let Some(carried) = carried {
+        count(carried.nature_he(rack_nature_he, loose));
+    }
+    (ap, he)
+}
+
+/// The pool slot a newly extracted case takes: a free one, else the first (oldest) case lying
+/// at rest and not in the loader's hands, else the slowest uncarried one.
+fn casing_pool_slot(cases: &[Casing]) -> Option<usize> {
+    if let Some(free) = cases.iter().position(|case| !case.active) { return Some(free); }
+    let loose = || cases.iter().enumerate().filter(|(_, case)| !case.carried);
+    loose().find(|(_, case)| case.vel.length_squared() < 1.0e-4).map(|(index, _)| index)
+        .or_else(|| loose().min_by(|a, b| a.1.vel.length_squared().total_cmp(&b.1.vel.length_squared()))
+            .map(|(index, _)| index))
+}
+
+#[cfg(test)]
+mod lay_yaw_lead_tests {
+    use super::*;
+    #[test]
+    fn a_full_casing_pool_recycles_a_resting_uncarried_case_and_never_blocks_extraction() {
+        let mut cases = vec![Casing::default(); 4];
+        assert_eq!(casing_pool_slot(&cases), Some(0));
+        for case in &mut cases { case.active = true; }
+        cases[0].carried = true;                 // in the hands: never taken
+        cases[1].vel = Vec3::new(0.0, -2.0, 0.4); // still tumbling
+        assert_eq!(casing_pool_slot(&cases), Some(2), "oldest case at rest");
+        cases[2].vel = Vec3::X; cases[3].vel = Vec3::X * 3.0;
+        assert_eq!(casing_pool_slot(&cases), Some(2), "none at rest: the slowest loose case");
+        cases[3].active = false;
+        assert_eq!(casing_pool_slot(&cases), Some(3), "a free slot is always preferred");
+        assert_eq!(casing_pool_slot(&[]), None);
+    }
+    #[test]
+    fn campaign_export_counts_floor_and_carried_rounds_but_not_outside_salvage() {
+        let mut loose = vec![LooseShell::default(); 6];
+        loose[0] = LooseShell { active: true, nature_he: false, ..LooseShell::default() };
+        loose[1] = LooseShell { active: true, nature_he: true, ..LooseShell::default() };
+        loose[2] = LooseShell { active: true, world_space: true, ..LooseShell::default() };
+        loose[3] = LooseShell { active: false, nature_he: true, ..LooseShell::default() }; // in the hands
+        let rack = [false, true];
+        assert_eq!(unracked_88mm_aboard(&loose, None, &rack), (1, 1));
+        assert_eq!(unracked_88mm_aboard(&loose, Some(CarriedMesh::LooseShell(3)), &rack), (1, 2));
+        assert_eq!(unracked_88mm_aboard(&loose, Some(CarriedMesh::RackShell(0)), &rack), (2, 1));
+        assert_eq!(unracked_88mm_aboard(&[], None, &rack), (0, 0));
+    }
+    #[test]
+    fn invincible_survives_a_cannon_hit_on_foot_and_ordinary_play_does_not() {
+        assert_eq!(foot_hp_after_cannon_hit(true, 73.0), 73.0);
+        assert_eq!(foot_hp_after_cannon_hit(false, 73.0), 0.0);
+    }
+    fn chase(lay: f32, turret: f32) -> f32 {
+        let mut d = (lay - turret) % std::f32::consts::TAU;
+        if d > std::f32::consts::PI { d -= std::f32::consts::TAU; }
+        if d < -std::f32::consts::PI { d += std::f32::consts::TAU; }
+        (d * 8.0).clamp(-1.0, 1.0)
+    }
+    #[test]
+    fn held_traverse_never_reverses_the_turret_at_any_step_rate() {
+        for hz in [20.0_f32, 30.0, 60.0, 144.0] {
+            for rate in [0.10472_f32, 0.0] { // 6 deg/s powered traverse and a jammed ring
+                let dt = 1.0 / hz;
+                let (mut lay, mut turret) = (0.0_f32, 0.0_f32);
+                for _ in 0..(40.0 * hz) as u32 {
+                    lay = advance_lay_yaw(lay, turret, 0.9 * dt);
+                    let command = chase(lay, turret);
+                    assert!(command > 0.0, "held left traverse reversed at {hz} Hz");
+                    turret += command * rate * dt;
+                }
+                assert!((lay - turret).abs() <= MAX_LAY_LEAD_RAD + 1.0e-3);
+            }
+        }
+    }
+    #[test]
+    fn small_inputs_are_unchanged_and_a_scripted_lead_is_not_shortened() {
+        assert!((advance_lay_yaw(0.3, 0.1, 0.05) - 0.35).abs() < 1.0e-6);
+        assert!((advance_lay_yaw(0.3, 0.1, -0.5) + 0.2).abs() < 1.0e-6);
+        // A lay set 3.0 rad ahead by a script stays where it was put.
+        assert!((advance_lay_yaw(3.0, 0.0, 0.0) - 3.0).abs() < 1.0e-6);
+        assert!((advance_lay_yaw(3.0, 0.0, 0.2) - 3.0).abs() < 1.0e-6);
+        assert!((advance_lay_yaw(3.0, 0.0, -0.2) - 2.8).abs() < 1.0e-6);
+        assert_eq!(advance_lay_yaw(f32::NAN, 1.25, 0.1), 1.25);
+    }
+}
+
 /// Relative library gain, not a measured source SPL. Zero dB here is only the catalog's authored
 /// amplitude at 1 m; equal octave-band energies approximate broadband hiss until it is calibrated.
 fn engine_hiss_relative_emitter(path: &crate::sound_propagation::Path, facing: Vec3,
@@ -13527,6 +13640,11 @@ impl Game {
                     ap_like = ap_like.saturating_add(1);
                 }
             }
+            // Rounds set down on the turret floor or still in the hands are aboard too (the
+            // cook-off inventory already counts them); salvage lying outside is not.
+            let (floor_ap, floor_he) = unracked_88mm_aboard(&self.loose, self.carry_mesh, &self.slot_nature_he);
+            ap_like = ap_like.saturating_add(floor_ap);
+            he = he.saturating_add(floor_he);
             out.inventory.apcr_rounds = out.inventory.apcr_rounds.min(ap_like);
             out.inventory.ap_rounds = ap_like.saturating_sub(out.inventory.apcr_rounds);
             out.inventory.he_rounds = he;
@@ -14390,7 +14508,9 @@ impl Game {
         // on the new tank routes; kilometres of catch-up would arrive after the armour fight.
         self.muster_tank_escorts();
         self.stealth = stealth::Stealth::new(self.enemies.len());
-        self.projectiles.clear();
+        // Enemy slots are recycled for the new contact, so their rounds in flight go with them.
+        // The player's own shells keep flying; a wave arriving mid-shot must not delete them.
+        self.projectiles.retain(|p| matches!(p.shooter, ProjectileShooter::Player));
         self.projectile_flight_audio = projectile_flight_audio::Runtime::default();
         self.projectile_accumulator_s = 0.0;
         for shot in &mut self.e_shots {
@@ -15396,7 +15516,8 @@ impl Game {
                 let look_dy = gunner_input.map_or(input.look_dy, |i| i.look_dy);
                 let traverse_cmd = gunner_input.map_or(input.traverse, |i| i.traverse);
                 let elevate_cmd = gunner_input.map_or(input.elevate, |i| i.elevate);
-                self.lay_yaw += -look_dx * sens + traverse_cmd * 0.9 * dt;
+                self.lay_yaw = advance_lay_yaw(self.lay_yaw, self.player.turret_yaw,
+                    -look_dx * sens + traverse_cmd * 0.9 * dt);
                 self.lay_pitch = (self.lay_pitch - look_dy * sens + elevate_cmd * 0.25 * dt)
                     .clamp(-0.139, 0.261);
             } else {
@@ -15473,6 +15594,7 @@ impl Game {
                 self.player.turret_yaw += self.traverse_jam_offset;
             }
             self.constrain_act2_player_tank(previous_tank_pos);
+            self.constrain_player_to_terrain(previous_tank_pos);
             self.player.pos.y = previous_tank_pos.y;
             self.resolve_tank_crush(dt, r); // bow vs standing walls: burst / grind / hard stop
             // Tracks on everything they meet: terrain, floors, plinths, steps and rubble, within
@@ -15922,6 +16044,7 @@ impl Game {
                 self.drive_cmd = 0.0;
                 self.steer_cmd = 0.0;
                 self.constrain_act2_player_tank(previous_tank_pos);
+                self.constrain_player_to_terrain(previous_tank_pos);
                 // The unmanned hull still rests on its supports (a floor under it can fail).
                 self.player.pos.y = previous_tank_pos.y;
                 self.settle_player_tank(previous_pose, dt, Some(r));
@@ -15943,8 +16066,11 @@ impl Game {
                     .foot_mount_hover(r.camera.forward(), r.camera.pos)
                     .is_some()
                 {
-                    self.hover_label = Some(if self.hatch_open { "ENTER CUPOLA [SPACE]" }
-                        else { "OPEN HATCH [LMB] - THEN ENTER [SPACE]" });
+                    // Offer Space only where Space really enters (gaze through the fully open
+                    // aperture, within reach); elsewhere it is a jump and LMB works the lid.
+                    self.hover_label = Some(if !self.hatch_open { "OPEN HATCH [LMB] - THEN ENTER [SPACE]" }
+                        else if self.space_hatch_target(r) == Some(4) { "ENTER CUPOLA [SPACE]" }
+                        else { "CLOSE HATCH [LMB] - STEP TO THE OPENING TO ENTER" });
                 }
             }
             self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
@@ -18865,6 +18991,12 @@ impl Game {
                 self.foot.crouch_t = 0.0;
                 self.foot.airborne = false;
                 self.foot.vel_y = 0.0;
+                // The cabin extinguisher and its spray stay with the tank. Left set, the
+                // interior activity (cleared only in the tank arm) would refuse every hatch
+                // entry from outside and the bottle would hang at the vacated post.
+                self.activity = None;
+                self.ext_want_spray = false;
+                self.ext_equipped = false;
                 println!("[absitzen] ON FOOT — clear of the hatch");
             }
             ClimbEnd::IntoTank => {
@@ -18914,6 +19046,19 @@ impl Game {
                 self.fire_active = false;
                 self.ammo_fire.reset();
                 self.breech = Breech::Loaded;
+                // The spare is another vehicle: its own chambered AP round, stowage and plates.
+                // The lost hull's cook-off marked every aboard post dead and emptied its racks;
+                // the man who climbs in here was outside it and is alive.
+                self.he_loaded = false;
+                self.lever_open = 0.0;
+                let carried_slot = self.carry_mesh.and_then(CarriedMesh::reserved_rack_slot);
+                for (index, taken) in self.slot_taken.iter_mut().enumerate() {
+                    *taken = carried_slot == Some(index);
+                    self.slot_nature_he[index] = crate::interior_rig::shell_slot_is_he(index);
+                }
+                self.armor_scars = crate::armor_damage::ArmorField::default();
+                self.crew = default_crew();
+                self.reset_singleplayer_crew();
                 self.death_cause = None;
                 self.last_fatal = None;
         self.player_surface_burn = None;
@@ -19015,6 +19160,10 @@ impl Game {
                 end: ClimbEnd::Afoot,
                 ..Climb::default()
             };
+            // Keep looking where the head was turned (inverse of `finish_hatch_passage_view`);
+            // the foot view otherwise resumes at whatever it held when last on foot.
+            (self.foot.yaw, self.foot.pitch) = hatch_access::hatch_exit_foot_view(self.player.turret_forward(),
+                self.head_yaw, self.head_pitch, self.station == Station::Commander);
             self.finish_climb(); // exit through the cupola and stand on the source roof
             println!(
                 "[panzerrechnersystem] AUSGESTIEGEN — {}",
@@ -20259,7 +20408,10 @@ impl Game {
             if hit.fatal {
                 let killed=self.kill_soldier(index,weapon);
                 let origin=self.soldiers[index].pos;
+                let soviet=index<self.soviet_soldier_count;
                 for i in 0..self.soldiers.len() {
+                    // Seeing an enemy fall does not rout a man; only his own side's loss does.
+                    if (i<self.soviet_soldier_count)!=soviet {continue;}
                     if i!=index&&self.soldiers[i].alive&&self.soldiers[i].pos.distance(origin)<12.0
                         &&self.los_clear(origin+Vec3::Y*0.9,self.soldiers[i].pos+Vec3::Y*1.2) {
                         self.soldiers[i].begin_flee_from(origin);
@@ -20773,6 +20925,11 @@ impl Game {
             }
             Mode::Foot if self.foot.hp <= 0.0 => Some(DeathCause::OnFoot),
             Mode::Foot if (self.campaign.is_some() || self.canyon_run.is_some()) && !self.player.alive => {
+                Some(self.death_cause.unwrap_or(DeathCause::FuelFire))
+            }
+            // Sandbox: the escape is a real untaken spare Tiger (Space at its hull). With none
+            // left anywhere in the world there is no legal mount, exactly as in the campaign.
+            Mode::Foot if !self.player.alive && self.abandoned.iter().all(|spare| spare.2) => {
                 Some(self.death_cause.unwrap_or(DeathCause::FuelFire))
             }
             _ => None,
@@ -21606,6 +21763,8 @@ impl Game {
         self.reset_singleplayer_crew();
         self.couch_kia_peers.clear();
         self.couch_casualties.clear();
+        self.living_wounds.reset();
+        self.infantry_casualties.reset();
         self.couch_ragdolls.clear();
         self.couch_last_casualty = None;
         self.couch_crew_frame = crate::lan::CrewFrame::default();
@@ -21627,6 +21786,7 @@ impl Game {
         self.crew_ko_t = 0.0;
         self.crew_ko_world_dir = Vec3::Z;
         self.breech = Breech::Loaded;
+        self.he_loaded = false; // the fresh chambered round is AP, whatever was handled last
         self.station = Station::Commander;
         self.switch_from = Station::Commander;
         self.switch_t = 0.0;
@@ -24055,11 +24215,18 @@ impl Game {
         }
     }
 
-    fn apply_authoritative_he_blast(&mut self, projectile_id: u64, point: Vec3, incoming: Vec3,
-        radius: f32, filler_j:f32, burst: crate::sound_propagation::Emission, r: &mut Renderer) {
+    /// Anatomical pressure resolution for every exposed soldier inside `radius`. Shared by
+    /// shell HE and the armed Panzerfaust so no exterior burst is suppression-only.
+    pub(super) fn infantry_pressure_blast(&mut self, point: Vec3, incoming: Vec3, radius: f32,
+        filler_j: f32, weapon: &str) {
         let targets=self.soldiers.iter().enumerate().filter(|(_,s)|s.alive&&s.pos.distance(point)<radius)
             .filter(|(_,s)|self.los_clear(point+Vec3::Y*0.05,s.pos+Vec3::Y*0.8)).map(|(i,_)|i).collect::<Vec<_>>();
-        for i in targets {self.infantry_contact(i,point,incoming,0.0,filler_j,true,"HE pressure");}
+        for i in targets {self.infantry_contact(i,point,incoming,0.0,filler_j,true,weapon);}
+    }
+
+    fn apply_authoritative_he_blast(&mut self, projectile_id: u64, point: Vec3, incoming: Vec3,
+        radius: f32, filler_j:f32, burst: crate::sound_propagation::Emission, r: &mut Renderer) {
+        self.infantry_pressure_blast(point, incoming, radius, filler_j, "HE pressure");
         let mut visited_building_modules = std::collections::BTreeSet::new();
         // Damage reaches `radius`, sympathetic dust `2 radius`: nothing farther can respond.
         for index in self.blast_candidates(point, radius * 2.0) {
@@ -24249,7 +24416,7 @@ impl Game {
             }
             ProjectileContactKind::ExposedCrew(..) => unreachable!("small arms resolve crew contacts before cannon routing"),
             ProjectileContactKind::Foot => {
-                self.foot.hp = 0.0;
+                self.foot.hp = foot_hp_after_cannon_hit(self.god, self.foot.hp);
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround,contact.pos);
                 self.spawn_snow_puff(
                     Vec3::new(
@@ -25843,10 +26010,11 @@ impl Game {
         let speed_frac = (self.enemies[i].speed.abs() / tank::TOP_SPEED).clamp(0.0, 1.0);
         let skill = f32::from(self.enemy_skill.get(i).copied().unwrap_or(42)) / 100.0;
         let dispersion = (0.004 + 0.014 * speed_frac) * (1.18 - 0.48 * skill);
-        let direction = (laid_direction
-            + Vec3::X * (jitter(self.ai_tick) * dispersion)
-            + Vec3::Y * (jitter(self.ai_tick.wrapping_add(97)) * dispersion))
-            .normalize_or_zero();
+        let direction = gun_relative_dispersion(
+            laid_direction,
+            jitter(self.ai_tick) * dispersion,
+            jitter(self.ai_tick.wrapping_add(97)) * dispersion,
+        );
         let id = self.spawn_authoritative_projectile(
             ProjectileShooter::Enemy(i),
             enemy_shell(kind),
@@ -25980,7 +26148,7 @@ impl Game {
         }
         let hit_pos = mpos + dir * hit_t;
         if hit_foot {
-            self.foot.hp = 0.0;
+            self.foot.hp = foot_hp_after_cannon_hit(self.god, self.foot.hp);
             println!(
                 "[absitzen] DIRECT HIT — a {} shell found you on foot",
                 self.enemies[i].kind.name()
@@ -27016,7 +27184,10 @@ impl Game {
                 self.weapon_vfx.pressure_vent(point,normal);
                 // One finite release at the same genuine breach, propagated at arrival.
                 // Authored source estimate below an armor strike, not another detonation.
-                let vent=crate::audio::pressure_vent_mono(i as u32 ^ 0x7a5311);
+                // `ScheduledSound::buf` is interleaved stereo; the vent source is mono. Passing it
+                // raw played it an octave up at half length.
+                let vent=crate::acoustics::spatialize_mono(
+                    &crate::audio::pressure_vent_mono(i as u32 ^ 0x7a5311),0.0,0.0);
                 let emission=crate::sound_propagation::Emission::from_level(
                     &crate::sound_levels::EXTERIOR_ARMOUR_STRIKE_10M).shifted(-8.0);
                 self.schedule_emission(crate::audio::Sfx::CookOff,point,emission,None,Some(vent));
@@ -27569,6 +27740,8 @@ impl Game {
             } else {
                 requested
             };
+            // A contact shove cannot carry a hull off the terrain grid either.
+            let resolved = solid_city::terrain_edge_step(hf, previous, resolved).unwrap_or(resolved);
             vehicle.pos.x = resolved.x;
             vehicle.pos.z = resolved.y;
             vehicle.pos.y = if campaign_channel {
@@ -27830,11 +28003,13 @@ impl Game {
         Mat4::from_rotation_translation(rotation, position)
     }
 
-    fn can_spawn_casing(&self) -> bool { self.casings.iter().any(|case| !case.active) }
+    fn can_spawn_casing(&self) -> bool { casing_pool_slot(&self.casings).is_some() }
 
-    /// Cases persist until the scene ends. A full represented pool never overwrites another case.
+    /// Cases persist while the pool has room. Once every represented case is in use the oldest
+    /// one at rest and out of the hands is given up for the new case, so the breech can always
+    /// clear: a full pool must never leave the gun permanently unable to extract.
     fn spawn_casing_from(&mut self, pos: Vec3, vel: Vec3) -> Option<usize> {
-        let k = self.casings.iter().position(|case| !case.active)?;
+        let k = casing_pool_slot(&self.casings)?;
         self.next_casing = k + 1;
         self.kill_tick = self.kill_tick.wrapping_add(1);
         let seed = self.kill_tick.wrapping_mul(2654435761);
@@ -30701,6 +30876,19 @@ fn segment_local_aabb_contact(start: Vec3, end: Vec3, min: Vec3, max: Vec3) -> O
     Some((enter.max(0.0), normal))
 }
 
+/// Offset a laid gun line by small azimuth and elevation errors measured about the gun's own
+/// axes. World-axis offsets made the azimuth error vanish for a gun laid along world X, so hit
+/// probability depended on compass bearing.
+fn gun_relative_dispersion(laid: Vec3, across_offset: f32, up_offset: f32) -> Vec3 {
+    let across = laid.cross(Vec3::Y).normalize_or_zero();
+    let up = across.cross(laid).normalize_or_zero();
+    if across == Vec3::ZERO {
+        // A vertical lay has no defined azimuth; keep the old world-axis behaviour there.
+        return (laid + Vec3::X * across_offset + Vec3::Z * up_offset).normalize_or_zero();
+    }
+    (laid + across * across_offset + up * up_offset).normalize_or_zero()
+}
+
 fn facing_from_local_normal(normal: Vec3, part: ArmorPart) -> crate::ballistics::Facing {
     let face = if normal.z.abs() >= normal.x.abs() {
         if normal.z >= 0.0 {
@@ -31857,6 +32045,25 @@ mod tests {
         let end = site + body[site..].find("\n    }\n").expect("end of the collapse site");
         assert!(body[site..end].contains("structure_collapse_emission()"));
         assert!(!body[site..end].contains("schedule_sound_from(crate::audio::Sfx::KillExplosion"));
+    }
+
+    #[test]
+    fn enemy_gun_dispersion_is_the_same_on_every_compass_bearing() {
+        let lateral = |laid: Vec3| {
+            let d = gun_relative_dispersion(laid, 0.01, 0.0);
+            d.cross(laid).length().asin()
+        };
+        let east = lateral(Vec3::X);
+        let north = lateral(Vec3::Z);
+        let diagonal = lateral(Vec3::new(1.0, 0.0, 1.0).normalize());
+        assert!(east > 0.0099 && (east - north).abs() < 1e-5 && (east - diagonal).abs() < 1e-5,
+            "azimuth error depends on bearing: {east} {north} {diagonal}");
+        // An elevated lay keeps the azimuth error horizontal and the elevation error vertical.
+        let laid = Vec3::new(0.6, 0.2, 0.3).normalize();
+        let az = gun_relative_dispersion(laid, 0.01, 0.0);
+        assert!((az.y - laid.y).abs() < 1e-4);
+        let el = gun_relative_dispersion(laid, 0.0, 0.01);
+        assert!(el.y > laid.y && gun_relative_dispersion(Vec3::Y, 0.01, 0.01).is_finite());
     }
 
     #[test]

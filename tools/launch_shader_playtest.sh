@@ -33,7 +33,9 @@ fi
 cd "$BRANCH_ROOT"
 export CARGO_TARGET_DIR="$BRANCH_ROOT/target"
 export KESSEL_RENDERER=shader
-export KESSEL_ASSET_ROOT="$CANONICAL_ROOT"
+# This checkout carries its own audio library, workshops and survey maps; the canonical
+# checkout does not. Callers may still point at another asset root explicitly.
+export KESSEL_ASSET_ROOT="${KESSEL_ASSET_ROOT:-$BRANCH_ROOT}"
 # Act One's content is the first level (docs/ACT1_FIRST_LEVEL.md), the urban district workshop,
 # when it has been generated; otherwise the winter approach revision.
 DEFAULT_PLAYTEST_MANIFEST="$BRANCH_ROOT/assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json"

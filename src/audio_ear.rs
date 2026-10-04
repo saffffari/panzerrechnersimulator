@@ -246,6 +246,11 @@ pub(super) struct Ear<S> {
     control: Arc<EarControl>,
     bus: EarBus,
     frames: u64,
+    /// Frames since this voice's first non-zero input sample. A sample-clock pre-roll
+    /// (`audio_timeline::AtFrame`) is silence, not age: the impact bus's full-level window
+    /// starts where the strike becomes audible, not when its voice was created.
+    age_frames: u64,
+    started: bool,
     right: bool,
     targets: EarTargets,
     active: bool,
@@ -281,7 +286,7 @@ impl<S: Source<Item = f32>> Ear<S> {
     pub fn new(source: S, control: Arc<EarControl>, bus: EarBus) -> Self {
         let generation = control.generation().wrapping_sub(1);
         let mut ear = Self {
-            source, control, bus, frames: 0, right: false,
+            source, control, bus, frames: 0, age_frames: 0, started: false, right: false,
             targets: EarTargets { shift_db: [[0.0; EAR_BANDS]; 2], reflex_db: 0.0,
                 reflex_db_per_s: 0.0, reflex_hold_s: 0.0, conductive_db: [0.0; 2] },
             active: false,
@@ -327,7 +332,7 @@ impl<S: Source<Item = f32>> Ear<S> {
     fn follow(&self) -> f32 {
         match self.bus {
             EarBus::World => 1.0,
-            EarBus::Impact => impact_follow(self.frames as f32 / RATE),
+            EarBus::Impact => impact_follow(self.age_frames as f32 / RATE),
             EarBus::Trauma | EarBus::Score => 0.0,
         }
     }
@@ -402,12 +407,14 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
     fn next(&mut self) -> Option<f32> {
         let x = self.source.next()?;
         let channel = usize::from(self.right);
+        if x != 0.0 { self.started = true; }
         if !self.right {
             if self.frames % POLL_FRAMES == 0 || self.repoll {
                 self.repoll = false;
                 self.poll();
             }
             self.frames += 1;
+            if self.started { self.age_frames += 1; }
             self.level += ramp(LISTENER_LEVEL_TAU_S) * (self.level_target - self.level);
             let duck_tau = if self.score_duck_target < self.score_duck { 0.025 } else { 1.5 };
             self.score_duck += ramp(duck_tau) * (self.score_duck_target - self.score_duck);
@@ -605,6 +612,26 @@ mod tests {
         let tail = rms(&hit[(0.40 * RATE) as usize * 2..]) / rms(&input[(0.40 * RATE) as usize * 2..]);
         assert!(tail < 0.2, "tail heard through the damaged ears: {tail}");
         assert_eq!(run(&control, EarBus::Trauma, &input), input);
+    }
+
+    #[test]
+    fn a_scheduled_hit_keeps_its_full_level_window_after_a_silent_pre_roll() {
+        // Live catch-up schedules a strike on the master sample clock: its voice exists, and is
+        // pulled as silence, before the strike is audible. That wait must not use up the window.
+        let control = Arc::new(EarControl::default());
+        control.set_state(&render([[40.0; EAR_BANDS]; 2], 15.0, [20.0; 2]));
+        let input = noise(RATE as usize, 0.001);
+        let pre_roll = (0.30 * RATE) as usize * 2;
+        let mut delayed = vec![0.0; pre_roll];
+        delayed.extend_from_slice(&input);
+        let hit = run(&control, EarBus::Impact, &delayed);
+        assert!(hit[..pre_roll].iter().all(|v| *v == 0.0));
+        let first = &hit[pre_roll..pre_roll + (0.10 * RATE) as usize * 2];
+        let error = first.iter().zip(&input).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        assert!(error < 1.0e-6, "scheduled hit lands untouched after its pre-roll: {error}");
+        let from = (0.40 * RATE) as usize * 2;
+        let tail = rms(&hit[pre_roll + from..]) / rms(&input[from..]);
+        assert!(tail < 0.2, "tail still follows the damaged ears: {tail}");
     }
 
     #[test]

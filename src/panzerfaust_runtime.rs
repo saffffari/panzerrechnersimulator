@@ -621,6 +621,17 @@ impl Game {
             self.spawn_blast(contact.point, 1.8, 8.0, 0.18);
             // Shared exterior blast damage has real cover and faction-neutral actor targets. Move
             // just back off the struck face to avoid burying the whole effect inside solid armor.
+            // `mixed_he_blast` is telemetry and suppression only; survival is resolved by the
+            // same anatomical pressure route shell HE uses. The warhead's full filler is used
+            // through that shared open-air model: an approximation for a shaped charge, whose
+            // forward jet is resolved separately by the armor contact above.
+            self.infantry_pressure_blast(
+                contact.point - dir * 0.08,
+                dir,
+                HE_BLAST_RADIUS,
+                ballistic::PANZERFAUST_60.filler_g * 4184.0,
+                "Panzerfaust blast",
+            );
             self.mixed_he_blast(
                 shot.id,
                 contact.point - dir * 0.08,
