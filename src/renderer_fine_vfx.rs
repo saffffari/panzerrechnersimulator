@@ -195,6 +195,8 @@ fn allocate_counts(parents:&mut [Parent],budget:u64) {
     }
 }
 impl FineVfx {
+    /// Linear colour of a registered grain batch (the raymarch backend turns these into media).
+    pub(super) fn material_color(&self,batch:usize)->Option<[f32;3]> {self.materials.get(&batch).map(|m|m.color)}
     pub(super) fn copy_registrations_from(&mut self,other:&Self) {
         self.materials.clone_from(&other.materials);self.particle_ids.clone_from(&other.particle_ids);
     }

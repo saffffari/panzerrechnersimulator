@@ -23,6 +23,8 @@ use crate::ui::{Align, Ui};
 mod renderer_fine_vfx;
 #[path = "renderer_weapon_particles.rs"]
 pub(crate) mod renderer_weapon_particles;
+#[path = "renderer_raymarch.rs"]
+pub(crate) mod raymarch;
 
 #[path = "track_ruts.rs"]
 mod track_ruts;
@@ -2546,6 +2548,8 @@ impl Default for BlitRect {
 
 pub struct Renderer {
     pub shader_backend: bool,
+    /// The raymarch frame pipeline (`KESSEL_RENDERER=raymarch`); None on the other backends.
+    raymarch: Option<raymarch::Backend>,
     raster_optics: Option<raster_optics::RasterOptics>,
     raster_ssao: Option<raster_ssao::RasterSsao>,
     geometry_aa: Option<renderer_aa::GeometryAa>,
@@ -3573,7 +3577,7 @@ impl Renderer {
         }
         let graphics_preset = crate::graphics::active_preset();
         let shader_backend = crate::graphics::shader_backend_enabled();
-        println!("[renderer] backend={} (ray queries {})", if shader_backend { "shader" } else { "physical" }, if shader_backend { "disabled" } else { "adapter-dependent" });
+        println!("[renderer] backend={} (ray queries {})", if crate::graphics::raymarch_backend_enabled() { "raymarch" } else if shader_backend { "shader" } else { "physical" }, if shader_backend { "disabled" } else { "adapter-dependent" });
         // Until a caller sets an act clock the sky is Stalingrad's solstice noon.
         let default_sky_clock = crate::celestial_sky::SkyClock::for_act(
             1, crate::celestial_sky::ClockPhase::Day);
@@ -5747,6 +5751,8 @@ impl Renderer {
         // Without this call each new game/capture recompiles the large ray-query programs.
         persist_physical_pipeline_cache(pipeline_cache.as_ref(), pipeline_cache_path.as_deref());
 
+        let raymarch = crate::graphics::raymarch_backend_enabled()
+            .then(|| raymarch::Backend::new(device, &material_bgl, &terrain_detail_view, &terrain_detail_sampler, iw, ih));
         Self {
             // Standard stays at the playtested 0.7; [ ] still dials continuously in-game, while
             // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.
@@ -5754,6 +5760,7 @@ impl Renderer {
             ih,
             graphics_preset,
             shader_backend,
+            raymarch,
             raster_optics: shader_backend.then(|| {
                 raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler,
                     &sky_visibility.sampling_bgl, &cabin_shadows.sampling_bgl, &cabin_medium_view)
@@ -7888,6 +7895,10 @@ impl Renderer {
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
         self.prepare_fine_vfx(device, queue);
         self.prepare_weapon_particles(device, queue);
+        if let Some(mut rm) = self.raymarch.take() {
+            rm.prepare(self, device, queue);
+            self.raymarch = Some(rm);
+        }
 
         let m = self.master_retro.clamp(0.0, 1.0);
         // Metered frames receive the eye's mapping from the GPU (copied after this upload). A
@@ -8044,6 +8055,10 @@ impl Renderer {
     }
 
     fn render_internal(&self, encoder: &mut wgpu::CommandEncoder, finish_ldr: bool) {
+        if let Some(rm) = &self.raymarch {
+            rm.encode(self, encoder, finish_ldr);
+            return;
+        }
         let mut work = RenderWorkStats {
             scene_renders: 1,
             ..RenderWorkStats::default()

@@ -17,13 +17,14 @@ pub fn fixed_playtest_graphics() -> bool {
 
 /// Separate rendering architectures, independent of the scene/detail preset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RendererBackend { Physical, Shader }
+pub enum RendererBackend { Physical, Shader, Raymarch }
 
 impl RendererBackend {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "physical" | "legacy" => Some(Self::Physical),
             "shader" | "raster" => Some(Self::Shader),
+            "raymarch" | "rm" => Some(Self::Raymarch),
             _ => None,
         }
     }
@@ -33,12 +34,18 @@ pub fn renderer_backend() -> RendererBackend {
     if fixed_playtest_graphics() { return RendererBackend::Shader; }
     match std::env::var("KESSEL_RENDERER") {
         Ok(value) => RendererBackend::parse(&value)
-            .unwrap_or_else(|| panic!("Unknown KESSEL_RENDERER={value:?}; use shader or physical")),
+            .unwrap_or_else(|| panic!("Unknown KESSEL_RENDERER={value:?}; use shader, raymarch or physical")),
         Err(_) => RendererBackend::Physical,
     }
 }
 
-pub fn shader_backend_enabled() -> bool { renderer_backend() == RendererBackend::Shader }
+/// True for the raster-fed backends (shader and raymarch): the game then supplies the
+/// simulation-owned grains, analytic weapon records and raster optics instead of RT payloads.
+pub fn shader_backend_enabled() -> bool {
+    matches!(renderer_backend(), RendererBackend::Shader | RendererBackend::Raymarch)
+}
+/// The raymarch frame pipeline (src/renderer_raymarch.rs) replaces the shader backend's passes.
+pub fn raymarch_backend_enabled() -> bool { renderer_backend() == RendererBackend::Raymarch }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphicsPreset {

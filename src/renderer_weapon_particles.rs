@@ -17,7 +17,7 @@ pub(super) struct Frame {
 }
 pub(super) struct WeaponParticles {
     layout:wgpu::BindGroupLayout,sparks:wgpu::RenderPipeline,tracers:wgpu::RenderPipeline,
-    bursts:Vec<Record>,segments:Vec<Record>,frames:HashMap<usize,Frame>,
+    pub(super) bursts:Vec<Record>,pub(super) segments:Vec<Record>,frames:HashMap<usize,Frame>,
 }
 fn shader_source()->String {
     let smoke=include_str!("../shaders/stylized_smoke.wgsl");
