@@ -1,0 +1,5 @@
+# Windows gives the main thread a 1 MiB stack by default (Linux: 8 MiB, macOS: 8 MiB). The engine
+# keeps large frame/scene state on the main thread's stack and overflows immediately at the
+# default. Reserve 64 MiB; it is address space only, committed on demand.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:67108864"]
