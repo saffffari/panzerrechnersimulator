@@ -88,22 +88,25 @@ is ~1e-4 W/sr, sunlit snow ~500). A light's own housing is excluded from its sha
 
 ## Measured frame cost (4090, 800x450, `gfxbench` exterior orbit over the Act-I city, 120 frames)
 
+Measured alone on the GPU (concurrent captures inflate every number several times over).
+
 | | ms |
 | --- | --- |
-| wall per frame (render + wait) | 20.3 avg, 17.7 p50, 32.1 p99 |
-| CPU prepare (lights, parcels, embers, binning) | 0.45 |
-| CPU encode (draw submission, 16 scene traversals) | 0.85 |
-| GPU rm-gbuffer | 4.4 |
+| raymarch wall per frame (render + wait) | 10.5 avg, 9.7 p50, 13.9 p99 |
+| shader backend, same bench, msaa4 | 251 avg (its orbit also pays the raster optic tiles) |
+| CPU prepare (lights, parcels, embers, binning) | 0.42 |
+| CPU encode (draw submission, 16 scene traversals) | 0.66 |
 | GPU rm-sky (physical atmosphere at misses) | 4.4 |
-| GPU rm-shadow-far / near / sky-cover | 1.3 / 0.4 / 0.9 |
-| GPU rm-point-face (12 faces) | 0.7 |
-| GPU rm-volume / integrate / shade / reflect / points | 0.31 / 0.04 / 0.07 / 0.02 / 0.01 |
+| GPU rm-gbuffer | 1.35 |
+| GPU rm-shadow-far / near / sky-cover | 0.34 / 0.30 / 0.31 |
+| GPU rm-point-face (12 faces) | 0.14 |
+| GPU rm-volume / integrate / shade / reflect / points | 0.32 / 0.04 / 0.07 / 0.01 / 0.01 |
 
 GPU pass timestamps are the engine's `KESSEL_GPU_PROFILE=1` readback; the compute and fullscreen
 figures are implausibly small next to the raster ones and are quoted as reported, not trusted.
-The largest known costs are the physical sky evaluated per miss pixel and the four extra scene
-traversals for visibility maps; both are first optimization targets (sky at half resolution or
-cached per direction; cascade/cover maps on a cadence).
+The physical sky evaluated per miss pixel is the dominant cost and the first optimization
+target (half resolution or a per-direction cache); the shader-backend figure is this machine's
+first measurement of that bench and is not a tuned baseline.
 
 ## A/B against the shader backend
 
