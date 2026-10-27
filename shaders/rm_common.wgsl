@@ -20,8 +20,8 @@ struct Frame {
     wind: vec4<f32>,              // world wind x, act mood (0 winter..1 spring), z, gust
     shadow_params: vec4<f32>,     // far half m, near half m, far res, near res
     light_count: vec4<f32>,       // n lights, shadowed light A (-1 none), shadowed light B, parcels
+    optic: vec4<f32>,             // optic mask, vertical fov rad, optic blast 0..1, unused
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
-    lights: array<vec4<f32>, 64>, // [pos, source radius], [linear colour, radiant intensity]
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
 };
 @group(0) @binding(0) var<uniform> fr: Frame;
@@ -41,12 +41,25 @@ fn rm_relative_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     let h = fr.inv_view_proj * vec4(ndc, depth, 1.0);
     return h.xyz / h.w;
 }
+// Screen uv (y down) of an eye-relative point; w <= 0 behind the eye.
+fn rm_project(rel: vec3<f32>) -> vec3<f32> {
+    let clip = fr.view_proj * vec4(rel, 1.0);
+    if (clip.w <= 0.0001) { return vec3(0.0, 0.0, -1.0); }
+    let ndc = clip.xy / clip.w;
+    return vec3(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, clip.w);
+}
 // Froxel slices are exponential in radial distance from the eye.
 fn rm_slice(distance_m: f32) -> f32 {
     return log(max(distance_m, fr.vol_range.x) / fr.vol_range.x) / fr.vol_range.z * fr.vol.z;
 }
 fn rm_dist(slice: f32) -> f32 {
     return fr.vol_range.x * exp(slice / fr.vol.z * fr.vol_range.z);
+}
+// Coarse cell (for the binned parcel and light lists) of a screen uv and radial distance.
+fn rm_cell_index(uv: vec2<f32>, distance_m: f32) -> u32 {
+    let c = clamp(vec3<u32>(vec3(uv.x * f32(RM_CELLS.x), uv.y * f32(RM_CELLS.y), rm_slice(distance_m) / fr.vol.z * f32(RM_CELLS.z))),
+        vec3<u32>(0u), RM_CELLS - vec3<u32>(1u));
+    return (c.z * RM_CELLS.y + c.y) * RM_CELLS.x + c.x;
 }
 fn rm_hg(cos_theta: f32, g: f32) -> f32 {
     let gg = g * g;
@@ -87,4 +100,9 @@ fn rm_sky_hemisphere(n: vec3<f32>) -> vec3<f32> {
 }
 fn rm_sky_isotropic() -> vec3<f32> {
     return (fr.sky_zenith.rgb + 2.0 * fr.sky_horizon.rgb + fr.sky_ground.rgb) * 0.25;
+}
+// Blackbody-like colour of hot matter by normalized temperature 0..1 (dull red -> white).
+fn rm_heat_colour(t: f32) -> vec3<f32> {
+    let x = clamp(t, 0.0, 1.0);
+    return vec3(1.0, 0.18 + 0.82 * x * x, 0.02 + 0.98 * pow(x, 4.0));
 }

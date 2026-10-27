@@ -2651,6 +2651,9 @@ pub struct Renderer {
     lights: Vec<PointLight>,
     /// Point lights offered for the latest frame (all of them, before the `N_LIGHTS` budget).
     lights_offered: usize,
+    /// Every offered light (bounded by `raymarch::MAX_SCENE_LIGHTS`); the raymarch backend
+    /// clusters all of them instead of taking the `N_LIGHTS` budget.
+    lights_full: Vec<PointLight>,
     frame: u32,
 
     hdr_view: wgpu::TextureView,
@@ -5820,6 +5823,7 @@ impl Renderer {
             optic_mask: 0.0,
             lights: Vec::new(),
             lights_offered: 0,
+            lights_full: Vec::new(),
             frame: 0,
             hdr_view,
             hdr_tex,
@@ -6430,12 +6434,14 @@ impl Renderer {
     /// lamps). Cleared and refilled by game.rs each frame. If more than N_LIGHTS are
     /// offered, keep those that contribute most at the camera (see `select_point_lights`).
     pub fn extend_lights(&mut self, lights: &[PointLight]) {
-        let combined: Vec<_> = self.lights.iter().chain(lights.iter()).copied().collect();
+        let combined: Vec<_> = self.lights_full.iter().chain(lights.iter()).copied().collect();
         self.set_lights(&combined);
     }
 
     pub fn set_lights(&mut self, lights: &[PointLight]) {
         self.lights_offered = lights.len();
+        self.lights_full.clear();
+        self.lights_full.extend_from_slice(&lights[..lights.len().min(raymarch::MAX_SCENE_LIGHTS)]);
         self.lights = select_point_lights(lights, self.camera.pos, N_LIGHTS);
     }
 

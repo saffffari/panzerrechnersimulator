@@ -1,8 +1,8 @@
 // Raymarch backend deferred lighting. Every pixel is lit once from the G-buffer: key beam through
 // the cascades plus a screen-space ray-marched contact test, skylight through the vertical cover
-// map and ray-marched screen-space occlusion, lamps/fires through their depth faces and the
-// froxel medium, then the integrated froxel in-scatter/transmittance is composited over it.
-// Primary misses take the physical sky already rendered into `sky_tex`.
+// map and ray-marched screen-space occlusion, the clustered lamps/fires/flashes through their depth
+// faces and the froxel medium, then the integrated froxel in-scatter/transmittance is composited
+// over it. Primary misses take the physical sky already rendered into `sky_tex`.
 @group(0) @binding(1) var g0_tex: texture_2d<f32>;
 @group(0) @binding(2) var g1_tex: texture_2d<f32>;
 @group(0) @binding(3) var g2_tex: texture_2d<f32>;
@@ -40,12 +40,10 @@ fn contact_shadow(rel: vec3<f32>, dir: vec3<f32>, reach_m: f32, thickness_m: f32
     for (var i = 1u; i <= steps; i += 1u) {
         let t = (f32(i) - 0.5 + jitter * 0.5) / f32(steps) * reach_m;
         let s = rel + dir * t;
-        let clip = fr.view_proj * vec4(s, 1.0);
-        if (clip.w <= 0.001) { break; }
-        let ndc = clip.xy / clip.w;
-        let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        if (any(uv < vec2(0.0)) || any(uv > vec2(1.0))) { break; }
-        let pixel = vec2<i32>(uv * fr.res.xy);
+        let pr = rm_project(s);
+        if (pr.z <= 0.0) { break; }
+        if (any(pr.xy < vec2(0.0)) || any(pr.xy > vec2(1.0))) { break; }
+        let pixel = vec2<i32>(pr.xy * fr.res.xy);
         let scene = pixel_relative(pixel);
         let gap = length(s) - length(scene);
         if (gap > 0.012 + 0.004 * t && gap < thickness_m) { return 0.0; }
@@ -92,22 +90,18 @@ fn ggx_specular(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: ve
 }
 
 // Optical depth through the froxel medium between a surface point and a lamp.
-fn lamp_tau(rel: vec3<f32>, world: vec3<f32>, light: vec3<f32>) -> f32 {
+fn lamp_tau(world: vec3<f32>, light: vec3<f32>, steps: u32) -> f32 {
     var tau = 0.0;
-    let steps = 4u;
     let seg = (light - world) / f32(steps);
     let seg_len = length(seg);
     for (var i = 0u; i < steps; i += 1u) {
         let s = world + seg * (f32(i) + 0.5);
         let r = s - fr.cam_pos.xyz;
-        let clip = fr.view_proj * vec4(r, 1.0);
-        if (clip.w <= 0.001) { tau += rm_extinction_at(s) * seg_len; continue; }
-        let ndc = clip.xy / clip.w;
-        let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        if (any(uv < vec2(0.0)) || any(uv > vec2(1.0))) { tau += rm_extinction_at(s) * seg_len; continue; }
+        let pr = rm_project(r);
+        if (pr.z <= 0.0 || any(pr.xy < vec2(0.0)) || any(pr.xy > vec2(1.0))) { tau += rm_extinction_at(s) * seg_len; continue; }
         let slice = rm_slice(length(r));
         if (slice >= fr.vol.z) { tau += rm_extinction_at(s) * seg_len; continue; }
-        tau += textureSampleLevel(scatter, linear_samp, vec3(uv, slice / fr.vol.z), 0.0).a * seg_len;
+        tau += textureSampleLevel(scatter, linear_samp, vec3(pr.xy, slice / fr.vol.z), 0.0).a * seg_len;
     }
     return tau;
 }
@@ -187,26 +181,20 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let sky_vis = rm_sky_visibility(world, select(0.05, 0.4, terrain));
         let ambient = rm_sky_hemisphere(n) * mix(0.10, 1.0, sky_vis) * ao;
         color += diffuse * RM_PI * ambient;
-        color += f0 * ambient * (1.0 - roughness) * 0.35;
-        // Lamps, fires, flashes.
-        let n_lights = u32(fr.light_count.x);
-        for (var i = 0u; i < n_lights; i += 1u) {
-            let l = fr.lights[i * 2u];
-            let c = fr.lights[i * 2u + 1u];
-            let dv = l.xyz - world;
-            let dist2 = dot(dv, dv);
-            let r2 = max(dist2, l.w * l.w);
-            let e = c.rgb * c.w / r2;
-            if (max(e.r, max(e.g, e.b)) < 0.0015) { continue; }
-            let ldist = sqrt(dist2);
-            let ldir = dv / max(ldist, 0.001);
-            let ndl = dot(n, ldir);
-            if (ndl <= 0.0) { continue; }
-            var vis = rm_light_visibility(i, world, 0.02 + 0.03 * (1.0 - ndl));
+        // Lamps, fires, flashes: the lights binned into this pixel's cell.
+        let cell = rm_cell_index(in.uv, dist);
+        let lstart = light_cell_start[cell];
+        let lend = light_cell_start[cell + 1u];
+        for (var i = lstart; i < lend; i += 1u) {
+            let index = light_cell_items[i];
+            let s = rm_light_sample(index, world);
+            let ndl = dot(n, s.dir);
+            if (ndl <= 0.0 || max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }
+            var vis = rm_light_visibility(index, world, 0.02 + 0.03 * (1.0 - ndl));
             if (vis <= 0.001) { continue; }
-            vis *= mix(0.3, 1.0, contact_shadow(rel, ldir, min(0.3, ldist * 0.5), 0.12, jitter));
-            let tau = lamp_tau(rel, world, l.xyz);
-            color += (diffuse + ggx_specular(n, v, ldir, roughness, f0)) * e * ndl * vis * exp(-tau);
+            vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, jitter));
+            let tau = lamp_tau(world, lights[index].a.xyz, 4u);
+            color += (diffuse + ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
         }
         color += g2.rgb;
     }

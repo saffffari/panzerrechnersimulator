@@ -1,5 +1,6 @@
 // Raymarch backend visibility set (group 1): depth maps rendered from the actual scene geometry
-// each frame. Every pass that asks "can this point see that source" reads these.
+// each frame, and the clustered light list. Every pass that asks "can this point see that
+// source" reads these.
 struct ShadowViews { vp: array<mat4x4<f32>, 16>, };
 // 0 far sun cascade, 1 near sun cascade, 2 sky cover (orthographic, looking down),
 // 3.. point-light faces (+X -X +Y -Y +Z -Z for shadowed light A, then B).
@@ -9,6 +10,12 @@ struct ShadowViews { vp: array<mat4x4<f32>, 16>, };
 @group(1) @binding(3) var shadow_cmp: sampler_comparison;   // LessEqual: 1 = unoccluded
 @group(1) @binding(4) var sky_cover: texture_depth_2d;
 @group(1) @binding(5) var point_faces: texture_depth_2d_array;
+// a: position xyz, source radius   b: linear colour, radiant intensity
+// c: gather range m, shadow slot (-1 none), kind (0 scene, 1 burst, 2 tracer)
+struct Light { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, };
+@group(1) @binding(6) var<storage, read> lights: array<Light>;
+@group(1) @binding(7) var<storage, read> light_cell_start: array<u32>;
+@group(1) @binding(8) var<storage, read> light_cell_items: array<u32>;
 
 fn rm_shadow_uv(clip: vec4<f32>) -> vec3<f32> {
     let p = clip.xyz / clip.w;
@@ -74,7 +81,7 @@ fn rm_point_visibility(slot: u32, world: vec3<f32>, bias_m: f32) -> f32 {
     let light = fr.pshadow[slot];
     let to_point = world - light.xyz;
     let dist = length(to_point);
-    if (dist >= light.w) { return 0.0; }
+    if (dist >= light.w) { return 1.0; }
     let face = rm_cube_face(to_point);
     let layer = slot * 6u + face;
     let p = world - normalize(to_point) * bias_m;
@@ -90,7 +97,21 @@ fn rm_point_visibility(slot: u32, world: vec3<f32>, bias_m: f32) -> f32 {
     return sum / 9.0;
 }
 fn rm_light_visibility(index: u32, world: vec3<f32>, bias_m: f32) -> f32 {
-    if (u32(fr.light_count.y) == index && fr.light_count.y >= 0.0) { return rm_point_visibility(0u, world, bias_m); }
-    if (u32(fr.light_count.z) == index && fr.light_count.z >= 0.0) { return rm_point_visibility(1u, world, bias_m); }
-    return 1.0;
+    let slot = lights[index].c.y;
+    if (slot < -0.5) { return 1.0; }
+    return rm_point_visibility(u32(slot), world, bias_m);
+}
+// Irradiance of light `index` at a world point (inverse square, regularized by the source
+// radius), and the unit direction toward it. Zero outside its gather range.
+struct LightSample { e: vec3<f32>, dir: vec3<f32>, dist: f32, };
+fn rm_light_sample(index: u32, world: vec3<f32>) -> LightSample {
+    let l = lights[index];
+    let dv = l.a.xyz - world;
+    let dist2 = dot(dv, dv);
+    let dist = sqrt(dist2);
+    if (dist >= l.c.x) { return LightSample(vec3(0.0), vec3(0.0, 1.0, 0.0), dist); }
+    let r2 = max(dist2, l.a.w * l.a.w);
+    // Smooth cut at the gather range so clustered cells never show a seam.
+    let window = 1.0 - smoothstep(0.7, 1.0, dist / l.c.x);
+    return LightSample(l.b.rgb * l.b.w / r2 * window, dv / max(dist, 0.0005), dist);
 }
