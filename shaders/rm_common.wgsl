@@ -20,7 +20,10 @@ struct Frame {
     wind: vec4<f32>,              // world wind x, act mood (0 winter..1 spring), z, gust
     shadow_params: vec4<f32>,     // far half m, near half m, far res, near res
     light_count: vec4<f32>,       // n lights, shadowed light A (-1 none), shadowed light B, parcels
-    optic: vec4<f32>,             // optic mask, vertical fov rad, optic blast 0..1, unused
+    optic: vec4<f32>,             // optic mask, vertical fov rad, optic blast 0..1, key disc angular radius rad
+    secondary_dir: vec4<f32>,     // xyz to the secondary body, w its angular radius rad
+    secondary_radiance: vec4<f32>,// rgb secondary irradiance at the eye through the air, w present
+    sky_cache: vec4<f32>,         // elevation min rad, elevation span rad, width, height
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
 };
@@ -100,6 +103,43 @@ fn rm_sky_hemisphere(n: vec3<f32>) -> vec3<f32> {
 }
 fn rm_sky_isotropic() -> vec3<f32> {
     return (fr.sky_zenith.rgb + 2.0 * fr.sky_horizon.rgb + fr.sky_ground.rgb) * 0.25;
+}
+// Equirectangular sky-cache coordinates of a direction (azimuth across, elevation down from the
+// zenith; the cache window is fr.sky_cache.xy).
+fn rm_sky_cache_uv(dir: vec3<f32>) -> vec2<f32> {
+    let azimuth = atan2(dir.x, dir.z);
+    let elevation = asin(clamp(dir.y, -1.0, 1.0));
+    return vec2(azimuth / (2.0 * RM_PI) + 0.5, 1.0 - clamp((elevation - fr.sky_cache.x) / fr.sky_cache.y, 0.0, 1.0));
+}
+// Radiance of the finite discs (key body, secondary body) seen directly along `dir`, before any
+// cloud: the irradiance each delivers through the air divided by its solid angle. The sky cache's
+// alpha (cloud transmittance) multiplies this at the sampler.
+fn rm_sky_discs(dir: vec3<f32>) -> vec3<f32> {
+    var radiance = vec3(0.0);
+    if (dir.y > -0.002) {
+        if (fr.sun_radiance.w > 0.5 && dot(dir, fr.sun_dir.xyz) >= cos(fr.optic.w)) {
+            radiance += fr.sun_radiance.rgb / max(2.0 * RM_PI * (1.0 - cos(fr.optic.w)), 1.0e-12);
+        }
+        if (fr.secondary_radiance.w > 0.5 && dot(dir, fr.secondary_dir.xyz) >= cos(fr.secondary_dir.w)) {
+            radiance += fr.secondary_radiance.rgb / max(2.0 * RM_PI * (1.0 - cos(fr.secondary_dir.w)), 1.0e-12);
+        }
+    }
+    return radiance;
+}
+// GGX/Smith specular lobe with Schlick Fresnel.
+fn rm_ggx_specular(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
+    let h = normalize(v + l);
+    let ndh = max(dot(n, h), 0.0);
+    let ndv = max(dot(n, v), 0.001);
+    let ndl = max(dot(n, l), 0.001);
+    let a = max(roughness * roughness, 0.002);
+    let a2 = a * a;
+    let denom = ndh * ndh * (a2 - 1.0) + 1.0;
+    let d = a2 / (RM_PI * denom * denom);
+    let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+    let g = (ndv / (ndv * (1.0 - k) + k)) * (ndl / (ndl * (1.0 - k) + k));
+    let f = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
+    return d * g * f / (4.0 * ndv * ndl);
 }
 // Blackbody-like colour of hot matter by normalized temperature 0..1 (dull red -> white).
 fn rm_heat_colour(t: f32) -> vec3<f32> {

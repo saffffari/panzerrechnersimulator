@@ -16,6 +16,19 @@ struct Light { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, };
 @group(1) @binding(6) var<storage, read> lights: array<Light>;
 @group(1) @binding(7) var<storage, read> light_cell_start: array<u32>;
 @group(1) @binding(8) var<storage, read> light_cell_items: array<u32>;
+// The cached physical sky by direction (rm_sky_cache.wgsl): rgb radiance of air, clouds and
+// stars, a = cloud transmittance toward the finite discs.
+@group(1) @binding(9) var sky_cache_tex: texture_2d<f32>;
+@group(1) @binding(10) var sky_cache_samp: sampler;
+
+fn rm_sky_background(dir: vec3<f32>) -> vec4<f32> {
+    return textureSampleLevel(sky_cache_tex, sky_cache_samp, rm_sky_cache_uv(dir), 0.0);
+}
+// What a primary miss sees: the cached sky plus the discs through its cloud transmittance.
+fn rm_sky_radiance(dir: vec3<f32>) -> vec3<f32> {
+    let cached = rm_sky_background(dir);
+    return cached.rgb + rm_sky_discs(dir) * cached.a;
+}
 
 fn rm_shadow_uv(clip: vec4<f32>) -> vec3<f32> {
     let p = clip.xyz / clip.w;

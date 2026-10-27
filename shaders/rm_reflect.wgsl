@@ -1,6 +1,6 @@
 // Raymarch backend reflections: for glossy and metallic surfaces the reflected eye ray is marched
 // through the depth buffer; where it lands on rendered geometry the lit frame there is reflected,
-// where it leaves the screen or misses, the sky hemisphere stands in. Fresnel-weighted and
+// where it leaves the screen or misses, the cached sky (or the sky bands) stands in. Fresnel-weighted and
 // roughness-faded; the reflection is attenuated by the froxel medium like any other radiance.
 @group(0) @binding(1) var lit_tex: texture_2d<f32>;
 @group(0) @binding(2) var g0_tex: texture_2d<f32>;
@@ -86,7 +86,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let wobble = (vec3(rm_hash01(u32(pixel.x) * 7919u + u32(fr.vol.w)), rm_hash01(u32(pixel.y) * 104729u + u32(fr.vol.w)), jitter) - vec3(0.5)) * roughness * 0.6;
     let dir = normalize(r + wobble);
     let hit = march_reflection(rel, dir, roughness, jitter);
-    let fallback = rm_sky_hemisphere(dir) * 0.8;
+    // Off-screen: the mean sky bands, and the cached sky itself where the ray climbs clear of
+    // the horizon (clouds in puddles and on wet steel).
+    var fallback = rm_sky_hemisphere(dir) * 0.8;
+    if (dir.y > 0.0) { fallback = mix(fallback, rm_sky_background(dir).rgb, smoothstep(0.0, 0.25, dir.y)); }
     let reflected = mix(fallback, hit.colour, hit.weight);
     // The medium between the eye and this surface already attenuates `lit`; apply the same to
     // the reflected term so a distant wet deck in fog does not pop.

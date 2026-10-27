@@ -8,8 +8,9 @@
 //! crush). Every pass between the scene and the display stage is its own program:
 //!
 //!   depth maps  -> G-buffer -> froxel media lighting (compute) -> integration (compute)
-//!   -> deferred shade + fog composite -> screen-space marched reflections -> HDR one-pixel
-//!   snow/dust/embers -> HDR sparks/tracers -> optic glass -> exposure -> bloom -> crush -> ldr
+//!   -> deferred shade + fog composite -> screen-space marched reflections -> glass panes
+//!   -> HDR one-pixel snow/dust/embers -> HDR sparks/tracers -> optic glass -> exposure -> bloom
+//!   -> crush -> ldr. The physical sky is cached by direction (one refresh phase per frame).
 use super::*;
 use glam::{Mat4, Vec3};
 use std::collections::HashMap;
@@ -38,6 +39,13 @@ const POINT_FACE_RES: u32 = 256;
 const POINT_SHADOWS: usize = 2;
 const SHADOW_VIEWS: usize = 16;
 const PUFF_LANES: usize = 13 * 3;
+/// Direction-indexed sky cache (rm_sky_cache.wgsl): equirectangular, this many texels across the
+/// full azimuth, 3/8 as many down the elevation window below. `KESSEL_RM_SKY=width[,phases]`
+/// overrides; `phases` is how many frames one full refresh takes (a 2-row x N/2-column pattern).
+const SKY_CACHE_WIDTH: u32 = 1024;
+const SKY_CACHE_PHASES: u32 = 8;
+const SKY_CACHE_ELEVATION_MIN_RAD: f32 = -20.0 * std::f32::consts::PI / 180.0;
+const SKY_CACHE_ELEVATION_SPAN_RAD: f32 = 110.0 * std::f32::consts::PI / 180.0;
 /// Irradiance below which a light stops being gathered, in the renderer's radiometric scale
 /// (a cabin lamp is ~1e-4 W/sr; moonlit snow ~1e-3).
 const LIGHT_CUTOFF_IRRADIANCE: f32 = 2.0e-7;
@@ -65,9 +73,17 @@ struct FrameUniform {
     shadow_params: [f32; 4],
     light_count: [f32; 4],
     optic: [f32; 4],
+    secondary_dir: [f32; 4],
+    secondary_radiance: [f32; 4],
+    sky_cache: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
 }
+
+/// Sky cache refresh parameters (rm_sky_cache.wgsl `SkyCacheParams`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct SkyCacheUniform { dims: [f32; 4], window: [f32; 4] }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -113,6 +129,9 @@ pub struct Stats {
     pub shadowed_lights: usize,
     pub spark_records: usize,
     pub tracer_records: usize,
+    pub panes: usize,
+    /// Sky cache phase refreshed this frame (= phase count on a full refresh).
+    pub sky_phase: u32,
     pub history_valid: bool,
     pub prepare_ms: f32,
     pub encode_ms: f32,
@@ -148,7 +167,15 @@ pub(super) struct Backend {
     g0: Target,
     g1: Target,
     g2: Target,
-    sky: Target,
+    sky_cache: Target,
+    sky_cache_size: [u32; 2],
+    sky_cache_phases: u32,
+    sky_cache_buf: wgpu::Buffer,
+    sky_cache_bind: wgpu::BindGroup,
+    sky_cache_pipe: wgpu::RenderPipeline,
+    /// Phase refreshed this frame; `sky_cache_phases` means every texel (a sky jump).
+    sky_phase: u32,
+    prev_sky_key: Option<(Vec3, f32, f32)>,
     scratch: Target,
     shadow_far: Target,
     shadow_near: Target,
@@ -159,6 +186,7 @@ pub(super) struct Backend {
     scatter: [Target; 2],
     integrated: Target,
     linear_sampler: wgpu::Sampler,
+    sky_sampler: wgpu::Sampler,
     cmp_sampler: wgpu::Sampler,
     depth_bgl: wgpu::BindGroupLayout,
     gbuffer_bind: wgpu::BindGroup,
@@ -170,6 +198,8 @@ pub(super) struct Backend {
     post_bgl: wgpu::BindGroupLayout,
     depth_pipe: wgpu::RenderPipeline,
     depth_inst_pipe: wgpu::RenderPipeline,
+    depth_grass_pipe: wgpu::RenderPipeline,
+    glass_pipe: wgpu::RenderPipeline,
     gbuffer_pipe: wgpu::RenderPipeline,
     gbuffer_inst_pipe: wgpu::RenderPipeline,
     volume_pipe: wgpu::ComputePipeline,
@@ -197,12 +227,14 @@ pub(super) struct Backend {
     light_cell_items: Vec<u32>,
     weapon_draws: Vec<(u32, u32)>,
     tracer_range: (u32, u32),
+    /// Visible glass panes this frame, back to front.
+    panes: Vec<usize>,
     optic_active: bool,
     pub stats: Stats,
     encode_ms: Cell<f32>,
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
-    /// parcels, 256 burst parcels, 512 grain parcels.
+    /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes.
     debug_skip: u32,
 }
 
@@ -298,6 +330,9 @@ fn rm_source(name: &str) -> String {
         "rm_lens.wgsl" => include_str!("../shaders/rm_lens.wgsl"),
         "rm_points.wgsl" => include_str!("../shaders/rm_points.wgsl"),
         "rm_sparks.wgsl" => include_str!("../shaders/rm_sparks.wgsl"),
+        "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
+        "rm_sky_cache.wgsl" => include_str!("../shaders/rm_sky_cache.wgsl"),
+        "sky.wgsl" => include_str!("../shaders/sky.wgsl"),
         "terrain_material.wgsl" => include_str!("../shaders/terrain_material.wgsl"),
         _ => panic!("unknown raymarch shader {name}"),
     };
@@ -396,10 +431,19 @@ fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
 
 impl Backend {
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout,
-        terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler, iw: u32, ih: u32) -> Self {
+        terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
+        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32) -> Self {
         let vol = [iw.div_ceil(VOL_DIVISOR).max(8), ih.div_ceil(VOL_DIVISOR).max(8), VOL_SLICES];
-        println!("[raymarch] froxel grid {}x{}x{} over {:.2}..{:.0} m; cascades {}/{} px, sky cover {} px, {} point-light cubes {} px, {} clustered lights",
-            vol[0], vol[1], vol[2], VOL_NEAR_M, VOL_FAR_M, SHADOW_FAR_RES, SHADOW_NEAR_RES, SKY_COVER_RES, POINT_SHADOWS, POINT_FACE_RES, MAX_LIGHTS);
+        let (sky_cache_size, sky_cache_phases) = {
+            let spec = std::env::var("KESSEL_RM_SKY").ok();
+            let mut parts = spec.as_deref().unwrap_or("").split(',');
+            let width = parts.next().and_then(|v| v.trim().parse::<u32>().ok()).filter(|w| *w >= 64).unwrap_or(SKY_CACHE_WIDTH);
+            let phases = parts.next().and_then(|v| v.trim().parse::<u32>().ok()).filter(|p| (1..=16).contains(p)).unwrap_or(SKY_CACHE_PHASES);
+            ([width, (width * 3 / 8).max(32)], phases)
+        };
+        println!("[raymarch] froxel grid {}x{}x{} over {:.2}..{:.0} m; cascades {}/{} px, sky cover {} px, {} point-light cubes {} px, {} clustered lights, sky cache {}x{} in {} phases",
+            vol[0], vol[1], vol[2], VOL_NEAR_M, VOL_FAR_M, SHADOW_FAR_RES, SHADOW_NEAR_RES, SKY_COVER_RES, POINT_SHADOWS, POINT_FACE_RES, MAX_LIGHTS,
+            sky_cache_size[0], sky_cache_size[1], sky_cache_phases);
         let uniform = |label: &str, size: u64| device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label), size, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
         });
@@ -410,6 +454,7 @@ impl Backend {
             label: Some(label), size, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
         });
         let frame_buf = uniform("rm-frame", std::mem::size_of::<FrameUniform>() as u64);
+        let sky_cache_buf = uniform("rm-sky-cache-params", std::mem::size_of::<SkyCacheUniform>() as u64);
         let shadow_views_buf = uniform("rm-shadow-views", std::mem::size_of::<ShadowViewsUniform>() as u64);
         let parcels_buf = storage("rm-parcels", (MAX_PARCELS * std::mem::size_of::<Parcel>()) as u64);
         let cell_start_buf = storage("rm-cell-start", ((CELL_COUNT + 1) * 4) as u64);
@@ -423,7 +468,7 @@ impl Backend {
         let g0 = target(device, "rm-g0-albedo", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g1 = target(device, "rm-g1-normal", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g2 = target(device, "rm-g2-emission", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
-        let sky = target(device, "rm-sky", iw, ih, hdr_format(), gusage);
+        let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], wgpu::TextureFormat::Rgba16Float, gusage);
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let shadow_far = depth_target(device, "rm-shadow-far", SHADOW_FAR_RES);
         let shadow_near = depth_target(device, "rm-shadow-near", SHADOW_NEAR_RES);
@@ -444,6 +489,12 @@ impl Backend {
         let integrated = volume_target(device, "rm-integrated", vol);
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rm-linear"), address_mode_u: wgpu::AddressMode::ClampToEdge, address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge, mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest, ..Default::default()
+        });
+        // Azimuth wraps; elevation clamps to the window's rows.
+        let sky_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("rm-sky-cache"), address_mode_u: wgpu::AddressMode::Repeat, address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge, mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest, ..Default::default()
         });
@@ -478,6 +529,8 @@ impl Backend {
                 depth_tex(4, vis_stages, wgpu::TextureViewDimension::D2),
                 depth_tex(5, vis_stages, wgpu::TextureViewDimension::D2Array),
                 readonly_storage(6, vis_stages), readonly_storage(7, vis_stages), readonly_storage(8, vis_stages),
+                tex2d_entry(9, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
+                sampler_filtering(10, vis_stages),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -492,7 +545,7 @@ impl Backend {
         let shade_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-shade-bgl"), entries: &[
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT), float_tex_unfiltered(3, S::FRAGMENT),
-                depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2), float_tex_unfiltered(5, S::FRAGMENT),
+                depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT),
             ],
         });
@@ -531,6 +584,19 @@ impl Backend {
         });
         let depth_pipe = depth_pipeline("rm-depth", "vs", std::slice::from_ref(&vertex_layout));
         let depth_inst_pipe = depth_pipeline("rm-depth-inst", "vs_inst", &[vertex_layout.clone(), inst_layout.clone()]);
+        // Grass cards: alpha-tested against their source texture, wind-bent like the G-buffer.
+        let depth_grass_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-depth-grass-pl"), bind_group_layouts: &[&depth_bgl, material_bgl], push_constant_ranges: &[push_range(S::VERTEX)],
+        });
+        let depth_grass_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-depth-grass"), layout: Some(&depth_grass_pl),
+            vertex: wgpu::VertexState { module: &depth_shader, entry_point: Some("vs_grass"), buffers: &[vertex_layout.clone(), inst_layout.clone()], compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Less, wgpu::DepthBiasState { constant: 1, slope_scale: 1.5, clamp: 0.0 })),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &depth_shader, entry_point: Some("fs_grass"), targets: &[], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
 
         // G-buffer.
         let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_gbuffer.wgsl"]);
@@ -582,12 +648,53 @@ impl Backend {
         });
         let shade_pipe = fullscreen("rm-shade", &shade_shader, &shade_pl);
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rm-post-pl"), bind_group_layouts: &[&post_bgl], push_constant_ranges: &[],
+            label: Some("rm-post-pl"), bind_group_layouts: &[&post_bgl, &visibility_bgl], push_constant_ranges: &[],
         });
-        let reflect_shader = rm_shader(device, "rm-reflect", &["rm_common.wgsl", "rm_reflect.wgsl"]);
+        let reflect_shader = rm_shader(device, "rm-reflect", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_reflect.wgsl"]);
         let reflect_pipe = fullscreen("rm-reflect", &reflect_shader, &post_pl);
         let lens_shader = rm_shader(device, "rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]);
         let lens_pipe = fullscreen("rm-lens", &lens_shader, &post_pl);
+
+        // Glass panes: forward over the lit frame, depth-tested, premultiplied.
+        let glass_shader = rm_shader(device, "rm-glass", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_glass.wgsl"]);
+        let glass_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-glass-pl"), bind_group_layouts: &[&post_bgl, &visibility_bgl, material_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
+        });
+        let glass_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-glass"), layout: Some(&glass_pl),
+            vertex: wgpu::VertexState { module: &glass_shader, entry_point: Some("vs"), buffers: std::slice::from_ref(&vertex_layout), compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(depth_state(false, wgpu::CompareFunction::LessEqual, Default::default())),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &glass_shader, entry_point: Some("fs"), targets: &[Some(wgpu::ColorTargetState {
+                format: hdr_format(), blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
+
+        // The sky cache: the shared atmosphere module with a by-direction entry point, bound like
+        // the renderer's own sky pass (camera, physical environment) plus the cache window.
+        let sky_cache_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-sky-cache-bgl"), entries: &[uniform_entry(0, S::FRAGMENT)],
+        });
+        let sky_cache_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-sky-cache"), layout: &sky_cache_bgl, entries: &[entry(0, sky_cache_buf.as_entire_binding())],
+        });
+        let sky_cache_source = physical_atmosphere_transport_shader_source(&format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_sky_cache.wgsl")));
+        let sky_cache_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rm-sky-cache"), source: wgpu::ShaderSource::Wgsl(sky_cache_source.into()),
+        });
+        let sky_cache_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-sky-cache-pl"),
+            bind_group_layouts: &[&sky_pipe.get_bind_group_layout(0), &sky_pipe.get_bind_group_layout(1), &sky_cache_bgl],
+            push_constant_ranges: &[],
+        });
+        let sky_cache_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-sky-cache"), layout: Some(&sky_cache_pl),
+            vertex: wgpu::VertexState { module: &sky_cache_shader, entry_point: Some("vs_cache"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &sky_cache_shader, entry_point: Some("fs_cache"), targets: &[Some(color_target(wgpu::TextureFormat::Rgba16Float))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
 
         // HDR one-pixel particles and ballistic emitters.
         let premultiplied = Some(wgpu::ColorTargetState { format: hdr_format(), blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL });
@@ -620,17 +727,19 @@ impl Backend {
         Self {
             iw, ih, vol, frame_buf, shadow_views_buf, parcels_buf, cell_start_buf, cell_items_buf,
             lights_buf, light_cell_start_buf, light_cell_items_buf, weapon_buf, ember_buf,
-            g0, g1, g2, sky, scratch, shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
+            g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
+            sky_phase: 0, prev_sky_key: None, sky_sampler,
+            scratch, shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             scatter, integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
-            depth_pipe, depth_inst_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
+            depth_pipe, depth_inst_pipe, depth_grass_pipe, glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
             binds: None, flip: 0, prev_camera: None, history_valid: false,
             shadow_views: [Mat4::IDENTITY; SHADOW_VIEWS], shadowed: [None; POINT_SHADOWS],
             lights: Vec::with_capacity(MAX_LIGHTS), parcels: Vec::with_capacity(MAX_PARCELS), embers: Vec::with_capacity(MAX_EMBERS),
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
             light_pairs: Vec::new(), light_cell_start: vec![0; CELL_COUNT + 1], light_cell_items: Vec::new(),
-            weapon_draws: Vec::new(), tracer_range: (0, 0), optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
+            weapon_draws: Vec::new(), tracer_range: (0, 0), panes: Vec::new(), optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
             debug_skip: std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
         }
     }
@@ -651,6 +760,8 @@ impl Backend {
                 entry(6, self.lights_buf.as_entire_binding()),
                 entry(7, self.light_cell_start_buf.as_entire_binding()),
                 entry(8, self.light_cell_items_buf.as_entire_binding()),
+                entry(9, wgpu::BindingResource::TextureView(&self.sky_cache.view)),
+                entry(10, wgpu::BindingResource::Sampler(&self.sky_sampler)),
             ],
         });
         let volume = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -676,7 +787,6 @@ impl Backend {
                 entry(2, wgpu::BindingResource::TextureView(&self.g1.view)),
                 entry(3, wgpu::BindingResource::TextureView(&self.g2.view)),
                 entry(4, wgpu::BindingResource::TextureView(&r.depth_view)),
-                entry(5, wgpu::BindingResource::TextureView(&self.sky.view)),
                 entry(6, wgpu::BindingResource::TextureView(&self.integrated.view)),
                 entry(7, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
                 entry(8, wgpu::BindingResource::Sampler(&self.linear_sampler)),
@@ -737,6 +847,26 @@ impl Backend {
         let sun_radiance = if beam_on {
             atmosphere.solar_irradiance * physical_environment::solar_transmittance_at(&atmosphere, origin, sun_dir.as_dvec3(), quality.source_steps.max(4))
         } else { glam::DVec3::ZERO };
+        // The secondary body (the Moon by day, the Sun's glow below the horizon handled by the
+        // transport itself): its disc is drawn analytically from the irradiance through the air.
+        let secondary_dir = atmosphere.secondary_direction.normalize_or_zero();
+        let secondary_on = atmosphere.secondary_irradiance.max_element() > 0.0 && secondary_dir.length_squared() > 0.5 && secondary_dir.y > -0.02;
+        let secondary_radiance = if secondary_on {
+            atmosphere.secondary_irradiance * physical_environment::solar_transmittance_at(&atmosphere, origin, secondary_dir, quality.source_steps.max(4))
+        } else { glam::DVec3::ZERO };
+        // Sky cache refresh: one phase of the texel pattern per frame; every texel after a jump
+        // of the key body or the weather (a time-of-day cut, a capture's weather override).
+        let jumped = match self.prev_sky_key {
+            Some((p_sun, p_overcast, p_storm)) => p_sun.dot(sun_dir) < 0.99996 || (p_overcast - r.overcast).abs() > 0.02 || (p_storm - r.storm).abs() > 0.02,
+            None => true,
+        };
+        self.prev_sky_key = Some((sun_dir, r.overcast, r.storm));
+        self.sky_phase = if jumped { self.sky_cache_phases } else { (r.frame as u32) % self.sky_cache_phases };
+        let (sky_w, sky_h) = (self.sky_cache_size[0] as f32, self.sky_cache_size[1] as f32);
+        queue.write_buffer(&self.sky_cache_buf, 0, bytemuck::bytes_of(&SkyCacheUniform {
+            dims: [sky_w, sky_h, 1.0 / sky_w, 1.0 / sky_h],
+            window: [SKY_CACHE_ELEVATION_MIN_RAD, SKY_CACHE_ELEVATION_SPAN_RAD, self.sky_phase as f32, self.sky_cache_phases as f32],
+        }));
         let sample_sky = |dir: glam::DVec3| physical_environment::integrate_environment(&atmosphere, origin, dir, f64::INFINITY, quality).inscattered_radiance;
         let mut zenith = sample_sky(glam::DVec3::Y);
         for i in 0..4 {
@@ -791,6 +921,18 @@ impl Backend {
         self.collect_weapon_records(r, queue, rel_vp, eye);
         // The optic glass pass runs for the gunner's sight and the binoculars.
         self.optic_active = (r.optic_mask - 1.0).abs() < 0.5 || (r.optic_mask - 3.0).abs() < 0.5;
+        // Glass panes in view, sorted back to front for the forward pass.
+        let planes = frustum_planes(r.camera.view_proj());
+        let mut panes: Vec<(f32, usize)> = r.meshes.iter().enumerate().filter_map(|(i, m)| {
+            if !m.visible || !m.glass || (r.optic_hide_pass && m.optic_hidden) { return None; }
+            if !aabb_in_frustum(&planes, m.world_min, m.world_max) { return None; }
+            let center = (m.world_min + m.world_max) * 0.5;
+            Some(((center - eye).length_squared(), i))
+        }).collect();
+        panes.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        self.panes.clear();
+        self.panes.extend(panes.iter().map(|&(_, i)| i));
+        self.stats.panes = self.panes.len();
 
         let frame = FrameUniform {
             view_proj: rel_vp.to_cols_array_2d(),
@@ -811,12 +953,16 @@ impl Backend {
             wind: [wind.x, r.atmosphere_mood.clamp(0.0, 1.0), wind.y, gust],
             shadow_params: [SOLO_SHADOW_HALF_M, near_half, SHADOW_FAR_RES as f32, SHADOW_NEAR_RES as f32],
             light_count: [self.lights.len() as f32, self.shadowed[0].map_or(-1.0, |i| i as f32), self.shadowed[1].map_or(-1.0, |i| i as f32), self.parcels.len() as f32],
-            optic: [r.optic_mask, r.camera.fov_y, r.optic_blast.clamp(0.0, 1.0), 0.0],
+            optic: [r.optic_mask, r.camera.fov_y, r.optic_blast.clamp(0.0, 1.0), atmosphere.sun_angular_radius_rad as f32],
+            secondary_dir: [secondary_dir.x as f32, secondary_dir.y as f32, secondary_dir.z as f32, atmosphere.secondary_angular_radius_rad as f32],
+            secondary_radiance: [secondary_radiance.x as f32, secondary_radiance.y as f32, secondary_radiance.z as f32, if secondary_on { 1.0 } else { 0.0 }],
+            sky_cache: [SKY_CACHE_ELEVATION_MIN_RAD, SKY_CACHE_ELEVATION_SPAN_RAD, sky_w, sky_h],
             pshadow,
             puffs,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
+        self.stats.sky_phase = self.sky_phase;
         self.stats.history_valid = valid;
         self.stats.prepare_ms = started.elapsed().as_secs_f32() * 1000.0;
         self.stats.encode_ms = self.encode_ms.get();
@@ -1218,21 +1364,30 @@ impl Backend {
         let visible = r.inst_spatial_index.query(vp);
         let stages = if shadow { wgpu::ShaderStages::VERTEX } else { wgpu::ShaderStages::VERTEX_FRAGMENT };
         pass.set_pipeline(inst_pipe);
+        let mut grass_bound = false;
         for &batch in &visible.batches {
             let b = &r.inst_batches[batch];
             if b.inst_count == 0 { continue; }
             let flags = b.flags;
             // Smoke cubes, flame and soot grains are media here; glass sheen panes are open.
             if flags < -0.5 || (flags > 4.5 && flags < 6.5) || flags > 7.5 { continue; }
-            if shadow && (flags > 3.5 || b.raster_only_dynamic) { continue; }
+            if shadow && b.raster_only_dynamic { continue; }
+            // Grass casts into the near cascade, the sky cover and the point-light faces through
+            // the alpha-tested program; the far cascade's texels are coarser than a blade.
+            let grass_depth = shadow && flags > 3.5 && flags < 4.5;
+            if grass_depth && view_index < 0.5 { continue; }
             if encloses(b.world_min, b.world_max) && b.inst_count <= 4 { continue; }
             let p = &r.inst_prototypes[b.prototype];
+            if grass_depth != grass_bound {
+                pass.set_pipeline(if grass_depth { &self.depth_grass_pipe } else { inst_pipe });
+                grass_bound = grass_depth;
+            }
             let push = Push {
                 model: Mat4::IDENTITY.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor, if flags > 3.5 { 4.0 } else { 0.0 }] },
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
-            if !shadow { pass.set_bind_group(1, p.tex_bind.as_ref(), &[]); }
+            if !shadow || grass_depth { pass.set_bind_group(1, p.tex_bind.as_ref(), &[]); }
             pass.set_vertex_buffer(0, p.vbuf.slice(..));
             pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
             pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
@@ -1281,6 +1436,7 @@ impl Backend {
 
     /// A post pass over the lit HDR frame: copy it into `scratch`, then write the result back.
     fn post_pass(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, label: &str, pipe: &wgpu::RenderPipeline, bind: &wgpu::BindGroup, work: &mut RenderWorkStats) {
+        let binds = self.binds.as_ref().expect("raymarch binds prepared");
         encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.scratch._tex.as_image_copy(),
             wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1291,6 +1447,7 @@ impl Backend {
         });
         pass.set_pipeline(pipe);
         pass.set_bind_group(0, bind, &[]);
+        pass.set_bind_group(1, &binds.visibility, &[]);
         work.fullscreen_raster_passes += 1;
         pass.draw(0..3, 0..1);
     }
@@ -1325,19 +1482,19 @@ impl Backend {
             pass.set_bind_group(0, &self.gbuffer_bind, &[]);
             self.draw_scene(r, &mut pass, r.camera.view_proj(), 0.0, false, &self.gbuffer_pipe, &self.gbuffer_inst_pipe, &mut work);
         }
-        // 3. Physical sky at primary misses (the shared atmosphere solver, depth-gated).
+        // 3. Sky cache: this frame's phase of the by-direction atmosphere and clouds (every
+        // texel after a sky jump). Misses and reflections sample it; the discs are analytic.
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-sky"),
-                color_attachments: &[Some(attachment(&self.sky.view, wgpu::LoadOp::Clear(wgpu::Color::BLACK)))],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &r.depth_view, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }), stencil_ops: None,
-                }),
+                color_attachments: &[Some(attachment(&self.sky_cache.view, wgpu::LoadOp::Load))],
+                depth_stencil_attachment: None,
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-sky")), occlusion_query_set: None,
             });
-            pass.set_pipeline(&r.sky_depth_pipe);
+            pass.set_pipeline(&self.sky_cache_pipe);
             pass.set_bind_group(0, &r.camera_bind, &[]);
             pass.set_bind_group(1, &r.physical_environment_bind, &[]);
+            pass.set_bind_group(2, &self.sky_cache_bind, &[]);
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
@@ -1377,6 +1534,37 @@ impl Backend {
         }
         // 6. Screen-space marched reflections of the lit frame on glossy and metallic surfaces.
         if self.debug_skip & 32 == 0 { self.post_pass(r, encoder, "rm-reflect", &self.reflect_pipe, &binds.reflect, &mut work); }
+        // 6b. Glass panes (port slits, sight and eyepiece glass, instrument covers) forward over
+        // the lit frame, depth-tested against the opaque scene, back to front.
+        if !self.panes.is_empty() && self.debug_skip & 1024 == 0 {
+            encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.scratch._tex.as_image_copy(),
+                wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-glass"),
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load))],
+                // Read-only depth: the same texture is sampled by the pane's reflection march.
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &r.depth_view, depth_ops: None, stencil_ops: None,
+                }),
+                timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-glass")), occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.glass_pipe);
+            pass.set_bind_group(0, &binds.reflect, &[]);
+            pass.set_bind_group(1, &binds.visibility, &[]);
+            for &i in &self.panes {
+                let m = &r.meshes[i];
+                // The slab thickness is the pane's thinnest local extent (port glass ~9 cm,
+                // sight glass millimetres).
+                let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
+                let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness] };
+                pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
+                pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
+                pass.set_vertex_buffer(0, m.vbuf.slice(..));
+                pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..m.index_count, 0, 0..1);
+                work.scene_mesh_draws += 1;
+            }
+        }
         // 7. One-pixel snow, dust and embers, then ballistic emitters, in HDR before bloom/crush.
         let particles = if self.debug_skip & 4 != 0 { 0 } else { r.pixel_particle_count.get() };
         let embers = if self.debug_skip & 2 != 0 { 0 } else { self.embers.len() as u32 };

@@ -2,12 +2,11 @@
 // the cascades plus a screen-space ray-marched contact test, skylight through the vertical cover
 // map and ray-marched screen-space occlusion, the clustered lamps/fires/flashes through their depth
 // faces and the froxel medium, then the integrated froxel in-scatter/transmittance is composited
-// over it. Primary misses take the physical sky already rendered into `sky_tex`.
+// over it. Primary misses take the cached physical sky (rm_sky_cache.wgsl) and the discs.
 @group(0) @binding(1) var g0_tex: texture_2d<f32>;
 @group(0) @binding(2) var g1_tex: texture_2d<f32>;
 @group(0) @binding(3) var g2_tex: texture_2d<f32>;
 @group(0) @binding(4) var depth_tex: texture_depth_2d;
-@group(0) @binding(5) var sky_tex: texture_2d<f32>;
 @group(0) @binding(6) var integrated: texture_3d<f32>;
 @group(0) @binding(7) var scatter: texture_3d<f32>;
 @group(0) @binding(8) var linear_samp: sampler;
@@ -74,21 +73,6 @@ fn screen_occlusion(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32)
     return clamp(1.0 - occlusion / max(taps, 1.0) * 2.2, 0.0, 1.0);
 }
 
-fn ggx_specular(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
-    let h = normalize(v + l);
-    let ndh = max(dot(n, h), 0.0);
-    let ndv = max(dot(n, v), 0.001);
-    let ndl = max(dot(n, l), 0.001);
-    let a = max(roughness * roughness, 0.002);
-    let a2 = a * a;
-    let denom = ndh * ndh * (a2 - 1.0) + 1.0;
-    let d = a2 / (RM_PI * denom * denom);
-    let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    let g = (ndv / (ndv * (1.0 - k) + k)) * (ndl / (ndl * (1.0 - k) + k));
-    let f = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
-    return d * g * f / (4.0 * ndv * ndl);
-}
-
 // Optical depth through the froxel medium between a surface point and a lamp.
 fn lamp_tau(world: vec3<f32>, light: vec3<f32>, steps: u32) -> f32 {
     var tau = 0.0;
@@ -142,7 +126,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let ray = rm_ray(in.uv);
     let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(fr.vol.w) * 26699u);
     if (depth >= 1.0) {
-        let sky = textureLoad(sky_tex, pixel, 0).rgb;
+        let sky = rm_sky_radiance(ray);
         let fog = fog_to(in.uv, ray, 20000.0);
         return vec4(sky * fog.transmittance + fog.radiance, 1.0);
     }
@@ -164,6 +148,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let f0 = mix(vec3(0.04), albedo, metallic);
         let diffuse = albedo * (1.0 - metallic) / RM_PI;
         let terrain = g0.a > 2.5 && g0.a < 3.5;
+        let grass = g0.a > 3.5 && g0.a < 4.5;
         // Key beam.
         if (fr.sun_radiance.w > 0.5) {
             let ndl = dot(n, fr.sun_dir.xyz);
@@ -173,12 +158,13 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                 if (vis > 0.001 && !terrain) {
                     vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, jitter));
                 }
-                color += (diffuse + ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
+                color += (diffuse + rm_ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
             }
         }
         // Skylight.
         let ao = screen_occlusion(pixel, rel, n, jitter);
-        let sky_vis = rm_sky_visibility(world, select(0.05, 0.4, terrain));
+        // Grass blades ask the cover map from above their own canopy (they stand in it).
+        let sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
         let ambient = rm_sky_hemisphere(n) * mix(0.10, 1.0, sky_vis) * ao;
         color += diffuse * RM_PI * ambient;
         // Lamps, fires, flashes: the lights binned into this pixel's cell.
@@ -194,7 +180,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
             if (vis <= 0.001) { continue; }
             vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, jitter));
             let tau = lamp_tau(world, lights[index].a.xyz, 4u);
-            color += (diffuse + ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
+            color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
         }
         color += g2.rgb;
     }
