@@ -152,3 +152,43 @@ writer is hand-rolled (16-bit PCM).
   bed sits ~15 dB (LAF) below the own gun.
 
 The live debt ledger for all of this is `docs/PHYSICAL_TRUTH_AUDIT.md` ("Audio (sound levels)").
+
+## 9. Binaural rendering: the head and the steel around it (`acoustics::spatial`, 2026-10-27)
+
+Every positioned voice ends in one stage that places it around the crewman's head. The stage is
+`src/acoustics_spatial.rs`: deterministic, slice-in slice-out, measured by its unit tests. It is a
+parametric head model with every part named; it is **not** a measured head-related transfer
+function and **not** a wave solution. No permissively licensed measured HRTF set is bundled; that
+remains the upgrade path (the stage is one filter pair per voice, so a measured set would replace
+it without touching the chain).
+
+| Cue | Model | Where it comes from |
+|---|---|---|
+| **Direction** | Head-relative azimuth (0 ahead, 90 right, 270 left) from the station camera's forward vector: the commander's head-look, the turret the gunner and commander ride, the periscope the buttoned listener looks through. Elevation is carried but every game bearing is horizontal today. The spherical head resolves one angle, the lateral angle θ = asin(sin az·cos el): front/back and elevation along the cone of confusion are not told apart. | `game.rs` `bearing_deg_from(ear_forward, …)`; `spatial::Direction` |
+| **Interaural time difference** | Woodworth's rigid sphere, radius 87.5 mm, c = 343 m/s at the head: ITD = (a/c)(θ + sin θ), 0.66 ms (29 frames) abeam, as a linearly interpolated fractional delay on the ear away from the source. | `spatial::woodworth_itd_s`, `FractionalDelay` |
+| **Head shadow / ILD** | Brown & Duda's (1998) first-order head-shadow filter per ear, H(s) = (αs + β)/(s + β), β = 2c/a (624 Hz): unity at low frequency, α at high frequency, α = 2 at the ear the source faces and 0.1 at 150° from the ear's axis (the sphere's bright spot brings the antipode back to 0.28). Low frequencies pass round the head (ILD < 1.5 dB at 125 Hz); 3 kHz abeam is shadowed, not silenced. | `spatial::head_shadow_alpha`, `HeadShadowFilter` |
+| **Presentation pan** | The owner's full constant-power pan (`docs/PHYSICAL_TRUTH_AUDIT.md`, owner-directed departures, 2026-10-03) stays on top of the head model, so no voice's lateralisation or level moved when the model landed. `HeadModel::PHYSICAL` renders the sphere alone (tests, tools). | `spatial::HeadModel` |
+| **Distance and air** | Not here. `sound_propagation::propagate` carries the distance law (spherical, blast, rifle-blast), ISO 9613-1 air absorption from the act's air, the CRREL snow ground effect, Maekawa barrier loss, the plate and hatch insertion loss and the headset into `EarLevel.transfer_db`; `audio_calibrated::render_for_ear` applies that per-band transfer before the binaural stage and the level placement after it. | `sound_propagation.rs`, `audio_calibrated.rs` |
+| **Transmission** (closed hatches, open cupola, periscope-only views) | `EarLevel.transmission` records how the sound came in: `Direct` (head-out, on foot, a source in the same compartment), `Plates` (buttoned, including every periscope view), `Hatches{open}`. The level of each way is SL §8's insertion loss; the stage decides only which direction cues survive. The plate-borne share arrives from the whole re-radiating cabin and keeps 30 % of its lateral angle [E]; the share through open hatches arrives over the rim above the head, lifted to 45° elevation [E], which shortens ITD and ILD by cos 45°. The two shares are the band-energy ratio of the buttoned and open-hatch insertion losses under the voice's spectrum at the ear, rendered separately and summed by √share. Abeam: dominant interaural lag 10 frames buttoned, 17 through one open hatch, 29 head-out. | `spatial::plate_share`, `arrival_paths`, `render_through`; `Enclosure::transmission` |
+| **Continuous voices** | Other vehicles, burning wrecks (exterior: the listener's current enclosure), the manual elevation gear and the own loose track (direct) run a streaming panner: one effective direction per voice (energy-weighted mean of the two paths), parameters ramped per sample with a 20 ms constant, so a head turn or a hatch opening moves the voice without a click or a restart. | `spatial::BinauralPanner`, `audio_vehicles.rs`, `Audio::set_listener_enclosure` |
+
+What is routed through it: cannon reports, HE bursts, passing cracks, enemy MG strikes, structure
+collapse and every other scheduled world event (`render_for_ear`); strikes and MG on the own
+plates (`spatialize_armor_mono`, `synth_mg_gravel`: the plate is the source, direct); hot fragment
+contacts and whizzes; the owner's local recordings, controls and foley (`spatialize_mono`); the
+positioned loops above. The own gun, own MG and own engine beds are not positioned (they are at
+the ear by calibration).
+
+**Proof.** `cargo run --release -- crew-battle <outdir> spatial-sweep <seed> 35` films one T-34
+abeam at 100 m firing over the turret roof five times while the turret traverses through 180°,
+the cupola lid opens and the commander puts his head out; the receipt's `spatial_proof` measures
+the recorded gameplay audio itself (per discharge: energy against the half second before it, per
+ear and above 1.5 kHz) and the run fails unless the first shot pans right, the second and third
+left, the open hatch and head-out brighten, and the fifth pans right again. Unit gates:
+`acoustics::spatial::tests`, `audio::vehicles::tests::exterior_vehicle_direction_follows_the_listeners_hatches`.
+
+**Limits** (also in the ledger): a sphere, no pinna or torso (the SL §4 far-ear table is 2–5 dB
+deeper than the sphere from 500 Hz to 2 kHz; agreement within 3 dB at 4 and 8 kHz); no elevation
+cue beyond the lateral angle; the 30 % plate retention and 45° aperture elevation are estimates;
+the hatch share uses the pool's spectrum class for loops; one speed of sound at the head; the
+presentation pan is a departure, named as such.

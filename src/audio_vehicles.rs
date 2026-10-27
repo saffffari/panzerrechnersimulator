@@ -4,8 +4,11 @@
 //! cross to the audio thread as atomics and ramp per sample, as in `weather_audio.rs`.
 //!
 //! Named approximations: the per-band propagation transfer is reduced to one one-pole low-pass
-//! whose cutoff matches the transfer's 1 kHz loss relative to 63 Hz; the pan is constant-power
-//! with no head shadow; every enemy type uses the T-34's calibration and voice.
+//! whose cutoff matches the transfer's 1 kHz loss relative to 63 Hz; every enemy type uses the
+//! T-34's calibration and voice. Direction is the streaming head model of `acoustics::spatial`
+//! (interaural delay, head shadow, presentation pan) at one effective direction per voice: an
+//! exterior voice heard from inside takes the plate/hatch direction cues of the listener's current
+//! enclosure, blended by the spectrum class of the pool rather than the voice's own ear spectrum.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -36,9 +39,11 @@ pub struct VehicleVoice {
 
 #[derive(Default)]
 struct Parameters {
-    left: AtomicU32,
-    right: AtomicU32,
+    gain: AtomicU32,
     alpha: AtomicU32,
+    /// Effective head-relative direction (`acoustics::spatial::effective_direction`), degrees.
+    azimuth: AtomicU32,
+    elevation: AtomicU32,
 }
 
 struct PositionedLoop {
@@ -46,9 +51,11 @@ struct PositionedLoop {
     parameters: Arc<Parameters>,
     frame: usize,
     right: Option<f32>,
-    filtered: [f32; 2],
-    gains: [f32; 2],
+    filtered: f32,
+    gain: f32,
     alpha: f32,
+    panner: crate::acoustics::spatial::BinauralPanner,
+    direction_bits: (u32, u32),
 }
 
 impl Iterator for PositionedLoop {
@@ -61,26 +68,28 @@ impl Iterator for PositionedLoop {
         if frames == 0 {
             return Some(0.0);
         }
-        let target = [
-            f32::from_bits(self.parameters.left.load(Ordering::Relaxed)),
-            f32::from_bits(self.parameters.right.load(Ordering::Relaxed)),
-        ];
+        let target = f32::from_bits(self.parameters.gain.load(Ordering::Relaxed));
         let smooth = 1.0 - (-1.0 / (0.02 * crate::acoustics::SAMPLE_RATE as f32)).exp();
-        for (gain, target) in self.gains.iter_mut().zip(target) {
-            *gain += (target - *gain) * smooth;
-        }
+        self.gain += (target - self.gain) * smooth;
         let alpha_target = f32::from_bits(self.parameters.alpha.load(Ordering::Relaxed)).clamp(0.001, 1.0);
         self.alpha += (alpha_target - self.alpha) * smooth;
+        let bits = (
+            self.parameters.azimuth.load(Ordering::Relaxed),
+            self.parameters.elevation.load(Ordering::Relaxed),
+        );
+        if bits != self.direction_bits {
+            self.direction_bits = bits;
+            self.panner.set_direction(crate::acoustics::spatial::Direction {
+                azimuth_deg: f32::from_bits(bits.0), elevation_deg: f32::from_bits(bits.1) },
+                crate::acoustics::spatial::HeadModel::PRESENTED);
+        }
         let at = self.frame % frames;
         self.frame = self.frame.wrapping_add(1);
         let mono = 0.5 * (self.samples[at * 2] + self.samples[at * 2 + 1]);
-        let mut out = [0.0f32; 2];
-        for ear in 0..2 {
-            self.filtered[ear] += self.alpha * (mono - self.filtered[ear]);
-            out[ear] = self.filtered[ear] * self.gains[ear];
-        }
-        self.right = Some(out[1]);
-        Some(out[0])
+        self.filtered += self.alpha * (mono - self.filtered);
+        let ears = self.panner.process(self.filtered * self.gain);
+        self.right = Some(ears[1]);
+        Some(ears[0])
     }
 }
 
@@ -174,7 +183,8 @@ impl Audio {
     pub fn set_vehicle_voices(&self, vehicles: &[VehicleVoice], dt: f32) {
         let samples = self.vehicle_samples();
         self.set_positioned_loops(&self.vehicle_voices, vehicles, dt, samples,
-            "loop:t34_exterior", MAX_VEHICLE_VOICES, 0.4);
+            "loop:t34_exterior", MAX_VEHICLE_VOICES, 0.4, true,
+            crate::sound_levels::SpectrumClass::Engine);
     }
 
     /// Actual burning surfaces only. Shares the live/capture listener stage and positioned-loop
@@ -187,8 +197,9 @@ impl Audio {
             super::seamless_loop_blend(&mut pcm, 2, crate::acoustics::SAMPLE_RATE, 0.25);
             pcm.into_iter().map(|v| v as f32 / 32767.0).collect::<Vec<_>>().into()
         }).clone();
+        // A burning wreck's roar is low-heavy like an engine for the plate/hatch blend [E].
         self.set_positioned_loops(&self.fire_voices, fires, dt, samples,
-            "loop:burning_fire", 8, 0.06);
+            "loop:burning_fire", 8, 0.06, true, crate::sound_levels::SpectrumClass::Engine);
     }
 
     /// Positioned manual elevation mechanism. Empty/idle retires this independent source; it
@@ -198,7 +209,8 @@ impl Audio {
         let samples = self.elevation_voices.borrow_mut().samples
             .get_or_insert_with(elevation_samples).clone();
         self.set_positioned_loops(&self.elevation_voices, voice.as_slice(), dt, samples,
-            "loop:manual_gun_elevation", 1, 0.035);
+            "loop:manual_gun_elevation", 1, 0.035, false,
+            crate::sound_levels::SpectrumClass::Mechanical);
     }
 
     /// Two actual loose runs can sound independently. Empty drive telemetry fades to silence.
@@ -206,13 +218,22 @@ impl Audio {
         if voices.is_empty() && self.loose_track_voices.borrow().slots.is_empty() {return;}
         let samples=self.loose_track_voices.borrow_mut().samples
             .get_or_insert_with(super::loose_track::samples).clone();
+        // The own sprocket is bolted to the hull: structure-borne, no plate between it and the ear.
         self.set_positioned_loops(&self.loose_track_voices,voices,dt,samples,
-            "loop:loose_track_sprocket",2,0.035);
+            "loop:loose_track_sprocket",2,0.035,false,crate::sound_levels::SpectrumClass::Engine);
     }
 
+    /// `exterior` voices reach a listener inside the vehicle through its plates and open hatches
+    /// (`listener_transmission`); interior and structure-borne voices reach the head directly.
+    #[allow(clippy::too_many_arguments)]
     fn set_positioned_loops(&self, pool: &RefCell<VehicleVoices>, vehicles: &[VehicleVoice],
-        dt: f32, samples: Arc<[f32]>, key: &str, capacity: usize, fade_s: f32) {
+        dt: f32, samples: Arc<[f32]>, key: &str, capacity: usize, fade_s: f32, exterior: bool,
+        class: crate::sound_levels::SpectrumClass) {
+        use crate::acoustics::spatial::{effective_direction, BinauralPanner, Direction, HeadModel};
         let laf_at_speed_1 = self.cached_laf_dbfs(key, || samples.to_vec());
+        let transmission = if exterior { self.listener_transmission() }
+            else { crate::sound_propagation::Transmission::Direct };
+        let spectrum = crate::sound_propagation::class_spectrum(class);
         let mut wanted: Vec<VehicleVoice> = vehicles.iter().copied()
             .filter(|v| v.ear_laf_dba.is_finite()).collect();
         wanted.sort_by(|a, b| b.ear_laf_dba.total_cmp(&a.ear_laf_dba));
@@ -236,6 +257,10 @@ impl Audio {
             if !voices.slots.iter().any(|slot| slot.id == vehicle.id) {
                 let Ok(sink) = self.create_sink() else { continue };
                 let parameters = Arc::new(Parameters::default());
+                let start = effective_direction(Direction::horizontal(vehicle.bearing_deg),
+                    transmission, &spectrum);
+                parameters.azimuth.store(start.azimuth_deg.to_bits(), Ordering::Relaxed);
+                parameters.elevation.store(start.elevation_deg.to_bits(), Ordering::Relaxed);
                 let loop_control = Arc::new(super::continuous::Control::default());
                 sink.append(super::continuous::Continuous::new(PositionedLoop {
                     samples: Arc::clone(&samples),
@@ -243,9 +268,11 @@ impl Audio {
                     // Deterministic phase offset per vehicle so two tanks do not beat in unison.
                     frame: vehicle.id.wrapping_mul(52_711) % (samples.len() / 2).max(1),
                     right: None,
-                    filtered: [0.0; 2],
-                    gains: [0.0; 2],
+                    filtered: 0.0,
+                    gain: 0.0,
                     alpha: 1.0,
+                    panner: BinauralPanner::new(start, HeadModel::PRESENTED),
+                    direction_bits: (start.azimuth_deg.to_bits(), start.elevation_deg.to_bits()),
                 }, loop_control.clone()));
                 voices.slots.push(VehicleSlot { id: vehicle.id, sink, parameters, loop_control, fade: 0.0 });
             }
@@ -254,12 +281,13 @@ impl Audio {
             // Speed shifts the loop's spectrum; treat its A-weighted level as the speed-1 value
             // plus the engine law's own dependence (the level comes from the game).
             let gain = crate::reproduction::voice_gain(vehicle.ear_laf_dba, laf_at_speed_1);
-            let lateral = vehicle.bearing_deg.to_radians().sin().clamp(-1.0, 1.0);
-            let pan = (lateral + 1.0) * std::f32::consts::FRAC_PI_4;
+            let direction = effective_direction(Direction::horizontal(vehicle.bearing_deg),
+                transmission, &spectrum);
             let rate = crate::acoustics::SAMPLE_RATE as f32;
             let alpha = 1.0 - (-std::f32::consts::TAU * vehicle.lowpass_hz.clamp(80.0, 16_000.0) / rate).exp();
-            slot.parameters.left.store((gain * pan.cos()).to_bits(), Ordering::Relaxed);
-            slot.parameters.right.store((gain * pan.sin()).to_bits(), Ordering::Relaxed);
+            slot.parameters.gain.store(gain.to_bits(), Ordering::Relaxed);
+            slot.parameters.azimuth.store(direction.azimuth_deg.to_bits(), Ordering::Relaxed);
+            slot.parameters.elevation.store(direction.elevation_deg.to_bits(), Ordering::Relaxed);
             slot.parameters.alpha.store(alpha.to_bits(), Ordering::Relaxed);
             slot.loop_control.set_rate(vehicle.playback_speed.clamp(0.25, 3.0));
             slot.loop_control.set_gain(slot.fade * master);
@@ -301,6 +329,7 @@ mod tests {
     #[test]
     fn vehicle_voices_follow_the_ear_level_and_retire_when_gone() {
         let audio = Audio::new_capture();
+        audio.set_listener_enclosure(crate::sound_propagation::Enclosure::HeadOut);
         let voice = |laf: f32| VehicleVoice { id: 3, ear_laf_dba: laf, bearing_deg: 90.0,
             lowpass_hz: 4_000.0, playback_speed: 1.0 };
         for _ in 0..60 { audio.set_vehicle_voices(&[voice(90.0)], 1.0 / 60.0); audio.render_capture_frames(735); }
@@ -325,6 +354,29 @@ mod tests {
         assert!((lowpass_for_transfer(&transfer) - 150.0).abs() < 1.0);
         transfer[5] = 3.0;
         assert!((lowpass_for_transfer(&transfer) - 1000.0).abs() < 20.0);
+    }
+
+    /// The same T-34 abeam, heard head-out, through one open hatch and buttoned: its direction
+    /// narrows as the steel closes, and widens again when the hatch opens, without a restart.
+    #[test]
+    fn exterior_vehicle_direction_follows_the_listeners_hatches() {
+        use crate::sound_propagation::Enclosure;
+        let audio = Audio::new_capture();
+        let voice = VehicleVoice { id: 7, ear_laf_dba: 88.0, bearing_deg: 90.0,
+            lowpass_hz: 8_000.0, playback_speed: 1.0 };
+        let mut lateral = Vec::new();
+        for enclosure in [Enclosure::HeadOut, Enclosure::HatchOpen, Enclosure::Buttoned, Enclosure::HatchOpen] {
+            audio.set_listener_enclosure(enclosure);
+            for _ in 0..30 { audio.set_vehicle_voices(&[voice], 1.0 / 60.0); audio.render_capture_frames(735); }
+            let pcm = audio.render_capture_frames(22_050).unwrap();
+            let (left, right) = crate::acoustics::channel_energy(&pcm);
+            lateral.push(10.0 * (right / left.max(1.0e-12)).log10());
+        }
+        assert_eq!(audio.capture_metadata().unwrap()["sinks_created"], 1, "one continuous voice");
+        assert!(lateral[0] > lateral[1] + 3.0, "head-out {} dB wider than one hatch {}", lateral[0], lateral[1]);
+        assert!(lateral[1] > lateral[2] + 3.0, "one hatch {} dB wider than buttoned {}", lateral[1], lateral[2]);
+        assert!((lateral[3] - lateral[1]).abs() < 1.0, "reopening the hatch restores {} vs {}", lateral[3], lateral[1]);
+        assert!(lateral[2] > 2.0, "buttoned, the near plate still says which side ({} dB)", lateral[2]);
     }
 
     #[test]

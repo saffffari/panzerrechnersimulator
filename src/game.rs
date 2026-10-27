@@ -23854,12 +23854,13 @@ impl Game {
     }
 
     fn drain_scheduled_audio(&mut self, dt: f32, r: &Renderer, audio_time_s: f32) -> usize {
+        // Every open hatch is another way in for outside sound.
+        crate::sound_propagation::set_open_hatches(self.open_hatch_count());
         if let Some(audio) = &self.audio {
             audio.set_local_acoustics(self.surroundings_reverb(r.camera.pos, self.listener_enclosure()),
                 self.listener_headset());
+            audio.set_listener_enclosure(self.listener_enclosure());
         }
-        // Every open hatch is another way in for outside sound.
-        crate::sound_propagation::set_open_hatches(self.open_hatch_count());
         // Where the ears are and which way the head is turned, for sounds played between drains.
         self.ear_pos = r.camera.pos;
         self.ear_forward = r.camera.forward();
@@ -32762,7 +32763,7 @@ mod tests {
         let ear = |laf: f32| p::EarLevel { lpk_db: laf + 12.0, laf_db: laf, transfer_db: [-20.0; p::BANDS],
             spectrum: [0.0; p::BANDS], class: p::propagate(&p::Emission::blast(1.0), &p::Path { distance_m: 10.0,
                 atmosphere: p::Atmosphere::WINTER, occluded: false, enclosure: p::Enclosure::OnFoot, headset: false }).class,
-            a_duration_ms: 5.0 };
+            a_duration_ms: 5.0, transmission: p::Transmission::Direct };
         // A faint arrival is lifted to the floor; the floor falls with distance but not without limit.
         let near = presented_world_ear(crate::audio::Sfx::KillExplosion, ear(60.0), 150.0);
         let far = presented_world_ear(crate::audio::Sfx::KillExplosion, ear(60.0), 1200.0);

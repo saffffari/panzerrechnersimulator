@@ -161,6 +161,17 @@ impl Game {
         enemy.ai_aim(aim, dt)
     }
 
+    /// Recording only: traverse the turret to a hull-relative yaw (radians, as the gunner's lay
+    /// would leave it), keeping the mouse-lay target in step so nothing unwinds it. The commander's
+    /// camera, and so the acoustic listener's head, rides the turret.
+    pub fn debug_traverse_turret_to(&mut self, yaw_rad: f32) {
+        if !yaw_rad.is_finite() {
+            return;
+        }
+        self.player.turret_yaw = yaw_rad;
+        self.lay_yaw = yaw_rad;
+    }
+
     pub fn debug_launch_crew_battle_shot(&mut self, index: usize) -> Option<u64> {
         if !self.enemy_return_fire_allowed()
             || !self

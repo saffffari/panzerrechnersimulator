@@ -85,14 +85,19 @@ pub fn effort_db(volume: f32) -> f32 {
     if volume.is_finite() && volume > 0.0 { (20.0 * volume.log10()).clamp(-40.0, 12.0) } else { -200.0 }
 }
 
-/// Render a dry mono world source for the ear: spectral transfer, pan and head shadow, then the
-/// listener's environment tail. The broadband level is left to the caller's placement.
+/// Render a dry mono world source for the ear: the path's spectral transfer (air absorption,
+/// ground, barrier, plates, hatches and headset per band), then the binaural stage
+/// (`acoustics::spatial::render_through`: interaural delay, head shadow, presentation pan and the
+/// direction cues the plates and open hatches let through), then the listener's environment tail.
+/// The broadband level is left to the caller's placement.
 pub(super) fn render_for_ear(mono: &[f32], ear: &EarLevel, bearing_deg: f32, reverb: ReverbParams)
     -> Vec<f32>
 {
     let mut filtered = mono.to_vec();
     SpectralTransfer::fit(&ear.transfer_db, reproduction::SAMPLE_RATE).apply_mono(&mut filtered);
-    let dry = acoustics::spatialize_mono(&filtered, bearing_deg, 0.0);
+    let dry = acoustics::spatial::render_through(&filtered,
+        acoustics::spatial::Direction::horizontal(bearing_deg), ear.transmission, &ear.spectrum,
+        acoustics::spatial::HeadModel::PRESENTED);
     acoustics::schroeder_reverb(&dry, reverb)
 }
 
