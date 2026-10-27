@@ -20,15 +20,22 @@
   Run `cargo build --release --locked --bin panzerrechnersystem` first (also done
   automatically when the binary is missing).
 
+.PARAMETER Renderer
+  shader   The raster/hybrid shader backend (default; the Linux playtest profile).
+  raymarch The froxel ray-marching backend (docs/RAYMARCHING_ENGINE.md): clustered
+           lights, marched media, fireballs, embers, reflections, eyepiece glass.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Mode menu -Windowed
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('play', 'menu', 'check')] [string]$Mode = 'play',
     [switch]$Windowed,
-    [switch]$Build
+    [switch]$Build,
+    [ValidateSet('shader', 'raymarch')] [string]$Renderer = 'shader'
 )
 $ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility, Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
@@ -102,7 +109,7 @@ $env:XDG_CONFIG_HOME = Join-Path $Runtime 'config'
 foreach ($d in $env:XDG_STATE_HOME, $env:XDG_CACHE_HOME, $env:XDG_CONFIG_HOME) { New-Item -ItemType Directory -Force $d | Out-Null }
 
 $env:KESSEL_ASSET_ROOT        = $Root
-$env:KESSEL_RENDERER          = 'shader'
+$env:KESSEL_RENDERER          = $Renderer
 $env:KESSEL_GRAPHICS_PRESET   = 'high'
 $env:KESSEL_INTERNAL_RES      = '800x450'
 $env:KESSEL_DITHER_PATTERN    = 'screen_bayer8'
@@ -122,7 +129,7 @@ $log = Join-Path $Runtime "winter-playtest-$stamp-$PID.log"
     "[launcher] timestamp=$(Get-Date -Format o) mode=$Mode launcher_pid=$PID windowed=$Windowed"
     "[launcher] binary=$Binary sha256=$sha"
     "[launcher] asset_root=$Root manifest=$Manifest"
-    "[launcher] renderer=shader preset=high geometry_aa=msaa4 visibility=maps config=$Config"
+    "[launcher] renderer=$Renderer preset=high geometry_aa=msaa4 visibility=maps config=$Config"
 ) | Set-Content $log
 $errLog = "$log.stderr"
 $proc = Start-Process -FilePath $Binary -WorkingDirectory $Root -PassThru -NoNewWindow `

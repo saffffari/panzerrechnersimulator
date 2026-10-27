@@ -577,6 +577,21 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         println!("[sky] clock {} at {:.3} N {:.3} E", instant.to_iso(),
             r.sky_clock.site.latitude_deg, r.sky_clock.site.longitude_deg_east);
     }
+    // KESSEL_SHOT_WEATHER=clear|clouds|storm[:N] replaces the act's weather for this capture
+    // (the same medium knobs the `atmo` review uses); KESSEL_SHOT_FOG=sigma_t/m sets the
+    // ground medium directly. Headless look-development only; live play keeps the act profile.
+    if let Ok(kind) = std::env::var("KESSEL_SHOT_WEATHER") {
+        match kind.split(':').next().unwrap_or("") {
+            "clear" => { r.set_weather_override(None); r.overcast = 0.08; r.storm = 0.0; r.fog_density = 0.00035; r.precipitation = 0.0; }
+            "clouds" => { r.set_weather_override(None); r.overcast = 0.6; r.storm = 0.0; r.fog_density = 0.0006; r.precipitation = 0.0; }
+            "storm" => r.set_weather_override(Some(kind.split(':').nth(1).and_then(|v| v.parse().ok()).unwrap_or(8.0))),
+            other => anyhow::bail!("unknown KESSEL_SHOT_WEATHER {other:?}; use clear, clouds or storm[:N]"),
+        }
+        println!("[sky] weather override {kind}: overcast {:.2} storm {:.2} fog {:.5} precipitation {:.2}", r.overcast, r.storm, r.fog_density, r.precipitation);
+    }
+    if let Some(fog) = std::env::var("KESSEL_SHOT_FOG").ok().and_then(|v| v.parse::<f32>().ok()) {
+        r.fog_density = fog.max(0.0);
+    }
     if let Some(c) = cam {
         r.camera.pos = Vec3::new(c[0], c[1], c[2]);
         r.camera.yaw = c[3].to_radians();
@@ -899,6 +914,7 @@ fn run_gfxbench(
         }
     }
     let _ = gpu_samples.report();
+    if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
     times.sort_by(f32::total_cmp);
     let n = times.len();
     let avg: f32 = times.iter().sum::<f32>() / n as f32;

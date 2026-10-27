@@ -114,6 +114,7 @@ pub struct Stats {
     pub tracer_records: usize,
     pub history_valid: bool,
     pub prepare_ms: f32,
+    pub encode_ms: f32,
 }
 
 struct Target { _tex: wgpu::Texture, view: wgpu::TextureView }
@@ -197,6 +198,7 @@ pub(super) struct Backend {
     tracer_range: (u32, u32),
     optic_active: bool,
     pub stats: Stats,
+    encode_ms: Cell<f32>,
 }
 
 fn target(device: &wgpu::Device, label: &str, w: u32, h: u32, format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> Target {
@@ -623,7 +625,7 @@ impl Backend {
             lights: Vec::with_capacity(MAX_LIGHTS), parcels: Vec::with_capacity(MAX_PARCELS), embers: Vec::with_capacity(MAX_EMBERS),
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
             light_pairs: Vec::new(), light_cell_start: vec![0; CELL_COUNT + 1], light_cell_items: Vec::new(),
-            weapon_draws: Vec::new(), tracer_range: (0, 0), optic_active: false, stats: Stats::default(),
+            weapon_draws: Vec::new(), tracer_range: (0, 0), optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
         }
     }
 
@@ -811,6 +813,7 @@ impl Backend {
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
         self.stats.history_valid = valid;
         self.stats.prepare_ms = started.elapsed().as_secs_f32() * 1000.0;
+        self.stats.encode_ms = self.encode_ms.get();
         if std::env::var("KESSEL_RM_DEBUG").as_deref() == Ok("1") && r.frame % 4 == 2 {
             println!("[raymarch] frame {} eye {:.2?} sun {:.3?} beam [{:.3e} {:.3e} {:.3e}] zenith [{:.3e} {:.3e} {:.3e}] horizon [{:.3e} {:.3e} {:.3e}] history {} {:?}",
                 r.frame, eye, sun_dir, sun_radiance.x, sun_radiance.y, sun_radiance.z, zenith.x, zenith.y, zenith.z, horizon.x, horizon.y, horizon.z, valid, self.stats);
@@ -1203,6 +1206,7 @@ impl Backend {
 
     /// The whole frame into `r.ldr_view`, replacing `Renderer::render_internal`.
     pub(super) fn encode(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, finish_ldr: bool) {
+        let started = std::time::Instant::now();
         let binds = self.binds.as_ref().expect("raymarch binds prepared");
         let mut work = RenderWorkStats { scene_renders: 1, ..RenderWorkStats::default() };
         // 1. Visibility maps from the scene geometry.
@@ -1361,6 +1365,7 @@ impl Backend {
         let mut total = r.render_work.get();
         total.accumulate(work);
         r.render_work.set(total);
+        self.encode_ms.set(started.elapsed().as_secs_f32() * 1000.0);
     }
 }
 

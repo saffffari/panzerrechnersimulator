@@ -75,8 +75,8 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
     }
     if (fire_emission > 0.0) {
         // Temperature from the local density: 0.3 (a lone lick, deep orange-red) to 1 (core).
-        let temperature = clamp(0.3 + fire_heat * 0.35, 0.0, 1.0);
-        m.emission += rm_heat_colour(temperature) * fire_emission * (0.6 + 0.8 * temperature);
+        let temperature = clamp(0.22 + fire_heat * 0.16, 0.0, 0.92);
+        m.emission += rm_heat_colour(temperature) * fire_emission * (0.5 + 0.7 * temperature) * 0.55;
     }
     return m;
 }

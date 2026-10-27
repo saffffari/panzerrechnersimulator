@@ -7777,7 +7777,10 @@ impl Renderer {
             medium_transport:[if self.atmo_enabled {self.atmo_haze*0.010*5.2}else{0.0},self.weather_offset.x,self.weather_offset.y,self.weather_offset.z],
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
-        if self.raster_lighting || self.menu_mode {
+        // The raymarch backend renders none of the raster-lighting passes these feed
+        // (cabin cubemaps, the visibility atlas, raster optics, grain/spark parcels).
+        let raster_passes = self.raymarch.is_none();
+        if (self.raster_lighting || self.menu_mode) && raster_passes {
             let near = self.near_shadow_uniform();
             let near_camera = CameraUniform { light_view_proj: near.view_proj, ..cam };
             queue.write_buffer(&self.near_shadow_camera_buf,0,bytemuck::bytes_of(&near_camera));
@@ -7788,7 +7791,7 @@ impl Renderer {
         // The probe also lights the forward menu/editor pipe on the deferred backend.
         self.environment_probe.prepare(queue, self.camera.pos, cam.world_medium,
             self.atmosphere_mood);
-        self.prepare_raster_optics(queue, &cam);
+        if raster_passes { self.prepare_raster_optics(queue, &cam); }
         if let Some(probe) = &self.live_texel_probe {
             probe.prepare(queue, &cam, &self.camera, self.frame,
                 self.live_probe_geometry_key(probe.hull()), self.live_texel_probe_active());
@@ -7899,8 +7902,10 @@ impl Renderer {
             cabin_medium:self.cabin_medium_uniform,
         };
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
-        self.prepare_fine_vfx(device, queue);
-        self.prepare_weapon_particles(device, queue);
+        if raster_passes {
+            self.prepare_fine_vfx(device, queue);
+            self.prepare_weapon_particles(device, queue);
+        }
         if let Some(mut rm) = self.raymarch.take() {
             rm.prepare(self, device, queue);
             self.raymarch = Some(rm);
