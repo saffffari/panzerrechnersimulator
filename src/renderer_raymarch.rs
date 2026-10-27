@@ -84,6 +84,7 @@ const PARCEL_SMOKE: f32 = 2.0;
 const PARCEL_GLOW: f32 = 3.0;
 const PARCEL_SEGMENT: f32 = 4.0;
 const PARCEL_FIREBALL: f32 = 5.0;
+const PARCEL_FLASH: f32 = 6.0;
 
 /// One clustered light. Layout shared with rm_visibility.wgsl.
 #[repr(C)]
@@ -199,6 +200,10 @@ pub(super) struct Backend {
     optic_active: bool,
     pub stats: Stats,
     encode_ms: Cell<f32>,
+    /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
+    /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
+    /// parcels, 256 burst parcels, 512 grain parcels.
+    debug_skip: u32,
 }
 
 fn target(device: &wgpu::Device, label: &str, w: u32, h: u32, format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> Target {
@@ -626,6 +631,7 @@ impl Backend {
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
             light_pairs: Vec::new(), light_cell_start: vec![0; CELL_COUNT + 1], light_cell_items: Vec::new(),
             weapon_draws: Vec::new(), tracer_range: (0, 0), optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
+            debug_skip: std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
         }
     }
 
@@ -817,6 +823,25 @@ impl Backend {
         if std::env::var("KESSEL_RM_DEBUG").as_deref() == Ok("1") && r.frame % 4 == 2 {
             println!("[raymarch] frame {} eye {:.2?} sun {:.3?} beam [{:.3e} {:.3e} {:.3e}] zenith [{:.3e} {:.3e} {:.3e}] horizon [{:.3e} {:.3e} {:.3e}] history {} {:?}",
                 r.frame, eye, sun_dir, sun_radiance.x, sun_radiance.y, sun_radiance.z, zenith.x, zenith.y, zenith.z, horizon.x, horizon.y, horizon.z, valid, self.stats);
+            for (i, m) in r.meshes.iter().enumerate() {
+                let half = (m.world_max - m.world_min) * 0.5;
+                let center = (m.world_max + m.world_min) * 0.5;
+                if m.visible && half.max_element() > 1.5 && (center - eye).length() < half.max_element() + 20.0 && !m.track_recv {
+                    println!("[raymarch]   mesh {i}: half {:.1?} center {:.1?} dist {:.1} emissive {:.2} own {} win {} glass {}",
+                        half, center, (center - eye).length(), m.emissive, m.emissive_own, m.emissive_win, m.glass);
+                }
+            }
+            for (i, p) in r.smoke_puffs.iter().enumerate() {
+                if p.strength > 0.0 { println!("[raymarch]   puff {i}: pos {:.1?} age {:.2} strength {:.2} shape {:.2?}", p.pos, p.age, p.strength, p.shape); }
+            }
+            if let Some((m, d)) = r.muzzle_hint { println!("[raymarch]   muzzle {:.1?} dir {:.2?}", m, d); }
+            let mut big: Vec<&Parcel> = self.parcels.iter().filter(|p| p.a[3] > 0.8 || p.c[0] * p.a[3] > 0.3).collect();
+            big.sort_by(|a, b| b.a[3].total_cmp(&a.a[3]));
+            for p in big.iter().take(12) {
+                let c = Vec3::from_array([p.a[0], p.a[1], p.a[2]]);
+                println!("[raymarch]   parcel kind {} radius {:.2} at {:.1?} dist {:.1} emission {:.3} extinction {:.3}",
+                    p.b[3], p.a[3], c, (c - eye).length(), p.c[0], p.c[1]);
+            }
             for (i, l) in self.lights.iter().enumerate().take(24) {
                 println!("[raymarch]   light {i}: pos {:.2?} r {:.3} colour {:.3?} I {:.3e} range {:.1} shadow {} kind {}",
                     &l.a[..3], l.a[3], &l.b[..3], l.b[3], l.c[0], l.c[1], l.c[2]);
@@ -842,7 +867,7 @@ impl Backend {
         }
         let mut effect = 0;
         for burst in r.weapon_particles.bursts.iter().filter(|b| b.active()) {
-            if effect >= MAX_EFFECT_LIGHTS - 8 { break; }
+            if effect >= MAX_EFFECT_LIGHTS - 8 || self.debug_skip & 8 != 0 { break; }
             let age: f32 = burst.origin_age[3].max(0.0);
             let count = burst.meta[1] as f32;
             let kind = burst.meta[3];
@@ -853,9 +878,12 @@ impl Backend {
             // and inside; a blast fireball is a real flash.
             let (pos, color, intensity) = match kind {
                 k if k == wm::BLAST => {
-                    let blast = burst.parameters[2] > 2.0;
-                    let flash = if blast { 2.2 } else { 0.35 } * (1.0 - age / 0.9).max(0.0).powf(2.5);
-                    (origin + Vec3::Y * if blast { 1.2 } else { 0.3 }, Vec3::new(1.0, 0.62, 0.22), flash)
+                    let heavy = burst.parameters[2] > 2.0 && burst.parameters[3] > 0.5;
+                    let at_muzzle = heavy && r.muzzle_hint.is_some_and(|(m, _)| (origin - m).length() < 2.5);
+                    let flash = if at_muzzle { 3.0 * (1.0 - age / 0.09).max(0.0) }
+                        else if heavy { 2.2 * (1.0 - age / 0.9).max(0.0).powf(2.5) }
+                        else { 0.12 * (1.0 - age / 0.14).max(0.0) };
+                    (origin + Vec3::Y * if heavy && !at_muzzle { 1.2 } else { 0.2 }, Vec3::new(1.0, 0.62, 0.22), flash)
                 }
                 k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (3.0 + 12.0 * age).min(60.0), Vec3::new(1.0, 0.55, 0.12), 1.5 * (1.0 - age / 17.0).max(0.0)),
                 k if k == wm::HOT_RIM => (origin + n * 0.05, Vec3::new(1.0, 0.35, 0.08), 0.004 * (-age / 2.5).exp()),
@@ -925,12 +953,13 @@ impl Backend {
         self.pairs.clear();
         self.embers.clear();
         self.stats.merged_grains = 0;
+        if self.debug_skip & 16 != 0 { build_csr(&self.pairs, &mut self.cell_start, &mut self.cell_items); return; }
         #[derive(Default)]
         struct Cell { sum: Vec3, count: u32, size: f32 }
         let mut merged: HashMap<(i32, i32, i32, u32), Cell> = HashMap::new();
         let mut cell_kinds: Vec<(u32, f32, [f32; 3], f32)> = Vec::new();
         for (batch_index, b) in r.inst_batches.iter().enumerate() {
-            if b.inst_count == 0 { continue; }
+            if b.inst_count == 0 || self.debug_skip & 512 != 0 { continue; }
             let kind = if (b.flags - 5.0).abs() < 0.5 { PARCEL_FIRE }
                 else if (b.flags - 6.0).abs() < 0.5 { PARCEL_SOOT }
                 else if b.flags < -0.5 { PARCEL_SMOKE }
@@ -974,10 +1003,13 @@ impl Backend {
             let radius = (cs * 1.35).max(cell.size * 1.5);
             // Fraction of the cell's cross-section the grains actually cover.
             let coverage = ((cell.count as f32 * cell.size * cell.size) / (radius * radius)).clamp(0.08, 1.0);
+            // Energy: looking through the cell must give the grains' own radiance times the
+            // fraction of the cross-section they cover, so emission per metre is that over the
+            // cell's diameter (the tongue shaping in rm_volume.wgsl redistributes, not adds).
             let (emission, extinction) = match kind {
-                k if k == PARCEL_FIRE => (emissive * coverage * 2.2 / radius, 0.6 * coverage / radius),
-                k if k == PARCEL_SOOT => (0.0, 6.0 * coverage / radius),
-                _ => (0.0, 3.0 * coverage / radius),
+                k if k == PARCEL_FIRE => (emissive * coverage * 0.6 / radius, 0.6 * coverage / radius),
+                k if k == PARCEL_SOOT => (0.0, 4.0 * coverage / radius),
+                _ => (0.0, 1.0 * coverage / radius),
             };
             self.parcels.push(Parcel {
                 a: [center.x, center.y, center.z, radius],
@@ -986,20 +1018,75 @@ impl Backend {
                 d: [0.0; 4],
             });
         }
+        // The game's self-luminous effect meshes (muzzle and impact flash balls, FX orange)
+        // become torn volumetric flashes sized by their bounds.
+        for m in &r.meshes {
+            if !m.visible || m.emissive <= 0.0 || m.emissive_own || m.emissive_win || m.track_recv || self.debug_skip & 128 != 0 { continue; }
+            if self.parcels.len() >= MAX_PARCELS - 8 { break; }
+            let center = (m.world_min + m.world_max) * 0.5;
+            let half = (m.world_max - m.world_min) * 0.5;
+            if !center.is_finite() || half.max_element() <= 0.0 || (center - eye).length() > VOL_FAR_M { continue; }
+            let radius = half.max_element().clamp(0.05, 6.0);
+            let x = m.emissive;
+            let color = Vec3::new(1.0, 0.24, 0.03).lerp(Vec3::new(1.0, 0.9, 0.7), (x / 8.0).clamp(0.0, 1.0));
+            // The gun's own flash mesh becomes a forward lobe along the bore, not a ball.
+            if let Some((muzzle, dir)) = r.muzzle_hint.filter(|(m, _)| (center - *m).length() < 2.5) {
+                let length = (radius * 2.2).clamp(0.8, 4.0);
+                let lobe = muzzle + dir * (length * 0.45);
+                self.parcels.push(Parcel {
+                    a: [lobe.x, lobe.y, lobe.z, length],
+                    b: [color.x, color.y, color.z, PARCEL_FLASH],
+                    c: [x * 0.12 / length, 0.4 / length, (center.x * 7.0 + center.z * 3.0).abs() % 100.0, 0.3],
+                    d: [dir.x, dir.y, dir.z, 0.0],
+                });
+                continue;
+            }
+            self.parcels.push(Parcel {
+                a: [center.x, center.y, center.z, radius],
+                b: [color.x, color.y, color.z, PARCEL_FIREBALL],
+                c: [x * 0.1 / radius, 0.4 / radius, (center.x * 7.0 + center.z * 3.0).abs() % 100.0, 0.35],
+                d: [0.0; 4],
+            });
+        }
         // Spark showers glow in the medium around their emitter; blasts become fireballs that
         // flash, roll upward and leave soot; tracers glow along their strip.
         use renderer_weapon_particles::math as wm;
         for burst in r.weapon_particles.bursts.iter().filter(|b| b.active()) {
-            if self.parcels.len() >= MAX_PARCELS - 4 { break; }
+            if self.parcels.len() >= MAX_PARCELS - 4 || self.debug_skip & 256 != 0 { break; }
             let age: f32 = burst.origin_age[3].max(0.0);
             let count = burst.meta[1] as f32;
             let kind = burst.meta[3];
             if kind == wm::GROUND || count <= 0.0 { continue; }
             let origin = burst.origin();
             let n = Vec3::from_array([burst.normal_offset[0], burst.normal_offset[1], burst.normal_offset[2]]);
-            if kind == wm::BLAST {
-                let blast = burst.parameters[2] > 2.0;
-                let scale = if blast { 1.0 } else { 0.28 };
+            // A heavy exterior blast away from the gun is a detonation; the same record at the
+            // muzzle is the gun's own report (plume slot 0 marks the muzzle); a light impact
+            // record (small arms, 'Impact' bursts) is only a glow.
+            let heavy = burst.parameters[2] > 2.0 && burst.parameters[3] > 0.5;
+            let at_muzzle = heavy && r.muzzle_hint.is_some_and(|(m, _)| (origin - m).length() < 2.5);
+            if at_muzzle {
+                // Muzzle report: a brief, bright, forward-stretched flash along the bore, no
+                // soot of its own.
+                let life = 0.08;
+                if age < life {
+                    let t = age / life;
+                    let dir = Vec3::from_array([burst.direction_life[0], burst.direction_life[1], burst.direction_life[2]]).normalize_or_zero();
+                    let radius = 0.55 + 0.35 * t;
+                    let length = 2.6 + 1.4 * t;
+                    let heat = (1.0 - t).powf(0.7);
+                    let color = Vec3::new(1.0, 0.78 + 0.2 * heat, 0.35 + 0.6 * heat);
+                    let center = origin + dir * (length * 0.45);
+                    self.parcels.push(Parcel {
+                        a: [center.x, center.y, center.z, length],
+                        b: [color.x, color.y, color.z, PARCEL_FLASH],
+                        c: [4.0 * heat / length, 0.5 / length, burst.meta[0] as f32 * 0.001, radius / length],
+                        d: [dir.x, dir.y, dir.z, 0.0],
+                    });
+                }
+                continue;
+            }
+            if kind == wm::BLAST && heavy {
+                let scale = 1.0;
                 // Fireball: fast expansion, then a cooling, rising mass with a soot cap.
                 let life = 0.9;
                 if age < life {
@@ -1011,7 +1098,7 @@ impl Backend {
                     self.parcels.push(Parcel {
                         a: [center.x, center.y, center.z, radius],
                         b: [color.x, color.y, color.z, PARCEL_FIREBALL],
-                        c: [14.0 * heat / radius, 2.5 / radius, burst.meta[0] as f32 * 0.001, t],
+                        c: [3.0 * heat / radius, 2.5 / radius, burst.meta[0] as f32 * 0.001, t],
                         d: [0.0; 4],
                     });
                 }
@@ -1030,6 +1117,7 @@ impl Backend {
                 continue;
             }
             let (center, radius, fade, color) = match kind {
+                k if k == wm::BLAST => (origin + n * 0.1, 0.22 + 0.3 * age, (1.0 - age / 0.14).max(0.0), [1.0, 0.62, 0.22]),
                 k if k == wm::HOT_RIM => (origin, (burst.parameters[0] + burst.parameters[1]) * 2.0 + 0.05, (-age / 2.5).exp(), [1.0, 0.45, 0.12]),
                 k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (20.0 * age).min(120.0), (6.0 + 12.0 * age).min(60.0), (1.0 - age / 17.0).max(0.0), [1.0, 0.59, 0.05]),
                 k if k == wm::PRESSURE_VENT => (origin + n * (4.0 * age).min(3.0), (0.5 + 3.0 * age).min(3.0), (1.0 - age / 0.65).max(0.0), [1.0, 0.59, 0.05]),
@@ -1157,6 +1245,9 @@ impl Backend {
             if !shadow && r.optic_hide_pass && m.optic_hidden { continue; }
             if !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
             if shadow && (m.emissive_own || encloses(m.world_min, m.world_max)) { continue; }
+            // Self-luminous effect meshes (muzzle flash and impact flash balls) are drawn as
+            // volumetric emitters by the froxel grid, never as glowing sphere silhouettes.
+            if m.emissive > 0.0 && !m.emissive_own && !m.emissive_win && !m.track_recv { continue; }
             let kind = if m.track_recv { 3.0 } else if m.emissive_own { 2.0 } else if m.emissive_win { 1.0 } else { 0.0 };
             let push = Push {
                 model: m.model.to_cols_array_2d(),
@@ -1285,10 +1376,10 @@ impl Backend {
             pass.draw(0..3, 0..1);
         }
         // 6. Screen-space marched reflections of the lit frame on glossy and metallic surfaces.
-        self.post_pass(r, encoder, "rm-reflect", &self.reflect_pipe, &binds.reflect, &mut work);
+        if self.debug_skip & 32 == 0 { self.post_pass(r, encoder, "rm-reflect", &self.reflect_pipe, &binds.reflect, &mut work); }
         // 7. One-pixel snow, dust and embers, then ballistic emitters, in HDR before bloom/crush.
-        let particles = r.pixel_particle_count.get();
-        let embers = self.embers.len() as u32;
+        let particles = if self.debug_skip & 4 != 0 { 0 } else { r.pixel_particle_count.get() };
+        let embers = if self.debug_skip & 2 != 0 { 0 } else { self.embers.len() as u32 };
         if particles > 0 || embers > 0 || !self.weapon_draws.is_empty() || self.tracer_range.1 > 0 {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-points"),
@@ -1309,7 +1400,7 @@ impl Backend {
                 pass.draw(0..6, 0..embers);
                 work.scene_instanced_draws += 1;
             }
-            if !self.weapon_draws.is_empty() {
+            if !self.weapon_draws.is_empty() && self.debug_skip & 1 == 0 {
                 pass.set_pipeline(&self.sparks_pipe);
                 pass.set_vertex_buffer(0, self.weapon_buf.slice(..));
                 for &(first, count) in &self.weapon_draws {
@@ -1317,7 +1408,7 @@ impl Backend {
                     work.scene_instanced_draws += 1;
                 }
             }
-            if self.tracer_range.1 > 0 {
+            if self.tracer_range.1 > 0 && self.debug_skip & 1 == 0 {
                 pass.set_pipeline(&self.tracers_pipe);
                 pass.set_vertex_buffer(0, self.weapon_buf.slice(..));
                 pass.draw(0..6, self.tracer_range.0..self.tracer_range.0 + self.tracer_range.1);
@@ -1325,7 +1416,7 @@ impl Backend {
             }
         }
         // 8. The eyepiece glass: refraction, dispersion and the lens edge of the TZF/binoculars.
-        if self.optic_active {
+        if self.optic_active && self.debug_skip & 64 == 0 {
             self.post_pass(r, encoder, "rm-lens", &self.lens_pipe, &binds.lens, &mut work);
         }
         // 9. The shared display stage: the crewman's eye, bloom, crush.

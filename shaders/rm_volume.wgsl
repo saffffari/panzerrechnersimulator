@@ -62,6 +62,17 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
                 colour = mix(rm_heat_colour(0.55), rm_heat_colour(1.0), (1.0 - dd) * (1.0 - age));
             } else if (kind == 1u || kind == 2u) {
                 w = (1.0 - dd) * (1.0 - dd) * (0.55 + 0.9 * flame_noise);
+            } else if (kind == 6u) {
+                // Muzzle flash: a prolate lobe along the bore (d = direction, c.w = radius/length),
+                // brightest just ahead of the muzzle, torn by the shared noise.
+                let axis = parcel.d.xyz;
+                let along = dot(p - parcel.a.xyz, axis) / max(parcel.a.w, 0.01);
+                let radial = length((p - parcel.a.xyz) - axis * dot(p - parcel.a.xyz, axis)) / max(parcel.a.w * parcel.c.w, 0.01);
+                let lobe = along * along * 4.0 + radial * radial;
+                if (lobe >= 1.0) { continue; }
+                let torn = 0.5 + 0.5 * rm_noise(p * 6.0 + vec3(parcel.c.z), 83u);
+                w = (1.0 - lobe) * (1.0 - lobe) * torn * (1.3 - 0.8 * max(along + 0.5, 0.0));
+                colour = mix(rm_heat_colour(0.7), rm_heat_colour(1.0), (1.0 - lobe));
             } else {
                 w = (1.0 - dd) * (1.0 - dd);
             }
@@ -71,12 +82,12 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
         m.sigma_t += ext;
         if (kind == 1u) { m.sigma_s += vec3(ext * 0.12); }
         else if (kind == 2u) { m.sigma_s += parcel.b.rgb * ext * 0.75; }
-        else if (kind == 5u) { m.sigma_s += vec3(ext * 0.25); }
+        else if (kind == 5u || kind == 6u) { m.sigma_s += vec3(ext * 0.25); }
     }
     if (fire_emission > 0.0) {
         // Temperature from the local density: 0.3 (a lone lick, deep orange-red) to 1 (core).
-        let temperature = clamp(0.22 + fire_heat * 0.16, 0.0, 0.92);
-        m.emission += rm_heat_colour(temperature) * fire_emission * (0.5 + 0.7 * temperature) * 0.55;
+        let temperature = clamp(0.18 + fire_heat * 0.12, 0.0, 0.72);
+        m.emission += rm_heat_colour(temperature) * fire_emission * (0.5 + 0.7 * temperature) * 0.5;
     }
     return m;
 }

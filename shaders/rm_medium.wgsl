@@ -97,7 +97,11 @@ fn rm_puff_extinction(p: vec3<f32>) -> vec2<f32> {
     let gas = rm_gas_density(p) * 5.2;
     tau += gas;
     albedo_sum += gas * 0.72;
-    return vec2(tau, select(0.78, albedo_sum / max(tau, 1e-6), tau > 1e-6));
+    // Dense local plumes saturate: beyond ~0.6/m a thicker cloud is no darker, only the
+    // simulation's support grows (named approximation, keeps a detonation cloud translucent
+    // at the froxel scale).
+    let capped = min(tau, 0.6);
+    return vec2(capped, select(0.78, albedo_sum / max(tau, 1e-6), tau > 1e-6));
 }
 // The full continuous medium at a world point, without parcels.
 fn rm_medium_at(p: vec3<f32>) -> Medium {

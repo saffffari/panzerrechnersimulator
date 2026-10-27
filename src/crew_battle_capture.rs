@@ -54,12 +54,21 @@ fn crew_ledger(game: &Game) -> Value {
 }
 
 fn file_sha256(path: &str) -> anyhow::Result<String> {
-    let result = Command::new("sha256sum").arg(path).output()?;
+    // Windows has no sha256sum; certutil prints the digest on its second line.
+    let (result, windows) = match Command::new("sha256sum").arg(path).output() {
+        Ok(result) => (result, false),
+        Err(_) => (Command::new("certutil").args(["-hashfile", path, "SHA256"]).output()?, true),
+    };
     ensure!(
         result.status.success(),
         "cannot hash capture dependency {path}"
     );
     let text = String::from_utf8(result.stdout)?;
+    if windows {
+        return text.lines().nth(1).map(|line| line.trim().replace(' ', "").to_lowercase())
+            .filter(|digest| digest.len() == 64)
+            .ok_or_else(|| anyhow::anyhow!("certutil gave no digest for {path}"));
+    }
     Ok(text
         .split_whitespace()
         .next()

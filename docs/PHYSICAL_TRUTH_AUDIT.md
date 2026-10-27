@@ -1,8 +1,35 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Raymarch backend, 2026-10-27 (`KESSEL_RENDERER=raymarch`, branch `raymarching`)
+
+A selectable frame pipeline (`src/renderer_raymarch.rs`, `shaders/rm_*.wgsl`,
+`docs/RAYMARCHING_ENGINE.md`). Surfaces are raster G-buffer visibility lit once; participating
+media are a froxel grid (200x113x96 at 800x450) lit per cell by the key beam through two depth
+cascades plus a marched medium transmittance, the sky through a top-down cover map, and clustered
+lights (every offered light, not a 32 budget; two with depth faces). Named limits, none of which
+are presented as ray tracing, GI or a combustion/solver result:
+
+- Sky visibility is vertical only (one top-down depth map); horizontal openings leak nothing and
+  covered points keep an 8 % residual sky term.
+- Contact shadows, ambient occlusion and reflections are screen-space ray marches against the
+  depth buffer; off-screen occluders/reflectors are missed, misses fall back to the sky bands.
+- Lights beyond the two shadowed ones are occluded only by the screen-space contact test and the
+  medium. A light's own housing mesh is excluded from its faces (the source sits inside it).
+- The weather layer beyond the 320 m grid is homogeneous and unoccluded.
+- Flame grains are merged into cells and drawn as a temperature field with authored tongue
+  noise; fireballs and muzzle flashes are authored shapes driven by the burst records' age,
+  energy class and position; spark/tracer medium glow is aggregated per burst.
+- The eyepiece glass (refraction, dispersion, grime) is a presentation of the optic.
+- Flakes, embers and sparks are one native pixel with projected-coverage energy.
+- The froxel history reprojects by camera motion only.
+
+Gates: `raymarch-showcase PREFIX` (13 stills with a JSON receipt) and `gfxbench` with
+`KESSEL_GPU_PROFILE=1` on the raymarch backend; the shader and physical backends are unchanged
+and remain the shipping defaults until this backend passes the same reviews.
 
 ## Native geometry coverage, 2026-10-01 (consolidated shader renderer)
 

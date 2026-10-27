@@ -110,7 +110,9 @@ fn rm_light_sample(index: u32, world: vec3<f32>) -> LightSample {
     let dist2 = dot(dv, dv);
     let dist = sqrt(dist2);
     if (dist >= l.c.x) { return LightSample(vec3(0.0), vec3(0.0, 1.0, 0.0), dist); }
-    let r2 = max(dist2, l.a.w * l.a.w);
+    // The source radius regularizes the near field smoothly (d^2 + R^2): a plateau sphere
+    // would draw a disc into any medium around a large emitter.
+    let r2 = dist2 + l.a.w * l.a.w;
     // Smooth cut at the gather range so clustered cells never show a seam.
     let window = 1.0 - smoothstep(0.7, 1.0, dist / l.c.x);
     return LightSample(l.b.rgb * l.b.w / r2 * window, dv / max(dist, 0.0005), dist);

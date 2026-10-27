@@ -29496,6 +29496,7 @@ impl Game {
         self.drive_carried_tools(dt, r);
 
         // Transient weapon volumes join the sustained smoke supports above.
+        r.muzzle_hint = Some(self.player.muzzle());
         self.drive_weapon_vfx(dt, r);
         self.drive_dust_volumes(r);
     }
@@ -31032,6 +31033,10 @@ impl Game {
     /// Player-facing T binding: ammunition is selected by the physical round, never by changing a
     /// chamber flag through steel. The key remains as a discoverability reminder for old muscle
     /// memory while the embodied loader ritual owns the actual swap.
+    /// Headless-only: seat the named shell nature without the loader's manual swap, so a review
+    /// can fire HE or AP along a scripted lay (`debug_fire_laid`).
+    pub fn debug_set_he_loaded(&mut self, he: bool) { self.he_loaded = he; }
+
     pub fn request_nature_swap(&self) {
         println!(
             "[panzerrechnersystem] Open the breech; hold LMB to unload, release to set down, then hold LMB on the AP/HE round you want"

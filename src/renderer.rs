@@ -2591,6 +2591,9 @@ pub struct Renderer {
     /// Legacy gunner-optic obscuration envelope. Retained while the game-side producer migrates;
     /// the screen-space snow-dust veil was not a modeled medium and is no longer rendered.
     pub optic_blast: f32,
+    /// The player's gun muzzle (position, bore direction) this frame, so a backend can tell the
+    /// gun's own report from a detonation downrange. Set by the game each update.
+    pub muzzle_hint: Option<(glam::Vec3, glam::Vec3)>,
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -5824,6 +5827,7 @@ impl Renderer {
             lights: Vec::new(),
             lights_offered: 0,
             lights_full: Vec::new(),
+            muzzle_hint: None,
             frame: 0,
             hdr_view,
             hdr_tex,

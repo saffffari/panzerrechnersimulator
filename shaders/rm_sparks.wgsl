@@ -28,8 +28,10 @@ fn weapon_rotate(source_axis: vec3<f32>, target_axis: vec3<f32>, v: vec3<f32>) -
     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
 }
 fn weapon_hidden() -> WeaponOut { return WeaponOut(vec4(2.0, 2.0, 2.0, 1.0), vec3(0.0), vec3(0.0), 0.0); }
+// Incandescent spark pages: the hottest page is a warm white-yellow rather than the shader
+// backend's near-white, so a dense shower reads as burning steel instead of confetti.
 fn weapon_palette(page: u32) -> vec3<f32> {
-    if (page == 3u) { return vec3(1.0, 0.9473, 0.6795) * 9.9; }
+    if (page == 3u) { return vec3(1.0, 0.82, 0.50) * 6.5; }
     if (page == 4u) { return vec3(1.0, 0.5906, 0.0482) * 4.38; }
     return vec3(1.0, 0.2874, 0.0116) * 5.30;
 }
