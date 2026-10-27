@@ -201,3 +201,6 @@ Cargo.lock.bak
 /assets/tanks/tiger/baked/*
 !/assets/tanks/tiger/baked/tiger_rack_fitting.glb
 !/assets/tanks/tiger/baked/tiger_rack_source.json
+
+# Private build directory for sessions that share this checkout (see docs/RAYMARCHING_ENGINE.md)
+target_rm/

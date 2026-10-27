@@ -16018,6 +16018,9 @@ impl Game {
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
         if let Some(arms)=&self.first_person {arms.clear(r);}
+        // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
+        // also sets it does not run on every path).
+        r.muzzle_hint = Some(self.player.muzzle());
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);

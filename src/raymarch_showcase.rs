@@ -78,6 +78,7 @@ fn step(g: &mut Game, r: &mut crate::renderer::Renderer, frames: u32, input: &Ta
 pub fn run(prefix: &str) -> anyhow::Result<()> {
     // The shader backend may run the same scenes for an A/B (KESSEL_RENDERER=shader).
     anyhow::ensure!(graphics::shader_backend_enabled(), "raymarch-showcase requires KESSEL_RENDERER=raymarch or shader");
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("palette") { return run_palette(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_wreck_sunset_near.png")).exists(),
         "preserving existing showcase; choose a new prefix");
     let manifest = crate::canyon::manifest_path();
@@ -124,14 +125,22 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let flight_frames = (flight_s * 60.0).round() as u32;
     step(&mut g, &mut r, 2, &idle);
     rig.observe(&mut r, tiger + Vec3::new(-7.0, 2.4, -3.0) + forward * 2.0, muzzle + forward * 3.0, 60.0);
-    rig.still(&mut r, "he_muzzle", "88 mm discharge: muzzle flash fireball, plume lit by its own flash, tracer")?;
-    step(&mut g, &mut r, flight_frames.saturating_sub(2) + 3, &idle);
+    rig.still(&mut r, "he_muzzle", "88 mm discharge: brake-shaped flash, plume lit by its own flash, tracer")?;
+    step(&mut g, &mut r, 28, &idle);
+    rig.observe(&mut r, tiger + Vec3::new(-9.0, 2.0, 4.0) + forward * 4.0, muzzle + forward * 5.0 - Vec3::Y * 0.8, 58.0);
+    rig.still(&mut r, "he_muzzle_cloud", "88 mm report at +0.5 s: the blast's snow cloud ahead of the muzzle, smoke supports")?;
+    step(&mut g, &mut r, flight_frames.saturating_sub(30) + 3, &idle);
     rig.observe(&mut r, side, impact + Vec3::Y * 1.2, 58.0);
     rig.still(&mut r, "he_impact_flash", "HE detonation at +0.05 s: fireball core, flash light on the snow, ejecta")?;
     step(&mut g, &mut r, 14, &idle);
     rig.still(&mut r, "he_impact_bloom", "HE detonation at +0.3 s: rolling fireball, sparks, soot column")?;
     step(&mut g, &mut r, 48, &idle);
     rig.still(&mut r, "he_impact_smoke", "HE detonation at +1.1 s: soot and lingering embers")?;
+    step(&mut g, &mut r, 114, &idle);
+    rig.observe(&mut r, side + Vec3::new(-6.0, 2.0, 3.0), impact + Vec3::Y * 4.0, 60.0);
+    rig.still(&mut r, "he_impact_dust", "HE detonation at +3 s: snow and earth column, burning fragments on the ground")?;
+    step(&mut g, &mut r, 300, &idle);
+    rig.still(&mut r, "he_impact_plume", "HE detonation at +8 s: soot drifting with the wind")?;
 
     // Scene C: an AP round into the wreck hull: armour impact sparks, hot rim, ricochet.
     g.debug_set_he_loaded(false);
@@ -181,5 +190,72 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         "disclosure": "Staged fixtures (banished enemies, held fire, one burning T-34 at ignition load 0.75, scripted gun lays). Weather and clock overridden per scene. Observer cameras, not a player run. No image grading."
     }))?)?;
     println!("[raymarch-showcase] {} stills -> {prefix}_*.png", rig.shots.len());
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=palette`: the same fixtures through the day and the weather from two
+/// observers, for judging colour across clear, overcast, dusk, night and storm. Nothing is
+/// graded; what differs between stills is the ephemeris and the weather profile.
+fn run_palette(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_noon_clear_wide.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let wreck = g.debug_stage_burning_t34(WRECK.x, WRECK.y).context("fixture needs a T-34")?;
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    step(&mut g, &mut r, 480, &idle);
+    let origin = g.enemies[wreck].pos;
+    let tiger = g.player.pos;
+    let forward = g.player.forward();
+    let wide = (tiger + Vec3::new(-14.0, 3.2, -2.0), tiger + forward * 30.0 + Vec3::Y * 1.0, 62.0);
+    let close = (tiger + Vec3::new(9.0, 2.2, -14.0), tiger + Vec3::Y * 1.6 + (origin - tiger) * 0.3, 52.0);
+    // (name, UTC instant, storm_weather intensity or None for a dry overcast, note)
+    let scenes = [
+        ("dawn_clear", "1942-12-21T05:25:00Z", Some(0.0), "sun rising, clear"),
+        ("noon_clear", "1942-12-21T09:00:00Z", Some(0.0), "midday, clear"),
+        ("noon_overcast", "1942-12-21T09:00:00Z", None, "midday under cloud, dry"),
+        ("dusk_clear", "1942-12-21T12:40:00Z", Some(0.0), "sun 3 deg, clear"),
+        ("dusk_overcast", "1942-12-21T12:40:00Z", None, "sun 3 deg under cloud, dry"),
+        ("night_clear", "1942-12-21T19:30:00Z", Some(0.0), "moon and stars, clear"),
+        ("night_overcast", "1942-12-21T19:30:00Z", None, "night under cloud: the fire is the light"),
+        ("blizzard", "1942-12-21T09:30:00Z", Some(3.0), "storm layer, snow, key beam through cloud"),
+        ("windy_snow", "1942-12-21T09:30:00Z", Some(1.0), "light snow on a 5 m/s wind: spindrift over the ground"),
+    ];
+    for (name, utc, weather, note) in scenes {
+        // A dry overcast is not on the storm scale (every intensity above zero snows), so it is
+        // the act's own weather with the cloud cover set by hand, re-applied after each update.
+        let overcast = |r: &mut crate::renderer::Renderer| {
+            if weather.is_none() { r.overcast = 0.82; r.storm = 0.0; r.fog_density = 0.0009; r.precipitation = 0.0; }
+        };
+        r.set_weather_override(weather);
+        overcast(&mut r);
+        rig.clock(&mut r, utc)?;
+        step(&mut g, &mut r, 30, &idle);
+        overcast(&mut r);
+        rig.observe(&mut r, wide.0, wide.1, wide.2);
+        rig.still(&mut r, &format!("{name}_wide"), note)?;
+        overcast(&mut r);
+        rig.observe(&mut r, close.0, close.1, close.2);
+        rig.still(&mut r, &format!("{name}_tiger"), note)?;
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.palette.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixtures (banished enemies, held fire, one burning T-34). Clock and weather overridden per scene. Observer cameras, not a player run. No image grading."
+    }))?)?;
     Ok(())
 }

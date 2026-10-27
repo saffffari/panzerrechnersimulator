@@ -60,7 +60,57 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
     let kind = identity.w; var t = origin_age.w; let n = normal_offset.xyz;
     let seed = identity.x * select(3948571u, 9348571u, kind <= 1u) + index * 977u; let q = weapon_random(seed);
     var velocity = vec3(0.0); var axis = vec3(0.0, 0.0, 1.0); var width = 0.0; var tail = 0.0; var page = 2u; var rim_offset = vec3(0.0);
-    if (kind == 8u) {
+    var gain = 1.0;
+    if (kind == 9u) {
+        // Detonation fragment streaks: casing shards and burning residue leaving at 250-1500 m/s
+        // (most of them slow), slowing under drag (x = v0 tau (1 - e^(-t/tau))), incandescent
+        // for a few hundredths to a quarter of a second. Ten samples trail each shard along its
+        // own path so a streak is a dotted radial line, not a shell of points. The ground sends
+        // them up and out.
+        let shard = index / 10u; let trail = index % 10u;
+        let fs = identity.x * 3948571u + shard * 977u;
+        let fq = weapon_random(fs);
+        let life = 0.04 + 0.2 * fq * fq; if (t >= life) { return weapon_hidden(); }
+        let ts = max(t - f32(trail) * 0.0012, 0.0);
+        var ray = weapon_direction(fs + 23u);
+        ray.y = ray.y * 0.8 + 0.25;
+        ray = normalize(ray);
+        let sq = weapon_random(fs + 29u);
+        let v0 = 250.0 + 1250.0 * sq * sq;
+        let tau = 0.11;
+        let travelled = v0 * tau * (1.0 - exp(-ts / tau));
+        t = ts;
+        velocity = ray * travelled / max(ts, 0.0005);
+        axis = ray;
+        width = 0.012 + 0.012 * fq; tail = clamp(v0 * exp(-ts / tau) * 0.002, 0.2, 3.0);
+        page = select(4u, 3u, ts < 0.05); gain = 0.25 * (1.0 - ts / life) * (1.0 - 0.06 * f32(trail));
+    } else if (kind == 10u) {
+        // Burning fragments and residue: heavy shards arcing out at 15-55 m/s, glowing for
+        // seconds, coming to rest on the ground (parameters.x = ground y, y = 1 when known).
+        let life = 2.0 + 3.0 * q; if (t >= life) { return weapon_hidden(); }
+        var ray = weapon_direction(seed + 23u); ray.y = abs(ray.y) * 0.9 + 0.3; ray = normalize(ray);
+        velocity = ray * (15.0 + 40.0 * weapon_random(seed + 29u));
+        if (parameters.y > 0.5) {
+            let drop = origin_age.y - parameters.x;
+            let t_land = (velocity.y + sqrt(max(velocity.y * velocity.y + 19.62 * drop, 0.0))) / 9.81;
+            t = min(t, t_land);
+        }
+        let current = velocity - vec3(0.0, 9.81 * t, 0.0); axis = current / max(length(current), 0.000001);
+        let landed = parameters.y > 0.5 && origin_age.w > t + 0.0001;
+        width = 0.018 + 0.02 * q; tail = select(clamp(length(current) * 0.01, width, 0.4), width * 0.5, landed);
+        page = select(select(2u, 4u, origin_age.w < 0.6), 3u, origin_age.w < 0.12);
+        gain = pow(1.0 - origin_age.w / life, 1.5) * 0.3;
+    } else if (kind == 11u) {
+        // Molten spray off struck armour: droplets 20-80 m/s in a cone about the plate normal,
+        // cooling through white, yellow and red over a second.
+        let life = 0.5 + 0.7 * q; if (t >= life) { return weapon_hidden(); }
+        let spray = weapon_direction(seed + 23u); let outward = spray - n * (2.0 * min(dot(spray, n), 0.0));
+        let ray = normalize(n * (0.5 + 0.5 * q) + outward * 0.8 + direction_life.xyz * 0.15);
+        velocity = ray * (20.0 + 60.0 * weapon_random(seed + 29u));
+        let current = velocity - vec3(0.0, 9.81 * t, 0.0); axis = current / max(length(current), 0.000001);
+        width = 0.006 + 0.008 * q; tail = clamp(length(current) * 0.006, width, 0.35);
+        page = select(select(2u, 4u, t < 0.35), 3u, t < 0.12); gain = 0.8 * (1.0 - t / life);
+    } else if (kind == 8u) {
         if (t >= 6.0) { return weapon_hidden(); }
         let inner = parameters.x; let outer = inner + parameters.y;
         let radius = sqrt(inner * inner + (outer * outer - inner * inner) * (f32(index) + 0.5) / f32(identity.y));
@@ -111,16 +161,28 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
         width = select(0.003 + 0.005 * q, 0.008 + 0.010 * q, heavy) * max(1.0 - t / direction_life.w, 0.15);
         tail = clamp(speed * 0.008, 0.025, 0.32); page = select(select(2u, 4u, t < 0.16), 3u, t < 0.055);
     } else {
-        let life = 0.45 + 1.4 * q; if (t >= life) { return weapon_hidden(); }
-        var ray = weapon_direction(seed + 17u); ray.y = abs(ray.y) * 0.75 + 0.15;
+        // A heavy exterior blast's sparks trail four samples along each path (a dotted
+        // radial streak) instead of filling a dome with points; light impacts are unchanged.
+        var sseed = seed; var sq = q;
+        let heavy_blast = kind == 0u && parameters.w > 0.5 && parameters.z > 2.0;
+        if (heavy_blast) {
+            let shard = index / 4u; let trail = index % 4u;
+            // Every third shard: the record's count fills a dome otherwise.
+            if (shard % 3u != 0u) { return weapon_hidden(); }
+            sseed = identity.x * 9348571u + shard * 977u; sq = weapon_random(sseed);
+            t = max(t - f32(trail) * 0.0025, 0.0);
+            gain = 0.55 * (1.0 - 0.12 * f32(trail));
+        }
+        let life = 0.45 + 1.4 * sq; if (t >= life) { return weapon_hidden(); }
+        var ray = weapon_direction(sseed + 17u); ray.y = abs(ray.y) * 0.75 + 0.15;
         if (kind == 1u) { ray = weapon_rotate(vec3(0.0, 1.0, 0.0), n, ray); }
-        velocity = normalize(ray) * (10.0 + 28.0 * q) * parameters.z;
+        velocity = normalize(ray) * (10.0 + 28.0 * sq) * parameters.z;
         let current = velocity - vec3(0.0, 9.81 * t, 0.0); axis = normalize(current);
-        width = (0.006 + 0.012 * q) * sqrt(1.0 - t / life); tail = min(length(current) * 0.008, 0.32);
+        width = (0.006 + 0.012 * sq) * sqrt(1.0 - t / life); tail = min(length(current) * 0.008, 0.32);
         page = select(select(2u, 4u, t < 0.55), 3u, t < 0.12);
     }
     let center = select(origin_age.xyz + velocity * t - vec3(0.0, 4.905 * t * t, 0.0), origin_age.xyz + rim_offset, kind == 8u);
-    if (kind != 0u) {
+    if (kind != 0u && kind < 9u) {
         let local_normal = weapon_rotate(axis, vec3(0.0, 0.0, 1.0), n);
         let support = dot(abs(local_normal), vec3(width, width, tail)) * 0.5;
         if (dot(center - origin_age.xyz, n) + normal_offset.w < support) { return weapon_hidden(); }
@@ -128,7 +190,9 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
     let clip = fr.view_proj * vec4(center - fr.cam_pos.xyz, 1.0);
     if (clip.w <= 0.0001 || clip.z < 0.0 || clip.z >= clip.w) { return weapon_hidden(); }
     let focal = fr.view_proj[1][1] * fr.res.y * 0.5;
-    let projected_area = width * (width + tail) * pow(focal / clip.w, 2.0);
+    // A streak drawn as one native pixel carries its whole projected area; cap it so a shard
+    // passing the eye does not become a bloom blob.
+    let projected_area = min(width * (width + tail) * pow(focal / clip.w, 2.0), select(6.0, 3.0, kind >= 9u));
     let weight = projected_area * f32(identity.z) / f32(identity.y);
     let position = pixel_quad(center, corner);
     if (kind == 7u) {
@@ -136,7 +200,7 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
         return WeaponOut(position, center, mix(vec3(0.16, 0.115, 0.075), vec3(0.65, 0.72, 0.80), parameters.z), area);
     }
     if (kind == 8u) { return WeaponOut(position, center, rim_color(parameters.z, t) * weight, 0.0); }
-    return WeaponOut(position, center, weapon_palette(page) * weight, 0.0);
+    return WeaponOut(position, center, weapon_palette(page) * weight * gain, 0.0);
 }
 
 @vertex fn vs_tracer(@builtin(vertex_index) vertex: u32,

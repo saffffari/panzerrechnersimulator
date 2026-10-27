@@ -13,6 +13,7 @@ struct Parcel { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, };
 @group(0) @binding(5) var linear_samp: sampler;
 @group(0) @binding(6) var out_scatter: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(7) var depth_tex: texture_depth_2d;
+@group(0) @binding(8) var out_heat: texture_storage_3d<rgba16float, write>;
 
 const SUN_MARCH_STEPS: u32 = 6u;
 const LAMP_MARCH_STEPS: u32 = 4u;
@@ -49,6 +50,7 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
                 let body = (1.0 - dd) * (1.0 - dd);
                 fire_heat += body * (0.6 + 1.2 * tongue);
                 fire_emission += parcel.c.x * body * tongue * 2.2;
+                m.heat += body * tongue * min(parcel.c.x, 2.0) * 0.35;
                 let ext = parcel.c.y * body * tongue;
                 m.sigma_t += ext;
                 m.sigma_s += vec3(ext * 0.25);
@@ -59,7 +61,8 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
                 let shell = rm_fbm(q * (2.5 + 2.0 * age) + vec3(parcel.c.z, -fr.cam_pos.w * 1.5, parcel.c.z * 0.7), 71u);
                 let edge = smoothstep(0.15 + 0.55 * age, 0.95, shell + (1.0 - dd) * 0.8);
                 w = edge * (0.4 + 0.6 * (1.0 - dd));
-                colour = mix(rm_heat_colour(0.55), rm_heat_colour(1.0), (1.0 - dd) * (1.0 - age));
+                colour = mix(rm_heat_colour(0.5), rm_heat_colour(0.84), (1.0 - dd) * (1.0 - age));
+                m.heat += w * 1.5 * (1.0 - 0.5 * age);
             } else if (kind == 1u || kind == 2u) {
                 w = (1.0 - dd) * (1.0 - dd) * (0.55 + 0.9 * flame_noise);
             } else if (kind == 6u) {
@@ -85,6 +88,10 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
         else if (kind == 5u || kind == 6u) { m.sigma_s += vec3(ext * 0.25); }
     }
     if (fire_emission > 0.0) {
+        // The gun's report: its flash grains leave through the muzzle brake's lobes.
+        let lobes = rm_brake_lobes(p);
+        fire_emission *= lobes;
+        fire_heat *= lobes;
         // Temperature from the local density: 0.3 (a lone lick, deep orange-red) to 1 (core).
         let temperature = clamp(0.18 + fire_heat * 0.12, 0.0, 0.72);
         m.emission += rm_heat_colour(temperature) * fire_emission * (0.5 + 0.7 * temperature) * 0.5;
@@ -117,8 +124,10 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     m = parcel_medium(p, cell_index, flame_noise, m);
     if (d > scene_d + slice_width) {
         textureStore(out_scatter, vec3<i32>(id), vec4(0.0, 0.0, 0.0, m.sigma_t));
+        textureStore(out_heat, vec3<i32>(id), vec4(0.0));
         return;
     }
+    textureStore(out_heat, vec3<i32>(id), vec4(m.heat, 0.0, 0.0, 0.0));
 
     var inscatter = m.emission;
     if (any(m.sigma_s > vec3(0.0))) {
@@ -130,7 +139,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
                 let reach = clamp((fr.medium.w - p.y) / max(fr.sun_dir.y, 0.08), 4.0, 60.0);
                 let tau = rm_march_tau(p, fr.sun_dir.xyz, reach, SUN_MARCH_STEPS, jitter.x);
                 inscatter += m.sigma_s * fr.sun_radiance.rgb * vis * exp(-tau)
-                    * rm_hg(dot(ray, fr.sun_dir.xyz), m.g);
+                    * rm_phase(dot(ray, fr.sun_dir.xyz), m.g);
             }
         }
         // Skylight: isotropic mean sky through the vertical cover map.
@@ -153,7 +162,10 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
             } else {
                 tau = m.sigma_t * min(s.dist, 12.0);
             }
-            inscatter += m.sigma_s * s.e * vis * exp(-tau) * rm_hg(dot(ray, s.dir), m.g);
+            var shape = 1.0;
+            // The report's own light leaves through the brake with the gas.
+            if (fr.report.w >= 0.0 && fr.report.w < 0.22 && distance(lights[index].a.xyz, fr.report.xyz) < 1.5) { shape = rm_brake_lobes(p); }
+            inscatter += m.sigma_s * s.e * vis * exp(-tau) * rm_phase(dot(ray, s.dir), m.g) * shape;
         }
     }
 

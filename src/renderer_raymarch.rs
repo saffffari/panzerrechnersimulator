@@ -42,14 +42,50 @@ const PUFF_LANES: usize = 13 * 3;
 /// Direction-indexed sky cache (rm_sky_cache.wgsl): equirectangular, this many texels across the
 /// full azimuth, 3/8 as many down the elevation window below. `KESSEL_RM_SKY=width[,phases]`
 /// overrides; `phases` is how many frames one full refresh takes (a 2-row x N/2-column pattern).
-const SKY_CACHE_WIDTH: u32 = 1024;
-const SKY_CACHE_PHASES: u32 = 8;
+const SKY_CACHE_WIDTH: u32 = 768;
+const SKY_CACHE_PHASES: u32 = 16;
+/// The cache marches the cloud layer with fewer view and light steps than the per-pixel sky
+/// pass did (32/5): its texel is 0.47 deg and refreshed over 16 frames, so the finer march bought
+/// nothing visible. Named in docs/RAYMARCHING_ENGINE.md.
+const SKY_CACHE_CLOUD_VIEW_STEPS: u32 = 20;
+const SKY_CACHE_CLOUD_LIGHT_STEPS: u32 = 4;
 const SKY_CACHE_ELEVATION_MIN_RAD: f32 = -20.0 * std::f32::consts::PI / 180.0;
 const SKY_CACHE_ELEVATION_SPAN_RAD: f32 = 110.0 * std::f32::consts::PI / 180.0;
 /// Irradiance below which a light stops being gathered, in the renderer's radiometric scale
 /// (a cabin lamp is ~1e-4 W/sr; moonlit snow ~1e-3).
 const LIGHT_CUTOFF_IRRADIANCE: f32 = 2.0e-7;
 const WEAPON_RECORD_BYTES: u64 = std::mem::size_of::<renderer_weapon_particles::Record>() as u64;
+/// Events the backend keeps rendering after the simulation's short burst record has expired.
+const MAX_EVENTS: usize = 96;
+const EVENT_LIFE_S: f32 = 24.0;
+/// Synthetic spark records per event (fragment streaks, burning fragments, molten spray).
+const EVENT_RECORDS: usize = 2;
+const EVENT_DETONATION: u32 = 0;
+const EVENT_MUZZLE: u32 = 1;
+const EVENT_ARMOUR: u32 = 2;
+/// Spark record kinds the backend adds to the simulation's (weapon_particle_math.rs ends at 8).
+const SPARK_FRAGMENT_STREAKS: u32 = 9;
+const SPARK_BURNING_FRAGMENTS: u32 = 10;
+const SPARK_MOLTEN_SPRAY: u32 = 11;
+
+/// A detonation, muzzle report or heavy armour strike seen in the simulation's burst records,
+/// kept for its cosmetic sequel: the fireball breaking up, soot and snow dust drifting with the
+/// wind, fragment streaks, burning fragments on the ground. Everything drawn from it is a
+/// deterministic function of the record's seed and the time since the event, so no state beyond
+/// this row exists (docs/RAYMARCHING_ENGINE.md, "Explosions").
+#[derive(Clone, Copy, Debug)]
+struct Event {
+    kind: u32,
+    seed: u32,
+    origin: Vec3,
+    /// Bore or incoming direction.
+    dir: Vec3,
+    /// Struck surface normal (armour) or up.
+    normal: Vec3,
+    /// Ground height under a detonation when the simulation also recorded ground ejecta there.
+    ground_y: Option<f32>,
+    born: f32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -76,6 +112,8 @@ struct FrameUniform {
     secondary_dir: [f32; 4],
     secondary_radiance: [f32; 4],
     sky_cache: [f32; 4],
+    report: [f32; 4],
+    report_dir: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
 }
@@ -130,6 +168,7 @@ pub struct Stats {
     pub spark_records: usize,
     pub tracer_records: usize,
     pub panes: usize,
+    pub events: usize,
     /// Sky cache phase refreshed this frame (= phase count on a full refresh).
     pub sky_phase: u32,
     pub history_valid: bool,
@@ -185,6 +224,9 @@ pub(super) struct Backend {
     point_face_views: Vec<wgpu::TextureView>,
     scatter: [Target; 2],
     integrated: Target,
+    /// Hot-gas measure per froxel and its front-to-back integral (heat haze).
+    heat: Target,
+    heat_integrated: Target,
     linear_sampler: wgpu::Sampler,
     sky_sampler: wgpu::Sampler,
     cmp_sampler: wgpu::Sampler,
@@ -229,12 +271,16 @@ pub(super) struct Backend {
     tracer_range: (u32, u32),
     /// Visible glass panes this frame, back to front.
     panes: Vec<usize>,
+    events: Vec<Event>,
+    /// World wind this frame (m/s, xz), for drifting soot and dust.
+    wind: Vec3,
     optic_active: bool,
     pub stats: Stats,
     encode_ms: Cell<f32>,
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
-    /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes.
+    /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
+    /// 4096 veiling glare.
     debug_skip: u32,
 }
 
@@ -462,7 +508,7 @@ impl Backend {
         let lights_buf = storage("rm-lights", (MAX_LIGHTS * std::mem::size_of::<GpuLight>()) as u64);
         let light_cell_start_buf = storage("rm-light-cell-start", ((CELL_COUNT + 1) * 4) as u64);
         let light_cell_items_buf = storage("rm-light-cell-items", (MAX_LIGHT_CELL_ITEMS * 4) as u64);
-        let weapon_buf = vertex("rm-weapon-records", (renderer_weapon_particles::math::MAX_BURSTS + renderer_weapon_particles::math::MAX_TRACERS) as u64 * WEAPON_RECORD_BYTES);
+        let weapon_buf = vertex("rm-weapon-records", (renderer_weapon_particles::math::MAX_BURSTS + MAX_EVENTS * EVENT_RECORDS + renderer_weapon_particles::math::MAX_TRACERS) as u64 * WEAPON_RECORD_BYTES);
         let ember_buf = vertex("rm-embers", (MAX_EMBERS * std::mem::size_of::<Ember>()) as u64);
         let gusage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
         let g0 = target(device, "rm-g0-albedo", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
@@ -487,6 +533,8 @@ impl Backend {
         })).collect();
         let scatter = [volume_target(device, "rm-scatter-a", vol), volume_target(device, "rm-scatter-b", vol)];
         let integrated = volume_target(device, "rm-integrated", vol);
+        let heat = volume_target(device, "rm-heat", vol);
+        let heat_integrated = volume_target(device, "rm-heat-integrated", vol);
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rm-linear"), address_mode_u: wgpu::AddressMode::ClampToEdge, address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge, mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
@@ -537,16 +585,17 @@ impl Backend {
             label: Some("rm-volume-bgl"), entries: &[
                 uniform_entry(0, S::COMPUTE), readonly_storage(1, S::COMPUTE), readonly_storage(2, S::COMPUTE), readonly_storage(3, S::COMPUTE),
                 tex3d(4, S::COMPUTE), sampler_filtering(5, S::COMPUTE), storage3d(6), depth_tex(7, S::COMPUTE, wgpu::TextureViewDimension::D2),
+                storage3d(8),
             ],
         });
         let integrate_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rm-integrate-bgl"), entries: &[uniform_entry(0, S::COMPUTE), tex3d(1, S::COMPUTE), storage3d(2)],
+            label: Some("rm-integrate-bgl"), entries: &[uniform_entry(0, S::COMPUTE), tex3d(1, S::COMPUTE), storage3d(2), tex3d(3, S::COMPUTE), storage3d(4)],
         });
         let shade_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-shade-bgl"), entries: &[
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT), float_tex_unfiltered(3, S::FRAGMENT),
                 depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2),
-                tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT),
+                tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT), tex3d(9, S::FRAGMENT),
             ],
         });
         let points_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -679,7 +728,11 @@ impl Backend {
         let sky_cache_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-sky-cache"), layout: &sky_cache_bgl, entries: &[entry(0, sky_cache_buf.as_entire_binding())],
         });
-        let sky_cache_source = physical_atmosphere_transport_shader_source(&format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_sky_cache.wgsl")));
+        let sky_entry = rm_source("sky.wgsl")
+            .replace("const CLOUD_VIEW_STEPS: i32 = 32;", &format!("const CLOUD_VIEW_STEPS: i32 = {SKY_CACHE_CLOUD_VIEW_STEPS};"))
+            .replace("const CLOUD_LIGHT_STEPS: i32 = 5;", &format!("const CLOUD_LIGHT_STEPS: i32 = {SKY_CACHE_CLOUD_LIGHT_STEPS};"));
+        assert!(sky_entry.contains(&format!("const CLOUD_VIEW_STEPS: i32 = {SKY_CACHE_CLOUD_VIEW_STEPS};")), "sky.wgsl cloud step constants moved");
+        let sky_cache_source = physical_atmosphere_transport_shader_source(&format!("{}\n{}", sky_entry, rm_source("rm_sky_cache.wgsl")));
         let sky_cache_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rm-sky-cache"), source: wgpu::ShaderSource::Wgsl(sky_cache_source.into()),
         });
@@ -730,7 +783,7 @@ impl Backend {
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
             sky_phase: 0, prev_sky_key: None, sky_sampler,
             scratch, shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
-            scatter, integrated, linear_sampler, cmp_sampler,
+            scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
@@ -739,7 +792,8 @@ impl Backend {
             lights: Vec::with_capacity(MAX_LIGHTS), parcels: Vec::with_capacity(MAX_PARCELS), embers: Vec::with_capacity(MAX_EMBERS),
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
             light_pairs: Vec::new(), light_cell_start: vec![0; CELL_COUNT + 1], light_cell_items: Vec::new(),
-            weapon_draws: Vec::new(), tracer_range: (0, 0), panes: Vec::new(), optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
+            weapon_draws: Vec::new(), tracer_range: (0, 0), panes: Vec::new(), events: Vec::with_capacity(MAX_EVENTS), wind: Vec3::ZERO,
+            optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
             debug_skip: std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
         }
     }
@@ -772,12 +826,15 @@ impl Backend {
                 entry(5, wgpu::BindingResource::Sampler(&self.linear_sampler)),
                 entry(6, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
                 entry(7, wgpu::BindingResource::TextureView(&r.depth_view)),
+                entry(8, wgpu::BindingResource::TextureView(&self.heat.view)),
             ],
         }));
         let integrate = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-integrate"), layout: &self.integrate_bgl, entries: &[
                 entry(0, frame.clone()), entry(1, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
                 entry(2, wgpu::BindingResource::TextureView(&self.integrated.view)),
+                entry(3, wgpu::BindingResource::TextureView(&self.heat.view)),
+                entry(4, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
             ],
         }));
         let shade = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -790,6 +847,7 @@ impl Backend {
                 entry(6, wgpu::BindingResource::TextureView(&self.integrated.view)),
                 entry(7, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
                 entry(8, wgpu::BindingResource::Sampler(&self.linear_sampler)),
+                entry(9, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
             ],
         }));
         let points = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -911,6 +969,8 @@ impl Backend {
 
         let vz = self.vol[2] as f32;
         let ln_range = (VOL_FAR_M / VOL_NEAR_M).ln();
+        self.wind = Vec3::new(wind.x, 0.0, wind.y);
+        self.track_events(r);
         self.collect_parcels(r, rel_vp, eye, vz, ln_range);
         self.collect_lights(r, rel_vp, eye, vz, ln_range);
         let pshadow = self.point_shadow_views(r);
@@ -957,6 +1017,10 @@ impl Backend {
             secondary_dir: [secondary_dir.x as f32, secondary_dir.y as f32, secondary_dir.z as f32, atmosphere.secondary_angular_radius_rad as f32],
             secondary_radiance: [secondary_radiance.x as f32, secondary_radiance.y as f32, secondary_radiance.z as f32, if secondary_on { 1.0 } else { 0.0 }],
             sky_cache: [SKY_CACHE_ELEVATION_MIN_RAD, SKY_CACHE_ELEVATION_SPAN_RAD, sky_w, sky_h],
+            report: self.events.iter().filter(|e| e.kind == EVENT_MUZZLE).map(|e| [e.origin.x, e.origin.y, e.origin.z, r.time - e.born])
+                .min_by(|a, b| a[3].total_cmp(&b[3])).unwrap_or([0.0, 0.0, 0.0, -1.0]),
+            report_dir: self.events.iter().filter(|e| e.kind == EVENT_MUZZLE).min_by(|a, b| (r.time - a.born).total_cmp(&(r.time - b.born)))
+                .map_or([0.0, 0.0, 1.0, 0.0], |e| [e.dir.x, e.dir.y, e.dir.z, 0.0]),
             pshadow,
             puffs,
         };
@@ -1140,9 +1204,12 @@ impl Backend {
             let db = (b.1.sum / b.1.count as f32 - eye).length_squared();
             da.total_cmp(&db)
         });
+        let now = r.time;
+        let detonations: Vec<(Vec3, f32)> = self.events.iter()
+            .filter(|e| e.kind == EVENT_DETONATION && now - e.born < 3.0).map(|e| (e.origin, now - e.born)).collect();
         for (key, cell) in cells {
             if self.parcels.len() >= MAX_PARCELS - 512 { break; }
-            let Some(&(_, kind, color, emissive)) = cell_kinds.iter().find(|k| k.0 == key.3) else { continue };
+            let Some(&(_, kind, mut color, emissive)) = cell_kinds.iter().find(|k| k.0 == key.3) else { continue };
             let center = cell.sum / cell.count as f32;
             let d = (center - eye).length();
             let cs = (cell.size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);
@@ -1152,11 +1219,23 @@ impl Backend {
             // Energy: looking through the cell must give the grains' own radiance times the
             // fraction of the cross-section they cover, so emission per metre is that over the
             // cell's diameter (the tongue shaping in rm_volume.wgsl redistributes, not adds).
-            let (emission, extinction) = match kind {
+            let (mut emission, mut extinction) = match kind {
                 k if k == PARCEL_FIRE => (emissive * coverage * 0.6 / radius, 0.6 * coverage / radius),
                 k if k == PARCEL_SOOT => (0.0, 4.0 * coverage / radius),
                 _ => (0.0, 1.0 * coverage / radius),
             };
+            // Grains thrown by a detonation are its products: incandescent for the first
+            // quarter second, then the dark smoke of the burst (a renderer-side reading of the
+            // simulation's flame grains, named in docs/RAYMARCHING_ENGINE.md).
+            if kind == PARCEL_FIRE {
+                if let Some(&(_, t)) = detonations.iter().find(|(o, t)| center.distance(*o) < 6.0 + 40.0 * t) {
+                    let burning = (1.0 - t / 0.25).max(0.0);
+                    emission *= burning * burning;
+                    extinction *= 0.8;
+                    let dark = 1.0 - burning;
+                    color = [color[0] + (0.11 - color[0]) * dark, color[1] + (0.09 - color[1]) * dark, color[2] + (0.08 - color[2]) * dark];
+                }
+            }
             self.parcels.push(Parcel {
                 a: [center.x, center.y, center.z, radius],
                 b: [color[0], color[1], color[2], kind],
@@ -1231,37 +1310,9 @@ impl Backend {
                 }
                 continue;
             }
-            if kind == wm::BLAST && heavy {
-                let scale = 1.0;
-                // Fireball: fast expansion, then a cooling, rising mass with a soot cap.
-                let life = 0.9;
-                if age < life {
-                    let t = age / life;
-                    let radius = (0.5 + 4.2 * t.sqrt()) * scale;
-                    let center = origin + Vec3::Y * (0.4 + 3.0 * t) * scale;
-                    let heat = (1.0 - t).powf(1.6);
-                    let color = Vec3::new(1.0, 0.55 + 0.4 * heat, 0.12 + 0.6 * heat * heat);
-                    self.parcels.push(Parcel {
-                        a: [center.x, center.y, center.z, radius],
-                        b: [color.x, color.y, color.z, PARCEL_FIREBALL],
-                        c: [3.0 * heat / radius, 2.5 / radius, burst.meta[0] as f32 * 0.001, t],
-                        d: [0.0; 4],
-                    });
-                }
-                // Soot column.
-                if age > 0.15 {
-                    let t = ((age - 0.15) / 1.7).min(1.0);
-                    let radius = (1.0 + 3.5 * t) * scale;
-                    let center = origin + Vec3::Y * (1.0 + 6.0 * t) * scale;
-                    self.parcels.push(Parcel {
-                        a: [center.x, center.y, center.z, radius],
-                        b: [0.05, 0.045, 0.04, PARCEL_SOOT],
-                        c: [0.0, 3.0 * (1.0 - t * 0.7) / radius, burst.meta[0] as f32 * 0.001, 0.0],
-                        d: [0.0; 4],
-                    });
-                }
-                continue;
-            }
+            // A heavy detonation's fireball, soot and dust come from its event (`event_parcels`),
+            // which outlives this record.
+            if kind == wm::BLAST && heavy { continue; }
             let (center, radius, fade, color) = match kind {
                 k if k == wm::BLAST => (origin + n * 0.1, 0.22 + 0.3 * age, (1.0 - age / 0.14).max(0.0), [1.0, 0.62, 0.22]),
                 k if k == wm::HOT_RIM => (origin, (burst.parameters[0] + burst.parameters[1]) * 2.0 + 0.05, (-age / 2.5).exp(), [1.0, 0.45, 0.12]),
@@ -1278,6 +1329,7 @@ impl Backend {
                 d: [0.0; 4],
             });
         }
+        self.event_parcels(r.time);
         for segment in &r.weapon_particles.segments {
             if self.parcels.len() >= MAX_PARCELS { break; }
             let a = Vec3::from_array([segment.origin_age[0], segment.origin_age[1], segment.origin_age[2]]);
@@ -1306,6 +1358,172 @@ impl Backend {
         self.stats.embers = self.embers.len();
     }
 
+    /// Register this frame's new detonations, muzzle reports and heavy armour strikes from the
+    /// simulation's burst records; drop events older than their sequel.
+    fn track_events(&mut self, r: &Renderer) {
+        use renderer_weapon_particles::math as wm;
+        let now = r.time;
+        self.events.retain(|e| now - e.born < EVENT_LIFE_S && now + 0.5 >= e.born);
+        if self.debug_skip & 2048 != 0 { self.events.clear(); self.stats.events = 0; return; }
+        let grounds: Vec<Vec3> = r.weapon_particles.bursts.iter()
+            .filter(|b| b.active() && b.meta[3] == wm::GROUND).map(|b| b.origin()).collect();
+        for burst in r.weapon_particles.bursts.iter().filter(|b| b.active()) {
+            let kind = burst.meta[3];
+            let heavy = burst.parameters[3] > 0.5;
+            let origin = burst.origin();
+            let event_kind = if kind == wm::BLAST && heavy && burst.parameters[2] > 2.0 {
+                if r.muzzle_hint.is_some_and(|(m, _)| (origin - m).length() < 2.5) { EVENT_MUZZLE } else { EVENT_DETONATION }
+            } else if (kind == wm::ARMOR_IMPACT || kind == wm::RICOCHET) && heavy {
+                EVENT_ARMOUR
+            } else { continue };
+            let seed = burst.meta[0];
+            if self.events.iter().any(|e| e.seed == seed && e.kind == event_kind) { continue; }
+            if self.events.len() >= MAX_EVENTS { break; }
+            let dir = Vec3::from_array([burst.direction_life[0], burst.direction_life[1], burst.direction_life[2]]).normalize_or_zero();
+            let n = Vec3::from_array([burst.normal_offset[0], burst.normal_offset[1], burst.normal_offset[2]]);
+            let normal = if n.length_squared() > 0.5 { n.normalize() } else { Vec3::Y };
+            let ground_y = grounds.iter().find(|p| p.distance(origin) < 2.5).map(|p| p.y);
+            self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, born: now - burst.origin_age[3].max(0.0) });
+        }
+        // The gun's own report: its flash light (tens of W/sr against lamps of 1e-4) appears at
+        // the muzzle; the muzzle smoke supports persist without an age and the flash is flame
+        // grains, so the light is the frame-exact signal.
+        if let Some((muzzle, dir)) = r.muzzle_hint {
+            let flashing = r.lights_full.iter().any(|l| l.radiant_intensity > 1.0 && l.pos.distance(muzzle) < 2.5);
+            if flashing && !self.events.iter().any(|e| e.kind == EVENT_MUZZLE && (now - e.born).abs() < 0.5) && self.events.len() < MAX_EVENTS {
+                let seed = (r.frame as u32).wrapping_mul(0x2545_F491) ^ 0x4D55_5A5A;
+                self.events.push(Event { kind: EVENT_MUZZLE, seed, origin: muzzle, dir: dir.normalize_or_zero(), normal: Vec3::Y, ground_y: None, born: now });
+            }
+        }
+        self.stats.events = self.events.len();
+    }
+
+    /// The media an event sheds at time `now`: fireball cluster, soot, snow and earth dust, the
+    /// muzzle's snow blast; burning fragments as embers. Every shape is a function of (seed, age).
+    fn event_parcels(&mut self, now: f32) {
+        use renderer_weapon_particles::math::random;
+        let wind = self.wind;
+        for e in self.events.clone() {
+            if self.parcels.len() >= MAX_PARCELS - 32 { break; }
+            let t = now - e.born;
+            if t < 0.0 { continue; }
+            let seed = e.seed;
+            let h = |k: u32| random(seed ^ k.wrapping_mul(0x9E37_79B9));
+            let o = e.origin;
+            let mut push = |center: Vec3, radius: f32, colour: [f32; 3], kind: f32, emission: f32, extinction: f32, noise: f32, age: f32| {
+                if radius <= 0.01 || extinction + emission <= 0.0 { return; }
+                self.parcels.push(Parcel {
+                    a: [center.x, center.y, center.z, radius],
+                    b: [colour[0], colour[1], colour[2], kind],
+                    c: [emission, extinction, noise, age],
+                    d: [0.0; 4],
+                });
+            };
+            match e.kind {
+                EVENT_DETONATION => {
+                    // Detonation products: a white-hot core for the first frames, then a cluster
+                    // of three turbulent lobes rising and parting as they cool.
+                    if t < 0.045 {
+                        let core = 1.0 + 30.0 * t;
+                        push(o + Vec3::Y * 0.6, core, [1.0, 0.97, 0.9], PARCEL_FIREBALL, 30.0 / core, 3.0 / core, h(1) * 100.0, 0.0);
+                    }
+                    if t < 1.3 {
+                        let u = t / 1.3;
+                        let heat = (1.0 - u).powf(1.5);
+                        for k in 0..3u32 {
+                            let a = h(10 + k) * std::f32::consts::TAU;
+                            let spread = (0.3 + 1.8 * u) * (0.4 + 0.6 * h(20 + k));
+                            let rise = (0.4 + 3.4 * u.powf(0.8)) * (0.8 + 0.4 * h(30 + k));
+                            let radius = (0.8 + 4.2 * u.powf(0.3)) * (0.75 + 0.25 * h(40 + k));
+                            let center = o + Vec3::new(a.cos() * spread, rise, a.sin() * spread) + wind * (t * 0.3);
+                            let colour = [1.0, 0.55 + 0.4 * heat, 0.12 + 0.6 * heat * heat];
+                            push(center, radius, colour, PARCEL_FIREBALL, 6.0 * heat / radius, 2.5 / radius, h(50 + k) * 100.0, u);
+                        }
+                    }
+                    // Soot: five puffs rising on their own buoyancy and drifting with the wind.
+                    if t > 0.1 && t < 14.0 {
+                        let u = (t - 0.1) / 13.9;
+                        for k in 0..5u32 {
+                            let a = h(60 + k) * std::f32::consts::TAU;
+                            let rb = h(70 + k);
+                            let rise = (1.5 + 7.5 * u.powf(0.55)) * (0.7 + 0.6 * rb);
+                            let spread = (0.8 + 5.0 * u.sqrt()) * (0.4 + 0.6 * h(80 + k));
+                            let center = o + Vec3::new(a.cos() * spread, rise, a.sin() * spread) + wind * (t * 0.8);
+                            let radius = (1.0 + 3.5 * u.sqrt()) * (0.6 + 0.6 * rb);
+                            let density = (1.0 - u).powf(1.3) * 0.7;
+                            // Dark grey, not black: the burst's smoke is soot mixed with lifted earth.
+                            push(center, radius, [0.4, 0.38, 0.36], PARCEL_SMOKE, 0.0, density / radius, h(90 + k) * 100.0, 0.0);
+                        }
+                    }
+                    if let Some(gy) = e.ground_y {
+                        // The pressure front sweeps a ring of snow off the ground, then the
+                        // crater's snow and earth climb in a column and fall back downwind.
+                        if t < 1.6 {
+                            let u = t / 1.6;
+                            let ring = 2.5 + 14.0 * u.powf(0.6);
+                            for k in 0..8u32 {
+                                let a = (k as f32 / 8.0 + 0.06 * h(100 + k)) * std::f32::consts::TAU;
+                                let center = Vec3::new(o.x + a.cos() * ring, gy + 0.5 + 0.4 * t, o.z + a.sin() * ring) + wind * (t * 0.5);
+                                let radius = (1.2 + 1.6 * t) * (0.8 + 0.4 * h(110 + k));
+                                let density = (1.0 - u) * 2.2;
+                                push(center, radius, [1.15, 1.15, 1.2], PARCEL_SMOKE, 0.0, density / radius, h(120 + k) * 100.0, 0.0);
+                            }
+                        }
+                        if t < 7.0 {
+                            let u = t / 7.0;
+                            for k in 0..4u32 {
+                                let a = h(130 + k) * std::f32::consts::TAU;
+                                let spread = (0.5 + 3.5 * u) * (0.3 + 0.7 * h(140 + k));
+                                let rise = (1.0 + 4.5 * u.powf(0.7)) * (0.7 + 0.5 * h(150 + k));
+                                let center = o + Vec3::new(a.cos() * spread, rise, a.sin() * spread) + wind * (t * 0.5);
+                                let radius = (1.5 + 3.5 * u.sqrt()) * (0.7 + 0.4 * h(160 + k));
+                                let density = (1.0 - u).powf(1.2) * 2.5;
+                                let colour = if k % 2 == 0 { [1.1, 1.1, 1.15] } else { [0.35, 0.3, 0.25] };
+                                push(center, radius, colour, PARCEL_SMOKE, 0.0, density / radius, h(170 + k) * 100.0, 0.0);
+                            }
+                        }
+                        // Burning residue around the crater, fading over the sequel.
+                        if t > 0.3 && self.embers.len() + 48 < MAX_EMBERS {
+                            let fade = (1.0 - t / EVENT_LIFE_S).max(0.0).powf(1.5);
+                            for k in 0..48u32 {
+                                let a = h(200 + k) * std::f32::consts::TAU;
+                                let d = 1.0 + 8.0 * h(250 + k).sqrt();
+                                let flicker = 0.6 + 0.4 * h(300 + k + ((t * 7.0) as u32 % 5));
+                                let pos = Vec3::new(o.x + a.cos() * d, gy + 0.05, o.z + a.sin() * d);
+                                self.embers.push(Ember { pos: pos.to_array(), packed: pack_ember([1.0, 0.45, 0.1], 2.2 * fade * flicker) });
+                            }
+                        }
+                    }
+                }
+                EVENT_MUZZLE => {
+                    // The 88's blast lifts a snow cloud off the ground ahead of the muzzle.
+                    if t < 3.0 {
+                        let u = t / 3.0;
+                        let forward = Vec3::new(e.dir.x, 0.0, e.dir.z).normalize_or_zero();
+                        let side = Vec3::new(-forward.z, 0.0, forward.x);
+                        let ramp = (t / 0.12).min(1.0);
+                        for k in 0..5u32 {
+                            let along = 2.0 + 1.1 * k as f32 + 3.0 * u;
+                            let lateral = (h(10 + k) - 0.5) * (1.5 + 4.0 * u);
+                            let center = o + forward * along + side * lateral + Vec3::Y * (-1.6 + 0.5 + 1.4 * u) + wind * (t * 0.6);
+                            let radius = (1.1 + 3.2 * u.sqrt()) * (0.7 + 0.5 * h(20 + k));
+                            let density = ramp * (1.0 - u).powf(1.4) * 1.1;
+                            push(center, radius, [1.15, 1.15, 1.2], PARCEL_SMOKE, 0.0, density / radius, h(30 + k) * 100.0, 0.0);
+                        }
+                    }
+                }
+                _ => {
+                    // Armour strike: a small puff of paint smoke and dust off the plate.
+                    if t < 1.4 {
+                        let u = t / 1.4;
+                        let center = o + e.normal * (0.3 + 1.2 * u) + Vec3::Y * (0.4 * u) + wind * (t * 0.5);
+                        push(center, 0.5 + 1.4 * u, [0.55, 0.5, 0.45], PARCEL_SMOKE, 0.0, (1.0 - u).powf(1.5) * 1.5 / (0.5 + 1.4 * u), h(1) * 100.0, 0.0);
+                    }
+                }
+            }
+        }
+    }
+
     fn upload_lists(&self, queue: &wgpu::Queue) {
         if !self.parcels.is_empty() { queue.write_buffer(&self.parcels_buf, 0, bytemuck::cast_slice(&self.parcels)); }
         queue.write_buffer(&self.cell_start_buf, 0, bytemuck::cast_slice(&self.cell_start));
@@ -1322,7 +1540,7 @@ impl Backend {
         let planes = frustum_planes(rel_vp);
         let mut bursts: Vec<wm::Record> = r.weapon_particles.bursts.iter().copied().filter(|b| b.active()).collect();
         bursts.sort_by(|a, b| a.origin().distance_squared(eye).total_cmp(&b.origin().distance_squared(eye)));
-        let mut records: Vec<wm::Record> = Vec::with_capacity(bursts.len() + r.weapon_particles.segments.len());
+        let mut records: Vec<wm::Record> = Vec::with_capacity(bursts.len() + self.events.len() * EVENT_RECORDS + r.weapon_particles.segments.len());
         let mut available = wm::MAX_SPARKS_PER_VIEW;
         for burst in bursts {
             let center = burst.origin() - eye;
@@ -1333,6 +1551,35 @@ impl Backend {
             available -= count;
             self.weapon_draws.push((records.len() as u32, count));
             records.push(burst);
+        }
+        // Event sparks: fragment streaks and burning fragments of a detonation, molten spray
+        // off struck armour (the vertex program in rm_sparks.wgsl carries their kinematics).
+        let now = r.time;
+        for e in &self.events {
+            if self.debug_skip & 2048 != 0 { break; }
+            let t = now - e.born;
+            if t < 0.0 { continue; }
+            let o = e.origin;
+            let mut synth = |kind: u32, count: u32, life: f32, parameters: [f32; 4]| {
+                if count > available { return; }
+                available -= count;
+                self.weapon_draws.push((records.len() as u32, count));
+                records.push(wm::Record {
+                    origin_age: [o.x, o.y, o.z, t],
+                    direction_life: [e.dir.x, e.dir.y, e.dir.z, life],
+                    normal_offset: [e.normal.x, e.normal.y, e.normal.z, 0.0],
+                    parameters,
+                    meta: [e.seed ^ kind.wrapping_mul(0x51ED_27D5), count, count, kind],
+                });
+            };
+            match e.kind {
+                EVENT_DETONATION => {
+                    if t < 0.25 { synth(SPARK_FRAGMENT_STREAKS, 1800, 0.25, [0.0; 4]); }
+                    if t < 5.5 { synth(SPARK_BURNING_FRAGMENTS, 64, 5.5, [e.ground_y.unwrap_or(o.y - 0.3), if e.ground_y.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0]); }
+                }
+                EVENT_ARMOUR => { if t < 1.3 { synth(SPARK_MOLTEN_SPRAY, 420, 1.3, [0.0; 4]); } }
+                _ => {}
+            }
         }
         self.weapon_draws.sort_by(|a, b| records[b.0 as usize].origin().distance_squared(eye)
             .total_cmp(&records[a.0 as usize].origin().distance_squared(eye)));
@@ -1630,6 +1877,33 @@ impl Backend {
             r.bloom_pass(encoder, "bloom-blur-h", &r.bloom_blur_pipe, &r.bloom_bind_a, &r.bloom_b_view, btexel, [1.0, 0.0], false);
             r.bloom_pass(encoder, "bloom-blur-v", &r.bloom_blur_pipe, &r.bloom_bind_b, &r.bloom_a_view, btexel, [0.0, 1.0], false);
             r.bloom_pass(encoder, "bloom-composite", &r.bloom_composite_pipe, &r.bloom_bind_a, &r.hdr_view, btexel, [0.0, 0.0], true);
+            // The eye's veiling glare: wide rings over the blurred bright pass, scaled by the
+            // bloom target's pixels per degree of view.
+            if self.debug_skip & 4096 == 0 {
+                let half_h = (r.camera.fov_y * 0.5).tan() * (self.iw as f32 / self.ih as f32);
+                let px_per_deg = r.bw as f32 / (2.0 * half_h.atan().to_degrees()).max(1.0);
+                r.bloom_pass(encoder, "bloom-glare-down", &r.bloom_copy_pipe, &r.bloom_bind_a, &r.bloom_levels[0], btexel, [0.0, 0.0], false);
+                for level in 1..r.bloom_levels.len() {
+                    r.bloom_pass(encoder, "bloom-glare-down", &r.bloom_copy_pipe, &r.bloom_level_binds[level - 1], &r.bloom_levels[level], btexel, [0.0, 0.0], false);
+                }
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("bloom-glare"),
+                        color_attachments: &[Some(attachment(&r.bloom_b_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK)))],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("bloom-glare")), occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(&r.bloom_glare_pipe);
+                    pass.set_bind_group(0, &r.bloom_bind_a, &[]);
+                    pass.set_bind_group(1, &r.bloom_glare_bind, &[]);
+                    let push = BloomPush { texel: btexel, dir: [px_per_deg, 0.0] };
+                    pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, 0, bytemuck::bytes_of(&push));
+                    pass.draw(0..3, 0..1);
+                }
+                r.bloom_pass(encoder, "bloom-glare-composite", &r.bloom_composite_glare_pipe, &r.bloom_bind_b, &r.hdr_view, btexel, [0.0, 0.0], true);
+                work.bloom_passes += 7;
+                work.fullscreen_raster_passes += 7;
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("crush"),
                 color_attachments: &[Some(attachment(&r.ldr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK)))],

@@ -82,6 +82,16 @@ fn rm_sky_visibility(world: vec3<f32>, lift_m: f32) -> f32 {
     }
     return sum / 9.0;
 }
+// Height of the top-down cover surface (terrain, hulls, roofs) under a horizontal position,
+// read back from the sky-cover depth map (orthographic, 0.1..400 m below the map's eye at
+// +150 m); the eye's own ground when the point lies outside the map.
+fn rm_cover_height(xz: vec2<f32>) -> f32 {
+    let c = rm_shadow_uv(shadow_views.vp[2] * vec4(xz.x, fr.cam_pos.y, xz.y, 1.0));
+    if (any(c.xy < vec2(0.0)) || any(c.xy > vec2(1.0))) { return fr.cam_pos.y - 1.7; }
+    let texel = vec2<i32>(clamp(c.xy, vec2(0.0), vec2(0.9999)) * 512.0);
+    let d = textureLoad(sky_cover, texel, 0);
+    return fr.cam_pos.y + 150.0 - (0.1 + d * 399.9);
+}
 // Face of a point-light cube by the major axis of the light-to-point vector.
 fn rm_cube_face(d: vec3<f32>) -> u32 {
     let a = abs(d);

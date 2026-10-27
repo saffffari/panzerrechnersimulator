@@ -141,3 +141,55 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // No fixed tint: orange fire produces an orange surround, cool sky a cool surround.
     return vec4(c.rgb * INTENSITY * surround, 1.0);
 }
+
+// --- Veiling glare of the crewman's eye (raymarch backend chain) -----------------------------
+// Intraocular scatter spreads a bright source over the retina: the CIE general disability glare
+// equation (Vos & van den Berg 1999) gives the veil as L_v = E_glare * 5 / theta^2 (cd/m^2 per
+// lux) between about 1 and 30 degrees. Each octave ring of angle therefore carries the same
+// veil energy, 5 * 2 pi theta dtheta / theta^2 ~ 2.2 % of the source luminance per octave. Four
+// rings (1.5, 3, 6, 12 deg) of eight taps each sample the Gaussian-blurred bright pass; the
+// inner degree is the compact bloom. GLARE_SCALE halves the CIE veil for play (named in
+// docs/PHYSICAL_TRUTH_AUDIT.md); the sun, a muzzle flash and a night fire still veil the eye.
+const GLARE_RING_SHARE: f32 = 0.0218;
+const GLARE_SCALE: f32 = 0.5;
+@group(1) @binding(0) var glare_l1: texture_2d<f32>;
+@group(1) @binding(1) var glare_l2: texture_2d<f32>;
+@group(1) @binding(2) var glare_l3: texture_2d<f32>;
+@group(1) @binding(3) var glare_l4: texture_2d<f32>;
+@group(1) @binding(4) var glare_samp: sampler;
+// One ring of twelve taps from the pyramid level whose texel is about half the tap spacing, so
+// a point source spreads into a smooth veil instead of twelve copies of itself.
+fn glare_ring(level: u32, uv: vec2<f32>, radius: vec2<f32>, phase: f32) -> vec3<f32> {
+    var sum = vec3(0.0);
+    for (var k = 0u; k < 12u; k += 1u) {
+        let a = f32(k) * 0.5235988 + phase;
+        let p = uv + vec2(cos(a), sin(a)) * radius;
+        var c = vec3(0.0);
+        switch level {
+            case 1u: { c = textureSample(glare_l1, glare_samp, p).rgb; }
+            case 2u: { c = textureSample(glare_l2, glare_samp, p).rgb; }
+            case 3u: { c = textureSample(glare_l3, glare_samp, p).rgb; }
+            default: { c = textureSample(glare_l4, glare_samp, p).rgb; }
+        }
+        sum += c;
+    }
+    return sum / 12.0;
+}
+@fragment
+fn fs_glare(in: VsOut) -> @location(0) vec4<f32> {
+    // pc.dir.x carries the bloom target's pixels per degree of view.
+    let px_per_deg = max(pc.dir.x, 0.5);
+    var veil = vec3(0.0);
+    for (var ring = 0u; ring < 4u; ring += 1u) {
+        let theta_deg = 1.5 * exp2(f32(ring));
+        let radius = theta_deg * px_per_deg * pc.texel;
+        let phase = select(0.0, 0.2617994, (ring & 1u) == 1u);
+        veil += glare_ring(ring + 1u, in.uv, radius, phase);
+    }
+    return vec4(veil * (GLARE_RING_SHARE * GLARE_SCALE), 1.0);
+}
+@fragment
+fn fs_composite_glare(in: VsOut) -> @location(0) vec4<f32> {
+    // The veil is already in luminance units of the source; it adds to the frame as is.
+    return vec4(textureSample(src, samp, in.uv).rgb, 1.0);
+}

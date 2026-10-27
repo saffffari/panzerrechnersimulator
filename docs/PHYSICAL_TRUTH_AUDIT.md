@@ -26,10 +26,45 @@ are presented as ray tracing, GI or a combustion/solver result:
 - The eyepiece glass (refraction, dispersion, grime) is a presentation of the optic.
 - Flakes, embers and sparks are one native pixel with projected-coverage energy.
 - The froxel history reprojects by camera motion only.
+- (2026-10-27, second pass) The physical sky is cached by direction: a 768x288 equirectangular
+  map (0.47 deg per texel, the cloud layer marched with 20 view and 4 light steps instead of
+  32/5) refreshed over 16 frames; the solar and secondary discs are drawn analytically from the
+  same transmitted irradiance through the cache's cloud transmittance. Clouds and stars are that
+  soft; below -20 deg elevation the bottom row stands in.
+- Glass panes (`rm_glass.wgsl`): Fresnel at the entry face, absorption along the refracted path
+  through the slab's thinnest extent, glints and screen-space reflection; no refraction offset of
+  what is seen through the pane, no second-interface bounce, a scalar mean transmittance for the
+  blend, grime from a fixed noise field. The cupola eyepieces are panes over the housing, not
+  relayed views.
+- Grass cards cast into the near cascade, the cover map and the point faces (not the far
+  cascade); blades ask the cover map from 0.55 m above themselves, take no contact shadow, 70 %
+  of their occlusion is lifted, and the key beam wraps round a blade (0.35 of the back-face
+  cosine plus 0.15) as a stand-in for straw's translucency.
+- Event sequels (`Event`): a detonation, muzzle report or heavy armour strike is kept for 24 s
+  past its 1.85 s burst record; its fireball lobes, soot and dust, snow ring and column, fragment
+  streaks, burning fragments, molten spray and the muzzle's snow cloud are authored motions
+  seeded by the record, not fluid or fragmentation solvers. Grains the simulation throws from a
+  detonation are read as its products (incandescent 0.25 s, then dark smoke). The muzzle brake's
+  jet and side lobes shape the report's smoke, light and flash grains for 0.22 s.
+- Spark samples' projected-area energy is capped (6 px, 3 px for event shards) so a shard
+  passing the eye does not bloom into a disc; fragment and heavy-blast sparks trail 4-10
+  samples per shard.
+- Media phase is Henyey-Greenstein with a 35 % isotropic share standing in for multiple
+  scattering (single scattering alone left the lit side of a thick smoke cloud black).
+- Heat haze is a screen-space displacement of the G-buffer lookup by the heat integrated along
+  the ray (fire and fireball cells), not refraction through an index field.
+- Spindrift is a density field in the lowest 0.9 m over the cover map's surface, streaked along
+  the wind, fading at the map's 48 m edge; not saltating snow.
+- Snow glitter: one random ice facet per centimetre of terrain (a hash, not a crystal model)
+  flashes the key beam at the eye through a narrow lobe; one native pixel each.
+- Veiling glare (`stylized_bloom.wgsl` `fs_glare`, this chain only): see the "Light, sky and
+  the eye" row; the display stage's rod signal takes the cool mesopic hue
+  (`observer::ROD_DISPLAY_HUE`).
 
-Gates: `raymarch-showcase PREFIX` (13 stills with a JSON receipt) and `gfxbench` with
-`KESSEL_GPU_PROFILE=1` on the raymarch backend; the shader and physical backends are unchanged
-and remain the shipping defaults until this backend passes the same reviews.
+Gates: `raymarch-showcase PREFIX` (16 stills with a JSON receipt; `KESSEL_SHOWCASE_SET=palette`
+for 18 more across the day and the weather) and `gfxbench` with `KESSEL_GPU_PROFILE=1` on the
+raymarch backend; the shader and physical backends are unchanged and remain the shipping
+defaults until this backend passes the same reviews.
 
 ## Native geometry coverage, 2026-10-01 (consolidated shader renderer)
 
@@ -376,6 +411,8 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | HDR precision (2026-10-04) | The HDR frame and the radiance targets that feed it (light layers, accumulation, volume estimate, reconstruction, passthrough) are binary32 (Rgba32Float) wherever the adapter can blend, filter and four-sample-resolve that format (`renderer::choose_hdr_format`); the light, the shaders and both presets are otherwise unchanged. Measured on the steppe under a full Moon: the field read exactly 0 cd/m^2 in binary16 and reads 0.0006-0.0012 cd/m^2 now; a daylight frame's displayed mean is unchanged (0.24318 against 0.24317). | An adapter without those format features keeps binary16 and the old loss: its smallest subnormal is 6e-8 RU (about 0.004 cd/m^2), so a moonlit field stores as zero. `KESSEL_HDR_HALF=1` forces binary16 for comparison. The G-buffer albedo target, the texel-probe targets and the bloom chain stay binary16. The optic layer dump (`raster_optics`) still assumes 8 bytes a texel and needs `KESSEL_HDR_HALF=1`. |
 | Twilight (2026-10-04) | `physical_first_planet_hit` in `shaders/physical_environment.wgsl` read the empty interval of a ray that misses the planet as a hit at infinity, so every sample whose ray toward the Sun cleared the planet was in the planet's shadow: all air above (R sin^2 h)/2 under a Sun at altitude h (3.9 km at 2 deg, 300 m at 0.5 deg) and all of it once the Sun set. The CPU reference never had the fault. Corrected: across sunset on the steppe the frame mean now falls 880, 529, 262, 77, 6.8, 0.21, 0.075 cd/m^2 for the Sun at +7.8, +4.8, +2.0, -0.8, -3.5, -6.0, -8.3 deg (before: 879, 487, 86, 0.0001, 0.005, 0.008, 0.07). | Low-Sun daylight is brighter than every earlier capture (the upper air is lit again). Gate: `celestial_sky::tests::the_light_falls_steadily_through_dusk` states the CPU reference's dusk; there is no GPU-against-CPU sky regression yet. |
 | Night display gain (owner, 2026-10-04) | `observer::ROD_DISPLAY_GAIN` = 6: `crush.wgsl` shows the eye model's rod signal six times brighter than the threshold-matched level, because a moonlit field reproduced as dim as a dark-adapted eye sees it is too dark to play by on a monitor. It changes no light and no adaptation state, and nothing in photopic light (the rod share is zero there). | A deliberate departure from the eye model's visibility matching: under the Moon a surface can be shown brighter than the same surface late in dusk. `Mapping::aces_input` and the research gates state the model without the gain. `KESSEL_ROD_DISPLAY_GAIN` overrides it for review. Gate: `observer::tests::the_night_display_gain_is_a_named_bounded_departure_applied_only_by_the_display`. |
+| Night display hue (2026-10-27) | `observer::ROD_DISPLAY_HUE` = (0.80, 1.00, 1.45): `crush.wgsl` reproduces the eye model's achromatic rod signal in a luminance-neutral cool grey (the mesopic Purkinje appearance: rod sensitivity peaks at 507 nm and the rod signal enters the opponent channels on the blue side; Kirk & O'Brien 2011, Jensen et al. 2000). The cone term keeps every source's own colour, so fire and lamps stay warm; a daylight frame is untouched (rod share zero). | A reproduction choice: moonlit snow is shown blue-grey where the model's rod channel is hueless. `KESSEL_ROD_HUE=r,g,b` overrides it for review. Gate: `observer::tests::the_rod_display_hue_is_luminance_neutral_cool_and_named`. |
+| Veiling glare (2026-10-27, raymarch backend) | `stylized_bloom.wgsl` `fs_glare`: the eye's intraocular scatter spreads every bright source over the frame by the CIE general disability glare equation (Vos & van den Berg 1999), L_v = E 5/theta^2, sampled as four octave rings (1.5-12 deg) of eight taps over the Gaussian-blurred bright pass, each ring 2.2 % of the source luminance per octave. `GLARE_SCALE` = 0.5 halves the CIE veil so the sun near the horizon leaves the field playable. | A reproduction model of the observer, not scene light: it adds no illumination to any surface or volume. The raymarch display chain only; `KESSEL_RM_SKIP=4096` disables it for review. |
 
 ## Simulation
 

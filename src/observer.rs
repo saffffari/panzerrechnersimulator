@@ -87,6 +87,14 @@ pub const ROD_SATURATION_SCOT_TD: f64 = 1_700.0;
 /// frame (the rod share is zero in photopic light). `Mapping::aces_input` stays the eye model
 /// without it, so the research gates still test the model; only `crush.wgsl` applies it.
 pub const ROD_DISPLAY_GAIN: f64 = 6.0;
+/// The colour the rod signal is reproduced in, linear Rec. 709, luminance-neutral (luma 0.99).
+/// Rod vision has no hue of its own, but the mesopic appearance of a moonlit field is reported
+/// and modelled as a cool, bluish grey (the Purkinje shift: rod sensitivity peaks at 507 nm,
+/// and the rod signal enters the blue-yellow opponent channel on the blue side; Kirk & O'Brien
+/// 2011, Jensen et al. 2000). A reproduction choice named in docs/PHYSICAL_TRUTH_AUDIT.md: it
+/// scales the achromatic rod term only, so fire, lamps and anything the cones see keep their
+/// colour, and a daylight frame (rod share zero) is untouched. `KESSEL_ROD_HUE=r,g,b` overrides.
+pub const ROD_DISPLAY_HUE: [f64; 3] = [0.80, 1.00, 1.45];
 
 /// A sample brighter than this multiple of the cone adaptation counts as flash light [E].
 pub const FLASH_ABOVE_ADAPTATION: f64 = 30.0;
@@ -505,6 +513,13 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_SATURATION_TD", ROD_SATURATION_SCOT_TD);
     push("OBS_ROD_DISPLAY_GAIN", std::env::var("KESSEL_ROD_DISPLAY_GAIN").ok()
         .and_then(|v| v.parse().ok()).unwrap_or(ROD_DISPLAY_GAIN));
+    let hue = std::env::var("KESSEL_ROD_HUE").ok().and_then(|v| {
+        let parts: Vec<f64> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]])
+    }).unwrap_or(ROD_DISPLAY_HUE);
+    push("OBS_ROD_HUE_R", hue[0]);
+    push("OBS_ROD_HUE_G", hue[1]);
+    push("OBS_ROD_HUE_B", hue[2]);
     push("OBS_FLASH_ABOVE_ADAPTATION", FLASH_ABOVE_ADAPTATION);
     push("OBS_FLASH_MEMORY_TAU", FLASH_MEMORY_TAU_S);
     push("OBS_FLASH_MIN_RECOVERY", FLASH_MIN_RECOVERY_S);
@@ -617,9 +632,23 @@ mod tests {
         assert!((1.0..=8.0).contains(&ROD_DISPLAY_GAIN));
         let crush = include_str!("../shaders/crush.wgsl");
         assert_eq!(crush.matches("OBS_ROD_DISPLAY_GAIN").count(), 1);
-        assert!(crush.contains("vec3(rods * OBS_ROD_DISPLAY_GAIN)"));
+        assert!(crush.contains("vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * OBS_ROD_DISPLAY_GAIN)"));
         assert!(wgsl_constants().contains("const OBS_ROD_DISPLAY_GAIN: f32 = "));
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_GAIN"));
+    }
+
+    #[test]
+    fn the_rod_display_hue_is_luminance_neutral_cool_and_named() {
+        let [r, g, b] = ROD_DISPLAY_HUE;
+        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        assert!((luma - 1.0).abs() < 0.02, "the hue must not change the rod signal's brightness: {luma}");
+        assert!(b > g && g >= r, "cool: blue above green above red");
+        assert!(b / r < 2.2, "bounded departure from grey");
+        let constants = wgsl_constants();
+        for name in ["OBS_ROD_HUE_R", "OBS_ROD_HUE_G", "OBS_ROD_HUE_B"] {
+            assert!(constants.contains(&format!("const {name}: f32 = ")));
+        }
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_HUE"));
     }
 
     #[test]

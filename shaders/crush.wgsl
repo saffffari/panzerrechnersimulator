@@ -59,7 +59,10 @@ fn camera_white_gain() -> vec3<f32> {
 fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
     let rods = obs_rod_response(scotopic, cr.rod_exposure, cr.rod_inverse_saturation);
-    return radiance * camera_white_gain() * cr.exposure + vec3(rods * OBS_ROD_DISPLAY_GAIN);
+    // The rod term is achromatic in the eye; it is reproduced in the cool mesopic hue
+    // (observer::ROD_DISPLAY_HUE, luminance-neutral). Cones keep every source's own colour.
+    return radiance * camera_white_gain() * cr.exposure
+        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * OBS_ROD_DISPLAY_GAIN);
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright

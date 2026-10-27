@@ -24,6 +24,8 @@ struct Frame {
     secondary_dir: vec4<f32>,     // xyz to the secondary body, w its angular radius rad
     secondary_radiance: vec4<f32>,// rgb secondary irradiance at the eye through the air, w present
     sky_cache: vec4<f32>,         // elevation min rad, elevation span rad, width, height
+    report: vec4<f32>,            // xyz the gun's muzzle at its last report, w seconds since (-1 none)
+    report_dir: vec4<f32>,        // xyz bore direction of that report
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
 };
@@ -67,6 +69,12 @@ fn rm_cell_index(uv: vec2<f32>, distance_m: f32) -> u32 {
 fn rm_hg(cos_theta: f32, g: f32) -> f32 {
     let gg = g * g;
     return (1.0 - gg) / (4.0 * RM_PI * pow(max(1.0 + gg - 2.0 * g * cos_theta, 0.0001), 1.5));
+}
+// Phase function of the media: the Henyey-Greenstein forward lobe with a 35 % isotropic share
+// standing in for the multiply-scattered light a thick cloud returns toward the eye (single
+// scattering alone leaves the lit side of a smoke cloud black; named approximation).
+fn rm_phase(cos_theta: f32, g: f32) -> f32 {
+    return mix(rm_hg(cos_theta, g), 1.0 / (4.0 * RM_PI), 0.35);
 }
 fn rm_hash(x: u32) -> u32 {
     var s = x ^ (x >> 16u); s *= 0x7feb352du; s ^= s >> 15u; s *= 0x846ca68bu; s ^= s >> 16u;
@@ -125,6 +133,29 @@ fn rm_sky_discs(dir: vec3<f32>) -> vec3<f32> {
         }
     }
     return radiance;
+}
+// The 88's muzzle brake, for the first fraction of a second after the gun's report
+// (fr.report, fr.report_dir): gas and light leave as a forward jet and two lateral lobes, not a
+// sphere. 1 where the point lies in a lobe, 0 between them, 1 everywhere once the report ages.
+fn rm_brake_lobes(p: vec3<f32>) -> f32 {
+    let age = fr.report.w;
+    if (age < 0.0 || age >= 0.22) { return 1.0; }
+    let axis_raw = fr.report_dir.xyz;
+    if (dot(axis_raw, axis_raw) < 1.0e-4) { return 1.0; }
+    let axis = normalize(axis_raw);
+    let side = normalize(cross(axis, vec3(0.0, 1.0, 0.0)));
+    let up = cross(side, axis);
+    let q = p - fr.report.xyz;
+    if (dot(q, q) > 9.0) { return 1.0; }
+    let along = dot(q, axis); let lateral = dot(q, side); let vert = dot(q, up);
+    // A narrow forward jet widening with distance, and two side jets of 0.18 m radius centred
+    // 0.35 m out and 0.1 m ahead of the muzzle; the flash grains cluster within 0.5 m, so the
+    // pattern is tighter than the cluster.
+    let fwd = exp(-(lateral * lateral + vert * vert) / pow(0.07 + 0.3 * max(along, 0.0), 2.0)) * step(-0.05, along);
+    let dl = abs(lateral) - 0.35;
+    let lobe = exp(-((along - 0.1) * (along - 0.1) + vert * vert + dl * dl) / (0.18 * 0.18));
+    let shaped = clamp(max(fwd, lobe) * 1.4, 0.03, 1.0);
+    return mix(shaped, 1.0, smoothstep(0.06, 0.22, age));
 }
 // GGX/Smith specular lobe with Schlick Fresnel.
 fn rm_ggx_specular(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0: vec3<f32>) -> vec3<f32> {

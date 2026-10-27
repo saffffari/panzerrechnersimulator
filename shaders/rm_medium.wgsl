@@ -1,9 +1,11 @@
 // Raymarch backend participating media: the world weather layer, the cabin haze, and the
 // analytic plumes the simulation drives (muzzle smoke, breech gas, fire smoke supports).
 // Fire/soot/smoke parcels come through the binned parcel list in rm_volume.wgsl.
-struct Medium { sigma_s: vec3<f32>, sigma_t: f32, emission: vec3<f32>, g: f32 };
+// `heat`: hot-gas measure per metre (fire, fireballs), integrated along the ray for the heat
+// haze in rm_shade.wgsl; it carries no light.
+struct Medium { sigma_s: vec3<f32>, sigma_t: f32, emission: vec3<f32>, g: f32, heat: f32 };
 
-fn rm_medium_zero() -> Medium { return Medium(vec3(0.0), 0.0, vec3(0.0), 0.6); }
+fn rm_medium_zero() -> Medium { return Medium(vec3(0.0), 0.0, vec3(0.0), 0.6, 0.0); }
 
 // World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x.
 fn rm_world_density(p: vec3<f32>) -> f32 {
@@ -13,7 +15,30 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
     // Snow drift texture: coherent low-frequency breakup moving with the wind, never bright noise.
     let drift = p - vec3(fr.wind.x, 0.0, fr.wind.z) * fr.cam_pos.w * 0.35;
     let gust = 0.72 + 0.28 * rm_noise(drift * 0.045, 11u);
-    return fr.medium.x * above * gust;
+    // Spindrift: wind lifts loose snow into a shallow, streaky layer over the ground (the
+    // sky-cover map gives the surface height under the point; beyond the map's edge the
+    // layer fades into the general weather layer). Named in docs/RAYMARCHING_ENGINE.md.
+    let wind_v = vec2(fr.wind.x, fr.wind.z);
+    let wind_speed = length(wind_v);
+    let blow = smoothstep(2.5, 6.0, wind_speed) * max(fr.medium.y, 0.5);
+    var spindrift = 0.0;
+    if (blow > 0.0) {
+        let horizontal = length(p.xz - fr.cam_pos.xz);
+        let edge = 1.0 - smoothstep(40.0, 47.0, horizontal);
+        if (edge > 0.0) {
+            let h = p.y - rm_cover_height(p.xz);
+            if (h > -0.3 && h < 0.9) {
+                let wdir = wind_v / max(wind_speed, 0.01);
+                let along = dot(p.xz, wdir) - fr.cam_pos.w * wind_speed * 0.8;
+                let across = dot(p.xz, vec2(-wdir.y, wdir.x));
+                let streak = rm_noise(vec3(along * 0.3, across * 1.6, h * 2.5 + 3.0), 29u);
+                let fine = rm_noise(vec3(along * 1.1 - fr.cam_pos.w * 2.0, across * 4.0, 11.0), 31u);
+                let profile = pow(1.0 - clamp(h, 0.0, 0.9) / 0.9, 2.0);
+                spindrift = (0.03 + fr.medium.x * 3.0) * blow * profile * smoothstep(0.35, 0.85, streak * 0.7 + fine * 0.3) * edge;
+            }
+        }
+    }
+    return fr.medium.x * above * gust + spindrift;
 }
 fn rm_cabin_density(p: vec3<f32>) -> f32 {
     if (fr.cabin.w <= 0.0) { return 0.0; }
@@ -87,6 +112,10 @@ fn rm_puff_extinction(p: vec3<f32>) -> vec2<f32> {
             d = rm_billow_density(p, i);
         } else {
             d = rm_plume_density(p, i);
+        }
+        // The muzzle smoke supports take the brake's shape for the first fraction of a second.
+        if (d > 0.0 && fr.report.w >= 0.0 && fr.report.w < 0.22 && distance(rm_puff_pos(i).xyz, fr.report.xyz) < 2.5) {
+            d *= rm_brake_lobes(p);
         }
         if (d > 0.0) {
             let albedo = select(0.78, shape.w, shape.x > 0.0);

@@ -10,6 +10,7 @@
 @group(0) @binding(6) var integrated: texture_3d<f32>;
 @group(0) @binding(7) var scatter: texture_3d<f32>;
 @group(0) @binding(8) var linear_samp: sampler;
+@group(0) @binding(9) var heat_integrated: texture_3d<f32>;
 
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, };
 
@@ -111,7 +112,7 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
             let albedo = mix(0.70, 0.92, fr.medium.y);
             let g = mix(0.74, 0.62, fr.medium.y);
             var source = rm_sky_isotropic();
-            if (fr.sun_radiance.w > 0.5) { source += fr.sun_radiance.rgb * rm_hg(dot(ray, fr.sun_dir.xyz), g); }
+            if (fr.sun_radiance.w > 0.5) { source += fr.sun_radiance.rgb * rm_phase(dot(ray, fr.sun_dir.xyz), g); }
             radiance += transmittance * albedo * source * (1.0 - t2);
             transmittance *= t2;
         }
@@ -121,16 +122,34 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    let pixel = vec2<i32>(in.pos.xy);
-    let depth = textureLoad(depth_tex, pixel, 0);
-    let ray = rm_ray(in.uv);
+    var pixel = vec2<i32>(in.pos.xy);
+    var uv = in.uv;
+    var depth = textureLoad(depth_tex, pixel, 0);
+    // Heat haze: hot air between the eye and what it looks at refracts the view. The
+    // integrated heat along the ray sets the amplitude; the pattern climbs as hot air does.
+    // A presentation of refraction by the froxel heat field, named in the engine document.
+    {
+        let d0 = select(2000.0, length(rm_relative_from_depth(uv, depth)), depth < 1.0);
+        let hs = clamp((rm_slice(d0) - 0.5) / fr.vol.z, 0.0, (fr.vol.z - 0.5) / fr.vol.z);
+        let heat = textureSampleLevel(heat_integrated, linear_samp, vec3(uv, hs), 0.0).r;
+        if (heat > 0.02) {
+            let amp = min(heat * 2.0, 6.0);
+            let n1 = rm_noise(vec3(uv.x * 38.0, uv.y * 24.0 - fr.cam_pos.w * 3.1, 2.0), 57u) - 0.5;
+            let n2 = rm_noise(vec3(uv.x * 29.0 + 5.0, uv.y * 31.0 - fr.cam_pos.w * 2.7, 9.0), 63u) - 0.5;
+            let shift = vec2<i32>(round(vec2(n1, n2) * amp * 2.0));
+            pixel = clamp(pixel + shift, vec2(0), vec2<i32>(fr.res.xy) - vec2(1));
+            uv = (vec2<f32>(pixel) + vec2(0.5)) * fr.res.zw;
+            depth = textureLoad(depth_tex, pixel, 0);
+        }
+    }
+    let ray = rm_ray(uv);
     let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(fr.vol.w) * 26699u);
     if (depth >= 1.0) {
         let sky = rm_sky_radiance(ray);
         let fog = fog_to(in.uv, ray, 20000.0);
         return vec4(sky * fog.transmittance + fog.radiance, 1.0);
     }
-    let rel = rm_relative_from_depth(in.uv, depth);
+    let rel = rm_relative_from_depth(uv, depth);
     let world = fr.cam_pos.xyz + rel;
     let dist = length(rel);
     let g0 = textureLoad(g0_tex, pixel, 0);
@@ -151,24 +170,40 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let grass = g0.a > 3.5 && g0.a < 4.5;
         // Key beam.
         if (fr.sun_radiance.w > 0.5) {
-            let ndl = dot(n, fr.sun_dir.xyz);
+            // Grass is dead straw: thin, two-sided, lit through; the beam wraps round a blade
+            // instead of leaving its back black (named approximation, no transmission solve).
+            let ndl = select(dot(n, fr.sun_dir.xyz), max(dot(n, fr.sun_dir.xyz), 0.35 * abs(dot(n, fr.sun_dir.xyz)) + 0.15), grass);
             if (ndl > 0.0) {
-                let bias = select(0.03, 0.35, terrain) + 0.25 * (1.0 - ndl);
+                let bias = select(select(0.03, 0.35, terrain), 0.12, grass) + 0.25 * (1.0 - ndl);
                 var vis = rm_sun_visibility(world, bias);
-                if (vis > 0.001 && !terrain) {
+                if (vis > 0.001 && !terrain && !grass) {
                     vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, jitter));
                 }
                 color += (diffuse + rm_ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
+                // Snow glitter: a random ice facet per 4 cm of surface flashes the beam into the
+                // eye when its half-vector lines up (named approximation: facets are a hash, not
+                // a crystal model; the dither keeps them one-pixel sparks).
+                if (terrain && fr.wind.y < 0.5) {
+                    // One facet per centimetre: a sparkle stays a point at any distance.
+                    let cell = vec3<i32>(floor(world * 100.0));
+                    let seed = u32(cell.x * 73856093 ^ cell.y * 19349663 ^ cell.z * 83492791);
+                    let tilt = vec3(rm_hash01(seed) - 0.5, rm_hash01(seed + 1u) - 0.5, rm_hash01(seed + 2u) - 0.5) * 1.1;
+                    let facet = normalize(n + tilt);
+                    let h = normalize(v + fr.sun_dir.xyz);
+                    let glint = pow(max(dot(facet, h), 0.0), 900.0) * 0.3 * vis;
+                    color += fr.sun_radiance.rgb * glint;
+                }
             }
         }
         // Skylight.
-        let ao = screen_occlusion(pixel, rel, n, jitter);
+        var ao = screen_occlusion(pixel, rel, n, jitter);
+        if (grass) { ao = mix(ao, 1.0, 0.7); }
         // Grass blades ask the cover map from above their own canopy (they stand in it).
         let sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
         let ambient = rm_sky_hemisphere(n) * mix(0.10, 1.0, sky_vis) * ao;
         color += diffuse * RM_PI * ambient;
         // Lamps, fires, flashes: the lights binned into this pixel's cell.
-        let cell = rm_cell_index(in.uv, dist);
+        let cell = rm_cell_index(uv, dist);
         let lstart = light_cell_start[cell];
         let lend = light_cell_start[cell + 1u];
         for (var i = lstart; i < lend; i += 1u) {

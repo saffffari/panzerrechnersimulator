@@ -2857,6 +2857,14 @@ pub struct Renderer {
     bloom_bright_pipe: wgpu::RenderPipeline,
     bloom_blur_pipe: wgpu::RenderPipeline,
     bloom_composite_pipe: wgpu::RenderPipeline,
+    /// Veiling glare of the eye over the Gaussian bloom (raymarch chain only): a box-filtered
+    /// pyramid of the blurred bright pass, one level per glare ring.
+    bloom_glare_pipe: wgpu::RenderPipeline,
+    bloom_composite_glare_pipe: wgpu::RenderPipeline,
+    bloom_copy_pipe: wgpu::RenderPipeline,
+    bloom_levels: Vec<wgpu::TextureView>,
+    bloom_level_binds: Vec<wgpu::BindGroup>,
+    bloom_glare_bind: wgpu::BindGroup,
     bloom_bind_hdr: wgpu::BindGroup, // src = full-res HDR (bright pass)
     bloom_bind_a: wgpu::BindGroup,   // src = bloom_a
     bloom_bind_b: wgpu::BindGroup,   // src = bloom_b
@@ -5389,6 +5397,42 @@ impl Renderer {
             "fs_composite",
             Some(add_blend),
         );
+        let bloom_composite_glare_pipe = bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", Some(add_blend));
+        // Glare pyramid: five box-filtered halvings of the blurred bright pass (a bilinear copy
+        // into a half-size target is a 2x2 box); rings 1.5/3/6/12 deg read levels 1..4.
+        let bloom_copy_pipe = bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", None);
+        let mut bloom_levels = Vec::new();
+        let mut bloom_level_binds = Vec::new();
+        for level in 0..5u32 {
+            let (w, h) = ((bw >> (level + 1)).max(1), (bh >> (level + 1)).max(1));
+            let view = make_target(device, "bloom-glare-level", w, h, hdr_format(), wgpu::TextureUsages::TEXTURE_BINDING);
+            if level < 4 { bloom_level_binds.push(make_bloom_bind(&view, "bloom-glare-level-bind")); }
+            bloom_levels.push(view);
+        }
+        let glare_tex = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding, visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+            count: None,
+        };
+        let glare_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bloom-glare-bgl"),
+            entries: &[glare_tex(0), glare_tex(1), glare_tex(2), glare_tex(3), sampler_entry(4)],
+        });
+        let bloom_glare_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bloom-glare-bind"), layout: &glare_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bloom_levels[1]) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&bloom_levels[2]) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&bloom_levels[3]) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&bloom_levels[4]) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&bloom_sampler) },
+            ],
+        });
+        let bloom_glare_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bloom-glare-pl"), bind_group_layouts: &[&bloom_bgl, &glare_bgl],
+            push_constant_ranges: &[wgpu::PushConstantRange { stages: wgpu::ShaderStages::FRAGMENT, range: 0..std::mem::size_of::<BloomPush>() as u32 }],
+        });
+        let bloom_glare_pipe = bloom_pipe(device, &bloom_shader, &bloom_glare_pl, "fs_glare", None);
 
         // ---------- volumetric smoke ----------
         // binding 0 = scene depth (sampled with textureLoad for occlusion), 1 = SmokeUniform.
@@ -5889,6 +5933,12 @@ impl Renderer {
             bloom_bright_pipe,
             bloom_blur_pipe,
             bloom_composite_pipe,
+            bloom_glare_pipe,
+            bloom_composite_glare_pipe,
+            bloom_copy_pipe,
+            bloom_levels,
+            bloom_level_binds,
+            bloom_glare_bind,
             bloom_bind_hdr,
             bloom_bind_a,
             bloom_bind_b,
