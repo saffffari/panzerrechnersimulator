@@ -214,7 +214,7 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     // EXPERIMENTAL_RAY_QUERY. The four acceleration-structure limits default to ZERO, so they
     // must be raised explicitly or every BLAS/TLAS creation fails validation.
     let al = adapter.limits();
-    let rt = !graphics::shader_backend_enabled() && adapter
+    let rt = (!graphics::shader_backend_enabled() || graphics::raymarch_ray_queries_wanted()) && adapter
         .features()
         .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY);
     let vr = rt && adapter
@@ -941,7 +941,7 @@ fn run_gfxbench(
     println!(
         "[gfxbench] preset {} | RT {} | legacy proxy lighting {} | {} blas | {} tlas instances | {} inst batches ({} instances) | retro {:.2}",
         r.graphics_preset.label(),
-        if r.rt_on { "ON" } else { "OFF (KESSEL_NO_RT or no feature)" },
+        if r.rt_on { "ON" } else if r.rt_scene { "scene TLAS only (raymarch ray queries)" } else { "OFF (KESSEL_NO_RT or no feature)" },
         if r.portable_ao_enabled { "ON" } else { "OFF" },
         blases, tlas_n, batches, insts, r.master_retro
     );

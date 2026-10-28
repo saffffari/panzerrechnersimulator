@@ -145,6 +145,15 @@ pub fn active_preset() -> GraphicsPreset {
     ACTIVE_PRESET.with(Cell::get)
 }
 
+/// The raymarch backend's ray queries (world-space occlusion and reflection fallbacks against the
+/// scene TLAS): on the presets that allow hardware RT, vetoed by `KESSEL_NO_RT=1` or
+/// `KESSEL_RM_RT=0`. The physical backend's deferred ray integrator stays off on this backend.
+pub fn raymarch_ray_queries_wanted() -> bool {
+    raymarch_backend_enabled() && active_preset().allows_hardware_rt()
+        && std::env::var("KESSEL_NO_RT").map(|value| value != "1").unwrap_or(true)
+        && std::env::var("KESSEL_RM_RT").map(|value| value != "0").unwrap_or(true)
+}
+
 /// Existing `KESSEL_NO_RT=1` remains the authoritative kill switch even on the hero preset.
 pub fn hardware_rt_enabled() -> bool {
     !shader_backend_enabled() && active_preset().allows_hardware_rt()

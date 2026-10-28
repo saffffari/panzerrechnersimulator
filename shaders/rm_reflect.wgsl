@@ -9,6 +9,8 @@
 @group(0) @binding(5) var depth_tex: texture_depth_2d;
 @group(0) @binding(6) var integrated: texture_3d<f32>;
 @group(0) @binding(7) var linear_samp: sampler;
+// Reflection history: rgb the accumulated reflected radiance, a the eye distance it was taken at.
+@group(0) @binding(8) var refl_prev: texture_2d<f32>;
 
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, };
 
@@ -59,21 +61,71 @@ fn march_reflection(rel: vec3<f32>, dir: vec3<f32>, roughness: f32, jitter: f32)
     return Hit(vec3(0.0), 0.0);
 }
 
+// Off-screen reflection by ray query (rm_rt.wgsl): where the screen march finds nothing, the
+// reflected ray is traced against the scene to RM_REFLECT_RANGE_M. A hit the frame shows (its
+// depth agrees) takes the lit frame there; one it does not is a grey surface (albedo 0.3) facing
+// the ray, lit by the sun through the cascades and by the sky through the cover map (named
+// approximation: no material at an off-screen hit). A clear ray sees the sky.
+const RM_REFLECT_RANGE_M: f32 = 80.0;
+fn offscreen_reflection(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<f32>) -> vec3<f32> {
+    let dist = length(rel);
+    let origin_rel = rel + n * (0.02 + 0.002 * dist);
+    let t = rm_ray_nearest(fr.cam_pos.xyz + origin_rel, dir, 0.0, RM_REFLECT_RANGE_M);
+    if (t < 0.0) { return sky; }
+    let hit_rel = origin_rel + dir * t;
+    let pr = rm_project(hit_rel);
+    if (pr.z > 0.0 && all(pr.xy >= vec2(0.0)) && all(pr.xy < vec2(1.0))) {
+        let p = vec2<i32>(pr.xy * fr.res.xy);
+        let d = length(hit_rel);
+        if (abs(scene_distance(p) - d) < 0.05 * d + 0.1) { return textureLoad(lit_tex, p, 0).rgb; }
+    }
+    let hit = fr.cam_pos.xyz + hit_rel;
+    let facing = -dir;
+    var radiance = rm_sky_hemisphere(facing) * rm_sky_visibility(hit, 0.1);
+    if (fr.sun_radiance.w > 0.5) {
+        radiance += fr.sun_radiance.rgb * max(dot(facing, fr.sun_dir.xyz), 0.0) * rm_sun_visibility(hit, 0.1) / RM_PI;
+    }
+    return 0.3 * radiance;
+}
+
+// Temporal filter: the reflected radiance is averaged over frames through the reflecting
+// surface's reprojection (the new estimate weighs RM_REFLECT_BLEND; history whose recorded eye
+// distance disagrees is dropped). The jittered rough lobe and the ray-query fallback converge
+// instead of sparkling. Named approximation: the history follows the surface, not the reflected
+// point, so a moving reflection trails for a few frames.
+const RM_REFLECT_BLEND: f32 = 0.2;
+fn previous_reflection(world: vec3<f32>) -> vec4<f32> {
+    if (fr.prev_cam_pos.w < 0.5) { return vec4(0.0, 0.0, 0.0, -1.0); }
+    let rel = world - fr.prev_cam_pos.xyz;
+    let clip = fr.prev_view_proj * vec4(rel, 1.0);
+    if (clip.w <= 0.001) { return vec4(0.0, 0.0, 0.0, -1.0); }
+    let ndc = clip.xy / clip.w;
+    let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < vec2(0.0)) || any(uv >= vec2(1.0))) { return vec4(0.0, 0.0, 0.0, -1.0); }
+    let h = textureLoad(refl_prev, vec2<i32>(uv * fr.res.xy), 0);
+    let d = length(rel);
+    if (h.a <= 0.0 || abs(h.a - d) > 0.02 * d + 0.03) { return vec4(0.0, 0.0, 0.0, -1.0); }
+    return vec4(h.rgb, 1.0);
+}
+
+struct ReflectOut { @location(0) color: vec4<f32>, @location(1) history: vec4<f32>, };
+
 @fragment
-fn fs(in: VsOut) -> @location(0) vec4<f32> {
+fn fs(in: VsOut) -> ReflectOut {
     let pixel = vec2<i32>(in.pos.xy);
     let lit = textureLoad(lit_tex, pixel, 0).rgb;
     let depth = textureLoad(depth_tex, pixel, 0);
-    if (depth >= 1.0) { return vec4(lit, 1.0); }
+    let none = vec4(0.0, 0.0, 0.0, -1.0);
+    if (depth >= 1.0) { return ReflectOut(vec4(lit, 1.0), none); }
     let g0 = textureLoad(g0_tex, pixel, 0);
-    if (g0.a > 8.5) { return vec4(lit, 1.0); }
+    if (g0.a > 8.5) { return ReflectOut(vec4(lit, 1.0), none); }
     let g1 = textureLoad(g1_tex, pixel, 0);
     let g2 = textureLoad(g2_tex, pixel, 0);
     let roughness = g1.w;
     let metallic = g2.w;
     // Rough dielectrics show no coherent reflection worth a march.
     let gloss = (1.0 - smoothstep(0.35, 0.8, roughness)) * mix(0.35, 1.0, metallic);
-    if (gloss < 0.02) { return vec4(lit, 1.0); }
+    if (gloss < 0.02) { return ReflectOut(vec4(lit, 1.0), none); }
     let rel = rm_relative_from_depth(in.uv, depth);
     let dist = length(rel);
     let v = -normalize(rel);
@@ -90,10 +142,16 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // the horizon (clouds in puddles and on wet steel).
     var fallback = rm_sky_hemisphere(dir) * 0.8;
     if (dir.y > 0.0) { fallback = mix(fallback, rm_sky_background(dir).rgb, smoothstep(0.0, 0.25, dir.y)); }
-    let reflected = mix(fallback, hit.colour, hit.weight);
+    // With ray queries a miss is traced through the scene instead of assumed to be sky.
+    if (RM_RAY_QUERIES && hit.weight < 0.99 && fr.debug.w < 0.5) {
+        fallback = offscreen_reflection(rel, n, dir, fallback);
+    }
+    let fresh = mix(fallback, hit.colour, hit.weight);
+    let history = previous_reflection(fr.cam_pos.xyz + rel);
+    let reflected = select(fresh, mix(history.rgb, fresh, RM_REFLECT_BLEND), history.a > 0.0);
     // The medium between the eye and this surface already attenuates `lit`; apply the same to
     // the reflected term so a distant wet deck in fog does not pop.
     let slice = clamp((rm_slice(dist) - 0.5) / fr.vol.z, 0.0, (fr.vol.z - 0.5) / fr.vol.z);
     let transmittance = textureSampleLevel(integrated, linear_samp, vec3(in.uv, slice), 0.0).a;
-    return vec4(lit + reflected * fresnel * gloss * transmittance, 1.0);
+    return ReflectOut(vec4(lit + reflected * fresnel * gloss * transmittance, 1.0), vec4(reflected, dist));
 }

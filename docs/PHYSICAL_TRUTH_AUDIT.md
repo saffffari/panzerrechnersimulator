@@ -76,6 +76,15 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch ray queries (2026-10-28; `rm_rt.wgsl`, `rm_shade.wgsl` `rt_open_share`,
+  `rm_reflect.wgsl` `offscreen_reflection`): occlusion traced with two cosine rays per pixel per
+  frame to 4 m and averaged over frames (new estimate 0.15); cover beyond 4 m counts as open, and
+  cover the frame does not show returns the surface's own last-frame radiance. Reflections trace
+  screen-space misses to 80 m; an off-screen hit is a grey 0.3 surface facing the ray lit by the
+  sun cascades and the sky cover map; the reflected radiance is averaged over frames (0.2) through
+  the reflecting surface's reprojection. The TLAS is rebuilt each frame (no refit in wgpu 27).
+  Gate: `KESSEL_SHOWCASE_SET=ao` with and without `KESSEL_RM_SKIP=32768` (the closed cabin by day
+  78 to 39 mean luma: it was lit by skylight through walls the frame could not see).
 - Lying snow on the raymarch backend (`src/snow_cover.rs`, `rm_common.wgsl` `rm_snow_lying`): a
   scalar load per vehicle (the player's Tiger, starting bare) and one for the world (0.7 at the
   start of a winter act, everything else including enemy vehicles). Snowfall fills a load at

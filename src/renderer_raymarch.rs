@@ -19,6 +19,10 @@ const VOL_DIVISOR: u32 = 4;
 const VOL_SLICES: u32 = 96;
 const VOL_NEAR_M: f32 = 0.25;
 const VOL_FAR_M: f32 = 320.0;
+/// Reflection history: accumulated reflected radiance and the reflecting surface's eye distance.
+const REFL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// World-space occlusion history: open share and the eye distance it was measured at.
+const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const CELLS: [u32; 3] = [32, 18, 24];
 const CELL_COUNT: usize = (CELLS[0] * CELLS[1] * CELLS[2]) as usize;
 const MAX_PARCELS: usize = 16384;
@@ -188,6 +192,8 @@ struct Binds {
     shade: [wgpu::BindGroup; 2],
     points: wgpu::BindGroup,
     reflect: wgpu::BindGroup,
+    /// The reflection pass's own binds: the post set plus the reflection history [1 - flip].
+    reflect_t: [wgpu::BindGroup; 2],
     lens: wgpu::BindGroup,
 }
 
@@ -218,6 +224,23 @@ pub(super) struct Backend {
     sky_phase: u32,
     prev_sky_key: Option<(Vec3, f32, f32)>,
     scratch: Target,
+    /// The shaded frame before reflections, glass and points: next frame's bounce source. Kept
+    /// apart from `scratch` so that the reflection pass's output does not re-enter the indirect
+    /// loop (with ray-query reflections that loop diverged in the closed cabin).
+    history: Target,
+    /// Reflection history: the reflected radiance accumulated over frames (rgb) and the eye
+    /// distance of the reflecting surface (a); written by the reflection pass into [flip].
+    refl: [Target; 2],
+    refl_bgl: wgpu::BindGroupLayout,
+    /// World-space occlusion history (ray queries): x the open share, y the eye distance it was
+    /// measured at; written by the shade pass into [flip], read from [1 - flip].
+    ao: [Target; 2],
+    /// Ray queries against the scene TLAS (`Renderer::rt_scene`): the TLAS layout, this frame's
+    /// bind, and an empty TLAS bound until the scene's first exists.
+    rt_bgl: Option<wgpu::BindGroupLayout>,
+    rt_bind: Option<wgpu::BindGroup>,
+    rt_empty: Option<wgpu::Tlas>,
+    rt_empty_built: bool,
     shadow_far: Target,
     shadow_near: Target,
     sky_cover: Target,
@@ -287,7 +310,8 @@ pub(super) struct Backend {
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
-    /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow.
+    /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow, 32768 ray queries
+    /// (world-space occlusion and the reflection fallback).
     debug_skip: u32,
 }
 
@@ -384,6 +408,8 @@ fn rm_source(name: &str) -> String {
         "rm_points.wgsl" => include_str!("../shaders/rm_points.wgsl"),
         "rm_sparks.wgsl" => include_str!("../shaders/rm_sparks.wgsl"),
         "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
+        "rm_rt.wgsl" => include_str!("../shaders/rm_rt.wgsl"),
+        "rm_rt_stub.wgsl" => include_str!("../shaders/rm_rt_stub.wgsl"),
         "rm_sky_cache.wgsl" => include_str!("../shaders/rm_sky_cache.wgsl"),
         "sky.wgsl" => include_str!("../shaders/sky.wgsl"),
         "terrain_material.wgsl" => include_str!("../shaders/terrain_material.wgsl"),
@@ -488,7 +514,7 @@ impl Backend {
 
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
-        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32) -> Self {
+        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool) -> Self {
         let vol = [iw.div_ceil(VOL_DIVISOR).max(8), ih.div_ceil(VOL_DIVISOR).max(8), VOL_SLICES];
         let (sky_cache_size, sky_cache_phases) = {
             let spec = std::env::var("KESSEL_RM_SKY").ok();
@@ -527,6 +553,19 @@ impl Backend {
         let g2 = target(device, "rm-g2-emission", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], wgpu::TextureFormat::Rgba16Float, gusage);
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
+        let history = target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
+        let ao = [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)];
+        let refl = [target(device, "rm-refl-a", iw, ih, REFL_FORMAT, gusage), target(device, "rm-refl-b", iw, ih, REFL_FORMAT, gusage)];
+        let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
+            }],
+        }));
+        let rt_empty = rt_scene.then(|| device.create_tlas(&wgpu::CreateTlasDescriptor {
+            label: Some("rm-rt-empty"), max_instances: 1,
+            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE, update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+        }));
         let shadow_far = depth_target(device, "rm-shadow-far", SHADOW_FAR_RES);
         let shadow_near = depth_target(device, "rm-shadow-near", SHADOW_NEAR_RES);
         let sky_cover = depth_target(device, "rm-sky-cover", SKY_COVER_RES);
@@ -607,7 +646,7 @@ impl Backend {
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT), float_tex_unfiltered(3, S::FRAGMENT),
                 depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT), tex3d(9, S::FRAGMENT),
-                float_tex_unfiltered(10, S::FRAGMENT),
+                float_tex_unfiltered(10, S::FRAGMENT), float_tex_unfiltered(11, S::FRAGMENT),
             ],
         });
         let points_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -622,6 +661,13 @@ impl Backend {
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT),
                 float_tex_unfiltered(3, S::FRAGMENT), float_tex_unfiltered(4, S::FRAGMENT), depth_tex(5, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), sampler_filtering(7, S::FRAGMENT),
+            ],
+        });
+        let refl_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-reflect-bgl"), entries: &[
+                uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT),
+                float_tex_unfiltered(3, S::FRAGMENT), float_tex_unfiltered(4, S::FRAGMENT), depth_tex(5, S::FRAGMENT, wgpu::TextureViewDimension::D2),
+                tex3d(6, S::FRAGMENT), sampler_filtering(7, S::FRAGMENT), float_tex_unfiltered(8, S::FRAGMENT),
             ],
         });
 
@@ -703,16 +749,38 @@ impl Backend {
             fragment: Some(wgpu::FragmentState { module: shader, entry_point: Some("fs"), targets: &[Some(color_target(hdr_format()))], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
-        let shade_shader = rm_shader(device, "rm-shade", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_shade.wgsl"]);
+        let rt_source = if rt_scene { "rm_rt.wgsl" } else { "rm_rt_stub.wgsl" };
+        let shade_shader = rm_shader(device, "rm-shade", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt_source, "rm_shade.wgsl"]);
+        let shade_layouts: Vec<&wgpu::BindGroupLayout> = [&shade_bgl, &visibility_bgl].into_iter().chain(rt_bgl.as_ref()).collect();
         let shade_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rm-shade-pl"), bind_group_layouts: &[&shade_bgl, &visibility_bgl], push_constant_ranges: &[],
+            label: Some("rm-shade-pl"), bind_group_layouts: &shade_layouts, push_constant_ranges: &[],
         });
-        let shade_pipe = fullscreen("rm-shade", &shade_shader, &shade_pl);
+        // Two targets: the lit frame and the occlusion history.
+        let shade_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-shade"), layout: Some(&shade_pl),
+            vertex: wgpu::VertexState { module: &shade_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &shade_shader, entry_point: Some("fs"),
+                targets: &[Some(color_target(hdr_format())), Some(color_target(AO_FORMAT))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-post-pl"), bind_group_layouts: &[&post_bgl, &visibility_bgl], push_constant_ranges: &[],
         });
-        let reflect_shader = rm_shader(device, "rm-reflect", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_reflect.wgsl"]);
-        let reflect_pipe = fullscreen("rm-reflect", &reflect_shader, &post_pl);
+        let reflect_shader = rm_shader(device, "rm-reflect", &["rm_common.wgsl", "rm_visibility.wgsl", rt_source, "rm_reflect.wgsl"]);
+        let reflect_layouts: Vec<&wgpu::BindGroupLayout> = [&refl_bgl, &visibility_bgl].into_iter().chain(rt_bgl.as_ref()).collect();
+        let reflect_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-reflect-pl"), bind_group_layouts: &reflect_layouts, push_constant_ranges: &[],
+        });
+        // Two targets: the lit frame and the reflection history.
+        let reflect_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-reflect"), layout: Some(&reflect_pl),
+            vertex: wgpu::VertexState { module: &reflect_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &reflect_shader, entry_point: Some("fs"),
+                targets: &[Some(color_target(hdr_format())), Some(color_target(REFL_FORMAT))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
         let lens_shader = rm_shader(device, "rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]);
         let lens_pipe = fullscreen("rm-lens", &lens_shader, &post_pl);
 
@@ -794,7 +862,8 @@ impl Backend {
             lights_buf, light_cell_start_buf, light_cell_items_buf, weapon_buf, ember_buf,
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
             sky_phase: 0, prev_sky_key: None, sky_sampler,
-            scratch, shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
+            scratch, history, ao, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false,
+            shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
@@ -868,7 +937,8 @@ impl Backend {
                 entry(7, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
                 entry(8, wgpu::BindingResource::Sampler(&self.linear_sampler)),
                 entry(9, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
-                entry(10, wgpu::BindingResource::TextureView(&self.scratch.view)),
+                entry(10, wgpu::BindingResource::TextureView(&self.history.view)),
+                entry(11, wgpu::BindingResource::TextureView(&self.ao[1 - i].view)),
             ],
         }));
         let points = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -890,13 +960,41 @@ impl Backend {
                 entry(7, wgpu::BindingResource::Sampler(&self.linear_sampler)),
             ],
         });
-        Binds { depth, visibility, volume, integrate, shade, points, reflect: post("rm-reflect"), lens: post("rm-lens") }
+        let reflect_t = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-reflect-t"), layout: &self.refl_bgl, entries: &[
+                entry(0, frame.clone()),
+                entry(1, wgpu::BindingResource::TextureView(&self.scratch.view)),
+                entry(2, wgpu::BindingResource::TextureView(&self.g0.view)),
+                entry(3, wgpu::BindingResource::TextureView(&self.g1.view)),
+                entry(4, wgpu::BindingResource::TextureView(&self.g2.view)),
+                entry(5, wgpu::BindingResource::TextureView(&r.depth_view)),
+                entry(6, wgpu::BindingResource::TextureView(&self.integrated.view)),
+                entry(7, wgpu::BindingResource::Sampler(&self.linear_sampler)),
+                entry(8, wgpu::BindingResource::TextureView(&self.refl[1 - i].view)),
+            ],
+        }));
+        Binds { depth, visibility, volume, integrate, shade, points, reflect: post("rm-reflect"), reflect_t, lens: post("rm-lens") }
     }
 
     /// Per-frame CPU side: camera/history state, source radiance, shadow views, lights, medium
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
         let started = std::time::Instant::now();
+        // Ray queries: bind the scene TLAS (rebuilt in place by `rt_update` before this frame's
+        // passes), or an empty one until the scene's first exists.
+        if self.rt_bgl.is_some() {
+            if r.rt_tlas.is_none() && !self.rt_empty_built {
+                let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rm-rt-empty") });
+                enc.build_acceleration_structures(std::iter::empty::<&wgpu::BlasBuildEntry>(), self.rt_empty.iter());
+                queue.submit([enc.finish()]);
+                self.rt_empty_built = true;
+            }
+            self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref()).zip(self.rt_bgl.as_ref()).map(|(tlas, layout)| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("rm-rt"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: tlas.as_binding() }],
+                })
+            });
+        }
         if self.probe_pending.replace(false) {
             if let Some((px, py)) = self.probe {
                 let slice = self.probe_buf.slice(..);
@@ -1082,7 +1180,7 @@ impl Backend {
                 .min_by(|a, b| a[3].total_cmp(&b[3])).unwrap_or([0.0, 0.0, 0.0, -1.0]),
             report_dir: self.events.iter().filter(|e| e.kind == EVENT_MUZZLE).min_by(|a, b| (r.time - a.born).total_cmp(&(r.time - b.born)))
                 .map_or([0.0, 0.0, 1.0, 0.0], |e| [e.dir.x, e.dir.y, e.dir.z, 0.0]),
-            debug: [if self.debug_skip & 8192 != 0 { 1.0 } else { 0.0 }, self.probe.map_or(-1.0, |p| p.0 as f32), self.probe.map_or(-1.0, |p| p.1 as f32), 0.0],
+            debug: [if self.debug_skip & 8192 != 0 { 1.0 } else { 0.0 }, self.probe.map_or(-1.0, |p| p.0 as f32), self.probe.map_or(-1.0, |p| p.1 as f32), if self.debug_skip & 32768 != 0 { 1.0 } else { 0.0 }],
             pshadow,
             puffs,
         };
@@ -1746,7 +1844,8 @@ impl Backend {
     }
 
     /// A post pass over the lit HDR frame: copy it into `scratch`, then write the result back.
-    fn post_pass(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, label: &str, pipe: &wgpu::RenderPipeline, bind: &wgpu::BindGroup, work: &mut RenderWorkStats) {
+    fn post_pass(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, label: &str, pipe: &wgpu::RenderPipeline, bind: &wgpu::BindGroup,
+        rt: Option<&wgpu::BindGroup>, work: &mut RenderWorkStats) {
         let binds = self.binds.as_ref().expect("raymarch binds prepared");
         encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.scratch._tex.as_image_copy(),
             wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
@@ -1759,6 +1858,7 @@ impl Backend {
         pass.set_pipeline(pipe);
         pass.set_bind_group(0, bind, &[]);
         pass.set_bind_group(1, &binds.visibility, &[]);
+        if let Some(rt) = rt { pass.set_bind_group(2, rt, &[]); }
         work.fullscreen_raster_passes += 1;
         pass.draw(0..3, 0..1);
     }
@@ -1834,20 +1934,22 @@ impl Backend {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-shade"),
-                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK)))],
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK))),
+                    Some(attachment(&self.ao[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: -1.0, b: 0.0, a: 0.0 })))],
                 depth_stencil_attachment: None,
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-shade")), occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shade_pipe);
             pass.set_bind_group(0, &binds.shade[self.flip], &[]);
             pass.set_bind_group(1, &binds.visibility, &[]);
+            if let Some(rt) = &self.rt_bind { pass.set_bind_group(2, rt, &[]); }
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
         if let Some((px, py)) = self.probe {
             let origin = wgpu::Origin3d { x: px, y: py, z: 0 };
             let one = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
-            for (i, tex) in [&r.hdr_tex, &self.scratch._tex, &self.g0._tex, &self.g1._tex, &self.g2._tex].into_iter().enumerate() {
+            for (i, tex) in [&r.hdr_tex, &self.history._tex, &self.g0._tex, &self.g1._tex, &self.g2._tex].into_iter().enumerate() {
                 encoder.copy_texture_to_buffer(
                     wgpu::TexelCopyTextureInfo { texture: tex, mip_level: 0, origin, aspect: wgpu::TextureAspect::All },
                     wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: (i * 256) as u64, bytes_per_row: None, rows_per_image: None } },
@@ -1862,8 +1964,27 @@ impl Backend {
                 wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: self.vol[2] });
             self.probe_pending.set(true);
         }
+        // The shaded frame is next frame's bounce source (after the probe has read last frame's).
+        encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.history._tex.as_image_copy(),
+            wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
         // 6. Screen-space marched reflections of the lit frame on glossy and metallic surfaces.
-        if self.debug_skip & 32 == 0 { self.post_pass(r, encoder, "rm-reflect", &self.reflect_pipe, &binds.reflect, &mut work); }
+        if self.debug_skip & 32 == 0 {
+            encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.scratch._tex.as_image_copy(),
+                wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-reflect"),
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load)),
+                    Some(attachment(&self.refl[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: -1.0 })))],
+                depth_stencil_attachment: None,
+                timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-reflect")), occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.reflect_pipe);
+            pass.set_bind_group(0, &binds.reflect_t[self.flip], &[]);
+            pass.set_bind_group(1, &binds.visibility, &[]);
+            if let Some(rt) = &self.rt_bind { pass.set_bind_group(2, rt, &[]); }
+            work.fullscreen_raster_passes += 1;
+            pass.draw(0..3, 0..1);
+        }
         // 6b. Glass panes (port slits, sight and eyepiece glass, instrument covers) forward over
         // the lit frame, depth-tested against the opaque scene, back to front.
         if !self.panes.is_empty() && self.debug_skip & 1024 == 0 {
@@ -1936,7 +2057,7 @@ impl Backend {
         }
         // 8. The eyepiece glass: refraction, dispersion and the lens edge of the TZF/binoculars.
         if self.optic_active && self.debug_skip & 64 == 0 {
-            self.post_pass(r, encoder, "rm-lens", &self.lens_pipe, &binds.lens, &mut work);
+            self.post_pass(r, encoder, "rm-lens", &self.lens_pipe, &binds.lens, None, &mut work);
         }
         // 9. The shared display stage: the crewman's eye, bloom, crush.
         if finish_ldr && r.autoexp && r.exposure_override.is_none() {

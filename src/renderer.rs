@@ -2820,6 +2820,9 @@ pub struct Renderer {
     rt_degenerate_reported: std::collections::HashSet<usize>,
     /// Device came up with EXPERIMENTAL_RAY_QUERY and KESSEL_NO_RT didn't veto it.
     pub rt_on: bool,
+    /// The scene BLASes and per-frame TLAS exist: `rt_on`, or the raymarch backend's ray queries
+    /// (`graphics::raymarch_ray_queries_wanted`). The exact surface pack stays `rt_on`-only.
+    pub rt_scene: bool,
     /// Splitscreen: views 2..N of the SAME sim frame reuse view 1's TLAS (scene transforms are
     /// camera-independent) — set true before their renders, cleared after. Never skips the very
     /// first build (the guard checks a TLAS exists).
@@ -3602,7 +3605,7 @@ impl Renderer {
         }
         let graphics_preset = crate::graphics::active_preset();
         let shader_backend = crate::graphics::shader_backend_enabled();
-        println!("[renderer] backend={} (ray queries {})", if crate::graphics::raymarch_backend_enabled() { "raymarch" } else if shader_backend { "shader" } else { "physical" }, if shader_backend { "disabled" } else { "adapter-dependent" });
+        println!("[renderer] backend={} (ray queries {})", if crate::graphics::raymarch_backend_enabled() { "raymarch" } else if shader_backend { "shader" } else { "physical" }, if shader_backend && !crate::graphics::raymarch_ray_queries_wanted() { "disabled" } else { "adapter-dependent" });
         // Until a caller sets an act clock the sky is Stalingrad's solstice noon.
         let default_sky_clock = crate::celestial_sky::SkyClock::for_act(
             1, crate::celestial_sky::ClockPhase::Day);
@@ -3846,6 +3849,10 @@ impl Renderer {
             .features()
             .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
             && crate::graphics::hardware_rt_enabled();
+        // The scene's acceleration structures: built for the physical integrator (`rt_on`) and
+        // for the raymarch backend's ray queries, which leave the physical deferred path off.
+        let rt_scene = device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
+            && (rt_on || crate::graphics::raymarch_ray_queries_wanted());
         // S4: the deferred combine IS the ray integrator — no RT, no deferred (Low tier
         // = the forward path).
         let deferred = rt_on
@@ -3871,7 +3878,7 @@ impl Renderer {
                     &material_bgl,
                     &sampler,
                     m,
-                    rt_on,
+                    rt_scene,
                     raster_only_mask[slot],
                     &mut material_cache,
                 );
@@ -3886,7 +3893,7 @@ impl Renderer {
         // M-D: one BLAS per scene mesh, all built in bulk at load (the world is rigid — these
         // never rebuild; TLAS membership per frame is the only steady-state RT work). Chunked
         // submits keep any single scratch allocation modest.
-        if rt_on {
+        if rt_scene {
             let t0 = std::time::Instant::now();
             for (m, src) in meshes.iter_mut().zip(scene.iter()) {
                 if !m.raster_only && m.index_count >= 3 && !src.vertices.is_empty() {
@@ -5815,7 +5822,7 @@ impl Renderer {
         persist_physical_pipeline_cache(pipeline_cache.as_ref(), pipeline_cache_path.as_deref());
 
         let raymarch = crate::graphics::raymarch_backend_enabled()
-            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih));
+            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih, rt_scene));
         Self {
             // Standard stays at the playtested 0.7; [ ] still dials continuously in-game, while
             // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.
@@ -6047,6 +6054,7 @@ impl Renderer {
             gpu_profile: crate::gpu_profile::GpuProfile::new(device),
             rt_degenerate_reported: std::collections::HashSet::new(),
             rt_on,
+            rt_scene,
             rt_skip: false,
             optic_hide_pass: false,
             rt_tlas: None,
@@ -6312,7 +6320,7 @@ impl Renderer {
     /// Rare anatomical topology mask; retains index capacity and never mutates a shared actor buffer.
     pub fn upload_pose_indices(&mut self,slot:usize,indices:&[u32])->bool {
         let Some(mesh)=self.meshes.get_mut(slot) else{return false;};
-        if indices.is_empty() || indices.len()!=mesh.index_count as usize || (self.rt_on&&!mesh.raster_only) {return false;}
+        if indices.is_empty() || indices.len()!=mesh.index_count as usize || (self.rt_scene&&!mesh.raster_only) {return false;}
         let vertex_count=mesh.vbuf.size()/std::mem::size_of::<crate::gltf_load::Vertex>() as u64;
         if indices.iter().any(|i|*i as u64>=vertex_count){return false;}
         if self.raster_lighting&&self.portable_visibility {
@@ -6336,7 +6344,7 @@ impl Renderer {
         let Some(mesh) = self.meshes.get_mut(slot) else { return false; };
         if vertices.len() > 4096 || vertices.is_empty()
             || std::mem::size_of_val(vertices) as u64 != mesh.vbuf.size()
-            || (self.rt_on && !mesh.raster_only) { return false; }
+            || (self.rt_scene && !mesh.raster_only) { return false; }
         let mut lo=glam::Vec3::splat(f32::INFINITY);
         let mut hi=glam::Vec3::splat(f32::NEG_INFINITY);
         for vertex in vertices {
@@ -6680,7 +6688,7 @@ impl Renderer {
         queue: &wgpu::Queue,
         mesh: &CpuMesh,
     ) -> InstancedPrototype {
-        let bi = if self.rt_on {
+        let bi = if self.rt_scene {
             wgpu::BufferUsages::BLAS_INPUT
         } else {
             wgpu::BufferUsages::empty()
@@ -6696,7 +6704,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX | bi,
         });
         // M-D: the prototype's BLAS, built immediately (add_instanced is a load/editor-time path).
-        let blas = if self.rt_on && mesh.indices.len() >= 3 && !mesh.vertices.is_empty() {
+        let blas = if self.rt_scene && mesh.indices.len() >= 3 && !mesh.vertices.is_empty() {
             let set = crate::rt::make_blas(
                 device,
                 mesh.vertices.len() as u32,
@@ -7315,7 +7323,7 @@ impl Renderer {
     /// the same rule tells what the TLAS would hold, so both backends report one demand.
     fn batch_in_ray_scene(&self, batch: &InstBatch) -> bool {
         let prototype = &self.inst_prototypes[batch.prototype];
-        let geometry = if self.rt_on {
+        let geometry = if self.rt_scene {
             prototype.blas.is_some()
         } else {
             prototype.index_count >= 3
@@ -9424,10 +9432,12 @@ impl Renderer {
     /// Emissive geometry remains geometry: it participates in visibility and can return radiance
     /// when a secondary ray commits to it. Only explicit view-local/transparent paths stay out.
     fn rt_update(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        if !self.rt_on {
+        if !self.rt_scene {
             return;
         }
-        self.rt_rebuild_surface_pack(device);
+        if self.rt_on {
+            self.rt_rebuild_surface_pack(device);
+        }
         // Splitscreen views 2..N re-render the SAME sim frame: the TLAS built for view 1 is
         // exactly current — skip the rebuild (but never before the first build exists).
         if self.rt_skip && self.rt_tlas.is_some() && self.combine_rt_bind.is_some() {
@@ -9598,7 +9608,7 @@ impl Renderer {
             std::iter::empty::<&wgpu::BlasBuildEntry>(),
             std::iter::once(self.rt_tlas.as_ref().unwrap()),
         );
-        if self.combine_rt_bind.is_none() {
+        if self.rt_on && self.combine_rt_bind.is_none() {
             let rt_as_bgl = self
                 .rt_as_bgl
                 .as_ref()

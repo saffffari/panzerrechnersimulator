@@ -350,6 +350,72 @@ on this backend (the stills show it at every grid): the sight camera sits left o
 nothing hides the gun from it. Whether the real TZF 9b field shows the barrel needs the sight's
 mounting geometry; until then it is recorded here, not hidden.
 
+## Occlusion and reflections by ray query (2026-10-28)
+
+Request: "we need ambient occlusion and real time reflections too", beyond screen space. On the
+High preset the raymarch backend now asks the adapter for `EXPERIMENTAL_RAY_QUERY`
+(`graphics::raymarch_ray_queries_wanted`; `KESSEL_NO_RT=1` or `KESSEL_RM_RT=0` vetoes it). The
+renderer then builds the scene's BLASes at load (1,975 meshes in 34 ms on the Canyon v2 workshop)
+and rebuilds the TLAS every frame (8,671 instances on the workshop, 18,227 over the Act-I city),
+without the physical backend's surface pack or deferred integrator (`Renderer::rt_scene` against
+`rt_on`). The shade and reflection passes bind it; without the feature they compile against
+`rm_rt_stub.wgsl` and run as before.
+
+**Occlusion.** Each pixel traces two cosine-distributed rays per frame to 4 m against the scene
+(any hit; glass excluded) and keeps the share that escapes. The share is averaged over frames
+through the reprojected history (the new estimate weighs 0.15; a history texel whose recorded eye
+distance disagrees with the reprojected point's is dropped). Where the rays find more cover than the
+screen-space horizon gather saw, their open share replaces it and the near-field contact term; the
+difference is cover the frame does not show, and it returns the surface's own radiance of the last
+frame. `KESSEL_RM_SKIP=32768` turns the ray queries off for the A/B.
+
+**Reflections.** The screen-space march runs first. Where it misses, the reflected ray is traced to
+80 m: a hit the frame shows (its depth agrees) takes the lit frame there; a hit it does not show is
+a grey surface (albedo 0.3) facing the ray, lit by the sun through the cascades and by the sky
+through the cover map; a clear ray sees the sky. The reflected radiance is then averaged over
+frames through the reflecting surface's reprojection (the new estimate weighs 0.2), which turned
+the rough lobe's per-frame jitter from sparkle into a steady gloss. The roughness budget is the
+existing gloss weight: surfaces rougher than about 0.8 take no reflection (the armour's paint is
+metallic 1 at roughness 1 and reflects nothing).
+
+**A divergence, found and fixed.** The bounce light reads the previous frame. That frame used to
+be copied after the reflection pass, so reflections fed the next frame's bounce; with ray-query
+reflections the cabin's loop gain passed one and the loader's view climbed to a saturated green
+over a few hundred frames (a probed pixel's green channel at 400 renderer units against sunlit
+snow's 0.17). The bounce source is now its own copy of the shaded frame, taken before
+reflections, glass and points. A first estimate for the unseen cover, the mean radiance of the
+seen cover, also diverged when a single lamp sample stood for a whole covered hemisphere.
+
+Measured on `KESSEL_SHOWCASE_SET=ao` (noon, clear, sky clock pinned; mean sRGB luma of the
+2400x1350 still, screen-space only against ray queries):
+
+| view | screen-space only | ray queries |
+| --- | --- | --- |
+| commander's post, hatch shut | 78.1 | 39.4 |
+| commander's post, hatch open | 77.6 | 51.8 |
+| loader's post, hatch shut | 131.5 | 51.8 |
+| loader's post, hatch open | 132.1 | 51.9 |
+| the rear under the turret bustle | 99.9 | 98.8 |
+| the running gear from 0.7 m | 95.8 | 94.2 |
+| the glacis from under the barrel | 141.2 | 137.1 |
+
+The closed cabin was lit by skylight leaking through walls the frame could not see; it is now lit
+through its vision blocks and, with the commander's hatch open, through the hatch onto the roof.
+Outside, the snow under the hull's nose and the faces under the bustle darken; little else moves,
+because the screen-space gather already sees most of an exterior. The loader's hatch state does
+not change the loader's view (the open hatch is the commander's). Captures:
+`captures/rm_ao8_*` (ray queries), `rm_ao7off_*` (off), `rm_ao8_compare.png`.
+
+Two things the darker cabin shows. With reflections turned off it turns green: the breech's ready
+lamp and the annunciators glow in the cabin haze and, at the eye's raised adaptation, dominate
+the frame (their power is authored; this backend may not change it). And the cabin by day is now
+dark enough to reopen the question the eye's range draw-in answers ("Near-camera haze").
+
+**Cost.** Under the same outside GPU load as above, the shade pass's timestamps moved from 0.164-0.184
+to 0.175-0.184 ms and the reflection pass's from 0.012 to 0.016 ms, interleaved over three runs
+each; the frame totals (34-41 ms) are noise. These fullscreen timestamps under-report (the table
+above says so); an idle-GPU rerun, with `KESSEL_RM_RT=0` to price the TLAS rebuild, is owed.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -379,15 +445,20 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 
 - Sky visibility is a single top-down depth map: cover above a point, no horizontal openings
   (a window lights nothing from the side; 8 % residual sky inside cover).
-- Contact shadows and ambient occlusion are screen-space marches against the depth buffer;
-  off-screen and thin geometry is missed.
+- Contact shadows are screen-space marches against the depth buffer. With ray queries the
+  occlusion is traced to 4 m (cover beyond counts as open; unseen cover returns the surface's own
+  last-frame radiance); without them it is screen-space and misses off-screen geometry.
+- Ray-query reflections: an off-screen hit is a grey (0.3) surface facing the ray, lit by sun and
+  sky; the reflection history follows the reflecting surface, so a moving reflection trails; the
+  glass panes' own reflection march stays screen-space with the sky beyond.
 - Only two lights have depth faces per frame; the others are unshadowed except by the screen-
   space contact test and the medium.
 - The analytic weather layer beyond 320 m has no geometric occlusion.
 - Fire parcels are merged grains, not the grains themselves; the froxel grid (4 native pixels) is
   the flame's spatial resolution; embers add the grain detail.
 - Spark and tracer glow in the medium is an aggregate per burst, not per sample.
-- Screen-space reflections see only what the frame sees; misses fall back to the sky hemisphere.
+- Without ray queries, screen-space reflections see only what the frame sees; misses fall back to
+  the sky hemisphere.
 - The eyepiece glass is a presentation; its grime and dispersion are authored.
 - The flame temperature field, fireball shell and muzzle-flash shapes are authored shapes driven
   by simulation state, not combustion solvers; the event sequels (soot puffs, snow ring and

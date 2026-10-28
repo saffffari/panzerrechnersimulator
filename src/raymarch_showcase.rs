@@ -81,6 +81,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("palette") { return run_palette(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("haze") { return run_haze(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("res") { return run_resolution(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("ao") { return run_occlusion(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_wreck_sunset_near.png")).exists(),
         "preserving existing showcase; choose a new prefix");
@@ -440,6 +441,66 @@ fn run_resolution(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `KESSEL_SHOWCASE_SET=ao`: the views where occlusion the frame cannot see matters, for the
+/// ray-query A/B (`KESSEL_RM_SKIP=32768` turns the ray queries off): the commander's post and the
+/// loader's at noon with the hatch shut and open, the Tiger's rear under the turret bustle, its
+/// running gear from low beside it, the hull from beneath the barrel.
+fn run_occlusion(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_commander_noon_shut.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    step(&mut g, &mut r, 30, &idle);
+    for (station, name) in [(Station::Commander, "commander"), (Station::Loader, "loader")] {
+        for (open, state) in [(false, "shut"), (true, "open")] {
+            g.station = station;
+            g.commander_outside = false;
+            g.hatch_open = open;
+            rig.station_camera();
+            step(&mut g, &mut r, 40, &idle);
+            rig.still(&mut r, &format!("{name}_noon_{state}"), &format!("the {name}'s post at noon, hatch {state}"))?;
+        }
+    }
+    g.hatch_open = false;
+    g.station = Station::Commander;
+    step(&mut g, &mut r, 20, &idle);
+    let p = g.player.pos;
+    let f = g.player.forward();
+    let side = f.cross(Vec3::Y).normalize_or_zero();
+    for (name, eye, at, note) in [
+        ("rear_bustle", p - f * 5.5 + Vec3::Y * 1.6, p + Vec3::Y * 1.8, "the rear plate and engine deck under the turret bustle, from behind at 1.6 m"),
+        ("running_gear", p + side * 4.2 + Vec3::Y * 0.7, p + side * 1.6 + Vec3::Y * 0.6, "the running gear and the fender's underside from 0.7 m beside the hull"),
+        ("under_barrel", p + f * 7.0 + side * 1.5 + Vec3::Y * 1.2, p + Vec3::Y * 1.6, "the glacis and mantlet from in front, under the barrel"),
+    ] {
+        rig.observe(&mut r, eye, at, 60.0);
+        rig.still(&mut r, name, note)?;
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.ao.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "ray_queries_off": std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v & 32768 != 0),
+        "disclosure": "Staged fixture (banished enemies, held fire). Clear noon, sky clock pinned. Observer and station cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
 /// `KESSEL_SHOWCASE_SET=snow`: snow lying on the Tiger over time (`snow_cover`): the clean hull,
 /// after two minutes of steady snowfall, after a fast drive, after a shot, after a traverse;
 /// each from behind and from above the hull, the sky clock pinned. The world keeps its winter cover.
@@ -482,7 +543,7 @@ fn run_snow(prefix: &str) -> anyhow::Result<()> {
         let side = f.cross(Vec3::Y).normalize_or_zero();
         (p - f * 4.0 - side * 4.5 + Vec3::Y * 8.5, p + Vec3::Y * 1.2)
     };
-    let mut still = |g: &Game, r: &mut crate::renderer::Renderer, rig: &mut Rig, name: &str, note: &str| -> anyhow::Result<()> {
+    let still = |g: &Game, r: &mut crate::renderer::Renderer, rig: &mut Rig, name: &str, note: &str| -> anyhow::Result<()> {
         let note = format!("{note}; Tiger snow load {:.2}", g.player_snow_cover());
         let (eye, at) = follow(g);
         rig.observe(r, eye, at, 55.0);
