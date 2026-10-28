@@ -2559,6 +2559,8 @@ impl Renderer {
 
     pub fn raymarch_stats(&self) -> Option<Stats> { self.raymarch.as_ref().map(|rm| rm.stats) }
     pub fn scatter_stats(&self) -> Option<super::renderer_scatter::ScatterStats> { self.scatter_field.as_ref().map(|s| s.stats()) }
+    /// A heavy strewn piece gave way to the hull: move its instance by `delta` at the next upload.
+    pub fn scatter_shove(&mut self, instance: u32, delta: Vec3) { if let Some(sf) = &mut self.scatter_field { sf.shove(instance, delta); } }
     /// Install the strewn field of the act (`scatter_field::Built`) on the GPU. Drawn by the
     /// raymarch backend only; the shader backend keeps its CPU-paged instancing.
     pub fn install_scatter_field(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, built: crate::scatter_field::Built) {

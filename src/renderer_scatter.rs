@@ -138,6 +138,11 @@ pub struct ScatterGpu {
     /// (camera-relative view_proj, eye, projection scale) of the frame whose depth the Hi-Z holds.
     hiz_frame: Cell<Option<(Mat4, Vec3, [f32; 2])>>,
     hiz_valid: Cell<bool>,
+    /// CPU copies of the instances and cells (the hull's push shoves heavy pieces along), and
+    /// the shoves waiting for the next upload.
+    cpu_placements: Vec<Packed>,
+    cpu_cells: Vec<crate::scatter_field::Cell>,
+    pending_shoves: Vec<(u32, Vec3)>,
     multi_draw: bool,
     skip_draw: bool,
     skip_hiz: bool,
@@ -326,8 +331,8 @@ impl ScatterGpu {
             label: Some(label), size: size.max(16), usage, mapped_at_creation: false,
         });
         let st = wgpu::BufferUsages::STORAGE;
-        let placements_buf = make("scatter-placements", bytemuck::cast_slice(&placements), st);
-        let cells_buf = make("scatter-cells", bytemuck::cast_slice(&built.cells), st);
+        let placements_buf = make("scatter-placements", bytemuck::cast_slice(&placements), st | wgpu::BufferUsages::COPY_DST);
+        let cells_buf = make("scatter-cells", bytemuck::cast_slice(&built.cells), st | wgpu::BufferUsages::COPY_DST);
         let protos_buf = make("scatter-protos", bytemuck::cast_slice(&protos), st);
         let vbuf = make("scatter-vbuf", bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX);
         let ibuf = make("scatter-ibuf", bytemuck::cast_slice(&indices), wgpu::BufferUsages::INDEX);
@@ -560,6 +565,32 @@ impl ScatterGpu {
             cells_pipe, count_pipe, scan_pipe, write_pipe, gbuffer_pipe, depth_pipe, hiz_tex, hiz_mips, hiz_copy_pipe, hiz_reduce_pipe, hiz_binds,
             hiz_full_view, hiz_frame: Cell::new(None), hiz_valid: Cell::new(false), multi_draw, skip_draw, skip_hiz, stats_every, frame: Cell::new(0),
             stats: RefCell::new(stats), cull_dims: [iw, ih],
+            cpu_placements: placements, cpu_cells: built.cells, pending_shoves: Vec::new(),
+        }
+    }
+
+    /// Move one instance by `delta` (a heavy piece the hull shoved along); applied at the next
+    /// upload, with its cell's bounds grown to keep it in the cull.
+    pub fn shove(&mut self, instance: u32, delta: Vec3) {
+        if (instance as usize) < self.cpu_placements.len() && delta.is_finite() {
+            self.pending_shoves.push((instance, delta));
+        }
+    }
+
+    fn apply_shoves(&mut self, queue: &wgpu::Queue) {
+        for (instance, delta) in std::mem::take(&mut self.pending_shoves) {
+            let i = instance as usize;
+            let p = &mut self.cpu_placements[i];
+            p.pos = (Vec3::from(p.pos) + delta).to_array();
+            queue.write_buffer(&self.placements, (i * std::mem::size_of::<Packed>()) as u64, bytemuck::bytes_of(p));
+            let cell = p.cell as usize;
+            let pos = Vec3::from(p.pos);
+            if let Some(c) = self.cpu_cells.get_mut(cell) {
+                let r = 3.0;
+                c.min = Vec3::from(c.min).min(pos - Vec3::splat(r)).to_array();
+                c.max = Vec3::from(c.max).max(pos + Vec3::splat(r)).to_array();
+                queue.write_buffer(&self.cells, (cell * std::mem::size_of::<crate::scatter_field::Cell>()) as u64, bytemuck::bytes_of(c));
+            }
         }
     }
 
@@ -581,6 +612,7 @@ impl ScatterGpu {
 
     /// Per-frame CPU side: the four views' matrices and the Hi-Z frame, from `upload_uniforms`.
     pub(super) fn prepare(&mut self, r: &Renderer, shadow_views: &[Mat4], device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.apply_shoves(queue);
         let cam = &r.camera;
         let eye = cam.pos;
         let vp_abs = cam.view_proj();
