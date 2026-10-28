@@ -18,13 +18,20 @@ pub const FILE_NAME: &str = "mission.v1.json";
 /// Repository-relative sheets by campaign act for maps whose manifest carries none beside it.
 pub const ACT_SHEETS: [(u8, &str); 1] = [(1, "assets/worldgen/act1/mission.v1.json")];
 
-/// The order sheet is held up this long at most; it folds away sooner once the crew moves.
+/// The order sheet is held up this long at most. The crew folds it sooner with Enter, Space, E,
+/// a click or the pad's A/B (`dismiss_order`), by moving off, or by taking out the map, which it
+/// is then folded onto (M rereads it).
 pub const ORDER_SHEET_MAX_S: f32 = 28.0;
-/// The sheet cannot be dismissed before this (a key held through the build must not skip it).
-pub const ORDER_SHEET_MIN_S: f32 = 4.0;
-/// A radio line stays legible this long, fading over its last seconds.
-pub const RADIO_LINE_S: f32 = 16.0;
-pub const RADIO_FADE_S: f32 = 3.0;
+/// Moving the tank folds the sheet only after it has been up this long, so a driver who was
+/// already rolling still sees it. Keys are not held to this: see `ORDER_ARM_FRAMES`.
+pub const ORDER_SHEET_MIN_S: f32 = 2.0;
+/// A key press folds the sheet only once the sheet has been presented on this many frames. A
+/// key held or mashed through the world build is delivered as queued events before the second
+/// frame, so it cannot skip an order nobody saw; a press after that folds it at once.
+pub const ORDER_ARM_FRAMES: u32 = 2;
+/// A radio line stays legible this long, fading over its last seconds; Enter clears them early.
+pub const RADIO_LINE_S: f32 = 10.0;
+pub const RADIO_FADE_S: f32 = 2.5;
 pub const RADIO_LINES_SHOWN: usize = 3;
 /// Dead reckoning: the pencilled position estimate's error grows with travel since the last fix.
 pub const ESTIMATE_ERROR_PER_M: f32 = 0.045;
@@ -480,6 +487,8 @@ pub struct Observation {
     pub objectives_complete: Vec<String>,
     /// The crew gave a movement input this step (folds the order sheet away).
     pub moved: bool,
+    /// The paper map is held (folds the order sheet onto it).
+    pub map_held: bool,
     /// Ground wind (m/s) for the flares and the smoke.
     pub wind: Vec2,
 }
@@ -514,6 +523,8 @@ pub struct MapGuidance {
 pub struct Overlay {
     /// The written order while it is held up: title, lines, the first beat's line, alpha.
     pub order: Option<(String, Vec<String>, String, f32)>,
+    /// The order folded onto the map: title and lines, drawn while the map is held.
+    pub order_on_map: Option<(String, Vec<String>)>,
     /// Recent radio traffic: (from, text, alpha), oldest first.
     pub radio: Vec<(String, String, f32)>,
 }
@@ -528,6 +539,10 @@ pub struct MissionState {
     pub smoke: Vec<SmokeColumn>,
     /// Seconds the order sheet has been held up; `None` once folded away.
     pub order_sheet_s: Option<f32>,
+    /// Frames on which the held-up sheet has been presented (`ORDER_ARM_FRAMES`).
+    pub order_frames: u32,
+    /// Radio lines said at or before this mission time are cleared from the frame.
+    pub radio_cleared_s: f32,
     /// Dead reckoning: the last fix and the travel since.
     pub fix: Vec2,
     pub travel_since_fix_m: f32,
@@ -567,7 +582,8 @@ impl MissionState {
         let fix = resolve(&Place::CourseStart).or_else(|| resolve(&Place::ActSpawn)).unwrap_or(beats[0].at);
         Ok(Self {
             mission, beats, elapsed_s: 0.0, radio: Vec::new(), flares: Vec::new(), smoke: Vec::new(),
-            order_sheet_s: Some(0.0), fix, travel_since_fix_m: 0.0, last_actor: None, finished: false,
+            order_sheet_s: Some(0.0), order_frames: 0, radio_cleared_s: f32::NEG_INFINITY,
+            fix, travel_since_fix_m: 0.0, last_actor: None, finished: false,
             requests: Vec::new(), log: Vec::new(),
         })
     }
@@ -726,8 +742,12 @@ impl MissionState {
         self.last_actor = Some(obs.actor);
         if let Some(t) = self.order_sheet_s.as_mut() {
             *t += dt;
-            if *t >= ORDER_SHEET_MAX_S || (*t >= ORDER_SHEET_MIN_S && obs.moved) {
-                self.log.push(format!("[mission] {:>7.1}s order sheet folded away", self.elapsed_s));
+            let reason = if obs.map_held { Some("onto the map") }
+                else if *t >= ORDER_SHEET_MAX_S { Some("after its time") }
+                else if *t >= ORDER_SHEET_MIN_S && obs.moved { Some("as the crew moved off") }
+                else { None };
+            if let Some(reason) = reason {
+                self.log.push(format!("[mission] {:>7.1}s order sheet folded {reason}", self.elapsed_s));
                 self.order_sheet_s = None;
             }
         }
@@ -855,15 +875,48 @@ impl MissionState {
         guidance
     }
 
+    /// The order sheet is held up over the world.
+    pub fn order_up(&self) -> bool { self.order_sheet_s.is_some() }
+
+    /// The front end presented the held-up sheet on a frame (arms the key dismiss).
+    pub fn note_order_presented(&mut self) {
+        if self.order_sheet_s.is_some() { self.order_frames = self.order_frames.saturating_add(1); }
+    }
+
+    /// A deliberate press (Enter, Space, E, a click, the pad's A or B) folds the held-up sheet.
+    /// True when the press was spent on it, so the caller consumes it; false when there is no
+    /// sheet up, or the sheet has not yet been presented `ORDER_ARM_FRAMES` times (a key carried
+    /// through the build), in which case the press goes on to its ordinary use.
+    pub fn dismiss_order(&mut self) -> bool {
+        if self.order_sheet_s.is_none() || self.order_frames < ORDER_ARM_FRAMES { return false; }
+        self.order_sheet_s = None;
+        self.log.push(format!("[mission] {:>7.1}s order sheet folded by the crew", self.elapsed_s));
+        true
+    }
+
+    /// Clear the net's lines now on the frame (Enter). Later lines show as usual. True when a
+    /// line was showing.
+    pub fn dismiss_radio(&mut self) -> bool {
+        let showing = self.radio.iter().any(|l| self.line_showing(l));
+        self.radio_cleared_s = self.elapsed_s;
+        showing
+    }
+
+    fn line_showing(&self, line: &RadioLine) -> bool {
+        line.at_s > self.radio_cleared_s && self.elapsed_s - line.at_s < RADIO_LINE_S
+    }
+
     pub fn overlay(&self) -> Overlay {
         let mut overlay = Overlay::default();
         if let Some(t) = self.order_sheet_s {
             let alpha = ((ORDER_SHEET_MAX_S - t) / 1.5).clamp(0.0, 1.0).min((t / 0.6).clamp(0.0, 1.0));
             let first = self.mission.beats.first().map(|b| format!("1  {}", b.title.to_uppercase())).unwrap_or_default();
             overlay.order = Some((self.mission.title.clone(), self.mission.order.clone(), first, alpha));
+        } else {
+            overlay.order_on_map = Some((self.mission.title.clone(), self.mission.order.clone()));
         }
         let recent: Vec<_> = self.radio.iter().rev()
-            .filter(|line| self.elapsed_s - line.at_s < RADIO_LINE_S)
+            .filter(|line| self.line_showing(line))
             .take(RADIO_LINES_SHOWN).collect();
         for line in recent.into_iter().rev() {
             let age = self.elapsed_s - line.at_s;
@@ -1057,6 +1110,62 @@ mod tests {
         assert_eq!(s.beat_status(1), BeatStatus::Failed);
         assert!(s.radio.iter().any(|l| l.text == "Leave it. Out."));
         assert_eq!(s.current(), Some(2));
+    }
+
+    #[test]
+    fn the_crew_folds_the_order_with_a_press_but_not_with_a_key_carried_through_the_build() {
+        let mut s = MissionState::new(parse(&sheet(), Path::new("t.json")).unwrap(), &resolve).unwrap();
+        s.step(0.0, &obs(Vec2::ZERO, 0.0));
+        assert!(s.order_up() && s.overlay().order.is_some() && s.overlay().order_on_map.is_none());
+        // Queued presses from the build arrive before the sheet has been seen twice.
+        assert!(!s.dismiss_order(), "not yet presented");
+        s.note_order_presented();
+        assert!(!s.dismiss_order(), "presented once: still a queued press");
+        s.note_order_presented();
+        // No flat lockout: a press on the third frame folds it at 0 s of mission time.
+        assert!(s.dismiss_order());
+        assert!(!s.order_up() && s.overlay().order.is_none());
+        let (title, lines) = s.overlay().order_on_map.expect("the folded order rereads on the map");
+        assert_eq!(title, "Test");
+        assert_eq!(lines.len(), 3);
+        assert!(!s.dismiss_order(), "a later press goes to its ordinary use");
+        // Presenting after the fold does not re-arm anything.
+        s.note_order_presented();
+        assert_eq!(s.order_frames, 2);
+    }
+
+    #[test]
+    fn taking_out_the_map_folds_the_order_onto_it_and_moving_folds_it_after_two_seconds() {
+        let mut s = MissionState::new(parse(&sheet(), Path::new("t.json")).unwrap(), &resolve).unwrap();
+        let mut o = obs(Vec2::ZERO, 0.0);
+        o.map_held = true;
+        s.step(0.1, &o);
+        assert!(!s.order_up(), "M folds the sheet onto the map at once");
+        assert!(s.overlay().order_on_map.is_some());
+        let mut s = MissionState::new(parse(&sheet(), Path::new("t.json")).unwrap(), &resolve).unwrap();
+        let mut o = obs(Vec2::ZERO, 0.0);
+        o.moved = true;
+        for _ in 0..19 { s.step(0.1, &o); }
+        assert!(s.order_up(), "a driver already rolling still sees it");
+        s.step(0.1, &o);
+        assert!(!s.order_up());
+    }
+
+    #[test]
+    fn enter_clears_the_lines_on_the_net_and_later_lines_still_show() {
+        let mut s = MissionState::new(parse(&sheet(), Path::new("t.json")).unwrap(), &resolve).unwrap();
+        s.step(0.1, &obs(Vec2::ZERO, 0.0));
+        assert_eq!(s.overlay().radio.len(), 1);
+        assert!(s.dismiss_radio());
+        assert!(s.overlay().radio.is_empty());
+        assert!(!s.dismiss_radio(), "nothing left to clear");
+        s.step(0.1, &obs(Vec2::ZERO, 0.0));
+        s.debug_say("Adler", "Kiebitz, Adler. Out.");
+        assert_eq!(s.overlay().radio.len(), 1, "a later line shows");
+        // And a line leaves by itself after RADIO_LINE_S (the fixture's 10 s nudge may say a
+        // fresh one meanwhile, so look for this line).
+        for _ in 0..((RADIO_LINE_S / 0.5) as usize + 1) { s.step(0.5, &obs(Vec2::ZERO, 0.0)); }
+        assert!(!s.overlay().radio.iter().any(|(_, text, _)| text == "Kiebitz, Adler. Out."));
     }
 
     #[test]

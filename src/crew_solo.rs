@@ -1260,6 +1260,13 @@ impl Game {
 
     // ── Public readouts ─────────────────────────────────────────────────────────────────────
 
+    /// Enter: the intercom line on the frame leaves it now. True when one was showing.
+    pub fn crew_intercom_clear(&mut self) -> bool {
+        let showing = self.crew_solo.intercom.iter().any(|(_, left)| *left > 0.0);
+        for line in &mut self.crew_solo.intercom { line.1 = line.1.min(0.0); }
+        showing
+    }
+
     /// The latest intercom line on the air, for the front end. `KESSEL_INTERCOM=0` silences it.
     pub fn intercom_line(&self) -> Option<&str> {
         static SHOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

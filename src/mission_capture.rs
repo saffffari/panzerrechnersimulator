@@ -44,7 +44,7 @@ impl Rig<'_> {
         let path = format!("{}_{name}.png", self.prefix);
         if let Some(overlay) = hud {
             r.ui_reset();
-            ui::draw_mission_overlay(r, overlay);
+            ui::draw_mission_overlay(r, overlay, g.map_held);
             r.render_to_png_hud(self.device, self.queue, &path, CW, CH)?;
         } else {
             r.render_to_png(self.device, self.queue, &path, CW, CH)?;
@@ -110,7 +110,8 @@ pub fn run(prefix: &str, seed: u64) -> anyhow::Result<()> {
         Ok(())
     };
     draw_map(&mut g, &mut r)?;
-    rig.still(&mut g, &mut r, "02_map", "the held survey 300 m up the ravine: beat marks, the dead-reckoned position ring, the dashed bearing with its figures, the slip with the open beat", None)?;
+    let overlay = g.mission_overlay().context("overlay")?;
+    rig.still(&mut g, &mut r, "02_map", "the held survey 300 m up the ravine: beat marks, the dead-reckoned position ring, the dashed bearing with its figures, the slip with the open beat; the folded order reread across the top", Some(&overlay))?;
     let guidance = g.mission_map_guidance().context("map guidance")?;
     let focus = guidance.bearing.map(|(_, to, _)| to).unwrap_or(start);
     let (u, v) = g.canyon_survey_uv(focus);
@@ -121,6 +122,14 @@ pub fn run(prefix: &str, seed: u64) -> anyhow::Result<()> {
     g.zoom_held_map(-3.0);
     g.set_map_held(false);
     step(&mut g, &mut r, 6);
+    // KESSEL_MISSION_STILLS=sheet stops here (the order and the map only; a short GPU hold).
+    if std::env::var("KESSEL_MISSION_STILLS").as_deref() == Ok("sheet") {
+        fs::write(format!("{prefix}_receipt.json"), serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "panzer.mission-captures.v1", "seed": seed, "manifest": manifest, "output": [CW, CH],
+            "shots": rig.shots, "mission": g.mission_report(), "scope": "sheet stills only (KESSEL_MISSION_STILLS=sheet)",
+        }))?)?;
+        return Ok(());
+    }
 
     // 3. The white star over phase line Anton (the hamlet), from the ravine floor 220 m short of it.
     g.debug_mission_open_beat(1, &mut r)?;

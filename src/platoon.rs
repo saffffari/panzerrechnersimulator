@@ -31,8 +31,9 @@ use std::f32::consts::{PI, TAU};
 pub const ENV_PLATOON: &str = "KESSEL_PLATOON";
 /// Wingmen fielded by `KESSEL_PLATOON=2` (the only size the roster below supports).
 pub const WINGMEN: usize = 2;
-/// Reply lines fade from the HUD after this long.
-pub const RADIO_LINE_LIFE_S: f32 = 14.0;
+/// Reply lines fade from the HUD after this long (the mission net's own life, src/mission.rs
+/// `RADIO_LINE_S`); Enter clears them early (`platoon_clear_lines`).
+pub const RADIO_LINE_LIFE_S: f32 = 10.0;
 const RADIO_LOG_LINES: usize = 5;
 const FORMATION_BACK_M: [f32; 2] = [22.0, 30.0];
 const FORMATION_SIDE_M: f32 = 16.0;
@@ -1161,6 +1162,15 @@ impl Game {
 
     /// Lines for the HUD: `(callsign, text, alpha, is_entry)`. Drawn by main.rs with the
     /// display-resolution `ab_glyph` text, outside the PS1 crush, like the menus.
+    /// Enter: age every line on the radio log past its life so it leaves the frame now. The
+    /// typed entry and transmissions in flight are untouched. True when a line was showing.
+    pub fn platoon_clear_lines(&mut self) -> bool {
+        let Some(p) = self.platoon.as_mut() else { return false };
+        let showing = p.log.iter().any(|l| l.age < RADIO_LINE_LIFE_S);
+        for line in &mut p.log { line.age = line.age.max(RADIO_LINE_LIFE_S); }
+        showing
+    }
+
     pub fn platoon_hud_lines(&self) -> Vec<(String, String, f32, bool)> {
         let Some(p) = self.platoon.as_ref() else { return Vec::new() };
         let mut out = Vec::new();
