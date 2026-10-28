@@ -90,6 +90,9 @@ cargo run -- koop prefix                            # headless: KOOP splitscreen
 cargo run -- absitzen outdir                        # headless: on-foot slice — dismount, walk, loot, Luger, stealth beats
 cargo run -- lasttiger                              # headless: the Last Tiger loop — bail burning, survive cook-off, remount a spare
 cargo run -- climb                                  # headless: the mount/dismount climb ritual (3 timed moves each way) + jump
+cargo run -- crew-solo prefix                       # headless: solo living crew — AI stations, a real penetration wounds the
+                                                    #   loader and the player treats him, gunner/driver KIA and the player
+                                                    #   takes the gun / the levers; 8 PNGs + JSON receipt, PASS/FAIL
 cargo run --release -- train [gens] [pop] [secs] [acts]  # neuroevolution: ES over enemy policy, acts="0,1" = mean fitness across maps
 cargo run --release -- duel outdir [weights] [act]  # film a T-34 duel (aerial cam → mp4); act 0 = the training arena
 cargo run --release -- train-foot-ai [epochs] [dir] # deterministic CPU KSL2 foot candidates; default assets/ai/foot_candidates/epochs_<epochs>; refuses overwrite

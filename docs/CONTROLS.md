@@ -191,6 +191,10 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **M** | raise/stow the held paper map; world keeps moving; the compass comes out with the map |
 | **LMB on map** | draw permanent graphite with the pencil; there is no eraser |
 | **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play) |
+| **K** | solo crew: the gunner's standing order, fire at will / hold fire |
+| **LMB** buttoned at the cupola, nothing under the crosshair | solo crew: fire command to the gunner |
+| **E** (hold) on a wounded crewman, a body, or the first-aid box | solo crew: treat him / drag the body off the seat / treat yourself |
+| **LMB** on the driver's seat from the front of the basket floor | solo crew: take the driver's seat (the clamber takes a beat) |
 | **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
 | **[ ]** / **F12** | retro dial / screenshot |
 | **Esc** | pause local play, including while holding the map; Esc again resumes from the main pause page |

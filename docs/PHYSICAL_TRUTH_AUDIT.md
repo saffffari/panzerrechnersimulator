@@ -1,8 +1,45 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (solo crew, wounds and first aid; raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Solo crew, wounds and first aid, 2026-10-27 (branch `crew-solo`)
+
+Singleplayer musters five living men (`src/singleplayer_crew.rs`, `src/crew_solo.rs`,
+`src/first_aid.rs`, `docs/CREW_SOLO.md`). Wounds come only from the live penetration solver's
+anatomical events and the live cabin fire; nothing here invents a hit. Named approximations,
+none presented as physiology or a contact solve:
+
+- The wound time course is a rule-of-thumb model: bleeding in litres per minute by body region
+  and severity^1.5, clotting of minor wounds as an exponential over five minutes, performance
+  as piecewise functions of blood loss, fracture, burn, pain, morphine and concussion, and
+  death at 42 % loss. Severity is mapped from the solver's fragment work (`total_work_j / 350`,
+  clamped 0.2..0.85) and tissue outcome (detachment and pulverization are 1.0). Unconsciousness
+  from blast work above 150 J is `6 + blast_work_j / 60` seconds. Burn exposure is `fire *
+  0.02` severity per second in the hull, 0.6 of that in the turret, 0.15 head out, with no
+  position inside the compartment and no heat transport.
+- Morphine ampoules stand in for the Wehrmacht's ampoules and syringe; the box contents (6
+  dressings, 2 tourniquets, 3 morphine, 2 splints) are a design count, not a reviewed
+  Kfz-Verbandkasten inventory. Treatment durations are design values.
+- The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
+- The crew figures carry no animation clips. A wounded man's slump is a rotation about his seat
+  by his performance; his anatomical hit volumes do not follow it (they stay at the seated
+  pose). Dragging a body off a seat translates the settled articulated ragdoll as one toward a
+  rest point over four seconds, with no contact against the interior.
+- The driver's reaction (0.3 s / performance) and command ramp (2.5 / s × performance), the
+  gunner's settle (0.55 s / performance), lay tolerance (0.010 rad / performance) and hand
+  shake (a sinusoid scaled by 1 − performance on the desired lay), and the loader's stroke
+  cadence (0.75 s / performance through the existing auto-crew stroke machine) are design
+  values; the turret, gun and powertrain still move at their real rates through the existing
+  drives.
+- The gunner's target choice is nearest-first with an optical line from the eyepiece; no
+  recognition, no priority by threat.
+- Station entry refusal and the clamber cost reuse `switch_cost`; the clamber itself is the
+  existing camera interpolation.
+
+Gates: `crew-solo PREFIX` (eight stills and a JSON receipt, PASS/FAIL per check, nonzero exit
+on failure) and the unit tests `first_aid`, `crew_solo`, `singleplayer_crew`.
 
 ## Raymarch backend, 2026-10-27 (`KESSEL_RENDERER=raymarch`, branch `raymarching`)
 

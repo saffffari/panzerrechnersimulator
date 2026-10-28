@@ -97,6 +97,8 @@ mod ephemeris;
 mod celestial_sky;
 mod observer;
 mod foot;
+mod first_aid;
+mod crew_solo_capture;
 mod foot_ai;
 mod astra_capture;
 mod astra_survey;
@@ -9642,6 +9644,7 @@ struct Keys {
     f: bool,     // F edge equips/stows the physical flashlight
     e: bool,     // E held: the one interaction key (see App::interaction_primary)
     g: bool,     // G — held field repair (locks all stations)
+    k: bool,     // K — solo crew: the gunner's standing order (fire at will / hold fire)
     shift: bool, // on-foot run (hold)
     ctrl: bool,  // hold to crouch on foot or while walking inside the tank
     mmb: bool,   // middle mouse held — coax MG34 at the gunner sights
@@ -9679,6 +9682,7 @@ impl Keys {
             interaction: false, // set after the E key is resolved against the game
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
+            fire_order: self.k,
             coop: None,
             coop_host: false,
             couch_crew: false,
@@ -13374,6 +13378,12 @@ impl WindowState {
             let hint = interaction_hint(&label, self.game.interact_kind());
             pixel_font::draw_centered(&mut self.renderer, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
         }
+        // The crew's intercom: one terse line, a few seconds, above the interaction hint
+        // (solo with a living crew only; KESSEL_INTERCOM=0 silences it).
+        if let Some(line) = self.game.intercom_line() {
+            let line = line.to_owned();
+            pixel_font::draw_centered(&mut self.renderer, &line, 0.5, 0.865, 1, [0.80, 0.84, 0.70, 0.80]);
+        }
         // A dot where the crosshair rests on something the hands can use.
         if self.game.hover_label_text().is_some() && !self.game.sidearm_is_drawn() {
             self.renderer.draw_text(
@@ -14556,6 +14566,7 @@ impl ApplicationHandler for App {
                     KeyCode::KeyF => self.keys.f = down,
                     KeyCode::KeyE => self.keys.e = down,
                     KeyCode::KeyG => self.keys.g = down,
+                    KeyCode::KeyK => self.keys.k = down,
                     // Shift/Ctrl: on-foot run + crouch (held). Shift ALSO edge-cycles the gun
                     // sights while in the tank (see the Playing match below, Tank-mode gated).
                     KeyCode::ShiftLeft | KeyCode::ShiftRight => self.keys.shift = down,
@@ -16408,6 +16419,10 @@ fn main() -> anyhow::Result<()> {
         let max_secs = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(120.0f32);
         let act = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(0u8);
         return showreel::run_ai_showreel(outdir, t34_weights, tiger_weights, count, max_secs, act);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo" {
+        let prefix = capture_arg(&args, 2, "crew_solo");
+        return crew_solo_capture::run_crew_solo_capture(&prefix);
     }
     if args.len() >= 2 && args[1] == "crew-battle" {
         let outdir = args.get(2).map(String::as_str).unwrap_or("captures/astra");

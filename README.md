@@ -53,6 +53,7 @@ cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 0xc0de
 cargo run -- soundbank /tmp/panzerrechnersystem-soundbank    # render the procedural WAV library
 cargo run -- lan-verify                         # real two-socket LAN protocol proof
 cargo run -- koop                                # four-seat split-screen mission proof → captures/
+cargo run -- crew-solo                           # solo living crew: wounds, first aid, dead stations by hand → captures/
 cargo run --release -- ai-showreel captures      # evolved AI battle film
 cargo run --release                # the real thing
 ```
@@ -113,6 +114,16 @@ stand behind the Tiger and press E again to refuel. Elsewhere E places it gently
 **B/Circle**) throws the equipped can. Throw mass and speed follow the litres left, so an empty can
 travels much farther than a full one. The current Stützpunkt split-screen battle remains tank-only;
 its prepared on-foot pad routing becomes live when couch campaign/body ownership is added.
+
+Solo play is a full crew (branch `crew-solo`, 2026-10-27): the gunner, driver, loader and radio
+operator are living men at their posts. The driver follows your WASD orders from the cupola, the
+gunner lays on contacts and fires under the standing order (**K** toggles fire at will / hold
+fire; **LMB** buttoned up at the cupola is the fire command), the loader serves the breech at a
+human rate. Hits wound them (bleeding, fractures, burns, unconsciousness) with a time course:
+go to the man from the interior walk and **hold E** to dress, tourniquet, splint or give
+morphine from the finite first-aid box, which restocks at the same pickups as ammunition and
+fuel. A dead man's station goes dark until you drag his body off the seat (**hold E**) and do
+his job yourself, driver's seat included. See [`docs/CREW_SOLO.md`](docs/CREW_SOLO.md).
 
 LAN crew co-op is host-authoritative and needs no service or account:
 
