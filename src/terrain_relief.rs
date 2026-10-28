@@ -36,7 +36,7 @@ pub const NORMAL_OCTAVES: i32 = 3;
 /// Relief amplitude (m) per class and octave k = -3..=3.
 pub const AMPLITUDE: [[f32; 7]; CLASSES] = [
     // 0.15   0.31   0.61   1.22   2.44   4.88   9.77 m
-    [0.003, 0.006, 0.012, 0.025, 0.045, 0.070, 0.090], // snow: waves across the wind
+    [0.004, 0.008, 0.016, 0.035, 0.060, 0.090, 0.110], // snow: waves across the wind
     [0.003, 0.005, 0.008, 0.030, 0.040, 0.050, 0.050], // wind crust: sharper sastrugi
     [0.006, 0.012, 0.025, 0.050, 0.080, 0.120, 0.150], // rock and loess: ridged blocks
     [0.004, 0.008, 0.012, 0.025, 0.030, 0.030, 0.020], // frozen mud: clods (+ old ruts)
@@ -64,6 +64,8 @@ pub const BERM_WIDTH_M: f32 = 0.12;
 pub const RUT_CELL_M: f32 = 0.125;
 pub const RUT_PAGE: usize = 256;
 pub const RUT_PAGE_M: f32 = RUT_CELL_M * RUT_PAGE as f32;
+/// Tap spacing of the rut map's band limit for geometry and physics (see `Detail::rut_at`).
+pub const RUT_FILTER_M: f32 = 0.2;
 /// Crater lookup grid cell.
 pub const CRATER_CELL_M: f32 = 32.0;
 /// Cube-root cratering scaling for a surface burst: apparent radius = k * W^(1/3), W the filler
@@ -218,8 +220,8 @@ pub fn pattern(class: usize, k: i32, x: f32, z: f32, wind: Vec2) -> f32 {
 /// Amplitude scale for snow by exposure (Winstral Sx, deg) and available depth.
 pub fn snow_amplitude_scale(class: usize, attr: &Attr) -> f32 {
     match class as u8 {
-        SNOW => (0.6 - attr.sx_deg / 25.0).clamp(0.3, 1.2) * (attr.depth_m / 0.25).clamp(0.0, 1.0),
-        CRUST => (0.6 - attr.sx_deg / 25.0).clamp(0.3, 1.2),
+        SNOW => (1.0 - attr.sx_deg / 30.0).clamp(0.5, 1.5) * (attr.depth_m / 0.25).clamp(0.0, 1.0),
+        CRUST => (1.0 - attr.sx_deg / 30.0).clamp(0.5, 1.5),
         _ => 1.0,
     }
 }
@@ -419,8 +421,9 @@ impl Detail {
     // ── events ──────────────────────────────────────────────────────────────────────────────
 
     /// Compaction (m, positive = lowered; negative = shoved berm) at a point: the cell-centred
-    /// bilinear map under a tent of one cell either side (weights 2,1,1,1,1 / 6), so the 0.305 m
-    /// lattice samples a band edge as a ramp rather than a staircase (mirrored by `tr_rut`).
+    /// bilinear map band-limited to the 0.305 m lattice by a 3x3 binomial at 0.2 m (support
+    /// +-0.4 m), so a tread edge is a ramp the lattice can carry, not a sawtooth of aliased
+    /// triangles; shading normals take the unfiltered map (mirrored by `tr_rut`).
     pub fn rut_at(&self, x: f32, z: f32) -> f32 {
         let events = self.events.read().unwrap();
         if events.ruts.is_empty() {
@@ -450,8 +453,13 @@ impl Detail {
             let cd = c + (d - c) * tx;
             ab + (cd - ab) * tz
         };
-        let h = RUT_CELL_M;
-        (2.0 * bilinear(x, z) + bilinear(x + h, z) + bilinear(x - h, z) + bilinear(x, z + h) + bilinear(x, z - h)) / 6.0
+        let mut sum = 0.0;
+        for (dz, wz) in [(-RUT_FILTER_M, 1.0), (0.0, 2.0), (RUT_FILTER_M, 1.0)] {
+            for (dx, wx) in [(-RUT_FILTER_M, 1.0), (0.0, 2.0), (RUT_FILTER_M, 1.0)] {
+                sum += wx * wz * bilinear(x + dx, z + dz);
+            }
+        }
+        sum / 16.0
     }
 
     pub fn crater_at(&self, x: f32, z: f32) -> f32 {
@@ -501,18 +509,23 @@ impl Detail {
             for cx in c0.x as i32..c1.x as i32 {
                 let p = Vec2::new((cx as f32 + 0.5) * RUT_CELL_M - self.half, (cz as f32 + 0.5) * RUT_CELL_M - self.half);
                 let d = inside_dist(p);
-                if d > pad { continue; }
+                if d > pad.max(RUT_CELL_M * 0.5) { continue; }
                 let target = self.compaction(p.x, p.y, share, max);
                 if target <= 0.0 { continue; }
+                // Anti-aliased: a cell takes the compaction in proportion to how much of it the
+                // band covers, so an edge oblique to the cells is a ramp, not a staircase.
+                let coverage = (0.5 - d / RUT_CELL_M).clamp(0.0, 1.0);
                 let page_key = (cx.div_euclid(RUT_PAGE as i32), cz.div_euclid(RUT_PAGE as i32));
                 let local = cz.rem_euclid(RUT_PAGE as i32) as usize * RUT_PAGE + cx.rem_euclid(RUT_PAGE as i32) as usize;
                 let page = events.ruts.entry(page_key).or_insert_with(|| vec![0.0; RUT_PAGE * RUT_PAGE].into_boxed_slice());
                 let cell = &mut page[local];
                 let before = *cell;
-                if d <= 0.0 {
-                    *cell = cell.max(target);
-                } else if *cell <= 0.0 {
-                    *cell = cell.min(-target * BERM_SHARE);
+                if coverage > 0.0 {
+                    *cell = cell.max(target * coverage);
+                }
+                if berm && d > 0.0 && *cell <= 0.0 {
+                    let t = (d / pad).clamp(0.0, 1.0);
+                    *cell = cell.min(-target * BERM_SHARE * 4.0 * t * (1.0 - t));
                 }
                 if *cell != before {
                     events.dirty.insert(page_key);
@@ -607,6 +620,8 @@ impl Detail {
         self.events.read().unwrap().ruts.get(&key).map(|p| p.to_vec())
     }
 
+    pub fn rut_page_count(&self) -> usize { self.events.read().unwrap().ruts.len() }
+
     pub fn rut_page_keys(&self) -> Vec<(i32, i32)> {
         self.events.read().unwrap().ruts.keys().copied().collect()
     }
@@ -628,7 +643,7 @@ pub fn wgsl_constants(detail: &Detail) -> String {
     s.push_str(&format!(
         "const TR_GROOVE_OFFSET: f32 = {ROUTE_GROOVE_OFFSET_M:?};\nconst TR_GROOVE_HALF: f32 = {ROUTE_GROOVE_HALF_M:?};\nconst TR_GROOVE_DEPTH: f32 = {ROUTE_GROOVE_DEPTH_M:?};\n"));
     s.push_str(&format!(
-        "const TR_RUT_CELL: f32 = {RUT_CELL_M:?};\nconst TR_RUT_PAGE: i32 = {RUT_PAGE};\nconst TR_CRATER_CELL: f32 = {CRATER_CELL_M:?};\n"));
+        "const TR_RUT_CELL: f32 = {RUT_CELL_M:?};\nconst TR_RUT_FILTER: f32 = {RUT_FILTER_M:?};\nconst TR_RUT_PAGE: i32 = {RUT_PAGE};\nconst TR_CRATER_CELL: f32 = {CRATER_CELL_M:?};\n"));
     s.push_str(&format!(
         "const TR_CRATER_RIM_SHARE: f32 = {CRATER_RIM_SHARE:?};\nconst TR_CRATER_RIM_WIDTH: f32 = {CRATER_RIM_WIDTH_SHARE:?};\nconst TR_CRATER_REACH: f32 = {CRATER_REACH_SHARE:?};\n"));
     s
@@ -691,16 +706,20 @@ mod tests {
         let mut events = d.events.write().unwrap();
         let quad = [Vec2::new(-0.36, -2.0), Vec2::new(0.36, -2.0), Vec2::new(0.36, 2.0), Vec2::new(-0.36, 2.0)];
         d.stamp_polygon(&mut events, quad, TRACK_COMPACTION_SHARE, TRACK_SINKAGE_MAX_M, true);
+        let raw = |events: &Events| events.ruts.values().flat_map(|p| p.iter().copied()).fold(f32::MIN, f32::max);
+        assert!((raw(&events) - 0.30).abs() < 1e-5, "cell compaction {}", raw(&events));
         drop(events);
-        assert!((d.rut_at(0.0, 0.0) - 0.30).abs() < 1e-5);
+        let filtered = d.rut_at(0.0, 0.0);
+        assert!((filtered - 0.30).abs() < 0.02, "band-limited compaction {filtered}");
         let berm = (0..40).map(|k| d.rut_at(0.36 + k as f32 * 0.01, 0.0)).fold(f32::MAX, f32::min);
         assert!(berm < -0.02, "berm {berm}");
         assert!(d.height_at(0.0, 0.0) < before - 0.25);
         // Stamping again does not dig deeper: compaction reaches the firm layer once.
         let mut events = d.events.write().unwrap();
         d.stamp_polygon(&mut events, quad, TRACK_COMPACTION_SHARE, TRACK_SINKAGE_MAX_M, true);
+        assert!((raw(&events) - 0.30).abs() < 1e-5);
         drop(events);
-        assert!((d.rut_at(0.0, 0.0) - 0.30).abs() < 1e-5);
+        assert_eq!(d.rut_at(0.0, 0.0), filtered);
     }
 
     #[test]

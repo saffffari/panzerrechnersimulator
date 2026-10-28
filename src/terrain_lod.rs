@@ -370,6 +370,7 @@ impl TerrainLod {
         self.stream_craters(device, queue);
         self.stream_openings(device, queue);
         stats.rut_pages_resident = self.resident.len();
+        stats.rut_pages_cpu = self.detail.rut_page_count();
         stats.craters = self.crater_count as usize;
         let mut ranges = [[0.0f32; 4]; 3];
         for l in 0..12 { ranges[l / 4][l % 4] = if self.ranges[l].is_finite() { self.ranges[l] } else { 1.0e9 }; }
@@ -439,7 +440,6 @@ impl TerrainLod {
         if self.frame % 30 == 0 {
             let e = Vec2::new(eye.x, eye.z);
             let keys = self.detail.rut_page_keys();
-            self.stats.rut_pages_cpu = keys.len();
             for key in keys {
                 if self.resident.contains_key(&key) || self.page_center(key).distance(e) > RUT_RESIDENT_M { continue; }
                 if let Some(data) = self.detail.rut_page(key) {

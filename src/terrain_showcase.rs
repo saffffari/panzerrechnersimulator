@@ -15,6 +15,8 @@ use std::fs;
 
 const TIGER: Vec2 = Vec2::new(-418.0, -408.0);
 const TIGER_HEADING: f32 = 1.38;
+/// Near ground: open, wind-exposed snow 25 m west of the course start (no pads, no road).
+const GROUND_TIGER: Vec2 = Vec2::new(-816.0, 845.0);
 /// The crater field: open snow beside the course just south of its start (the course keeps its
 /// central 24 m clear of dressing), the Tiger facing down the course.
 const FIELD_TIGER: Vec2 = Vec2::new(-791.0, 760.0);
@@ -108,14 +110,19 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let (cold_ns, _) = timed(&g);
     let (warm_ns, _) = timed(&g);
 
+    // 1. Near ground at the Tiger, placed in open snow: a low eye at the track, the snow surface
+    // running to the hull.
+    g.debug_place_tiger(GROUND_TIGER, TIGER_HEADING);
+    step(&mut g, &mut r, 30, &idle);
     let tiger = g.player.pos;
     let forward = g.player.forward();
     let side = Vec3::new(-forward.z, 0.0, forward.x);
-
-    // 1. Near ground at the Tiger: a low eye at the track, the snow surface running to the hull.
     let eye = ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(side.x, side.z) * 7.5 + Vec2::new(forward.x, forward.z) * 6.0, 1.25);
     let look = ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(forward.x, forward.z) * 1.5, 0.4);
     rig.still(&mut g, &mut r, "ground", eye, look, 58.0, "near ground at the Tiger: snow waves, wind crust, drift, the track's contact")?;
+    g.debug_place_tiger(TIGER, TIGER_HEADING);
+    step(&mut g, &mut r, 30, &idle);
+    let tiger = g.player.pos;
 
     // 2. A ridge 1.8 km away across the valley.
     let a = RIDGE_AZIMUTH_DEG.to_radians();
@@ -194,5 +201,82 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         "disclosure": "Staged fixtures (banished enemies, held fire, the Tiger placed, scripted gun lays and a straight drive). Clock overridden per still, clear weather. Observer cameras, not a player run. No image grading."
     }))?)?;
     println!("[terrain-showcase] {} stills -> {prefix}_*.png (detail surface: {detail})", rig.shots.len());
+    Ok(())
+}
+
+/// `terrain-bench PREFIX [FRAMES]`: the frame at the ground and ridge viewpoints, timed with GPU
+/// pass timestamps (`KESSEL_GPU_PROFILE=1`). Run with the detail surface, with it and
+/// `KESSEL_RM_SKIP=8192` (no terrain at all), and with `KESSEL_TERRAIN_DETAIL=off` (the coarse
+/// mesh): the differences are the terrain's own cost. Only trustworthy on an idle GPU; the
+/// receipt records the GPU utilisation nvidia-smi reported at the start.
+pub fn bench(prefix: &str, frames: u32) -> anyhow::Result<()> {
+    anyhow::ensure!(graphics::shader_backend_enabled(), "terrain-bench requires KESSEL_RENDERER=raymarch");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, TIGER_HEADING);
+    r.set_weather_override(Some(0.0));
+    let instant = ephemeris::UtcInstant::parse_iso(DAY)?;
+    r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
+    step(&mut g, &mut r, 60, &TankInput::default());
+    let utilisation = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader"]).output().ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+    let tiger = g.player.pos;
+    let forward = g.player.forward();
+    let side = Vec3::new(-forward.z, 0.0, forward.x);
+    let a = RIDGE_AZIMUTH_DEG.to_radians();
+    let dir = Vec2::new(a.sin(), -a.cos());
+    let ridge_eye = ground(&g, Vec2::new(tiger.x, tiger.z) - dir * 6.0, 28.0);
+    let far = Vec2::new(ridge_eye.x, ridge_eye.z) + dir * RIDGE_DISTANCE_M;
+    let views = [
+        ("ground", ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(side.x, side.z) * 7.5 + Vec2::new(forward.x, forward.z) * 6.0, 1.25),
+            ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(forward.x, forward.z) * 1.5, 0.4), 58.0f32),
+        ("ridge2km", ridge_eye, Vec3::new(far.x, g.hf.height_at(far.x, far.y) - 40.0, far.y), 30.0),
+    ];
+    let mut results = Vec::new();
+    for (name, eye, target, fov) in views {
+        let mut gpu = crate::gpu_profile::GpuProfileSummary::default();
+        let mut times = Vec::new();
+        for i in 0..frames + 30 {
+            g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+            r.camera.pos = eye;
+            r.camera.set_forward(target - eye);
+            r.camera.fov_y = fov.to_radians();
+            r.optic_mask = 0.0;
+            r.reticle = false;
+            r.interior_light = 0.0;
+            r.interior_haze = 0.0;
+            r.weather_shelter = 0.0;
+            r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+            r.begin_gpu_profile_frame();
+            let t0 = std::time::Instant::now();
+            r.render_offscreen(&device, &queue);
+            device.poll(wgpu::PollType::wait_indefinitely()).ok();
+            let ms = t0.elapsed().as_secs_f32() * 1000.0;
+            let frame = r.read_gpu_profile_frame(&device, &queue)?;
+            if i >= 30 { times.push(ms); gpu.record(frame); }
+        }
+        times.sort_by(f32::total_cmp);
+        let n = times.len();
+        let avg = times.iter().sum::<f32>() / n as f32;
+        println!("[terrain-bench] {name}: {n} frames avg {avg:.2} ms p50 {:.2} p99 {:.2}", times[n / 2], times[n * 99 / 100]);
+        results.push(serde_json::json!({"view": name, "frames": n, "wall_avg_ms": avg, "wall_p50_ms": times[n / 2],
+            "wall_p99_ms": times[n * 99 / 100], "gpu_passes": gpu.report(),
+            "terrain_lod": r.terrain_lod_stats().map(|s| format!("{s:?}")), "raymarch": r.raymarch_stats().map(|s| format!("{s:?}"))}));
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.terrain-bench.v1", "adapter": adapter.get_info().name, "internal_resolution": [r.iw, r.ih],
+        "detail_surface": g.hf.detail.is_some(), "rm_skip": std::env::var("KESSEL_RM_SKIP").ok(),
+        "gpu_utilisation_at_start": utilisation, "views": results,
+    }))?)?;
     Ok(())
 }

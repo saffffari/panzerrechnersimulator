@@ -134,8 +134,8 @@ fn tr_pattern(cls: u32, k: i32, x: f32, z: f32) -> f32 {
 }
 
 fn tr_snow_scale(cls: u32, a: TrAttr) -> f32 {
-    if (cls == 0u) { return clamp(0.6 - a.sx / 25.0, 0.3, 1.2) * clamp(a.depth / 0.25, 0.0, 1.0); }
-    if (cls == 1u) { return clamp(0.6 - a.sx / 25.0, 0.3, 1.2); }
+    if (cls == 0u) { return clamp(1.0 - a.sx / 30.0, 0.5, 1.5) * clamp(a.depth / 0.25, 0.0, 1.0); }
+    if (cls == 1u) { return clamp(1.0 - a.sx / 30.0, 0.5, 1.5); }
     return 1.0;
 }
 
@@ -238,12 +238,17 @@ fn tr_rut_smooth(p: vec2<f32>) -> f32 {
     return ab + (cd - ab) * t.y;
 }
 
-// The geometry's compaction (Detail::rut_at): the bilinear map under a one-cell tent.
+// The geometry's compaction (Detail::rut_at): the bilinear map band-limited to the lattice.
 fn tr_rut(p: vec2<f32>) -> f32 {
     if (tr.rut.w < 0.5) { return 0.0; }
-    let h = TR_RUT_CELL;
-    return (2.0 * tr_rut_smooth(p) + tr_rut_smooth(p + vec2(h, 0.0)) + tr_rut_smooth(p - vec2(h, 0.0))
-        + tr_rut_smooth(p + vec2(0.0, h)) + tr_rut_smooth(p - vec2(0.0, h))) / 6.0;
+    var sum = 0.0;
+    var w = array<f32, 3>(1.0, 2.0, 1.0);
+    for (var j = 0; j < 3; j++) {
+        for (var i = 0; i < 3; i++) {
+            sum += w[i] * w[j] * tr_rut_smooth(p + vec2(f32(i - 1), f32(j - 1)) * TR_RUT_FILTER);
+        }
+    }
+    return sum / 16.0;
 }
 
 // Static surface of a level (Detail::static_height): base, relief octaves k >= level with the
