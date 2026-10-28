@@ -130,7 +130,15 @@ struct FrameUniform {
     fog: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
+    /// The player's cabin air (`cabin_medium.rs`), as the shader backend's camera carries it.
+    cabin_air: super::cabin_medium::Uniform,
+    /// Per cabin domain: this frame's world point to where the same point of that rigid frame
+    /// was in the previous frame (identity when the domain is off or the history is cut).
+    cabin_motion: [[[f32; 4]; 4]; super::cabin_medium::DOMAINS],
 }
+
+/// `KESSEL_RM_SKIP` bit: no relayed exterior views on the vision blocks and sights.
+const SKIP_RELAYS: u32 = 524288;
 
 /// Sky cache refresh parameters (rm_sky_cache.wgsl `SkyCacheParams`).
 #[repr(C)]
@@ -319,6 +327,8 @@ pub(super) struct Backend {
     binds: Option<Binds>,
     flip: usize,
     prev_camera: Option<(Vec3, Vec3, f32, f32, Mat4)>,
+    /// The cabin domains' world-to-local transforms last frame (`FrameUniform::cabin_motion`).
+    prev_cabin: Option<[Mat4; super::cabin_medium::DOMAINS]>,
     history_valid: bool,
     shadow_views: [Mat4; SHADOW_VIEWS],
     shadowed: [Option<usize>; POINT_SHADOWS],
@@ -352,7 +362,8 @@ pub(super) struct Backend {
     /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow, 32768 ray queries
     /// (world-space occlusion and the reflection fallback), 65536 surface wear, 131072 cloud
     /// shadows (the eye's cloud attenuation for the whole frame instead), 262144 detail terrain
-    /// (terrain_lod; neither it nor the coarse mesh draws; 8192 on the terrain-detail branch).
+    /// (terrain_lod; neither it nor the coarse mesh draws; 8192 on the terrain-detail branch),
+    /// 524288 relayed exterior views on the vision blocks and sights.
     debug_skip: u32,
     /// The detail terrain's LOD draw (docs/TERRAIN_DETAIL.md), built once the game attaches a
     /// detail surface; it replaces the coarse terrain mesh in every pass.
@@ -707,6 +718,7 @@ impl Backend {
                 tex2d_entry(9, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
                 sampler_filtering(10, vis_stages),
                 tex2d_entry(11, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
+                tex2d_entry(12, vis_stages, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -997,7 +1009,7 @@ impl Backend {
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
-            binds: None, flip: 0, prev_camera: None, history_valid: false,
+            binds: None, flip: 0, prev_camera: None, prev_cabin: None, history_valid: false,
             shadow_views: [Mat4::IDENTITY; SHADOW_VIEWS], shadowed: [None; POINT_SHADOWS],
             lights: Vec::with_capacity(MAX_LIGHTS), parcels: Vec::with_capacity(MAX_PARCELS), embers: Vec::with_capacity(MAX_EMBERS),
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
@@ -1086,6 +1098,7 @@ impl Backend {
                 entry(9, wgpu::BindingResource::TextureView(&self.sky_cache.view)),
                 entry(10, wgpu::BindingResource::Sampler(&self.sky_sampler)),
                 entry(11, wgpu::BindingResource::TextureView(&self.cloud_shadow.view)),
+                entry(12, wgpu::BindingResource::TextureView(&r.cabin_medium_view)),
             ],
         });
         let volume = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1252,6 +1265,18 @@ impl Backend {
         };
         self.history_valid = valid;
         self.prev_camera = Some((eye, forward, cam.fov_y, cam.aspect, rel_vp));
+        // The cabin air rides its rigid frame: its froxel history follows the vehicle, not the
+        // world (`rm_volume.wgsl`).
+        let cabin_air = r.cabin_medium_uniform;
+        let cabin_now: [Mat4; super::cabin_medium::DOMAINS] = std::array::from_fn(|d| Mat4::from_cols_array_2d(&cabin_air.world_to_local[d]));
+        let cabin_motion: [[[f32; 4]; 4]; super::cabin_medium::DOMAINS] = std::array::from_fn(|d| {
+            let on = cabin_air.grid_min_step[d][3] > 0.5;
+            match self.prev_cabin {
+                Some(prev) if valid && on && prev[d].determinant().abs() > 1e-6 => (prev[d].inverse() * cabin_now[d]).to_cols_array_2d(),
+                _ => Mat4::IDENTITY.to_cols_array_2d(),
+            }
+        });
+        self.prev_cabin = Some(cabin_now);
 
         // Source radiance from the shared physical atmosphere: key-beam irradiance at the eye and
         // mean sky radiance bands. The same solver renders the visible sky.
@@ -1434,6 +1459,8 @@ impl Backend {
             }),
             pshadow,
             puffs,
+            cabin_air,
+            cabin_motion,
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2067,10 +2094,13 @@ impl Backend {
         pass.set_pipeline(mesh_pipe);
         let detail_terrain = self.terrain.is_some() || self.debug_skip & 262144 != 0;
         let mut scar_bound = false;
+        // A relayed port's entrance face shows its exterior view (`encode`, 5b), not its material.
+        let relayed = !shadow && self.relays(r);
         for (mesh_index, m) in r.meshes.iter().enumerate() {
             if !m.visible || m.glass { continue; }
             // The detail terrain draws the ground; the coarse mesh is its fallback.
             if detail_terrain && m.track_recv { continue; }
+            if relayed && r.raster_optic_panel(mesh_index) { continue; }
             if !shadow && r.optic_hide_pass && m.optic_hidden { continue; }
             if !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
             if shadow && (m.emissive_own || encloses(m.world_min, m.world_max)) { continue; }
@@ -2161,12 +2191,27 @@ impl Backend {
     }
 
     /// The whole frame into `r.ldr_view`, replacing `Renderer::render_internal`.
+    /// The vision blocks and sights relay the shader backend's exterior captures (not skipped).
+    pub(super) fn relays_optics(&self) -> bool { self.debug_skip & SKIP_RELAYS == 0 }
+    /// A relayed exterior view is prepared this frame.
+    fn relays(&self, r: &Renderer) -> bool { self.relays_optics() && r.raster_optics_prepared() }
+
     pub(super) fn encode(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, finish_ldr: bool) {
         let started = std::time::Instant::now();
         let binds = self.binds.as_ref().expect("raymarch binds prepared");
         let mut work = RenderWorkStats { scene_renders: 1, ..RenderWorkStats::default() };
         // 0. The strewn field's GPU cull for every view of this frame.
         if let Some(sf) = &r.scatter_field { sf.encode_cull(r, encoder); }
+        // 0b. The vision blocks' and sights' exterior views, rendered by the shader backend's
+        // raster path with its own visibility atlas and lamp cubes (an interim relay until the
+        // ray queries carry the periscopes' image; docs/RAYMARCHING_ENGINE.md).
+        let relayed = self.relays(r);
+        if relayed {
+            r.cabin_shadows.encode(r, encoder, &mut work);
+            r.sky_visibility.encode(r, encoder, &mut work);
+            r.environment_probe.encode(encoder, &mut work);
+            r.encode_raster_optics(encoder, &mut work);
+        }
         // 1. Visibility maps from the scene geometry.
         self.depth_pass(r, encoder, "rm-shadow-far", &self.shadow_far.view, 0, &mut work);
         self.depth_pass(r, encoder, "rm-shadow-near", &self.shadow_near.view, 1, &mut work);
@@ -2292,6 +2337,10 @@ impl Backend {
         // The shaded frame is next frame's bounce source (after the probe has read last frame's).
         encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.history._tex.as_image_copy(),
             wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
+        // 5b. The relayed exterior views on the entrance faces. After the bounce source: the
+        // light a vision block lets in reaches the cabin through the ray queries' periscope
+        // folds, not as a glowing screen.
+        if relayed { r.encode_raster_optic_relays(encoder, &r.hdr_view, &r.depth_view, &mut work); }
         // 6. Screen-space marched reflections of the lit frame on glossy and metallic surfaces.
         if self.debug_skip & 32 == 0 {
             encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.scratch._tex.as_image_copy(),
@@ -2399,6 +2448,10 @@ impl Backend {
             let eye = &r.exp_bufs[r.active_view];
             encoder.copy_buffer_to_buffer(eye, 0, &r.crush_buf, 44, 4);
             encoder.copy_buffer_to_buffer(eye, 8, &r.crush_buf, 16, 8);
+            if let Some(optics) = &r.raster_optics {
+                // The relayed views' particles take the same eye (one frame later).
+                optics.copy_eye_mapping(encoder, eye);
+            }
         }
         if finish_ldr {
             work.bloom_passes += 4;

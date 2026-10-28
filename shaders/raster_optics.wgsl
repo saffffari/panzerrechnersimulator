@@ -28,6 +28,13 @@ struct Out {
 }
 struct PaneOutput { @location(0) color: vec4<f32>, @location(1) glow: vec4<f32> };
 @fragment fn fs(in: Out) -> PaneOutput {
+    // 2 identifies a visible exterior relay; 1 remains the ordinary lamp-lens glow mask.
+    // Both are depth-tested on the real pane, so a hidden/occluded optic cannot seed bloom.
+    return PaneOutput(vec4(relayed(in), 1.0), vec4(0.0, 0.0, 0.0, 2.0));
+}
+// The raymarch backend's panel: the same relayed radiance, one target.
+@fragment fn fs_relay(in: Out) -> @location(0) vec4<f32> { return vec4(relayed(in), 1.0); }
+fn relayed(in: Out) -> vec3<f32> {
     // A pane direction outside the captured field takes the nearest captured direction instead
     // of leaving a black hole in a daylit block (see OFF_AXIS_ACCEPTANCE in raster_optics.rs).
     // A direction behind the capture camera has no nearest edge; it takes the field centre.
@@ -35,11 +42,9 @@ struct PaneOutput { @location(0) color: vec4<f32>, @location(1) glow: vec4<f32> 
     if (in.source.w > 0.0) {
         uv = clamp(in.source.xy / in.source.w * vec2(0.5, -0.5) + vec2(0.5), vec2(0.0), vec2(1.0));
     }
-    // 2 identifies a visible exterior relay; 1 remains the ordinary lamp-lens glow mask.
-    // Both are depth-tested on the real pane, so a hidden/occluded optic cannot seed bloom.
     // Only the active upper-left viewport is populated. Clamp at its last texel center so the
     // nearest sample cannot read the cleared, unused remainder when uv reaches exactly one.
     let extent=vec2<f32>(panel.layer.zw);let allocated=vec2<f32>(textureDimensions(exterior));
     let sample_uv=clamp(uv*extent,vec2(0.5),extent-vec2(0.5))/allocated;
-    return PaneOutput(vec4(textureSampleLevel(exterior, nearest_sampler, sample_uv, i32(panel.layer.x), 0.0).rgb, 1.0),vec4(0.0,0.0,0.0,2.0));
+    return textureSampleLevel(exterior, nearest_sampler, sample_uv, i32(panel.layer.x), 0.0).rgb;
 }

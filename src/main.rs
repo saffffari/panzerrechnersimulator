@@ -16161,6 +16161,9 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "raymarch-cabin") {
+        return raymarch_showcase::run_cabin(&capture_arg(&args, 2, "raymarch_cabin"));
+    }
     if args.get(1).is_some_and(|s| s == "terrain-bench") {
         let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(240);
         return terrain_showcase::bench(&capture_arg(&args, 2, "terrain_bench"), frames);

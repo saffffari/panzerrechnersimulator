@@ -61,8 +61,11 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
     }
     return fr.medium.x * above * gust + spindrift + rm_fog_bank_density(p);
 }
-fn rm_cabin_density(p: vec3<f32>) -> f32 {
+// The cabin haze fills the cabin air (`inside`: rm_cabin_domain). Without registered cabin air
+// (no posed player Tiger) it falls back to an ellipsoid about the crew compartment.
+fn rm_cabin_density(p: vec3<f32>, inside: bool) -> f32 {
     if (fr.cabin.w <= 0.0) { return 0.0; }
+    if (rm_cabin_air_on()) { return select(0.0, fr.cabin.w, inside); }
     // Centred on the crew compartment (fr.vehicle, 1.4 m up) where the pose is known: the
     // cabin origin is the hull's ground-contact point, which left the haze below seated eye
     // height (2026-10-28).
@@ -157,13 +160,17 @@ fn rm_puff_extinction(p: vec3<f32>) -> vec2<f32> {
     let capped = min(tau, 0.6);
     return vec2(capped, select(0.78, albedo_sum / max(tau, 1e-6), tau > 1e-6));
 }
-// The full continuous medium at a world point, without parcels.
+// The full continuous medium at a world point, without parcels. The world weather (the layer,
+// spindrift, fog banks) stays out of the cabin air (2026-10-28): opening a hatch exposes the
+// same finite air, as on the shader backend; no ventilation carries the weather in.
 fn rm_medium_at(p: vec3<f32>) -> Medium {
     var m = rm_medium_zero();
-    let world = rm_world_density(p);
+    let inside = rm_cabin_domain(p) >= 0;
+    var world = 0.0;
+    if (!inside) { world = rm_world_density(p); }
     let snow = fr.medium.y;
     let world_albedo = mix(0.70, 0.92, snow);
-    let cabin = rm_cabin_density(p);
+    let cabin = rm_cabin_density(p, inside);
     let puff = rm_puff_extinction(p);
     let sigma_t = world + cabin + puff.x;
     if (sigma_t <= 0.0) { return m; }
@@ -175,7 +182,10 @@ fn rm_medium_at(p: vec3<f32>) -> Medium {
 }
 // Extinction only, for ray marches toward sources.
 fn rm_extinction_at(p: vec3<f32>) -> f32 {
-    return rm_world_density(p) + rm_cabin_density(p) + rm_puff_extinction(p).x;
+    let inside = rm_cabin_domain(p) >= 0;
+    var world = 0.0;
+    if (!inside) { world = rm_world_density(p); }
+    return world + rm_cabin_density(p, inside) + rm_puff_extinction(p).x;
 }
 // Optical depth from `origin` toward `dir` over `length_m`, marched in `steps` samples.
 fn rm_march_tau(origin: vec3<f32>, dir: vec3<f32>, length_m: f32, steps: u32, jitter: f32) -> f32 {

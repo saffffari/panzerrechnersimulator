@@ -101,8 +101,12 @@ impl Renderer {
     pub(super) fn prepare_weapon_particles(&mut self,device:&wgpu::Device,queue:&wgpu::Queue) {
         if !self.shader_backend{return;}
         let mut frames=std::mem::take(&mut self.weapon_particles.frames);for frame in frames.values_mut(){frame.active=false;}
-        let main=self.prepare_weapon_particle_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX));
-        frames.insert(usize::MAX,main);self.prepare_weapon_particle_ports(device,queue,&mut frames);self.weapon_particles.frames=frames;
+        // The raymarch backend draws its own sparks in the main view; only its relayed ports take these.
+        if self.raymarch.is_none() {
+            let main=self.prepare_weapon_particle_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX));
+            frames.insert(usize::MAX,main);
+        }
+        self.prepare_weapon_particle_ports(device,queue,&mut frames);self.weapon_particles.frames=frames;
     }
     pub(super) fn encode_weapon_particles(&self,encoder:&mut wgpu::CommandEncoder,key:usize,color:&wgpu::TextureView,
         tracers:bool,clear:bool,work:&mut RenderWorkStats) {
