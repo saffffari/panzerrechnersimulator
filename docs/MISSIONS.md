@@ -131,7 +131,46 @@ them. No radio lines, no cues: marks, the bearing and the order only.
 
 ## Verified by play (27 October 2026, RTX 4090, shader backend)
 
-Filled in from the receipts under `captures/` (see the end of this file).
+Unit tests: `cargo test --bin panzerrechnersystem -- mission canyon_director hand_map hand_compass
+canyon_map` (34 pass): the sheet parser and its refusals, beats opening in order, observe / destroy
+/ bypass / course-finish completion, nudge and consequence timing, timeout failing forward, the
+star's climb, chute, drift and burn-out, the estimate's error, the compass bearing, the route
+fraction by arc length, and that both authored sheets parse and resolve against the course's own
+route with their beats in corridor order.
+
+Captures (`mission-captures captures/missions_20261027_s29 29`, 1280 x 720, receipt
+`captures/missions_20261027_s29_receipt.json`, contact sheet `..._contact_sheet.png`):
+
+| Still | What it shows |
+| --- | --- |
+| `01_order` | the typed Befehl held up over the ravine at the start, commander head out |
+| `02_map`, `03_map_zoom` | the held survey 300 m up the ravine: mark 1 (done, faint), mark 2 (box) with its number, the dashed position ring, the dashed bearing with "005", the slip "2  PHASE LINE ANTON: THE HAMLET" |
+| `04_white_star`, `05_white_star_chute` | the white star over the hamlet 1.7 s after launch with its launch smoke (the eye adapts to it), then ten seconds on under its chute, drifting downwind |
+| `06_smoke_column` | the column at the fork 380 m off, leaning downwind; the net's three lines |
+| `07_red_star_yard` | the red star over the factory yard's far edge 430 m off, its light on the ground; platoon B alerted to Searching (receipt `alerted_lines`, console `platoon 1 alerted -> Searching`) |
+| `08_head_star` | the white star over the ravine head 200 m off |
+| `09_compass` | the pocket compass raised at the loader's post, its body turned to the open beat's bearing |
+| `10_star_350m` | one white star 350 m up the ravine by day, nothing else burning |
+
+Autonomous attempts (`canyon-ai-run`, the rule-based pilot, 60 Hz, receipts
+`captures/missions_ai_20261027_*_result.json`, traces `_trace.jsonl`, the beats in every state line):
+
+| Run | Result |
+| --- | --- |
+| seed 137, **invincible** (`KESSEL_CANYON_AI_INVINCIBLE=1`), the workshop without today's wreckage pass (`gaea-canyon-run-v2-nowreck`, ignored copy with the `canyon_v2_wreckage` ops removed) | **completed** at 1,687 s simulated: beats 1 to 6 done in order (orders 4 s, Anton 108 s, gun line 780 s by passing 34 %, factory yard 1,393 s by passing 72 % with its two released tanks admitted, basin 1,661 s by passing 94 %, head 1,689 s at the finish); two nudges on the gun line and one on the yard, no consequence; one round fired, one kill. A traversal and mission proof, not a survivability result. |
+| seed 29, mortal, the current workshop | knocked out at 174 s at the gun line (ammunition detonation after ten hits); beats 1 and 2 done, 3 open. |
+| seeds 29, 137, 73, invincible, the current workshop | all three stalled at 16 to 17 % of the route (`pilot_stalled`), at the hamlet's road around z = 60 to 140, with beats 1 and 2 done and 3 open. The same pilot passes this point on the workshop without the wreckage pass. |
+
+What the attempts show about the mission: the beats open on their triggers (previous, route
+fraction), the cues fire on open and on every nudge (the white star over Anton every 90 s), the
+alerts put the right platoons into Searching, the yard's release is admitted by the director,
+the bypass completions let a crew that goes round a strongpoint pass it, and the finish closes
+the mission. What they show about the pilot, which is not this branch's subject: on this build
+its manual reload never closes the breech lever (it used to; see the trace's `reload_retry`
+lines), so after one round it drives on with the gun unusable (this branch adds the retry and
+the drive-on; before, it stood at the breech forever), and the wreckage pass authored today
+(`canyon_v2_wreckage`, 2,131 props) holds it at the hamlet. A mortal attempt on the workshop
+without the wreckage was not run.
 
 ## Open
 
@@ -149,5 +188,7 @@ Filled in from the receipts under `captures/` (see the end of this file).
 - The platoon branch draws its radio lines bottom left; this branch's net is top left so both
   can show. One net (the platoon's wingmen and the rear party on the same list) is the right end
   state.
+- The pilot stalls at the hamlet on the workshop with the wreckage pass (all three seeds) and
+  its manual reload never closes the lever on this build; both are the harness's, open.
 - Escort beats have no ally to escort on the Canyon run (the platoon branch's wingmen would be
   the natural ones); the condition is implemented and untested in play.
