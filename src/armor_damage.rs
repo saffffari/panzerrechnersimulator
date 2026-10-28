@@ -25,6 +25,9 @@ pub const MAX_ARMOR_SCARS: usize = 512;
 /// Packed size of one scar (`ArmorScar::pack`).
 pub const PACKED_SCAR_BYTES: usize = 32;
 
+/// Ambient plate temperature (K) of a cold scar.
+pub const AMBIENT_K: f32 = 293.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ScarKind {
@@ -329,6 +332,9 @@ pub struct ArmorField {
     /// Simulation time each scar was last struck. Not persisted: a loaded scar is cold. Drives the
     /// cooling rim and the fresh-steel sheen.
     struck_s: Vec<f32>,
+    /// Initial rim temperature (K) of each fresh strike, from the shared thin heated-rim estimate
+    /// (`renderer_weapon_particles::math::rim_heat`); 293 for a cold or loaded scar.
+    rim_k: Vec<f32>,
     /// Bumped on every change, so renderers can skip re-uploading an unchanged field.
     revision: u32,
 }
@@ -345,7 +351,8 @@ impl ArmorField {
         scars.retain(valid_scar);
         scars.truncate(MAX_ARMOR_SCARS);
         let struck_s = vec![f32::NEG_INFINITY; scars.len()];
-        Self { scars, struck_s, revision: 1 }
+        let rim_k = vec![AMBIENT_K; scars.len()];
+        Self { scars, struck_s, rim_k, revision: 1 }
     }
 
     pub fn scars(&self) -> &[ArmorScar] {
@@ -355,6 +362,11 @@ impl ArmorField {
     /// When scar `index` was last struck, or `NEG_INFINITY` for a loaded (cold) record.
     pub fn struck_at(&self, index: usize) -> f32 {
         self.struck_s.get(index).copied().unwrap_or(f32::NEG_INFINITY)
+    }
+
+    /// Initial rim temperature of scar `index`'s latest strike (K).
+    pub fn rim_kelvin(&self, index: usize) -> f32 {
+        self.rim_k.get(index).copied().unwrap_or(AMBIENT_K)
     }
 
     pub fn revision(&self) -> u32 {
@@ -413,15 +425,22 @@ impl ArmorField {
                 (event.shell.caliber_mm * 0.0022).clamp(0.12, 0.42),
                 (energy_mj.sqrt() * 5.0 * normal_cos).clamp(2.0, event.plate.thickness_mm * 0.28),
             ),
+            // A kinetic round that fails to perforate still bores into the face: a fraction of its
+            // penetration capability along the normal, growing with how close it came (pen over
+            // effective thickness). A shattering shot spends itself breaking up and digs less. This
+            // is the cavity, so it is also the resistance lost at its centre: the crater the eye
+            // sees is the plate the next round meets. Capped at 45 % of the plate.
             Terminal::Shatter => (
                 ScarKind::Dent,
                 (event.shell.caliber_mm * 0.0015).clamp(0.06, 0.22),
-                (energy_mj.sqrt() * 3.2 * normal_cos).clamp(1.0, event.plate.thickness_mm * 0.18),
+                kinetic_crater_mm(event, 0.15, normal_cos)
+                    .max(energy_mj.sqrt() * 3.2 * normal_cos).clamp(1.0, event.plate.thickness_mm * 0.45),
             ),
             Terminal::Bounce | Terminal::Ricochet => (
                 ScarKind::Dent,
                 (event.shell.caliber_mm * 0.0012).clamp(0.05, 0.18),
-                (energy_mj.sqrt() * 2.0 * normal_cos).clamp(0.5, event.plate.thickness_mm * 0.12),
+                kinetic_crater_mm(event, 0.25, normal_cos)
+                    .max(energy_mj.sqrt() * 2.0 * normal_cos).clamp(0.5, event.plate.thickness_mm * 0.45),
             ),
         };
         let normal = local_normal.try_normalize().unwrap_or_else(|| facing_axis(facing, local_hit));
@@ -452,7 +471,12 @@ impl ArmorField {
             petal_mm: if hole { (geometry.petal_m * 1000.0).round().min(255.0) as u8 } else { 0 },
             plug: hole && geometry.plug,
         };
-        self.insert(scar, now_s)
+        // The plate work lost by the round heats a thin ring at the wound (the same estimate the
+        // incandescent rim grains use). A ricochet keeps what it carries away.
+        let deposited_j = 0.5 * event.shell.mass_kg * (event.striking_v.powi(2) - event.residual_v.powi(2)).max(0.0);
+        let rim_k = crate::renderer::renderer_weapon_particles::math::rim_heat(
+            event.shell.caliber_mm, event.plate.thickness_mm, deposited_j).map_or(AMBIENT_K, |heat| heat.initial_kelvin);
+        self.insert(scar, now_s, rim_k)
     }
 
     /// A rifle-calibre bullet (or a fragment) on armor: a splash crater and stripped paint with no
@@ -483,12 +507,13 @@ impl ArmorField {
             petal_mm: 0,
             plug: false,
         };
-        self.insert(scar, now_s)
+        self.insert(scar, now_s, AMBIENT_K)
     }
 
-    fn insert(&mut self, scar: ArmorScar, now_s: f32) -> ArmorScar {
+    fn insert(&mut self, scar: ArmorScar, now_s: f32, rim_k: f32) -> ArmorScar {
         self.revision = self.revision.wrapping_add(1);
         self.struck_s.resize(self.scars.len(), f32::NEG_INFINITY);
+        self.rim_k.resize(self.scars.len(), AMBIENT_K);
         let local_hit = scar.local_position();
         let radius_m = scar.radius_m();
         if scar.kind != ScarKind::Pock {
@@ -516,6 +541,7 @@ impl ArmorField {
                     }
                 }
                 self.struck_s[index] = now_s;
+                self.rim_k[index] = rim_k;
                 return *existing;
             }
             // A crater swallows the pocks under it.
@@ -526,6 +552,7 @@ impl ArmorField {
                     && old.local_position().distance(local_hit) < radius_m * 0.8 {
                     self.scars.remove(index);
                     self.struck_s.remove(index);
+                    self.rim_k.remove(index);
                 } else {
                     index += 1;
                 }
@@ -546,9 +573,11 @@ impl ArmorField {
             let evict = self.eviction_candidate();
             self.scars.remove(evict);
             self.struck_s.remove(evict);
+            self.rim_k.remove(evict);
         }
         self.scars.push(scar);
         self.struck_s.push(now_s);
+        self.rim_k.push(rim_k);
         scar
     }
 
@@ -618,6 +647,7 @@ impl ArmorField {
         let mut changed = self.scars.len() > total;
         self.scars.truncate(total);
         self.struck_s.truncate(total);
+        self.rim_k.truncate(total);
         for (offset, scar) in window.iter().enumerate() {
             let index = start + offset;
             if index >= total {
@@ -634,6 +664,7 @@ impl ArmorField {
             while self.scars.len() <= index {
                 self.scars.push(*scar);
                 self.struck_s.push(f32::NEG_INFINITY);
+                self.rim_k.push(AMBIENT_K);
             }
             changed = true;
         }
@@ -641,6 +672,15 @@ impl ArmorField {
             self.revision = self.revision.wrapping_add(1);
         }
     }
+}
+
+/// Depth (mm) a non-perforating kinetic strike bores into the face: `share` of the round's
+/// penetration capability along the plate normal, scaled by how near it came to perforating.
+/// An empirical estimate (docs/PHYSICAL_TRUTH_AUDIT.md, "Armor scar crater depth").
+fn kinetic_crater_mm(event: &ImpactEvent, share: f32, normal_cos: f32) -> f32 {
+    if event.effective_mm <= 0.0 || event.pen_mm <= 0.0 { return 0.0; }
+    let closeness = (event.pen_mm / event.effective_mm).clamp(0.0, 1.0);
+    share * event.pen_mm * normal_cos * closeness
 }
 
 pub fn quantize_mm(value: Vec3) -> [i16; 3] {

@@ -242,8 +242,9 @@ impl Game {
                     let normal = to_local.transform_vector3(armor.world_normal);
                     let dir = to_local.transform_vector3(projectile.velocity);
                     let caliber = projectile.shell.caliber_mm;
+                    let now = self.armor_clock_s;
                     self.vehicle_scars_mut(armor.vehicle).record_pock(armor.facing, armor.local_point,
-                        normal, dir, caliber, energy_j, plate_mm, f32::NEG_INFINITY);
+                        normal, dir, caliber, energy_j, plate_mm, now);
                 }
             }
             ProjectileContactKind::Foot => {

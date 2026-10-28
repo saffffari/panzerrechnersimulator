@@ -25,6 +25,9 @@ mod renderer_fine_vfx;
 pub(crate) mod renderer_weapon_particles;
 #[path = "renderer_raymarch.rs"]
 pub(crate) mod raymarch;
+#[path = "renderer_scars.rs"]
+pub(crate) mod scars;
+pub use scars::ScarDraw;
 
 #[path = "track_ruts.rs"]
 mod track_ruts;
@@ -2550,6 +2553,9 @@ pub struct Renderer {
     pub shader_backend: bool,
     /// The raymarch frame pipeline (`KESSEL_RENDERER=raymarch`); None on the other backends.
     raymarch: Option<raymarch::Backend>,
+    /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
+    /// backend cuts, displaces and shades them (renderer_scars.rs).
+    mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
     raster_optics: Option<raster_optics::RasterOptics>,
     raster_ssao: Option<raster_ssao::RasterSsao>,
     geometry_aa: Option<renderer_aa::GeometryAa>,
@@ -5811,6 +5817,7 @@ impl Renderer {
             graphics_preset,
             shader_backend,
             raymarch,
+            mesh_scars: std::collections::HashMap::new(),
             raster_optics: shader_backend.then(|| {
                 raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler,
                     &sky_visibility.sampling_bgl, &cabin_shadows.sampling_bgl, &cabin_medium_view)
@@ -6393,6 +6400,16 @@ impl Renderer {
     pub fn set_optic_hidden(&mut self, idx: usize, hidden: bool) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.optic_hidden = hidden;
+        }
+    }
+    /// The armor wounds on mesh `idx`, in its local frame; an empty slice clears them.
+    pub fn set_mesh_scars(&mut self, idx: usize, scars: &[ScarDraw]) {
+        if scars.is_empty() {
+            self.mesh_scars.remove(&idx);
+        } else {
+            let entry = self.mesh_scars.entry(idx).or_default();
+            entry.clear();
+            entry.extend_from_slice(scars);
         }
     }
     pub fn set_visible(&mut self, idx: usize, v: bool) {

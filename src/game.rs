@@ -73,6 +73,8 @@ mod ammunition_fire;
 mod authored_feature;
 #[path = "capture_impact.rs"]
 mod capture_impact;
+#[path = "armor_scars_review.rs"]
+pub(crate) mod armor_scars_review;
 #[path = "crew_battle_scene.rs"]
 mod crew_battle_scene;
 #[path = "cartridge_primer.rs"]
@@ -749,6 +751,9 @@ const COOKOFF_MIN: f32 = 3.0; // s — earliest a burning wreck cooks off
 const COOKOFF_MAX: f32 = 8.0; // s — latest
 const N_BLAST: usize = 4; // pooled big emissive fireball FX (kills / pops / cook-offs overlap)
 const N_DEBRIS: usize = 144; // bounded exterior chips; hot debris uses many fine grains
+/// Rigid wound marks for the shader and physical backends (the raymarch backend cuts and
+/// displaces the scars themselves) and spare-track field patches on the player's Tiger.
+const N_ARMOR_MARKS: usize = 24;
 
 /// How a destroyed enemy reads as a wreck.
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -1385,6 +1390,8 @@ struct HotFragment {
 pub struct HotFragmentCollision {
     pub turret_local: bool,
     pub local_pos: Vec3,
+    /// The struck collision wall's normal into the cabin, in the same frame.
+    pub local_normal: Vec3,
     pub speed: f32,
     pub seed: u32,
     pub bounce_count: u8,
@@ -3174,6 +3181,16 @@ struct ProjectileStep {
     crosswind_velocity: Vec3,
 }
 
+/// What lies behind a vehicle's armor for its wounds: the player's modeled Tiger interior, the
+/// T-34's bare hull shell (no interior is modeled; its exterior mesh is seen from inside), or
+/// nothing the renderer can show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArmorInterior {
+    PlayerTiger,
+    T34Shell,
+    None,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ArmorPart {
     Hull,
@@ -4218,6 +4235,7 @@ fn hot_fragment_bounce(
         collisions.push(HotFragmentCollision {
             turret_local: fragment.frame == BloodFrame::Turret,
             local_pos: fragment.pos,
+            local_normal: normal,
             speed: incoming_speed,
             seed: fragment.seed,
             bounce_count: fragment.bounces,
@@ -8509,8 +8527,8 @@ struct Slots {
     abandoned: Vec<[usize; 3]>,
     blast: [usize; N_BLAST], // pooled big fireballs (kill / turret-pop / cook-off)
     debris: [usize; N_DEBRIS], // pooled spark/debris chunks
-    armor_scar: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
-    armor_patch: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
+    armor_scar: [usize; N_ARMOR_MARKS],
+    armor_patch: [usize; N_ARMOR_MARKS],
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     track_snow: [usize;2],
     weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
@@ -9171,6 +9189,12 @@ pub struct Game {
     armor_scars: crate::armor_damage::ArmorField,
     /// Rotating LAN cursor over `armor_scars` (`net_snapshot`).
     armor_net_cursor: std::cell::Cell<usize>,
+    /// Probed surface extent and plug rest per drawn wound (`push_vehicle_scars`), keyed by the
+    /// hull mesh slot, facing, position and kind: derived from geometry, never saved.
+    scar_geometry_cache: std::cell::RefCell<std::collections::HashMap<(usize, u8, [i16; 3], u8), ([u8; 16], Option<(Vec3, Vec3)>)>>,
+    /// The renderer clock at the start of this update: strike times on armor scars (fresh steel,
+    /// cooling rims) for paths that do not hold the renderer.
+    armor_clock_s: f32,
     /// Visual concussion: elapsed seconds into the eye's disturbance after a heavy hit and its
     /// duration (0 = none). Hearing is the ear model's (`hearing`), not this.
     concussion_t: f32,
@@ -11133,9 +11157,9 @@ impl Game {
         // Permanent vehicle wounds. Each record owns a dark crater/hole marker and an optional
         // raised spare-track patch; transforms are driven from the same compact ArmorScar that
         // modifies repeat-hit ballistics and survives campaign/LAN snapshots.
-        let mut armor_scar = [0usize; crate::armor_damage::MAX_ARMOR_SCARS];
-        let mut armor_patch = [0usize; crate::armor_damage::MAX_ARMOR_SCARS];
-        for i in 0..crate::armor_damage::MAX_ARMOR_SCARS {
+        let mut armor_scar = [0usize; N_ARMOR_MARKS];
+        let mut armor_patch = [0usize; N_ARMOR_MARKS];
+        for i in 0..N_ARMOR_MARKS {
             armor_scar[i] = scene.len();
             scene.push(box_mesh(
                 Vec3::new(-0.5, -0.5, -0.5),
@@ -13181,6 +13205,8 @@ impl Game {
             armor_tick: 0,
             armor_scars: crate::armor_damage::ArmorField::default(),
             armor_net_cursor: std::cell::Cell::new(0),
+            scar_geometry_cache: Default::default(),
+            armor_clock_s: 0.0,
             concussion_t: 0.0,
             concussion_dur: 0.0,
             hearing: crate::hearing::Hearing::default(),
@@ -16024,6 +16050,7 @@ impl Game {
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
         if let Some(arms)=&self.first_person {arms.clear(r);}
+        self.armor_clock_s = r.time;
         // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
         // also sets it does not run on every path).
         r.muzzle_hint = Some(self.player.muzzle());
@@ -18430,61 +18457,291 @@ impl Game {
         }
     }
 
-    /// Draw persistent dents/holes and spare track shoes installed by the field-patch ritual.
-    /// These deliberately remain hard-edged geometry at the game's native pixel resolution rather
-    /// than a smooth decal layer. Physics, save data and visuals all read the same scar array.
+    /// Draw persistent dents, holes and pocks, and the spare track shoes installed by the
+    /// field-patch ritual. Physics, save data and visuals all read the same scar arrays. On the
+    /// raymarch backend every vehicle's wounds are cut and displaced into its own meshes
+    /// (renderer_scars.rs); the shader and physical backends keep the rigid marks on the player's
+    /// Tiger. The track patch is real geometry on every backend.
     fn drive_armor_scars(&self, r: &mut Renderer) {
         use crate::armor_damage::ScarKind;
-        use crate::ballistics::Facing;
-
-        for i in 0..crate::armor_damage::MAX_ARMOR_SCARS {
+        let raymarch = crate::graphics::raymarch_backend_enabled();
+        let scars = self.armor_scars.scars();
+        // The most significant wounds take the rigid marks; every patch takes a patch slot.
+        let mut marks: Vec<usize> = (0..scars.len()).filter(|&i| scars[i].kind != ScarKind::Pock).collect();
+        marks.sort_by_key(|&i| std::cmp::Reverse((scars[i].kind != ScarKind::Dent, scars[i].radius_mm)));
+        let patches: Vec<usize> = (0..scars.len()).filter(|&i| scars[i].kind == ScarKind::Patched).collect();
+        for i in 0..N_ARMOR_MARKS {
             let mark_slot = self.slots.armor_scar[i];
             let patch_slot = self.slots.armor_patch[i];
-            let Some(scar) = self.armor_scars.scars().get(i).copied() else {
-                r.set_visible(mark_slot, false);
-                r.set_visible(patch_slot, false);
-                continue;
-            };
-            let pos = scar.local_position();
-            let normal = match scar.facing {
-                Facing::HullFront | Facing::TurretFront => Vec3::Z,
-                Facing::HullRear | Facing::TurretRear => -Vec3::Z,
-                Facing::HullSide | Facing::TurretSide => {
-                    if pos.x < 0.0 {
-                        -Vec3::X
-                    } else {
-                        Vec3::X
-                    }
+            match marks.get(i).filter(|_| !raymarch) {
+                Some(&index) => {
+                    let scar = scars[index];
+                    let (parent, rotation, pos, radius) = self.armor_scar_frame(scar);
+                    let local_mark = Mat4::from_scale_rotation_translation(
+                        Vec3::new(radius * 2.0, radius * 2.0, 0.018),
+                        rotation,
+                        pos + rotation * Vec3::Z * 0.020,
+                    );
+                    r.set_visible(mark_slot, true);
+                    r.set_emissive(mark_slot, 0.0);
+                    r.set_model(mark_slot, parent * local_mark);
                 }
-            };
-            let parent = if scar.is_turret() {
-                self.player.turret_model()
-            } else {
-                self.player.hull_model()
-            };
-            let rotation = Quat::from_rotation_arc(Vec3::Z, normal);
-            let radius = scar.radius_m().max(0.045);
-            let local_mark = Mat4::from_scale_rotation_translation(
-                Vec3::new(radius * 2.0, radius * 2.0, 0.018),
-                rotation,
-                pos + normal * 0.020,
-            );
-            r.set_visible(mark_slot, true);
-            r.set_emissive(mark_slot, 0.0);
-            r.set_model(mark_slot, parent * local_mark);
-
-            let patched = scar.kind == ScarKind::Patched;
-            r.set_visible(patch_slot, patched);
-            if patched {
-                let local_patch = Mat4::from_scale_rotation_translation(
-                    Vec3::new(radius * 2.8, radius * 2.8, 0.045),
-                    rotation,
-                    pos + normal * 0.052,
-                );
-                r.set_emissive(patch_slot, 0.0);
-                r.set_model(patch_slot, parent * local_patch);
+                None => r.set_visible(mark_slot, false),
+            }
+            match patches.get(i) {
+                Some(&index) => {
+                    // The shoes lie on the crater's lip across the hole: back face on the struck
+                    // surface (the mesh spans z -0.5..1.0 in units of its 4.5 cm thickness), long
+                    // axis across the shot so the shoes bridge the elongated bore.
+                    let scar = scars[index];
+                    let (parent, rotation, pos, radius) = self.armor_scar_frame(scar);
+                    let lip = scar.depth_m() * 0.22;
+                    let local_patch = Mat4::from_scale_rotation_translation(
+                        Vec3::new(radius * 2.8, radius * 2.8, 0.045),
+                        rotation,
+                        pos + rotation * Vec3::Z * (0.5 * 0.045 + lip),
+                    );
+                    r.set_visible(patch_slot, true);
+                    r.set_emissive(patch_slot, 0.0);
+                    r.set_model(patch_slot, parent * local_patch);
+                }
+                None => r.set_visible(patch_slot, false),
             }
         }
+        if !raymarch {
+            return;
+        }
+        let player_frames = [self.player.hull_model(), self.player.turret_model()];
+        self.push_vehicle_scars(r, [self.slots.tiger[0], self.slots.tiger[1]], &self.armor_scars,
+            ArmorInterior::PlayerTiger, player_frames, false);
+        for (ei, enemy) in self.enemies.iter().enumerate() {
+            let rigs = [
+                self.slots.t34[ei], self.slots.su100[ei], self.slots.kv2[ei],
+                self.slots.isu152[ei], self.slots.is2[ei], self.slots.is3[ei],
+            ];
+            let active = match enemy.kind {
+                EnemyKind::T34 => 0,
+                EnemyKind::Su100 => 1,
+                EnemyKind::Kv2 => 2,
+                EnemyKind::Isu152 => 3,
+                EnemyKind::Is2 => 4,
+                EnemyKind::Is3 => 5,
+            };
+            for (index, rig) in rigs.iter().enumerate() {
+                if index != active || !self.enemy_active.get(ei).copied().unwrap_or(false) {
+                    r.set_mesh_scars(rig[0], &[]);
+                    r.set_mesh_scars(rig[1], &[]);
+                }
+            }
+            if !self.enemy_active.get(ei).copied().unwrap_or(false) { continue; }
+            let turret = if !enemy.alive && self.wrecks.get(ei).is_some_and(|w| w.kind == WreckKind::TurretPop) {
+                self.wrecks[ei].turret_pop_xf()
+            } else { enemy.turret_model() };
+            let interior = if enemy.kind == EnemyKind::T34 { ArmorInterior::T34Shell } else { ArmorInterior::None };
+            self.push_vehicle_scars(r, [rigs[active][0], rigs[active][1]], &enemy.scars, interior,
+                [enemy.hull_model(), turret], enemy.kind.casemate());
+        }
+        for (i, ally) in self.allies.iter().enumerate() {
+            let sl = self.slots.allies[i];
+            self.push_vehicle_scars(r, [sl[0], sl[1]], &ally.tank.scars, ArmorInterior::None,
+                [ally.tank.hull_model(), ally.tank.turret_model()], false);
+        }
+        for i in 0..self.slots.hulk_t34.len() {
+            let rigs = [
+                self.slots.hulk_t34[i], self.slots.hulk_su100[i], self.slots.hulk_kv2[i],
+                self.slots.hulk_isu152[i], self.slots.hulk_is2[i], self.slots.hulk_is3[i],
+            ];
+            let hulk = self.campaign_hulks.get(i);
+            for rig in rigs {
+                r.set_mesh_scars(rig[0], &[]);
+                r.set_mesh_scars(rig[1], &[]);
+            }
+            let Some(hulk) = hulk else { continue };
+            let live = match hulk.kind {
+                EnemyKind::T34 => 0,
+                EnemyKind::Su100 => 1,
+                EnemyKind::Kv2 => 2,
+                EnemyKind::Isu152 => 3,
+                EnemyKind::Is2 => 4,
+                EnemyKind::Is3 => 5,
+            };
+            self.push_vehicle_scars(r, [rigs[live][0], rigs[live][1]], &hulk.scars, ArmorInterior::None,
+                [hulk.models[0], hulk.models[1]], hulk.kind.casemate());
+        }
+    }
+
+    /// Spall marks inside the hull: each fast first strike of a fragment on the bounded cabin
+    /// collision walls is traced back along the wall normal to the cabin's own surface behind it,
+    /// and the steel there takes a pock. The fragment walls are a named proxy; the mark lands only
+    /// where a real interior surface is found within 40 cm (none is invented).
+    fn mark_fragment_strikes(&mut self) {
+        if self.hot_fragment_collisions.is_empty() || self.god { return; }
+        let models = self.fire_surface_models();
+        let now = self.armor_clock_s;
+        let strikes: Vec<HotFragmentCollision> = self.hot_fragment_collisions.iter()
+            .filter(|c| c.bounce_count == 1 && c.speed > 120.0).take(48).copied().collect();
+        for c in strikes {
+            let frame = blood_parent_model(&self.player, if c.turret_local { BloodFrame::Turret } else { BloodFrame::Hull });
+            let p = frame.transform_point3(c.local_pos);
+            let n = frame.transform_vector3(c.local_normal).normalize_or_zero();
+            let Some(hit) = self.cabin_fire.sweep(p + n * 0.05, p - n * 0.40, &models) else { continue };
+            let model = models[hit.frame];
+            let point = model.transform_point3(hit.point);
+            let mut normal = model.inverse().transpose().transform_vector3(hit.normal).normalize_or_zero();
+            if normal.dot(n) < 0.0 { normal = -normal; }
+            let part = if c.turret_local { ArmorPart::Turret } else { ArmorPart::Hull };
+            let to_local = if c.turret_local { self.player.turret_model() } else { self.player.hull_model() }.inverse();
+            let local = to_local.transform_point3(point);
+            let local_normal = to_local.transform_vector3(normal).normalize_or_zero();
+            // A spall chip of ~10 g at the strike speed; the plate behind a cabin surface is the
+            // nominal 25 mm of the roof/floor class (pocks change no resistance).
+            let energy_j = 0.5 * 0.010 * c.speed * c.speed;
+            self.armor_scars.record_pock(facing_from_local_normal(-local_normal, part), local, local_normal,
+                -local_normal, 6.0, energy_j, 25.0, now);
+        }
+    }
+
+    /// The hull/turret transform, orientation (+Z out of the plate) and local centre of a scar on
+    /// the player's Tiger, for the rigid marks and patches.
+    fn armor_scar_frame(&self, scar: crate::armor_damage::ArmorScar) -> (Mat4, Quat, Vec3, f32) {
+        let parent = if scar.is_turret() { self.player.turret_model() } else { self.player.hull_model() };
+        let normal = scar.local_normal();
+        let across = normal.cross(scar.local_dir()).try_normalize().unwrap_or_else(|| normal.any_orthonormal_vector());
+        // Local X along the shot's path in the plate (the bore's long axis), Z out of the plate.
+        let along = across.cross(normal);
+        let rotation = Quat::from_mat3(&glam::Mat3::from_cols(along, across, normal)).normalize();
+        (parent, rotation, scar.local_position(), scar.radius_m().max(0.045))
+    }
+
+    /// Where the struck surface really extends round a wound: for each of 16 sectors of the wound's
+    /// elliptical angle, the furthest radius (tenths of R, to 1.3 R) out to which a short probe
+    /// along the plate normal still meets the vehicle's own source surface lying in the plate.
+    fn scar_extent(source: &surface_fire::CabinFire, models: &[Mat4; surface_fire::FRAMES], frame: Mat4,
+        scar: crate::armor_damage::ArmorScar) -> [u8; 16] {
+        let c = frame.transform_point3(scar.local_position());
+        let n = frame.transform_vector3(scar.local_normal()).normalize_or_zero();
+        let dir = frame.transform_vector3(scar.local_dir()).normalize_or_zero();
+        let t = (dir - n * dir.dot(n)).try_normalize().unwrap_or_else(|| n.any_orthonormal_vector());
+        let b = n.cross(t);
+        let open = matches!(scar.kind, crate::armor_damage::ScarKind::Hole | crate::armor_damage::ScarKind::Patched);
+        let stretch = (1.0 / scar.obliquity_cos()).clamp(1.0, if open { 3.0 } else { 2.2 });
+        let radius = scar.radius_m().max(0.004);
+        let mut extent = [0u8; 16];
+        for (k, out) in extent.iter_mut().enumerate() {
+            let angle = (k as f32 + 0.5) / 16.0 * std::f32::consts::TAU;
+            let offset = t * (stretch * angle.cos()) + b * angle.sin();
+            for step in 1..=13u8 {
+                let p = c + offset * radius * (step as f32 * 0.1);
+                let Some(hit) = source.sweep(p + n * 0.035, p - n * 0.035, models) else { break };
+                let model = models[hit.frame];
+                let point = model.transform_point3(hit.point);
+                let normal = model.inverse().transpose().transform_vector3(hit.normal).normalize_or_zero();
+                if (point - p).dot(n).abs() > 0.02 || normal.dot(n).abs() < 0.7 { break; }
+                *out = step;
+            }
+        }
+        if armor_scars_review::trace_enabled() {
+            println!("[armor-scars] extent {:?} {:?} at {:?}: {:?}", scar.facing, scar.kind, scar.local_mm, extent);
+        }
+        extent
+    }
+
+    /// The probe source and frames for a vehicle's own surfaces, when it has them.
+    fn scar_probe_source(&self, interior: ArmorInterior, frames: [Mat4; 2]) -> Option<(&surface_fire::CabinFire, [Mat4; surface_fire::FRAMES])> {
+        match interior {
+            ArmorInterior::PlayerTiger => Some((&self.projectile_player_armor, self.fire_surface_models())),
+            ArmorInterior::T34Shell => {
+                let mut models = [Mat4::from_translation(Vec3::splat(1.0e6)); surface_fire::FRAMES];
+                models[0] = frames[0];
+                models[1] = frames[1];
+                Some((&self.projectile_enemy_armor, models))
+            }
+            ArmorInterior::None => None,
+        }
+    }
+
+    /// Hand one vehicle's wounds to its hull and turret meshes (hull-frame scars to the hull,
+    /// turret-frame scars to the turret; a casemate's are all hull), with each punched plug's
+    /// resting place found by sweeping its path against the vehicle's own surfaces.
+    fn push_vehicle_scars(&self, r: &mut Renderer, slots: [usize; 2], field: &crate::armor_damage::ArmorField,
+        interior: ArmorInterior, frames: [Mat4; 2], casemate: bool) {
+        if field.is_empty() {
+            r.set_mesh_scars(slots[0], &[]);
+            r.set_mesh_scars(slots[1], &[]);
+            return;
+        }
+        let mut lists: [Vec<crate::renderer::ScarDraw>; 2] = [Vec::new(), Vec::new()];
+        for (index, scar) in field.scars().iter().copied().enumerate() {
+            let part = usize::from(scar.is_turret() && !casemate);
+            let frame = if scar.is_turret() { frames[1] } else { frames[0] };
+            // Surface extent and plug rest are probed once per wound and cached in its frame.
+            let key = (slots[0], crate::armor_damage::facing_code(scar.facing), scar.local_mm, scar.kind as u8);
+            let cached = self.scar_geometry_cache.borrow().get(&key).copied();
+            let (extent, plug_rest) = cached.unwrap_or_else(|| {
+                let frame = if scar.is_turret() { frames[1] } else { frames[0] };
+                let extent = match self.scar_probe_source(interior, frames) {
+                    Some((source, models)) if scar.kind != crate::armor_damage::ScarKind::Pock =>
+                        Self::scar_extent(source, &models, frame, scar),
+                    _ => [13; 16],
+                };
+                let plug = if scar.plug { self.plug_rest(scar, frames, interior) } else { None };
+                let mut cache = self.scar_geometry_cache.borrow_mut();
+                if cache.len() > 32_768 { cache.clear(); }
+                cache.insert(key, (extent, plug));
+                (extent, plug)
+            });
+            // Express a turret-frame scar on a casemate's hull mesh.
+            let scar = if part == 0 && scar.is_turret() {
+                let to_hull = frames[0].inverse() * frame;
+                crate::armor_damage::ArmorScar {
+                    local_mm: crate::armor_damage::quantize_mm(to_hull.transform_point3(scar.local_position())),
+                    normal: crate::armor_damage::quantize_dir(to_hull.transform_vector3(scar.local_normal())),
+                    dir: crate::armor_damage::quantize_dir(to_hull.transform_vector3(scar.local_dir())),
+                    ..scar
+                }
+            } else { scar };
+            lists[part].push(crate::renderer::ScarDraw {
+                scar,
+                struck_at: field.struck_at(index),
+                rim_kelvin: field.rim_kelvin(index),
+                plug_rest,
+                interior: interior == ArmorInterior::PlayerTiger,
+                extent,
+            });
+        }
+        r.set_mesh_scars(slots[0], &lists[0]);
+        r.set_mesh_scars(slots[1], &lists[1]);
+    }
+
+    /// Where a hole's punched plug lies: its path continues from the bore's exit along the shell's
+    /// line until it meets an inner surface of the same vehicle (the Tiger's modeled interior, or
+    /// the T-34's hull shell from inside). The plug stops there; no bounce is modeled (named in
+    /// the ledger). Returned in the scar's frame.
+    fn plug_rest(&self, scar: crate::armor_damage::ArmorScar, frames: [Mat4; 2], interior: ArmorInterior) -> Option<(Vec3, Vec3)> {
+        let frame = if scar.is_turret() { frames[1] } else { frames[0] };
+        let dir = frame.transform_vector3(scar.local_dir()).normalize_or_zero();
+        let normal = frame.transform_vector3(scar.local_normal()).normalize_or_zero();
+        let exit = frame.transform_point3(scar.local_position()) - normal * (scar.plate_m() + 0.01)
+            + dir * 0.02;
+        let to = exit + dir * 3.0;
+        let (source, models) = match interior {
+            ArmorInterior::PlayerTiger => (&self.cabin_fire, self.fire_surface_models()),
+            ArmorInterior::T34Shell => {
+                // The T-34 source holds its hull (frame 0) and turret (frame 1) only.
+                let mut models = [Mat4::from_translation(Vec3::splat(1.0e6)); surface_fire::FRAMES];
+                models[0] = frames[0];
+                models[1] = frames[1];
+                (&self.projectile_enemy_armor, models)
+            }
+            ArmorInterior::None => return None,
+        };
+        let hit = source.sweep(exit, to, &models)?;
+        let model = models[hit.frame];
+        let point = model.transform_point3(hit.point);
+        let mut seat = model.inverse().transpose().transform_vector3(hit.normal).normalize_or_zero();
+        if seat.dot(dir) > 0.0 { seat = -seat; }
+        let to_local = frame.inverse();
+        Some((to_local.transform_point3(point + seat * 0.002), to_local.transform_vector3(seat).normalize_or_zero()))
     }
 
     fn drive_lights(&mut self, r: &mut Renderer) {
@@ -24249,7 +24506,10 @@ impl Game {
         }
 
         for (index, enemy) in self.enemies.iter().enumerate() {
-            if (!enemy.alive && projectile.small_arm.is_none())
+            // A wreck is still steel in the round's path and takes its wounds. A popped turret is
+            // excluded: its contact frame would be the turret's old seat, not its flight.
+            let popped = self.wrecks.get(index).is_some_and(|w| w.kind == WreckKind::TurretPop);
+            if (!enemy.alive && projectile.small_arm.is_none() && popped)
                 || !self.enemy_active.get(index).copied().unwrap_or(false)
                 || matches!(projectile.shooter, ProjectileShooter::Enemy(i) if i == index)
                     && projectile.ignores_firing_vehicle()
@@ -24752,6 +25012,13 @@ impl Game {
         contact: ProjectileContact,
         r: &mut Renderer,
     ) -> Option<crate::ballistics::ricochet::Response> {
+        if armor_scars_review::trace_enabled() {
+            println!("[armor-scars] terminal {} {:?} at {:.2?} after {:.1} m", projectile.shell.name,
+                std::mem::discriminant(&contact.kind), contact.pos, projectile.distance_m);
+            if let ProjectileContactKind::Vehicle(armor) = contact.kind {
+                println!("[armor-scars]   vehicle {:?} {:?} {:?} local {:.3?} normal {:.2?}", armor.vehicle, armor.part, armor.facing, armor.local_point, armor.world_normal);
+            }
+        }
         self.present_source_ground_impact(projectile,contact,r);
         if let Some(bullet) = projectile.small_arm {
             self.finish_small_arm(projectile,contact,bullet, &r.camera);
@@ -24994,7 +25261,8 @@ impl Game {
         }
         match armor.vehicle {
             ProjectileVehicle::Enemy(index) => {
-                if matches!(projectile.shooter, ProjectileShooter::Player) {
+                // Rounds into a wreck mark its steel but are not hits on a fighting enemy.
+                if matches!(projectile.shooter, ProjectileShooter::Player) && self.enemies[index].alive {
                     self.stat_hits_by_player = self.stat_hits_by_player.saturating_add(1);
                     if penetrated {
                         self.stat_pens_by_player = self.stat_pens_by_player.saturating_add(1);
@@ -29683,6 +29951,7 @@ impl Game {
                 );
             }
         }
+        self.mark_fragment_strikes();
 
         let mut stage_mats: [Vec<Mat4>; N_HOT_FRAGMENT_BATCHES] =
             std::array::from_fn(|_| Vec::with_capacity(HOT_FRAGMENT_STAGE_CAPACITY));
@@ -35350,6 +35619,7 @@ mod tests {
         let collision = |turret_local, local_pos| HotFragmentCollision {
             turret_local,
             local_pos,
+            local_normal: Vec3::Y,
             speed: 6.0,
             seed: 1,
             bounce_count: 1,
@@ -35396,6 +35666,7 @@ mod tests {
             HotFragmentCollision {
                 turret_local: true,
                 local_pos: Vec3::new(1.0, 1.0, 0.0),
+                local_normal: Vec3::Y,
                 speed: 8.0,
                 seed: 77,
                 bounce_count: 3,

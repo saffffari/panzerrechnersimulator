@@ -326,6 +326,18 @@ fn v1_scars(value: &Value) -> Result<Vec<ArmorScar>> {
     Ok(scars)
 }
 
+/// Review harness (`armor-scars`): write a real checkpoint carrying `scars` to `path` with the
+/// encoder the game uses, read the file back through the decoder and return the loaded field.
+pub fn round_trip_armor_scars_for_review(scars: &[ArmorScar], path: &Path) -> Result<Vec<ArmorScar>> {
+    let mut snapshot = CampaignRun::new(1).persistent().clone();
+    snapshot.tiger.armor_scars = scars.to_vec();
+    let run = CampaignRun::with_snapshot(1, snapshot);
+    let bytes = encode(&run.export_act_entry_checkpoint()?, false, "armor-scars-review")?;
+    fs::write(path, &bytes).with_context(|| format!("write {}", path.display()))?;
+    let read = read_bounded(path, MAX_SAVE_BYTES)?;
+    Ok(decode(&read, "armor-scars-review")?.run.persistent().tiger.armor_scars.clone())
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);

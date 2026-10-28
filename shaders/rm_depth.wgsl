@@ -6,8 +6,9 @@ struct ShadowViews { vp: array<mat4x4<f32>, 16>, };
 @group(1) @binding(0) var albedo_tex: texture_2d<f32>;
 @group(1) @binding(3) var samp: sampler;
 
-struct Push { model: mat4x4<f32>, params: vec4<f32>, }; // params.x = view index
+struct Push { model: mat4x4<f32>, params: vec4<f32>, scars: vec4<u32>, }; // params.x = view index
 var<push_constant> pc: Push;
+@group(0) @binding(1) var<storage, read> scars: array<Scar>;
 
 @vertex
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
@@ -59,4 +60,28 @@ fn vs_grass(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locati
 @fragment
 fn fs_grass(in: GrassOut) {
     if (textureSample(albedo_tex, samp, in.uv).a < 0.5) { discard; }
+}
+
+// A mesh with open wounds: the bore (and the back-face scab) is cut out of every depth map, so
+// the key beam and lamps pass through a hole exactly where the eye sees through it.
+struct ScarDepthOut { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32>, };
+
+@vertex
+fn vs_scar(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
+           @location(3) tangent: vec4<f32>) -> ScarDepthOut {
+    let world = pc.model * vec4(pos, 1.0);
+    return ScarDepthOut(shadow_views.vp[u32(pc.params.x)] * world, world.xyz);
+}
+
+@fragment
+fn fs_scar_cut(in: ScarDepthOut) {
+    let end = pc.scars.x + pc.scars.y;
+    for (var i = pc.scars.x; i < end; i += 1u) {
+        let s = scars[i];
+        if (!scar_open(s)) { continue; }
+        let q = in.world - s.a.xyz;
+        let reach = scar_reach(s);
+        if (dot(q, q) > reach * reach) { continue; }
+        if (scar_in_cut(s, scar_local(s, in.world))) { discard; return; }
+    }
 }
