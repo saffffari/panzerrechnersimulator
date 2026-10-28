@@ -1,7 +1,7 @@
 # Headless AI-vs-AI combat captures (video via ffmpeg) from this checkout's release binary: a varied set of
 # showreel, crew-battle, blizzard, duel, brawl and canyon autopilot runs. Each run gets its own log; a run that
 # fails on the raymarch backend is retried once on the shader backend. Needs ffmpeg on PATH and a GPU that
-# nothing else is using. Usage: powershell -File toolsun_ai_fights.ps1 [-AssetRoot <checkout with assets>]
+# nothing else is using. Usage: powershell -File tools\run_ai_fights.ps1 [-AssetRoot <checkout with assets>]
 param([string]$AssetRoot)
 $ErrorActionPreference = 'Continue'
 $Root   = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
