@@ -1,14 +1,14 @@
 //! The ground below the authored grid: the Canyon v2 detail surface (docs/TERRAIN_DETAIL.md).
 //!
 //! One surface serves physics and both raymarch passes. It is the native 4097² Gaea grid
-//! (1.2207 m, `tools/worldgen/canyon_terrain_detail.py`) refined on a lattice four times finer
-//! (0.305 m), plus
+//! (1.2207 m, `tools/worldgen/canyon_terrain_detail.py`) refined on a lattice sixteen times
+//! finer (0.076 m), plus
 //!   * procedural relief per ground class: snow waves across the prevailing wind, wind crust,
-//!     rock, frozen old ruts along the course, rubble beds, trampled yards. Octaves of 1.22 to
-//!     9.77 m wavelength are geometry; 0.15 to 0.61 m are shading normals only (the GPU half);
+//!     rock, frozen old ruts along the course, rubble beds, trampled yards. Octaves of 0.31 to
+//!     9.77 m wavelength are geometry at the finest level; 0.15 m is a shading normal only;
 //!   * persistent events: track ruts and boot prints compacted into a 12.5 cm rut map from the
 //!     real tread bands, and shell craters from the HE solver.
-//! [`Detail::height_at`] is the triangle-interpolated 0.305 m lattice, each cell split along the
+//! [`Detail::height_at`] is the triangle-interpolated 0.076 m lattice, each cell split along the
 //! same (i+1, j)-(i, j+1) diagonal as `terrain::Heightfield::grade_at`; the terrain LOD draws
 //! that lattice near the camera (`terrain_lod.rs`) and evaluates the same functions in WGSL
 //! (`shaders/rm_terrain.wgsl`, constants from [`wgsl_constants`]).
@@ -398,7 +398,7 @@ impl Detail {
         stat - self.rut_at(x, z)
     }
 
-    /// The physical surface: the 0.305 m lattice triangles with every geometry octave, crater
+    /// The physical surface: the 0.076 m lattice triangles with every geometry octave, crater
     /// and rut, the surface the finest LOD level draws.
     pub fn height_at(&self, x: f32, z: f32) -> f32 {
         let gx = (x + self.half) / self.lattice;

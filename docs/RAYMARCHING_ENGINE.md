@@ -214,7 +214,10 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 
 - The cupola periscope eyepieces are glass panes over the periscope housing, not relayed views;
   the raster optic tiles (an offscreen view per periscope) do not run on this backend.
-- Track ruts on terrain are not sampled in the G-buffer.
+- Track ruts on terrain: on branch `terrain-detail` the ground is the detail surface
+  (docs/TERRAIN_DETAIL.md): ruts, boot prints and craters are geometry in every pass and the
+  terrain LOD replaces the coarse mesh; without a `terrain.detail` block the coarse mesh is still
+  drawn without the renderer's track map.
 - History reprojection for the froxel grid uses the camera only; moving emitters smear up to
   ~10 frames.
 - No temporal filter on the deferred shade; dither hides the per-pixel jitter of the contact and

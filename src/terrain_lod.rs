@@ -1,9 +1,9 @@
 //! Chunked distance LOD of the detail terrain for the raymarch backend (docs/TERRAIN_DETAIL.md).
 //!
 //! CDLOD (Strugar 2009): a quadtree over the 5 km map whose leaves are 16x16-cell quadrants at
-//! lattice 0.305 m * 2^level. A node at level L is refined while it intersects the sphere of
+//! lattice 0.076 m * 2^level. A node at level L is refined while it intersects the sphere of
 //! radius `range(L-1)` around the camera (ranges double per level from `KESSEL_TERRAIN_LOD_RANGE`,
-//! default 40 m); a quadrant outside it is drawn at the parent's level. Every vertex is the surface
+//! default 10 m); a quadrant outside it is drawn at the parent's level. Every vertex is the surface
 //! function of `terrain_relief` evaluated on the GPU (`shaders/rm_terrain.wgsl`) at its own
 //! position. In the outer quarter of each range the odd vertices slide onto the even ones and the
 //! level's finest relief octave fades out, so at a level boundary both sides are the coarser
@@ -216,7 +216,7 @@ impl TerrainLod {
             label: Some("terrain-patch-indices"), contents: bytemuck::cast_slice(&indices), usage: wgpu::BufferUsages::INDEX });
         let bgl = Self::bind_group_layout(device);
         let range0 = std::env::var("KESSEL_TERRAIN_LOD_RANGE").ok().and_then(|v| v.parse::<f32>().ok())
-            .filter(|r| *r >= 8.0).unwrap_or(DEFAULT_RANGE0_M);
+            .filter(|r| *r >= 4.0).unwrap_or(DEFAULT_RANGE0_M);
         // Area level a squares: 16 lattice cells * 2^a; the root area spans the map.
         let mut levels = 1;
         while (QUAD_CELLS as f32 * detail.lattice * (1u32 << levels) as f32) < detail.half * 2.0 - 0.01 { levels += 1; }

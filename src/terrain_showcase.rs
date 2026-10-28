@@ -267,6 +267,12 @@ pub fn bench(prefix: &str, frames: u32) -> anyhow::Result<()> {
     for (name, eye, target, fov) in views {
         let mut gpu = crate::gpu_profile::GpuProfileSummary::default();
         let mut times = Vec::new();
+        // Per frame: the passes that draw scene geometry (G-buffer, sun cascades, sky cover,
+        // point faces). On a shared GPU their minimum over many frames approximates the
+        // uncontended cost; the mean does not.
+        const GEOMETRY: [&str; 5] = ["rm-gbuffer", "rm-shadow-far", "rm-shadow-near", "rm-sky-cover", "rm-point-face"];
+        let mut geometry: std::collections::BTreeMap<&str, Vec<f64>> = GEOMETRY.iter().map(|k| (*k, Vec::new())).collect();
+        let mut geometry_total = Vec::new();
         for i in 0..frames + 30 {
             g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
             r.camera.pos = eye;
@@ -284,13 +290,30 @@ pub fn bench(prefix: &str, frames: u32) -> anyhow::Result<()> {
             device.poll(wgpu::PollType::wait_indefinitely()).ok();
             let ms = t0.elapsed().as_secs_f32() * 1000.0;
             let frame = r.read_gpu_profile_frame(&device, &queue)?;
-            if i >= 30 { times.push(ms); gpu.record(frame); }
+            if i >= 30 {
+                times.push(ms);
+                let mut total = 0.0;
+                for k in GEOMETRY {
+                    let v: f64 = frame.iter().filter(|(l, _)| l == k).map(|(_, ms)| ms).sum();
+                    geometry.get_mut(k).unwrap().push(v);
+                    total += v;
+                }
+                geometry_total.push(total);
+                gpu.record(frame);
+            }
         }
         times.sort_by(f32::total_cmp);
         let n = times.len();
         let avg = times.iter().sum::<f32>() / n as f32;
         println!("[terrain-bench] {name}: {n} frames avg {avg:.2} ms p50 {:.2} p99 {:.2}", times[n / 2], times[n * 99 / 100]);
-        results.push(serde_json::json!({"view": name, "frames": n, "wall_avg_ms": avg, "wall_p50_ms": times[n / 2],
+        let stats = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            serde_json::json!({"min": v[0], "p10": v[v.len() / 10], "p50": v[v.len() / 2]})
+        };
+        let per_pass: serde_json::Map<String, serde_json::Value> = geometry.iter_mut().map(|(k, v)| (k.to_string(), stats(v))).collect();
+        let total = stats(&mut geometry_total);
+        println!("[terrain-bench] {name}: geometry passes GPU ms {total}");
+        results.push(serde_json::json!({"view": name, "frames": n, "geometry_passes_ms": total, "geometry_per_pass_ms": per_pass, "wall_avg_ms": avg, "wall_p50_ms": times[n / 2],
             "wall_p99_ms": times[n * 99 / 100], "gpu_passes": gpu.report(),
             "terrain_lod": r.terrain_lod_stats().map(|s| format!("{s:?}")), "raymarch": r.raymarch_stats().map(|s| format!("{s:?}"))}));
     }
