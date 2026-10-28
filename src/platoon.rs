@@ -43,6 +43,14 @@ const COMBAT_STOP_RANGE_M: f32 = 900.0;
 const CLOSE_CONTACT_M: f32 = 500.0;
 const FALL_BACK_M: f32 = 120.0;
 const RELOAD_S: f32 = 9.0;
+/// Under `follow`, the trained policy fights only while the wingman stays this close to the
+/// leader; beyond it the order controller drives back to formation.
+const POLICY_LEASH_M: f32 = 250.0;
+/// Longest short halt the driver makes for a policy shot before letting the policy move again
+/// (a target that will not come into lay must not pin the tank in the open).
+const SHORT_HALT_MAX_S: f32 = 6.0;
+/// The neuroevolution Tiger policy from the duel training (14 obs -> drive, steer, fire).
+pub const DEFAULT_POLICY: &str = "assets/ai/weights_tiger.bin";
 const ARRIVE_M: f32 = 6.0;
 
 /// Does the environment ask for the platoon? Only `KESSEL_PLATOON=2` is a valid size today.
@@ -152,6 +160,12 @@ pub struct Wingman {
     pub burning: bool,
     /// Seconds since the tank last answered; the HUD and the model both read it.
     pub last_reply: Option<String>,
+    /// The trained policy is driving this frame (in contact under an order that allows it).
+    pub policy_engaged: bool,
+    /// Seconds spent under the trained policy, for the proof receipt.
+    pub policy_s: f32,
+    /// Seconds of the current short halt for a policy shot.
+    pub halt_s: f32,
     stuck_s: f32,
     reverse_until: f32,
     time: f32,
@@ -177,6 +191,9 @@ impl Wingman {
             kills: 0,
             burning: false,
             last_reply: None,
+            policy_engaged: false,
+            policy_s: 0.0,
+            halt_s: 0.0,
             stuck_s: 0.0,
             reverse_until: 0.0,
             time: 0.0,
@@ -245,6 +262,10 @@ pub struct Platoon {
     time: f32,
     pub enemy_kill_credit: Vec<Option<usize>>,
     squelch_tick: u32,
+    /// The engagement policy the wingmen fight with (None: order controller only).
+    pub policy: Option<crate::ai::Mlp>,
+    /// Where the policy came from, for the logs and the proof receipt.
+    pub policy_source: String,
 }
 
 impl Platoon {
@@ -263,7 +284,37 @@ impl Platoon {
             time: 0.0,
             enemy_kill_credit: Vec::new(),
             squelch_tick: 0,
+            policy: None,
+            policy_source: String::new(),
         }
+        .with_policy_from_env()
+    }
+
+    /// `KESSEL_PLATOON_POLICY`: unset = the trained Tiger weights (`DEFAULT_POLICY`), `off` = the
+    /// order controller alone, `doctrine` = the hand-built seed network, anything else = a path
+    /// to a KSL1 weight artifact. A missing or mismatched artifact falls back to the doctrine
+    /// seed, and the log says so.
+    fn with_policy_from_env(mut self) -> Self {
+        let want = std::env::var("KESSEL_PLATOON_POLICY").unwrap_or_default();
+        let want = want.trim();
+        let (policy, source) = match want {
+            "off" | "none" => (None, "off".to_string()),
+            "doctrine" => (Some(crate::ai::Mlp::tiger_doctrine_seed()), "doctrine seed".to_string()),
+            path => {
+                let path = if path.is_empty() { DEFAULT_POLICY } else { path };
+                match crate::ai::Mlp::load(path) {
+                    Ok(m) => (Some(m), path.to_string()),
+                    Err(e) => {
+                        println!("[platoon] policy {path} unavailable ({e:#}); using the doctrine seed");
+                        (Some(crate::ai::Mlp::tiger_doctrine_seed()), "doctrine seed (fallback)".to_string())
+                    }
+                }
+            }
+        };
+        println!("[platoon] engagement policy: {source}");
+        self.policy = policy;
+        self.policy_source = source;
+        self
     }
 
     pub fn alive_count(&self, game: &Game) -> usize {
@@ -305,6 +356,41 @@ fn navigate(pos: Vec2, heading: f32, goal: Vec2, speed: f32, stop: f32) -> (f32,
 }
 fn hash01(n: u32) -> f32 {
     (((n.wrapping_mul(2_654_435_761)) >> 8) & 0xffff) as f32 / 65_536.0
+}
+
+/// The trained Tiger policy's observation, built from a wingman's own tank. Same layout and
+/// scaling as `Game::tiger_executor_obs` (the training input): target offset and range over
+/// 300 m, relative bearing sin/cos, own speed, reload, breech, hp, living-enemy fraction, turret
+/// error, the target's facing toward us and its speed, bias. The target is the one the order
+/// controller chose (so an `engage contact #n` order points the policy at #n), not merely the
+/// nearest. The wingmen have no breech model: `breech_ready` is their reload cycle.
+pub fn wingman_policy_obs(own: &Tank, breech_ready: bool, living_frac: f32, target: Option<&Tank>) -> [f32; crate::ai::OBS] {
+    let mut obs = [0.0f32; crate::ai::OBS];
+    let pc = own.center();
+    obs[5] = (own.speed / tank::TOP_SPEED).clamp(-1.0, 1.0);
+    obs[6] = own.reload.clamp(0.0, 1.0);
+    obs[7] = if breech_ready { 1.0 } else { -1.0 };
+    obs[8] = (own.hp / tank::MAX_HP).clamp(0.0, 1.0);
+    obs[9] = living_frac.clamp(0.0, 1.0);
+    obs[13] = 1.0;
+    if let Some(e) = target {
+        let to = e.center() - pc;
+        let range = Vec2::new(to.x, to.z).length();
+        let bearing = to.x.atan2(to.z) - own.heading;
+        obs[0] = (to.x / 300.0).clamp(-1.0, 1.0);
+        obs[1] = (to.z / 300.0).clamp(-1.0, 1.0);
+        obs[2] = (range / 300.0).min(1.0);
+        obs[3] = bearing.sin();
+        obs[4] = bearing.cos();
+        let to_dir = Vec3::new(to.x, 0.0, to.z).normalize_or_zero();
+        let turret = own.turret_forward();
+        let turret_flat = Vec3::new(turret.x, 0.0, turret.z).normalize_or_zero();
+        obs[10] = turret_flat.cross(to_dir).y.clamp(-1.0, 1.0);
+        let toward_us = Vec3::new(-to.x, 0.0, -to.z).normalize_or_zero();
+        obs[11] = e.forward().dot(toward_us).clamp(-1.0, 1.0);
+        obs[12] = (e.speed / tank::TOP_SPEED).clamp(-1.0, 1.0);
+    }
+    obs
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -622,6 +708,8 @@ impl Game {
         let leader_fwd = xz(self.player.forward()).normalize_or_zero();
         let leader_heading = self.player.heading;
         let mut fired: Vec<(usize, Option<usize>, Vec3, Vec3, f32)> = Vec::new();
+        // Training input slot 9: living fraction of the whole enemy roster.
+        let living_frac = self.enemies.iter().filter(|e| e.alive).count() as f32 / self.enemies.len().max(1) as f32;
 
         // Snapshot of every hull for avoidance; the wingman's own id is 1_000_000 + index.
         let mut bodies = Vec::with_capacity(self.enemies.len() + 3);
@@ -721,6 +809,72 @@ impl Game {
                     }
                 }
             };
+            // In contact, the trained Tiger policy fights the tank: it replaces the order
+            // controller's drive/steer and adds its fire intent to the trigger gates below. Hold,
+            // cover and fall back stay with the order controller; under follow the policy is on a
+            // leash to the leader. Everything downstream (avoidance, wall veto, watchdog, hull
+            // contact, gun lay, travel lock, weapons hold, friendly line) still applies.
+            let leader_dist = here.distance(xz(player_pos));
+            let policy_wanted = target.is_some()
+                && match &w.standing {
+                    Standing::Follow => in_contact && leader_dist < POLICY_LEASH_M,
+                    Standing::Advance(_) | Standing::Flank { .. } => close_contact,
+                    Standing::Hold | Standing::Cover | Standing::FallBack(_) => false,
+                };
+            let policy_action: Option<[f32; crate::ai::ACT]> = if policy_wanted {
+                let p = self.platoon.as_ref().unwrap();
+                p.policy.as_ref().map(|m| {
+                    let obs = wingman_policy_obs(
+                        &self.allies[index].tank,
+                        w.fire_cd <= 0.0,
+                        living_frac,
+                        target.map(|(i, _, _)| &self.enemies[i]),
+                    );
+                    m.forward(&obs)
+                })
+            } else {
+                None
+            };
+            // Short halt: the Tiger has no stabiliser and the trigger is travel-locked, while the
+            // evolved policy keeps moving (it orbits its target). When it wants to fire and the gun
+            // is loaded, the driver stops for the shot, as a crew would on the commander's "Halt!";
+            // after the round (or SHORT_HALT_MAX_S) the policy moves the tank again.
+            let ready_to_shoot = w.fire_cd <= 0.0 && w.ap_rounds > 0 && w.can_shoot() && !w.weapons_hold;
+            let mut halting = false;
+            if let Some(a) = policy_action {
+                drive = a[0];
+                steer = a[1];
+                if a[2] > 0.0 && ready_to_shoot && w.halt_s < SHORT_HALT_MAX_S {
+                    drive = 0.0;
+                    steer = 0.0;
+                    halting = true;
+                }
+            }
+            {
+                let p = self.platoon.as_mut().unwrap();
+                let wm = &mut p.wingmen[index];
+                let engaged = policy_action.is_some();
+                if engaged && !wm.policy_engaged {
+                    println!(
+                        "[platoon] {} fighting under the trained policy (contact #{}, {:.0} m)",
+                        wm.callsign,
+                        target.map(|(i, _, _)| i + 1).unwrap_or(0),
+                        target.map(|(_, _, d)| d).unwrap_or(0.0)
+                    );
+                } else if !engaged && wm.policy_engaged {
+                    println!("[platoon] {} back on the order controller ({})", wm.callsign, wm.standing.label());
+                }
+                wm.policy_engaged = engaged;
+                if engaged {
+                    wm.policy_s += dt;
+                }
+                if halting {
+                    wm.halt_s += dt;
+                } else if !ready_to_shoot || !engaged {
+                    // Reloading (just fired) or off the policy: the next halt starts fresh.
+                    wm.halt_s = 0.0;
+                }
+            }
             if !w.can_drive() {
                 drive = 0.0;
                 steer = 0.0;
@@ -811,7 +965,8 @@ impl Game {
                 let aim_point = ballistic_aim_target(ally.muzzle().0, point, &crate::ballistics::PZGR_39);
                 let laid = if traverse_ok { ally.ai_aim(aim_point, dt) } else { ally.casemate_aim(aim_point, dt) };
                 if let Some((tidx, tpos, dist)) = target {
-                    if laid && has_ammo && w.can_shoot() && !w.weapons_hold && ally.can_fire() && w.fire_cd <= 0.0 {
+                    let policy_trigger = policy_action.map_or(true, |a| a[2] > 0.0);
+                    if laid && has_ammo && policy_trigger && w.can_shoot() && !w.weapons_hold && ally.can_fire() && w.fire_cd <= 0.0 {
                         let (muzzle, direction) = ally.muzzle();
                         // Never shoot through a friend: the leader or the other wingman near the line.
                         let friendly_in_line = {
@@ -1031,6 +1186,7 @@ impl Game {
         serde_json::json!({
             "time_s": t,
             "radio_path": p.radio.config().mode_label(),
+            "policy_source": p.policy_source,
             "inflight": p.inflight.len(),
             "wingmen": p.wingmen.iter().enumerate().map(|(i, w)| {
                 let tank = self.allies.get(i).map(|a| &a.tank);
@@ -1054,6 +1210,8 @@ impl Game {
                     "hull_hits": w.hull_hits, "penetrations": w.penetrations,
                     "crew_dead": w.crew_dead(), "damage": w.damage_list(),
                     "last_reply": w.last_reply,
+                    "policy": w.policy_engaged,
+                    "policy_s": w.policy_s,
                 })
             }).collect::<Vec<_>>(),
         })
@@ -1182,6 +1340,75 @@ mod tests {
         assert!(matches!(w.standing, Standing::FallBack(g) if g.y < 0.0 && g.x > 0.0));
         apply_order(&mut w, 1, &ord(OrderKind::FlankRight, OrderTarget::None), &markers, Vec2::ZERO, Vec2::Y, 0.0, &[]);
         assert!(matches!(w.standing, Standing::Flank { side, .. } if side > 0.0));
+    }
+
+    fn flat() -> crate::terrain::Heightfield {
+        crate::terrain::Heightfield { res: 2, spacing: 8000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default() }
+    }
+
+    #[test]
+    fn policy_obs_matches_the_training_layout() {
+        let hf = flat();
+        let own = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
+        let mut enemy = Tank::new(0.0, 150.0, std::f32::consts::PI, &hf, tank::T34_PARTS);
+        enemy.speed = tank::TOP_SPEED * 0.5;
+        let obs = wingman_policy_obs(&own, true, 0.5, Some(&enemy));
+        assert!((obs[2] - 0.5).abs() < 0.02, "range over 300 m: {}", obs[2]);
+        assert!(obs[3].abs() < 0.02 && obs[4] > 0.99, "dead ahead: sin {} cos {}", obs[3], obs[4]);
+        assert_eq!(obs[7], 1.0);
+        assert_eq!(obs[9], 0.5);
+        assert!(obs[11] > 0.99, "the T-34 faces us");
+        assert!((obs[12] - 0.5).abs() < 1e-3);
+        assert_eq!(obs[13], 1.0);
+        let none = wingman_policy_obs(&own, false, 1.0, None);
+        assert_eq!(&none[0..5], &[0.0; 5]);
+        assert_eq!(none[7], -1.0);
+    }
+
+    #[test]
+    fn doctrine_policy_closes_turns_toward_and_wants_to_fire() {
+        // The checked-in weights are an asset (gitignored); the doctrine seed has the same I/O
+        // contract and documented behaviour, so it proves the wiring without the file.
+        let hf = flat();
+        let net = crate::ai::Mlp::tiger_doctrine_seed();
+        let own = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
+        let far_ahead = Tank::new(0.0, 280.0, PI, &hf, tank::T34_PARTS);
+        let a = net.forward(&wingman_policy_obs(&own, true, 1.0, Some(&far_ahead)));
+        assert!(a[0] > 0.2, "closes a distant target: drive {}", a[0]);
+        assert!(a[2] > 0.0, "trigger intent");
+        let right = Tank::new(150.0, 20.0, 0.0, &hf, tank::T34_PARTS);
+        let a = net.forward(&wingman_policy_obs(&own, true, 1.0, Some(&right)));
+        assert!(a[1] > 0.2, "turns toward +X (steer > 0 increases heading toward +X): {}", a[1]);
+        let near = Tank::new(0.0, 60.0, PI, &hf, tank::T34_PARTS);
+        let a = net.forward(&wingman_policy_obs(&own, true, 1.0, Some(&near)));
+        assert!(a[0] < 0.0, "backs off inside its preferred range: drive {}", a[0]);
+    }
+
+    /// Probes the real trained weights when the asset tree is reachable (`KESSEL_ASSET_ROOT` or a
+    /// checkout with `assets/`); skipped in a bare clone, where the file is not tracked.
+    #[test]
+    fn trained_weights_load_and_answer_the_probes_when_present() {
+        let Ok(net) = crate::ai::Mlp::load(DEFAULT_POLICY) else {
+            println!("skip: {DEFAULT_POLICY} not reachable");
+            return;
+        };
+        let hf = flat();
+        let own = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
+        let probes = [
+            ("far ahead 280 m", Tank::new(0.0, 280.0, PI, &hf, tank::T34_PARTS)),
+            ("ahead 150 m", Tank::new(0.0, 150.0, PI, &hf, tank::T34_PARTS)),
+            ("near 60 m", Tank::new(0.0, 60.0, PI, &hf, tank::T34_PARTS)),
+            ("right 150 m", Tank::new(150.0, 20.0, -PI / 2.0, &hf, tank::T34_PARTS)),
+            ("left 150 m", Tank::new(-150.0, 20.0, PI / 2.0, &hf, tank::T34_PARTS)),
+            ("behind 200 m", Tank::new(0.0, -200.0, 0.0, &hf, tank::T34_PARTS)),
+        ];
+        for (name, enemy) in &probes {
+            let a = net.forward(&wingman_policy_obs(&own, true, 1.0, Some(enemy)));
+            assert!(a.iter().all(|v| v.is_finite()));
+            println!("[policy-probe] {name:16} drive {:+.2} steer {:+.2} fire {:+.2}", a[0], a[1], a[2]);
+        }
+        let none = net.forward(&wingman_policy_obs(&own, true, 1.0, None));
+        println!("[policy-probe] no target        drive {:+.2} steer {:+.2} fire {:+.2}", none[0], none[1], none[2]);
     }
 
     #[test]
