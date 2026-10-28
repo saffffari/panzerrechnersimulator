@@ -16,6 +16,17 @@ use glam::{Mat4, Vec3};
 use std::collections::HashMap;
 
 const VOL_DIVISOR: u32 = 4;
+/// The froxel grid's least size: below 640x360 the grid stops shrinking with the pixels (a coarser
+/// pixel grid spends the saving on the medium's cells instead).
+const VOL_MIN: [u32; 2] = [160, 90];
+
+/// The per-pixel sample budget of the noisy terms (2026-10-28, "like samples aren't high enough";
+/// "we can reduce pixel res"): 800x450's pixel count over this grid's, 1 at 800x450 and above, up
+/// to 3 below. The occlusion rays, the screen gather's directions and the rough reflection lobe
+/// take that many times their base count, so a lower grid's frame settles cleaner, not cheaper.
+fn sample_budget(iw: u32, ih: u32) -> f32 {
+    (360_000.0 / (iw.max(1) * ih.max(1)) as f32).clamp(1.0, 3.0)
+}
 const VOL_SLICES: u32 = 96;
 const VOL_NEAR_M: f32 = 0.25;
 const VOL_FAR_M: f32 = 320.0;
@@ -130,6 +141,8 @@ struct FrameUniform {
     fog: [f32; 4],
     optic_eye: [f32; 4],
     livery: [f32; 4],
+    /// x the per-pixel sample budget (`sample_budget`).
+    samples: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
     /// The player's cabin air (`cabin_medium.rs`), as the shader backend's camera carries it.
@@ -182,9 +195,9 @@ struct Ember { pos: [f32; 3], packed: u32 }
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4], scars: [u32; 4] }
 // extra: x snow load (`snow_cover`; G-buffer and glass only), y 1 on the player's vehicle
-// (surface wear), z 1 on an instrument dial's cover (glass only), w unused. scars: this mesh's
-// armor wounds (first record, count, flags; renderer_scars.rs). 112 bytes, inside the 128-byte
-// push-constant floor the device requires.
+// (surface wear), z 1 on an instrument dial's cover (glass) or on painted steel (G-buffer:
+// `Renderer::mark_painted_steel`), w unused. scars: this mesh's armor wounds (first record, count,
+// flags; renderer_scars.rs). 112 bytes, inside the 128-byte push-constant floor the device requires.
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -213,16 +226,58 @@ pub struct Stats {
 
 struct Target { _tex: wgpu::Texture, view: wgpu::TextureView }
 
+/// One view's temporal state (2026-10-28). The live loop draws the gunner's sight in two passes a
+/// frame with two cameras (`Renderer::set_active_view` 0 for the optic, 3 for the cabin round the
+/// eyepiece), split-screen draws one per seat: with one shared set, each view cut the other's
+/// histories every frame and none accumulated (the cabin round the eyepiece showed raw noise).
+struct Temporal {
+    /// The shaded frame before reflections, glass and points: next frame's bounce source. Kept
+    /// apart from `scratch` so that the reflection pass's output does not re-enter the indirect
+    /// loop (with ray-query reflections that loop diverged in the closed cabin).
+    history: Target,
+    /// Reflection history: the reflected radiance accumulated over frames (rgb) and the eye
+    /// distance of the reflecting surface (a); written by the reflection pass into [flip].
+    refl: [Target; 2],
+    /// The shade pass's stochastic terms' history: `ao` x the ray-traced open share, y the
+    /// screen gather's open share, z its contact term, w the eye distance; `bounce` rgb the
+    /// gathered bounce irradiance, a that distance. Written into [flip], read from [1 - flip].
+    ao: [Target; 2],
+    bounce: [Target; 2],
+    /// The froxel medium's in-scatter history, written into [flip].
+    scatter: [Target; 2],
+    flip: usize,
+    prev_camera: Option<(Vec3, Vec3, f32, f32, Mat4)>,
+    /// The cabin domains' world-to-local transforms last frame (`FrameUniform::cabin_motion`).
+    prev_cabin: Option<[Mat4; super::cabin_medium::DOMAINS]>,
+}
+
+impl Temporal {
+    fn new(device: &wgpu::Device, iw: u32, ih: u32, vol: [u32; 3]) -> Self {
+        let gusage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
+        Self {
+            history: target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST),
+            refl: [target(device, "rm-refl-a", iw, ih, REFL_FORMAT, gusage), target(device, "rm-refl-b", iw, ih, REFL_FORMAT, gusage)],
+            ao: [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)],
+            bounce: [target(device, "rm-bounce-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-bounce-b", iw, ih, AO_FORMAT, gusage)],
+            scatter: [volume_target(device, "rm-scatter-a", vol), volume_target(device, "rm-scatter-b", vol)],
+            flip: 0,
+            prev_camera: None,
+            prev_cabin: None,
+        }
+    }
+}
+
 struct Binds {
     depth: wgpu::BindGroup,
     visibility: wgpu::BindGroup,
-    volume: [wgpu::BindGroup; 2],
-    integrate: [wgpu::BindGroup; 2],
-    shade: [wgpu::BindGroup; 2],
+    /// Per view slot, per flip.
+    volume: Vec<[wgpu::BindGroup; 2]>,
+    integrate: Vec<[wgpu::BindGroup; 2]>,
+    shade: Vec<[wgpu::BindGroup; 2]>,
     points: wgpu::BindGroup,
     reflect: wgpu::BindGroup,
     /// The reflection pass's own binds: the post set plus the reflection history [1 - flip].
-    reflect_t: [wgpu::BindGroup; 2],
+    reflect_t: Vec<[wgpu::BindGroup; 2]>,
     lens: wgpu::BindGroup,
 }
 
@@ -265,19 +320,11 @@ pub(super) struct Backend {
     /// `Renderer::frame` of the last render that drew those maps.
     maps_frame: Option<u32>,
     scratch: Target,
-    /// The shaded frame before reflections, glass and points: next frame's bounce source. Kept
-    /// apart from `scratch` so that the reflection pass's output does not re-enter the indirect
-    /// loop (with ray-query reflections that loop diverged in the closed cabin).
-    history: Target,
-    /// Reflection history: the reflected radiance accumulated over frames (rgb) and the eye
-    /// distance of the reflecting surface (a); written by the reflection pass into [flip].
-    refl: [Target; 2],
+    /// Per view slot (`Renderer::active_view`), created on first use: the temporal histories.
+    temporal: Vec<Temporal>,
+    /// This frame's view slot.
+    view: usize,
     refl_bgl: wgpu::BindGroupLayout,
-    /// The shade pass's stochastic terms' history: `ao` x the ray-traced open share, y the
-    /// screen gather's open share, z its contact term, w the eye distance; `bounce` rgb the
-    /// gathered bounce irradiance, a that distance. Written into [flip], read from [1 - flip].
-    ao: [Target; 2],
-    bounce: [Target; 2],
     /// Ray queries against the scene TLAS (`Renderer::rt_scene`): the TLAS layout, this frame's
     /// bind, and an empty TLAS bound until the scene's first exists.
     rt_bgl: Option<wgpu::BindGroupLayout>,
@@ -293,7 +340,6 @@ pub(super) struct Backend {
     point_faces_tex: wgpu::Texture,
     point_faces_array: wgpu::TextureView,
     point_face_views: Vec<wgpu::TextureView>,
-    scatter: [Target; 2],
     integrated: Target,
     /// Hot-gas measure per froxel and its front-to-back integral (heat haze).
     heat: Target,
@@ -335,10 +381,6 @@ pub(super) struct Backend {
     sparks_pipe: wgpu::RenderPipeline,
     tracers_pipe: wgpu::RenderPipeline,
     binds: Option<Binds>,
-    flip: usize,
-    prev_camera: Option<(Vec3, Vec3, f32, f32, Mat4)>,
-    /// The cabin domains' world-to-local transforms last frame (`FrameUniform::cabin_motion`).
-    prev_cabin: Option<[Mat4; super::cabin_medium::DOMAINS]>,
     /// `KESSEL_GLASS_GRIME`: a fixed glass grime load in place of the game's.
     glass_grime: Option<f32>,
     /// `KESSEL_WHITEWASH`: a fixed winter whitewash in place of the game's.
@@ -605,7 +647,7 @@ impl Backend {
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
         sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool) -> Self {
-        let vol = [iw.div_ceil(VOL_DIVISOR).max(8), ih.div_ceil(VOL_DIVISOR).max(8), VOL_SLICES];
+        let vol = [iw.div_ceil(VOL_DIVISOR).max(VOL_MIN[0].min(iw)), ih.div_ceil(VOL_DIVISOR).max(VOL_MIN[1].min(ih)), VOL_SLICES];
         let (sky_cache_size, sky_cache_phases) = {
             let spec = std::env::var("KESSEL_RM_SKY").ok();
             let mut parts = spec.as_deref().unwrap_or("").split(',');
@@ -646,10 +688,6 @@ impl Backend {
         let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], wgpu::TextureFormat::Rgba16Float, gusage);
         let cloud_shadow = target(device, "rm-cloud-shadow", CLOUD_SHADOW_RES, CLOUD_SHADOW_RES, wgpu::TextureFormat::R16Float, gusage);
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
-        let history = target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
-        let ao = [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)];
-        let bounce = [target(device, "rm-bounce-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-bounce-b", iw, ih, AO_FORMAT, gusage)];
-        let refl = [target(device, "rm-refl-a", iw, ih, REFL_FORMAT, gusage), target(device, "rm-refl-b", iw, ih, REFL_FORMAT, gusage)];
         let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
@@ -680,7 +718,7 @@ impl Backend {
         let point_face_views = (0..(POINT_SHADOWS * 6) as u32).map(|layer| point_faces_tex.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: layer, array_layer_count: Some(1), ..Default::default()
         })).collect();
-        let scatter = [volume_target(device, "rm-scatter-a", vol), volume_target(device, "rm-scatter-b", vol)];
+        let temporal = vec![Temporal::new(device, iw, ih, vol)];
         let integrated = volume_target(device, "rm-integrated", vol);
         let heat = volume_target(device, "rm-heat", vol);
         let heat_integrated = volume_target(device, "rm-heat-integrated", vol);
@@ -1016,14 +1054,14 @@ impl Backend {
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
-            scratch, history, ao, bounce, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
+            scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
-            scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
+            integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
-            binds: None, flip: 0, prev_camera: None, prev_cabin: None, history_valid: false,
+            binds: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             whitewash: std::env::var("KESSEL_WHITEWASH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             shadow_views: [Mat4::IDENTITY; SHADOW_VIEWS], shadowed: [None; POINT_SHADOWS],
@@ -1117,26 +1155,26 @@ impl Backend {
                 entry(12, wgpu::BindingResource::TextureView(&r.cabin_medium_view)),
             ],
         });
-        let volume = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let volume = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-volume"), layout: &self.volume_bgl, entries: &[
                 entry(0, frame.clone()), entry(1, self.parcels_buf.as_entire_binding()),
                 entry(2, self.cell_start_buf.as_entire_binding()), entry(3, self.cell_items_buf.as_entire_binding()),
-                entry(4, wgpu::BindingResource::TextureView(&self.scatter[1 - i].view)),
+                entry(4, wgpu::BindingResource::TextureView(&t.scatter[1 - i].view)),
                 entry(5, wgpu::BindingResource::Sampler(&self.linear_sampler)),
-                entry(6, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
+                entry(6, wgpu::BindingResource::TextureView(&t.scatter[i].view)),
                 entry(7, wgpu::BindingResource::TextureView(&r.depth_view)),
                 entry(8, wgpu::BindingResource::TextureView(&self.heat.view)),
             ],
-        }));
-        let integrate = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
+        }))).collect();
+        let integrate = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-integrate"), layout: &self.integrate_bgl, entries: &[
-                entry(0, frame.clone()), entry(1, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
+                entry(0, frame.clone()), entry(1, wgpu::BindingResource::TextureView(&t.scatter[i].view)),
                 entry(2, wgpu::BindingResource::TextureView(&self.integrated.view)),
                 entry(3, wgpu::BindingResource::TextureView(&self.heat.view)),
                 entry(4, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
             ],
-        }));
-        let shade = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
+        }))).collect();
+        let shade = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-shade"), layout: &self.shade_bgl, entries: &[
                 entry(0, frame.clone()),
                 entry(1, wgpu::BindingResource::TextureView(&self.g0.view)),
@@ -1144,14 +1182,14 @@ impl Backend {
                 entry(3, wgpu::BindingResource::TextureView(&self.g2.view)),
                 entry(4, wgpu::BindingResource::TextureView(&r.depth_view)),
                 entry(6, wgpu::BindingResource::TextureView(&self.integrated.view)),
-                entry(7, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
+                entry(7, wgpu::BindingResource::TextureView(&t.scatter[i].view)),
                 entry(8, wgpu::BindingResource::Sampler(&self.linear_sampler)),
                 entry(9, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
-                entry(10, wgpu::BindingResource::TextureView(&self.history.view)),
-                entry(11, wgpu::BindingResource::TextureView(&self.ao[1 - i].view)),
-                entry(12, wgpu::BindingResource::TextureView(&self.bounce[1 - i].view)),
+                entry(10, wgpu::BindingResource::TextureView(&t.history.view)),
+                entry(11, wgpu::BindingResource::TextureView(&t.ao[1 - i].view)),
+                entry(12, wgpu::BindingResource::TextureView(&t.bounce[1 - i].view)),
             ],
-        }));
+        }))).collect();
         let points = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-points"), layout: &self.points_bgl, entries: &[
                 entry(0, frame.clone()), entry(1, wgpu::BindingResource::TextureView(&r.depth_view)),
@@ -1171,7 +1209,7 @@ impl Backend {
                 entry(7, wgpu::BindingResource::Sampler(&self.linear_sampler)),
             ],
         });
-        let reflect_t = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let reflect_t = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-reflect-t"), layout: &self.refl_bgl, entries: &[
                 entry(0, frame.clone()),
                 entry(1, wgpu::BindingResource::TextureView(&self.scratch.view)),
@@ -1181,9 +1219,9 @@ impl Backend {
                 entry(5, wgpu::BindingResource::TextureView(&r.depth_view)),
                 entry(6, wgpu::BindingResource::TextureView(&self.integrated.view)),
                 entry(7, wgpu::BindingResource::Sampler(&self.linear_sampler)),
-                entry(8, wgpu::BindingResource::TextureView(&self.refl[1 - i].view)),
+                entry(8, wgpu::BindingResource::TextureView(&t.refl[1 - i].view)),
             ],
-        }));
+        }))).collect();
         Binds { depth, visibility, volume, integrate, shade, points, reflect: post("rm-reflect"), reflect_t, lens: post("rm-lens") }
     }
 
@@ -1263,15 +1301,22 @@ impl Backend {
                 self.probe_buf.unmap();
             }
         }
+        // Each view slot keeps its own histories (`Temporal`).
+        let view = r.active_view.min(7);
+        while self.temporal.len() <= view {
+            self.temporal.push(Temporal::new(device, self.iw, self.ih, self.vol));
+            self.binds = None;
+        }
+        self.view = view;
         if self.binds.is_none() { self.binds = Some(self.make_binds(device, r)); }
-        self.flip = 1 - self.flip;
+        self.temporal[view].flip = 1 - self.temporal[view].flip;
         let cam = &r.camera;
         let eye = cam.pos;
         let rel_vp = cam.relative_view_proj();
         let forward = cam.forward();
         // History survives continuous motion only; a cut (seat change, optic zoom, kill-cam)
         // restarts the froxel accumulation.
-        let (prev_vp, prev_eye, valid) = match self.prev_camera {
+        let (prev_vp, prev_eye, valid) = match self.temporal[view].prev_camera {
             Some((p_eye, p_fwd, p_fov, p_aspect, p_vp)) => {
                 let cut = temporal_camera_cut((eye - p_eye).length(), forward.dot(p_fwd), cam.fov_y - p_fov,
                     cam.aspect - p_aspect, false, r.continuous_camera_translation);
@@ -1280,19 +1325,19 @@ impl Backend {
             None => (rel_vp, eye, false),
         };
         self.history_valid = valid;
-        self.prev_camera = Some((eye, forward, cam.fov_y, cam.aspect, rel_vp));
+        self.temporal[view].prev_camera = Some((eye, forward, cam.fov_y, cam.aspect, rel_vp));
         // The cabin air rides its rigid frame: its froxel history follows the vehicle, not the
         // world (`rm_volume.wgsl`).
         let cabin_air = r.cabin_medium_uniform;
         let cabin_now: [Mat4; super::cabin_medium::DOMAINS] = std::array::from_fn(|d| Mat4::from_cols_array_2d(&cabin_air.world_to_local[d]));
         let cabin_motion: [[[f32; 4]; 4]; super::cabin_medium::DOMAINS] = std::array::from_fn(|d| {
             let on = cabin_air.grid_min_step[d][3] > 0.5;
-            match self.prev_cabin {
+            match self.temporal[view].prev_cabin {
                 Some(prev) if valid && on && prev[d].determinant().abs() > 1e-6 => (prev[d].inverse() * cabin_now[d]).to_cols_array_2d(),
                 _ => Mat4::IDENTITY.to_cols_array_2d(),
             }
         });
-        self.prev_cabin = Some(cabin_now);
+        self.temporal[view].prev_cabin = Some(cabin_now);
 
         // Source radiance from the shared physical atmosphere: key-beam irradiance at the eye and
         // mean sky radiance bands. The same solver renders the visible sky.
@@ -1486,6 +1531,7 @@ impl Backend {
             optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
             // KESSEL_WHITEWASH=0..1 fixes the winter coat for review.
             livery: [self.whitewash.unwrap_or(r.whitewash).clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+            samples: [sample_budget(self.iw, self.ih), 0.0, 0.0, 0.0],
             vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
                 let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
                 [c.x, c.y, c.z, 3.0]
@@ -2169,7 +2215,8 @@ impl Backend {
             let push = Push {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
-                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0],
+                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
+                    if m.painted_steel { 1.0 } else { 0.0 }, 0.0],
                 scars: range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]),
             };
             let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
@@ -2245,6 +2292,9 @@ impl Backend {
     pub(super) fn encode(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, finish_ldr: bool) {
         let started = std::time::Instant::now();
         let binds = self.binds.as_ref().expect("raymarch binds prepared");
+        // This view's histories.
+        let t = &self.temporal[self.view];
+        let flip = t.flip;
         let mut work = RenderWorkStats { scene_renders: 1, ..RenderWorkStats::default() };
         // 0. The strewn field's GPU cull for every view of this frame.
         if let Some(sf) = &r.scatter_field { sf.encode_cull(r, encoder); }
@@ -2253,7 +2303,8 @@ impl Backend {
         // ray queries carry the periscopes' image; docs/RAYMARCHING_ENGINE.md).
         let relayed = self.relays(r);
         if relayed {
-            r.cabin_shadows.encode(r, encoder, &mut work);
+            // The relays render only the outside, where the cabin's lamps do not reach: their
+            // shadow cubes are not rebuilt for them (another 10 ms a frame while the turret turned).
             r.sky_visibility.encode(r, encoder, &mut work);
             r.environment_probe.encode(encoder, &mut work);
             r.encode_raster_optics(encoder, &mut work);
@@ -2331,7 +2382,7 @@ impl Backend {
                 label: Some("rm-volume"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("rm-volume")),
             });
             cpass.set_pipeline(&self.volume_pipe);
-            cpass.set_bind_group(0, &binds.volume[self.flip], &[]);
+            cpass.set_bind_group(0, &binds.volume[self.view][flip], &[]);
             cpass.set_bind_group(1, &binds.visibility, &[]);
             cpass.dispatch_workgroups(self.vol[0].div_ceil(4), self.vol[1].div_ceil(4), self.vol[2].div_ceil(4));
             work.compute_passes += 1;
@@ -2341,7 +2392,7 @@ impl Backend {
                 label: Some("rm-integrate"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("rm-integrate")),
             });
             cpass.set_pipeline(&self.integrate_pipe);
-            cpass.set_bind_group(0, &binds.integrate[self.flip], &[]);
+            cpass.set_bind_group(0, &binds.integrate[self.view][flip], &[]);
             cpass.dispatch_workgroups(self.vol[0].div_ceil(8), self.vol[1].div_ceil(8), 1);
             work.compute_passes += 1;
         }
@@ -2350,13 +2401,13 @@ impl Backend {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-shade"),
                 color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK))),
-                    Some(attachment(&self.ao[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 1.0, b: 1.0, a: -1.0 }))),
-                    Some(attachment(&self.bounce[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: -1.0 })))],
+                    Some(attachment(&t.ao[flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 1.0, b: 1.0, a: -1.0 }))),
+                    Some(attachment(&t.bounce[flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: -1.0 })))],
                 depth_stencil_attachment: None,
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-shade")), occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shade_pipe);
-            pass.set_bind_group(0, &binds.shade[self.flip], &[]);
+            pass.set_bind_group(0, &binds.shade[self.view][flip], &[]);
             pass.set_bind_group(1, &binds.visibility, &[]);
             if let Some(rt) = &self.rt_bind { pass.set_bind_group(2, rt, &[]); }
             work.fullscreen_raster_passes += 1;
@@ -2365,7 +2416,7 @@ impl Backend {
         if let Some((px, py)) = self.probe {
             let origin = wgpu::Origin3d { x: px, y: py, z: 0 };
             let one = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
-            for (i, tex) in [&r.hdr_tex, &self.history._tex, &self.g0._tex, &self.g1._tex, &self.g2._tex].into_iter().enumerate() {
+            for (i, tex) in [&r.hdr_tex, &t.history._tex, &self.g0._tex, &self.g1._tex, &self.g2._tex].into_iter().enumerate() {
                 encoder.copy_texture_to_buffer(
                     wgpu::TexelCopyTextureInfo { texture: tex, mip_level: 0, origin, aspect: wgpu::TextureAspect::All },
                     wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: (i * 256) as u64, bytes_per_row: None, rows_per_image: None } },
@@ -2375,13 +2426,13 @@ impl Backend {
             // transmittance a), so the readback can report the values at any distance.
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo { texture: &self.integrated._tex, mip_level: 0,
-                    origin: wgpu::Origin3d { x: px / VOL_DIVISOR, y: py / VOL_DIVISOR, z: 0 }, aspect: wgpu::TextureAspect::All },
+                    origin: wgpu::Origin3d { x: (px * self.vol[0] / self.iw).min(self.vol[0] - 1), y: (py * self.vol[1] / self.ih).min(self.vol[1] - 1), z: 0 }, aspect: wgpu::TextureAspect::All },
                 wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: 5 * 256, bytes_per_row: Some(256), rows_per_image: Some(1) } },
                 wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: self.vol[2] });
             self.probe_pending.set(true);
         }
         // The shaded frame is next frame's bounce source (after the probe has read last frame's).
-        encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.history._tex.as_image_copy(),
+        encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), t.history._tex.as_image_copy(),
             wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
         // 5b. The relayed exterior views on the entrance faces. After the bounce source: the
         // light a vision block lets in reaches the cabin through the ray queries' periscope
@@ -2394,12 +2445,12 @@ impl Backend {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-reflect"),
                 color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load)),
-                    Some(attachment(&self.refl[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: -1.0 })))],
+                    Some(attachment(&t.refl[flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: -1.0 })))],
                 depth_stencil_attachment: None,
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-reflect")), occlusion_query_set: None,
             });
             pass.set_pipeline(&self.reflect_pipe);
-            pass.set_bind_group(0, &binds.reflect_t[self.flip], &[]);
+            pass.set_bind_group(0, &binds.reflect_t[self.view][flip], &[]);
             pass.set_bind_group(1, &binds.visibility, &[]);
             if let Some(rt) = &self.rt_bind { pass.set_bind_group(2, rt, &[]); }
             work.fullscreen_raster_passes += 1;

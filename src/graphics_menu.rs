@@ -4,8 +4,9 @@ use crate::ui::Align;
 use anyhow::{ensure, Context};
 use serde_json::{json, Value};
 
-pub const RESOLUTIONS: [(u32, u32); 9] = [
+pub const RESOLUTIONS: [(u32, u32); 10] = [
     (320, 180),
+    (480, 270),
     (480, 272),
     (640, 360),
     (800, 450),

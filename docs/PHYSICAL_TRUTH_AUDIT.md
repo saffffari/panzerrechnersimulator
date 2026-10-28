@@ -324,6 +324,15 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch gunner view (2026-10-28; `renderer_raymarch.rs` `Temporal`, `sample_budget`,
+  `rm_gbuffer.wgsl` `paint_source_metal`, `rm_reflect.wgsl`): each view slot keeps its own histories;
+  the source model's default metal on the player's hull and turret is drawn as painted steel (the
+  owner's gunmetal inside, the hull grey outside), bare steel only where wear scratches and worn edges
+  expose it (a reclassification by the material's exact source values, not per-part source data);
+  marched reflections fade out over roughness 0.2..0.5, the split-sum term carrying rough lobes; a
+  sample budget scales the occlusion, gather and reflection rays below 800x450. The relays' sky-
+  visibility atlas leaves the player's tank out (its own shadow is missing from the relayed views)
+  and the relays do not rebuild the cabin lamps' shadow cubes. Gate: `raymarch-gunner`.
 - Tiger exhaust plume (2026-10-28; `src/exhaust_plume.rs`, `rm_volume.wgsl` kind 7): puffs, not a
   fluid solver. Flow from the powertrain's speed and load; an engine temperature from a warm-up
   model (7 min at idle, faster under load, 30 min to cool); winter condensate always visible, densest

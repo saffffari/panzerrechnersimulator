@@ -71,7 +71,15 @@ fn offscreen_reflection(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<
     let dist = length(rel);
     let origin_rel = rel + n * (0.02 + 0.002 * dist);
     let t = rm_ray_nearest(fr.cam_pos.xyz + origin_rel, dir, 0.0, RM_REFLECT_RANGE_M);
-    if (t < 0.0) { return sky; }
+    if (t < 0.0) {
+        // A ray from inside the cabin that meets nothing has slipped through a seam of the model
+        // or a periscope's window: it sees sky only as far as the cover map opens the point to it
+        // (an open hatch above). Without this the gun's bare steel mirrored full daylight in noisy
+        // slivers round the gunner's eyepiece (2026-10-28).
+        let world = fr.cam_pos.xyz + origin_rel;
+        if (rm_cabin_domain(world) >= 0) { return sky * rm_sky_visibility(world, 0.3); }
+        return sky;
+    }
     let hit_rel = origin_rel + dir * t;
     let pr = rm_project(hit_rel);
     if (pr.z > 0.0 && all(pr.xy >= vec2(0.0)) && all(pr.xy < vec2(1.0))) {
@@ -123,8 +131,10 @@ fn fs(in: VsOut) -> ReflectOut {
     let g2 = textureLoad(g2_tex, pixel, 0);
     let roughness = g1.w;
     let metallic = g2.w;
-    // Rough dielectrics show no coherent reflection worth a march.
-    let gloss = (1.0 - smoothstep(0.35, 0.8, roughness)) * mix(0.35, 1.0, metallic);
+    // Only glossy surfaces take a marched reflection: a rough lobe is a blur the few marched rays
+    // drew as noise (the gun's oiled steel round the gunner's eyepiece, 2026-10-28); the shade
+    // pass's split-sum environment term carries it instead. Faded out over roughness 0.2..0.5.
+    let gloss = (1.0 - smoothstep(0.2, 0.5, roughness)) * mix(0.35, 1.0, metallic);
     if (gloss < 0.02) { return ReflectOut(vec4(lit, 1.0), none); }
     let rel = rm_relative_from_depth(in.uv, depth);
     let dist = length(rel);
@@ -133,20 +143,26 @@ fn fs(in: VsOut) -> ReflectOut {
     let r = reflect(-v, n);
     let f0 = mix(vec3(0.04), g0.rgb, metallic);
     let fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(n, v), 0.0), 5.0);
-    let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(fr.vol.w) * 26699u);
-    // Roughness jitters the reflected direction a little (a cheap cone); the PS1 crush hides the noise.
-    let wobble = (vec3(rm_hash01(u32(pixel.x) * 7919u + u32(fr.vol.w)), rm_hash01(u32(pixel.y) * 104729u + u32(fr.vol.w)), jitter) - vec3(0.5)) * roughness * 0.6;
-    let dir = normalize(r + wobble);
-    let hit = march_reflection(rel, dir, roughness, jitter);
-    // Off-screen: the mean sky bands, and the cached sky itself where the ray climbs clear of
-    // the horizon (clouds in puddles and on wet steel).
-    var fallback = rm_sky_hemisphere(dir) * 0.8;
-    if (dir.y > 0.0) { fallback = mix(fallback, rm_sky_background(dir).rgb, smoothstep(0.0, 0.25, dir.y)); }
-    // With ray queries a miss is traced through the scene instead of assumed to be sky.
-    if (RM_RAY_QUERIES && hit.weight < 0.99 && fr.debug.w < 0.5) {
-        fallback = offscreen_reflection(rel, n, dir, fallback);
+    // Roughness jitters the reflected direction (a cheap cone); a rough lobe takes up to the
+    // sample budget's rays (fr.samples.x), a sharp one a single ray.
+    let lobe = select(1u, clamp(u32(round(fr.samples.x)), 1u, 3u), roughness > 0.15);
+    var fresh = vec3(0.0);
+    for (var k = 0u; k < lobe; k += 1u) {
+        let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(fr.vol.w) * 26699u + k * 7727u);
+        let wobble = (vec3(rm_hash01(u32(pixel.x) * 7919u + u32(fr.vol.w) + k * 131u), rm_hash01(u32(pixel.y) * 104729u + u32(fr.vol.w) + k * 337u), jitter) - vec3(0.5)) * roughness * 0.6;
+        let dir = normalize(r + wobble);
+        let hit = march_reflection(rel, dir, roughness, jitter);
+        // Off-screen: the mean sky bands, and the cached sky itself where the ray climbs clear of
+        // the horizon (clouds in puddles and on wet steel).
+        var fallback = rm_sky_hemisphere(dir) * 0.8;
+        if (dir.y > 0.0) { fallback = mix(fallback, rm_sky_background(dir).rgb, smoothstep(0.0, 0.25, dir.y)); }
+        // With ray queries a miss is traced through the scene instead of assumed to be sky.
+        if (RM_RAY_QUERIES && hit.weight < 0.99 && fr.debug.w < 0.5) {
+            fallback = offscreen_reflection(rel, n, dir, fallback);
+        }
+        fresh += mix(fallback, hit.colour, hit.weight);
     }
-    let fresh = mix(fallback, hit.colour, hit.weight);
+    fresh /= f32(lobe);
     let history = previous_reflection(fr.cam_pos.xyz + rel, rm_surface_motion(fr.cam_pos.xyz + rel, n));
     let reflected = select(fresh, mix(history.rgb, fresh, RM_REFLECT_BLEND), history.a > 0.0);
     // The medium between the eye and this surface already attenuates `lit`; apply the same to

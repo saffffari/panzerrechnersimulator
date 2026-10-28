@@ -89,8 +89,10 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, mo
     var ao_sum = 0.0;
     var bands = 0.0;
     var irradiance = vec3(0.0);
-    for (var dir = 0u; dir < 8u; dir += 1u) {
-        let angle = (f32(dir) + jitter) * (RM_PI * 0.25);
+    // Eight directions at 800x450 and above, up to sixteen on a lower grid (fr.samples.x).
+    let dirs = clamp(u32(round(8.0 * fr.samples.x)), 8u, 16u);
+    for (var dir = 0u; dir < dirs; dir += 1u) {
+        let angle = (f32(dir) + jitter) * (2.0 * RM_PI / f32(dirs));
         let step = vec2(cos(angle), sin(angle));
         var horizon = 0.0;
         var horizon_near = 0.0;
@@ -106,7 +108,7 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, mo
             horizon_near = max(horizon_near, c * (1.0 - smoothstep(0.6, 3.0, len)));
             if (c > horizon + 1.0e-3) {
                 let lit = previous_radiance(fr.cam_pos.xyz + sample, motion);
-                let band = (c * c - horizon * horizon) * (RM_PI / 8.0);
+                let band = (c * c - horizon * horizon) * (RM_PI / f32(dirs));
                 irradiance += lit.rgb * lit.a * band;
                 bands += band;
                 horizon = c;
@@ -114,7 +116,7 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, mo
         }
         ao_sum += 1.0 - horizon_near * horizon_near;
     }
-    return Gather(clamp(ao_sum / 8.0, 0.0, 1.0), clamp(1.0 - bands / RM_PI, 0.0, 1.0), clamp(bands / RM_PI, 0.0, 1.0), irradiance);
+    return Gather(clamp(ao_sum / f32(dirs), 0.0, 1.0), clamp(1.0 - bands / RM_PI, 0.0, 1.0), clamp(bands / RM_PI, 0.0, 1.0), irradiance);
 }
 
 // World-space occlusion by ray queries (rm_rt.wgsl): the share of the cosine-weighted hemisphere
@@ -157,7 +159,9 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
     let b = cross(n, t);
     let origin = world + n * (0.015 + 0.002 * dist);
     var open = 0.0;
-    for (var k = 0u; k < RM_AO_RAYS; k += 1u) {
+    // RM_AO_RAYS at 800x450 and above, more on a lower grid (fr.samples.x).
+    let rays = max(RM_AO_RAYS, u32(round(f32(RM_AO_RAYS) * fr.samples.x)));
+    for (var k = 0u; k < rays; k += 1u) {
         let seed = u32(pixel.x) * 7919u + u32(pixel.y) * 104729u + u32(fr.vol.w) * 2654435761u + k * 40503u;
         let r1 = rm_hash01(seed);
         let phi = 2.0 * RM_PI * rm_hash01(seed ^ 0x9e3779b9u);
@@ -165,7 +169,7 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
         let d = t * (cos(phi) * s) + b * (sin(phi) * s) + n * sqrt(max(1.0 - r1, 0.0));
         if (rm_ray_open(origin, d, RM_AO_RANGE_M)) { open += 1.0; }
     }
-    let fresh = open / f32(RM_AO_RAYS);
+    let fresh = open / f32(rays);
     return select(fresh, mix(history.shares.x, fresh, RM_AO_BLEND), history.valid);
 }
 
@@ -331,8 +335,10 @@ fn fs(in: VsOut) -> ShadeOut {
                 }
             }
             let worn_edge = smoothstep(0.12, 0.45, crease) * clamp(fr.wear.w, 0.0, 1.0) * (0.55 + 0.45 * still);
-            albedo = mix(albedo, vec3(0.44, 0.43, 0.40), worn_edge * 0.85);
-            roughness = mix(roughness, 0.4, worn_edge);
+            // Worn through to steel (2026-10-28: bare metal where the paint wears, not pale paint).
+            albedo = mix(albedo, vec3(0.50, 0.50, 0.48), worn_edge * 0.85);
+            roughness = mix(roughness, 0.45, worn_edge);
+            metallic = mix(metallic, 1.0, worn_edge * 0.8);
             let to_cabin = fr.vehicle.xyz - world;
             let inside = select(0.0, 1.0, length(to_cabin) < fr.vehicle.w && dot(n, to_cabin) > 0.0);
             let grime = mix(clamp(fr.wear.y, 0.0, 1.0), clamp(fr.wear.x, 0.0, 1.0), inside);
@@ -408,7 +414,8 @@ fn fs(in: VsOut) -> ShadeOut {
             env = env * open + gather.irradiance * select(1.0, 0.6, grass) / RM_PI + hidden * hidden_cover;
         }
         color += diffuse * RM_PI * env;
-        let gloss = (1.0 - smoothstep(0.35, 0.8, roughness)) * mix(0.35, 1.0, metallic);
+        // The marched reflection's share (rm_reflect.wgsl's `gloss`): the rest is this term's.
+        let gloss = (1.0 - smoothstep(0.2, 0.5, roughness)) * mix(0.35, 1.0, metallic);
         color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss);
         // Lamps, fires, flashes: the lights binned into this pixel's cell.
         let cell = rm_cell_index(uv, dist);

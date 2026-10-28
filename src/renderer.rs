@@ -74,8 +74,8 @@ const CAMERA_EXPOSURE_ENV: &str = "KESSEL_CAMERA_EXPOSURE";
 /// Diagnostic A/B only: restore the former ordering (fullscreen sky before opaque draws).
 /// Shipping defaults to depth-gated sky; the transport and its samples are otherwise identical.
 const UNGATED_SKY_ENV: &str = "KESSEL_UNGATED_SKY";
-pub const INTERNAL_RES_PRESETS: [(u32, u32); 12] =
-    [(320, 180), (320, 240), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
+pub const INTERNAL_RES_PRESETS: [(u32, u32); 13] =
+    [(320, 180), (320, 240), (480, 270), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
 const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
@@ -1513,6 +1513,10 @@ struct MeshGpu {
     snow_vehicle: bool,
     /// A clear cover over an instrument dial (`mark_instrument_cover`).
     instrument_cover: bool,
+    /// The source model's default metal on this mesh is painted steel (`mark_painted_steel`).
+    painted_steel: bool,
+    /// Left out of the sky-visibility atlas (`exclude_from_relay_visibility`).
+    sky_visibility_excluded: bool,
     /// View-local geometry that is drawn through the ordinary raster material path but never enters
     /// the shared ray scene. Split-screen crew use this because each viewport hides a different body
     /// while views 2..N intentionally reuse view 1's TLAS.
@@ -3562,6 +3566,8 @@ fn make_mesh_gpu(
         emissive_own: false,
         snow_vehicle: false,
         instrument_cover: false,
+        painted_steel: false,
+        sky_visibility_excluded: false,
         raster_only,
         temporal_dynamic: false,
         glass: false,
@@ -6496,6 +6502,25 @@ impl Renderer {
             g.snow_vehicle = true;
         }
     }
+    /// Flag mesh `idx`'s default-material metal as painted steel (the player's hull and turret):
+    /// the raymarch G-buffer draws it as satin paint, bare steel only where wear exposes it
+    /// (`rm_gbuffer.wgsl` `paint_source_metal`). The gun's machined parts are not flagged.
+    pub fn mark_painted_steel(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.painted_steel = true;
+        }
+    }
+    /// On the raymarch backend the sky-visibility atlas serves only the periscope relays' views of
+    /// the outside: leave the player's own tank out of it, so its turret and hull moving do not
+    /// force the atlas's whole static layer (66 tiles of the scene, 88 ms) to be redrawn every
+    /// frame (2026-10-28). The relayed views lose the tank's own shadow. No effect elsewhere.
+    pub fn exclude_from_relay_visibility(&mut self, idx: usize) {
+        if crate::graphics::raymarch_backend_enabled() {
+            if let Some(g) = self.meshes.get_mut(idx) {
+                g.sky_visibility_excluded = true;
+            }
+        }
+    }
     /// Flag glass mesh `idx` as a clear cover over an instrument dial: the raymarch glass pass
     /// gives it a broad sheen of the cabin's lamps and a faint fixed dust (`rm_glass.wgsl`).
     pub fn mark_instrument_cover(&mut self, idx: usize) {
@@ -7982,7 +8007,7 @@ impl Renderer {
             let near_camera = CameraUniform { light_view_proj: near.view_proj, ..cam };
             queue.write_buffer(&self.near_shadow_camera_buf,0,bytemuck::bytes_of(&near_camera));
             queue.write_buffer(&self.near_shadow_buf,0,bytemuck::bytes_of(&near));
-            self.cabin_shadows.prepare(self,queue,&cam);
+            if raster_passes { self.cabin_shadows.prepare(self,queue,&cam); }
             self.sky_visibility.prepare(self,queue);
         }
         // The probe also lights the forward menu/editor pipe on the deferred backend.

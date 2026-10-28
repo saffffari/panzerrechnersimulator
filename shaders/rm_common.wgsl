@@ -33,6 +33,7 @@ struct Frame {
     fog: vec4<f32>,               // fog banks: extinction inside /m, coverage, depth m, floor y
     optic_eye: vec4<f32>,         // xy the eye's offset from the sight's axis (screen heights)
     livery: vec4<f32>,            // x the player's Tiger's winter whitewash 0..1
+    samples: vec4<f32>,           // x the sample budget: 800x450's pixels over this grid's, 1..3
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
     cabin_air: RmCabinAir,        // the player's cabin air domains (cabin_medium.rs; rm_visibility.wgsl)
