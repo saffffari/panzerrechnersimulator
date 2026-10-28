@@ -441,7 +441,8 @@ impl Game {
     }
 
     pub(super) fn crew_solo_ai_gunner_active(&self) -> bool {
-        self.crew_solo_working(CrewRole::Gunner) && self.player.alive
+        (self.crew_solo_working(CrewRole::Gunner) || self.crew_lan_ai_mans(CrewRole::Gunner))
+            && self.player.alive
     }
 
     /// The gunner has a target and owns the lay this frame.
@@ -788,10 +789,17 @@ impl Game {
         } else {
             Vec2::ZERO
         };
+        let working = self.crew_solo_working(CrewRole::Driver);
+        self.crew_driver_follow(order, working, dt);
+    }
+
+    /// The driver at the levers takes `order` (drive, steer) with his reaction time and hands;
+    /// `working` is whether a fit man sits there at all.
+    fn crew_driver_follow(&mut self, order: Vec2, working: bool, dt: f32) {
         if order != self.crew_solo.driver_order {
             self.crew_solo.driver_order = order;
             self.crew_solo.driver_react_s = 0.0;
-            if self.crew_solo_working(CrewRole::Driver) && order != Vec2::ZERO {
+            if working && order != Vec2::ZERO {
                 let word = if order.x > 0.0 {
                     "Driver: forward."
                 } else if order.x < 0.0 {
@@ -804,7 +812,7 @@ impl Game {
                 self.crew_solo.say(word);
             }
         }
-        if !self.crew_solo_working(CrewRole::Driver) {
+        if !working {
             // Nobody fit at the levers: the tank coasts to a stop whatever the commander orders.
             self.crew_solo.driver_cmd = Vec2::ZERO;
             return;
@@ -1258,13 +1266,129 @@ impl Game {
         self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "died": role.name(), "cause": "killed"}));
     }
 
+    // ── LAN crew co-op: the living crew fills the seats no human holds ─────────────────────
+    //
+    // On a LAN host (`TankInput::coop_ai_crew`) the same AI men work every empty seat: the
+    // gunner lays on contacts and fires under the standing order, the driver follows the
+    // commander channel's WASD with his reaction time, the loader strokes at a man's rate. A man
+    // steps aside the moment a human is assigned his seat or stands at his post, and takes it back
+    // when the human leaves or dismounts. The host alone decides; clients see the men through
+    // `WorldSnapshot::ai_crew_mask`. Wounds, first aid, triage and the intercom stay host-side
+    // (see docs/LAN_WINDOWS.md, "What is not replicated").
+
+    /// LAN host with the living crew: `role`'s seat is assigned to no human, no aboard human
+    /// stands at its post, and the man is alive. He works it.
+    pub(super) fn crew_lan_ai_mans(&self, role: CrewRole) -> bool {
+        let Some(frame) = self.lan_ai_frame else {
+            return false;
+        };
+        let post = singleplayer_crew::body_post(role);
+        let human_there = LanRole::ALL.iter().any(|&seat| {
+            frame.occupied(seat)
+                && !frame.input(seat).flag(crate::lan::F_DISMOUNTED)
+                && (seat == post || frame.input(seat).post == post)
+        });
+        !human_there && singleplayer_crew::role_alive(&self.crew, role)
+    }
+
+    /// Bits (`LanRole as u8`) of the seats the AI crew is working this frame.
+    pub(super) fn crew_lan_ai_mask(&self) -> u8 {
+        LanRole::ALL.iter().fold(0u8, |mask, &post| {
+            mask | ((self.crew_lan_ai_mans(role_of_post(post)) as u8) << post as u8)
+        })
+    }
+
+    /// Drive authority on a LAN host: `None` while a human holds the levers (his own channel
+    /// drives); otherwise the AI driver's output, zero when the driver is dead.
+    pub(super) fn crew_lan_ai_drive_command(&self) -> Option<(f32, f32)> {
+        let frame = self.lan_ai_frame?;
+        let human_at_levers = LanRole::ALL.iter().any(|&seat| {
+            frame.occupied(seat)
+                && !frame.input(seat).flag(crate::lan::F_DISMOUNTED)
+                && (seat == LanRole::Driver || frame.input(seat).post == LanRole::Driver)
+        });
+        if human_at_levers {
+            return None;
+        }
+        Some(if self.crew_lan_ai_mans(CrewRole::Driver) {
+            (self.crew_solo.driver_cmd.x, self.crew_solo.driver_cmd.y)
+        } else {
+            (0.0, 0.0)
+        })
+    }
+
+    /// Once per LAN host step, before the vehicle authority reads drive/lay/trigger: the standing
+    /// order from the commander channel (K), the gunner's lay and trigger, the driver's levers.
+    pub(super) fn crew_lan_ai_update(&mut self, dt: f32) {
+        let Some(frame) = self.lan_ai_frame else {
+            return;
+        };
+        self.crew_solo.time_s += dt;
+        for line in &mut self.crew_solo.intercom {
+            line.1 -= dt;
+        }
+        self.crew_solo.intercom.retain(|(_, left)| *left > -1.0);
+        // The commander channel is the commander, or the human covering command when that seat is
+        // empty (`lan::fill_empty_roles`).
+        let command = frame.input(LanRole::Commander);
+        let order_key = command.flag(crate::lan::F_FIRE_ORDER);
+        if order_key && !self.crew_solo.prev_fire_order && self.player.alive {
+            self.crew_solo.fire_at_will = !self.crew_solo.fire_at_will;
+            self.crew_solo.say(if self.crew_solo.fire_at_will {
+                "Commander: fire at will."
+            } else {
+                "Commander: hold fire."
+            });
+        }
+        self.crew_solo.prev_fire_order = order_key;
+        self.crew_solo_gunner_think(dt);
+        let takes_orders = self.player.alive
+            && !command.flag(crate::lan::F_DISMOUNTED)
+            && !matches!(command.post, LanRole::Loader | LanRole::Driver);
+        let order = if takes_orders {
+            Vec2::new(command.drive, command.steer)
+        } else {
+            Vec2::ZERO
+        };
+        let working = self.crew_lan_ai_mans(CrewRole::Driver);
+        self.crew_driver_follow(order, working, dt);
+    }
+
+    /// The AI loader at an empty LAN seat: the solo loader's cadence. The coop tank arm applies
+    /// no off-station ram decay, so `service_breech(false)` supplies it between strokes, as the
+    /// solo arm's own decay does there.
+    pub(super) fn crew_lan_ai_service_breech(&mut self, dt: f32) {
+        let loaded_now = matches!(self.breech, Breech::Loaded);
+        if loaded_now && !self.crew_solo.prev_breech_loaded {
+            self.crew_solo.loads_by_loader += 1;
+            self.crew_solo.say("Loader: up.");
+        }
+        self.crew_solo.prev_breech_loaded = loaded_now;
+        if loaded_now || !self.player.alive {
+            self.crew_solo.loader_clock = 0.0;
+            return;
+        }
+        let perf = self.crew_solo.man(CrewRole::Loader).performance().max(0.15);
+        self.crew_solo.loader_clock += dt;
+        let stroke = self.crew_solo.loader_clock >= LOADER_STROKE_S / perf;
+        if stroke {
+            self.crew_solo.loader_clock = 0.0;
+        }
+        self.service_breech(stroke && matches!(self.breech, Breech::Empty), dt);
+    }
+
+    /// Test/harness: the seats the AI crew is working (bit = `LanRole as u8`).
+    pub fn lan_ai_crew_mask(&self) -> u8 {
+        self.lan_ai_mask
+    }
+
     // ── Public readouts ─────────────────────────────────────────────────────────────────────
 
     /// The latest intercom line on the air, for the front end. `KESSEL_INTERCOM=0` silences it.
     pub fn intercom_line(&self) -> Option<&str> {
         static SHOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let show = *SHOW.get_or_init(|| std::env::var("KESSEL_INTERCOM").map_or(true, |v| v != "0"));
-        if !show || !self.crew_solo_active() {
+        if !show || !(self.crew_solo_active() || self.lan_ai_frame.is_some()) {
             return None;
         }
         self.crew_solo.intercom_line()

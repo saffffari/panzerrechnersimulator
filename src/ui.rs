@@ -193,6 +193,8 @@ pub struct LanMenuModel {
     pub manual_address: String,
     pub editing_address: bool,
     pub status: String,
+    /// "192.168.1.50 (Wi-Fi)": the address friends type to join a Tiger hosted here.
+    pub this_pc: String,
 }
 
 impl Default for LanMenuModel {
@@ -204,6 +206,7 @@ impl Default for LanMenuModel {
             manual_address: String::new(),
             editing_address: false,
             status: "Hosts appear automatically. Press R to retry discovery.".to_owned(),
+            this_pc: String::new(),
         }
     }
 }
@@ -285,10 +288,12 @@ impl LanMenuModel {
     }
 
     pub fn cycle_mission(&mut self, forward: bool) {
+        // Garage -> Arena -> Campaign -> Canyon -> Garage.
         self.mission = match (self.mission, forward) {
             (LanMission::Garage, true) | (LanMission::Campaign, false) => LanMission::Arena,
-            (LanMission::Arena, true) | (LanMission::Garage, false) => LanMission::Campaign,
-            (LanMission::Campaign, true) | (LanMission::Arena, false) => LanMission::Garage,
+            (LanMission::Arena, true) | (LanMission::Canyon, false) => LanMission::Campaign,
+            (LanMission::Campaign, true) | (LanMission::Garage, false) => LanMission::Canyon,
+            (LanMission::Canyon, true) | (LanMission::Arena, false) => LanMission::Garage,
         };
     }
 
@@ -332,9 +337,20 @@ mod lan_menu_tests {
         let mut menu = LanMenuModel::default();
         assert_eq!(menu.mission, LanMission::Campaign);
         menu.cycle_mission(true);
-        assert_eq!(menu.mission, LanMission::Garage);
+        assert_eq!(menu.mission, LanMission::Canyon);
         menu.cycle_mission(false);
         assert_eq!(menu.mission, LanMission::Campaign);
+        // Forward visits all four once and comes home; backward retraces it.
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            menu.cycle_mission(true);
+            seen.push(menu.mission);
+        }
+        assert_eq!(seen, [LanMission::Canyon, LanMission::Garage, LanMission::Arena, LanMission::Campaign]);
+        for expected in [LanMission::Arena, LanMission::Garage, LanMission::Canyon, LanMission::Campaign] {
+            menu.cycle_mission(false);
+            assert_eq!(menu.mission, expected);
+        }
     }
 
     #[test]
@@ -1713,6 +1729,11 @@ pub fn draw_lan_menu(
         )
     } else {
         "BROWSE UNAVAILABLE - MANUAL IP STILL WORKS".to_owned()
+    };
+    let browse = if m.this_pc.is_empty() {
+        browse
+    } else {
+        format!("{browse}   -   THIS PC {}", m.this_pc)
     };
     r.draw_text(&browse, x, 0.225, 0.026, COL_ITEM, Align::Left);
     if !m.status.is_empty() {

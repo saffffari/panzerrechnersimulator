@@ -194,7 +194,34 @@ fn resolver() -> anyhow::Result<&'static ResourceResolver> {
 
 /// Resolve a logical resource path without changing the process current directory.
 pub fn resolve(path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
-    resolver()?.resolve(path.as_ref())
+    let resolved = resolver()?.resolve(path.as_ref());
+    if let Ok(physical) = &resolved {
+        trace(path.as_ref(), physical);
+    }
+    resolved
+}
+
+/// `KESSEL_ASSET_TRACE=FILE`: append every distinct logical path this process resolves, with
+/// whether it exists, one `present|absent<TAB>path` line each. `tools/windows_payload.py --trace`
+/// adds the present ones to a package closure, so what a play session actually loads cannot be
+/// missing from the copy. Off (one env read) unless set.
+fn trace(logical: &Path, physical: &Path) {
+    use std::io::Write;
+    use std::sync::Mutex;
+    static TRACE: OnceLock<Option<Mutex<(File, HashSet<PathBuf>)>>> = OnceLock::new();
+    let Some(sink) = TRACE.get_or_init(|| {
+        let path = std::env::var_os("KESSEL_ASSET_TRACE").filter(|value| !value.is_empty())?;
+        let file = fs::OpenOptions::new().create(true).append(true).open(path).ok()?;
+        Some(Mutex::new((file, HashSet::new())))
+    }) else {
+        return;
+    };
+    let Ok(mut sink) = sink.lock() else { return };
+    let (file, seen) = &mut *sink;
+    if seen.insert(logical.to_owned()) {
+        let state = if physical.exists() { "present" } else { "absent" };
+        let _ = writeln!(file, "{state}\t{}", logical.to_string_lossy().replace('\\', "/"));
+    }
 }
 
 /// Read a logical resource into memory, reporting both its logical and resolved names on failure.
