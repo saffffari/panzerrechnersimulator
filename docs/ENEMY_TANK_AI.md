@@ -165,6 +165,13 @@ a Tiger at 380 m reach killing flank posts at 48 s, 52 s and 108 s, the wingmen 
 never all three moving at once; the street-district duel has all three manoeuvring 240-400 m
 along the streets without entering a block.
 
+Full suite from the worktree (`cargo test --release --bin panzerrechnersystem`): 1,933 passed /
+90 failed / 61 ignored, against the integration gate's 1,927 / 90 / 61 on main; the six extra
+passes are this branch's new tests, the 90 failures are the worktree's missing git-ignored assets
+(the two with nearby names, `normal_enemy_report_recipes_require_discharge_and_reject_injected_impacts`
+and `canyon_props_bound_rotated_contact_expansion_and_exclude_casualties`, fail on "cannot find the
+path"). List: `artifacts/t34-ai-20261028/full_tests.txt`.
+
 ## Open items
 
 - **The autopilot sees through the storm.** Make `canyon_pilot_visible_target` respect
