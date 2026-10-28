@@ -33,6 +33,10 @@ none presented as physiology or a contact solve:
   tissue or of a bandage. No first-person hands are drawn doing them; the crosshair label and
   the man's state are the feedback. The airway rule (an unconscious man on his back dies of it
   at 240 s unless positioned) is a single timer.
+- A bleeding man emits surface-blood grains every half second, `clamp(rate_l_per_min x 14,
+  4, 48)` grains from a point chosen by the worst wound's region (lap, side, head, chest), and
+  96 more as he dies of it: a design rate for the pool's growth, through the real surface
+  transport, not a volume balance against his blood loss.
 - Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
   loss, the airway timer), spoken once per change of the set of men needing care.
 - The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.

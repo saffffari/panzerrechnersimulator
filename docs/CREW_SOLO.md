@@ -36,9 +36,12 @@ hover, station entry, and the penetration path's wound record.
   cadence (`LOADER_STROKE_S = 0.75 s` per stroke against `RAM_PER_PRESS_OK` and `RAM_DECAY`,
   about six seconds from the shot to the next round seated at full performance).
 - The player can take any station as before (sight anchor, breech, cupola, and now the
-  **driver's seat** from the front of the basket floor). The man he displaces moves to the
-  commander's place under the cupola and stands by. Every move in full-crew solo costs the
-  real clamber (`switch_cost`: 0.55 s within the turret, 0.95 s turret to hull).
+  **driver's seat** from the front of the basket floor). The man he displaces stands by at
+  the rear of the basket floor, never under the cupola (the player is the commander; nobody
+  stands in his place when he leaves it). Walking the compartment does not displace the
+  loader: he keeps serving the breech until the player comes to the breech himself (within
+  0.55 m of the loader's post, or with a round or case in hand). Every move in full-crew solo
+  costs the real clamber (`switch_cost`: 0.55 s within the turret, 0.95 s turret to hull).
 
 ### 2. Wounds, not just death
 
@@ -100,14 +103,18 @@ a splinted man is at 70 %.
 - A dead driver with the player elsewhere means the tank stops whatever the commander orders.
 - A man dead of his wounds folds where he sat (a gentle ragdoll collapse) and is logged
   "gone" on the intercom; a man killed outright is the solver's ragdoll as before.
-- The sight anchor, the driver's seat and the breech refuse entry while the body is in the
-  seat: "GUNNER DEAD IN THE SEAT - DRAG HIM OFF FIRST". Crosshair on the body, **hold E**
-  4 s drags it toward the rear of the basket floor (the settled articulated body is
-  translated as one; see the ledger), after which the station can be entered.
+- The sight anchor and the driver's seat refuse entry while the body is in the seat:
+  "GUNNER DEAD IN THE SEAT - DRAG HIM OFF FIRST". The interior walk is never refused (it is
+  the compartment, not a seat). Crosshair on the body, **hold E** 4 s drags it toward the
+  rear of the basket floor (the settled articulated body is translated as one; see the
+  ledger), after which the station can be entered.
 
 ### 4. Legibility
 
-- The hit: the existing blood at the solved wound, the short red flash (`crew_ko_t`), the man
+- The hit: the existing blood at the solved wound, then a bleeding man keeps bleeding where he
+  sits (grains every half second in proportion to his rate, from the wound's region, through
+  the surface-blood transport: a pool grows on the seat and the floor), and what is left in
+  him runs out as he folds; the short red flash (`crew_ko_t`), the man
   slumping forward and sideways in his seat by his performance (`slump_pose`, a static pose),
   and silence or an intercom line in the terse register ("Loader: hit, leg — bleeding.",
   "Gunner: tank, 11 o'clock, 150.", "Loader: up.", "Driver: gone."). Lines show for 3.2 s
@@ -185,6 +192,21 @@ intercom lines for the result. Designed, not built: first-person hands and props
 procedures (there are no arm animations in the project yet), the man's breathing and voice
 as audio (no assets), scavenging a wreck's own kit (wreck pickups restock the box as a whole),
 and the morphine overdose beyond the one-dose-an-hour refusal.
+
+## Verified against the play reports (2026-10-28, `crew-solo-kia`, raymarch backend)
+
+Two reports from play on the integrated main: a figure left at the cupola when the player
+moved, and a loader killed with nothing to see. The short headless check `crew-solo-kia PREFIX`
+(one run, raymarch backend, `captures/crew_solo_kia_20261028*`) now passes: with the player at
+the sights the gunner stands by at the rear of the basket and no figure is under the cupola;
+walking the compartment leaves the loader at his post; a loader killed by a live solid shot
+leaves a settled body at his post with blood emitted and retained across the cabin (the still
+from the interior walk shows the body on the floor and the blood on the walls); a staged
+femoral bleed keeps emitting onto the station over thirty seconds. The cause of the second
+report was also a rule: a dead man's body blocked the *interior walk* as if it were a seat, so
+the player could not drop into the compartment to find him; and a loader who died while the
+player walked the compartment had been displaced to the cupola, so his body was not at his
+station. Both rules are changed above.
 
 ## Unit tests
 
