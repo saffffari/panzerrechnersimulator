@@ -1,0 +1,9 @@
+320x180 exit 0 [gfxbench] 240 frames @ 320x180 | avg 19.26 ms (51.92 fps) | p50 18.42 | p99 27.72 | min 11.90 max 28.90
+320x240 exit 0 [gfxbench] 240 frames @ 320x240 | avg 18.78 ms (53.26 fps) | p50 18.00 | p99 27.52 | min 12.41 max 28.59
+480x272 exit 0 [gfxbench] 240 frames @ 480x272 | avg 23.19 ms (43.12 fps) | p50 23.30 | p99 33.15 | min 11.01 max 34.67
+576x324 exit 0 [gfxbench] 240 frames @ 576x324 | avg 21.86 ms (45.75 fps) | p50 20.24 | p99 39.24 | min 13.45 max 40.30
+640x360 exit 0 [gfxbench] 240 frames @ 640x360 | avg 21.35 ms (46.83 fps) | p50 20.39 | p99 30.71 | min 14.73 max 31.82
+800x450 exit 0 [gfxbench] 240 frames @ 800x450 | avg 51.88 ms (19.28 fps) | p50 32.80 | p99 111.35 | min 13.02 max 127.00
+800x480 exit 0 [gfxbench] 240 frames @ 800x480 | avg 53.88 ms (18.56 fps) | p50 42.48 | p99 150.49 | min 12.36 max 153.90
+960x540 exit 0 [gfxbench] 240 frames @ 960x540 | avg 375.72 ms (2.66 fps) | p50 217.94 | p99 1724.73 | min 63.59 max 1891.04
+1280x720 exit 127 

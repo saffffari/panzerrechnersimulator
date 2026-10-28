@@ -1,0 +1,91 @@
+[panzerrechnersystem] wgpu instance backends: Backends(VULKAN | METAL | DX12 | BROWSER_WEBGPU)
+[panzerrechnersystem] adapter: NVIDIA GeForce RTX 4090 (DiscreteGpu, Vulkan), graphics=4090
+[panzerrechnersystem] device capabilities: backend=Vulkan, push_constants=128/256, ray_query=false, ray_vertex_return=false, pipeline_cache=true
+[panzerrechnersystem] HDR frame format: Rgba32Float
+[panzerrechnersystem] resources: Override root=C:/shop/panzerrechnersystem assets=C:/shop/panzerrechnersystem\assets cooked_models=0
+[panzerrechnersystem] game act-manifest: source=C:/shop/panzerrechnersystem\assets\worldgen/act1/manifest.v1.json schema=kessel.act/v1 act=1 name="Die Stadt" seed=1464932631 terrain=C:/shop/panzerrechnersystem\assets\worldgen/act1\heights.npy dimensions=1024x1024 spacing=4.289665m world=4388.33m terrain_id=fnv1a64:6928f0501cf67dd5 source_bytes=4194432 source_hash=fnv1a64:901b75c7ec6fce45
+[panzerrechnersystem] authored terrain: 1024² collision, 1024² render (2093058 triangles, the collision surface)
+[panzerrechnersystem] landmark 'Getreidesilo': manifest blockout (hero assets/hero/act1/getreidesilo.glb not installed)
+[panzerrechnersystem] landmark 'Springbrunnen': manifest blockout (hero assets/hero/act1/springbrunnen.glb not installed)
+[panzerrechnersystem] landmark 'Kasaner Kirche': manifest blockout (hero assets/hero/act1/kasaner_kirche.glb not installed)
+[panzerrechnersystem] landmark 'Hauptbahnhof': manifest blockout (hero assets/hero/act1/hauptbahnhof.glb not installed)
+[panzerrechnersystem] landmark 'Mamajew-Hügel': manifest blockout (hero assets/hero/act1/mamajew_huegel.glb not installed)
+[panzerrechnersystem] city: 519 pieces, module 4.00m×3.00m (cell×storey), 3×3 blocks, seed 0x57511917, ruination 0.72
+[panzerrechnersystem] building instance.city_feature_01: 36 compiler placements / 4 rooms / 2 floors at (-30.0,80.0)
+[panzerrechnersystem] building render: 67 instances in 27 pages over 27 shared prototypes (36 initially visible) for 1 buildings
+[panzerrechnersystem] buildings: 1 instances, 4 light fixtures against 32 renderer point lights
+[panzerrechnersystem] corpses: deterministic procedural field-grey bodies
+[panzerrechnersystem] destructibles: 644 standing structures (21 chunk-gridded, 420 chunks)
+[driver-visor] preserved source holder; 966 triangles → 1430; closed Schutzglas 97.3 mm; no hull armor cut
+[panzerrechnersystem] RTT periscopes: 9 screens, 1 tile render(s)/frame, scheduler=visible/stale (override: KESSEL_RTT_UPDATES_PER_FRAME=all|N)
+[panzerrechnersystem] su100 GLBs missing — using box placeholder
+[panzerrechnersystem] cupola hatch: baked GLB (4833 verts)
+[renderer] internal resolution 960x540 (KESSEL_INTERNAL_RES)
+[renderer] 130 raster-only mesh materials share 7 uploads: 480.7 MiB -> 44.8 MiB texture payload
+[renderer] backend=raymarch (ray queries disabled)
+[renderer] transport quality full (KESSEL_TRANSPORT_QUALITY); smoke steps [18.0, 22.0, 26.0, 6.0], glass fog steps 12, surface passes [2.0, 2.0, 1.0, 0.0]
+[renderer] loading 376 KiB Vulkan pipeline cache from C:/shop/panzerrechnersystem-integration/artifacts/runtime/cache\kessel\wgpu\shader-graphics-v1-wgpu_pipeline_cache_vulkan_4318_9860.bin
+[visibility] source geometry shadow maps
+[renderer] composing sky shader module
+[renderer] sky module accepted in 9 ms (60 KiB)
+[renderer] compiling sky pipeline
+[renderer] sky pipeline ready in 4 ms
+[renderer] ray query unavailable or disabled; using forward lighting without creating ray-query resources
+[renderer] ambient-only SSAO: on (64 deterministic depth samples)
+[renderer] compiling volume pipeline (17 KiB)
+[renderer] volume pipeline ready in 2 ms
+[renderer] persisted 376 KiB Vulkan pipeline cache to C:/shop/panzerrechnersystem-integration/artifacts/runtime/cache\kessel\wgpu\shader-graphics-v1-wgpu_pipeline_cache_vulkan_4318_9860.bin
+[raymarch] froxel grid 240x135x96 over 0.25..320 m; cascades 2048/1024 px, sky cover 512 px, 2 point-light cubes 256 px, 512 clustered lights, sky cache 768x288 in 16 phases
+[renderer] native geometry AA:4xMSAA; linear HDR resolve; conservative nearest depth for media
+[display] dither: native screen Bayer8 (one threshold per pixel)
+[world] immutable manifest page scale: 512 m
+[panzerrechnersystem] act 1 world from C:/shop/panzerrechnersystem\assets\worldgen/act1/manifest.v1.json: 13014 placements in 580 pages / 50 packed instance buffers over 50 shared prototypes; culling index 388 occupied 128m cells / 1597 page refs / 0 broad fallbacks; 4435 physical structures / 1556 aperture-aware proxies (0 legacy hollow-shell buildings awaiting modular replacement)
+[worldgen/story] act 1 'The City': 853 placements in 444 deterministic instanced pages over 39 shared prototypes
+[panzerrechnersystem] environmental story: 853 placed traces for act 1
+[panzerrechnersystem] district: 13934 instances in 1051 pages / 116 instance buffers over 116 GPU prototypes; culling index 432 occupied 128m cells / 2089 page refs / 0 broad fallbacks (109 destructible trees, 980 lightweight pushables)
+[panzerrechnersystem] Soviet infantry: exact 17-pose shared character active for 24 actors
+[mixed-combat] German original-rig crouch: five fixed-root stages, shared relaxed/aim geometry
+[mixed-combat] german_rifle uses combat doctrine; checkpoint assets/ai/weights_foot_german.bin unavailable: open resource "assets/ai/weights_foot_german.bin" (resolved to "C:/shop/panzerrechnersystem\\assets\\ai/weights_foot_german.bin")
+[mixed-combat] soviet_rifle loaded generation 512 from assets/ai/weights_foot_soviet.bin
+[audio] playback range: balanced (physical source levels unchanged)
+[audio] live mixer deadline isolation: 100ms hardware-buffer-derived queue with two scheduling blocks, callback never runs source DSP
+[audio] legacy reference recordings disabled; verified feedback bank and generated fallbacks are resolved below
+[audio] 24 gameplay feedback recordings loaded; video audition pending
+[audio] owner recordings: 36 cuts under 13 keys
+[audio] initialized: 24 verified feedback recordings (loaded); direct Sfx routes: 2 recorded replacements, 0 legacy references, 25 generated; 0 verified v1 layers; ammunition contacts use distinct authored modes; friction follows actual loader motion
+[foot-ai] loaded tiger_crew KSL2 generation 512 score 99.666 from assets/ai/weights_foot_tiger.bin
+[foot-ai] loaded soviet_rifle KSL2 generation 512 score 99.683 from assets/ai/weights_foot_soviet.bin
+[salvage] 96 physical 88mm rounds beside authored Tiger wrecks (9 AP + 3 HE each)
+[panzerrechnersystem] the Last Tiger rule: 3 abandoned Tigers scattered on this act
+[panzerrechnersystem] cover: 11402 LOS occluders (18 Act-I city cells + authored dressing/cover)
+[rt] TLAS demand at build: 18198 of 131072 TLAS instances (3137 scene-mesh slots + 15061 live instances; 286865 reserved instance IDs)
+[soundscape] 137 enabled cues, 0 scene zones; run seed 1793161247192327300
+[soundscape] day: audio_d3a9c714900375a3d3952ad3
+[soundscape] cabin: audio_dd145d174424341e4547df34
+[soundscape] music_intro: audio_0ca2a45dc91e1e0402b3ecbe
+[gpuprof] rm-gbuffer                4.008 ms/frame (1.0 passes/frame)
+[gpuprof] rm-sky                    3.495 ms/frame (1.0 passes/frame)
+[gpuprof] rm-sky-cover              2.039 ms/frame (1.0 passes/frame)
+[gpuprof] rm-volume                 2.016 ms/frame (1.0 passes/frame)
+[gpuprof] rm-shadow-far             1.648 ms/frame (1.0 passes/frame)
+[gpuprof] rm-shadow-near            0.318 ms/frame (1.0 passes/frame)
+[gpuprof] rm-shade                  0.225 ms/frame (1.0 passes/frame)
+[gpuprof] exposure                  0.149 ms/frame (1.0 passes/frame)
+[gpuprof] rm-point-face             0.141 ms/frame (12.0 passes/frame)
+[gpuprof] rm-integrate              0.055 ms/frame (1.0 passes/frame)
+[gpuprof] bloom-glare               0.025 ms/frame (1.0 passes/frame)
+[gpuprof] rm-reflect                0.021 ms/frame (1.0 passes/frame)
+[gpuprof] bloom-composite           0.020 ms/frame (1.0 passes/frame)
+[gpuprof] bloom-glare-composite     0.020 ms/frame (1.0 passes/frame)
+[gpuprof] bloom-bright              0.012 ms/frame (1.0 passes/frame)
+[gpuprof] rm-points                 0.011 ms/frame (1.0 passes/frame)
+[gpuprof] crush                     0.010 ms/frame (1.0 passes/frame)
+[gpuprof] bloom-glare-down          0.008 ms/frame (5.0 passes/frame)
+[gpuprof] rm-glass                  0.007 ms/frame (1.0 passes/frame)
+[gpuprof] bloom-blur-h              0.006 ms/frame (1.0 passes/frame)
+[gpuprof] bloom-blur-v              0.006 ms/frame (1.0 passes/frame)
+[gfxbench] raymarch Stats { parcels: 0, cell_items: 0, merged_grains: 0, embers: 0, lights: 6, light_cell_items: 14544, shadowed_lights: 2, spark_records: 0, tracer_records: 0, panes: 6, events: 0, sky_phase: 12, history_valid: true, prepare_ms: 0.48270002, encode_ms: 0.751 }
+[gfxbench] 240 frames @ 960x540 | avg 22.00 ms (45.46 fps) | p50 20.93 | p99 31.02 | min 15.51 max 31.66
+[gfxbench] preset 4090 | RT OFF (KESSEL_NO_RT or no feature) | legacy proxy lighting OFF | 0 blas | 0 tlas instances | 1761 inst batches (23984 instances) | retro 0.70
+[panzerrechnersystem] wrote C:/shop/panzerrechnersystem-integration/artifacts/runtime/gfxbench-sweep2/gfxbench_960x540.png (960x540, internal 960x540, retro 0.70)
+[gfxbench] reference frame → C:/shop/panzerrechnersystem-integration/artifacts/runtime/gfxbench-sweep2/gfxbench_960x540.png

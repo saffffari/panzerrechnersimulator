@@ -1,0 +1,33 @@
+[panzerrechnersystem] wgpu instance backends: Backends(VULKAN | METAL | DX12 | BROWSER_WEBGPU)
+[panzerrechnersystem] adapter: NVIDIA GeForce RTX 4090 (DiscreteGpu, Vulkan), graphics=4090
+[panzerrechnersystem] device capabilities: backend=Vulkan, push_constants=128/256, ray_query=false, ray_vertex_return=false, pipeline_cache=true
+[panzerrechnersystem] HDR frame format: Rgba32Float
+[panzerrechnersystem] resources: Override root=C:/shop/panzerrechnersystem assets=C:/shop/panzerrechnersystem\assets cooked_models=0
+[panzerrechnersystem] game act-manifest: source=C:/shop/panzerrechnersystem\assets\worldgen/act1/manifest.v1.json schema=kessel.act/v1 act=1 name="Die Stadt" seed=1464932631 terrain=C:/shop/panzerrechnersystem\assets\worldgen/act1\heights.npy dimensions=1024x1024 spacing=4.289665m world=4388.33m terrain_id=fnv1a64:6928f0501cf67dd5 source_bytes=4194432 source_hash=fnv1a64:901b75c7ec6fce45
+[panzerrechnersystem] authored terrain: 1024² collision, 1024² render (2093058 triangles, the collision surface)
+[panzerrechnersystem] landmark 'Getreidesilo': manifest blockout (hero assets/hero/act1/getreidesilo.glb not installed)
+[panzerrechnersystem] landmark 'Springbrunnen': manifest blockout (hero assets/hero/act1/springbrunnen.glb not installed)
+[panzerrechnersystem] landmark 'Kasaner Kirche': manifest blockout (hero assets/hero/act1/kasaner_kirche.glb not installed)
+[panzerrechnersystem] landmark 'Hauptbahnhof': manifest blockout (hero assets/hero/act1/hauptbahnhof.glb not installed)
+[panzerrechnersystem] landmark 'Mamajew-Hügel': manifest blockout (hero assets/hero/act1/mamajew_huegel.glb not installed)
+[panzerrechnersystem] city: 519 pieces, module 4.00m×3.00m (cell×storey), 3×3 blocks, seed 0x57511917, ruination 0.72
+[panzerrechnersystem] building instance.city_feature_01: 36 compiler placements / 4 rooms / 2 floors at (-30.0,80.0)
+[panzerrechnersystem] building render: 67 instances in 27 pages over 27 shared prototypes (36 initially visible) for 1 buildings
+[panzerrechnersystem] buildings: 1 instances, 4 light fixtures against 32 renderer point lights
+[panzerrechnersystem] corpses: deterministic procedural field-grey bodies
+[panzerrechnersystem] destructibles: 644 standing structures (21 chunk-gridded, 420 chunks)
+[driver-visor] preserved source holder; 966 triangles → 1430; closed Schutzglas 97.3 mm; no hull armor cut
+[panzerrechnersystem] RTT periscopes: 9 screens, 1 tile render(s)/frame, scheduler=visible/stale (override: KESSEL_RTT_UPDATES_PER_FRAME=all|N)
+[panzerrechnersystem] su100 GLBs missing — using box placeholder
+[panzerrechnersystem] cupola hatch: baked GLB (4833 verts)
+[renderer] internal resolution 1280x720 (KESSEL_INTERNAL_RES)
+[renderer] 130 raster-only mesh materials share 7 uploads: 480.7 MiB -> 44.8 MiB texture payload
+[renderer] backend=raymarch (ray queries disabled)
+[renderer] transport quality full (KESSEL_TRANSPORT_QUALITY); smoke steps [18.0, 22.0, 26.0, 6.0], glass fog steps 12, surface passes [2.0, 2.0, 1.0, 0.0]
+[renderer] loading 376 KiB Vulkan pipeline cache from C:/shop/panzerrechnersystem-integration/artifacts/runtime/cache\kessel\wgpu\shader-graphics-v1-wgpu_pipeline_cache_vulkan_4318_9860.bin
+[visibility] source geometry shadow maps
+[renderer] composing sky shader module
+[renderer] sky module accepted in 16 ms (60 KiB)
+[renderer] compiling sky pipeline
+[renderer] sky pipeline ready in 8 ms
+[renderer] ray query unavailable or disabled; using forward lighting without creating ray-query resources
