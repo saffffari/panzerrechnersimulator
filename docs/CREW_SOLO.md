@@ -56,8 +56,9 @@ model is deterministic.
 | Pain / morphine | untreated wounds | performance ×(1 − 0.35·pain); morphine removes pain, drowsy ×0.85, one dose per hour | morphine |
 
 Treatment is a physical interaction from the interior walk: crosshair on the man within
-1.75 m, **hold E** for the item's real seconds (dressing 20 s, tourniquet 12 s, morphine 8 s,
-splint 25 s), hands busy, standing still. The box (`AidBox::FULL`: 6 Verbandpäckchen, 2 Esmarch
+1.75 m (2.8 m down into the hull front for the driver and radio operator), **hold E** for the
+item's real seconds (dressing 20 s, tourniquet 12 s, morphine 8 s, splint 25 s), hands busy,
+standing still; the target is held for the length of the hold. The box (`AidBox::FULL`: 6 Verbandpäckchen, 2 Esmarch
 tourniquets, 3 morphine ampoules, 2 ladder splints) is finite and restocks at the same
 pickups that refill ammunition and fuel. The player treats his own wounds at the box on the
 rear right turret wall. Treated men work degraded: a dressed arm still costs performance, and
@@ -68,6 +69,8 @@ a splinted man is at 70 %.
 - A man killed outright (the solver's fatal anatomy) or dead of his wounds is a ragdoll at his
   post, as before. His station goes dark: no lay, no trigger, no breech service, no driving.
 - A dead driver with the player elsewhere means the tank stops whatever the commander orders.
+- A man dead of his wounds folds where he sat (a gentle ragdoll collapse) and is logged
+  "gone" on the intercom; a man killed outright is the solver's ragdoll as before.
 - The sight anchor, the driver's seat and the breech refuse entry while the body is in the
   seat: "GUNNER DEAD IN THE SEAT - DRAG HIM OFF FIRST". Crosshair on the body, **hold E**
   4 s drags it toward the rear of the basket floor (the settled articulated body is
@@ -100,7 +103,41 @@ the live armour solve, fragment cloud and anatomy aimed through the side plate a
 seat (`debug_crew_solo_strike`), with seeds iterated until the intended class of outcome; the
 receipt lists every attempt.
 
-(The check list and outcomes are recorded below once the run has completed.)
+Checks, in order (the receipt holds each one's detail):
+
+1. Five men aboard; gunner, driver and loader working their own posts; player at the cupola.
+2. The gunner lays on the T-34 and fires under fire-at-will (he killed it with the first
+   round; the proof keeps a queue of parked targets and rolls the next one up).
+3. The loader serves the breech back to loaded at a human rate (3-12 s).
+4. Hold-fire holds the gunner for eight seconds; the commander's fire command releases one
+   shot.
+5. The driver moves the tank on the commander's forward order and halts on none.
+6. A live 76 mm penetration through the hull side at the driver's seat, with the player at
+   the cupola, leaves at least one man wounded and alive (in the recorded run it wounded the
+   gunner, loader and radio operator in the legs and killed the driver outright).
+7. The crosshair on the wounded man from the interior walk offers the indicated treatment.
+8. Holding E at him for the treatment's real seconds consumes one item from the box and
+   lowers the bleed.
+9. A minute later the treated man is alive, at his post, working degraded (the untreated
+   radio operator bled out and died in that minute: "Radio: down, not answering." then
+   "Radio: gone.").
+10. The dead driver's body blocks the seat; dragged off (hold E), the seat is taken from the
+    basket floor with the clamber.
+11. The gunner is killed by a live solid shot; nobody lays or fires the gun for ten seconds.
+12. The dead gunner in the seat refuses the sights; holding E at the body drags it off; the
+    player takes the sights, lays and fires by hand with no AI shot counted.
+13. With the driver dead the tank does not move on the commander's order; the player takes the
+    seat and drives.
+
+State at the time of writing: checks 1-10 passed in the run of 2026-10-27 18:55 (receipt and
+stills `captures/crew_solo_20261027*`). That run then lost the Tiger to its own stowage at the
+gunner strike (a solid 76 mm slug through the gunner's seat set off the eight rounds left in
+the rear racks); the fixture now fires the last rounds off before every strike. The rerun of
+checks 11-13 with that fixture was blocked by the GPU being taken by another application
+(Kerbal Space Program, 97 % and 18.8 GB of 24.5 GB) at the time: the engine then comes up
+without ray queries and dies at renderer construction. Rerun with
+`tools/crew_solo_proof.sh captures/crew_solo_<date> C:/shop/panzerrechnersystem` and replace
+this paragraph with the result.
 
 ## Unit tests
 

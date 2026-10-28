@@ -26,7 +26,18 @@ none presented as physiology or a contact solve:
 - The crew figures carry no animation clips. A wounded man's slump is a rotation about his seat
   by his performance; his anatomical hit volumes do not follow it (they stay at the seated
   pose). Dragging a body off a seat translates the settled articulated ragdoll as one toward a
-  rest point over four seconds, with no contact against the interior.
+  rest point over four seconds, with no contact against the interior; while the hands are on
+  a man or a body the crosshair target is held (a neighbour cannot steal it mid-hold).
+- Hands-on reach is 1.75 m from the eye to a man in the turret and 2.8 m down into the hull
+  front (the driver and radio operator sit low and forward of the basket floor's edge, and a
+  body there has slumped into the footwell); no leaning or kneeling pose is drawn for it.
+- The headless proof's fixture: clear weather, a parked range target that does not fire, and
+  a Tiger down to its last rounds, fired off before each strike so no live cartridge sits in
+  the compartment. With a full stowage every wounding lane tried through a plate into a seated
+  man (turret side, turret rear, hull side) found live rounds first and the Tiger went up, and
+  a killing solid shot through the gunner's seat set off eight rounds left in the rear stowage.
+  That is the model's own answer about the Tiger's stowage, not a defect of the crew; the
+  proof states the fixture in its receipt.
 - The driver's reaction (0.3 s / performance) and command ramp (2.5 / s × performance), the
   gunner's settle (0.55 s / performance), lay tolerance (0.010 rad / performance) and hand
   shake (a sinusoid scaled by 1 − performance on the desired lay), and the loader's stroke
