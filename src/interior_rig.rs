@@ -86,6 +86,23 @@ pub const BREECH_FIXTURES: [FiniteCubeLamp; 3] = [
     FiniteCubeLamp { half_size_m: 0.010, srgb: [235, 45, 30], emission: 1.2 },
 ];
 
+/// The sight's loading lamp (2026-10-28; a gameplay instrument the Tiger did not carry: its loader
+/// called "Fertig" or tapped the gunner): a 1 cm lens on the gun cradle beside the eyepiece and
+/// under the commander's front vision block. Ready (bright green), working (dim red). Brightness
+/// tells the two apart without telling red from green.
+pub const SIGHT_LOAD_FIXTURES: [FiniteCubeLamp; 2] = [
+    FiniteCubeLamp { half_size_m: 0.005, srgb: [70, 235, 95], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.005, srgb: [235, 50, 32], emission: 0.3 },
+];
+/// Its companion: the round in the chamber or in the loader's hands. Armour-piercing (PzGr. 39)
+/// warm white, APCR (PzGr. 40) blue, high explosive (SprGr.) amber: the three differ along the
+/// blue-yellow axis and in brightness, which survive red-green colour blindness.
+pub const SIGHT_ROUND_FIXTURES: [FiniteCubeLamp; 3] = [
+    FiniteCubeLamp { half_size_m: 0.005, srgb: [255, 236, 200], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.005, srgb: [70, 130, 255], emission: 0.8 },
+    FiniteCubeLamp { half_size_m: 0.005, srgb: [255, 150, 30], emission: 0.55 },
+];
+
 pub fn dome_lamp_state(time_s: f32) -> f32 { 0.96 + 0.04 * (time_s * 5.0).sin() }
 
 /// Since the light foundation (2026-09-29) both backends hold the same spectral radiance, lit by

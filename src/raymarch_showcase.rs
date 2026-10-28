@@ -898,15 +898,18 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
         let text = note(&r, &format!("the {name}'s post at rest"));
         rig.still(&mut r, name, &text)?;
     }
-    // The gunner's eyepiece composite as the live loop draws it: the optic pass, then the
-    // interior pass around the eyepiece, which reuses the optic pass's far maps and sky.
+    // The gunner's eyepiece composite as the live loop draws it (the optic pass, then the
+    // interior pass around the eyepiece, which reuses the optic pass's far maps and sky): at noon
+    // with an armour-piercing round ready; at night with high explosive ready; at night just
+    // after a shot, the loader working (the sight lamps).
     g.station = Station::Gunner;
     step(&mut g, &mut r, 40, &idle);
-    if g.optic_composite_active() {
+    let composite = |g: &mut Game, r: &mut crate::renderer::Renderer, rig: &mut Rig, name: &str, note: &str| -> anyhow::Result<()> {
+        if !g.optic_composite_active() { return Ok(()); }
         let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter);
         r.begin_coop_shadow_frame(g.player.center());
         r.weather_shelter = 1.0;
-        g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, &mut r);
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, r);
         r.set_active_view(0);
         r.render_optic_snapshot(&device, &queue);
         let (eye, forward, fov) = g.gunner_interior_camera();
@@ -917,20 +920,31 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
         r.precipitation = 0.0;
         r.reticle = false;
         r.optic_mask = 4.0;
-        g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, &mut r);
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, r);
         r.set_active_view(3);
         r.rt_skip = true;
         r.set_coop_shadow_reuse(true);
-        let path = format!("{prefix}_gunner_composite.png");
+        let path = format!("{prefix}_{name}.png");
         r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
         let stats = r.raymarch_stats().map(|s| format!("{s:?}"));
         r.rt_skip = false;
         r.set_coop_shadow_reuse(false);
         r.end_coop_shadow_frame();
         (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter) = saved;
-        rig.shots.push(serde_json::json!({ "name": "gunner_composite", "path": path, "raymarch": stats,
-            "note": "the live loop's two-pass eyepiece composite; the interior pass reuses the optic pass's far cascade, sky cover and sky cache" }));
-    }
+        rig.shots.push(serde_json::json!({ "name": name, "path": path, "raymarch": stats, "note": note }));
+        Ok(())
+    };
+    composite(&mut g, &mut r, &mut rig, "gunner_composite", "the live loop's two-pass eyepiece composite at noon, an armour-piercing round ready")?;
+    rig.clock(&mut r, "1942-12-21T19:00:00Z")?;
+    g.debug_set_he_loaded(true);
+    step(&mut g, &mut r, 30, &idle);
+    composite(&mut g, &mut r, &mut rig, "gunner_composite_night", "the same at night, high explosive ready")?;
+    g.debug_fire_laid(&mut r);
+    step(&mut g, &mut r, 20, &idle);
+    composite(&mut g, &mut r, &mut rig, "gunner_composite_night_reloading", "the same at night just after the shot: the loader working")?;
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    step(&mut g, &mut r, 10, &idle);
+
     // The Tiger from outside: its winter coat (`apply_whitewash`), front and rear quarters.
     let p = g.player.pos;
     let f = g.player.forward();
