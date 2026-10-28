@@ -44,3 +44,10 @@ One line per merge: branch @ commit — conflicts — build / tests / smoke — 
 
 - crew-solo @ 3dbd422 (its own CRLF→LF fix) — whole-file conflicts only because the merge base 635bf63 is CRLF; 3dbd422's tree is byte-identical to the normalized `int/crew-solo-lf` merged in round 2, so merged with `-s ours` (no content change; crew-solo's history is now an ancestor, later pushes merge normally) — merged in 3855e55; tree identical to bf9c23f, so the round-2 build/test gate stands (build re-run ok); smoke **pending GPU window** — `main` **advanced** to 3855e55 (+ this log)
 - Confirmed in `main`: claude/canyon-wreckage-20261027 @ 413ee0c and claude/spatial-audio-20261027 @ 272e358 (merged in round 0).
+
+## Round 3 — 2026-10-28
+
+- raymarching @ 7904d3c — nothing new
+- raymarching-2 @ b697e14 (off `main` 8f7481e: `tools/build_render_gallery.py`, `tools/run_ai_fights.ps1`; no Rust or shader change) — none — merged in 3aad760; **`run_ai_fights.ps1` did not parse**: the usage comment's `tools\run_ai_fights.ps1` had been written with `\r` as a carriage return, which ended the comment and left `<checkout with assets>` as code (`The '<' operator is reserved for future use`, line 5) → fixed forward in b54fa01 (PowerShell parser: 0 errors); the gallery builder compiles and built a gallery from this worktree's `captures/` (2 stills)
+- **Gate for b54fa01 (+ this log)**: build ok; unit tests 1,926 passed / 90 failed / 61 ignored, failure set identical to round 2 (vs `origin/raymarching` 7904d3c 1,862 / 89 / 61 — the one extra is terrain-detail's `source_detail_tiles_carry_no_broad_structure`, `source_assets/` only); smoke **pending GPU window** (owner's hold) — `main` **advanced** to b54fa01 (+ this log)
+- Next: the renderer session's `raymarching` fix (black RTT sights on the raymarch backend, outdoor fog inside the hull, glass grime) gets its own round as soon as it is pushed — the owner is playing `main` and waiting on it.
