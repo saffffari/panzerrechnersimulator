@@ -36,15 +36,18 @@ fn vs_terrain(@location(0) grid: vec2<f32>, @location(1) node: vec4<f32>) -> TrO
 // four pixel footprints; the craters' and ruts' own relief (the vertex normal excludes events).
 fn tr_shading_field(p: vec2<f32>, a: TrAttr, level: i32, morph: f32, footprint: f32) -> f32 {
     var sum = 0.0;
-    let top = min(level, TR_GEOMETRY_OCTAVES - 1);
+    let lowest = level - TR_OCTAVE_LEVEL_OFFSET;
+    let top = min(lowest, TR_GEOMETRY_OCTAVES - 1);
     for (var k = -TR_NORMAL_OCTAVES; k <= top; k++) {
         let wavelength = ldexp(TR_SPACING, k);
         var weight = clamp((wavelength / footprint - 2.0) * 0.5, 0.0, 1.0);
-        if (k == level) { weight *= morph; }
+        if (k == lowest) { weight *= morph; }
         if (weight <= 0.0) { continue; }
         sum += weight * tr_relief(p, a, k, k, 99, 1.0);
     }
-    return sum + tr_crater(p) - tr_rut_smooth(p);
+    // The band-limited compaction: the raw map's bilinear gradient stair-steps along an oblique
+    // tread edge (piecewise constant per 12.5 cm cell), which a grazing sun picks out.
+    return sum + tr_crater(p) - tr_rut(p);
 }
 
 fn tr_material(p: vec2<f32>, world: vec3<f32>, normal_y: f32, a: TrAttr, rut: f32, crater: vec2<f32>,

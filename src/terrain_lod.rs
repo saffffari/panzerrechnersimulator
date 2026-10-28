@@ -21,7 +21,9 @@ pub const QUAD_CELLS: u32 = 16;
 pub const SLOTS: usize = 16;
 pub const GBUFFER_SLOT: usize = 15;
 pub const MORPH_START: f32 = 0.75;
-pub const DEFAULT_RANGE0_M: f32 = 40.0;
+/// Range of the finest (0.076 m) level; ranges double per level, so the 0.305 m level ends at
+/// 40 m, the 1.22 m level at 160 m.
+pub const DEFAULT_RANGE0_M: f32 = 10.0;
 pub const RUT_TABLE: u32 = 160;
 pub const RUT_ATLAS_PAGES: u32 = 16;
 /// Rut pages within this distance of the camera are kept resident; beyond it they may be evicted
@@ -69,8 +71,10 @@ pub struct TerrainLod {
     pub detail: Shared,
     levels: usize,
     ranges: [f32; 12],
-    /// Per area level a (squares of 16 * lattice * 2^a), min/max of the native heights.
+    /// Min/max of the native heights per area level a (squares of 16 * lattice * 2^a), from
+    /// `minmax_base` up (4 grid cells); finer areas use their containing base square.
     minmax: Vec<(usize, Vec<(f32, f32)>)>,
+    minmax_base: usize,
     _heights: wgpu::Texture,
     _surface: wgpu::Texture,
     rut_table: wgpu::Texture,
@@ -212,17 +216,18 @@ impl TerrainLod {
             label: Some("terrain-patch-indices"), contents: bytemuck::cast_slice(&indices), usage: wgpu::BufferUsages::INDEX });
         let bgl = Self::bind_group_layout(device);
         let range0 = std::env::var("KESSEL_TERRAIN_LOD_RANGE").ok().and_then(|v| v.parse::<f32>().ok())
-            .filter(|r| *r >= 30.0).unwrap_or(DEFAULT_RANGE0_M);
+            .filter(|r| *r >= 8.0).unwrap_or(DEFAULT_RANGE0_M);
         // Area level a squares: 16 lattice cells * 2^a; the root area spans the map.
         let mut levels = 1;
         while (QUAD_CELLS as f32 * detail.lattice * (1u32 << levels) as f32) < detail.half * 2.0 - 0.01 { levels += 1; }
         let mut ranges = [f32::INFINITY; 12];
         for (l, r) in ranges.iter_mut().enumerate().take(levels) { *r = range0 * (1u32 << l) as f32; }
+        let minmax_base = (4 * terrain_relief::LATTICE_DIV / QUAD_CELLS as usize).trailing_zeros() as usize;
         let minmax = Self::minmax_pyramid(&detail, levels);
         let gpu_bytes = res as u64 * res as u64 * 8 + (atlas_res as u64).pow(2) * 2 + (RUT_TABLE as u64).pow(2) * 4 + grid * grid * 8;
         let mut lod = Self {
             bind: Self::make_bind(device, &bgl, &uniform_buf, &heights, &surface, &rut_table, &rut_atlas, &craters_buf, &cells_buf, &items_buf, &openings_buf),
-            detail, levels, ranges, minmax, _heights: heights, _surface: surface, rut_table, rut_atlas,
+            detail, levels, ranges, minmax, minmax_base, _heights: heights, _surface: surface, rut_table, rut_atlas,
             craters_buf, cells_buf, items_buf, openings_buf, uniform_buf, instance_buf, instance_capacity,
             patch_vbuf, patch_ibuf, patch_indices: indices.len() as u32, bgl,
             slot_ranges: [(0, 0); SLOTS], resident: HashMap::new(),
@@ -264,7 +269,7 @@ impl TerrainLod {
     }
 
     fn minmax_pyramid(detail: &terrain_relief::Detail, levels: usize) -> Vec<(usize, Vec<(f32, f32)>)> {
-        // Area level 0 squares are 4 grid cells (16 lattice cells).
+        // The base squares are 4 grid cells.
         let res = detail.res;
         let cells = (res - 1) / 4;
         let h = detail.heights();
@@ -300,8 +305,14 @@ impl TerrainLod {
 
     fn area_box(&self, area: usize, x: i32, z: i32) -> (Vec3, Vec3) {
         let size = QUAD_CELLS as f32 * self.detail.lattice * (1u32 << area) as f32;
-        let (side, grid) = &self.minmax[area.min(self.minmax.len() - 1)];
-        let (lo, hi) = grid[(z.max(0) as usize).min(side - 1) * side + (x.max(0) as usize).min(side - 1)];
+        let (bx, bz, slot) = if area < self.minmax_base {
+            let shift = self.minmax_base - area;
+            (x >> shift, z >> shift, 0)
+        } else {
+            (x, z, area - self.minmax_base)
+        };
+        let (side, grid) = &self.minmax[slot.min(self.minmax.len() - 1)];
+        let (lo, hi) = grid[(bz.max(0) as usize).min(side - 1) * side + (bx.max(0) as usize).min(side - 1)];
         let o = Vec2::new(x as f32, z as f32) * size - self.detail.half;
         (Vec3::new(o.x, lo - BOX_BELOW_M, o.y), Vec3::new(o.x + size, hi + BOX_ABOVE_M, o.y + size))
     }

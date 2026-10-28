@@ -70,6 +70,11 @@ impl Rig<'_> {
     }
 }
 
+/// `KESSEL_SHOWCASE_SCENES=a,b` stages and renders only the named scenes.
+fn wanted(scene: &str) -> bool {
+    std::env::var("KESSEL_SHOWCASE_SCENES").map_or(true, |only| only.split(',').any(|s| s.trim() == scene))
+}
+
 fn step(g: &mut Game, r: &mut crate::renderer::Renderer, frames: u32, input: &TankInput) {
     for _ in 0..frames { g.update(input, 1.0 / 60.0, r); }
 }
@@ -119,7 +124,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let side = Vec3::new(-forward.z, 0.0, forward.x);
     let eye = ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(side.x, side.z) * 7.5 + Vec2::new(forward.x, forward.z) * 6.0, 1.25);
     let look = ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(forward.x, forward.z) * 1.5, 0.4);
-    rig.still(&mut g, &mut r, "ground", eye, look, 58.0, "near ground at the Tiger: snow waves, wind crust, drift, the track's contact")?;
+    if wanted("ground") { rig.still(&mut g, &mut r, "ground", eye, look, 58.0, "near ground at the Tiger: snow waves, wind crust, drift, the track's contact")?; }
     g.debug_place_tiger(TIGER, TIGER_HEADING);
     step(&mut g, &mut r, 30, &idle);
     let tiger = g.player.pos;
@@ -130,7 +135,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let eye = ground(&g, Vec2::new(tiger.x, tiger.z) - dir * 6.0, 28.0);
     let far = Vec2::new(eye.x, eye.z) + dir * RIDGE_DISTANCE_M;
     let target = Vec3::new(far.x, g.hf.height_at(far.x, far.y) - 40.0, far.y);
-    rig.still(&mut g, &mut r, "ridge2km", eye, target, 30.0, "the canyon wall 1.8 km away: coarse LOD levels, rock on the scoured faces, drifts in the gullies")?;
+    if wanted("ridge2km") { rig.still(&mut g, &mut r, "ridge2km", eye, target, 30.0, "the canyon wall 1.8 km away: coarse LOD levels, rock on the scoured faces, drifts in the gullies")?; }
 
     // 3. A crater field: five 88 mm HE rounds into the snow 35-55 m down the course.
     g.debug_place_tiger(FIELD_TIGER, 0.0);
@@ -139,7 +144,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let side = Vec3::new(-forward.z, 0.0, forward.x);
     let field = Vec2::new(tiger.x, tiger.z) + Vec2::new(forward.x, forward.z) * 45.0 + Vec2::new(side.x, side.z) * FIELD_SIDE_M;
     g.debug_set_he_loaded(true);
-    for k in 0..5 {
+    for k in 0..if wanted("craters") { 5 } else { 0 } {
         let offset = Vec2::new(forward.x, forward.z) * ((k as f32 - 2.0) * 4.5) + Vec2::new(side.x, side.z) * ((k % 2) as f32 * 7.0 - 3.5);
         let aim = ground(&g, field + offset, 0.2);
         g.debug_lay_gun_at(aim);
@@ -148,11 +153,11 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         step(&mut g, &mut r, 30, &idle);
         g.debug_reload();
     }
-    step(&mut g, &mut r, 60 * 25, &idle);
+    if wanted("craters") { step(&mut g, &mut r, 60 * 25, &idle); }
     let craters = g.hf.detail.as_ref().map_or(0, |d| d.craters().len());
     let center = ground(&g, field, 0.0);
     let eye = center + Vec3::new(side.x, 0.0, side.z) * 13.0 - forward * 8.0 + Vec3::Y * 6.0;
-    rig.still(&mut g, &mut r, "craters", eye, center, 55.0, "five 88 mm HE craters in settled snow after 25 s: bowls, thrown rims, frozen earth")?;
+    if wanted("craters") { rig.still(&mut g, &mut r, "craters", eye, center, 55.0, "five 88 mm HE craters in settled snow after 25 s: bowls, thrown rims, frozen earth")?; }
 
     // 4. Ruts: back at the first spot, twelve seconds of driving on, then look back along them.
     g.debug_place_tiger(TIGER, TIGER_HEADING);
@@ -161,14 +166,30 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     g.station = Station::Driver;
     let start = g.player.pos;
     let drive = TankInput { drive: 1.0, ..TankInput::default() };
-    step(&mut g, &mut r, 60 * 12, &drive);
+    let mut pose = Vec::new();
+    for frame in 0..60 * 12 {
+        g.update(&drive, 1.0 / 60.0, &mut r);
+        if frame % 6 == 0 {
+            pose.push([g.player.pos.x, g.player.pos.z, g.player.heading, g.player.pitch, g.player.roll, g.player.speed]);
+        }
+    }
     step(&mut g, &mut r, 120, &idle);
     let end = g.player.pos;
     let mid = (start + end) * 0.5;
     let back = (start - end).normalize_or_zero();
     let eye = ground(&g, Vec2::new(end.x, end.z) + Vec2::new(back.x, back.z) * 4.0 + Vec2::new(-back.z, back.x) * 4.5, 3.2);
     let look = ground(&g, Vec2::new(mid.x, mid.z), 0.0);
-    rig.still(&mut g, &mut r, "ruts", eye, look, 55.0, "the Tiger's ruts after a 12 s drive: compacted snow, shoved berms, tread-band width")?;
+    // The rut map itself (12.5 cm cells, 40 m square on the drive's midpoint), 2.5 mm per level.
+    if let Some(d) = g.hf.detail.clone() {
+        let n = 320u32;
+        let img = image::GrayImage::from_fn(n, n, |i, j| {
+            let x = mid.x - 20.0 + (i as f32 + 0.5) * 0.125;
+            let z = mid.z - 20.0 + (j as f32 + 0.5) * 0.125;
+            image::Luma([(128.0 + d.rut_at(x, z) * 400.0).clamp(0.0, 255.0) as u8])
+        });
+        img.save(format!("{}_rutmap.png", rig.prefix))?;
+    }
+    if wanted("ruts") { rig.still(&mut g, &mut r, "ruts", eye, look, 55.0, "the Tiger's ruts after a 12 s drive: compacted snow, shoved berms, tread-band width")?; }
 
     // The GPU surface against the physics surface at lattice nodes (finest level, unmorphed).
     let mut agreement = serde_json::Value::Null;
@@ -178,7 +199,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         let mut nodes: Vec<Vec2> = Vec::new();
         for c in [Vec2::new(tiger.x, tiger.z), field, Vec2::new(mid.x, mid.z), Vec2::new(end.x, end.z)] {
             for k in 0..1024 {
-                nodes.push(snap(c + Vec2::new((k % 32) as f32 - 16.0, (k / 32) as f32 - 16.0) * lattice * 1.0));
+                nodes.push(snap(c + Vec2::new((k % 32) as f32 - 16.0, (k / 32) as f32 - 16.0) * lattice * 4.0));
             }
         }
         eprintln!("[terrain-showcase] probing {} lattice nodes", nodes.len());
@@ -196,7 +217,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         "output_resolution": [rig.cw, rig.ch], "detail_surface": detail,
         "terrain_lod": r.terrain_lod_stats().map(|s| format!("{s:?}")),
         "ground_query_ns": {"cold": cold_ns, "warm": warm_ns, "points": probe_points.len()},
-        "craters": craters, "drive_m": start.distance(end),
+        "craters": craters, "drive_m": start.distance(end), "drive_pose_every_0_1s": pose,
         "gpu_physics_agreement": agreement, "shots": rig.shots,
         "disclosure": "Staged fixtures (banished enemies, held fire, the Tiger placed, scripted gun lays and a straight drive). Clock overridden per still, clear weather. Observer cameras, not a player run. No image grading."
     }))?)?;

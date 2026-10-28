@@ -26,11 +26,15 @@ pub const TRAMPLED: u8 = 5;
 pub const CLASSES: usize = 6;
 pub const CLASS_NAMES: [&str; CLASSES] = ["snow", "wind_crust", "rock", "frozen_mud", "rubble", "trampled"];
 
-/// The fine lattice divides the grid spacing by four (1.2207 m -> 0.305 m).
-pub const LATTICE_DIV: usize = 4;
-/// Relief octave k has wavelength `spacing * 2^k`. Octaves 0..=3 (1.22-9.77 m) are geometry,
-/// -3..=-1 (0.15-0.61 m) shading normals only. A LOD level L (lattice 0.305 m * 2^L) carries
-/// octaves k >= L: four lattice cells per wavelength at its own spacing.
+/// The fine lattice divides the grid spacing by sixteen (1.2207 m -> 0.0763 m): fine enough that
+/// a 0.3 m tread wall is a dozen facets, not two (at 0.305 m a grazing sun picked out each
+/// triangle of an oblique rut as a staircase).
+pub const LATTICE_DIV: usize = 16;
+/// Relief octave k has wavelength `spacing * 2^k`, k = -3..=3 (0.15-9.77 m). A LOD level L
+/// (lattice 0.0763 m * 2^L) carries the octaves with at least four of its cells per wavelength,
+/// k >= L - OCTAVE_LEVEL_OFFSET; the finest level (the physics surface) carries k >= -2
+/// (0.31-9.77 m) as geometry, and the 0.15 m octave is a shading normal only.
+pub const OCTAVE_LEVEL_OFFSET: i32 = 2;
 pub const GEOMETRY_OCTAVES: i32 = 4;
 pub const NORMAL_OCTAVES: i32 = 3;
 /// Relief amplitude (m) per class and octave k = -3..=3.
@@ -65,7 +69,7 @@ pub const RUT_CELL_M: f32 = 0.125;
 pub const RUT_PAGE: usize = 256;
 pub const RUT_PAGE_M: f32 = RUT_CELL_M * RUT_PAGE as f32;
 /// Tap spacing of the rut map's band limit for geometry and physics (see `Detail::rut_at`).
-pub const RUT_FILTER_M: f32 = 0.2;
+pub const RUT_FILTER_M: f32 = 0.1;
 /// Crater lookup grid cell.
 pub const CRATER_CELL_M: f32 = 32.0;
 /// Cube-root cratering scaling for a surface burst: apparent radius = k * W^(1/3), W the filler
@@ -138,8 +142,8 @@ impl NodeCache {
     }
     fn key(i: u32, j: u32, revision: u64) -> (usize, u64) {
         let slot = ((j & 255) << 8 | (i & 255)) as usize;
-        let tag = ((j >> 8) as u64) << 7 | (i >> 8) as u64;
-        (slot, (tag << 18 | (revision & 0x3ffff)) << 32)
+        let tag = ((j >> 8) as u64) << 9 | (i >> 8) as u64;
+        (slot, (tag << 14 | (revision & 0x3fff)) << 32)
     }
     fn get(&self, i: u32, j: u32, revision: u64) -> Option<f32> {
         let (slot, key) = Self::key(i, j, revision);
@@ -368,11 +372,11 @@ impl Detail {
         (0..CLASSES).max_by(|&p, &q| a.weights[p].total_cmp(&a.weights[q])).unwrap_or(0) as u8
     }
 
-    /// Static surface at a point for LOD level `level` (octaves k >= level, octave `level`
-    /// scaled by `1 - morph`), craters included, ruts excluded.
+    /// Static surface at a point for LOD level `level` (octaves k >= level - 2, the lowest of
+    /// them scaled by `1 - morph`), craters included, ruts excluded.
     pub fn static_height(&self, x: f32, z: f32, level: i32, morph: f32) -> f32 {
         let attr = self.attr_at(x, z);
-        let k_min = level.max(0);
+        let k_min = (level - OCTAVE_LEVEL_OFFSET).max(-NORMAL_OCTAVES);
         let relief = if k_min < GEOMETRY_OCTAVES {
             relief(x, z, &attr, self.wind, k_min, GEOMETRY_OCTAVES - 1, k_min, 1.0 - morph)
         } else { 0.0 };
@@ -421,9 +425,9 @@ impl Detail {
     // ── events ──────────────────────────────────────────────────────────────────────────────
 
     /// Compaction (m, positive = lowered; negative = shoved berm) at a point: the cell-centred
-    /// bilinear map band-limited to the 0.305 m lattice by a 3x3 binomial at 0.2 m (support
-    /// +-0.4 m), so a tread edge is a ramp the lattice can carry, not a sawtooth of aliased
-    /// triangles; shading normals take the unfiltered map (mirrored by `tr_rut`).
+    /// bilinear map under a 3x3 binomial at 0.1 m (support +-0.26 m), so a tread edge is a ramp
+    /// the 0.076 m lattice carries smoothly; shading normals take the unfiltered map (mirrored by
+    /// `tr_rut`).
     pub fn rut_at(&self, x: f32, z: f32) -> f32 {
         let events = self.events.read().unwrap();
         if events.ruts.is_empty() {
@@ -633,6 +637,7 @@ pub fn wgsl_constants(detail: &Detail) -> String {
     s.push_str(&format!("const TR_RES: u32 = {}u;\nconst TR_SPACING: f32 = {:?};\nconst TR_HALF: f32 = {:?};\n",
         detail.res, detail.spacing, detail.half));
     s.push_str(&format!("const TR_WIND: vec2<f32> = vec2<f32>({:?}, {:?});\n", detail.wind.x, detail.wind.y));
+    s.push_str(&format!("const TR_OCTAVE_LEVEL_OFFSET: i32 = {OCTAVE_LEVEL_OFFSET};\n"));
     s.push_str(&format!("const TR_GEOMETRY_OCTAVES: i32 = {GEOMETRY_OCTAVES};\nconst TR_NORMAL_OCTAVES: i32 = {NORMAL_OCTAVES};\n"));
     s.push_str("const TR_AMPLITUDE: array<array<f32, 7>, 6> = array<array<f32, 7>, 6>(\n");
     for row in AMPLITUDE {

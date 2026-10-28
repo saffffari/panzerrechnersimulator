@@ -251,12 +251,12 @@ fn tr_rut(p: vec2<f32>) -> f32 {
     return sum / 16.0;
 }
 
-// Static surface of a level (Detail::static_height): base, relief octaves k >= level with the
-// level's own octave faded by the morph, craters.
+// Static surface of a level (Detail::static_height): base, relief octaves k >= level - 2 with
+// the lowest of them faded by the morph.
 fn tr_static(p: vec2<f32>, level: i32, morph: f32) -> f32 {
     let a = tr_attr(p);
     var relief = 0.0;
-    let k_min = max(level, 0);
+    let k_min = max(level - TR_OCTAVE_LEVEL_OFFSET, -TR_NORMAL_OCTAVES);
     if (k_min < TR_GEOMETRY_OCTAVES) {
         relief = tr_relief(p, a, k_min, TR_GEOMETRY_OCTAVES - 1, k_min, 1.0 - morph);
     }
