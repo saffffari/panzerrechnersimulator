@@ -2219,7 +2219,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
     );
     let (device, queue) = request_device(&adapter);
     let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display" | "graphics" | "torch-on" | "torch-off" | "sunrise" | "sunset" | "stars" | "storm" | "clouds" | "kia-black"
-        | "death" | "actcard" | "ending" | "finaldefeat") {
+        | "death" | "actcard" | "ending" | "finaldefeat" | "runbrief" | "runcard-win" | "runcard-loss") {
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
         game.set_defer_rtt_to_render(true);
@@ -2255,6 +2255,9 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
         }
         "death" => draw_fallen_card(&mut r, death_card::identity(1943, 1943)),
+        "runbrief" => ui::draw_run_brief(&mut r, &canyon::RunBrief::example()),
+        "runcard-win" => ui::draw_run_card(&mut r, &canyon::RunReport::example(true), true),
+        "runcard-loss" => ui::draw_run_card(&mut r, &canyon::RunReport::example(false), true),
         "hint" => {
             ui::draw_black(&mut r);
             let hint = interaction_hint("OPEN CUPOLA HATCH [LMB]", game::InteractKind::Click);
@@ -11130,7 +11133,21 @@ enum AppState {
         t: f32,
         reason: campaign::FinalDefeatReason,
     },
+    /// The Canyon run's opening card (src/canyon.rs `RunBrief`), once per session, over the
+    /// built world: the course in a few words, then any key drops in.
+    RunBrief {
+        t: f32,
+    },
+    /// The Canyon after-action card (`RunReport`) after a death or a finish. Enter starts a
+    /// fresh seeded attempt without the title; Escape leaves for the title.
+    RunCard {
+        t: f32,
+    },
 }
+
+/// The cards ignore input this long after they appear, so a key held or mashed through the
+/// death skip or the world build cannot dismiss them unread.
+const RUN_CARD_ARM_S: f32 = 0.6;
 
 fn close_requires_confirmation(state: AppState, has_lan_session: bool) -> bool {
     !has_lan_session && matches!(state, AppState::Playing | AppState::Paused)
@@ -11491,6 +11508,12 @@ struct WindowState {
     /// Seconds since the CANYON run reached its goal (the finish fade), while it plays out.
     canyon_finish: Option<f32>,
     canyon_v2: bool,
+    /// The after-action card's facts, built once when the run ends (src/canyon.rs).
+    run_report: Option<canyon::RunReport>,
+    /// The kept times after a finish was recorded, with the best before it (for NEW BEST).
+    canyon_finish_times: Option<(canyon::Times, Option<f32>)>,
+    /// The opening brief has been read this session; later attempts drop straight in.
+    canyon_briefed: bool,
     /// A synchronous world build just replaced the Game. The frame clock restarts so the
     /// build's wall time is never replayed as simulated time on the first frame.
     clock_reset: bool,
@@ -11627,6 +11650,9 @@ impl WindowState {
             death_fade: None,
             canyon_finish: None,
             canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
+            run_report: None,
+            canyon_finish_times: None,
+            canyon_briefed: false,
             clock_reset: false,
             session_log: session_log::SessionLog::from_env(),
             last_sim_ms: 0.0,
@@ -14207,11 +14233,19 @@ impl WindowState {
         if self.build_act_world(1) {
             self.show_map = false;
             self.show_controls = false;
-            self.state = AppState::Playing;
-            self.set_play_cursor(true);
+            self.run_report = None;
+            self.canyon_finish_times = None;
             self.pencil_marks.retain(|(sheet,_)| *sheet != 1);
             self.map_pins.retain(|(sheet,_)| *sheet != 1);
-            println!("[canyon] run started: {}", path.display());
+            println!("[canyon] run started: {} (seed {:?})", path.display(), self.game.canyon_seed());
+            if self.canyon_briefed {
+                self.state = AppState::Playing;
+                self.set_play_cursor(true);
+            } else {
+                // The first attempt of the session opens on the brief; the world waits under it.
+                self.state = AppState::RunBrief { t: 0.0 };
+                self.set_play_cursor(false);
+            }
         } else {
             let _ = act_manifest::select_runtime_manifest(None);
             self.enter_menu(false);
@@ -14219,15 +14253,84 @@ impl WindowState {
         }
     }
 
-    /// A Canyon death is terminal. Leave the spent run for the title, with no resume/checkpoint.
-    fn retry_canyon_after_death(&mut self) -> bool {
+    /// A Canyon run is over (the man is dead, or the Tiger stood at the head of the ravine):
+    /// build the after-action card from the game's own counters and show it. There is no
+    /// resume and no checkpoint; the card's Enter is a fresh deployment.
+    fn show_canyon_run_card(&mut self) -> bool {
         if self.play_mode != Some(PlayMode::Canyon) {
             return false;
         }
         self.canyon_finish = None;
-        self.play_mode = None;
-        self.enter_menu(false);
+        let (times, previous_best) = self.canyon_finish_times.take().unwrap_or_else(|| {
+            let times = self.canyon_times_path().map(|path| canyon::load_times(&path)).unwrap_or_default();
+            (times, times.best_s)
+        });
+        self.run_report = self.game.canyon_run_report(times, previous_best);
+        if let Some(report) = &self.run_report {
+            println!("[canyon] after-action: {} — {}; {:?}", report.headline(), report.cause_line(), report.rows());
+        }
+        self.game.set_audio_silenced(true);
+        self.show_map = false;
+        self.show_controls = false;
+        self.state = AppState::RunCard { t: 0.0 };
+        self.set_play_cursor(false);
+        self.render_run_card(0.0);
         true
+    }
+
+    /// The Canyon v1 and v2 courses keep separate time records.
+    fn canyon_times_path(&self) -> anyhow::Result<std::path::PathBuf> {
+        canyon::times_path().map(|path| if self.canyon_v2 { path.with_file_name("canyon-v2-times.v1.json") } else { path })
+    }
+
+    /// The brief has been read: drop into the waiting world.
+    fn begin_canyon_play(&mut self) {
+        self.canyon_briefed = true;
+        self.state = AppState::Playing;
+        self.ft_last = None;
+        self.set_play_cursor(true);
+    }
+
+    /// Enter on the after-action card: a fresh seeded attempt, straight back in.
+    fn restart_canyon_from_card(&mut self) {
+        self.run_report = None;
+        self.start_play(PlayMode::Canyon);
+    }
+
+    /// Escape on the after-action card: the title, with the Canyon entry selected.
+    fn leave_canyon_to_menu(&mut self) {
+        self.run_report = None;
+        self.play_mode = None;
+        let _ = act_manifest::select_runtime_manifest(None);
+        self.refresh_canyon_menu_detail();
+        self.enter_menu(false);
+        self.menu.selected = ui::IDX_CANYON + usize::from(self.canyon_v2);
+        self.render_menu();
+    }
+
+    fn render_run_card(&mut self, t: f32) {
+        let Some((frame, view)) = self.acquire() else { return; };
+        self.renderer.ui_reset();
+        match &self.run_report {
+            Some(report) => ui::draw_run_card(&mut self.renderer, report, t >= RUN_CARD_ARM_S),
+            None => ui::draw_black(&mut self.renderer),
+        }
+        self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
+            self.config.format, self.config.width, self.config.height);
+        frame.present();
+    }
+
+    fn render_run_brief(&mut self) {
+        let Some((frame, view)) = self.acquire() else { return; };
+        self.renderer.ui_reset();
+        let best = self.canyon_times_path().map(|path| canyon::load_times(&path)).unwrap_or_default().best_s;
+        match self.game.canyon_brief(best) {
+            Some(brief) => ui::draw_run_brief(&mut self.renderer, &brief),
+            None => ui::draw_black(&mut self.renderer),
+        }
+        self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
+            self.config.format, self.config.width, self.config.height);
+        frame.present();
     }
 
     /// The finish, without words: once the Tiger reaches the ravine's head the fight is over, the
@@ -14240,10 +14343,9 @@ impl WindowState {
         let Some(elapsed) = self.game.canyon_finished() else { return false; };
         let t = match self.canyon_finish {
             None => {
-                let times = canyon::times_path().and_then(|path| {
-                    let path = if self.canyon_v2 { path.with_file_name("canyon-v2-times.v1.json") } else { path };
-                    canyon::record_time(&path, elapsed)
-                });
+                let previous_best = self.canyon_times_path().map(|path| canyon::load_times(&path).best_s).unwrap_or(None);
+                let times = self.canyon_times_path().and_then(|path| canyon::record_time(&path, elapsed));
+                self.canyon_finish_times = Some((times.as_ref().copied().unwrap_or_default(), previous_best));
                 match &times {
                     Ok(times) => println!("[canyon] run complete in {} (best {})", canyon::format_time(elapsed),
                         times.best_s.map_or_else(|| "-".into(), canyon::format_time)),
@@ -14262,11 +14364,8 @@ impl WindowState {
         self.game.set_audio_level(1.0 - fade);
         if t >= canyon::FINISH_END_S {
             self.game.set_audio_silenced(true);
-            self.canyon_finish = None;
-            let _ = act_manifest::select_runtime_manifest(None);
-            self.enter_menu(false);
-            self.menu.selected = ui::IDX_CANYON + usize::from(self.canyon_v2);
-            self.render_menu();
+            // Black and silence have held; the card says what the run was.
+            self.show_canyon_run_card();
         } else if t < canyon::FINISH_FADE_S && !self.couch_active {
             self.death_fade = Some(fade);
             self.render_game();
@@ -14436,7 +14535,8 @@ impl ApplicationHandler for App {
                     s.apply_display_preview(Some(index));
                 }
                 self.window_focused = true;
-                s.set_play_cursor(!s.show_controls && !matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu));
+                s.set_play_cursor(!s.show_controls && !matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu
+                    | AppState::RunBrief { .. } | AppState::RunCard { .. }));
                 window.request_redraw();
                 self.state = Some(s);
             }
@@ -14606,6 +14706,16 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
+                    AppState::RunBrief { t } => {
+                        if t >= RUN_CARD_ARM_S { state.begin_canyon_play(); }
+                    }
+                    AppState::RunCard { t } => {
+                        if t >= RUN_CARD_ARM_S && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space | KeyCode::KeyR) {
+                            state.restart_canyon_from_card();
+                        } else if t >= RUN_CARD_ARM_S && code == KeyCode::Escape {
+                            state.leave_canyon_to_menu();
+                        }
+                    }
                     AppState::Death { t, card } => {
                         // Let the player cut the black short once it has held for a beat. A spent
                         // Act-3 attempt still receives its terminal coda; never a retry path.
@@ -14615,7 +14725,7 @@ impl ApplicationHandler for App {
                         ) {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
-                            } else if state.retry_canyon_after_death() {
+                            } else if state.show_canyon_run_card() {
                                 // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
@@ -15325,12 +15435,21 @@ impl ApplicationHandler for App {
                     AppState::ActCard { built: true, .. } if pad.interact_pressed => {
                         state.state = AppState::Playing;
                     }
+                    AppState::RunBrief { t } if t >= RUN_CARD_ARM_S && (pad.interact_pressed || pad.menu_pressed) => {
+                        state.begin_canyon_play();
+                    }
+                    AppState::RunCard { t } if t >= RUN_CARD_ARM_S && pad.interact_pressed => {
+                        state.restart_canyon_from_card();
+                    }
+                    AppState::RunCard { t } if t >= RUN_CARD_ARM_S && (pad.back_pressed || pad.menu_pressed) => {
+                        state.leave_canyon_to_menu();
+                    }
                     AppState::Death { t, card }
                         if card.is_none() && death_may_skip(t) && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
                     {
                         if let Some(reason) = state.pending_final_defeat.take() {
                             state.state = AppState::FinalDefeat { t: 0.0, reason };
-                        } else if state.retry_canyon_after_death() {
+                        } else if state.show_canyon_run_card() {
                                 // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
@@ -15735,6 +15854,14 @@ impl ApplicationHandler for App {
                             state.render_black();
                         }
                     }
+                    AppState::RunBrief { t } => {
+                        state.state = AppState::RunBrief { t: t + dt };
+                        state.render_run_brief();
+                    }
+                    AppState::RunCard { t } => {
+                        state.state = AppState::RunCard { t: t + dt };
+                        state.render_run_card(t + dt);
+                    }
                     AppState::Death { t, card } => {
                         let nt = t + dt;
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
@@ -15752,7 +15879,7 @@ impl ApplicationHandler for App {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
                                 state.render_black();
-                            } else if state.retry_canyon_after_death() {
+                            } else if state.show_canyon_run_card() {
                                 // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
@@ -15974,6 +16101,21 @@ fn main() -> anyhow::Result<()> {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(7200.0),
             args.get(5).map(String::as_str),
+        );
+    }
+    if args.len() >= 2 && args[1] == "canyon-finish-check" {
+        return canyon_attempt::finish_check(
+            &capture_arg(&args, 2, "canyon_finish_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(220.0),
+            args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0),
+        );
+    }
+    if args.len() >= 2 && args[1] == "canyon-foot-check" {
+        return canyon_attempt::foot_check(
+            &capture_arg(&args, 2, "canyon_foot_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(45.0),
         );
     }
     if args.len() >= 2 && matches!(args[1].as_str(), "campaign-ai-run" | "campaign-ai") {

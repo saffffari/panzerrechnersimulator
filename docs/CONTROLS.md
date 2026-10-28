@@ -190,11 +190,22 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **E / Q with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
 | **M** | raise/stow the held paper map; world keeps moving; the compass comes out with the map |
 | **LMB on map** | draw permanent graphite with the pencil; there is no eraser |
-| **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play) |
+| **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play). Reachable at any moment of play, including with the map held |
 | **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
 | **[ ]** / **F12** | retro dial / screenshot |
 | **Esc** | pause local play, including while holding the map; Esc again resumes from the main pause page |
 | **Alt + Enter** | toggle fullscreen / windowed from any screen |
+
+### Canyon run cards (2026-10-27)
+
+The Canyon run opens, once per session, on a brief (the course in a few words, the keys, the
+attempt's seed, start clock and weather); any key drops into the waiting world. When the run ends,
+by death or by reaching the head of the ravine, the after-action card follows the death
+presentation or the finish fade: what ended it, time, distance reached, rounds, kills, hits taken,
+modules lost, the attempt's seed. **Enter / Space / R** starts a fresh seeded attempt without the
+title; **Esc** returns to the title with the Canyon entry selected. Controller: **A / Cross**
+restarts, **B / Circle** or **Menu** leaves. The cards ignore input for the first 0.6 s so a key
+mashed through the death skip cannot dismiss them unread.
 
 For deterministic visual comparisons, `KESSEL_RETRO_PRESET` accepts `clean`, `light`, `standard`,
 or `strong`. This is independent of `KESSEL_INTERNAL_RES` (`640x360`, `800x450`, `960x540`, or

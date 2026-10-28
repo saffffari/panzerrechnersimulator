@@ -1,8 +1,33 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Plate-solve obliquity ceiling and the Canyon run loop, 2026-10-27 (branch `run-loop`)
+
+- `ballistics::MAX_OBLIQUITY_DEG` raises the angle the plate solve represents from 75 to 85
+  degrees (`effective_thickness`, `resolve_at_velocity`). The ceiling predates source-triangle
+  contacts, which report the true angle between the shot and the struck plate's normal: a round
+  skimming a horizontal plate arrives at 85-90 degrees and was solved as a 75-degree hit on the
+  thin plate. Canyon v2 seed 7 (2026-10-27, `captures/run_loop_baseline_s7_20261027.log`): a 76 mm
+  BR-350B from 443 m, logged `HullFront 75.0 deg, penetration 92.3 mm / effective 71.6 mm,
+  Penetration` through the 25 mm hull roof, nine modules lost, ammunition detonation at 58 s.
+  With the ceiling at 85 degrees the same round is `85.0 deg, 62.1 / 120.1 mm, Ricochet`
+  (`captures/run_loop_fixed_s7_20261027.log`); the slope law itself still saturates at 80
+  degrees (`slope_multiplier`), so the steepest graze presents at most that LOS multiple. The
+  legacy horizontal-only helper `horiz_obliquity_deg` (OBB proxy contacts) keeps its 75-degree
+  limit. Regression: `ballistics::graze_tests`. This is a bound on an existing empirical slope
+  law, not a measured ricochet-angle model; the ricochet response's 65/75-degree thresholds and
+  restitution are unchanged and remain authored.
+- The Canyon run's after-action card and opening brief (`src/canyon.rs` `RunReport`/`RunBrief`,
+  `ui::draw_run_card`/`draw_run_brief`) are front-end presentation read from the game's own
+  counters after the run has ended; they change nothing in the simulation. Play itself stays
+  wordless. Per-attempt variation (`canyon::variation`) moves the manifest's authored start
+  instant by whole hours on the same date (the ephemeris lights it) and phases the same authored
+  winter fronts by the attempt seed; the medium's authored baseline, emitters, armour and damage
+  laws are untouched. The headless `canyon-finish-check` and `canyon-foot-check` harnesses stage
+  the Tiger with `debug_place_tiger` and are receipts of mechanism, not of balance.
 
 ## Raymarch backend, 2026-10-27 (`KESSEL_RENDERER=raymarch`, branch `raymarching`)
 
