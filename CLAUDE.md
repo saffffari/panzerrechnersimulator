@@ -95,6 +95,13 @@ cargo run -- crew-solo-kia prefix                   # headless, short: solo crew
 cargo run -- crew-solo prefix                       # headless: solo living crew — AI stations, a real penetration wounds the
                                                     #   loader and the player treats him, gunner/driver KIA and the player
                                                     #   takes the gun / the levers; 8 PNGs + JSON receipt, PASS/FAIL
+cargo run -- lan-verify                             # GPU-free: two sockets, one process — handshake, roles, input, snapshot
+cargo run -- lan-probe host [secs] [bind]           # GPU-free LAN stand-in host (real LanSession, beacons on every adapter)
+cargo run -- lan-probe join ADDR|auto [secs]        # GPU-free join of a real or stand-in host: Welcome, snapshot rate, or the
+                                                    #   JoinTrouble checklist; `lan-probe discover [secs]` lists Tigers heard
+cargo run -- lan-ifaces                             # IPv4 adapters, directed broadcasts, the address friends type
+cargo run --release -- asset-trace                  # with KESSEL_ASSET_TRACE=FILE: build every LAN-hostable world once so
+                                                    #   the trace lists what each loads (tools/windows_payload.py input)
 cargo run --release -- train [gens] [pop] [secs] [acts]  # neuroevolution: ES over enemy policy, acts="0,1" = mean fitness across maps
 cargo run --release -- duel outdir [weights] [act]  # film a T-34 duel (aerial cam → mp4); act 0 = the training arena
 cargo run --release -- train-foot-ai [epochs] [dir] # deterministic CPU KSL2 foot candidates; default assets/ai/foot_candidates/epochs_<epochs>; refuses overwrite

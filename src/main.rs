@@ -214,6 +214,20 @@ fn create_instance() -> wgpu::Instance {
     })
 }
 fn request_adapter(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> wgpu::Adapter {
+    // `KESSEL_ADAPTER=<name substring>`: run on a named GPU instead of the high-performance one
+    // (measuring a laptop-class integrated GPU on a machine that also has a discrete card).
+    if let Ok(wanted) = std::env::var("KESSEL_ADAPTER") {
+        let wanted = wanted.to_ascii_lowercase();
+        let found = instance
+            .enumerate_adapters(wgpu::Backends::all())
+            .into_iter()
+            .filter(|adapter| adapter.get_info().name.to_ascii_lowercase().contains(&wanted))
+            .find(|adapter| surface.is_none_or(|surface| adapter.is_surface_supported(surface)));
+        match found {
+            Some(adapter) => return adapter,
+            None => eprintln!("[panzerrechnersystem] KESSEL_ADAPTER={wanted:?} matched no adapter; using the default"),
+        }
+    }
     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: surface,
@@ -11191,6 +11205,46 @@ enum AppState {
 /// death skip or the world build cannot dismiss them unread.
 const RUN_CARD_ARM_S: f32 = 0.6;
 
+/// `asset-trace`: build every world LAN co-op can host (garage, arena, the three campaign acts and
+/// the Canyon v2 course) once, so `KESSEL_ASSET_TRACE` records what each one loads for the
+/// portable Windows folder (`tools/windows_payload.py`). Nothing is rendered or timed.
+fn run_asset_trace() -> anyhow::Result<()> {
+    anyhow::ensure!(
+        std::env::var_os("KESSEL_ASSET_TRACE").is_some(),
+        "asset-trace needs KESSEL_ASSET_TRACE=FILE"
+    );
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    graphics::set_active_preset(graphics::GraphicsPreset::for_adapter(info.device_type));
+    println!("[asset-trace] adapter {}", info.name);
+    let (device, queue) = request_device(&adapter);
+    let mut worlds = vec![("garage", world::garage()), ("arena", world::act(0))];
+    for act in 1..=world::ACT_COUNT {
+        worlds.push(("campaign act", world::act(act)));
+    }
+    for (label, map) in worlds {
+        let started = std::time::Instant::now();
+        let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &map)?;
+        match label {
+            "garage" => game.garage_setup(),
+            "arena" => game.arena_setup(),
+            _ => {}
+        }
+        renderer.load_menu_meshes(&device, &queue, &tank::build_tiger());
+        println!("[asset-trace] built {label} {} in {:.1} s", map.id, started.elapsed().as_secs_f32());
+    }
+    select_lan_canyon_manifest()?;
+    let started = std::time::Instant::now();
+    let (_renderer, mut game) = Game::build_act(&device, &queue, false, &world::act(1))?;
+    if game::platoon::requested() {
+        game.enable_platoon();
+    }
+    println!("[asset-trace] built canyon v2 in {:.1} s", started.elapsed().as_secs_f32());
+    act_manifest::select_runtime_manifest(None)?;
+    Ok(())
+}
+
 /// Host and every client select the same Canyon v2 course file before building act 1; the
 /// launcher pins it with `KESSEL_CANYON_MANIFEST` so a frozen workshop snapshot matches too.
 fn select_lan_canyon_manifest() -> anyhow::Result<()> {
@@ -16298,6 +16352,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "lan-probe" {
         return lan::run_probe(&args[2..]);
+    }
+    if args.len() >= 2 && args[1] == "asset-trace" {
+        return run_asset_trace();
     }
     if args.len() >= 2 && args[1] == "lan-ifaces" {
         net_ifaces::print_report(lan::DEFAULT_PORT, lan::DISCOVERY_PORT);

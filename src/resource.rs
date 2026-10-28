@@ -259,9 +259,15 @@ pub fn exists(path: impl AsRef<Path>) -> bool {
     resolve(path).is_ok_and(|physical| physical.exists())
 }
 
+/// Written by `tools/windows_payload.py` at the root of the portable Windows folder.
+const WINDOWS_PAYLOAD_MARKER: &str = "payload.windows.v1.json";
+
 fn find_development_root(start: &Path) -> Option<PathBuf> {
     start.ancestors().find_map(|candidate| {
-        (candidate.join("Cargo.toml").is_file() && candidate.join("assets").is_dir())
+        // A checkout, or the portable Windows folder (same logical layout, no Cargo.toml), so a
+        // friend who double-clicks the exe without the launcher still finds the assets.
+        ((candidate.join("Cargo.toml").is_file() || candidate.join(WINDOWS_PAYLOAD_MARKER).is_file())
+            && candidate.join("assets").is_dir())
             .then(|| candidate.to_owned())
     })
 }

@@ -34,7 +34,7 @@ SKIP_SOURCE = re.compile(
     r"(capture|proof|review|bench|_tests?\.rs$|tests\.rs$|editor_smoke|gallery|showreel|astra_|"
     r"filmstrip|mechanic_capture|combat_scene_suite|scene_suite)"
 )
-LITERAL = re.compile(r'"((?:assets|catalog)/[^"{}\n]+?)"')
+LITERAL = re.compile(r'"((?:assets|catalog|source_assets)/[^"{}\n]+?)"')
 DYNAMIC_DIRS = [
     "assets/fonts",
     "assets/sounds",
@@ -84,14 +84,9 @@ class Closure:
 
     def add(self, rel: str, reason: str) -> bool:
         rel = rel.replace("\\", "/").lstrip("/")
-        if not rel.startswith(("assets/", "catalog/")):
+        if not rel.startswith(("assets/", "catalog/", "source_assets/")):
             return False
-        path = self.asset_root / rel
-        if not path.is_file():
-            # Repository-tracked catalogs ship from the checkout when the asset root lacks them.
-            if (self.repo / rel).is_file() and rel.startswith("catalog/"):
-                self.files.setdefault(rel, reason + " (tracked)")
-                return True
+        if not self.source_path(rel).is_file():
             self.missing.setdefault(rel, reason)
             return False
         if not is_shippable(rel):
@@ -113,8 +108,11 @@ class Closure:
                     self.files.setdefault(logical, reason)
 
     def source_path(self, rel: str) -> Path:
-        path = self.asset_root / rel
-        return path if path.is_file() else self.repo / rel
+        # Files present in the building checkout (tracked: catalogs, mission sheets, small runtime
+        # data) ship in that checkout's version, which matches the exe; the git-ignored library
+        # comes from the asset root. A fresh worktree holds nothing untracked under assets/.
+        path = self.repo / rel
+        return path if path.is_file() else self.asset_root / rel
 
     def walk_json(self, rel: str) -> None:
         self.walked.add(rel)
@@ -146,7 +144,7 @@ class Closure:
                         text = (self.asset_root / candidate).resolve().relative_to(self.asset_root.resolve()).as_posix()
                     except (ValueError, OSError):
                         continue
-                if (self.asset_root / text).is_file() or ((self.repo / text).is_file() and text.startswith("catalog/")):
+                if (self.asset_root / text).is_file() or (self.repo / text).is_file():
                     self.add(text, f"named by {rel}")
                     break
 
@@ -184,7 +182,7 @@ def gather(asset_root: Path, repo: Path, traces: list[Path]) -> Closure:
     payload = json.loads((repo / "catalog/runtime_payload.v1.json").read_text(encoding="utf-8"))
     for entry in payload["files"]:
         source = entry.get("source")
-        if isinstance(source, str) and source.startswith(("assets/", "catalog/")):
+        if isinstance(source, str) and source.startswith(("assets/", "catalog/", "source_assets/")):
             closure.add(source, "runtime_payload.v1.json")
 
     manifests: set[str] = set()
@@ -201,25 +199,45 @@ def gather(asset_root: Path, repo: Path, traces: list[Path]) -> Closure:
     for act in ("assets/worldgen/act1", "assets/worldgen/act2", "assets/worldgen/act3"):
         manifests.add(act + "/manifest.v1.json")
     for manifest in sorted(manifests):
-        if (asset_root / manifest).is_file():
+        if (asset_root / manifest).is_file() or (repo / manifest).is_file():
             # The manifest and the JSON beside it (edits overlay, scatter layers, features, mission
             # sheets), then whatever those name.
-            for sibling in sorted((asset_root / manifest).parent.glob("*.json")):
-                closure.add(Path(manifest).parent.as_posix() + "/" + sibling.name, f"beside {manifest}")
+            beside = {p.name for root in (asset_root, repo) for p in (root / manifest).parent.glob("*.json")}
+            for name in sorted(beside):
+                closure.add(Path(manifest).parent.as_posix() + "/" + name, f"beside {manifest}")
             closure.add(manifest, "shipping source")
     audio_library(closure)
     for directory in DYNAMIC_DIRS:
         closure.add_dir(directory, "names composed at run time")
+    # Committed load traces (tools/windows_payload_traces/*.txt, file names only) and any given.
+    traces = sorted((repo / "tools" / "windows_payload_traces").glob("*.txt")) + list(traces)
     for trace in traces:
         for line in trace.read_text(encoding="utf-8", errors="replace").splitlines():
-            state, _, rel = line.partition("\t")
-            if state == "present" and rel and not os.path.isabs(rel):
+            state, _, raw = line.partition("\t")
+            rel = logical_trace_path(raw)
+            # Directory resolves (the sound library root) are not loads.
+            if rel and ((asset_root / rel).is_dir() or (repo / rel).is_dir()):
+                continue
+            if state == "present" and rel:
                 closure.add(rel, f"trace {trace.name}")
     # Walking already-added JSON (catalogs added by directory copies) for what they name.
     for rel in sorted(closure.files):
         if rel.endswith(".json") and rel not in closure.walked:
             closure.walk_json(rel)
     return closure
+
+
+def logical_trace_path(raw: str) -> str | None:
+    """A traced path as `assets/...` or `catalog/...`: relative ones as they are; absolute ones (a
+    canonicalized manifest path) from their last `/assets/` or `/catalog/` segment."""
+    path = raw.strip().replace("\\", "/")
+    if path.startswith(("assets/", "catalog/", "source_assets/")):
+        return path
+    for marker in ("/source_assets/", "/assets/", "/catalog/"):
+        at = path.rfind(marker)
+        if at >= 0:
+            return path[at + 1:]
+    return None
 
 
 def sha256(path: Path) -> str:

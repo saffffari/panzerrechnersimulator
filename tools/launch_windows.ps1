@@ -64,6 +64,36 @@
   Present uncapped (a vsync-off copy of the saved graphics preferences) so frame times show the
   real headroom rather than the display's refresh interval.
 
+.PARAMETER Host
+  LAN crew co-op (docs/LAN_WINDOWS.md): host a Tiger for friends on the same Wi-Fi. Campaign,
+  Arena, Garage or Canyon (the Canyon v2 winter run). The host's screen shows the address friends
+  type; run tools\setup_firewall.ps1 once on the host first.
+
+.PARAMETER Join
+  LAN crew co-op: join a host by its address (192.168.1.50 or 192.168.1.50:28460), or `auto` to
+  join the first compatible Tiger heard on the discovery port.
+
+.PARAMETER Role
+  Seat to ask for in LAN play (commander, driver, gunner, loader, radio). The host arbitrates;
+  F6 in play asks for the next free seat. Default: commander for the host, gunner for a client.
+
+.PARAMETER Name
+  Callsign shown to the crew (default: the Windows user name).
+
+.PARAMETER Port
+  LAN gameplay UDP port (default 28460). Discovery stays on 28461.
+
+.PARAMETER Tier
+  Graphics profile. auto (default) picks from the GPU: the 4090 profile on an RTX 4080/4090/5080/
+  5090 class card, else the laptop profile. laptop: 480x272 internal grid, laptop preset, gameplay
+  transport sampling, no MSAA, the shader backend unless a ray-tracing laptop GPU (RTX 30/40/50,
+  Radeon RX 6000/7000, Arc A) is present, in which case raymarch. 4090: the profile above.
+  A tier changes resolution and sampling only, never the scene or the simulation (CLAUDE.md).
+  The laptop profile keeps its own saved preferences (graphics.laptop.v1.json).
+
+.PARAMETER Laptop
+  Shorthand for -Tier laptop.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Mode menu -Windowed
@@ -71,6 +101,9 @@
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Logged -Windowed
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Logged -Autopilot -Seed 29
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Resolution 480x272
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Host Canyon
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Join 192.168.1.50 -Role gunner -Laptop
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Join auto -Windowed
 #>
 [CmdletBinding()]
 param(
@@ -85,13 +118,28 @@ param(
     [Alias('InternalRes')] [ValidateSet('800x450', '640x360', '480x272', '320x180')] [string]$Resolution = '800x450',
     [string]$AssetRoot,
     [string]$Binary,
-    [switch]$NoVsync
+    [switch]$NoVsync,
+    # `$Host` is PowerShell's own console object; the switch is -Host, the variable $HostMission.
+    [Alias('Host')] [ValidateSet('Campaign', 'Arena', 'Garage', 'Canyon')] [string]$HostMission,
+    [string]$Join,
+    [ValidateSet('commander', 'driver', 'gunner', 'loader', 'radio')] [string]$Role,
+    [string]$Name,
+    [ValidateRange(1, 65535)] [int]$Port = 28460,
+    [ValidateSet('auto', 'laptop', '4090')] [string]$Tier = 'auto',
+    [switch]$Laptop
 )
 $ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility, Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
 $Root     = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Target   = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root 'target' }
-if (-not $Binary) { $Binary = Join-Path $Target 'release\panzerrechnersystem.exe' }
+# The portable package (tools/package_windows.ps1) carries the exe at its root and no Cargo.toml.
+$Packaged = (Test-Path (Join-Path $Root 'panzerrechnersystem.exe')) -and -not (Test-Path (Join-Path $Root 'Cargo.toml'))
+if (-not $Binary) {
+    $Binary = if ($Packaged) { Join-Path $Root 'panzerrechnersystem.exe' } else { Join-Path $Target 'release\panzerrechnersystem.exe' }
+}
+if ($HostMission -and $Join) { throw 'Choose either -Host or -Join.' }
+$Lan = [bool]($HostMission -or $Join)
+if ($Laptop) { $Tier = 'laptop' }
 $WorkshopRel = 'assets\worldgen\workshops\gaea-canyon-run-v2\manifest.v1.json'
 if (-not $AssetRoot) {
     $AssetRoot = $Root
@@ -106,7 +154,26 @@ $AssetRoot = (Resolve-Path $AssetRoot).Path
 $Manifest = Join-Path $Root $WorkshopRel
 if (-not (Test-Path $Manifest)) { $Manifest = Join-Path $AssetRoot $WorkshopRel }
 $Runtime  = Join-Path $Root 'artifacts\runtime'
+# A package copied to a USB stick or a share may be read-only: its saves and logs live per user.
+if ($Packaged) { $Runtime = Join-Path $env:LOCALAPPDATA 'Panzerrechnersystem' }
 $Config   = Join-Path $Runtime 'winter-playtest-state\graphics.v1.json'
+
+# --- graphics tier --------------------------------------------------------------------------
+$gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+if ($Tier -eq 'auto') {
+    $Tier = if ($gpus | Where-Object { $_ -match 'RTX\s*(4080|4090|5080|5090)' -and $_ -notmatch 'Laptop' }) { '4090' } else { 'laptop' }
+}
+$GraphicsPreset = 'high'; $GeometryAA = 'msaa4'; $Transport = 'full'
+if ($Tier -eq 'laptop') {
+    $GraphicsPreset = 'laptop'; $GeometryAA = 'off'; $Transport = 'gameplay'
+    if (-not $PSBoundParameters.ContainsKey('Resolution')) { $Resolution = '480x272' }
+    if (-not $PSBoundParameters.ContainsKey('Renderer')) {
+        $rtCapable = $gpus | Where-Object { $_ -match 'RTX\s*[2-5]0\d0|Radeon.*RX\s*[67]\d{3}|Arc.*A\d{3}' }
+        $Renderer = if ($rtCapable) { 'raymarch' } else { 'shader' }
+    }
+    $Config = Join-Path $Runtime 'winter-playtest-state\graphics.laptop.v1.json'
+}
+Write-Host "GPU: $($gpus -join '; ')  ->  tier $Tier, renderer $Renderer, internal $Resolution"
 
 Set-Location $Root
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
@@ -114,7 +181,7 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     if (Test-Path $cargoBin) { $env:Path = "$cargoBin;$env:Path" }
 }
 
-if ($Mode -ne 'check' -and ($Build -or -not (Test-Path $Binary))) {
+if ($Mode -ne 'check' -and -not $Packaged -and ($Build -or -not (Test-Path $Binary))) {
     Write-Host "Building release binary (cargo build --release --locked) ..."
     & cargo build --release --locked --bin panzerrechnersystem
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
@@ -150,7 +217,7 @@ if (-not (Test-Path $Config)) {
     $initial = [ordered]@{
         version = 1; resolution = @($grid[0], $grid[1]); window = @(1280, 720)
         fullscreen = (-not $Windowed); vsync = $true; shadows = 2048
-        full_transport = $true; optics = 1; fps = $false
+        full_transport = ($Transport -eq 'full'); optics = 1; fps = $false
         exposure_ev = 0.0; saturation = 1.0; warmth = 0.0; gamma = 1.0
         storm = $null; sun_phase = 0; sun_speed = 1.0; dither_pattern = 3
         display = [ordered]@{
@@ -191,17 +258,17 @@ foreach ($d in $env:XDG_STATE_HOME, $env:XDG_CACHE_HOME, $env:XDG_CONFIG_HOME) {
 $env:KESSEL_ASSET_ROOT        = $AssetRoot
 $env:KESSEL_CANYON_MANIFEST   = $Manifest
 $env:KESSEL_RENDERER          = $Renderer
-$env:KESSEL_GRAPHICS_PRESET   = 'high'
+$env:KESSEL_GRAPHICS_PRESET   = $GraphicsPreset
 $env:KESSEL_INTERNAL_RES      = $Resolution
 $env:KESSEL_DITHER_PATTERN    = 'screen_bayer8'
-$env:KESSEL_GEOMETRY_AA       = 'msaa4'
+$env:KESSEL_GEOMETRY_AA       = $GeometryAA
 if (-not $Windowed) { $env:KESSEL_FULLSCREEN = '1' }
 $env:KESSEL_SOURCE_VISIBILITY = 'maps'
 $env:KESSEL_GRAPHICS_CONFIG   = $Config
 $env:KESSEL_ENABLE_PIZZA_AUDIO = '1'
-$env:KESSEL_TRANSPORT_QUALITY = 'full'
+$env:KESSEL_TRANSPORT_QUALITY = $Transport
 $env:KESSEL_CANYON_V2         = '1'
-if ($Mode -eq 'play') { $env:KESSEL_CANYON = '1' }
+if ($Mode -eq 'play' -and -not $Lan) { $env:KESSEL_CANYON = '1' }
 if ($Platoon) {
     $env:KESSEL_PLATOON = '2'
     if ($env:ANTHROPIC_API_KEY) { Write-Host 'Platoon radio: Claude model (ANTHROPIC_API_KEY set).' }
@@ -209,6 +276,36 @@ if ($Platoon) {
 }
 if ($Seed) { $env:KESSEL_CANYON_SEED = $Seed }
 if ($Autopilot) { $env:KESSEL_CANYON_AUTOPILOT = '1' }
+
+# --- LAN crew co-op arguments --------------------------------------------------------------------
+$GameArgs = @()
+if ($Lan) {
+    if ($Join -and $Join -ieq 'auto') {
+        Write-Host 'Listening 4 s for a Tiger on UDP 28461 ...'
+        $heard = & $Binary lan-probe discover 4 2>&1 | ForEach-Object { "$_" }
+        $line = $heard | Where-Object { $_ -match '^JOIN ' -and $_ -notmatch '\(protocol v' } | Select-Object -First 1
+        if (-not $line) {
+            $heard | Where-Object { $_ -match '^JOIN ' } | ForEach-Object { Write-Warning "Heard an incompatible build: $_" }
+            throw ("No compatible Tiger answered on the discovery port. Ask the host for the address on " +
+                "their screen and use -Join <address>; see docs\LAN_WINDOWS.md (firewall, client isolation).")
+        }
+        $Join = ($line -split ' ')[1]
+        Write-Host "Found: $line"
+    }
+    if ($HostMission) {
+        $GameArgs += '--host', '--mission', $HostMission.ToLower(), '--bind', "0.0.0.0:$Port"
+        # A fresh deployment each hosting unless -Seed pins one; clients take the host's.
+        $GameArgs += '--seed', $(if ($Seed) { $Seed } else { [string](Get-Random -Minimum 1 -Maximum 2147483647) })
+        if (-not $Role) { $Role = 'commander' }
+    } else {
+        $address = if ($Join -match ':\d+$' -or $Port -eq 28460) { $Join } else { "${Join}:$Port" }
+        $GameArgs += '--join', $address
+        if (-not $Role) { $Role = 'gunner' }
+    }
+    $GameArgs += '--role', $Role
+    if ($Name) { $GameArgs += '--name', $Name }
+    if ($HostMission -eq 'Canyon' -and $Platoon) { Write-Host 'Platoon wingmen are host-only in LAN play (not replicated yet).' }
+}
 
 # --- launch -----------------------------------------------------------------------------------
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -225,12 +322,18 @@ if ($Logged) {
     "[launcher] binary=$Binary sha256=$sha"
     "[launcher] checkout=$Root asset_root=$AssetRoot manifest=$Manifest"
     "[launcher] commit $(& git -C $Root log -1 --format='%h %s' 2>$null)"
-    "[launcher] renderer=$Renderer preset=high internal=$Resolution geometry_aa=msaa4 visibility=maps config=$Config platoon=$Platoon"
+    "[launcher] renderer=$Renderer tier=$Tier preset=$GraphicsPreset internal=$Resolution geometry_aa=$GeometryAA transport=$Transport visibility=maps config=$Config platoon=$Platoon"
+    "[launcher] lan=$Lan args=$($GameArgs -join ' ')"
     "[launcher] logged=$Logged autopilot=$Autopilot seed=$Seed session_log=$env:KESSEL_SESSION_LOG"
 ) | Set-Content $log
 $errLog = "$log.stderr"
-$proc = Start-Process -FilePath $Binary -WorkingDirectory $Root -PassThru -NoNewWindow `
-    -RedirectStandardOutput "$log.stdout" -RedirectStandardError $errLog
+$startArgs = @{ FilePath = $Binary; WorkingDirectory = $Root; PassThru = $true; NoNewWindow = $true
+    RedirectStandardOutput = "$log.stdout"; RedirectStandardError = $errLog }
+if ($GameArgs.Count) {
+    # Windows PowerShell joins ArgumentList with spaces and no quoting: quote a callsign with spaces.
+    $startArgs.ArgumentList = $GameArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
+}
+$proc = Start-Process @startArgs
 $null = $proc.Handle  # cache the handle so ExitCode is readable after exit
 Write-Host "Panzerrechnersystem PID $($proc.Id); log: $log"
 $proc.WaitForExit()
