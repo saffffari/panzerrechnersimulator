@@ -27,13 +27,39 @@ fn sample_lit(uv: vec2<f32>) -> vec3<f32> {
     return textureLoad(lit_tex, pixel, 0).rgb;
 }
 
+// Fine wiping marks on the outer glass: short arcs about a few cleaning-cloth centres, a fraction
+// of a pixel wide. They scatter a little of the light already in the field, so they show only
+// against a bright sky and never as dirt (a well-kept sight; 2026-10-28).
+fn wipe_marks(p: vec2<f32>) -> f32 {
+    var marks = 0.0;
+    let centres = array<vec2<f32>, 3>(vec2(-0.31, 0.22), vec2(0.27, -0.18), vec2(0.05, 0.41));
+    for (var i = 0u; i < 3u; i += 1u) {
+        let d = p - centres[i];
+        let radius = length(d) * 260.0;
+        let ring = floor(radius);
+        let angle = atan2(d.y, d.x);
+        // One arc in five rings, broken into short strokes along it.
+        let keep = step(0.8, rm_hash01(u32(ring) * 7919u + i * 104729u));
+        let stroke = smoothstep(0.55, 0.85, rm_noise(vec3(angle * 9.0, ring * 0.37, f32(i) * 5.0), 131u));
+        let line = 1.0 - smoothstep(0.0, 0.35, abs(fract(radius) - 0.5));
+        marks += keep * stroke * line;
+    }
+    return clamp(marks, 0.0, 1.0);
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let aspect = fr.res.x / fr.res.y;
-    // Field coordinates: the eyepiece circle has radius 0.45 in the crush's frame.
+    // Field coordinates: each eyepiece field has radius 0.45 in the crush's frame; the TZF's two
+    // overlap side by side (crush.wgsl `tzf_field_distance`), the binoculars' sit 0.20 out.
     let q = (in.uv - vec2(0.5)) * vec2(aspect, 1.0);
     let r = length(q) / 0.45;
     let binocular = fr.optic.x > 2.5;
+    let eyepiece = select(0.17, 0.20, binocular);
+    // The eye's offset from the instrument's axis (fr.optic_eye): what lies at the glass shifts
+    // against the image at infinity, the reticle with it (both in the focal plane).
+    let eye = fr.optic_eye.xy * vec2(1.0, -1.0);
+    let field_r = min(length(q - vec2(eyepiece, 0.0) - eye * 2.0), length(q + vec2(eyepiece, 0.0) - eye * 2.0)) / 0.45;
     // Barrel distortion and lateral colour: both grow with the square of the field angle.
     let k = select(0.055, 0.035, binocular);
     let disp = select(0.012, 0.008, binocular);
@@ -45,7 +71,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     colour.g = sample_lit((base * (1.0 + offsets.y)) / vec2(aspect, 1.0) + vec2(0.5)).g;
     colour.b = sample_lit((base * (1.0 + offsets.z)) / vec2(aspect, 1.0) + vec2(0.5)).b;
     // Softening toward the field stop: average a small ring of samples.
-    let soft = smoothstep(0.55, 1.0, r) * 0.6;
+    let soft = smoothstep(0.55, 1.0, field_r) * 0.6;
     if (soft > 0.01) {
         var blur = vec3(0.0);
         let rad = fr.res.zw * (1.0 + 2.5 * soft);
@@ -54,24 +80,25 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         blur += sample_lit(c + vec2(0.0, rad.y)); blur += sample_lit(c - vec2(0.0, rad.y));
         colour = mix(colour, blur * 0.25, soft);
     }
-    // Grime on the glass: faint refracting specks and two hairline scratches, in proportion to
-    // the glass load (surface_wear.rs; KESSEL_GLASS_GRIME fixes it): a fresh sight is clean, a
-    // load of 1 is the former fixed pattern (2026-10-28: "way too heavy" from the start).
-    let load = clamp(fr.wear.z, 0.0, 1.0);
-    var grime = 0.0;
-    if (load > 0.0) {
-        let g = in.uv * vec2(aspect, 1.0) * 60.0;
-        let speck = rm_noise(vec3(g, 3.0), 123u);
-        let speck_mask = smoothstep(0.82, 0.9, speck);
-        let scratch_a = 1.0 - smoothstep(0.0, 0.012, abs(q.y - 0.18 * q.x + 0.11 + 0.02 * sin(q.x * 9.0)));
-        let scratch_b = 1.0 - smoothstep(0.0, 0.008, abs(q.x + 0.35 * q.y - 0.21));
-        grime = (speck_mask * 0.6 + max(scratch_a, scratch_b) * 0.5) * load;
+    // The outer glass, which the eye sees a few centimetres away while focused at infinity: it
+    // lies at the eye's offset from the axis (moving against the image as the hull jolts),
+    // softly. The sights are kept clean: no stains (2026-10-28, "well maintained").
+    let glass = q - eye * 3.0;
+    // A ghost: the field reflected between the eyepiece's surfaces, turned through 180 degrees,
+    // defocused and tinted by the coating, at half a percent.
+    let ghost_uv = vec2(0.5) - (glass * 0.92) / vec2(aspect, 1.0);
+    var ghost = vec3(0.0);
+    let spread = fr.res.zw * 6.0;
+    ghost += sample_lit(ghost_uv + vec2(spread.x, 0.0)); ghost += sample_lit(ghost_uv - vec2(spread.x, 0.0));
+    ghost += sample_lit(ghost_uv + vec2(0.0, spread.y)); ghost += sample_lit(ghost_uv - vec2(0.0, spread.y));
+    colour += ghost * 0.25 * 0.005 * vec3(0.85, 0.80, 1.05);
+    // Fine wiping marks scatter 3 % of the local field light where they lie.
+    let marks = wipe_marks(glass);
+    if (marks > 0.0) {
+        let local = (sample_lit(in.uv + vec2(fr.res.z * 2.0, 0.0)) + sample_lit(in.uv - vec2(fr.res.z * 2.0, 0.0))) * 0.5;
+        colour += local * marks * 0.03;
     }
-    if (grime > 0.01) {
-        let shifted = sample_lit(in.uv + vec2(0.006, -0.004) * grime);
-        colour = mix(colour, shifted * 1.08 + vec3(0.002), grime * 0.7);
-    }
-    // Vignette of the field stop; the crush's mask draws the hard rim.
-    colour *= 1.0 - 0.25 * smoothstep(0.7, 1.0, r);
+    // Vignette of the exit pupil, following the eye; the crush's mask draws the hard rim.
+    colour *= 1.0 - 0.25 * smoothstep(0.7, 1.0, field_r);
     return vec4(colour, 1.0);
 }

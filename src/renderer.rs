@@ -2595,6 +2595,10 @@ pub struct Renderer {
     /// Legacy gunner-optic obscuration envelope. Retained while the game-side producer migrates;
     /// the screen-space snow-dust veil was not a modeled medium and is no longer rendered.
     pub optic_blast: f32,
+    /// Where the gunner's eye sits off the sight's axis, in fractions of the screen height (x
+    /// right, y up): the sight's true line against the steadied view (`Game::sight_view_model`).
+    /// The eyepiece pass shifts what lies on the glass and the exit pupil's shading by it.
+    pub optic_eye: [f32; 2],
     /// The player's gun muzzle (position, bore direction) this frame, so a backend can tell the
     /// gun's own report from a detonation downrange. Set by the game each update.
     pub muzzle_hint: Option<(glam::Vec3, glam::Vec3)>,
@@ -5872,6 +5876,7 @@ impl Renderer {
             fog_density: 0.02,
             reticle: false,
             optic_blast: 0.0,
+            optic_eye: [0.0; 2],
             observer_flash_source: false,
             crew_ko: 0.0,
             crew_ko_dir: [0.72, 0.69],
