@@ -8030,6 +8030,7 @@ impl Renderer {
             queue.write_buffer(&self.near_shadow_camera_buf,0,bytemuck::bytes_of(&near_camera));
             queue.write_buffer(&self.near_shadow_buf,0,bytemuck::bytes_of(&near));
             if raster_passes { self.cabin_shadows.prepare(self,queue,&cam); }
+            else { self.cabin_shadows.prepare_unmapped(self,queue); }
             self.sky_visibility.prepare(self,queue);
         }
         // The probe also lights the forward menu/editor pipe on the deferred backend.

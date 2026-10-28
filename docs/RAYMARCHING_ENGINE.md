@@ -721,6 +721,19 @@ traversing 10.4 (21.6 %) before, 5.9 (8.8 %) after at 480x270; at rest 4.6 (5.8 
 after. `captures/rm_gun_before_after_sheet.png` (left before, right after at 480x270; top traversing,
 bottom at rest); `rm_gun3_*` the same after the fix at 800x450 and 640x360.
 
+## Magenta in the night cabin (fixed 2026-10-28)
+
+At night a band of saturated magenta noise lay left of the gunner's eyepiece and a streak across the
+lower right, in the cabin round the TZF (8 649 pixels of `rm_tracers9_sight_quiet_composite`). It
+was the shader backend's unresolved-visibility sentinel (`shadow_map_visibility.wgsl`, colour
+(1, 0, 1)) on the relayed port views and their reflections: the relays stopped rebuilding the cabin
+lamps' shadow cubes (10 ms a frame), which left the lamps unregistered, and a lamp with no
+registration returns the sentinel. Relayed frames now register every point source with zero reach
+(`CabinShadows::prepare_unmapped`): the relayed exterior views take no light from lamps, fires or
+flashes (named in the ledger). The composite now has no magenta, and the eye, no longer metering the
+bright sentinel, adapts to the dark cabin: its lamps light the steel round the eyepiece
+(`captures/rm_magenta_fix_sight_quiet_composite.png`).
+
 ## The MG's tracers and flash (2026-10-28)
 
 Request: "MG tracer emission is too large radius, should be tighter like a small-arms bullet." Five
