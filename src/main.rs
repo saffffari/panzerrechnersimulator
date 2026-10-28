@@ -43,6 +43,7 @@
 
 mod simulation_uploads;
 mod session_log;
+mod sim_phase;
 mod canyon_autopilot;
 mod scene_visibility;
 mod scene_visibility_gpu;
@@ -13335,7 +13336,8 @@ impl WindowState {
                     "instances": {"batches": instance_batches, "live": instances},
                     "extras": self.renderer.session_render_extras(),
                 });
-                let game = self.game.session_telemetry();
+                let mut game = self.game.session_telemetry();
+                game["sim_phases_ms"] = self.game.sim_phase.take();
                 if let Some(log) = self.session_log.as_mut() { log.write(game, render); }
             }
         }

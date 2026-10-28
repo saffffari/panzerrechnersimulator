@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Summarise a KESSEL_SESSION_LOG run (src/session_log.rs) for a performance report.
 
-    python tools/analyze_session_log.py RUN.jsonl [--console RUN.console.log] [--memory RUN.memory.csv]
+    python tools/analyze_session_log.py RUN.jsonl[.gz] [--console RUN.console.log] [--memory RUN.memory.csv]
         [--json OUT.json] [--label NAME]
 
 Prints Markdown: frame-time percentiles over time (per minute), the worst five seconds with the
@@ -16,6 +16,7 @@ own p99 values. The overall mean frame time is exact (frame-count weighted).
 """
 import argparse
 import csv
+import gzip
 import json
 import math
 import re
@@ -33,7 +34,8 @@ def pct(values, q):
 
 def load(path):
     lines = []
-    with open(path, encoding="utf-8") as f:
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as f:
         for raw in f:
             raw = raw.strip()
             if raw:
@@ -188,7 +190,7 @@ def main():
     # ---- worst five seconds --------------------------------------------------------------------
     worst = sorted(play, key=lambda r: r["frame_ms"]["p99"], reverse=True)[:5]
     p("Worst five seconds (by that second's p99 frame time) and what the snapshot says was happening:\n")
-    p("| play time | fps | p99 ms | max ms | sim p99 | submit p99 | snapshot |")
+    p("| play time | fps | mean / p99 / max ms | sim mean / p99 | submit mean / p99 | GPU pass sum (if fenced) | snapshot |")
     p("|---|---|---|---|---|---|---|")
     out["worst"] = []
     for r in worst:
@@ -197,8 +199,10 @@ def main():
         out["worst"].append({"t_s": r["t_s"], "elapsed_s": el, "fps": r["fps"], "frame": r["frame_ms"],
                              "sim_p99": g(r, "cpu_sim_ms", "p99"), "submit_p99": g(r, "cpu_render_submit_ms", "p99"),
                              "snapshot": line})
-        p(f"| {fmt(el, 0)} s | {r['fps']:.1f} | {r['frame_ms']['p99']:.1f} | {r['frame_ms']['max']:.1f} | "
-          f"{fmt(g(r, 'cpu_sim_ms', 'p99'))} | {fmt(g(r, 'cpu_render_submit_ms', 'p99'))} | {line} |")
+        p(f"| {fmt(el, 0)} s | {r['fps']:.1f} | {r['frame_ms']['mean']:.1f} / {r['frame_ms']['p99']:.1f} / {r['frame_ms']['max']:.1f} | "
+          f"{fmt(g(r, 'cpu_sim_ms', 'mean'))} / {fmt(g(r, 'cpu_sim_ms', 'p99'))} | "
+          f"{fmt(g(r, 'cpu_render_submit_ms', 'mean'))} / {fmt(g(r, 'cpu_render_submit_ms', 'p99'))} | "
+          f"{fmt(g(r, 'gpu', 'pass_sum_ms'))} | {line} |")
     p("")
 
     # ---- GPU passes -----------------------------------------------------------------------------
@@ -224,21 +228,56 @@ def main():
         rows = []
         for label, v in passes.items():
             total = sum(v) / nsamp  # mean over all fenced samples (absent counts as 0)
-            rows.append((label, total, statistics.fmean(v), pct(v, 0.95), max(v), len(v)))
-        rows.sort(key=lambda x: x[1], reverse=True)
+            med = pct(v + [0.0] * (nsamp - len(v)), 0.5)
+            rows.append((label, total, med, pct(v, 0.95), max(v), len(v)))
+        # Ranked by the median frame: on a time-sliced GPU a few fenced frames are preempted and
+        # their single-pass times (tens of ms) dominate a mean.
+        rows.sort(key=lambda x: (x[2], x[1]), reverse=True)
         mean_sum = statistics.fmean(sums)
-        p(f"GPU passes from {nsamp} fenced frames (sum of pass means {mean_sum:.2f} ms; fenced frame wall "
-          f"median {pct([x for x in fenced if not math.isnan(x)], 0.5):.2f} ms). Ranked by mean cost per frame:\n")
-        p("| rank | pass | mean ms/frame | share | mean when present | p95 | max | present in |")
+        med_sum = pct(sums, 0.5)
+        p(f"GPU passes from {nsamp} fenced frames (pass sum: median {med_sum:.2f} ms, mean {mean_sum:.2f} ms; "
+          f"fenced frame wall median {pct([x for x in fenced if not math.isnan(x)], 0.5):.2f} ms). "
+          f"Ranked by median cost per frame:\n")
+        p("| rank | pass | median ms/frame | share of median sum | mean | p95 | max | frames |")
         p("|---|---|---|---|---|---|---|---|")
-        for i, (label, tot, mean_present, p95, mx, cnt) in enumerate(rows[:25], 1):
-            p(f"| {i} | `{label}` | {tot:.3f} | {100*tot/max(mean_sum,1e-9):.1f} % | {mean_present:.3f} | {p95:.3f} | {mx:.3f} | {cnt}/{nsamp} |")
-        out["gpu_passes"] = [{"pass": r[0], "mean_ms": r[1], "mean_present_ms": r[2], "p95_ms": r[3], "max_ms": r[4], "present": r[5]} for r in rows]
+        for i, (label, tot, med, p95, mx, cnt) in enumerate(rows[:25], 1):
+            p(f"| {i} | `{label}` | {med:.3f} | {100*med/max(med_sum,1e-9):.1f} % | {tot:.3f} | {p95:.3f} | {mx:.3f} | {cnt}/{nsamp} |")
+        out["gpu_passes"] = [{"pass": r[0], "mean_ms": r[1], "median_ms": r[2], "p95_ms": r[3], "max_ms": r[4], "present": r[5]} for r in rows]
         out["gpu_pass_sum_mean_ms"] = mean_sum
+        out["gpu_pass_sum_median_ms"] = med_sum
+        p("")
+
+    # ---- simulation phases (game.sim_phases_ms: mean ms per Game::update call) ------------------
+    def band(r):
+        n = g(r, "game", "combat", "nearest_enemy_vehicle_m")
+        if n is None:
+            return "no enemy vehicle"
+        return "enemy < 150 m" if n < 150 else "enemy 150-420 m" if n < 420 else "enemy > 420 m"
+    phased = [r for r in play if g(r, "game", "sim_phases_ms")]
+    if phased:
+        names = [k for k in phased[0]["game"]["sim_phases_ms"] if k != "updates"]
+        groups = defaultdict(list)
+        for r in phased:
+            groups["all"].append(r)
+            groups[band(r)].append(r)
+        p("CPU simulation by phase (ms per presented frame = mean per update × updates ÷ frames), "
+          "split by the nearest enemy vehicle's range:\n")
+        p("| seconds | " + " | ".join(names) + " | other | cpu_sim total |")
+        p("|---|" + "---|" * (len(names) + 2))
+        out["sim_phases"] = {}
+        for key in ["all", "no enemy vehicle", "enemy > 420 m", "enemy 150-420 m", "enemy < 150 m"]:
+            rs = groups.get(key)
+            if not rs:
+                continue
+            per = {k: statistics.fmean(r["game"]["sim_phases_ms"][k] * r["game"]["sim_phases_ms"]["updates"] / max(1, r["frame_ms"]["n"]) for r in rs) for k in names}
+            total = statistics.fmean(r["cpu_sim_ms"]["mean"] for r in rs)
+            other = total - sum(per.values())
+            out["sim_phases"][key] = {"seconds": len(rs), **per, "other": other, "cpu_sim": total}
+            p(f"| {key} ({len(rs)} s) | " + " | ".join(f"{per[k]:.2f}" for k in names) + f" | {other:.2f} | {total:.2f} |")
         p("")
 
     # ---- render work ----------------------------------------------------------------------------
-    rm_keys = ["lights", "shadowed_lights", "parcels", "cell_items", "embers", "spark_records", "tracer_records", "events", "prepare_ms", "encode_ms"]
+    rm_keys =["lights", "shadowed_lights", "parcels", "cell_items", "embers", "spark_records", "tracer_records", "events", "prepare_ms", "encode_ms"]
     rmv = defaultdict(list)
     for r in play:
         rm = g(r, "render", "extras", "raymarch")
@@ -335,7 +374,9 @@ def main():
         stalls.append({"from_s": el(run_start), "to_s": el(play[-1]), "at": g(run_start, "game", "tiger", "position")})
     gp["stalls"] = stalls
     if a.console:
-        txt = open(a.console, encoding="utf-8", errors="replace").read()
+        opener = gzip.open if a.console.endswith(".gz") else open
+        with opener(a.console, "rt", encoding="utf-8", errors="replace") as f:
+            txt = f.read()
         gp["tank_stopped_lines"] = len(re.findall(r"TANK STOPPED", txt))
         m = re.search(r"\[autopilot-result\] (\{.*\})", txt)
         gp["autopilot_result"] = json.loads(m.group(1)) if m else None

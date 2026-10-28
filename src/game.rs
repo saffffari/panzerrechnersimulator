@@ -9456,6 +9456,8 @@ pub struct Game {
     canyon_spec: Option<crate::canyon::CourseSpec>,
     canyon_paper: Option<(u32, [f32; 4])>,
     canyon_run: Option<crate::canyon::CanyonRun>,
+    /// Session-log timing of the heavier update phases (`sim_phase.rs`); read by nothing else.
+    pub(crate) sim_phase: crate::sim_phase::SimPhases,
     canyon_siting: Option<serde_json::Value>,
     /// The mission in play (src/mission.rs, docs/MISSIONS.md): its beats, cues and radio.
     mission: Option<crate::mission::MissionState>,
@@ -13385,6 +13387,7 @@ impl Game {
                 .inspect_err(|error| eprintln!("[canyon] course block refused: {error:#}")).ok().flatten()),
             canyon_paper,
             canyon_run: None,
+            sim_phase: Default::default(),
             canyon_siting: None,
             mission: None,
             mission_objectives: Vec::new(),
@@ -16048,6 +16051,7 @@ impl Game {
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        self.sim_phase.count_update();
         if let Some(arms)=&self.first_person {arms.clear(r);}
         // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
         // also sets it does not run on every path).
@@ -16373,9 +16377,9 @@ impl Game {
                         else { "CLOSE HATCH [LMB] - STEP TO THE OPENING TO ENTER" });
                 }
             }
-            self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
-            self.enemy_ai(dt);
-            self.resolve_vehicle_contacts(dt);
+            let phase_t = std::time::Instant::now(); self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb) self.sim_phase.add(crate::sim_phase::Phase::Infantry, phase_t);
+            let phase_t = std::time::Instant::now(); self.enemy_ai(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAi, phase_t);
+            let phase_t = std::time::Instant::now(); self.resolve_vehicle_contacts(dt); self.sim_phase.add(crate::sim_phase::Phase::VehicleContacts, phase_t);
                                          // A climb that finished INTO the tank this frame flips the mode — the tank arm picks
                                          // up next frame; nothing else to do here.
             if matches!(self.mode, Mode::Tank) {
@@ -16603,8 +16607,8 @@ impl Game {
             self.update_crew_vehicle_mg(input, dt);
 
             // enemy return-fire AI: track the player and shoot when laid + reloaded.
-            self.enemy_ai(dt);
-            self.resolve_vehicle_contacts(dt);
+            let phase_t = std::time::Instant::now(); self.enemy_ai(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAi, phase_t);
+            let phase_t = std::time::Instant::now(); self.resolve_vehicle_contacts(dt); self.sim_phase.add(crate::sim_phase::Phase::VehicleContacts, phase_t);
 
             // Hide first-person dismounted equipment while riding in the tank.
             self.hide_p08(r);
@@ -16624,7 +16628,7 @@ impl Game {
             }
             r.set_visible(self.slots.hammer, false);
             // Infantry remains persistent while mounted; rifles cannot damage the Tiger.
-            self.update_infantry_passive(dt, r);
+            let phase_t = std::time::Instant::now(); self.update_infantry_passive(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Infantry, phase_t);
 
             // ── Per-station first-person camera (four seats; lerped across a station switch so you SEE
             // the scramble). GUNNER: down the sight. LOADER: at the breech, hands busy (no free-look).
@@ -17365,7 +17369,7 @@ impl Game {
         self.drive_portable_items(dt, r);
 
         // Advance wreck fire clocks, tumbling turret-pop physics, and delayed cook-offs.
-        self.update_wrecks(dt);
+        let phase_t = std::time::Instant::now(); self.update_wrecks(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
         self.enemy_crew.update(dt, &self.enemies, &self.wrecks, &self.hf, &self.occluders);
         self.enemy_crew.draw(r);
         self.living_wounds.update_draw(dt,r);
@@ -17387,8 +17391,8 @@ impl Game {
 
         // Advance the PLAYER's interior fire: it grows once lit and, once established, reaches the
         // ammunition on a countdown — an unchecked fire cooks off the ammo (catastrophic kill).
-        self.update_fire(dt);
-        self.update_haze(dt);
+        let phase_t = std::time::Instant::now(); self.update_fire(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
+        let phase_t = std::time::Instant::now(); self.update_haze(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
 
         // Push enemy transforms. A LIVING enemy draws normally (lit, no glow). A DEAD one stays on
         // the field as a BURNING WRECK — its hull (and, unless the turret popped, its turret) keep
@@ -17553,12 +17557,12 @@ impl Game {
 
         // Resolve cannon flight after every moving vehicle has advanced. This is host simulation,
         // not presentation: all split views sample the same stable-ID projectile pool below.
-        self.advance_projectiles(dt, r);
+        let phase_t = std::time::Instant::now(); self.advance_projectiles(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Projectiles, phase_t);
         self.dispatch_shell_flight_audio(r);
         self.sync_authoritative_tracer_presentation();
         self.update_panzerfaust_shot(dt, r);
         self.drive_panzerfaust_rack(r);
-        self.update_fx(dt, r);
+        let phase_t = std::time::Instant::now(); self.update_fx(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Fx, phase_t);
         self.update_track_snow(dt,r);
         self.update_scene_environment(r);
         self.update_personal_hand_presentation(dt,r);
@@ -17579,8 +17583,8 @@ impl Game {
         if let Some(arms)=&self.first_person {arms.draw(self,dt,r);}
         self.update_cigarette_pickup_prompt(r);
         self.update_winter_mission(dt);
-        self.update_canyon_run(dt, r);
-        self.update_mission(dt, r, input);
+        let phase_t = std::time::Instant::now(); self.update_canyon_run(dt, r); self.sim_phase.add(crate::sim_phase::Phase::CanyonMission, phase_t);
+        let phase_t = std::time::Instant::now(); self.update_mission(dt, r, input); self.sim_phase.add(crate::sim_phase::Phase::CanyonMission, phase_t);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
         {
             let mut bx: Vec<(Vec3, Vec3, f32)> = Vec::new();
