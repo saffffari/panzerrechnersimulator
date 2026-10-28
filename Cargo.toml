@@ -29,6 +29,12 @@ ab_glyph = "0.2"
 rodio = { version = "0.20", default-features = false, features = ["vorbis"] }
 gilrs = "0.11"
 
+# LAN discovery on Windows: enumerate IPv4 adapters (GetAdaptersAddresses) so the beacon reaches the
+# Wi-Fi subnet and not only the Hyper-V/WSL switch that wins the limited-broadcast route. Already in
+# the lock through winit/wgpu; only the three API modules are added.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+
 # Keep our code fast to compile in dev, but optimize the heavy deps (wgpu/naga)
 # so the engine actually runs at speed during iteration.
 [profile.dev]

@@ -32,7 +32,8 @@ pub fn load() -> anyhow::Result<[CpuMesh; 2]> {
     Ok([body, needle].map(|page| page.transformed(Mat4::from_scale(Vec3::splat(0.5)))))
 }
 
-fn models(camera: &Camera, raise: f32) -> [Mat4; 2] {
+/// `march_bearing_deg` sets the bezel: the body turns to the ordered bearing, the needle keeps north.
+fn models(camera: &Camera, raise: f32, march_bearing_deg: Option<f32>) -> [Mat4; 2] {
     let forward = camera.forward();
     let right = forward.cross(Vec3::Y).normalize_or_zero();
     let up = right.cross(forward).normalize_or_zero();
@@ -48,7 +49,8 @@ fn models(camera: &Camera, raise: f32) -> [Mat4; 2] {
     // Dial +Y faces the holder; the source red tip/N mark point along local -Z.
     let body = frame * Mat4::from_rotation_x(55_f32.to_radians());
     let heading = crate::world::heading_of(Vec2::new(forward.x, forward.z));
-    [body, body * Mat4::from_rotation_y(heading.to_radians())]
+    let needle = body * Mat4::from_rotation_y(heading.to_radians());
+    [body * Mat4::from_rotation_y(march_bearing_deg.unwrap_or(0.0).to_radians()), needle]
 }
 
 impl super::Game {
@@ -86,10 +88,11 @@ impl super::Game {
         self.compass_raise +=
             (target - self.compass_raise).clamp(-dt.max(0.0) * 7.0, dt.max(0.0) * 5.0);
         let visible = (self.compass_raise > 0.001 || self.map_held) && self.player.alive;
+        let march = self.mission_march_bearing();
         let pose = if self.map_held {
-            super::hand_map::compass_models(&renderer.camera,self.hand_map_view)
+            super::hand_map::compass_models(&renderer.camera,self.hand_map_view,march)
         } else {
-            models(&renderer.camera, self.compass_raise)
+            models(&renderer.camera, self.compass_raise, march)
         };
         for (slot, model) in self.slots.hand_compass.into_iter().zip(pose) {
             renderer.set_visible(slot, visible);
@@ -127,7 +130,7 @@ mod tests {
         ] {
             camera.yaw = yaw.to_radians();
             camera.pitch = 0.0;
-            let [body, needle] = models(&camera, 1.0);
+            let [body, needle] = models(&camera, 1.0, None);
             let relative = body.inverse() * needle;
             assert!(relative
                 .transform_vector3(Vec3::NEG_Z)

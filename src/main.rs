@@ -43,7 +43,13 @@
 
 mod simulation_uploads;
 mod session_log;
+mod sim_phase;
+mod canyon_autopilot;
+mod suspension;
+mod vehdyn_trace;
+mod vehicle_spec;
 mod scene_visibility;
+mod scatter_field;
 mod scene_visibility_gpu;
 mod display_preview;
 mod acoustics;
@@ -80,6 +86,10 @@ mod campaign;
 mod campaign_save;
 mod canyon;
 mod canyon_attempt;
+mod mission;
+mod mission_capture;
+mod radio_llm;
+mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
 mod canyon_director;
@@ -97,6 +107,8 @@ mod ephemeris;
 mod celestial_sky;
 mod observer;
 mod foot;
+mod first_aid;
+mod crew_solo_capture;
 mod foot_ai;
 mod astra_capture;
 mod astra_survey;
@@ -115,6 +127,8 @@ mod infantry;
 mod infantry_combat;
 mod interior_rig;
 mod lan;
+mod net_ifaces;
+mod lan_crew_proof;
 mod mechanic_capture;
 mod blizzard_battle_capture;
 mod combat_scene_suite;
@@ -158,6 +172,9 @@ mod tank_support;
 mod track_snow;
 mod tank_dressing;
 mod terrain;
+mod terrain_lod;
+mod terrain_relief;
+mod terrain_showcase;
 mod terrain_opening;
 mod texelsplat;
 mod trees;
@@ -203,6 +220,20 @@ fn create_instance() -> wgpu::Instance {
     })
 }
 fn request_adapter(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> wgpu::Adapter {
+    // `KESSEL_ADAPTER=<name substring>`: run on a named GPU instead of the high-performance one
+    // (measuring a laptop-class integrated GPU on a machine that also has a discrete card).
+    if let Ok(wanted) = std::env::var("KESSEL_ADAPTER") {
+        let wanted = wanted.to_ascii_lowercase();
+        let found = instance
+            .enumerate_adapters(wgpu::Backends::all())
+            .into_iter()
+            .filter(|adapter| adapter.get_info().name.to_ascii_lowercase().contains(&wanted))
+            .find(|adapter| surface.is_none_or(|surface| adapter.is_surface_supported(surface)));
+        match found {
+            Some(adapter) => return adapter,
+            None => eprintln!("[panzerrechnersystem] KESSEL_ADAPTER={wanted:?} matched no adapter; using the default"),
+        }
+    }
     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: surface,
@@ -264,10 +295,18 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     if adapter.features().contains(renderer::HDR_FULL_FLOAT_FEATURES) {
         features |= renderer::HDR_FULL_FLOAT_FEATURES;
     }
+    // The strewn field's GPU culling (renderer_scatter.rs) draws every visible prototype of a
+    // texture page in one multi-draw when the adapter offers it; otherwise one indirect draw per
+    // bucket with the bucket's base in a push constant.
+    if adapter.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) {
+        features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
+    }
     let mut limits = wgpu::Limits {
         max_push_constant_size: REQUIRED_PUSH_CONSTANT_SIZE,
         ..Default::default()
     };
+    // The scatter cull binds nine storage buffers in one compute stage.
+    limits.max_storage_buffers_per_shader_stage = al.max_storage_buffers_per_shader_stage.min(12);
     // Several 32-bit float targets in one pass exceed the default 32 bytes per sample.
     limits.max_color_attachment_bytes_per_sample = al.max_color_attachment_bytes_per_sample.min(96);
     // Portable exact source visibility needs the same lossless geometry capacity without RT.
@@ -297,7 +336,7 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         const RT_MAX_BUFFER_BYTES: u64 = 4 * 1024 * 1024 * 1024;
         limits.max_buffer_size = al.max_buffer_size.min(RT_MAX_BUFFER_BYTES);
         limits.max_storage_buffer_binding_size = al.max_storage_buffer_binding_size;
-        limits.max_storage_buffers_per_shader_stage = RT_STORAGE_BUFFERS_PER_STAGE;
+        limits.max_storage_buffers_per_shader_stage = al.max_storage_buffers_per_shader_stage.clamp(RT_STORAGE_BUFFERS_PER_STAGE, 12);
         limits.max_blas_primitive_count = al.max_blas_primitive_count.min(1 << 22);
         limits.max_blas_geometry_count = al.max_blas_geometry_count.min(4);
         // Act scale is 60k+ instanced building modules and dressing; the renderer's capacity is
@@ -943,6 +982,7 @@ fn run_gfxbench(
     println!("[gfxbench] cpu: TLAS rewrite {:.2} ms, encoder finish {:.2} ms, submit {:.2} ms (mean per frame)",
         cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
     if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
+    if let Some(stats) = r.scatter_stats() { println!("[gfxbench] scatter {stats:?}"); }
     times.sort_by(f32::total_cmp);
     let n = times.len();
     let avg: f32 = times.iter().sum::<f32>() / n as f32;
@@ -2246,7 +2286,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
     );
     let (device, queue) = request_device(&adapter);
     let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display" | "graphics" | "torch-on" | "torch-off" | "sunrise" | "sunset" | "stars" | "storm" | "clouds" | "kia-black"
-        | "death" | "actcard" | "ending" | "finaldefeat") {
+        | "death" | "actcard" | "ending" | "finaldefeat" | "runbrief" | "runcard-win" | "runcard-loss") {
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
         game.set_defer_rtt_to_render(true);
@@ -2282,6 +2322,9 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
         }
         "death" => draw_fallen_card(&mut r, death_card::identity(1943, 1943)),
+        "runbrief" => ui::draw_run_brief(&mut r, &canyon::RunBrief::example()),
+        "runcard-win" => ui::draw_run_card(&mut r, &canyon::RunReport::example(true), true),
+        "runcard-loss" => ui::draw_run_card(&mut r, &canyon::RunReport::example(false), true),
         "hint" => {
             ui::draw_black(&mut r);
             let hint = interaction_hint("OPEN CUPOLA HATCH [LMB]", game::InteractKind::Click);
@@ -2357,6 +2400,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 287.0,
                 true,
                 _g.map_world_position(),
+                None,
             );
             r.render_held_map_texture(&device, &queue, _g.held_map_slot());
             r.ui_reset();
@@ -2632,7 +2676,7 @@ fn run_campaign_ai(
     let preset = std::env::var("KESSEL_GRAPHICS_PRESET")
         .ok()
         .and_then(|value| graphics::GraphicsPreset::parse(&value))
-        .unwrap_or(graphics::GraphicsPreset::Laptop);
+        .unwrap_or(graphics::GraphicsPreset::Low);
     if std::env::var_os("KESSEL_NO_RT").is_none() {
         std::env::set_var("KESSEL_NO_RT", "1");
     }
@@ -9669,6 +9713,9 @@ struct Keys {
     f: bool,     // F edge equips/stows the physical flashlight
     e: bool,     // E held: the one interaction key (see App::interaction_primary)
     g: bool,     // G — held field repair (locks all stations)
+    k: bool,     // K — solo crew: the gunner's standing order (fire at will / hold fire)
+    y: bool,     // Y — solo crew: yes to a crewman's request
+    n: bool,     // N — solo crew: no to a crewman's request
     shift: bool, // on-foot run (hold)
     ctrl: bool,  // hold to crouch on foot or while walking inside the tank
     mmb: bool,   // middle mouse held — coax MG34 at the gunner sights
@@ -9706,8 +9753,12 @@ impl Keys {
             interaction: false, // set after the E key is resolved against the game
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
+            fire_order: self.k,
+            crew_yes: self.y,
+            crew_no: self.n,
             coop: None,
             coop_host: false,
+            coop_ai_crew: false,
             couch_crew: false,
             couch_identities: [None; game::COUCH_CREW_ROLES.len()],
         }
@@ -9739,6 +9790,9 @@ fn lan_role_input(
     }
     if input.hatch_toggle {
         flags |= lan::F_HATCH_TOGGLE;
+    }
+    if input.fire_order {
+        flags |= lan::F_FIRE_ORDER;
     }
     match role {
         lan::LanRole::Commander => {
@@ -11157,6 +11211,91 @@ enum AppState {
         t: f32,
         reason: campaign::FinalDefeatReason,
     },
+    /// The Canyon run's opening card (src/canyon.rs `RunBrief`), once per session, over the
+    /// built world: the course in a few words, then any key drops in.
+    RunBrief {
+        t: f32,
+    },
+    /// The Canyon after-action card (`RunReport`) after a death or a finish. Enter starts a
+    /// fresh seeded attempt without the title; Escape leaves for the title.
+    RunCard {
+        t: f32,
+    },
+}
+
+/// The cards ignore input this long after they appear, so a key held or mashed through the
+/// death skip or the world build cannot dismiss them unread.
+const RUN_CARD_ARM_S: f32 = 0.6;
+
+/// `asset-trace`: build every world LAN co-op can host (garage, arena, the three campaign acts and
+/// the Canyon v2 course) once, so `KESSEL_ASSET_TRACE` records what each one loads for the
+/// portable Windows folder (`tools/windows_payload.py`). Nothing is rendered or timed.
+fn run_asset_trace() -> anyhow::Result<()> {
+    anyhow::ensure!(
+        std::env::var_os("KESSEL_ASSET_TRACE").is_some(),
+        "asset-trace needs KESSEL_ASSET_TRACE=FILE"
+    );
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    graphics::set_active_preset(graphics::GraphicsPreset::for_adapter(info.device_type));
+    println!("[asset-trace] adapter {}", info.name);
+    let (device, queue) = request_device(&adapter);
+    let mut worlds = vec![("garage", world::garage()), ("arena", world::act(0))];
+    for act in 1..=world::ACT_COUNT {
+        worlds.push(("campaign act", world::act(act)));
+    }
+    for (label, map) in worlds {
+        let started = std::time::Instant::now();
+        let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &map)?;
+        match label {
+            "garage" => game.garage_setup(),
+            "arena" => game.arena_setup(),
+            _ => {}
+        }
+        renderer.load_menu_meshes(&device, &queue, &tank::build_tiger());
+        println!("[asset-trace] built {label} {} in {:.1} s", map.id, started.elapsed().as_secs_f32());
+    }
+    select_lan_canyon_manifest()?;
+    let started = std::time::Instant::now();
+    let (_renderer, mut game) = Game::build_act(&device, &queue, false, &world::act(1))?;
+    if game::platoon::requested() {
+        game.enable_platoon();
+    }
+    println!("[asset-trace] built canyon v2 in {:.1} s", started.elapsed().as_secs_f32());
+    act_manifest::select_runtime_manifest(None)?;
+    Ok(())
+}
+
+/// Host and every client select the same Canyon v2 course file before building act 1; the
+/// launcher pins it with `KESSEL_CANYON_MANIFEST` so a frozen workshop snapshot matches too.
+fn select_lan_canyon_manifest() -> anyhow::Result<()> {
+    let path = std::env::var_os(canyon::MANIFEST_ENV)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(canyon::V2_MANIFEST));
+    let act = act_manifest::select_runtime_manifest(Some(path.clone()))?;
+    anyhow::ensure!(act == Some(1), "the canyon course {} is not an Act One map", path.display());
+    Ok(())
+}
+
+/// "FRIENDS JOIN 192.168.1.50 (Wi-Fi)" with the other physical addresses after it.
+fn lan_host_address_line(session: &lan::LanSession) -> String {
+    let port = session.local_addr().map_or(lan::DEFAULT_PORT, |addr| addr.port());
+    let port = if port == lan::DEFAULT_PORT { String::new() } else { format!(":{port}") };
+    let addresses = session.host_addresses();
+    match addresses.split_first() {
+        None => "NO LAN ADDRESS: CONNECT THIS PC TO THE WI-FI".to_owned(),
+        Some((best, rest)) => {
+            let others: Vec<String> = rest
+                .iter()
+                .filter(|iface| iface.kind.physical())
+                .take(2)
+                .map(|iface| format!("{}{port}", iface.addr))
+                .collect();
+            let tail = if others.is_empty() { String::new() } else { format!("   OR {}", others.join(", ")) };
+            format!("FRIENDS JOIN {}{port}  {}{tail}", best.addr, best.describe().trim_start_matches(&best.addr.to_string()).trim())
+        }
+    }
 }
 
 fn close_requires_confirmation(state: AppState, has_lan_session: bool) -> bool {
@@ -11491,6 +11630,8 @@ struct WindowState {
     /// process renders from its claimed physical station.
     lan: Option<lan::LanSession>,
     lan_status: String,
+    /// The LAN session reported a live link this frame (client: welcomed and not timed out).
+    lan_crew_connected: bool,
     editor_child: Option<std::process::Child>,
     lan_crew: lan::CrewFrame,
     lan_scene: Option<(lan::LanMission, u64, u8)>,
@@ -11518,11 +11659,19 @@ struct WindowState {
     /// Seconds since the CANYON run reached its goal (the finish fade), while it plays out.
     canyon_finish: Option<f32>,
     canyon_v2: bool,
+    /// The after-action card's facts, built once when the run ends (src/canyon.rs).
+    run_report: Option<canyon::RunReport>,
+    /// The kept times after a finish was recorded, with the best before it (for NEW BEST).
+    canyon_finish_times: Option<(canyon::Times, Option<f32>)>,
+    /// The opening brief has been read this session; later attempts drop straight in.
+    canyon_briefed: bool,
     /// A synchronous world build just replaced the Game. The frame clock restarts so the
     /// build's wall time is never replayed as simulated time on the first frame.
     clock_reset: bool,
     /// Opt-in playtest telemetry (`KESSEL_SESSION_LOG`); None in ordinary play.
     session_log: Option<session_log::SessionLog>,
+    /// `KESSEL_CANYON_AUTOPILOT=1`: the rule-based crew plays the Canyon run (telemetry runs).
+    autopilot: Option<canyon_autopilot::CanyonAutopilot>,
     last_sim_ms: f32,
     /// The solo controls reference froze the world and paused its audio; cleared on resume.
     controls_audio_paused: bool,
@@ -11641,6 +11790,7 @@ impl WindowState {
             x_exit_frac: 0.0,
             lan: None,
             lan_status: String::new(),
+            lan_crew_connected: false,
             editor_child: None,
             lan_crew: lan::CrewFrame::default(),
             lan_scene: None,
@@ -11654,8 +11804,12 @@ impl WindowState {
             death_fade: None,
             canyon_finish: None,
             canyon_v2: std::env::var_os("KESSEL_CANYON_V2").is_some(),
+            run_report: None,
+            canyon_finish_times: None,
+            canyon_briefed: false,
             clock_reset: false,
             session_log: session_log::SessionLog::from_env(),
+            autopilot: None,
             last_sim_ms: 0.0,
             controls_audio_paused: false,
         };
@@ -12158,6 +12312,10 @@ impl WindowState {
 
     fn reset_lan_browser(&mut self) {
         self.lan_browser = None;
+        self.lan_menu.this_pc = net_ifaces::lan_addresses()
+            .first()
+            .map(net_ifaces::Ipv4Interface::describe)
+            .unwrap_or_else(|| "has no LAN address".to_owned());
         match lan::LanBrowser::bind() {
             Ok(browser) => {
                 self.lan_browser = Some(browser);
@@ -12219,18 +12377,7 @@ impl WindowState {
     }
 
     fn local_lan_name() -> String {
-        let name: String = std::env::var("USER")
-            .or_else(|_| std::env::var("USERNAME"))
-            .unwrap_or_else(|_| "crew".to_owned())
-            .trim()
-            .chars()
-            .take(24)
-            .collect();
-        if name.is_empty() {
-            "crew".to_owned()
-        } else {
-            name
-        }
+        lan::local_player_name()
     }
 
     fn fresh_lan_seed(&self) -> u64 {
@@ -12447,6 +12594,17 @@ impl WindowState {
                 self.campaign = Some(campaign::CampaignRun::new(seed));
                 anyhow::ensure!(self.build_act_world(1), "LAN campaign build failed");
             }
+            lan::LanMission::Canyon => {
+                self.play_mode = Some(PlayMode::Canyon);
+                self.current_act = 1;
+                self.campaign = None;
+                self.canyon_v2 = true;
+                select_lan_canyon_manifest()?;
+                anyhow::ensure!(self.build_act_world(1), "LAN canyon build failed");
+                if game::platoon::requested() {
+                    self.game.enable_platoon();
+                }
+            }
         }
         self.state = AppState::Playing;
         self.menu.resume_available = false;
@@ -12465,10 +12623,14 @@ impl WindowState {
         seed: u64,
         act: u8,
     ) -> anyhow::Result<()> {
+        if mission == lan::LanMission::Canyon {
+            select_lan_canyon_manifest()?;
+        }
         let mut map = match mission {
             lan::LanMission::Garage => world::garage(),
             lan::LanMission::Arena => world::act(0),
             lan::LanMission::Campaign => world::act(act.clamp(1, world::ACT_COUNT)),
+            lan::LanMission::Canyon => world::act(1),
         };
         if mission == lan::LanMission::Campaign {
             map.seed ^= seed as u32 ^ (seed >> 32) as u32;
@@ -12480,7 +12642,7 @@ impl WindowState {
         match mission {
             lan::LanMission::Garage => game.garage_setup(),
             lan::LanMission::Arena => game.arena_setup(),
-            lan::LanMission::Campaign => {}
+            lan::LanMission::Campaign | lan::LanMission::Canyon => {}
         }
         // Prediction is visual only. The host's snapshots are the sole source of player damage,
         // module loss and death, so a client's locally-running enemy AI cannot create a false KO.
@@ -12495,6 +12657,7 @@ impl WindowState {
             lan::LanMission::Garage => PlayMode::Garage,
             lan::LanMission::Arena => PlayMode::Gefecht,
             lan::LanMission::Campaign => PlayMode::Kampagne,
+            lan::LanMission::Canyon => PlayMode::Canyon,
         });
         self.current_act = act;
         self.campaign = None;
@@ -12528,6 +12691,7 @@ impl WindowState {
         let seed = session.seed();
         let host = session.is_host();
         self.lan_status = poll.status;
+        self.lan_crew_connected = poll.connected;
         self.lan_crew = poll.crew;
         if !host && !poll.connected {
             // Stay in networked mode while waiting for/reconnecting to the authority; dropping
@@ -12566,6 +12730,8 @@ impl WindowState {
         }
         input.coop = Some(self.lan_crew);
         input.coop_host = host;
+        // The host's living crew mans every seat no human holds (src/crew_solo.rs, LAN section).
+        input.coop_ai_crew = host;
     }
 
     fn lan_post_update(&mut self) {
@@ -13212,6 +13378,11 @@ impl WindowState {
                 Some(ui::MenuAction::LoadCheckpoint) => self.load_campaign_checkpoint(),
                 Some(ui::MenuAction::Canyon) => { self.canyon_v2 = false; self.start_play(PlayMode::Canyon); },
                 Some(ui::MenuAction::CanyonV2) => { self.canyon_v2 = true; self.start_play(PlayMode::Canyon); },
+                Some(ui::MenuAction::Platoon) => {
+                    std::env::set_var(game::platoon::ENV_PLATOON, "2");
+                    self.canyon_v2 = true;
+                    self.start_play(PlayMode::Canyon);
+                },
                 None => {},
             },
             KeyCode::Escape if self.menu.resume_available => {
@@ -13253,7 +13424,7 @@ impl WindowState {
         }
         ui::draw_held_map_print(&mut self.renderer, &self.game.act, &self.game.marks,
             &self.pencil_marks, &self.map_pins, route, sheets, self.map_cursor, heading,
-            self.pencil_down, self.game.map_world_position());
+            self.pencil_down, self.game.map_world_position(), self.game.mission_map_guidance().as_ref());
         self.renderer.render_held_map_texture(&self.device, &self.queue, self.game.held_map_slot());
     }
 
@@ -13320,8 +13491,10 @@ impl WindowState {
                     },
                     "point_lights": {"offered": lights_offered, "admitted": lights_admitted},
                     "instances": {"batches": instance_batches, "live": instances},
+                    "extras": self.renderer.session_render_extras(),
                 });
-                let game = self.game.session_telemetry();
+                let mut game = self.game.session_telemetry();
+                game["sim_phases_ms"] = self.game.sim_phase.take();
                 if let Some(log) = self.session_log.as_mut() { log.write(game, render); }
             }
         }
@@ -13345,9 +13518,43 @@ impl WindowState {
         // cues remain: the interaction dot, the dismount ring and the co-op capture bar.
         self.renderer.ui_reset();
         self.draw_compound_hud(0.5); // STÜTZPUNKT capture bar (no-op outside the Koop mission)
+        // Platoon radio: the typed line and the wingmen's replies, display-resolution text outside
+        // the crush like the menus (the one place play carries words, by the mode's design).
+        {
+            let lines = self.game.platoon_hud_lines();
+            let mut y = 0.86;
+            for (callsign, text, alpha, entry) in lines.iter().rev() {
+                let color = if *entry { [1.0, 0.82, 0.46, alpha * 0.95] } else if callsign == radio_llm::PLAYER_CALLSIGN { [0.92, 0.92, 0.88, alpha * 0.85] } else { [0.72, 0.92, 0.74, alpha * 0.95] };
+                let line = if callsign.is_empty() { text.clone() } else if *entry { format!("{} > {}", callsign.to_uppercase(), text) } else { format!("{}: {}", callsign.to_uppercase(), text) };
+                self.renderer.draw_text(&line, 0.02, y, 0.020, color, ui::Align::Left);
+                y -= 0.028;
+            }
+            if self.game.platoon.is_some() && !self.game.platoon_typing() && lines.is_empty() {
+                self.renderer.draw_text("T: FUNK", 0.02, 0.86, 0.016, [0.6, 0.6, 0.58, 0.35], ui::Align::Left);
+            }
+        }
         if self.game.is_tank_editor_play() {
             // Developer workshop only, reached from the editor.
             tank_editor_acceptance::draw_workshop_status(&mut self.renderer);
+        }
+        // Getting a crew together is not diagnostics: a joining friend with no answer sees what to
+        // check, and a host nobody has joined yet sees the address to read out. Both go away by
+        // themselves (connected / first crewman aboard); F3 shows the rest.
+        if let Some(session) = self.lan.as_ref().filter(|_| !self.show_stats) {
+            let mut lines: Vec<(String, [f32; 4])> = Vec::new();
+            if let (Some(trouble), Some(server)) = (session.join_trouble(), session.server()) {
+                lines.push((trouble.headline(server), [1.0, 0.78, 0.46, 0.95]));
+                for check in trouble.checks() {
+                    lines.push((format!("- {check}"), [0.86, 0.86, 0.80, 0.85]));
+                }
+            } else if !session.is_host() && !self.lan_crew_connected {
+                lines.push((self.lan_status.clone(), [0.70, 0.90, 0.72, 0.85]));
+            } else if session.is_host() && session.peer_count() == 0 {
+                lines.push((lan_host_address_line(session), [0.70, 0.90, 0.72, 0.80]));
+            }
+            for (k, (line, color)) in lines.iter().enumerate() {
+                self.renderer.draw_text(line, 0.02, 0.035 + k as f32 * 0.030, 0.020, *color, ui::Align::Left);
+            }
         }
         // LAN connection and seat diagnostics are a debug overlay, shown with the F3 stats.
         if let Some(session) = self.lan.as_ref().filter(|_| self.show_stats) {
@@ -13388,6 +13595,16 @@ impl WindowState {
                 [0.58, 0.72, 0.60, 0.85],
                 ui::Align::Left,
             );
+            if session.is_host() {
+                self.renderer.draw_text(
+                    &lan_host_address_line(session),
+                    0.02,
+                    0.094,
+                    0.018,
+                    [0.58, 0.72, 0.60, 0.85],
+                    ui::Align::Left,
+                );
+            }
         }
         self.game.draw_repair_cue(&mut self.renderer);
         // The one line of survival text: the player's own body is on fire.
@@ -13397,9 +13614,21 @@ impl WindowState {
         }
         // What the outlined thing is and which button works it: small, bottom centre, in the
         // outline's own colour (owner, 2026-10-03; play is otherwise wordless).
+        // Mission guidance (src/mission.rs): the order sheet while it is held up and the net's
+        // lines, display-resolution text outside the crush like the menus.
+        if let Some(overlay) = self.game.mission_overlay() {
+            ui::draw_mission_overlay(&mut self.renderer, &overlay, self.show_map);
+            if overlay.order.is_some() { self.game.mission_note_order_presented(); }
+        }
         if let Some(label) = self.game.hover_label_text() {
             let hint = interaction_hint(&label, self.game.interact_kind());
             pixel_font::draw_centered(&mut self.renderer, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
+        }
+        // The crew's intercom: one terse line, a few seconds, above the interaction hint
+        // (solo with a living crew only; KESSEL_INTERCOM=0 silences it).
+        if let Some(line) = self.game.intercom_line() {
+            let line = line.to_owned();
+            pixel_font::draw_centered(&mut self.renderer, &line, 0.5, 0.865, 1, [0.80, 0.84, 0.70, 0.80]);
         }
         // A dot where the crosshair rests on something the hands can use.
         if self.game.hover_label_text().is_some() && !self.game.sidearm_is_drawn() {
@@ -14217,7 +14446,9 @@ impl WindowState {
     /// Build the course from its workshop and drop in with the one crewman. Called by `start_play`.
     fn start_canyon(&mut self) {
         self.canyon_finish = None;
-        let path = if self.canyon_v2 { std::path::PathBuf::from(canyon::V2_MANIFEST) }
+        // `KESSEL_CANYON_MANIFEST` pins the course file for v2 too (a frozen workshop snapshot).
+        let path = if self.canyon_v2 { std::env::var_os(canyon::MANIFEST_ENV).map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(canyon::V2_MANIFEST)) }
             else { canyon::manifest_path() };
         let selected = act_manifest::select_runtime_manifest(Some(path.clone())).and_then(|act| {
             anyhow::ensure!(act == Some(1), "the canyon course is an Act One map");
@@ -14232,13 +14463,28 @@ impl WindowState {
             return;
         }
         if self.build_act_world(1) {
+            if game::platoon::requested() {
+                self.game.enable_platoon();
+            }
             self.show_map = false;
             self.show_controls = false;
-            self.state = AppState::Playing;
-            self.set_play_cursor(true);
+            self.run_report = None;
+            self.canyon_finish_times = None;
             self.pencil_marks.retain(|(sheet,_)| *sheet != 1);
             self.map_pins.retain(|(sheet,_)| *sheet != 1);
-            println!("[canyon] run started: {}", path.display());
+            println!("[canyon] run started: {} (seed {:?})", path.display(), self.game.canyon_seed());
+            if canyon_autopilot::requested() {
+                self.autopilot = Some(canyon_autopilot::CanyonAutopilot::new(&self.game));
+                self.canyon_briefed = true;
+            }
+            if self.canyon_briefed {
+                self.state = AppState::Playing;
+                self.set_play_cursor(true);
+            } else {
+                // The first attempt of the session opens on the brief; the world waits under it.
+                self.state = AppState::RunBrief { t: 0.0 };
+                self.set_play_cursor(false);
+            }
         } else {
             let _ = act_manifest::select_runtime_manifest(None);
             self.enter_menu(false);
@@ -14246,15 +14492,91 @@ impl WindowState {
         }
     }
 
-    /// A Canyon death is terminal. Leave the spent run for the title, with no resume/checkpoint.
-    fn retry_canyon_after_death(&mut self) -> bool {
+    /// A Canyon run is over (the man is dead, or the Tiger stood at the head of the ravine):
+    /// build the after-action card from the game's own counters and show it. There is no
+    /// resume and no checkpoint; the card's Enter is a fresh deployment.
+    fn show_canyon_run_card(&mut self) -> bool {
         if self.play_mode != Some(PlayMode::Canyon) {
             return false;
         }
+        // A LAN client never ends or restarts the host's run; it keeps following the snapshots.
+        if self.lan.as_ref().is_some_and(|session| !session.is_host()) {
+            return false;
+        }
         self.canyon_finish = None;
-        self.play_mode = None;
-        self.enter_menu(false);
+        let (times, previous_best) = self.canyon_finish_times.take().unwrap_or_else(|| {
+            let times = self.canyon_times_path().map(|path| canyon::load_times(&path)).unwrap_or_default();
+            (times, times.best_s)
+        });
+        self.run_report = self.game.canyon_run_report(times, previous_best);
+        if let Some(autopilot) = self.autopilot.as_mut() {
+            autopilot.run_over(self.game.canyon_finished().is_some());
+        }
+        if let Some(report) = &self.run_report {
+            println!("[canyon] after-action: {} — {}; {:?}", report.headline(), report.cause_line(), report.rows());
+        }
+        self.game.set_audio_silenced(true);
+        self.show_map = false;
+        self.show_controls = false;
+        self.state = AppState::RunCard { t: 0.0 };
+        self.set_play_cursor(false);
+        self.render_run_card(0.0);
         true
+    }
+
+    /// The Canyon v1 and v2 courses keep separate time records.
+    fn canyon_times_path(&self) -> anyhow::Result<std::path::PathBuf> {
+        canyon::times_path().map(|path| if self.canyon_v2 { path.with_file_name("canyon-v2-times.v1.json") } else { path })
+    }
+
+    /// The brief has been read: drop into the waiting world.
+    fn begin_canyon_play(&mut self) {
+        self.canyon_briefed = true;
+        self.state = AppState::Playing;
+        self.ft_last = None;
+        self.set_play_cursor(true);
+    }
+
+    /// Enter on the after-action card: a fresh seeded attempt, straight back in.
+    fn restart_canyon_from_card(&mut self) {
+        self.run_report = None;
+        self.start_play(PlayMode::Canyon);
+    }
+
+    /// Escape on the after-action card: the title, with the Canyon entry selected.
+    fn leave_canyon_to_menu(&mut self) {
+        self.run_report = None;
+        self.play_mode = None;
+        let _ = act_manifest::select_runtime_manifest(None);
+        self.refresh_canyon_menu_detail();
+        self.enter_menu(false);
+        self.menu.selected = ui::IDX_CANYON + usize::from(self.canyon_v2);
+        self.render_menu();
+    }
+
+    fn render_run_card(&mut self, t: f32) {
+        let Some((frame, view)) = self.acquire() else { return; };
+        self.renderer.ui_reset();
+        match &self.run_report {
+            Some(report) => ui::draw_run_card(&mut self.renderer, report, t >= RUN_CARD_ARM_S),
+            None => ui::draw_black(&mut self.renderer),
+        }
+        self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
+            self.config.format, self.config.width, self.config.height);
+        frame.present();
+    }
+
+    fn render_run_brief(&mut self) {
+        let Some((frame, view)) = self.acquire() else { return; };
+        self.renderer.ui_reset();
+        let best = self.canyon_times_path().map(|path| canyon::load_times(&path)).unwrap_or_default().best_s;
+        match self.game.canyon_brief(best) {
+            Some(brief) => ui::draw_run_brief(&mut self.renderer, &brief),
+            None => ui::draw_black(&mut self.renderer),
+        }
+        self.renderer.render_ui_to_surface(&self.device, &self.queue, &view,
+            self.config.format, self.config.width, self.config.height);
+        frame.present();
     }
 
     /// The finish, without words: once the Tiger reaches the ravine's head the fight is over, the
@@ -14267,10 +14589,9 @@ impl WindowState {
         let Some(elapsed) = self.game.canyon_finished() else { return false; };
         let t = match self.canyon_finish {
             None => {
-                let times = canyon::times_path().and_then(|path| {
-                    let path = if self.canyon_v2 { path.with_file_name("canyon-v2-times.v1.json") } else { path };
-                    canyon::record_time(&path, elapsed)
-                });
+                let previous_best = self.canyon_times_path().map(|path| canyon::load_times(&path).best_s).unwrap_or(None);
+                let times = self.canyon_times_path().and_then(|path| canyon::record_time(&path, elapsed));
+                self.canyon_finish_times = Some((times.as_ref().copied().unwrap_or_default(), previous_best));
                 match &times {
                     Ok(times) => println!("[canyon] run complete in {} (best {})", canyon::format_time(elapsed),
                         times.best_s.map_or_else(|| "-".into(), canyon::format_time)),
@@ -14289,11 +14610,8 @@ impl WindowState {
         self.game.set_audio_level(1.0 - fade);
         if t >= canyon::FINISH_END_S {
             self.game.set_audio_silenced(true);
-            self.canyon_finish = None;
-            let _ = act_manifest::select_runtime_manifest(None);
-            self.enter_menu(false);
-            self.menu.selected = ui::IDX_CANYON + usize::from(self.canyon_v2);
-            self.render_menu();
+            // Black and silence have held; the card says what the run was.
+            self.show_canyon_run_card();
         } else if t < canyon::FINISH_FADE_S && !self.couch_active {
             self.death_fade = Some(fade);
             self.render_game();
@@ -14463,7 +14781,8 @@ impl ApplicationHandler for App {
                     s.apply_display_preview(Some(index));
                 }
                 self.window_focused = true;
-                s.set_play_cursor(!s.show_controls && !matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu));
+                s.set_play_cursor(!s.show_controls && !matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu
+                    | AppState::RunBrief { .. } | AppState::RunCard { .. }));
                 window.request_redraw();
                 self.state = Some(s);
             }
@@ -14516,7 +14835,7 @@ impl ApplicationHandler for App {
                     self.x_was_down = false;
                     self.couch_commander_exit.cancel();
                     state.x_exit_frac = 0.0;
-                    if state.lan.is_none() && matches!(state.state, AppState::Playing) {
+                    if state.lan.is_none() && state.autopilot.is_none() && matches!(state.state, AppState::Playing) {
                         state.enter_pause();
                         state.pause_menu.message = "PAUSED WHILE THE GAME WINDOW WAS INACTIVE".to_owned();
                     }
@@ -14535,7 +14854,7 @@ impl ApplicationHandler for App {
                 }
                 self.last = None;
                 state.ft_last = None;
-                if occluded && state.lan.is_none() && matches!(state.state, AppState::Playing) {
+                if occluded && state.lan.is_none() && state.autopilot.is_none() && matches!(state.state, AppState::Playing) {
                     state.enter_pause();
                     self.keys = Keys::default();
                     self.x_hold = 0.0;
@@ -14559,6 +14878,15 @@ impl ApplicationHandler for App {
                     return;
                 };
                 native_input_audit::key(&format!("{code:?}"),down);
+                // Platoon radio line open: every key is text (or Enter/Escape/Backspace) until it
+                // closes; the driver's level-triggered keys are released so the hull does not creep.
+                if matches!(state.state, AppState::Playing) && state.game.platoon_typing() {
+                    if down {
+                        state.game.platoon_radio_key(code, text.as_deref());
+                    }
+                    self.keys = Keys::default();
+                    return;
+                }
                 // Display changes are available from every screen and consume the key so they
                 // cannot also select a menu item, skip a replay, or start a campaign.
                 if pressed && self.modifiers.alt_key()
@@ -14566,6 +14894,22 @@ impl ApplicationHandler for App {
                     state.toggle_fullscreen();
                     state.window.request_redraw();
                     return;
+                }
+
+                // The held-up mission order (src/mission.rs) folds on a deliberate press; the press
+                // is spent on it and does not also fire, interact or work the breech. A key carried
+                // through the world build is not counted (`mission::ORDER_ARM_FRAMES`). With no
+                // order up, Enter clears the lines of words on the frame (net, platoon, intercom).
+                if pressed && matches!(state.state, AppState::Playing) && !state.show_controls {
+                    if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space | KeyCode::KeyE)
+                        && state.game.mission_dismiss_order() {
+                        state.window.request_redraw();
+                        return;
+                    }
+                    if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) {
+                        state.game.dismiss_play_lines();
+                        return;
+                    }
                 }
 
                 // Movement is level-triggered; track it regardless of state (only read while Playing).
@@ -14583,6 +14927,9 @@ impl ApplicationHandler for App {
                     KeyCode::KeyF => self.keys.f = down,
                     KeyCode::KeyE => self.keys.e = down,
                     KeyCode::KeyG => self.keys.g = down,
+                    KeyCode::KeyK => self.keys.k = down,
+                    KeyCode::KeyY => self.keys.y = down,
+                    KeyCode::KeyN => self.keys.n = down,
                     // Shift/Ctrl: on-foot run + crouch (held). Shift ALSO edge-cycles the gun
                     // sights while in the tank (see the Playing match below, Tank-mode gated).
                     KeyCode::ShiftLeft | KeyCode::ShiftRight => self.keys.shift = down,
@@ -14633,6 +14980,16 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
+                    AppState::RunBrief { t } => {
+                        if t >= RUN_CARD_ARM_S { state.begin_canyon_play(); }
+                    }
+                    AppState::RunCard { t } => {
+                        if t >= RUN_CARD_ARM_S && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space | KeyCode::KeyR) {
+                            state.restart_canyon_from_card();
+                        } else if t >= RUN_CARD_ARM_S && code == KeyCode::Escape {
+                            state.leave_canyon_to_menu();
+                        }
+                    }
                     AppState::Death { t, card } => {
                         // Let the player cut the black short once it has held for a beat. A spent
                         // Act-3 attempt still receives its terminal coda; never a retry path.
@@ -14642,7 +14999,7 @@ impl ApplicationHandler for App {
                         ) {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
-                            } else if state.retry_canyon_after_death() {
+                            } else if state.show_canyon_run_card() {
                                 // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
@@ -14657,6 +15014,11 @@ impl ApplicationHandler for App {
                         }
                     }
                     AppState::Playing => match code {
+                        // T keys the platoon radio (platoon mode only): opens the typed line.
+                        KeyCode::KeyT if state.game.platoon.is_some() && state.couch_keyboard_has_authority() && !state.show_map => {
+                            state.game.platoon_radio_key(code, None);
+                            self.keys = Keys::default();
+                        }
                         // Home toggles the controls reference (pauses the game).
                         KeyCode::Home if state.couch_keyboard_has_authority() => {
                             state.show_controls = !state.show_controls;
@@ -14945,6 +15307,12 @@ impl ApplicationHandler for App {
                 if !matches!(state.state, AppState::Playing) {
                     return;
                 }
+                // A click folds the held-up mission order (the close mark on its corner; the play
+                // cursor is captured, so the whole click is the mark). It does not also act.
+                if btn.is_pressed() && button == winit::event::MouseButton::Left && !state.show_map
+                    && state.game.mission_dismiss_order() {
+                    return;
+                }
                 if button == winit::event::MouseButton::Left {
                     self.keys.lmb = btn.is_pressed();
                 }
@@ -15006,6 +15374,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                if let Some(code) = state.autopilot.as_ref().and_then(|a| a.exit_due()) {
+                    println!("[autopilot] exiting with status {code}");
+                    std::process::exit(code);
+                }
                 if let Some(child) = state.editor_child.as_mut() {
                     match child.try_wait() {
                         Ok(Some(_)) => {
@@ -15029,8 +15401,11 @@ impl ApplicationHandler for App {
                     }
                 }
                 // A solo game pauses on focus loss and stops submitting GPU work while hidden.
-                // Focus/visibility events request a fresh frame; LAN authority keeps ticking.
-                if state.lan.is_none() && (!self.window_focused || self.window_occluded) {
+                // Focus/visibility events request a fresh frame; LAN authority keeps ticking. An
+                // autopilot telemetry run keeps playing unfocused or covered by other windows (it
+                // reads no keyboard or mouse; a frame the surface cannot take is simply not shown).
+                let hidden = (!self.window_focused || self.window_occluded) && state.autopilot.is_none();
+                if state.lan.is_none() && hidden {
                     self.gamepads.set_haptics_enabled(false);
                     self.mouse_haptics.stop();
                     self.last = None;
@@ -15051,7 +15426,7 @@ impl ApplicationHandler for App {
                 // before the read discards every mouse motion delivered since the last redraw
                 // (killed head-look, on-foot mouselook AND the mouse-driven reload).
                 let pads = self.gamepads.poll_all();
-                let pad = pads.active;
+                let mut pad = pads.active;
                 // In the keyboard setup, the first pad commits the run to persistent crew
                 // authority and that choice survives hot-unplug. Controller-only is committed at
                 // start_play, including its important zero-pad state: there is never a keyboard
@@ -15294,6 +15669,11 @@ impl ApplicationHandler for App {
                     // Commander globals were routed above; every other button stays station-owned.
                     AppState::Playing if couch => {}
                     AppState::Playing => {
+                        // A or B folds the held-up mission order and is spent on it.
+                        if (pad.interact_pressed || pad.back_pressed) && state.game.mission_dismiss_order() {
+                            pad.interact_pressed = false;
+                            pad.back_pressed = false;
+                        }
                         if pad.menu_pressed {
                             self.gamepads.set_haptics_enabled(false);
                             self.mouse_haptics.stop();
@@ -15352,12 +15732,21 @@ impl ApplicationHandler for App {
                     AppState::ActCard { built: true, .. } if pad.interact_pressed => {
                         state.state = AppState::Playing;
                     }
+                    AppState::RunBrief { t } if t >= RUN_CARD_ARM_S && (pad.interact_pressed || pad.menu_pressed) => {
+                        state.begin_canyon_play();
+                    }
+                    AppState::RunCard { t } if t >= RUN_CARD_ARM_S && pad.interact_pressed => {
+                        state.restart_canyon_from_card();
+                    }
+                    AppState::RunCard { t } if t >= RUN_CARD_ARM_S && (pad.back_pressed || pad.menu_pressed) => {
+                        state.leave_canyon_to_menu();
+                    }
                     AppState::Death { t, card }
                         if card.is_none() && death_may_skip(t) && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
                     {
                         if let Some(reason) = state.pending_final_defeat.take() {
                             state.state = AppState::FinalDefeat { t: 0.0, reason };
-                        } else if state.retry_canyon_after_death() {
+                        } else if state.show_canyon_run_card() {
                                 // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
@@ -15702,6 +16091,11 @@ impl ApplicationHandler for App {
                                 };
                             }
                         }
+                        if state.play_mode == Some(PlayMode::Canyon) {
+                            if let Some(autopilot) = state.autopilot.as_mut() {
+                                input = autopilot.step(&mut state.game, &state.renderer, dt);
+                            }
+                        }
                         let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
                         let sim_begin = Instant::now();
                         state.game.update_realtime(&input, dt, &mut state.renderer);
@@ -15762,6 +16156,14 @@ impl ApplicationHandler for App {
                             state.render_black();
                         }
                     }
+                    AppState::RunBrief { t } => {
+                        state.state = AppState::RunBrief { t: t + dt };
+                        state.render_run_brief();
+                    }
+                    AppState::RunCard { t } => {
+                        state.state = AppState::RunCard { t: t + dt };
+                        state.render_run_card(t + dt);
+                    }
                     AppState::Death { t, card } => {
                         let nt = t + dt;
                         state.game.advance_terminal_audio(dt, &state.renderer, nt);
@@ -15779,7 +16181,7 @@ impl ApplicationHandler for App {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
                                 state.render_black();
-                            } else if state.retry_canyon_after_death() {
+                            } else if state.show_canyon_run_card() {
                                 // Canyon permadeath returns to the title; a new selection starts a fresh run.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
@@ -15970,6 +16372,16 @@ fn main() -> anyhow::Result<()> {
     if args.get(1).is_some_and(|s| s == "raymarch-cabin") {
         return raymarch_showcase::run_cabin(&capture_arg(&args, 2, "raymarch_cabin"));
     }
+    if args.get(1).is_some_and(|s| s == "terrain-bench") {
+        let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(240);
+        return terrain_showcase::bench(&capture_arg(&args, 2, "terrain_bench"), frames);
+    }
+    if args.get(1).is_some_and(|s| s == "terrain-showcase") {
+        return terrain_showcase::run(&capture_arg(&args, 2, "terrain_showcase"));
+    }
+    if args.get(1).is_some_and(|s| s == "armor-scars") {
+        return game::armor_scars_review::run(&capture_arg(&args, 2, "armor_scars"));
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-showcase") {
         return raymarch_showcase::run(&capture_arg(&args, 2, "raymarch_showcase"));
     }
@@ -16008,6 +16420,19 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "lan-verify" {
         return lan::run_loopback_verify();
     }
+    if args.len() >= 2 && args[1] == "lan-probe" {
+        return lan::run_probe(&args[2..]);
+    }
+    if args.len() >= 2 && args[1] == "lan-crew" {
+        return lan_crew_proof::run(&capture_arg(&args, 2, "captures/lan_crew"));
+    }
+    if args.len() >= 2 && args[1] == "asset-trace" {
+        return run_asset_trace();
+    }
+    if args.len() >= 2 && args[1] == "lan-ifaces" {
+        net_ifaces::print_report(lan::DEFAULT_PORT, lan::DISCOVERY_PORT);
+        return Ok(());
+    }
     if args.len() >= 2 && args[1] == "replay-aftermath" {
         return run_replay_aftermath(&capture_arg(&args, 2, "captures/astra/replay_aftermath"),
             args.get(3).is_some_and(|s|s=="video"));
@@ -16016,12 +16441,48 @@ fn main() -> anyhow::Result<()> {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return run_campaign_verify(outdir);
     }
+    if args.len() >= 2 && args[1] == "mission-captures" {
+        return mission_capture::run(
+            &capture_arg(&args, 2, "mission_captures"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+        );
+    }
+    if args.len() >= 2 && args[1] == "platoon-proof" {
+        return platoon_proof::run(
+            &capture_arg(&args, 2, "platoon_proof"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200.0),
+        );
+    }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
         return canyon_attempt::run(
             &capture_arg(&args, 2, "canyon_ai_attempt"),
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(7200.0),
             args.get(5).map(String::as_str),
+        );
+    }
+    if args.len() >= 2 && args[1] == "vehdyn-trace" {
+        return vehdyn_trace::run(
+            &capture_arg(&args, 2, "vehdyn_trace"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(450.0),
+            args.get(5).and_then(|s| s.parse().ok()).unwrap_or(60.0),
+        );
+    }
+    if args.len() >= 2 && args[1] == "canyon-finish-check" {
+        return canyon_attempt::finish_check(
+            &capture_arg(&args, 2, "canyon_finish_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(220.0),
+            args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0),
+        );
+    }
+    if args.len() >= 2 && args[1] == "canyon-foot-check" {
+        return canyon_attempt::foot_check(
+            &capture_arg(&args, 2, "canyon_foot_check"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(45.0),
         );
     }
     if args.len() >= 2 && matches!(args[1].as_str(), "campaign-ai-run" | "campaign-ai") {
@@ -16314,7 +16775,7 @@ fn main() -> anyhow::Result<()> {
             .get(5)
             .map(|value| {
                 graphics::GraphicsPreset::parse(value).ok_or_else(|| {
-                    anyhow::anyhow!("gfxbench preset must be laptop or high/4090 (got {value:?})")
+                    anyhow::anyhow!("gfxbench preset must be low, high or ultra (got {value:?})")
                 })
             })
             .transpose()?;
@@ -16456,6 +16917,27 @@ fn main() -> anyhow::Result<()> {
         let max_secs = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(120.0f32);
         let act = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(0u8);
         return showreel::run_ai_showreel(outdir, t34_weights, tiger_weights, count, max_secs, act);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo-designate" {
+        let prefix = capture_arg(&args, 2, "crew_solo_designate");
+        return crew_solo_capture::run_crew_solo_designate_capture(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo-empties" {
+        let prefix = capture_arg(&args, 2, "crew_solo_empties");
+        return crew_solo_capture::run_crew_solo_empties_capture(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo-kia" {
+        let prefix = capture_arg(&args, 2, "crew_solo_kia");
+        return crew_solo_capture::run_crew_solo_kia_capture(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo" {
+        let prefix = capture_arg(&args, 2, "crew_solo");
+        return crew_solo_capture::run_crew_solo_capture(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "sound-world" {
+        // CPU-only proof of the traced rooms and the foley catalogue through the live mixer.
+        let outdir = args.get(2).map(String::as_str).unwrap_or("captures/sound_world");
+        return game::sound_world_proof::run(outdir);
     }
     if args.len() >= 2 && args[1] == "crew-battle" {
         let outdir = args.get(2).map(String::as_str).unwrap_or("captures/astra");

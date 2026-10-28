@@ -1,0 +1,6 @@
+KESSEL AI GAUNTLET
+T-34 policy: C:\shop\panzerrechnersystem\assets\ai\weights_academy.bin
+Tiger policy: C:\shop\panzerrechnersystem\assets\ai\weights_tiger.bin
+seeds per force size: 3
+match cap: 90.0 s
+empirical majority threshold: 2 T-34s

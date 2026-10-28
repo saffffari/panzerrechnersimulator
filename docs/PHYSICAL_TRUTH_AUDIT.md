@@ -1,8 +1,421 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-28 (vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, 2026-10-28 (branch `vehicle-dynamics`, docs/VEHICLE_DYNAMICS.md)
+
+Every tank now has a sourced row (`src/vehicle_spec.rs`: Tiger I, T-34/76, SU-100, KV-2, IS-2,
+ISU-152, IS-3), a sprung hull (`src/suspension.rs`) and, for AI vehicles, the player's force-based
+drivetrain (`src/powertrain.rs`, `powertrain::ai_driver`). Sourced: masses, engine powers and rated
+speeds where stated, gear counts, documented road speeds, wheel counts, the Tiger's 800 mm wheels
+and 55/58 mm x 1.89 m torsion bars (tiger1.info), the Soviet wheel diameters, track widths,
+clearances, ground pressures and obstacle limits (de/ru/en Wikipedia data tables, read 2026-10-28;
+the row comments name each). Named estimates [E], each derived in the code comment beside it:
+
+- Per-gear road speeds of the Soviet boxes (geometric spreads from a first gear to the documented
+  top); idle speeds; the IS family's 2000 rpm rating; the yaw rates (0.45-0.6 rad/s).
+- Track gauges other than the ISU-152's 2.42 m; contact lengths derived from mean ground pressure
+  (`M / (2 b p)`); hull dimensions for inertia; CG heights at 0.45 of overall height (Tiger 1.30 m
+  as before); unsprung shares 0.13-0.15.
+- Spring rates. Tiger: from its bars, `G pi d^4 / (32 L) / a^2` with steel G 79.3 GPa and an
+  estimated 0.41 m arm (224 kN/m, 275 at the ends; 1.37 Hz heave). Others: static deflection for a
+  chosen heave frequency (Christie 1.25 Hz, torsion-bar heavies 1.4 Hz).
+- Wheel travel (Tiger 0.15 m jounce / 0.10 m droop; Christie 0.14 / 0.09; KV/IS 0.12 / 0.08); bump
+  stops at 8x the station rate with 0.3 damping; belly contact at 5 Hz, 0.5 damping.
+- Damping: 0.06-0.08 of critical from friction on every station; the Tiger's end-arm hydraulic
+  shock absorbers (not checked this session) at 0.5. No shock absorbers on the T-34/SU-100 (sourced)
+  or the KV/IS family (IS-3 sourced, others assumed).
+- The AI driver's pedal gains (full throttle 1.5 m/s under the wanted speed, brake to full at
+  4 m/s over); the AI's speed command is a share of its own road speed (previously of one 12 m/s
+  for every kind, reached at 6 m/s^2).
+- The crewman's head on his neck: 1.8 Hz, 0.5 damping, 0.08 m travel.
+
+Named simplifications: massless wheels and track (no unsprung bounce); stations move along the
+hull's vertical; the track bridges whatever lies beyond a wheel radius of every wheel (no wrap or
+tension); uniform-box inertias; frame-differenced accelerations bounded at 3 g for load transfer; a
+station's support rises no faster than `2 v + 0.1` m/s (the old embedded rule, now per station); the
+refusals (step, trench, gradient, tipping, belly hang-up) stay the rigid-rest rules of
+`tank_support`, which the "Tank ground contact" row's simplification (1) and (3) described for the
+pose and which now decide only what the hull may cross. AI stations sit on the footprint's
+declared contact span (`vehicle_ground`, 0.65 of the half-length, 0.75 of the half-width) because
+the drawn meshes are larger than the real vehicles; the player Tiger's stations are its 48 drawn
+road wheels' measured centres. The owner-directed `CLIMB_GRADE_SHARE` stays player-only; AI
+vehicles climb the full grade. Road wheels are not yet drawn moving with their stations
+(`Ride::travel` is computed for them; see docs/VEHICLE_DYNAMICS.md).
+
+Gate: `suspension::tests` (static pose, heave frequency within 8 % of the spec, pitch settling,
+load transfer, a bump ridden with energy only decaying, the track nose on a step, droop and free
+fall, belly crest, partition and determinism, stations against the baked wheels, head sway),
+`vehicle_spec::tests` (row consistency, bar-derived Tiger rates, `ride_table`), the powertrain
+tests unchanged, `tank::tests::ai_tanks_drive_with_their_own_mass_power_and_brakes` and
+`ai_hull_rides_its_springs_over_a_bump_instead_of_snapping`, `tank_support::tests` unchanged (the
+refusals), and the headless `vehdyn-trace` receipt on Canyon v2.
+
+## LAN co-op on Windows, 2026-10-28 (branch `lan-windows`, `docs/LAN_WINDOWS.md`)
+
+- **The living crew in empty LAN seats** (`crew_solo.rs`, LAN section). On the host the solo
+  crew's AI gunner, driver and loader work every seat no human holds, through the same lay,
+  trigger, lever and breech paths as solo and as a human (no new authority path). Debt, named:
+  a man displaced by a human at his post is **not drawn** on any machine while displaced (solo
+  stands him by under the cupola; LAN has no standby pose yet). His body is a render rig only in
+  either mode; nothing collides with or is hit through the missing figure, and the host's crew
+  damage still uses the existing LAN crew model. Wounds, first aid and bleeding stay solo-only in
+  LAN (the crew alive mask is what replicates).
+- **Laptop tier** (`tools/launch_windows.ps1 -Laptop`/`-Tier auto`): 480x272 grid, `laptop`
+  preset, `gameplay` transport sampling, no MSAA, shader backend unless a ray-tracing GPU is
+  present. Resolution and sampling only; emitters, occluders, materials, damage and dynamics are
+  the shipping ones. Measured on an Intel UHD 770: about 3.0 s a frame at 480x272 and at
+  320x180 (GPU-bound on shadow passes and draws, not fill): integrated graphics are below the
+  floor, stated in the doc, no further shortcut taken.
+
+## Solo crew, wounds and first aid, 2026-10-27 (branch `crew-solo`)
+
+Singleplayer musters five living men (`src/singleplayer_crew.rs`, `src/crew_solo.rs`,
+`src/first_aid.rs`, `docs/CREW_SOLO.md`). Wounds come only from the live penetration solver's
+anatomical events and the live cabin fire; nothing here invents a hit. Named approximations,
+none presented as physiology or a contact solve:
+
+- The wound time course is a rule-of-thumb model: bleeding in litres per minute by body region
+  and severity^1.5, clotting of minor wounds as an exponential over five minutes, performance
+  as piecewise functions of blood loss, fracture, burn, pain, morphine and concussion, and
+  death at 42 % loss. Severity is mapped from the solver's fragment work (`total_work_j / 350`,
+  clamped 0.2..0.85) and tissue outcome (detachment and pulverization are 1.0). Unconsciousness
+  from blast work above 150 J is `6 + blast_work_j / 60` seconds. Burn exposure is `fire *
+  0.02` severity per second in the hull, 0.6 of that in the turret, 0.15 head out, with no
+  position inside the compartment and no heat transport.
+- Morphine ampoules stand in for the Wehrmacht's ampoules and syringe; the box contents (6
+  dressings, 2 tourniquets, 3 morphine, 2 splints, 2 burn dressings, 3 triangular bandages, 2
+  canteens, scissors) are a design count, not a reviewed Kfz-Verbandkasten inventory.
+- Treatment is a stepwise hands-on procedure per wound kind (`first_aid::Procedure`): holds,
+  presses, wraps as alternating mouse strokes in a 0.25-1.8 s cadence, windlass turns as
+  presses half a second apart, a hands-off watch. The step tables, their seconds and counts,
+  the quality penalties (0.08 a wrap off cadence, 0.03 a mashed turn, 0.05 a hold let go,
+  0.15 an interruption, 0.2 a skipped cooling) and the quality-to-effect maps (a tourniquet
+  leaks `0.5 x (1 - quality)` of the bleed, a dressing's factor rises by `0.6 x (1 - quality)`
+  of the way back to untreated, a splint's performance factor is `0.45 + 0.25 x quality`,
+  improvised work is capped at 0.6) are design values standing in for skill, not a model of
+  tissue or of a bandage. No first-person hands are drawn doing them; the crosshair label and
+  the man's state are the feedback. The airway rule (an unconscious man on his back dies of it
+  at 240 s unless positioned) is a single timer.
+- A bleeding man emits surface-blood grains every half second, `clamp(rate_l_per_min x 14,
+  4, 48)` grains from a point chosen by the worst wound's region (lap, side, head, chest), and
+  96 more as he dies of it: a design rate for the pool's growth, through the real surface
+  transport, not a volume balance against his blood loss.
+- Stowing spent cases upright in a rear-wall rack is a crew-habit choice for this Tiger, not a
+  historical claim (practice varied by crew and unit; cases also went out of the hatch or onto
+  the floor). The slot stands are generated from the turret's source triangles (a 100-degree
+  ray fan from a point in the rear of the basket, the case stood a hand's width in from the
+  wall on the surface a downward ray finds, if the upward ray finds headroom), so no slot is
+  invented where the wall and floor are not; the margins (0.03 m from the wall, 0.01 m above
+  the stand, 0.04 m headroom) are design values. The loader's carry to the rack is a pose
+  interpolation over the stow time with no hands drawn; the stow time, the rushed and hurt
+  thresholds are design values.
+- Dumping the empties out of the side escape hatch with the commander's leave, and letting them
+  collect on the floor otherwise, is a crew-habit choice, not a historical claim. The open hatch
+  is the real lid state (sound enclosure, light and weather through the real opening, small-arms
+  rays against the moved lid); the main-gun armour solve does not model an open hatch as a hole
+  in the plate. The loader does not move to the hatch: his body stays at his post while the case
+  is placed just outside the aperture and given the heave's velocity (CASING_THROW_SPEED outward,
+  1.2 m/s up), so a rifleman can hit the aperture but not a man standing in it. The dump only
+  happens between reloads with no contact in the gunner's sight; the 1.8 s per case is a design
+  value. Floor clutter is counted, not collided: loose cases within 0.7 m of the loader's post
+  stretch his stroke period (a quarter per case, at most double), cases within 0.32 m of the
+  player's feet slow his step (0.18 per case, never below half) and are kicked with 1.4 times
+  the foot's velocity; there is no foot-to-case contact solve and no trip or fall.
+- The AI loader's working round is exempt from the off-station ram decay while he holds it
+  (`loader_holding`); his stroke cadence (1.5 s per stroke at full performance) is set so the
+  reload stays about six seconds.
+- The commander's designation range is the hit distance of a ray from his eye to the terrain
+  heightfield or a 2.4 m sphere round a contact's centre: a game shortcut, not a rangefinder or
+  a stadiametric estimate, and it is the distance to whatever the eye ray meets first (a rise of
+  ground in front of the intended point gives the rise's range). The gunner's response uses the
+  ordinary lay and traverse drives at their real rates; his acknowledgement is immediate. The
+  second pointer on the gunner's turret position indicator is the same source needle drawn at
+  0.72 scale 4 mm in front of the first. That the Tiger I's indicator carried a commander's
+  pointer is the brief's direction and is not verified here against a primary source; the
+  turret's own 12-hour pointer is the existing instrument.
+- Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
+  loss, the airway timer), spoken once per change of the set of men needing care.
+- The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
+- The crew figures carry no animation clips. A wounded man's slump is a rotation about his seat
+  by his performance; his anatomical hit volumes do not follow it (they stay at the seated
+  pose). Dragging a body off a seat translates the settled articulated ragdoll as one toward a
+  rest point over four seconds, with no contact against the interior; while the hands are on
+  a man or a body the crosshair target is held (a neighbour cannot steal it mid-hold).
+- Hands-on reach is 1.75 m from the eye to a man in the turret and 2.8 m down into the hull
+  front (the driver and radio operator sit low and forward of the basket floor's edge, and a
+  body there has slumped into the footwell); no leaning or kneeling pose is drawn for it.
+- The headless proof's fixture: clear weather, a parked range target that does not fire, and
+  a Tiger down to its last rounds, fired off before each strike so no live cartridge sits in
+  the compartment. With a full stowage every wounding lane tried through a plate into a seated
+  man (turret side, turret rear, hull side) found live rounds first and the Tiger went up, and
+  a killing solid shot through the gunner's seat set off eight rounds left in the rear stowage.
+  That is the model's own answer about the Tiger's stowage, not a defect of the crew; the
+  proof states the fixture in its receipt.
+- The driver's reaction (0.3 s / performance) and command ramp (2.5 / s × performance), the
+  gunner's settle (0.55 s / performance), lay tolerance (0.010 rad / performance) and hand
+  shake (a sinusoid scaled by 1 − performance on the desired lay), and the loader's stroke
+  cadence (0.75 s / performance through the existing auto-crew stroke machine) are design
+  values; the turret, gun and powertrain still move at their real rates through the existing
+  drives.
+- The gunner's target choice is nearest-first with an optical line from the eyepiece; no
+  recognition, no priority by threat.
+- Station entry refusal and the clamber cost reuse `switch_cost`; the clamber itself is the
+  existing camera interpolation.
+
+Gates: `crew-solo PREFIX` (eight stills and a JSON receipt, PASS/FAIL per check, nonzero exit
+on failure) and the unit tests `first_aid`, `crew_solo`, `singleplayer_crew`.
+
+
+## Armor scars, 2026-10-27 (branch `armor-scars`, `docs/ARMOR_SCARS.md`)
+
+Permanent dents, holes, pocks and patches on every vehicle, one record per wound read by
+ballistics (`plate_at`), saves (checkpoint v2, LAN protocol 8) and the raymarch renderer. What the
+code computes and what it approximates:
+
+- Terminal geometry (aperture, back-face scab, petals, plug) is an empirical rule from calibre,
+  plate, obliquity and residual speed (`armor_damage::terminal_geometry`), not a plate solver.
+  The record carries it as data so a voxel or particle plate solver can replace it.
+- Crater depth of a non-perforating kinetic strike is 25 % (bounce, ricochet) or 15 % (shatter)
+  of the round's penetration along the normal, scaled by pen / effective thickness, capped at
+  45 % of the plate; the same depth is the resistance loss, so seen cavity and ballistic plate
+  agree. HE keeps the energy rule (5 mm dish for a 76 mm OF-350). Not calibrated against a test
+  plate series.
+- Bullet and spall pocks are 1-3 mm splash craters sized from strike energy; they change no
+  resistance (small arms stay inert against armor).
+- Spall marks inside the Tiger: fragment strikes are resolved against the bounded cabin
+  collision walls (pre-existing proxy); a mark is placed only where a trace from the wall along
+  its normal meets a real cabin surface within 40 cm.
+- Near the camera each wound is a dense patch generated from the record (local densification:
+  the baked outer plates carry 0.27-2.2 m triangles, see ARMOR_SCARS.md), planar in the struck
+  plate's tangent plane: on a curved casting the patch departs from the true surface by the
+  sagitta (about 2 cm for a 0.2 m wound on a 1 m radius). Its footprint and the cut are clamped
+  per sector to where a probe of the vehicle's source triangles finds the plate (16 sectors,
+  0.1 R steps): the clamp error is one probe step.
+- Mid and far: parallax occlusion of the analytic profile in the plate fragment (16 steps + 5
+  bisections) with its depth written; the bore wall is an analytic oblique elliptical cylinder.
+  Surfaces count as the struck plate when they face along its normal (|cos| > 0.6) within 3 cm.
+- Holes are cut from the G-buffer and from every depth map by the same cylinder test, so the key
+  beam and lamps enter exactly where the eye sees through. Daylight leak: one isotropic emitter
+  inside each open hole of the player's Tiger, radiant intensity = outside sky band radiance
+  along the plate normal x aperture area (a cosine-lobed aperture approximated as a point
+  source; the sky as its three bands). No outward cabin-light emitter: cabin lamps are already
+  unshadowed clustered lights in this backend.
+- Behind a T-34 hole the inner faces of its exterior hull shell are seen: it has no modeled
+  interior. The punched plug stops where its straight path from the bore exit first meets an inner
+  surface of the same vehicle; no bounce or tumble.
+- Rim glow: Planck radiance at the cooling rim temperature of the shared thin-ring heat estimate
+  (`rim_heat`, 1.5 % of lost kinetic energy, 2.5 s time constant) over the crater floor, a hole's
+  edge ring (0.2 calibre) and the bore wall.
+- Weathering: rust bloom (first order, 6 h), cavity grime (1 h), snow fill of sky-facing
+  cavities at 4e-5 m/s at full precipitation (spindrift packing included). A loaded scar counts
+  as a day old. Authored rates, not a corrosion or drift model.
+- Wrecks: cannon rounds now strike dead enemies whose turret is seated (they used to pass
+  through every dead tank). Still open: a popped turret (its contact frame is its old seat) and
+  the dead player Tiger (shells still pass through it) take no further shell hits.
+- Shader and physical backends: the 24 most significant player-Tiger wounds as rigid marks
+  plus the track patch; enemy wounds are not drawn there.
+
+Gate: `armor-scars PREFIX` (receipt + stills) and the unit tests in `armor_damage`,
+`campaign_save` (512-scar round trip, v1 load), `lan` (window, worst-case packet).
+
+
+## Strewn field (scatter), 2026-10-27 (branch `scatter`, `docs/SCATTER.md`)
+
+A million-object litter layer placed deterministically from authored density and rule layers
+and drawn by a GPU-culled indirect path on the raymarch backend (`src/scatter_field.rs`,
+`src/renderer_scatter.rs`, `shaders/scatter_*.wgsl`). Implemented status and its limits, none
+presented as a contact solve, a fluid or ballistic result, or exact occlusion:
+
+- Contact: each object rests on the heightfield's drawn triangle surface at its centre, tilted
+  to the local normal by its group's conformance, sunk by a group fraction of its height scaled
+  by the snow cover; its own geometry is not solved against the ground. Bodies sink 6 %.
+- Orientation by context (debris fans from a crater, cases in a gun's ejection sector, bodies
+  along the authored direction of flight with 30 % reversed, drift tails along the wind) is the
+  authored rule with jitter, not a fragmentation, gait or wind-transport result.
+- Overlap avoidance covers medium/large pieces and bodies within one 32 m cell only.
+- Interaction tiers by estimated mass and size (2026-10-28, after the "tank rocks from a small
+  can" report): under 0.15 m or 5 kg nothing collides with the vehicle at all; an authored
+  large piece under 400 kg or 0.45 m is sight cover only; above both it is static mass whose
+  push resistance is sliding friction of its estimated mass (0.6·m·g over a 1 m shove), after
+  which it slides 1 m along the push (its instance and cover box move). The mass is a
+  bounding-box estimate with a material density by name, not a measured one. The medium tier
+  is LOS cover only (`occluders`); its pushables move under the existing lightweight pushable
+  model. Caps, nearest the route kept: 12 000 heavy, 3 000 medium occluders, 1 500 pushables,
+  400 loot sockets. Everything else is visual, static after load, not burnable, not moved by
+  shells, not kicked by crew on foot.
+- Woody pieces (2026-10-28): anything named as a branch, twig, sapling, stick, pole, slat,
+  plank, board, fence or log under 400 kg (per placement, its mass a green-wood cylinder of the
+  piece's longest extent and 85 % of its smallest) has no vehicle collision; a heavier log
+  resists by a rolling coefficient of 0.15 [I] over the 1 m shove. Not a rolling or snapping
+  solve.
+- Standing trees (`tank_push::standing_tree`, used by `trees.rs`): the bow meets the weaker of
+  the stem's bending strength (modulus of rupture 40 MPa at 1.2 m) and the root plate's
+  anchorage, 200 N·m per kg of stem [I] (tree-pulling regressions for conifers give about
+  100-200, Nicoll et al. 2006; frozen ground at the top), the stem a green-wood cone (density
+  800, form factor 0.5) of the measured trunk diameter and the placed height, tipping over 0.5
+  m of bow travel. Before this only stem bending was modelled, so a 0.5 m trunk held the Tiger
+  indefinitely; now only a tree of about 0.7 m and 12 m holds a crawling Tiger, and it goes over
+  to one that arrives at 3 m/s. The anchorage is a regression constant, not a soil or root
+  model.
+- Draw: three LODs by projected size (the source mesh; a grid-clustered reduction; one native
+  pixel carrying the mean albedo); no metallic-roughness or normal maps for the field's
+  prototypes (the kit has none); shadows and sky cover from the large tier at the reduced LOD
+  only, none into the point-light faces; the Hi-Z occlusion cull is the previous frame's depth
+  under the previous camera (one frame of latency on disocclusion); nothing drawn beyond
+  1 500 m (700 m for the shadow views) or below 0.8 projected pixels.
+- Gates: `KESSEL_SCATTER=0` leaves the field out entirely; `KESSEL_SCATTER_SKIP=1` and
+  `KESSEL_SCATTER_NO_HIZ=1` are measurement-only switches; `KESSEL_SCATTER_STATS=N` reads the
+  visible counts back. Receipts: `captures/scatter_*` pairs and the `gfxbench` figures in
+  `docs/SCATTER.md` §4.
+- Not drawn by the shader backend.
+
+
+## Terrain detail, 2026-10-27 (branch `terrain-detail`, docs/TERRAIN_DETAIL.md)
+
+The Canyon v2 ground is the native 4097² Gaea export (1.2207 m; the 1025² grid it replaced was a
+4x downsample) refined on a 0.076 m lattice that physics (`Heightfield::grade_at` ->
+`terrain_relief::Detail::height_at`) and the raymarch backend's CDLOD terrain both evaluate; the
+GPU surface matches the physics surface to 0.25 mm at 4096 probed lattice nodes (the rut atlas
+is half-float on the GPU). Named
+approximations:
+
+- Nothing below 1.22 m exists in the source. Relief octaves 0.31-9.77 m (geometry at the finest
+  level) and 0.15 m (shading normal only) are procedural value noise per ground class, amplitudes
+  declared from field descriptions of snow waves, sastrugi, rubble and frozen ruts, not measured.
+- Snow depth: 0.40 m declared settled cover redistributed by the Winstral maximum upwind slope
+  (100 m reach, linear response, constants declared, not fitted to a 1942 survey); obstacles enter
+  as box envelopes; no transport, sintering or melt over time.
+- Ground class is derived per 1.22 m node from depth, slope, the course centreline and building
+  footprints (rules in the cook), not surveyed.
+- Ruts: tread bands from the hull's lowest 5 cm (as the track map), compaction 0.75 x local
+  depth capped at 0.45 m, berm a quarter; boots 0.5 x depth capped 0.30 m every 0.75 m. A
+  compaction rule, not a snow/soil constitutive solve; geometry and physics read the 12.5 cm map
+  band-limited (3x3 binomial at 0.1 m); stamps are anti-aliased by cell coverage.
+- Craters: cube-root scaling R = k W^(1/3), k 0.8 (frozen soil) to 1.3 (settled snow) m/kg^(1/3),
+  depth 0.4 R, rim 0.12 of depth; filler mass taken as TNT. Not a cratering solve. The wreckage
+  layer's authored scars stay meshes (not carved).
+- Ground material (2026-10-28): the 2.56 m PSX detail tiles are hex-tiled with hashed rotation
+  and offset, high-passed on upload and blended over two octaves; macro albedo/roughness drift
+  follows cooked snow depth, wind exposure and relief with declared shares (+3 %, -4 %, +-1 %),
+  and war dust/soot as value noise. A presentation of texture detail, not a measured BRDF field.
+- LOD: away from the camera the drawn surface omits the finer relief octaves (morph-faded) and
+  samples the lattice coarser; the physics surface keeps them. Bound: the omitted octaves' summed
+  amplitude, <= 1.5 cm within 80 m, <= 5 cm within 160 m, <= 0.45 m (rubble; snow 0.3 m) beyond
+  1.3 km where a pixel at 800x450 spans about 1.8 m. Rendered vertices are exact surface samples
+  at every level.
+- The raster/shader backends still draw the coarse 1025² mesh, now sampled from the detail
+  surface at its nodes; between nodes it departs from the physics surface by the native residual
+  (std 0.16 m, p99 0.41 m) plus relief. Open item; the raymarch backend is the one that draws
+  the physics surface.
+- The physics surface at a few fixed points (renderer track map on the raster path, the authored
+  `crater_scar` decal rims, prop placements re-seated by the ground change under their anchor)
+  is unchanged in kind.
+
+Gates: `terrain-showcase PREFIX` (four viewpoints, day and night, GPU-vs-physics probe, ground
+query cost; `KESSEL_TERRAIN_DETAIL=off` for the coarse grid) and `terrain-bench PREFIX FRAMES`
+(GPU pass timings with/without the terrain, `KESSEL_RM_SKIP=262144` since integration, 8192 on the branch); unit tests
+`terrain_relief::tests`, `terrain_lod::tests`.
+
+
+## Enemy tank crews, 2026-10-28 (branch `t34-ai`, `docs/ENEMY_TANK_AI.md`)
+
+Canyon T-34 platoons now fight an armoured target by fix and flank (`src/winter_encounter_ai.rs`,
+`src/tank_doctrine.rs`); the crews still drive, lay, reload and fire through the same `Tank`
+dynamics, turret traverse, reload clock, dispersion and authoritative shell solve as before. What is
+decision-making only, and what is simplified:
+
+- Armour solution: a crew's choice of post reads `kill_margin_mm`, the flat-plate budget of its
+  BR-350B at the post's range minus `ballistics::effective_thickness` of the Tiger I hull face
+  presented (front/side/rear by bearing from the hull's corner angle, plates from
+  `ArmorScheme::TigerI`). It is crew knowledge of the enemy's armour, evaluated against the pose
+  the crew last saw (or, unseen, a Tiger assumed to face it); no shell outcome is decided by it.
+  It ignores turret faces, scars and the solver's per-shot variation.
+- Hull-down: a candidate post counts as hull-down when the caller's optical sight test sees the
+  target from 2.3 m above the post's ground and not from 1.1 m: two sight rays, not a visibility
+  solve of the hull's silhouette.
+- Gun-on-me: a crew in sight of the target reads its bore within about 6 degrees of its own hull
+  as a gun laid on it (`GUN_ON_ME_COS`). A visual cue, not a model of what the eye resolves.
+- Struck: a Tiger round striking the tank, or bursting on the ground within 9 m of it, counts as
+  fire on it (`STRUCK_BESIDE_M`).
+- Muzzle flash: when the Tiger fires its main gun, a crew looking at least side-on toward it,
+  within 2 km, with a clear line (`los_clear`) through air whose `weather_view.transmittance`
+  passes 3 % (`FLASH_MIN_TRANSMITTANCE`; silhouettes need 10 %), gets an exact fix of where the
+  flash was at that moment, held 22 s like a sighting. A recognition knob, not a photometric flash
+  model; the threshold is lower because the flash outshines a hull.
+- Cued search: a crew whose fix (flash, sighting, radio or leader's signal) lies within 40 m of
+  the Tiger accrues its detection meter 3 times faster (`CUED_SEARCH_*`); the envelope, arc,
+  weather-contrast and line-of-sight gates are unchanged. A rule of thumb for cued detection, not
+  a model of visual search.
+- Engine noise: every 3 s each crew within an earshot radius (260 m idling to 700 m at full speed,
+  minus up to 45 % in the storm, cut to 62 % through cover by `hear`) receives the existing
+  uncertain sound report (rounded to a 32 m cell). The radius is tuning, not the acoustic
+  propagation model the audio layer runs.
+- Arena: `arena_setup` installs the evolved T-34 policy (`assets/ai/weights_academy.bin`) when it
+  loads; it proposes manoeuvre and a fire hold only, as in the AI lab.
+
+Gates: `cargo test --bin panzerrechnersystem winter_encounter_ai tank_doctrine enemy_ai_telemetry`
+(CPU-only duels on open ground and a street district), `canyon-ai-run` receipts' `enemy_ai`
+block, `ai-gauntlet`.
+
+## Platoon wingmen, 2026-10-27 (`KESSEL_PLATOON=2`, branch `platoon`)
+
+Two AI Tigers under the player's radio command (`src/platoon.rs`, `src/radio_llm.rs`,
+`docs/PLATOON_MODE.md`). What is shared truth and what is simplified:
+
+- Armour: a wingman is hit through the same swept `ArmorScheme::TigerI` contact and the same
+  `ballistics` plate solver as the player's hull. No friendly-fire exemption exists: the player's
+  rounds can hole a wingman and a wingman's rounds can hole the player; the gunnery only refuses
+  to fire when a friendly hull lies within 6 m of the shot line.
+- Behind the plate: a **simplified deterministic casualty model**, not the player's fragment
+  shower. Five fixed seat points and six modules take a kill/loss probability from the solver's
+  `behind_armor` lethality and the entry side (`ArmorPart`, `Facing`), drawn from a counter hash.
+  Side hits pick a flank by hash because the plate contact does not report left from right. No
+  fragment geometry, no interior occlusion, no fire spread timing. Named as such in the code
+  (`platoon_on_penetration`) and the mode doc.
+- Driving: the shared `apply_vehicle_avoidance` and the inverse-mass hull pair solver; the course's
+  clear-cell test is a wall veto, not a path planner. A 1.6 s reverse-and-swing watchdog is a
+  driver behaviour, not a physical recovery.
+- Engagement: in contact the wingmen are driven by the evolved Tiger policy (`weights_tiger.bin`).
+  It proposes drive, steer and a fire intent only; every physical gate (gun lay, travel lock,
+  reload, ammunition, line of sight, avoidance, hull contact) is unchanged, as for the AI Tiger.
+- Perception: enemies track, lay on and accrue detection against the nearest Tiger; the detection
+  envelope (engine, hatches, silent watch) still comes from the player's hull state.
+- Radio: the language model produces words and one validated order per transmission; it has no
+  access to the simulation beyond the context JSON and can move nothing. The squelch burst is a
+  synthesized stereo buffer, not a receiver model.
+
+Gates: `platoon-proof PREFIX` (scripted orders over the grammar, replies with their path, exterior
+captures, JSON receipt), `cargo test --bin panzerrechnersystem radio_llm platoon`. Off by default;
+no shipping preset fields the platoon without `KESSEL_PLATOON=2`.
+
+
+## Plate-solve obliquity ceiling and the Canyon run loop, 2026-10-27 (branch `run-loop`)
+
+- `ballistics::MAX_OBLIQUITY_DEG` raises the angle the plate solve represents from 75 to 85
+  degrees (`effective_thickness`, `resolve_at_velocity`). The ceiling predates source-triangle
+  contacts, which report the true angle between the shot and the struck plate's normal: a round
+  skimming a horizontal plate arrives at 85-90 degrees and was solved as a 75-degree hit on the
+  thin plate. Canyon v2 seed 7 (2026-10-27, `captures/run_loop_baseline_s7_20261027.log`): a 76 mm
+  BR-350B from 443 m, logged `HullFront 75.0 deg, penetration 92.3 mm / effective 71.6 mm,
+  Penetration` through the 25 mm hull roof, nine modules lost, ammunition detonation at 58 s.
+  With the ceiling at 85 degrees the same round is `85.0 deg, 62.1 / 120.1 mm, Ricochet`
+  (`captures/run_loop_fixed_s7_20261027.log`); the slope law itself still saturates at 80
+  degrees (`slope_multiplier`), so the steepest graze presents at most that LOS multiple. The
+  legacy horizontal-only helper `horiz_obliquity_deg` (OBB proxy contacts) keeps its 75-degree
+  limit. Regression: `ballistics::graze_tests`. This is a bound on an existing empirical slope
+  law, not a measured ricochet-angle model; the ricochet response's 65/75-degree thresholds and
+  restitution are unchanged and remain authored.
+- The Canyon run's after-action card and opening brief (`src/canyon.rs` `RunReport`/`RunBrief`,
+  `ui::draw_run_card`/`draw_run_brief`) are front-end presentation read from the game's own
+  counters after the run has ended; they change nothing in the simulation. Play itself stays
+  wordless. Per-attempt variation (`canyon::variation`) moves the manifest's authored start
+  instant by whole hours on the same date (the ephemeris lights it) and phases the same authored
+  winter fronts by the attempt seed; the medium's authored baseline, emitters, armour and damage
+  laws are untouched. The headless `canyon-finish-check` and `canyon-foot-check` harnesses stage
+  the Tiger with `debug_place_tiger` and are receipts of mechanism, not of balance.
 
 ## Raymarch backend, 2026-10-27 (`KESSEL_RENDERER=raymarch`, branch `raymarching`)
 
@@ -269,6 +682,20 @@ Gates: `raymarch-showcase PREFIX` (16 stills with a JSON receipt; `KESSEL_SHOWCA
 for 18 more across the day and the weather) and `gfxbench` with `KESSEL_GPU_PROFILE=1` on the
 raymarch backend; the shader and physical backends are unchanged and remain the shipping
 defaults until this backend passes the same reviews.
+
+## Missions: signal stars, smoke columns, alerts (2026-10-27, branch `missions`)
+
+`src/mission.rs`, `src/mission_game.rs`, `docs/MISSIONS.md`. The mission's in-world cues are
+things in the world, with these named limits:
+
+| Cue | What it does | Where | Limit |
+| --- | --- | --- | --- |
+| Signal star (flare) | A 26.5 mm star: launched at 46 m/s, gravity to the apex (about 110 m), parachute descent at 3.2 m/s drifting with the ground wind, 24 s burn fading over 3.5 s. One point light with a 90 mm source radius and the star's colour, occluded and scattered like every other light; a 0.42 m emissive grain so the star is not sub-pixel at a kilometre; a launch-smoke thread and a thin thread above the star in the volumetric pool. | `mission::Flare`, `Game::mission_lights`, `mission_smoke`, `drive_mission_flares` | The radiant intensity (900, renderer units) is set by eye, not photometrically; the grain is larger than the star; the parachute is not a drag model (a fixed terminal rate and a bounded approach to the wind). |
+| Smoke column | Three source-connected media supports from the base to the height, leaning downwind by the ratio of wind speed to a 2.2 m/s rise, growing over the first 20 s, fading over the duration. | `Game::mission_smoke` | No flame, no ember light, no heat: a burnt-out vehicle still smouldering. The pool is 12 supports shared with every other plume. |
+| Alert | Unaware platoons within the radius enter the stealth model's own Searching state with the Tiger's current position as the last known area and the model's own 22 s timeout; guns within the radius (field-of-fire factor as `at_guns_hear`) have `heard`. | `Game::mission_alert`, `stealth::AlertState::Searching`, `at_guns_hear` | Grants knowledge the model could have given only by hearing; nothing is aimed, fired or moved by the cue itself. |
+| Release | A platoon through the course director's own entry and siting (`canyon_platoon_site`, `canyon_reinforcement_entry`). | `Game::mission_release_platoon` | None beyond the director's. |
+| Compass bezel | The pocket compass body turns to the ordered bearing; the needle keeps north. | `hand_map::compass_models`, `hand_compass::models` | The body carries the dial and the housing together, so the housing turns with the bezel (a real Marschkompass turns only the ring). |
+| Position estimate | A pencil ring on the map: the true position displaced by an error of 4.5 cm per metre travelled since the last fix (a completed beat), 12 m to 110 m, in a direction fixed per fix. | `MissionState::estimate` | A design value standing in for dead-reckoning error, not a measurement. |
 
 ## Native geometry coverage, 2026-10-01 (consolidated shader renderer)
 
@@ -623,7 +1050,7 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | System | Live truth | Remaining debt / release gate |
 |---|---|---|
 | Exterior cannon flight | Authoritative projectile pool with fixed substeps, `ShellSpec` velocity loss/gravity and swept contacts is being integrated; focused moving-target/range/frame-schedule tests pass. | Unified game tests and a playable delayed-impact capture must pass after renderer integration. No trigger-time outcome or forced landing may remain. |
-| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. | P0: damage forecasts those bodies immediately against frozen targets, while their later visible paths meet moving state. Interior collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance but do not deform or perforate retained triangles. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. No new fracture solver is claimed. |
+| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. | P0: damage forecasts those bodies immediately against frozen targets, while their later visible paths meet moving state. Interior collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. No new fracture solver is claimed. |
 | Vehicle loss | Module/fire states and crew bodies exist. | P0: enemy penetration currently collapses too readily to an instant kill; random turret-pop/cook-off decisions are not derived from ammo/fuel/module energy. Replace with the shared vehicle damage state. |
 | Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. | P0: hot steel fragments still meet cabin proxies rather than the visible triangle interior; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations. Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
 | World collision/destruction | Tank/tank separation, trees, destructible structures, rubble and drive-over classes work; since 2026-09-29 the Tiger's contacts go through the push model (tank push row) and the manifest's walls, piers, doorways and sheds are destruction records. | P0: AABBs/yawed footprints, hard-coded infantry cover cylinders and several authored structure shapes are proxies. Replace them with source-derived triangle/convex data; no invisible blocker may contradict the rendered object. |
@@ -674,6 +1101,10 @@ exists; those figures are the report's scalings and derivations ([E]/[D]).
 | Source calibration (`sound_levels`) | One entry per source: Z-peak (dB re 20 µPa) and short-term A-weighted level LAF at a stated reference, spectrum class, distance law, durations and the report's provenance tag. Own 88 at the ear 163/139 buttoned, 168/142 hatch open, 182/152 head-out; guns scaled by propellant charge through Kingery-Bulmash (88 177 dB at 10 m side ↔ 0.90 kg TNT; charges not in SL estimated from muzzle energy at the anchors' efficiency); HE bursts by fill (mean of bare and Fano-cased); hits on own armour by SL §5's ringing-energy law or the confined quasi-static pressure of a filler bursting inside; Tiger interior 93/110/115 dB(A); T-34 106 dB(A) at 10 m. | Estimates for sources the report does not cover are tagged [E] and `in_research: false`: wind at the ear, foley and mechanisms (breech, tools, hatches, footsteps, paper), starter, hydraulic traverse, exterior armour strikes, bullets on steel and ground, spall fragments, ammunition-explosion and ground-strike TNT equivalents, Panzerfaust launch (PTRD figures), recoil stroke. Muzzle brakes of the D-25T/ML-20S/D-10S/M-10T are general knowledge. The 45 mm side level is 167.5 dB at runtime (the report's own unbraked −2.5 dB applied) against the table's 170. Gate: `sound_levels::tests`. |
 | Propagation (`sound_propagation`) | Per event at hear-time, per octave band 31.5 Hz–8 kHz: Kingery-Bulmash (Swisdak fit) for blast, 166 − 20·log r for rifle-class blast, spherical for engines/voices/foley, the Whitham N-wave evaluated at the listener; muzzle directivity (+7.5 forward, −5/−10 rear); ISO 9613-1 air absorption from the act's temperature and humidity (winter −20 °C, 80 %; spring the ISO +15 °C/70 % row as a stand-in); CRREL snow ground effect relative to hard ground; Maekawa barrier loss when the ray is blocked. Speed of sound from temperature (319 m/s at −20 °C) in the delay queue, pressure fronts, crew blast impulse and review tools. | Named approximations: beyond Z = 198.5 the midpoint exponent 1.24 of the report's 1.1–1.38 bracket; below Z = 2.9 the fit's local slope continued; the snow model is a fit (9 dB/octave above f_x = 100·(r/10)^−0.35 Hz, capped 8 + 14·log(r/10) dB) that ignores source and receiver heights; the barrier assumes a 1 m path difference (no diffraction geometry); no refraction by wind or temperature gradients, no Doppler, no ground reflection as a separate arrival; class spectra are nominal [E] shapes; LAF follows the peak law. The waveform filter is a fitted cascade of 16 high-shelf biquads (fit error ≤ 2 dB at band centres, tested); the level is computed, not taken from the filter. Gate: `sound_propagation::tests`. |
 | Listener enclosure and headset | Buttoned: the report's band insertion loss (upper end of the range at 31.5/63 Hz so the whole-impulse rule holds) and whole-impulse peak loss (−25 dB low-frequency blast, −35 dB cracks and small arms); open hatch 3–10 dB [E]; head-out and on foot 0 dB. Aboard, the Dfh.b supra-aural headset estimate on every source. Own sources (gun, MG, strikes, engine) calibrated at the ear. Buttoning up makes the own engine louder (+8 dB against an open hatch, SL §7/§8). | The report's insertion loss is itself an estimate; one hatch state covers every lid; no per-hatch geometry or ball-mount path; head shadow per band is estimated and the waveform's head shadow is the older fixed filter; the headset attenuation is an estimate for an unmeasured Dfh.b. A strike on the own hull is heard at the interior law (SL §5) whatever the enclosure: head-out and hatch-open listeners get no separate exterior radiation path. The own engine head-out is the exterior level carried from 10 m to ~4 m [E]. |
+| Binaural rendering (`acoustics::spatial`, 2026-10-27) | Every positioned voice is placed around the head by one deterministic stage: Woodworth's spherical-head interaural delay (87.5 mm, 0.66 ms abeam, fractional delay on the far ear), Brown–Duda's first-order head-shadow filter per ear (unity at low frequency, 2× at the facing ear and 0.1× in the shadow at high frequency), the owner's constant-power presentation pan on top. `EarLevel.transmission` carries how an exterior sound came in: direct, through the closed plates (buttoned and every periscope view), or through `open` hatches; the plate-borne share keeps 30 % of its lateral angle, the hatch share arrives from 45° above, the two shares from SL §8's band insertion losses under the voice's spectrum, rendered separately and summed by √share. Streaming voices (vehicles, fires, loose track, elevation gear) ramp the same model per sample with the listener's current enclosure. Levels are untouched: `propagate` sets them before and the LAF placement normalises after. Measured abeam: dominant interaural lag 10 frames buttoned, 17 through one hatch, 29 head-out; a 3 kHz tone abeam is shadowed, not silenced; 125 Hz ILD < 1.5 dB. The sweep capture (`crew-battle … spatial-sweep`) fails unless its recorded audio pans with the turret and brightens as the hatch opens. | A rigid sphere, no pinna or torso: no elevation cue, no front/back cue; the hearing model's far-ear band table (SL §4 [E]) is 2–5 dB deeper than the sphere from 500 Hz to 2 kHz (within 3 dB at 4 and 8 kHz), so the two head shadows (dose and waveform) disagree there. No measured HRTF is bundled (no permissively licensed set was taken in; the stage is one filter pair per voice, built to be replaced). The 30 % plate retention and the 45° aperture elevation are estimates; the hull is one enclosure, not per-plate radiation; loops blend by their pool's spectrum class, not the voice's ear spectrum; one speed of sound at the head (343 m/s, 7 % short of the −20 °C air's ITD). Game bearings are horizontal: elevation is carried but unused. The presentation pan (and `widened_bearing_deg`) are owner-directed departures: at exactly 90° the far ear is silent by the pan law, whatever the head model says. Gate: `acoustics::spatial::tests`, `audio::vehicles::tests::exterior_vehicle_direction_follows_the_listeners_hatches`, the sweep receipt's `spatial_proof.passed`. |
+| Traced room acoustics (`acoustics::raytrace`, `game_acoustics`, 2026-10-28) | World voices and foley are heard in a reflected field traced through the scene: stochastic energy ray tracing per octave band (geometric acoustics), the Tiger's 16 articulated source frames voxelized at 5 cm in their own frames, the marched terrain, cover boxes within 150 m; handbook absorption and scattering per material [E]; ISO 9613-1 air per band; receiver sphere plus diffuse rain (shadow-ray next-event estimation); a binaural IR from band noise shaped by the echogram, FFT-convolved and added to the dry path. Cached per listener cell, hatch state, turret bucket and source bucket; a fixed ray budget per update (48 High / 16 Laptop) keeps runs deterministic. Measured in `sound-world`: buttoned cabin +8.8 dB reflected at 1 kHz with T20 0.17 s; cupola open +4.0 dB, 89 % of rays out; head out −7.4 dB; a brick wall 3 m to the right adds ~20 dB over open snow and returns from the right. | Geometric acoustics: no diffraction, no transmission through plates (the dry path keeps SL §8's insertion loss), no modes below ~100 Hz, no phase; early reflections are per-bin band noise, not image sources. 5 cm voxels merge sub-cell features and thicken every wall by one cell. Trees, doors and building interiors beyond their boxes are absent outdoors. Fields come from bucketed stand-in sources, not each source's exact place. Cost bounds, named: the wet path convolves a voice's first 0.75 s; at most 4 (High) / 2 (Laptop) traced convolutions per update, the rest take the parametric tail; a new place uses a neighbouring field, else the parametric tail, until its trace is spent; MG receiver rounds keep the parametric path. The parametric Schroeder tail therefore remains as a fallback (and in offline tools); it is no longer the shipping room model where a trace exists. Gate: `acoustics::raytrace::tests`, the ignored real-cabin test, `sound-world` receipt `checks`. |
+| Foley catalogue (`acoustics::foley`, 2026-10-28) | 314 cues synthesized from contact physics (modal strikes with Hertzian contact, granular breakage, stick-slip friction, Minnaert bubbles, nozzle and Aeolian flow, formant bursts), each placed at its 1 m reference level [E] propagated from the event's world position through `sound_propagation`, the binaural stage and its traced room; continuous cues as positioned loops. Wired to footsteps on surfaces the recordings lack, landings, handling, doors, stations, climbing, hatches, the cigarette's actions, the extinguisher, first aid, the vehicle's gears, brakes, starter, stall, cooling, MG barrel heat, track ground, crush stops and collapses, weather on the steel and the wind's tones. | Waveforms are models, not recordings of the objects; every 1 m level is an estimate against the existing anchors; mode tables are body-class ratios, not measured Tiger parts; the cold-snow squeak, the Aeolian dipole's U⁶ level law, the ventilator's blade-pass tone and the cooling-tick rates are estimates. Intercom voices, periscope and sight clicks, enemy infantry and allied vehicles remain unvoiced. Not perceptually auditioned. Gate: `acoustics::foley::tests`, `audio::foley_play::tests`. |
+| Own engine direction and station level (2026-10-28) | The running bed comes from the engine compartment: outside directly, inside with its lateral angle kept by sqrt(direct share) of a firewall source (Q = 2) in a room of constant 12 m² (from the traced cabin's T20), and its level offset at the station from the same Hopkinson–Stryker law (≤ 0.7 dB across the crew stations). | The room constant is derived from an estimated cabin volume and surface; one source point for the whole engine bay; the running gear stays centred. Gate: `sound-world` receipt `engine_by_station`. |
 | Engine, tracks and other vehicles | Own Maybach and tracks at the SL §7 interior law (93/110/115 dB(A)), no "fatigue-safe" cap, ±1.8 dB for torque demand [E]; the loop is measured at seven playback speeds. Enemy tanks (none were voiced before) at the T-34 exterior level scaled to their speed, propagated per frame, the four loudest voiced. | Every enemy type uses the T-34 calibration and a synthesized V-2/track loop; the per-band transfer of a vehicle voice is reduced to one one-pole low-pass; allied Tigers are not voiced. |
 | **Reproduction transform (not physics)** | The tone map of SL §11 (L ≤ 110 dB(A): 1:1; 110–150: 2:1; above: 4:1) maps each voice's computed ear LAF to its short-term digital level; one global exposure puts the owner-verified buttoned own-gun recording's peak at −1.5 dBFS (measured crest 15.69 dB, so the curve's −30.5 dBFS(A) becomes −15.1); recordings and synthesized voices are normalised by their own measured LAF,max (IEC 61672 A-weighting, fast 125 ms); a lookahead true-peak limiter (4× interpolation, −1 dBFS ceiling, 1.5 ms window, 200 ms release) on the master output bounds the sum, live and in capture. Review films (`mechanic-review`) export the master output at unity (the former fixed 0.5 export gain is gone), and `impact-mix-review` renders every key event through the live graph and asserts the calibration's dB relations (own gun buttoned peak −1.5 dBFS and 17.4 dB (LAF) over the cross-country bed; every unlimited voice within 1.5 dB of the curve; nothing above −1 dBFS), and, heard through the ears, what the middle-ear reflex may and may not take (row below). | This is a reproduction transform like ACES and exposure, not acoustics. It is applied per voice, not to the sum: two equal overlapping events sum 3 dB higher than the curve would give their combined level. The limiter's 200 ms release lowers a limited event's short-term level too: the head-out gun plays ~2 dB (not the curve's 6.5) above the buttoned gun; the ear model carries the rest. The weather voice is normalised continuously (8 s); foley keeps its former call-site volume as a relative effort around an estimated class level. Gate: `reproduction::tests`, `audio::calibrated::tests`, `audio::master::tests`, `impact_mix_review::tests::every_calibration_relation_holds_through_the_live_graph`. |
 | Ear model (`hearing`) | Driven by the pressure at each ear, per impulse: every own shot (88, MG34 per round, P08), every strike on the own hull, every propagated report, burst and crack hands both ears its incident peak (head shadow on the far ear, +4 dB for the ear facing the source), A-duration and spectrum class. SL §12 runtime fallback: duration credit 0/5/9 dB, a 4 dB-per-decade trade, TTS2 at 4 kHz = 2·(X − 157) (median ear), the §12 frequency shape (½ octave lower for low-frequency blasts), log-time recovery over 16/24/72 h, a third of the 24 h shift kept after acoustic trauma (TTS2 > 40 dB), a 2 h engine accumulator towards LAeq − 85, eardrum rupture Φ[(ln p − ln 100 kPa)/0.64] of the incident (reflected for a facing ear) pressure with a 30 dB conductive loss, tinnitus onset/level/pitch per §12, the middle-ear reflex already contracted when an impulse arrives (row below; it protects the next impulse, never the first). Impulses below an effective 140 dB add no dose. Real recovery is the default. It replaces the former authored exposure (accumulate/recover with a 240 s constant), the world duck after hits and the synthesized "ear fatigue" wash. | This is the report's [E] fit to measured anchors, not the AHAAH model it prefers: anchors met within the test bands (25–50 rifle shots 16 dB; 7 × 17-pdr ~51; 40 × 88 buttoned ~7; 5–20 × 88 head-out 38–42). The report's prose says 20 dB recovers to ~15 dB in 30 min; its own recovery law (implemented) gives 11.2 dB; the law is kept and the discrepancy recorded. One median ear (G = 2), no susceptibility spread; rupture and persistent tinnitus are deterministic draws from a counter hash. The engine's continuous level comes from the live audio block, so a device-less run accumulates none (and drives no reflex); only the ear state depends on it, which such a run cannot play. Gate: `hearing::tests`. |
@@ -969,7 +1400,8 @@ refinement remain separate acceptance work, as recorded in the hand-prop note.
 | Loose brass rides with the tank (2026-10-03) | Spent 8.8 cm cases and machine-gun cases inside the tank's envelope are moved with the turret or hull by that frame's rigid motion each update, then solved against the real source triangles as if the frame were at rest. Inertial forces from acceleration, braking and turning are not applied, so brass does not slide when the tank stops. Outside the envelope a case is a world body; it stops at the terrain height with no bounce. | `src/game.rs` (`carry_with_frame`, `brass_aboard`, `drive_casings`), `src/mg_case_runtime.rs` | The earlier solver treated the brass as world bodies against a hull that moved under them, so the floor and walls struck every case on every update of a drive or traverse and produced an endless clinking. That was not physical either. The debt is the missing inertial forces. |
 | Cigarette vision boost (2026-10-03) | Each toke of at least half a second adds ten seconds, stacking to 120 seconds, during which the display grade's exposure is multiplied by up to 1.9 and its saturation by up to 1.18. It fades in over a second and out over the last two. Nothing in the scene changes: no emitter, medium, material or fog value. | `src/cigarette.rs` (`BOOST_SECONDS_PER_TOKE`), `src/renderer.rs` (`boosted_display_grade`) | The owner wants smoking to buy visibility, the game's central resource. It is a display-grade presentation value standing in for a steadier, sharper eye, not a claim about nicotine and night vision. |
 | Tiger main gun: one recording, shaped by the path (2026-10-03) | The owner's recording is played through the world renderer for every listening position. Its level at the ear is the calibrated own-gun level. Its colour is the loss in each octave band along the path from the muzzle to the head (air, ground, hull, headset), its direction is the muzzle's bearing from the live head, and its tail is the reverberation of the place. The earlier exterior recording plays as a second layer 6 dB under it, on the same path, with the open-ground tail. For a listener inside the hull a recording made inside a firing tank is added 3 dB under the main one, with only the headset's loss and no added filter or room. | `src/game.rs` (`play_player_main_gun_report`, `own_gun_path`, `OUTSIDE_BLAST_LAYER_DB`) | The 6 dB and 3 dB layer balances are set by ear. Three recordings of one shot are a presentation choice, not three physical sources. |
-| Outdoor reverberation from the surroundings (2026-10-03) | The late tail outdoors is built from walls and wrecks within 85 m, the share of the horizon the ground closes off (sixteen bearings at 60, 150 and 320 m), and whether the ground is snow. | `src/game.rs` (`surroundings_reverb`, `terrain_enclosure`, `outdoor_reverb`) | An estimate of late reverberation, not a traced impulse response. There are no discrete echoes off individual faces yet. |
+| Outdoor reverberation from the surroundings (2026-10-03; since 2026-10-28 only the fallback where no traced field exists, see "Traced room acoustics") | The late tail outdoors is built from walls and wrecks within 85 m, the share of the horizon the ground closes off (sixteen bearings at 60, 150 and 320 m), and whether the ground is snow. | `src/game.rs` (`surroundings_reverb`, `terrain_enclosure`, `outdoor_reverb`) | An estimate of late reverberation, not a traced impulse response. There are no discrete echoes off individual faces yet. |
+| Presentation pan under the binaural stage (2026-10-27) | The head model (`acoustics::spatial`) renders interaural delay and head shadow for every positioned voice, and the owner's full constant-power pan is kept on top of it, so a source abeam is still in one ear. `HeadModel::PHYSICAL` is the sphere alone. | `src/acoustics_spatial.rs` (`HeadModel::PRESENTED`) | The owner wanted direction judged by ear (row above, 2026-10-03); a bare spherical head gives under 2 dB of level difference below 500 Hz, where the engines and reports live. The pan is a presentation value, not a claim about the head. |
 | Open hatches stack (2026-10-03) | With hatches open and the head inside, the hull's loss in each band is the one-hatch figure less 10 log10 of the number of open hatches, never below zero. | `src/sound_propagation.rs` (`loss_through_openings_db`) | Treats the five hatches as equal openings whose transmitted energies add. Their real areas and positions differ. |
 | Recordings made at a distance, propagated again (2026-10-03) | Gun reports and strikes 700 m or more from the listener are voiced by the owner's recordings made at a distance. They are still placed at the propagated level and passed through the path's loss in each band, so the distance colour is partly counted twice. | `src/game.rs` (`recorded_gun_report`, `schedule_sound_from`, `DISTANT_RECORDING_M`) | The level is correct; the spectrum is darker than one pass of propagation would make it. The low bands that carry at range are barely affected. |
 | Own gun buttoned up, fitted to the listening references (2026-10-04) | For a listener in the closed tank the three gun recordings are filtered by per-band tables fitted so the result has the octave-band balance measured on the owner's two reference recordings, and the main and outside layers are held for 0.9 s (dense scattered copies of the recording) inside a 1.7 s tail. This replaces the hull and headset path for this one sound. Measured result: within about 1.5 dB of the reference from 31.5 Hz to 1 kHz, 4 dB low at 2 kHz, 9 dB at 4 kHz, 13 dB at 8 kHz; level within 7 dB of peak for 0.8 s. | `src/audio_calibrated.rs` (`CABIN_GUN_FIT`, `sustain_roar`), `tools/audio_reference_bands.py`, test `cabin_gun_capture_for_reference_measurement` | A film mix is the target, not a measurement of a Tiger. The hold is a presentation device. The references' loudness relative to the engine drone (about 9 dB) is not reproduced: the game's calibrated levels still decide that. |

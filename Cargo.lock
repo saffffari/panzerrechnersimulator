@@ -1696,6 +1696,7 @@ dependencies = [
  "rodio",
  "serde_json",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

@@ -121,6 +121,7 @@ impl Game {
             if !drain_tank(fuel, speed, dt) {
                 self.engine_on = false;
                 self.engine_crank_t = 0.0;
+                self.acoustics.starved = true;
             }
         }
     }

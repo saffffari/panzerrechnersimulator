@@ -1,0 +1,68 @@
+{
+  "best_s": null,
+  "broken_modules": [
+    "main gun",
+    "turret traverse",
+    "gunner sight (TZF)",
+    "coaxial MG",
+    "ammunition rack"
+  ],
+  "cause": "AMMUNITION DETONATION — TURRET BLOWN OFF",
+  "distance_m": 276.7041320800781,
+  "elapsed_s": 112.14280700683594,
+  "enemies_fielded": 11,
+  "headline": "THE RUN IS OVER",
+  "hits_taken": 2,
+  "kills": 0,
+  "length_m": 4925.7158203125,
+  "new_best": false,
+  "note": "harness record, separate from the title's canyon-v2-times.v1.json",
+  "outcome": "Lost(\"Ammunition detonation — turret blown off\")",
+  "penetrations_taken": 1,
+  "progress": 0.05617541819810867,
+  "rows": [
+    [
+      "TIME",
+      "1:52.1"
+    ],
+    [
+      "REACHED",
+      "277 m of 4926 m  (6%)"
+    ],
+    [
+      "BEST",
+      "no finish yet"
+    ],
+    [
+      "FIRE",
+      "0 rounds fired, 0 kills"
+    ],
+    [
+      "HITS TAKEN",
+      "2 (1 through the armour)"
+    ],
+    [
+      "ENEMY",
+      "11 tanks fielded against you"
+    ],
+    [
+      "LOST",
+      "main gun, turret traverse, gunner sight (TZF),"
+    ],
+    [
+      "",
+      "coaxial MG, ammunition rack"
+    ],
+    [
+      "ATTEMPT",
+      "seed 137  ·  start 11:48  ·  clearing"
+    ]
+  ],
+  "schema": "panzer.canyon-run-card.v1",
+  "seed": 137,
+  "shots": 0,
+  "start_clock_local": "11:48",
+  "times_file": "C:\\Users\\saffari\\.local/state\\panzerrechnersystem\\canyon-v2-times.headless.json",
+  "weather": "clearing",
+  "wounds": []
+}

@@ -65,6 +65,9 @@ pub(crate) use output_buffer::pressure_vent_mono;
 mod timeline;
 #[path = "audio_calibrated.rs"]
 mod calibrated;
+pub use calibrated::Room;
+#[path = "audio_foley.rs"]
+mod foley_play;
 #[path = "audio_small_arms.rs"]
 pub(crate) mod small_arms;
 #[path = "audio_vehicles.rs"]
@@ -1216,7 +1219,7 @@ fn deterministic_pizza_variant(event_index: usize, ordinal: u64, variants: usize
     ((ordinal % variants as u64) as usize + event_index % variants) % variants
 }
 
-fn sha256_hex(input: &[u8]) -> String {
+pub(crate) fn sha256_hex(input: &[u8]) -> String {
     const INITIAL: [u32; 8] = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,
@@ -1431,6 +1434,8 @@ struct WeatherState {
 struct EngineState {
     sink: Option<Sink>,
     loop_control: Arc<continuous::Control>,
+    /// Where the engine compartment is from the head (`set_engine_direction`).
+    direction: Arc<foley_play::DirectionCell>,
     base_gain: f32,
     procedural: Arc<engine::Control>,
     /// Smoothed physical level at the ear, dB(A).
@@ -1593,6 +1598,15 @@ pub struct Audio {
     /// The owner's own cut field recordings, and the acoustics of where the listener is now.
     owner_bank: owner::OwnerBank,
     local_acoustics: std::cell::Cell<(crate::acoustics::ReverbParams, bool)>,
+    /// The listener's enclosure this frame, for the continuous exterior voices' direction cues.
+    listener_enclosure: std::cell::Cell<crate::sound_propagation::Enclosure>,
+    /// The traced field around the listener for local sounds (`set_local_room`).
+    local_room: RefCell<Option<std::rc::Rc<crate::acoustics::raytrace::StereoIr>>>,
+    /// One positioned-loop pool per continuous foley cue (`set_foley_loop`).
+    foley_loops: RefCell<std::collections::HashMap<crate::acoustics::foley::Cue,
+        std::rc::Rc<RefCell<vehicles::VehicleVoices>>>>,
+    /// Rendered loop buffers of the continuous foley cues.
+    foley_loop_samples: RefCell<std::collections::HashMap<String, Arc<[f32]>>>,
     named_effects:named_effects::Bank,
     /// Immutable load-time provenance and route report; never used to select/play a source.
     bank_metadata: serde_json::Value,
@@ -1860,6 +1874,10 @@ impl Audio {
             feedback_bank,
             owner_bank,
             local_acoustics: std::cell::Cell::new((crate::acoustics::ReverbParams::STEEL_INTERIOR, true)),
+            listener_enclosure: std::cell::Cell::new(crate::sound_propagation::Enclosure::Buttoned),
+            local_room: RefCell::new(None),
+            foley_loops: RefCell::new(std::collections::HashMap::new()),
+            foley_loop_samples: RefCell::new(std::collections::HashMap::new()),
             named_effects,
             bank_metadata,
             mechanisms: RefCell::new(feedback::Mechanisms::default()),
@@ -2143,6 +2161,7 @@ impl Audio {
         let traverse = self.traverse_state.get_mut();
         traverse.loop_control.set_gain(traverse.vol * self.master_volume);
         self.vehicle_voices.get_mut().set_master_volume(self.master_volume);
+        for pool in self.foley_loops.get_mut().values() { pool.borrow().set_master_volume(self.master_volume); }
         self.fire_voices.get_mut().set_master_volume(self.master_volume);
         self.elevation_voices.get_mut().set_master_volume(self.master_volume);
         self.loose_track_voices.get_mut().set_master_volume(self.master_volume);
@@ -2206,6 +2225,7 @@ impl Audio {
         for voice in self.transients.borrow().iter() { apply(&voice.sink); }
         self.mechanisms.borrow().set_paused(paused);
         self.vehicle_voices.borrow().set_paused(paused);
+        for pool in self.foley_loops.borrow().values() { pool.borrow().set_paused(paused); }
         self.fire_voices.borrow().set_paused(paused);
         self.elevation_voices.borrow().set_paused(paused);
         self.loose_track_voices.borrow().set_paused(paused);
@@ -2435,11 +2455,11 @@ impl Audio {
             if let Ok(sink) = self.create_sink() {
                 // The source starts at zero and applies targets on its stereo sample clock.
                 if self.engine_recorded {
-                    sink.append(continuous::Continuous::new(clip.source().convert_samples::<f32>().repeat_infinite(),
-                        Arc::clone(&st.loop_control)));
+                    sink.append(foley_play::Directed::new(continuous::Continuous::new(clip.source().convert_samples::<f32>().repeat_infinite(),
+                        Arc::clone(&st.loop_control)), Arc::clone(&st.direction)));
                 } else {
-                    sink.append(continuous::Continuous::new(engine::EngineSource::new(Arc::clone(&st.procedural)),
-                        Arc::clone(&st.loop_control)));
+                    sink.append(foley_play::Directed::new(continuous::Continuous::new(engine::EngineSource::new(Arc::clone(&st.procedural)),
+                        Arc::clone(&st.loop_control)), Arc::clone(&st.direction)));
                 }
                 st.sink = Some(sink);
             }

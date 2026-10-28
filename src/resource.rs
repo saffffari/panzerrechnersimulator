@@ -194,7 +194,34 @@ fn resolver() -> anyhow::Result<&'static ResourceResolver> {
 
 /// Resolve a logical resource path without changing the process current directory.
 pub fn resolve(path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
-    resolver()?.resolve(path.as_ref())
+    let resolved = resolver()?.resolve(path.as_ref());
+    if let Ok(physical) = &resolved {
+        trace(path.as_ref(), physical);
+    }
+    resolved
+}
+
+/// `KESSEL_ASSET_TRACE=FILE`: append every distinct logical path this process resolves, with
+/// whether it exists, one `present|absent<TAB>path` line each. `tools/windows_payload.py --trace`
+/// adds the present ones to a package closure, so what a play session actually loads cannot be
+/// missing from the copy. Off (one env read) unless set.
+fn trace(logical: &Path, physical: &Path) {
+    use std::io::Write;
+    use std::sync::Mutex;
+    static TRACE: OnceLock<Option<Mutex<(File, HashSet<PathBuf>)>>> = OnceLock::new();
+    let Some(sink) = TRACE.get_or_init(|| {
+        let path = std::env::var_os("KESSEL_ASSET_TRACE").filter(|value| !value.is_empty())?;
+        let file = fs::OpenOptions::new().create(true).append(true).open(path).ok()?;
+        Some(Mutex::new((file, HashSet::new())))
+    }) else {
+        return;
+    };
+    let Ok(mut sink) = sink.lock() else { return };
+    let (file, seen) = &mut *sink;
+    if seen.insert(logical.to_owned()) {
+        let state = if physical.exists() { "present" } else { "absent" };
+        let _ = writeln!(file, "{state}\t{}", logical.to_string_lossy().replace('\\', "/"));
+    }
 }
 
 /// Read a logical resource into memory, reporting both its logical and resolved names on failure.
@@ -232,9 +259,15 @@ pub fn exists(path: impl AsRef<Path>) -> bool {
     resolve(path).is_ok_and(|physical| physical.exists())
 }
 
+/// Written by `tools/windows_payload.py` at the root of the portable Windows folder.
+const WINDOWS_PAYLOAD_MARKER: &str = "payload.windows.v1.json";
+
 fn find_development_root(start: &Path) -> Option<PathBuf> {
     start.ancestors().find_map(|candidate| {
-        (candidate.join("Cargo.toml").is_file() && candidate.join("assets").is_dir())
+        // A checkout, or the portable Windows folder (same logical layout, no Cargo.toml), so a
+        // friend who double-clicks the exe without the launcher still finds the assets.
+        ((candidate.join("Cargo.toml").is_file() || candidate.join(WINDOWS_PAYLOAD_MARKER).is_file())
+            && candidate.join("assets").is_dir())
             .then(|| candidate.to_owned())
     })
 }

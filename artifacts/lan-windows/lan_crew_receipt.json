@@ -1,0 +1,81 @@
+{
+  "adapter": "Intel(R) UHD Graphics 770",
+  "backend": "Vulkan",
+  "checks": [
+    {
+      "check": "target placed in the gunner's view",
+      "detail": {
+        "range_m_bearing_deg": [
+          220.0,
+          20.0
+        ]
+      },
+      "pass": true
+    },
+    {
+      "check": "AI men hold every seat but the host's",
+      "detail": {
+        "expected": 30,
+        "mask": 30
+      },
+      "pass": true
+    },
+    {
+      "check": "AI gunner lays and fires on the contact",
+      "detail": {
+        "rounds": 1,
+        "seconds": 5.650000095367432
+      },
+      "pass": true
+    },
+    {
+      "check": "AI loader reloads at a man's rate",
+      "detail": {
+        "seconds": 5.333333492279053
+      },
+      "pass": true
+    },
+    {
+      "check": "AI driver follows the commander's WASD",
+      "detail": {
+        "moved_m": 10.271137237548828,
+        "speed_m_s": 3.7180168628692627
+      },
+      "pass": true
+    },
+    {
+      "check": "a human gunner takes the seat: the AI gunner stands down",
+      "detail": {
+        "mask": 26
+      },
+      "pass": true
+    },
+    {
+      "check": "no shot while the human gunner holds the seat without firing",
+      "detail": {
+        "live_target": 1,
+        "rounds_after": 1,
+        "rounds_before": 1
+      },
+      "pass": true
+    },
+    {
+      "check": "the human leaves: the AI gunner takes his seat back",
+      "detail": {
+        "mask": 30
+      },
+      "pass": true
+    },
+    {
+      "check": "the returned AI gunner fires again",
+      "detail": {
+        "live_target": 1,
+        "seconds": 3.766666889190674
+      },
+      "pass": true
+    }
+  ],
+  "pass": true,
+  "schema": "panzer.lan-crew-proof/v1",
+  "scope": "LAN host path with the crew frame a LanSession host builds; one parked range target (targets_only); simulation steps only, nothing rendered; no network sockets (lan-probe covers the transport)."
+}

@@ -144,6 +144,7 @@ __pycache__/
 !/assets/worldgen/act2/manifest_edits.json
 !/assets/worldgen/act3/manifest_edits.json
 !/assets/worldgen/act1/level_design.v1.json
+!/assets/worldgen/act1/mission.v1.json
 !/assets/worldgen/act2/level_design.v1.json
 !/assets/worldgen/act3/level_design.v1.json
 !/assets/worldgen/scene_blocks/*.json
@@ -204,3 +205,9 @@ Cargo.lock.bak
 
 # Private build directory for sessions that share this checkout (see docs/RAYMARCHING_ENGINE.md)
 target_rm/
+# Mission sheets (docs/MISSIONS.md) are authored data beside the untracked workshop manifests.
+!/assets/worldgen/workshops/
+/assets/worldgen/workshops/*
+!/assets/worldgen/workshops/gaea-canyon-run-v2/
+/assets/worldgen/workshops/gaea-canyon-run-v2/*
+!/assets/worldgen/workshops/gaea-canyon-run-v2/mission.v1.json

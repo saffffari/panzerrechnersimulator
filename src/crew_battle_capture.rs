@@ -15,6 +15,13 @@ enum Scenario {
         bearing: f32,
         turret: bool,
     },
+    /// The binaural proof: one T-34 abeam fires over the turret roof five times while the turret
+    /// traverses through 180°, the cupola lid opens and the commander puts his head out. Every
+    /// round is a real swept projectile; nothing about its sound is scripted.
+    SpatialSweep {
+        range: f32,
+        bearing: f32,
+    },
 }
 
 impl Scenario {
@@ -26,7 +33,8 @@ impl Scenario {
             "oblique-100" => Self::Firing { range:100.0,bearing:130.0,turret:true },
             "front-300" => Self::Firing { range:300.0,bearing:0.0,turret:false },
             "rear-80" => Self::Firing { range:80.0,bearing:180.0,turret:false },
-            _ => anyhow::bail!("crew-battle mode must be platoon, side-30, side-100, oblique-100, front-300 or rear-80"),
+            "spatial-sweep" => Self::SpatialSweep { range:100.0,bearing:90.0 },
+            _ => anyhow::bail!("crew-battle mode must be platoon, side-30, side-100, oblique-100, front-300, rear-80 or spatial-sweep"),
         })
     }
 
@@ -36,8 +44,89 @@ impl Scenario {
             Self::Firing { range, bearing, .. } => {
                 format!("STAGED T-34 FIRING - BR-350B 76mm - {range:.0}m - BEARING {bearing:.0}deg")
             }
+            Self::SpatialSweep { range, bearing } => {
+                format!("BINAURAL SWEEP - T-34 OVERSHOOTS x5 - {range:.0}m - BEARING {bearing:.0}deg - TURRET TURNS - HATCH OPENS")
+            }
         }
     }
+}
+
+/// The spatial sweep's script, in simulation seconds.
+mod sweep {
+    /// Each T-34 discharge (the lay is re-solved every tick; a shot waits for a laid gun).
+    pub const SHOTS_S: [f32; 5] = [3.0, 10.0, 17.0, 24.0, 31.0];
+    /// Turret traverse 0 → 180° between these times, and back between the second pair.
+    pub const TRAVERSE_OUT_S: (f32, f32) = (4.0, 9.0);
+    pub const TRAVERSE_BACK_S: (f32, f32) = (25.0, 30.0);
+    /// The cupola lid is opened, and the commander puts his head out.
+    pub const HATCH_OPEN_S: f32 = 14.0;
+    pub const HEAD_OUT_S: f32 = 21.0;
+    /// Aim point above the turret roof: the round passes over the crew, so the listener lives
+    /// through all five and the sound is the crack, the report and the ground strike, never a
+    /// strike on his own plate.
+    pub const OVERSHOOT_M: f32 = 2.5;
+    pub const LENGTH_S: f32 = 35.0;
+
+    pub fn turret_yaw_at(t: f32) -> f32 {
+        let ramp = |(start, end): (f32, f32)| ((t - start) / (end - start)).clamp(0.0, 1.0);
+        let out = ramp(TRAVERSE_OUT_S);
+        let back = ramp(TRAVERSE_BACK_S);
+        std::f32::consts::PI * (out - back).clamp(0.0, 1.0)
+    }
+}
+
+/// Energy of one window of the capture, per ear and in the band above 1.5 kHz.
+#[derive(Clone, Copy, Debug, Default)]
+struct WindowEnergy {
+    left: f64,
+    right: f64,
+    high: f64,
+    frames: usize,
+}
+
+fn window_energy(samples: &[f32], from_s: f32, to_s: f32) -> WindowEnergy {
+    let rate = acoustics::SAMPLE_RATE as f32;
+    let frames = samples.len() / 2;
+    let a = ((from_s.max(0.0) * rate) as usize).min(frames);
+    let b = ((to_s.max(0.0) * rate) as usize).min(frames);
+    let mut w = WindowEnergy::default();
+    // One-pole high-pass at 1.5 kHz on the mid signal, started a little early to settle.
+    let alpha = 1.0 - (-std::f32::consts::TAU * 1_500.0 / rate).exp();
+    let mut low = 0.0f32;
+    for i in a.saturating_sub(441)..b {
+        let (l, r) = (samples[i * 2], samples[i * 2 + 1]);
+        let mid = 0.5 * (l + r);
+        low += alpha * (mid - low);
+        if i < a {
+            continue;
+        }
+        w.left += f64::from(l * l);
+        w.right += f64::from(r * r);
+        let high = mid - low;
+        w.high += f64::from(high * high);
+        w.frames += 1;
+    }
+    w
+}
+
+/// What one scripted discharge sounded like against the half second before it: how far right
+/// (positive) or left (negative) its energy lay, and the share of its energy above 1.5 kHz.
+fn shot_metrics(samples: &[f32], fired_s: f32) -> Value {
+    let base = window_energy(samples, fired_s - 0.55, fired_s - 0.05);
+    let event = window_energy(samples, fired_s + 0.05, fired_s + 1.25);
+    let per_frame = |w: WindowEnergy, v: f64| if w.frames > 0 { v / w.frames as f64 } else { 0.0 };
+    let excess = |select: fn(WindowEnergy) -> f64| {
+        (per_frame(event, select(event)) - per_frame(base, select(base))).max(1.0e-12)
+    };
+    let (left, right, high) = (excess(|w| w.left), excess(|w| w.right), excess(|w| w.high));
+    let total = left + right;
+    json!({
+        "fired_s": fired_s,
+        "lateral_db": 10.0 * (right / left).log10(),
+        "high_band_share": (2.0 * high / total).clamp(0.0, 1.0),
+        "event_over_baseline_db": 10.0 * ((per_frame(event, event.left + event.right))
+            / per_frame(base, base.left + base.right).max(1.0e-12)).log10(),
+    })
 }
 
 fn sample_count(tick: u64) -> usize {
@@ -54,26 +143,9 @@ fn crew_ledger(game: &Game) -> Value {
 }
 
 fn file_sha256(path: &str) -> anyhow::Result<String> {
-    // Windows has no sha256sum; certutil prints the digest on its second line.
-    let (result, windows) = match Command::new("sha256sum").arg(path).output() {
-        Ok(result) => (result, false),
-        Err(_) => (Command::new("certutil").args(["-hashfile", path, "SHA256"]).output()?, true),
-    };
-    ensure!(
-        result.status.success(),
-        "cannot hash capture dependency {path}"
-    );
-    let text = String::from_utf8(result.stdout)?;
-    if windows {
-        return text.lines().nth(1).map(|line| line.trim().replace(' ', "").to_lowercase())
-            .filter(|digest| digest.len() == 64)
-            .ok_or_else(|| anyhow::anyhow!("certutil gave no digest for {path}"));
-    }
-    Ok(text
-        .split_whitespace()
-        .next()
-        .context("empty sha256sum")?
-        .to_owned())
+    // In-process digest: no sha256sum/certutil dependency, and canonical, extended-length paths hash.
+    let bytes = std::fs::read(path).with_context(|| format!("cannot hash capture dependency {path}"))?;
+    Ok(crate::audio::sha256_hex(&bytes))
 }
 
 struct Picture {
@@ -85,7 +157,15 @@ struct Picture {
 impl Picture {
     fn new(path: String, r: &Renderer, label: &str, view: &str) -> anyhow::Result<Self> {
         // Text comes from the fixed scenario enum and fixed view labels, never shell evaluation.
-        let filter = format!("scale=1920:1080:flags=neighbor,format=yuv420p,drawtext=text='{label}':fontcolor=white:fontsize=23:x=24:y=22:box=1:boxcolor=black@0.65:boxborderw=8,drawtext=text='{view} - SAME RUN AND CLOCK':fontcolor=white:fontsize=21:x=24:y=h-48:box=1:boxcolor=black@0.65:boxborderw=8");
+        // The bundled font by file: FFmpeg's drawtext otherwise needs a fontconfig setup, which a
+        // plain Windows install lacks. Filter-graph escaping: forward slashes, colon escaped.
+        let font = crate::resource::resolve("assets/fonts/VT323-Regular.ttf")
+            .context("crew-battle caption font")?
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .replace('\\', "/")
+            .replace(':', r"\:");
+        let filter = format!("scale=1920:1080:flags=neighbor,format=yuv420p,drawtext=fontfile='{font}':text='{label}':fontcolor=white:fontsize=23:x=24:y=22:box=1:boxcolor=black@0.65:boxborderw=8,drawtext=fontfile='{font}':text='{view} - SAME RUN AND CLOCK':fontcolor=white:fontsize=21:x=24:y=h-48:box=1:boxcolor=black@0.65:boxborderw=8");
         let mut child = Command::new("ffmpeg")
             .args([
                 "-hide_banner",
@@ -369,15 +449,24 @@ pub fn run_crew_battle_capture(
             bearing,
             turret,
         } => Some(g.debug_stage_crew_battle_shooter(range, bearing, turret)?),
+        Scenario::SpatialSweep { range, bearing } => {
+            let (index, target, staging) = g.debug_stage_crew_battle_shooter(range, bearing, true)?;
+            Some((index, target + Vec3::Y * sweep::OVERSHOOT_M, staging))
+        }
     };
+    let sweeping = matches!(scenario, Scenario::SpatialSweep { .. });
+    if sweeping {
+        ensure!(max_secs >= sweep::LENGTH_S, "the spatial sweep needs {} s", sweep::LENGTH_S);
+        ensure!(g.station == Station::Commander, "the sweep's listener is the commander");
+    }
     g.enable_singleplayer_crew();
     g.debug_begin_crew_battle_audit();
     g.begin_audio_capture();
     g.set_defer_rtt_to_render(true);
     let initial = g.debug_crew_battle_snapshot();
     ensure!(
-        g.singleplayer_living_crew() == Some(1),
-        "recording requires the living singleplayer crewman"
+        g.singleplayer_living_crew() == Some(5),
+        "recording requires the living singleplayer crew"
     );
     let label = scenario.label();
     let mut inside = Picture::new(
@@ -397,6 +486,8 @@ pub fn run_crew_battle_capture(
     let mut pilot = TigerPilot::new(&tiger);
     let frames = (max_secs as f64 * FPS as f64).ceil() as u64;
     let mut fired = None;
+    let mut sweep_shots: Vec<Value> = Vec::new();
+    let mut sweep_state = (false, false); // (lid opened, head out)
     let mut previous_crew = crew_ledger(&g);
     let mut previous_hits = 0;
     let start = Instant::now();
@@ -406,7 +497,35 @@ pub fn run_crew_battle_capture(
             let tick = frame * u64::from(SIM_HZ / FPS) + u64::from(substep);
             let now = (tick + 1) as f64 / f64::from(SIM_HZ);
             g.debug_crew_battle_clock(tick + 1, now);
-            let input = if let Some((index, target, _)) = &controlled {
+            let input = if let (Some((index, target, _)), true) = (&controlled, sweeping) {
+                let t = tick as f32 / SIM_HZ as f32;
+                g.debug_traverse_turret_to(sweep::turret_yaw_at(t));
+                if t >= sweep::HATCH_OPEN_S && !sweep_state.0 {
+                    g.toggle_hatch();
+                    sweep_state.0 = true;
+                    timeline.push(json!({"kind":"scripted_hatch","tick":tick,"at_s":t,"open":g.hatch_is_open()}));
+                }
+                if t >= sweep::HEAD_OUT_S && !sweep_state.1 {
+                    let out = g.toggle_commander_head();
+                    sweep_state.1 = true;
+                    timeline.push(json!({"kind":"scripted_head_out","tick":tick,"at_s":t,"head_out":out}));
+                }
+                let laid = g.debug_aim_crew_battle_shooter(*index, *target, STEP);
+                let due = sweep_shots.len() < sweep::SHOTS_S.len()
+                    && t >= sweep::SHOTS_S[sweep_shots.len()];
+                if due && laid {
+                    let id = g
+                        .debug_launch_crew_battle_shot(*index)
+                        .context("real T34 muzzle discharge rejected")?;
+                    fired.get_or_insert(id);
+                    sweep_shots.push(json!({"projectile_id":id,"tick":tick,"at_s":t,
+                        "turret_yaw_deg":sweep::turret_yaw_at(t).to_degrees(),
+                        "enclosure":format!("{:?}",g.listener_enclosure())}));
+                    timeline.push(json!({"kind":"scripted_trigger","tick":tick,"at_s":t,
+                        "projectile_id":id,"actor_index":index,"state":g.debug_crew_battle_snapshot()}));
+                }
+                TankInput::default()
+            } else if let Some((index, target, _)) = &controlled {
                 let laid = g.debug_aim_crew_battle_shooter(*index, *target, STEP);
                 if tick >= u64::from(SIM_HZ) * 3 && fired.is_none() && laid {
                     let id = g
@@ -474,9 +593,36 @@ pub fn run_crew_battle_capture(
     mux_showreel(&inside.path, &soundtrack, &interior)?;
     mux_showreel(&outside.path, &soundtrack, &overhead)?;
     let contacts = last_frame_state["contacts"].as_array().map_or(0, Vec::len);
+    // The binaural proof, measured on the recorded gameplay audio itself: each discharge's
+    // energy against the half second before it, per ear and above 1.5 kHz.
+    let spatial_proof = sweeping.then(|| {
+        let shots: Vec<Value> = sweep_shots.iter().map(|shot| {
+            let mut m = shot_metrics(&samples, shot["at_s"].as_f64().unwrap_or(0.0) as f32);
+            m["turret_yaw_deg"] = shot["turret_yaw_deg"].clone();
+            m["enclosure"] = shot["enclosure"].clone();
+            m
+        }).collect();
+        let lateral = |i: usize| shots.get(i).and_then(|s| s["lateral_db"].as_f64()).unwrap_or(0.0);
+        let high = |i: usize| shots.get(i).and_then(|s| s["high_band_share"].as_f64()).unwrap_or(0.0);
+        let checks = json!({
+            "five_real_discharges": shots.len() == sweep::SHOTS_S.len(),
+            "buttoned_source_right_pans_right": lateral(0) > 3.0,
+            "turret_turned_180_pans_left": lateral(1) < -3.0,
+            "open_hatch_keeps_it_left_and_brightens": lateral(2) < -3.0 && high(2) > high(1),
+            "head_out_brightens_further": high(3) >= high(2),
+            "turret_back_pans_right_again": lateral(4) > 3.0,
+            "listener_alive_throughout": g.singleplayer_living_crew() == Some(1),
+        });
+        let all = checks.as_object().map_or(false, |c| c.values().all(|v| v.as_bool() == Some(true)));
+        json!({"model":"acoustics::spatial (Woodworth ITD, Brown-Duda head shadow, presentation pan, plate/hatch transmission of direction cues); levels from sound_propagation unchanged",
+            "measure":"per discharge: energy in [+0.05, +1.25] s minus the mean of [-0.55, -0.05] s, per ear (lateral_db = 10 log R/L) and above a 1.5 kHz one-pole high-pass (share of the excess)",
+            "shots":shots,"checks":checks,"passed":all})
+    });
     let passed = match scenario {
         Scenario::Platoon => contacts > 0,
         Scenario::Firing { .. } => fired.is_some() && g.stat_hits_on_player > 0,
+        Scenario::SpatialSweep { .. } => spatial_proof.as_ref()
+            .and_then(|p| p["passed"].as_bool()).unwrap_or(false),
     };
     let manifest = json!({"schema":"panzer.crew-battle-capture.v1","scenario":mode,"seed":seed,
         "act":{"id":g.act.id,"name":g.act.name,"season":format!("{:?}",g.act.season),
@@ -493,12 +639,17 @@ pub fn run_crew_battle_capture(
             "pairing":"Frame N in either video is the same authoritative tick; no replay/resimulation or alternate seed",
             "interior_scope":"Detached observer lens keeps real living/casualty bodies visible after injury; never a restored dead identity",
             "benchmark":false},"initial_state":initial,"final_state":last_frame_state,"timeline":timeline,
+        "spatial_proof":spatial_proof,
         "acceptance":{"actual_projectile_contact":passed,"target_penetrated":g.stat_pens_on_player>0,
             "crew_casualty":g.singleplayer_living_crew() == Some(0),
             "no_forced_damage":true,"visual_review_pending":true,
             "note":"A bounce, miss, or zero-casualty result remains that observed result; do not label it successful penetration or KIA"}});
     std::fs::write(&receipt, serde_json::to_vec_pretty(&manifest)?)?;
-    ensure!(passed,"recorded real result failed target-contact acceptance; keep receipt but do not advertise it as a hit");
+    ensure!(passed, if sweeping {
+        "recorded gameplay audio failed the binaural sweep checks; keep the receipt, do not advertise it"
+    } else {
+        "recorded real result failed target-contact acceptance; keep receipt but do not advertise it as a hit"
+    });
     println!("[crew-battle] paired tracks and provenance: {receipt}");
     Ok(())
 }

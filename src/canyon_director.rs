@@ -42,6 +42,8 @@ pub struct Director {
     pub rest_until: f32,
     pub credit: f32,
     pub target_live: usize,
+    /// A mission beat's cap on living armour (src/mission.rs pacing); `MAX_LIVE` otherwise.
+    pub live_cap: usize,
     pub state: &'static str,
     pub rejected_entries: u32,
     last_progress_s: f32,
@@ -62,6 +64,7 @@ impl Director {
             rest_until: MIN_LULL_S,
             credit: 0.0,
             target_live: 3,
+            live_cap: MAX_LIVE,
             state: "opening",
             rejected_entries: 0,
             last_progress_s: 0.0,
@@ -97,8 +100,7 @@ impl Director {
         // a pacing reference, not an enforced duration: a successful breakout can finish sooner.
         let expected = self.elapsed / TARGET_SECONDS;
         let ahead = (self.progress - expected).max(0.0);
-        self.target_live =
-            MAX_LIVE;
+        self.target_live = MAX_LIVE.min(self.live_cap.max(1));
         let stalled = self.elapsed - self.last_progress_s > 420.0;
         if stalled {
             self.target_live = self.target_live.min(RELIEVED_LIVE);

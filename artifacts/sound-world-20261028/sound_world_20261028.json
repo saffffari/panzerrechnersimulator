@@ -1,0 +1,2885 @@
+{
+  "cabin_voxels": {
+    "build_ms": 571.985,
+    "frames": 4,
+    "note": "proof loads hull, turret, gun and cupola lid meshes only; the game's roof lids and visor shutters are absent here, so their openings are open",
+    "source_triangles": 3555661
+  },
+  "cases": [
+    {
+      "bearing_deg": 90.0,
+      "case": "buttoned_report_from_right",
+      "ear_laf_db": 71.64466857910156,
+      "enclosure": "Buttoned",
+      "ir_samples": 5027,
+      "rendered_laf_max_dbfs": -56.70173263549805,
+      "rendered_right_over_left_db": 5.349170443748838,
+      "starts_s": 0.0,
+      "trace": {
+        "direct_distance_m": 0.44999998807907104,
+        "escaped": 0.54296875,
+        "mean_lateral": 0.12250888347625732,
+        "rays": 768,
+        "reflected_db": [
+          9.559318542480469,
+          9.5200834274292,
+          9.480064392089844,
+          9.435312271118164,
+          8.908074378967285,
+          8.830431938171387,
+          8.752586364746094,
+          8.280156135559082,
+          8.207517623901367
+        ],
+        "reflections": 17038,
+        "t20_s": [
+          0.15300001204013824,
+          0.15300001204013824,
+          0.15300001204013824,
+          0.15600000321865082,
+          0.1680000126361847,
+          0.17100000381469727,
+          0.17100000381469727,
+          0.1770000010728836,
+          0.1770000010728836
+        ]
+      }
+    },
+    {
+      "bearing_deg": 90.0,
+      "case": "cupola_open_report_from_right",
+      "ear_laf_db": 90.93231201171875,
+      "enclosure": "HatchOpen",
+      "ir_samples": 4851,
+      "rendered_laf_max_dbfs": -43.90707015991211,
+      "rendered_right_over_left_db": 10.764638611236903,
+      "starts_s": 3.3999773242630384,
+      "trace": {
+        "direct_distance_m": 0.34999990463256836,
+        "escaped": 0.8880208134651184,
+        "mean_lateral": -0.022123096510767937,
+        "rays": 768,
+        "reflected_db": [
+          4.4099040031433105,
+          4.386221885681152,
+          4.362512588500977,
+          4.336933612823486,
+          4.078192234039307,
+          4.040387153625488,
+          4.0031514167785645,
+          3.780733108520508,
+          3.74814772605896
+        ],
+        "reflections": 5209,
+        "t20_s": [
+          0.2550000250339508,
+          0.2550000250339508,
+          0.24900001287460327,
+          0.25200000405311584,
+          0.22500000894069672,
+          0.22200001776218414,
+          0.22200001776218414,
+          0.22500000894069672,
+          0.22200001776218414
+        ]
+      }
+    },
+    {
+      "bearing_deg": 90.0,
+      "case": "head_out_report_from_right",
+      "ear_laf_db": 95.37339782714844,
+      "enclosure": "HeadOut",
+      "ir_samples": 64341,
+      "rendered_laf_max_dbfs": -40.576255798339844,
+      "rendered_right_over_left_db": 13.704640751953328,
+      "starts_s": 6.799954648526077,
+      "trace": {
+        "direct_distance_m": 60.0,
+        "escaped": 0.998046875,
+        "mean_lateral": 0.9779404997825623,
+        "rays": 2048,
+        "reflected_db": [
+          0.4301375150680542,
+          -0.08146107196807861,
+          -0.9834402799606323,
+          -2.5812339782714844,
+          -5.136480331420898,
+          -7.36024808883667,
+          -9.126537322998047,
+          -9.130154609680176,
+          -9.135934829711914
+        ],
+        "reflections": 1024,
+        "t20_s": [
+          0.22500000894069672,
+          0.22500000894069672,
+          0.22500000894069672,
+          0.22500000894069672,
+          0.2160000056028366,
+          0.19200000166893005,
+          0.1860000044107437,
+          0.1770000010728836,
+          0.1680000126361847
+        ]
+      }
+    },
+    {
+      "bearing_deg": 0.0,
+      "case": "on_foot_brick_wall_right_report_ahead",
+      "ear_laf_db": 106.79946899414062,
+      "enclosure": "OnFoot",
+      "ir_samples": 53757,
+      "rendered_laf_max_dbfs": -33.8900032043457,
+      "rendered_right_over_left_db": 0.17980587514960927,
+      "starts_s": 10.199931972789116,
+      "trace": {
+        "direct_distance_m": 60.0,
+        "escaped": 0.998046875,
+        "mean_lateral": 0.09146031737327576,
+        "rays": 2048,
+        "reflected_db": [
+          1.799250602722168,
+          1.2934200763702393,
+          0.3593124449253082,
+          -1.2101223468780518,
+          -3.6923482418060303,
+          -5.853004455566406,
+          -7.534053802490234,
+          -7.628135681152344,
+          -7.632255554199219
+        ],
+        "reflections": 1024,
+        "t20_s": [
+          0.036000002175569534,
+          0.036000002175569534,
+          0.039000000804662704,
+          0.036000002175569534,
+          0.036000002175569534,
+          0.032999999821186066,
+          0.032999999821186066,
+          0.032999999821186066,
+          0.032999999821186066
+        ]
+      }
+    },
+    {
+      "bearing_deg": 0.0,
+      "case": "on_foot_open_snow_report_ahead",
+      "ear_laf_db": 106.79946899414062,
+      "enclosure": "OnFoot",
+      "ir_samples": 54551,
+      "rendered_laf_max_dbfs": -33.8900032043457,
+      "rendered_right_over_left_db": 0.03530370029982501,
+      "starts_s": 13.599909297052154,
+      "trace": {
+        "direct_distance_m": 60.0,
+        "escaped": 0.998046875,
+        "mean_lateral": 0.019967511296272278,
+        "rays": 2048,
+        "reflected_db": [
+          -17.677661895751953,
+          -18.18984603881836,
+          -19.09355926513672,
+          -20.697635650634766,
+          -23.27295684814453,
+          -25.53824234008789,
+          -27.346126556396484,
+          -27.377321243286133,
+          -27.42658233642578
+        ],
+        "reflections": 1020,
+        "t20_s": [
+          0.9720000624656677,
+          0.9720000624656677,
+          0.9240000247955322,
+          0.9240000247955322,
+          0.8850000500679016,
+          0.8820000290870667,
+          0.8700000643730164,
+          0.7800000309944153,
+          0.6660000085830688
+        ]
+      }
+    },
+    {
+      "case": "loader_boots_on_turret_floor",
+      "cue": "step.turret_floor.walk",
+      "starts_s": 16.99988662131519,
+      "trace": {
+        "direct_distance_m": 1.5628498792648315,
+        "escaped": 0.6145833134651184,
+        "mean_lateral": 0.1843852400779724,
+        "rays": 768,
+        "reflected_db": [
+          3.0048012733459473,
+          2.960110664367676,
+          2.9132585525512695,
+          2.8587703704833984,
+          1.361236810684204,
+          1.2479280233383179,
+          1.1318960189819336,
+          -0.37876245379447937,
+          -0.5015859603881836
+        ],
+        "reflections": 17076,
+        "t20_s": [
+          0.09600000083446503,
+          0.09600000083446503,
+          0.09600000083446503,
+          0.09600000083446503,
+          0.09000000357627869,
+          0.09000000357627869,
+          0.09000000357627869,
+          0.08700000494718552,
+          0.07200000435113907
+        ]
+      }
+    },
+    {
+      "case": "boots_on_timber_floor_indoors",
+      "cue": "step.wood_floor.walk",
+      "starts_s": 21.099886621315193,
+      "trace": {
+        "direct_distance_m": 1.562849998474121,
+        "escaped": 0.76318359375,
+        "mean_lateral": -0.01738736592233181,
+        "rays": 2048,
+        "reflected_db": [
+          9.806936264038086,
+          8.126286506652832,
+          8.122549057006836,
+          9.408086776733398,
+          9.719511032104492,
+          10.824393272399902,
+          11.119688987731934,
+          10.547292709350586,
+          10.373148918151855
+        ],
+        "reflections": 65300,
+        "t20_s": [
+          0.8070000410079956,
+          0.5760000348091125,
+          0.5730000138282776,
+          0.7500000596046448,
+          0.7890000343322754,
+          0.9330000281333923,
+          0.9600000381469727,
+          0.909000039100647,
+          0.8850000500679016
+        ]
+      }
+    },
+    {
+      "case": "boots_in_fresh_snow_open_field",
+      "cue": "step.fresh_snow.walk",
+      "starts_s": 25.199886621315194,
+      "trace": {
+        "direct_distance_m": 1.562849998474121,
+        "escaped": 0.9990234375,
+        "mean_lateral": 0.010633560828864574,
+        "rays": 2048,
+        "reflected_db": [
+          -0.6913419961929321,
+          -1.202906608581543,
+          -2.104785442352295,
+          -3.702214241027832,
+          -6.256285667419434,
+          -8.47764778137207,
+          -10.241548538208008,
+          -10.243595123291016,
+          -10.246917724609375
+        ],
+        "reflections": 1022,
+        "t20_s": [
+          0.024000000208616257,
+          0.024000000208616257,
+          0.024000000208616257,
+          0.024000000208616257,
+          0.024000000208616257,
+          0.024000000208616257,
+          0.024000000208616257,
+          0.024000000208616257,
+          0.024000000208616257
+        ]
+      }
+    }
+  ],
+  "catalogue": [
+    {
+      "bearing_deg": 0.0,
+      "cue": "step.fresh_snow.walk",
+      "ear_laf_db_at_2m": 51.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 58.0,
+      "starts_s": 29.299886621315192
+    },
+    {
+      "bearing_deg": 37.0,
+      "cue": "step.fresh_snow.run",
+      "ear_laf_db_at_2m": 56.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 63.0,
+      "starts_s": 30.199886621315194
+    },
+    {
+      "bearing_deg": 74.0,
+      "cue": "step.fresh_snow.crouch",
+      "ear_laf_db_at_2m": 44.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 51.0,
+      "starts_s": 31.099886621315193
+    },
+    {
+      "bearing_deg": 111.0,
+      "cue": "step.fresh_snow.scuff",
+      "ear_laf_db_at_2m": 47.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 54.0,
+      "starts_s": 31.99988662131519
+    },
+    {
+      "bearing_deg": 148.0,
+      "cue": "step.fresh_snow.take_off",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 32.89988662131519
+    },
+    {
+      "bearing_deg": 185.0,
+      "cue": "step.fresh_snow.land_soft",
+      "ear_laf_db_at_2m": 58.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 65.0,
+      "starts_s": 33.799886621315196
+    },
+    {
+      "bearing_deg": 222.0,
+      "cue": "step.fresh_snow.land_hard",
+      "ear_laf_db_at_2m": 64.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 71.0,
+      "starts_s": 34.699886621315194
+    },
+    {
+      "bearing_deg": 259.0,
+      "cue": "step.packed_snow.walk",
+      "ear_laf_db_at_2m": 56.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 63.0,
+      "starts_s": 35.59988662131519
+    },
+    {
+      "bearing_deg": 296.0,
+      "cue": "step.packed_snow.run",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 36.49988662131519
+    },
+    {
+      "bearing_deg": 333.0,
+      "cue": "step.packed_snow.crouch",
+      "ear_laf_db_at_2m": 49.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 56.0,
+      "starts_s": 37.39988662131519
+    },
+    {
+      "bearing_deg": 10.0,
+      "cue": "step.packed_snow.scuff",
+      "ear_laf_db_at_2m": 52.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 59.0,
+      "starts_s": 38.299886621315196
+    },
+    {
+      "bearing_deg": 47.0,
+      "cue": "step.packed_snow.take_off",
+      "ear_laf_db_at_2m": 58.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 65.0,
+      "starts_s": 39.199886621315194
+    },
+    {
+      "bearing_deg": 84.0,
+      "cue": "step.packed_snow.land_soft",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 40.09988662131519
+    },
+    {
+      "bearing_deg": 121.0,
+      "cue": "step.packed_snow.land_hard",
+      "ear_laf_db_at_2m": 69.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 76.0,
+      "starts_s": 40.99988662131519
+    },
+    {
+      "bearing_deg": 158.0,
+      "cue": "step.ice.walk",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 41.89988662131519
+    },
+    {
+      "bearing_deg": 195.0,
+      "cue": "step.ice.run",
+      "ear_laf_db_at_2m": 66.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 73.0,
+      "starts_s": 42.799886621315196
+    },
+    {
+      "bearing_deg": 232.0,
+      "cue": "step.ice.crouch",
+      "ear_laf_db_at_2m": 54.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 61.0,
+      "starts_s": 43.699886621315194
+    },
+    {
+      "bearing_deg": 269.0,
+      "cue": "step.ice.scuff",
+      "ear_laf_db_at_2m": 57.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 64.0,
+      "starts_s": 44.59988662131519
+    },
+    {
+      "bearing_deg": 306.0,
+      "cue": "step.ice.take_off",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 45.49988662131519
+    },
+    {
+      "bearing_deg": 343.0,
+      "cue": "step.ice.land_soft",
+      "ear_laf_db_at_2m": 68.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 75.0,
+      "starts_s": 46.39988662131519
+    },
+    {
+      "bearing_deg": 20.0,
+      "cue": "step.ice.land_hard",
+      "ear_laf_db_at_2m": 74.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 81.0,
+      "starts_s": 47.299886621315196
+    },
+    {
+      "bearing_deg": 57.0,
+      "cue": "step.mud.walk",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 48.199886621315194
+    },
+    {
+      "bearing_deg": 94.0,
+      "cue": "step.mud.run",
+      "ear_laf_db_at_2m": 58.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 65.0,
+      "starts_s": 49.09988662131519
+    },
+    {
+      "bearing_deg": 131.0,
+      "cue": "step.mud.crouch",
+      "ear_laf_db_at_2m": 46.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 53.0,
+      "starts_s": 49.99988662131519
+    },
+    {
+      "bearing_deg": 168.0,
+      "cue": "step.mud.scuff",
+      "ear_laf_db_at_2m": 49.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 56.0,
+      "starts_s": 50.89988662131519
+    },
+    {
+      "bearing_deg": 205.0,
+      "cue": "step.mud.take_off",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 51.799886621315196
+    },
+    {
+      "bearing_deg": 242.0,
+      "cue": "step.mud.land_soft",
+      "ear_laf_db_at_2m": 60.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 67.0,
+      "starts_s": 52.699886621315194
+    },
+    {
+      "bearing_deg": 279.0,
+      "cue": "step.mud.land_hard",
+      "ear_laf_db_at_2m": 66.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 73.0,
+      "starts_s": 53.59988662131519
+    },
+    {
+      "bearing_deg": 316.0,
+      "cue": "step.frozen_earth.walk",
+      "ear_laf_db_at_2m": 57.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 64.0,
+      "starts_s": 54.49988662131519
+    },
+    {
+      "bearing_deg": 353.0,
+      "cue": "step.frozen_earth.run",
+      "ear_laf_db_at_2m": 62.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 69.0,
+      "starts_s": 55.39988662131519
+    },
+    {
+      "bearing_deg": 30.0,
+      "cue": "step.frozen_earth.crouch",
+      "ear_laf_db_at_2m": 50.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 57.0,
+      "starts_s": 56.299886621315196
+    },
+    {
+      "bearing_deg": 67.0,
+      "cue": "step.frozen_earth.scuff",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 57.199886621315194
+    },
+    {
+      "bearing_deg": 104.0,
+      "cue": "step.frozen_earth.take_off",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 58.09988662131519
+    },
+    {
+      "bearing_deg": 141.0,
+      "cue": "step.frozen_earth.land_soft",
+      "ear_laf_db_at_2m": 64.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 71.0,
+      "starts_s": 58.99988662131519
+    },
+    {
+      "bearing_deg": 178.0,
+      "cue": "step.frozen_earth.land_hard",
+      "ear_laf_db_at_2m": 70.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 77.0,
+      "starts_s": 59.89988662131519
+    },
+    {
+      "bearing_deg": 215.0,
+      "cue": "step.gravel.walk",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 60.799886621315196
+    },
+    {
+      "bearing_deg": 252.0,
+      "cue": "step.gravel.run",
+      "ear_laf_db_at_2m": 66.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 73.0,
+      "starts_s": 61.699886621315194
+    },
+    {
+      "bearing_deg": 289.0,
+      "cue": "step.gravel.crouch",
+      "ear_laf_db_at_2m": 54.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 61.0,
+      "starts_s": 62.59988662131519
+    },
+    {
+      "bearing_deg": 326.0,
+      "cue": "step.gravel.scuff",
+      "ear_laf_db_at_2m": 57.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 64.0,
+      "starts_s": 63.49988662131519
+    },
+    {
+      "bearing_deg": 3.0,
+      "cue": "step.gravel.take_off",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 64.39988662131519
+    },
+    {
+      "bearing_deg": 40.0,
+      "cue": "step.gravel.land_soft",
+      "ear_laf_db_at_2m": 68.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 75.0,
+      "starts_s": 65.2998866213152
+    },
+    {
+      "bearing_deg": 77.0,
+      "cue": "step.gravel.land_hard",
+      "ear_laf_db_at_2m": 74.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 81.0,
+      "starts_s": 66.19988662131519
+    },
+    {
+      "bearing_deg": 114.0,
+      "cue": "step.rubble.walk",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 67.09988662131519
+    },
+    {
+      "bearing_deg": 151.0,
+      "cue": "step.rubble.run",
+      "ear_laf_db_at_2m": 68.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 75.0,
+      "starts_s": 67.9998866213152
+    },
+    {
+      "bearing_deg": 188.0,
+      "cue": "step.rubble.crouch",
+      "ear_laf_db_at_2m": 56.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 63.0,
+      "starts_s": 68.89988662131519
+    },
+    {
+      "bearing_deg": 225.0,
+      "cue": "step.rubble.scuff",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 69.7998866213152
+    },
+    {
+      "bearing_deg": 262.0,
+      "cue": "step.rubble.take_off",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 70.69988662131519
+    },
+    {
+      "bearing_deg": 299.0,
+      "cue": "step.rubble.land_soft",
+      "ear_laf_db_at_2m": 70.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 77.0,
+      "starts_s": 71.59988662131519
+    },
+    {
+      "bearing_deg": 336.0,
+      "cue": "step.rubble.land_hard",
+      "ear_laf_db_at_2m": 76.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 83.0,
+      "starts_s": 72.4998866213152
+    },
+    {
+      "bearing_deg": 13.0,
+      "cue": "step.grass.walk",
+      "ear_laf_db_at_2m": 50.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 57.0,
+      "starts_s": 73.39988662131519
+    },
+    {
+      "bearing_deg": 50.0,
+      "cue": "step.grass.run",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 74.2998866213152
+    },
+    {
+      "bearing_deg": 87.0,
+      "cue": "step.grass.crouch",
+      "ear_laf_db_at_2m": 43.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 50.0,
+      "starts_s": 75.19988662131519
+    },
+    {
+      "bearing_deg": 124.0,
+      "cue": "step.grass.scuff",
+      "ear_laf_db_at_2m": 46.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 53.0,
+      "starts_s": 76.09988662131519
+    },
+    {
+      "bearing_deg": 161.0,
+      "cue": "step.grass.take_off",
+      "ear_laf_db_at_2m": 52.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 59.0,
+      "starts_s": 76.9998866213152
+    },
+    {
+      "bearing_deg": 198.0,
+      "cue": "step.grass.land_soft",
+      "ear_laf_db_at_2m": 57.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 64.0,
+      "starts_s": 77.89988662131519
+    },
+    {
+      "bearing_deg": 235.0,
+      "cue": "step.grass.land_hard",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 78.7998866213152
+    },
+    {
+      "bearing_deg": 272.0,
+      "cue": "step.wood_floor.walk",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 79.69988662131519
+    },
+    {
+      "bearing_deg": 309.0,
+      "cue": "step.wood_floor.run",
+      "ear_laf_db_at_2m": 70.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 77.0,
+      "starts_s": 80.59988662131519
+    },
+    {
+      "bearing_deg": 346.0,
+      "cue": "step.wood_floor.crouch",
+      "ear_laf_db_at_2m": 58.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 65.0,
+      "starts_s": 81.4998866213152
+    },
+    {
+      "bearing_deg": 23.0,
+      "cue": "step.wood_floor.scuff",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 82.39988662131519
+    },
+    {
+      "bearing_deg": 60.0,
+      "cue": "step.wood_floor.take_off",
+      "ear_laf_db_at_2m": 67.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 74.0,
+      "starts_s": 83.2998866213152
+    },
+    {
+      "bearing_deg": 97.0,
+      "cue": "step.wood_floor.land_soft",
+      "ear_laf_db_at_2m": 72.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 79.0,
+      "starts_s": 84.19988662131519
+    },
+    {
+      "bearing_deg": 134.0,
+      "cue": "step.wood_floor.land_hard",
+      "ear_laf_db_at_2m": 78.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 85.0,
+      "starts_s": 85.09988662131519
+    },
+    {
+      "bearing_deg": 171.0,
+      "cue": "step.stone_floor.walk",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 85.9998866213152
+    },
+    {
+      "bearing_deg": 208.0,
+      "cue": "step.stone_floor.run",
+      "ear_laf_db_at_2m": 68.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 75.0,
+      "starts_s": 86.89988662131519
+    },
+    {
+      "bearing_deg": 245.0,
+      "cue": "step.stone_floor.crouch",
+      "ear_laf_db_at_2m": 56.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 63.0,
+      "starts_s": 87.7998866213152
+    },
+    {
+      "bearing_deg": 282.0,
+      "cue": "step.stone_floor.scuff",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 88.69988662131519
+    },
+    {
+      "bearing_deg": 319.0,
+      "cue": "step.stone_floor.take_off",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 89.59988662131519
+    },
+    {
+      "bearing_deg": 356.0,
+      "cue": "step.stone_floor.land_soft",
+      "ear_laf_db_at_2m": 70.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 77.0,
+      "starts_s": 90.4998866213152
+    },
+    {
+      "bearing_deg": 33.0,
+      "cue": "step.stone_floor.land_hard",
+      "ear_laf_db_at_2m": 76.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 83.0,
+      "starts_s": 91.39988662131519
+    },
+    {
+      "bearing_deg": 70.0,
+      "cue": "step.steel_deck.walk",
+      "ear_laf_db_at_2m": 73.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 80.0,
+      "starts_s": 92.2998866213152
+    },
+    {
+      "bearing_deg": 107.0,
+      "cue": "step.steel_deck.run",
+      "ear_laf_db_at_2m": 78.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 85.0,
+      "starts_s": 93.19988662131519
+    },
+    {
+      "bearing_deg": 144.0,
+      "cue": "step.steel_deck.crouch",
+      "ear_laf_db_at_2m": 66.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 73.0,
+      "starts_s": 94.09988662131519
+    },
+    {
+      "bearing_deg": 181.0,
+      "cue": "step.steel_deck.scuff",
+      "ear_laf_db_at_2m": 69.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 76.0,
+      "starts_s": 94.9998866213152
+    },
+    {
+      "bearing_deg": 218.0,
+      "cue": "step.steel_deck.take_off",
+      "ear_laf_db_at_2m": 75.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 82.0,
+      "starts_s": 95.89988662131519
+    },
+    {
+      "bearing_deg": 255.0,
+      "cue": "step.steel_deck.land_soft",
+      "ear_laf_db_at_2m": 80.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 87.0,
+      "starts_s": 96.7998866213152
+    },
+    {
+      "bearing_deg": 292.0,
+      "cue": "step.steel_deck.land_hard",
+      "ear_laf_db_at_2m": 86.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 93.0,
+      "starts_s": 97.69988662131519
+    },
+    {
+      "bearing_deg": 329.0,
+      "cue": "step.turret_floor.walk",
+      "ear_laf_db_at_2m": 73.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 80.0,
+      "starts_s": 98.59988662131519
+    },
+    {
+      "bearing_deg": 6.0,
+      "cue": "step.turret_floor.run",
+      "ear_laf_db_at_2m": 78.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 85.0,
+      "starts_s": 99.4998866213152
+    },
+    {
+      "bearing_deg": 43.0,
+      "cue": "step.turret_floor.crouch",
+      "ear_laf_db_at_2m": 66.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 73.0,
+      "starts_s": 100.39988662131519
+    },
+    {
+      "bearing_deg": 80.0,
+      "cue": "step.turret_floor.scuff",
+      "ear_laf_db_at_2m": 69.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 76.0,
+      "starts_s": 101.2998866213152
+    },
+    {
+      "bearing_deg": 117.0,
+      "cue": "step.turret_floor.take_off",
+      "ear_laf_db_at_2m": 75.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 82.0,
+      "starts_s": 102.19988662131519
+    },
+    {
+      "bearing_deg": 154.0,
+      "cue": "step.turret_floor.land_soft",
+      "ear_laf_db_at_2m": 80.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 87.0,
+      "starts_s": 103.09988662131519
+    },
+    {
+      "bearing_deg": 191.0,
+      "cue": "step.turret_floor.land_hard",
+      "ear_laf_db_at_2m": 86.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 93.0,
+      "starts_s": 103.9998866213152
+    },
+    {
+      "bearing_deg": 228.0,
+      "cue": "step.glass.walk",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 104.89988662131519
+    },
+    {
+      "bearing_deg": 265.0,
+      "cue": "step.glass.run",
+      "ear_laf_db_at_2m": 70.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 77.0,
+      "starts_s": 105.7998866213152
+    },
+    {
+      "bearing_deg": 302.0,
+      "cue": "step.glass.crouch",
+      "ear_laf_db_at_2m": 58.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 65.0,
+      "starts_s": 106.69988662131519
+    },
+    {
+      "bearing_deg": 339.0,
+      "cue": "step.glass.scuff",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 107.59988662131519
+    },
+    {
+      "bearing_deg": 16.0,
+      "cue": "step.glass.take_off",
+      "ear_laf_db_at_2m": 67.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 74.0,
+      "starts_s": 108.4998866213152
+    },
+    {
+      "bearing_deg": 53.0,
+      "cue": "step.glass.land_soft",
+      "ear_laf_db_at_2m": 72.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 79.0,
+      "starts_s": 109.39988662131519
+    },
+    {
+      "bearing_deg": 90.0,
+      "cue": "step.glass.land_hard",
+      "ear_laf_db_at_2m": 78.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 85.0,
+      "starts_s": 110.2998866213152
+    },
+    {
+      "bearing_deg": 127.0,
+      "cue": "handle.jerry_can.grab",
+      "ear_laf_db_at_2m": 58.23992156982422,
+      "loop": false,
+      "ref_dba_1m": 64.27635955810547,
+      "starts_s": 111.19988662131519
+    },
+    {
+      "bearing_deg": 164.0,
+      "cue": "handle.jerry_can.set_down",
+      "ear_laf_db_at_2m": 72.51628875732422,
+      "loop": false,
+      "ref_dba_1m": 78.55272674560547,
+      "starts_s": 112.09988662131519
+    },
+    {
+      "bearing_deg": 201.0,
+      "cue": "handle.jerry_can.drop",
+      "ear_laf_db_at_2m": 86.51628875732422,
+      "loop": false,
+      "ref_dba_1m": 92.55272674560547,
+      "starts_s": 112.9998866213152
+    },
+    {
+      "bearing_deg": 238.0,
+      "cue": "handle.jerry_can.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 113.89988662131519
+    },
+    {
+      "bearing_deg": 275.0,
+      "cue": "handle.jerry_can.carry",
+      "ear_laf_db_at_2m": 54.239925384521484,
+      "loop": false,
+      "ref_dba_1m": 60.276363372802734,
+      "starts_s": 114.7998866213152
+    },
+    {
+      "bearing_deg": 312.0,
+      "cue": "handle.jerry_can.stow",
+      "ear_laf_db_at_2m": 76.51628875732422,
+      "loop": false,
+      "ref_dba_1m": 82.55272674560547,
+      "starts_s": 115.69988662131519
+    },
+    {
+      "bearing_deg": 349.0,
+      "cue": "handle.toolbox.grab",
+      "ear_laf_db_at_2m": 56.73477554321289,
+      "loop": false,
+      "ref_dba_1m": 62.77121353149414,
+      "starts_s": 116.59988662131519
+    },
+    {
+      "bearing_deg": 26.0,
+      "cue": "handle.toolbox.set_down",
+      "ear_laf_db_at_2m": 69.50598907470703,
+      "loop": false,
+      "ref_dba_1m": 75.54242706298828,
+      "starts_s": 117.4998866213152
+    },
+    {
+      "bearing_deg": 63.0,
+      "cue": "handle.toolbox.drop",
+      "ear_laf_db_at_2m": 83.50598907470703,
+      "loop": false,
+      "ref_dba_1m": 89.54242706298828,
+      "starts_s": 118.39988662131519
+    },
+    {
+      "bearing_deg": 100.0,
+      "cue": "handle.toolbox.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 119.2998866213152
+    },
+    {
+      "bearing_deg": 137.0,
+      "cue": "handle.toolbox.carry",
+      "ear_laf_db_at_2m": 52.73477554321289,
+      "loop": false,
+      "ref_dba_1m": 58.77121353149414,
+      "starts_s": 120.19988662131519
+    },
+    {
+      "bearing_deg": 174.0,
+      "cue": "handle.toolbox.stow",
+      "ear_laf_db_at_2m": 73.50598907470703,
+      "loop": false,
+      "ref_dba_1m": 79.54242706298828,
+      "starts_s": 121.09988662131519
+    },
+    {
+      "bearing_deg": 211.0,
+      "cue": "handle.hammer.grab",
+      "ear_laf_db_at_2m": 52.844017028808594,
+      "loop": false,
+      "ref_dba_1m": 58.880455017089844,
+      "starts_s": 121.9998866213152
+    },
+    {
+      "bearing_deg": 248.0,
+      "cue": "handle.hammer.set_down",
+      "ear_laf_db_at_2m": 61.72447204589844,
+      "loop": false,
+      "ref_dba_1m": 67.76091003417969,
+      "starts_s": 122.89988662131519
+    },
+    {
+      "bearing_deg": 285.0,
+      "cue": "handle.hammer.drop",
+      "ear_laf_db_at_2m": 75.72447204589844,
+      "loop": false,
+      "ref_dba_1m": 81.76091003417969,
+      "starts_s": 123.7998866213152
+    },
+    {
+      "bearing_deg": 322.0,
+      "cue": "handle.hammer.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 124.69988662131519
+    },
+    {
+      "bearing_deg": 359.0,
+      "cue": "handle.hammer.carry",
+      "ear_laf_db_at_2m": 48.844017028808594,
+      "loop": false,
+      "ref_dba_1m": 54.880455017089844,
+      "starts_s": 125.59988662131519
+    },
+    {
+      "bearing_deg": 36.0,
+      "cue": "handle.hammer.stow",
+      "ear_laf_db_at_2m": 65.72447204589844,
+      "loop": false,
+      "ref_dba_1m": 71.76091003417969,
+      "starts_s": 126.4998866213152
+    },
+    {
+      "bearing_deg": 73.0,
+      "cue": "handle.shell_88.grab",
+      "ear_laf_db_at_2m": 57.844017028808594,
+      "loop": false,
+      "ref_dba_1m": 63.880455017089844,
+      "starts_s": 127.39988662131519
+    },
+    {
+      "bearing_deg": 110.0,
+      "cue": "handle.shell_88.set_down",
+      "ear_laf_db_at_2m": 71.72447204589844,
+      "loop": false,
+      "ref_dba_1m": 77.76091003417969,
+      "starts_s": 128.29988662131518
+    },
+    {
+      "bearing_deg": 147.0,
+      "cue": "handle.shell_88.drop",
+      "ear_laf_db_at_2m": 85.72447204589844,
+      "loop": false,
+      "ref_dba_1m": 91.76091003417969,
+      "starts_s": 129.1998866213152
+    },
+    {
+      "bearing_deg": 184.0,
+      "cue": "handle.shell_88.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 130.0998866213152
+    },
+    {
+      "bearing_deg": 221.0,
+      "cue": "handle.shell_88.carry",
+      "ear_laf_db_at_2m": 53.844017028808594,
+      "loop": false,
+      "ref_dba_1m": 59.880455017089844,
+      "starts_s": 130.9998866213152
+    },
+    {
+      "bearing_deg": 258.0,
+      "cue": "handle.shell_88.stow",
+      "ear_laf_db_at_2m": 75.72447204589844,
+      "loop": false,
+      "ref_dba_1m": 81.76091003417969,
+      "starts_s": 131.8998866213152
+    },
+    {
+      "bearing_deg": 295.0,
+      "cue": "handle.case_88.grab",
+      "ear_laf_db_at_2m": 55.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 61.89075469970703,
+      "starts_s": 132.79988662131518
+    },
+    {
+      "bearing_deg": 332.0,
+      "cue": "handle.case_88.set_down",
+      "ear_laf_db_at_2m": 67.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 73.78150939941406,
+      "starts_s": 133.6998866213152
+    },
+    {
+      "bearing_deg": 9.0,
+      "cue": "handle.case_88.drop",
+      "ear_laf_db_at_2m": 81.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 87.78150939941406,
+      "starts_s": 134.5998866213152
+    },
+    {
+      "bearing_deg": 46.0,
+      "cue": "handle.case_88.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 135.4998866213152
+    },
+    {
+      "bearing_deg": 83.0,
+      "cue": "handle.case_88.carry",
+      "ear_laf_db_at_2m": 51.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 57.89075469970703,
+      "starts_s": 136.3998866213152
+    },
+    {
+      "bearing_deg": 120.0,
+      "cue": "handle.case_88.stow",
+      "ear_laf_db_at_2m": 71.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 77.78150939941406,
+      "starts_s": 137.29988662131518
+    },
+    {
+      "bearing_deg": 157.0,
+      "cue": "handle.ammo_box.grab",
+      "ear_laf_db_at_2m": 56.47901153564453,
+      "loop": false,
+      "ref_dba_1m": 62.51544952392578,
+      "starts_s": 138.1998866213152
+    },
+    {
+      "bearing_deg": 194.0,
+      "cue": "handle.ammo_box.set_down",
+      "ear_laf_db_at_2m": 68.99446105957031,
+      "loop": false,
+      "ref_dba_1m": 75.03089904785156,
+      "starts_s": 139.0998866213152
+    },
+    {
+      "bearing_deg": 231.0,
+      "cue": "handle.ammo_box.drop",
+      "ear_laf_db_at_2m": 82.99446105957031,
+      "loop": false,
+      "ref_dba_1m": 89.03089904785156,
+      "starts_s": 139.9998866213152
+    },
+    {
+      "bearing_deg": 268.0,
+      "cue": "handle.ammo_box.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 140.8998866213152
+    },
+    {
+      "bearing_deg": 305.0,
+      "cue": "handle.ammo_box.carry",
+      "ear_laf_db_at_2m": 52.47901153564453,
+      "loop": false,
+      "ref_dba_1m": 58.51544952392578,
+      "starts_s": 141.79988662131518
+    },
+    {
+      "bearing_deg": 342.0,
+      "cue": "handle.ammo_box.stow",
+      "ear_laf_db_at_2m": 72.99446105957031,
+      "loop": false,
+      "ref_dba_1m": 79.03089904785156,
+      "starts_s": 142.6998866213152
+    },
+    {
+      "bearing_deg": 19.0,
+      "cue": "handle.extinguisher.grab",
+      "ear_laf_db_at_2m": 55.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 61.89075469970703,
+      "starts_s": 143.5998866213152
+    },
+    {
+      "bearing_deg": 56.0,
+      "cue": "handle.extinguisher.set_down",
+      "ear_laf_db_at_2m": 67.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 73.78150939941406,
+      "starts_s": 144.4998866213152
+    },
+    {
+      "bearing_deg": 93.0,
+      "cue": "handle.extinguisher.drop",
+      "ear_laf_db_at_2m": 81.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 87.78150939941406,
+      "starts_s": 145.3998866213152
+    },
+    {
+      "bearing_deg": 130.0,
+      "cue": "handle.extinguisher.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 146.29988662131518
+    },
+    {
+      "bearing_deg": 167.0,
+      "cue": "handle.extinguisher.carry",
+      "ear_laf_db_at_2m": 51.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 57.89075469970703,
+      "starts_s": 147.1998866213152
+    },
+    {
+      "bearing_deg": 204.0,
+      "cue": "handle.extinguisher.stow",
+      "ear_laf_db_at_2m": 71.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 77.78150939941406,
+      "starts_s": 148.0998866213152
+    },
+    {
+      "bearing_deg": 241.0,
+      "cue": "handle.panzerfaust.grab",
+      "ear_laf_db_at_2m": 55.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 61.89075469970703,
+      "starts_s": 148.9998866213152
+    },
+    {
+      "bearing_deg": 278.0,
+      "cue": "handle.panzerfaust.set_down",
+      "ear_laf_db_at_2m": 67.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 73.78150939941406,
+      "starts_s": 149.8998866213152
+    },
+    {
+      "bearing_deg": 315.0,
+      "cue": "handle.panzerfaust.drop",
+      "ear_laf_db_at_2m": 81.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 87.78150939941406,
+      "starts_s": 150.79988662131518
+    },
+    {
+      "bearing_deg": 352.0,
+      "cue": "handle.panzerfaust.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 151.6998866213152
+    },
+    {
+      "bearing_deg": 29.0,
+      "cue": "handle.panzerfaust.carry",
+      "ear_laf_db_at_2m": 51.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 57.89075469970703,
+      "starts_s": 152.5998866213152
+    },
+    {
+      "bearing_deg": 66.0,
+      "cue": "handle.panzerfaust.stow",
+      "ear_laf_db_at_2m": 71.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 77.78150939941406,
+      "starts_s": 153.4998866213152
+    },
+    {
+      "bearing_deg": 103.0,
+      "cue": "handle.flashlight.grab",
+      "ear_laf_db_at_2m": 50.458412170410156,
+      "loop": false,
+      "ref_dba_1m": 56.494850158691406,
+      "starts_s": 154.3998866213152
+    },
+    {
+      "bearing_deg": 140.0,
+      "cue": "handle.flashlight.set_down",
+      "ear_laf_db_at_2m": 56.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 62.98970031738281,
+      "starts_s": 155.29988662131518
+    },
+    {
+      "bearing_deg": 177.0,
+      "cue": "handle.flashlight.drop",
+      "ear_laf_db_at_2m": 70.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 76.98970031738281,
+      "starts_s": 156.1998866213152
+    },
+    {
+      "bearing_deg": 214.0,
+      "cue": "handle.flashlight.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 157.0998866213152
+    },
+    {
+      "bearing_deg": 251.0,
+      "cue": "handle.flashlight.carry",
+      "ear_laf_db_at_2m": 46.458412170410156,
+      "loop": false,
+      "ref_dba_1m": 52.494850158691406,
+      "starts_s": 157.9998866213152
+    },
+    {
+      "bearing_deg": 288.0,
+      "cue": "handle.flashlight.stow",
+      "ear_laf_db_at_2m": 60.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 66.98970031738281,
+      "starts_s": 158.8998866213152
+    },
+    {
+      "bearing_deg": 325.0,
+      "cue": "handle.binoculars.grab",
+      "ear_laf_db_at_2m": 51.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 58.0,
+      "starts_s": 159.79988662131518
+    },
+    {
+      "bearing_deg": 2.0,
+      "cue": "handle.binoculars.set_down",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 160.6998866213152
+    },
+    {
+      "bearing_deg": 39.0,
+      "cue": "handle.binoculars.drop",
+      "ear_laf_db_at_2m": 73.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 80.0,
+      "starts_s": 161.5998866213152
+    },
+    {
+      "bearing_deg": 76.0,
+      "cue": "handle.binoculars.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 162.4998866213152
+    },
+    {
+      "bearing_deg": 113.0,
+      "cue": "handle.binoculars.carry",
+      "ear_laf_db_at_2m": 47.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 54.0,
+      "starts_s": 163.3998866213152
+    },
+    {
+      "bearing_deg": 150.0,
+      "cue": "handle.binoculars.stow",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 164.29988662131518
+    },
+    {
+      "bearing_deg": 187.0,
+      "cue": "handle.map.grab",
+      "ear_laf_db_at_2m": 46.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 53.0,
+      "starts_s": 165.1998866213152
+    },
+    {
+      "bearing_deg": 224.0,
+      "cue": "handle.map.set_down",
+      "ear_laf_db_at_2m": 49.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 56.0,
+      "starts_s": 166.0998866213152
+    },
+    {
+      "bearing_deg": 261.0,
+      "cue": "handle.map.drop",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 166.9998866213152
+    },
+    {
+      "bearing_deg": 298.0,
+      "cue": "handle.map.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 167.8998866213152
+    },
+    {
+      "bearing_deg": 335.0,
+      "cue": "handle.map.carry",
+      "ear_laf_db_at_2m": 42.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 49.0,
+      "starts_s": 168.79988662131518
+    },
+    {
+      "bearing_deg": 12.0,
+      "cue": "handle.map.stow",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 169.6998866213152
+    },
+    {
+      "bearing_deg": 49.0,
+      "cue": "handle.compass.grab",
+      "ear_laf_db_at_2m": 48.468711853027344,
+      "loop": false,
+      "ref_dba_1m": 54.505149841308594,
+      "starts_s": 170.5998866213152
+    },
+    {
+      "bearing_deg": 86.0,
+      "cue": "handle.compass.set_down",
+      "ear_laf_db_at_2m": 52.97386169433594,
+      "loop": false,
+      "ref_dba_1m": 59.01029968261719,
+      "starts_s": 171.4998866213152
+    },
+    {
+      "bearing_deg": 123.0,
+      "cue": "handle.compass.drop",
+      "ear_laf_db_at_2m": 66.97386169433594,
+      "loop": false,
+      "ref_dba_1m": 73.01029968261719,
+      "starts_s": 172.3998866213152
+    },
+    {
+      "bearing_deg": 160.0,
+      "cue": "handle.compass.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 173.29988662131518
+    },
+    {
+      "bearing_deg": 197.0,
+      "cue": "handle.compass.carry",
+      "ear_laf_db_at_2m": 44.468711853027344,
+      "loop": false,
+      "ref_dba_1m": 50.505149841308594,
+      "starts_s": 174.1998866213152
+    },
+    {
+      "bearing_deg": 234.0,
+      "cue": "handle.compass.stow",
+      "ear_laf_db_at_2m": 56.97386169433594,
+      "loop": false,
+      "ref_dba_1m": 63.01029968261719,
+      "starts_s": 175.0998866213152
+    },
+    {
+      "bearing_deg": 271.0,
+      "cue": "handle.pistol.grab",
+      "ear_laf_db_at_2m": 51.73477554321289,
+      "loop": false,
+      "ref_dba_1m": 57.77121353149414,
+      "starts_s": 175.9998866213152
+    },
+    {
+      "bearing_deg": 308.0,
+      "cue": "handle.pistol.set_down",
+      "ear_laf_db_at_2m": 59.50598907470703,
+      "loop": false,
+      "ref_dba_1m": 65.54242706298828,
+      "starts_s": 176.8998866213152
+    },
+    {
+      "bearing_deg": 345.0,
+      "cue": "handle.pistol.drop",
+      "ear_laf_db_at_2m": 73.50598907470703,
+      "loop": false,
+      "ref_dba_1m": 79.54242706298828,
+      "starts_s": 177.79988662131518
+    },
+    {
+      "bearing_deg": 22.0,
+      "cue": "handle.pistol.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 178.6998866213152
+    },
+    {
+      "bearing_deg": 59.0,
+      "cue": "handle.pistol.carry",
+      "ear_laf_db_at_2m": 47.73477554321289,
+      "loop": false,
+      "ref_dba_1m": 53.77121353149414,
+      "starts_s": 179.5998866213152
+    },
+    {
+      "bearing_deg": 96.0,
+      "cue": "handle.pistol.stow",
+      "ear_laf_db_at_2m": 63.50598907470703,
+      "loop": false,
+      "ref_dba_1m": 69.54242706298828,
+      "starts_s": 180.4998866213152
+    },
+    {
+      "bearing_deg": 133.0,
+      "cue": "handle.cigarette_pack.grab",
+      "ear_laf_db_at_2m": 45.458412170410156,
+      "loop": false,
+      "ref_dba_1m": 51.494850158691406,
+      "starts_s": 181.3998866213152
+    },
+    {
+      "bearing_deg": 170.0,
+      "cue": "handle.cigarette_pack.set_down",
+      "ear_laf_db_at_2m": 46.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 52.98970031738281,
+      "starts_s": 182.29988662131518
+    },
+    {
+      "bearing_deg": 207.0,
+      "cue": "handle.cigarette_pack.drop",
+      "ear_laf_db_at_2m": 60.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 66.98970031738281,
+      "starts_s": 183.1998866213152
+    },
+    {
+      "bearing_deg": 244.0,
+      "cue": "handle.cigarette_pack.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 184.0998866213152
+    },
+    {
+      "bearing_deg": 281.0,
+      "cue": "handle.cigarette_pack.carry",
+      "ear_laf_db_at_2m": 41.458412170410156,
+      "loop": false,
+      "ref_dba_1m": 47.494850158691406,
+      "starts_s": 184.9998866213152
+    },
+    {
+      "bearing_deg": 318.0,
+      "cue": "handle.cigarette_pack.stow",
+      "ear_laf_db_at_2m": 50.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 56.98970031738281,
+      "starts_s": 185.8998866213152
+    },
+    {
+      "bearing_deg": 355.0,
+      "cue": "handle.lighter.grab",
+      "ear_laf_db_at_2m": 45.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 51.89075469970703,
+      "starts_s": 186.79988662131518
+    },
+    {
+      "bearing_deg": 32.0,
+      "cue": "handle.lighter.set_down",
+      "ear_laf_db_at_2m": 47.74507522583008,
+      "loop": false,
+      "ref_dba_1m": 53.78151321411133,
+      "starts_s": 187.6998866213152
+    },
+    {
+      "bearing_deg": 69.0,
+      "cue": "handle.lighter.drop",
+      "ear_laf_db_at_2m": 61.74507141113281,
+      "loop": false,
+      "ref_dba_1m": 67.78150939941406,
+      "starts_s": 188.5998866213152
+    },
+    {
+      "bearing_deg": 106.0,
+      "cue": "handle.lighter.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 189.4998866213152
+    },
+    {
+      "bearing_deg": 143.0,
+      "cue": "handle.lighter.carry",
+      "ear_laf_db_at_2m": 41.85431671142578,
+      "loop": false,
+      "ref_dba_1m": 47.89075469970703,
+      "starts_s": 190.3998866213152
+    },
+    {
+      "bearing_deg": 180.0,
+      "cue": "handle.lighter.stow",
+      "ear_laf_db_at_2m": 51.74507522583008,
+      "loop": false,
+      "ref_dba_1m": 57.78151321411133,
+      "starts_s": 191.29988662131518
+    },
+    {
+      "bearing_deg": 217.0,
+      "cue": "handle.track_pin.grab",
+      "ear_laf_db_at_2m": 54.97386169433594,
+      "loop": false,
+      "ref_dba_1m": 61.01029968261719,
+      "starts_s": 192.1998866213152
+    },
+    {
+      "bearing_deg": 254.0,
+      "cue": "handle.track_pin.set_down",
+      "ear_laf_db_at_2m": 65.98416137695312,
+      "loop": false,
+      "ref_dba_1m": 72.02059936523438,
+      "starts_s": 193.0998866213152
+    },
+    {
+      "bearing_deg": 291.0,
+      "cue": "handle.track_pin.drop",
+      "ear_laf_db_at_2m": 79.98416137695312,
+      "loop": false,
+      "ref_dba_1m": 86.02059936523438,
+      "starts_s": 193.9998866213152
+    },
+    {
+      "bearing_deg": 328.0,
+      "cue": "handle.track_pin.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 194.8998866213152
+    },
+    {
+      "bearing_deg": 5.0,
+      "cue": "handle.track_pin.carry",
+      "ear_laf_db_at_2m": 50.97386169433594,
+      "loop": false,
+      "ref_dba_1m": 57.01029968261719,
+      "starts_s": 195.79988662131518
+    },
+    {
+      "bearing_deg": 42.0,
+      "cue": "handle.track_pin.stow",
+      "ear_laf_db_at_2m": 69.98416137695312,
+      "loop": false,
+      "ref_dba_1m": 76.02059936523438,
+      "starts_s": 196.6998866213152
+    },
+    {
+      "bearing_deg": 79.0,
+      "cue": "handle.track_link.grab",
+      "ear_laf_db_at_2m": 59.34916687011719,
+      "loop": false,
+      "ref_dba_1m": 65.38560485839844,
+      "starts_s": 197.5998866213152
+    },
+    {
+      "bearing_deg": 116.0,
+      "cue": "handle.track_link.set_down",
+      "ear_laf_db_at_2m": 74.73477172851562,
+      "loop": false,
+      "ref_dba_1m": 80.77120971679688,
+      "starts_s": 198.4998866213152
+    },
+    {
+      "bearing_deg": 153.0,
+      "cue": "handle.track_link.drop",
+      "ear_laf_db_at_2m": 88.73477172851562,
+      "loop": false,
+      "ref_dba_1m": 94.77120971679688,
+      "starts_s": 199.3998866213152
+    },
+    {
+      "bearing_deg": 190.0,
+      "cue": "handle.track_link.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 200.29988662131518
+    },
+    {
+      "bearing_deg": 227.0,
+      "cue": "handle.track_link.carry",
+      "ear_laf_db_at_2m": 55.34916687011719,
+      "loop": false,
+      "ref_dba_1m": 61.38560485839844,
+      "starts_s": 201.1998866213152
+    },
+    {
+      "bearing_deg": 264.0,
+      "cue": "handle.track_link.stow",
+      "ear_laf_db_at_2m": 78.73477172851562,
+      "loop": false,
+      "ref_dba_1m": 84.77120971679688,
+      "starts_s": 202.0998866213152
+    },
+    {
+      "bearing_deg": 301.0,
+      "cue": "handle.spare_parts.grab",
+      "ear_laf_db_at_2m": 55.458412170410156,
+      "loop": false,
+      "ref_dba_1m": 61.494850158691406,
+      "starts_s": 202.9998866213152
+    },
+    {
+      "bearing_deg": 338.0,
+      "cue": "handle.spare_parts.set_down",
+      "ear_laf_db_at_2m": 66.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 72.98970031738281,
+      "starts_s": 203.8998866213152
+    },
+    {
+      "bearing_deg": 15.0,
+      "cue": "handle.spare_parts.drop",
+      "ear_laf_db_at_2m": 80.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 86.98970031738281,
+      "starts_s": 204.79988662131518
+    },
+    {
+      "bearing_deg": 52.0,
+      "cue": "handle.spare_parts.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 205.6998866213152
+    },
+    {
+      "bearing_deg": 89.0,
+      "cue": "handle.spare_parts.carry",
+      "ear_laf_db_at_2m": 51.458412170410156,
+      "loop": false,
+      "ref_dba_1m": 57.494850158691406,
+      "starts_s": 206.5998866213152
+    },
+    {
+      "bearing_deg": 126.0,
+      "cue": "handle.spare_parts.stow",
+      "ear_laf_db_at_2m": 70.95326232910156,
+      "loop": false,
+      "ref_dba_1m": 76.98970031738281,
+      "starts_s": 207.4998866213152
+    },
+    {
+      "bearing_deg": 163.0,
+      "cue": "handle.first_aid_kit.grab",
+      "ear_laf_db_at_2m": 51.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 58.0,
+      "starts_s": 208.3998866213152
+    },
+    {
+      "bearing_deg": 200.0,
+      "cue": "handle.first_aid_kit.set_down",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 209.29988662131518
+    },
+    {
+      "bearing_deg": 237.0,
+      "cue": "handle.first_aid_kit.drop",
+      "ear_laf_db_at_2m": 73.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 80.0,
+      "starts_s": 210.1998866213152
+    },
+    {
+      "bearing_deg": 274.0,
+      "cue": "handle.first_aid_kit.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 211.0998866213152
+    },
+    {
+      "bearing_deg": 311.0,
+      "cue": "handle.first_aid_kit.carry",
+      "ear_laf_db_at_2m": 47.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 54.0,
+      "starts_s": 211.9998866213152
+    },
+    {
+      "bearing_deg": 348.0,
+      "cue": "handle.first_aid_kit.stow",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 212.8998866213152
+    },
+    {
+      "bearing_deg": 25.0,
+      "cue": "handle.canteen.grab",
+      "ear_laf_db_at_2m": 52.359466552734375,
+      "loop": false,
+      "ref_dba_1m": 58.395904541015625,
+      "starts_s": 213.79988662131518
+    },
+    {
+      "bearing_deg": 62.0,
+      "cue": "handle.canteen.set_down",
+      "ear_laf_db_at_2m": 60.75537109375,
+      "loop": false,
+      "ref_dba_1m": 66.79180908203125,
+      "starts_s": 214.6998866213152
+    },
+    {
+      "bearing_deg": 99.0,
+      "cue": "handle.canteen.drop",
+      "ear_laf_db_at_2m": 74.75537109375,
+      "loop": false,
+      "ref_dba_1m": 80.79180908203125,
+      "starts_s": 215.5998866213152
+    },
+    {
+      "bearing_deg": 136.0,
+      "cue": "handle.canteen.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 216.4998866213152
+    },
+    {
+      "bearing_deg": 173.0,
+      "cue": "handle.canteen.carry",
+      "ear_laf_db_at_2m": 48.359466552734375,
+      "loop": false,
+      "ref_dba_1m": 54.395904541015625,
+      "starts_s": 217.3998866213152
+    },
+    {
+      "bearing_deg": 210.0,
+      "cue": "handle.canteen.stow",
+      "ear_laf_db_at_2m": 64.75537109375,
+      "loop": false,
+      "ref_dba_1m": 70.79180908203125,
+      "starts_s": 218.29988662131518
+    },
+    {
+      "bearing_deg": 247.0,
+      "cue": "handle.helmet.grab",
+      "ear_laf_db_at_2m": 52.359466552734375,
+      "loop": false,
+      "ref_dba_1m": 58.395904541015625,
+      "starts_s": 219.1998866213152
+    },
+    {
+      "bearing_deg": 284.0,
+      "cue": "handle.helmet.set_down",
+      "ear_laf_db_at_2m": 60.75537109375,
+      "loop": false,
+      "ref_dba_1m": 66.79180908203125,
+      "starts_s": 220.0998866213152
+    },
+    {
+      "bearing_deg": 321.0,
+      "cue": "handle.helmet.drop",
+      "ear_laf_db_at_2m": 74.75537109375,
+      "loop": false,
+      "ref_dba_1m": 80.79180908203125,
+      "starts_s": 220.9998866213152
+    },
+    {
+      "bearing_deg": 358.0,
+      "cue": "handle.helmet.throw",
+      "ear_laf_db_at_2m": 48.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 55.0,
+      "starts_s": 221.8998866213152
+    },
+    {
+      "bearing_deg": 35.0,
+      "cue": "handle.helmet.carry",
+      "ear_laf_db_at_2m": 48.359466552734375,
+      "loop": false,
+      "ref_dba_1m": 54.395904541015625,
+      "starts_s": 222.79988662131518
+    },
+    {
+      "bearing_deg": 72.0,
+      "cue": "handle.helmet.stow",
+      "ear_laf_db_at_2m": 64.75537109375,
+      "loop": false,
+      "ref_dba_1m": 70.79180908203125,
+      "starts_s": 223.6998866213152
+    },
+    {
+      "bearing_deg": 109.0,
+      "cue": "cabin.stationmove",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 224.5998866213152
+    },
+    {
+      "bearing_deg": 146.0,
+      "cue": "cabin.seatcreak",
+      "ear_laf_db_at_2m": 45.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 52.0,
+      "starts_s": 225.4998866213152
+    },
+    {
+      "bearing_deg": 183.0,
+      "cue": "cabin.headbump",
+      "ear_laf_db_at_2m": 67.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 74.0,
+      "starts_s": 226.3998866213152
+    },
+    {
+      "bearing_deg": 220.0,
+      "cue": "cabin.crouchrustle",
+      "ear_laf_db_at_2m": 43.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 50.0,
+      "starts_s": 227.29988662131518
+    },
+    {
+      "bearing_deg": 257.0,
+      "cue": "cabin.standrustle",
+      "ear_laf_db_at_2m": 43.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 50.0,
+      "starts_s": 228.1998866213152
+    },
+    {
+      "bearing_deg": 294.0,
+      "cue": "cabin.climbgrip",
+      "ear_laf_db_at_2m": 57.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 64.0,
+      "starts_s": 229.0998866213152
+    },
+    {
+      "bearing_deg": 331.0,
+      "cue": "cabin.climbboot",
+      "ear_laf_db_at_2m": 69.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 76.0,
+      "starts_s": 229.9998866213152
+    },
+    {
+      "bearing_deg": 8.0,
+      "cue": "cabin.hatchpassage",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 230.8998866213152
+    },
+    {
+      "bearing_deg": 45.0,
+      "cue": "cabin.breechbrush",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 231.79988662131518
+    },
+    {
+      "bearing_deg": 82.0,
+      "cue": "cabin.rackbrush",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 232.6998866213152
+    },
+    {
+      "bearing_deg": 119.0,
+      "cue": "cabin.periscopeturn",
+      "ear_laf_db_at_2m": 43.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 50.0,
+      "starts_s": 233.5998866213152
+    },
+    {
+      "bearing_deg": 156.0,
+      "cue": "cabin.sightclick",
+      "ear_laf_db_at_2m": 49.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 56.0,
+      "starts_s": 234.4998866213152
+    },
+    {
+      "bearing_deg": 193.0,
+      "cue": "cabin.visorlean",
+      "ear_laf_db_at_2m": 47.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 54.0,
+      "starts_s": 235.3998866213152
+    },
+    {
+      "bearing_deg": 230.0,
+      "cue": "cabin.intercomclick",
+      "ear_laf_db_at_2m": 41.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 48.0,
+      "starts_s": 236.29988662131518
+    },
+    {
+      "bearing_deg": 267.0,
+      "cue": "cabin.lampswitch",
+      "ear_laf_db_at_2m": 45.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 52.0,
+      "starts_s": 237.1998866213152
+    },
+    {
+      "bearing_deg": 304.0,
+      "cue": "cabin.headout",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 238.0998866213152
+    },
+    {
+      "bearing_deg": 341.0,
+      "cue": "cabin.headin",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 238.9998866213152
+    },
+    {
+      "bearing_deg": 18.0,
+      "cue": "vehicle.gearshift",
+      "ear_laf_db_at_2m": 85.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 92.0,
+      "starts_s": 239.8998866213152
+    },
+    {
+      "bearing_deg": 55.0,
+      "cue": "vehicle.geargrind",
+      "ear_laf_db_at_2m": 87.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 94.0,
+      "starts_s": 240.79988662131518
+    },
+    {
+      "bearing_deg": 92.0,
+      "cue": "vehicle.brakesqueal",
+      "ear_laf_db_at_2m": 89.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 96.0,
+      "starts_s": 241.6998866213152
+    },
+    {
+      "bearing_deg": 129.0,
+      "cue": "vehicle.parkingbrake",
+      "ear_laf_db_at_2m": 77.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 84.0,
+      "starts_s": 243.8998866213152
+    },
+    {
+      "bearing_deg": 166.0,
+      "cue": "vehicle.starterdry",
+      "ear_laf_db_at_2m": 77.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 84.0,
+      "starts_s": 244.79988662131518
+    },
+    {
+      "bearing_deg": 203.0,
+      "cue": "vehicle.inertiacrank",
+      "ear_laf_db_at_2m": 81.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 88.0,
+      "starts_s": 245.6998866213152
+    },
+    {
+      "bearing_deg": 240.0,
+      "cue": "vehicle.fuelsputter",
+      "ear_laf_db_at_2m": 93.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 100.0,
+      "starts_s": 246.5998866213152
+    },
+    {
+      "bearing_deg": 277.0,
+      "cue": "vehicle.stall",
+      "ear_laf_db_at_2m": 89.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 96.0,
+      "starts_s": 247.4998866213152
+    },
+    {
+      "bearing_deg": 314.0,
+      "cue": "vehicle.barrelsizzle",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 248.3998866213152
+    },
+    {
+      "bearing_deg": 351.0,
+      "cue": "vehicle.barreltick",
+      "ear_laf_db_at_2m": 51.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 58.0,
+      "starts_s": 249.29988662131518
+    },
+    {
+      "bearing_deg": 28.0,
+      "cue": "vehicle.handtraverse",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 70.0,
+      "starts_s": 250.1998866213152
+    },
+    {
+      "bearing_deg": 65.0,
+      "cue": "vehicle.wallgrind",
+      "ear_laf_db_at_2m": 97.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 104.0,
+      "starts_s": 252.3998866213152
+    },
+    {
+      "bearing_deg": 102.0,
+      "cue": "vehicle.masonrycreak",
+      "ear_laf_db_at_2m": 85.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 92.0,
+      "starts_s": 254.5998866213152
+    },
+    {
+      "bearing_deg": 139.0,
+      "cue": "vehicle.hardstop",
+      "ear_laf_db_at_2m": 103.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 110.0,
+      "starts_s": 255.4998866213152
+    },
+    {
+      "bearing_deg": 176.0,
+      "cue": "vehicle.floorcollapse",
+      "ear_laf_db_at_2m": 105.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 112.0,
+      "starts_s": 256.3998866213152
+    },
+    {
+      "bearing_deg": 213.0,
+      "cue": "vehicle.tracksnow",
+      "ear_laf_db_at_2m": 81.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 88.0,
+      "starts_s": 257.2998866213152
+    },
+    {
+      "bearing_deg": 250.0,
+      "cue": "vehicle.trackgravel",
+      "ear_laf_db_at_2m": 89.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 96.0,
+      "starts_s": 259.49988662131517
+    },
+    {
+      "bearing_deg": 287.0,
+      "cue": "vehicle.trackrubble",
+      "ear_laf_db_at_2m": 93.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 100.0,
+      "starts_s": 261.6998866213152
+    },
+    {
+      "bearing_deg": 324.0,
+      "cue": "vehicle.trackice",
+      "ear_laf_db_at_2m": 87.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 94.0,
+      "starts_s": 263.8998866213152
+    },
+    {
+      "bearing_deg": 1.0,
+      "cue": "vehicle.trackwood",
+      "ear_laf_db_at_2m": 91.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 98.0,
+      "starts_s": 266.0998866213152
+    },
+    {
+      "bearing_deg": 38.0,
+      "cue": "vehicle.hulldrop",
+      "ear_laf_db_at_2m": 105.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 112.0,
+      "starts_s": 268.2998866213152
+    },
+    {
+      "bearing_deg": 75.0,
+      "cue": "vehicle.enemytrackclank",
+      "ear_laf_db_at_2m": 91.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 98.0,
+      "starts_s": 269.1998866213152
+    },
+    {
+      "bearing_deg": 112.0,
+      "cue": "env.snowticks",
+      "ear_laf_db_at_2m": 35.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 42.0,
+      "starts_s": 271.3998866213152
+    },
+    {
+      "bearing_deg": 149.0,
+      "cue": "env.sleetticks",
+      "ear_laf_db_at_2m": 45.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 52.0,
+      "starts_s": 273.5998866213152
+    },
+    {
+      "bearing_deg": 186.0,
+      "cue": "env.windrail",
+      "ear_laf_db_at_2m": 47.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 54.0,
+      "starts_s": 275.7998866213152
+    },
+    {
+      "bearing_deg": 223.0,
+      "cue": "env.windantenna",
+      "ear_laf_db_at_2m": 49.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 56.0,
+      "starts_s": 277.99988662131517
+    },
+    {
+      "bearing_deg": 260.0,
+      "cue": "env.windhatchrim",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 60.0,
+      "starts_s": 280.1998866213152
+    },
+    {
+      "bearing_deg": 297.0,
+      "cue": "env.hullping",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 282.3998866213152
+    },
+    {
+      "bearing_deg": 334.0,
+      "cue": "env.treecreak",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 283.2998866213152
+    },
+    {
+      "bearing_deg": 11.0,
+      "cue": "env.wrecktick",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 284.1998866213152
+    },
+    {
+      "bearing_deg": 48.0,
+      "cue": "env.buildingsettle",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 285.0998866213152
+    },
+    {
+      "bearing_deg": 85.0,
+      "cue": "env.snowslough",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 285.99988662131517
+    },
+    {
+      "bearing_deg": 122.0,
+      "cue": "env.icecrack",
+      "ear_laf_db_at_2m": 77.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 84.0,
+      "starts_s": 286.8998866213152
+    },
+    {
+      "bearing_deg": 159.0,
+      "cue": "env.rubbletrickle",
+      "ear_laf_db_at_2m": 57.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 64.0,
+      "starts_s": 287.7998866213152
+    },
+    {
+      "bearing_deg": 196.0,
+      "cue": "env.fanhum",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 62.0,
+      "starts_s": 288.6998866213152
+    },
+    {
+      "bearing_deg": 233.0,
+      "cue": "env.lampbuzz",
+      "ear_laf_db_at_2m": 27.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 34.0,
+      "starts_s": 290.8998866213152
+    },
+    {
+      "bearing_deg": 270.0,
+      "cue": "env.casinglandsnow",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 293.0998866213152
+    },
+    {
+      "bearing_deg": 307.0,
+      "cue": "cigarette.packopen",
+      "ear_laf_db_at_2m": 37.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 44.0,
+      "starts_s": 293.99988662131517
+    },
+    {
+      "bearing_deg": 344.0,
+      "cue": "cigarette.packclose",
+      "ear_laf_db_at_2m": 37.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 44.0,
+      "starts_s": 294.8998866213152
+    },
+    {
+      "bearing_deg": 21.0,
+      "cue": "cigarette.drawcigarette",
+      "ear_laf_db_at_2m": 33.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 40.0,
+      "starts_s": 295.7998866213152
+    },
+    {
+      "bearing_deg": 58.0,
+      "cue": "cigarette.flint",
+      "ear_laf_db_at_2m": 51.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 58.0,
+      "starts_s": 296.6998866213152
+    },
+    {
+      "bearing_deg": 95.0,
+      "cue": "cigarette.flame",
+      "ear_laf_db_at_2m": 39.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 46.0,
+      "starts_s": 297.5998866213152
+    },
+    {
+      "bearing_deg": 132.0,
+      "cue": "cigarette.inhale",
+      "ear_laf_db_at_2m": 33.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 40.0,
+      "starts_s": 298.49988662131517
+    },
+    {
+      "bearing_deg": 169.0,
+      "cue": "cigarette.exhale",
+      "ear_laf_db_at_2m": 37.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 44.0,
+      "starts_s": 299.3998866213152
+    },
+    {
+      "bearing_deg": 206.0,
+      "cue": "cigarette.cough",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 300.2998866213152
+    },
+    {
+      "bearing_deg": 243.0,
+      "cue": "cigarette.burnout",
+      "ear_laf_db_at_2m": 27.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 34.0,
+      "starts_s": 301.1998866213152
+    },
+    {
+      "bearing_deg": 280.0,
+      "cue": "cigarette.buttflick",
+      "ear_laf_db_at_2m": 35.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 42.0,
+      "starts_s": 302.0998866213152
+    },
+    {
+      "bearing_deg": 317.0,
+      "cue": "cigarette.buttlandsnow",
+      "ear_laf_db_at_2m": 23.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 30.0,
+      "starts_s": 302.99988662131517
+    },
+    {
+      "bearing_deg": 354.0,
+      "cue": "cigarette.buttlandsteel",
+      "ear_laf_db_at_2m": 33.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 40.0,
+      "starts_s": 303.8998866213152
+    },
+    {
+      "bearing_deg": 31.0,
+      "cue": "extinguisher.pumpstroke",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 304.7998866213152
+    },
+    {
+      "bearing_deg": 68.0,
+      "cue": "extinguisher.spraystart",
+      "ear_laf_db_at_2m": 73.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 80.0,
+      "starts_s": 305.6998866213152
+    },
+    {
+      "bearing_deg": 105.0,
+      "cue": "extinguisher.spray",
+      "ear_laf_db_at_2m": 71.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 78.0,
+      "starts_s": 306.5998866213152
+    },
+    {
+      "bearing_deg": 142.0,
+      "cue": "extinguisher.sprayend",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 308.7998866213152
+    },
+    {
+      "bearing_deg": 179.0,
+      "cue": "extinguisher.quench",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 309.6998866213152
+    },
+    {
+      "bearing_deg": 216.0,
+      "cue": "door.timber.open",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 310.5998866213152
+    },
+    {
+      "bearing_deg": 253.0,
+      "cue": "door.timber.close",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 311.49988662131517
+    },
+    {
+      "bearing_deg": 290.0,
+      "cue": "door.timber.latch",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 312.3998866213152
+    },
+    {
+      "bearing_deg": 327.0,
+      "cue": "door.timber.locked",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 313.2998866213152
+    },
+    {
+      "bearing_deg": 4.0,
+      "cue": "door.timber.slam",
+      "ear_laf_db_at_2m": 81.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 88.0,
+      "starts_s": 314.1998866213152
+    },
+    {
+      "bearing_deg": 41.0,
+      "cue": "door.timber.creak",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 315.0998866213152
+    },
+    {
+      "bearing_deg": 78.0,
+      "cue": "door.iron.open",
+      "ear_laf_db_at_2m": 65.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 72.0,
+      "starts_s": 315.99988662131517
+    },
+    {
+      "bearing_deg": 115.0,
+      "cue": "door.iron.close",
+      "ear_laf_db_at_2m": 71.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 78.0,
+      "starts_s": 316.8998866213152
+    },
+    {
+      "bearing_deg": 152.0,
+      "cue": "door.iron.latch",
+      "ear_laf_db_at_2m": 67.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 74.0,
+      "starts_s": 317.7998866213152
+    },
+    {
+      "bearing_deg": 189.0,
+      "cue": "door.iron.locked",
+      "ear_laf_db_at_2m": 69.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 76.0,
+      "starts_s": 318.6998866213152
+    },
+    {
+      "bearing_deg": 226.0,
+      "cue": "door.iron.slam",
+      "ear_laf_db_at_2m": 87.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 94.0,
+      "starts_s": 319.5998866213152
+    },
+    {
+      "bearing_deg": 263.0,
+      "cue": "door.iron.creak",
+      "ear_laf_db_at_2m": 61.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 68.0,
+      "starts_s": 320.49988662131517
+    },
+    {
+      "bearing_deg": 300.0,
+      "cue": "door.barn.open",
+      "ear_laf_db_at_2m": 62.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 69.0,
+      "starts_s": 321.3998866213152
+    },
+    {
+      "bearing_deg": 337.0,
+      "cue": "door.barn.close",
+      "ear_laf_db_at_2m": 68.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 75.0,
+      "starts_s": 322.2998866213152
+    },
+    {
+      "bearing_deg": 14.0,
+      "cue": "door.barn.latch",
+      "ear_laf_db_at_2m": 64.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 71.0,
+      "starts_s": 323.1998866213152
+    },
+    {
+      "bearing_deg": 51.0,
+      "cue": "door.barn.locked",
+      "ear_laf_db_at_2m": 66.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 73.0,
+      "starts_s": 324.0998866213152
+    },
+    {
+      "bearing_deg": 88.0,
+      "cue": "door.barn.slam",
+      "ear_laf_db_at_2m": 84.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 91.0,
+      "starts_s": 324.99988662131517
+    },
+    {
+      "bearing_deg": 125.0,
+      "cue": "door.barn.creak",
+      "ear_laf_db_at_2m": 58.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 65.0,
+      "starts_s": 325.8998866213152
+    },
+    {
+      "bearing_deg": 162.0,
+      "cue": "body.burncatch",
+      "ear_laf_db_at_2m": 63.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 70.0,
+      "starts_s": 326.7998866213152
+    },
+    {
+      "bearing_deg": 199.0,
+      "cue": "body.patout",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 327.6998866213152
+    },
+    {
+      "bearing_deg": 236.0,
+      "cue": "body.dragbody",
+      "ear_laf_db_at_2m": 55.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 62.0,
+      "starts_s": 328.5998866213152
+    },
+    {
+      "bearing_deg": 273.0,
+      "cue": "body.bandagetear",
+      "ear_laf_db_at_2m": 51.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 58.0,
+      "starts_s": 329.49988662131517
+    },
+    {
+      "bearing_deg": 310.0,
+      "cue": "body.kneel",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 60.0,
+      "starts_s": 330.3998866213152
+    },
+    {
+      "bearing_deg": 347.0,
+      "cue": "body.fuelcapopen",
+      "ear_laf_db_at_2m": 57.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 64.0,
+      "starts_s": 331.2998866213152
+    },
+    {
+      "bearing_deg": 24.0,
+      "cue": "body.fuelcapclose",
+      "ear_laf_db_at_2m": 59.96356201171875,
+      "loop": false,
+      "ref_dba_1m": 66.0,
+      "starts_s": 332.1998866213152
+    },
+    {
+      "bearing_deg": 61.0,
+      "cue": "body.fuelpour",
+      "ear_laf_db_at_2m": 53.96356201171875,
+      "loop": true,
+      "ref_dba_1m": 60.0,
+      "starts_s": 333.0998866213152
+    }
+  ],
+  "catalogue_starts_s": 29.299886621315192,
+  "checks": {
+    "brick_wall_adds_reflected_energy": true,
+    "brick_wall_on_the_right_returns_from_the_right": true,
+    "buttoned_cabin_rings_hardest": true,
+    "catalogue_has_hundreds": true,
+    "head_out_is_drier_than_inside": true,
+    "open_cupola_lets_energy_out": true,
+    "report_from_the_right_is_heard_right": true,
+    "turret_floor_rings_longer_than_snow": true
+  },
+  "engine_by_station": [
+    {
+      "bearing_facing_forward_deg": 189.78240966796875,
+      "direct_share": 0.0233450960367918,
+      "distance_to_engine_m": 4.4693403244018555,
+      "lateral_retention": 0.15279102325439453,
+      "level_offset_db": -0.6401243209838867,
+      "station": "driver"
+    },
+    {
+      "bearing_facing_forward_deg": 170.21759033203125,
+      "direct_share": 0.0233450960367918,
+      "distance_to_engine_m": 4.4693403244018555,
+      "lateral_retention": 0.15279102325439453,
+      "level_offset_db": -0.6401243209838867,
+      "station": "radio_operator"
+    },
+    {
+      "bearing_facing_forward_deg": 188.61849975585938,
+      "direct_share": 0.04092227295041084,
+      "distance_to_engine_m": 3.3451664447784424,
+      "lateral_retention": 0.2022925466299057,
+      "level_offset_db": -0.5612513422966003,
+      "station": "gunner"
+    },
+    {
+      "bearing_facing_forward_deg": 164.2215576171875,
+      "direct_share": 0.06044473871588707,
+      "distance_to_engine_m": 2.724285364151001,
+      "lateral_retention": 0.24585512280464172,
+      "level_offset_db": -0.4719364047050476,
+      "station": "commander"
+    },
+    {
+      "bearing_facing_forward_deg": 168.53622436523438,
+      "direct_share": 0.06373163312673569,
+      "distance_to_engine_m": 2.6484594345092773,
+      "lateral_retention": 0.25245124101638794,
+      "level_offset_db": -0.4567165672779083,
+      "station": "loader"
+    }
+  ],
+  "model": {
+    "engine": "direction from the engine compartment; inside, lateral retention sqrt(direct share) and the Hopkinson-Stryker level offset with R = 12 m2 [E]",
+    "foley": "acoustics::foley contact synthesis, levels from each cue's 1 m reference through sound_propagation",
+    "rooms": "acoustics::raytrace stochastic energy ray tracing per octave band, Tiger source triangles voxelized at 5 cm, snow ground, brick boxes; binaural IR from the echogram"
+  },
+  "mp4": "C:/shop/panzerrechnersystem-soundworld/artifacts/sound-world-20261028/sound_world_20261028.mp4",
+  "mp4_encoded": true,
+  "passed": true,
+  "perceptually_auditioned": false,
+  "schema": "panzer.sound-world-proof.v1",
+  "wav": "C:/shop/panzerrechnersystem-soundworld/artifacts/sound-world-20261028/sound_world_20261028.wav"
+}

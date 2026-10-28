@@ -20,6 +20,21 @@
 use std::f32::consts::TAU;
 use std::io::Write;
 
+/// Binaural rendering: the spherical head (ITD, head shadow), the presentation pan and the
+/// plate/hatch transmission of direction cues. Deterministic; see its module doc.
+#[path = "acoustics_spatial.rs"]
+pub mod spatial;
+
+/// Geometric room acoustics: energy ray tracing per octave band through the scene, and the
+/// binaural impulse response of the reflected field it yields. Deterministic; see its module doc.
+#[path = "acoustics_raytrace.rs"]
+pub mod raytrace;
+
+/// Foley from contact physics: modal strikes, granular ground, stick-slip friction, bubbles,
+/// flow and body sounds, as a catalogue of several hundred named cues. Deterministic.
+#[path = "acoustics_foley.rs"]
+pub mod foley;
+
 pub const SAMPLE_RATE: u32 = 44_100;
 
 /// Coarse, audio-facing shell class (maps from the ballistics `ShellKind` later). Drives timbre:
@@ -930,16 +945,11 @@ pub fn synth_mg_gravel(
             mono[at + i] += g * env * (0.6 * n + 0.4 * (TAU * ping * t).sin());
         }
     }
-    // pan + proximity (reuse the impact spatialiser math, simplified)
-    let br = bearing_deg.to_radians();
-    let pan = ((br.sin() + 1.0) * 0.25 * TAU / 2.0).clamp(0.0, TAU / 4.0);
-    let (lg, rg) = (pan.cos(), pan.sin());
+    // Pan, head model and proximity: the plate the rounds rake is a close source on that side.
     let prox = (1.6 / (1.6 + station_dist_m)).clamp(0.12, 1.0);
-    let mut out = Vec::with_capacity(total * 2);
-    for &s in &mono {
-        out.push(s * prox * lg);
-        out.push(s * prox * rg);
-    }
+    for s in &mut mono { *s *= prox; }
+    let mut out = spatial::render_binaural(&mono, spatial::Direction::horizontal(bearing_deg),
+        spatial::HeadModel::PRESENTED);
     // Preserve the station-distance gain (the old per-event normaliser erased it).
     soft_limit_in_place(&mut out, 0.92);
     out
@@ -2407,43 +2417,20 @@ pub fn apply_occlusion(buf: &mut [f32], amount: f32) {
     }
 }
 
-/// Apply a compact head-shadow model to an already panned stereo buffer. The far ear receives a
-/// sub-millisecond interaural delay, high-frequency rolloff and modest level loss. Bearings follow
-/// the rest of the acoustics API: 90 degrees is right, 270 degrees is left.
+/// Apply the head model to an already panned stereo buffer, in place: the ear away from the source
+/// waits Woodworth's interaural delay and each ear takes its Brown-Duda head-shadow filter
+/// (`spatial`). The buffer's own pan is kept. Bearings follow the rest of the acoustics API:
+/// 90 degrees is right, 270 degrees is left; a non-finite bearing is taken as ahead.
 pub fn apply_head_shadow(buf: &mut [f32], bearing_deg: f32) {
-    let lateral = bearing_deg.to_radians().sin().clamp(-1.0, 1.0);
-    let strength = lateral.abs();
-    if strength <= 0.001 || buf.len() < 4 {
-        return;
-    }
-    let far_ear = if lateral > 0.0 { 0 } else { 1 };
-    let delay = (0.00062 * SAMPLE_RATE as f32 * strength) as usize;
-    let cutoff = 14_000.0 * (1.0 - strength) + 1_850.0 * strength;
-    let a = 1.0 - (-TAU * cutoff / SAMPLE_RATE as f32).exp();
-    let gain = 1.0 - 0.36 * strength;
-    let frames = buf.len() / 2;
-    let original: Vec<f32> = (0..frames).map(|i| buf[i * 2 + far_ear]).collect();
-    let mut lp = 0.0f32;
-    for i in 0..frames {
-        let src = if i >= delay { original[i - delay] } else { 0.0 };
-        lp += a * (src - lp);
-        buf[i * 2 + far_ear] = lp * gain;
-    }
+    spatial::shadow_stereo_in_place(buf, spatial::Direction::horizontal(bearing_deg));
 }
 
-/// Convenience path for game-side world sounds: constant-power pan a mono source, then apply head
-/// shadow and a direct-ray occlusion amount.
+/// Convenience path for game-side world sounds reaching the head directly: the presentation pan
+/// and the head model (`spatial::render_binaural`), then a direct-ray occlusion amount. Sounds that
+/// come in through the hull take `spatial::render_through` (`audio_calibrated::render_for_ear`).
 pub fn spatialize_mono(mono: &[f32], bearing_deg: f32, occlusion: f32) -> Vec<f32> {
-    let lateral = bearing_deg.to_radians().sin();
-    let pan =
-        ((lateral + 1.0) * core::f32::consts::FRAC_PI_4).clamp(0.0, core::f32::consts::FRAC_PI_2);
-    let (lg, rg) = (pan.cos(), pan.sin());
-    let mut out = Vec::with_capacity(mono.len() * 2);
-    for &s in mono {
-        out.push(s * lg);
-        out.push(s * rg);
-    }
-    apply_head_shadow(&mut out, bearing_deg);
+    let mut out = spatial::render_binaural(mono, spatial::Direction::horizontal(bearing_deg),
+        spatial::HeadModel::PRESENTED);
     apply_occlusion(&mut out, occlusion);
     out
 }

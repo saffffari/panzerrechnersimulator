@@ -101,8 +101,8 @@ pub const IDX_PLAYTEST: usize = 2;
 pub const IDX_EDITOR: usize = 3;
 pub const IDX_LOAD_CHECKPOINT: usize = 4;
 pub const IDX_CANYON: usize = 5;
-pub const MENU_LABELS: [&str; 8] = [
-    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Graphics",
+pub const MENU_LABELS: [&str; 9] = [
+    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Platoon", "Graphics",
 ];
 pub const MENU_COUNT: usize = MENU_LABELS.len();
 const MENU_ROW_TOP: f32 = 0.485;
@@ -119,12 +119,13 @@ pub enum MenuAction {
     LoadCheckpoint,
     Canyon,
     CanyonV2,
+    Platoon,
     Graphics,
 }
 
 const MENU_ACTIONS: [MenuAction; MENU_COUNT] = [
     MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Graphics,
+    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Graphics,
 ];
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
@@ -192,6 +193,8 @@ pub struct LanMenuModel {
     pub manual_address: String,
     pub editing_address: bool,
     pub status: String,
+    /// "192.168.1.50 (Wi-Fi)": the address friends type to join a Tiger hosted here.
+    pub this_pc: String,
 }
 
 impl Default for LanMenuModel {
@@ -203,6 +206,7 @@ impl Default for LanMenuModel {
             manual_address: String::new(),
             editing_address: false,
             status: "Hosts appear automatically. Press R to retry discovery.".to_owned(),
+            this_pc: String::new(),
         }
     }
 }
@@ -284,10 +288,12 @@ impl LanMenuModel {
     }
 
     pub fn cycle_mission(&mut self, forward: bool) {
+        // Garage -> Arena -> Campaign -> Canyon -> Garage.
         self.mission = match (self.mission, forward) {
             (LanMission::Garage, true) | (LanMission::Campaign, false) => LanMission::Arena,
-            (LanMission::Arena, true) | (LanMission::Garage, false) => LanMission::Campaign,
-            (LanMission::Campaign, true) | (LanMission::Arena, false) => LanMission::Garage,
+            (LanMission::Arena, true) | (LanMission::Canyon, false) => LanMission::Campaign,
+            (LanMission::Campaign, true) | (LanMission::Garage, false) => LanMission::Canyon,
+            (LanMission::Canyon, true) | (LanMission::Arena, false) => LanMission::Garage,
         };
     }
 
@@ -331,9 +337,20 @@ mod lan_menu_tests {
         let mut menu = LanMenuModel::default();
         assert_eq!(menu.mission, LanMission::Campaign);
         menu.cycle_mission(true);
-        assert_eq!(menu.mission, LanMission::Garage);
+        assert_eq!(menu.mission, LanMission::Canyon);
         menu.cycle_mission(false);
         assert_eq!(menu.mission, LanMission::Campaign);
+        // Forward visits all four once and comes home; backward retraces it.
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            menu.cycle_mission(true);
+            seen.push(menu.mission);
+        }
+        assert_eq!(seen, [LanMission::Canyon, LanMission::Garage, LanMission::Arena, LanMission::Campaign]);
+        for expected in [LanMission::Arena, LanMission::Garage, LanMission::Canyon, LanMission::Campaign] {
+            menu.cycle_mission(false);
+            assert_eq!(menu.mission, expected);
+        }
     }
 
     #[test]
@@ -443,7 +460,7 @@ mod title_menu_tests {
         assert_eq!(menu.action(), Some(MenuAction::Singleplayer));
         let expected = [
             MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Graphics,
+            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Graphics,
         ];
         for (index, action) in expected.into_iter().enumerate() {
             let y = MENU_ROW_TOP + (index as f32 + 0.5) * MENU_ROW_STEP;
@@ -570,8 +587,10 @@ mod pause_menu_tests {
 
     #[test]
     fn fixed_profile_removes_only_graphics_routes_and_preserves_setting_actions() {
-        assert_eq!(title_row_count(true), 7);
-        assert_eq!(title_row_count(false), 8);
+        // Eight title rows since the platoon branch added "Platoon"; the fixed profile drops
+        // only Graphics.
+        assert_eq!(title_row_count(true), 8);
+        assert_eq!(title_row_count(false), 9);
         assert!(!MENU_ACTIONS[..title_row_count(true)].contains(&MenuAction::Graphics));
         for row in 0..4 {
             assert_eq!(pause_action_row(PausePage::Settings, row, true), row + 2);
@@ -1558,6 +1577,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
             None => "ONE TIGER / ADAPTIVE DEFENCE / PERMADEATH",
         },
         Some(MenuAction::CanyonV2) => "POPULATED GAEA CANYON / ADAPTIVE DEFENCE / PERMADEATH",
+        Some(MenuAction::Platoon) => "CANYON V2 / THREE TIGERS / RADIO ORDERS (T) / PERMADEATH",
         None => "",
     };
     r.draw_text(detail, 0.50, 0.905, 0.020, COL_HINT, Align::Center);
@@ -1710,6 +1730,11 @@ pub fn draw_lan_menu(
     } else {
         "BROWSE UNAVAILABLE - MANUAL IP STILL WORKS".to_owned()
     };
+    let browse = if m.this_pc.is_empty() {
+        browse
+    } else {
+        format!("{browse}   -   THIS PC {}", m.this_pc)
+    };
     r.draw_text(&browse, x, 0.225, 0.026, COL_ITEM, Align::Left);
     if !m.status.is_empty() {
         r.draw_text(
@@ -1849,6 +1874,43 @@ pub fn draw_lan_menu(
 /// named real Panzer aces with an invented death year. Callers own the timing and the sound.
 pub fn draw_black(r: &mut Renderer) {
     r.set_ui_bg(BG_BLACK, BG_BLACK);
+}
+
+// ── The Canyon run's two cards (src/canyon.rs): the brief before the first attempt, and the
+// after-action card. Front-end text, outside play; play itself stays wordless. ──────────────────
+
+const COL_LOSS: [f32; 4] = [0.90, 0.44, 0.30, 1.0];
+
+pub fn draw_run_brief(r: &mut Renderer, brief: &crate::canyon::RunBrief) {
+    r.set_ui_bg(BG_BLACK, BG_BLACK);
+    r.draw_text_bold("CANYON RUN", 0.5, 0.09, 0.058, COL_TITLE, Align::Center);
+    r.draw_text("ONE TIGER  ·  ONE CREWMAN  ·  ONE LIFE", 0.5, 0.175, 0.026, COL_SUBTITLE, Align::Center);
+    let mut y = 0.29;
+    for line in brief.lines() {
+        r.draw_text(&line, 0.5, y, 0.029, COL_ITEM, Align::Center);
+        y += 0.056;
+    }
+    r.draw_text_bold("M  field map          HOME  controls          ESC  pause", 0.5, 0.675, 0.027, COL_SELECT, Align::Center);
+    r.draw_text(&brief.attempt_line(), 0.5, 0.76, 0.024, COL_HINT, Align::Center);
+    r.draw_text("PRESS ANY KEY", 0.5, 0.875, 0.026, COL_HINT, Align::Center);
+}
+
+pub fn draw_run_card(r: &mut Renderer, report: &crate::canyon::RunReport, armed: bool) {
+    r.set_ui_bg(BG_BLACK, BG_BLACK);
+    let won = report.outcome == crate::canyon::RunOutcome::Completed;
+    r.draw_text_bold(report.headline(), 0.5, 0.08, 0.052, COL_TITLE, Align::Center);
+    r.draw_text_bold(&report.cause_line(), 0.5, 0.165, 0.034, if won { COL_SELECT } else { COL_LOSS }, Align::Center);
+    let mut y = 0.285;
+    for (label, value) in report.rows() {
+        if !label.is_empty() {
+            r.draw_text_bold(&label, 0.435, y + 0.004, 0.022, COL_SUBTITLE, Align::Right);
+        }
+        r.draw_text(&value, 0.465, y, 0.029, COL_ITEM, Align::Left);
+        y += 0.05;
+    }
+    if armed {
+        r.draw_text("ENTER  new attempt          ESC  title", 0.5, 0.905, 0.026, COL_HINT, Align::Center);
+    }
 }
 
 // ── In-game navigation: physical paper map + pocket compass (no waypoints) ───────────────────────
@@ -2059,6 +2121,7 @@ pub fn draw_held_map_print(
     _heading_deg: f32,
     pencil_down: bool,
     player_position: glam::Vec2,
+    mission: Option<&crate::mission::MapGuidance>,
 ) {
     let (mx, my, mw, mh) = (0.17f32, 0.34f32, 0.66f32, 0.59f32);
     let paper = [0.78, 0.73, 0.60, 0.98];
@@ -2339,6 +2402,10 @@ pub fn draw_held_map_print(
 
     let (px, py) = proj(player_position.x, player_position.y);
     r.fill_rect(px-0.004,py-0.006,0.008,0.012,[0.04,0.22,0.25,1.0]);
+    // The mission's marks (src/mission.rs) in the same plan projection.
+    if let Some(guidance) = mission {
+        draw_mission_marks(r, guidance, &|p: glam::Vec2| proj(p.x, p.y), (mx, my, mw, mh));
+    }
 
     // Player graphite: thousands of tiny stable points give a satisfyingly scratchy pencil line.
     for (_, p) in pencil.iter().filter(|(id, _)| *id == act.id) {
@@ -2493,4 +2560,196 @@ pub fn draw_controls(r: &mut Renderer) {
     r.draw_text("Driver: PgUp / PgDn manual gear · End automatic",0.5,0.890,0.024,COL_ITEM,Align::Center);
     r.fill_rect(0.34,0.930,0.32,0.054,[0.12,0.13,0.14,1.0]);
     r.draw_text("Back  ·  Home / Esc",0.5,0.940,0.029,COL_ITEM,Align::Center);
+}
+
+// ── Missions (src/mission.rs, docs/MISSIONS.md): the order sheet, the net's lines and the paper's
+// marks. The order and the lines are display-resolution text outside the crush, like the menus;
+// the marks are pigment on the held sheet's albedo, registered to the paper like the pencil. ──────
+
+const COL_NET: [f32; 4] = [0.74, 0.90, 0.76, 1.0];
+const COL_NET_OWN: [f32; 4] = [0.92, 0.92, 0.88, 1.0];
+const COL_NOTE: [f32; 4] = [0.86, 0.80, 0.62, 1.0];
+
+/// Break a line into pieces of at most `width` characters at word boundaries.
+pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() { line.push(' '); }
+        line.push_str(word);
+    }
+    if !line.is_empty() { lines.push(line); }
+    lines
+}
+
+/// The close mark's rectangle on the held-up order sheet (x, y, w, h), for drawing and hit tests.
+pub const ORDER_CLOSE_MARK: (f32, f32, f32, f32) = (0.785, 0.162, 0.035, 0.050);
+
+/// `map_held`: the paper map is out, so the folded order is reread at the top of the frame and
+/// the net's lines wait until the map is stowed.
+pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay, map_held: bool) {
+    // The written order (Befehl): a typed field-order slip held up over the world, then folded.
+    if let Some((title, lines, first, alpha)) = &overlay.order {
+        let mut body: Vec<String> = Vec::new();
+        for line in lines {
+            body.extend(wrap_text(line, 66));
+            body.push(String::new());
+        }
+        let (x, w) = (0.17f32, 0.66f32);
+        let h = 0.135 + body.len() as f32 * 0.030 + 0.07;
+        let y = 0.15;
+        let a = alpha.clamp(0.0, 1.0);
+        r.fill_rect(x + 0.006, y + 0.008, w, h, [0.0, 0.0, 0.0, 0.35 * a]);
+        r.fill_rect(x, y, w, h, [0.80, 0.75, 0.62, 0.94 * a]);
+        r.fill_rect(x, y, w, 0.004, [0.52, 0.46, 0.34, 0.6 * a]);
+        r.fill_rect(x + 0.02, y + 0.085, w - 0.04, 0.0015, [0.30, 0.26, 0.20, 0.6 * a]);
+        let ink = [0.16, 0.14, 0.11, 0.95 * a];
+        let faded = [0.36, 0.33, 0.27, 0.90 * a];
+        r.draw_text_bold(title, 0.5, y + 0.030, 0.022, ink, Align::Center);
+        r.draw_text("Kampfgruppe  ·  Nachhut  ·  schriftlicher Befehl", 0.5, y + 0.062, 0.018, faded, Align::Center);
+        let mut ty = y + 0.108;
+        for line in &body {
+            if !line.is_empty() { r.draw_text(line, x + 0.03, ty, 0.025, ink, Align::Left); }
+            ty += 0.030;
+        }
+        r.draw_text_bold(first, x + 0.03, ty + 0.012, 0.018, [0.58, 0.08, 0.065, 0.95 * a], Align::Left);
+        // The close mark in the sheet's corner and the small print that says how to fold it.
+        let (cx, cy, cw, ch) = ORDER_CLOSE_MARK;
+        r.fill_rect(cx, cy, cw, ch, [0.70, 0.64, 0.50, 0.95 * a]);
+        r.fill_rect(cx, cy + ch - 0.003, cw, 0.003, [0.42, 0.37, 0.28, 0.7 * a]);
+        r.draw_text_bold("X", cx + cw * 0.5, cy + 0.010, 0.024, ink, Align::Center);
+        r.draw_text("ENTER  ·  SPACE  ·  E  ·  CLICK  ·  (A)   fold the order away          M   reread it on the map",
+            0.5, y + h - 0.034, 0.017, faded, Align::Center);
+    }
+    if map_held {
+        // The order folded onto the map: reread across the top of the frame, above the sheet.
+        if let Some((title, lines)) = &overlay.order_on_map {
+            let mut body: Vec<String> = Vec::new();
+            for line in lines { body.extend(wrap_text(line, 150)); }
+            let (x, w) = (0.10f32, 0.80f32);
+            let h = 0.050 + body.len() as f32 * 0.024 + 0.012;
+            let y = 0.012;
+            r.fill_rect(x + 0.004, y + 0.005, w, h, [0.0, 0.0, 0.0, 0.30]);
+            r.fill_rect(x, y, w, h, [0.80, 0.75, 0.62, 0.92]);
+            let ink = [0.16, 0.14, 0.11, 0.95];
+            r.draw_text_bold(title, x + 0.02, y + 0.014, 0.016, ink, Align::Left);
+            let mut ty = y + 0.046;
+            for line in &body {
+                r.draw_text(line, x + 0.02, ty, 0.021, ink, Align::Left);
+                ty += 0.024;
+            }
+        }
+        return;
+    }
+    // The net: a signals log, top left, oldest first.
+    let mut y = 0.05;
+    for (from, text, alpha) in &overlay.radio {
+        let (color, line) = if from.is_empty() {
+            ([COL_NOTE[0], COL_NOTE[1], COL_NOTE[2], 0.9 * alpha], text.clone())
+        } else if from.eq_ignore_ascii_case("kiebitz") {
+            ([COL_NET_OWN[0], COL_NET_OWN[1], COL_NET_OWN[2], 0.85 * alpha], format!("{}: {}", from.to_uppercase(), text))
+        } else {
+            ([COL_NET[0], COL_NET[1], COL_NET[2], 0.95 * alpha], format!("{}: {}", from.to_uppercase(), text))
+        };
+        r.draw_text(&line, 0.02, y, 0.020, color, Align::Left);
+        y += 0.028;
+    }
+    if !overlay.radio.is_empty() {
+        let alpha = overlay.radio.iter().map(|(_, _, a)| *a).fold(0.0f32, f32::max);
+        r.draw_text("ENTER  clear", 0.02, y, 0.017, [0.70, 0.76, 0.70, 0.85 * alpha], Align::Left);
+    }
+}
+
+/// The mission's pigment on the held sheet. `proj` maps a world point to the sheet's normalized
+/// screen position; `paper` is the printed rectangle (x, y, w, h) for the slip and clipping.
+pub fn draw_mission_marks(
+    r: &mut Renderer,
+    guidance: &crate::mission::MapGuidance,
+    proj: &dyn Fn(glam::Vec2) -> (f32, f32),
+    paper: (f32, f32, f32, f32),
+) {
+    use crate::mission::MarkKind;
+    let aspect = r.ih.max(1) as f32 / r.iw.max(1) as f32;
+    let graphite = [0.07, 0.08, 0.08, 1.0];
+    let red = [0.58, 0.06, 0.05, 1.0];
+    let faded = [0.26, 0.26, 0.24, 0.80];
+    let (px, py, pw, ph) = paper;
+    let inside = |x: f32, y: f32| x >= px && x <= px + pw && y >= py && y <= py + ph;
+    let dot = |r: &mut Renderer, x: f32, y: f32, s: f32, c: [f32; 4]| {
+        if inside(x, y) { r.fill_rect(x - s * aspect * 0.5, y - s * 0.5, s * aspect, s, c); }
+    };
+    let ring = |r: &mut Renderer, cx: f32, cy: f32, radius: f32, n: usize, dashed: bool, c: [f32; 4]| {
+        for k in 0..n {
+            if dashed && k % 3 == 2 { continue; }
+            let a = k as f32 / n as f32 * std::f32::consts::TAU;
+            dot(r, cx + a.cos() * radius * aspect, cy + a.sin() * radius, 0.0042, c);
+        }
+    };
+    let line = |r: &mut Renderer, (ax, ay): (f32, f32), (bx, by): (f32, f32), dashed: bool, c: [f32; 4]| {
+        let steps = (((bx - ax) / aspect).hypot(by - ay) / 0.0036).ceil().max(1.0) as usize;
+        for k in 0..=steps {
+            if dashed && (k / 4) % 2 == 1 { continue; }
+            let t = k as f32 / steps as f32;
+            dot(r, ax + (bx - ax) * t, ay + (by - ay) * t, 0.0038, c);
+        }
+    };
+
+    // The dead-reckoned position: a pencil ring the size of the crew's uncertainty.
+    if let Some((estimate, error_m)) = guidance.estimate {
+        let (ex, ey) = proj(estimate);
+        let (fx, _) = proj(estimate + glam::Vec2::new(error_m, 0.0));
+        let radius = ((fx - ex) / aspect).abs().clamp(0.006, 0.08);
+        ring(r, ex, ey, radius, 32, true, graphite);
+        dot(r, ex, ey, 0.006, graphite);
+    }
+    // The bearing: a dashed pencil line to the mark with its three figures.
+    if let Some((from, to, bearing)) = guidance.bearing {
+        let a = proj(from);
+        let b = proj(to);
+        line(r, a, b, true, graphite);
+        let (mx, my) = (a.0 + (b.0 - a.0) * 0.45, a.1 + (b.1 - a.1) * 0.45);
+        if inside(mx, my) {
+            r.draw_text_bold(&format!("{:03.0}", bearing.rem_euclid(360.0)), mx + 0.014, my - 0.020, 0.017, graphite, Align::Left);
+        }
+    }
+    for &(at, kind, number, done) in &guidance.marks {
+        let (x, y) = proj(at);
+        if !inside(x, y) { continue; }
+        let color = if done { faded } else if matches!(kind, MarkKind::Pin | MarkKind::Cross) { red } else { graphite };
+        match kind {
+            MarkKind::Box => {
+                let (hw, hh) = (0.024 * aspect, 0.021);
+                for (cx, cy) in [(x - hw, y - hh), (x + hw, y - hh), (x - hw, y + hh), (x + hw, y + hh)] {
+                    dot(r, cx, cy, 0.0065, color);
+                }
+                line(r, (x - hw, y - hh), (x - hw, y + hh), true, color);
+                line(r, (x + hw, y - hh), (x + hw, y + hh), true, color);
+                line(r, (x - hw, y - hh), (x + hw, y - hh), true, color);
+                line(r, (x - hw, y + hh), (x + hw, y + hh), true, color);
+            }
+            MarkKind::Cross => {
+                let d = 0.014;
+                line(r, (x - d * aspect, y - d), (x + d * aspect, y + d), false, color);
+                line(r, (x - d * aspect, y + d), (x + d * aspect, y - d), false, color);
+            }
+            MarkKind::Pin => {
+                r.fill_rect(x - 0.0012, y + 0.001, 0.0024, 0.019, [0.63, 0.57, 0.50, 0.95]);
+                r.fill_rect(x - 0.0062, y - 0.0050, 0.0124, 0.0100, color);
+            }
+            MarkKind::Circle => ring(r, x, y, 0.016, 22, false, color),
+        }
+        r.draw_text_bold(&number.to_string(), x + 0.024 * aspect + 0.008, y - 0.014, 0.017, color, Align::Left);
+    }
+    // The slip clipped to the sheet's corner: the open beat's number and title.
+    if let Some(slip) = &guidance.slip {
+        let (sw, sh) = (0.46f32, 0.052f32);
+        let (sx, sy) = (px + 0.012, py + 0.012);
+        r.fill_rect(sx + 0.003, sy + 0.004, sw, sh, [0.0, 0.0, 0.0, 0.18]);
+        r.fill_rect(sx, sy, sw, sh, [0.86, 0.82, 0.70, 0.97]);
+        r.fill_rect(sx, sy, sw, 0.003, [0.42, 0.38, 0.30, 0.5]);
+        r.draw_text_bold(slip, sx + 0.012, sy + 0.015, 0.019, [0.12, 0.11, 0.09, 1.0], Align::Left);
+    }
 }

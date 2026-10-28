@@ -1,0 +1,135 @@
+{
+  "schema": "kessel.mission",
+  "version": 1,
+  "id": "canyon-v2-rearguard",
+  "title": "BEFEHL: DURCHBRUCH ZUM SCHLUCHTKOPF",
+  "act_id": 1,
+  "callsign": "Kiebitz",
+  "net": "Adler",
+  "note": "The Canyon v2 winter run as a mission (docs/MISSIONS.md). Places are the course's own authored geography (manifest_edits.json canyon_course / street_encounter): the wreck field marker, the hamlet at 12 % of the route, the choke-1 gun line and its kill-zone fork, platoon B's factory yard, platoon A's final basin by the strongpoint, the goal disc. Fiction: the Tiger is the rearguard of a Kampfgruppe that went up the ravine at first light; its rear party holds the ravine head and signals phase lines with flares (white: held, red: enemy on it). Flares and smoke are modeled emitters; alerts change real enemy knowledge; nothing else is scripted.",
+  "order": [
+    "Panzer 231, rearguard of the Kampfgruppe. Crew: you alone. The column went up the ravine at first light; you are the last vehicle.",
+    "Soviet tanks and 45 mm guns have cut the ravine at the settlement, the saddle and the factory. The rear party holds the ravine head: a white star over each phase line it still holds, a red one where the enemy stands.",
+    "Break through to the ravine head, 4.9 km: north to the hamlet, then east. Arrive mounted before dark. Nothing waits for you behind."
+  ],
+  "beats": [
+    {
+      "id": "orders",
+      "title": "Read the ground",
+      "goal": "observe",
+      "at": {"x": -736.0, "z": 595.0, "marker": "canyon_wrecks"},
+      "radius_m": 260.0,
+      "trigger": {"kind": "start"},
+      "complete": {"kind": "observe", "cone_deg": 100.0, "dwell_s": 4.0},
+      "lines": {
+        "open": [{"from": "Adler", "text": "Kiebitz, Adler. Column is through the hamlet. Read the ground, then follow the wrecks north. Out."}],
+        "done": [{"from": "Kiebitz", "text": "Adler, Kiebitz. Understood. Moving. Out."}],
+        "nudge": [{"from": "Adler", "text": "Kiebitz, Adler. Move out. Out."}],
+        "consequence": [{"from": "Adler", "text": "Kiebitz, Adler. Armour coming down the ravine toward you. Out."}]
+      },
+      "map": {"mark": "circle", "bearing": true},
+      "cues": [],
+      "pacing": {"live_cap": 4, "nudge_after_s": 150.0, "consequence_after_s": 420.0, "consequence": {"count": 3, "fraction": 0.14}}
+    },
+    {
+      "id": "anton",
+      "title": "Phase line Anton: the hamlet",
+      "goal": "reach",
+      "at": {"ref": "route_fraction", "f": 0.123},
+      "radius_m": 110.0,
+      "trigger": {"kind": "previous"},
+      "complete": {"kind": "enter", "dwell_s": 1.0},
+      "lines": {
+        "open": [{"from": "Adler", "text": "Kiebitz, Adler. Phase line Anton is the hamlet, 450 metres north. White star marks it. Out."}],
+        "done": [{"from": "Adler", "text": "Kiebitz at Anton. Two guns on the settlement edge ahead. Smoke marks the lorry they killed at the fork. Out."}],
+        "nudge": [{"from": "Adler", "text": "Kiebitz, Adler. Anton. Move. Out."}],
+        "consequence": [{"from": "Adler", "text": "Kiebitz, Adler. Armour on the road behind Anton. Out."}]
+      },
+      "map": {"mark": "box", "bearing": true},
+      "cues": [{"kind": "flare", "color": "white", "delay_s": 3.0, "repeat_s": 90.0}],
+      "pacing": {"live_cap": 4, "nudge_after_s": 240.0, "consequence_after_s": 600.0, "consequence": {"count": 3, "fraction": 0.19}}
+    },
+    {
+      "id": "gunline",
+      "title": "The gun line at the fork",
+      "goal": "destroy",
+      "at": {"x": -560.0, "z": -200.0},
+      "radius_m": 650.0,
+      "trigger": {"kind": "previous"},
+      "complete": {"kind": "destroy_near", "count": 1, "radius_m": 650.0, "guns": true},
+      "bypass_fraction": 0.34,
+      "lines": {
+        "open": [{"from": "Adler", "text": "Kiebitz, Adler. Guns at the settlement, east bank of the fork. Take them from the flank, do not drive the road. Out."}],
+        "done": [{"from": "Kiebitz", "text": "Adler, Kiebitz. Gun silenced. Continuing. Out."}],
+        "nudge": [{"from": "Adler", "text": "Kiebitz, Adler. Report. Out."}],
+        "consequence": [{"from": "Adler", "text": "Kiebitz, Adler. Armour moving up behind you. Do not stop. Out."}]
+      },
+      "map": {"mark": "cross", "bearing": true},
+      "cues": [
+        {"kind": "smoke_column", "at": {"x": -690.0, "z": -88.0}, "height_m": 70.0, "duration_s": 1800.0},
+        {"kind": "alert", "at": {"x": -560.0, "z": -200.0}, "radius_m": 700.0}
+      ],
+      "pacing": {"live_cap": 6, "nudge_after_s": 300.0, "consequence_after_s": 720.0, "consequence": {"count": 3}}
+    },
+    {
+      "id": "factory",
+      "title": "The factory yard",
+      "goal": "destroy",
+      "at": {"x": 345.0, "z": 190.0},
+      "radius_m": 400.0,
+      "trigger": {"kind": "route_fraction", "f": 0.44},
+      "complete": {"kind": "destroy_near", "count": 2, "radius_m": 420.0},
+      "bypass_fraction": 0.72,
+      "lines": {
+        "open": [{"from": "Adler", "text": "Kiebitz, Adler. Two T-34 in the factory yard across the saddle. Red star over the yard. Clear it, or go round by the east wall. Out."}],
+        "done": [{"from": "Kiebitz", "text": "Adler, Kiebitz. Yard clear. Out."}],
+        "nudge": [{"from": "Adler", "text": "Kiebitz, Adler. The yard. Out."}],
+        "consequence": [{"from": "Adler", "text": "Kiebitz, Adler. More armour moving up the ravine behind you. Do not stop. Out."}]
+      },
+      "map": {"mark": "cross", "bearing": true},
+      "cues": [
+        {"kind": "flare", "color": "red", "at": {"ref": "route_fraction", "f": 0.72}, "delay_s": 4.0, "repeat_s": 0.0},
+        {"kind": "alert", "at": {"x": 345.0, "z": 190.0}, "radius_m": 650.0}
+      ],
+      "pacing": {"release": {"count": 2, "fraction": 0.60}, "live_cap": 7, "nudge_after_s": 300.0, "consequence_after_s": 780.0, "consequence": {"count": 3}}
+    },
+    {
+      "id": "basin",
+      "title": "The final basin",
+      "goal": "destroy",
+      "at": {"x": 1180.0, "z": 420.0},
+      "radius_m": 450.0,
+      "trigger": {"kind": "route_fraction", "f": 0.76},
+      "complete": {"kind": "destroy_near", "count": 2, "radius_m": 450.0},
+      "bypass_fraction": 0.94,
+      "lines": {
+        "open": [{"from": "Adler", "text": "Kiebitz, Adler. Rear party pulling off the strongpoint. Three T-34 in the basin between you and us. Red star where they stand. Out."}],
+        "done": [{"from": "Adler", "text": "Kiebitz, Adler. Basin clear. Ravine head 500 metres east, white star. Come through. Out."}],
+        "nudge": [{"from": "Adler", "text": "Kiebitz, Adler. We cannot hold the head much longer. Out."}],
+        "consequence": [{"from": "Adler", "text": "Kiebitz, Adler. Armour behind you in the basin. Out."}]
+      },
+      "map": {"mark": "cross", "bearing": true},
+      "cues": [
+        {"kind": "flare", "color": "red", "at": {"ref": "route_fraction", "f": 0.93}, "delay_s": 5.0, "repeat_s": 0.0},
+        {"kind": "alert", "at": {"x": 1180.0, "z": 420.0}, "radius_m": 700.0}
+      ],
+      "pacing": {"live_cap": 9, "nudge_after_s": 300.0, "consequence_after_s": 720.0, "consequence": {"count": 3}}
+    },
+    {
+      "id": "head",
+      "title": "The ravine head",
+      "goal": "reach",
+      "at": {"ref": "course_goal"},
+      "radius_m": 85.0,
+      "trigger": {"kind": "previous"},
+      "complete": {"kind": "course_finished"},
+      "lines": {
+        "open": [{"from": "Adler", "text": "Kiebitz, Adler. White star on the head. Come through. Out."}],
+        "nudge": [{"from": "Adler", "text": "Kiebitz, Adler. Star on the head. Out."}]
+      },
+      "map": {"mark": "pin", "bearing": true},
+      "cues": [{"kind": "flare", "color": "white", "at": {"ref": "course_goal"}, "delay_s": 2.0, "repeat_s": 75.0}],
+      "pacing": {"live_cap": 9, "nudge_after_s": 240.0}
+    }
+  ]
+}

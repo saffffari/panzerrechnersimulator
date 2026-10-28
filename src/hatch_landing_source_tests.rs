@@ -159,7 +159,7 @@ fn ordinary_jump_reaches_source_track_and_hull_without_assisted_climb() {
         (2, &parts[2]), (3, &lids[0]), (4, &lids[1]), (5, &holder),
         (14, &lids[2]), (15, &lids[3])]);
     let hf = Heightfield { res: 2, spacing: 100.0, heights: vec![0.0; 4],
-        min_h: 0.0, max_h: 0.0, openings: Default::default() };
+        min_h: 0.0, max_h: 0.0, openings: Default::default(), detail: None };
     let tiger = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
     let mut models = [tiger.hull_model(); surface_fire::FRAMES];
     models[1] = tiger.turret_model(); models[2] = tiger.gun_model();

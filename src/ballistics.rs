@@ -357,12 +357,21 @@ fn slope_multiplier(shell: &ShellSpec, angle_deg: f32, plate_mm: f32) -> f32 {
     (1.0 / cos).powf(n.max(0.85))
 }
 
+/// The steepest obliquity the plate solve represents. Source-triangle contacts report the true
+/// angle between the shot and the struck plate's normal, so a shell skimming a roof or belly at
+/// 85-90 degrees arrives here; the former 75-degree ceiling solved such a graze as a 75-degree
+/// hit on the thin horizontal plate (a 76 mm round "penetrated" the Tiger's 25 mm hull roof
+/// through an effective 72 mm, 2026-10-27 Canyon seed 7). Above this the plate is treated as
+/// this oblique; the slope law itself saturates at 80 degrees (`slope_multiplier`), so a graze
+/// is a stopped round that the ricochet response may carry on, never a penetration.
+pub const MAX_OBLIQUITY_DEG: f32 = 85.0;
+
 /// Effective thickness (mm RHA-equivalent) presented by `plate` to `shell` when the shot arrives
 /// with an extra `horiz_obliquity_deg` off the plate's horizontal normal (compound angle).
 pub fn effective_thickness(shell: &ShellSpec, plate: &Plate, horiz_obliquity_deg: f32) -> f32 {
     // Compound impact angle: cos(total) = cos(vertical slope)·cos(horizontal approach).
     let cv = plate.slope_deg.to_radians().cos();
-    let ch = horiz_obliquity_deg.clamp(0.0, 75.0).to_radians().cos();
+    let ch = horiz_obliquity_deg.clamp(0.0, MAX_OBLIQUITY_DEG).to_radians().cos();
     let total = (cv * ch).clamp(0.05, 1.0).acos().to_degrees();
     plate.thickness_mm
         * plate.material.quality()
@@ -469,7 +478,7 @@ fn resolve_at_velocity(shell:&'static ShellSpec,range_m:f32,plate:Plate,
     horiz_obliquity_deg:f32,seed:u32,v:f32)->ImpactEvent {
     let eff = effective_thickness(shell, &plate, horiz_obliquity_deg);
     let cv = plate.slope_deg.to_radians().cos();
-    let ch = horiz_obliquity_deg.clamp(0.0, 75.0).to_radians().cos();
+    let ch = horiz_obliquity_deg.clamp(0.0, MAX_OBLIQUITY_DEG).to_radians().cos();
     let impact_angle = (cv * ch).clamp(0.05, 1.0).acos().to_degrees();
     let flight_time = shell.time_of_flight(range_m);
 
@@ -1305,5 +1314,33 @@ mod tests {
             (ob - 45.0).abs() < 1.0,
             "45° approach should read ~45° (got {ob:.1})"
         );
+    }
+}
+
+#[cfg(test)]
+mod graze_tests {
+    use super::*;
+
+    /// Canyon seed 7, 2026-10-27: a 76 mm BR-350B from 443 m skimmed the Tiger's 25 mm hull roof
+    /// at about 87 degrees to its normal and was solved as a 75-degree hit through 72 mm effective:
+    /// a penetration that detonated the rack. A graze on a horizontal plate is a stopped round.
+    #[test]
+    fn a_shell_skimming_the_hull_roof_does_not_penetrate_it() {
+        let roof = Plate { name: "source roof plate", thickness_mm: 25.0, slope_deg: 0.0, material: ArmorMaterial::Rha };
+        for angle in [85.0_f32, 87.0, 89.0] {
+            let event = resolve(&BR_350B, 443.0, roof, angle, 7);
+            assert_ne!(event.terminal, Terminal::Penetration,
+                "{angle} deg graze on a 25 mm roof must not go through (eff {:.0} mm vs pen {:.0} mm)",
+                event.effective_mm, event.pen_mm);
+            assert!(event.effective_mm > event.pen_mm);
+            assert!((event.impact_angle_deg - angle.min(MAX_OBLIQUITY_DEG)).abs() < 0.5);
+        }
+        // Obliquities the former ceiling already represented resolve exactly as before.
+        let before = resolve(&BR_350B, 443.0, roof, 75.0, 7);
+        assert!((before.impact_angle_deg - 75.0).abs() < 0.01);
+        // A square hit on the roof from above is still a defeat of thin plate: the fix narrows
+        // nothing but the graze.
+        let square = resolve(&BR_350B, 443.0, roof, 10.0, 7);
+        assert_eq!(square.terminal, Terminal::Penetration);
     }
 }

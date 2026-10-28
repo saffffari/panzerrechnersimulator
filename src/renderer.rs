@@ -23,11 +23,16 @@ use crate::ui::{Align, Ui};
 mod renderer_fine_vfx;
 #[path = "renderer_weapon_particles.rs"]
 pub(crate) mod renderer_weapon_particles;
+#[path = "renderer_scatter.rs"]
+mod renderer_scatter;
 #[path = "renderer_raymarch.rs"]
 pub(crate) mod raymarch;
+#[path = "renderer_scars.rs"]
+pub(crate) mod scars;
+pub use scars::ScarDraw;
 
 #[path = "track_ruts.rs"]
-mod track_ruts;
+pub(crate) mod track_ruts;
 
 #[path = "held_map_render.rs"]
 mod held_map_render;
@@ -116,7 +121,7 @@ impl TransportQuality {
             return IntegrationQuality { view_steps: view as u32, source_steps: source as u32,
                 solar_disk_samples: disk as u32, cloud_column_steps: cloud as u32 };
         }
-        if self == Self::Gameplay || preset == crate::graphics::GraphicsPreset::Laptop {
+        if self == Self::Gameplay || preset == crate::graphics::GraphicsPreset::Low {
             IntegrationQuality {
                 view_steps: 12,
                 source_steps: 8,
@@ -197,6 +202,7 @@ fn pipeline_cache_file() -> Option<PathBuf> {
         .or_else(|| {
             std::env::var_os("HOME")
                 .filter(|path| !path.is_empty())
+                .or_else(|| std::env::var_os("USERPROFILE").filter(|path| !path.is_empty()))
                 .map(|home| {
                     let home = PathBuf::from(home);
                     if cfg!(target_os = "macos") {
@@ -2569,6 +2575,11 @@ pub struct Renderer {
     pub shader_backend: bool,
     /// The raymarch frame pipeline (`KESSEL_RENDERER=raymarch`); None on the other backends.
     raymarch: Option<raymarch::Backend>,
+    /// The strewn field's GPU side (`renderer_scatter.rs`), installed once per act.
+    scatter_field: Option<renderer_scatter::ScatterGpu>,
+    /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
+    /// backend cuts, displaces and shades them (renderer_scars.rs).
+    mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
     raster_optics: Option<raster_optics::RasterOptics>,
     raster_ssao: Option<raster_ssao::RasterSsao>,
     geometry_aa: Option<renderer_aa::GeometryAa>,
@@ -2755,6 +2766,9 @@ pub struct Renderer {
     track_lookup: wgpu::Texture,
     track_atlas: track_ruts::Atlas,
     track_footprints: HashMap<[u32; 2], track_ruts::Footprint>,
+    /// The detail ground surface (`terrain_relief`), drawn by the raymarch backend's terrain LOD
+    /// in place of the coarse terrain mesh (docs/TERRAIN_DETAIL.md).
+    pub(crate) terrain_detail: Option<crate::terrain_relief::Shared>,
     /// Kept from `new` so the front-end can upload extra meshes after construction (the main-menu
     /// turntable Tiger, `menu_meshes`) reusing the same material bind-group layout.
     material_bgl: wgpu::BindGroupLayout,
@@ -5877,6 +5891,8 @@ impl Renderer {
             graphics_preset,
             shader_backend,
             raymarch,
+            scatter_field: None,
+            mesh_scars: std::collections::HashMap::new(),
             raster_optics: shader_backend.then(|| {
                 raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler,
                     &sky_visibility.sampling_bgl, &cabin_shadows.sampling_bgl, &cabin_medium_view)
@@ -5988,6 +6004,7 @@ impl Renderer {
             track_lookup,
             track_atlas: track_ruts::Atlas::default(),
             track_footprints: HashMap::new(),
+            terrain_detail: None,
             shadow_view,
             shadow_pipe,
             shadow_bind,
@@ -6175,7 +6192,7 @@ impl Renderer {
             optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
-            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, smoke_puffs, breech_gas,
+            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
             pressure_fronts, heat_sources, ui, held_map_surface);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
@@ -6359,6 +6376,11 @@ impl Renderer {
         self.apply_weather_override();
     }
 
+    /// Read back a mesh's visibility and model (headless verification of what is drawn).
+    pub fn debug_mesh_state(&self, idx: usize) -> Option<(bool, glam::Mat4)> {
+        self.meshes.get(idx).map(|g| (g.visible, g.model))
+    }
+
     pub fn set_model(&mut self, idx: usize, m: glam::Mat4) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.model = m;
@@ -6470,6 +6492,16 @@ impl Renderer {
     pub fn set_optic_hidden(&mut self, idx: usize, hidden: bool) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.optic_hidden = hidden;
+        }
+    }
+    /// The armor wounds on mesh `idx`, in its local frame; an empty slice clears them.
+    pub fn set_mesh_scars(&mut self, idx: usize, scars: &[ScarDraw]) {
+        if scars.is_empty() {
+            self.mesh_scars.remove(&idx);
+        } else {
+            let entry = self.mesh_scars.entry(idx).or_default();
+            entry.clear();
+            entry.extend_from_slice(scars);
         }
     }
     pub fn set_visible(&mut self, idx: usize, v: bool) {
@@ -6642,6 +6674,26 @@ impl Renderer {
         (self.lights_offered, self.lights.len())
     }
 
+    /// Session-log extras: the weather the frame was drawn under and, on the raymarch backend,
+    /// its per-frame work counts (lights, media parcels, events, sparks). Read-only.
+    pub fn session_render_extras(&self) -> serde_json::Value {
+        let rm = self.raymarch.as_ref().map(|b| {
+            let s = &b.stats;
+            serde_json::json!({
+                "lights": s.lights, "shadowed_lights": s.shadowed_lights, "light_cell_items": s.light_cell_items,
+                "parcels": s.parcels, "cell_items": s.cell_items, "merged_grains": s.merged_grains,
+                "embers": s.embers, "spark_records": s.spark_records, "tracer_records": s.tracer_records,
+                "panes": s.panes, "events": s.events, "sky_phase": s.sky_phase,
+                "prepare_ms": s.prepare_ms, "encode_ms": s.encode_ms,
+            })
+        });
+        serde_json::json!({
+            "weather": {"storm": self.storm, "overcast": self.overcast, "precipitation": self.precipitation},
+            "lights_full": self.lights_full.len(),
+            "raymarch": rm,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn admitted_lights_for_review(&self) -> &[PointLight] {
         &self.lights
@@ -6663,6 +6715,21 @@ impl Renderer {
     /// Compatibility no-op. Dynamic tanks are represented by their exact BLAS/TLAS geometry.
     pub fn set_rt_boxes(&mut self, boxes: &[(glam::Vec3, glam::Vec3, f32)]) {
         let _ = boxes;
+    }
+
+    /// Hand the detail ground surface to the raymarch backend's terrain LOD.
+    pub fn set_terrain_detail(&mut self, detail: Option<crate::terrain_relief::Shared>) {
+        self.terrain_detail = detail;
+    }
+
+    /// The detail terrain LOD's statistics this frame (raymarch backend with a detail surface).
+    pub fn terrain_lod_stats(&self) -> Option<crate::terrain_lod::LodStats> {
+        self.raymarch.as_ref().and_then(|rm| rm.terrain_stats())
+    }
+
+    /// The GPU's own terrain surface at `points` (finest level), for the physics/render check.
+    pub fn probe_terrain(&self, device: &wgpu::Device, queue: &wgpu::Queue, points: &[glam::Vec2]) -> Option<Vec<f32>> {
+        self.raymarch.as_ref().and_then(|rm| rm.terrain_lod()).map(|lod| lod.probe(device, queue, points))
     }
 
     /// Flag mesh `idx` as TERRAIN — it samples the tank-track map (ruts darken + dip-shade it).
@@ -8119,6 +8186,10 @@ impl Renderer {
             rm.prepare(self, device, queue);
             // The tracers' veil for the eye's meter (the clock's lanes 5 and 6).
             queue.write_buffer(&self.exp_clock_buf, 20, bytemuck::cast_slice(&rm.point_veil));
+            if let Some(mut sf) = self.scatter_field.take() {
+                sf.prepare(self, rm.shadow_views(), device, queue);
+                self.scatter_field = Some(sf);
+            }
             self.raymarch = Some(rm);
         }
 

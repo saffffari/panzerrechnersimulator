@@ -90,6 +90,24 @@ cargo run -- koop prefix                            # headless: KOOP splitscreen
 cargo run -- absitzen outdir                        # headless: on-foot slice — dismount, walk, loot, Luger, stealth beats
 cargo run -- lasttiger                              # headless: the Last Tiger loop — bail burning, survive cook-off, remount a spare
 cargo run -- climb                                  # headless: the mount/dismount climb ritual (3 timed moves each way) + jump
+cargo run -- crew-solo-designate prefix             # headless, short: commander's MMB designation -> gunner slews, TPZ second
+                                                    #   pointer, refine, mid-slew handover, contact under hold fire; 2 PNGs
+cargo run -- crew-solo-empties prefix               # headless, short: empties rack full -> ask, refuse (floor clutter), approve
+                                                    #   (side hatch open, cases heaved out), contact shuts the hatch; 2 PNGs
+cargo run -- crew-solo-kia prefix                   # headless, short: solo crew legibility — displaced man stands clear of the
+                                                    #   cupola, a loader killed leaves a body and blood, a bleeder bleeds on; 4 PNGs
+cargo run -- crew-solo prefix                       # headless: solo living crew — AI stations, a real penetration wounds the
+                                                    #   loader and the player treats him, gunner/driver KIA and the player
+                                                    #   takes the gun / the levers; 8 PNGs + JSON receipt, PASS/FAIL
+cargo run -- lan-verify                             # GPU-free: two sockets, one process — handshake, roles, input, snapshot
+cargo run -- lan-probe host [secs] [bind]           # GPU-free LAN stand-in host (real LanSession, beacons on every adapter)
+cargo run -- lan-probe join ADDR|auto [secs]        # GPU-free join of a real or stand-in host: Welcome, snapshot rate, or the
+                                                    #   JoinTrouble checklist; `lan-probe discover [secs]` lists Tigers heard
+cargo run -- lan-ifaces                             # IPv4 adapters, directed broadcasts, the address friends type
+cargo run -- lan-crew prefix                        # headless: the living AI crew in empty LAN host seats (drive, lay, fire,
+                                                    #   reload, stand down for a human and return); JSON receipt, PASS/FAIL
+cargo run --release -- asset-trace                  # with KESSEL_ASSET_TRACE=FILE: build every LAN-hostable world once so
+                                                    #   the trace lists what each loads (tools/windows_payload.py input)
 cargo run --release -- train [gens] [pop] [secs] [acts]  # neuroevolution: ES over enemy policy, acts="0,1" = mean fitness across maps
 cargo run --release -- duel outdir [weights] [act]  # film a T-34 duel (aerial cam → mp4); act 0 = the training arena
 cargo run --release -- train-foot-ai [epochs] [dir] # deterministic CPU KSL2 foot candidates; default assets/ai/foot_candidates/epochs_<epochs>; refuses overwrite

@@ -10,7 +10,7 @@ fn dropped_ammunition_runtime_is_bounded_in_source_racks_and_breech() {
         (0, &parts[0]), (1, &parts[1]), (2, &parts[2]), (3, &lids[0]), (4, &lids[1]),
         (5, &holder), (8, &sight.parts[0]), (12, &cover), (14, &lids[2]), (15, &lids[3]),
     ]);
-    let hf = Heightfield { res: 2, spacing: 2000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default() };
+    let hf = Heightfield { res: 2, spacing: 2000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default(), detail: None };
     let tiger = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
     let hull = tiger.hull_model();
     let turret = tiger.turret_model();
@@ -122,7 +122,7 @@ fn held_shell_source_cpu_benchmark() {
         (0,&parts[0]),(1,&parts[1]),(2,&parts[2]),(3,&lids[0]),(4,&lids[1]),
         (5,&holder),(8,&sight.parts[0]),(12,&cover),(14,&lids[2]),(15,&lids[3]),
     ]);
-    let hf=Heightfield {res:2,spacing:2000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0, openings: Default::default()};
+    let hf=Heightfield {res:2,spacing:2000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0, openings: Default::default(), detail: None};
     let tiger=Tank::new(0.0,0.0,0.0,&hf,tank::TIGER_PARTS);
     let hull=tiger.hull_model();
     let turret=tiger.turret_model();

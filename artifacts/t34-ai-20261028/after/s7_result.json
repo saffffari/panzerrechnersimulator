@@ -1,0 +1,960 @@
+{
+  "driver": "rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression",
+  "film": false,
+  "final": {
+    "alive": true,
+    "ammo": 62,
+    "breech": "Loaded",
+    "broken_modules": [],
+    "carried_casing": false,
+    "carrying": false,
+    "casing_pull": 0.0,
+    "combat": {
+      "bore": [
+        -0.7222588658332825,
+        0.024285392835736275,
+        -0.6911963820457458
+      ],
+      "gun_pitch": 0.05025482922792435,
+      "hits": 2,
+      "impact": [
+        -751.7386474609375,
+        -17.436647415161133,
+        337.0052490234375
+      ],
+      "impact_kind": "Penetrate",
+      "kills": 2,
+      "lay_pitch": 0.05181705951690674,
+      "lay_yaw": -1.014617919921875,
+      "muzzle": [
+        -797.8680419921875,
+        -10.498678207397461,
+        662.92919921875
+      ],
+      "target": [
+        -659.3486938476562,
+        -19.09404945373535,
+        -125.2913818359375
+      ]
+    },
+    "death_cause": null,
+    "enemy_ai": {
+      "clock_s": 434.95458984375,
+      "contact_tank_s": 128.0323486328125,
+      "first_contact_s": null,
+      "first_enemy_shot_s": null,
+      "first_hit_on_tiger_s": null,
+      "hits_on_tiger_front_side_rear": [
+        0,
+        0,
+        0
+      ],
+      "idle_in_contact_fraction": 0.15269595384597778,
+      "idle_in_contact_tank_s": 19.55002212524414,
+      "pens_on_tiger": 0,
+      "shots_flank_or_rear_fraction": 0.0,
+      "shots_front_side_rear": [
+        0,
+        0,
+        0
+      ],
+      "shots_with_kill_solution": 0,
+      "stuck_tank_s": 39.19977569580078,
+      "tanks": [
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 0,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 388.3552551269531,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 1,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 378.573486328125,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 2,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 378.3770446777344,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 3,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 328.9976501464844,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 4,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 310.83062744140625,
+          "with_solution": 0
+        },
+        {
+          "active_s": 194.6965789794922,
+          "contact_s": 27.949745178222656,
+          "first_contact_s": 70.16717529296875,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            1,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 2.333331823348999,
+          "knocked_out_s": 194.6965789794922,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 6,
+          "stuck_s": 0.03333333507180214,
+          "track_s": 0.0,
+          "travelled_m": 333.44854736328125,
+          "with_solution": 0
+        },
+        {
+          "active_s": 76.23513793945312,
+          "contact_s": 6.083357810974121,
+          "first_contact_s": 70.16717529296875,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            1,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 2.0499987602233887,
+          "knocked_out_s": 76.23513793945312,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 7,
+          "stuck_s": 0.03333333507180214,
+          "track_s": 0.0,
+          "travelled_m": 84.6524658203125,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 27.949745178222656,
+          "first_contact_s": 70.16717529296875,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 9.366695404052734,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 8,
+          "stuck_s": 18.083229064941406,
+          "track_s": 0.0,
+          "travelled_m": 628.5286254882812,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 22.016502380371094,
+          "first_contact_s": 194.31333923339844,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 1.9333322048187256,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 9,
+          "stuck_s": 0.4666668474674225,
+          "track_s": 0.0,
+          "travelled_m": 568.1705932617188,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 22.016502380371094,
+          "first_contact_s": 194.31333923339844,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 1.9166655540466309,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 10,
+          "stuck_s": 19.01654815673828,
+          "track_s": 0.0,
+          "travelled_m": 483.12493896484375,
+          "with_solution": 0
+        },
+        {
+          "active_s": 434.95458984375,
+          "contact_s": 22.016502380371094,
+          "first_contact_s": 194.31333923339844,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 1.9499988555908203,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 11,
+          "stuck_s": 1.5666658878326416,
+          "track_s": 0.0,
+          "travelled_m": 488.55950927734375,
+          "with_solution": 0
+        }
+      ],
+      "tanks_fielded": 11,
+      "tanks_in_contact": 6,
+      "tanks_knocked_out": 2,
+      "tiger_hits_taken_front_side_rear": [
+        2,
+        0,
+        0
+      ],
+      "travelled_m": 4371.61865234375
+    },
+    "finished_s": null,
+    "god": false,
+    "ground": "TankGroundState { pitch_deg: -1.4988878, roll_deg: 2.6899152, above_terrain_m: -0.2758379, carried_by: \"terrain\", refused: \"\", refused_value: 0.0, obstacle: \"\", crushing: None, gave_way: 0, falling: false, embedded: false, max_climbed_step_m: 0.0055236816, max_pitch_deg: 3.4524853, max_rubble_above_terrain_m: 0.0, belly_share: 0.0, max_belly_share: 0.0 }",
+    "heading": 3.9460315704345703,
+    "hits": 2,
+    "hover": "DESCEND INTO TURRET CABIN [SPACE]",
+    "incoming_hits": 0,
+    "incoming_penetrations": 0,
+    "kills": 2,
+    "lever": 0.0,
+    "live_at_guns": 5,
+    "live_t34s": 9,
+    "mission_beat": [
+      2,
+      "Phase line Anton: the hamlet"
+    ],
+    "mission_finished": false,
+    "navigation": {
+      "avoid_until": 451.4000244140625,
+      "cursor": 34,
+      "recoveries": 6,
+      "reverse_until": 433.4000244140625,
+      "side": -1.0
+    },
+    "phase": "detouring",
+    "position": [
+      -793.6716918945312,
+      -12.953330993652344,
+      667.0903930664062
+    ],
+    "progress": 0.04597596824169159,
+    "ram": 0.0,
+    "reloads": 1,
+    "return_fire": true,
+    "shots": 3,
+    "speed_m_s": 0.0,
+    "stage": "reload_seat",
+    "stage_tries": 0,
+    "station": "Commander",
+    "target_in_sight": null,
+    "time_s": 435.0166931152344,
+    "total_t34s": 11,
+    "walk": [
+      0.6369999647140503,
+      0.0,
+      0.5738750696182251
+    ]
+  },
+  "manifest": "C:\\shop\\panzerrechnersystem-t34ai\\assets\\worldgen\\workshops\\gaea-canyon-run-v2\\manifest.v1.json",
+  "max_seconds": 900.0,
+  "mission": {
+    "beats": [
+      {
+        "at": [
+          -736.0,
+          595.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 4.016663551330566,
+        "goal": "observe",
+        "id": "orders",
+        "nudges": 0,
+        "number": 1,
+        "radius_m": 260.0,
+        "started_s": 0.0,
+        "status": "Done",
+        "title": "Read the ground"
+      },
+      {
+        "at": [
+          -747.0700073242188,
+          296.741455078125
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "reach",
+        "id": "anton",
+        "nudges": 1,
+        "number": 2,
+        "radius_m": 110.0,
+        "started_s": 4.016663551330566,
+        "status": "Active",
+        "title": "Phase line Anton: the hamlet"
+      },
+      {
+        "at": [
+          -560.0,
+          -200.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "destroy",
+        "id": "gunline",
+        "nudges": 0,
+        "number": 3,
+        "radius_m": 650.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The gun line at the fork"
+      },
+      {
+        "at": [
+          345.0,
+          190.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "destroy",
+        "id": "factory",
+        "nudges": 0,
+        "number": 4,
+        "radius_m": 400.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The factory yard"
+      },
+      {
+        "at": [
+          1180.0,
+          420.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "destroy",
+        "id": "basin",
+        "nudges": 0,
+        "number": 5,
+        "radius_m": 450.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The final basin"
+      },
+      {
+        "at": [
+          1699.218994140625,
+          234.375
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "reach",
+        "id": "head",
+        "nudges": 0,
+        "number": 6,
+        "radius_m": 85.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The ravine head"
+      }
+    ],
+    "elapsed_s": 434.95458984375,
+    "finished": false,
+    "flares_fired": 1,
+    "mission": "canyon-v2-rearguard",
+    "radio": [
+      {
+        "from": "Adler",
+        "t": 0.0,
+        "text": "Kiebitz, Adler. Column is through the hamlet. Read the ground, then follow the wrecks north. Out."
+      },
+      {
+        "from": "Kiebitz",
+        "t": 4.016663551330566,
+        "text": "Adler, Kiebitz. Understood. Moving. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 4.016663551330566,
+        "text": "Kiebitz, Adler. Phase line Anton is the hamlet, 450 metres north. White star marks it. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 244.0178680419922,
+        "text": "Kiebitz, Adler. Anton. Move. Out."
+      }
+    ],
+    "source": "C:\\shop\\panzerrechnersystem-t34ai\\assets\\worldgen\\workshops\\gaea-canyon-run-v2\\mission.v1.json",
+    "title": "BEFEHL: DURCHBRUCH ZUM SCHLUCHTKOPF"
+  },
+  "outcome": "pilot_stalled",
+  "schema": "panzer.canyon-ai-attempt.v1",
+  "seed": 7,
+  "simulation_hz": 60,
+  "wall_seconds": 146.2733103,
+  "winter": {
+    "at_guns": [
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 0,
+        "position": [
+          -639.0,
+          -22.10600471496582,
+          -50.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 1,
+        "position": [
+          -729.0,
+          -20.530851364135742,
+          -116.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 2,
+        "position": [
+          238.0,
+          -11.902567863464355,
+          -383.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 3,
+        "position": [
+          229.0,
+          -12.138043403625488,
+          -306.5
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 4,
+        "position": [
+          769.0,
+          50.63694763183594,
+          671.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      }
+    ],
+    "confirmed_sightings": 0,
+    "crews": [
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 0,
+        "position": [
+          1029.4830322265625,
+          49.278202056884766,
+          542.9287109375
+        ],
+        "role": "leader",
+        "slot": 0,
+        "speed_m_s": 0.0,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 0,
+        "position": [
+          1065.004150390625,
+          37.7420768737793,
+          514.65283203125
+        ],
+        "role": "wingman",
+        "slot": 1,
+        "speed_m_s": 0.5607854127883911,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 0,
+        "position": [
+          1093.2862548828125,
+          27.81696891784668,
+          486.1871337890625
+        ],
+        "role": "wingman",
+        "slot": 2,
+        "speed_m_s": 0.5762245655059814,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 1,
+        "position": [
+          351.2859191894531,
+          -15.00648307800293,
+          34.75021743774414
+        ],
+        "role": "leader",
+        "slot": 3,
+        "speed_m_s": 1.4399999380111694,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 1,
+        "position": [
+          342.41119384765625,
+          -15.293109893798828,
+          -3.3006069660186768
+        ],
+        "role": "wingman",
+        "slot": 4,
+        "speed_m_s": 0.0,
+        "visible_now": false
+      },
+      {
+        "alive": false,
+        "detection": 0.0,
+        "doctrine": {
+          "active": true,
+          "arrived": false,
+          "at_post_s": 0.40000012516975403,
+          "fix": [
+            -768.7095947265625,
+            632.1133422851562
+          ],
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "search_last_seen",
+        "platoon": 2,
+        "position": [
+          -752.1182250976562,
+          -19.87714385986328,
+          335.63299560546875
+        ],
+        "role": "leader",
+        "slot": 6,
+        "speed_m_s": 0.0,
+        "visible_now": false
+      },
+      {
+        "alive": false,
+        "detection": 0.0,
+        "doctrine": {
+          "active": true,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": [
+            -767.1318969726562,
+            622.7606811523438
+          ],
+          "heard": null,
+          "post": [
+            -791.778564453125,
+            760.5653686523438
+          ],
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "search_last_seen",
+        "platoon": 2,
+        "position": [
+          -747.9373168945312,
+          -22.840383529663086,
+          215.38156127929688
+        ],
+        "role": "wingman",
+        "slot": 7,
+        "speed_m_s": 0.0,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 2,
+        "position": [
+          -577.7850341796875,
+          -18.87165069580078,
+          -213.83612060546875
+        ],
+        "role": "wingman",
+        "slot": 8,
+        "speed_m_s": 0.0,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 3,
+        "position": [
+          -658.0306396484375,
+          -21.51512336730957,
+          -126.96871948242188
+        ],
+        "role": "leader",
+        "slot": 9,
+        "speed_m_s": 1.4399999380111694,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 3,
+        "position": [
+          -624.8939819335938,
+          -20.204870223999023,
+          -169.0298309326172
+        ],
+        "role": "wingman",
+        "slot": 10,
+        "speed_m_s": 1.2982394695281982,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "doctrine": {
+          "active": false,
+          "arrived": false,
+          "at_post_s": 0.0,
+          "fix": null,
+          "heard": null,
+          "post": null,
+          "press": 0,
+          "refused": 0,
+          "shots_at_post": 0,
+          "withdraw_s": 0.0
+        },
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 3,
+        "position": [
+          -597.2466430664062,
+          -19.283716201782227,
+          -198.20553588867188
+        ],
+        "role": "wingman",
+        "slot": 11,
+        "speed_m_s": 1.8529255390167236,
+        "visible_now": false
+      }
+    ],
+    "elapsed_s": 434.95458984375,
+    "flashes_seen": 7,
+    "layout": "streets",
+    "sounds_heard": 8,
+    "streets": null
+  }
+}

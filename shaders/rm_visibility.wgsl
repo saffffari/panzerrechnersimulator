@@ -122,7 +122,7 @@ fn rm_sun_visibility_maps(world: vec3<f32>, bias_m: f32) -> f32 {
 fn rm_sky_visibility(world: vec3<f32>, lift_m: f32) -> f32 {
     let c = rm_shadow_uv(shadow_views.vp[2] * vec4(world + vec3(0.0, lift_m, 0.0), 1.0));
     if (any(c.xy < vec2(0.0)) || any(c.xy > vec2(1.0)) || c.z <= 0.0 || c.z >= 1.0) { return 1.0; }
-    let texel = 1.0 / 512.0;
+    let texel = 1.0 / f32(textureDimensions(sky_cover).x);
     var sum = 0.0;
     for (var y = -1; y <= 1; y += 1) {
         for (var x = -1; x <= 1; x += 1) {
@@ -147,7 +147,7 @@ fn rm_cabin_sky_visibility(world: vec3<f32>, n: vec3<f32>) -> f32 {
 fn rm_cover_height(xz: vec2<f32>) -> f32 {
     let c = rm_shadow_uv(shadow_views.vp[2] * vec4(xz.x, fr.cam_pos.y, xz.y, 1.0));
     if (any(c.xy < vec2(0.0)) || any(c.xy > vec2(1.0))) { return fr.cam_pos.y - 1.7; }
-    let texel = vec2<i32>(clamp(c.xy, vec2(0.0), vec2(0.9999)) * 512.0);
+    let texel = vec2<i32>(clamp(c.xy, vec2(0.0), vec2(0.9999)) * f32(textureDimensions(sky_cover).x));
     let d = textureLoad(sky_cover, texel, 0);
     return fr.cam_pos.y + 150.0 - (0.1 + d * 399.9);
 }
@@ -169,7 +169,7 @@ fn rm_point_visibility(slot: u32, world: vec3<f32>, bias_m: f32) -> f32 {
     let p = world - normalize(to_point) * bias_m;
     let c = rm_shadow_uv(shadow_views.vp[3u + layer] * vec4(p, 1.0));
     if (any(c.xy < vec2(0.0)) || any(c.xy > vec2(1.0)) || c.z <= 0.0 || c.z >= 1.0) { return 1.0; }
-    let texel = 1.0 / 256.0;
+    let texel = 1.0 / f32(textureDimensions(point_faces).x);
     var sum = 0.0;
     for (var y = -1; y <= 1; y += 1) {
         for (var x = -1; x <= 1; x += 1) {

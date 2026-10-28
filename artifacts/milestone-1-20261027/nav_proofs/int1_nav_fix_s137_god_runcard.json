@@ -1,0 +1,50 @@
+{
+  "best_s": 1425.779296875,
+  "broken_modules": [],
+  "cause": "23:45.8    NEW BEST",
+  "distance_m": 4925.7158203125,
+  "elapsed_s": 1425.779296875,
+  "enemies_fielded": 13,
+  "headline": "THE RAVINE IS BEHIND YOU",
+  "hits_taken": 2,
+  "kills": 13,
+  "length_m": 4925.7158203125,
+  "new_best": true,
+  "note": "harness record, separate from the title's canyon-v2-times.v1.json",
+  "outcome": "Completed",
+  "penetrations_taken": 0,
+  "progress": 1.0,
+  "rows": [
+    [
+      "TIME",
+      "23:45.8"
+    ],
+    [
+      "BEST",
+      "23:45.8"
+    ],
+    [
+      "FIRE",
+      "19 rounds fired, 13 kills"
+    ],
+    [
+      "HITS TAKEN",
+      "2 (0 through the armour)"
+    ],
+    [
+      "ENEMY",
+      "13 tanks fielded against you"
+    ],
+    [
+      "ATTEMPT",
+      "seed 137  ·  start 11:48  ·  heavy snow"
+    ]
+  ],
+  "schema": "panzer.canyon-run-card.v1",
+  "seed": 137,
+  "shots": 19,
+  "start_clock_local": "11:48",
+  "times_file": "C:/shop/panzerrechnersystem-integration/artifacts/runtime/state\\panzerrechnersystem\\canyon-v2-times.headless.json",
+  "weather": "heavy snow",
+  "wounds": []
+}

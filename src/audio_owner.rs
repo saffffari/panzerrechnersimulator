@@ -135,6 +135,23 @@ impl Audio {
         self.local_acoustics.set((reverb, headset));
     }
 
+    /// The traced reflected field around the listener for sounds made beside him (his own
+    /// handling, controls and recordings); `None` falls back to the parametric local tail.
+    pub fn set_local_room(&self, room: Option<std::rc::Rc<crate::acoustics::raytrace::StereoIr>>) {
+        *self.local_room.borrow_mut() = room;
+    }
+
+    /// Where the listener's ears are with respect to the vehicle's steel this frame (SL §8): the
+    /// continuous exterior voices (other vehicles, fires, the own loose track) take their direction
+    /// cues through it. One-shot world events carry their own path in their `EarLevel`.
+    pub fn set_listener_enclosure(&self, enclosure: crate::sound_propagation::Enclosure) {
+        self.listener_enclosure.set(enclosure);
+    }
+
+    pub(crate) fn listener_transmission(&self) -> crate::sound_propagation::Transmission {
+        self.listener_enclosure.get().transmission()
+    }
+
     /// Play the owner's recording `key` as a sound made beside the listener, at `level_dba` at
     /// his ear, from `bearing_deg`, in the place he is in. False if it is not installed.
     pub(crate) fn play_owner_local(&self, key: &str, level_dba: f32, bearing_deg: f32) -> bool {
@@ -143,7 +160,11 @@ impl Audio {
         let (reverb, headset) = self.local_acoustics.get();
         let ear = crate::sound_propagation::at_ear(level_dba + 12.0, level_dba,
             crate::sound_levels::SpectrumClass::Mechanical, 2.0, headset);
-        self.play_world_mono_at_ear(&mono, &ear, if bearing_deg.is_finite() { bearing_deg } else { 0.0 }, reverb);
+        let bearing = if bearing_deg.is_finite() { bearing_deg } else { 0.0 };
+        match self.local_room.borrow().clone() {
+            Some(ir) => self.play_world_mono_in_room(&mono, &ear, bearing, super::calibrated::Room::Traced(&ir)),
+            None => self.play_world_mono_at_ear(&mono, &ear, bearing, reverb),
+        }
         true
     }
 }

@@ -213,9 +213,11 @@ impl Game {
     pub(super) fn winter_enemy_orders(&mut self, dt: f32) -> Vec<Option<winter_encounter_ai::Order>> {
         if self.winter_encounter.is_none() { return vec![None; self.enemies.len()]; }
         self.winter_encounter.as_mut().unwrap().tick(dt);
+        self.hear_tiger_engine(dt);
         let live = |i: usize| i < self.enemies.len() && self.enemies[i].alive && self.enemy_active[i];
         let hulls: Vec<_> = (0..self.enemies.len()).map(|i| live(i).then(|| winter_encounter_ai::Hull {
-            pos: self.enemies[i].center(), heading: self.enemies[i].heading })).collect();
+            pos: self.enemies[i].center(), heading: self.enemies[i].heading, speed: self.enemies[i].speed })).collect();
+        let struck = std::mem::take(&mut self.enemy_struck);
         let observations: Vec<_> = (0..self.enemies.len()).map(|i| {
             let visible = live(i) && self.player.alive
                 && self.winter_encounter.as_ref().unwrap().visible(i)
@@ -223,8 +225,20 @@ impl Game {
             // The platoon's shared knowledge; the encounter lets only a leader act on it.
             let pl = &self.stealth.platoons[self.stealth.platoon_index_of(i)];
             let radio_fix = matches!(pl.state,AlertState::Engaged|AlertState::Searching).then_some(pl.last_known);
+            // What the crew sees of an armoured target in sight: its hull's lie, and whether its
+            // gun is laid on this tank. Neither is read when the target is out of sight.
+            let threat = visible.then(|| self.enemy_threat_tank(i)).flatten();
+            let gun_on_me = threat.is_some_and(|tank| {
+                let (muzzle, bore) = tank.muzzle();
+                let to = self.enemies[i].center() - muzzle;
+                bore.dot(to.normalize_or_zero()) > GUN_ON_ME_COS
+            });
             winter_encounter_ai::Observation {
-                visible: visible.then(|| self.threat_center()), radio_fix, on_foot:self.winter_foot_target(),
+                visible: visible.then(|| self.enemy_threat_center(i)), radio_fix, on_foot:self.winter_foot_target(),
+                heading: threat.map(|tank| tank.heading), gun_on_me,
+                struck: struck.get(i).copied().unwrap_or(false),
+                shots: self.enemy_gun_shots.get(i).copied().unwrap_or(0),
+                loaded: self.enemies[i].reload <= 0.0,
             }
         }).collect();
         // In the streets a leader closing on a report halts where the reported area comes into view:
@@ -232,9 +246,41 @@ impl Game {
         let mut encounter = self.winter_encounter.take().unwrap();
         let sees = |eye: Vec3, at: Vec2| self.optical_los_clear(eye,
             Vec3::new(at.x, self.hf.height_at(at.x, at.y) + tank::TIGER_PARTS.center_h, at.y));
-        let orders = encounter.orders(&hulls, &observations, dt, &sees);
+        let ground = |at: Vec2| self.hf.height_at(at.x, at.y);
+        let orders = encounter.orders(&hulls, &observations, dt, &sees, &ground);
         self.winter_encounter = Some(encounter);
         orders
+    }
+
+    /// The Tiger's engine and running gear heard by the crews (docs/ENEMY_TANK_AI.md): every
+    /// `ENGINE_LISTEN_S` each living crew within earshot gets an uncertain report of where the
+    /// noise came from (`WinterEncounter::hear` rounds it to a 32 m cell), never a line to fire
+    /// along. Earshot is a tuning radius that grows with the Tiger's speed and shrinks in the
+    /// storm, halved again through cover by `hear` itself; it is not an acoustic propagation
+    /// result.
+    fn hear_tiger_engine(&mut self, dt: f32) {
+        self.engine_listen_s += dt;
+        if self.engine_listen_s < ENGINE_LISTEN_S { return; }
+        self.engine_listen_s = 0.0;
+        if !self.player.alive || !self.engine_on || self.winter_foot_target() { return; }
+        let storm = self.winter_encounter.as_ref().map_or(0.0, |e| e.storm).clamp(0.0, 1.0);
+        let speed = (self.player.speed.abs() / tank::TOP_SPEED).clamp(0.0, 1.0);
+        let earshot = (ENGINE_EARSHOT_IDLE_M + (ENGINE_EARSHOT_FULL_M - ENGINE_EARSHOT_IDLE_M) * speed)
+            * (1.0 - 0.45 * storm);
+        let source = self.player.center();
+        for i in 0..self.enemies.len() {
+            if !self.enemies[i].alive || !self.enemy_active.get(i).copied().unwrap_or(false) { continue; }
+            let listener = self.enemies[i].center();
+            if listener.distance(source) > earshot { continue; }
+            let obstructed = !self.los_clear(listener, source);
+            self.winter_encounter.as_mut().unwrap().hear(i, listener, source, earshot, obstructed);
+        }
+    }
+
+    /// A Tiger round struck enemy `i`, or burst on the ground beside it.
+    pub(super) fn mark_enemy_struck(&mut self, i: usize) {
+        if self.enemy_struck.len() <= i { self.enemy_struck.resize(i + 1, false); }
+        self.enemy_struck[i] = true;
     }
 
     /// Local footprint probes keep cautious orders out of walls and steep ground; they do not
@@ -299,7 +345,7 @@ impl Game {
     /// Debug/capture telemetry only; it is deliberately not a player-facing enemy marker API.
     pub fn winter_encounter_snapshot(&self) -> Option<serde_json::Value> {
         self.winter_encounter.as_ref().map(|ai| serde_json::json!({
-            "elapsed_s":ai.elapsed,"sounds_heard":ai.sounds_heard,
+            "elapsed_s":ai.elapsed,"sounds_heard":ai.sounds_heard,"flashes_seen":ai.flashes_seen,
             "confirmed_sightings":ai.confirmed_sightings,
             "crews":(0..ai.slots()).filter(|&i| self.enemy_active.get(i).copied().unwrap_or(false)).map(|i| serde_json::json!({
                 "slot":i,"platoon":winter_encounter_ai::platoon_of(i),"role":ai.role(i).name(),
@@ -307,6 +353,7 @@ impl Game {
                 "position":self.enemies[i].pos.to_array(),"visible_now":ai.visible(i),
                 "detection":self.stealth.meters[i],
                 "main_gun_shots":self.enemy_main_gun_shot_sequence(i),
+                "speed_m_s":self.enemies[i].speed,"doctrine":ai.doctrine(i),
             })).collect::<Vec<_>>(),
             "at_guns":self.at_gun_snapshot(),
             "layout":if ai.streets().is_some() { "streets" } else { "open_ground" },
@@ -314,6 +361,13 @@ impl Game {
         }))
     }
 }
+
+/// The bore within about 6 degrees of a hull reads to its crew as a gun laid on them.
+const GUN_ON_ME_COS: f32 = 0.9945;
+/// How often the crews listen for the Tiger's engine, and its earshot idling and at full speed.
+const ENGINE_LISTEN_S: f32 = 3.0;
+const ENGINE_EARSHOT_IDLE_M: f32 = 260.0;
+const ENGINE_EARSHOT_FULL_M: f32 = 700.0;
 
 /// Finite sweep prevents a thin obstruction from being skipped by a large frame or shove.
 fn clip_winter_motion(from: Vec2, to: Vec2, mut clear: impl FnMut(Vec2) -> bool) -> Vec2 {

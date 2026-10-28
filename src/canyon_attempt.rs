@@ -6,6 +6,7 @@ use crate::{
     renderer::Renderer,
     world,
 };
+use glam::Vec2;
 use std::{
     fs,
     io::Write,
@@ -216,6 +217,187 @@ pub fn record_terminal_review(prefix:&str,g:&mut Game,r:&mut Renderer,device:&wg
     film.finish()
 }
 
+/// The harnesses keep their own time record beside the player's, so a headless finish never
+/// becomes the title's BEST.
+fn harness_times_path() -> anyhow::Result<std::path::PathBuf> {
+    Ok(crate::canyon::times_path()?.with_file_name("canyon-v2-times.headless.json"))
+}
+
+/// Write the after-action card of a headless run as facts (JSON) and as the card itself (PNG,
+/// the same `ui::draw_run_card` the window shows). Returns the report.
+pub fn write_run_card(prefix: &str, g: &Game, r: &mut Renderer, device: &wgpu::Device,
+    queue: &wgpu::Queue) -> anyhow::Result<Option<crate::canyon::RunReport>> {
+    let path = harness_times_path()?;
+    let previous = crate::canyon::load_times(&path).best_s;
+    let times = match g.canyon_finished() {
+        Some(elapsed) => crate::canyon::record_time(&path, elapsed)?,
+        None => crate::canyon::load_times(&path),
+    };
+    let Some(report) = g.canyon_run_report(times, previous) else { return Ok(None) };
+    let facts = serde_json::json!({
+        "schema": "panzer.canyon-run-card.v1",
+        "headline": report.headline(), "cause": report.cause_line(),
+        "outcome": format!("{:?}", report.outcome), "elapsed_s": report.elapsed_s,
+        "progress": report.progress, "distance_m": report.distance_m, "length_m": report.length_m,
+        "shots": report.shots, "kills": report.kills, "hits_taken": report.hits_taken,
+        "penetrations_taken": report.penetrations_taken, "enemies_fielded": report.enemies_fielded,
+        "broken_modules": report.broken_modules, "wounds": report.wounds, "seed": report.seed,
+        "start_clock_local": report.start_clock, "weather": report.weather,
+        "best_s": report.best_s, "new_best": report.new_best, "rows": report.rows(),
+        "times_file": path, "note": "harness record, separate from the title's canyon-v2-times.v1.json",
+    });
+    fs::write(format!("{prefix}_runcard.json"), serde_json::to_vec_pretty(&facts)?)?;
+    r.ui_reset();
+    crate::ui::draw_run_card(r, &report, true);
+    r.render_ui_to_png(device, queue, &format!("{prefix}_runcard.png"), 1280, 720)?;
+    println!("[canyon-card] {}: {} — {}", prefix, report.headline(), report.cause_line());
+    Ok(Some(report))
+}
+
+pub(crate) fn build_course(seed: u64) -> anyhow::Result<(wgpu::Device, wgpu::Queue, Renderer, Game, std::path::PathBuf)> {
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    g.enable_canyon_course_seeded(seed)?;
+    g.enable_singleplayer_crew();
+    g.set_defer_rtt_to_render(true);
+    g.mute_audio();
+    g.update(&TankInput::default(), 0.0, &mut r);
+    Ok((device, queue, r, g, manifest))
+}
+
+/// The point `back_m` metres before the goal along the authored route, and the heading of travel there.
+fn route_point_before_goal(route: &[Vec2], back_m: f32) -> (Vec2, f32) {
+    let mut idx = route.len() - 1;
+    let mut remaining = back_m;
+    while idx > 0 && remaining > 0.0 {
+        remaining -= route[idx].distance(route[idx - 1]);
+        idx -= 1;
+    }
+    let at = route[idx];
+    let next = route[(idx + 1).min(route.len() - 1)];
+    let d = next - at;
+    (at, d.x.atan2(d.y))
+}
+
+/// `canyon-finish-check PREFIX SEED [BACK_M] [MAX_S]`: the win path, verified by play. The Tiger is
+/// staged (disclosed: `debug_place_tiger`) on the authored route `BACK_M` metres short of the
+/// goal, with the whole defence live and return fire on, and the rule-based crew drives the rest.
+/// Passes when the run completes: the clock stops, the time is kept, the card is written.
+pub fn finish_check(prefix: &str, seed: u64, back_m: f32, max_s: f32) -> anyhow::Result<()> {
+    let (device, queue, mut r, mut g, manifest) = build_course(seed)?;
+    let route = g.canyon_route().ok_or_else(|| anyhow::anyhow!("no course route"))?;
+    let (at, heading) = route_point_before_goal(&route, back_m);
+    g.debug_place_tiger(at, heading);
+    g.update(&TankInput::default(), 0.0, &mut r);
+    let mut pilot = CanyonPilot::new(&g);
+    let dt = 1.0 / 60.0;
+    let mut outcome = "time_limit";
+    let mut finished_at = None;
+    let mut hits_before_finish = 0;
+    for step in 0..(max_s / dt).ceil() as usize {
+        let t = step as f32 * dt;
+        let input = pilot.step(&mut g, &r, t, dt);
+        g.update(&input, dt, &mut r);
+        if step % 8 == 0 { crate::simulation_uploads::drain(&device, &queue)?; }
+        if step % 60 == 0 { println!("[canyon-finish] {}", g.canyon_ai_state(&pilot, t)); }
+        if g.game_over().is_some() { outcome = "knocked_out"; break; }
+        if let Some(elapsed) = g.canyon_finished() {
+            outcome = "completed";
+            finished_at = Some(elapsed);
+            hits_before_finish = g.stat_hits_on_player;
+            // The world runs on through the finish fade; the clock must not.
+            for _ in 0..(crate::canyon::FINISH_END_S / dt).ceil() as usize {
+                g.update(&TankInput::default(), dt, &mut r);
+            }
+            anyhow::ensure!(g.canyon_finished() == Some(elapsed), "the finish time changed after the goal");
+            break;
+        }
+    }
+    crate::simulation_uploads::drain(&device, &queue)?;
+    let report = write_run_card(prefix, &g, &mut r, &device, &queue)?;
+    let receipt = serde_json::json!({
+        "schema": "panzer.canyon-finish-check.v1", "seed": seed, "staged_back_m": back_m,
+        "staged_at": [at.x, at.y], "outcome": outcome, "finished_s": finished_at,
+        "hits_taken_before_finish": hits_before_finish, "final": g.canyon_ai_state(&pilot, 0.0),
+        "manifest": manifest, "staging": "debug_place_tiger onto the authored route; defence, guns, riflemen and return fire untouched",
+        "card": report.as_ref().map(|c| c.rows()),
+    });
+    fs::write(format!("{prefix}_result.json"), serde_json::to_vec_pretty(&receipt)?)?;
+    println!("[canyon-finish-result] {receipt}");
+    anyhow::ensure!(outcome == "completed", "FAIL: the staged Tiger did not complete the course ({outcome})");
+    println!("PASS: the course completes at the goal; time {:.1} s kept and carded", finished_at.unwrap_or(0.0));
+    Ok(())
+}
+
+/// `canyon-foot-check PREFIX SEED [HOLD_S]`: does the garrison's fire reach a dismounted man?
+/// The Tiger is staged (disclosed) 45 m from each of up to four posted riflemen in turn; the
+/// crewman climbs out through the cupola and stands in the open for `HOLD_S` seconds. Nothing
+/// about the riflemen, their perception or their weapons is touched. Passes when at least one
+/// post wounds him.
+pub fn foot_check(prefix: &str, seed: u64, hold_s: f32) -> anyhow::Result<()> {
+    let (device, queue, mut r, mut g, manifest) = build_course(seed)?;
+    let route = g.canyon_route().ok_or_else(|| anyhow::anyhow!("no course route"))?;
+    let posts = g.canyon_garrison_posts();
+    anyhow::ensure!(!posts.is_empty(), "the course has no garrison posts");
+    let dt = 1.0 / 60.0;
+    let mut trials = Vec::new();
+    let mut wounded_any = false;
+    // Posts spread along the course: first, a third, two thirds, last.
+    let picks: Vec<usize> = [0.0, 0.33, 0.66, 0.99].iter()
+        .map(|f| ((posts.len() - 1) as f32 * f).round() as usize).collect();
+    for (k, &index) in picks.iter().enumerate() {
+        let post = posts[index];
+        // Stand 45 m from the post, on the side of the route (open ground, not the ruin's wall).
+        let toward = route.iter().min_by(|a, b| a.distance_squared(post).total_cmp(&b.distance_squared(post)))
+            .map(|p| (*p - post).normalize_or_zero()).unwrap_or(Vec2::X);
+        let toward = if toward.length_squared() < 0.5 { Vec2::X } else { toward };
+        let at = post + toward * 45.0;
+        let heading = (post - at).x.atan2((post - at).y);
+        if g.on_foot() { g.toggle_dismount(); g.dbg_complete_climb(&mut r); }
+        g.debug_place_tiger(at, heading);
+        g.update(&TankInput::default(), dt, &mut r);
+        g.dbg_open_hatch();
+        g.toggle_dismount();
+        g.dbg_complete_climb(&mut r);
+        let hp_start = g.foot_hp();
+        let hits_start = g.stat_small_arms_hits_on_foot;
+        let soldiers_start = g.soldiers_alive();
+        let mut first_wound_s = None;
+        for step in 0..(hold_s / dt).ceil() as usize {
+            g.update(&TankInput::default(), dt, &mut r);
+            if step % 8 == 0 { crate::simulation_uploads::drain(&device, &queue)?; }
+            if first_wound_s.is_none() && g.foot_hp() < hp_start { first_wound_s = Some(step as f32 * dt); }
+            if g.foot_hp() <= 0.0 { break; }
+        }
+        let trial = serde_json::json!({
+            "post_index": index, "post": [post.x, post.y], "stood_at": [at.x, at.y],
+            "on_foot": g.on_foot(), "hp_start": hp_start, "hp_end": g.foot_hp(),
+            "small_arms_hits_on_foot": g.stat_small_arms_hits_on_foot - hits_start,
+            "first_wound_s": first_wound_s, "soldiers_alive": soldiers_start, "held_s": hold_s,
+        });
+        println!("[canyon-foot] trial {k}: {trial}");
+        wounded_any |= g.foot_hp() < hp_start;
+        trials.push(trial);
+        if g.foot_hp() <= 0.0 { break; }
+    }
+    crate::simulation_uploads::drain(&device, &queue)?;
+    let receipt = serde_json::json!({
+        "schema": "panzer.canyon-foot-check.v1", "seed": seed, "hold_s": hold_s, "trials": trials,
+        "wounded": wounded_any, "manifest": manifest,
+        "staging": "debug_place_tiger 45 m from a garrison post, cupola dismount via dbg_open_hatch/toggle_dismount/dbg_complete_climb; riflemen untouched",
+    });
+    fs::write(format!("{prefix}_result.json"), serde_json::to_vec_pretty(&receipt)?)?;
+    println!("[canyon-foot-result] {receipt}");
+    anyhow::ensure!(wounded_any, "FAIL: no posted rifleman wounded the dismounted man in {hold_s} s at 45 m");
+    println!("PASS: garrison rifle fire reaches the dismounted man");
+    Ok(())
+}
+
 pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::Result<()> {
     anyhow::ensure!(
         max_s.is_finite() && max_s > 0.0,
@@ -232,6 +414,10 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     g.enable_canyon_course_seeded(seed)?;
     g.enable_singleplayer_crew();
     g.set_defer_rtt_to_render(true);
+    // KESSEL_CANYON_AI_INVINCIBLE=1: a traversal and mission proof, never a survivability result.
+    // The receipt's `final.god` and `driver` disclose it.
+    let invincible = std::env::var("KESSEL_CANYON_AI_INVINCIBLE").as_deref() == Ok("1");
+    if invincible { g.god = true; println!("[canyon-ai] INVINCIBLE traversal proof: the Tiger takes no damage"); }
     let mut film = cuts.map(|path| Film::new(prefix, path)).transpose()?;
     if film.is_none() {
         g.mute_audio();
@@ -256,10 +442,16 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
         if let Some(f) = film.as_mut() {
             f.step(&mut g, &mut r, &device, &queue, step)?;
         }
+        if step % 600 == 0 && std::env::var("KESSEL_T34_DBG").as_deref() == Ok("1") {
+            println!("[t34-ai-state] {}", serde_json::json!({"t":t,"tiger":g.player.pos.to_array(),"tiger_heading":g.player.heading,"winter":g.winter_encounter_snapshot()}));
+        }
         if step % 60 == 0 || g.game_over().is_some() || g.canyon_finished().is_some() {
             state = g.canyon_ai_state(&pilot, t + dt);
+            state["mission_beat"] = serde_json::json!(g.mission_current_beat());
+            state["mission_finished"] = serde_json::json!(g.mission_finished());
             let key = format!(
-                "{}|{}|{}|{}|{}|{}|{}",
+                "{}|{}|{}|{}|{}|{}|{}|{}",
+                state["mission_beat"],
                 state["phase"],
                 state["shots"],
                 state["kills"],
@@ -297,12 +489,16 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     }
     crate::simulation_uploads::drain(&device, &queue)?;
     trace.flush()?;
-    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression","manifest":manifest,"simulation_hz":60,"film":cuts.is_some()});
+    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report(),"winter":g.winter_encounter_snapshot()});
     fs::write(
         format!("{prefix}_result.json"),
         serde_json::to_vec_pretty(&receipt)?,
     )?;
     println!("[canyon-result] {receipt}");
+    // The run's own after-action card, as the window would show it.
+    if g.game_over().is_some() || g.canyon_finished().is_some() {
+        write_run_card(prefix, &g, &mut r, &device, &queue)?;
+    }
     if let Some(mut f) = film {
         if g.game_over().is_some() {
             // Append every terminal event independently of the user's ordinary highlight cuts.

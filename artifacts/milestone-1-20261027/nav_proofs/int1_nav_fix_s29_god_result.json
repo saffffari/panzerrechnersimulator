@@ -1,0 +1,252 @@
+{
+  "driver": "rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result",
+  "film": false,
+  "final": {
+    "alive": true,
+    "ammo": 39,
+    "breech": "Loaded",
+    "broken_modules": [],
+    "carried_casing": false,
+    "carrying": false,
+    "casing_pull": 0.0,
+    "combat": {
+      "bore": [
+        -0.29053565859794617,
+        -0.03356367349624634,
+        -0.9562754034996033
+      ],
+      "gun_pitch": 0.013134505599737167,
+      "hits": 20,
+      "impact": [
+        1075.21875,
+        32.876426696777344,
+        486.9974670410156
+      ],
+      "impact_kind": "Penetrate",
+      "kills": 16,
+      "lay_pitch": 0.013134505599737167,
+      "lay_yaw": 1.060619831085205,
+      "muzzle": [
+        1619.5887451171875,
+        -9.401466369628906,
+        262.67041015625
+      ],
+      "target": null
+    },
+    "death_cause": null,
+    "finished_s": 1806.8941650390625,
+    "god": true,
+    "ground": "TankGroundState { pitch_deg: 0.7467952, roll_deg: -3.4849472, above_terrain_m: -0.2660656, carried_by: \"terrain\", refused: \"\", refused_value: 0.0, obstacle: \"\", crushing: None, gave_way: 0, falling: false, embedded: false, max_climbed_step_m: 0.75, max_pitch_deg: 16.473276, max_rubble_above_terrain_m: 0.0, belly_share: 0.0, max_belly_share: 0.0 }",
+    "heading": 2.3767471313476562,
+    "hits": 20,
+    "hover": "DESCEND INTO TURRET CABIN [SPACE]",
+    "incoming_hits": 7,
+    "incoming_penetrations": 3,
+    "kills": 16,
+    "lever": 0.0,
+    "live_at_guns": 0,
+    "live_t34s": 0,
+    "mission_beat": null,
+    "mission_finished": true,
+    "navigation": {
+      "avoid_until": 1756.0333251953125,
+      "cursor": 605,
+      "recoveries": 0,
+      "reverse_until": 1745.5333251953125,
+      "side": -1.0
+    },
+    "phase": "advance",
+    "position": [
+      1621.3978271484375,
+      -11.556654930114746,
+      268.3351745605469
+    ],
+    "progress": 0.9815987944602966,
+    "ram": 0.0,
+    "reloads": 26,
+    "return_fire": false,
+    "shots": 26,
+    "speed_m_s": 7.690680503845215,
+    "stage": "reload_seat",
+    "stage_tries": 0,
+    "station": "Commander",
+    "target_in_sight": null,
+    "time_s": 1804.4334716796875,
+    "total_t34s": 16,
+    "walk": [
+      0.45130711793899536,
+      0.0,
+      -0.09042804688215256
+    ]
+  },
+  "manifest": "C:/shop/panzerrechnersystem-integration/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json",
+  "max_seconds": 3000.0,
+  "mission": {
+    "beats": [
+      {
+        "at": [
+          -736.0,
+          595.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 4.016663551330566,
+        "goal": "observe",
+        "id": "orders",
+        "nudges": 0,
+        "number": 1,
+        "radius_m": 260.0,
+        "started_s": 0.0,
+        "status": "Done",
+        "title": "Read the ground"
+      },
+      {
+        "at": [
+          -747.0700073242188,
+          296.741455078125
+        ],
+        "consequence_sent": false,
+        "ended_s": 89.1545639038086,
+        "goal": "reach",
+        "id": "anton",
+        "nudges": 0,
+        "number": 2,
+        "radius_m": 110.0,
+        "started_s": 4.016663551330566,
+        "status": "Done",
+        "title": "Phase line Anton: the hamlet"
+      },
+      {
+        "at": [
+          -560.0,
+          -200.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 106.82500457763672,
+        "goal": "destroy",
+        "id": "gunline",
+        "nudges": 0,
+        "number": 3,
+        "radius_m": 650.0,
+        "started_s": 89.1545639038086,
+        "status": "Done",
+        "title": "The gun line at the fork"
+      },
+      {
+        "at": [
+          345.0,
+          190.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 805.3807983398438,
+        "goal": "destroy",
+        "id": "factory",
+        "nudges": 0,
+        "number": 4,
+        "radius_m": 400.0,
+        "started_s": 732.4319458007812,
+        "status": "Done",
+        "title": "The factory yard"
+      },
+      {
+        "at": [
+          1180.0,
+          420.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 1688.173095703125,
+        "goal": "destroy",
+        "id": "basin",
+        "nudges": 0,
+        "number": 5,
+        "radius_m": 450.0,
+        "started_s": 1434.94384765625,
+        "status": "Done",
+        "title": "The final basin"
+      },
+      {
+        "at": [
+          1699.218994140625,
+          234.375
+        ],
+        "consequence_sent": false,
+        "ended_s": 1806.8941650390625,
+        "goal": "reach",
+        "id": "head",
+        "nudges": 0,
+        "number": 6,
+        "radius_m": 85.0,
+        "started_s": 1688.173095703125,
+        "status": "Done",
+        "title": "The ravine head"
+      }
+    ],
+    "elapsed_s": 1806.8941650390625,
+    "finished": true,
+    "flares_fired": 0,
+    "mission": "canyon-v2-rearguard",
+    "radio": [
+      {
+        "from": "Adler",
+        "t": 0.0,
+        "text": "Kiebitz, Adler. Column is through the hamlet. Read the ground, then follow the wrecks north. Out."
+      },
+      {
+        "from": "Kiebitz",
+        "t": 4.016663551330566,
+        "text": "Adler, Kiebitz. Understood. Moving. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 4.016663551330566,
+        "text": "Kiebitz, Adler. Phase line Anton is the hamlet, 450 metres north. White star marks it. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 89.1545639038086,
+        "text": "Kiebitz at Anton. Two guns on the settlement edge ahead. Smoke marks the lorry they killed at the fork. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 89.1545639038086,
+        "text": "Kiebitz, Adler. Guns at the settlement, east bank of the fork. Take them from the flank, do not drive the road. Out."
+      },
+      {
+        "from": "Kiebitz",
+        "t": 106.82500457763672,
+        "text": "Adler, Kiebitz. Gun silenced. Continuing. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 732.4319458007812,
+        "text": "Kiebitz, Adler. Two T-34 in the factory yard across the saddle. Red star over the yard. Clear it, or go round by the east wall. Out."
+      },
+      {
+        "from": "Kiebitz",
+        "t": 805.3807983398438,
+        "text": "Adler, Kiebitz. Yard clear. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 1434.94384765625,
+        "text": "Kiebitz, Adler. Rear party pulling off the strongpoint. Three T-34 in the basin between you and us. Red star where they stand. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 1688.173095703125,
+        "text": "Kiebitz, Adler. Basin clear. Ravine head 500 metres east, white star. Come through. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 1688.173095703125,
+        "text": "Kiebitz, Adler. White star on the head. Come through. Out."
+      }
+    ],
+    "source": "C:/shop/panzerrechnersystem-integration/assets/worldgen/workshops/gaea-canyon-run-v2\\mission.v1.json",
+    "title": "BEFEHL: DURCHBRUCH ZUM SCHLUCHTKOPF"
+  },
+  "outcome": "completed",
+  "schema": "panzer.canyon-ai-attempt.v1",
+  "seed": 29,
+  "simulation_hz": 60,
+  "wall_seconds": 2086.0168902
+}

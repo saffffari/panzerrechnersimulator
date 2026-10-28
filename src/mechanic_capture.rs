@@ -850,7 +850,7 @@ fn frame_at_size(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &
         r.ui_reset();
         // As in the window: the winter session carries its own sketch, otherwise the survey print.
         if !g.draw_canyon_map(r,&map.marks,&map.pins,map.cursor) && !g.draw_winter_map(r,&map.marks,&map.pins,map.cursor) {
-            ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position());
+            ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position(),g.mission_map_guidance().as_ref());
         }
         r.render_held_map_texture(device,queue,g.held_map_slot());
     }
@@ -1146,7 +1146,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         campaign_run.as_mut().unwrap().commit_prepared_attempt(start)?;
         g.enable_singleplayer_crew();
         anyhow::ensure!(!g.god && g.playtest_return_fire().is_none()
-            && g.singleplayer_living_crew()==Some(1) && g.campaign_map_state().is_some(),
+            && g.singleplayer_living_crew()==Some(5) && g.campaign_map_state().is_some(),
             "Act-One Playtest must have a live campaign route and its one mortal crewman");
     }
     if spec["setup"]["singleplayer_crew"]==true {g.enable_singleplayer_crew();}

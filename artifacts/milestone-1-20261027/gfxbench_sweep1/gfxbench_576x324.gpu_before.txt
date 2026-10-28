@@ -1,0 +1,33 @@
+91 %, 7420 MiB
+11156, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\CrossDeviceResume.exe
+11676, C:\Windows\explorer.exe
+2684, C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe
+2016, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe
+15900, C:\Program Files (x86)\Microsoft\EdgeWebView\Application\155.0.4283.62\msedgewebview2.exe
+12396, C:\Program Files\LogiOptionsPlus\logioptionsplus_agent.exe
+19488, C:\Users\saffari\AppData\Local\PowerToys\WinUI3Apps\PowerToys.QuickAccess.exe
+20604, C:\Program Files\WindowsApps\Microsoft.CommandPalette_0.12.12365.0_x64__8wekyb3d8bbwe\Microsoft.CmdPal.UI.exe
+19960, C:\Users\saffari\AppData\Local\PowerToys\WinUI3Apps\PowerToys.Peek.UI.exe
+10620, C:\Users\saffari\AppData\Local\PowerToys\PowerToys.FancyZones.exe
+15236, C:\Users\saffari\AppData\Local\PowerToys\PowerToys.exe
+21708, C:\Users\saffari\AppData\Local\PowerToys\WinUI3Apps\PowerToys.ShortcutGuide.exe
+22440, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TextInputHost.exe
+14728, C:\Users\saffari\AppData\Local\PowerToys\PowerToys.ColorPickerUI.exe
+9016, C:\Users\saffari\AppData\Local\Programs\twinkle-tray\Twinkle Tray.exe
+24908, C:\Program Files\WindowsApps\SpotifyAB.SpotifyMusic_1.306.1921.0_x64__zpdnekdrzrea0\Spotify.exe
+12596, C:\Program Files\WindowsApps\OpenAI.Codex_26.1021.3705.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe
+27436, C:\Program Files\Intel\Intel Graphics Software\IntelGraphicsSoftware.exe
+20520, C:\Users\saffari\AppData\Local\OpenAI\Codex\runtimes\cua_node\1fb7137c46617d50\bin\node_modules\@oai\sky\bin\windows\swift\x64\codex-computer-use-swift.exe
+30468, C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe
+8176, C:\Program Files\Common Files\Adobe\Adobe OS Extension\AdobeNotificationClient.exe
+23568, C:\Windows\System32\ApplicationFrameHost.exe
+5020, C:\Windows\ImmersiveControlPanel\SystemSettings.exe
+560, C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\KSP_x64.exe
+7372, C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe
+17780, C:\Windows\System32\ShellHost.exe
+33080, C:\Program Files\WindowsApps\Claude_4.29.0.0_x64__pzs8sxrjxfjjc\app\claude.exe
+28852, C:\Program Files\WindowsApps\Claude_4.29.0.0_x64__pzs8sxrjxfjjc\app\claude.exe
+43244, C:\Program Files (x86)\Microsoft\EdgeWebView\Application\155.0.4283.62\msedgewebview2.exe
+25196, C:\Program Files\Google\Chrome\Application\chrome.exe
+46964, C:\Program Files\Google\Chrome\Application\chrome.exe
+8600, C:\Program Files\WindowsApps\Microsoft.ScreenSketch_11.2608.41.0_x64__8wekyb3d8bbwe\SnippingTool\SnippingTool.exe
