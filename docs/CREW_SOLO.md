@@ -144,12 +144,13 @@ Checks, in order (the receipt holds each one's detail):
 6. A live 76 mm penetration through the hull side at the driver's seat, with the player at
    the cupola, leaves at least one man wounded and alive (in the recorded run it wounded the
    gunner, loader and radio operator in the legs and killed the driver outright).
-7. The crosshair on the wounded man from the interior walk offers the indicated treatment.
-8. Holding E at him for the treatment's real seconds consumes one item from the box and
-   lowers the bleed.
-9. A minute later the treated man is alive, at his post, working degraded (the untreated
-   radio operator bled out and died in that minute: "Radio: down, not answering." then
-   "Radio: gone.").
+7. The crosshair on the wounded man from the interior walk names the procedure he needs.
+8. The first procedure is worked end to end by hand (steps in order, items taken, quality
+   kept, the bleed controlled), then every procedure the man and the next-worst man need, then
+   a staged fracture's splint (the fracture is injected and named so in the receipt: a 76 mm
+   cone rarely breaks a bone); three or more distinct procedures, a still of the hands at
+   each.
+9. A minute later the treated man is alive, at his post, working degraded.
 10. The dead driver's body blocks the seat; dragged off (hold E), the seat is taken from the
     basket floor with the clamber.
 11. The gunner is killed by a live solid shot; nobody lays or fires the gun for ten seconds.
@@ -158,20 +159,41 @@ Checks, in order (the receipt holds each one's detail):
 13. With the driver dead the tank does not move on the commander's order; the player takes the
     seat and drives.
 
-State at the time of writing: checks 1-10 passed in the run of 2026-10-27 18:55 (receipt and
-stills `captures/crew_solo_20261027*`). That run then lost the Tiger to its own stowage at the
-gunner strike (a solid 76 mm slug through the gunner's seat set off the eight rounds left in
-the rear racks); the fixture now fires the last rounds off before every strike. The rerun of
-checks 11-13 with that fixture was blocked by the GPU being taken by another application
-(Kerbal Space Program, 97 % and 18.8 GB of 24.5 GB) at the time: the engine then comes up
-without ray queries and dies at renderer construction. Rerun with
+State at the time of writing (2026-10-27 evening): the run of 18:55 passed checks 1-10 in
+their earlier single-hold form (the receipt and stills were since overwritten by later
+attempts; the log of that run is quoted in the hand-over note). That run then lost the Tiger
+to its own stowage at the gunner strike (a solid 76 mm slug through the gunner's seat set off
+the eight rounds left in the rear racks); the fixture now fires the last rounds off before
+every strike. The procedure medkit (check 8 in its present form) and checks 11-13 with the
+new fixture are **not yet verified by play**: the GPU was held for the owner's other work
+(Kerbal Space Program at 97 % and 18.8 GB of 24.5 GB; the engine then comes up without ray
+queries and dies at renderer construction), and a hold on launching the game was in force.
+Pending captures: the whole `crew-solo` set (`01` crew at posts, `02` after the first shot,
+`03` crewman hit, `04_<procedure>_<man>` one per procedure, `05` dead gunner from the cupola,
+`06` the player at the sights, `07` driver dead and the tank halted, `08` the player driving)
+and the JSON receipt. Rerun with
 `tools/crew_solo_proof.sh captures/crew_solo_<date> C:/shop/panzerrechnersystem` and replace
 this paragraph with the result.
 
+## Medkit: done versus designed
+
+Done in code and unit-tested: the seven procedures with their step tables, cadence and turn
+rules, quality and interruption model, the varied finite kit with improvisation and
+scavenging, triage, the airway timer, the first-person driving of a procedure from the
+interior walk with the look locked to the hands, the crosshair as the step readout, the
+intercom lines for the result. Designed, not built: first-person hands and props for the
+procedures (there are no arm animations in the project yet), the man's breathing and voice
+as audio (no assets), scavenging a wreck's own kit (wreck pickups restock the box as a whole),
+and the morphine overdose beyond the one-dose-an-hour refusal.
+
 ## Unit tests
 
-`cargo test --release --locked --bin panzerrechnersystem -- first_aid crew_solo singleplayer_crew`:
-the wound time course (untreated femoral bleed degrades, knocks out and kills within five
+`cargo test --release --locked --bin panzerrechnersystem -- first_aid crew_solo singleplayer_crew`
+(24 tests): every procedure runs to its end with practised hands in about its nominal time; a
+rushed, interrupted tourniquet leaks while a practised one holds; the wrap cadence counts only
+alternating strokes and marks a loose wrap; improvised kit is used when the box is out and caps
+the result; triage puts the man nearest death first; an unconscious man on his back loses his
+airway unless positioned; burn care cools and dresses; the chest seal; the wound time course (untreated femoral bleed degrades, knocks out and kills within five
 minutes; tourniquet stops it; dressing slows it; a trunk bleed is only partly controlled;
 minor wounds clot), supply accounting (refusals cost nothing, out-of-supply, morphine limit,
 restock), morphine and fracture performance, head wound unconsciousness and concussion, fire

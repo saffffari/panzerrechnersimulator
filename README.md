@@ -120,9 +120,10 @@ operator are living men at their posts. The driver follows your WASD orders from
 gunner lays on contacts and fires under the standing order (**K** toggles fire at will / hold
 fire; **LMB** buttoned up at the cupola is the fire command), the loader serves the breech at a
 human rate. Hits wound them (bleeding, fractures, burns, unconsciousness) with a time course:
-go to the man from the interior walk and **hold E** to dress, tourniquet, splint or give
-morphine from the finite first-aid box, which restocks at the same pickups as ammunition and
-fuel. A dead man's station goes dark until you drag his body off the seat (**hold E**) and do
+go to the man from the interior walk and work the procedure his wound wants with your hands
+(tourniquet: place, windlass, secure; pressure dressing: cut away, pack, wrap, tie; splint,
+burn care, chest seal, airway, morphine), from the finite first-aid box, improvised when it is
+out, restocked at the same pickups as ammunition and fuel. The work is as good as you do it. A dead man's station goes dark until you drag his body off the seat (**hold E**) and do
 his job yourself, driver's seat included. See [`docs/CREW_SOLO.md`](docs/CREW_SOLO.md).
 
 LAN crew co-op is host-authoritative and needs no service or account:
