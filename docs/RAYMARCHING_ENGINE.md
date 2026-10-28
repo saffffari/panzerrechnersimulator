@@ -668,7 +668,7 @@ G-buffer leaves the relayed faces out, and after the deferred shade (after the b
 copied, so a relay does not glow into the cabin; the light the blocks let in arrives through
 the ray queries' periscope folds) each face is drawn into the HDR frame from its capture,
 depth-tested against the G-buffer and not written to it. Glass in front of a face (eyepieces,
-the sight) is drawn over it by the glass pass. `KESSEL_RM_SKIP=262144` turns the relays off.
+the sight) is drawn over it by the glass pass. `KESSEL_RM_SKIP=524288` turns the relays off (262144 is the detail terrain on main).
 What a port shows is therefore the shader backend's rendering of the outside (its lighting, its
 weather), not this backend's; the relay geometry (entrance face, objective, direction-preserving
 cupola relays) is exactly the shader backend's. The gunner's sight was unaffected: its view is

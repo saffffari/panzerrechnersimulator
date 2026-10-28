@@ -138,7 +138,7 @@ struct FrameUniform {
 }
 
 /// `KESSEL_RM_SKIP` bit: no relayed exterior views on the vision blocks and sights.
-const SKIP_RELAYS: u32 = 262144;
+const SKIP_RELAYS: u32 = 524288;
 
 /// Sky cache refresh parameters (rm_sky_cache.wgsl `SkyCacheParams`).
 #[repr(C)]
@@ -344,7 +344,7 @@ pub(super) struct Backend {
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
     /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow, 32768 ray queries
     /// (world-space occlusion and the reflection fallback), 65536 surface wear, 131072 cloud
-    /// shadows (the eye's cloud attenuation for the whole frame instead), 262144 relayed
+    /// shadows (the eye's cloud attenuation for the whole frame instead), 524288 relayed
     /// exterior views on the vision blocks and sights.
     debug_skip: u32,
 }
