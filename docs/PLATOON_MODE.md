@@ -109,8 +109,11 @@ from the seed and the script.
 
 Targets: `bearing N` (compass degrees, clock positions converted against the leader's heading),
 `contact <label>` where the label must match one the context listed (`T-34 #3`; the index is the
-enemy slot, stable for the run), `marker <name>` (`Wegpunkt N`, the next three route knots ahead
-of the leader), or `left` / `right` / `front` / `rear`. Anything the context did not list is
+enemy slot, stable for the run), `marker <name>` (`Wegpunkt N`, N the route knot index: the next
+three knots after the route edge nearest the leader, at least 30 m away), or `left` / `right` /
+`front` / `rear`. Every movement goal (advance, flank, fall back) is snapped to the nearest cell
+the course measured clear for a tank within 80 m (`StreetNav::nearest_clear`), so an order into a
+rock face becomes an order to the nearest drivable spot. Anything the context did not list is
 dropped to "no target" rather than invented. Addressee: `all`, or one callsign (the commander's
 surname also works in the offline parser).
 
@@ -125,7 +128,10 @@ Driving: `navigate` (pivot above 0.7 rad error, else drive), the shared
 course's measured clear-cell test (`winter_patrol_point_clear`) as a wall veto, a stuck watchdog
 (2.5 s of wanting to move without moving -> 1.6 s of reverse and swing), and hull-to-hull contact
 with the leader and the enemies through the same inverse-mass pair solver the enemies use against
-the player. There is no navmesh path planning for the wingmen yet (open item).
+the player. Movement orders halt for a contact inside 500 m (the Tiger cannot fire on the move);
+`follow` halts within 60 m of its slot for a contact inside 900 m. There is no path planning along
+the street grid for the wingmen yet (open item): goals are snapped to clear cells, the drive to
+them is a straight line with avoidance.
 
 ## Prompt and context design
 
@@ -190,14 +196,52 @@ See the receipts in `captures/platoon_proof_*` (gitignored) and the section belo
 the proof run. Build: `cargo build --release --locked --bin panzerrechnersystem` on Windows
 (`.cargo/config.toml` 64 MiB stack unchanged).
 
-PROOF_RESULTS_PLACEHOLDER
+Proof run 2026-10-27 (`platoon-proof platoon_proof_20261027 29 200`, Windows 11 / RTX 4090,
+assets from the main checkout, `KESSEL_NO_RT=1` for the stills, offline radio because this box has
+no `ANTHROPIC_API_KEY`):
+
+| Item | Result |
+|---|---|
+| Build | `cargo build --release --locked --bin panzerrechnersystem` passes; `.cargo/config.toml` unchanged |
+| Unit tests | `cargo test --bin panzerrechnersystem -- radio_llm platoon`: grammar, addressee/target parsing, model-output validation, order application, navigation: all pass |
+| Transmissions | 14 keyed by the script, 14 answered (`path=fallback reason=no_key`, 0-1 ms each) |
+| Orders exercised | report_status, spot, follow, flank_right, cover_me, hold, engage, cease_fire, fall_back, advance, flank_left (the whole grammar) |
+| Formation | both wingmen formed up and followed at 27-65 m while the leader drove the first 230 m at up to 8.4 m/s |
+| Fighting | Anton engaged T-34 #7 at 480 m on his own initiative and was credited the kill; the leader's own kill count was 1 |
+| fall_back | both tanks reversed/drove to 111-117 m behind the leader (goals snapped to the clear floor) |
+| advance | Anton drove from 111 m behind to the next route knot (`Wegpunkt` ahead of the leader), arriving 7 m off the leader |
+| flank_left / flank_right | Berta moved out toward the snapped flank goal; a contact inside 500 m halted her to fight, as designed |
+| cease_fire / engage | weapons hold set and cleared; `engage` with nothing in sight answered "No target in sight. Over." |
+| report_status / spot | replies carried the real round counts, damage, crew and the contacts in the tank's own line of sight (`T-34 #9 bearing 179, 550 metres, stationary; T-34 #12 bearing 165, 950 metres, moving`) |
+| Captures | `captures/platoon_proof_20261027_t{002,030,070,110,160}.png` and `_final.png` (exterior chase view with the radio log drawn on the still), `_radio.jsonl`, `_trace.jsonl`, `_result.json` |
+| Wall time | 131 s for 200 simulated seconds |
+
+Caveats of this run: the rule-based leader pilot stalled after its first engagement (from t=30 s), so
+formation following under movement is only evidenced for the first 30 s and in the recoveries
+after orders. The **live model path was not exercised**: no key is present on this machine
+(process, user and machine environment all unset), so every call went through the offline
+parser. The live path is wired end to end (request body, structured output, validation, timeout
+and refusal fallback) but its latency and cost are estimates (table above) until a run with
+`ANTHROPIC_API_KEY` set prints the `path=llm ... latency= ... cost=` lines; `platoon-proof` will
+record them in `_result.json` (`radio.latency_ms_median`, `radio.cost_usd`) with no code change.
+
+Headless note: the proof's exterior stills run raster-only because the renderer's RT surface
+pack panics on a degenerate instanced transform (`RT batch 4798 instance 703 ... transform is
+non-invertible`) at t≈2 s on Canyon v2 in this headless capture path. Not a platoon issue; left
+for the renderer owner. The stills also inherit the player's view exposure state, so dusk frames
+read dark.
+
 
 ## Open items
 
 - No live playtest with a human at the keyboard on this branch yet; the proof's leader is the
   rule-based `CanyonPilot`.
-- Wingmen have no navmesh path planning; `advance`/`flank` goals that lie behind a rock face are
-  reached only as far as the wall veto and the stuck watchdog get them.
+- Wingmen have no path planning along the street grid; goals are snapped to clear cells but the
+  drive is a straight line, so a goal around a bend is reached only as far as the wall veto and
+  the stuck watchdog get them. `StreetNav::path` exists and is the obvious next step.
+- The headless proof's stills need `KESSEL_NO_RT=1` (renderer RT pack panic on a degenerate
+  instanced transform in this path; see above). The leader pilot stalls after its first fight on
+  seed 29, so a longer following run needs another seed or a human leader.
 - The wingman damage model behind a penetrated plate is a simplified deterministic seat/module
   risk model, not the player's fragment shower (ledger entry in `docs/PHYSICAL_TRUTH_AUDIT.md`).
   Their HE rounds are counted but never fired (no soft targets are chosen for the wingmen yet).

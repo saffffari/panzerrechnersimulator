@@ -45,11 +45,13 @@ fn exterior_capture(
     queue: &wgpu::Queue,
     path: &str,
 ) -> anyhow::Result<()> {
-    // Chase camera behind-above the player's Tiger, looking at the platoon's centroid.
+    // Chase camera behind-above the player's Tiger, looking at the platoon's centroid. Same
+    // save/render/restore discipline as `mechanic_capture::frame_at_size`; the RT pass is skipped
+    // for this exterior still so the capture never rebuilds the surface atlas mid-run.
     let player = g.player.center();
     let mut centroid = player;
     let mut n = 1.0;
-    for (i, _) in (0..2).enumerate() {
+    for i in 0..2 {
         if let Some(pos) = g.platoon_wingman_center(i) {
             centroid += pos;
             n += 1.0;
@@ -58,17 +60,35 @@ fn exterior_capture(
     centroid /= n;
     let back = g.player.forward();
     let pos = player - back * 34.0 + Vec3::Y * 12.0 + g.player.right() * 10.0;
+    let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter, r.interior_light,
+        r.interior_haze, r.rt_mix, r.interior_atmosphere_enabled(), r.rt_skip);
+    r.begin_coop_shadow_frame(player);
     r.camera.pos = pos;
     r.camera.set_forward((centroid + Vec3::Y * 1.0 - pos).normalize_or_zero());
     r.camera.fov_y = 58f32.to_radians();
     r.reticle = false;
+    r.optic_mask = 0.0;
     r.interior_light = 0.0;
     r.interior_haze = 0.0;
-    r.rt_mix = 1.0;
-    r.weather_shelter = g.building_weather_shelter_at(r.camera.pos);
-    r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
-    g.prepare_world_survey(r, 1.0 / 60.0);
-    r.render_to_png(device, queue, path, CAPTURE_W, CAPTURE_H)?;
+    r.weather_shelter = 0.0;
+    r.set_interior_atmosphere_enabled(false);
+    r.rt_skip = true;
+    r.ui_reset();
+    // The radio log on the still, drawn as in the window (display-resolution text).
+    let mut y = 0.86;
+    for (callsign, text, alpha, entry) in g.platoon_hud_lines().iter().rev() {
+        let color = if *entry { [1.0, 0.82, 0.46, alpha * 0.95] } else if callsign == crate::radio_llm::PLAYER_CALLSIGN { [0.92, 0.92, 0.88, alpha * 0.85] } else { [0.72, 0.92, 0.74, alpha * 0.95] };
+        let line = if callsign.is_empty() { text.clone() } else { format!("{}: {}", callsign.to_uppercase(), text) };
+        r.draw_text(&line, 0.02, y, 0.020, color, crate::ui::Align::Left);
+        y -= 0.028;
+    }
+    let rgba = r.render_to_rgba_with_hud(device, queue, CAPTURE_W, CAPTURE_H);
+    r.camera = saved.0; r.reticle = saved.1; r.optic_mask = saved.2; r.precipitation = saved.3;
+    r.weather_shelter = saved.4; r.interior_light = saved.5; r.interior_haze = saved.6; r.rt_mix = saved.7;
+    r.set_interior_atmosphere_enabled(saved.8); r.rt_skip = saved.9;
+    r.end_coop_shadow_frame();
+    let rgba = rgba?;
+    image::save_buffer(path, &rgba, CAPTURE_W, CAPTURE_H, image::ColorType::Rgba8)?;
     println!("[platoon-proof] capture {path}");
     Ok(())
 }

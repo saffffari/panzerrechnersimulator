@@ -40,6 +40,7 @@ const FLANK_SIDE_M: f32 = 90.0;
 const FLANK_AHEAD_M: f32 = 120.0;
 const ENGAGE_RANGE_M: f32 = 1200.0;
 const COMBAT_STOP_RANGE_M: f32 = 900.0;
+const CLOSE_CONTACT_M: f32 = 500.0;
 const FALL_BACK_M: f32 = 120.0;
 const RELOAD_S: f32 = 9.0;
 const ARRIVE_M: f32 = 6.0;
@@ -112,7 +113,7 @@ pub enum Standing {
     Follow,
     Hold,
     Advance(Vec2),
-    Flank { side: f32, anchor: Vec2, heading: f32 },
+    Flank { side: f32, goal: Vec2 },
     Cover,
     FallBack(Vec2),
 }
@@ -421,13 +422,20 @@ impl Game {
     fn platoon_markers(&self) -> Vec<(String, Vec2)> {
         let Some(spec) = self.canyon_spec.as_ref() else { return Vec::new() };
         let here = xz(self.player.pos);
-        let progress = crate::canyon_director::route_progress(&spec.route, here);
-        let mut along = 0.0;
+        // The route edge nearest the leader; the markers are the knots after it, 30 m or more away.
+        let mut best = (f32::INFINITY, 0usize);
+        for (i, e) in spec.route.windows(2).enumerate() {
+            let ab = e[1] - e[0];
+            let t = if ab.length_squared() > 1e-6 { ((here - e[0]).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+            let d = (e[0] + ab * t).distance_squared(here);
+            if d < best.0 {
+                best = (d, i);
+            }
+        }
         let mut out = Vec::new();
-        for (i, edge) in spec.route.windows(2).enumerate() {
-            along += edge[0].distance(edge[1]);
-            if along > progress + 30.0 {
-                out.push((format!("Wegpunkt {}", i + 2), edge[1]));
+        for (k, knot) in spec.route.iter().enumerate().skip(best.1 + 1) {
+            if knot.distance(here) >= 30.0 {
+                out.push((format!("Wegpunkt {k}"), *knot));
                 if out.len() >= 3 {
                     break;
                 }
@@ -546,6 +554,38 @@ impl Game {
         if !result.replies.is_empty() {
             self.platoon_squelch(0.45);
         }
+        // Snap movement goals onto the course's measured clear floor, so an order into a rock
+        // face becomes an order to the nearest drivable cell.
+        let goals: Vec<(usize, Vec2)> = {
+            let p = self.platoon.as_ref().unwrap();
+            p.wingmen
+                .iter()
+                .enumerate()
+                .filter_map(|(i, w)| match &w.standing {
+                    Standing::Advance(g) | Standing::FallBack(g) | Standing::Flank { goal: g, .. } => Some((i, *g)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let snapped: Vec<(usize, Vec2)> = goals.into_iter().map(|(i, g)| (i, self.platoon_snap_goal(g))).collect();
+        let p = self.platoon.as_mut().unwrap();
+        for (i, g) in snapped {
+            match &mut p.wingmen[i].standing {
+                Standing::Advance(x) | Standing::FallBack(x) => *x = g,
+                Standing::Flank { goal, .. } => *goal = g,
+                _ => {}
+            }
+        }
+    }
+
+    /// The nearest cell the course measured clear for a tank, within 80 m; the goal itself when
+    /// the map has no street navigation grid.
+    fn platoon_snap_goal(&self, goal: Vec2) -> Vec2 {
+        self.winter_encounter
+            .as_ref()
+            .and_then(|e| e.streets())
+            .and_then(|s| s.nav().nearest_clear(goal, 80.0))
+            .unwrap_or(goal)
     }
 
     /// Per-frame platoon step, called from `Game::update` in place of `update_allied_tigers`.
@@ -649,6 +689,8 @@ impl Game {
             let here = xz(ally_pos);
             let heading = self.allies[index].tank.heading;
             let in_contact = target.is_some_and(|(_, _, d)| d < COMBAT_STOP_RANGE_M);
+            // Movement orders halt only for a close contact worth a halt-and-shoot.
+            let close_contact = target.is_some_and(|(_, _, d)| d < CLOSE_CONTACT_M);
             let (mut drive, mut steer) = match &w.standing {
                 Standing::Follow => {
                     let goal = self.platoon_formation_point(index);
@@ -662,12 +704,9 @@ impl Game {
                 }
                 Standing::Hold | Standing::Cover => (0.0, 0.0),
                 // Fight first, then move: the Tiger cannot fire on the move.
-                Standing::Advance(goal) => if in_contact { (0.0, 0.0) } else { navigate(here, heading, *goal, 0.8, ARRIVE_M) },
-                Standing::Flank { side, anchor, heading: fh } => {
-                    let fwd = Vec2::new(fh.sin(), fh.cos());
-                    let right = Vec2::new(fwd.y, -fwd.x);
-                    let goal = *anchor + right * side * FLANK_SIDE_M + fwd * FLANK_AHEAD_M;
-                    if in_contact && here.distance(goal) < 40.0 { (0.0, 0.0) } else { navigate(here, heading, goal, 0.9, ARRIVE_M) }
+                Standing::Advance(goal) => if close_contact { (0.0, 0.0) } else { navigate(here, heading, *goal, 0.8, ARRIVE_M) },
+                Standing::Flank { goal, .. } => {
+                    if close_contact || here.distance(*goal) < ARRIVE_M { (0.0, 0.0) } else { navigate(here, heading, *goal, 0.9, ARRIVE_M) }
                 }
                 Standing::FallBack(goal) => {
                     // Reverse out of contact while the gun still faces the enemy; turn once clear.
@@ -1002,6 +1041,12 @@ impl Game {
                     "speed": tank.map(|t| t.speed),
                     "range_to_leader_m": tank.map(|t| xz(t.pos).distance(xz(self.player.pos))),
                     "standing": w.standing.label(),
+                    "goal": match &w.standing {
+                        Standing::Advance(g) | Standing::FallBack(g) => Some(g.to_array()),
+                        Standing::Flank { goal, .. } => Some(goal.to_array()),
+                        _ => None,
+                    },
+                    "heading_deg": tank.map(|t| compass_deg(xz(t.forward()))),
                     "engage": w.engage.as_ref().map(|e| e.describe()),
                     "weapons_hold": w.weapons_hold,
                     "ap": w.ap_rounds, "he": w.he_rounds,
@@ -1040,7 +1085,7 @@ fn apply_order(
     markers: &[(String, Vec2)],
     leader_pos: Vec2,
     leader_fwd: Vec2,
-    leader_heading: f32,
+    _leader_heading: f32,
     enemies: &[(usize, Vec2, bool)],
 ) {
     let right = Vec2::new(leader_fwd.y, -leader_fwd.x);
@@ -1078,7 +1123,7 @@ fn apply_order(
         }
         OrderKind::FlankLeft | OrderKind::FlankRight => {
             let side = if order.kind == OrderKind::FlankLeft { -1.0 } else { 1.0 };
-            w.standing = Standing::Flank { side, anchor: leader_pos, heading: leader_heading };
+            w.standing = Standing::Flank { side, goal: leader_pos + right * side * FLANK_SIDE_M + leader_fwd * FLANK_AHEAD_M };
         }
         OrderKind::Engage => {
             w.weapons_hold = false;

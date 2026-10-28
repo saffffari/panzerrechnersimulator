@@ -932,8 +932,8 @@ fn parse_target(norm: &str, kind: OrderKind, ctx: &RadioContext) -> OrderTarget 
             return OrderTarget::Marker(m.clone());
         }
     }
-    // Sector words (flank orders consume left/right themselves)
-    if !matches!(kind, OrderKind::FlankLeft | OrderKind::FlankRight) {
+    // Sector words (flank orders consume left/right themselves; "fall back" consumes "back")
+    if !matches!(kind, OrderKind::FlankLeft | OrderKind::FlankRight | OrderKind::FallBack) {
         if has_any(norm, &["left", "links"]) {
             return OrderTarget::Sector("left".into());
         }
