@@ -667,6 +667,28 @@ If the report came from the shader backend (the launcher's default, `-Renderer s
 eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
 and any aliasing of the small relayed views under motion would need their own look.
 
+## Sight lamps (2026-10-28)
+
+Requests: "a small light indicator visible while in gun sights that displays loading status" and
+"another light colour coded for HE and AP rounds in gunner sight view". The Tiger carried no such
+lamps (its loader called "Fertig" or tapped the gunner), so they are a gameplay instrument, named
+in the ledger; `KESSEL_SIGHT_LAMPS=0` leaves them out. Two 1 cm lenses (`interior_rig.rs`
+`SIGHT_LOAD_FIXTURES`, `SIGHT_ROUND_FIXTURES`) sit on a bracket off the sight body, just left of
+the binocular field as the eyepiece composite frames it, and a copy under the commander's front
+vision block. They are real emitters at the cabin lamps' power in the light list (they glow on
+nearby steel at night and wash out by day), driven by the reload machine (`Game::sight_lamp_states`):
+
+- Loading: bright green when the breech is closed, loaded and ready; dim red while the loader
+  works (extracting, ramming, or shut without a ready round); dark with no fit loader. Brightness
+  separates the two for red-green colour blindness.
+- Round: the chamber's round, or the one in the loader's hands: warm white for armour-piercing
+  (PzGr. 39), amber for high explosive (SprGr.); dark when there is none. A blue APCR (PzGr. 40)
+  lens is fitted but never lights: the reload machine chambers APCR as the armour-piercing round.
+
+Stills: `captures/rm_lamps2_gunner_composite*.png` (noon with AP ready, night with HE ready, night
+just after a shot). On main, where the crew model has a wounded loader working slowly, the loading
+lamp blinks slowly while he does (merge branch).
+
 ## Winter whitewash (2026-10-28)
 
 Request: "we need a proper winter camo look". The Tiger is painted charcoal German grey (linear

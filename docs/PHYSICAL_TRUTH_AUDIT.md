@@ -76,6 +76,12 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Sight lamps (2026-10-28; `Game::sight_lamp_states`, `interior_rig::SIGHT_LOAD_FIXTURES`,
+  `SIGHT_ROUND_FIXTURES`, `KESSEL_SIGHT_LAMPS=0` removes them): a gameplay instrument the Tiger
+  did not carry (its loader reported by voice or a tap): a loading lamp and a chambered-round lamp
+  beside the gunner's eyepiece and under the commander's front vision block, real emitters at the
+  cabin lamps' power, driven by the reload machine's state, never by the player's selection. The
+  APCR lens never lights because the reload machine chambers APCR as the armour-piercing round.
 - Winter whitewash (2026-10-28; `rm_gbuffer.wgsl` `apply_whitewash`, `Renderer::whitewash`): in
   winter acts the player's Tiger's exterior paint (recognised by its exact swatch) takes a chalky
   white coat (linear 0.56-0.72), thin where the brush ran dry, worn through on the decks, streaked

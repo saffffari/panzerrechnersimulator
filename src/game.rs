@@ -7626,6 +7626,18 @@ const LEVER_OPEN: f32 = 0.8; // open enough to work the breech
 const LEVER_SHUT: f32 = 0.15; // closed enough to fire
 
 /// One state drives both the visible reload lamp and its point light.
+/// The sight lamps' lenses in slot order: ready, working, armour-piercing, APCR, high explosive.
+fn sight_lamp_fixture(k: usize) -> crate::interior_rig::FiniteCubeLamp {
+    if k < 2 { crate::interior_rig::SIGHT_LOAD_FIXTURES[k] } else { crate::interior_rig::SIGHT_ROUND_FIXTURES[(k - 2).min(2)] }
+}
+
+/// `KESSEL_SIGHT_LAMPS=0` leaves the sight's loading and round lamps out (they are a gameplay
+/// instrument; the Tiger's loader reported by voice or a tap).
+fn sight_lamps_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KESSEL_SIGHT_LAMPS").as_deref() != Ok("0"))
+}
+
 fn breech_indicator_state(breech: Breech, lever_open: f32, ready: bool) -> usize {
     if lever_open > LEVER_SHUT || !lever_open.is_finite() {
         1 // amber: open or still working the block, even with a seated live round
@@ -8548,6 +8560,7 @@ struct Slots {
     foam_batch: [usize; N_FOAM_BATCHES], // instanced flying/stuck physical extinguisher grains
     annun: [usize; N_LAMP], // interior annunciator lamps (fire/breech/repair/station)
     breech_lamp: [[usize; 3];2], // both sides: [green, amber, red], one active lens each
+    sight_lamps: [[usize; 5]; 2], // gunner's sight, commander's cupola: [ready, working, AP, APCR, HE]
     lan_crew: [usize; 5], // seated living body pool (permanent face identity slots)
     commander_crew: [usize; 5], // upright counterpart for each identity taking the cupola
     crew_helmet: [usize; 5], // source CC0 steel helmet, shared geometry/material, head-attached
@@ -11416,6 +11429,14 @@ impl Game {
                 Vec3::splat(fixture.half_size_m),fixture.srgb));
             slot
         }));
+        // The sight's loading and round lamps, at the gunner's sight and under the cupola.
+        let sight_lamps: [[usize; 5]; 2] = std::array::from_fn(|_| std::array::from_fn(|k| {
+            let fixture = sight_lamp_fixture(k);
+            let slot = scene.len();
+            scene.push(box_mesh(Vec3::splat(-fixture.half_size_m),
+                Vec3::splat(fixture.half_size_m), fixture.srgb));
+            slot
+        }));
 
         // Full textured crew bodies live before the legacy FX tail. Each of the five original
         // assignments owns one permanent face identity and both a seated and standing pose slot.
@@ -11908,6 +11929,7 @@ impl Game {
             foam_batch,
             annun,
             breech_lamp,
+            sight_lamps,
             lan_crew,
             commander_crew,
             crew_helmet,
@@ -12454,6 +12476,9 @@ impl Game {
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
         for s in breech_lamp.into_iter().flatten() {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
+        }
+        for s in sight_lamps.into_iter().flatten() {
+            renderer.mark_own_emissive(s);
         }
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
         let authored_grass_mask = manifest.as_ref().and_then(|m|
@@ -18731,6 +18756,26 @@ impl Game {
                         emitting_meshes.push(Some(slot));
                     } else {
                         r.set_visible(slot,false);r.set_emissive(slot,0.0);
+                    }
+                }
+            }
+            // The sight's loading and round lamps (`sight_lamp_states`): one lens of each lit, the
+            // other lens shown dark. Real emitters in the light list at lamp power; no shadow cube.
+            let (load, round) = self.sight_lamp_states(state);
+            for station in 0..2 {
+                let base = self.sight_lamp_frame(station);
+                for (k, &slot) in self.slots.sight_lamps[station].iter().enumerate() {
+                    // The round lamp sits 3 cm beside the loading lamp.
+                    let model = base * Mat4::from_translation(Vec3::new(if k < 2 { 0.0 } else { 0.03 }, 0.0, 0.0));
+                    let lit = if k < 2 { load == Some(k) } else { round == Some(k - 2) };
+                    // The dark lens of each lamp: working (red) and armour-piercing (white) glass.
+                    let shown_dark = (k == 1 && load.is_none()) || (k == 2 && round.is_none());
+                    if lit {
+                        lights.push(Self::drive_finite_lamp(r, slot, model, sight_lamp_fixture(k).sample(practical_gain)));
+                    } else if shown_dark && sight_lamps_enabled() {
+                        r.set_visible(slot, true); r.set_emissive(slot, 0.0); r.set_model(slot, model);
+                    } else {
+                        r.set_visible(slot, false); r.set_emissive(slot, 0.0);
                     }
                 }
             }
@@ -30407,6 +30452,43 @@ impl Game {
 
     fn breech_lamp_state(&self) -> usize {
         breech_indicator_state(self.breech, self.lever_open, self.player_can_fire())
+    }
+
+    /// The sight lamps' lit lenses from the reload machine: loading (0 ready: closed, loaded and
+    /// mechanically ready; 1 working: the loader at the breech, extracting or ramming or not yet
+    /// ready; dark with no fit loader), and the round (0 armour-piercing, 2 high explosive; the
+    /// chamber's round, else the one in the loader's hands; dark when there is none). APCR is not
+    /// chambered as its own round (it fires as PzGr. 39), so its lens never lights.
+    fn sight_lamp_states(&self, breech_state: usize) -> (Option<usize>, Option<usize>) {
+        if !sight_lamps_enabled() { return (None, None); }
+        let load = match breech_state {
+            0 => Some(0),
+            _ if self.crew_ok(CrewRole::Loader) => Some(1),
+            _ => None,
+        };
+        let round_present = matches!(self.breech, Breech::Loaded) || self.grab || self.ram > 0.0;
+        (load, round_present.then_some(if self.he_loaded { 2 } else { 0 }))
+    }
+
+    /// Where the sight lamps sit: on a bracket off the sight body beside the gunner's eyepiece,
+    /// just left of the binocular field as the eyepiece composite frames it, on the turret-wall
+    /// side (the gun's cradle fills the right) (0); and under the commander's front vision block (1).
+    fn sight_lamp_frame(&self, station: usize) -> Mat4 {
+        if station == 0 {
+            let sight = self.sight_model();
+            let (eye, forward, _) = tiger_gunner_sight::interior_camera(sight);
+            let right = forward.cross(sight.transform_vector3(Vec3::Y)).normalize_or_zero();
+            let up = right.cross(forward);
+            Mat4::from_rotation_translation(Quat::from_mat4(&sight).normalize(),
+                eye + forward * 0.30 - right * 0.27 - up * 0.02)
+        } else {
+            let turret = self.player.turret_model();
+            let forward = self.player.turret_forward();
+            let right = forward.cross(turret.transform_vector3(Vec3::Y)).normalize_or_zero();
+            let up = right.cross(forward);
+            Mat4::from_rotation_translation(Quat::from_mat4(&turret).normalize(),
+                self.player.commander_eye() + forward * 0.28 + right * 0.05 - up * 0.12)
+        }
     }
 
     /// Animate the coaxial / hull MG34 FX: the stroboscopic muzzle-flash flicker at the live port,
