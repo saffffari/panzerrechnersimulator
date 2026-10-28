@@ -29,6 +29,9 @@ struct Push {
     // x emissive intensity, y metallic factor, z roughness factor,
     // w kind: 0 ordinary, 1 night window, 2 own-colour lamp, 3 terrain, 4 grass.
     params: vec4<f32>,
+    // x snow load 0..1 (snow_cover): the lying share goes to the shade pass in g0.a of ordinary
+    // surfaces.
+    extra: vec4<f32>,
 };
 var<push_constant> pc: Push;
 
@@ -38,6 +41,9 @@ struct VsOut {
     @location(1) normal: vec3<f32>,
     @location(2) relative: vec3<f32>,
     @location(3) tangent: vec4<f32>,
+    // Where the snow breakup field is sampled: the mesh's own frame in metres for a single
+    // (possibly moving) mesh, world space for static instances.
+    @location(4) local: vec3<f32>,
 };
 
 fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
@@ -49,7 +55,7 @@ fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(c0 * inv_det, c1 * inv_det, c2 * inv_det);
 }
 
-fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>) -> VsOut {
+fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>) -> VsOut {
     let world = (model * vec4(pos, 1.0)).xyz;
     let linear = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
     let n = normalize(inverse_transpose_3x3(linear) * normal);
@@ -60,13 +66,15 @@ fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
     out.uv = uv;
     out.normal = n;
     out.tangent = vec4(t, tangent.w);
+    out.local = local;
     return out;
 }
 
 @vertex
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
       @location(3) tangent: vec4<f32>) -> VsOut {
-    return project(pc.model, pos, normal, uv, tangent);
+    let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+    return project(pc.model, pos, normal, uv, tangent, pos * metric);
 }
 
 @vertex
@@ -88,7 +96,7 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         n.y -= dot(derivative, n) / max(1.0 + derivative.y, 0.1);
         t += derivative * t.y;
     }
-    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w));
+    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz);
 }
 
 struct GOut {
@@ -168,7 +176,10 @@ fn fs(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
             n = normalize(n + vec3(gx, 0.0, gz) * 1.2);
         }
     }
-    out.g0 = vec4(albedo, select(0.0, kind, kind > 2.5));
+    // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
+    // kinds 3+ keep their code.
+    let lying = rm_snow_lying(in.local, n, clamp(pc.extra.x, 0.0, 1.0));
+    out.g0 = vec4(albedo, select(lying * 0.9, kind, kind > 2.5));
     out.g1 = vec4(n, roughness);
     out.g2 = vec4(0.0, 0.0, 0.0, metallic);
     return out;

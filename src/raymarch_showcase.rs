@@ -80,6 +80,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     anyhow::ensure!(graphics::shader_backend_enabled(), "raymarch-showcase requires KESSEL_RENDERER=raymarch or shader");
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("palette") { return run_palette(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("haze") { return run_haze(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("res") { return run_resolution(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_wreck_sunset_near.png")).exists(),
         "preserving existing showcase; choose a new prefix");
     let manifest = crate::canyon::manifest_path();
@@ -323,6 +325,147 @@ fn run_haze(prefix: &str) -> anyhow::Result<()> {
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "disclosure": "Staged fixture (banished enemies). Clock and weather overridden. Observer cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=res`: the stills for judging an internal resolution (run once per
+/// `KESSEL_INTERNAL_RES`): a live T-34 at 1,500 m through the TZF, the Tiger at 25 m in low sun,
+/// the burning wreck at dusk, the commander's cabin at night. Same fixtures at every grid.
+fn run_resolution(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_t34_1500m_sight.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: 2400, ch: 1350, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    rig.clock(&mut r, "1942-12-21T10:30:00Z")?;
+    step(&mut g, &mut r, 30, &idle);
+    // A live T-34 1,500 m ahead of the Tiger, broadside, laid on through the gunner's sight.
+    let tiger = g.player.pos;
+    let forward = g.player.forward();
+    let far = tiger + Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero() * 1500.0;
+    let t34 = g.debug_first_t34().context("fixture needs a T-34")?;
+    g.debug_place_enemy(t34, far.x, far.z, 1.57);
+    g.debug_set_enemy_active(t34, true);
+    step(&mut g, &mut r, 20, &idle);
+    let target = g.enemies[t34].pos + Vec3::Y * 1.2;
+    g.debug_lay_gun_at(target);
+    g.station = Station::Gunner;
+    rig.station_camera();
+    step(&mut g, &mut r, 40, &idle);
+    rig.still(&mut r, "t34_1500m_sight", "a live T-34 broadside at 1,500 m through the TZF")?;
+    rig.observe(&mut r, tiger + Vec3::new(-14.0, 3.2, -2.0) + forward * -10.0, tiger + Vec3::Y * 1.4, 50.0);
+    rig.still(&mut r, "tiger_25m", "the Tiger at about 25 m, mid-morning sun")?;
+    let wreck = g.debug_stage_burning_t34(WRECK.x, WRECK.y).context("fixture needs a second T-34")?;
+    rig.clock(&mut r, "1942-12-21T12:40:00Z")?;
+    step(&mut g, &mut r, 300, &idle);
+    let origin = g.enemies[wreck].pos;
+    rig.observe(&mut r, origin + Vec3::new(10.0, 1.7, -12.0), origin + Vec3::Y * 1.8, 58.0);
+    rig.still(&mut r, "wreck_dusk", "the burning wreck at sunset")?;
+    rig.clock(&mut r, "1942-12-21T19:30:00Z")?;
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    rig.station_camera();
+    step(&mut g, &mut r, 60, &idle);
+    rig.still(&mut r, "cabin_night", "the commander's post at night")?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.res.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixtures (banished enemies, held fire, a live T-34 at 1,500 m, one burning T-34). Clock and weather overridden. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=snow`: snow lying on the Tiger over time (`snow_cover`): the clean hull,
+/// after two minutes of steady snowfall, after a fast drive, after a shot, after a traverse; the
+/// each from behind and from above the hull, the sky clock pinned. The world keeps its winter cover.
+fn run_snow(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_0_clean.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    // Steady snowfall from a grey midday sky (storm_weather intensity 1).
+    r.set_weather_override(Some(1.0));
+    rig.clock(&mut r, "1942-12-21T09:30:00Z")?;
+    // The same light for every still: the series spans three simulated minutes, which the day
+    // cycle (FULL_DAY_S of play for the whole day) would otherwise carry into sunset.
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.debug_set_snow_cover(0.0, crate::snow_cover::WINTER_WORLD_LOAD);
+    step(&mut g, &mut r, 30, &idle);
+    let follow = |g: &Game| {
+        let p = g.player.pos;
+        let f = g.player.forward();
+        let side = f.cross(Vec3::Y).normalize_or_zero();
+        (p - f * 6.5 + side * 3.0 + Vec3::Y * 4.2, p + Vec3::Y * 1.3 + f * 1.0)
+    };
+    // A high three-quarter view from the other side shows the deck, turret roof and fenders.
+    let above = |g: &Game| {
+        let p = g.player.pos;
+        let f = g.player.forward();
+        let side = f.cross(Vec3::Y).normalize_or_zero();
+        (p - f * 4.0 - side * 4.5 + Vec3::Y * 8.5, p + Vec3::Y * 1.2)
+    };
+    let mut still = |g: &Game, r: &mut crate::renderer::Renderer, rig: &mut Rig, name: &str, note: &str| -> anyhow::Result<()> {
+        let note = format!("{note}; Tiger snow load {:.2}", g.player_snow_cover());
+        let (eye, at) = follow(g);
+        rig.observe(r, eye, at, 55.0);
+        rig.still(r, name, &note)?;
+        let (eye, at) = above(g);
+        rig.observe(r, eye, at, 50.0);
+        rig.still(r, &format!("{name}_top"), &format!("{note}; from above"))
+    };
+    still(&g, &mut r, &mut rig, "0_clean", "the clean hull at the start")?;
+    // Two minutes of snowfall, rendering once a second so frame-driven state stays live.
+    for i in 0..7200u32 {
+        g.update(&idle, 1.0 / 60.0, &mut r);
+        if i % 60 == 59 { r.render_offscreen(&device, &queue); }
+    }
+    still(&g, &mut r, &mut rig, "1_after_2min_snowfall", "after two minutes of steady snowfall")?;
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    step(&mut g, &mut r, 480, &drive);
+    step(&mut g, &mut r, 90, &idle);
+    still(&g, &mut r, &mut rig, "2_after_fast_drive", "after eight seconds at full throttle")?;
+    for _ in 0..3600u32 { g.update(&idle, 1.0 / 60.0, &mut r); }
+    let before_shot = g.player_snow_cover();
+    g.debug_set_he_loaded(false);
+    g.debug_fire_laid(&mut r);
+    step(&mut g, &mut r, 120, &idle);
+    still(&g, &mut r, &mut rig, "3_after_shot", &format!("one more minute of snowfall (load {before_shot:.2}), then a shot"))?;
+    let traverse = TankInput { traverse: 1.0, ..TankInput::default() };
+    step(&mut g, &mut r, 240, &traverse);
+    step(&mut g, &mut r, 30, &idle);
+    still(&g, &mut r, &mut rig, "4_after_traverse", "after four seconds of turret traverse")?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.snow.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies). Weather overridden to steady snowfall; the Tiger starts bare, the world at its winter load. Observer camera. No image grading."
     }))?)?;
     Ok(())
 }

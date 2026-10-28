@@ -1504,6 +1504,8 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
+    /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
+    snow_vehicle: bool,
     /// View-local geometry that is drawn through the ordinary raster material path but never enters
     /// the shared ray scene. Split-screen crew use this because each viewport hides a different body
     /// while views 2..N intentionally reuse view 1's TLAS.
@@ -2594,6 +2596,10 @@ pub struct Renderer {
     /// The player's gun muzzle (position, bore direction) this frame, so a backend can tell the
     /// gun's own report from a detonation downrange. Set by the game each update.
     pub muzzle_hint: Option<(glam::Vec3, glam::Vec3)>,
+    /// Snow lying on the player's vehicle and on the world, 0..1 (`snow_cover`), set by the game
+    /// each update; the raymarch shade pass turns them into coverage per pixel.
+    pub player_snow_load: f32,
+    pub world_snow_load: f32,
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -3518,6 +3524,7 @@ fn make_mesh_gpu(
         emissive: 0.0,
         emissive_win: false,
         emissive_own: false,
+        snow_vehicle: false,
         raster_only,
         temporal_dynamic: false,
         glass: false,
@@ -5878,6 +5885,8 @@ impl Renderer {
             lights_offered: 0,
             lights_full: Vec::new(),
             muzzle_hint: None,
+            player_snow_load: 0.0,
+            world_snow_load: 0.0,
             frame: 0,
             hdr_view,
             hdr_tex,
@@ -6418,6 +6427,12 @@ impl Renderer {
     pub fn mark_window(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.emissive_win = true;
+        }
+    }
+    /// Mesh `idx` is part of the player's vehicle: its lying snow follows `player_snow_load`.
+    pub fn mark_snow_vehicle(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.snow_vehicle = true;
         }
     }
     /// Flag mesh `idx` as an OWN-COLOUR emissive that is NOT night-gated: a warm interior bulb or a

@@ -76,6 +76,17 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Lying snow on the raymarch backend (`src/snow_cover.rs`, `rm_common.wgsl` `rm_snow_lying`): a
+  scalar load per vehicle (the player's Tiger, starting bare) and one for the world (0.7 at the
+  start of a winter act, everything else including enemy vehicles). Snowfall fills a load at
+  precipitation / 120 s x (1 - load); the Tiger sheds 0.5/s x ((speed - 2 m/s) / 10 m/s)^2 of it in
+  the air stream, 0.4/s per rad/s of turret traverse, and a shot keeps 55 %. These are
+  presentation estimates, not snow-physics measurements. The renderer covers faces flatter than
+  about 63 degrees that the falling snow can reach (the sky-cover map), broken by a noise field in
+  the mesh's frame, with a matte layer (albedo 0.86/0.89/0.93, roughness 0.85). Not modelled:
+  per-face accumulation (leeward faces, melt on hot parts), snow depth and its shadow, contact
+  puffs, falling clumps, enemy vehicles shedding snow, snow over the near-vertical optics. Gate:
+  `KESSEL_SHOWCASE_SET=snow` time series (loads 0.00, 0.58, 0.20, 0.43, 0.25, 0.23).
 - Tank ruts on the raymarch G-buffer: the track map darkens and polishes the compacted floor and
   tilts the shading normal by its gradient; the terrain triangles do not move.
 - Exact RT surface pack (physical backend): an instanced transform with a singular or

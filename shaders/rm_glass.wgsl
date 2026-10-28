@@ -23,6 +23,8 @@ struct Push {
     model: mat4x4<f32>,
     // x pane kind (0 pane, 1 eyepiece tile), y unused, z roughness factor, w slab thickness m
     params: vec4<f32>,
+    // x snow load 0..1 (snow_cover)
+    extra: vec4<f32>,
 };
 var<push_constant> pc: Push;
 
@@ -31,6 +33,7 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) relative: vec3<f32>,
+    @location(3) local: vec3<f32>,
 };
 
 fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
@@ -52,6 +55,7 @@ fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) 
     out.clip = fr.view_proj * vec4(out.relative, 1.0);
     out.uv = uv;
     out.normal = normalize(inverse_transpose_3x3(linear) * normal);
+    out.local = pos * vec3(length(linear[0]), length(linear[1]), length(linear[2]));
     return out;
 }
 
@@ -155,9 +159,24 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     dirt_light += rm_sky_hemisphere(n) * sky_vis;
     let dirt_colour = vec3(0.30, 0.27, 0.22) * dirt * dirt_light;
 
+    // Snow lying on a pane's upper face blocks it. Seen from above it scatters the light that
+    // reaches it; seen from below, a few centimetres pass about a tenth of the light above.
+    let face = normalize(in.normal);
+    let up_face = select(face, -face, face.y < 0.0);
+    let snow = rm_snow_lying(in.local, up_face, pc.extra.x) * rm_sky_visibility(world, 0.06);
+    var snow_light = dirt_light;
+    if (snow > 0.0 && dot(up_face, v) < 0.0) {
+        var above = rm_sky_hemisphere(vec3(0.0, 1.0, 0.0)) * sky_vis;
+        if (fr.sun_radiance.w > 0.5 && fr.sun_dir.y > 0.0) {
+            above += fr.sun_radiance.rgb * fr.sun_dir.y * rm_sun_visibility(world, 0.05) / RM_PI;
+        }
+        snow_light = above * 0.1;
+    }
+    let snow_colour = RM_SNOW_ALBEDO * snow_light * snow;
+
     // The medium between the eye and the pane attenuates what the pane adds.
     let slice = clamp((rm_slice(dist) - 0.5) / fr.vol.z, 0.0, (fr.vol.z - 0.5) / fr.vol.z);
     let fog_t = textureSampleLevel(integrated, linear_samp, vec3(uv, slice), 0.0).a;
-    let added = (reflected * fresnel + spec + dirt_colour) * fog_t;
-    return vec4(added, 1.0 - transmit);
+    let added = ((reflected * fresnel + spec + dirt_colour) * (1.0 - snow) + snow_colour) * fog_t;
+    return vec4(added, 1.0 - transmit * (1.0 - snow));
 }

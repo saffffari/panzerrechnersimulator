@@ -9117,6 +9117,8 @@ pub struct Game {
     hover_station: Option<Station>,
     /// Main-gun rounds fired this run — depletes the visible rack (65 authored slots).
     rounds_spent: u32,
+    /// Snow lying on the player's Tiger and on the world (`snow_cover`), for the renderer.
+    snow_cover: crate::snow_cover::SnowCover,
     /// Interior walk position (turret-local, on the TURRET FLOOR) while posted INSIDE (Loader).
     walk_pos: Vec3,
     loader_crouch_t: f32, // held Ctrl lowers the actual cabin eye/body
@@ -12015,6 +12017,7 @@ impl Game {
             Renderer::new_with_raster_only(device, queue, &scene, &crew_raster_only_slots);
         renderer.display_tuning = authored_display;
         renderer.register_track_footprint(tank::TIGER_PARTS, &scene[slots.tiger[0]]);
+        for slot in slots.tiger { renderer.mark_snow_vehicle(slot); }
         for (prototype, kind) in prototypes.iter().zip([
             EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
             EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3,
@@ -13199,6 +13202,7 @@ impl Game {
             hover_label: None,
             hover_station: None,
             rounds_spent: 0,
+            snow_cover: crate::snow_cover::SnowCover::new(act.season == crate::world::Season::Winter),
             loader_crouch_t: 0.0,
             walk_sounds: footsteps::Cadence::default(),
             walk_pos: Vec3::new(-0.60, 0.0, 0.15), // the loader's post, right of the breech (−X)
@@ -16026,6 +16030,12 @@ impl Game {
         crate::terrain::set_vehicle_sinkage_m(if self.act.season == crate::world::Season::Winter {
             crate::vehicle_ground::WINTER_TRACK_SINKAGE_M
         } else { 0.0 });
+        // Snow collects on the Tiger and the world under snowfall and sheds from the Tiger when
+        // it drives, traverses or fires (`snow_cover`; read by the raymarch shade pass).
+        let snowfall = if self.act.season == crate::world::Season::Winter { r.precipitation } else { 0.0 };
+        self.snow_cover.update(dt, snowfall, self.player.speed, self.player.turret_yaw, self.rounds_spent);
+        r.player_snow_load = self.snow_cover.player;
+        r.world_snow_load = self.snow_cover.world;
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
@@ -31059,6 +31069,21 @@ impl Game {
             e.heading = heading;
             e.speed = 0.0;
         }
+    }
+
+    /// Snow lying on the player's Tiger, 0 (bare) to 1 (every face that can hold snow covered).
+    /// For the spotting model's target albedo (a snow-covered hull reads against snow).
+    pub fn player_snow_cover(&self) -> f32 { self.snow_cover.player }
+
+    /// Headless-only: set the snow loads (Tiger, world) for a capture's starting state.
+    pub fn debug_set_snow_cover(&mut self, player: f32, world: f32) {
+        self.snow_cover.player = player.clamp(0.0, 1.0);
+        self.snow_cover.world = world.clamp(0.0, 1.0);
+    }
+
+    /// Headless-only: mark enemy `idx` active (fielded, drawn and simulated) or not.
+    pub fn debug_set_enemy_active(&mut self, idx: usize, active: bool) {
+        if let Some(slot) = self.enemy_active.get_mut(idx) { *slot = active; }
     }
 
     /// Headless-only: is enemy `idx` still alive? (overpen demo assertion)

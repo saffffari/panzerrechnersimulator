@@ -207,10 +207,20 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     if (g0.a > 8.5) {
         color = g2.rgb;
     } else {
-        let albedo = g0.rgb;
+        var albedo = g0.rgb;
         let n = normalize(g1.xyz);
-        let roughness = g1.w;
-        let metallic = g2.w;
+        var roughness = g1.w;
+        var metallic = g2.w;
+        // Lying snow on ordinary surfaces (the G-buffer's lying share in g0.a below 1): a matte
+        // white layer over the material where the face can hold it and the snow can reach it.
+        if (g0.a > 0.001 && g0.a < 0.95) {
+            let snow = g0.a / 0.9 * rm_sky_visibility(world, 0.06);
+            if (snow > 0.0) {
+                albedo = mix(albedo, RM_SNOW_ALBEDO, snow);
+                roughness = mix(roughness, 0.85, snow);
+                metallic = mix(metallic, 0.0, snow);
+            }
+        }
         let v = -ray;
         let f0 = mix(vec3(0.04), albedo, metallic);
         let diffuse = albedo * (1.0 - metallic) / RM_PI;

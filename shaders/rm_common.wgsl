@@ -182,3 +182,19 @@ fn rm_heat_colour(t: f32) -> vec3<f32> {
     let x = clamp(t, 0.0, 1.0);
     return vec3(1.0, 0.18 + 0.82 * x * x, 0.02 + 0.98 * pow(x, 4.0));
 }
+// Snow lying on a face (snow_cover.rs): the share of the face covered at a load 0..1. Faces
+// flatter than about 63 degrees hold snow, those under about 32 degrees fully; a breakup field
+// at 10-40 cm, sampled in the mesh's own frame so the pattern rides a moving hull and turret,
+// leaves bare patches at low load and drifts at high load. Whether the falling snow reaches the
+// face (the sky-cover map: overhangs, the inside of a hull) multiplies in where the map is bound.
+// Named approximation: a coverage function, not an accumulated depth field.
+const RM_SNOW_ALBEDO: vec3<f32> = vec3<f32>(0.86, 0.89, 0.93);
+fn rm_snow_lying(local: vec3<f32>, n: vec3<f32>, load: f32) -> f32 {
+    if (load <= 0.001) { return 0.0; }
+    let lie = smoothstep(0.45, 0.85, n.y);
+    if (lie <= 0.0) { return 0.0; }
+    let breakup = rm_fbm(local * vec3(3.5, 6.0, 3.5), 97u);
+    let threshold = 1.0 - load;
+    let covered = smoothstep(threshold - 0.18, threshold + 0.12, breakup * 0.55 + lie * 0.30 + load * 0.15);
+    return clamp(lie * covered, 0.0, 1.0);
+}

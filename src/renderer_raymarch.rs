@@ -155,7 +155,8 @@ struct Ember { pos: [f32; 3], packed: u32 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Push { model: [[f32; 4]; 4], params: [f32; 4] }
+struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4] }
+// extra: x snow load (`snow_cover`; G-buffer and glass only), yzw unused.
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -286,7 +287,7 @@ pub(super) struct Backend {
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
-    /// 4096 veiling glare, 8192 screen-space indirect light.
+    /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow.
     debug_skip: u32,
 }
 
@@ -482,6 +483,9 @@ fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
 }
 
 impl Backend {
+    /// A mesh's snow load for the push constant (`snow_cover`), zero under `KESSEL_RM_SKIP` 16384.
+    fn snow_load(&self, load: f32) -> f32 { if self.debug_skip & 16384 != 0 { 0.0 } else { load } }
+
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
         sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32) -> Self {
@@ -915,7 +919,7 @@ impl Backend {
                     let lit = if hdr32 { f32s(0) } else { f16(0) };
                     let prev = if hdr32 { f32s(256) } else { f16(256) };
                     let g0 = f16(512); let g1 = f16(768); let g2 = f16(1024);
-                    println!("[rm-probe] px ({px},{py}) lit [{:.4e} {:.4e} {:.4e}] prev-lit [{:.4e} {:.4e} {:.4e}] albedo [{:.3} {:.3} {:.3}] kind {:.0} n [{:.2} {:.2} {:.2}] rough {:.2} metallic {:.2} emission [{:.3e} {:.3e} {:.3e}]",
+                    println!("[rm-probe] px ({px},{py}) lit [{:.4e} {:.4e} {:.4e}] prev-lit [{:.4e} {:.4e} {:.4e}] albedo [{:.3} {:.3} {:.3}] kind {:.3} n [{:.2} {:.2} {:.2}] rough {:.2} metallic {:.2} emission [{:.3e} {:.3e} {:.3e}]",
                         lit[0], lit[1], lit[2], prev[0], prev[1], prev[2], g0[0], g0[1], g0[2], g0[3], g1[0], g1[1], g1[2], g1[3], g2[3], g2[0], g2[1], g2[2]);
                     // The medium column: transmittance and in-scatter (green) at round distances.
                     let ln_range = (VOL_FAR_M / VOL_NEAR_M).ln();
@@ -1690,6 +1694,7 @@ impl Backend {
             let push = Push {
                 model: Mat4::IDENTITY.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor, if flags > 3.5 { 4.0 } else { 0.0 }] },
+                extra: [self.snow_load(r.world_snow_load), 0.0, 0.0, 0.0],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow || grass_depth { pass.set_bind_group(1, p.tex_bind.as_ref(), &[]); }
@@ -1712,6 +1717,7 @@ impl Backend {
             let push = Push {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
+                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), 0.0, 0.0, 0.0],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow { pass.set_bind_group(1, m.tex_bind.as_ref(), &[]); }
@@ -1880,7 +1886,8 @@ impl Backend {
                 // The slab thickness is the pane's thinnest local extent (port glass ~9 cm,
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
-                let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness] };
+                let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
+                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), 0.0, 0.0, 0.0] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));

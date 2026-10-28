@@ -210,6 +210,69 @@ spindrift lifts only in blowing-snow conditions (wind over 5 m/s, or snowing in 
 Captures: `captures/rm_haze_fixed_*` (after), `rm_haze_before_*` and `rm_haze2_before_act_*`
 (before), `rm_haze_fix_act_before_after.png` (the act weather side by side).
 
+## Snow on surfaces (2026-10-28)
+
+Request: "we also need a snow effect where snow like hits surfaces like the tank and brushes off
+or collects". `src/snow_cover.rs` keeps two loads, from 0 (bare) to 1 (every face that can hold
+snow is covered). The player's Tiger starts bare, fills under snowfall and sheds snow when it
+drives, traverses or fires. The world (wrecks, buildings, rubble, props, scatter, and every
+vehicle but the player's) starts at 0.7 in a winter act and only fills. Snowfall is the
+renderer's precipitation in a winter act (1 is steady snowfall) and zero otherwise. Per update:
+
+| term | rate |
+| --- | --- |
+| snowfall | precipitation / 120 s x (1 - load): 63 % of full cover after two minutes of steady snowfall |
+| air stream | 0.5/s x ((speed - 2 m/s) / 10 m/s)^2 x load: nothing below 2 m/s, 0.5/s at 12 m/s |
+| turret traverse | 0.4/s per rad/s of traverse (to 2 rad/s) x load |
+| a shot | keeps 55 % (muzzle blast over the glacis, recoil) |
+
+The rates are presentation estimates, not snow-physics measurements.
+
+**Drawing.** A mesh's load rides its push constant (the Tiger's parts are flagged with
+`mark_snow_vehicle`; every other mesh and instance takes the world load). The G-buffer turns it
+into the share of the face that holds snow (`rm_common.wgsl` `rm_snow_lying`): faces tilted less
+than about 63 degrees from horizontal start to hold it and those under about 32 degrees hold it
+fully; a breakup field at 10-40 cm, sampled in the mesh's own frame so the pattern rides the
+hull and the turret instead of sliding over them, leaves bare patches at low load and continuous
+cover at high load. The share goes to the shade pass in `g0.a`, which multiplies it by the
+face's openness to falling snow (the sky-cover map: the deck under the turret overhang, the
+inside of the hull and the ground under a roof stay bare) and lays a matte layer over the
+material: albedo 0.86/0.89/0.93, roughness 0.85, metallic 0. Glass panes take the same cover on
+their upper face: it blocks the view; from below, a few centimetres of snow pass a tenth of the
+light above.
+
+**Hooks.** `Game::player_snow_cover()` gives the Tiger's load for the spotting model, where a
+snow-covered hull has less contrast against snow; nothing reads it yet. The vision blocks and the
+sight window are near-vertical and collect no snow in this model, so snow does not yet obscure an
+optic; crew brushing an optic clear is a follow-up.
+
+**Time series** (`KESSEL_SHOWCASE_SET=snow`, the act's Tiger on the Canyon v2 workshop, steady
+snowfall from a grey 09:30 sky, the sky clock pinned so every still has the same light; each still
+from behind and from above):
+
+| still | Tiger load |
+| --- | --- |
+| clean hull | 0.00 |
+| after two minutes of snowfall | 0.58 |
+| after eight seconds at full throttle | 0.20 |
+| one more minute of snowfall | 0.43 |
+| after a shot | 0.25 |
+| after four seconds of traverse | 0.23 |
+
+Seen from above, at 0.58 the deck, the fenders and the turret roof read white; at 0.20-0.25 the
+cover breaks into patches over all three, and after the traverse the turret's patches have turned
+with it. From behind, the fenders carry most of what is visible.
+Captures: `captures/rm_snow_v5_*.png` with the `.json` receipt, `rm_snow_v5_sheet.png`. The first
+series (`rm_snow_v2`) let the day clock run through its three simulated minutes and its last still
+was lit by a 1.8 degree sun; `rm_snow_v3` sampled the breakup field in world space, so the pattern
+would have slid over a moving hull.
+
+**Cost.** By construction: one three-octave value noise per G-buffer fragment of a face that can
+hold snow on a mesh with a load, and one nine-tap sky-cover lookup per shaded pixel that holds
+snow. `KESSEL_RM_SKIP=16384` sets every load to zero for the A/B. Not yet measured: while this
+was built the GPU was held at 97 % by other applications, which inflates timestamp queries by an
+unknown factor.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -229,8 +292,9 @@ at +0.05/+0.3/+1.1/+3/+8 s, the report's snow cloud at +0.5 s, AP strike sparks 
 commander's cabin lamps at night, blizzard coax tracers through the TZF and from outside, the
 Tiger in the storm. `KESSEL_SHOWCASE_SET=palette` writes eighteen stills of the same fixtures from
 two observers across dawn/noon/dusk/night × clear/dry overcast/blizzard, plus light snow on a 5 m/s wind
-(`captures/rm_palette_v7_*.png`) for judging colour; `KESSEL_SHOWCASE_SCENES=a,b` filters either
-set. `screenshot` accepts `KESSEL_SHOT_WEATHER=clear|clouds|storm[:N]`,
+(`captures/rm_palette_v7_*.png`) for judging colour; `KESSEL_SHOWCASE_SET=haze` and `=snow`
+write the series of "Near-camera haze" and "Snow on surfaces"; `KESSEL_SHOWCASE_SCENES=a,b`
+filters any set. `screenshot` accepts `KESSEL_SHOT_WEATHER=clear|clouds|storm[:N]`,
 `KESSEL_SHOT_FOG`, `KESSEL_SKY_UTC`. `KESSEL_RM_LIVE_SHADERS=1` reloads `shaders/rm_*.wgsl` from
 disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights and binning stats.
 
@@ -263,6 +327,12 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   saltating particles, and ends at the map's 48 m edge.
 - The veiling glare is the CIE veil at half strength over a four-ring pyramid; the eye's ciliary
   corona and lenticular halo are not modelled.
+- Lying snow: one scalar load per vehicle (the player's Tiger) or for the world (everything
+  else, enemy vehicles included, at the winter's 0.7 even while they drive), not a per-face
+  accumulation; leeward faces fill no faster than windward ones and hot parts (engine deck,
+  exhausts, a fired barrel) do not melt it; a coverage layer on the material, not a depth field,
+  so it has no thickness at an edge and casts no shadow; flakes vanish at a surface (no contact
+  puffs) and shed snow does not fall as particles; the rates are presentation estimates.
 
 ## Open items
 
