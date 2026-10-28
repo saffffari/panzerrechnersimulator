@@ -721,6 +721,42 @@ traversing 10.4 (21.6 %) before, 5.9 (8.8 %) after at 480x270; at rest 4.6 (5.8 
 after. `captures/rm_gun_before_after_sheet.png` (left before, right after at 480x270; top traversing,
 bottom at rest); `rm_gun3_*` the same after the fix at 800x450 and 640x360.
 
+## Stars, the Sun and the Moon at the pixel (2026-10-28)
+
+Request: "stars and sun should be much sharper. Like perfect pixel squares for stars and a visibly
+stepped border for the sun." Four things blurred them:
+
+- The stars lived in the 768x288 sky cache as Gaussian blobs about 0.13 deg across, resampled to the
+  frame: two- to four-pixel smudges. The cache no longer holds them. The shade pass draws each star
+  of the same lattice (`physical_stellar_radiance`: 96 cells a cube face of the celestial sphere, a
+  star in 1.4 % of them, at the same positions, colours and fluxes) into the one native pixel that
+  holds its direction, carrying its whole flux: its irradiance over the pixel's solid angle
+  (`rm_shade.wgsl` `rm_pixel_star`, the frame's new `stars` lane). A star is one square at any field
+  and grid. Air: Kasten-Young airmass at a zenith optical depth of 0.22 (an estimate for clear winter
+  air); cloud: the cached sky's transmittance.
+- The discs were already hard-edged per pixel, but a Sun pixel is some ten thousand times display
+  white, and the bloom and the eye's veil spread it into a round glow that buried the disc. Sky
+  pixels (the scene's far depth) now feed the halo and the veil at most at six times display white
+  (`stylized_bloom.wgsl` `SKY_DISC_LIMIT`, owner-directed presentation); the disc keeps its full
+  radiance in the frame and in the eye's meter, so it reads as a stepped pixel circle (the Moon 14
+  pixels across in the binoculars' 10 deg field at 480x270).
+- The eye's veil drew a ring of dots round the Moon: each glare ring took twelve taps, which in a
+  narrow field (the binoculars' 10 deg, the TZF's 25) lie several texels apart at their pyramid level.
+  The taps now follow the ring's circumference, 1.5 texels apart (12 to 64).
+- The eye's meter read one pixel at the centre of each of its 256 x 144 cells, so a source smaller
+  than a cell was caught or missed by where it fell: the full Moon in a 60 deg view set the eye at 130
+  on the 480x270 grid and 3854 on 800x450. Each cell now averages its pixels (up to 4 x 4, every pixel
+  to 1024 x 576): 215 and 380.
+
+`raymarch-sky PREFIX` (the night sky away from the Moon, the Moon at 60 and 10 deg, the low Sun at
+11:30 UT at 60 and 10 deg; run per grid): `captures/rm_sky1_480_*`, `rm_sky1_800_*`,
+`rm_sky2_*` (the meter), against `rm_sky0_480_*`.
+
+Not done: the discs are uniform (no lunar maria, no limb darkening); fixating the Sun or the Moon
+still adapts the eye's fovea to it (15 % of the meter), which darkens the land round a low Sun as a
+dazzled eye would; the binoculars and the TZF pass point sources at their naked-eye flux (their
+light grasp, M^2 times the transmission, is not modelled).
+
 ## Explosions from OpenVDB volumes (2026-10-28)
 
 Request: "The explosive effects aren't realistic, they are spheres, not like explosion clouds." An

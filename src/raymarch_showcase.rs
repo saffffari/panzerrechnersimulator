@@ -910,7 +910,7 @@ pub fn run_sky(prefix: &str) -> anyhow::Result<()> {
     rig.still(&mut r, "moon_wide", "the Moon in a 60 deg field")?;
     rig.observe(&mut r, eye, eye + moon * 100.0, 10.0);
     rig.still(&mut r, "moon_binocular", "the Moon in the binoculars' 10 deg field")?;
-    rig.clock(&mut r, "1942-12-21T12:45:00Z")?;
+    rig.clock(&mut r, "1942-12-21T11:30:00Z")?;
     step(&mut g, &mut r, 30, &idle);
     let sun = toward(r.celestial().state.sun.engine_direction());
     rig.observe(&mut r, eye, eye + sun * 100.0, 60.0);

@@ -152,6 +152,9 @@ struct FrameUniform {
     livery: [f32; 4],
     /// x the per-pixel sample budget (`sample_budget`).
     samples: [f32; 4],
+    /// The star lattice's frame (sin latitude, cos latitude, local sidereal angle, gain), as
+    /// `PhysicalEnvironment::star_frame`: `rm_shade.wgsl` draws each star into one pixel.
+    stars: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
     /// The player's cabin air (`cabin_medium.rs`), as the shader backend's camera carries it.
@@ -1580,6 +1583,12 @@ impl Backend {
             // KESSEL_WHITEWASH=0..1 fixes the winter coat for review.
             livery: [self.whitewash.unwrap_or(r.whitewash).clamp(0.0, 1.0), 0.0, 0.0, 0.0],
             samples: [sample_budget(self.iw, self.ih), 0.0, 0.0, 0.0],
+            stars: {
+                let latitude = r.sky_clock.site.latitude_deg.to_radians();
+                let sidereal = (crate::ephemeris::apparent_sidereal_time_deg(r.sky_clock.now())
+                    + r.sky_clock.site.longitude_deg_east).to_radians();
+                [latitude.sin() as f32, latitude.cos() as f32, sidereal as f32, 1.0]
+            },
             vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
                 let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
                 [c.x, c.y, c.z, 3.0]

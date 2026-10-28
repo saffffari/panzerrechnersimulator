@@ -242,6 +242,86 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
 
 struct ShadeOut { @location(0) color: vec4<f32>, @location(1) shares: vec4<f32>, @location(2) bounce: vec4<f32>, };
 
+// Stars as single native pixels (2026-10-28, "perfect pixel squares for stars"). The sky's star
+// lattice (physical_environment.wgsl physical_stellar_radiance: 96 cells along each cube face of
+// the celestial sphere, a star in 1.4 % of them) is projected star by star: the one pixel that holds
+// a star's direction carries its whole flux, its irradiance over the pixel's solid angle, so a star
+// is one square at any field of view and never a blur. Air: Kasten-Young airmass at a zenith optical
+// depth of 0.22 (clear winter air, an estimate); cloud: the cached sky's transmittance (the caller).
+fn rm_star_hash(input: u32) -> u32 {
+    let state = input * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+fn rm_star_lattice(cell: vec3<i32>, seed: u32) -> f32 {
+    var h = rm_star_hash(bitcast<u32>(cell.x) ^ seed);
+    h = rm_star_hash(h ^ bitcast<u32>(cell.y) * 0x9e3779b9u);
+    h = rm_star_hash(h ^ bitcast<u32>(cell.z) * 0x85ebca6bu);
+    return f32(rm_star_hash(h) >> 8u) * (1.0 / 16777216.0);
+}
+fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
+    let frame = fr.stars;
+    if (frame.w <= 0.0 || dir.y <= 0.0) { return vec3(0.0); }
+    // World -> celestial, as physical_stellar_radiance: the pole axis, the meridian, east.
+    let pole = vec3(0.0, frame.x, -frame.y);
+    let meridian = vec3(0.0, frame.y, frame.x);
+    let dec = clamp(dot(dir, pole), -1.0, 1.0);
+    let hour = atan2(-dir.x, dot(dir, meridian));
+    let ra = frame.z - hour;
+    let radial = sqrt(max(1.0 - dec * dec, 0.0));
+    let q = vec3(radial * cos(ra), dec, radial * sin(ra));
+    let a = abs(q);
+    var uv = vec2(0.0);
+    var face = 0;
+    if (a.x >= a.y && a.x >= a.z) { uv = q.zy / a.x; face = select(1, 0, q.x > 0.0); }
+    else if (a.y >= a.z) { uv = q.xz / a.y; face = select(3, 2, q.y > 0.0); }
+    else { uv = q.xy / a.z; face = select(5, 4, q.z > 0.0); }
+    let grid = (uv * 0.5 + vec2(0.5)) * 96.0;
+    let home = vec2<i32>(floor(grid));
+    var radiance = vec3(0.0);
+    let t = tan(0.5 * fr.optic.y);
+    let forward = rm_ray(vec2(0.5));
+    for (var dy = -1; dy <= 1; dy += 1) {
+        for (var dx = -1; dx <= 1; dx += 1) {
+            let cell = vec3<i32>(home + vec2(dx, dy), face);
+            if (any(cell.xy < vec2(0)) || any(cell.xy > vec2(95))) { continue; }
+            let h = rm_star_lattice(cell, 0x53544152u);
+            if (h < 0.986) { continue; }
+            let centre = vec2(0.25) + 0.5 * vec2(rm_star_lattice(cell, 0x41520001u), rm_star_lattice(cell, 0x41520002u));
+            let suv = (vec2<f32>(cell.xy) + centre) / 96.0 * 2.0 - vec2(1.0);
+            // Back to the celestial direction on this face (the inverse of the face pick above),
+            // then to the world.
+            var c = vec3(0.0);
+            if (face == 0) { c = vec3(1.0, suv.y, suv.x); } else if (face == 1) { c = vec3(-1.0, suv.y, suv.x); }
+            else if (face == 2) { c = vec3(suv.x, 1.0, suv.y); } else if (face == 3) { c = vec3(suv.x, -1.0, suv.y); }
+            else if (face == 4) { c = vec3(suv.x, suv.y, 1.0); } else { c = vec3(suv.x, suv.y, -1.0); }
+            let cn = normalize(c);
+            let s_ra = atan2(cn.z, cn.x);
+            let s_hour = frame.z - s_ra;
+            let s_radial = sqrt(max(1.0 - cn.y * cn.y, 0.0));
+            let w = vec3(-s_radial * sin(s_hour), 0.0, 0.0) + meridian * (s_radial * cos(s_hour)) + pole * cn.y;
+            if (w.y <= 0.0) { continue; }
+            // The pixel that holds it.
+            let clip = fr.view_proj * vec4(w * 1000.0, 1.0);
+            if (clip.w <= 0.0) { continue; }
+            let ndc = clip.xy / clip.w;
+            let at = vec2<i32>(floor(vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * fr.res.xy));
+            if (any(at != pixel)) { continue; }
+            // The lattice star's flux: its Gaussian's peak times its area, over the cell's solid angle.
+            let x = (h - 0.986) / 0.014;
+            let peak = 0.000003 + 0.000012 * x * x * x * x;
+            let cell_sr = (2.0 / 96.0) * (2.0 / 96.0) / pow(1.0 + dot(suv, suv), 1.5);
+            let irradiance = peak * (RM_PI * 0.14 * 0.14 * 0.5) * cell_sr * frame.w;
+            let tint = mix(vec3(0.65, 0.80, 1.0), vec3(1.0, 0.77, 0.55), rm_star_lattice(cell, 0x41520003u));
+            let pixel_sr = pow(2.0 * t / fr.res.y, 2.0) * pow(max(dot(w, forward), 0.05), 3.0);
+            let elevation = degrees(asin(clamp(w.y, 0.0, 1.0)));
+            let airmass = 1.0 / (w.y + 0.50572 * pow(elevation + 6.07995, -1.6364));
+            radiance += tint * irradiance / pixel_sr * exp(-0.22 * airmass);
+        }
+    }
+    return radiance;
+}
+
 @fragment
 fn fs(in: VsOut) -> ShadeOut {
     var pixel = vec2<i32>(in.pos.xy);
@@ -267,7 +347,8 @@ fn fs(in: VsOut) -> ShadeOut {
     let ray = rm_ray(uv);
     let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(fr.vol.w) * 26699u);
     if (depth >= 1.0) {
-        let sky = rm_sky_radiance(ray);
+        let cached = rm_sky_background(ray);
+        let sky = cached.rgb + (rm_sky_discs(ray) + rm_pixel_star(ray, pixel)) * cached.a;
         let fog = fog_to(in.uv, ray, 20000.0);
         return ShadeOut(vec4(sky * fog.transmittance + fog.radiance, 1.0), vec4(1.0, 1.0, 1.0, -1.0), vec4(0.0, 0.0, 0.0, -1.0));
     }

@@ -370,6 +370,13 @@ are presented as ray tracing, GI or a combustion/solver result:
   displacement and the stacks' bore. No shadow, no ground contact, raymarch backend only. The plume
   widens the enemy's detection radius by up to 25 % by day. Gate: `raymarch-exhaust`; unit tests in
   the module.
+- Stars and discs at the pixel (2026-10-28; `rm_shade.wgsl` `rm_pixel_star`,
+  `stylized_bloom.wgsl` `SKY_DISC_LIMIT`, `exposure.wgsl`): each lattice star's flux goes into the
+  one pixel holding its direction (no seeing, no diffraction); air extinction from Kasten-Young
+  airmass at an estimated zenith depth of 0.22; the sky discs feed bloom and the eye's veil at most at
+  six times display white, an owner-directed presentation so their stepped edge shows (the real
+  Sun's veil is far wider); the glare rings sample 1.5 texels apart; the eye's meter averages each
+  cell's pixels rather than reading one.
 - Explosion volumes (2026-10-28; `tools/bake_explosion_volumes.py`, `src/explosion_volumes.rs`,
   `rm_volume.wgsl` kind 8): shapes from simulated OpenVDB ground explosions (Cloudscapes V2 PRO,
   licensed to the owner) baked to 64^3 and normalised per slot; one snapshot per role, scaled,
