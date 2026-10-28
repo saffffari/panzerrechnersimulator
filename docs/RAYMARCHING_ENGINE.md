@@ -874,13 +874,69 @@ in the field (sRGB code): full Moon clear 3552, 128; new Moon clear 3884, 26; fu
 107; new Moon overcast 3901, 1. The sight has its own eye (view 0): in the composite the field shows
 exactly the sight's frame whatever the cabin's lamps do to the cabin's eye.
 
-Not done: a moonless overcast night is black through the sight, about as a dark-adapted eye finds
-it; a floor for the rod reproduction (`observer::ROD_DISPLAY_GAIN` is the owner's reproduction
-choice) would be a decision for the owner. The TZF passes extended scenes at their luminance
-(transmission not modelled) and does not yet brighten point sources by its light grasp (stars,
-flashes: M^2 x transmission at the eye). Under overcast with a Moon the cloud deck draws black while
-the snow it lights is bright; a lit cloud base should be at least as bright as the snow (sky model).
-The tracer's dazzle through the eye's field-average meter (the MG's tracers, below) is open.
+Not done: the TZF passes extended scenes at their luminance (transmission not modelled) and does not
+yet brighten point sources by its light grasp (stars, flashes: M^2 x transmission at the eye). The
+moonless overcast night and the black cloud deck under a Moon are the next section's.
+
+## Night under cloud: the cauldron's fire glow, a lit deck, full-float radiance (2026-10-28)
+
+Requests: "at night it shouldn't be pitch black in the gun sights", dark but readable, for the
+moonless overcast night; and the full Moon behind overcast drew the cloud deck black over bright
+snow. Three causes, three changes:
+
+- Radiance in half floats. The frame is 32-bit, but the raymarch kept the froxel in-scatter and its
+  history, the integrated medium column, the sky cache and the reflection history in half floats.
+  Night radiance is 1e-9..1e-7 renderer units and half float's least value 6e-8, so a froxel's
+  in-scatter under a moonlit deck (sigma_s L, about 2e-9) stored as zero: the falling snow scattered
+  no light and, opaque past 200 m, hid the sky behind a black wall; the sky cache held a moonless sky
+  at zero. These stores now take the frame's format (`renderer_raymarch.rs` `radiance_format`); half
+  floats remain only on a device without float32 filtering, as for the frame. The heat volumes, not
+  light, stay half floats.
+- The deck from below (`sky.wgsl` `march_clouds`). The cloud march lights a sample by the key body
+  through 1.4 km of cloud and the clear sky along the ray; in a deck fifty optical depths thick the
+  first is nothing and the second, at night, is the moonlit clear sky, a hundredth of what leaves the
+  base. Below the layer each sample's source is now at least the delta-Eddington exit radiance along
+  the ray, so a lit base is as bright as the light it sends down: `cloud_base_floor`, the solve that
+  lights the ground (`physical_cloud_diffuse_boundary`) in compact form, the key's beam as it reaches
+  the cloud diffused through a six-step column, the night-sky layer through it and the fires' glow
+  returned by it (the general solve per texel took the sky cache from 1.65 to 3.8 ms).
+- The cauldron's fire glow (`physical_environment::KESSEL_FIRE_GLOW_FLUX`). With no Moon, the light
+  under an overcast was airglow through the deck, about 0.1 mlx: the sight black. The Stalingrad
+  pocket burned every night (the city, villages, vehicles, dumps); a deck returns that glow to the
+  snow. It is a named source: an upward diffuse flux under the cloud base of 1.2 mlx photopic with a
+  1900 K Planck colour (1, 0.21, 0.02) at the bands' 680/550/440 nm, which both cloud-boundary solvers
+  (GPU and CPU) return to the ground by the cloud's diffuse reflectance (0.85 for the act's deck).
+  Clear skies let it escape; nothing else is added. On the snow about 1 mlx, to the rods about four
+  fifths of the clear moonless sky's light (the rods are weak in its red). Its value is an estimate
+  set for a dark but readable sight, not a measurement.
+
+`raymarch-night-sight` at 480x270 (`captures/rm_night18_*` against `rm_night12_*`), the sight's eye,
+sRGB codes (green) of the sky a few degrees up and of the snow:
+
+| Sky | before: sky, snow | after: sky, snow |
+|---|---|---|
+| full Moon, clear | 83, 122 | 87, 120 |
+| new Moon, clear | 17, 23 | 31, 23 |
+| full Moon, overcast with snow | 1, 107 | 124, 97 |
+| new Moon, overcast with snow | 0, 2 | 30, 17 |
+
+Under the full Moon and snowfall the sight is a moonlit white-out; moonless under cloud it is dark,
+the snow, the horizon and the barrel readable, the black reticle lost against the dark field (the
+reticle's own lamp is the sight lamps' section). The clear moonless sky near the horizon is now
+brighter than the snow (van Rhijn brightening of the airglow, previously stored as zero).
+
+Cost (`gfxbench`, 800x450, RTX 4090, GPU profile): the sky cache 1.65 -> 1.63 ms; the froxel
+lighting 0.119 -> 0.127 ms and the column integration 0.041 -> 0.069 ms for the 32-bit volumes; the
+profiled GPU total 5.09 -> 5.04 ms. By day the floor barely moves the deck (`KESSEL_SHOWCASE_SET=palette`,
+`captures/rm_deck_c_*` against `rm_deck_b_*`): noon under the dry deck, the top of the frame 142, 163,
+176 -> 153, 166, 176 (a thick patch whitens), dusk unchanged. At night under the dry deck with the eye
+adapted to the burning wreck the deck stays near black, as the moonlit snow round it; the general
+solve and its compact form render it alike.
+
+Not done: the glow is uniform over the pocket and constant through the night (no fires' direction,
+no flicker, no horizon glow under a clear sky, nothing after the breakout leaves the cauldron); the
+cloud and snow exchange no second bounce (a snow ground under a deck would raise both by about
+1 / (1 - 0.8 x 0.85), threefold); the reticle has no illumination at night.
 
 ## Magenta in the night cabin (fixed 2026-10-28)
 
@@ -1199,6 +1255,9 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   saltating particles, and ends at the map's 48 m edge.
 - The veiling glare is the CIE veil at half strength over a four-ring pyramid; the eye's ciliary
   corona and lenticular halo are not modelled.
+- Under cloud at night the cauldron's fire glow is one uniform, constant upward flux (an estimate);
+  the cloud base seen from below is floored by a compact two-stream (six column steps, the secondary
+  body and the clear sky above the deck left out).
 - Surface wear: four scalar loads for the player's Tiger (no per-face history); procedural masks
   in the mesh frame, not painted or simulated wear; inside and outside told apart by facing the
   compartment's centre; worn edges from neighbouring normals in screen space (silhouette-adjacent
