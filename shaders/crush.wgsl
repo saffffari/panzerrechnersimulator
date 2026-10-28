@@ -313,7 +313,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
 
-    // The TZF Strichbild is drawn by blit.wgsl at the output's resolution (`cr.reticle` unused).
+    // TZF 9b/9c Strichbild: drawn by blit.wgsl at the output's resolution (`cr.reticle` unused).
 
     // ── Optic masks: the eye pressed to an eyepiece. Black steel outside the aperture; a soft
     // breath-dark vignette inside so the picture pools at the centre. 1 = the TZF 9b's two

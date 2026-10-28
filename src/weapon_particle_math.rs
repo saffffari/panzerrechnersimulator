@@ -89,6 +89,16 @@ pub fn ground_budget(projectile_mass:f32,velocity:Vec3,caliber_mm:f32,snow:f32)-
     let base_count=((residual_j/3000.0).sqrt()*32.0).round().clamp(8.0,384.0) as u32;
     Some(GroundBudget {residual_j,ejecta_j,mass_kg,density,snow,base_count})
 }
+/// A ground-ejecta grain's speed over the burst's apex-limited maximum: crater ejecta speeds follow
+/// the scaling law M(>v) ~ v^(-3 mu), mu ~ 0.4 for loose soil (Housen & Holsapple 2011), sampled
+/// between 0.15 and 1 of the maximum and drawn apart from the grain's direction. With one random
+/// number setting both (2026-10-28) every grain lay in a crisp-faced cone that read as a box.
+pub fn ground_speed_share(u:f32)->f32 {
+    const LOW:f32=0.15;const EXPONENT:f32=1.2;
+    let floor=LOW.powf(EXPONENT);
+    // Inverse of the bounded power law: u = 0 the slowest, u = 1 the fastest.
+    (floor/(1.0-u.clamp(0.0,1.0)*(1.0-floor))).powf(1.0/EXPONENT)
+}
 pub fn random(seed:u32)->f32 {
     let mut s=seed^(seed>>16);s=s.wrapping_mul(0x7feb352d);s^=s>>15;
     s=s.wrapping_mul(0x846ca68b);s^=s>>16;(s>>8) as f32/16777216.0
@@ -113,7 +123,7 @@ pub fn sample(r:Record,index:u32)->Option<Sample> {
         let grazing=1.0-(-d.dot(n)).clamp(0.0,1.0);
         let ray=if index==0 {n}else{(n*(0.6+0.4*q)+tangent*(0.15+0.60*grazing)+out*0.4).normalize_or_zero()};
         let max_speed=(2.0*r.parameters[0]/r.parameters[1].max(0.0001)).sqrt().min((2.0*9.81*GROUND_APEX_TARGET_M).sqrt());
-        velocity=ray*max_speed*if index==0 {1.0}else{0.4+0.6*q};
+        velocity=ray*max_speed*if index==0 {1.0}else{ground_speed_share(random(seed.wrapping_add(41)))};
         axis=(velocity-Vec3::Y*9.81*t).normalize_or_zero();
         width=2.0*(3.0*r.parameters[1]/(4.0*std::f32::consts::PI*r.parameters[3]*r.meta[1] as f32)).cbrt();
         length=width;page=6;

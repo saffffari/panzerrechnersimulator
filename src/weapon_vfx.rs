@@ -823,6 +823,9 @@ impl Game {
                     crate::particle_motion::seed_phase(b.seed)+b.age*0.8,0.35);
                 continue;
             }
+            // A detonation's cloud is the raymarch medium's baked explosion volume when one is
+            // drawn (renderer_raymarch.rs `draws_explosion_volumes`); its three lobes were dark balls.
+            if matches!(b.kind,BurstKind::Blast) && r.draws_explosion_volumes() {continue;}
             if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
             if let BurstKind::PressureVent(normal)=b.kind {
                 let advance=(b.age*26.0).min(12.0);let fade=(1.0-b.age/b.life).max(0.0);

@@ -14,6 +14,11 @@ struct WeaponOut {
     @location(2) @interpolate(flat) opacity: f32,
 };
 fn weapon_random(seed: u32) -> f32 { return rm_hash01(seed); }
+// weapon_particle_math.rs `ground_speed_share`: the crater-ejecta power law, 0.15..1.
+fn ground_speed_share(u: f32) -> f32 {
+    let floor = pow(0.15, 1.2);
+    return pow(floor / (1.0 - clamp(u, 0.0, 1.0) * (1.0 - floor)), 1.0 / 1.2);
+}
 fn weapon_direction(seed: u32) -> vec3<f32> {
     let y = weapon_random(seed) * 2.0 - 1.0; let a = weapon_random(seed + 1u) * 6.28318530718;
     let r = sqrt(max(0.0, 1.0 - y * y)); return vec3(r * cos(a), y, r * sin(a));
@@ -125,7 +130,9 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
         let grazing = 1.0 - clamp(-dot(direction_life.xyz, n), 0.0, 1.0);
         let ray = select(normalize(n * (0.6 + 0.4 * q) + tangent * (0.15 + 0.60 * grazing) + outward * 0.4), n, index == 0u);
         let speed = min(sqrt(2.0 * parameters.x / max(parameters.y, 0.0001)), sqrt(2.0 * 9.81 * 6.096));
-        velocity = ray * speed * select(0.4 + 0.6 * q, 1.0, index == 0u);
+        // Speed apart from direction, by the crater-ejecta power law (weapon_particle_math.rs
+        // `ground_speed_share`).
+        velocity = ray * speed * select(ground_speed_share(weapon_random(seed + 41u)), 1.0, index == 0u);
         let current_velocity = velocity - vec3(0.0, 9.81 * t, 0.0); axis = current_velocity / max(length(current_velocity), 0.000001);
         width = 2.0 * pow(3.0 * parameters.y / (4.0 * 3.14159265359 * parameters.w * f32(identity.y)), 1.0 / 3.0);
         tail = width; page = 6u;

@@ -187,6 +187,15 @@ const PARCEL_FIREBALL: f32 = 5.0;
 const PARCEL_FLASH: f32 = 6.0;
 /// The Tiger's exhaust: smoke that carries heat while young (`exhaust_plume`).
 const PARCEL_EXHAUST: f32 = 7.0;
+/// Hermite smoothstep of `x` between `a` and `b`.
+fn smooth(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+/// A baked explosion volume (`explosion_volumes`): density and flame from the atlas slot c.z, in a
+/// box of half extents d.xyz yawed by c.w; c.x emission and c.y extinction per metre at full
+/// value, d.w the flame's temperature 0..1.
+const PARCEL_VOLUME: f32 = 8.0;
 
 /// One clustered light. Layout shared with rm_visibility.wgsl.
 #[repr(C)]
@@ -346,6 +355,13 @@ pub(super) struct Backend {
     integrated: Target,
     /// Hot-gas measure per froxel and its front-to-back integral (heat haze).
     heat: Target,
+    /// The baked explosion volumes' atlas (`explosion_volumes`): a 3D texture of (density, flame),
+    /// a 2 x 2 x 64 blank when no atlas is installed.
+    explosion_atlas: Target,
+    /// The atlas's voxels until the first `prepare` uploads them.
+    explosion_pending: Option<Vec<u8>>,
+    /// The installed atlas's slots (role and aspect); none without an atlas.
+    explosion_slots: Option<crate::explosion_volumes::ExplosionVolumes>,
     heat_integrated: Target,
     linear_sampler: wgpu::Sampler,
     sky_sampler: wgpu::Sampler,
@@ -695,6 +711,22 @@ impl Backend {
         let temporal = vec![Temporal::new(device, iw, ih, vol)];
         let integrated = volume_target(device, "rm-integrated", vol);
         let heat = volume_target(device, "rm-heat", vol);
+        // The baked explosion volumes, when the local atlas is installed (tools/bake_explosion_volumes.py).
+        let mut explosions = match crate::explosion_volumes::ExplosionVolumes::load() {
+            Ok(v) => { println!("[raymarch] explosion volumes: {} slots", v.slots.len()); Some(v) }
+            Err(e) => { println!("[raymarch] no explosion volumes ({e:#}); detonations use parcels"); None }
+        };
+        let (atlas_w, atlas_d) = explosions.as_ref().map_or((2, 64), |v| (crate::explosion_volumes::SLOT, v.depth()));
+        let explosion_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("rm-explosion-atlas"),
+            size: wgpu::Extent3d { width: atlas_w, height: atlas_w, depth_or_array_layers: atlas_d },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rg8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let explosion_atlas = Target { view: explosion_tex.create_view(&Default::default()), _tex: explosion_tex };
+        let explosion_pending = explosions.as_mut().map(|v| std::mem::take(&mut v.voxels));
         let heat_integrated = volume_target(device, "rm-heat-integrated", vol);
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rm-linear"), address_mode_u: wgpu::AddressMode::ClampToEdge, address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -748,7 +780,7 @@ impl Backend {
             label: Some("rm-volume-bgl"), entries: &[
                 uniform_entry(0, S::COMPUTE), readonly_storage(1, S::COMPUTE), readonly_storage(2, S::COMPUTE), readonly_storage(3, S::COMPUTE),
                 tex3d(4, S::COMPUTE), sampler_filtering(5, S::COMPUTE), storage3d(6), depth_tex(7, S::COMPUTE, wgpu::TextureViewDimension::D2),
-                storage3d(8),
+                storage3d(8), tex3d(9, S::COMPUTE),
             ],
         });
         let integrate_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -999,7 +1031,7 @@ impl Backend {
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
-            integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
+            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
@@ -1055,6 +1087,7 @@ impl Backend {
                 entry(6, wgpu::BindingResource::TextureView(&t.scatter[i].view)),
                 entry(7, wgpu::BindingResource::TextureView(&r.depth_view)),
                 entry(8, wgpu::BindingResource::TextureView(&self.heat.view)),
+                entry(9, wgpu::BindingResource::TextureView(&self.explosion_atlas.view)),
             ],
         }))).collect();
         let integrate = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1120,6 +1153,12 @@ impl Backend {
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
         let started = std::time::Instant::now();
+        if let Some(voxels) = self.explosion_pending.take() {
+            let side = crate::explosion_volumes::SLOT;
+            queue.write_texture(self.explosion_atlas._tex.as_image_copy(), &voxels,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(side * 2), rows_per_image: Some(side) },
+                wgpu::Extent3d { width: side, height: side, depth_or_array_layers: (voxels.len() / (side * side * 2) as usize) as u32 });
+        }
         // Ray queries: bind the scene TLAS (rebuilt in place by `rt_update` before this frame's
         // passes), or an empty one until the scene's first exists.
         if self.rt_bgl.is_some() {
@@ -1668,6 +1707,20 @@ impl Backend {
                 });
                 continue;
             }
+            // A kill's, a turret pop's or a cook-off's fireball: a baked burst volume (its own fire
+            // and shape, explosion_volumes.rs) sized by the mesh's bounds, when the atlas is installed.
+            let pick = ((center.x * 7.0 + center.z * 3.0).abs() % 100.0) / 100.0;
+            if let Some((slot, aspect)) = self.explosion_slots.as_ref().filter(|_| !m.small_arms_flash)
+                .and_then(|v| v.pick(crate::explosion_volumes::Role::Burst, pick)) {
+                let half = aspect * (radius * 1.3);
+                self.parcels.push(Parcel {
+                    a: [center.x, center.y, center.z, half.length()],
+                    b: [0.35, 0.32, 0.29, PARCEL_VOLUME],
+                    c: [x * 0.15 / radius, 0.4 / radius, slot as f32, pick * std::f32::consts::TAU],
+                    d: [half.x, half.y, half.z, (x / 8.0).clamp(0.3, 1.0)],
+                });
+                continue;
+            }
             self.parcels.push(Parcel {
                 a: [center.x, center.y, center.z, radius],
                 b: [color.x, color.y, color.z, PARCEL_FIREBALL],
@@ -1812,6 +1865,7 @@ impl Backend {
     fn event_parcels(&mut self, now: f32) {
         use renderer_weapon_particles::math::random;
         let wind = self.wind;
+        let mut volumes: Vec<Parcel> = Vec::new();
         for e in self.events.clone() {
             if self.parcels.len() >= MAX_PARCELS - 32 { break; }
             let t = now - e.born;
@@ -1819,6 +1873,23 @@ impl Backend {
             let seed = e.seed;
             let h = |k: u32| random(seed ^ k.wrapping_mul(0x9E37_79B9));
             let o = e.origin;
+            // A baked explosion volume (PARCEL_VOLUME) of `role`: `size` its largest half extent,
+            // its base at `base` (the ground, when it stands on it) or centred on `base` + its
+            // half height, `lift` above that, drifting with `drift`.
+            let explosion = self.explosion_slots.as_ref();
+            let mut volume = |role: crate::explosion_volumes::Role, pick: f32, yaw: f32, size: f32, base: Vec3,
+                              colour: [f32; 3], emission: f32, extinction: f32, temperature: f32| {
+                let Some((slot, aspect)) = explosion.and_then(|v| v.pick(role, pick)) else { return };
+                if size <= 0.05 || emission + extinction <= 0.0 { return; }
+                let half = aspect * size;
+                let centre = base + Vec3::Y * half.y;
+                volumes.push(Parcel {
+                    a: [centre.x, centre.y, centre.z, half.length()],
+                    b: [colour[0], colour[1], colour[2], PARCEL_VOLUME],
+                    c: [emission, extinction, slot as f32, yaw],
+                    d: [half.x, half.y, half.z, temperature],
+                });
+            };
             let mut push = |center: Vec3, radius: f32, colour: [f32; 3], kind: f32, emission: f32, extinction: f32, noise: f32, age: f32| {
                 if radius <= 0.01 || extinction + emission <= 0.0 { return; }
                 self.parcels.push(Parcel {
@@ -1836,7 +1907,44 @@ impl Backend {
                         let core = 1.0 + 30.0 * t;
                         push(o + Vec3::Y * 0.6, core, [1.0, 0.97, 0.9], PARCEL_FIREBALL, 30.0 / core, 3.0 / core, h(1) * 100.0, 0.0);
                     }
-                    if t < 1.3 {
+                    if explosion.is_some() {
+                        // The baked volumes (explosion_volumes.rs): a fresh ground burst for the
+                        // fire and the ejecta, cross-fading from 0.6 s into a developed cloud of
+                        // soot and lifted earth that rises and drifts until 14 s. Their sizes,
+                        // rise and cooling are the parcel model's below, for an 88 mm-class burst.
+                        let ground = e.ground_y.map_or(o - Vec3::Y * 1.5, |gy| Vec3::new(o.x, gy, o.z));
+                        use crate::explosion_volumes::Role;
+                        // Extinction per metre at the slot's full density for a mean optical depth
+                        // `tau` across the shape: a line through a slot meets on average a tenth
+                        // of the box's width at full density (measured over the twelve slots,
+                        // 0.02-0.33; the volumes fill 5-40 % of their boxes), the box is 2 x size
+                        // wide; the core runs to about three times the mean.
+                        let per_m = |tau: f32, size: f32| tau / (0.2 * size);
+                        if t < 1.6 {
+                            let u = (t / 1.3).min(1.0);
+                            // A TNT-class fireball shines for tens of milliseconds (the detonation
+                            // products' afterburn), then the burst is smoke and earth: 60 ms decay.
+                            let heat = (-t / 0.06).exp();
+                            let size = 1.2 + 4.0 * u.powf(0.3);
+                            // The burst's soot and thrown earth: mean depth 3.5 at 2.5 m, spreading.
+                            let tau = 3.5 * (2.5 / size).powi(2) * (1.0 - smooth(0.6, 1.6, t));
+                            volume(Role::Burst, h(400), h(401) * std::f32::consts::TAU, size,
+                                ground + Vec3::Y * (0.6 * u.powf(0.8)) + wind * (t * 0.3),
+                                [0.20, 0.18, 0.16], 9.0 / size, per_m(tau, size), heat);
+                        }
+                        if t > 0.4 && t < 14.0 {
+                            let u = (t - 0.1) / 13.9;
+                            let size = 2.5 + 5.5 * u.sqrt();
+                            // The cloud: mean depth 4 at 3 m, falling with its area as it spreads
+                            // and as the earth falls out (an estimate for an 88 mm-class burst).
+                            let tau = 4.0 * (3.0 / size).powi(2) * smooth(0.4, 1.4, t) * (1.0 - u).powf(0.6);
+                            let ember = 0.3 * (-t / 0.15).exp();
+                            volume(Role::Cloud, h(410), h(411) * std::f32::consts::TAU, size,
+                                ground + Vec3::Y * (4.0 * u.powf(0.6)) + wind * (t * 0.8),
+                                [0.24, 0.22, 0.20], 6.0 / size, per_m(tau, size), ember);
+                        }
+                    }
+                    if t < 1.3 && explosion.is_none() {
                         let u = t / 1.3;
                         let heat = (1.0 - u).powf(1.5);
                         for k in 0..3u32 {
@@ -1850,7 +1958,7 @@ impl Backend {
                         }
                     }
                     // Soot: five puffs rising on their own buoyancy and drifting with the wind.
-                    if t > 0.1 && t < 14.0 {
+                    if t > 0.1 && t < 14.0 && explosion.is_none() {
                         let u = (t - 0.1) / 13.9;
                         for k in 0..5u32 {
                             let a = h(60 + k) * std::f32::consts::TAU;
@@ -1875,10 +1983,16 @@ impl Backend {
                                 let center = Vec3::new(o.x + a.cos() * ring, gy + 0.5 + 0.4 * t, o.z + a.sin() * ring) + wind * (t * 0.5);
                                 let radius = (1.2 + 1.6 * t) * (0.8 + 0.4 * h(110 + k));
                                 let density = (1.0 - u) * 2.2;
+                                if explosion.is_some() {
+                                    // The swept snow as cloud shapes lying on the snow, not balls.
+                                    volume(crate::explosion_volumes::Role::Cloud, h(500 + k), h(510 + k) * std::f32::consts::TAU, radius,
+                                        Vec3::new(center.x, gy, center.z), [1.15, 1.15, 1.2], 0.0, density / (0.2 * radius) * 0.35, 0.0);
+                                    continue;
+                                }
                                 push(center, radius, [1.15, 1.15, 1.2], PARCEL_SMOKE, 0.0, density / radius, h(120 + k) * 100.0, 0.0);
                             }
                         }
-                        if t < 7.0 {
+                        if t < 7.0 && explosion.is_none() {
                             let u = t / 7.0;
                             for k in 0..4u32 {
                                 let a = h(130 + k) * std::f32::consts::TAU;
@@ -1931,6 +2045,8 @@ impl Backend {
                 }
             }
         }
+        let room = (MAX_PARCELS - 8).saturating_sub(self.parcels.len());
+        self.parcels.extend(volumes.into_iter().take(room));
     }
 
     fn upload_lists(&self, queue: &wgpu::Queue) {
@@ -2450,6 +2566,12 @@ impl Renderer {
     }
 
     pub fn raymarch_stats(&self) -> Option<Stats> { self.raymarch.as_ref().map(|rm| rm.stats) }
+    /// Whether detonations are drawn from the baked explosion volumes (`explosion_volumes`): the
+    /// raymarch backend with its atlas installed. The game then leaves out its own smoke lobes for
+    /// a blast (`weapon_vfx.rs`), which the volume's cloud replaces.
+    pub fn draws_explosion_volumes(&self) -> bool {
+        self.raymarch.as_ref().is_some_and(|rm| rm.explosion_slots.is_some())
+    }
 }
 
 #[cfg(test)]

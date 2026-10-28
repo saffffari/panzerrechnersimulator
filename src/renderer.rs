@@ -12621,7 +12621,8 @@ mod atmosphere_tests {
         // The crush applies the eye's two channels and nothing else before ACES.
         let crush = include_str!("../shaders/crush.wgsl");
         assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
-        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + vec3(rods);"));
+        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure
+        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * OBS_ROD_DISPLAY_GAIN);"));
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

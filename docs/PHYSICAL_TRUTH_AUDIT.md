@@ -96,6 +96,15 @@ are presented as ray tracing, GI or a combustion/solver result:
   displacement and the stacks' bore. No shadow, no ground contact, raymarch backend only. The plume
   widens the enemy's detection radius by up to 25 % by day. Gate: `raymarch-exhaust`; unit tests in
   the module.
+- Explosion volumes (2026-10-28; `tools/bake_explosion_volumes.py`, `src/explosion_volumes.rs`,
+  `rm_volume.wgsl` kind 8): shapes from simulated OpenVDB ground explosions (Cloudscapes V2 PRO,
+  licensed to the owner) baked to 64^3 and normalised per slot; one snapshot per role, scaled,
+  yawed, cooled and thinned over time rather than a simulated sequence; sizes and drift from the
+  former parcel model for an 88 mm-class burst; the fireball a 60 ms afterburn decay; extinction from
+  an estimated mean optical depth (burst 3.5 at 2.5 m, cloud 4 at 3 m, falling with the area); one
+  albedo for soot and earth. Ground ejecta speeds follow M(>v) ~ v^(-1.2) between 0.15 and 1 of the
+  apex-limited maximum (crater scaling, mu about 0.4), drawn apart from direction. Gate:
+  `raymarch-showcase` he_impact stills; `explosion_volumes` and `weapon_particle_math` unit tests.
 - Lamp housings in point shadows (2026-10-28; `renderer_raymarch.rs` `draw_scene`,
   `FIXTURE_HOUSING_MAX_M`): a mesh enclosing a shadowed lamp's position is left out of that lamp's
   cube only when it is smaller than 0.75 m (the fixture); larger enclosing meshes (the turret round
