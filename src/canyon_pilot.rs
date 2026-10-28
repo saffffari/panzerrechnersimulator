@@ -272,6 +272,60 @@ impl CanyonPilot {
         None
     }
 
+    /// Boxed in among knocked-out hulls (Canyon v2 seed 29, 2026-10-27: three dead T-34s 6-14 m
+    /// round the Tiger at (346, 349), vehicle avoidance holding the throttle at zero with a hull
+    /// ahead and refusing reverse with one behind): of 16 headings, the one with the longest
+    /// corridor the Tiger's width clear of every hull and of the street floor's obstructions, out
+    /// to 14 m, favouring the route's direction; the aim point is 10 m along it. None when no
+    /// dead hull is within 10 m.
+    fn hull_escape(&self, g: &Game, here: Vec2) -> Option<Vec2> {
+        let hulls: Vec<Vec2> = g.enemies.iter().enumerate()
+            .filter(|(i, e)| !e.alive && g.enemy_active.get(*i).copied().unwrap_or(true))
+            .map(|(_, e)| Vec2::new(e.pos.x, e.pos.z))
+            .collect();
+        if !hulls.iter().any(|h| h.distance(here) < 10.0) {
+            return None;
+        }
+        let n = self.route.len();
+        let route_dir = (self.route[(self.cursor + 3).min(n - 1)] - self.route[self.cursor.min(n - 1)]).normalize_or_zero();
+        let nav = g.winter_encounter.as_ref().and_then(|w| w.streets()).map(|s| s.nav());
+        let mut best: Option<(f32, Vec2)> = None;
+        for k in 0..16 {
+            let a = k as f32 * std::f32::consts::TAU / 16.0;
+            let dir = Vec2::new(a.sin(), a.cos());
+            let side = Vec2::new(-dir.y, dir.x);
+            // How far the corridor runs before a hull (within the Tiger's half width plus a
+            // T-34's) or an obstructed floor cell.
+            let mut reach = 14.0f32;
+            for h in &hulls {
+                let rel = *h - here;
+                let along = rel.dot(dir);
+                if along > 0.0 && rel.dot(side).abs() < TIGER_HALF_WIDTH_M + 2.2 {
+                    reach = reach.min(along - 3.5);
+                }
+            }
+            if let Some(nav) = nav {
+                let mut d = 1.0;
+                while d <= reach {
+                    let p = here + dir * d;
+                    if ![-TIGER_HALF_WIDTH_M, 0.0, TIGER_HALF_WIDTH_M].iter().all(|w| nav.is_clear(p + side * *w)) {
+                        reach = d - 1.0;
+                        break;
+                    }
+                    d += 1.0;
+                }
+            }
+            if reach < 4.0 {
+                continue;
+            }
+            let score = reach + 4.0 * dir.dot(route_dir);
+            if best.is_none_or(|(s, _)| score > s) {
+                best = Some((score, here + dir * reach.min(10.0)));
+            }
+        }
+        best.map(|(_, p)| p)
+    }
+
     fn look(&mut self, g: &Game, r: &Renderer, target: Vec3, dt: f32, input: &mut TankInput) {
         let (error, sensitivity) = g.capture_gaze_error(target, r);
         let gain = if g.station == Station::Gunner {
@@ -703,9 +757,15 @@ impl CanyonPilot {
                     self.phase = "detouring";
                 }
             }
-            // A dead hull on the line is passed on clear floor; a run-up never moves one.
+            // A dead hull on the line is passed on clear floor; a run-up never moves one. Boxed
+            // in among several (the bypass and the ladder both failed twice), drive out along
+            // the clearest corridor first.
             if t >= self.reverse_until {
-                if let Some(past) = self.hull_bypass(g, here) {
+                if let Some(out) = (self.stuck_count >= 2).then(|| self.hull_escape(g, here)).flatten() {
+                    carrot = out;
+                    run_up = false;
+                    self.phase = "escaping";
+                } else if let Some(past) = self.hull_bypass(g, here) {
                     carrot = past;
                     run_up = false;
                     self.phase = "bypassing";
@@ -748,7 +808,7 @@ impl CanyonPilot {
         if g.mode == Mode::Tank && g.station != Station::Loader {
             (input.drive, input.steer) = g.safe_ai_tiger_drive(input.drive, input.steer);
         }
-        self.was_advancing = matches!(self.phase, "advance" | "backing_off" | "detouring" | "run_up" | "bypassing");
+        self.was_advancing = matches!(self.phase, "advance" | "backing_off" | "detouring" | "run_up" | "bypassing" | "escaping");
         // Mirror native primary-click dispatch. Held ammunition is owned by Game::update.
         if input.mg_coax && !self.primary_held {
             let eye = r.camera.pos;
