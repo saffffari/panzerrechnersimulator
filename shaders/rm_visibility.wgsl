@@ -131,6 +131,16 @@ fn rm_sky_visibility(world: vec3<f32>, lift_m: f32) -> f32 {
     }
     return sum / 9.0;
 }
+// The sky cover map asked by a surface of the crew compartment without ray queries: 30 cm into
+// the compartment along the surface's normal, unlifted, one bilinear compare (reach one 19 cm
+// texel). The open-ground filter (3 x 3 taps 28 cm apart) and lift reached past the armour to the
+// deck and the ground beside the turret and above the thin roof plate: the closed cabin took up
+// to 70 % of the sky (2026-10-28). An open hatch still opens it: the map sees down the hole.
+fn rm_cabin_sky_visibility(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    let c = rm_shadow_uv(shadow_views.vp[2] * vec4(world + n * 0.3, 1.0));
+    if (any(c.xy < vec2(0.0)) || any(c.xy > vec2(1.0)) || c.z <= 0.0 || c.z >= 1.0) { return 1.0; }
+    return textureSampleCompareLevel(sky_cover, shadow_cmp, c.xy, c.z);
+}
 // Height of the top-down cover surface (terrain, hulls, roofs) under a horizontal position,
 // read back from the sky-cover depth map (orthographic, 0.1..400 m below the map's eye at
 // +150 m); the eye's own ground when the point lies outside the map.

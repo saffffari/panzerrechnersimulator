@@ -12770,7 +12770,8 @@ impl Game {
         renderer.mark_raster_only(slots.held_map);
         renderer.set_emissive(slots.held_map, 0.0);
         renderer.set_visible(slots.held_map, false);
-        renderer.mark_own_emissive(slots.hatch);
+        // The cupola hatch lid is ordinary steel (it once glowed under the crosshair): no
+        // own-colour emissive mark, so it shadows and covers like the turret round it.
         for &s in slots.snow.iter() {
             renderer.mark_own_emissive(s);
             renderer.set_visible(s, false);
