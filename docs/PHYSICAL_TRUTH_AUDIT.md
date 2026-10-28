@@ -76,6 +76,17 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch relayed sights and cabin air (2026-10-28; `renderer_raymarch.rs` `relays`,
+  `raster_optics.rs` `encode_raster_optic_relays`, `rm_visibility.wgsl` `rm_cabin_domain` and
+  `rm_surface_motion`): the vision blocks show the shader backend's exterior raster capture per
+  port (its lighting and weather, not this backend's transport), an interim until the ray
+  queries carry the periscope image. The froxel medium and the one-pixel particles use the
+  shader backend's cabin-air domains: no weather and no sky in-scatter inside them except
+  straight down an open hatch, no snowflakes inside, no dust motes outside; light entering the
+  air through the vision blocks is left out. Histories of points in (or 5 cm beneath the surface
+  of) a cabin domain reproject through that rigid frame's motion. Gate: `raymarch-cabin`
+  (`captures/rm_cabin_before_*` against `rm_cabin_after3_*`; consecutive-frame difference in
+  motion 5.53 to 0.50 sRGB codes).
 - Raymarch temporal filter and pane reflections (2026-10-28; `rm_shade.wgsl` `shade_history`,
   `rm_glass.wgsl` `pane_offscreen`): the screen gather's open share, contact term and bounce are
   averaged over frames (new estimates 0.2) with a disocclusion mask and a firefly clamp (eight times

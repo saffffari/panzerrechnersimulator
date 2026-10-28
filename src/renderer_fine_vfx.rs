@@ -305,8 +305,12 @@ impl Renderer {
         if !self.shader_backend {return;}
         let mut frames=std::mem::take(&mut self.fine_vfx.frames);
         for frame in frames.values_mut(){frame.active=false;}
-        let main=self.prepare_fine_vfx_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX));
-        frames.insert(usize::MAX,main);self.prepare_fine_vfx_ports(device,queue,&mut frames);
+        // The raymarch backend draws its own grains in the main view; only its relayed ports take these.
+        if self.raymarch.is_none() {
+            let main=self.prepare_fine_vfx_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX));
+            frames.insert(usize::MAX,main);
+        }
+        self.prepare_fine_vfx_ports(device,queue,&mut frames);
         self.fine_vfx.frames=frames;
     }
     pub(super) fn encode_fine_vfx(&self,encoder:&mut wgpu::CommandEncoder,key:usize,color:&wgpu::TextureView,work:&mut RenderWorkStats) {

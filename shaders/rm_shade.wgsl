@@ -70,9 +70,9 @@ fn contact_shadow(rel: vec3<f32>, dir: vec3<f32>, reach_m: f32, thickness_m: f32
 // ao: near-field contact; open: the hemisphere share the frame's surfaces leave open; covered:
 // the share they cover; irradiance: their previous-frame radiance over that share (x pi).
 struct Gather { ao: f32, open: f32, covered: f32, irradiance: vec3<f32> };
-fn previous_radiance(world: vec3<f32>) -> vec4<f32> {
+fn previous_radiance(world: vec3<f32>, motion: mat4x4<f32>) -> vec4<f32> {
     if (fr.prev_cam_pos.w < 0.5) { return vec4(0.0); }
-    let rel = world - fr.prev_cam_pos.xyz;
+    let rel = (motion * vec4(world, 1.0)).xyz - fr.prev_cam_pos.xyz;
     let clip = fr.prev_view_proj * vec4(rel, 1.0);
     if (clip.w <= 0.001) { return vec4(0.0); }
     let ndc = clip.xy / clip.w;
@@ -81,7 +81,8 @@ fn previous_radiance(world: vec3<f32>) -> vec4<f32> {
     let p = vec2<i32>(uv * fr.res.xy);
     return vec4(textureLoad(lit_prev, p, 0).rgb, 1.0);
 }
-fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32) -> Gather {
+// `motion`: the shaded surface's (rm_surface_motion), applied to the surfaces it gathers from.
+fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32, motion: mat4x4<f32>) -> Gather {
     let dist = length(rel);
     let dims = vec2<i32>(fr.res.xy);
     let radius_px = clamp(6.0 * fr.view_proj[1][1] * fr.res.y * 0.5 / max(dist, 0.05), 8.0, 220.0);
@@ -104,7 +105,7 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32) ->
             let c = max(dot(n, h / len), 0.0);
             horizon_near = max(horizon_near, c * (1.0 - smoothstep(0.6, 3.0, len)));
             if (c > horizon + 1.0e-3) {
-                let lit = previous_radiance(fr.cam_pos.xyz + sample);
+                let lit = previous_radiance(fr.cam_pos.xyz + sample, motion);
                 let band = (c * c - horizon * horizon) * (RM_PI / 8.0);
                 irradiance += lit.rgb * lit.a * band;
                 bands += band;
@@ -134,10 +135,10 @@ const RM_AO_BLEND: f32 = 0.15;
 // landing on a bright pane brightens a pixel over a few frames instead of flashing.
 const RM_GATHER_BLEND: f32 = 0.2;
 struct ShadeHistory { shares: vec4<f32>, bounce: vec3<f32>, valid: bool };
-fn shade_history(world: vec3<f32>) -> ShadeHistory {
+fn shade_history(world: vec3<f32>, motion: mat4x4<f32>) -> ShadeHistory {
     var none = ShadeHistory(vec4(0.0), vec3(0.0), false);
     if (fr.prev_cam_pos.w < 0.5) { return none; }
-    let rel = world - fr.prev_cam_pos.xyz;
+    let rel = (motion * vec4(world, 1.0)).xyz - fr.prev_cam_pos.xyz;
     let clip = fr.prev_view_proj * vec4(rel, 1.0);
     if (clip.w <= 0.001) { return none; }
     let ndc = clip.xy / clip.w;
@@ -298,8 +299,9 @@ fn fs(in: VsOut) -> ShadeOut {
         }
         let terrain = g0.a > 2.5 && g0.a < 3.5;
         let grass = g0.a > 3.5 && g0.a < 4.5;
-        let fresh_gather = screen_gather(pixel, rel, n, jitter);
-        let history = shade_history(world);
+        let motion = rm_surface_motion(world, n);
+        let fresh_gather = screen_gather(pixel, rel, n, jitter, motion);
+        let history = shade_history(world, motion);
         var gather = fresh_gather;
         if (history.valid) {
             gather.open = mix(history.shares.y, fresh_gather.open, RM_GATHER_BLEND);
@@ -402,7 +404,7 @@ fn fs(in: VsOut) -> ShadeOut {
             // mean of the on-screen cover was tried first and diverged, a single lamp sample
             // standing for a whole covered hemisphere.
             var hidden = vec3(0.0);
-            if (hidden_cover > 0.0) { hidden = previous_radiance(world).rgb; }
+            if (hidden_cover > 0.0) { hidden = previous_radiance(world, motion).rgb; }
             env = env * open + gather.irradiance * select(1.0, 0.6, grass) / RM_PI + hidden * hidden_cover;
         }
         color += diffuse * RM_PI * env;

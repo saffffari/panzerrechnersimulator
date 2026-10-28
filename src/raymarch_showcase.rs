@@ -822,6 +822,76 @@ fn run_shafts(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `raymarch-cabin PREFIX`: the commander's post shut, as a player sees it on the act's own
+/// weather: the vision blocks, the cabin medium at rest, then while the tank drives (two pairs of
+/// consecutive frames, no history reset between them, so their difference is the frame-to-frame
+/// flicker); then the gunner's, driver's and radio operator's posts at rest. Short by design (one
+/// process, a few hundred frames).
+pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_commander.png")).exists(),
+        "preserving existing capture; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    g.hatch_open = false;
+    rig.station_camera();
+    step(&mut g, &mut r, 40, &idle);
+    let note = |r: &crate::renderer::Renderer, what: &str| format!("{what}; cloud cover {:.2}, haze {:.4}/m, precipitation {:.2}",
+        r.overcast, r.fog_density, r.precipitation);
+    let text = note(&r, "the commander's post at noon, hatch shut, at rest");
+    rig.still(&mut r, "commander", &text)?;
+    let path = format!("{prefix}_commander_next.png");
+    r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+    rig.shots.push(serde_json::json!({ "name": "commander_next", "path": path, "note": "the next frame (flicker)" }));
+    // Drive: every frame simulated and rendered, so the histories accumulate in motion.
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    for _ in 0..150 {
+        g.update(&drive, 1.0 / 60.0, &mut r);
+        r.render_offscreen(&device, &queue);
+    }
+    let speed = g.player.speed;
+    let path = format!("{prefix}_commander_driving.png");
+    r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+    rig.shots.push(serde_json::json!({ "name": "commander_driving", "path": path, "speed_m_s": speed,
+        "note": note(&r, "the same post after 2.5 s at full throttle, every frame rendered") }));
+    g.update(&drive, 1.0 / 60.0, &mut r);
+    let path = format!("{prefix}_commander_driving_next.png");
+    r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+    rig.shots.push(serde_json::json!({ "name": "commander_driving_next", "path": path, "note": "one game step later (flicker in motion)" }));
+    // The other optics at rest: the gunner's sight, the driver's and the radio operator's posts.
+    step(&mut g, &mut r, 60, &idle);
+    for (station, name) in [(Station::Gunner, "gunner"), (Station::Driver, "driver"), (Station::Radioman, "radioman")] {
+        g.station = station;
+        step(&mut g, &mut r, 40, &idle);
+        let text = note(&r, &format!("the {name}'s post at rest"));
+        rig.still(&mut r, name, &text)?;
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-cabin.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "skip": std::env::var("KESSEL_RM_SKIP").ok(),
+        "disclosure": "Staged fixture (banished enemies, held fire). The act's own weather; clock set to 09:00 UTC and pinned. The game's commander camera. No image grading."
+    }))?)?;
+    Ok(())
+}
+
 /// `KESSEL_SHOWCASE_SET=snow`: snow lying on the Tiger over time (`snow_cover`): the clean hull,
 /// after two minutes of steady snowfall, after a fast drive, after a shot, after a traverse;
 /// each from behind and from above the hull, the sky clock pinned. The world keeps its winter cover.

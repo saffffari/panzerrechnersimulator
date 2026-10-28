@@ -94,9 +94,9 @@ fn offscreen_reflection(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<
 // instead of sparkling. Named approximation: the history follows the surface, not the reflected
 // point, so a moving reflection trails for a few frames.
 const RM_REFLECT_BLEND: f32 = 0.2;
-fn previous_reflection(world: vec3<f32>) -> vec4<f32> {
+fn previous_reflection(world: vec3<f32>, motion: mat4x4<f32>) -> vec4<f32> {
     if (fr.prev_cam_pos.w < 0.5) { return vec4(0.0, 0.0, 0.0, -1.0); }
-    let rel = world - fr.prev_cam_pos.xyz;
+    let rel = (motion * vec4(world, 1.0)).xyz - fr.prev_cam_pos.xyz;
     let clip = fr.prev_view_proj * vec4(rel, 1.0);
     if (clip.w <= 0.001) { return vec4(0.0, 0.0, 0.0, -1.0); }
     let ndc = clip.xy / clip.w;
@@ -147,7 +147,7 @@ fn fs(in: VsOut) -> ReflectOut {
         fallback = offscreen_reflection(rel, n, dir, fallback);
     }
     let fresh = mix(fallback, hit.colour, hit.weight);
-    let history = previous_reflection(fr.cam_pos.xyz + rel);
+    let history = previous_reflection(fr.cam_pos.xyz + rel, rm_surface_motion(fr.cam_pos.xyz + rel, n));
     let reflected = select(fresh, mix(history.rgb, fresh, RM_REFLECT_BLEND), history.a > 0.0);
     // The medium between the eye and this surface already attenuates `lit`; apply the same to
     // the reflected term so a distant wet deck in fog does not pop.

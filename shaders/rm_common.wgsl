@@ -33,6 +33,16 @@ struct Frame {
     fog: vec4<f32>,               // fog banks: extinction inside /m, coverage, depth m, floor y
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
+    cabin_air: RmCabinAir,        // the player's cabin air domains (cabin_medium.rs; rm_visibility.wgsl)
+    cabin_motion: array<mat4x4<f32>, 3>, // per domain: world point now -> same frame point last frame
+};
+// cabin_medium.rs `Uniform` (shaders/cabin_medium.wgsl `CabinMedium`): hull, turret, cupola.
+struct RmCabinAir {
+    world_to_local: array<mat4x4<f32>, 3>,
+    grid_min_step: array<vec4<f32>, 3>,   // local min x, local min z, pitch, enabled
+    grid_size: array<vec4<u32>, 3>,       // columns x, z, texture layer
+    bounds_min: array<vec4<f32>, 3>,      // world AABB
+    bounds_max: array<vec4<f32>, 3>,
 };
 @group(0) @binding(0) var<uniform> fr: Frame;
 

@@ -118,6 +118,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     let scene_d = select(1.0e9, length(rm_relative_from_depth(uv, depth)), depth < 1.0);
     let slice_width = rm_dist(kf + 1.0) - d;
     var m = rm_medium_at(p);
+    let cabin_domain = rm_cabin_domain(p);
     let cell = vec3<u32>(id * RM_CELLS / dims);
     let cell_index = (cell.z * RM_CELLS.y + cell.y) * RM_CELLS.x + cell.x;
     let flame_noise = rm_fbm(p * vec3(9.0, 6.0, 9.0) + vec3(0.0, -fr.cam_pos.w * 2.6, 0.0), 41u);
@@ -142,9 +143,11 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
                     * rm_phase_dense(dot(ray, fr.sun_dir.xyz), m.g, m.sigma_t);
             }
         }
-        // Skylight: isotropic mean sky through the vertical cover map.
+        // Skylight: isotropic mean sky through the vertical cover map. Covered open air keeps 8 %
+        // (the sky low on the horizon under eaves and trees); the cabin air only what the map
+        // sees through an open hatch above it (light through the vision blocks is left out).
         let sky_vis = rm_sky_visibility(p, 0.0);
-        inscatter += m.sigma_s * rm_sky_isotropic() * mix(0.08, 1.0, sky_vis);
+        inscatter += m.sigma_s * rm_sky_isotropic() * mix(select(0.08, 0.0, cabin_domain >= 0), 1.0, sky_vis);
         // Lamps, fires, flashes, tracer heads: the lights binned into this cell.
         let lstart = light_cell_start[cell_index];
         let lend = light_cell_start[cell_index + 1u];
@@ -172,7 +175,11 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     // Temporal history: reproject this froxel's world point into the previous frame's grid.
     var result = vec4(inscatter, m.sigma_t);
     if (fr.prev_cam_pos.w > 0.5) {
-        let prev_rel = p - fr.prev_cam_pos.xyz;
+        // Cabin air rides its rigid frame: last frame it was where that frame's motion puts it,
+        // so the history of the lit cabin follows the vehicle instead of smearing through it.
+        var prev_p = p;
+        if (cabin_domain >= 0) { prev_p = (fr.cabin_motion[u32(cabin_domain)] * vec4(p, 1.0)).xyz; }
+        let prev_rel = prev_p - fr.prev_cam_pos.xyz;
         let clip = fr.prev_view_proj * vec4(prev_rel, 1.0);
         if (clip.w > 0.001) {
             let ndc = clip.xy / clip.w;

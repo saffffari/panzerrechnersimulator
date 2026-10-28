@@ -93,6 +93,9 @@ pub(super) struct RasterOptics {
     layers: Vec<Layer>,
     prepared: RefCell<Vec<Prepared>>,
     panel_pipe: wgpu::RenderPipeline,
+    /// The raymarch backend's panel: one HDR target, the G-buffer depth read and not written
+    /// (later passes sample it), no ambient mask.
+    relay_pipe: Option<wgpu::RenderPipeline>,
     tracer_panel_pipe: wgpu::RenderPipeline,
     weather: WeatherPipelines,
     width: u32,
@@ -397,6 +400,18 @@ impl RasterOptics {
                 stencil:Default::default(),bias:Default::default()}),
             multisample:Default::default(),multiview:None,cache:None,
         });
+        let relay_pipe=crate::graphics::raymarch_backend_enabled().then(||device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label:Some("raymarch-optic-relay"),layout:Some(&layout),
+            vertex:wgpu::VertexState {module:&shader,entry_point:Some("vs"),compilation_options:Default::default(),
+                buffers:&[wgpu::VertexBufferLayout {array_stride:std::mem::size_of::<crate::gltf_load::Vertex>() as u64,
+                    step_mode:wgpu::VertexStepMode::Vertex,attributes:&wgpu::vertex_attr_array![0=>Float32x3]}]},
+            fragment:Some(wgpu::FragmentState {module:&shader,entry_point:Some("fs_relay"),compilation_options:Default::default(),
+                targets:&[Some(wgpu::ColorTargetState {format:hdr_format(),blend:None,write_mask:wgpu::ColorWrites::ALL})]}),
+            primitive:wgpu::PrimitiveState {cull_mode:None,..Default::default()},
+            depth_stencil:Some(wgpu::DepthStencilState {format:DEPTH,depth_write_enabled:false,depth_compare:wgpu::CompareFunction::LessEqual,
+                stencil:Default::default(),bias:Default::default()}),
+            multisample:Default::default(),multiview:None,cache:None,
+        }));
         let tracer_source=format!("{}\n{}",include_str!("../shaders/raster_optics.wgsl")
             .split("struct PaneOutput").next().unwrap(),include_str!("../shaders/weapon_tracer_panel.wgsl"));
         let tracer_module=super::shader(device,"raster-optic-tracer-panel",&tracer_source);
@@ -439,7 +454,7 @@ impl RasterOptics {
             let weather=weather_layer(device,&depth_view,&weather_layouts,medium);
             Layer {color:view(&color),tracer_color:view(&tracers),tracer_bind,depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
         }).collect();
-        Self {specs:Vec::new(),blocked:Vec::new(),occluded:Vec::new(),source_surfaces:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,tracer_panel_pipe,weather,width,height,_color:color,_tracers:tracers,_depth:depth}
+        Self {specs:Vec::new(),blocked:Vec::new(),occluded:Vec::new(),source_surfaces:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,relay_pipe,tracer_panel_pipe,weather,width,height,_color:color,_tracers:tracers,_depth:depth}
     }
 }
 
@@ -493,6 +508,37 @@ impl Renderer {
         mesh.glass=state.glass;mesh.periscope_kind=state.optical_kind;
         mesh.emissive_own=state.own_emission;mesh.emissive_win=state.window_emission;mesh.emissive=state.emission;
         self.rt_surface_dirty=self.rt_on;
+    }
+
+    /// Some port's exterior view is prepared this frame (its entrance face is in view).
+    pub(super) fn raster_optics_prepared(&self) -> bool {
+        self.raster_optics.as_ref().is_some_and(|o| !o.prepared.borrow().is_empty())
+    }
+
+    /// The raymarch backend's relay: each prepared port's entrance face drawn into its HDR frame
+    /// after the deferred shade, depth-tested against the G-buffer (the face itself is left out
+    /// of it). Glass in front of a face (eyepieces, the sight) is drawn over it afterwards.
+    pub(super) fn encode_raster_optic_relays(&self, encoder:&mut wgpu::CommandEncoder, hdr:&wgpu::TextureView,
+        depth:&wgpu::TextureView, work:&mut RenderWorkStats) {
+        let Some(optics)=&self.raster_optics else {return;};
+        let Some(pipe)=&optics.relay_pipe else {return;};
+        let prepared=optics.prepared.borrow();
+        if prepared.is_empty() {return;}
+        let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label:Some("raymarch-optic-relays"),
+            color_attachments:&[Some(super::attachment(hdr,wgpu::LoadOp::Load))],
+            depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:depth,depth_ops:None,stencil_ops:None}),
+            timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render("raymarch-optic-relays")),
+            occlusion_query_set:None,
+        });
+        pass.set_pipeline(pipe);
+        for view in prepared.iter() {
+            let spec=&optics.specs[view.port];
+            let m=&self.meshes[spec.mesh];
+            pass.set_bind_group(0,&optics.layers[view.port].panel_bind,&[]);
+            pass.set_vertex_buffer(0,m.vbuf.slice(..));pass.set_index_buffer(m.ibuf.slice(..),wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(spec.entry_indices.clone(),0,0..1);work.scene_mesh_draws+=1;
+        }
     }
 
     pub(super) fn raster_optic_panel(&self, mesh: usize) -> bool {

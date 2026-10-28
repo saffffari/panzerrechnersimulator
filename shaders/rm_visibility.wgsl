@@ -22,6 +22,43 @@ struct Light { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, };
 @group(1) @binding(10) var sky_cache_samp: sampler;
 // The cloud layer's transmittance toward the key body by ground position (rm_cloud_shadow.wgsl).
 @group(1) @binding(11) var cloud_shadow_tex: texture_2d<f32>;
+// The player's cabin air (cabin_medium.rs): per rigid frame (hull, turret, cupola) a 2 cm grid of
+// source floor-to-roof intervals, moving with the vehicle.
+@group(1) @binding(12) var cabin_air_columns: texture_2d_array<f32>;
+
+// Which cabin domain's air holds a world point (-1: outside the vehicle's air). The membership
+// test of cabin_medium.wgsl `cabin_contains` (same cells, same intervals), returning the domain
+// so a caller can follow that frame's motion.
+fn rm_cabin_domain(point: vec3<f32>) -> i32 {
+    for (var domain = 0u; domain < 3u; domain += 1u) {
+        let grid = fr.cabin_air.grid_min_step[domain];
+        let size = fr.cabin_air.grid_size[domain];
+        if (grid.w < 0.5 || any(point < fr.cabin_air.bounds_min[domain].xyz) || any(point > fr.cabin_air.bounds_max[domain].xyz)) { continue; }
+        let p = (fr.cabin_air.world_to_local[domain] * vec4(point, 1.0)).xyz;
+        let cell = vec2<i32>(floor((p.xz - grid.xy) / grid.z));
+        if (any(cell < vec2(0)) || any(cell >= vec2<i32>(size.xy))) { continue; }
+        let interval = textureLoad(cabin_air_columns, cell, i32(size.z), 0).xy;
+        if (interval.y > interval.x && p.y >= interval.x && p.y <= interval.y) { return i32(domain); }
+    }
+    return -1;
+}
+// The rigid motion since last frame of the vehicle frame a surface point belongs to: the cabin
+// domain holding the point 3 cm off the surface into the air, or 5 cm beneath it (the domain
+// spans the armour). Identity elsewhere, where the world itself stands still. Histories of the
+// player's own vehicle reproject through it, so a cabin wall keeps its history while the tank
+// moves under the eye.
+fn rm_surface_motion(world: vec3<f32>, n: vec3<f32>) -> mat4x4<f32> {
+    var domain = rm_cabin_domain(world + n * 0.03);
+    if (domain < 0) { domain = rm_cabin_domain(world - n * 0.05); }
+    if (domain < 0) {
+        return mat4x4<f32>(vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(0.0, 0.0, 1.0, 0.0), vec4(0.0, 0.0, 0.0, 1.0));
+    }
+    return fr.cabin_motion[u32(domain)];
+}
+// The cabin air is registered (the player's Tiger is posed this frame).
+fn rm_cabin_air_on() -> bool {
+    return fr.cabin_air.grid_min_step[0].w > 0.5 || fr.cabin_air.grid_min_step[1].w > 0.5 || fr.cabin_air.grid_min_step[2].w > 0.5;
+}
 
 fn rm_sky_background(dir: vec3<f32>) -> vec4<f32> {
     return textureSampleLevel(sky_cache_tex, sky_cache_samp, rm_sky_cache_uv(dir), 0.0);

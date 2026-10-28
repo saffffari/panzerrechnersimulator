@@ -51,6 +51,11 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let coverage = clamp(pow(0.012 * focal / max(dist, 0.05), 2.0), 0.02, 1.0);
         return vec4(colour * intensity * coverage * transmittance, 0.0);
     }
+    // Weather snow stays out of the cabin air and the cabin's dust motes stay in it (as on the
+    // shader backend); a mote takes the sky only where the cover map sees it through a hatch.
+    let cabin_domain = rm_cabin_domain(in.world);
+    if (kind == 0u && cabin_domain >= 0) { discard; return vec4(0.0); }
+    if (kind == 1u && cabin_domain < 0 && rm_cabin_air_on()) { discard; return vec4(0.0); }
     let dust = kind == 1u;
     // Projected coverage of a 2.5 mm flake (0.4 mm mote) inside one native pixel.
     let size_m = select(0.0025, 0.0004, dust);
@@ -62,7 +67,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         radiance += fr.sun_radiance.rgb * vis * rm_hg(dot(ray, fr.sun_dir.xyz), 0.55) * 4.0;
     }
     // A flake scatters mostly forward: it carries the brighter sky behind it more than the ground.
-    radiance += mix(rm_sky_isotropic(), rm_sky_hemisphere(vec3(0.0, 1.0, 0.0)), 0.6) * 1.25 * mix(0.08, 1.0, rm_sky_visibility(in.world, 0.0));
+    radiance += mix(rm_sky_isotropic(), rm_sky_hemisphere(vec3(0.0, 1.0, 0.0)), 0.6) * 1.25 * mix(select(0.08, 0.0, cabin_domain >= 0), 1.0, rm_sky_visibility(in.world, 0.0));
     let cell = rm_cell_index(uv, dist);
     let lstart = light_cell_start[cell];
     let lend = light_cell_start[cell + 1u];

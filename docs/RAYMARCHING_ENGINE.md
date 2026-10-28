@@ -642,10 +642,67 @@ Gate: `every_raymarch_shader_validates_with_and_without_ray_queries` (naga, no G
 validates every pipeline's WGSL with and without ray queries. Pending the GPU window: the same
 interior view before and after (`KESSEL_SHOWCASE_SET=ao`, `commander_noon_shut` and the loader's;
 `=res` `cabin_night`), and two consecutive stills to measure the flicker against today's 2.65 codes.
+The commander's post before and after this fix and the next one is in "Black sights and weather
+in the cabin" (`captures/rm_cabin_*`).
 
 If the report came from the shader backend (the launcher's default, `-Renderer shader`), the
 eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
 and any aliasing of the small relayed views under motion would need their own look.
+
+## Black sights and weather in the cabin (fixed 2026-10-28)
+
+Report, playing the merged main on this backend (800x450 fullscreen): "sights are black, top
+priority fix. Also the atmosphere I think is inside the tank and doesn't move with the tank, it's
+environment atmosphere, causes this weird pixel shimmer." Reproduced headless with
+`raymarch-cabin PREFIX` (the commander's post shut on the act's own weather at 09:00 UTC; two
+pairs of consecutive frames at rest and after 2.5 s at full throttle, then the gunner's,
+driver's and radio operator's posts): `captures/rm_cabin_before_*` against `rm_cabin_after3_*`.
+
+**The sights.** This backend never ran the shader backend's raster optics (one exterior raster
+view per port, `raster_optics.rs`), and drew each cupola block's entrance window into the
+G-buffer as an opaque grey slab: the flat grey panes in cream frames. The ports now relay, as an
+interim until the ray queries carry the periscopes' image: on a frame where a port's entrance
+face is in view, the shader backend's own capture runs (its visibility atlas, lamp cubes,
+environment probe, the ports' grains and sparks, then each port's raster scene and weather), the
+G-buffer leaves the relayed faces out, and after the deferred shade (after the bounce source is
+copied, so a relay does not glow into the cabin; the light the blocks let in arrives through
+the ray queries' periscope folds) each face is drawn into the HDR frame from its capture,
+depth-tested against the G-buffer and not written to it. Glass in front of a face (eyepieces,
+the sight) is drawn over it by the glass pass. `KESSEL_RM_SKIP=262144` turns the relays off.
+What a port shows is therefore the shader backend's rendering of the outside (its lighting, its
+weather), not this backend's; the relay geometry (entrance face, objective, direction-preserving
+cupola relays) is exactly the shader backend's. The gunner's sight was unaffected: its view is
+the camera itself.
+
+**Weather in the cabin.** The froxel medium evaluated the world weather layer, the spindrift and
+the fog banks inside the hull as if it were open air, from world-space noise that slides through
+the compartment as the tank moves; the cabin air also took 8 % of the isotropic sky as
+in-scatter (the floor meant for covered open air), and the cabin's dust motes took the same 8 %
+while the weather's snowflakes were drawn inside the hull. Against cabin lamps near 1e-4 of the
+sky's scale, every lit mote and froxel was a bright speck. Now the raymarch passes read the
+player's cabin air (`cabin_medium.rs`, the shader backend's weather-exclusion domains: per rigid
+frame, hull, turret and cupola, a 2 cm grid of source floor-to-roof intervals moving with the
+vehicle; `rm_cabin_domain` in `rm_visibility.wgsl` is `cabin_contains` returning the domain):
+inside it the medium is the cabin haze (filling the air instead of the old ellipsoid), the
+breech gas, the smoke supports and the fire parcels; no weather; sky in-scatter only where the
+cover map sees through an open hatch. Snowflakes are dropped inside it and dust motes outside
+it, as the shader backend does. Opening a hatch exposes the same finite air; no ventilation
+carries the weather in (the domain's own rule, shared with the shader backend).
+
+**Histories that follow the vehicle.** Every history reprojected a world point through the
+previous camera. Inside a moving tank the eye rides the vehicle, so a cabin wall's world point
+of this frame was last frame somewhere the wall no longer was: the disocclusion test dropped its
+history and the jittered estimates showed raw (the speckle on the turret floor in motion). The
+frame now carries each cabin domain's motion since the last frame (`cabin_motion`); froxels in
+the cabin air, and surfaces whose point 3 cm into the air or 5 cm beneath the surface lies in a
+domain, reproject through it (`rm_surface_motion`: the shade's open share and bounce history,
+the gathered previous radiance, the reflection history).
+
+Measured (mean absolute difference between consecutive frames, sRGB codes over the 2400x1350
+still): at rest 0.94 before, 0.71 after; driving 5.53 before, 0.50 after (pixels off by more
+than 16 codes: 6.3 % before, 0.2 % after). Mean luminance of the commander's view fell from 47.7
+to 32.1 codes as the sky-lit motes and haze left the cabin. GPU cost of the relays (one raster
+scene per port in view plus the atlas and cubes) is not yet measured; the box was in use.
 
 ## A/B against the shader backend
 
@@ -697,6 +754,11 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 - Without ray queries, screen-space reflections see only what the frame sees; misses fall back to
   the sky hemisphere.
 - The eyepiece glass is a presentation; its grime and dispersion are authored.
+- The vision blocks show the shader backend's raster view of the outside (its lighting and
+  weather, a 2:1 sampled capture per port), not this backend's transport.
+- Cabin air: the shader backend's sampled enclosure (2 cm columns); no weather inside it, an open
+  hatch included; no sky in the air except straight down an open hatch; the light the vision
+  blocks let into the air is left out.
 - The flame temperature field, fireball shell and muzzle-flash shapes are authored shapes driven
   by simulation state, not combustion solvers; the event sequels (soot puffs, snow ring and
   column, fragment and droplet kinematics, the brake lobes) are authored motions seeded by the
@@ -725,8 +787,10 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 
 ## Open items
 
-- The cupola periscope eyepieces are glass panes over the periscope housing, not relayed views;
-  the raster optic tiles (an offscreen view per periscope) do not run on this backend.
+- The vision blocks and sights relay the shader backend's exterior raster captures (an interim,
+  "Black sights and weather in the cabin"); the real path is the ray queries carrying the image
+  through the periscope folds and shading what they hit with this backend's own lighting. The
+  relays' GPU cost is unmeasured.
 - Ruts are shading only: the terrain triangles are not displaced, so a rut has no depth in the
   silhouette and casts no shadow of its own. Vehicles sink 0.30 m into the winter snowpack
   (`vehicle_ground::WINTER_TRACK_SINKAGE_M`, sim side), but the snow is not banked against the

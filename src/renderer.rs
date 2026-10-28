@@ -7881,7 +7881,13 @@ impl Renderer {
         // The raymarch backend renders none of the raster-lighting passes these feed
         // (cabin cubemaps, the visibility atlas, raster optics, grain/spark parcels).
         let raster_passes = self.raymarch.is_none();
-        if (self.raster_lighting || self.menu_mode) && raster_passes {
+        // The raymarch backend has no optical relay of its own yet: its vision blocks and sights
+        // show this backend's exterior raster captures (an interim, docs/RAYMARCHING_ENGINE.md),
+        // which need the visibility atlas and lamp cubes on the frames a port is in view.
+        let relay_optics = !raster_passes && self.raymarch.as_ref().is_some_and(|rm| rm.relays_optics());
+        if relay_optics { self.prepare_raster_optics(queue, &cam); }
+        let relayed = relay_optics && self.raster_optics_prepared();
+        if (self.raster_lighting || self.menu_mode) && (raster_passes || relayed) {
             let near = self.near_shadow_uniform();
             let near_camera = CameraUniform { light_view_proj: near.view_proj, ..cam };
             queue.write_buffer(&self.near_shadow_camera_buf,0,bytemuck::bytes_of(&near_camera));
@@ -8003,7 +8009,7 @@ impl Renderer {
             cabin_medium:self.cabin_medium_uniform,
         };
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
-        if raster_passes {
+        if raster_passes || relayed {
             self.prepare_fine_vfx(device, queue);
             self.prepare_weapon_particles(device, queue);
         }
