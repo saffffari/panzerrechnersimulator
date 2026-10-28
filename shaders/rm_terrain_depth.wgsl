@@ -4,7 +4,7 @@
 struct ShadowViews { vp: array<mat4x4<f32>, 16>, };
 @group(0) @binding(0) var<uniform> shadow_views: ShadowViews;
 
-struct Push { model: mat4x4<f32>, params: vec4<f32>, extra: vec4<f32>, }; // params.x = view index (layout shared with rm_depth.wgsl)
+struct Push { model: mat4x4<f32>, params: vec4<f32>, extra: vec4<f32>, scars: vec4<u32>, }; // params.x = view index (layout shared with rm_depth.wgsl)
 var<push_constant> pc: Push;
 
 struct TrDepthOut {

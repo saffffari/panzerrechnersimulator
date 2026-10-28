@@ -572,11 +572,9 @@ impl Game {
                 } else {
                     cosine * plate.slope_deg.to_radians().cos()
                 };
-                if armor.vehicle == ProjectileVehicle::Player {
-                    plate = self
-                        .armor_scars
-                        .plate_at(plate, armor.facing, armor.local_point);
-                }
+                plate = self
+                    .vehicle_scars(armor.vehicle)
+                    .plate_at(plate, armor.facing, armor.local_point);
                 let event = ballistic::resolve_shaped_charge(
                     &ballistic::PANZERFAUST_60,
                     shot.distance,

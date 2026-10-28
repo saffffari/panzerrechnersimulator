@@ -1,8 +1,61 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Armor scars, 2026-10-27 (branch `armor-scars`, `docs/ARMOR_SCARS.md`)
+
+Permanent dents, holes, pocks and patches on every vehicle, one record per wound read by
+ballistics (`plate_at`), saves (checkpoint v2, LAN protocol 8) and the raymarch renderer. What the
+code computes and what it approximates:
+
+- Terminal geometry (aperture, back-face scab, petals, plug) is an empirical rule from calibre,
+  plate, obliquity and residual speed (`armor_damage::terminal_geometry`), not a plate solver.
+  The record carries it as data so a voxel or particle plate solver can replace it.
+- Crater depth of a non-perforating kinetic strike is 25 % (bounce, ricochet) or 15 % (shatter)
+  of the round's penetration along the normal, scaled by pen / effective thickness, capped at
+  45 % of the plate; the same depth is the resistance loss, so seen cavity and ballistic plate
+  agree. HE keeps the energy rule (5 mm dish for a 76 mm OF-350). Not calibrated against a test
+  plate series.
+- Bullet and spall pocks are 1-3 mm splash craters sized from strike energy; they change no
+  resistance (small arms stay inert against armor).
+- Spall marks inside the Tiger: fragment strikes are resolved against the bounded cabin
+  collision walls (pre-existing proxy); a mark is placed only where a trace from the wall along
+  its normal meets a real cabin surface within 40 cm.
+- Near the camera each wound is a dense patch generated from the record (local densification:
+  the baked outer plates carry 0.27-2.2 m triangles, see ARMOR_SCARS.md), planar in the struck
+  plate's tangent plane: on a curved casting the patch departs from the true surface by the
+  sagitta (about 2 cm for a 0.2 m wound on a 1 m radius). Its footprint and the cut are clamped
+  per sector to where a probe of the vehicle's source triangles finds the plate (16 sectors,
+  0.1 R steps): the clamp error is one probe step.
+- Mid and far: parallax occlusion of the analytic profile in the plate fragment (16 steps + 5
+  bisections) with its depth written; the bore wall is an analytic oblique elliptical cylinder.
+  Surfaces count as the struck plate when they face along its normal (|cos| > 0.6) within 3 cm.
+- Holes are cut from the G-buffer and from every depth map by the same cylinder test, so the key
+  beam and lamps enter exactly where the eye sees through. Daylight leak: one isotropic emitter
+  inside each open hole of the player's Tiger, radiant intensity = outside sky band radiance
+  along the plate normal x aperture area (a cosine-lobed aperture approximated as a point
+  source; the sky as its three bands). No outward cabin-light emitter: cabin lamps are already
+  unshadowed clustered lights in this backend.
+- Behind a T-34 hole the inner faces of its exterior hull shell are seen: it has no modeled
+  interior. The punched plug stops where its straight path from the bore exit first meets an inner
+  surface of the same vehicle; no bounce or tumble.
+- Rim glow: Planck radiance at the cooling rim temperature of the shared thin-ring heat estimate
+  (`rim_heat`, 1.5 % of lost kinetic energy, 2.5 s time constant) over the crater floor, a hole's
+  edge ring (0.2 calibre) and the bore wall.
+- Weathering: rust bloom (first order, 6 h), cavity grime (1 h), snow fill of sky-facing
+  cavities at 4e-5 m/s at full precipitation (spindrift packing included). A loaded scar counts
+  as a day old. Authored rates, not a corrosion or drift model.
+- Wrecks: cannon rounds now strike dead enemies whose turret is seated (they used to pass
+  through every dead tank). Still open: a popped turret (its contact frame is its old seat) and
+  the dead player Tiger (shells still pass through it) take no further shell hits.
+- Shader and physical backends: the 24 most significant player-Tiger wounds as rigid marks
+  plus the track patch; enemy wounds are not drawn there.
+
+Gate: `armor-scars PREFIX` (receipt + stills) and the unit tests in `armor_damage`,
+`campaign_save` (512-scar round trip, v1 load), `lan` (window, worst-case packet).
+
 
 ## Strewn field (scatter), 2026-10-27 (branch `scatter`, `docs/SCATTER.md`)
 
@@ -648,7 +701,7 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | System | Live truth | Remaining debt / release gate |
 |---|---|---|
 | Exterior cannon flight | Authoritative projectile pool with fixed substeps, `ShellSpec` velocity loss/gravity and swept contacts is being integrated; focused moving-target/range/frame-schedule tests pass. | Unified game tests and a playable delayed-impact capture must pass after renderer integration. No trigger-time outcome or forced landing may remain. |
-| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. | P0: damage forecasts those bodies immediately against frozen targets, while their later visible paths meet moving state. Interior collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance but do not deform or perforate retained triangles. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. No new fracture solver is claimed. |
+| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. | P0: damage forecasts those bodies immediately against frozen targets, while their later visible paths meet moving state. Interior collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. No new fracture solver is claimed. |
 | Vehicle loss | Module/fire states and crew bodies exist. | P0: enemy penetration currently collapses too readily to an instant kill; random turret-pop/cook-off decisions are not derived from ammo/fuel/module energy. Replace with the shared vehicle damage state. |
 | Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. | P0: hot steel fragments still meet cabin proxies rather than the visible triangle interior; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations. Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
 | World collision/destruction | Tank/tank separation, trees, destructible structures, rubble and drive-over classes work; since 2026-09-29 the Tiger's contacts go through the push model (tank push row) and the manifest's walls, piers, doorways and sheds are destruction records. | P0: AABBs/yawed footprints, hard-coded infantry cover cylinders and several authored structure shapes are proxies. Replace them with source-derived triangle/convex data; no invisible blocker may contradict the rendered object. |

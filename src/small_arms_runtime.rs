@@ -229,6 +229,23 @@ impl Game {
                 }
                 // All small-arms profiles are inert against tank armor: no AP resolution, HP chip,
                 // spall, or cabin fire. Roof/belly blocking below needs no invented plate values.
+                // The strike still marks the steel: a splash crater and stripped paint that never
+                // changes the plate's resistance (`ScarKind::Pock`).
+                {
+                    let frame = self.armor_contact_frame(&armor);
+                    let to_local = frame.inverse();
+                    let plate_mm = armor.surface_plate.map_or_else(|| match armor.vehicle {
+                        ProjectileVehicle::Enemy(index) => enemy_armor(self.enemies[index].kind),
+                        _ => crate::ballistics::ArmorScheme::TigerI,
+                    }.plate(armor.facing).thickness_mm, |surface| surface.plate.thickness_mm);
+                    let energy_j = 0.5 * projectile.shell.mass_kg * projectile.velocity.length_squared();
+                    let normal = to_local.transform_vector3(armor.world_normal);
+                    let dir = to_local.transform_vector3(projectile.velocity);
+                    let caliber = projectile.shell.caliber_mm;
+                    let now = self.armor_clock_s;
+                    self.vehicle_scars_mut(armor.vehicle).record_pock(armor.facing, armor.local_point,
+                        normal, dir, caliber, energy_j, plate_mm, now);
+                }
             }
             ProjectileContactKind::Foot => {
                 if !self.god {
@@ -520,11 +537,14 @@ mod tests {
         bullet.small_arm=Some(Payload {emitted_at_s:0.0,shot,damage:100.0,tracer:false,round:1,mixed:false,telemetry:None});
         let alive=g.player.alive;
         let hp=g.player.hp;
-        let scars=g.armor_scars.clone();
+        let roof=crate::ballistics::ArmorScheme::TigerI.plate(surface.facing);
+        let before=g.armor_scars.plate_at(roof,surface.facing,surface.local_point).thickness_mm;
         g.finish_small_arm(&bullet,armor,bullet.small_arm.unwrap(), &r.camera);
         assert_eq!(g.player.alive,alive);
         assert_eq!(g.player.hp,hp);
-        assert_eq!(g.armor_scars,scars);
+        assert_eq!(g.armor_scars.plate_at(roof,surface.facing,surface.local_point).thickness_mm,before);
+        assert!(g.armor_scars.scars().iter().any(|scar|scar.kind==crate::armor_damage::ScarKind::Pock),
+            "the bullet left a visible pock");
         println!("[small-arms] delayed damage, thin cover, moving target, range retirement and inert roof impact PASS");
         Ok(())
     }

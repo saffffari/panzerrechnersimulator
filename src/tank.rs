@@ -780,6 +780,10 @@ pub struct Tank {
     /// navigation and would otherwise drop into every pit their route crosses. Neither climbs a
     /// face higher than `terrain::TANK_STEP_M` out of one.
     pub drops_into_pits: bool,
+    /// Permanent dents, holes, pocks and patches on this machine's armor (`armor_damage`). The
+    /// player Tiger's live field is `Game::armor_scars` (it is saved with the campaign); every other
+    /// vehicle carries its own here, and a wreck keeps it.
+    pub scars: crate::armor_damage::ArmorField,
     // A tank is NOT an HP sponge — armor either holds (bounce, no effect) or is holed (a real
     // consequence). For the PLAYER Tiger the discrete penetration damage-state (individual crewmen +
     // modules, the spall model, fire) lives on `Game` (player-only, richer than the enemies need);
@@ -806,6 +810,7 @@ impl Tank {
             parts,
             kind: EnemyKind::T34,
             drops_into_pits: false,
+            scars: crate::armor_damage::ArmorField::default(),
         };
         crate::vehicle_ground::settle(&mut tank, |x,z|hf.vehicle_height_at(x,z));
         tank

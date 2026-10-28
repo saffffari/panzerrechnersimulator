@@ -168,9 +168,10 @@ struct Ember { pos: [f32; 3], packed: u32 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4] }
+struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4], scars: [u32; 4] }
 // extra: x snow load (`snow_cover`; G-buffer and glass only), y 1 on the player's vehicle
-// (surface wear), zw unused.
+// (surface wear), zw unused. scars: this mesh's armor wounds (first record, count, flags;
+// renderer_scars.rs). 112 bytes, inside the 128-byte push-constant floor the device requires.
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -190,6 +191,11 @@ pub struct Stats {
     pub history_valid: bool,
     pub prepare_ms: f32,
     pub encode_ms: f32,
+    /// Armor wound records this frame, those drawn as near patches, open holes, leak emitters.
+    pub scars: usize,
+    pub scar_patches: usize,
+    pub scar_holes: usize,
+    pub scar_leaks: usize,
 }
 
 struct Target { _tex: wgpu::Texture, view: wgpu::TextureView }
@@ -288,6 +294,17 @@ pub(super) struct Backend {
     depth_pipe: wgpu::RenderPipeline,
     depth_inst_pipe: wgpu::RenderPipeline,
     depth_grass_pipe: wgpu::RenderPipeline,
+    /// Depth maps of a mesh with open wounds: the bores are cut (rm_depth.wgsl `fs_scar_cut`).
+    depth_scar_pipe: wgpu::RenderPipeline,
+    /// G-buffer of a wounded mesh (rm_gbuffer.wgsl `fs_scar`, writes its own depth).
+    gbuffer_scar_pipe: wgpu::RenderPipeline,
+    /// Dense near-camera wound patches (rm_scar_patch.wgsl).
+    scar_patch_pipe: wgpu::RenderPipeline,
+    scars_buf: wgpu::Buffer,
+    scar_near_buf: wgpu::Buffer,
+    scar_ranges: HashMap<usize, scars::MeshScarRange>,
+    scar_near_count: u32,
+    scar_leaks: Vec<PointLight>,
     glass_pipe: wgpu::RenderPipeline,
     gbuffer_pipe: wgpu::RenderPipeline,
     gbuffer_inst_pipe: wgpu::RenderPipeline,
@@ -434,6 +451,8 @@ fn rm_source(name: &str) -> String {
         "rm_visibility.wgsl" => VISIBILITY,
         "rm_medium.wgsl" => MEDIUM,
         "rm_depth.wgsl" => include_str!("../shaders/rm_depth.wgsl"),
+        "rm_scars.wgsl" => include_str!("../shaders/rm_scars.wgsl"),
+        "rm_scar_patch.wgsl" => include_str!("../shaders/rm_scar_patch.wgsl"),
         "rm_gbuffer.wgsl" => include_str!("../shaders/rm_gbuffer.wgsl"),
         "rm_volume.wgsl" => include_str!("../shaders/rm_volume.wgsl"),
         "rm_integrate.wgsl" => include_str!("../shaders/rm_integrate.wgsl"),
@@ -452,8 +471,10 @@ fn rm_source(name: &str) -> String {
         _ => panic!("unknown raymarch shader {name}"),
     };
     if std::env::var("KESSEL_RM_LIVE_SHADERS").as_deref() == Ok("1") {
-        let root = std::env::var("KESSEL_ASSET_ROOT").unwrap_or_else(|_| ".".into());
-        let path = std::path::Path::new(&root).join("shaders").join(name);
+        // KESSEL_RM_SHADER_DIR reads a worktree's shaders while assets come from another root.
+        let dir = std::env::var("KESSEL_RM_SHADER_DIR").unwrap_or_else(|_|
+            format!("{}/shaders", std::env::var("KESSEL_ASSET_ROOT").unwrap_or_else(|_| ".".into())));
+        let path = std::path::Path::new(&dir).join(name);
         match std::fs::read_to_string(&path) {
             Ok(text) => return text,
             Err(error) => eprintln!("[raymarch] live shader {} unreadable ({error}); using the compiled copy", path.display()),
@@ -590,6 +611,8 @@ impl Backend {
         let light_cell_items_buf = storage("rm-light-cell-items", (MAX_LIGHT_CELL_ITEMS * 4) as u64);
         let weapon_buf = vertex("rm-weapon-records", (renderer_weapon_particles::math::MAX_BURSTS + MAX_EVENTS * EVENT_RECORDS + renderer_weapon_particles::math::MAX_TRACERS) as u64 * WEAPON_RECORD_BYTES);
         let ember_buf = vertex("rm-embers", (MAX_EMBERS * std::mem::size_of::<Ember>()) as u64);
+        let scars_buf = storage("rm-scars", (scars::MAX_GPU_SCARS * std::mem::size_of::<scars::GpuScar>()) as u64);
+        let scar_near_buf = storage("rm-scar-near", (scars::MAX_NEAR_SCARS * 4) as u64);
         // COPY_SRC for the pixel probe (`KESSEL_RM_PROBE`).
         let gusage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
         let g0 = target(device, "rm-g0-albedo", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
@@ -654,18 +677,21 @@ impl Backend {
 
         use wgpu::ShaderStages as S;
         let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rm-depth-bgl"), entries: &[uniform_entry(0, S::VERTEX)],
+            label: Some("rm-depth-bgl"), entries: &[uniform_entry(0, S::VERTEX), readonly_storage(1, S::VERTEX_FRAGMENT)],
         });
         let gbuffer_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-gbuffer-bgl"), entries: &[uniform_entry(0, S::VERTEX_FRAGMENT),
                 tex2d_entry(1, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2Array),
-                sampler_filtering(2, S::FRAGMENT)],
+                sampler_filtering(2, S::FRAGMENT),
+                readonly_storage(3, S::VERTEX_FRAGMENT), readonly_storage(4, S::VERTEX_FRAGMENT)],
         });
         let gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-gbuffer"), layout: &gbuffer_bgl, entries: &[
                 entry(0, frame_buf.as_entire_binding()),
                 entry(1, wgpu::BindingResource::TextureView(terrain_detail_view)),
                 entry(2, wgpu::BindingResource::Sampler(terrain_detail_sampler)),
+                entry(3, scars_buf.as_entire_binding()),
+                entry(4, scar_near_buf.as_entire_binding()),
             ],
         });
         let vis_stages = S::FRAGMENT | S::COMPUTE;
@@ -730,7 +756,7 @@ impl Backend {
         };
 
         // Depth-only program for every shadow/cover map.
-        let depth_shader = rm_shader(device, "rm-depth", &["rm_depth.wgsl"]);
+        let depth_shader = rm_shader(device, "rm-depth", &["rm_scars.wgsl", "rm_depth.wgsl"]);
         let depth_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-depth-pl"), bind_group_layouts: &[&depth_bgl], push_constant_ranges: &[push_range(S::VERTEX)],
         });
@@ -757,25 +783,53 @@ impl Backend {
             multiview: None, cache: None,
         });
 
+        // Wounded meshes in the depth maps: bores cut by the fragment stage.
+        let depth_scar_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-depth-scar-pl"), bind_group_layouts: &[&depth_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
+        });
+        let depth_scar_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-depth-scar"), layout: Some(&depth_scar_pl),
+            vertex: wgpu::VertexState { module: &depth_shader, entry_point: Some("vs_scar"), buffers: std::slice::from_ref(&vertex_layout), compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Less, wgpu::DepthBiasState { constant: 1, slope_scale: 1.5, clamp: 0.0 })),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &depth_shader, entry_point: Some("fs_scar_cut"), targets: &[], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
+
         // G-buffer.
-        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_gbuffer.wgsl"]);
+        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_gbuffer.wgsl"]);
         let gbuffer_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-gbuffer-pl"), bind_group_layouts: &[&gbuffer_bgl, material_bgl, track_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
         });
         let gtargets: Vec<Option<wgpu::ColorTargetState>> = (0..3).map(|_| Some(wgpu::ColorTargetState {
             format: wgpu::TextureFormat::Rgba16Float, blend: None, write_mask: wgpu::ColorWrites::ALL,
         })).collect();
-        let gbuffer_pipeline = |label: &str, entry: &str, buffers: &[wgpu::VertexBufferLayout]| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let gbuffer_pipeline = |label: &str, entry: &str, fs_entry: &str, buffers: &[wgpu::VertexBufferLayout]| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label), layout: Some(&gbuffer_pl),
             vertex: wgpu::VertexState { module: &gbuffer_shader, entry_point: Some(entry), buffers, compilation_options: Default::default() },
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
             depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Less, Default::default())),
             multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState { module: &gbuffer_shader, entry_point: Some("fs"), targets: &gtargets, compilation_options: Default::default() }),
+            fragment: Some(wgpu::FragmentState { module: &gbuffer_shader, entry_point: Some(fs_entry), targets: &gtargets, compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
-        let gbuffer_pipe = gbuffer_pipeline("rm-gbuffer", "vs", std::slice::from_ref(&vertex_layout));
-        let gbuffer_inst_pipe = gbuffer_pipeline("rm-gbuffer-inst", "vs_inst", &[vertex_layout.clone(), inst_layout.clone()]);
+        let gbuffer_pipe = gbuffer_pipeline("rm-gbuffer", "vs", "fs", std::slice::from_ref(&vertex_layout));
+        let gbuffer_inst_pipe = gbuffer_pipeline("rm-gbuffer-inst", "vs_inst", "fs", &[vertex_layout.clone(), inst_layout.clone()]);
+        let gbuffer_scar_pipe = gbuffer_pipeline("rm-gbuffer-scar", "vs", "fs_scar", std::slice::from_ref(&vertex_layout));
+        let patch_shader = rm_shader(device, "rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]);
+        let patch_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-scar-patch-pl"), bind_group_layouts: &[&gbuffer_bgl], push_constant_ranges: &[],
+        });
+        let scar_patch_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-scar-patch"), layout: Some(&patch_pl),
+            vertex: wgpu::VertexState { module: &patch_shader, entry_point: Some("vs_patch"), buffers: &[], compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Less, Default::default())),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &patch_shader, entry_point: Some("fs_patch"), targets: &gtargets, compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
 
         // Froxel lighting and integration.
         let volume_shader = rm_shader(device, "rm-volume", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_volume.wgsl"]);
@@ -940,7 +994,8 @@ impl Backend {
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
-            depth_pipe, depth_inst_pipe, depth_grass_pipe, glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
+            depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
+            scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
             binds: None, flip: 0, prev_camera: None, history_valid: false,
             shadow_views: [Mat4::IDENTITY; SHADOW_VIEWS], shadowed: [None; POINT_SHADOWS],
@@ -1014,7 +1069,8 @@ impl Backend {
     fn make_binds(&self, device: &wgpu::Device, r: &Renderer) -> Binds {
         let frame = self.frame_buf.as_entire_binding();
         let depth = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rm-depth"), layout: &self.depth_bgl, entries: &[entry(0, self.shadow_views_buf.as_entire_binding())],
+            label: Some("rm-depth"), layout: &self.depth_bgl, entries: &[entry(0, self.shadow_views_buf.as_entire_binding()),
+                entry(1, self.scars_buf.as_entire_binding())],
         });
         let visibility = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-visibility"), layout: &self.visibility_bgl, entries: &[
@@ -1289,6 +1345,20 @@ impl Backend {
         self.wind = Vec3::new(wind.x, 0.0, wind.y);
         self.track_events(r);
         self.collect_parcels(r, rel_vp, eye, vz, ln_range);
+        // Armor wounds of every visible vehicle, in world space for this frame.
+        {
+            let bands = scars::SkyBands { zenith: zenith.as_vec3(), horizon: horizon.as_vec3(), ground: ground.as_vec3() };
+            let packed = scars::pack(r, &bands);
+            if !packed.gpu.is_empty() { queue.write_buffer(&self.scars_buf, 0, bytemuck::cast_slice(&packed.gpu)); }
+            if !packed.near.is_empty() { queue.write_buffer(&self.scar_near_buf, 0, bytemuck::cast_slice(&packed.near)); }
+            self.stats.scars = packed.gpu.len();
+            self.stats.scar_patches = packed.near.len();
+            self.stats.scar_holes = packed.holes;
+            self.stats.scar_leaks = packed.leaks.len();
+            self.scar_near_count = packed.near.len() as u32;
+            self.scar_ranges = packed.ranges;
+            self.scar_leaks = packed.leaks;
+        }
         self.collect_lights(r, rel_vp, eye, vz, ln_range);
         let pshadow = self.point_shadow_views(r);
         if self.terrain.is_none() {
@@ -1447,6 +1517,16 @@ impl Backend {
                 c: [range_of(color, intensity), -1.0, 1.0, 0.0],
             });
             effect += 1;
+        }
+        // Daylight entering a modeled interior through open armor holes (renderer_scars.rs).
+        if self.debug_skip & 8 == 0 {
+            for l in &self.scar_leaks {
+                self.lights.push(GpuLight {
+                    a: [l.pos.x, l.pos.y, l.pos.z, l.source_radius.max(0.005)],
+                    b: [l.color.x, l.color.y, l.color.z, l.radiant_intensity],
+                    c: [range_of(l.color, l.radiant_intensity), -1.0, 0.0, 0.0],
+                });
+            }
         }
         for segment in r.weapon_particles.segments.iter().take(8) {
             let head = Vec3::from_array([segment.direction_life[0], segment.direction_life[1], segment.direction_life[2]]);
@@ -1974,6 +2054,7 @@ impl Backend {
                 model: Mat4::IDENTITY.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor, if flags > 3.5 { 4.0 } else { 0.0 }] },
                 extra: [self.snow_load(r.world_snow_load), 0.0, 0.0, 0.0],
+                scars: [0; 4],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow || grass_depth { pass.set_bind_group(1, p.tex_bind.as_ref(), &[]); }
@@ -1985,7 +2066,8 @@ impl Backend {
         }
         pass.set_pipeline(mesh_pipe);
         let detail_terrain = self.terrain.is_some() || self.debug_skip & 262144 != 0;
-        for m in &r.meshes {
+        let mut scar_bound = false;
+        for (mesh_index, m) in r.meshes.iter().enumerate() {
             if !m.visible || m.glass { continue; }
             // The detail terrain draws the ground; the coarse mesh is its fallback.
             if detail_terrain && m.track_recv { continue; }
@@ -1996,11 +2078,25 @@ impl Backend {
             // volumetric emitters by the froxel grid, never as glowing sphere silhouettes.
             if m.emissive > 0.0 && !m.emissive_own && !m.emissive_win && !m.track_recv { continue; }
             let kind = if m.track_recv { 3.0 } else if m.emissive_own { 2.0 } else if m.emissive_win { 1.0 } else { 0.0 };
+            // A wounded mesh: the G-buffer program that cuts and shades its scars, and in the depth
+            // maps the one that cuts its open holes. Other meshes keep the early-depth programs.
+            let range = self.scar_ranges.get(&mesh_index).copied()
+                .filter(|range| !shadow || range[2] != 0);
+            if range.is_some() != scar_bound {
+                pass.set_pipeline(match (range.is_some(), shadow) {
+                    (true, true) => &self.depth_scar_pipe,
+                    (true, false) => &self.gbuffer_scar_pipe,
+                    (false, _) => mesh_pipe,
+                });
+                scar_bound = range.is_some();
+            }
             let push = Push {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
                 extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0],
+                scars: range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]),
             };
+            let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow { pass.set_bind_group(1, m.tex_bind.as_ref(), &[]); }
             pass.set_vertex_buffer(0, m.vbuf.slice(..));
@@ -2015,7 +2111,7 @@ impl Backend {
             let Some(material) = r.meshes.iter().find(|m| m.track_recv) else { return };
             if shadow {
                 pass.set_pipeline(&terrain.depth_pipe);
-                let push = Push { model: Mat4::IDENTITY.to_cols_array_2d(), params: [view_index, 0.0, 0.0, 0.0], extra: [0.0; 4] };
+                let push = Push { model: Mat4::IDENTITY.to_cols_array_2d(), params: [view_index, 0.0, 0.0, 0.0], extra: [0.0; 4], scars: [0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
             } else {
                 pass.set_pipeline(&terrain.gbuffer_pipe);
@@ -2097,6 +2193,13 @@ impl Backend {
             pass.set_bind_group(2, &r.track_bind, &[]);
             self.draw_scene(r, &mut pass, r.camera.view_proj(), 0.0, false, &self.gbuffer_pipe, &self.gbuffer_inst_pipe, &mut work);
             if let Some(sf) = &r.scatter_field { sf.draw(&mut pass, 3, &mut work); }
+            // Near armor wounds: dense displaced patches where the vehicle mesh was cut for them.
+            if self.scar_near_count > 0 {
+                pass.set_pipeline(&self.scar_patch_pipe);
+                pass.set_bind_group(0, &self.gbuffer_bind, &[]);
+                pass.draw(0..scars::PATCH_VERTICES, 0..self.scar_near_count);
+                work.scene_instanced_draws += 1;
+            }
         }
         // 2b. This frame's depth into the strewn field's Hi-Z for the next frame's occlusion cull.
         if let Some(sf) = &r.scatter_field { sf.encode_hiz(r, encoder); }
@@ -2231,7 +2334,7 @@ impl Backend {
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
                 let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
-                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0] };
+                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0], scars: [0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
@@ -2397,8 +2500,9 @@ mod shader_tests {
     #[test]
     fn every_raymarch_shader_validates_with_and_without_ray_queries() {
         let common: &[(&str, &[&str])] = &[
-            ("rm-depth", &["rm_depth.wgsl"]),
-            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_gbuffer.wgsl"]),
+            ("rm-depth", &["rm_scars.wgsl", "rm_depth.wgsl"]),
+            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_gbuffer.wgsl"]),
+            ("rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]),
             ("rm-volume", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_volume.wgsl"]),
             ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
