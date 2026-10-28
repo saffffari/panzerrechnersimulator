@@ -125,6 +125,7 @@ mod infantry_combat;
 mod interior_rig;
 mod lan;
 mod net_ifaces;
+mod lan_crew_proof;
 mod mechanic_capture;
 mod blizzard_battle_capture;
 mod combat_scene_suite;
@@ -16352,6 +16353,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "lan-probe" {
         return lan::run_probe(&args[2..]);
+    }
+    if args.len() >= 2 && args[1] == "lan-crew" {
+        return lan_crew_proof::run(&capture_arg(&args, 2, "captures/lan_crew"));
     }
     if args.len() >= 2 && args[1] == "asset-trace" {
         return run_asset_trace();

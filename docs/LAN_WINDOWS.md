@@ -189,6 +189,15 @@ branch `lan-windows`:
   adapter, and the Wi-Fi-before-`vEthernet` ordering. Whole suite: no new failures against the
   base (the remaining failures read git-ignored assets from a worktree, as on `main`).
 - `lan-verify`: PASS.
+- **The AI crew on the LAN host path** (`lan-crew`, headless, simulation steps only, receipt
+  `artifacts/lan-windows/lan_crew_receipt.json`): 9/9 PASS on the arena with a parked T-34. With
+  only the host aboard the AI holds Gunner, Driver, Loader and Radio; the AI gunner called the
+  tank at 200 m and fired after 5.7 s; the AI loader had the next round up 5.3 s later; the AI
+  driver took the commander's W and moved the Tiger 10 m (3.7 m/s) in 5 s; a human given the
+  gunner's seat made the AI gunner stand down, and with a live target in the gunner's view no
+  shot left in 10 s; when the human left, the AI gunner took the seat back and fired 3.8 s later.
+  The first shot's kill left a burning wreck whose smoke correctly hid the next target placed
+  behind it, so the proof moves later targets clear of the plume.
 - `lan-ifaces` on this machine: Wi-Fi 192.168.1.228/24 first (default route), `vEthernet (Default
   Switch)` and `vEthernet (WSL (Hyper-V firewall))` classified virtual; beacons to 192.168.1.255,
   172.17.31.255, 172.27.79.255 and 255.255.255.255.
@@ -214,5 +223,6 @@ branch `lan-windows`:
   `panzerrechnersystem.exe lan-probe host 60` and, in a second window,
   `panzerrechnersystem.exe lan-probe join 192.168.1.228`, then the same with two game windows.
 - Two physical laptops, client isolation on a real access point, and discovery across them.
-- The AI crew in a live LAN fight (built and unit-tested paths only; no live capture yet).
+- The AI crew in a live networked fight between two game windows (the host path is proven
+  headless above; clients drawing the AI men from `ai_crew_mask` is only unit-tested).
 - Discrete laptop GPU frame rates (see "Laptop GPUs").

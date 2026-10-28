@@ -100,6 +100,8 @@ cargo run -- lan-probe host [secs] [bind]           # GPU-free LAN stand-in host
 cargo run -- lan-probe join ADDR|auto [secs]        # GPU-free join of a real or stand-in host: Welcome, snapshot rate, or the
                                                     #   JoinTrouble checklist; `lan-probe discover [secs]` lists Tigers heard
 cargo run -- lan-ifaces                             # IPv4 adapters, directed broadcasts, the address friends type
+cargo run -- lan-crew prefix                        # headless: the living AI crew in empty LAN host seats (drive, lay, fire,
+                                                    #   reload, stand down for a human and return); JSON receipt, PASS/FAIL
 cargo run --release -- asset-trace                  # with KESSEL_ASSET_TRACE=FILE: build every LAN-hostable world once so
                                                     #   the trace lists what each loads (tools/windows_payload.py input)
 cargo run --release -- train [gens] [pop] [secs] [acts]  # neuroevolution: ES over enemy policy, acts="0,1" = mean fitness across maps

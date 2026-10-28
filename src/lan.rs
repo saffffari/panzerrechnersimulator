@@ -844,6 +844,18 @@ impl CrewFrame {
     }
 }
 
+/// The crew frame a host builds from these humans (seat and input; peer ids in order), the empty
+/// seats filled as `LanSession::poll` fills them. For harnesses that drive the host path without
+/// sockets (`lan-crew`).
+pub fn host_crew_frame(humans: &[(LanRole, RoleInput)]) -> CrewFrame {
+    let mut frame = CrewFrame::default();
+    for (id, (role, input)) in humans.iter().enumerate() {
+        frame.roster[*role as usize] = id as u32;
+        frame.inputs[*role as usize] = input.sanitized();
+    }
+    fill_empty_roles(frame)
+}
+
 fn fill_empty_roles(mut frame: CrewFrame) -> CrewFrame {
     let fallback_role = if frame.occupied(LanRole::Commander) {
         LanRole::Commander

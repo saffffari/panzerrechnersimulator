@@ -1377,6 +1377,15 @@ impl Game {
         self.service_breech(stroke && matches!(self.breech, Breech::Empty), dt);
     }
 
+    /// Test/harness: whether the AI gunner's own test (`crew_solo_gunner_think`) sees enemy `i`:
+    /// active, alive, in range and an optical line from the muzzle (smoke and fire included).
+    pub fn debug_crew_gunner_sees(&self, i: usize) -> bool {
+        self.enemy_active.get(i).copied().unwrap_or(false)
+            && self.enemies.get(i).is_some_and(|enemy| enemy.alive)
+            && self.enemies[i].pos.distance(self.player.pos) <= GUNNER_ENGAGE_M
+            && self.optical_los_clear(self.player.muzzle().0, self.enemies[i].center())
+    }
+
     /// Test/harness: the seats the AI crew is working (bit = `LanRole as u8`).
     pub fn lan_ai_crew_mask(&self) -> u8 {
         self.lan_ai_mask
