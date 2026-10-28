@@ -31006,8 +31006,21 @@ impl Game {
             _ if self.crew_ok(CrewRole::Loader) => Some(1),
             _ => None,
         };
+        // A wounded loader still working (crew-solo: his performance below 0.9, the player's own
+        // when he works the breech) makes the working lamp blink slowly, 0.6 s on and 0.6 s off.
+        let blink_off = (self.stealth.t / 0.6).floor() as i64 % 2 == 1;
+        let load = if load == Some(1) && blink_off && self.loader_degraded() { None } else { load };
         let round_present = matches!(self.breech, Breech::Loaded) || self.grab || self.ram > 0.0;
         (load, round_present.then_some(if self.he_loaded { 2 } else { 0 }))
+    }
+
+    /// The man at the breech is working below his strength (crew-solo's wounds and shock).
+    fn loader_degraded(&self) -> bool {
+        if !self.crew_solo_active() { return false; }
+        let player_loads = self.mode == Mode::Tank
+            && singleplayer_crew::role_for_station(self.station) == CrewRole::Loader;
+        let performance = if player_loads { self.crew_solo_player_perf() } else { self.crew_solo.man(CrewRole::Loader).performance() };
+        performance < 0.9
     }
 
     /// Where the sight lamps sit: on a bracket off the sight body beside the gunner's eyepiece,
