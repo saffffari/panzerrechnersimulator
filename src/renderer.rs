@@ -8045,6 +8045,8 @@ impl Renderer {
         let sidereal = (crate::ephemeris::apparent_sidereal_time_deg(self.sky_clock.now())
             + self.sky_clock.site.longitude_deg_east).to_radians();
         physical_environment.star_frame = [latitude.sin(),latitude.cos(),sidereal,1.0];
+        // The cauldron's fires under the cloud deck (named in the physical truth audit).
+        physical_environment.ground_glow_flux = physical_environment::KESSEL_FIRE_GLOW_FLUX;
         // The ephemeris supplies both bodies: the key carries the direct beam along `sun_dir`
         // (diagnostic fixtures may stage that direction), the secondary lights only air and
         // cloud. Night is whatever these give: no floor, no fraction of the Sun.

@@ -55,6 +55,11 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
 // the three-octave series (each octave half the energy, under half the optical depth, half the
 // forward peak); skylight entering the cloud is the clear-sky radiance along the view ray, scaled
 // by height in the layer; haze between the eye and a far cloud is one exponential over CLOUD_HAZE_M.
+// From below the layer each sample's source is at least the radiance the delta-Eddington two-stream
+// says leaves the cloud base along this ray (`cloud_base_floor`, the solve that lights the ground in
+// compact form): the octaves above see the key only through 1.4 km of cloud, which in a thick deck
+// is nothing, and a full Moon behind overcast lit the snow while the deck above stayed black
+// (2026-10-28).
 const CLOUD_VIEW_STEPS: i32 = 32;
 const CLOUD_LIGHT_STEPS: i32 = 5;
 const CLOUD_MAX_DISTANCE_M: f32 = 32000.0;
@@ -79,6 +84,37 @@ fn cloud_depth_toward(point: vec3<f32>, toward: vec3<f32>, extinction: f32) -> f
         step_m *= 1.85;
     }
     return depth;
+}
+
+// The diffuse radiance leaving the cloud base along this ray: `physical_cloud_diffuse_boundary` in
+// compact form, for a floor. The key's beam as it reaches the cloud (`key_irradiance`) diffused
+// through the column, the night-sky layer through it, the fires' glow returned by it. Named
+// approximations: six steps through the column; the secondary body's beam and the clear sky's
+// diffuse light above the deck left out (the march's own skylight term carries the latter). The
+// general solve per texel doubled the sky's cost (2026-10-28).
+fn cloud_base_floor(origin: vec3<f32>, direction: vec3<f32>, key_irradiance: vec3<f32>,
+    toward_key: vec3<f32>) -> vec3<f32> {
+    let center = environment.planet_center_radius.xyz;
+    let base_m = physical_ray_sphere_interval(origin, direction, center,
+        environment.planet_center_radius.w + environment.atmosphere_cloud_bottom.w).y;
+    if (!(base_m > 0.0)) { return vec3(0.0); }
+    let base = origin + direction * base_m;
+    var coarse = environment;
+    coarse.integration.w = min(environment.integration.w, 6u);
+    let tau = physical_cloud_column_optical_depth(coarse, base);
+    if (tau <= 1.0e-4) { return vec3(0.0); }
+    let albedo = environment.ozone_absorption_cloud_albedo.w;
+    let g = environment.cloud_optics_scales.y;
+    let diffuse = physical_delta_eddington_diffuse_flux(tau, albedo, g);
+    var flux = physical_airglow_hemispheric_flux(environment, environment.cloud_top_lwc_radius_coverage.x)
+            * diffuse.transmittance
+        + max(environment.ground_glow.xyz, vec3(0.0)) * diffuse.reflectance;
+    let mu0 = dot(normalize(base - center), toward_key);
+    if (mu0 > 0.0) {
+        let beam = physical_delta_eddington_flux(tau, albedo, g, mu0);
+        flux += key_irradiance * (mu0 * max(beam.transmittance - beam.direct_transmittance, 0.0));
+    }
+    return flux / PHYSICAL_ENV_PI;
 }
 
 fn march_clouds(origin: vec3<f32>, direction: vec3<f32>, pixel: vec2<f32>,
@@ -124,6 +160,7 @@ fn march_clouds(origin: vec3<f32>, direction: vec3<f32>, pixel: vec2<f32>,
     var lit = false;
     var key_irradiance = vec3(0.0);
     var zenith_radiance = vec3(0.0);
+    var diffuse_floor = vec3(0.0);
     var first_m = leave;
     for (var i = 0; i < CLOUD_VIEW_STEPS; i = i + 1) {
         let t = enter + (f32(i) + jitter) * step_m;
@@ -140,6 +177,9 @@ fn march_clouds(origin: vec3<f32>, direction: vec3<f32>, pixel: vec2<f32>,
             // Skylight on the cloud: the clear sky seen along this same ray stands in for the
             // sky overhead (a second full atmosphere march per pixel cost more than the clouds).
             zenith_radiance = background;
+            if (altitude < bottom) {
+                diffuse_floor = cloud_base_floor(origin, direction, key_irradiance, toward_key);
+            }
             first_m = t;
             lit = true;
         }
@@ -157,7 +197,8 @@ fn march_clouds(origin: vec3<f32>, direction: vec3<f32>, pixel: vec2<f32>,
             peak *= 0.5;
         }
         let height = clamp((physical_altitude_m(environment, point) - bottom) / (top - bottom), 0.0, 1.0);
-        let source = key_irradiance * scattered + zenith_radiance * (0.30 + 0.70 * height);
+        let source = max(key_irradiance * scattered + zenith_radiance * (0.30 + 0.70 * height),
+            diffuse_floor);
         let through = exp(-sigma * step_m);
         radiance += transmittance * (1.0 - through) * source;
         transmittance *= through;

@@ -46,7 +46,7 @@ fn physical_snow_geometry_visibility(
     return 1.0;
 }
 
-// Exact 208-byte ABI match for GpuPhysicalEnvironment. The key directional source (`solar_*`,
+// Exact 256-byte ABI match for GpuPhysicalEnvironment. The key directional source (`solar_*`,
 // `sun_*`) is whichever body carries the direct beam: the Sun by day, the Moon once the Sun is
 // below the horizon. The secondary body (zero irradiance = none) lights only the air and the
 // cloud and shows its disc. The night-sky layer (airglow, zodiacal light, faint starlight) emits
@@ -67,6 +67,8 @@ struct PhysicalEnvironment {
     airglow_zenith_altitude: vec4<f32>,
     cloud_motion: vec4<f32>,
     star_frame: vec4<f32>,
+    // Upward diffuse flux under the cloud base from the battlefield's fires (xyz; w unused).
+    ground_glow: vec4<f32>,
 };
 
 struct PhysicalMediumCoefficients {
@@ -966,7 +968,9 @@ fn physical_cloud_diffuse_boundary(
             environment, column_up, optical_depth, cloud_diffuse.transmittance,
             environment.secondary_direction.xyz,
             environment.secondary_irradiance_angle.xyz)
-        + physical_airglow_hemispheric_flux(environment, top) * cloud_diffuse.transmittance;
+        + physical_airglow_hemispheric_flux(environment, top) * cloud_diffuse.transmittance
+        // The fires' upward glow, returned by the cloud's diffuse reflectance.
+        + max(environment.ground_glow.xyz, vec3(0.0)) * cloud_diffuse.reflectance;
     if (max(max(lower_flux.x, lower_flux.y), lower_flux.z) <= 0.0) {
         return PhysicalCloudDiffuseBoundary(vec3(0.0), 1u);
     }

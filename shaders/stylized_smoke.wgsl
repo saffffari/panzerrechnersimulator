@@ -62,6 +62,8 @@ struct PhysicalEnvironment {
     airglow_zenith_altitude: vec4<f32>,
     cloud_motion: vec4<f32>,
     star_frame: vec4<f32>,
+    // Upward diffuse flux under the cloud base from the battlefield's fires (xyz; w unused).
+    ground_glow: vec4<f32>,
 };
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> sm: Smoke;
