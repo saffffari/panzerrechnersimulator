@@ -93,6 +93,30 @@ impl Game {
     pub fn mission_finished(&self) -> bool { self.mission.as_ref().is_some_and(|m| m.finished) }
     pub fn mission_report(&self) -> Option<serde_json::Value> { self.mission.as_ref().map(MissionState::report) }
     pub fn mission_overlay(&self) -> Option<mission::Overlay> { self.mission.as_ref().map(MissionState::overlay) }
+    /// The written order is held up over the world.
+    pub fn mission_order_up(&self) -> bool { self.mission.as_ref().is_some_and(MissionState::order_up) }
+    /// The front end drew the held-up order on this frame.
+    pub fn mission_note_order_presented(&mut self) {
+        if let Some(m) = self.mission.as_mut() { m.note_order_presented(); }
+    }
+    /// A deliberate press folds the held-up order (see `MissionState::dismiss_order`). True when
+    /// the press was spent on it and must not also act.
+    pub fn mission_dismiss_order(&mut self) -> bool {
+        let folded = self.mission.as_mut().is_some_and(MissionState::dismiss_order);
+        if folded {
+            if let Some(audio) = &self.audio { audio.play_control_at("map_close", 0.40, 345.0); }
+            for line in self.mission.as_mut().unwrap().take_log() { println!("{line}"); }
+        }
+        folded
+    }
+    /// Enter: clear every line of words on the frame now (the mission net, the platoon's radio
+    /// log, the crew intercom). Later lines show as usual. True when something was showing.
+    pub fn dismiss_play_lines(&mut self) -> bool {
+        let mut any = self.mission.as_mut().is_some_and(MissionState::dismiss_radio);
+        any |= self.platoon_clear_lines();
+        any |= self.crew_intercom_clear();
+        any
+    }
     /// The current beat's number (from 1) and title.
     pub fn mission_current_beat(&self) -> Option<(usize, String)> {
         let m = self.mission.as_ref()?;
@@ -141,6 +165,7 @@ impl Game {
             course_finished: self.canyon_finished().is_some(),
             objectives_complete,
             moved: input.drive.abs() > 0.2 || input.steer.abs() > 0.2,
+            map_held: self.map_held,
             wind: r.weather_wind_world * self.weather_wind_scale,
         }
     }

@@ -2564,7 +2564,12 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay) {
+/// The close mark's rectangle on the held-up order sheet (x, y, w, h), for drawing and hit tests.
+pub const ORDER_CLOSE_MARK: (f32, f32, f32, f32) = (0.785, 0.162, 0.035, 0.050);
+
+/// `map_held`: the paper map is out, so the folded order is reread at the top of the frame and
+/// the net's lines wait until the map is stowed.
+pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay, map_held: bool) {
     // The written order (Befehl): a typed field-order slip held up over the world, then folded.
     if let Some((title, lines, first, alpha)) = &overlay.order {
         let mut body: Vec<String> = Vec::new();
@@ -2590,7 +2595,33 @@ pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay)
             ty += 0.030;
         }
         r.draw_text_bold(first, x + 0.03, ty + 0.012, 0.018, [0.58, 0.08, 0.065, 0.95 * a], Align::Left);
-        r.draw_text("M  the map carries the marks and the bearing", 0.5, y + h - 0.034, 0.018, faded, Align::Center);
+        // The close mark in the sheet's corner and the small print that says how to fold it.
+        let (cx, cy, cw, ch) = ORDER_CLOSE_MARK;
+        r.fill_rect(cx, cy, cw, ch, [0.70, 0.64, 0.50, 0.95 * a]);
+        r.fill_rect(cx, cy + ch - 0.003, cw, 0.003, [0.42, 0.37, 0.28, 0.7 * a]);
+        r.draw_text_bold("X", cx + cw * 0.5, cy + 0.010, 0.024, ink, Align::Center);
+        r.draw_text("ENTER  ·  SPACE  ·  E  ·  CLICK  ·  (A)   fold the order away          M   reread it on the map",
+            0.5, y + h - 0.034, 0.017, faded, Align::Center);
+    }
+    if map_held {
+        // The order folded onto the map: reread across the top of the frame, above the sheet.
+        if let Some((title, lines)) = &overlay.order_on_map {
+            let mut body: Vec<String> = Vec::new();
+            for line in lines { body.extend(wrap_text(line, 150)); }
+            let (x, w) = (0.10f32, 0.80f32);
+            let h = 0.050 + body.len() as f32 * 0.024 + 0.012;
+            let y = 0.012;
+            r.fill_rect(x + 0.004, y + 0.005, w, h, [0.0, 0.0, 0.0, 0.30]);
+            r.fill_rect(x, y, w, h, [0.80, 0.75, 0.62, 0.92]);
+            let ink = [0.16, 0.14, 0.11, 0.95];
+            r.draw_text_bold(title, x + 0.02, y + 0.014, 0.016, ink, Align::Left);
+            let mut ty = y + 0.046;
+            for line in &body {
+                r.draw_text(line, x + 0.02, ty, 0.021, ink, Align::Left);
+                ty += 0.024;
+            }
+        }
+        return;
     }
     // The net: a signals log, top left, oldest first.
     let mut y = 0.05;
@@ -2604,6 +2635,10 @@ pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay)
         };
         r.draw_text(&line, 0.02, y, 0.020, color, Align::Left);
         y += 0.028;
+    }
+    if !overlay.radio.is_empty() {
+        let alpha = overlay.radio.iter().map(|(_, _, a)| *a).fold(0.0f32, f32::max);
+        r.draw_text("ENTER  clear", 0.02, y, 0.017, [0.70, 0.76, 0.70, 0.85 * alpha], Align::Left);
     }
 }
 

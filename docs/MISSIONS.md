@@ -69,13 +69,25 @@ the guns' crews stand to (`heard`). No one is handed a fix the model would not g
 fires that did not fire. A **release** is the course director's own platoon entry (the same
 siting rules, the same hidden approach) at a knot of the corridor or down to the Tiger.
 
-Radio lines are text (display-resolution, outside the pixel crush, top left, oldest first, 16 s
-each) with the headset's key click. The crew's own transmissions use its callsign.
+Radio lines are text (display-resolution, outside the pixel crush, top left, oldest first, 10 s
+each, fading over the last 2.5 s) with the headset's key click and a dim "ENTER clear" under
+them. The crew's own transmissions use its callsign. Enter (with no order up) clears every line
+of words on the frame at once: the mission net, the platoon's radio log (also 10 s now, was 14 s)
+and the crew intercom line; later lines show as usual. The Canyon brief and after-action cards
+already take any key or Enter.
 
 ## Guidance the player sees
 
 - **The order sheet.** At the start the typed Befehl is held up over the world: the title, the
-  three lines, the first beat. It folds away when the crew moves (after 4 s) or after 28 s.
+  three lines, the first beat, a close mark in its corner and the fold keys in small print.
+  Enter, Space, E, a left click (the play cursor is captured, so the whole click is the close
+  mark) or the pad's A or B folds it at once, and that press does nothing else (no shot, no
+  interaction). A press counts only once the sheet has been presented on two frames
+  (`mission::ORDER_ARM_FRAMES`), so a key held or mashed through the world build cannot skip an
+  order nobody saw; there is no flat lockout. It also folds when the crew moves off (after 2 s),
+  when the map is taken out, or after 28 s.
+- **Rereading the order (M).** Once folded, the order is on the map: holding the map shows it
+  across the top of the frame, above the sheet. While the map is held the net's lines wait.
 - **The map (M).** The survey carries every opened beat's mark with its number (done marks go
   faint), the dead-reckoned position (a dashed pencil ring whose radius is the crew's uncertainty:
   12 m at a fix, 4.5 cm per metre travelled since, 110 m at most; a completed beat is a fix) and
