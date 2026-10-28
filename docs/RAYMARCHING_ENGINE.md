@@ -800,6 +800,38 @@ Not done: the volumes are single snapshots grown, cooled and thinned in time, no
 is bounded by the froxel grid (a shape 8 m across at 25 m spans about 15 cells); the cloud is one
 colour of soot and earth (a burst in snow is whiter low down); the shader backend draws no volumes.
 
+## The crew compartment: ivory paint, grime and lamps (2026-10-28)
+
+Requests: "tank interior too metallic; it would have been some metal but also some painted metal";
+"lights are too large; they read as just flat full-bright colour instead of a physical 3D shape
+emitting light. Metal looks too new too, should have more dirt and grime."
+
+- Paint: the cabin is the historical ivory, Elfenbein RAL 1001 (sRGB 205/186/136, a common conversion
+  of the swatch; satin, roughness 0.70), for the source's `Interior Paint` surfaces (`tank.rs`
+  `tiger_paint_finish`) and for the default metal the raymarch reads as painted inside
+  (`RM_INTERIOR_PAINT`). It replaces the owner's 2026-09-09 muted gunmetal at the owner's request.
+- Grime (`rm_gbuffer.wgsl` `cabin_grime`, at the interior grime load, now 0.65 at the campaign's
+  start: `surface_wear::CAMPAIGN_START`): on the hull's, turret's and gun's faces toward the crew
+  compartment, dust on what faces up, oil and grease low down and on bare steel (dark and glossy),
+  propellant soot on the roof and upper walls, and an all-over dulling, broken up in the mesh's frame.
+  Bare steel keeps its worn-bright edges (the shade pass).
+- Lamps (`lamp_lens`, `Renderer::mark_lamp_lens`): each face of a lamp's cube is a round lens in a
+  dark steel bezel, a hot whitened core over a deeper rim, and a glint where the filament shows; the
+  dome lamp behind a wire cage. The lens carries the face's whole emission, so the light transported
+  is unchanged. The raymarch frame's compact camera halo is now 0.06 at half the spread
+  (`RM_BLOOM_INTENSITY`, `RM_BLOOM_SPREAD`; the shader backend keeps 0.18): at the old strength a
+  lamp a few pixels across sat in a flat glow many times its size. The eye's own scatter is the veil.
+
+`raymarch-interior PREFIX` (four posts and the gunner's head by the cabin lamps at night and with
+the cupola hatch open at noon; the dome lamp close up): `captures/rm_int6_*` against `rm_int0_*`.
+
+Not done: the hull's posts at night are lit only by their small panel lamps, so the eye sees them in
+rod vision, colourless and flat (the reproduction's rod gain, `observer::ROD_DISPLAY_GAIN`); the dome
+lamp's cube sits behind a steel plate of the source turret mesh, so its lens is not seen (its light
+reaches the cabin, the turret mesh being its housing); the grime is an authored mask at one scalar
+load, not accumulated per face; contact points polished bright are the shade pass's worn edges, not
+traced from where hands go; the noon cabin by the hatch's light is still grainy.
+
 ## The gunner's sight at night (2026-10-28)
 
 Request: "At night it shouldn't be pitch black in the gun sights." The campaign's night is
@@ -809,13 +841,14 @@ under that sky the TZF reads (the snow mid-grey through the sight). What blacked
 - Firing the coax drew the 88's flash lobe at its muzzle on every round (the MG's tracers and
   flash, below): the sight's eye fell from 3523 to 52.
 - The relayed port views' magenta sentinel (below) pulled the eye down in the eyepiece composite.
-- The cabin's main lamp lit the outside through the armour. `draw_scene` leaves a lamp's own
-  housing (the mesh enclosing the emitter) out of that lamp's shadow cube; the turret's bounds
-  enclose its lamp too, so the whole turret, mantlet and gun cast no shadow for it, and the 6 cd lamp
-  (1.1 m from the sight's objective) lit the barrel, the deck and the snow to 28 m with 0.12 lx of
-  warm light, a hundred times starlight; the eye metered the lamp-lit barrel. Only meshes smaller than
-  0.75 m (`FIXTURE_HOUSING_MAX_M`) now count as a housing. Moonless, clear: barrel 61 -> 12, snow
-  14 -> 26 (sRGB codes).
+- The cabin's lamps lit the outside through the armour. `draw_scene` leaves a lamp's own housing
+  (the mesh enclosing the emitter) out of that lamp's shadow cube; the turret and gun meshes enclose
+  the cabin lamps too, so they cast no shadow for them, and a 6 cd lamp 1.1 m from the sight's
+  objective lit the barrel, the deck and the snow to 28 m with 0.12 lx of warm light, a hundred times
+  starlight; the eye metered the lamp-lit barrel. A lamp inside the crew compartment's air domains
+  now lights only surfaces facing that air and the air itself (`rm_shade.wgsl`, `rm_volume.wgsl`).
+  (A first fix counted only fixture-sized meshes as housings; the turret's own roof fan then put the
+  dome lamp out, and it was withdrawn.) Moonless, clear: barrel 61 -> 12, snow 14 -> 26 (sRGB codes).
 
 The reticle: at the 480x270 default a Strich is 0.6 of a frame pixel, and the Strichbild, drawn in
 the crushed frame, had shrunk to a dark speck and a few dots. It is etched glass in the focal plane,

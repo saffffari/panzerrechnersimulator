@@ -498,12 +498,18 @@ fn fs(in: VsOut) -> ShadeOut {
         // The marched reflection's share (rm_reflect.wgsl's `gloss`): the rest is this term's.
         let gloss = (1.0 - smoothstep(0.2, 0.5, roughness)) * mix(0.35, 1.0, metallic);
         color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss);
-        // Lamps, fires, flashes: the lights binned into this pixel's cell.
+        // Lamps, fires, flashes: the lights binned into this pixel's cell. A lamp in the crew
+        // compartment lights only surfaces facing the compartment's air: the armour is opaque
+        // whatever the lamp's shadow cube holds (its housing, which the turret and gun meshes
+        // count as, is exempt from it). The cabin lamp lit the barrel, the deck and the snow round
+        // the tank through the mantlet (2026-10-28).
         let cell = rm_cell_index(uv, dist);
         let lstart = light_cell_start[cell];
         let lend = light_cell_start[cell + 1u];
+        let receiver_in_cabin = rm_cabin_domain(world + n * 0.03) >= 0;
         for (var i = lstart; i < lend; i += 1u) {
             let index = light_cell_items[i];
+            if (!receiver_in_cabin && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }
             let s = rm_light_sample(index, world);
             let ndl = dot(n, s.dir);
             if (ndl <= 0.0 || max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }

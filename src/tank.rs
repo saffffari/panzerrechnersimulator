@@ -346,7 +346,9 @@ const TIGER_PAINTED_NODES: &[&str] = &[
 ];
 
 pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
-    // Alex's 2026-09-09 choice: muted gunmetal cabin instead of historical ivory paint.
+    // The cabin is the historical ivory (Elfenbein, RAL 1001, sRGB 205/186/136, a common conversion
+    // of the swatch, not a measured surviving interior), the owner's request of 2026-10-28 ("tank
+    // interior too metallic"), replacing the 2026-09-09 muted gunmetal.
     // Named painted surfaces are dielectric pigment; bare machinery retains its source steel.
     // Select named surface materials, never the shared atlas or bright instrument faces.
     let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
@@ -354,7 +356,7 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
         let (swatch, rgb, metallic, roughness) = if material == Some("Turret Floor") {
             (2, [58.0, 70.0, 64.0], 0.0, 0.84)
         } else {
-            (1, [104.0, 110.0, 118.0], 0.0, 0.78)
+            (1, [205.0, 186.0, 136.0], 0.0, 0.70)
         };
         return Some(crate::gltf_load::MaterialOverride {
             swatch,
@@ -1228,7 +1230,7 @@ mod tests {
                 if let Some(finish) = selected {
                     let expected = match finish.swatch {
                         0 => [72, 74, 78, 255],
-                        1 => [104, 110, 118, 255],
+                        1 => [205, 186, 136, 255],
                         2 => [58, 70, 64, 255],
                         3 => [58, 58, 56, 255],
                         4 => [73, 72, 68, 255],
