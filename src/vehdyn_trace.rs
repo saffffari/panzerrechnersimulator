@@ -56,6 +56,34 @@ impl Roughness {
     }
 }
 
+/// The commander's drive orders along the authored route: engine on, buttoned up in the cupola,
+/// the same steering law as `CanyonPilot`'s advance (drive 0.6 unless more than 0.6 rad off).
+fn drive_route(g: &mut crate::game::Game, route: &[Vec2], cursor: &mut usize) -> TankInput {
+    use crate::game::Station;
+    if g.station_ready(Station::Gunner) {
+        g.request_station(Station::Loader);
+    } else if g.station_ready(Station::Loader) {
+        g.request_station(Station::Commander);
+    }
+    let here = Vec2::new(g.player.pos.x, g.player.pos.z);
+    while *cursor + 1 < route.len() && here.distance(route[*cursor]) < 10.0 {
+        *cursor += 1;
+    }
+    let to = route[*cursor] - here;
+    let error = (to.x.atan2(to.y) - g.player.heading + std::f32::consts::PI)
+        .rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    let mut input = TankInput {
+        drive: if error.abs() > 0.6 { 0.0 } else { 0.6 },
+        steer: (error * 2.2).clamp(-1.0, 1.0),
+        ..Default::default()
+    };
+    if !g.engine_on {
+        input.ignition = true;
+    }
+    (input.drive, input.steer) = g.safe_ai_tiger_drive(input.drive, input.steer);
+    input
+}
+
 fn route_point_from_start(route: &[Vec2], along_m: f32) -> (Vec2, f32, usize) {
     let mut remaining = along_m;
     for i in 0..route.len().saturating_sub(1) {
@@ -79,6 +107,10 @@ pub fn run(prefix: &str, seed: u64, from_m: f32, seconds: f32) -> anyhow::Result
     g.debug_place_tiger(at, heading);
     g.update(&TankInput::default(), 0.0, &mut r);
     let mut pilot = CanyonPilot::new(&g);
+    // The ride is the subject: by default the commander orders the drive along the route and
+    // nothing else (no stops to fight or reload); `VEHDYN_PILOT=1` lets the combat pilot drive.
+    let use_pilot = std::env::var("VEHDYN_PILOT").as_deref() == Ok("1");
+    let mut cursor = first_waypoint;
     let dt = 1.0 / 60.0;
     let mut log = std::io::BufWriter::new(fs::File::create(format!("{prefix}_tiger.jsonl"))?);
     let (mut sprung, mut rigid) = (Roughness::default(), Roughness::default());
@@ -86,7 +118,11 @@ pub fn run(prefix: &str, seed: u64, from_m: f32, seconds: f32) -> anyhow::Result
     let (mut max_speed, mut carried) = (0.0_f32, std::collections::BTreeMap::<String, usize>::new());
     for step in 0..(seconds / dt).ceil() as usize {
         let t = step as f32 * dt;
-        let input = pilot.step(&mut g, &r, t, dt);
+        let input = if use_pilot {
+            pilot.step(&mut g, &r, t, dt)
+        } else {
+            drive_route(&mut g, &route, &mut cursor)
+        };
         g.update(&input, dt, &mut r);
         if step % 8 == 0 {
             crate::simulation_uploads::drain(&device, &queue)?;
@@ -108,6 +144,9 @@ pub fn run(prefix: &str, seed: u64, from_m: f32, seconds: f32) -> anyhow::Result
             "travel": p.ride.travel, "along_accel": p.ride.along_accel, "lateral_accel": p.ride.lateral_accel,
             "carried_by": ground,
         }))?;
+        if use_pilot && step % 300 == 0 {
+            println!("[vehdyn-pilot] {}", g.canyon_ai_state(&pilot, t));
+        }
         if step % 60 == 0 {
             println!("[vehdyn] t {t:5.1} speed {:5.2} gear {} pitch {:6.2} (rigid {:6.2}) roll {:6.2} y {:.3}",
                 p.speed, g.player_powertrain.gear, p.pitch.to_degrees(),
@@ -165,7 +204,8 @@ pub fn run(prefix: &str, seed: u64, from_m: f32, seconds: f32) -> anyhow::Result
     let summary = serde_json::json!({
         "schema": "panzer.vehdyn-trace.v1", "seed": seed, "from_m": from_m, "seconds": seconds,
         "manifest": manifest, "staged_at": [at.x, at.y], "heading": heading,
-        "staging": "debug_place_tiger on the authored route; god mode (ride trace, not survivability); CanyonPilot drives",
+        "staging": "debug_place_tiger on the authored route; god mode (ride trace, not survivability)",
+        "driver": if use_pilot { "CanyonPilot (combat pilot)" } else { "commander's drive orders along the route (drive 0.6, carrot 1 waypoint ahead), no combat or reload stops" },
         "tiger": {"distance_m": tiger_distance, "max_speed_m_s": max_speed, "carried_by_frames": carried,
             "sprung": sprung.json(), "rigid_rest": rigid.json()},
         "t34": {"distance_m": t34_distance, "max_speed_m_s": t34_max_speed,
