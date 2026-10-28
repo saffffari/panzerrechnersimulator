@@ -129,6 +129,8 @@ param(
     [ValidateSet('commander', 'driver', 'gunner', 'loader', 'radio')] [string]$Role,
     [string]$Name,
     [ValidateRange(1, 65535)] [int]$Port = 28460,
+    # Address the host listens on. 127.0.0.1 keeps a same-PC two-window test off the network (no firewall prompt).
+    [string]$Bind = '0.0.0.0',
     [Alias('Graphics')] [ValidateSet('auto', 'low', 'high', 'ultra', 'laptop', '4090')] [string]$Tier = 'auto',
     [switch]$Laptop
 )
@@ -303,7 +305,7 @@ if ($Lan) {
         Write-Host "Found: $line"
     }
     if ($HostMission) {
-        $GameArgs += '--host', '--mission', $HostMission.ToLower(), '--bind', "0.0.0.0:$Port"
+        $GameArgs += '--host', '--mission', $HostMission.ToLower(), '--bind', "${Bind}:$Port"
         # A fresh deployment each hosting unless -Seed pins one; clients take the host's.
         $GameArgs += '--seed', $(if ($Seed) { $Seed } else { [string](Get-Random -Minimum 1 -Maximum 2147483647) })
         if (-not $Role) { $Role = 'commander' }
