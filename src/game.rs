@@ -25,6 +25,8 @@ pub(crate) mod winter_drive_review;
 #[path = "canyon_pilot.rs"]
 mod canyon_pilot;
 pub use canyon_pilot::CanyonPilot;
+#[path = "platoon.rs"]
+pub mod platoon;
 #[path = "street_nav.rs"]
 mod street_nav;
 #[path = "winter_mission.rs"]
@@ -9039,6 +9041,9 @@ pub struct Game {
     grass: Option<crate::grass::Grass>,
     pub enemies: Vec<Tank>,
     allies: Vec<AllyTiger>,
+    /// Platoon mode (`KESSEL_PLATOON=2`): the wingmen's crews, orders and radio. `None` keeps the
+    /// Halbe finale's plain `update_allied_tigers` behaviour.
+    pub platoon: Option<platoon::Platoon>,
     ally_shot_tick: u32,
     campaign_hulks: Vec<CampaignHulk>,
     finale_town_integrity: f32,
@@ -10978,7 +10983,7 @@ impl Game {
         // the player's scarred machine, then follow and engage through the real tracer/kill path.
         let mut ally_slots: Vec<[usize; 3]> = Vec::new();
         let mut ally_state: Vec<AllyTiger> = Vec::new();
-        if act.id == 3 && !isolated_population {
+        if (act.id == 3 || platoon::requested()) && !isolated_population {
             let route = (act.goal - act.spawn).normalize_or_zero();
             let right = Vec2::new(route.y, -route.x);
             let heading = route.x.atan2(route.y);
@@ -13080,6 +13085,7 @@ impl Game {
             wrecks: vec![Wreck::default(); enemies.len()],
             enemies,
             allies: ally_state,
+            platoon: None,
             ally_shot_tick: 0,
             campaign_hulks: Vec::new(),
             finale_town_integrity: 100.0,
@@ -17084,7 +17090,7 @@ impl Game {
             self.update_campaign_director(dt, input.reload);
             self.sync_campaign_map_case_visibility(r);
         }
-        self.update_allied_tigers(dt);
+        if self.platoon.is_some() { self.platoon_update(dt); } else { self.update_allied_tigers(dt); }
         self.update_finale_pressure(dt);
 
         if self.concussion_dur > 0.0 {
@@ -24981,9 +24987,25 @@ impl Game {
                 }
             }
             ProjectileVehicle::Ally(index) => {
+                if let Some(p) = self.platoon.as_mut() {
+                    if let Some(w) = p.wingmen.get_mut(index) { w.hull_hits += 1; }
+                }
                 if penetrated && self.allies[index].tank.alive {
-                    self.allies[index].tank.alive = false;
-                    self.allies[index].tank.hp = 0.0;
+                    // Platoon wingmen take the simplified behind-armour casualty model and may
+                    // fight on; the Halbe finale's allies die on the first penetration as before.
+                    let destroyed = if self.platoon.is_some() {
+                        self.platoon_on_penetration(index, armor.part, armor.facing, event.behind_armor, projectile.seed)
+                    } else {
+                        true
+                    };
+                    if destroyed {
+                        self.allies[index].tank.alive = false;
+                        self.allies[index].tank.hp = 0.0;
+                        self.allies[index].tank.speed = 0.0;
+                        if self.platoon.is_some() { self.spawn_blast(self.allies[index].tank.center(), 7.0, 24.0, 0.75); }
+                    } else {
+                        self.allies[index].tank.hp = (self.allies[index].tank.hp - 30.0).max(1.0);
+                    }
                     self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
                 } else {
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
@@ -26029,6 +26051,7 @@ impl Game {
                 .filter(|(i, _)| self.enemy_active.get(*i).copied().unwrap_or(false))
                 .map(|(i, enemy)| vehicle_motion(i, enemy)),
         );
+        avoidance_bodies.extend(self.platoon_bodies());
 
         for i in 0..self.enemies.len() {
             if !self.enemies[i].alive {
@@ -26154,7 +26177,7 @@ impl Game {
                     let target = if let Some(order) = winter { order.aim } else { match (self.brawl, brawl_target) {
                         (true, Some(t)) => t,
                         (true, None) => continue,  // foe team wiped — hold
-                        _ => self.threat_center(), // the Tiger — or the MAN, when dismounted
+                        _ => self.enemy_threat_center(i), // platoon mode: the nearest Tiger; // the Tiger — or the MAN, when dismounted
                     }};
                     let laid = lay(&mut self.enemies[i], target);
                     // No snap shot on first sight: the crew needs its seconds to lay on.
@@ -26192,7 +26215,7 @@ impl Game {
     /// everyone else is on PATROL, blissfully unaware of the Tiger in their midst.
     fn enemy_mode(&self, i: usize) -> AiMode {
         if self.stealth.spotted[i] && self.stealth.meters[i] >= 0.9
-            && self.optical_los_clear(self.enemies[i].center(), self.threat_center()) {
+            && self.optical_los_clear(self.enemies[i].center(), self.enemy_threat_center(i)) {
             return AiMode::Track;
         }
         match self.stealth.platoon_state(i) {
@@ -26309,6 +26332,8 @@ impl Game {
             let ecenter = self.enemies[i].center();
             let hull_f = self.enemies[i].forward();
             let turret_f = self.enemies[i].turret_forward();
+            // Platoon mode: each crew looks at whichever Tiger is nearest to it.
+            let player_pos = self.enemy_threat_center(i);
             let mut to = player_pos - ecenter;
             to.y = 0.0;
             let dist = to.length();

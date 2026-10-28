@@ -20,6 +20,12 @@
   Run `cargo build --release --locked --bin panzerrechnersystem` first (also done
   automatically when the binary is missing).
 
+.PARAMETER Platoon
+  Platoon mode (docs/PLATOON_MODE.md): two AI Tigers under your command on the Canyon v2 run,
+  ordered over the radio (T opens the typed line). Sets KESSEL_PLATOON=2. With ANTHROPIC_API_KEY
+  in the environment the radio goes through the Claude model; without it an offline parser
+  answers.
+
 .PARAMETER Renderer
   shader   The raster/hybrid shader backend (default; the Linux playtest profile).
   raymarch The froxel ray-marching backend (docs/RAYMARCHING_ENGINE.md): clustered
@@ -35,6 +41,7 @@ param(
     [ValidateSet('play', 'menu', 'check')] [string]$Mode = 'play',
     [switch]$Windowed,
     [switch]$Build,
+    [switch]$Platoon,
     [ValidateSet('shader', 'raymarch')] [string]$Renderer = 'shader'
 )
 $ErrorActionPreference = 'Stop'
@@ -121,6 +128,11 @@ $env:KESSEL_ENABLE_PIZZA_AUDIO = '1'
 $env:KESSEL_TRANSPORT_QUALITY = 'full'
 $env:KESSEL_CANYON_V2         = '1'
 if ($Mode -eq 'play') { $env:KESSEL_CANYON = '1' }
+if ($Platoon) {
+    $env:KESSEL_PLATOON = '2'
+    if ($env:ANTHROPIC_API_KEY) { Write-Host 'Platoon radio: Claude model (ANTHROPIC_API_KEY set).' }
+    else { Write-Host 'Platoon radio: offline keyword parser (no ANTHROPIC_API_KEY).' }
+}
 
 # --- launch -----------------------------------------------------------------------------------
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -129,7 +141,7 @@ $log = Join-Path $Runtime "winter-playtest-$stamp-$PID.log"
     "[launcher] timestamp=$(Get-Date -Format o) mode=$Mode launcher_pid=$PID windowed=$Windowed"
     "[launcher] binary=$Binary sha256=$sha"
     "[launcher] asset_root=$Root manifest=$Manifest"
-    "[launcher] renderer=$Renderer preset=high geometry_aa=msaa4 visibility=maps config=$Config"
+    "[launcher] renderer=$Renderer preset=high geometry_aa=msaa4 visibility=maps config=$Config platoon=$Platoon"
 ) | Set-Content $log
 $errLog = "$log.stderr"
 $proc = Start-Process -FilePath $Binary -WorkingDirectory $Root -PassThru -NoNewWindow `

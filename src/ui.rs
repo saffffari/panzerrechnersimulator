@@ -101,8 +101,8 @@ pub const IDX_PLAYTEST: usize = 2;
 pub const IDX_EDITOR: usize = 3;
 pub const IDX_LOAD_CHECKPOINT: usize = 4;
 pub const IDX_CANYON: usize = 5;
-pub const MENU_LABELS: [&str; 8] = [
-    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Graphics",
+pub const MENU_LABELS: [&str; 9] = [
+    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Platoon", "Graphics",
 ];
 pub const MENU_COUNT: usize = MENU_LABELS.len();
 const MENU_ROW_TOP: f32 = 0.485;
@@ -119,12 +119,13 @@ pub enum MenuAction {
     LoadCheckpoint,
     Canyon,
     CanyonV2,
+    Platoon,
     Graphics,
 }
 
 const MENU_ACTIONS: [MenuAction; MENU_COUNT] = [
     MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Graphics,
+    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Graphics,
 ];
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
@@ -443,7 +444,7 @@ mod title_menu_tests {
         assert_eq!(menu.action(), Some(MenuAction::Singleplayer));
         let expected = [
             MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Graphics,
+            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Graphics,
         ];
         for (index, action) in expected.into_iter().enumerate() {
             let y = MENU_ROW_TOP + (index as f32 + 0.5) * MENU_ROW_STEP;
@@ -1558,6 +1559,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
             None => "ONE TIGER / ADAPTIVE DEFENCE / PERMADEATH",
         },
         Some(MenuAction::CanyonV2) => "POPULATED GAEA CANYON / ADAPTIVE DEFENCE / PERMADEATH",
+        Some(MenuAction::Platoon) => "CANYON V2 / THREE TIGERS / RADIO ORDERS (T) / PERMADEATH",
         None => "",
     };
     r.draw_text(detail, 0.50, 0.905, 0.020, COL_HINT, Align::Center);
