@@ -416,6 +416,57 @@ to 0.175-0.184 ms and the reflection pass's from 0.012 to 0.016 ms, interleaved 
 each; the frame totals (34-41 ms) are noise. These fullscreen timestamps under-report (the table
 above says so); an idle-GPU rerun, with `KESSEL_RM_RT=0` to price the TLAS rebuild, is owed.
 
+## Surface wear (2026-10-28)
+
+Request: "these surfaces need more damage, like scratches, smudges, and grime, especially inside
+tank". `src/surface_wear.rs` keeps four loads for the player's Tiger, each 0 (factory clean) to 1:
+
+| load | grows with | start of the campaign |
+| --- | --- | --- |
+| mechanical wear (chipped edges, scratches) | each main-gun round (0.4 % of what remains) | 0.55 |
+| interior grime (soot, oil, propellant residue) | time crewed (toward full over 40 min) and each round (3 %) | 0.35 |
+| exterior grime (slush and earth from the tracks) | distance driven (toward full over 3 km) | 0.30 |
+| glass grime (the film on the vision blocks) | each round (2 %) and distance (8 km); a wipe leaves 0.05 | 0.25 |
+
+The rates are presentation estimates, not measurements. `Game::wipe_glass` is the crew's wipe;
+nothing in play calls it yet.
+
+**Drawing.** The hull and turret meshes carry both their outside and the crew compartment, so a face
+counts as inside when it lies within 3 m of the compartment's centre (0.9 m above the turret frame's
+origin, `fr.vehicle`) and faces it. In the G-buffer, for the player's meshes only (push `extra.y`),
+with masks in the mesh's own frame so they ride the hull and turret: scratch strokes in two
+directions gathered in patches, outside densest on faces that are stood and worked on, inside on the
+floor and in the band at seat and hand height, lighter where they cut the paint; dark smudges inside
+at seat and hand height; dust and grit on faces
+that look up (the compartment's floor and shelves; the deck outside); slush and earth on the
+running gear and lower hull outside. In the shade pass, within 4.5 m of that centre: paint worn
+through to steel on creases (where a pixel's normal turns against its neighbours' at the same
+depth), and grime gathered in corners (the near-field occlusion). The glass panes' fixed film
+scales with the glass load (0.25 is its former strength). `KESSEL_RM_SKIP=65536` zeroes every
+load for the A/B.
+
+**Captures** (`KESSEL_SHOWCASE_SET=wear`, noon, clear, the sky clock pinned, the same pose for
+both states): the commander's, loader's, driver's and radioman's posts and the commander's with the
+hatch open, clean (every load 0) and after a fight (the campaign's start, ten rounds fired, a
+minute at full throttle through the game's update: mechanical 0.57, interior 0.52, exterior 0.37,
+glass 0.40); the hull outside before and after; the driver's vision block before and after a wipe
+(`captures/rm_wear12_*`, `rm_wear12_sheet.png`). `KESSEL_WEAR_EXTREME=1` renders every load at 1 in
+the clean pose instead of the fight (`rm_wear12x_*`), to see the masks alone. Outside the wear reads
+clearly: slush on the road wheels, streaks and scratches on the hull side, the fenders' edges worn
+light. Inside, in the shut cabin by day, most of it falls in the dark: the interior is lit through
+the vision blocks only, and darkening dark paint shows little at this resolution; the scratches and
+the dust on lit faces are what carries. After the fight the gun's mechanism stands differently, so
+the interior pairs also differ there. The glass film barely shows by day: dust on glass in front of
+bright snow is low in contrast, and both states read as the same bright pane.
+
+Two first attempts were wrong and are recorded so they are not repeated: an oily, glossier smudge
+made the matte turret ceiling mirror the vision blocks, and scratch strokes on the turret's tall
+inner wall merged into pale vertical bars at this resolution.
+
+**Cost.** Not measured: the GPU was held by another application throughout. By construction, five
+value-noise lookups per G-buffer fragment of the player's meshes, and four neighbour normal and
+depth reads per shaded pixel of the vehicle.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -475,6 +526,10 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   saltating particles, and ends at the map's 48 m edge.
 - The veiling glare is the CIE veil at half strength over a four-ring pyramid; the eye's ciliary
   corona and lenticular halo are not modelled.
+- Surface wear: four scalar loads for the player's Tiger (no per-face history); procedural masks
+  in the mesh frame, not painted or simulated wear; inside and outside told apart by facing the
+  compartment's centre; worn edges from neighbouring normals in screen space (silhouette-adjacent
+  creases flicker with the view); the rates are presentation estimates.
 - Lying snow: one scalar load per vehicle (the player's Tiger) or for the world (everything
   else, enemy vehicles included, at the winter's 0.7 even while they drive), not a per-face
   accumulation; leeward faces fill no faster than windward ones and hot parts (engine deck,

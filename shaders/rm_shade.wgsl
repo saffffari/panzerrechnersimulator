@@ -269,11 +269,37 @@ fn fs(in: VsOut) -> ShadeOut {
                 metallic = mix(metallic, 0.0, snow);
             }
         }
+        let terrain = g0.a > 2.5 && g0.a < 3.5;
+        let grass = g0.a > 3.5 && g0.a < 4.5;
+        let gather = screen_gather(pixel, rel, n, jitter);
+        // The player's vehicle (pixels within 4.5 m of its compartment's centre that are not the
+        // ground; fr.vehicle): paint worn through on its edges, grime gathered in its corners. Edges are the
+        // creases between neighbouring pixels' normals; corners are the near-field occlusion.
+        let vehicle = select(0.0, 1.0, !terrain && !grass && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
+        if (vehicle > 0.0 && max(fr.wear.w, max(fr.wear.x, fr.wear.y)) > 0.0) {
+            let dims = vec2<i32>(fr.res.xy) - vec2(1);
+            var crease = 0.0;
+            for (var k = 0; k < 4; k += 1) {
+                let o = select(select(vec2(0, -1), vec2(0, 1), k == 1), select(vec2(-1, 0), vec2(1, 0), k == 3), k >= 2);
+                let q = clamp(pixel + o, vec2(0), dims);
+                let nq = textureLoad(g1_tex, q, 0).xyz;
+                let dq = textureLoad(depth_tex, q, 0);
+                if (dq < 1.0 && abs(length(rm_relative_from_depth((vec2<f32>(q) + vec2(0.5)) * fr.res.zw, dq)) - dist) < 0.08 + 0.02 * dist) {
+                    crease = max(crease, 1.0 - dot(n, normalize(nq)));
+                }
+            }
+            let worn_edge = smoothstep(0.12, 0.45, crease) * clamp(fr.wear.w, 0.0, 1.0) * (0.55 + 0.45 * jitter);
+            albedo = mix(albedo, vec3(0.44, 0.43, 0.40), worn_edge * 0.85);
+            roughness = mix(roughness, 0.4, worn_edge);
+            let to_cabin = fr.vehicle.xyz - world;
+            let inside = select(0.0, 1.0, length(to_cabin) < fr.vehicle.w && dot(n, to_cabin) > 0.0);
+            let grime = mix(clamp(fr.wear.y, 0.0, 1.0), clamp(fr.wear.x, 0.0, 1.0), inside);
+            let corner = smoothstep(0.05, 0.6, 1.0 - gather.ao);
+            albedo *= 1.0 - 0.6 * corner * grime;
+        }
         let v = -ray;
         let f0 = mix(vec3(0.04), albedo, metallic);
         let diffuse = albedo * (1.0 - metallic) / RM_PI;
-        let terrain = g0.a > 2.5 && g0.a < 3.5;
-        let grass = g0.a > 3.5 && g0.a < 4.5;
         // Key beam.
         if (fr.sun_radiance.w > 0.5) {
             // Grass is dead straw: thin, two-sided, lit through; the beam wraps round a blade
@@ -304,7 +330,6 @@ fn fs(in: VsOut) -> ShadeOut {
         // Skylight through the part of the hemisphere the frame's surfaces leave open, the
         // bounce from the part they cover. The upwelling-ground band stands in for off-screen
         // ground only (halved: most of the ground a surface sees is on screen).
-        let gather = screen_gather(pixel, rel, n, jitter);
         var ao = gather.ao;
         var open = gather.open;
         if (grass) { ao = mix(ao, 1.0, 0.7); open = mix(open, 1.0, 0.7); }

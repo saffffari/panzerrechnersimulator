@@ -149,6 +149,7 @@ mod street_plan;
 mod tank;
 mod vehicle_ground;
 mod snow_cover;
+mod surface_wear;
 mod powertrain;
 mod tank_push;
 mod tank_support;

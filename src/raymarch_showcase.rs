@@ -82,6 +82,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("haze") { return run_haze(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("res") { return run_resolution(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("ao") { return run_occlusion(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("wear") { return run_wear(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_wreck_sunset_near.png")).exists(),
         "preserving existing showcase; choose a new prefix");
@@ -497,6 +498,122 @@ fn run_occlusion(prefix: &str) -> anyhow::Result<()> {
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "ray_queries_off": std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v & 32768 != 0),
         "disclosure": "Staged fixture (banished enemies, held fire). Clear noon, sky clock pinned. Observer and station cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=wear`: wear and grime on the Tiger (`surface_wear`). The four crew posts
+/// inside clean (every load zero) and after a fight (the campaign's starting loads, then ten
+/// rounds fired and a minute at speed through the game's own update), the hull outside before and
+/// after that drive, and the commander's vision blocks before and after a wipe.
+fn run_wear(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_clean_commander.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    step(&mut g, &mut r, 30, &idle);
+    let loads = |g: &Game| {
+        let [m, i, e, gl] = g.surface_wear_loads();
+        format!("wear: mechanical {m:.2}, interior grime {i:.2}, exterior grime {e:.2}, glass {gl:.2}")
+    };
+    // The same pose for both states: the gun laid on a point ahead, the Tiger put back after the
+    // drive.
+    let aim = g.player.pos + g.player.forward() * 400.0 + Vec3::Y * 2.0;
+    g.debug_set_he_loaded(false);
+    g.debug_lay_gun_at(aim);
+    step(&mut g, &mut r, 10, &idle);
+    let stations = [(Station::Commander, "commander"), (Station::Loader, "loader"), (Station::Driver, "driver"), (Station::Radioman, "radioman")];
+    let mut posts = |g: &mut Game, r: &mut crate::renderer::Renderer, rig: &mut Rig, state: &str| -> anyhow::Result<()> {
+        for (station, name) in stations {
+            g.station = station;
+            g.commander_outside = false;
+            g.hatch_open = false;
+            rig.station_camera();
+            step(g, r, 40, &idle);
+            let note = format!("the {name}'s post at noon, {state}; {}", loads(g));
+            rig.still(r, &format!("{state}_{name}"), &note)?;
+        }
+        // The commander's post again with the hatch open: daylight on the turret's inside.
+        g.station = Station::Commander;
+        g.hatch_open = true;
+        rig.station_camera();
+        step(g, r, 40, &idle);
+        rig.still(r, &format!("{state}_commander_open"), &format!("the commander's post, hatch open, {state}; {}", loads(g)))?;
+        g.hatch_open = false;
+        Ok(())
+    };
+    let outside = |g: &Game| {
+        let p = g.player.pos;
+        let f = g.player.forward();
+        let side = f.cross(Vec3::Y).normalize_or_zero();
+        (p + side * 5.5 - f * 2.0 + Vec3::Y * 1.4, p + Vec3::Y * 0.9 - f * 0.5)
+    };
+    g.debug_set_wear([0.0; 4]);
+    step(&mut g, &mut r, 2, &idle);
+    posts(&mut g, &mut r, &mut rig, "clean")?;
+    let (eye, at) = outside(&g);
+    rig.observe(&mut r, eye, at, 55.0);
+    rig.still(&mut r, "clean_outside", &format!("the hull from the side, clean; {}", loads(&g)))?;
+    // KESSEL_WEAR_EXTREME=1: every load at 1 in the same pose (no rounds, no drive), to see the
+    // masks alone.
+    if std::env::var("KESSEL_WEAR_EXTREME").as_deref() == Ok("1") {
+        g.debug_set_wear([1.0; 4]);
+        step(&mut g, &mut r, 2, &idle);
+        posts(&mut g, &mut r, &mut rig, "worn")?;
+        let (eye, at) = outside(&g);
+        rig.observe(&mut r, eye, at, 55.0);
+        rig.still(&mut r, "worn_outside", &format!("the hull from the side, every load at 1; {}", loads(&g)))?;
+        return Ok(());
+    }
+    // The fight: the campaign's starting state, ten rounds, a minute at speed.
+    g.debug_set_wear(crate::surface_wear::CAMPAIGN_START);
+    g.station = Station::Gunner;
+    for _ in 0..10 {
+        g.debug_set_he_loaded(false);
+        g.debug_fire_laid(&mut r);
+        step(&mut g, &mut r, 90, &idle);
+    }
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    step(&mut g, &mut r, 3600, &drive);
+    step(&mut g, &mut r, 120, &idle);
+    g.debug_place_tiger(TIGER, 0.0);
+    g.debug_set_he_loaded(false);
+    g.debug_lay_gun_at(aim);
+    step(&mut g, &mut r, 120, &idle);
+    posts(&mut g, &mut r, &mut rig, "fought")?;
+    let (eye, at) = outside(&g);
+    rig.observe(&mut r, eye, at, 55.0);
+    rig.still(&mut r, "fought_outside", &format!("the hull from the side after ten rounds and a minute at speed; {}", loads(&g)))?;
+    // The commander's vision blocks, filmed, then wiped.
+    g.station = Station::Commander;
+    g.hatch_open = false;
+    rig.station_camera();
+    step(&mut g, &mut r, 30, &idle);
+    rig.still(&mut r, "glass_filmed", &format!("the commander's vision blocks before a wipe; {}", loads(&g)))?;
+    g.wipe_glass();
+    step(&mut g, &mut r, 2, &idle);
+    rig.still(&mut r, "glass_wiped", &format!("the commander's vision blocks after a wipe; {}", loads(&g)))?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.wear.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies, held fire). Clear noon, sky clock pinned. The fight is ten rounds fired into the open and a minute at full throttle through the game's update. Station and observer cameras. No image grading."
     }))?)?;
     Ok(())
 }

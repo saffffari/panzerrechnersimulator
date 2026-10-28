@@ -121,7 +121,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let g = in.uv * 44.0;
     let smear = rm_noise(vec3(g * 0.21, 5.0), 91u);
     let speck = smoothstep(0.58, 0.95, rm_noise(vec3(g, 1.0), 71u));
-    let dirt = clamp(speck * (0.3 + 0.7 * smear) + smoothstep(0.62, 0.9, smear) * 0.35, 0.0, 1.0) * 0.5;
+    // The film grows with the glass grime load (surface_wear.rs: fumes, blast, spray; a wipe
+    // clears it): 0.25, the campaign's start, is the fixed pattern's former strength.
+    let film = 0.2 + 1.2 * clamp(fr.wear.z, 0.0, 1.0);
+    let dirt = clamp((speck * (0.3 + 0.7 * smear) + smoothstep(0.62, 0.9, smear) * 0.35) * film, 0.0, 1.0) * 0.5;
     let transmit = clear_transmit * (1.0 - dirt);
 
     // Reflection: the lit frame where the reflected ray lands, the cached sky beyond.

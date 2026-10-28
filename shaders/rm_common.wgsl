@@ -26,7 +26,9 @@ struct Frame {
     sky_cache: vec4<f32>,         // elevation min rad, elevation span rad, width, height
     report: vec4<f32>,            // xyz the gun's muzzle at its last report, w seconds since (-1 none)
     report_dir: vec4<f32>,        // xyz bore direction of that report
-    debug: vec4<f32>,             // x skip screen-space indirect light (KESSEL_RM_SKIP 8192); yz probe pixel (-1 none)
+    debug: vec4<f32>,             // x skip screen-space indirect light (KESSEL_RM_SKIP 8192); yz probe pixel (-1 none); w skip ray queries
+    wear: vec4<f32>,              // player's vehicle: x interior grime, y exterior grime, z glass grime, w mechanical wear
+    vehicle: vec4<f32>,           // player's crew compartment centre xyz, w its reach m (0 none)
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
 };

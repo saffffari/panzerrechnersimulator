@@ -9119,6 +9119,8 @@ pub struct Game {
     rounds_spent: u32,
     /// Snow lying on the player's Tiger and on the world (`snow_cover`), for the renderer.
     snow_cover: crate::snow_cover::SnowCover,
+    /// Wear and grime on the player's Tiger (`surface_wear`), for the renderer.
+    surface_wear: crate::surface_wear::SurfaceWear,
     /// Interior walk position (turret-local, on the TURRET FLOOR) while posted INSIDE (Loader).
     walk_pos: Vec3,
     loader_crouch_t: f32, // held Ctrl lowers the actual cabin eye/body
@@ -13203,6 +13205,7 @@ impl Game {
             hover_station: None,
             rounds_spent: 0,
             snow_cover: crate::snow_cover::SnowCover::new(act.season == crate::world::Season::Winter),
+            surface_wear: crate::surface_wear::SurfaceWear::default(),
             loader_crouch_t: 0.0,
             walk_sounds: footsteps::Cadence::default(),
             walk_pos: Vec3::new(-0.60, 0.0, 0.15), // the loader's post, right of the breech (−X)
@@ -16036,6 +16039,9 @@ impl Game {
         self.snow_cover.update(dt, snowfall, self.player.speed, self.player.turret_yaw, self.rounds_spent);
         r.player_snow_load = self.snow_cover.player;
         r.world_snow_load = self.snow_cover.world;
+        // Wear and grime grow with time crewed, rounds fired and distance driven (`surface_wear`).
+        self.surface_wear.update(dt, self.player.speed, self.rounds_spent);
+        r.wear = self.surface_wear.uniform();
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
@@ -31074,6 +31080,20 @@ impl Game {
     /// Snow lying on the player's Tiger, 0 (bare) to 1 (every face that can hold snow covered).
     /// For the spotting model's target albedo (a snow-covered hull reads against snow).
     pub fn player_snow_cover(&self) -> f32 { self.snow_cover.player }
+
+    /// The crew wipes the vision blocks and sight windows clear of their film (`surface_wear`).
+    pub fn wipe_glass(&mut self) { self.surface_wear.wipe_glass(); }
+
+    /// Headless-only: set the wear loads (mechanical, interior grime, exterior grime, glass grime).
+    pub fn debug_set_wear(&mut self, loads: [f32; 4]) {
+        self.surface_wear = crate::surface_wear::SurfaceWear::new(loads);
+    }
+
+    /// The wear loads (mechanical, interior grime, exterior grime, glass grime).
+    pub fn surface_wear_loads(&self) -> [f32; 4] {
+        let w = &self.surface_wear;
+        [w.mechanical, w.interior_grime, w.exterior_grime, w.glass_grime]
+    }
 
     /// Headless-only: set the snow loads (Tiger, world) for a capture's starting state.
     pub fn debug_set_snow_cover(&mut self, player: f32, world: f32) {

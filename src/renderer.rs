@@ -2600,6 +2600,9 @@ pub struct Renderer {
     /// each update; the raymarch shade pass turns them into coverage per pixel.
     pub player_snow_load: f32,
     pub world_snow_load: f32,
+    /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
+    /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
+    pub wear: [f32; 4],
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -5894,6 +5897,7 @@ impl Renderer {
             muzzle_hint: None,
             player_snow_load: 0.0,
             world_snow_load: 0.0,
+            wear: [0.0; 4],
             frame: 0,
             hdr_view,
             hdr_tex,

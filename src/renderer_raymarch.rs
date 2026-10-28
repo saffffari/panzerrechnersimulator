@@ -119,6 +119,8 @@ struct FrameUniform {
     report: [f32; 4],
     report_dir: [f32; 4],
     debug: [f32; 4],
+    wear: [f32; 4],
+    vehicle: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
 }
@@ -160,7 +162,8 @@ struct Ember { pos: [f32; 3], packed: u32 }
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4] }
-// extra: x snow load (`snow_cover`; G-buffer and glass only), yzw unused.
+// extra: x snow load (`snow_cover`; G-buffer and glass only), y 1 on the player's vehicle
+// (surface wear), zw unused.
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -311,7 +314,7 @@ pub(super) struct Backend {
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
     /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow, 32768 ray queries
-    /// (world-space occlusion and the reflection fallback).
+    /// (world-space occlusion and the reflection fallback), 65536 surface wear.
     debug_skip: u32,
 }
 
@@ -1181,6 +1184,13 @@ impl Backend {
             report_dir: self.events.iter().filter(|e| e.kind == EVENT_MUZZLE).min_by(|a, b| (r.time - a.born).total_cmp(&(r.time - b.born)))
                 .map_or([0.0, 0.0, 1.0, 0.0], |e| [e.dir.x, e.dir.y, e.dir.z, 0.0]),
             debug: [if self.debug_skip & 8192 != 0 { 1.0 } else { 0.0 }, self.probe.map_or(-1.0, |p| p.0 as f32), self.probe.map_or(-1.0, |p| p.1 as f32), if self.debug_skip & 32768 != 0 { 1.0 } else { 0.0 }],
+            wear: if self.debug_skip & 65536 != 0 { [0.0; 4] } else { r.wear },
+            // The player's crew compartment: 0.9 m above the turret frame's origin (its basket
+            // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
+            vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
+                let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
+                [c.x, c.y, c.z, 3.0]
+            }),
             pshadow,
             puffs,
         };
@@ -1815,7 +1825,7 @@ impl Backend {
             let push = Push {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
-                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), 0.0, 0.0, 0.0],
+                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow { pass.set_bind_group(1, m.tex_bind.as_ref(), &[]); }
@@ -2008,7 +2018,7 @@ impl Backend {
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
                 let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
-                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), 0.0, 0.0, 0.0] };
+                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));

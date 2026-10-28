@@ -76,6 +76,14 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
+  `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
+  mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min
+  crewed, +3 % per round), exterior grime (toward full over 3 km driven), glass grime (+2 % per
+  round, over 8 km; a wipe leaves 0.05), starting at 0.55 / 0.35 / 0.30 / 0.25 for a Tiger some
+  weeks into the cauldron. Presentation estimates, not measurements; procedural masks, not painted
+  or simulated wear; inside and outside told apart by facing the compartment's centre. Gate:
+  `KESSEL_SHOWCASE_SET=wear` (clean against after a fight, and every load at 1).
 - Raymarch ray queries (2026-10-28; `rm_rt.wgsl`, `rm_shade.wgsl` `rt_open_share`,
   `rm_reflect.wgsl` `offscreen_reflection`): occlusion traced with two cosine rays per pixel per
   frame to 4 m and averaged over frames (new estimate 0.15); cover beyond 4 m counts as open, and
