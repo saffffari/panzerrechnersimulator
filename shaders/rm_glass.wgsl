@@ -94,6 +94,43 @@ fn march_reflection(rel: vec3<f32>, dir: vec3<f32>, jitter: f32) -> Hit {
     return Hit(vec3(0.0), 0.0);
 }
 
+// A screen-space miss traced through the scene (as rm_reflect.wgsl does): a hit the frame shows
+// takes the lit frame there, one it does not is a grey surface (0.3) facing the ray lit by sun and
+// sky, a clear ray the sky.
+fn pane_offscreen(rel: vec3<f32>, n: vec3<f32>, dir: vec3<f32>, sky: vec3<f32>) -> vec3<f32> {
+    let origin_rel = rel + n * 0.01;
+    let t = rm_ray_nearest(fr.cam_pos.xyz + origin_rel, dir, 0.0, 80.0);
+    if (t < 0.0) { return sky; }
+    let hit_rel = origin_rel + dir * t;
+    let pr = rm_project(hit_rel);
+    if (pr.z > 0.0 && all(pr.xy >= vec2(0.0)) && all(pr.xy < vec2(1.0))) {
+        let p = vec2<i32>(pr.xy * fr.res.xy);
+        let d = length(hit_rel);
+        if (abs(scene_distance(p) - d) < 0.05 * d + 0.1) { return textureLoad(lit_tex, p, 0).rgb; }
+    }
+    let hit = fr.cam_pos.xyz + hit_rel;
+    var radiance = rm_sky_hemisphere(-dir) * rm_sky_visibility(hit, 0.1);
+    if (fr.sun_radiance.w > 0.5) {
+        radiance += fr.sun_radiance.rgb * max(dot(-dir, fr.sun_dir.xyz), 0.0) * rm_sun_visibility(hit, 0.1) / RM_PI;
+    }
+    return 0.3 * radiance;
+}
+fn pane_open_side(world: vec3<f32>, n: vec3<f32>, pixel: vec2<i32>) -> f32 {
+    let a = select(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), abs(n.y) > 0.9);
+    let t = normalize(cross(a, n));
+    let b = cross(n, t);
+    var open = 0.0;
+    for (var k = 0u; k < 4u; k += 1u) {
+        let seed = u32(pixel.x) * 7919u + u32(pixel.y) * 104729u + k * 40503u;
+        let r1 = rm_hash01(seed);
+        let phi = 2.0 * RM_PI * (f32(k) + rm_hash01(seed ^ 0x9e3779b9u)) / 4.0;
+        let s = sqrt(r1);
+        let d = t * (cos(phi) * s) + b * (sin(phi) * s) + n * sqrt(max(1.0 - r1, 0.0));
+        if (rm_ray_open(world + n * 0.01, d, 4.0)) { open += 0.25; }
+    }
+    return open;
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.clip.xy);
@@ -104,7 +141,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let world = fr.cam_pos.xyz + rel;
     var n = normalize(in.normal);
     if (dot(n, v) < 0.0) { n = -n; }
-    let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(fr.vol.w) * 26699u);
+    // Fixed per pixel: the pane's reflection march is not accumulated, and a per-frame offset made
+    // its edge flicker between a hit and the fallback (2026-10-28).
+    let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u);
 
     // Entry face: Fresnel of a 1.52 dielectric; the refracted path through the slab.
     let cos_i = max(dot(n, v), 0.0);
@@ -127,12 +166,23 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let dirt = clamp((speck * (0.3 + 0.7 * smear) + smoothstep(0.62, 0.9, smear) * 0.35) * film, 0.0, 1.0) * 0.5;
     let transmit = clear_transmit * (1.0 - dirt);
 
-    // Reflection: the lit frame where the reflected ray lands, the cached sky beyond.
+    // Reflection: the lit frame where the reflected ray lands, the cached sky beyond. With ray
+    // queries a screen-space miss is traced through the scene: inside a closed cabin the reflected
+    // ray meets the cabin, not the sky. Without them the sky stands in, cut to 15 % under cover:
+    // a pane in a dark compartment reflected that much sky, three to four orders of magnitude
+    // brighter than the compartment, and clipped to white (2026-10-28).
     let r = reflect(-v, n);
     let sky_vis = mix(0.15, 1.0, rm_sky_visibility(world, 0.3));
-    var reflected = mix(rm_sky_hemisphere(r), rm_sky_background(r).rgb, smoothstep(-0.05, 0.25, r.y)) * sky_vis;
+    let sky_r = mix(rm_sky_hemisphere(r), rm_sky_background(r).rgb, smoothstep(-0.05, 0.25, r.y));
+    var reflected = sky_r * sky_vis;
     let hit = march_reflection(rel, r, jitter);
+    if (RM_RAY_QUERIES && hit.weight < 0.99) { reflected = pane_offscreen(rel, n, r, sky_r); }
     reflected = mix(reflected, hit.colour, hit.weight);
+    // The light reaching the pane's grime from the viewer's side: with ray queries, the share of
+    // that hemisphere open to the sky (four fixed rays, the periscopes' folds included) instead of
+    // the top-down cover map, which counts a cabin's ports and hatch as roofed.
+    var open_side = sky_vis;
+    if (RM_RAY_QUERIES) { open_side = pane_open_side(world, n, pixel); }
 
     // Glints: the key beam and the clustered lights through the pane's slight waviness.
     let rough = clamp(0.04 + 0.03 * pc.params.z, 0.04, 0.12);
@@ -159,7 +209,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         spec += rm_ggx_specular(n, v, s.dir, rough, vec3(f0)) * s.e * ndl * vis;
         dirt_light += s.e * ndl * vis / RM_PI;
     }
-    dirt_light += rm_sky_hemisphere(n) * sky_vis;
+    dirt_light += rm_sky_hemisphere(n) * open_side;
     let dirt_colour = vec3(0.30, 0.27, 0.22) * dirt * dirt_light;
 
     // Snow lying on a pane's upper face blocks it. Seen from above it scatters the light that

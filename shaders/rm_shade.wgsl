@@ -13,8 +13,11 @@
 @group(0) @binding(9) var heat_integrated: texture_3d<f32>;
 // The previous frame's shaded frame (before reflections, glass and points), the bounce source.
 @group(0) @binding(10) var lit_prev: texture_2d<f32>;
-// World-space occlusion history: x the open share, y the eye distance it was measured at.
-@group(0) @binding(11) var ao_prev: texture_2d<f32>;
+// The stochastic terms' history (2026-10-28): `shares_prev` x the ray-traced open share, y the
+// screen gather's open share, z its near-field contact term, w the eye distance they were measured
+// at; `bounce_prev` rgb the gathered bounce irradiance, a that distance.
+@group(0) @binding(11) var shares_prev: texture_2d<f32>;
+@group(0) @binding(12) var bounce_prev: texture_2d<f32>;
 
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, };
 
@@ -122,20 +125,32 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32) ->
 const RM_AO_RANGE_M: f32 = 4.0;
 const RM_AO_RAYS: u32 = 2u;
 const RM_AO_BLEND: f32 = 0.15;
-fn previous_open(world: vec3<f32>) -> f32 {
-    if (fr.prev_cam_pos.w < 0.5) { return -1.0; }
+// Temporal filter for the shade's stochastic terms (the screen gather's jittered slices and
+// steps, the occlusion rays): each frame's estimate is blended into the history reprojected
+// through the previous view (new estimates weigh RM_GATHER_BLEND). Disocclusion mask: a history
+// texel whose recorded eye distance disagrees with the reprojected point's, or that falls off
+// the previous frame, is dropped and the frame starts from its own estimate. Firefly clamp: a
+// new bounce estimate may not exceed eight times the history's luminance, so a single slice
+// landing on a bright pane brightens a pixel over a few frames instead of flashing.
+const RM_GATHER_BLEND: f32 = 0.2;
+struct ShadeHistory { shares: vec4<f32>, bounce: vec3<f32>, valid: bool };
+fn shade_history(world: vec3<f32>) -> ShadeHistory {
+    var none = ShadeHistory(vec4(0.0), vec3(0.0), false);
+    if (fr.prev_cam_pos.w < 0.5) { return none; }
     let rel = world - fr.prev_cam_pos.xyz;
     let clip = fr.prev_view_proj * vec4(rel, 1.0);
-    if (clip.w <= 0.001) { return -1.0; }
+    if (clip.w <= 0.001) { return none; }
     let ndc = clip.xy / clip.w;
     let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    if (any(uv < vec2(0.0)) || any(uv >= vec2(1.0))) { return -1.0; }
-    let h = textureLoad(ao_prev, vec2<i32>(uv * fr.res.xy), 0);
+    if (any(uv < vec2(0.0)) || any(uv >= vec2(1.0))) { return none; }
+    let texel = vec2<i32>(uv * fr.res.xy);
+    let shares = textureLoad(shares_prev, texel, 0);
     let d = length(rel);
-    if (h.y <= 0.0 || abs(h.y - d) > 0.02 * d + 0.03) { return -1.0; }
-    return h.x;
+    if (shares.w <= 0.0 || abs(shares.w - d) > 0.02 * d + 0.03) { return none; }
+    return ShadeHistory(shares, textureLoad(bounce_prev, texel, 0).rgb, true);
 }
-fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>) -> f32 {
+fn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, history: ShadeHistory) -> f32 {
     let a = select(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), abs(n.y) > 0.9);
     let t = normalize(cross(a, n));
     let b = cross(n, t);
@@ -150,8 +165,7 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>) ->
         if (rm_ray_open(origin, d, RM_AO_RANGE_M)) { open += 1.0; }
     }
     let fresh = open / f32(RM_AO_RAYS);
-    let history = previous_open(world);
-    return select(fresh, mix(history, fresh, RM_AO_BLEND), history >= 0.0);
+    return select(fresh, mix(history.shares.x, fresh, RM_AO_BLEND), history.valid);
 }
 
 // Optical depth through the froxel medium between a surface point and a lamp.
@@ -221,7 +235,7 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
     return Fog(radiance, transmittance);
 }
 
-struct ShadeOut { @location(0) color: vec4<f32>, @location(1) open: vec4<f32>, };
+struct ShadeOut { @location(0) color: vec4<f32>, @location(1) shares: vec4<f32>, @location(2) bounce: vec4<f32>, };
 
 @fragment
 fn fs(in: VsOut) -> ShadeOut {
@@ -250,7 +264,7 @@ fn fs(in: VsOut) -> ShadeOut {
     if (depth >= 1.0) {
         let sky = rm_sky_radiance(ray);
         let fog = fog_to(in.uv, ray, 20000.0);
-        return ShadeOut(vec4(sky * fog.transmittance + fog.radiance, 1.0), vec4(1.0, -1.0, 0.0, 0.0));
+        return ShadeOut(vec4(sky * fog.transmittance + fog.radiance, 1.0), vec4(1.0, 1.0, 1.0, -1.0), vec4(0.0, 0.0, 0.0, -1.0));
     }
     let rel = rm_relative_from_depth(uv, depth);
     let world = fr.cam_pos.xyz + rel;
@@ -259,7 +273,12 @@ fn fs(in: VsOut) -> ShadeOut {
     let g1 = textureLoad(g1_tex, pixel, 0);
     let g2 = textureLoad(g2_tex, pixel, 0);
     var color = vec3(0.0);
-    var open_out = vec4(1.0, -1.0, 0.0, 0.0);
+    var shares_out = vec4(1.0, 1.0, 1.0, -1.0);
+    var bounce_out = vec4(0.0, 0.0, 0.0, -1.0);
+    // A per-pixel offset that does not change from frame to frame, for the marches whose result
+    // is not accumulated (contact shadows, worn edges): a still pattern under the dither instead
+    // of a shimmer.
+    let still = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u);
     if (g0.a > 8.5) {
         color = g2.rgb;
     } else {
@@ -279,7 +298,20 @@ fn fs(in: VsOut) -> ShadeOut {
         }
         let terrain = g0.a > 2.5 && g0.a < 3.5;
         let grass = g0.a > 3.5 && g0.a < 4.5;
-        let gather = screen_gather(pixel, rel, n, jitter);
+        let fresh_gather = screen_gather(pixel, rel, n, jitter);
+        let history = shade_history(world);
+        var gather = fresh_gather;
+        if (history.valid) {
+            gather.open = mix(history.shares.y, fresh_gather.open, RM_GATHER_BLEND);
+            gather.ao = mix(history.shares.z, fresh_gather.ao, RM_GATHER_BLEND);
+            var irradiance = fresh_gather.irradiance;
+            let cap = 8.0 * luminance(history.bounce) + 1.0e-7;
+            let l = luminance(irradiance);
+            if (l > cap) { irradiance *= cap / l; }
+            gather.irradiance = mix(history.bounce, irradiance, RM_GATHER_BLEND);
+        }
+        shares_out = vec4(1.0, gather.open, gather.ao, dist);
+        bounce_out = vec4(gather.irradiance, dist);
         // The player's vehicle (pixels within 4.5 m of its compartment's centre that are not the
         // ground; fr.vehicle): paint worn through on its edges, grime gathered in its corners. Edges are the
         // creases between neighbouring pixels' normals; corners are the near-field occlusion.
@@ -296,7 +328,7 @@ fn fs(in: VsOut) -> ShadeOut {
                     crease = max(crease, 1.0 - dot(n, normalize(nq)));
                 }
             }
-            let worn_edge = smoothstep(0.12, 0.45, crease) * clamp(fr.wear.w, 0.0, 1.0) * (0.55 + 0.45 * jitter);
+            let worn_edge = smoothstep(0.12, 0.45, crease) * clamp(fr.wear.w, 0.0, 1.0) * (0.55 + 0.45 * still);
             albedo = mix(albedo, vec3(0.44, 0.43, 0.40), worn_edge * 0.85);
             roughness = mix(roughness, 0.4, worn_edge);
             let to_cabin = fr.vehicle.xyz - world;
@@ -317,7 +349,7 @@ fn fs(in: VsOut) -> ShadeOut {
                 let bias = select(select(0.03, 0.35, terrain), 0.12, grass) + 0.25 * (1.0 - ndl);
                 var vis = rm_sun_visibility(world, bias);
                 if (vis > 0.001 && !terrain && !grass) {
-                    vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, jitter));
+                    vis *= mix(0.25, 1.0, contact_shadow(rel, fr.sun_dir.xyz, 0.35, 0.18, still));
                 }
                 color += (diffuse + rm_ggx_specular(n, v, fr.sun_dir.xyz, roughness, f0)) * fr.sun_radiance.rgb * ndl * vis;
                 // Snow glitter: a random ice facet per 4 cm of surface flashes the beam into the
@@ -346,8 +378,8 @@ fn fs(in: VsOut) -> ShadeOut {
         // frame does not show (`hidden_cover`).
         var hidden_cover = 0.0;
         if (RM_RAY_QUERIES && !grass && fr.debug.w < 0.5) {
-            let rays = rt_open_share(world, n, dist, pixel);
-            open_out = vec4(rays, dist, 0.0, 0.0);
+            let rays = rt_open_share(world, n, dist, pixel, history);
+            shares_out.x = rays;
             let seen = min(rays, open);
             hidden_cover = open - seen;
             open = seen;
@@ -393,7 +425,7 @@ fn fs(in: VsOut) -> ShadeOut {
                 let reach = s.dist - max(0.15, 4.0 * lights[index].a.w);
                 if (reach > 0.02 && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), s.dir, 0.0, reach) >= 0.0) { continue; }
             } else {
-                vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, jitter));
+                vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, still));
             }
             let tau = lamp_tau(world, lights[index].a.xyz, 4u);
             color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
@@ -401,5 +433,5 @@ fn fs(in: VsOut) -> ShadeOut {
         color += g2.rgb;
     }
     let fog = fog_to(in.uv, ray, dist);
-    return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), open_out);
+    return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), shares_out, bounce_out);
 }
