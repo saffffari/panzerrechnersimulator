@@ -36,6 +36,9 @@ pub(super) struct StreetNav {
     clear: Vec<bool>,
     /// Chebyshev distance in cells to the nearest blocked cell, capped at `ROOM_CAP`.
     room: Vec<u8>,
+    /// Connected region of each clear cell (`u32::MAX` for blocked cells). Four-neighbour
+    /// connectivity equals `path`'s: a diagonal step needs both side cells clear.
+    region: Vec<u32>,
 }
 
 impl StreetNav {
@@ -75,7 +78,31 @@ impl StreetNav {
             }
             frontier = next;
         }
-        Self { origin, cell, w, h, clear, room }
+        let mut region = vec![u32::MAX; w * h];
+        let mut next_region = 0u32;
+        for seed in 0..w * h {
+            if !clear[seed] || region[seed] != u32::MAX { continue; }
+            region[seed] = next_region;
+            let mut stack = vec![seed];
+            while let Some(k) = stack.pop() {
+                let (i, j) = (k % w, k / w);
+                let mut visit = |n: usize| if clear[n] && region[n] == u32::MAX { region[n] = next_region; stack.push(n); };
+                if i + 1 < w { visit(k + 1); }
+                if i > 0 { visit(k - 1); }
+                if j + 1 < h { visit(k + w); }
+                if j > 0 { visit(k - w); }
+            }
+            next_region += 1;
+        }
+        Self { origin, cell, w, h, clear, room, region }
+    }
+
+    /// Whether `path` can connect `a` and `b`: both within 16 m of a clear cell of one region.
+    pub fn reachable(&self, a: Vec2, b: Vec2) -> bool {
+        match (self.nearest_clear_cell(a, 16.0), self.nearest_clear_cell(b, 16.0)) {
+            (Some(x), Some(y)) => self.region[x] == self.region[y],
+            _ => false,
+        }
     }
 
     pub fn clear_cells(&self) -> usize { self.clear.iter().filter(|&&c| c).count() }
@@ -258,6 +285,18 @@ mod tests {
             inside(p.x) && inside(p.y)
         };
         StreetNav::build(Vec2::ZERO, Vec2::splat(300.0), NAV_CELL_M, |p| !blocked(p))
+    }
+
+    #[test]
+    fn reachability_agrees_with_the_route_search() {
+        // A wall down x = 150 with no gap splits the ground in two; a diagonal-only touch does not join.
+        let nav = StreetNav::build(Vec2::ZERO, Vec2::splat(300.0), NAV_CELL_M, |p| !(148.0..152.0).contains(&p.x));
+        let (a, b, c) = (Vec2::new(20.0, 20.0), Vec2::new(120.0, 250.0), Vec2::new(250.0, 40.0));
+        assert!(nav.reachable(a, b) && nav.path(a, b).is_some());
+        assert!(!nav.reachable(a, c) && nav.path(a, c).is_none());
+        let streets = blocks();
+        assert!(streets.reachable(Vec2::new(10.0, 10.0), Vec2::new(290.0, 290.0)));
+        assert!(!streets.reachable(Vec2::new(10.0, 10.0), Vec2::new(80.0, 80.0)), "inside a block is no ground");
     }
 
     #[test]

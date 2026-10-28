@@ -1,0 +1,566 @@
+{
+  "driver": "rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression",
+  "film": false,
+  "final": {
+    "alive": true,
+    "ammo": 63,
+    "breech": "Loaded",
+    "broken_modules": [],
+    "carried_casing": false,
+    "carrying": false,
+    "casing_pull": 0.0,
+    "combat": {
+      "bore": [
+        0.9601562023162842,
+        0.08501969277858734,
+        0.2662173807621002
+      ],
+      "gun_pitch": 0.04483281448483467,
+      "hits": 2,
+      "impact": [
+        -746.732666015625,
+        -20.463592529296875,
+        211.93289184570312
+      ],
+      "impact_kind": "Penetrate",
+      "kills": 2,
+      "lay_pitch": 0.05104758217930794,
+      "lay_yaw": 0.9582222700119019,
+      "muzzle": [
+        -746.3410034179688,
+        -10.553654670715332,
+        656.6480712890625
+      ],
+      "target": [
+        -746.9686279296875,
+        -19.961549758911133,
+        250.72305297851562
+      ]
+    },
+    "death_cause": null,
+    "enemy_ai": {
+      "clock_s": 289.989990234375,
+      "contact_tank_s": 12.216672897338867,
+      "first_contact_s": null,
+      "first_enemy_shot_s": null,
+      "first_hit_on_tiger_s": null,
+      "hits_on_tiger_front_side_rear": [
+        0,
+        0,
+        0
+      ],
+      "idle_in_contact_fraction": 0.8976813554763794,
+      "idle_in_contact_tank_s": 10.966679573059082,
+      "pens_on_tiger": 0,
+      "shots_flank_or_rear_fraction": 0.0,
+      "shots_front_side_rear": [
+        0,
+        0,
+        0
+      ],
+      "shots_with_kill_solution": 0,
+      "stuck_tank_s": 0.03333333507180214,
+      "tanks": [
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 0,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 233.86892700195312,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 1,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 218.7601776123047,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 2,
+          "stuck_s": 0.03333333507180214,
+          "track_s": 0.0,
+          "travelled_m": 220.6897735595703,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 3,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 235.09503173828125,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 4,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 225.0143585205078,
+          "with_solution": 0
+        },
+        {
+          "active_s": 28.649734497070312,
+          "contact_s": 0.41666680574417114,
+          "first_contact_s": 28.249740600585938,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            1,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": 28.649734497070312,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 6,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 41.531192779541016,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 10.83333969116211,
+          "first_contact_s": 28.249740600585938,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 10.416679382324219,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 7,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 23.555587768554688,
+          "with_solution": 0
+        },
+        {
+          "active_s": 48.7994270324707,
+          "contact_s": 0.9666664004325867,
+          "first_contact_s": 28.249740600585938,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            1,
+            0
+          ],
+          "idle_in_contact_s": 0.5500001311302185,
+          "knocked_out_s": 48.7994270324707,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 8,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 19.732772827148438,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 9,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 311.8587646484375,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 10,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 298.58441162109375,
+          "with_solution": 0
+        },
+        {
+          "active_s": 289.989990234375,
+          "contact_s": 0.0,
+          "first_contact_s": null,
+          "hits": [
+            0,
+            0,
+            0
+          ],
+          "hits_taken": [
+            0,
+            0,
+            0
+          ],
+          "idle_in_contact_s": 0.0,
+          "knocked_out_s": null,
+          "pens": 0,
+          "shots": [
+            0,
+            0,
+            0
+          ],
+          "slot": 11,
+          "stuck_s": 0.0,
+          "track_s": 0.0,
+          "travelled_m": 295.7734375,
+          "with_solution": 0
+        }
+      ],
+      "tanks_fielded": 11,
+      "tanks_in_contact": 3,
+      "tanks_knocked_out": 2,
+      "tiger_hits_taken_front_side_rear": [
+        1,
+        1,
+        0
+      ],
+      "travelled_m": 2124.46435546875
+    },
+    "finished_s": null,
+    "god": false,
+    "ground": "TankGroundState { pitch_deg: -0.059159465, roll_deg: -3.5882297, above_terrain_m: -0.26929474, carried_by: \"terrain\", refused: \"\", refused_value: 0.0, obstacle: \"\", crushing: None, gave_way: 0, falling: false, embedded: false, max_climbed_step_m: 0.005923271, max_pitch_deg: 3.4524853, max_rubble_above_terrain_m: 0.0, belly_share: 0.0, max_belly_share: 0.0 }",
+    "heading": 2.01379656791687,
+    "hits": 2,
+    "hover": "DESCEND INTO TURRET CABIN [SPACE]",
+    "incoming_hits": 0,
+    "incoming_penetrations": 0,
+    "kills": 2,
+    "lever": 0.0,
+    "live_at_guns": 5,
+    "live_t34s": 9,
+    "mission_beat": [
+      2,
+      "Phase line Anton: the hamlet"
+    ],
+    "mission_finished": false,
+    "navigation": {
+      "avoid_until": 308.2833251953125,
+      "cursor": 35,
+      "recoveries": 6,
+      "reverse_until": 290.2833251953125,
+      "side": 1.0
+    },
+    "phase": "backing_off",
+    "position": [
+      -751.8978271484375,
+      -13.366986274719238,
+      655.2400512695312
+    ],
+    "progress": 0.04963928088545799,
+    "ram": 0.0,
+    "reloads": 2,
+    "return_fire": true,
+    "shots": 2,
+    "speed_m_s": -2.2480483055114746,
+    "stage": "reload_seat",
+    "stage_tries": 0,
+    "station": "Commander",
+    "target_in_sight": null,
+    "time_s": 290.01666259765625,
+    "total_t34s": 11,
+    "walk": [
+      0.6369999647140503,
+      0.0,
+      0.1779228299856186
+    ]
+  },
+  "manifest": "C:\\shop\\panzerrechnersystem-t34ai\\assets\\worldgen\\workshops\\gaea-canyon-run-v2\\manifest.v1.json",
+  "max_seconds": 900.0,
+  "mission": {
+    "beats": [
+      {
+        "at": [
+          -736.0,
+          595.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 4.016663551330566,
+        "goal": "observe",
+        "id": "orders",
+        "nudges": 0,
+        "number": 1,
+        "radius_m": 260.0,
+        "started_s": 0.0,
+        "status": "Done",
+        "title": "Read the ground"
+      },
+      {
+        "at": [
+          -747.0700073242188,
+          296.741455078125
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "reach",
+        "id": "anton",
+        "nudges": 1,
+        "number": 2,
+        "radius_m": 110.0,
+        "started_s": 4.016663551330566,
+        "status": "Active",
+        "title": "Phase line Anton: the hamlet"
+      },
+      {
+        "at": [
+          -560.0,
+          -200.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "destroy",
+        "id": "gunline",
+        "nudges": 0,
+        "number": 3,
+        "radius_m": 650.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The gun line at the fork"
+      },
+      {
+        "at": [
+          345.0,
+          190.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "destroy",
+        "id": "factory",
+        "nudges": 0,
+        "number": 4,
+        "radius_m": 400.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The factory yard"
+      },
+      {
+        "at": [
+          1180.0,
+          420.0
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "destroy",
+        "id": "basin",
+        "nudges": 0,
+        "number": 5,
+        "radius_m": 450.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The final basin"
+      },
+      {
+        "at": [
+          1699.218994140625,
+          234.375
+        ],
+        "consequence_sent": false,
+        "ended_s": 0.0,
+        "goal": "reach",
+        "id": "head",
+        "nudges": 0,
+        "number": 6,
+        "radius_m": 85.0,
+        "started_s": 0.0,
+        "status": "Pending",
+        "title": "The ravine head"
+      }
+    ],
+    "elapsed_s": 289.989990234375,
+    "finished": false,
+    "flares_fired": 0,
+    "mission": "canyon-v2-rearguard",
+    "radio": [
+      {
+        "from": "Adler",
+        "t": 0.0,
+        "text": "Kiebitz, Adler. Column is through the hamlet. Read the ground, then follow the wrecks north. Out."
+      },
+      {
+        "from": "Kiebitz",
+        "t": 4.016663551330566,
+        "text": "Adler, Kiebitz. Understood. Moving. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 4.016663551330566,
+        "text": "Kiebitz, Adler. Phase line Anton is the hamlet, 450 metres north. White star marks it. Out."
+      },
+      {
+        "from": "Adler",
+        "t": 244.0178680419922,
+        "text": "Kiebitz, Adler. Anton. Move. Out."
+      }
+    ],
+    "source": "C:\\shop\\panzerrechnersystem-t34ai\\assets\\worldgen\\workshops\\gaea-canyon-run-v2\\mission.v1.json",
+    "title": "BEFEHL: DURCHBRUCH ZUM SCHLUCHTKOPF"
+  },
+  "outcome": "pilot_stalled",
+  "schema": "panzer.canyon-ai-attempt.v1",
+  "seed": 101,
+  "simulation_hz": 60,
+  "wall_seconds": 150.8907393
+}

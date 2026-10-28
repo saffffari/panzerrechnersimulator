@@ -942,6 +942,6 @@ impl Game {
             "combat":self.capture_combat_receipt(),"live_at_guns":self.at_guns.iter().flatten().filter(|g|g.working()).count(),
             "navigation":{"cursor":pilot.cursor,"recoveries":pilot.stuck_count,"side":pilot.avoid_side,"reverse_until":pilot.reverse_until,"avoid_until":pilot.avoid_until},
             "ground":format!("{:?}",self.tank_ground_state()),
-            "god":self.god,"return_fire":self.playtest_return_fire(),"target_in_sight":self.canyon_pilot_visible_target().map(|(p,g)|serde_json::json!({"position":p.to_array(),"gun":g}))})
+            "god":self.god,"enemy_ai":self.enemy_ai_summary(),"return_fire":self.playtest_return_fire(),"target_in_sight":self.canyon_pilot_visible_target().map(|(p,g)|serde_json::json!({"position":p.to_array(),"gun":g}))})
     }
 }

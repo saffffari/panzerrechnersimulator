@@ -442,6 +442,9 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
         if let Some(f) = film.as_mut() {
             f.step(&mut g, &mut r, &device, &queue, step)?;
         }
+        if step % 600 == 0 && std::env::var("KESSEL_T34_DBG").as_deref() == Ok("1") {
+            println!("[t34-ai-state] {}", serde_json::json!({"t":t,"tiger":g.player.pos.to_array(),"tiger_heading":g.player.heading,"winter":g.winter_encounter_snapshot()}));
+        }
         if step % 60 == 0 || g.game_over().is_some() || g.canyon_finished().is_some() {
             state = g.canyon_ai_state(&pilot, t + dt);
             state["mission_beat"] = serde_json::json!(g.mission_current_beat());
@@ -486,7 +489,7 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     }
     crate::simulation_uploads::drain(&device, &queue)?;
     trace.flush()?;
-    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report()});
+    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report(),"winter":g.winter_encounter_snapshot()});
     fs::write(
         format!("{prefix}_result.json"),
         serde_json::to_vec_pretty(&receipt)?,
