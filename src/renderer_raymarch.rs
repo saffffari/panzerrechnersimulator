@@ -757,15 +757,15 @@ impl Backend {
             label: Some("rm-gbuffer-bgl"), entries: &[uniform_entry(0, S::VERTEX_FRAGMENT),
                 tex2d_entry(1, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2Array),
                 sampler_filtering(2, S::FRAGMENT),
-                // The cabin air's columns (`rm_gbuffer.wgsl` gb_cabin_air).
-                tex2d_entry(3, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array)],
+                // The cabin air's columns (`rm_gbuffer.wgsl` gb_cabin_air; 3 and 4 are the scars').
+                tex2d_entry(5, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array)],
         });
         let gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-gbuffer"), layout: &gbuffer_bgl, entries: &[
                 entry(0, frame_buf.as_entire_binding()),
                 entry(1, wgpu::BindingResource::TextureView(terrain_detail_view)),
                 entry(2, wgpu::BindingResource::Sampler(terrain_detail_sampler)),
-                entry(3, wgpu::BindingResource::TextureView(cabin_medium_view)),
+                entry(5, wgpu::BindingResource::TextureView(cabin_medium_view)),
             ],
         });
         let vis_stages = S::FRAGMENT | S::COMPUTE;

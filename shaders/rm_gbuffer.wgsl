@@ -111,7 +111,7 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
 // once per fragment). The former test, a face turned toward the compartment's centre, read every
 // upward face above that centre (the breech's top, the turret ring, bins at shoulder height) as
 // the outside: whitewashed and grey instead of ivory and grimed (2026-10-28).
-@group(0) @binding(3) var gb_cabin_columns: texture_2d_array<f32>;
+@group(0) @binding(5) var gb_cabin_columns: texture_2d_array<f32>;
 var<private> gb_in_cabin: bool;
 fn gb_cabin_air(point: vec3<f32>) -> bool {
     for (var domain = 0u; domain < 3u; domain += 1u) {
