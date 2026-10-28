@@ -902,6 +902,7 @@ fn run_gfxbench(
     const WARMUP: u32 = 60;
     let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut times = Vec::with_capacity(frames as usize);
+    let mut cpu_ms = [0.0f32; 3];
     for i in 0..(frames + WARMUP) {
         g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
@@ -934,9 +935,13 @@ fn run_gfxbench(
         if i >= WARMUP {
             times.push(frame_ms);
             gpu_samples.record(gpu_frame);
+            for (sum, ms) in cpu_ms.iter_mut().zip(r.bench_cpu_ms) { *sum += ms; }
         }
     }
     let _ = gpu_samples.report();
+    let timed = frames.max(1) as f32;
+    println!("[gfxbench] cpu: TLAS rewrite {:.2} ms, encoder finish {:.2} ms, submit {:.2} ms (mean per frame)",
+        cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
     if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
     times.sort_by(f32::total_cmp);
     let n = times.len();

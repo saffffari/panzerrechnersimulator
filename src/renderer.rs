@@ -2883,6 +2883,8 @@ pub struct Renderer {
     /// Ray-visible pools with unchanged live counts have stable TLAS ranges and can rewrite only
     /// their small reserved ranges between full static-tail updates.
     rt_moving_batches_dirty: bool,
+    /// gfxbench: this frame's CPU ms for the TLAS rewrite, `encoder.finish` and `submit`.
+    pub bench_cpu_ms: [f32; 3],
     /// One stable TLAS range start per instanced batch (`None` for non-RT batches). Recomputed only
     /// when topology/capacity changes; moving-pool live counts never invalidate it.
     rt_batch_slot_offsets: Vec<Option<u32>>,
@@ -6115,6 +6117,7 @@ impl Renderer {
             rt_prev_count: 0,
             rt_batches_dirty: true,
             rt_moving_batches_dirty: false,
+            bench_cpu_ms: [0.0; 3],
             rt_batch_slot_offsets: Vec::new(),
             rt_surface_gpu: None,
             rt_surface_dirty: rt_on,
@@ -10069,10 +10072,19 @@ impl Renderer {
             label: Some("bench-frame"),
         });
         self.flush_track_stamps(device, &mut encoder);
+        let rt_started = std::time::Instant::now();
         self.rt_update(device, &mut encoder);
+        let rt_ms = rt_started.elapsed().as_secs_f32() * 1000.0;
         self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
-        queue.submit([encoder.finish()]);
+        let finish_started = std::time::Instant::now();
+        let commands = encoder.finish();
+        let finish_ms = finish_started.elapsed().as_secs_f32() * 1000.0;
+        let submit_started = std::time::Instant::now();
+        queue.submit([commands]);
+        // The CPU side of the frame the GPU pass timings cannot see: the TLAS rewrite and its
+        // build's per-instance work inside wgpu (at record, finish and submit), for gfxbench.
+        self.bench_cpu_ms = [rt_ms, finish_ms, submit_started.elapsed().as_secs_f32() * 1000.0];
     }
 
     /// Dump the just-completed active view's actual lighting targets without rendering, changing
