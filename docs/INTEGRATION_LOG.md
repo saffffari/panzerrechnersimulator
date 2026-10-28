@@ -77,3 +77,9 @@ One line per merge: branch @ commit — conflicts — build / tests / smoke — 
 - missions @ 96b8114 (branched from main 06a7d5f: a button folds the order sheet — Enter/Space/E/click/pad — M rereads it on the map; Enter clears the radio, platoon and intercom lines on the frame; touches `crew_solo.rs`, `platoon.rs`, `ui.rs`, `main.rs`) — none; stored LF — merged in fdd3e63
 - **Gate for fdd3e63 (+ this log)**: build ok; test build ok; GPU-free shader validation ok; unit tests 1,934 passed / 90 failed / 61 ignored, failure set identical to round 6 (mission, ui and platoon tests pass); smoke **pending GPU window** — `main` **advanced** to fdd3e63 (+ this log)
 - Seen on origin, not yet relayed as working: scatter @ 757f95e (+1)
+
+## Round 8 — 2026-10-28
+
+- raymarching @ 992d707 (the Tiger's exhaust: a winter plume from the engine model in the raymarch medium; new `src/exhaust_plume.rs`) — through `raymarching-main-merge` @ 787715a — none — merged in fe3fd6c
+- scatter @ 757f95e (trees fail at the weaker of stem snap and root-plate tip, woody pieces under 400 kg crushed, heavier logs roll; `tank_push.rs`, `trees.rs`) — none; stored LF — merged in 6a9cad2. Its session notes it is unverified in-engine: a treefall run hit a raymarching bloom bug the renderer session is checking.
+- **Gate for 6a9cad2 (+ this log)**: build ok; test build ok; GPU-free shader validation ok; unit tests 1,939 passed / 90 failed / 61 ignored, failure set identical to round 7 (scatter, trees, tank_push tests pass); smoke **pending GPU window** — `main` **advanced** to 6a9cad2 (+ this log)
