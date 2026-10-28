@@ -149,7 +149,7 @@ def groups():
               g(MP2 + 'Props/scrap_metal_mx_1_2.glb', 0.4, sink=0.3),
               g(MP2 + 'Props/stool_mx_1.glb', 0.1, sink=0.1, pushable=True), g(MP2 + 'Props/bench_mx_1_1.glb', 0.08, 'medium', sink=0.1, pushable=True),
               g(MP2 + 'Large Props & Machinery/chimney_a_2_1.glb', 0.05, 'medium', sink=0.2)]
-    clods = [g(SC + f'clod_{i}.glb', [2.5, 2.0, 1.2, 0.6][i], sink=0.25) for i in range(4)]
+    clods = [g(SC + f'clod_{i}.glb', [4.0, 2.0, 0.7, 0.2][i], sink=0.3) for i in range(4)]
     shards = [g(SC + f'shard_{i}.glb', [2.0, 1.5, 1.0, 0.5][i], sink=0.2) for i in range(4)]
     fragments = [g(SC + f'plate_fragment_{i}.glb', 1.0, sink=0.2) for i in range(4)] + \
                 [g(SC + 'track_link_tiger.glb', 0.5, sink=0.3), g(SC + 'track_link_t34.glb', 0.8, sink=0.3),
@@ -253,7 +253,7 @@ def rules():
           rule('road', 'bodies_soviet', 0.004, rect([[1, 0], [1, 0]], [[0, 1.5], [0, 9]]), orient='along', jitter=50,
                companions=BODY_COMPANIONS, lane_clear=True, name='road.bodies_soviet')]
     # ── Craters: frozen earth and splinters fan outward, snow thrown clear; the occasional dead.
-    R += [rule('crater', 'clods', 1.2, annulus([1, 0], [4.5, 0]), orient='radial', jitter=25, scale=(0.7, 1.3), name='crater.clods'),
+    R += [rule('crater', 'clods', 0.9, annulus([1, 0], [4.5, 0]), orient='radial', jitter=25, scale=(0.45, 1.0), name='crater.clods'),
           rule('crater', 'shards', 0.45, annulus([0.5, 0], [6, 0]), orient='radial', jitter=30, name='crater.shards'),
           rule('crater', 'snow', 0.25, annulus([1, 0], [5, 0]), orient='radial', jitter=40, scale=(0.5, 1.1), classes=['snow'], name='crater.snow'),
           rule('crater', 'kit', 0.15, annulus([0.5, 0], [4, 0]), orient='radial', jitter=60, name='crater.kit'),

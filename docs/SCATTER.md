@@ -114,14 +114,20 @@ Canyon v2 result (seed `0x20261027`, density 1.0; `[scatter] field:` log line):
 
 | | |
 |---|---|
-| placed | 912 k (see the capture logs for the exact figure of the current layer file) |
-| by tier | ~890 k small, ~16 k medium, ~3.9 k large |
-| bodies | ~1.7 k new (plus the 978 authored ones that get blood and kit) |
-| cells | 785 of 32 m |
-| build | ~0.5 s on 24 threads |
-| cover | 3 918 large (all) + 3 000 medium (of 16 k) |
-| pushables | 1 500 (of ~29 k eligible) |
-| loot sockets | 334 |
+| placed | 844 325 (expected 986 k before rejections; `--density` scales it) |
+| by tier | 827 094 small, 12 791 medium, 4 440 large |
+| bodies | 1 672 new (plus the 978 authored ones that get blood and kit); 9 530 companions |
+| by group | cases 209 k, rubble 112 k, kit 108 k, clods 100 k, shards 89 k, foliage 59 k, fragments 50 k, snow 41 k, rocks 31 k, weapons 18 k, blood 6 k, crates 4.9 k, 76/88/45 mm cases 4.4/4.1/3.1 k, furniture 2 k, German bodies 1.2 k, drifts 643, Soviet bodies 509, barricades 186 |
+| rejected | slope 10 k, class 36 k, lane 19 k, building 33 k, keep-clear 36, overlap 8 k (band rejection sampling 447 k) |
+| cells | 784 of 32 m |
+| build | 453 ms on 24 threads |
+| cover | 4 440 large (all) + 3 000 medium (of 12 791) |
+| pushables | 1 500 (of 29 307 eligible) |
+| loot sockets | 335 |
+
+The first layer file of the session placed 930 k (more snow lumps and crater clods, the cliff
+boulders and 9 m branch cards in two groups); the retune after the first captures brought it to
+the figures above. A million in the data is `--density 1.2`; the GPU side is sized by the count.
 
 ## 3. GPU side (`renderer_scatter.rs`, `shaders/scatter_*.wgsl`)
 
@@ -162,10 +168,11 @@ with the bucket index in a push constant (the 4090 has the feature; the loop is 
 path). After the G-buffer the depth buffer is reduced into the Hi-Z pyramid (10 mips at
 800×450) for the next frame.
 
-Memory on Canyon v2 (`[scatter] gpu:` log line): 29.7 MB instances and cells, 7.7 MB geometry
-(91.5 k near + 12.7 k mid triangles, 136 k vertices), 129.8 MB texture pages (66 × 128², 75 ×
-256², 70 × 512² layers with mips; the 512 page carries the character atlases), 31.7 MB cull
-scratch (per-view slots and visible lists, bucket tables, indirect arguments, Hi-Z).
+Memory on Canyon v2 (`[scatter] gpu:` log line): 842 825 instances in 784 cells, 200
+prototypes; 27.0 MB instances and cells, 7.0 MB geometry (81.6 k near + 11.9 k mid triangles,
+123 k vertices), 122.6 MB texture pages (63 × 128², 71 × 256², 66 × 512² layers with mips; the
+512 page carries the character atlases), 29.0 MB cull scratch (per-view slots and visible
+lists, bucket tables, indirect arguments, Hi-Z). 186 MB in all.
 
 Debug and measurement switches: `KESSEL_SCATTER=0` (field off), `KESSEL_SCATTER_SKIP=1`
 (cull runs, nothing drawn), `KESSEL_SCATTER_NO_HIZ=1` (no occlusion test),
@@ -174,16 +181,36 @@ counts per view and per camera LOD; `gfxbench` prints the `ScatterStats` record)
 
 ## 4. Measured cost
 
-(see §4.1, filled from the clean bench runs)
+`gfxbench tag 120 out.png` on the Canyon v2 workshop (`KESSEL_PLAYTEST=1`,
+`KESSEL_PLAYTEST_MANIFEST=…/gaea-canyon-run-v2/manifest.v1.json`, raymarch, high preset,
+800×450, `KESSEL_GPU_PROFILE=1`, `KESSEL_SCATTER_STATS=60`), the harness's 22 m orbit 9 m above
+the spawn, RTX 4090, Windows 11, Vulkan. One run was taken on an idle GPU (no other engine
+process on the box, 19:03 on 2026-10-27, `captures/scatter_bench_on.log`):
 
-### 4.1 Bench
+| field on, idle GPU | |
+|---|---|
+| frame | avg 26.19 ms, p50 25.94, p99 41.44, min 14.75, max 43.73 |
+| `scatter-cull` (4 views, 842 825 instances, 4 dispatches) | **0.074 ms** |
+| `scatter-hiz` (10 mips) | **0.025 ms** |
+| `rm-gbuffer` (scene + the field's camera draws) | 3.612 ms |
+| `rm-shadow-far` / `rm-shadow-near` / `rm-sky-cover` (scene + the large tier) | 1.896 / 1.246 / 0.539 ms |
+| visible at frame 120 | 2 780 camera (24 near, 864 mid, 1 892 pixel), 350 far cascade, 0 near cascade, 0 sky cover |
 
-`gfxbench 120` on the Canyon v2 workshop (`KESSEL_PLAYTEST=1`,
-`KESSEL_PLAYTEST_MANIFEST=…/gaea-canyon-run-v2/manifest.v1.json`, raymarch, high, 800×450,
-`KESSEL_GPU_PROFILE=1`), the harness's 22 m orbit about the spawn, RTX 4090, Windows, Vulkan.
+The orbit about the spawn looks across the start of the route from 9 m up, so it sees a few
+thousand instances; the route viewpoints of §5 see 13–50 k (`[scatter] frame` lines in their
+logs: 23 k on the road near, 42 k road far, 50 k crater near, 22 k casualties near, 13 k wreck
+column near). The cull cost is independent of the view (every instance is tested for every
+view); the draw cost scales with the visible count and is folded into the G-buffer and
+cascade passes above, so the field-off reference and the cull-only run are needed to state
+it. Pending the next GPU window (the box was handed back to the user; every engine launch is
+on hold): the `KESSEL_SCATTER=0`, `KESSEL_SCATTER_SKIP=1` and `KESSEL_SCATTER_NO_HIZ=1`
+variants of the same bench, and a bench from a strewn viewpoint. Under contention the same
+run is meaningless (with six other engine processes on the card: 485 ms frames, cull 12 ms;
+`captures/scatter_diag_profile.log`), which is why only the idle run is tabled.
 
-MEASUREMENTS_TABLE
-
+Budget: the target was under 2 ms of GPU time for culling and drawing at 800×450. The cull
+and Hi-Z together are 0.1 ms. The draws in the idle run are bounded by the G-buffer pass's
+3.6 ms total, which also holds the whole scene; the split is pending.
 ## 5. Captures (`captures/`, raymarch, 800×450, clear sky)
 
 `python tools/worldgen/scatter_shots.py --root C:\shop\panzerrechnersystem` writes the set: for
@@ -191,8 +218,11 @@ each of `road` (the route at the start), `crater` (the densest crater cluster), 
 densest stand), `wrecks` (the densest tank column), `casualties` (the dissolved-unit field),
 near (16 m, eye 2.4 m) and far (95 m, eye 14 m), day (09:20 Z) and night (18:30 Z), the same
 camera with the field off (`_before`) and on (`_after`):
-`captures/scatter_<site>_<near|far>_<day|night>_<before|after>.png`, the engine log beside each.
-Earlier probes of the session: `captures/scatter_probe_start*.png`,
+`captures/scatter_<site>_<near|far>_<day|night>_<before|after>.png` (40 files), the engine log
+beside each (the `_after` logs carry the visible counts). The crater set was re-shot after the
+clod retune (the smaller clods); its `far_night_before` is the first run's file, identical in
+content since a `_before` shot has no field. Earlier probes of the session, with the first layer
+file: `captures/scatter_probe_start.png` / `_before.png` (the start recon camera),
 `scatter_probe_approach.png`, `scatter_check_wrecks_near_day_after.png`,
 `scatter_check_casualties_near_day_after.png`.
 
@@ -222,6 +252,9 @@ Earlier probes of the session: `captures/scatter_probe_start*.png`,
 
 ## 7. Open items
 
+- Pending the GPU window: the field-off / cull-only / no-Hi-Z bench variants (§4) and a bench
+  from a strewn viewpoint; a drive through the field in the native window (pushables, crush,
+  the Tiger against the large tier's cover).
 - Shader backend: the field is not drawn there (the raymarch backend is the visual branch).
 - Streaming by cell ring for maps larger than Canyon v2 (the campaign acts' extents fit, the
   per-view scratch grows with the instance count).
