@@ -31,6 +31,7 @@ struct Frame {
     vehicle: vec4<f32>,           // player's crew compartment centre xyz, w its reach m (0 none)
     cloud: vec4<f32>,             // cloud shadow map centre x, z, half extent m, w on
     fog: vec4<f32>,               // fog banks: extinction inside /m, coverage, depth m, floor y
+    optic_eye: vec4<f32>,         // xy the eye's offset from the sight's axis (screen heights)
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
     cabin_air: RmCabinAir,        // the player's cabin air domains (cabin_medium.rs; rm_visibility.wgsl)

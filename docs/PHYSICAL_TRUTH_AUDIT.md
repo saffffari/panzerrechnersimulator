@@ -324,6 +324,16 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Gunner sight view damping (2026-10-28; `Game::sight_view_model`, `KESSEL_SIGHT_DAMPING_S`): the
+  gunner's view follows the hull's pitch and roll through a 0.25 s low-pass because the hull pose
+  is fitted to the ground every frame without suspension dynamics; a comfort filter, not a head or
+  brow-pad model. The sight mesh, the bore and the shell keep the true pose. Gate: `raymarch-cabin`
+  receipt `sight_line_driving` (jolt 11.8 deg/s RMS raw, 1.1 as viewed, v2 canyon detail terrain).
+- TZF 9b eyepieces and glass (2026-10-28; `crush.wgsl` `tzf_field_distance`, `rm_lens.wgsl`): two
+  overlapping eyepiece fields (a presentation: a fused pair of eyes sees one circle); a 0.5 %
+  coating-tinted ghost and wiping arcs scattering 3 % of the local field light (authored); the glass
+  layer and the exit pupil's shading shift by the eye's offset from the sight's axis
+  (`Renderer::optic_eye`), clamped to 5 % of the screen. Cabin dust motes take the hull's full pose.
 - Raymarch relayed sights and cabin air (2026-10-28; `renderer_raymarch.rs` `relays`,
   `raster_optics.rs` `encode_raster_optic_relays`, `rm_visibility.wgsl` `rm_cabin_domain` and
   `rm_surface_motion`): the vision blocks show the shader backend's exterior raster capture per
@@ -366,8 +376,7 @@ are presented as ray tracing, GI or a combustion/solver result:
   crewed, +3 % per round), exterior grime (toward full over 3 km driven), glass grime (+2 % per
   round, over 8 km, toward full over an hour of full snowfall; a wipe leaves 0.05), starting at
   0.55 / 0.35 / 0.30 / 0 for a Tiger some weeks into the cauldron with its optics wiped clean (the
-  glass start was 0.25 under a fixed film until 2026-10-28; the sight's eyepiece grime now follows
-  the same load). Presentation estimates, not measurements; procedural masks, not painted
+  glass start was 0.25 under a fixed film until 2026-10-28; the gunner's sight carries no grime). Presentation estimates, not measurements; procedural masks, not painted
   or simulated wear; inside and outside told apart by facing the compartment's centre. Gate:
   `KESSEL_SHOWCASE_SET=wear` (clean against after a fight, and every load at 1).
 - Raymarch ray queries (2026-10-28; `rm_rt.wgsl`, `rm_shade.wgsl` `rt_open_share`,

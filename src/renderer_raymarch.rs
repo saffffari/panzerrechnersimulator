@@ -128,6 +128,7 @@ struct FrameUniform {
     vehicle: [f32; 4],
     cloud: [f32; 4],
     fog: [f32; 4],
+    optic_eye: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
     /// The player's cabin air (`cabin_medium.rs`), as the shader backend's camera carries it.
@@ -1475,6 +1476,7 @@ impl Backend {
             // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
             cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
             fog: r.fog_bank,
+            optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
             vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
                 let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
                 [c.x, c.y, c.z, 3.0]

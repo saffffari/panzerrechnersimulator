@@ -442,7 +442,7 @@ tank". `src/surface_wear.rs` keeps four loads for the player's Tiger, each 0 (fa
 | mechanical wear (chipped edges, scratches) | each main-gun round (0.4 % of what remains) | 0.55 |
 | interior grime (soot, oil, propellant residue) | time crewed (toward full over 40 min) and each round (3 %) | 0.35 |
 | exterior grime (slush and earth from the tracks) | distance driven (toward full over 3 km) | 0.30 |
-| glass grime (the film on the vision blocks, the panes and the sight's eyepiece) | each round (2 %), distance (8 km) and precipitation (toward full over an hour of full snowfall); a wipe leaves 0.05 | 0 |
+| glass grime (the film on the vision blocks and the panes) | each round (2 %), distance (8 km) and precipitation (toward full over an hour of full snowfall); a wipe leaves 0.05 | 0 |
 
 The rates are presentation estimates, not measurements. `Game::wipe_glass` is the crew's wipe;
 nothing in play calls it yet.
@@ -458,9 +458,9 @@ that look up (the compartment's floor and shelves; the deck outside); slush and 
 running gear and lower hull outside. In the shade pass, within 4.5 m of that centre: paint worn
 through to steel on creases (where a pixel's normal turns against its neighbours' at the same
 depth), and grime gathered in corners (the near-field occlusion). The glass panes' specks and
-smudges and the sight eyepiece's specks and hairline scratches are drawn in proportion to the glass
-load and are absent at 0: the optics start clean (2026-10-28; until then a fixed film covered every
-pane and the sight from the start, "way too heavy"). `KESSEL_GLASS_GRIME=0..1` fixes the glass load;
+smudges are drawn in proportion to the glass load and are absent at 0: the optics start clean
+(2026-10-28; until then a fixed film covered every pane from the start, "way too heavy"). The
+gunner's sight carries no grime at any load ("The gunner's sight"). `KESSEL_GLASS_GRIME=0..1` fixes the glass load;
 `KESSEL_RM_SKIP=65536` zeroes every load for the A/B. Not done: a frost line along a pane's frame
 (the pass has no pane-local frame coordinates).
 
@@ -667,6 +667,47 @@ If the report came from the shader backend (the launcher's default, `-Renderer s
 eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
 and any aliasing of the small relayed views under motion would need their own look.
 
+## The gunner's sight (2026-10-28)
+
+Requests: "reduce motion while traversing bumpy terrain in gun sights, its motion sickening"; "a
+binocular sight thats wider than just a circle"; "stains we don't need really, those sights were
+well maintained, but we do need some kind of surface like reflection, imperceptably small
+scratches, and for the reticles to have depth relative to the outer glass sight".
+
+**Motion.** The hull's pitch and roll are fitted to the ground under the tracks every frame
+(`vehicle_ground::solve`, no suspension dynamics), so every bump of the 7.6 cm detail-terrain
+lattice reached the gun line at once, and the sight magnified it 2.5 to 5 times. The gunner's
+view (`Game::sight_view_model`) now follows the hull's pitch and roll through a 0.25 s low-pass
+(`KESSEL_SIGHT_DAMPING_S`, 0 = the raw view); traverse, elevation and heading stay immediate,
+the sight mesh and the bore keep the true pose, and the shell follows the bore, which on rough
+ground wanders about the reticle by the filtered jolts. Measured (`raymarch-cabin` on the v2
+canyon with its detail terrain, 2.2 m/s): the sight line's jolt about a 9-frame mean is 11.8
+deg/s RMS raw and 1.1 deg/s as viewed. The real cause is the missing suspension: a sprung hull
+(torsion bars, road-wheel travel, the hull's pitch inertia) would filter the bumps for every view
+and for the gun itself.
+
+**Two eyepieces.** The Tiger's TZF 9b is binocular. The crush draws its two eyepiece fields side
+by side (radius 0.45 of the screen height, centres 0.34 apart, `tzf_field_distance`), one wide
+field with a slight waist, in both backends; the eyepiece composite seats the optic pass in the
+same shape. A presentation: two eyepieces aimed alike fuse into a single circle for a real pair of
+eyes.
+
+**Glass.** The sight is clean (its former specks and two hairline scratches are gone, whatever
+the glass load). On the outer glass (`rm_lens.wgsl`): a ghost, the field reflected between the
+eyepiece's surfaces, turned through 180 degrees, defocused, coating-tinted, at half a percent;
+and fine wiping arcs a fraction of a pixel wide that scatter 3 % of the local field light, so they
+show only against bright sky.
+
+**Depth.** The reticle lies in the focal plane with the image; the glass lies a few centimetres
+from the eye. The eye's offset from the instrument's axis (`Renderer::optic_eye`: the sight's true
+line against the steadied view, clamped to 5 % of the screen) shifts the glass layer (ghost,
+wiping marks) and the exit pupil's shading against the reticle and the image, so while the hull
+jolts the reticle reads as deep inside the optic. Still frames show none of it.
+
+The gun's own barrel and muzzle brake sit in the right of the field from the sight's registered
+objective; the wider field shows more of them. Whether the TZF 9b's real objective saw its own
+barrel is not settled here (an open item).
+
 ## Black sights and weather in the cabin (fixed 2026-10-28)
 
 Report, playing the merged main on this backend (800x450 fullscreen): "sights are black, top
@@ -771,7 +812,11 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 - Spark and tracer glow in the medium is an aggregate per burst, not per sample.
 - Without ray queries, screen-space reflections see only what the frame sees; misses fall back to
   the sky hemisphere.
-- The eyepiece glass is a presentation; its grime and dispersion are authored.
+- The eyepiece glass is a presentation; its dispersion, ghost and wiping marks are authored,
+  and the TZF 9b's two eyepieces are drawn as two overlapping fields (a fused pair of eyes sees
+  one circle).
+- The gunner's view low-passes the hull's pitch and roll (0.25 s): a comfort filter; the bore
+  keeps the true pose and wanders about the reticle on rough ground.
 - The vision blocks show the shader backend's raster view of the outside (its lighting and
   weather, a 2:1 sampled capture per port), not this backend's transport.
 - Cabin air: the shader backend's sampled enclosure (2 cm columns); no weather inside it, an open
@@ -818,6 +863,8 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   silhouette and casts no shadow of its own. Vehicles sink 0.30 m into the winter snowpack
   (`vehicle_ground::WINTER_TRACK_SINKAGE_M`, sim side), but the snow is not banked against the
   hull or ploughed by the belly.
+- The gun's own barrel and muzzle brake appear in the right of the gunner's field from the
+  sight's registered objective; check the TZF 9b's objective position against its source.
 - Per-view temporal histories: the gunner's two-pass eyepiece composite alternates two cameras,
   so the froxel, occlusion, bounce and reflection histories are cut every frame in both passes.
   One history set per view slot (`Renderer::set_active_view`) would let each accumulate.

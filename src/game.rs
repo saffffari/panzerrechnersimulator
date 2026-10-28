@@ -16905,6 +16905,14 @@ impl Game {
             r.camera.set_forward(fwd);
             r.camera.fov_y = fov;
             r.reticle = reticle;
+            // The sight's true line seen from the steadied view: how far the eye sits off the
+            // instrument's axis while the hull jolts (screen heights; the eyepiece pass's depth).
+            r.optic_eye = if matches!(self.station, Station::Gunner) && fov > 1e-3 {
+                let off = self.sight_line() - fwd;
+                let up = r.camera.right().cross(fwd).normalize_or_zero();
+                // Clamped to 5 % of the screen: a hard knock is the camera impulse's, not this.
+                [(off.dot(r.camera.right()) / fov).clamp(-0.05, 0.05), (off.dot(up) / fov).clamp(-0.05, 0.05)]
+            } else { [0.0; 2] };
             // TZF = circle, binoculars = double-circle. The driver's actual armor/glass assembly
             // frames its own slit; an extra letterbox would crop the requested close inspection.
             r.optic_mask = match self.station {
