@@ -35,8 +35,9 @@ fine-grain and analytic-spark passes do not run and are not prepared.
    are drawn forward later (step 6b).
 2b. **Sky cache** (`rm_sky_cache.wgsl`): the physical atmosphere and cloud march evaluated by
    direction into a 768×288 equirectangular map (azimuth across, elevation -20..90°), one phase
-   of a sixteen-phase texel pattern per frame and every texel after a sky jump (time-of-day cut,
-   weather override). Misses and reflections sample it; the solar and secondary discs are drawn
+   of a sixteen-phase pattern of 8×8-texel tiles per frame and every texel after a sky jump
+   (time-of-day cut, weather override). A later view of the same displayed frame (the gunner's
+   eyepiece composite, split-screen views 2..N) refreshes nothing. Misses and reflections sample it; the solar and secondary discs are drawn
    analytically from the same transmitted irradiance through the cache's cloud transmittance
    (`rm_sky_discs`), because a disc narrower than a cache texel would smear. `KESSEL_RM_SKY=
    width[,phases]` overrides.
@@ -173,7 +174,21 @@ figures are implausibly small next to the raster ones and are quoted as reported
 The direction cache took the sky off the per-pixel path: its cost is now fixed per frame
 (768×288/16 texels) whatever the view holds. WGSL `discard` only demotes an invocation, so the
 cache's skipped phases return early explicitly (the first version ran the whole march for every
-texel and cost 9.8 ms).
+texel and cost 9.8 ms). The phases then interleaved single texels, which left about 2 of a warp's
+32 lanes marching while the rest waited: in the user's storm (cloud cover 0.98) `rm-sky` was 3.5 ms
+a frame, the largest pass (session log 2026-10-28). The phases now interleave 8×8-texel tiles, so
+a refreshed warp marches on every lane and the others leave together; not yet measured on an idle
+GPU.
+
+**The gunner's eyepiece composite renders two frames.** The live loop draws the gunner's sight in
+two passes (the optic, snapshotted after the crush, then the interior around the eyepiece with the
+snapshot dropped into the circle), and on this backend each was a whole frame: in the session log
+every pass appears twice at the gunner's sight (36.5 fps against 55-56 at the other posts). The
+interior pass now samples the optic pass's far cascade, sky cover and sky cache
+(`Renderer::set_coop_shadow_reuse`, which the loop already sets for it); its near cascade, G-buffer,
+medium and shade remain its own. The two passes still alternate cameras, so each cuts the other's
+temporal histories every frame (no froxel, occlusion or reflection accumulation in either):
+per-view histories are the open item.
 
 ## Near-camera haze (diagnosed 2026-10-28)
 
@@ -427,7 +442,7 @@ tank". `src/surface_wear.rs` keeps four loads for the player's Tiger, each 0 (fa
 | mechanical wear (chipped edges, scratches) | each main-gun round (0.4 % of what remains) | 0.55 |
 | interior grime (soot, oil, propellant residue) | time crewed (toward full over 40 min) and each round (3 %) | 0.35 |
 | exterior grime (slush and earth from the tracks) | distance driven (toward full over 3 km) | 0.30 |
-| glass grime (the film on the vision blocks) | each round (2 %) and distance (8 km); a wipe leaves 0.05 | 0.25 |
+| glass grime (the film on the vision blocks, the panes and the sight's eyepiece) | each round (2 %), distance (8 km) and precipitation (toward full over an hour of full snowfall); a wipe leaves 0.05 | 0 |
 
 The rates are presentation estimates, not measurements. `Game::wipe_glass` is the crew's wipe;
 nothing in play calls it yet.
@@ -442,9 +457,12 @@ at seat and hand height; dust and grit on faces
 that look up (the compartment's floor and shelves; the deck outside); slush and earth on the
 running gear and lower hull outside. In the shade pass, within 4.5 m of that centre: paint worn
 through to steel on creases (where a pixel's normal turns against its neighbours' at the same
-depth), and grime gathered in corners (the near-field occlusion). The glass panes' fixed film
-scales with the glass load (0.25 is its former strength). `KESSEL_RM_SKIP=65536` zeroes every
-load for the A/B.
+depth), and grime gathered in corners (the near-field occlusion). The glass panes' specks and
+smudges and the sight eyepiece's specks and hairline scratches are drawn in proportion to the glass
+load and are absent at 0: the optics start clean (2026-10-28; until then a fixed film covered every
+pane and the sight from the start, "way too heavy"). `KESSEL_GLASS_GRIME=0..1` fixes the glass load;
+`KESSEL_RM_SKIP=65536` zeroes every load for the A/B. Not done: a frost line along a pane's frame
+(the pass has no pane-local frame coordinates).
 
 **Captures** (`KESSEL_SHOWCASE_SET=wear`, noon, clear, the sky clock pinned, the same pose for
 both states): the commander's, loader's, driver's and radioman's posts and the commander's with the
@@ -763,7 +781,8 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   by simulation state, not combustion solvers; the event sequels (soot puffs, snow ring and
   column, fragment and droplet kinematics, the brake lobes) are authored motions seeded by the
   simulation's records, not fluid or fragmentation solvers.
-- The sky cache is 0.47° per texel, marched with 20/4 cloud steps and refreshed over sixteen frames; clouds and stars are that
+- The sky cache is 0.47° per texel, marched with 20/4 cloud steps and refreshed over sixteen frames
+  in 8×8-texel tiles (a fast-changing sky can show tile seams for up to sixteen frames); clouds and stars are that
   soft, the discs are analytic. Below -20° elevation the cache's bottom row stands in.
 - Glass panes: no refraction offset of what is seen through the pane, no second-interface
   bounce, a scalar (mean) transmittance for the blend, grime from a fixed noise field.
@@ -795,6 +814,9 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   silhouette and casts no shadow of its own. Vehicles sink 0.30 m into the winter snowpack
   (`vehicle_ground::WINTER_TRACK_SINKAGE_M`, sim side), but the snow is not banked against the
   hull or ploughed by the belly.
+- Per-view temporal histories: the gunner's two-pass eyepiece composite alternates two cameras,
+  so the froxel, occlusion, bounce and reflection histories are cut every frame in both passes.
+  One history set per view slot (`Renderer::set_active_view`) would let each accumulate.
 - Indirect light comes only from what is on screen, one frame late; a probe grid (world-space,
   lit by the clustered lights and the cached sky) is the route to off-screen bounce.
 - Headless captures: `screenshot` accepts `KESSEL_SHOT_SIM_S=seconds` to run the simulation

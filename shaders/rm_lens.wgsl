@@ -54,13 +54,19 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         blur += sample_lit(c + vec2(0.0, rad.y)); blur += sample_lit(c - vec2(0.0, rad.y));
         colour = mix(colour, blur * 0.25, soft);
     }
-    // Grime on the glass: faint refracting specks and two hairline scratches.
-    let g = in.uv * vec2(aspect, 1.0) * 60.0;
-    let speck = rm_noise(vec3(g, 3.0), 123u);
-    let speck_mask = smoothstep(0.82, 0.9, speck);
-    let scratch_a = 1.0 - smoothstep(0.0, 0.012, abs(q.y - 0.18 * q.x + 0.11 + 0.02 * sin(q.x * 9.0)));
-    let scratch_b = 1.0 - smoothstep(0.0, 0.008, abs(q.x + 0.35 * q.y - 0.21));
-    let grime = speck_mask * 0.6 + max(scratch_a, scratch_b) * 0.5;
+    // Grime on the glass: faint refracting specks and two hairline scratches, in proportion to
+    // the glass load (surface_wear.rs; KESSEL_GLASS_GRIME fixes it): a fresh sight is clean, a
+    // load of 1 is the former fixed pattern (2026-10-28: "way too heavy" from the start).
+    let load = clamp(fr.wear.z, 0.0, 1.0);
+    var grime = 0.0;
+    if (load > 0.0) {
+        let g = in.uv * vec2(aspect, 1.0) * 60.0;
+        let speck = rm_noise(vec3(g, 3.0), 123u);
+        let speck_mask = smoothstep(0.82, 0.9, speck);
+        let scratch_a = 1.0 - smoothstep(0.0, 0.012, abs(q.y - 0.18 * q.x + 0.11 + 0.02 * sin(q.x * 9.0)));
+        let scratch_b = 1.0 - smoothstep(0.0, 0.008, abs(q.x + 0.35 * q.y - 0.21));
+        grime = (speck_mask * 0.6 + max(scratch_a, scratch_b) * 0.5) * load;
+    }
     if (grime > 0.01) {
         let shifted = sample_lit(in.uv + vec2(0.006, -0.004) * grime);
         colour = mix(colour, shifted * 1.08 + vec3(0.002), grime * 0.7);

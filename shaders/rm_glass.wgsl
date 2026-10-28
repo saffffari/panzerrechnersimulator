@@ -156,14 +156,20 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let tint = exp(-vec3(3.4, 2.0, 3.8) * path_m);
     let clear_transmit = (1.0 - fresnel) * (tint.r + tint.g + tint.b) / 3.0;
 
-    // Grime: fixed specks and smears that block and scatter.
-    let g = in.uv * 44.0;
-    let smear = rm_noise(vec3(g * 0.21, 5.0), 91u);
-    let speck = smoothstep(0.58, 0.95, rm_noise(vec3(g, 1.0), 71u));
-    // The film grows with the glass grime load (surface_wear.rs: fumes, blast, spray; a wipe
-    // clears it): 0.25, the campaign's start, is the fixed pattern's former strength.
-    let film = 0.2 + 1.2 * clamp(fr.wear.z, 0.0, 1.0);
-    let dirt = clamp((speck * (0.3 + 0.7 * smear) + smoothstep(0.62, 0.9, smear) * 0.35) * film, 0.0, 1.0) * 0.5;
+    // Grime: specks and smudges that block and scatter, in proportion to the glass load
+    // (surface_wear.rs: none at the start, the blast and fumes of each round, slush per
+    // kilometre, snowfall; a wipe clears it; KESSEL_GLASS_GRIME fixes it). Clean glass has none.
+    // A light load is a few smudges where the noise peaks; more of the pane fills as it grows.
+    // Before 2026-10-28 a fixed film covered every pane from the start ("way too heavy").
+    let load = clamp(fr.wear.z, 0.0, 1.0);
+    var dirt = 0.0;
+    if (load > 0.0) {
+        let g = in.uv * 44.0;
+        let smear = rm_noise(vec3(g * 0.21, 5.0), 91u);
+        let speck = smoothstep(0.70, 0.97, rm_noise(vec3(g, 1.0), 71u));
+        let smudge = smoothstep(0.85 - 0.30 * load, 0.98, smear);
+        dirt = clamp(speck * 0.5 + smudge * 0.4, 0.0, 1.0) * load * 0.5;
+    }
     let transmit = clear_transmit * (1.0 - dirt);
 
     // Reflection: the lit frame where the reflected ray lands, the cached sky beyond. With ray
