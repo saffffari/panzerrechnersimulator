@@ -396,6 +396,12 @@ are presented as ray tracing, GI or a combustion/solver result:
   oil low, soot high) at one scalar load, 0.65 at the start (an estimate of weeks in the cauldron);
   lamp lenses an authored profile (core, rim, glint, cage) carrying the cube face's emission; the
   raymarch camera halo 0.06 at half spread, a presentation choice.
+- The cabin without ray queries (2026-10-28; `rm_visibility.wgsl` `rm_cabin_sky_visibility`,
+  `rm_shade.wgsl`, `rm_reflect.wgsl`): skylight in the crew compartment is the top-down cover map
+  asked 30 cm inside along the surface normal, all-or-nothing under an open hatch (no solid angle);
+  no light through the vision blocks; lamps without a shadow cube unoccluded; an off-screen
+  reflection is the surface's own lit radiance. Own-colour emitters leave the depth maps only while
+  they glow.
 - The cauldron's fire glow (2026-10-28; `physical_environment::KESSEL_FIRE_GLOW_FLUX`, both
   cloud-boundary solvers): an upward diffuse flux of 1.2 mlx photopic under the cloud base, a 1900 K
   Planck colour, returned to the ground by the cloud's delta-Eddington diffuse reflectance; an

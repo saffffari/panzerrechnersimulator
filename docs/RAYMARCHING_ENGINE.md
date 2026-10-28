@@ -842,6 +842,32 @@ reaches the cabin, the turret mesh being its housing); the grime is an authored 
 load, not accumulated per face; contact points polished bright are the shade pass's worn edges, not
 traced from where hands go; the noon cabin by the hatch's light is still grainy.
 
+## The cabin without ray queries (2026-10-28)
+
+Finding (the presets work): with ray queries off (`KESSEL_RM_RT=0`, or a GPU without them) the
+commander's cabin rendered like open ground at noon, frame mean 111 against 25 with them (sRGB, the
+eye adapted to each). A cupola wall took 1.4e-3 renderer units against 2.5e-6. Three causes:
+
+- The cupola hatch lid carried the own-colour emissive mark of a hover glow it no longer has, and the
+  raymarch's depth passes leave own-colour emitters out (a bulb casts no shadow of its own light):
+  the sun cascades and the sky cover had a hole over the commander. The mark is gone (`game.rs`),
+  and an own-colour mesh now drops out of the depth passes only while it glows (`draw_scene`).
+- Inside the compartment the sky cover map was asked as on open ground: lifted 5 cm (above a roof
+  plate thinner than that) through a 3 x 3 filter whose taps, 28 cm apart, reached past the armour to
+  the deck and the ground beside the turret; the upper turret read 30-70 % open sky. Without ray
+  queries a cabin surface now asks it 30 cm into the compartment along its normal, unlifted, with
+  one bilinear compare (`rm_cabin_sky_visibility`); an open hatch still opens it.
+- Covered points keep a tenth of the sky (the low sky round eaves); without ray queries the
+  compartment keeps none (its air already did), and an off-screen reflection in it returns the
+  surface's own lit radiance where the map sees cover, not the sky (`rm_reflect.wgsl`).
+
+`gfxbench` with `KESSEL_BENCH_STATION=commander KESSEL_RETAIN_RIGID_SKY_DEPTH=0`, the cupola wall
+(renderer units): ray queries off 1.4e-3 -> 8.5e-7, on 2.5e-6 -> 9.7e-7 (the lid now covers for the
+ray path's sky term too). With the hatch open the fallback is still brighter than the traced cabin:
+the cover map counts every point under the opening as under open sky, whatever the solid angle the
+opening subtends. Lamps without a shadow cube light through steel without ray queries (no
+occlusion for them). With ray queries the open-hatch cabin is grainy (the rays' open share).
+
 ## The gunner's sight at night (2026-10-28)
 
 Request: "At night it shouldn't be pitch black in the gun sights." The campaign's night is
@@ -1200,7 +1226,10 @@ two observers across dawn/noon/dusk/night × clear/dry overcast/blizzard, plus l
 (`captures/rm_palette_v7_*.png`) for judging colour; `KESSEL_SHOWCASE_SET=haze` and `=snow`
 write the series of "Near-camera haze" and "Snow on surfaces"; `KESSEL_SHOWCASE_SCENES=a,b`
 filters any set. `screenshot` accepts `KESSEL_SHOT_WEATHER=clear|clouds|storm[:N]`,
-`KESSEL_SHOT_FOG`, `KESSEL_SKY_UTC`. `KESSEL_RM_LIVE_SHADERS=1` reloads `shaders/rm_*.wgsl` from
+`KESSEL_SHOT_FOG`, `KESSEL_SKY_UTC`. `gfxbench` with `KESSEL_BENCH_STATION=gunner` times the
+gunner's frame as played at the TZF (the optic pass, then the cabin pass round the eyepiece reusing its
+maps; 2026-10-28, 800x450: rm-sky, the far cascade and the sky cover once a frame, 30 ms a frame with
+`KESSEL_RETAIN_RIGID_SKY_DEPTH=0`). `KESSEL_RM_LIVE_SHADERS=1` reloads `shaders/rm_*.wgsl` from
 disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights and binning stats.
 
 ## Named approximations (also in the ledger)

@@ -2414,7 +2414,10 @@ impl Backend {
             if relayed && r.raster_optic_panel(mesh_index) { continue; }
             if !shadow && r.optic_hide_pass && m.optic_hidden { continue; }
             if !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
-            if shadow && (m.emissive_own || encloses(m.world_min, m.world_max)) { continue; }
+            // A glowing own-colour emitter (a bulb, a flame) casts no shadow of its own light; one
+            // that is dark (the cupola hatch lid, a round) is ordinary geometry: the lid, left out,
+            // opened a hole over the commander in the sun cascades and the sky cover (2026-10-28).
+            if shadow && ((m.emissive_own && m.emissive > 0.0) || encloses(m.world_min, m.world_max)) { continue; }
             // Self-luminous effect meshes (muzzle flash and impact flash balls) are drawn as
             // volumetric emitters by the froxel grid, never as glowing sphere silhouettes.
             if m.emissive > 0.0 && !m.emissive_own && !m.emissive_win && !m.track_recv { continue; }

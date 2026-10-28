@@ -147,6 +147,8 @@ fn fs(in: VsOut) -> ReflectOut {
     // sample budget's rays (fr.samples.x), a sharp one a single ray.
     let lobe = select(1u, clamp(u32(round(fr.samples.x)), 1u, 3u), roughness > 0.15);
     var fresh = vec3(0.0);
+    let in_cabin = rm_cabin_domain(fr.cam_pos.xyz + rel + n * 0.03) >= 0;
+    let cabin_sky = select(1.0, rm_cabin_sky_visibility(fr.cam_pos.xyz + rel, n), in_cabin);
     for (var k = 0u; k < lobe; k += 1u) {
         let jitter = rm_hash01(u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(fr.vol.w) * 26699u + k * 7727u);
         let wobble = (vec3(rm_hash01(u32(pixel.x) * 7919u + u32(fr.vol.w) + k * 131u), rm_hash01(u32(pixel.y) * 104729u + u32(fr.vol.w) + k * 337u), jitter) - vec3(0.5)) * roughness * 0.6;
@@ -159,6 +161,12 @@ fn fs(in: VsOut) -> ReflectOut {
         // With ray queries a miss is traced through the scene instead of assumed to be sky.
         if (RM_RAY_QUERIES && hit.weight < 0.99 && fr.debug.w < 0.5) {
             fallback = offscreen_reflection(rel, n, dir, fallback);
+        } else if (in_cabin) {
+            // Without them, inside the crew compartment an off-screen ray meets the compartment,
+            // not the sky: the sky only as far as the cover map opens the point (an open hatch),
+            // otherwise this surface's own lit radiance stands for its surroundings (named
+            // approximation). The steel mirrored daylight in a closed cabin (2026-10-28).
+            fallback = mix(lit, fallback, cabin_sky);
         }
         fresh += mix(fallback, hit.colour, hit.weight);
     }
