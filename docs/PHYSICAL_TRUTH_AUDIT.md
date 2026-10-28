@@ -1,8 +1,39 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (strewn-field scatter entry; raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Strewn field (scatter), 2026-10-27 (branch `scatter`, `docs/SCATTER.md`)
+
+A million-object litter layer placed deterministically from authored density and rule layers
+and drawn by a GPU-culled indirect path on the raymarch backend (`src/scatter_field.rs`,
+`src/renderer_scatter.rs`, `shaders/scatter_*.wgsl`). Implemented status and its limits, none
+presented as a contact solve, a fluid or ballistic result, or exact occlusion:
+
+- Contact: each object rests on the heightfield's drawn triangle surface at its centre, tilted
+  to the local normal by its group's conformance, sunk by a group fraction of its height scaled
+  by the snow cover; its own geometry is not solved against the ground. Bodies sink 6 %.
+- Orientation by context (debris fans from a crater, cases in a gun's ejection sector, bodies
+  along the authored direction of flight with 30 % reversed, drift tails along the wind) is the
+  authored rule with jitter, not a fragmentation, gait or wind-transport result.
+- Overlap avoidance covers medium/large pieces and bodies within one 32 m cell only.
+- Interaction tiers: the large tier is static mass and sight cover as a world AABB joining
+  `story_cover`; the medium tier is LOS cover only (`occluders`); the small tier has no physical
+  presence. Caps, nearest the route kept: 12 000 large, 3 000 medium occluders, 1 500 pushables
+  (through the existing lightweight pushable model), 400 loot sockets. Everything else is
+  visual, static after load, not burnable, not moved by shells.
+- Draw: three LODs by projected size (the source mesh; a grid-clustered reduction; one native
+  pixel carrying the mean albedo); no metallic-roughness or normal maps for the field's
+  prototypes (the kit has none); shadows and sky cover from the large tier at the reduced LOD
+  only, none into the point-light faces; the Hi-Z occlusion cull is the previous frame's depth
+  under the previous camera (one frame of latency on disocclusion); nothing drawn beyond
+  1 500 m (700 m for the shadow views) or below 0.8 projected pixels.
+- Gates: `KESSEL_SCATTER=0` leaves the field out entirely; `KESSEL_SCATTER_SKIP=1` and
+  `KESSEL_SCATTER_NO_HIZ=1` are measurement-only switches; `KESSEL_SCATTER_STATS=N` reads the
+  visible counts back. Receipts: `captures/scatter_*` pairs and the `gfxbench` figures in
+  `docs/SCATTER.md` §4.
+- Not drawn by the shader backend.
 
 ## Raymarch backend, 2026-10-27 (`KESSEL_RENDERER=raymarch`, branch `raymarching`)
 
