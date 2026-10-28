@@ -420,8 +420,7 @@ fn fs(in: VsOut) -> ShadeOut {
             albedo = mix(albedo, vec3(0.50, 0.50, 0.48), worn_edge * 0.85);
             roughness = mix(roughness, 0.45, worn_edge);
             metallic = mix(metallic, 1.0, worn_edge * 0.8);
-            let to_cabin = fr.vehicle.xyz - world;
-            let inside = select(0.0, 1.0, length(to_cabin) < fr.vehicle.w && dot(n, to_cabin) > 0.0);
+            let inside = select(0.0, 1.0, rm_cabin_domain(world + n * 0.03) >= 0);
             let grime = mix(clamp(fr.wear.y, 0.0, 1.0), clamp(fr.wear.x, 0.0, 1.0), inside);
             let corner = smoothstep(0.05, 0.6, 1.0 - gather.ao);
             albedo *= 1.0 - 0.6 * corner * grime;

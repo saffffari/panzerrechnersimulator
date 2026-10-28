@@ -642,7 +642,8 @@ impl Backend {
 
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
-        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool) -> Self {
+        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool,
+        cabin_medium_view: &wgpu::TextureView) -> Self {
         let vol = [iw.div_ceil(VOL_DIVISOR).max(VOL_MIN[0].min(iw)), ih.div_ceil(VOL_DIVISOR).max(VOL_MIN[1].min(ih)), VOL_SLICES];
         let (sky_cache_size, sky_cache_phases) = {
             let spec = std::env::var("KESSEL_RM_SKY").ok();
@@ -755,13 +756,16 @@ impl Backend {
         let gbuffer_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-gbuffer-bgl"), entries: &[uniform_entry(0, S::VERTEX_FRAGMENT),
                 tex2d_entry(1, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2Array),
-                sampler_filtering(2, S::FRAGMENT)],
+                sampler_filtering(2, S::FRAGMENT),
+                // The cabin air's columns (`rm_gbuffer.wgsl` gb_cabin_air).
+                tex2d_entry(3, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array)],
         });
         let gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-gbuffer"), layout: &gbuffer_bgl, entries: &[
                 entry(0, frame_buf.as_entire_binding()),
                 entry(1, wgpu::BindingResource::TextureView(terrain_detail_view)),
                 entry(2, wgpu::BindingResource::Sampler(terrain_detail_sampler)),
+                entry(3, wgpu::BindingResource::TextureView(cabin_medium_view)),
             ],
         });
         let vis_stages = S::FRAGMENT | S::COMPUTE;

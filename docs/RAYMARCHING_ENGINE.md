@@ -822,8 +822,18 @@ emitting light. Metal looks too new too, should have more dirt and grime."
   (`RM_BLOOM_INTENSITY`, `RM_BLOOM_SPREAD`; the shader backend keeps 0.18): at the old strength a
   lamp a few pixels across sat in a flat glow many times its size. The eye's own scatter is the veil.
 
+- Which surfaces are the cabin's (the material reclassification check): the G-buffer now asks
+  whether the point 3 cm off a surface's visible side lies in the crew compartment's air (the
+  cabin-air columns, `cabin_medium.rs`, bound to the G-buffer: `gb_cabin_air`; the shade pass's
+  corner grime asks the same). The former test, a face turned toward the compartment's centre, read
+  every upward face above that centre (the breech's top, the turret ring, bins at shoulder height)
+  as outside: whitewashed and grey (probe: albedo 0.61, roughness 0.92 on an upward cabin face, now
+  0.39/0.33/0.22 dusty ivory). The exterior's Panzergrau carried onto the cabin's side of an
+  exterior-painted part (the cupola's ring, the hatches: their paint covers both faces) is now the
+  interior ivory there.
+
 `raymarch-interior PREFIX` (four posts and the gunner's head by the cabin lamps at night and with
-the cupola hatch open at noon; the dome lamp close up): `captures/rm_int6_*` against `rm_int0_*`.
+the cupola hatch open at noon; the dome lamp close up): `captures/rm_int12_*` against `rm_int0_*`.
 
 Not done: the hull's posts at night are lit only by their small panel lamps, so the eye sees them in
 rod vision, colourless and flat (the reproduction's rod gain, `observer::ROD_DISPLAY_GAIN`); the dome
