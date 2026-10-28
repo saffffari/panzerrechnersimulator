@@ -667,6 +667,21 @@ If the report came from the shader backend (the launcher's default, `-Renderer s
 eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
 and any aliasing of the small relayed views under motion would need their own look.
 
+## Winter whitewash (2026-10-28)
+
+Request: "we need a proper winter camo look". The Tiger is painted charcoal German grey (linear
+0.065) against snow at 0.9, so it read as a dark mass in every daylight still; a December 1942
+Tiger in the snow would carry its crew's washable white winter coat. In winter acts
+(`Renderer::whitewash`, `KESSEL_WHITEWASH=0..1` fixes it) the raymarch G-buffer lays the coat
+(`rm_gbuffer.wgsl` `apply_whitewash`) over the player's Tiger's exterior paint only: the surface is
+recognised by `tank::tiger_paint_finish`'s exact swatch (sRGB 72/74/78), so tracks, exhausts, the
+interior and the textured markings keep their own finish (as crews left the crosses and numbers
+clear). The coat is chalky off-white (linear 0.56-0.72, roughness 0.92), thin where the brush ran
+dry, worn through on the decks and turret roof where the crew stand and climb, streaked by grime
+running down the sides; the wear (scratches, grit, slush, worn edges) lies on top. Stills:
+`captures/rm_camo1_tiger_front_quarter.png`, `_rear_quarter.png`. Not done: the shader backend
+keeps the grey; enemy and platoon Tigers carry no coat (only the player's vehicle is flagged).
+
 ## The gunner's sight (2026-10-28)
 
 Requests: "reduce motion while traversing bumpy terrain in gun sights, its motion sickening"; "a
@@ -815,6 +830,8 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 - The eyepiece glass is a presentation; its dispersion, ghost and wiping marks are authored,
   and the TZF 9b's two eyepieces are drawn as two overlapping fields (a fused pair of eyes sees
   one circle).
+- Winter whitewash: an authored mask in the mesh frame over the exterior paint swatch, not a
+  painted or simulated coat; only on the player's Tiger and only on the raymarch backend.
 - The gunner's view low-passes the hull's pitch and roll (0.25 s): a comfort filter; the bore
   keeps the true pose and wanders about the reticle on rough ground.
 - The vision blocks show the shader backend's raster view of the outside (its lighting and
