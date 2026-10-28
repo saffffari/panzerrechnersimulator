@@ -85,6 +85,7 @@ fn ground(g: &Game, p: Vec2, above: f32) -> Vec3 {
 
 pub fn run(prefix: &str) -> anyhow::Result<()> {
     anyhow::ensure!(graphics::shader_backend_enabled(), "terrain-showcase requires KESSEL_RENDERER=raymarch");
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("tiling") { return run_tiling(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_ground_day.png")).exists(),
         "preserving existing captures; choose a new prefix");
     let manifest = crate::canyon::manifest_path();
@@ -321,6 +322,72 @@ pub fn bench(prefix: &str, frames: u32) -> anyhow::Result<()> {
         "schema": "panzer.terrain-bench.v1", "adapter": adapter.get_info().name, "internal_resolution": [r.iw, r.ih],
         "detail_surface": g.hf.detail.is_some(), "rm_skip": std::env::var("KESSEL_RM_SKIP").ok(),
         "gpu_utilisation_at_start": utilisation, "views": results,
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=tiling`: the ground material at 3, 30, 300 and 2000 m from a snow, a
+/// rock and a frozen-mud site, at local noon and at dusk (docs/TERRAIN_DETAIL.md, "Ground
+/// material"). Each eye stands on the line from the site toward the course (open ground), at
+/// 1.7 m or a tenth of the distance, whichever is higher, looking at the site.
+fn run_tiling(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_snow_3m_noon.png")).exists(),
+        "preserving existing captures; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new() };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    // The Tiger parked out of every view.
+    g.debug_place_tiger(Vec2::new(1500.0, -1500.0), 0.0);
+    r.set_weather_override(Some(0.0));
+    step(&mut g, &mut r, 30, &TankInput::default());
+    // (name, site, a point toward open ground)
+    let sites = [
+        ("snow", GROUND_TIGER, Vec2::new(-791.0, 845.0)),
+        ("rock", Vec2::new(-109.9, -566.4), Vec2::new(-133.7, -577.3)),
+        ("mud", Vec2::new(-791.0, 700.0), Vec2::new(-791.0, 760.0)),
+    ];
+    for (class, site, open) in sites {
+        let away = (open - site).normalize_or(Vec2::X);
+        for distance in [3.0f32, 30.0, 300.0, 2000.0] {
+            let eye_xz = site + away * distance;
+            let eye = ground(&g, eye_xz, (distance * 0.1).max(1.7));
+            let target = ground(&g, site, 0.0);
+            for (utc, when) in [("1942-12-21T09:00:00Z", "noon"), ("1942-12-21T12:40:00Z", "dusk")] {
+                rig.clock(&mut r, utc)?;
+                g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+                r.camera.pos = eye;
+                r.camera.set_forward(target - eye);
+                r.camera.fov_y = 50f32.to_radians();
+                r.optic_mask = 0.0;
+                r.reticle = false;
+                r.interior_light = 0.0;
+                r.interior_haze = 0.0;
+                r.weather_shelter = 0.0;
+                r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+                r.reset_history();
+                let settled = crate::converge_headless_screenshot(&mut r, &device, &queue, 20)?;
+                let name = format!("{class}_{}m_{when}", distance as u32);
+                let path = format!("{prefix}_{name}.png");
+                r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+                eprintln!("[terrain-showcase] {name}");
+                rig.shots.push(serde_json::json!({"name": name, "path": path, "class": class, "distance_m": distance,
+                    "eye": eye.to_array(), "target": target.to_array(), "clock_utc": utc, "exposure": settled.measured_exposure}));
+            }
+        }
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.terrain-tiling.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "internal_resolution": [r.iw, r.ih], "detail_surface": g.hf.detail.is_some(), "shots": rig.shots,
+        "disclosure": "Observer cameras, the Tiger parked out of view, clear weather, clock overridden per still. No image grading."
     }))?)?;
     Ok(())
 }

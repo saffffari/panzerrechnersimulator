@@ -8,6 +8,10 @@ const TILES: [&str; 4] = [
 ];
 
 fn ratios(bytes: &[u8]) -> Vec<[f32; 4]> {
+    ratios_filtered(bytes, true)
+}
+
+fn ratios_filtered(bytes: &[u8], high: bool) -> Vec<[f32; 4]> {
     let image = image::load_from_memory(bytes)
         .expect("source Pizza detail")
         .into_rgb8();
@@ -43,6 +47,10 @@ fn ratios(bytes: &[u8]) -> Vec<[f32; 4]> {
             })
         })
         .collect();
+    // High-pass: remove the tile's structure broader than about half a metre (a three-pass box
+    // blur, radius 24 texels, wrapped like the tile). That structure is what makes a repeat
+    // readable; the grain that remains reads as material, not as a pattern.
+    if high { high_pass(&mut field, 256, 24); }
     let clipped: [f32; 3] = std::array::from_fn(|c| {
         (field.iter().map(|p| p[c] as f64).sum::<f64>() / field.len() as f64) as f32
     });
@@ -52,6 +60,35 @@ fn ratios(bytes: &[u8]) -> Vec<[f32; 4]> {
         }
     }
     field
+}
+
+/// Subtract a wrapped Gaussian-like blur (three box passes of `radius`) from the colour channels,
+/// keeping each channel's mean.
+fn high_pass(field: &mut [[f32; 4]], size: usize, radius: usize) {
+    // One wrapped running-sum box pass along rows (`step` 1) or columns (`step` = size).
+    let box_pass = |input: &[f32], output: &mut [f32], rows: bool| {
+        let width = (2 * radius + 1) as f32;
+        for line in 0..size {
+            let at = |k: usize| if rows { line * size + k % size } else { (k % size) * size + line };
+            let mut acc: f32 = (0..=2 * radius).map(|k| input[at(k + size - radius)]).sum();
+            for k in 0..size {
+                output[at(k)] = acc / width;
+                acc += input[at(k + radius + 1)] - input[at(k + size - radius)];
+            }
+        }
+    };
+    for c in 0..3 {
+        let mut blurred: Vec<f32> = field.iter().map(|p| p[c]).collect();
+        let mut tmp = vec![0.0f32; size * size];
+        for _ in 0..3 {
+            box_pass(&blurred, &mut tmp, true);
+            box_pass(&tmp, &mut blurred, false);
+        }
+        let mean = field.iter().map(|p| p[c] as f64).sum::<f64>() as f32 / field.len() as f32;
+        for (p, b) in field.iter_mut().zip(&blurred) {
+            p[c] = p[c] - b + mean;
+        }
+    }
 }
 
 pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
@@ -130,6 +167,30 @@ pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
 
 #[cfg(test)]
 mod tests {
+    /// What repeats is grain: the high-pass at least halves the share of each tile's contrast
+    /// held in structure broader than about half a metre, to under 6 %.
+    #[test]
+    fn source_detail_tiles_carry_no_broad_structure() {
+        for path in super::TILES {
+            let bytes = crate::resource::read(path).expect("load source Pizza detail");
+            let std = |v: &[f32]| {
+                let m = v.iter().sum::<f32>() / v.len() as f32;
+                (v.iter().map(|x| (x - m) * (x - m)).sum::<f32>() / v.len() as f32).sqrt()
+            };
+            // Share of a field's contrast that the same blur keeps (broad structure).
+            let broad_share = |field: &[[f32; 4]]| {
+                let mut blurred_away = field.to_vec();
+                super::high_pass(&mut blurred_away, 256, 24);
+                let g: Vec<f32> = field.iter().map(|p| p[1]).collect();
+                let broad: Vec<f32> = field.iter().zip(&blurred_away).map(|(a, b)| a[1] - b[1]).collect();
+                std(&broad) / std(&g).max(1e-6)
+            };
+            let raw = broad_share(&super::ratios_filtered(&bytes, false));
+            let filtered = broad_share(&super::ratios(&bytes));
+            assert!(filtered < raw * 0.5 && filtered < 0.06, "{path}: broad structure {raw} -> {filtered}");
+        }
+    }
+
     #[test]
     fn source_detail_distant_average_is_neutral_and_finite() {
         for path in super::TILES {

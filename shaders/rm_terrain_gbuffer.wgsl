@@ -50,8 +50,8 @@ fn tr_shading_field(p: vec2<f32>, a: TrAttr, level: i32, morph: f32, footprint: 
     return sum + tr_crater(p) - tr_rut(p);
 }
 
-fn tr_material(p: vec2<f32>, world: vec3<f32>, normal_y: f32, a: TrAttr, rut: f32, crater: vec2<f32>,
-               footprint: f32) -> vec4<f32> {
+fn tr_material(p: vec2<f32>, world: vec3<f32>, n: vec3<f32>, a: TrAttr, rut: f32, crater: vec2<f32>,
+               footprint: f32, relief: f32) -> vec4<f32> {
     let uv = (p + vec2(TR_HALF)) / (2.0 * TR_HALF);
     let dims = vec2<f32>(textureDimensions(albedo_tex));
     let macro_lod = log2(max(footprint / (2.0 * TR_HALF) * dims.x, 1.0));
@@ -59,12 +59,22 @@ fn tr_material(p: vec2<f32>, world: vec3<f32>, normal_y: f32, a: TrAttr, rut: f3
     // Snow cover follows the snow depth (wind-redistributed, terrain_relief) instead of the
     // painted coverage: the Gaea rock map shows wherever less than a few centimetres lie.
     let cover = smoothstep(0.01, 0.08, a.depth);
-    var albedo = terrain_material(vec4(raw.rgb, (32.0 + 191.0 * cover) / 255.0), world, normal_y, fr.wind.y, footprint);
+    var albedo = terrain_material_n(vec4(raw.rgb, (32.0 + 191.0 * cover) / 255.0), world, n, fr.wind.y, footprint);
     var rough = terrain_roughness(fr.wind.y);
-    let lod = terrain_detail_lod(footprint);
-    let duv = world.xz / TERRAIN_DETAIL_REPEAT_M;
-    let soil = textureSampleLevel(terrain_detail_tex, terrain_detail_sampler, duv, 1, lod).rgb * 2.0;
-    let litter = textureSampleLevel(terrain_detail_tex, terrain_detail_sampler, duv, 2, lod).rgb * 2.0;
+    // Macro drift from the cooked ground rather than noise where the data says why: settled and
+    // drifted snow (deeper) is finer-grained and slightly brighter and smoother; wind-exposed snow
+    // (Sx < 0) is packed, a little greyer and glazed; relief crests are scoured and glazed, the
+    // troughs between them hold softer snow. War dust and soot, which the data does not carry,
+    // drift as slow value noise. Shares are declared, not measured (PHYSICAL_TRUTH_AUDIT).
+    let deep = clamp((a.depth - 0.4) / 1.0, -1.0, 1.0);
+    let exposed = clamp(-a.sx / 15.0, 0.0, 1.0);
+    let crest = clamp(relief / 0.05, -1.0, 1.0);
+    let dust = tm_macro(p, 0x5d7u);
+    let snow_macro = (1.0 + 0.03 * deep - 0.04 * exposed - 0.01 * crest) * (1.0 - 0.025 * max(dust, 0.0));
+    albedo = mix(albedo, albedo * snow_macro, cover);
+    rough = clamp(rough - (0.08 * exposed + 0.04 * crest - 0.03 * deep) * cover, 0.45, 1.0);
+    let soil = tm_detail_projected(world, n, 1, footprint, 0x21u) * 2.0;
+    let litter = tm_detail_projected(world, n, 2, footprint, 0x22u) * 2.0;
     // Wind crust: a glazed, slightly greyer skin.
     albedo = mix(albedo, albedo * 0.95, a.w[1]);
     rough = mix(rough, 0.55, a.w[1]);
@@ -119,7 +129,7 @@ fn fs_terrain(in: TrOut) -> TrGOut {
     if (n.y > 0.2) {
         n = normalize(vec3(n.x / n.y - (fx - f0) / e, 1.0, n.z / n.y - (fz - f0) / e));
     }
-    let m = tr_material(p, world, n.y, a, tr_rut_smooth(p), tr_crater_nearest(p), footprint);
+    let m = tr_material(p, world, n, a, tr_rut_smooth(p), tr_crater_nearest(p), footprint, f0);
     out.g0 = vec4(m.rgb, 3.0);
     out.g1 = vec4(n, m.a);
     out.g2 = vec4(0.0);

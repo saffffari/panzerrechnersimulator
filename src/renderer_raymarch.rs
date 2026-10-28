@@ -2038,3 +2038,27 @@ impl Renderer {
 
     pub fn raymarch_stats(&self) -> Option<Stats> { self.raymarch.as_ref().map(|rm| rm.stats) }
 }
+
+#[cfg(test)]
+mod terrain_shader_tests {
+    /// The detail terrain's three programs (G-buffer, depth maps, probe) parse and validate as
+    /// they are composed at runtime, without a device.
+    #[test]
+    fn detail_terrain_programs_validate() {
+        let detail = crate::terrain_relief::Detail::new(9, 1.25, vec![0.0; 81], vec![[0, 40, 255, 128]; 81],
+            glam::Vec2::X, "test".into()).unwrap();
+        let prelude = crate::terrain_lod::shader_prelude_for(&detail);
+        for (label, source) in [
+            ("gbuffer", format!("{}\n{}\n{}\n{}", super::rm_source("rm_common.wgsl"), super::rm_source("terrain_material.wgsl"),
+                prelude, include_str!("../shaders/rm_terrain_gbuffer.wgsl"))),
+            ("depth", format!("{}\n{}", prelude, include_str!("../shaders/rm_terrain_depth.wgsl"))),
+            ("probe", format!("{}\n{}", prelude, crate::terrain_lod::PROBE_WGSL)),
+        ] {
+            let module = wgpu::naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|error| panic!("terrain {label} WGSL parse failed: {}", error.emit_to_string(&source)));
+            wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(), wgpu::naga::valid::Capabilities::all())
+                .validate(&module)
+                .unwrap_or_else(|error| panic!("terrain {label} WGSL validation failed: {error:?}"));
+        }
+    }
+}

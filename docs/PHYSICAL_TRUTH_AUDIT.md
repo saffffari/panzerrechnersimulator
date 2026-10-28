@@ -28,6 +28,10 @@ approximations:
 - Craters: cube-root scaling R = k W^(1/3), k 0.8 (frozen soil) to 1.3 (settled snow) m/kg^(1/3),
   depth 0.4 R, rim 0.12 of depth; filler mass taken as TNT. Not a cratering solve. The wreckage
   layer's authored scars stay meshes (not carved).
+- Ground material (2026-10-28): the 2.56 m PSX detail tiles are hex-tiled with hashed rotation
+  and offset, high-passed on upload and blended over two octaves; macro albedo/roughness drift
+  follows cooked snow depth, wind exposure and relief with declared shares (+3 %, -4 %, +-1 %),
+  and war dust/soot as value noise. A presentation of texture detail, not a measured BRDF field.
 - LOD: away from the camera the drawn surface omits the finer relief octaves (morph-faded) and
   samples the lattice coarser; the physics surface keeps them. Bound: the omitted octaves' summed
   amplitude, <= 1.5 cm within 80 m, <= 5 cm within 160 m, <= 0.45 m (rubble; snow 0.3 m) beyond

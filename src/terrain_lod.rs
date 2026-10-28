@@ -535,8 +535,7 @@ impl TerrainLod {
 
     /// The WGSL source shared by every terrain program: generated constants + rm_terrain.wgsl.
     pub fn shader_prelude(&self) -> String {
-        format!("{}\nconst TR_QUAD_CELLS: f32 = {:?};\n{}", terrain_relief::wgsl_constants(&self.detail),
-            QUAD_CELLS as f32, include_str!("../shaders/rm_terrain.wgsl"))
+        shader_prelude_for(&self.detail)
     }
 
     /// Evaluate the GPU surface (finest level, unmorphed) at `points` and return it: the check
@@ -583,7 +582,12 @@ impl TerrainLod {
     }
 }
 
-const PROBE_WGSL: &str = r#"
+pub fn shader_prelude_for(detail: &terrain_relief::Detail) -> String {
+    format!("{}\nconst TR_QUAD_CELLS: f32 = {:?};\n{}", terrain_relief::wgsl_constants(detail),
+        QUAD_CELLS as f32, include_str!("../shaders/rm_terrain.wgsl"))
+}
+
+pub(crate) const PROBE_WGSL: &str = r#"
 @group(1) @binding(0) var<storage, read> probe_points: array<vec2<f32>>;
 @group(1) @binding(1) var<storage, read_write> probe_out: array<f32>;
 @compute @workgroup_size(64)

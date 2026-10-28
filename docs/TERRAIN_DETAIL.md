@@ -130,6 +130,60 @@ smoother skin; frozen mud is soil (~0.1) with snow only in the hollows; rubble i
 and ash; trampled snow is greyer; compacted snow (ruts, prints) reflects 14 % less and is smoother
 (sintered); a crater shows frozen earth in its bowl and a ragged ejecta apron to 2.2 R.
 
+## 5b. Ground material without visible tiling (2026-10-28)
+
+**Diagnosis.** Only one source repeats: four 256-px PSX colour tiles (grass, two soils, snow)
+used as linear-reflectance ratios at **2.56 m** a repeat, sampled on axis-aligned world xz with
+no rotation or offset (`terrain_material.wgsl`, shared by the raymarch, shader and physical
+backends). The 1.22 m Gaea drape is georeferenced and does not tile. Where it read:
+
+| distance (800×450, 50–58° fov) | pixel footprint | what showed |
+|---|---|---|
+| 3–30 m | 1–4 cm | the tile's own blotches repeating every 2.56 m: 13 % of the grass and soil tiles' contrast sits in structure broader than ~0.5 m |
+| 30–250 m | 4–32 cm | a 2.56 m lattice a few pixels per repeat; on mixed snow/rock ground the soil tile also drove the snow/rock *coverage boundary* (×2.8), so the grid was in the coverage itself |
+| 300 m–2 km | 0.4–2.6 m | detail still fading (unity only at footprint 2.56 m); the "drift" macro term was a sum of sinusoids (λ ≈ 160–200 m, ±1.5 % on snow, ±8 % on bare earth): regular banding |
+
+**Fix (the standard set).**
+* *Hex-tiled sampling* (Heitz & Neyret 2018; Mikkelsen 2022 "practical real-time hex-tiling"):
+  each vertex of a hexagonal lattice (~0.6 tile across) draws the tile with its own hashed
+  rotation and offset; the three draws blend by sharpened barycentric weight, variance-preserving
+  about the neutral 0.5 so the grain keeps its contrast. Explicit mip from the pixel footprint,
+  so the cell seams carry no derivative discontinuity.
+* *Two octaves*: the near repeat (2.56 m) and a middle-distance repeat 5.3× larger (13.6 m, not
+  a power of two, so the two never realign), each faded by its own footprint (near out by
+  footprint ~0.08 m, middle by ~0.6 m), so the grain hands over to the macro layer instead of
+  showing as a grid.
+* *High-passed tiles*: on upload (`terrain_detail.rs`) each tile loses its structure broader than
+  about half a metre (three wrapped box passes, radius 24 texels); the repeat carries grain, not
+  blotches. Test: the broad share at least halves, to under 6 %.
+* *Macro variation from data* (raymarch terrain): snow albedo and roughness drift with the
+  cooked snow depth (deeper drifted snow +3 % brighter, smoother), wind exposure (packed snow
+  −4 %, glazed, roughness −0.08) and the relief field (crests scoured and glazed, troughs softer);
+  only what the data does not carry (war dust and soot) drifts as three octaves of non-periodic
+  value noise (37/113/331 m). The sinusoidal drift and pasture fields are now value noise on every
+  backend. Shares are declared, not measured (ledger).
+* *Slope-aware projection*: faces steeper than ~40° blend the two vertical projections by their
+  share of the normal (`terrain_material_n`), so cliffs are not smeared along the fall line; the
+  older entry (`terrain_material`, normal_y only) blends both vertical views evenly.
+* *Physical breakup*: the micro-relief shading normals (0.15–0.6 m), ruts, prints, craters and
+  the scatter layer's debris all break the field further; the PS1 crush's ordered dither sits on
+  top and hides residual low-contrast repetition for free.
+
+**Cost.** Texture reads per terrain pixel, Gaea snow branch: 2 before → 12 on flat ground
+(2 layers × 2 octaves × 3 hex draws), up to 36 on steep faces; the raymarch terrain adds 12–36
+for the mud/rubble grain; the legacy (non-Gaea) branch 4 → 24–72. All `textureSampleLevel` at an
+explicit mip from a 256² array, cache-resident. GPU time: pending (the hold below).
+
+**Verification without a device**: the three terrain programs and the shared material on the
+forward, deferred and combine entries parse and validate with naga
+(`detail_terrain_programs_validate`, `campaign_terrain_material_compiles_in_forward_and_deferred_entries`,
+`live_physical_environment_entries_parse_and_validate_together`); the tile tests pass.
+
+**Pending captures** (GPU on hold): `KESSEL_SHOWCASE_SET=tiling terrain-showcase PREFIX` writes
+snow / rock / mud × 3 m / 30 m / 300 m / 2 km × noon / dusk (24 stills + receipt). Before = the
+same harness on the pre-change material (binary built from ee7998c + the new harness in
+`../panzerrechnersystem-terrain-before`, target `target_before`), after = this branch.
+
 ## 6. Verification
 
 `terrain-showcase PREFIX` (`src/terrain_showcase.rs`): four viewpoints day and night (near
@@ -176,6 +230,9 @@ Receipts `terrain_detail_{before,after}.json`. Measured with the final code:
 
 ## 7. Open items
 
+* **Pending under the GPU hold**: the tiling before/after set (section 5b), the full
+  before/after showcase is done but the material changed since (re-run `terrain-showcase` for
+  the after), and the terrain cost bench.
 * **Frame cost on an idle GPU** (above). If the depth views prove expensive, the levers are
   the finest range (`KESSEL_TERRAIN_LOD_RANGE`) and the sky-cover map's 19 cm texels, which see
   the 0.076 m triangles as sub-texel; both keep the occluder the same in every pass.
