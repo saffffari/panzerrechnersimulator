@@ -307,7 +307,7 @@ fn volume_target(device: &wgpu::Device, label: &str, dims: [u32; 3]) -> Target {
         size: wgpu::Extent3d { width: dims[0], height: dims[1], depth_or_array_layers: dims[2] },
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D3,
         format: wgpu::TextureFormat::Rgba16Float,
-        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let view = tex.create_view(&Default::default());
@@ -806,7 +806,7 @@ impl Backend {
                 Some((it.next()?, it.next()?))
             }).filter(|&(x, y)| x < iw && y < ih),
             probe_buf: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rm-probe"), size: 5 * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+                label: Some("rm-probe"), size: (5 + VOL_SLICES as u64) * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
             }),
             probe_pending: Cell::new(false),
             optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
@@ -917,6 +917,15 @@ impl Backend {
                     let g0 = f16(512); let g1 = f16(768); let g2 = f16(1024);
                     println!("[rm-probe] px ({px},{py}) lit [{:.4e} {:.4e} {:.4e}] prev-lit [{:.4e} {:.4e} {:.4e}] albedo [{:.3} {:.3} {:.3}] kind {:.0} n [{:.2} {:.2} {:.2}] rough {:.2} metallic {:.2} emission [{:.3e} {:.3e} {:.3e}]",
                         lit[0], lit[1], lit[2], prev[0], prev[1], prev[2], g0[0], g0[1], g0[2], g0[3], g1[0], g1[1], g1[2], g1[3], g2[3], g2[0], g2[1], g2[2]);
+                    // The medium column: transmittance and in-scatter (green) at round distances.
+                    let ln_range = (VOL_FAR_M / VOL_NEAR_M).ln();
+                    let mut column = String::new();
+                    for d in [1.0f32, 3.0, 5.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 320.0] {
+                        let slice = ((d / VOL_NEAR_M).ln() / ln_range * VOL_SLICES as f32).clamp(0.0, VOL_SLICES as f32 - 1.0) as usize;
+                        let v = f16(5 * 256 + slice * 256);
+                        column.push_str(&format!(" {d:.0}m T {:.4} S {:.3e}", v[3], v[1]));
+                    }
+                    println!("[rm-probe] medium column{column}");
                     drop(mapped);
                 }
                 self.probe_buf.unmap();
@@ -1838,6 +1847,13 @@ impl Backend {
                     wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: (i * 256) as u64, bytes_per_row: None, rows_per_image: None } },
                     one);
             }
+            // The integrated medium column under the pixel: every slice (in-scatter rgb,
+            // transmittance a), so the readback can report the values at any distance.
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo { texture: &self.integrated._tex, mip_level: 0,
+                    origin: wgpu::Origin3d { x: px / VOL_DIVISOR, y: py / VOL_DIVISOR, z: 0 }, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: 5 * 256, bytes_per_row: Some(256), rows_per_image: Some(1) } },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: self.vol[2] });
             self.probe_pending.set(true);
         }
         // 6. Screen-space marched reflections of the lit frame on glossy and metallic surfaces.
@@ -1940,12 +1956,12 @@ impl Backend {
             r.bloom_pass(encoder, "bloom-composite", &r.bloom_composite_pipe, &r.bloom_bind_a, &r.hdr_view, btexel, [0.0, 0.0], true);
             // The eye's veiling glare: wide rings over the blurred bright pass, scaled by the
             // bloom target's pixels per degree of view.
-            if self.debug_skip & 4096 == 0 {
+            if let (false, Some(glare_pipe), Some(composite_glare), Some(copy_pipe), Some(glare_bind)) = (self.debug_skip & 4096 != 0, &r.bloom_glare_pipe, &r.bloom_composite_glare_pipe, &r.bloom_copy_pipe, &r.bloom_glare_bind) {
                 let half_h = (r.camera.fov_y * 0.5).tan() * (self.iw as f32 / self.ih as f32);
                 let px_per_deg = r.bw as f32 / (2.0 * half_h.atan().to_degrees()).max(1.0);
-                r.bloom_pass(encoder, "bloom-glare-down", &r.bloom_copy_pipe, &r.bloom_bind_a, &r.bloom_levels[0], btexel, [0.0, 0.0], false);
+                r.bloom_pass(encoder, "bloom-glare-down", copy_pipe, &r.bloom_bind_a, &r.bloom_levels[0], btexel, [0.0, 0.0], false);
                 for level in 1..r.bloom_levels.len() {
-                    r.bloom_pass(encoder, "bloom-glare-down", &r.bloom_copy_pipe, &r.bloom_level_binds[level - 1], &r.bloom_levels[level], btexel, [0.0, 0.0], false);
+                    r.bloom_pass(encoder, "bloom-glare-down", copy_pipe, &r.bloom_level_binds[level - 1], &r.bloom_levels[level], btexel, [0.0, 0.0], false);
                 }
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1954,14 +1970,14 @@ impl Backend {
                         depth_stencil_attachment: None,
                         timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("bloom-glare")), occlusion_query_set: None,
                     });
-                    pass.set_pipeline(&r.bloom_glare_pipe);
+                    pass.set_pipeline(glare_pipe);
                     pass.set_bind_group(0, &r.bloom_bind_a, &[]);
-                    pass.set_bind_group(1, &r.bloom_glare_bind, &[]);
+                    pass.set_bind_group(1, glare_bind, &[]);
                     let push = BloomPush { texel: btexel, dir: [px_per_deg, 0.0] };
                     pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, 0, bytemuck::bytes_of(&push));
                     pass.draw(0..3, 0..1);
                 }
-                r.bloom_pass(encoder, "bloom-glare-composite", &r.bloom_composite_glare_pipe, &r.bloom_bind_b, &r.hdr_view, btexel, [0.0, 0.0], true);
+                r.bloom_pass(encoder, "bloom-glare-composite", composite_glare, &r.bloom_bind_b, &r.hdr_view, btexel, [0.0, 0.0], true);
                 work.bloom_passes += 7;
                 work.fullscreen_raster_passes += 7;
             }

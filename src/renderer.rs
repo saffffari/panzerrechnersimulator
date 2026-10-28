@@ -2809,6 +2809,9 @@ pub struct Renderer {
     gpu_profile: Option<crate::gpu_profile::GpuProfile>,
 
     // ---- M-D hardware ray tracing (rt.rs) ----
+    /// Instanced batches already reported for a degenerate instance transform (see
+    /// `rt_safe_instance_transform`): one line per batch, not per frame.
+    rt_degenerate_reported: std::collections::HashSet<usize>,
     /// Device came up with EXPERIMENTAL_RAY_QUERY and KESSEL_NO_RT didn't veto it.
     pub rt_on: bool,
     /// Splitscreen: views 2..N of the SAME sim frame reuse view 1's TLAS (scene transforms are
@@ -2859,12 +2862,13 @@ pub struct Renderer {
     bloom_composite_pipe: wgpu::RenderPipeline,
     /// Veiling glare of the eye over the Gaussian bloom (raymarch chain only): a box-filtered
     /// pyramid of the blurred bright pass, one level per glare ring.
-    bloom_glare_pipe: wgpu::RenderPipeline,
-    bloom_composite_glare_pipe: wgpu::RenderPipeline,
-    bloom_copy_pipe: wgpu::RenderPipeline,
+    /// `None` on the physical backend, whose `bloom.wgsl` has no glare entry points.
+    bloom_glare_pipe: Option<wgpu::RenderPipeline>,
+    bloom_composite_glare_pipe: Option<wgpu::RenderPipeline>,
+    bloom_copy_pipe: Option<wgpu::RenderPipeline>,
     bloom_levels: Vec<wgpu::TextureView>,
     bloom_level_binds: Vec<wgpu::BindGroup>,
-    bloom_glare_bind: wgpu::BindGroup,
+    bloom_glare_bind: Option<wgpu::BindGroup>,
     bloom_bind_hdr: wgpu::BindGroup, // src = full-res HDR (bright pass)
     bloom_bind_a: wgpu::BindGroup,   // src = bloom_a
     bloom_bind_b: wgpu::BindGroup,   // src = bloom_b
@@ -5397,10 +5401,12 @@ impl Renderer {
             "fs_composite",
             Some(add_blend),
         );
-        let bloom_composite_glare_pipe = bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", Some(add_blend));
+        // The veiling glare belongs to the stylized bloom (raster-fed backends); the physical
+        // backend's bloom.wgsl has no such entry points.
+        let bloom_composite_glare_pipe = shader_backend.then(|| bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", Some(add_blend)));
         // Glare pyramid: five box-filtered halvings of the blurred bright pass (a bilinear copy
         // into a half-size target is a 2x2 box); rings 1.5/3/6/12 deg read levels 1..4.
-        let bloom_copy_pipe = bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", None);
+        let bloom_copy_pipe = shader_backend.then(|| bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", None));
         let mut bloom_levels = Vec::new();
         let mut bloom_level_binds = Vec::new();
         for level in 0..5u32 {
@@ -5418,7 +5424,7 @@ impl Renderer {
             label: Some("bloom-glare-bgl"),
             entries: &[glare_tex(0), glare_tex(1), glare_tex(2), glare_tex(3), sampler_entry(4)],
         });
-        let bloom_glare_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bloom_glare_bind = shader_backend.then(|| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bloom-glare-bind"), layout: &glare_bgl,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bloom_levels[1]) },
@@ -5427,12 +5433,12 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&bloom_levels[4]) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&bloom_sampler) },
             ],
-        });
+        }));
         let bloom_glare_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bloom-glare-pl"), bind_group_layouts: &[&bloom_bgl, &glare_bgl],
             push_constant_ranges: &[wgpu::PushConstantRange { stages: wgpu::ShaderStages::FRAGMENT, range: 0..std::mem::size_of::<BloomPush>() as u32 }],
         });
-        let bloom_glare_pipe = bloom_pipe(device, &bloom_shader, &bloom_glare_pl, "fs_glare", None);
+        let bloom_glare_pipe = shader_backend.then(|| bloom_pipe(device, &bloom_shader, &bloom_glare_pl, "fs_glare", None));
 
         // ---------- volumetric smoke ----------
         // binding 0 = scene depth (sampled with textureLoad for occlusion), 1 = SmokeUniform.
@@ -6030,6 +6036,7 @@ impl Renderer {
             active_view: 0,
             render_work: Cell::new(RenderWorkStats::default()),
             gpu_profile: crate::gpu_profile::GpuProfile::new(device),
+            rt_degenerate_reported: std::collections::HashSet::new(),
             rt_on,
             rt_skip: false,
             optic_hide_pass: false,
@@ -7993,7 +8000,11 @@ impl Renderer {
             exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
-            _grade_pad: [self.display_dither_pattern, 0.0],
+            // The eye's draw-in of regions far from its adapted level (crush.wgsl `eye_range`)
+            // applies where a dark cabin and bright ports share the field: a buttoned-up view that
+            // is not the gun sight's or the binoculars' full-field optic picture.
+            _grade_pad: [self.display_dither_pattern,
+                if self.interior_light > 0.5 && (self.optic_mask - 1.0).abs() > 0.5 && (self.optic_mask - 3.0).abs() > 0.5 { 1.0 } else { 0.0 }],
             display_grade: boosted_display_grade(self.display_grade, self.vision_boost),
             dither_right: self.camera.right().extend((self.camera.fov_y * 0.5).tan() * self.camera.aspect).to_array(),
             dither_up: self.camera.right().cross(self.camera.forward()).extend((self.camera.fov_y * 0.5).tan()).to_array(),
@@ -9071,11 +9082,21 @@ impl Renderer {
             }
             let surface = crate::rt_surface::SurfaceId(prototype_surfaces[batch.prototype]);
             for instance in 0..batch.object_id_capacity {
-                let model = batch
+                let stored = batch
                     .cpu_mats
                     .get(instance as usize)
                     .copied()
                     .unwrap_or(glam::Mat4::IDENTITY);
+                // A degenerate instance (zero scale, a collapsed axis, a non-finite entry) has no
+                // volume to trace; it enters the exact pack as a point-sized stand-in so the
+                // custom-data range stays dense, and is reported once per batch so the writer
+                // can be fixed (the raster path draws it as nothing either way).
+                let (model, degenerate) = rt_safe_instance_transform(stored);
+                if degenerate && !self.rt_degenerate_reported.contains(&batch_index) {
+                    self.rt_degenerate_reported.insert(batch_index);
+                    eprintln!("[rt] batch {batch_index} instance {instance} (flags {:.1}, {} instances, prototype {}) has a degenerate transform {:?}; traced as a point",
+                        batch.flags, batch.inst_count, batch.prototype, stored.to_cols_array_2d());
+                }
                 let custom = batch.object_custom_data(instance);
                 builder
                     .add_instance(custom, surface, model)
@@ -11051,6 +11072,19 @@ impl Renderer {
 }
 
 // ---- small wgpu helpers ----
+
+/// An instance transform the exact ray scene can invert, and whether it had to be replaced: a
+/// transform whose linear part is singular or non-finite becomes a point-sized (1 mm) box at
+/// the same translation, which no ray meets.
+fn rt_safe_instance_transform(model: glam::Mat4) -> (glam::Mat4, bool) {
+    let finite = model.to_cols_array().iter().all(|v| v.is_finite());
+    let determinant = glam::Mat3::from_mat4(model).determinant();
+    if finite && determinant.is_finite() && determinant.abs() > 1.0e-9 {
+        return (model, false);
+    }
+    let translation = if finite { model.w_axis.truncate() } else { glam::Vec3::ZERO };
+    (glam::Mat4::from_scale_rotation_translation(glam::Vec3::splat(1.0e-3), glam::Quat::IDENTITY, translation), true)
+}
 
 fn camera_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

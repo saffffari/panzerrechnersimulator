@@ -87,6 +87,11 @@ pub const ROD_SATURATION_SCOT_TD: f64 = 1_700.0;
 /// frame (the rod share is zero in photopic light). `Mapping::aces_input` stays the eye model
 /// without it, so the research gates still test the model; only `crush.wgsl` applies it.
 pub const ROD_DISPLAY_GAIN: f64 = 6.0;
+/// The display's draw-in of regions far from the adapted level (`crush.wgsl` `eye_range`): beyond
+/// the knee (stops from the display key) a region's distance to the key is scaled by the slope.
+/// Owner-directed presentation of local adaptation (docs/PHYSICAL_TRUTH_AUDIT.md).
+pub const EYE_RANGE_KNEE_STOPS: f64 = 1.5;
+pub const EYE_RANGE_SLOPE: f64 = 0.32;
 /// The colour the rod signal is reproduced in, linear Rec. 709, luminance-neutral (luma 0.99).
 /// Rod vision has no hue of its own, but the mesopic appearance of a moonlit field is reported
 /// and modelled as a cool, bluish grey (the Purkinje shift: rod sensitivity peaks at 507 nm,
@@ -513,6 +518,12 @@ pub fn wgsl_constants() -> String {
     push("OBS_ROD_SATURATION_TD", ROD_SATURATION_SCOT_TD);
     push("OBS_ROD_DISPLAY_GAIN", std::env::var("KESSEL_ROD_DISPLAY_GAIN").ok()
         .and_then(|v| v.parse().ok()).unwrap_or(ROD_DISPLAY_GAIN));
+    let range = std::env::var("KESSEL_EYE_RANGE").ok().and_then(|v| {
+        let parts: Vec<f64> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        (parts.len() == 2).then(|| (parts[0], parts[1]))
+    }).unwrap_or((EYE_RANGE_KNEE_STOPS, EYE_RANGE_SLOPE));
+    push("OBS_EYE_RANGE_KNEE", range.0);
+    push("OBS_EYE_RANGE_SLOPE", range.1);
     let hue = std::env::var("KESSEL_ROD_HUE").ok().and_then(|v| {
         let parts: Vec<f64> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
         (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]])

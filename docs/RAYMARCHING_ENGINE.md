@@ -174,6 +174,42 @@ The direction cache took the sky off the per-pixel path: its cost is now fixed p
 cache's skipped phases return early explicitly (the first version ran the whole march for every
 texel and cost 9.8 ms).
 
+## Near-camera haze (diagnosed 2026-10-28)
+
+Report: "the haze is a bit too strong close to camera, it's just washing out everything close
+range." Measured, not dialled: `KESSEL_SHOWCASE_SET=haze` renders the Tiger from 3, 10, 30 and
+100 m with the sun behind the observer in the act's own weather and in clear, dry overcast and
+blizzard overrides; `KESSEL_RM_PROBE=400,225` reads back the integrated medium column at the
+frame centre. Transmittance per distance (after the fix; the medium values were the same
+before):
+
+| weather | 1 m | 3 m | 10 m | 30 m | 100 m |
+| --- | --- | --- | --- | --- | --- |
+| act (Canyon v2, sigma 0.0020/m) | 0.998 | 0.994 | 0.981 | 0.943 | 0.820 |
+| clear (0.0006/m) | 0.9995 | 0.998 | 0.995 | 0.984 | 0.947 |
+| dry overcast (0.0009/m) | 0.999 | 0.998 | 0.992 | 0.976 | 0.922 |
+| blizzard (storm 3, about 0.04/m) | 0.97 | 0.89 | 0.67 | 0.30 | 0.02 |
+
+Each column is exp(-sigma d) of the configured extinction: the first froxel slices do not
+over-count, the history does not hold stale light, the cabin term does not leak, and at 3 m
+the medium's in-scatter is 5 % of the hull's own radiance. What washed the near field out was
+the display stage: `crush.wgsl` `eye_range` drew every pixel more than 1.5 stops from the
+adapted level in toward it at 0.32 of the distance, in every view. A dark tank on snow sits
+about 4 stops below the key, so it was lifted almost two stops toward grey, and the darkest
+pixels of a daylight frame sat at sRGB 40-48 instead of 8-23. It was written (2026-10-04) for a
+man in a dark cabin looking at bright ports; it now applies only there (a buttoned-up view that
+is not the gun sight's or the binoculars' full-field picture, `eye_range_strength` in the crush
+uniform). Measured on the act weather stills: frame black level (1st percentile luma, sRGB code)
+47.9 to 23.3 at 3 m and 39.3 to 8.0 at 10 m; hull centre 51 to 30 at 10 m; frame contrast
+(95th minus 5th percentile) 140 to 171 at 10 m. A moonlit night now shows bright blue-grey snow
+under a black Tiger (frame mean 28 to 80); an overcast night is darker (29 to 17). Two smaller
+contributors were also corrected: the multiple-scattering stand-in (an isotropic share of the
+phase function) now grows with local density instead of applying 35 % to thin aerosol, and
+spindrift lifts only in blowing-snow conditions (wind over 5 m/s, or snowing in wind), at 0.012/m.
+`KESSEL_EYE_RANGE=knee,slope` overrides the draw-in for review (`1.5,1.0` disables it).
+Captures: `captures/rm_haze_fixed_*` (after), `rm_haze_before_*` and `rm_haze2_before_act_*`
+(before), `rm_haze_fix_act_before_after.png` (the act weather side by side).
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -238,6 +274,26 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   hull or ploughed by the belly.
 - Indirect light comes only from what is on screen, one frame late; a probe grid (world-space,
   lit by the clustered lights and the cached sky) is the route to off-screen bounce.
+- Headless captures: `screenshot` accepts `KESSEL_SHOT_SIM_S=seconds` to run the simulation
+  (idle inputs, 60 Hz, a frame rendered every quarter second) before the capture, so a still
+  can follow a few seconds of play. The platoon proof's exterior stills had to run with
+  `KESSEL_NO_RT=1` because the exact RT surface pack (physical backend only; the raymarch and
+  shader backends never build it) panicked on an instanced transform with a singular linear
+  part ("RT batch N instance M ... transform is non-invertible", Canyon v2, about 2 s in).
+  The pack now traces such an instance as a 1 mm point at its translation (no ray meets it,
+  the raster path draws nothing either way) and prints one `[rt] batch ... degenerate
+  transform` line per batch with the matrix, so the writer can be found; see the open items
+  for the trigger.
+- The trigger, as far as it is known: the platoon branch's headless proof (`KESSEL_PLATOON=2`,
+  Canyon v2, physical backend, about 2 s into the run) reported "RT batch 4798 instance 703".
+  The same path on this branch (physical backend, Canyon v2 manifest, `KESSEL_SHOT_SIM_S=3`,
+  RT on, 18,198 TLAS instances over about 1,100 pages) runs clean and prints no degenerate
+  batch, and the batch index there is four times this branch's page count, so the writer is
+  most likely one of the platoon branch's own instance pools (ally rigs or their effects). On
+  that branch the guard turns the panic into one `[rt] batch` line naming the batch and matrix.
+- The veiling glare and its pyramid exist only on the raster-fed backends (the stylized bloom
+  shader); the physical backend's bloom has no such pass and could not start on the branch
+  between 8cf48cf and this fix.
 - The Tiger reads dark in every daylight still because it is painted dark: `tank::tiger_paint_finish`
   sets the charcoal German grey sRGB (72, 74, 78), linear reflectance 0.065-0.076 (the owner's
   2026-09-09 choice; RAL 7021 Panzergrau is about that), against snow at 0.90. At equal

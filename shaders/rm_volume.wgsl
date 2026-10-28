@@ -139,7 +139,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
                 let reach = clamp((fr.medium.w - p.y) / max(fr.sun_dir.y, 0.08), 4.0, 60.0);
                 let tau = rm_march_tau(p, fr.sun_dir.xyz, reach, SUN_MARCH_STEPS, jitter.x);
                 inscatter += m.sigma_s * fr.sun_radiance.rgb * vis * exp(-tau)
-                    * rm_phase(dot(ray, fr.sun_dir.xyz), m.g);
+                    * rm_phase_dense(dot(ray, fr.sun_dir.xyz), m.g, m.sigma_t);
             }
         }
         // Skylight: isotropic mean sky through the vertical cover map.
@@ -165,7 +165,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
             var shape = 1.0;
             // The report's own light leaves through the brake with the gas.
             if (fr.report.w >= 0.0 && fr.report.w < 0.22 && distance(lights[index].a.xyz, fr.report.xyz) < 1.5) { shape = rm_brake_lobes(p); }
-            inscatter += m.sigma_s * s.e * vis * exp(-tau) * rm_phase(dot(ray, s.dir), m.g) * shape;
+            inscatter += m.sigma_s * s.e * vis * exp(-tau) * rm_phase_dense(dot(ray, s.dir), m.g, m.sigma_t) * shape;
         }
     }
 

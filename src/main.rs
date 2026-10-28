@@ -593,6 +593,17 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if let Some(fog) = std::env::var("KESSEL_SHOT_FOG").ok().and_then(|v| v.parse::<f32>().ok()) {
         r.fog_density = fog.max(0.0);
     }
+    // KESSEL_SHOT_SIM_S=seconds runs the simulation (idle inputs, 60 Hz) for that long before the
+    // capture, with a render every quarter second so frame-driven systems (track stamps, RT
+    // surface pack, effects) see the run as a live frame loop would.
+    if let Some(sim_s) = std::env::var("KESSEL_SHOT_SIM_S").ok().and_then(|v| v.parse::<f32>().ok()).filter(|s| *s > 0.0) {
+        let steps = (sim_s * 60.0).round() as u32;
+        println!("[sim] stepping {steps} frames ({sim_s:.2} s) before the capture");
+        for i in 0..steps {
+            g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+            if i % 15 == 14 { r.render_offscreen(&device, &queue); }
+        }
+    }
     if let Some(c) = cam {
         r.camera.pos = Vec3::new(c[0], c[1], c[2]);
         r.camera.yaw = c[3].to_radians();

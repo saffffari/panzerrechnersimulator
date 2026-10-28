@@ -160,7 +160,7 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
             let albedo = mix(0.70, 0.92, fr.medium.y);
             let g = mix(0.74, 0.62, fr.medium.y);
             var source = rm_sky_isotropic();
-            if (fr.sun_radiance.w > 0.5) { source += fr.sun_radiance.rgb * rm_phase(dot(ray, fr.sun_dir.xyz), g); }
+            if (fr.sun_radiance.w > 0.5) { source += fr.sun_radiance.rgb * rm_hg(dot(ray, fr.sun_dir.xyz), g); }
             radiance += transmittance * albedo * source * (1.0 - t2);
             transmittance *= t2;
         }

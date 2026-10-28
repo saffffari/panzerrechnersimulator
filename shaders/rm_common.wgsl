@@ -71,11 +71,15 @@ fn rm_hg(cos_theta: f32, g: f32) -> f32 {
     let gg = g * g;
     return (1.0 - gg) / (4.0 * RM_PI * pow(max(1.0 + gg - 2.0 * g * cos_theta, 0.0001), 1.5));
 }
-// Phase function of the media: the Henyey-Greenstein forward lobe with a 35 % isotropic share
-// standing in for the multiply-scattered light a thick cloud returns toward the eye (single
-// scattering alone leaves the lit side of a smoke cloud black; named approximation).
-fn rm_phase(cos_theta: f32, g: f32) -> f32 {
-    return mix(rm_hg(cos_theta, g), 1.0 / (4.0 * RM_PI), 0.35);
+// Phase function of the media: the Henyey-Greenstein lobe, with an isotropic share standing
+// in for the multiply-scattered light a DENSE cloud returns toward the eye (single scattering
+// alone leaves the lit side of a smoke cloud black). The share grows with the local extinction
+// (optical depth over 2 m): thin weather aerosol keeps its single-scattering lobe, which is what
+// a clear day's haze is, so it does not glow when the sun is behind the camera. Named
+// approximation (docs/RAYMARCHING_ENGINE.md).
+fn rm_phase_dense(cos_theta: f32, g: f32, sigma_t: f32) -> f32 {
+    let dense = 1.0 - exp(-sigma_t * 2.0);
+    return mix(rm_hg(cos_theta, g), 1.0 / (4.0 * RM_PI), 0.35 * dense);
 }
 fn rm_hash(x: u32) -> u32 {
     var s = x ^ (x >> 16u); s *= 0x7feb352du; s ^= s >> 15u; s *= 0x846ca68bu; s ^= s >> 16u;

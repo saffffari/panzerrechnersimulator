@@ -79,6 +79,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     // The shader backend may run the same scenes for an A/B (KESSEL_RENDERER=shader).
     anyhow::ensure!(graphics::shader_backend_enabled(), "raymarch-showcase requires KESSEL_RENDERER=raymarch or shader");
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("palette") { return run_palette(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("haze") { return run_haze(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_wreck_sunset_near.png")).exists(),
         "preserving existing showcase; choose a new prefix");
     let manifest = crate::canyon::manifest_path();
@@ -269,6 +270,59 @@ fn run_palette(prefix: &str) -> anyhow::Result<()> {
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "disclosure": "Staged fixtures (banished enemies, held fire, one burning T-34). Clock and weather overridden per scene. Observer cameras, not a player run. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=haze`: the Tiger seen from 3, 10, 30 and 100 m, sun behind the
+/// observer, in clear, dry overcast and blizzard weather, for judging the medium between the
+/// eye and a dark object. With `KESSEL_RM_PROBE=400,225` the hull pixel at the frame centre
+/// prints its lit radiance and the medium column (transmittance and in-scatter per distance).
+fn run_haze(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_act_3m.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    rig.clock(&mut r, "1942-12-21T10:30:00Z")?;
+    step(&mut g, &mut r, 30, &idle);
+    let tiger = g.player.pos + Vec3::Y * 1.5;
+    // The sun at 10:30 UTC stands south-south-west; the observer looks along it from behind.
+    let sun = r.sun_dir.normalize_or_zero();
+    let back = -Vec3::new(sun.x, 0.0, sun.z).normalize_or_zero();
+    // "act" first: the act's own weather profile and wind, untouched (Act I: 0.0068/m ground
+    // medium, storm 0.98, a 5.4 m/s exposed wind), which is what a player sees.
+    let weathers: [(&str, Option<f32>, bool); 4] = [("act", None, false), ("clear", Some(0.0), false), ("overcast", None, true), ("blizzard", Some(3.0), false)];
+    for (wname, weather, dry_overcast) in weathers {
+        let overcast = |r: &mut crate::renderer::Renderer| {
+            if dry_overcast { r.overcast = 0.82; r.storm = 0.0; r.fog_density = 0.0009; r.precipitation = 0.0; }
+        };
+        r.set_weather_override(weather);
+        overcast(&mut r);
+        step(&mut g, &mut r, 30, &idle);
+        for d in [3.0f32, 10.0, 30.0, 100.0] {
+            overcast(&mut r);
+            let eye = tiger - back * d + Vec3::Y * (0.3 + d * 0.06);
+            rig.observe(&mut r, eye, tiger, 40.0);
+            rig.still(&mut r, &format!("{wname}_{d:.0}m"), &format!("{wname}: the Tiger at {d:.0} m, sun behind the observer"))?;
+        }
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.haze.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies). Clock and weather overridden. Observer cameras. No image grading."
     }))?)?;
     Ok(())
 }

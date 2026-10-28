@@ -22,7 +22,7 @@ struct Crush {
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
     dither_pattern: f32, // 0 screen Bayer4, 1 fixed blue64, 2 sphere Bayer8, 3 native screen Bayer8
-    _grade_pad1: f32,
+    eye_range_strength: f32, // 1 in a closed cabin view (dark cabin + bright ports), 0 elsewhere
     display_grade: vec4<f32>, // exposure multiplier, saturation, warmth, display gamma
     dither_right: vec4<f32>, // world basis; w = tan(horizontal half-FOV)
     dither_up: vec4<f32>, // world basis; w = tan(vertical half-FOV)
@@ -71,15 +71,22 @@ fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
 // toward it: the dark is lifted and the bright is held down, with colour kept. Within the knee
 // the picture is untouched. OWNER-DIRECTED PRESENTATION of local adaptation
 // (docs/PHYSICAL_TRUTH_AUDIT.md); it changes no light in the scene.
-const EYE_RANGE_KNEE_STOPS: f32 = 1.5;
-const EYE_RANGE_SLOPE: f32 = 0.32;
+// Knee and slope are generated from observer.rs (OBS_EYE_RANGE_*; `KESSEL_EYE_RANGE=knee,slope`
+// overrides them for review; slope 1 disables the draw-in).
+const EYE_RANGE_KNEE_STOPS: f32 = OBS_EYE_RANGE_KNEE;
+const EYE_RANGE_SLOPE: f32 = OBS_EYE_RANGE_SLOPE;
 fn eye_range(x: vec3<f32>) -> vec3<f32> {
     let positive = max(x, vec3(0.0));
     let peak = max(positive.r, max(positive.g, positive.b));
     if (peak <= 1e-9) { return positive; }
     let stops = log2(peak / OBS_DISPLAY_KEY);
+    // Only where the eye faces a dark cabin and a bright port at once (cr.eye_range_strength,
+    // set by the renderer from the buttoned-up view state, not in the sight or outside): applied
+    // to an exterior view it lifted every dark object 1-2 stops toward grey and read as a
+    // near-camera haze (2026-10-28, docs/RAYMARCHING_ENGINE.md).
+    let slope = mix(1.0, EYE_RANGE_SLOPE, clamp(cr.eye_range_strength, 0.0, 1.0));
     let beyond = max(abs(stops) - EYE_RANGE_KNEE_STOPS, 0.0);
-    let drawn_in = sign(stops) * (min(abs(stops), EYE_RANGE_KNEE_STOPS) + beyond * EYE_RANGE_SLOPE);
+    let drawn_in = sign(stops) * (min(abs(stops), EYE_RANGE_KNEE_STOPS) + beyond * slope);
     return positive * (OBS_DISPLAY_KEY * exp2(drawn_in) / peak);
 }
 

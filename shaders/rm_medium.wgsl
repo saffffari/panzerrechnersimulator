@@ -18,9 +18,11 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
     // Spindrift: wind lifts loose snow into a shallow, streaky layer over the ground (the
     // sky-cover map gives the surface height under the point; beyond the map's edge the
     // layer fades into the general weather layer). Named in docs/RAYMARCHING_ENGINE.md.
+    // Only when snow is actually blowing: a snowing storm (snow fraction) or a wind above the
+    // 5 m/s threshold that lifts loose surface snow; the act's ordinary breeze lifts nothing.
     let wind_v = vec2(fr.wind.x, fr.wind.z);
     let wind_speed = length(wind_v);
-    let blow = smoothstep(2.5, 6.0, wind_speed) * max(fr.medium.y, 0.5);
+    let blow = max(smoothstep(5.0, 9.0, wind_speed), fr.medium.y * smoothstep(2.0, 5.0, wind_speed));
     var spindrift = 0.0;
     if (blow > 0.0) {
         let horizontal = length(p.xz - fr.cam_pos.xz);
@@ -34,7 +36,7 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
                 let streak = rm_noise(vec3(along * 0.3, across * 1.6, h * 2.5 + 3.0), 29u);
                 let fine = rm_noise(vec3(along * 1.1 - fr.cam_pos.w * 2.0, across * 4.0, 11.0), 31u);
                 let profile = pow(1.0 - clamp(h, 0.0, 0.9) / 0.9, 2.0);
-                spindrift = (0.03 + fr.medium.x * 3.0) * blow * profile * smoothstep(0.35, 0.85, streak * 0.7 + fine * 0.3) * edge;
+                spindrift = (0.012 + fr.medium.x * 2.0) * blow * profile * smoothstep(0.35, 0.85, streak * 0.7 + fine * 0.3) * edge;
             }
         }
     }
