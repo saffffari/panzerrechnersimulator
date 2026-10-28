@@ -7655,6 +7655,18 @@ const LEVER_OPEN: f32 = 0.8; // open enough to work the breech
 const LEVER_SHUT: f32 = 0.15; // closed enough to fire
 
 /// One state drives both the visible reload lamp and its point light.
+/// The sight lamps' lenses in slot order: ready, working, armour-piercing, APCR, high explosive.
+fn sight_lamp_fixture(k: usize) -> crate::interior_rig::FiniteCubeLamp {
+    if k < 2 { crate::interior_rig::SIGHT_LOAD_FIXTURES[k] } else { crate::interior_rig::SIGHT_ROUND_FIXTURES[(k - 2).min(2)] }
+}
+
+/// `KESSEL_SIGHT_LAMPS=0` leaves the sight's loading and round lamps out (they are a gameplay
+/// instrument; the Tiger's loader reported by voice or a tap).
+fn sight_lamps_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KESSEL_SIGHT_LAMPS").as_deref() != Ok("0"))
+}
+
 fn breech_indicator_state(breech: Breech, lever_open: f32, ready: bool) -> usize {
     if lever_open > LEVER_SHUT || !lever_open.is_finite() {
         1 // amber: open or still working the block, even with a seated live round
@@ -8579,6 +8591,7 @@ struct Slots {
     foam_batch: [usize; N_FOAM_BATCHES], // instanced flying/stuck physical extinguisher grains
     annun: [usize; N_LAMP], // interior annunciator lamps (fire/breech/repair/station)
     breech_lamp: [[usize; 3];2], // both sides: [green, amber, red], one active lens each
+    sight_lamps: [[usize; 5]; 2], // gunner's sight, commander's cupola: [ready, working, AP, APCR, HE]
     lan_crew: [usize; 5], // seated living body pool (permanent face identity slots)
     commander_crew: [usize; 5], // upright counterpart for each identity taking the cupola
     crew_helmet: [usize; 5], // source CC0 steel helmet, shared geometry/material, head-attached
@@ -9240,6 +9253,9 @@ pub struct Game {
     /// stage restores the historical engagement envelope (and makes the 4-mil stadia triangles
     /// span ~14 px — readable for ranging) without touching the pixel aesthetic.
     pub sights_mag: u8,
+    /// The hull pitch and roll the gunner's sight view follows (`sight_view_model`): the true
+    /// values through a low-pass of `sight_damping_s()`.
+    sight_steady: Option<Vec2>,
     /// God mode (the menu's Invincible toggle; also the trainer's parked referee): penetrations,
     /// fire cook-offs, and on-foot hits all resolve (sound/FX) but never damage crew/modules or kill.
     pub god: bool,
@@ -11483,6 +11499,14 @@ impl Game {
                 Vec3::splat(fixture.half_size_m),fixture.srgb));
             slot
         }));
+        // The sight's loading and round lamps, at the gunner's sight and under the cupola.
+        let sight_lamps: [[usize; 5]; 2] = std::array::from_fn(|_| std::array::from_fn(|k| {
+            let fixture = sight_lamp_fixture(k);
+            let slot = scene.len();
+            scene.push(box_mesh(Vec3::splat(-fixture.half_size_m),
+                Vec3::splat(fixture.half_size_m), fixture.srgb));
+            slot
+        }));
 
         // Full textured crew bodies live before the legacy FX tail. Each of the five original
         // assignments owns one permanent face identity and both a seated and standing pose slot.
@@ -11975,6 +11999,7 @@ impl Game {
             foam_batch,
             annun,
             breech_lamp,
+            sight_lamps,
             lan_crew,
             commander_crew,
             crew_helmet,
@@ -12566,6 +12591,9 @@ impl Game {
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
         for s in breech_lamp.into_iter().flatten() {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
+        }
+        for s in sight_lamps.into_iter().flatten() {
+            renderer.mark_own_emissive(s);
         }
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
         let authored_grass_mask = manifest.as_ref().and_then(|m|
@@ -13315,6 +13343,7 @@ impl Game {
             pressure_last_arrival_s: -1.0,
             act_complete: false,
             sights_mag: 0,
+            sight_steady: None,
             god: false,
             grab: false,
             bail_presses: 0,
@@ -16206,6 +16235,9 @@ impl Game {
         // precipitation (`surface_wear`).
         self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);
         r.wear = self.surface_wear.uniform();
+        // Winter: the crews' washable white coat over the grey (a December 1942 Tiger in the
+        // snow would carry one); none in the other seasons.
+        r.whitewash = if self.act.season == crate::world::Season::Winter { 1.0 } else { 0.0 };
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
@@ -16792,13 +16824,28 @@ impl Game {
             // Infantry remains persistent while mounted; rifles cannot damage the Tiger.
             let phase_t = std::time::Instant::now(); self.update_infantry_passive(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Infantry, phase_t);
 
+            // The gunner's sight view follows the hull's pitch and roll through a low-pass: the hull
+            // pose is fitted to the ground under the tracks every frame (`vehicle_ground`), so each
+            // bump reached the 2.5-5x view as a jolt (2026-10-28, "motion sickening"). A jump larger
+            // than 20 degrees (a respawn, a teleport) is taken at once.
+            {
+                let target = Vec2::new(self.player.pitch, self.player.roll);
+                let tau = sight_damping_s();
+                let blend = if tau > 0.0 { 1.0 - (-dt.max(0.0) / tau).exp() } else { 1.0 };
+                self.sight_steady = Some(match self.sight_steady {
+                    Some(s) if (target - s).abs().max_element() < 0.35 => s + (target - s) * blend,
+                    _ => target,
+                });
+            }
+
             // ── Per-station first-person camera (four seats; lerped across a station switch so you SEE
             // the scramble). GUNNER: down the sight. LOADER: at the breech, hands busy (no free-look).
             // DRIVER: hull-forward through the visor slit. COMMANDER: cupola head-look + binoculars. ──
             let (fwd, fov, reticle): (Vec3, f32, bool) = match self.station {
                 Station::Gunner => {
-                    // The sight's own line: the bore, unless a strike knocked the sight out of true.
-                    let mdir = self.sight_line();
+                    // The sight's own line (the bore, unless a strike knocked the sight out of
+                    // true), seen with the hull's jolts low-passed (`sight_view_model`).
+                    let mdir = self.sight_view_line();
                     // A destroyed gunner sight (TZF) blinds the optic — no reticle to lay with.
                     let fov = [25f32, 12.0, 6.0][self.sights_mag.min(2) as usize].to_radians();
                     (mdir, fov, self.module_ok(ModuleKind::GunnerSight))
@@ -16886,6 +16933,14 @@ impl Game {
             r.camera.set_forward(fwd);
             r.camera.fov_y = fov;
             r.reticle = reticle;
+            // The sight's true line seen from the steadied view: how far the eye sits off the
+            // instrument's axis while the hull jolts (screen heights; the eyepiece pass's depth).
+            r.optic_eye = if matches!(self.station, Station::Gunner) && fov > 1e-3 {
+                let off = self.sight_line() - fwd;
+                let up = r.camera.right().cross(fwd).normalize_or_zero();
+                // Clamped to 5 % of the screen: a hard knock is the camera impulse's, not this.
+                [(off.dot(r.camera.right()) / fov).clamp(-0.05, 0.05), (off.dot(up) / fov).clamp(-0.05, 0.05)]
+            } else { [0.0; 2] };
             // TZF = circle, binoculars = double-circle. The driver's actual armor/glass assembly
             // frames its own slit; an extra letterbox would crop the requested close inspection.
             r.optic_mask = match self.station {
@@ -19126,6 +19181,26 @@ impl Game {
                         emitting_meshes.push(Some(slot));
                     } else {
                         r.set_visible(slot,false);r.set_emissive(slot,0.0);
+                    }
+                }
+            }
+            // The sight's loading and round lamps (`sight_lamp_states`): one lens of each lit, the
+            // other lens shown dark. Real emitters in the light list at lamp power; no shadow cube.
+            let (load, round) = self.sight_lamp_states(state);
+            for station in 0..2 {
+                let base = self.sight_lamp_frame(station);
+                for (k, &slot) in self.slots.sight_lamps[station].iter().enumerate() {
+                    // The round lamp sits 3 cm beside the loading lamp.
+                    let model = base * Mat4::from_translation(Vec3::new(if k < 2 { 0.0 } else { 0.03 }, 0.0, 0.0));
+                    let lit = if k < 2 { load == Some(k) } else { round == Some(k - 2) };
+                    // The dark lens of each lamp: working (red) and armour-piercing (white) glass.
+                    let shown_dark = (k == 1 && load.is_none()) || (k == 2 && round.is_none());
+                    if lit {
+                        lights.push(Self::drive_finite_lamp(r, slot, model, sight_lamp_fixture(k).sample(practical_gain)));
+                    } else if shown_dark && sight_lamps_enabled() {
+                        r.set_visible(slot, true); r.set_emissive(slot, 0.0); r.set_model(slot, model);
+                    } else {
+                        r.set_visible(slot, false); r.set_emissive(slot, 0.0);
                     }
                 }
             }
@@ -23856,6 +23931,35 @@ impl Game {
         self.sight_model().transform_vector3(Vec3::Z).normalize()
     }
 
+    /// The gunner's view through the sight: the sight's pose with the hull's pitch and roll
+    /// replaced by their low-passed values (`sight_steady`). A comfort filter, named in the
+    /// ledger: the traverse, elevation and heading stay immediate, the sight mesh and the bore
+    /// keep the true pose, and on rough ground the bore (where the shell goes) wanders about the
+    /// reticle by the filtered jolts. `KESSEL_SIGHT_DAMPING_S=0` restores the raw view.
+    pub(super) fn sight_view_model(&self) -> Mat4 {
+        let Some(steady) = self.sight_steady else { return self.sight_model(); };
+        let p = &self.player;
+        let level = Mat4::from_translation(p.pos) * Mat4::from_rotation_y(p.heading);
+        let true_tilt = Mat4::from_rotation_x(-p.pitch) * Mat4::from_rotation_z(p.roll);
+        let steady_tilt = Mat4::from_rotation_x(-steady.x) * Mat4::from_rotation_z(steady.y);
+        level * steady_tilt * true_tilt.inverse() * level.inverse() * self.sight_model()
+    }
+
+    pub(super) fn sight_view_line(&self) -> Vec3 {
+        self.sight_view_model().transform_vector3(Vec3::Z).normalize()
+    }
+}
+
+/// Time constant of the gunner sight view's low-pass on the hull's pitch and roll, seconds
+/// (`KESSEL_SIGHT_DAMPING_S`, 0 = the raw view). 0.25 s passes slopes and a slow pitch and takes
+/// out most of a bump's jolt; a comfort estimate, not a measured head-and-brow-pad response.
+fn sight_damping_s() -> f32 {
+    static TAU: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *TAU.get_or_init(|| std::env::var("KESSEL_SIGHT_DAMPING_S").ok()
+        .and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(0.25, |v| v.clamp(0.0, 2.0)))
+}
+
+impl Game {
     /// Apply the current main-gun and armor-hit camera impulses to an already-authored base pose.
     /// This does not advance any timers, so the keyboard view, all controller split views, and a
     /// deterministic film camera can sample the exact same physical instant independently.
@@ -23931,7 +24035,7 @@ impl Game {
     pub fn coop_view_camera(&self, role: crate::lan::LanRole) -> (Vec3, Vec3, f32, f32, bool) {
         match role {
             crate::lan::LanRole::Gunner => {
-                let mdir = self.sight_line();
+                let mdir = self.sight_view_line();
                 let fov = [25f32, 12.0, 6.0][self.sights_mag.min(2) as usize].to_radians();
                 (
                     self.player.gunsight(),
@@ -30888,6 +30992,56 @@ impl Game {
 
     fn breech_lamp_state(&self) -> usize {
         breech_indicator_state(self.breech, self.lever_open, self.player_can_fire())
+    }
+
+    /// The sight lamps' lit lenses from the reload machine: loading (0 ready: closed, loaded and
+    /// mechanically ready; 1 working: the loader at the breech, extracting or ramming or not yet
+    /// ready; dark with no fit loader), and the round (0 armour-piercing, 2 high explosive; the
+    /// chamber's round, else the one in the loader's hands; dark when there is none). APCR is not
+    /// chambered as its own round (it fires as PzGr. 39), so its lens never lights.
+    fn sight_lamp_states(&self, breech_state: usize) -> (Option<usize>, Option<usize>) {
+        if !sight_lamps_enabled() { return (None, None); }
+        let load = match breech_state {
+            0 => Some(0),
+            _ if self.crew_ok(CrewRole::Loader) => Some(1),
+            _ => None,
+        };
+        // A wounded loader still working (crew-solo: his performance below 0.9, the player's own
+        // when he works the breech) makes the working lamp blink slowly, 0.6 s on and 0.6 s off.
+        let blink_off = (self.stealth.t / 0.6).floor() as i64 % 2 == 1;
+        let load = if load == Some(1) && blink_off && self.loader_degraded() { None } else { load };
+        let round_present = matches!(self.breech, Breech::Loaded) || self.grab || self.ram > 0.0;
+        (load, round_present.then_some(if self.he_loaded { 2 } else { 0 }))
+    }
+
+    /// The man at the breech is working below his strength (crew-solo's wounds and shock).
+    fn loader_degraded(&self) -> bool {
+        if !self.crew_solo_active() { return false; }
+        let player_loads = self.mode == Mode::Tank
+            && singleplayer_crew::role_for_station(self.station) == CrewRole::Loader;
+        let performance = if player_loads { self.crew_solo_player_perf() } else { self.crew_solo.man(CrewRole::Loader).performance() };
+        performance < 0.9
+    }
+
+    /// Where the sight lamps sit: on a bracket off the sight body beside the gunner's eyepiece,
+    /// just left of the binocular field as the eyepiece composite frames it, on the turret-wall
+    /// side (the gun's cradle fills the right) (0); and under the commander's front vision block (1).
+    fn sight_lamp_frame(&self, station: usize) -> Mat4 {
+        if station == 0 {
+            let sight = self.sight_model();
+            let (eye, forward, _) = tiger_gunner_sight::interior_camera(sight);
+            let right = forward.cross(sight.transform_vector3(Vec3::Y)).normalize_or_zero();
+            let up = right.cross(forward);
+            Mat4::from_rotation_translation(Quat::from_mat4(&sight).normalize(),
+                eye + forward * 0.30 - right * 0.27 - up * 0.02)
+        } else {
+            let turret = self.player.turret_model();
+            let forward = self.player.turret_forward();
+            let right = forward.cross(turret.transform_vector3(Vec3::Y)).normalize_or_zero();
+            let up = right.cross(forward);
+            Mat4::from_rotation_translation(Quat::from_mat4(&turret).normalize(),
+                self.player.commander_eye() + forward * 0.28 + right * 0.05 - up * 0.12)
+        }
     }
 
     /// Animate the coaxial / hull MG34 FX: the stroboscopic muzzle-flash flicker at the live port,

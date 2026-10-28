@@ -2605,6 +2605,10 @@ pub struct Renderer {
     /// Legacy gunner-optic obscuration envelope. Retained while the game-side producer migrates;
     /// the screen-space snow-dust veil was not a modeled medium and is no longer rendered.
     pub optic_blast: f32,
+    /// Where the gunner's eye sits off the sight's axis, in fractions of the screen height (x
+    /// right, y up): the sight's true line against the steadied view (`Game::sight_view_model`).
+    /// The eyepiece pass shifts what lies on the glass and the exit pupil's shading by it.
+    pub optic_eye: [f32; 2],
     /// The player's gun muzzle (position, bore direction) this frame, so a backend can tell the
     /// gun's own report from a detonation downrange. Set by the game each update.
     pub muzzle_hint: Option<(glam::Vec3, glam::Vec3)>,
@@ -2615,6 +2619,9 @@ pub struct Renderer {
     /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
     /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
     pub wear: [f32; 4],
+    /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
+    /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
+    pub whitewash: f32,
     /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
     /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
     pub fog_bank: [f32; 4],
@@ -5887,6 +5894,7 @@ impl Renderer {
             fog_density: 0.02,
             reticle: false,
             optic_blast: 0.0,
+            optic_eye: [0.0; 2],
             observer_flash_source: false,
             crew_ko: 0.0,
             crew_ko_dir: [0.72, 0.69],
@@ -5919,6 +5927,7 @@ impl Renderer {
             player_snow_load: 0.0,
             world_snow_load: 0.0,
             wear: [0.0; 4],
+            whitewash: 0.0,
             fog_bank: [0.0; 4],
             frame: 0,
             hdr_view,
@@ -7801,8 +7810,14 @@ impl Renderer {
         let wind = glam::Vec3::new(self.weather_wind_world.x,0.0,self.weather_wind_world.y)*gust;
         let dust = if self.atmo_enabled { self.atmo_dust } else { 0.0 };
         let mut field = self.pixel_particle_field.borrow_mut();
+        // The cabin's dust rides the hull: its sphere turns, pitches and rolls with the vehicle
+        // (it was translated only, so turning the tank swirled it through the crew; 2026-10-28).
+        let dust_model = self.cabin_medium_pose.map_or(glam::Mat4::from_translation(self.atmo_origin), |(hull, _)| {
+            let (_, rotation, _) = hull.to_scale_rotation_translation();
+            glam::Mat4::from_rotation_translation(rotation, self.atmo_origin)
+        });
         let points = field.update(self.camera.pos,wind,self.time,self.precipitation,
-            self.atmo_origin,dust,glam::Mat4::from_translation(self.atmo_origin));
+            self.atmo_origin,dust,dust_model);
         self.pixel_particle_count.set(points.len() as u32);
         if points.is_empty() { return; }
         queue.write_buffer(&self.pixel_particle_vertices,0,bytemuck::cast_slice(points));

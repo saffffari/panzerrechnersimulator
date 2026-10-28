@@ -825,8 +825,9 @@ fn run_shafts(prefix: &str) -> anyhow::Result<()> {
 /// `raymarch-cabin PREFIX`: the commander's post shut, as a player sees it on the act's own
 /// weather: the vision blocks, the cabin medium at rest, then while the tank drives (two pairs of
 /// consecutive frames, no history reset between them, so their difference is the frame-to-frame
-/// flicker); then the gunner's, driver's and radio operator's posts at rest, and the gunner's
-/// two-pass eyepiece composite. Short by design (one process, a few hundred frames).
+/// flicker); then the gunner's, driver's and radio operator's posts at rest, the gunner's
+/// two-pass eyepiece composite; the receipt also carries the gunner's sight line's jolt through
+/// the drive, raw and as the view shows it. Short by design (one process, a few hundred frames).
 pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_commander.png")).exists(),
         "preserving existing capture; choose a new prefix");
@@ -861,10 +862,25 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
     rig.shots.push(serde_json::json!({ "name": "commander_next", "path": path, "note": "the next frame (flicker)" }));
     // Drive: every frame simulated and rendered, so the histories accumulate in motion.
     let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    // The gunner's sight line through the drive, raw and as the view shows it (low-passed).
+    let (mut raw_lines, mut view_lines) = (Vec::new(), Vec::new());
     for _ in 0..150 {
         g.update(&drive, 1.0 / 60.0, &mut r);
         r.render_offscreen(&device, &queue);
+        raw_lines.push(g.sight_line());
+        view_lines.push(g.sight_view_line());
     }
+    // Turn rate frame to frame, and its jolt about a 9-frame running mean (deg/s).
+    let rates = |lines: &[Vec3]| -> (f32, f32) {
+        let turns: Vec<f32> = lines.windows(2).map(|w| w[0].angle_between(w[1]) * 60.0).collect();
+        let mean = turns.iter().sum::<f32>() / turns.len().max(1) as f32;
+        let jolt = (turns.windows(9).map(|w| (w[4] - w.iter().sum::<f32>() / 9.0).powi(2)).sum::<f32>()
+            / turns.len().saturating_sub(8).max(1) as f32).sqrt();
+        (mean.to_degrees(), jolt.to_degrees())
+    };
+    let (raw_turn, raw_jolt) = rates(&raw_lines[30..]);
+    let (view_turn, view_jolt) = rates(&view_lines[30..]);
+    println!("[raymarch-cabin] gunner sight line while driving: raw turn {raw_turn:.2} deg/s jolt {raw_jolt:.2} deg/s; view turn {view_turn:.2} deg/s jolt {view_jolt:.2} deg/s");
     let speed = g.player.speed;
     let path = format!("{prefix}_commander_driving.png");
     r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
@@ -882,15 +898,18 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
         let text = note(&r, &format!("the {name}'s post at rest"));
         rig.still(&mut r, name, &text)?;
     }
-    // The gunner's eyepiece composite as the live loop draws it: the optic pass, then the
-    // interior pass around the eyepiece, which reuses the optic pass's far maps and sky.
+    // The gunner's eyepiece composite as the live loop draws it (the optic pass, then the
+    // interior pass around the eyepiece, which reuses the optic pass's far maps and sky): at noon
+    // with an armour-piercing round ready; at night with high explosive ready; at night just
+    // after a shot, the loader working (the sight lamps).
     g.station = Station::Gunner;
     step(&mut g, &mut r, 40, &idle);
-    if g.optic_composite_active() {
+    let composite = |g: &mut Game, r: &mut crate::renderer::Renderer, rig: &mut Rig, name: &str, note: &str| -> anyhow::Result<()> {
+        if !g.optic_composite_active() { return Ok(()); }
         let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter);
         r.begin_coop_shadow_frame(g.player.center());
         r.weather_shelter = 1.0;
-        g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, &mut r);
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, r);
         r.set_active_view(0);
         r.render_optic_snapshot(&device, &queue);
         let (eye, forward, fov) = g.gunner_interior_camera();
@@ -901,20 +920,45 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
         r.precipitation = 0.0;
         r.reticle = false;
         r.optic_mask = 4.0;
-        g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, &mut r);
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, r);
         r.set_active_view(3);
         r.rt_skip = true;
         r.set_coop_shadow_reuse(true);
-        let path = format!("{prefix}_gunner_composite.png");
+        let path = format!("{prefix}_{name}.png");
         r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
         let stats = r.raymarch_stats().map(|s| format!("{s:?}"));
         r.rt_skip = false;
         r.set_coop_shadow_reuse(false);
         r.end_coop_shadow_frame();
         (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter) = saved;
-        rig.shots.push(serde_json::json!({ "name": "gunner_composite", "path": path, "raymarch": stats,
-            "note": "the live loop's two-pass eyepiece composite; the interior pass reuses the optic pass's far cascade, sky cover and sky cache" }));
+        rig.shots.push(serde_json::json!({ "name": name, "path": path, "raymarch": stats, "note": note }));
+        Ok(())
+    };
+    composite(&mut g, &mut r, &mut rig, "gunner_composite", "the live loop's two-pass eyepiece composite at noon, an armour-piercing round ready")?;
+    rig.clock(&mut r, "1942-12-21T19:00:00Z")?;
+    g.debug_set_he_loaded(true);
+    step(&mut g, &mut r, 30, &idle);
+    composite(&mut g, &mut r, &mut rig, "gunner_composite_night", "the same at night, high explosive ready")?;
+    g.debug_fire_laid(&mut r);
+    step(&mut g, &mut r, 20, &idle);
+    composite(&mut g, &mut r, &mut rig, "gunner_composite_night_reloading", "the same at night just after the shot: the loader working")?;
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    step(&mut g, &mut r, 10, &idle);
+
+    // The Tiger from outside: its winter coat (`apply_whitewash`), front and rear quarters.
+    let p = g.player.pos;
+    let f = g.player.forward();
+    let side = f.cross(Vec3::Y).normalize_or_zero();
+    for (name, eye) in [("tiger_front_quarter", p + f * 7.5 + side * 5.0 + Vec3::Y * 2.2),
+                        ("tiger_rear_quarter", p - f * 7.5 - side * 5.0 + Vec3::Y * 2.6)] {
+        rig.observe(&mut r, eye, p + Vec3::Y * 1.4, 55.0);
+        rig.still(&mut r, name, "the Tiger from outside at 9 m: its winter coat")?;
     }
+    rig.station_camera();
+    rig.shots.push(serde_json::json!({ "name": "sight_line_driving", "speed_m_s": speed,
+        "raw_turn_deg_s": raw_turn, "raw_jolt_rms_deg_s": raw_jolt, "view_turn_deg_s": view_turn, "view_jolt_rms_deg_s": view_jolt,
+        "damping_s": std::env::var("KESSEL_SIGHT_DAMPING_S").ok(),
+        "note": "the gunner's sight line through the commander's 2.5 s drive (first 0.5 s left out): raw, and as the sight view shows it" }));
     fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "schema": "panzer.raymarch-cabin.v1", "manifest": manifest, "adapter": adapter.get_info().name,
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],

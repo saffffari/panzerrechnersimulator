@@ -29,6 +29,16 @@ struct Crush {
     dither_forward: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
+
+// The gunner's TZF 9b is binocular: its two eyepiece fields (radius 0.45 of the screen height)
+// drawn side by side, centres 0.34 apart, overlapping into one wide field with a slight waist.
+// A presentation: two eyepieces aimed alike fuse into one circle for a real pair of eyes; the
+// offset widens the picture across the screen (2026-10-28, the owner's request). The distance
+// from the nearer eyepiece's centre; inside the field below 0.45.
+const TZF_EYEPIECE_OFFSET: f32 = 0.17;
+fn tzf_field_distance(q: vec2<f32>) -> f32 {
+    return min(length(q - vec2(TZF_EYEPIECE_OFFSET, 0.0)), length(q + vec2(TZF_EYEPIECE_OFFSET, 0.0)));
+}
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
 @group(0) @binding(5) var optic_tex: texture_2d<f32>;   // snapshot of the crushed optic frame (mask mode 4)
 struct EnvironmentWhite { lanes: array<vec4<f32>, 68>, };
@@ -332,13 +342,14 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     // ── Optic masks: the eye pressed to an eyepiece. Black steel outside the aperture; a soft
-    // breath-dark vignette inside so the picture pools at the centre. 1 = TZF circle (the reticle
-    // is drawn within), 2 = driver's visor letterbox, 3 = binoculars double-circle.
+    // breath-dark vignette inside so the picture pools at the centre. 1 = the TZF 9b's two
+    // eyepieces (the reticle is drawn within), 2 = driver's visor letterbox, 3 = binoculars
+    // double-circle.
     if (cr.mask > 0.5) {
         let dims = vec2<f32>(textureDimensions(hdr));
         let q = (in.uv - vec2(0.5)) * vec2(dims.x / max(dims.y, 1.0), 1.0);
         if (cr.mask < 1.5) {
-            let d = length(q);
+            let d = tzf_field_distance(q);
             m *= 1.0 - 0.55 * smoothstep(0.28, 0.45, d);      // inner vignette
             m *= 1.0 - smoothstep(0.45, 0.472, d);            // hard steel rim
         } else if (cr.mask < 2.5) {
@@ -356,7 +367,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
             // gunner's head at the TZF; the previous pass's crushed optic frame drops into the
             // same r=0.45 circle it was masked to (1:1 texels — no resample, the Strichbild
             // stays crisp). A dark bezel ring seats the glass in the housing.
-            let d = length(q);
+            let d = tzf_field_distance(q);
             if (d < 0.45) {
                 m = textureSampleLevel(optic_tex, samp, in.uv, 0.0).rgb;
             }

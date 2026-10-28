@@ -128,6 +128,8 @@ struct FrameUniform {
     vehicle: [f32; 4],
     cloud: [f32; 4],
     fog: [f32; 4],
+    optic_eye: [f32; 4],
+    livery: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
     /// The player's cabin air (`cabin_medium.rs`), as the shader backend's camera carries it.
@@ -336,6 +338,8 @@ pub(super) struct Backend {
     prev_cabin: Option<[Mat4; super::cabin_medium::DOMAINS]>,
     /// `KESSEL_GLASS_GRIME`: a fixed glass grime load in place of the game's.
     glass_grime: Option<f32>,
+    /// `KESSEL_WHITEWASH`: a fixed winter whitewash in place of the game's.
+    whitewash: Option<f32>,
     history_valid: bool,
     shadow_views: [Mat4; SHADOW_VIEWS],
     shadowed: [Option<usize>; POINT_SHADOWS],
@@ -1018,6 +1022,7 @@ impl Backend {
             points_pipe, sparks_pipe, tracers_pipe,
             binds: None, flip: 0, prev_camera: None, prev_cabin: None, history_valid: false,
             glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
+            whitewash: std::env::var("KESSEL_WHITEWASH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             shadow_views: [Mat4::IDENTITY; SHADOW_VIEWS], shadowed: [None; POINT_SHADOWS],
             lights: Vec::with_capacity(MAX_LIGHTS), parcels: Vec::with_capacity(MAX_PARCELS), embers: Vec::with_capacity(MAX_EMBERS),
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
@@ -1475,6 +1480,9 @@ impl Backend {
             // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
             cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
             fog: r.fog_bank,
+            optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
+            // KESSEL_WHITEWASH=0..1 fixes the winter coat for review.
+            livery: [self.whitewash.unwrap_or(r.whitewash).clamp(0.0, 1.0), 0.0, 0.0, 0.0],
             vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
                 let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
                 [c.x, c.y, c.z, 3.0]

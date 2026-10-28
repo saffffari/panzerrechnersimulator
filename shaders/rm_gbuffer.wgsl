@@ -111,6 +111,38 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
 // cavity grime need neighbours and are drawn in the shade pass. Named approximation: procedural
 // masks scaled by whole-vehicle loads, not painted or simulated wear.
 struct Worn { albedo: vec3<f32>, roughness: f32 };
+// Winter whitewash (2026-10-28): the crews' washable white coat, brushed over the grey in the
+// field. It lies only on the exterior paint (tank::tiger_paint_finish's exact swatch, sRGB 72/74/78:
+// tracks, exhausts, the interior and the textured markings keep their own finish, as crews left
+// crosses and numbers clear), thin where the brush ran dry and worn through on the faces that are
+// stood on, streaked by grime running down the sides. Wear (scratches, grit, slush) lies on top.
+// Named approximation: an authored mask in the mesh's frame, not a painted or simulated coat.
+const RM_TIGER_PAINT: vec3<f32> = vec3<f32>(0.0648, 0.0685, 0.0762);
+fn apply_whitewash(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>, face: vec3<f32>, local: vec3<f32>) -> Worn {
+    let coat = clamp(fr.livery.x, 0.0, 1.0);
+    if (coat <= 0.0 || any(abs(albedo - RM_TIGER_PAINT) > vec3(0.006))) { return Worn(albedo, roughness); }
+    let to_cabin = fr.vehicle.xyz - world;
+    if (length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0) { return Worn(albedo, roughness); }
+    let up = smoothstep(0.3, 0.85, n.y);
+    // Brush coverage: broad passes with the grey showing where the brush ran dry.
+    let passes = rm_fbm(vec3(local.x * 1.3 + local.y * 0.4, local.y * 2.2, local.z * 1.3 - local.y * 0.3), 251u);
+    let dry = smoothstep(0.58, 0.82, passes) * 0.55;
+    // Strokes: the brush's own direction, fine streaks where the coat is thin.
+    let stroke = rm_noise(vec3(local.x * 22.0 + local.z * 9.0, local.y * 3.0, local.z * 22.0 - local.x * 9.0), 257u);
+    let streaky = smoothstep(0.55, 0.9, stroke) * 0.25;
+    // Worn through where the crew stand and climb: the decks and the turret roof.
+    let walked = up * smoothstep(0.45, 0.75, rm_fbm(local * 3.1, 263u) + 0.1) * 0.7;
+    let cover = clamp(1.0 - dry - streaky - walked, 0.0, 1.0) * coat;
+    // The coat's own tone: chalky off-white, greyer where thin, a little warm with age.
+    let tone = mix(0.56, 0.72, rm_fbm(local * 0.9, 269u));
+    var white = vec3(tone, tone, tone * 0.96);
+    // Grime runs down the sides from seams and fittings: thin vertical streaks.
+    let side = 1.0 - up;
+    let run = smoothstep(0.62, 0.95, rm_noise(vec3(local.x * 18.0, local.y * 0.7, local.z * 18.0), 271u)) * side;
+    white *= 1.0 - 0.35 * run;
+    return Worn(mix(albedo, white, cover), mix(roughness, 0.92, cover));
+}
+
 fn apply_wear(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>, face: vec3<f32>, local: vec3<f32>) -> Worn {
     var a = albedo;
     var r = roughness;
@@ -237,6 +269,9 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         }
     }
     if (kind < 0.5 && pc.extra.y > 0.5) {
+        let coated = apply_whitewash(albedo, roughness, in.relative + fr.cam_pos.xyz, n, normalize(in.normal), in.local);
+        albedo = coated.albedo;
+        roughness = coated.roughness;
         let worn = apply_wear(albedo, roughness, in.relative + fr.cam_pos.xyz, n, normalize(in.normal), in.local);
         albedo = worn.albedo;
         roughness = worn.roughness;
