@@ -39,6 +39,10 @@ mod wreck_surface_fire;
 mod wreck_salvage;
 #[path = "wreck_turret.rs"]
 mod wreck_turret;
+#[path = "game_acoustics.rs"]
+mod game_acoustics;
+#[path = "sound_world_proof.rs"]
+pub(crate) mod sound_world_proof;
 #[cfg(test)]
 #[path = "couch_station_scene_tests.rs"]
 mod couch_station_scene_tests;
@@ -9369,6 +9373,8 @@ pub struct Game {
     bail_presses: u32,
     scheduled: Vec<ScheduledSound>, // speed-of-sound delayed combat audio (see schedule_sound_from)
     scheduled_audio_audit: ScheduledAudioAudit,
+    /// Traced rooms, foley and the world's continuous sounds (`game_acoustics`).
+    acoustics: game_acoustics::WorldAcoustics,
     ambient_t: f32,                 // countdown to the next distant battlefield explosion
     ambient_tick: u32,              // counter-based pseudo-random (interval + bearing + clip pick)
     soundscape_combat_t: f32,
@@ -13424,6 +13430,7 @@ impl Game {
             repair_hammer_t: 0.0,
             scheduled: Vec::new(),
             scheduled_audio_audit: ScheduledAudioAudit::default(),
+            acoustics: Default::default(),
             ambient_t: AMBIENT_EXP_MIN,
             ambient_tick: 0,
             soundscape_combat_t: 0.0,
@@ -15833,6 +15840,10 @@ impl Game {
                     a.play_owner_local("engine_start", crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db, 180.0);
                 }
                 println!("[panzerrechnersystem] ANLASSER — cranking…");
+            } else if self.engine_crank_t <= 0.0 {
+                // An empty tank: the starter turns the Maybach over and nothing catches.
+                let at = self.player.hull_model().transform_point3(ModuleKind::Engine.station());
+                self.foley(crate::acoustics::foley::Cue::Vehicle(crate::acoustics::foley::VehicleCue::StarterDry), 1.0, 0.0, at);
             }
         }
         if self.engine_crank_t > 0.0 {
@@ -17398,6 +17409,7 @@ impl Game {
             let engine_ear = self.own_engine_ear_laf(telemetry, r.camera.pos);
             self.engine_ear_laf_dba = engine_ear;
             a.set_engine_at_ear(telemetry, engine_ear, dt);
+            a.set_engine_direction(self.engine_heard_direction(r.camera.pos, r.camera.forward()));
             let loader_motion = loader_contact_motion(loader_before,
                 (self.breech, self.casing_pull, self.ram, self.grab), dt);
             let loader_level = crate::audio::LOADER_FRICTION_REFERENCE_DBA;
@@ -17429,6 +17441,8 @@ impl Game {
             // Bend the outgoing shell shriek's pitch down + fade it over the round's flight.
             a.update_shell_shriek(dt);
         }
+        // Traced rooms, the weather on the steel, the tracks' ground, brakes, gears, cooling.
+        self.update_world_foley(dt, r, turret_rate);
 
         // Random booms on the horizon with no simulated source. Removed pending simulated off-map
         // indirect fire; kept only behind a debug-only gate, off in both presets.
@@ -17918,6 +17932,8 @@ impl Game {
         self.station = s;
         self.switch_dur = switch_cost(self.switch_from, s);
         self.switch_t = self.switch_dur;
+        let at = self.ear_pos - Vec3::Y * 0.6;
+        self.foley(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::StationMove), 1.0, 0.0, at);
     }
 
     /// One physical visor pose for solo, crew play and the title background. The supplied outer
@@ -19502,6 +19518,8 @@ impl Game {
             crate::foot::FootWeapon::Panzerfaust => crate::foot::FootWeapon::Luger,
         };
         self.select_foot_weapon(next);
+        let object = if matches!(next, crate::foot::FootWeapon::Luger) { crate::acoustics::foley::Object::Pistol } else { crate::acoustics::foley::Object::Panzerfaust };
+        self.foley_hands(crate::acoustics::foley::Cue::Handle(object, crate::acoustics::foley::Gesture::Grab));
     }
 
     pub fn toggle_dismount(&mut self) {
@@ -19708,6 +19726,10 @@ impl Game {
                 self.climb.anim = false;
                 self.climb.t = 0.0;
                 self.climb.step = b;
+                let boot = r.camera.pos - Vec3::Y * 1.3;
+                self.foley(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::ClimbBoot), 1.0, 0.0, boot);
+                let grip = r.camera.pos - Vec3::Y * 0.3;
+                self.foley(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::ClimbGrip), 1.0, 0.0, grip);
                 if b == n - 1 {
                     self.foot.pos = r.camera.pos - Vec3::Y * crate::foot::EYE;
                     if self.carry_mesh.is_some() {
@@ -19857,6 +19879,7 @@ impl Game {
         self.panzerfaust_claimed = false;
         self.foot.panzerfaust_ready = false;
         self.foot.panzerfaust_spares = 0;
+        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Panzerfaust, crate::acoustics::foley::Gesture::Stow));
         self.foot.panzerfaust_swap_t = 0.0;
         self.foot.panzerfaust_flash_t = 0.0;
         self.foot.flash_t = 0.0;
@@ -19991,6 +20014,7 @@ impl Game {
     }
 
     fn finish_hatch_entry(&mut self, index: usize, station: Station, r: &mut Renderer) {
+        self.foley(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::HatchPassage), 1.0, 0.0, r.camera.pos - Vec3::Y * 0.5);
         self.last_access_hatch = index;
         self.climb = Climb { end: ClimbEnd::IntoTank, ..Climb::default() };
         self.finish_climb();
@@ -20289,7 +20313,15 @@ impl Game {
 
     pub fn interact_world_door(&mut self, cam_fwd: Vec3, cam_pos: Vec3) -> bool {
         let Some(index) = self.world_door_hover(cam_fwd, cam_pos) else { return false; };
-        self.world_doors.toggle(index, cam_pos)
+        let toggled = self.world_doors.toggle(index, cam_pos);
+        if toggled {
+            if let Some((at, locked, opening)) = self.world_doors.sound_state(index) {
+                let action = if locked { crate::acoustics::foley::DoorAction::Locked } else if opening { crate::acoustics::foley::DoorAction::Open }
+                    else { crate::acoustics::foley::DoorAction::Close };
+                self.foley(crate::acoustics::foley::Cue::Door(crate::acoustics::foley::DoorKind::Timber, action), 1.0, 0.0, at);
+            }
+        }
+        toggled
     }
 
     fn update_world_doors(&mut self, dt: f32, r: &mut Renderer) {
@@ -20351,9 +20383,7 @@ impl Game {
                 } else {
                     let drained = self.refuel_from_pickup(index);
                     self.pickups[index].collected = true;
-                    if let Some(audio) = &self.audio {
-                        audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.55));
-                    }
+                    self.foley_start_pour(drained);
                     println!(
                         "[absitzen] rear service — Tiger accepted {drained:.0} L; physical can retains {:.0} L",
                         can_liters - drained
@@ -20375,9 +20405,8 @@ impl Game {
                 item.put_down();
             }
             self.held_item = None;
-            if let Some(audio) = &self.audio {
-                audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.32));
-            }
+            let at = self.pickups[index].pos;
+            self.foley(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::SetDown), 1.0, 0.0, at);
             println!("[absitzen] portable item placed with zero impulse");
             return true;
         }
@@ -20388,14 +20417,12 @@ impl Game {
         if let Some(item) = &mut self.pickups[index].portable {
             item.equip();
             self.held_item = Some(index);
-            if let Some(audio) = &self.audio {
-                audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.5));
-            }
             println!(
                 "[absitzen] jerry can in hand — {:.0} L, {:.1} kg",
                 item.fuel_liters(),
                 item.mass_kg()
             );
+            self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::Grab));
             true
         } else {
             false
@@ -20420,6 +20447,7 @@ impl Game {
                 item.fuel_liters(),
                 item.velocity.length()
             );
+            self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::Throw));
             true
         } else {
             false
@@ -20438,6 +20466,8 @@ impl Game {
         if let Some(item) = &mut pickup.portable {
             item.put_down();
         }
+        let at = self.pickups[index].pos;
+        self.foley(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::SetDown), 0.8, -3.0, at);
     }
 
     /// Advance and draw every portable pickup from its one permanent renderer slot. Empty cans have
@@ -20451,6 +20481,7 @@ impl Game {
             * Quat::from_rotation_z(-0.12)
             * Quat::from_rotation_x(0.08);
 
+        let mut bounces = Vec::new();
         for (index, pickup) in self.pickups.iter_mut().enumerate() {
             let Some(item) = &mut pickup.portable else {
                 continue;
@@ -20467,7 +20498,9 @@ impl Game {
                     item.put_down();
                 }
                 let ground = self.hf.height_at(pickup.pos.x, pickup.pos.z);
+                let falling = item.velocity.y;
                 item.integrate(&mut pickup.pos, ground, dt);
+                if falling < -0.8 && item.velocity.y > 0.0 { bounces.push((pickup.pos, -falling)); }
                 let rotation = Quat::from_euler(
                     glam::EulerRot::XYZ,
                     item.rotation.x,
@@ -20481,6 +20514,10 @@ impl Game {
             }
             r.set_emissive(pickup.slot, 0.0);
             r.set_visible(pickup.slot, true);
+        }
+        for (at, v) in bounces {
+            self.foley(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::Drop), (v / 3.0).clamp(0.3, 3.0),
+                20.0 * (v / 3.0).max(0.05).log10(), at);
         }
     }
 
@@ -20504,7 +20541,15 @@ impl Game {
                 if normal.y.abs()>0.45 {surface=footsteps::Surface::Metal;}
             }
         }
-        if let Some(audio)=&self.audio {audio.play_control(step.key(surface),step.gain);}
+        // Surfaces the owner's footstep recordings do not cover are synthesized from contact
+        // physics (`acoustics::foley`): timber and stone floors, rubble, mud, gravel, ice, glass.
+        let ground=if inside {crate::acoustics::foley::Ground::TurretFloor} else {self.foley_ground_at(feet)};
+        let synthesized=matches!(ground,crate::acoustics::foley::Ground::WoodFloor|crate::acoustics::foley::Ground::StoneFloor|crate::acoustics::foley::Ground::Rubble
+            |crate::acoustics::foley::Ground::Mud|crate::acoustics::foley::Ground::Gravel|crate::acoustics::foley::Ground::Ice|crate::acoustics::foley::Ground::Glass);
+        if synthesized {
+            let gait=if crouch>0.5 {crate::acoustics::foley::Gait::Crouch} else if distance/dt.max(1.0e-3)>3.0 {crate::acoustics::foley::Gait::Run} else {crate::acoustics::foley::Gait::Walk};
+            self.foley(crate::acoustics::foley::Cue::Step(ground,gait),1.0,crate::audio::effort_db(step.gain),feet);
+        } else if let Some(audio)=&self.audio {audio.play_control(step.key(surface),step.gain);}
     }
 
     fn update_foot(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
@@ -20623,6 +20668,7 @@ impl Game {
         }
 
 
+        self.foley_airborne(previously_airborne);
         let walk_delta = self.foot.pos - previous_foot_pos;
         self.update_walk_sound(Vec2::new(walk_delta.x,walk_delta.z).length(),dt,
             !previously_airborne && !self.foot.airborne,
@@ -24334,10 +24380,15 @@ impl Game {
     fn drain_scheduled_audio(&mut self, dt: f32, r: &Renderer, audio_time_s: f32) -> usize {
         // Every open hatch is another way in for outside sound.
         crate::sound_propagation::set_open_hatches(self.open_hatch_count());
+        // The traced field around the listener's own body, for his handling and recordings.
+        let local_room = if self.audio.is_some() && self.ear_pos != Vec3::ZERO {
+            self.acoustic_field_for(self.ear_pos + self.ear_forward * 0.3 - Vec3::Y * 0.4).0
+        } else { None };
         if let Some(audio) = &self.audio {
             audio.set_local_acoustics(self.surroundings_reverb(r.camera.pos, self.listener_enclosure()),
                 self.listener_headset());
             audio.set_listener_enclosure(self.listener_enclosure());
+            audio.set_local_room(local_room);
         }
         // Where the ears are and which way the head is turned, for sounds played between drains.
         self.ear_pos = r.camera.pos;
@@ -24399,6 +24450,13 @@ impl Game {
                 let ear = presented_world_ear(s.sfx, ear, path.distance_m);
                 let bearing = widened_bearing_deg(bearing);
                 self.hear_world_impulse(&ear, bearing);
+                // The field traced through the scene from this source's place to the ear
+                // (`game_acoustics`); the parametric tail only until it has been traced.
+                let traced = self.acoustic_room_for(s.source);
+                let room = match &traced {
+                    Some(ir) => crate::audio::Room::Traced(ir),
+                    None => crate::audio::Room::Parametric(reverb),
+                };
                 if let Some(a) = &self.audio {
                     if let Some(buf) = s.buf {
                         // Parametric reports may arrive pre-panned, but the listener can rotate
@@ -24407,9 +24465,9 @@ impl Game {
                             .chunks_exact(2)
                             .map(|frame| (frame[0] + frame[1]) * std::f32::consts::FRAC_1_SQRT_2)
                             .collect();
-                        a.play_world_mono_at_ear(&mono, &ear, bearing, reverb);
+                        a.play_world_mono_in_room(&mono, &ear, bearing, room);
                     } else {
-                        a.play_world_at_ear(s.sfx, &ear, bearing, reverb);
+                        a.play_world_in_room(s.sfx, &ear, bearing, room);
                     }
                 }
             }
@@ -26474,6 +26532,10 @@ impl Game {
         if can_fire {
             self.mg_heat = (self.mg_heat + MG_HEAT_PER_SEC * dt).min(1.0);
             if self.mg_heat >= 1.0 {
+                if !self.mg_overheated {
+                    let at = self.player.turret_model().transform_point3(Vec3::new(0.2, 1.9, 1.6));
+                    self.foley(crate::acoustics::foley::Cue::Vehicle(crate::acoustics::foley::VehicleCue::BarrelSizzle), 1.0, 0.0, at);
+                }
                 self.mg_overheated = true;
             }
             // Source timestamps determine cadence and the muzzle wave's departure. Keep the
@@ -26489,7 +26551,13 @@ impl Game {
         } else {
             // Not firing: shed heat, clear the overheat lock once cool enough, and reset the
             // sub-interval so the first round after re-pulling the trigger fires promptly.
+            let heat_before = self.mg_heat;
             self.mg_heat = (self.mg_heat - MG_COOL_PER_SEC * dt).max(0.0);
+            // A hot barrel ticks as it contracts: one tick per 0.1 of heat shed above 0.3 [E].
+            if heat_before > 0.3 && (heat_before * 10.0).floor() != (self.mg_heat * 10.0).floor() {
+                let at = self.player.turret_model().transform_point3(Vec3::new(0.2, 1.9, 1.6));
+                self.foley(crate::acoustics::foley::Cue::Vehicle(crate::acoustics::foley::VehicleCue::BarrelTick), 1.0, 0.0, at);
+            }
             if self.mg_overheated && self.mg_heat <= MG_COOL_RESUME {
                 self.mg_overheated = false;
             }
@@ -28982,6 +29050,8 @@ impl Game {
         // and the legacy story overlay's wreck columns. The manifest's walls, piers, doorways and
         // sheds are destruction records since 2026-09-29 and give way above. The bow stops at these
         // by the unyielding push (no work, speed to rest); pushing a wreck along is not modelled.
+        let mut struck_cover = false;
+        let speed_before_cover = self.player.speed.abs();
         for &(min, max) in &self.story_cover {
             if min.y > self.player.pos.y + 2.2 {
                 continue;
@@ -28991,10 +29061,13 @@ impl Game {
                 continue;
             };
             contact = true;
+            struck_cover = true;
             self.player.pos += push * overlap;
             self.player.speed = crate::tank_push::press(
                 self.player.speed, self.player.pitch * sgn, crate::tank_push::Resistance::UNYIELDING, 0.0, dt).speed;
         }
+        let bow = self.player.pos + dir * CRUSH_NOSE_LEN + Vec3::Y * 1.0;
+        self.foley_hard_stop(struck_cover, speed_before_cover, bow);
         // Trees under the bow: each trunk resists by its bending strength against the push
         // (`trees::Trees::crush`, `tank_push::tree`) and falls when the work is done.
         let mut tree_events = Vec::new();
@@ -29149,6 +29222,7 @@ impl Game {
         if !forward.is_finite() || !self.release_carried_casing() { return false; }
         let case = &mut self.casings[k];
         case.vel += forward.normalize_or_zero() * CASING_THROW_SPEED + Vec3::Y * 1.0;
+        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Case88, crate::acoustics::foley::Gesture::Throw));
         true
     }
 
@@ -31352,10 +31426,16 @@ impl Game {
             (self.fire / FIRE_MAX).clamp(0.0, 1.0)
         } else { 0.0 };
         let was_burning = self.player_burn.burning();
-        if was_burning && space_edge { self.player_burn.pat(outside); }
+        if was_burning && space_edge {
+            self.player_burn.pat(outside);
+            let at = self.ear_pos - Vec3::Y * 0.7;
+            self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::PatOut), 1.0, 0.0, at);
+        }
         let damage = self.player_burn.update(dt, exposure);
         if self.player_burn.burning() && !was_burning {
             println!("[fire] the player's clothing has caught");
+            let at = self.ear_pos - Vec3::Y * 0.6;
+            self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::BurnCatch), 1.0, 0.0, at);
         }
         if damage > 0.0 {
             self.foot.hp = (self.foot.hp - damage).max(0.0);
@@ -31438,6 +31518,7 @@ impl Game {
         if let Some(Hotspot::PanzerfaustRack(index)) = self.hover { return self.take_panzerfaust(index); }
         if self.ext_equipped {
             self.ext_equipped = false;
+            self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Extinguisher, crate::acoustics::foley::Gesture::Stow));
             println!("[panzerrechnersystem] Extinguisher stowed");
             return true;
         }
@@ -31446,6 +31527,7 @@ impl Game {
             && self.carry_mesh.is_none() && self.carried_casing.is_none()
         {
             self.ext_equipped = true;
+            self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Extinguisher, crate::acoustics::foley::Gesture::Grab));
             println!("[panzerrechnersystem] Extinguisher equipped — LMB sprays after release; Q/E stows");
             return true;
         }

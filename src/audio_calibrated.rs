@@ -93,12 +93,44 @@ pub fn effort_db(volume: f32) -> f32 {
 pub(super) fn render_for_ear(mono: &[f32], ear: &EarLevel, bearing_deg: f32, reverb: ReverbParams)
     -> Vec<f32>
 {
+    render_for_ear_in(mono, ear, bearing_deg, Room::Parametric(reverb))
+}
+
+/// Seconds of each voice convolved with a traced reflected field (cost bound, named in the audit).
+pub const TRACED_WET_SOURCE_S: f32 = 0.75;
+
+/// The space a voice is heard in: the reflected field traced through the scene's geometry
+/// (`acoustics::raytrace`), or a parametric late tail where no trace exists (offline tools, the
+/// first moments in a new place while its trace is still being spent, the pre-rendered MG
+/// receiver).
+#[derive(Clone, Copy)]
+pub enum Room<'a> {
+    Parametric(ReverbParams),
+    Traced(&'a acoustics::raytrace::StereoIr),
+}
+
+/// `render_for_ear` in a given room: the dry binaural path, plus the voice convolved with the
+/// traced reflected field when there is one.
+pub(super) fn render_for_ear_in(mono: &[f32], ear: &EarLevel, bearing_deg: f32, room: Room<'_>)
+    -> Vec<f32>
+{
     let mut filtered = mono.to_vec();
     SpectralTransfer::fit(&ear.transfer_db, reproduction::SAMPLE_RATE).apply_mono(&mut filtered);
     let dry = acoustics::spatial::render_through(&filtered,
         acoustics::spatial::Direction::horizontal(bearing_deg), ear.transmission, &ear.spectrum,
         acoustics::spatial::HeadModel::PRESENTED);
-    acoustics::schroeder_reverb(&dry, reverb)
+    match room {
+        Room::Parametric(reverb) => acoustics::schroeder_reverb(&dry, reverb),
+        Room::Traced(ir) => {
+            // The reflected field is convolved from the voice's first `TRACED_WET_SOURCE_S`
+            // (where its energy is); the dry path keeps the whole voice. A named cost bound.
+            let head = filtered.len().min((TRACED_WET_SOURCE_S * reproduction::SAMPLE_RATE as f32) as usize);
+            let mut wet = ir.convolve(&filtered[..head]);
+            if wet.len() < dry.len() { wet.resize(dry.len(), 0.0); }
+            for (w, d) in wet.iter_mut().zip(&dry) { *w += *d; }
+            wet
+        }
+    }
 }
 
 // Preparation runs on the game thread, never the device callback. Keep exact transfer bits:
@@ -675,20 +707,41 @@ impl Audio {
     pub fn play_world_mono_at_ear(&self, mono: &[f32], ear: &EarLevel, bearing_deg: f32,
         reverb: ReverbParams)
     {
+        self.play_world_mono_in_room(mono, ear, bearing_deg, Room::Parametric(reverb));
+    }
+
+    /// `play_world_at_ear` in a given room (a traced reflected field).
+    pub fn play_world_in_room(&self, sfx: Sfx, ear: &EarLevel, bearing_deg: f32, room: Room<'_>) {
+        let Some(mono) = self.world_source(sfx) else { return };
+        let key = if super::small_arms::is_variant(sfx) {
+            format!("world:{sfx:?}:{:016x}", super::buffer_checksum(&mono))
+        } else { format!("world:{sfx:?}:{}", mono.len()) };
+        let measured = self.measured_world_source(key, &mono);
+        self.place_world_render_in(&mono, measured, ear, bearing_deg, room, EarBus::World);
+    }
+
+    /// `play_world_mono_at_ear` in a given room.
+    pub fn play_world_mono_in_room(&self, mono: &[f32], ear: &EarLevel, bearing_deg: f32, room: Room<'_>) {
         if mono.is_empty() {
             return;
         }
         let measured = measure_mono(mono);
-        self.place_world_render(mono, measured, ear, bearing_deg, reverb, EarBus::World);
+        self.place_world_render_in(mono, measured, ear, bearing_deg, room, EarBus::World);
     }
 
     fn place_world_render(&self, mono: &[f32], measured: MeasuredSource, ear: &EarLevel,
         bearing_deg: f32, reverb: ReverbParams, bus: EarBus)
     {
+        self.place_world_render_in(mono, measured, ear, bearing_deg, Room::Parametric(reverb), bus);
+    }
+
+    fn place_world_render_in(&self, mono: &[f32], measured: MeasuredSource, ear: &EarLevel,
+        bearing_deg: f32, room: Room<'_>, bus: EarBus)
+    {
         if !ear.laf_db.is_finite() || !measured.laf_dbfs.is_finite() {
             return;
         }
-        let rendered = render_for_ear(mono, ear, bearing_deg, reverb);
+        let rendered = render_for_ear_in(mono, ear, bearing_deg, room);
         let level = measure_render_window(&rendered, measured.max_frame);
         let gain = reproduction::voice_gain(ear.laf_db, level);
         self.play_stereo_on(rendered, gain, bus);

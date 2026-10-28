@@ -226,7 +226,7 @@ impl Audio {
     /// `exterior` voices reach a listener inside the vehicle through its plates and open hatches
     /// (`listener_transmission`); interior and structure-borne voices reach the head directly.
     #[allow(clippy::too_many_arguments)]
-    fn set_positioned_loops(&self, pool: &RefCell<VehicleVoices>, vehicles: &[VehicleVoice],
+    pub(super) fn set_positioned_loops(&self, pool: &RefCell<VehicleVoices>, vehicles: &[VehicleVoice],
         dt: f32, samples: Arc<[f32]>, key: &str, capacity: usize, fade_s: f32, exterior: bool,
         class: crate::sound_levels::SpectrumClass) {
         use crate::acoustics::spatial::{effective_direction, BinauralPanner, Direction, HeadModel};

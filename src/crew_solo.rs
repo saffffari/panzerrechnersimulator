@@ -803,6 +803,9 @@ impl Game {
                 if let Some(step) = run.steps().get(step_before) {
                     self.crew_solo.aid_box.take_for(step);
                 }
+                // A step of the procedure done: a bandage torn and wound, a strap pulled.
+                let at = self.hands_pos() - Vec3::Y * 0.3;
+                self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::BandageTear), 1.0, 0.0, at);
             }
             match outcome {
                 Progress::Working | Progress::StepDone => {
@@ -872,6 +875,10 @@ impl Game {
                     self.crew_solo.action = Some((action, progress, here));
                     // The remaining distance over the remaining hold: the body arrives as the hold ends.
                     let remaining = (CLEAR_BODY_S - progress).max(dt);
+                    if progress <= dt {
+                        let at = self.hands_pos() - Vec3::Y * 0.4;
+                        self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::DragBody), 1.0, 0.0, at);
+                    }
                     self.crew_solo_drag_body(role, dt / remaining);
                     return;
                 }

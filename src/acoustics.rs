@@ -25,6 +25,16 @@ use std::io::Write;
 #[path = "acoustics_spatial.rs"]
 pub mod spatial;
 
+/// Geometric room acoustics: energy ray tracing per octave band through the scene, and the
+/// binaural impulse response of the reflected field it yields. Deterministic; see its module doc.
+#[path = "acoustics_raytrace.rs"]
+pub mod raytrace;
+
+/// Foley from contact physics: modal strikes, granular ground, stick-slip friction, bubbles,
+/// flow and body sounds, as a catalogue of several hundred named cues. Deterministic.
+#[path = "acoustics_foley.rs"]
+pub mod foley;
+
 pub const SAMPLE_RATE: u32 = 44_100;
 
 /// Coarse, audio-facing shell class (maps from the ballistics `ShellKind` later). Drives timbre:

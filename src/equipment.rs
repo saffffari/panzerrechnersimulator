@@ -353,6 +353,7 @@ impl Game {
         self.foot.panzerfaust_swap_t = 0.0;
         self.foot.weapon = crate::foot::FootWeapon::Panzerfaust;
         self.primary_pickup_press = true;
+        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Panzerfaust, crate::acoustics::foley::Gesture::Grab));
         true
     }
 
@@ -374,6 +375,7 @@ impl Game {
     }
 
     pub(super) fn put_down_toolbox(&mut self) {
+        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Toolbox, crate::acoustics::foley::Gesture::SetDown));
         let eye = self.equipment_eye;
         let look = self.equipment_look;
         let mount = self.player.turret_model().transform_point3(TOOLBOX_MOUNT);
