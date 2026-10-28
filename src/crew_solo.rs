@@ -13,7 +13,8 @@
 //! invents a hit: wounds come from the anatomical fragment/blast events of the live penetration
 //! solver, burns from the live cabin fire, and bleeding to death from the first-aid time course.
 use super::*;
-use crate::first_aid::{AidBox, Casualty, Event as AidEvent, Region, Treatment, Wound, WoundKind};
+use crate::first_aid::{self, AidBox, Casualty, Event as AidEvent, Hands, Procedure, ProcedureRun, Progress, Region, Wound, WoundKind};
+use std::sync::Mutex;
 use crate::lan::LanRole;
 use serde_json::{json, Value};
 
@@ -96,54 +97,68 @@ fn role_short(role: CrewRole) -> &'static str {
 /// What the crosshair is resting on, among the crew's own bodies and kit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HoverAction {
-    /// Treat this man with this item from the box.
-    Treat(CrewRole, Treatment),
+    /// Work this procedure on this man.
+    Treat(CrewRole, Procedure),
     /// Drag this dead man off his station.
     ClearBody(CrewRole),
-    /// Treat the player's own wound at the box.
-    SelfAid(Treatment),
+    /// Work this procedure on the player himself, at the box.
+    SelfAid(Procedure),
 }
 
 impl HoverAction {
     fn duration_s(self) -> f32 {
         match self {
-            HoverAction::Treat(_, t) | HoverAction::SelfAid(t) => t.duration_s(),
+            HoverAction::Treat(_, p) | HoverAction::SelfAid(p) => p.nominal_seconds(),
             HoverAction::ClearBody(_) => CLEAR_BODY_S,
         }
     }
 }
 
-/// The crosshair label for a treatment hover. Labels are static so the hover text path stays
-/// allocation-free; the table is the price.
-fn treat_label(role: CrewRole, t: Treatment, supplied: bool) -> &'static str {
-    use CrewRole as R;
-    use Treatment as T;
-    match (role, t, supplied) {
-        (R::Gunner, T::Dressing, true) => "GUNNER - BLEEDING - DRESS THE WOUND [HOLD E]",
-        (R::Gunner, T::Tourniquet, true) => "GUNNER - ARTERIAL BLEED - TOURNIQUET [HOLD E]",
-        (R::Gunner, T::Morphine, true) => "GUNNER - IN PAIN - MORPHINE [HOLD E]",
-        (R::Gunner, T::Splint, true) => "GUNNER - FRACTURE - SPLINT [HOLD E]",
-        (R::Loader, T::Dressing, true) => "LOADER - BLEEDING - DRESS THE WOUND [HOLD E]",
-        (R::Loader, T::Tourniquet, true) => "LOADER - ARTERIAL BLEED - TOURNIQUET [HOLD E]",
-        (R::Loader, T::Morphine, true) => "LOADER - IN PAIN - MORPHINE [HOLD E]",
-        (R::Loader, T::Splint, true) => "LOADER - FRACTURE - SPLINT [HOLD E]",
-        (R::Driver, T::Dressing, true) => "DRIVER - BLEEDING - DRESS THE WOUND [HOLD E]",
-        (R::Driver, T::Tourniquet, true) => "DRIVER - ARTERIAL BLEED - TOURNIQUET [HOLD E]",
-        (R::Driver, T::Morphine, true) => "DRIVER - IN PAIN - MORPHINE [HOLD E]",
-        (R::Driver, T::Splint, true) => "DRIVER - FRACTURE - SPLINT [HOLD E]",
-        (R::Radioman, T::Dressing, true) => "RADIO OP - BLEEDING - DRESS THE WOUND [HOLD E]",
-        (R::Radioman, T::Tourniquet, true) => "RADIO OP - ARTERIAL BLEED - TOURNIQUET [HOLD E]",
-        (R::Radioman, T::Morphine, true) => "RADIO OP - IN PAIN - MORPHINE [HOLD E]",
-        (R::Radioman, T::Splint, true) => "RADIO OP - FRACTURE - SPLINT [HOLD E]",
-        (R::Commander, T::Dressing, true) => "FIRST-AID BOX - DRESS YOUR OWN WOUND [HOLD E]",
-        (R::Commander, T::Tourniquet, true) => "FIRST-AID BOX - TOURNIQUET YOUR OWN LEG OR ARM [HOLD E]",
-        (R::Commander, T::Morphine, true) => "FIRST-AID BOX - MORPHINE FOR YOURSELF [HOLD E]",
-        (R::Commander, T::Splint, true) => "FIRST-AID BOX - SPLINT YOUR OWN FRACTURE [HOLD E]",
-        (_, T::Dressing, false) => "BLEEDING - NO DRESSINGS LEFT",
-        (_, T::Tourniquet, false) => "ARTERIAL BLEED - NO TOURNIQUET LEFT",
-        (_, T::Morphine, false) => "IN PAIN - NO MORPHINE LEFT",
-        (_, T::Splint, false) => "FRACTURE - NO SPLINT LEFT",
+/// Interned crosshair labels: the hover text path is `&'static str`, and the set of labels
+/// here is bounded (roles x procedures x a few kit states), each leaked once.
+fn intern(text: String) -> &'static str {
+    static POOL: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut pool = POOL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(found) = pool.iter().find(|known| ***known == *text) {
+        return found;
     }
+    let leaked: &'static str = Box::leak(text.into_boxed_str());
+    pool.push(leaked);
+    leaked
+}
+
+fn need_word(procedure: Procedure) -> &'static str {
+    match procedure {
+        Procedure::Tourniquet => "ARTERIAL BLEED",
+        Procedure::PressureDressing => "BLEEDING",
+        Procedure::Splint => "FRACTURE",
+        Procedure::BurnCare => "BURNED",
+        Procedure::ChestSeal => "CHEST WOUND",
+        Procedure::Airway => "OUT COLD",
+        Procedure::Morphine => "IN PAIN",
+    }
+}
+
+/// The offer under the crosshair: who, what is wrong, and what the hands would do; whether the
+/// kit allows it (`Some(false)` issued, `Some(true)` improvised, `None` nothing left).
+fn offer_label(role: CrewRole, procedure: Procedure, can: Option<bool>) -> &'static str {
+    let need = need_word(procedure);
+    let what = procedure.label();
+    let text = if role == CrewRole::Commander {
+        match can {
+            Some(false) => format!("FIRST-AID BOX - YOU ARE {need} - {what} ON YOURSELF [E]"),
+            Some(true) => format!("FIRST-AID BOX - YOU ARE {need} - IMPROVISED {what} ON YOURSELF [E]"),
+            None => format!("FIRST-AID BOX - YOU ARE {need} - NOTHING LEFT FOR A {what}"),
+        }
+    } else {
+        let who = if role == CrewRole::Radioman { "RADIO OP".to_owned() } else { role_short(role).to_uppercase() };
+        match can {
+            Some(false) => format!("{who} - {need} - {what} [E]"),
+            Some(true) => format!("{who} - {need} - IMPROVISED {what} [E]"),
+            None => format!("{who} - {need} - NOTHING LEFT FOR A {what}"),
+        }
+    };
+    intern(text)
 }
 
 fn clear_label(role: CrewRole) -> &'static str {
@@ -191,6 +206,13 @@ pub(super) struct CrewSolo {
     pub hover: Option<HoverAction>,
     /// Action in progress: what, seconds held, where the player stood when he started.
     action: Option<(HoverAction, f32, Vec3)>,
+    /// The procedure in the player's hands: the man, the run, where the player stood.
+    procedure: Option<(CrewRole, ProcedureRun, Vec3)>,
+    prev_hands_button: bool,
+    /// The men last called in a triage line, so the call is made once per change.
+    triage_called: Vec<CrewRole>,
+    /// Every finished or abandoned procedure, for the receipt.
+    pub procedures_done: Vec<Value>,
     /// A dead man's body has been dragged off his station.
     pub body_cleared: [bool; 5],
     intercom: Vec<(String, f32)>,
@@ -222,6 +244,10 @@ impl Default for CrewSolo {
             prev_breech_loaded: true,
             hover: None,
             action: None,
+            procedure: None,
+            prev_hands_button: false,
+            triage_called: Vec::new(),
+            procedures_done: Vec::new(),
             body_cleared: [false; 5],
             intercom: Vec::new(),
             prev_fire_order: false,
@@ -467,6 +493,34 @@ impl Game {
                 }
             }
         }
+        self.crew_solo_triage_call();
+    }
+
+    /// Two or more men needing care: the one nearest death is named first, once per change.
+    fn crew_solo_triage_call(&mut self) {
+        let me = self.solo_identity();
+        let needing: Vec<CrewRole> = CrewRole::ALL
+            .into_iter()
+            .filter(|&role| Some(role) != me && singleplayer_crew::role_alive(&self.crew, role))
+            .filter(|&role| self.crew_solo.man(role).procedure_needed().is_some())
+            .collect();
+        if needing.len() < 2 {
+            self.crew_solo.triage_called.clear();
+            return;
+        }
+        if needing == self.crew_solo.triage_called {
+            return;
+        }
+        let men: Vec<&Casualty> = needing.iter().map(|&role| self.crew_solo.man(role)).collect();
+        let order = first_aid::triage(&men);
+        let line = order.first().map(|&first| {
+            let count = match needing.len() { 2 => "Two", 3 => "Three", _ => "Four" };
+            format!("{count} down. {} first.", role_short(needing[first]))
+        });
+        self.crew_solo.triage_called = needing;
+        if let Some(line) = line {
+            self.crew_solo.say(line);
+        }
     }
 
     fn crew_solo_bled_out(&mut self, role: CrewRole) {
@@ -708,64 +762,140 @@ impl Game {
 
     // ── The player's hands ──────────────────────────────────────────────────────────────────
 
+    /// The procedure in the hands, or the hold that drags a body. The mouse is the hands while
+    /// a procedure runs (the look is locked in `game.rs`); E or LMB is the button.
     fn crew_solo_hands(&mut self, input: &TankInput, dt: f32) {
-        let hover = self.crew_solo.hover;
-        let held = input.mg_coax && self.mode == Mode::Tank && self.player.alive;
-        let Some(action) = hover.filter(|_| held) else {
-            self.crew_solo.action = None;
-            return;
-        };
+        let button = input.mg_coax && self.mode == Mode::Tank && self.player.alive;
+        let press = button && !self.crew_solo.prev_hands_button;
+        self.crew_solo.prev_hands_button = button;
         let here = self.walk_pos;
-        let progress = match self.crew_solo.action {
-            Some((current, t, start)) if current == action && start.distance(here) < 0.08 => t + dt,
-            _ => 0.0,
-        };
-        if progress < action.duration_s() {
-            self.crew_solo.action = Some((action, progress, here));
-            if let HoverAction::ClearBody(role) = action {
-                // The remaining distance over the remaining hold: the body arrives as the hold ends.
-                let remaining = (CLEAR_BODY_S - progress).max(dt);
-                self.crew_solo_drag_body(role, dt / remaining);
+
+        if let Some((role, mut run, start)) = self.crew_solo.procedure.take() {
+            self.crew_solo.action = None;
+            if self.mode != Mode::Tank || self.station != Station::Loader || !self.player.alive
+                || start.distance(here) > 0.10
+            {
+                self.crew_solo.say(format!("{}: left half done.", role_short(role)));
+                self.crew_solo.procedures_done.push(json!({"t": self.crew_solo.time_s, "man": role.name(),
+                    "procedure": run.procedure.label(), "abandoned_at_step": run.step, "quality": run.quality}));
+                return;
             }
-            return;
-        }
-        self.crew_solo.action = None;
-        match action {
-            HoverAction::Treat(..) | HoverAction::SelfAid(_) => {
-                let (role, t) = match action {
-                    HoverAction::Treat(role, t) => (role, t),
-                    HoverAction::SelfAid(t) => (self.solo_identity().unwrap_or(CrewRole::Commander), t),
-                    HoverAction::ClearBody(_) => unreachable!("matched above"),
-                };
-                let mut aid = self.crew_solo.aid_box;
-                let result = self.crew_solo.man_mut(role).treat(t, &mut aid);
-                self.crew_solo.aid_box = aid;
-                match result {
-                    Ok(()) => {
-                        self.crew_solo.treatments += 1;
-                        let word = match t {
-                            Treatment::Dressing => "dressed",
-                            Treatment::Tourniquet => "tourniquet on",
-                            Treatment::Morphine => "morphine in",
-                            Treatment::Splint => "splinted",
-                        };
-                        self.crew_solo.say(format!("{}: {word}.", role_short(role)));
-                        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s,
-                            "treated": role.name(), "treatment": t.label(),
-                            "box": aid_box_json(&self.crew_solo.aid_box)}));
-                    }
-                    Err(refusal) => {
-                        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s,
-                            "refused": role.name(), "treatment": t.label(), "why": format!("{refusal:?}")}));
+            // A step whose item is gone: the canteen is skipped dry, anything else ends the work.
+            if let Some(step) = run.current() {
+                if let Some(item) = step.consumes {
+                    if !self.crew_solo.aid_box.has(item) {
+                        if item == first_aid::Item::Canteen {
+                            run.skip_step();
+                            self.crew_solo.say("No water left. Dress it dry.");
+                        } else {
+                            self.crew_solo.say("Nothing left in the box.");
+                            self.crew_solo.procedures_done.push(json!({"t": self.crew_solo.time_s, "man": role.name(),
+                                "procedure": run.procedure.label(), "out_of_kit_at_step": run.step}));
+                            return;
+                        }
                     }
                 }
             }
-            HoverAction::ClearBody(role) => {
+            let hands = Hands { hold: button, press, stroke: input.look_dx, dt };
+            let step_before = run.step;
+            let outcome = run.advance(hands);
+            if run.step != step_before {
+                if let Some(step) = run.steps().get(step_before) {
+                    self.crew_solo.aid_box.take_for(step);
+                }
+            }
+            match outcome {
+                Progress::Working | Progress::StepDone => {
+                    self.crew_solo.procedure = Some((role, run, start));
+                }
+                Progress::Finished => {
+                    let result = self.crew_solo.man_mut(role).finish_procedure(&run);
+                    let quality = if run.improvised { run.quality.min(0.6) } else { run.quality };
+                    match result {
+                        Ok(()) => {
+                            self.crew_solo.treatments += 1;
+                            let how = if quality >= 0.85 { "good and tight" } else if quality >= 0.5 { "loose" } else { "barely holding" };
+                            let word = match run.procedure {
+                                Procedure::Tourniquet => "tourniquet on",
+                                Procedure::PressureDressing => "dressed",
+                                Procedure::Splint => "splinted",
+                                Procedure::BurnCare => "burn dressed",
+                                Procedure::ChestSeal => "chest sealed",
+                                Procedure::Airway => "on his side, breathing",
+                                Procedure::Morphine => "morphine in, marked",
+                            };
+                            self.crew_solo.say(format!("{}: {word}, {how}.", role_short(role)));
+                            self.crew_solo.procedures_done.push(json!({"t": self.crew_solo.time_s, "man": role.name(),
+                                "procedure": run.procedure.label(), "improvised": run.improvised,
+                                "quality": quality, "seconds": run.elapsed_s, "interruptions": run.interruptions,
+                                "skipped_cooling": run.skipped_cooling, "box": aid_box_json(&self.crew_solo.aid_box)}));
+                        }
+                        Err(refusal) => {
+                            self.crew_solo.procedures_done.push(json!({"t": self.crew_solo.time_s, "man": role.name(),
+                                "procedure": run.procedure.label(), "refused": format!("{refusal:?}")}));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        let hover = self.crew_solo.hover;
+        match hover {
+            Some(HoverAction::Treat(..)) | Some(HoverAction::SelfAid(_)) => {
+                self.crew_solo.action = None;
+                if !press {
+                    return;
+                }
+                let (role, procedure) = match hover {
+                    Some(HoverAction::Treat(role, p)) => (role, p),
+                    Some(HoverAction::SelfAid(p)) => (self.solo_identity().unwrap_or(CrewRole::Commander), p),
+                    _ => unreachable!(),
+                };
+                let man = self.crew_solo.man(role);
+                let wound = man.procedure_needed().filter(|(p, _)| *p == procedure).and_then(|(_, w)| w);
+                if let Some(run) = man.begin_procedure(procedure, wound, &self.crew_solo.aid_box) {
+                    self.crew_solo.procedure = Some((role, run, here));
+                    self.crew_solo.say(format!("{}: hold still.", role_short(role)));
+                }
+            }
+            Some(action @ HoverAction::ClearBody(role)) => {
+                if !button {
+                    self.crew_solo.action = None;
+                    return;
+                }
+                let progress = match self.crew_solo.action {
+                    Some((current, t, start)) if current == action && start.distance(here) < 0.08 => t + dt,
+                    _ => 0.0,
+                };
+                if progress < CLEAR_BODY_S {
+                    self.crew_solo.action = Some((action, progress, here));
+                    // The remaining distance over the remaining hold: the body arrives as the hold ends.
+                    let remaining = (CLEAR_BODY_S - progress).max(dt);
+                    self.crew_solo_drag_body(role, dt / remaining);
+                    return;
+                }
+                self.crew_solo.action = None;
                 self.crew_solo.body_cleared[role_index(role)] = true;
                 self.crew_solo_drag_body(role, 1.0);
                 self.crew_solo.say(format!("{}'s body moved aside.", role_short(role)));
                 self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "body_cleared": role.name()}));
             }
+            None => self.crew_solo.action = None,
+        }
+    }
+
+    /// The player's hands are on a man: the look is his hands now.
+    pub(super) fn crew_solo_hands_busy(&self) -> bool {
+        self.crew_solo.procedure.is_some()
+    }
+
+    /// A hit on the tank mid-procedure: the hands jerk, the step is lost.
+    fn crew_solo_interrupt_hands(&mut self) {
+        if let Some((role, run, _)) = self.crew_solo.procedure.as_mut() {
+            run.interrupt();
+            let line = format!("Hit. Hands off {} a moment.", role_short(*role));
+            self.crew_solo.say(line);
         }
     }
 
@@ -802,14 +932,21 @@ impl Game {
     /// Crosshair on a crewman, a dead man's body, or the first-aid box. Runs from the interior
     /// walk with empty hands, after the ordinary hotspot/station hover has had its say.
     pub(super) fn crew_solo_hover(&mut self, eye: Vec3, fwd: Vec3) {
-        // Hands already on a man or a body: the work keeps its target until E is released or
-        // the player steps away (the body moves as it is dragged; a neighbour must not steal it).
+        // A procedure in the hands keeps its man; the label is the step the hands are on.
+        if let Some((role, run, _)) = &self.crew_solo.procedure {
+            let action = if Some(*role) == self.solo_identity() { HoverAction::SelfAid(run.procedure) } else { HoverAction::Treat(*role, run.procedure) };
+            self.crew_solo.hover = Some(action);
+            self.hover_label = run.current().map(|step| step.label);
+            return;
+        }
+        // Hands already on a body: the drag keeps its target until E is released or the player
+        // steps away (the body moves as it is dragged; a neighbour must not steal it).
         if let Some((action, _, start)) = self.crew_solo.action {
             if self.mode == Mode::Tank && self.station == Station::Loader && start.distance(self.walk_pos) < 0.08 {
                 self.crew_solo.hover = Some(action);
                 self.hover_label = Some(match action {
-                    HoverAction::Treat(role, t) => treat_label(role, t, true),
-                    HoverAction::SelfAid(t) => treat_label(CrewRole::Commander, t, true),
+                    HoverAction::Treat(role, p) => offer_label(role, p, Some(false)),
+                    HoverAction::SelfAid(p) => offer_label(CrewRole::Commander, p, Some(false)),
                     HoverAction::ClearBody(role) => clear_label(role),
                 });
                 return;
@@ -855,13 +992,13 @@ impl Game {
             }
             let alive = singleplayer_crew::role_alive(&self.crew, role) && !self.crew_solo.man(role).dead;
             if alive {
-                let Some(t) = self.crew_solo.man(role).indicated() else { continue; };
+                let Some((procedure, _)) = self.crew_solo.man(role).procedure_needed() else { continue; };
                 let post = self.crew_solo_post(role);
                 let torso = crew_live_model(&self.player, post)
                     .transform_point3(Vec3::new(0.0, crew_live_torso_y(post), 0.0));
-                let supplied = self.crew_solo.aid_box.count(t) > 0;
+                let can = self.crew_solo.aid_box.can_start(procedure);
                 let reach = if matches!(post, LanRole::Driver | LanRole::Radio) { AID_REACH_HULL_M } else { AID_REACH_M };
-                consider(torso, HoverAction::Treat(role, t), treat_label(role, t, supplied), reach);
+                consider(torso, HoverAction::Treat(role, procedure), offer_label(role, procedure, can), reach);
             } else if !self.crew_solo.body_cleared[role_index(role)] {
                 let identity = singleplayer_crew::body_post(role);
                 if let Some(body) = self.couch_ragdolls.iter().find(|b| b.casualty.identity == identity) {
@@ -873,15 +1010,15 @@ impl Game {
             }
         }
         if let Some(me) = me {
-            if let Some(t) = self.crew_solo.man(me).indicated() {
+            if let Some((procedure, _)) = self.crew_solo.man(me).procedure_needed() {
                 let point = self.player.turret_model().transform_point3(AID_BOX_TURRET_LOCAL);
-                let supplied = self.crew_solo.aid_box.count(t) > 0;
-                consider(point, HoverAction::SelfAid(t), treat_label(CrewRole::Commander, t, supplied), AID_REACH_M);
+                let can = self.crew_solo.aid_box.can_start(procedure);
+                consider(point, HoverAction::SelfAid(procedure), offer_label(CrewRole::Commander, procedure, can), AID_REACH_M);
             }
         }
         if let Some((action, label)) = pick {
             let supplied = match action {
-                HoverAction::Treat(_, t) | HoverAction::SelfAid(t) => self.crew_solo.aid_box.count(t) > 0,
+                HoverAction::Treat(_, p) | HoverAction::SelfAid(p) => self.crew_solo.aid_box.can_start(p).is_some(),
                 HoverAction::ClearBody(_) => true,
             };
             self.hover_label = Some(label);
@@ -973,6 +1110,7 @@ impl Game {
         if !any {
             return;
         }
+        self.crew_solo_interrupt_hands();
         let man = self.crew_solo.man(role);
         let state = man.state_label();
         let (performance, conscious) = (man.performance(), man.is_conscious());
@@ -997,6 +1135,10 @@ impl Game {
             return;
         }
         let role = role_of_post(casualty.identity);
+        self.crew_solo_interrupt_hands();
+        if self.crew_solo.procedure.as_ref().is_some_and(|(patient, _, _)| *patient == role) {
+            self.crew_solo.procedure = None;
+        }
         let man = self.crew_solo.man_mut(role);
         man.dead = true;
         man.cause = Some("killed");
@@ -1061,6 +1203,7 @@ impl Game {
             "shots_by_gunner": self.crew_solo.shots_by_gunner,
             "loads_by_loader": self.crew_solo.loads_by_loader,
             "treatments": self.crew_solo.treatments,
+            "procedures": self.crew_solo.procedures_done,
             "player_station": format!("{:?}", self.station),
             "log": self.crew_solo.log,
         })
@@ -1170,6 +1313,34 @@ impl Game {
 
     pub fn debug_crew_solo_action_progress(&self) -> Option<f32> {
         self.crew_solo.action.map(|(_, t, _)| t)
+    }
+
+    /// The procedure in the hands, as the harness drives it: the man, the step's kind and
+    /// label, how far along, and the quality so far.
+    pub fn debug_crew_solo_procedure(&self) -> Option<Value> {
+        let (role, run, _) = self.crew_solo.procedure.as_ref()?;
+        let step = run.current()?;
+        let (kind, needed) = match step.kind {
+            first_aid::StepKind::Hold(s) => ("Hold", s),
+            first_aid::StepKind::Press => ("Press", 1.0),
+            first_aid::StepKind::Wrap(n) => ("Wrap", f32::from(n)),
+            first_aid::StepKind::Turn(n) => ("Turn", f32::from(n)),
+            first_aid::StepKind::Watch(s) => ("Watch", s),
+        };
+        Some(json!({"man": role.name(), "procedure": run.procedure.label(), "improvised": run.improvised,
+            "step": run.step, "steps": run.steps().len(), "kind": kind, "label": step.label,
+            "needed": needed, "count": run.count, "progress": run.progress, "quality": run.quality}))
+    }
+
+    pub fn debug_crew_solo_procedures_done(&self) -> Vec<Value> {
+        self.crew_solo.procedures_done.clone()
+    }
+
+    /// Stage a wound of a given kind directly (bypasses the ballistic solver; the receipt says so).
+    pub fn debug_crew_solo_stage_wound(&mut self, role: CrewRole, kind: WoundKind, region: Region, severity: f32) {
+        self.crew_solo.man_mut(role).add_wound(Wound::new(kind, region, severity));
+        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "staged_wound": role.name(),
+            "kind": format!("{kind:?}"), "region": region.label(), "severity": severity}));
     }
 
     pub fn debug_crew_solo_body_cleared(&self, role: CrewRole) -> bool {
@@ -1373,7 +1544,8 @@ impl Game {
 
 fn aid_box_json(aid: &AidBox) -> Value {
     json!({"dressings": aid.dressings, "tourniquets": aid.tourniquets,
-        "morphine": aid.morphine, "splints": aid.splints})
+        "morphine": aid.morphine, "splints": aid.splints, "burn_dressings": aid.burn_dressings,
+        "triangular": aid.triangular, "canteen": aid.canteen, "scissors": aid.scissors})
 }
 
 #[cfg(test)]
@@ -1400,11 +1572,13 @@ mod tests {
     }
 
     #[test]
-    fn every_role_has_labels_for_every_treatment() {
+    fn every_role_has_an_offer_label_for_every_procedure_and_kit_state() {
         for role in CrewRole::ALL {
-            for t in Treatment::ALL {
-                assert!(treat_label(role, t, true).contains("[HOLD E]"));
-                assert!(!treat_label(role, t, false).contains("[HOLD E]"), "no prompt without supply");
+            for p in Procedure::ALL {
+                assert!(offer_label(role, p, Some(false)).contains("[E]"));
+                assert!(offer_label(role, p, Some(true)).contains("IMPROVISED"));
+                assert!(!offer_label(role, p, None).contains("[E]"), "no prompt without kit");
+                assert!(std::ptr::eq(offer_label(role, p, Some(false)), offer_label(role, p, Some(false))), "interned once");
             }
             assert!(clear_label(role).contains("[HOLD E]"));
             assert!(!blocked_label(role).is_empty());

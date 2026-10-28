@@ -10,7 +10,7 @@
 //!
 //! The solver decides who a cone finds. The proof therefore treats whichever man the wounding
 //! strike leaves alive and bleeding, and clears a dead driver's body before it needs his seat.
-use crate::first_aid::Region;
+use crate::first_aid::{Region, WoundKind};
 use crate::game::{Arc, CrewRole, Game, Station, TankInput};
 use anyhow::Context;
 use glam::Vec3;
@@ -124,6 +124,82 @@ fn ensure_target(g: &mut Game, r: &mut crate::renderer::Renderer, target: &mut u
         return i;
     }
     *target
+}
+
+/// Work the procedure in the hands the way practised hands would, reading each step's kind:
+/// holds held, a press every tenth of a second, wraps as alternating mouse strokes at 0.6 s,
+/// windlass turns as presses every 0.8 s, watches with the hands off. Takes `still` once the
+/// hands are into the second step. Returns what the receipt recorded for it.
+fn work_procedure(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, still: &str) -> anyhow::Result<Value> {
+    let idle = TankInput::default();
+    let button = TankInput { mg_coax: true, interaction: true, ..TankInput::default() };
+    // The press that starts it (an edge: the button was up).
+    g.update(&idle, DT, r);
+    g.update(&button, DT, r);
+    g.update(&idle, DT, r);
+    let before = g.debug_crew_solo_procedures_done().len();
+    let mut frame = 0usize;
+    let mut still_taken = false;
+    let mut labels: Vec<String> = Vec::new();
+    let mut last = json!(null);
+    while let Some(state) = g.debug_crew_solo_procedure() {
+        if frame > 60 * 120 {
+            break;
+        }
+        if let Some(label) = state["label"].as_str() {
+            if labels.last().map(String::as_str) != Some(label) {
+                labels.push(label.to_owned());
+            }
+        }
+        let input = match state["kind"].as_str().unwrap_or("") {
+            "Hold" => button,
+            "Press" => if frame % 6 == 0 { button } else { idle },
+            "Wrap" => TankInput { look_dx: if (frame / 36) % 2 == 0 { 60.0 } else { -60.0 }, ..TankInput::default() },
+            "Turn" => if frame % 48 == 0 { button } else { idle },
+            _ => idle,
+        };
+        if !still_taken && state["step"].as_u64().unwrap_or(0) >= 1 {
+            proof.still(r, still)?;
+            still_taken = true;
+        }
+        g.update(&input, DT, r);
+        frame += 1;
+        last = state;
+    }
+    if !still_taken {
+        proof.still(r, still)?;
+    }
+    let done = g.debug_crew_solo_procedures_done();
+    let record = done.get(before).cloned().unwrap_or(json!(null));
+    Ok(json!({"record": record, "frames": frame, "seconds": frame as f32 * DT, "last_state": last, "steps_seen": labels}))
+}
+
+/// What the crosshair offers on this man, as "Treat(Role, Procedure)" or none.
+fn offered_procedure(g: &Game) -> Option<String> {
+    let hover = g.debug_crew_solo_hover()?;
+    let inner = hover.strip_prefix("Treat(")?.strip_suffix(')')?;
+    inner.split(", ").nth(1).map(str::to_owned)
+}
+
+/// Go to the man and work every procedure he needs, one after another (at most `cap`), a still
+/// for each distinct procedure. Returns the records.
+fn treat_the_man(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, idle: &TankInput, role: CrewRole, cap: usize, stills: &mut Vec<String>) -> anyhow::Result<Vec<Value>> {
+    let mut records = Vec::new();
+    for _ in 0..cap {
+        g.debug_crew_solo_go_to(role);
+        run_for(g, r, idle, 0.2);
+        let Some(procedure) = offered_procedure(g) else { break; };
+        let name = format!("{}_{}", procedure.to_lowercase(), role.name().replace('-', "_"));
+        let still = format!("04_{name}");
+        let first_time = !stills.contains(&procedure);
+        let outcome = work_procedure(g, r, proof, &still)?;
+        if first_time {
+            stills.push(procedure.clone());
+        }
+        records.push(json!({"man": role.name(), "procedure": procedure, "outcome": outcome}));
+        run_for(g, r, idle, 0.3);
+    }
+    Ok(records)
 }
 
 /// Walk to a dead man's body and hold E until it is dragged aside. Returns the hover seen.
@@ -305,35 +381,60 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     run_for(g, r, &idle, 0.2);
     proof.still(r, "03_crewman_hit")?;
 
-    // ── 6. The player goes to him and treats the wound ───────────────────────────────────
+    // ── 6. The kit in the hands: procedures at the men ──────────────────────────────────
     let hover = g.debug_crew_solo_hover();
     let label = g.hover_label_text().map(|l| l.to_string());
-    let expect = format!("Treat({patient:?}");
+    let offered = offered_procedure(g);
     proof.check(
-        "crosshair on the wounded man offers the indicated treatment",
-        hover.as_deref().is_some_and(|h| h.contains(&expect)),
-        json!({"patient": patient.name(), "hover": hover, "label": label}),
+        "crosshair on the wounded man offers the procedure he needs, by name",
+        hover.as_deref().is_some_and(|h| h.contains(&format!("Treat({patient:?}"))) && offered.is_some(),
+        json!({"patient": patient.name(), "hover": hover, "label": label, "offered": offered}),
     );
     let box_before = g.debug_crew_solo_aid_box();
-    let indicated = g.debug_crew_solo_man(patient).indicated();
-    let duration = indicated.map_or(20.0, |t| t.duration_s());
-    run_for(g, r, &hold_e, duration * 0.5);
-    let mid_progress = g.debug_crew_solo_action_progress();
-    proof.still(r, "04_treating_crewman")?;
-    run_for(g, r, &hold_e, duration * 0.5 + 0.5);
-    run_for(g, r, &idle, 0.2);
+    let bleed_before = g.debug_crew_solo_man(patient).total_bleed_rate_l_per_s();
+    let mut stills_by_procedure: Vec<String> = Vec::new();
+    let first = treat_the_man(g, r, proof, &idle, patient, 4, &mut stills_by_procedure)?;
     let box_after = g.debug_crew_solo_aid_box();
     let treated = g.debug_crew_solo_man(patient).clone();
     let bleed_after = treated.total_bleed_rate_l_per_s();
-    let count = |b: crate::first_aid::AidBox| u32::from(b.dressings) + u32::from(b.tourniquets) + u32::from(b.splints) + u32::from(b.morphine);
+    let count = |b: crate::first_aid::AidBox| u32::from(b.dressings) + u32::from(b.tourniquets) + u32::from(b.splints)
+        + u32::from(b.morphine) + u32::from(b.burn_dressings) + u32::from(b.triangular) + u32::from(b.canteen);
     let consumed = count(box_before) - count(box_after);
+    let first_record = first.first().and_then(|f| f["outcome"]["record"].as_object().cloned());
+    let first_quality = first_record.as_ref().and_then(|rec| rec.get("quality")).and_then(Value::as_f64).unwrap_or(0.0);
     proof.check(
-        "holding E at the man for the treatment's real seconds consumes one item and controls the bleed",
-        consumed == 1 && (bleed_after < bleed_before || !treated.is_bleeding()),
-        json!({"patient": patient.name(), "treatment": indicated.map(|t| t.label()), "seconds": duration,
-            "progress_at_half": mid_progress, "box_before": format!("{box_before:?}"),
+        "the first procedure is worked end to end by hand: steps in order, items taken, a good job, the bleed controlled",
+        !first.is_empty() && first_quality >= 0.7 && consumed >= 1 && (bleed_after < bleed_before || !treated.is_bleeding()),
+        json!({"patient": patient.name(), "procedures": first, "box_before": format!("{box_before:?}"),
             "box_after": format!("{box_after:?}"), "bleed_before_l_per_min": bleed_before * 60.0,
-            "bleed_after_l_per_min": bleed_after * 60.0}),
+            "bleed_after_l_per_min": bleed_after * 60.0, "first_quality": first_quality}),
+    );
+    // A second man, if the cone left one: the triage line names him.
+    let second = AI_ROLES
+        .into_iter()
+        .filter(|&role| role != patient && !dead(g, role) && g.debug_crew_solo_man(role).procedure_needed().is_some())
+        .min_by(|&a, &b| g.debug_crew_solo_man(a).time_to_death_s().total_cmp(&g.debug_crew_solo_man(b).time_to_death_s()));
+    let mut all_records = first;
+    if let Some(second) = second {
+        all_records.extend(treat_the_man(g, r, proof, &idle, second, 3, &mut stills_by_procedure)?);
+    }
+    // A fracture is rarer than a bleed in a 76 mm cone: one is staged (named so in the receipt)
+    // on the first patient so the splint is worked by hand too.
+    g.debug_crew_solo_stage_wound(patient, WoundKind::Fracture, Region::Arm, 0.7);
+    all_records.extend(treat_the_man(g, r, proof, &idle, patient, 3, &mut stills_by_procedure)?);
+    let distinct: Vec<String> = {
+        let mut names: Vec<String> = all_records.iter()
+            .filter(|rec| rec["outcome"]["record"].get("quality").is_some())
+            .map(|rec| rec["procedure"].as_str().unwrap_or("").to_owned()).collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    proof.check(
+        "three or more distinct procedures worked by hand, each with a still of the hands at it",
+        distinct.len() >= 3 && stills_by_procedure.len() >= 3,
+        json!({"distinct": distinct, "stills": stills_by_procedure, "records": all_records,
+            "fracture_staged_on": patient.name()}),
     );
     // Back to the cupola: the treated man is at his post and works, degraded.
     g.jump_station(Station::Commander);

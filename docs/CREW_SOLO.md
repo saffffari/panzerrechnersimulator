@@ -55,10 +55,39 @@ model is deterministic.
 | Unconscious | head wound ≥0.35, blast work >150 J, blood loss | out for 20–80 s, then concussed (cap 0.7, recovering over 10 min) | treat the cause |
 | Pain / morphine | untreated wounds | performance ×(1 − 0.35·pain); morphine removes pain, drowsy ×0.85, one dose per hour | morphine |
 
-Treatment is a physical interaction from the interior walk: crosshair on the man within
-1.75 m (2.8 m down into the hull front for the driver and radio operator), **hold E** for the
-item's real seconds (dressing 20 s, tourniquet 12 s, morphine 8 s, splint 25 s), hands busy,
-standing still; the target is held for the length of the hold. The box (`AidBox::FULL`: 6 Verbandpäckchen, 2 Esmarch
+### The medkit in the hands (procedures)
+
+Treatment is not one hold. Each wound kind has its own hands-on procedure, done at the man
+from the interior walk in the game's object-interaction register: crosshair on him within
+1.75 m (2.8 m down into the hull front for the driver and radio operator), the crosshair
+names what is wrong and what the hands would do ("LOADER - ARTERIAL BLEED - TOURNIQUET [E]"),
+**E** starts it, and from then on the mouse is the hands and the button is the button until the
+job is done or the player steps away. The crosshair reads the current step. No bars.
+
+| Procedure | Steps (button = E or LMB) | Kit |
+| --- | --- | --- |
+| Tourniquet (limb arterial bleed) | place above the wound [E]; turn the windlass [three presses, each given its half second]; secure and note the hour [hold 2 s] | Esmarch tourniquet; improvised: belt and wrench, five turns, capped at 0.6 |
+| Pressure dressing (a bleeder) | cut the cloth away [hold 2 s]; pack [E]; wrap six times [mouse left and right in a cadence, 0.25-1.8 s a wrap]; tie off [hold 1.5 s] | Verbandpäckchen; improvised: a torn sleeve, capped at 0.6 |
+| Splint (fracture) | draw the limb straight [hold 3 s]; lay the ladder splint [E]; bind four wraps; knot [hold 1 s] | ladder splint + triangular bandage; improvised: the cleaning-rod section, five wraps |
+| Burn care | cut the charred cloth away [hold 2 s]; pour the canteen [E]; lay the burn dressing [E]; wrap loosely four times | burn dressing + canteen; a dry canteen is skipped and the care is poorer; improvised: a plain dressing |
+| Chest seal (penetrating trunk wound) | open the tunic [hold 1.5 s]; the dressing's waxed wrapper over the hole [E]; hold it sealed as he breathes out [hold 3 s]; strap three wraps | a Verbandpäckchen's wrapper |
+| Airway (unconscious man) | tilt the head back, clear the mouth [hold 1.5 s]; roll him onto his side [E]; watch him breathe [hands off 4 s] | nothing |
+| Morphine | dose into the thigh [E]; mark him, M and the hour [hold 1.5 s] | morphine ampoule; one dose an hour |
+
+Adaptive: the procedure offered is the one the wound wants (`procedure_needed`: airway first,
+then tourniquet, chest seal, pressure dressing, burn care, splint, morphine). Rushed work
+costs quality (a wrap outside the cadence, a windlass mashed, a hold let go early), a hit on
+the tank mid-procedure jerks the hands (the step's work is lost, a wrap comes undone,
+"Hit. Hands off him a moment."), and the result is as good as the work: a loose tourniquet
+leaks half the bleed, a loose wrap holds less, an improvised job is capped. Stepping away
+abandons the procedure with the items spent. The kit is finite and varied
+(`AidBox::FULL`: 6 Verbandpäckchen, 2 Esmarch tourniquets, 3 morphine ampoules, 2 ladder
+splints, 2 burn dressings, 3 triangular bandages, 2 canteens, scissors), restocks at the
+same pickups as ammunition and fuel, and a dead soldier's own dressing packet is taken when
+his body is looted (bounded at ten). Triage: when two or more men need care, the intercom
+names the one nearest death first ("Two down. Loader first."); the order is the game, since
+the slower bleed waits while the faster one is worked. An unconscious man left on his back
+loses his airway after four minutes unless somebody positions him. The box (`AidBox::FULL`: 6 Verbandpäckchen, 2 Esmarch
 tourniquets, 3 morphine ampoules, 2 ladder splints) is finite and restocks at the same
 pickups that refill ammunition and fuel. The player treats his own wounds at the box on the
 rear right turret wall. Treated men work degraded: a dressed arm still costs performance, and

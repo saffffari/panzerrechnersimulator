@@ -20,8 +20,21 @@ none presented as physiology or a contact solve:
   0.02` severity per second in the hull, 0.6 of that in the turret, 0.15 head out, with no
   position inside the compartment and no heat transport.
 - Morphine ampoules stand in for the Wehrmacht's ampoules and syringe; the box contents (6
-  dressings, 2 tourniquets, 3 morphine, 2 splints) are a design count, not a reviewed
-  Kfz-Verbandkasten inventory. Treatment durations are design values.
+  dressings, 2 tourniquets, 3 morphine, 2 splints, 2 burn dressings, 3 triangular bandages, 2
+  canteens, scissors) are a design count, not a reviewed Kfz-Verbandkasten inventory.
+- Treatment is a stepwise hands-on procedure per wound kind (`first_aid::Procedure`): holds,
+  presses, wraps as alternating mouse strokes in a 0.25-1.8 s cadence, windlass turns as
+  presses half a second apart, a hands-off watch. The step tables, their seconds and counts,
+  the quality penalties (0.08 a wrap off cadence, 0.03 a mashed turn, 0.05 a hold let go,
+  0.15 an interruption, 0.2 a skipped cooling) and the quality-to-effect maps (a tourniquet
+  leaks `0.5 x (1 - quality)` of the bleed, a dressing's factor rises by `0.6 x (1 - quality)`
+  of the way back to untreated, a splint's performance factor is `0.45 + 0.25 x quality`,
+  improvised work is capped at 0.6) are design values standing in for skill, not a model of
+  tissue or of a bandage. No first-person hands are drawn doing them; the crosshair label and
+  the man's state are the feedback. The airway rule (an unconscious man on his back dies of it
+  at 240 s unless positioned) is a single timer.
+- Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
+  loss, the airway timer), spoken once per change of the set of men needing care.
 - The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
 - The crew figures carry no animation clips. A wounded man's slump is a rotation about his seat
   by his performance; his anatomical hit volumes do not follow it (they stay at the seated

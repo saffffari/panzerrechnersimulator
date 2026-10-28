@@ -16656,7 +16656,8 @@ impl Game {
                     self.loader_crouch_t += (target - self.loader_crouch_t).clamp(-6.0 * dt, 6.0 * dt);
                     let ram_locked = ram_consumed_look
                         || (self.grab && input.mg_coax && self.ram > 0.0);
-                    if !self.lever_pulling && !ram_locked && !casing_consumed_look {
+                    // Hands on a wounded man: the mouse is the hands (wrapping, turning), not the eyes.
+                    if !self.lever_pulling && !ram_locked && !casing_consumed_look && !self.crew_solo_hands_busy() {
                         self.head_yaw += input.look_dx * SENS; // unclamped — turn all the way around
                         self.head_pitch = (self.head_pitch - input.look_dy * SENS).clamp(-1.2, 1.0);
                     }
@@ -20438,6 +20439,8 @@ impl Game {
             {
                 soldier.looted = true;
                 recovered += u32::from(soldier.ammo_drop);
+                // Every soldier carries his own dressing packet; it goes into the box.
+                self.crew_solo.aid_box.scavenge_dressing();
             }
         }
         if recovered > 0 {
