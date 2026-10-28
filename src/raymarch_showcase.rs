@@ -1065,7 +1065,7 @@ fn fire_until_tracer(g: &mut Game, r: &mut crate::renderer::Renderer, input: &Ta
 /// One frame of the live loop's gunner eyepiece composite (main.rs `render_optic_composite`): the
 /// optic pass, then the interior pass around the eyepiece. With `capture`, the interior pass is the
 /// captured frame (so it follows an optic pass, as in play).
-fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+pub(crate) fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
     capture: Option<(&str, u32, u32)>) -> anyhow::Result<()> {
     let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter);
     r.begin_coop_shadow_frame(g.player.center());

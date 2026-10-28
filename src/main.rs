@@ -890,7 +890,8 @@ fn run_gfxbench(
     let bench_station = std::env::var("KESSEL_BENCH_STATION").ok();
     if let Some(station) = bench_station.as_deref() {
         g.station = match station { "loader" => game::Station::Loader, "commander" => game::Station::Commander,
-            "driver" => game::Station::Driver, _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
+            "driver" => game::Station::Driver, "gunner" => game::Station::Gunner,
+            _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
     }
     if std::env::var("KESSEL_BENCH_HATCH").as_deref() == Ok("open") { g.toggle_hatch(); }
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
@@ -920,7 +921,13 @@ fn run_gfxbench(
         }
         r.begin_gpu_profile_frame();
         let t0 = std::time::Instant::now();
-        r.render_offscreen(&device, &queue);
+        if bench_station.as_deref() == Some("gunner") {
+            // The gunner's frame as played at the TZF: the optic pass, then the cabin pass round
+            // the eyepiece, which reuses the optic pass's maps.
+            raymarch_showcase::eyepiece_frame(&mut g, &mut r, &device, &queue, None)?;
+        } else {
+            r.render_offscreen(&device, &queue);
+        }
         device.poll(wgpu::PollType::wait_indefinitely()).ok();
         let frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
         let gpu_frame = r.read_gpu_profile_frame(&device, &queue)?;

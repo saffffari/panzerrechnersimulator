@@ -1200,7 +1200,10 @@ two observers across dawn/noon/dusk/night × clear/dry overcast/blizzard, plus l
 (`captures/rm_palette_v7_*.png`) for judging colour; `KESSEL_SHOWCASE_SET=haze` and `=snow`
 write the series of "Near-camera haze" and "Snow on surfaces"; `KESSEL_SHOWCASE_SCENES=a,b`
 filters any set. `screenshot` accepts `KESSEL_SHOT_WEATHER=clear|clouds|storm[:N]`,
-`KESSEL_SHOT_FOG`, `KESSEL_SKY_UTC`. `KESSEL_RM_LIVE_SHADERS=1` reloads `shaders/rm_*.wgsl` from
+`KESSEL_SHOT_FOG`, `KESSEL_SKY_UTC`. `gfxbench` with `KESSEL_BENCH_STATION=gunner` times the
+gunner's frame as played at the TZF (the optic pass, then the cabin pass round the eyepiece reusing its
+maps; 2026-10-28, 800x450: rm-sky, the far cascade and the sky cover once a frame, 30 ms a frame with
+`KESSEL_RETAIN_RIGID_SKY_DEPTH=0`). `KESSEL_RM_LIVE_SHADERS=1` reloads `shaders/rm_*.wgsl` from
 disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights and binning stats.
 
 ## Named approximations (also in the ledger)
