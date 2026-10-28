@@ -16021,6 +16021,11 @@ impl Game {
         // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
         // also sets it does not run on every path).
         r.muzzle_hint = Some(self.player.muzzle());
+        // Every vehicle's tracks compact the winter snowpack (`vehicle_ground`): the AI rest
+        // height reads it from the heightfield, the player's support profile from the same constant.
+        crate::terrain::set_vehicle_sinkage_m(if self.act.season == crate::world::Season::Winter {
+            crate::vehicle_ground::WINTER_TRACK_SINKAGE_M
+        } else { 0.0 });
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);

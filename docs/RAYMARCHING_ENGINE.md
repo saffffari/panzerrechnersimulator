@@ -55,8 +55,26 @@ fine-grain and analytic-spark passes do not run and are not prepared.
 4. **Integration** (`rm_integrate.wgsl`): per column front-to-back, a per-slice table of
    in-scattered radiance, transmittance and integrated heat.
 5. **Deferred shade** (`rm_shade.wgsl`): GGX/Lambert. Key beam: cascade PCF plus an 8-step
-   screen-space ray-marched contact test. Skylight: hemisphere bands × vertical cover ×
-   8-direction screen-space ray-marched occlusion. Lamps/fires/flashes: the clustered list of the
+   screen-space ray-marched contact test. Skylight and **indirect light** (2026-10-28): a
+   screen-space horizon gather (eight slices around the pixel, eight samples each out to 6 m of
+   screen reach, no distance limit on the bounce) integrates one bounce from the surfaces the
+   frame sees: each sample that raises a slice's horizon owns the cosine-weighted band
+   pi/8 (c² - h²) between the horizons and contributes the previous frame's lit radiance there
+   (reprojected through the previous view). The bands sum to the share of the hemisphere those
+   surfaces cover; the sky bands light the rest (the upwelling-ground band, now snow 0.80 in
+   winter and earth 0.30 in spring, stands in for off-screen ground, halved). A near-field
+   horizon fading over 0.6..3 m is the contact occlusion. The GGX lobe takes its directional
+   albedo of the same environment (the split-sum fit of Karis 2014), less the share the
+   reflection pass draws in the mirror direction, so a rough metal takes sky and bounce light
+   too. The snow under a hull lights its underside and a sunlit slope warms the shadow beside it;
+   nothing off-screen bounces. Terrain takes the tank-track map as ruts (darkened, polished, the
+   shading normal tilted by the map's gradient). `KESSEL_RM_PROBE=x,y` prints the lit radiance,
+   previous-frame radiance and G-buffer of one internal pixel each frame (renderer units, before
+   exposure). Measured on the noon Tiger still (green): the shaded hull plate 0.0039 without
+   the bounce, 0.0068 with it, the sunlit flat snow 0.171; the plate's irradiance is 54 % of the
+   flat snow's, the share a vertical face over snow should receive. The shade pass costs 0.17 ms
+   with the gather (0.07 before).
+   gradient). Lamps/fires/flashes: the clustered list of the
    pixel's cell, depth faces or contact march, extinction marched through the froxel grid toward
    the source. Emission. Then the integrated medium composites over the pixel; beyond 320 m an
    analytic homogeneous weather layer lit by sun and sky. **Heat haze**: the integrated heat
@@ -214,7 +232,18 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 
 - The cupola periscope eyepieces are glass panes over the periscope housing, not relayed views;
   the raster optic tiles (an offscreen view per periscope) do not run on this backend.
-- Track ruts on terrain are not sampled in the G-buffer.
+- Ruts are shading only: the terrain triangles are not displaced, so a rut has no depth in the
+  silhouette and casts no shadow of its own. Vehicles sink 0.30 m into the winter snowpack
+  (`vehicle_ground::WINTER_TRACK_SINKAGE_M`, sim side), but the snow is not banked against the
+  hull or ploughed by the belly.
+- Indirect light comes only from what is on screen, one frame late; a probe grid (world-space,
+  lit by the clustered lights and the cached sky) is the route to off-screen bounce.
+- The Tiger reads dark in every daylight still because it is painted dark: `tank::tiger_paint_finish`
+  sets the charcoal German grey sRGB (72, 74, 78), linear reflectance 0.065-0.076 (the owner's
+  2026-09-09 choice; RAL 7021 Panzergrau is about that), against snow at 0.90. At equal
+  irradiance the hull returns 7 % of what the snow returns; no lighting pass changes that ratio.
+  The historical answer for a December 1942 Tiger is the winter whitewash (Kalkfarbe over the
+  grey, worn at edges and running gear), a content decision for the owner, not a renderer one.
 - History reprojection for the froxel grid uses the camera only; moving emitters smear up to
   ~10 frames.
 - No temporal filter on the deferred shade; dither hides the per-pixel jitter of the contact and

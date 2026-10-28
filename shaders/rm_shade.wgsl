@@ -11,6 +11,8 @@
 @group(0) @binding(7) var scatter: texture_3d<f32>;
 @group(0) @binding(8) var linear_samp: sampler;
 @group(0) @binding(9) var heat_integrated: texture_3d<f32>;
+// The previous frame's lit frame (the post-pass scratch copy), the source of the bounce.
+@group(0) @binding(10) var lit_prev: texture_2d<f32>;
 
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, };
 
@@ -51,27 +53,60 @@ fn contact_shadow(rel: vec3<f32>, dir: vec3<f32>, reach_m: f32, thickness_m: f32
     return 1.0;
 }
 
-// Screen-space ray-marched ambient occlusion over a 0.9 m hemisphere.
-fn screen_occlusion(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32) -> f32 {
+// Screen-space horizon gather: the bounce from the surfaces the frame sees, and the share of
+// the hemisphere they cover. Eight slices around the pixel, eight samples each out to 6 m of
+// screen reach; every sample that raises a slice's horizon (cosine from the normal c, from the
+// previous horizon h) owns the band of the cosine-weighted hemisphere between them,
+// pi/8 (c^2 - h^2), and contributes the radiance the previous frame rendered where it stands
+// (reprojected through the previous view). The bands sum to at most pi (the whole hemisphere);
+// what they leave open sees the sky. A separate near-field horizon (fading over 0.6..3 m) is the
+// contact occlusion. Horizon-based indirect light of the visible scene only: off-screen
+// surfaces bounce nothing and cover nothing here (named approximation).
+struct Gather { ao: f32, open: f32, irradiance: vec3<f32> };
+fn previous_radiance(world: vec3<f32>) -> vec4<f32> {
+    if (fr.prev_cam_pos.w < 0.5) { return vec4(0.0); }
+    let rel = world - fr.prev_cam_pos.xyz;
+    let clip = fr.prev_view_proj * vec4(rel, 1.0);
+    if (clip.w <= 0.001) { return vec4(0.0); }
+    let ndc = clip.xy / clip.w;
+    let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < vec2(0.0)) || any(uv > vec2(1.0))) { return vec4(0.0); }
+    let p = vec2<i32>(uv * fr.res.xy);
+    return vec4(textureLoad(lit_prev, p, 0).rgb, 1.0);
+}
+fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32) -> Gather {
     let dist = length(rel);
-    let radius_px = clamp(0.9 * fr.view_proj[1][1] * fr.res.y * 0.5 / max(dist, 0.05), 3.0, 48.0);
-    var occlusion = 0.0;
-    var taps = 0.0;
+    let dims = vec2<i32>(fr.res.xy);
+    let radius_px = clamp(6.0 * fr.view_proj[1][1] * fr.res.y * 0.5 / max(dist, 0.05), 8.0, 220.0);
+    var ao_sum = 0.0;
+    var bands = 0.0;
+    var irradiance = vec3(0.0);
     for (var dir = 0u; dir < 8u; dir += 1u) {
         let angle = (f32(dir) + jitter) * (RM_PI * 0.25);
         let step = vec2(cos(angle), sin(angle));
-        for (var s = 1u; s <= 4u; s += 1u) {
-            let offset = step * radius_px * (f32(s) - 0.5 + jitter * 0.5) / 4.0;
-            let sample = pixel_relative(pixel + vec2<i32>(offset));
+        var horizon = 0.0;
+        var horizon_near = 0.0;
+        for (var s = 1u; s <= 8u; s += 1u) {
+            let t = pow((f32(s) - 0.5 + jitter * 0.5) / 8.0, 1.6);
+            let p = pixel + vec2<i32>(step * radius_px * t);
+            if (any(p < vec2(0)) || any(p >= dims)) { break; }
+            let sample = pixel_relative(p);
             let h = sample - rel;
             let len = length(h);
-            if (len < 1e-4 || len > 1.2) { continue; }
-            let cosine = dot(n, h / len);
-            occlusion += max(cosine - 0.15, 0.0) * (1.0 - smoothstep(0.3, 0.9, len));
-            taps += 1.0;
+            if (len < 1e-4) { continue; }
+            let c = max(dot(n, h / len), 0.0);
+            horizon_near = max(horizon_near, c * (1.0 - smoothstep(0.6, 3.0, len)));
+            if (c > horizon + 1.0e-3) {
+                let lit = previous_radiance(fr.cam_pos.xyz + sample);
+                let band = (c * c - horizon * horizon) * (RM_PI / 8.0);
+                irradiance += lit.rgb * lit.a * band;
+                bands += band;
+                horizon = c;
+            }
         }
+        ao_sum += 1.0 - horizon_near * horizon_near;
     }
-    return clamp(1.0 - occlusion / max(taps, 1.0) * 2.2, 0.0, 1.0);
+    return Gather(clamp(ao_sum / 8.0, 0.0, 1.0), clamp(1.0 - bands / RM_PI, 0.0, 1.0), irradiance);
 }
 
 // Optical depth through the froxel medium between a surface point and a lamp.
@@ -89,6 +124,19 @@ fn lamp_tau(world: vec3<f32>, light: vec3<f32>, steps: u32) -> f32 {
         tau += textureSampleLevel(scatter, linear_samp, vec3(pr.xy, slice / fr.vol.z), 0.0).a * seg_len;
     }
     return tau;
+}
+
+// Directional albedo of the GGX lobe under a uniform environment (the split-sum fit of Karis
+// 2014, "Physically Based Shading on Mobile"): what a rough metal reflects of the light around
+// it. The game's armour materials are metallic 1 / roughness 1, which have no Lambert term at
+// all; without this they take no sky or bounce light.
+fn env_brdf(f0: vec3<f32>, roughness: f32, ndv: f32) -> vec3<f32> {
+    let c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    let r = roughness * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
+    let ab = vec2(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
 }
 
 struct Fog { radiance: vec3<f32>, transmittance: f32 };
@@ -195,13 +243,29 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                 }
             }
         }
-        // Skylight.
-        var ao = screen_occlusion(pixel, rel, n, jitter);
-        if (grass) { ao = mix(ao, 1.0, 0.7); }
+        // Skylight through the part of the hemisphere the frame's surfaces leave open, the
+        // bounce from the part they cover. The upwelling-ground band stands in for off-screen
+        // ground only (halved: most of the ground a surface sees is on screen).
+        let gather = screen_gather(pixel, rel, n, jitter);
+        var ao = gather.ao;
+        var open = gather.open;
+        if (grass) { ao = mix(ao, 1.0, 0.7); open = mix(open, 1.0, 0.7); }
         // Grass blades ask the cover map from above their own canopy (they stand in it).
         let sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
-        let ambient = rm_sky_hemisphere(n) * mix(0.10, 1.0, sky_vis) * ao;
-        color += diffuse * RM_PI * ambient;
+        let up = clamp(n.y, -1.0, 1.0);
+        let sky_band = mix(fr.sky_horizon.rgb, fr.sky_zenith.rgb, clamp(up, 0.0, 1.0));
+        let hemisphere = mix(fr.sky_ground.rgb * 0.5, sky_band, 0.5 + 0.5 * up);
+        // The environment radiance the surface sees: sky through the open share, the frame's
+        // bounce through the covered share. Lambert takes albedo x that; the GGX lobe takes its
+        // directional albedo x that, less the share the screen-space reflection pass draws
+        // in the mirror direction (its gloss weight).
+        var env = hemisphere * mix(0.10, 1.0, sky_vis) * ao;
+        if (fr.debug.x < 0.5) {
+            env = env * open + gather.irradiance * select(1.0, 0.6, grass) / RM_PI;
+        }
+        color += diffuse * RM_PI * env;
+        let gloss = (1.0 - smoothstep(0.35, 0.8, roughness)) * mix(0.35, 1.0, metallic);
+        color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss);
         // Lamps, fires, flashes: the lights binned into this pixel's cell.
         let cell = rm_cell_index(uv, dist);
         let lstart = light_cell_start[cell];

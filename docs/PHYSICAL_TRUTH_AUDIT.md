@@ -60,6 +60,27 @@ are presented as ray tracing, GI or a combustion/solver result:
 - Veiling glare (`stylized_bloom.wgsl` `fs_glare`, this chain only): see the "Light, sky and
   the eye" row; the display stage's rod signal takes the cool mesopic hue
   (`observer::ROD_DISPLAY_HUE`).
+- (2026-10-28) Indirect light is a screen-space horizon gather (`rm_shade.wgsl` `screen_gather`):
+  eight slices of eight samples out to 6 m of screen reach, no distance limit on the bounce; each
+  sample that raises a slice's horizon owns the cosine-weighted band pi/8 (c^2 - h^2) and
+  contributes the radiance the previous frame rendered there, reprojected through the previous
+  view; the sky bands light the share the bands leave open. One bounce, visible surfaces only,
+  one frame late, nothing from off-screen. A near-field horizon fading over 0.6-3 m is the
+  contact occlusion. The GGX lobe's ambient is its directional albedo (Karis 2014 split-sum fit)
+  times the same environment, less the reflection pass's gloss share. The upwelling-ground band
+  (off-screen ground stand-in) is snow 0.80 in winter and earth 0.30 in spring (it was 0.30 in
+  winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
+  `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
+  units) against flat snow 0.171.
+- Tank ruts on the raymarch G-buffer: the track map darkens and polishes the compacted floor and
+  tilts the shading normal by its gradient; the terrain triangles do not move.
+- Winter snow sinkage (`vehicle_ground::WINTER_TRACK_SINKAGE_M`): 0.40 m of settled steppe
+  snow (declared for the December 1942 cauldron, not a station measurement) compacts to a
+  quarter of its depth under every tracked vehicle fielded here, so tracks rest 0.30 m below the
+  drawn snow surface. The player's support profile and the AI heightfield rest use the same
+  constant (the player's earlier authored 127 mm is replaced); cellar floors and the Act-II bridge
+  stay hard. The snow is not displaced or banked around the hull, the belly does not plough, and
+  no vehicle sinks differently by its ground pressure.
 
 Gates: `raymarch-showcase PREFIX` (16 stills with a JSON receipt; `KESSEL_SHOWCASE_SET=palette`
 for 18 more across the day and the weather) and `gfxbench` with `KESSEL_GPU_PROFILE=1` on the

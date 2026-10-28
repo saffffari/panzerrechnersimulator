@@ -183,6 +183,19 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     rig.observe(&mut r, tiger + Vec3::new(-14.0, 3.0, -2.0), tiger + Vec3::Y * 1.5, 50.0);
     rig.still(&mut r, "blizzard_tiger", "the Tiger in the blizzard: weather layer, snow grains, key beam through storm cloud")?;
 
+    // Scene G: the Tiger drives on in clear low sun and leaves its ruts; seen low from behind.
+    r.set_weather_override(Some(0.0));
+    rig.clock(&mut r, "1942-12-21T12:40:00Z")?;
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    step(&mut g, &mut r, 360, &drive);
+    step(&mut g, &mut r, 30, &idle);
+    let here = g.player.pos;
+    let heading = g.player.forward();
+    let side = heading.cross(Vec3::Y).normalize_or_zero();
+    let ground = g.hf.height_at(here.x, here.z);
+    rig.observe(&mut r, Vec3::new(here.x, ground, here.z) - heading * 7.0 + side * 5.0 + Vec3::Y * 2.4, here + Vec3::Y * 0.9 - heading * 1.0, 60.0);
+    rig.still(&mut r, "tiger_ruts", "after 6 s of driving: tracks in the snowpack, ruts behind, the hull lit from the snow below")?;
+
     fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "schema": "panzer.raymarch-showcase.v1", "manifest": manifest, "adapter": adapter.get_info().name,
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],

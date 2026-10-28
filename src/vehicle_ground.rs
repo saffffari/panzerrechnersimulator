@@ -3,6 +3,17 @@
 //! subsequently uses solid_city's fuller source-profile solve, including floors and rubble.
 use glam::{Mat3, Vec2, Vec3};
 
+/// The winter snowpack under a loaded track. Settled steppe snow of 0.40 m (declared for the
+/// Act-I cauldron in December 1942, not a measured station value) compacts to a quarter of its
+/// depth under any tracked vehicle of the weights fielded here (a Tiger loads its tracks at
+/// about 100 kPa, a T-34 at 65; both press settled snow to the firm layer), so the tracks rest
+/// 0.30 m below the drawn snow surface. One value for the player's support profile
+/// (`solid_city::tank_support_at`) and the AI vehicles' heightfield rest
+/// (`terrain::Heightfield::vehicle_height_at`). Named in docs/PHYSICAL_TRUTH_AUDIT.md.
+pub const WINTER_SNOW_DEPTH_M: f32 = 0.40;
+pub const TRACK_COMPACTION_SHARE: f32 = 0.75;
+pub const WINTER_TRACK_SINKAGE_M: f32 = WINTER_SNOW_DEPTH_M * TRACK_COMPACTION_SHARE;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Pose { pub height: f32, pub pitch: f32, pub roll: f32 }
 

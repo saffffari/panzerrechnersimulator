@@ -114,6 +114,7 @@ struct FrameUniform {
     sky_cache: [f32; 4],
     report: [f32; 4],
     report_dir: [f32; 4],
+    debug: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
 }
@@ -274,13 +275,18 @@ pub(super) struct Backend {
     events: Vec<Event>,
     /// World wind this frame (m/s, xz), for drifting soot and dust.
     wind: Vec3,
+    /// `KESSEL_RM_PROBE=x,y`: an internal pixel whose lit HDR and G-buffer texels are read back
+    /// and printed each frame (radiance in renderer units, before exposure).
+    probe: Option<(u32, u32)>,
+    probe_buf: wgpu::Buffer,
+    probe_pending: Cell<bool>,
     optic_active: bool,
     pub stats: Stats,
     encode_ms: Cell<f32>,
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
-    /// 4096 veiling glare.
+    /// 4096 veiling glare, 8192 screen-space indirect light.
     debug_skip: u32,
 }
 
@@ -476,7 +482,7 @@ fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
 }
 
 impl Backend {
-    pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout,
+    pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
         sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32) -> Self {
         let vol = [iw.div_ceil(VOL_DIVISOR).max(8), ih.div_ceil(VOL_DIVISOR).max(8), VOL_SLICES];
@@ -510,7 +516,8 @@ impl Backend {
         let light_cell_items_buf = storage("rm-light-cell-items", (MAX_LIGHT_CELL_ITEMS * 4) as u64);
         let weapon_buf = vertex("rm-weapon-records", (renderer_weapon_particles::math::MAX_BURSTS + MAX_EVENTS * EVENT_RECORDS + renderer_weapon_particles::math::MAX_TRACERS) as u64 * WEAPON_RECORD_BYTES);
         let ember_buf = vertex("rm-embers", (MAX_EMBERS * std::mem::size_of::<Ember>()) as u64);
-        let gusage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        // COPY_SRC for the pixel probe (`KESSEL_RM_PROBE`).
+        let gusage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
         let g0 = target(device, "rm-g0-albedo", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g1 = target(device, "rm-g1-normal", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g2 = target(device, "rm-g2-emission", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
@@ -596,6 +603,7 @@ impl Backend {
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT), float_tex_unfiltered(3, S::FRAGMENT),
                 depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT), tex3d(9, S::FRAGMENT),
+                float_tex_unfiltered(10, S::FRAGMENT),
             ],
         });
         let points_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -650,7 +658,7 @@ impl Backend {
         // G-buffer.
         let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_gbuffer.wgsl"]);
         let gbuffer_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rm-gbuffer-pl"), bind_group_layouts: &[&gbuffer_bgl, material_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
+            label: Some("rm-gbuffer-pl"), bind_group_layouts: &[&gbuffer_bgl, material_bgl, track_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
         });
         let gtargets: Vec<Option<wgpu::ColorTargetState>> = (0..3).map(|_| Some(wgpu::ColorTargetState {
             format: wgpu::TextureFormat::Rgba16Float, blend: None, write_mask: wgpu::ColorWrites::ALL,
@@ -793,6 +801,14 @@ impl Backend {
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
             light_pairs: Vec::new(), light_cell_start: vec![0; CELL_COUNT + 1], light_cell_items: Vec::new(),
             weapon_draws: Vec::new(), tracer_range: (0, 0), panes: Vec::new(), events: Vec::with_capacity(MAX_EVENTS), wind: Vec3::ZERO,
+            probe: std::env::var("KESSEL_RM_PROBE").ok().and_then(|v| {
+                let mut it = v.split(',').filter_map(|p| p.trim().parse::<u32>().ok());
+                Some((it.next()?, it.next()?))
+            }).filter(|&(x, y)| x < iw && y < ih),
+            probe_buf: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rm-probe"), size: 5 * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+            }),
+            probe_pending: Cell::new(false),
             optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
             debug_skip: std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
         }
@@ -848,6 +864,7 @@ impl Backend {
                 entry(7, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
                 entry(8, wgpu::BindingResource::Sampler(&self.linear_sampler)),
                 entry(9, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
+                entry(10, wgpu::BindingResource::TextureView(&self.scratch.view)),
             ],
         }));
         let points = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -876,6 +893,35 @@ impl Backend {
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
         let started = std::time::Instant::now();
+        if self.probe_pending.replace(false) {
+            if let Some((px, py)) = self.probe {
+                let slice = self.probe_buf.slice(..);
+                let (tx, rx) = std::sync::mpsc::channel();
+                slice.map_async(wgpu::MapMode::Read, move |result| { let _ = tx.send(result); });
+                let _ = device.poll(wgpu::PollType::wait_indefinitely());
+                if rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                    let mapped = slice.get_mapped_range();
+                    let f16 = |o: usize| -> [f32; 4] {
+                        std::array::from_fn(|i| {
+                            let h = u16::from_le_bytes([mapped[o + i * 2], mapped[o + i * 2 + 1]]);
+                            let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+                            let e = ((h >> 10) & 0x1f) as i32;
+                            let m = (h & 0x3ff) as f32;
+                            if e == 0 { sign * m / 1024.0 * 2f32.powi(-14) } else if e == 31 { f32::NAN } else { sign * (1.0 + m / 1024.0) * 2f32.powi(e - 15) }
+                        })
+                    };
+                    let f32s = |o: usize| -> [f32; 4] { std::array::from_fn(|i| f32::from_le_bytes([mapped[o + i * 4], mapped[o + i * 4 + 1], mapped[o + i * 4 + 2], mapped[o + i * 4 + 3]])) };
+                    let hdr32 = hdr_format() == wgpu::TextureFormat::Rgba32Float;
+                    let lit = if hdr32 { f32s(0) } else { f16(0) };
+                    let prev = if hdr32 { f32s(256) } else { f16(256) };
+                    let g0 = f16(512); let g1 = f16(768); let g2 = f16(1024);
+                    println!("[rm-probe] px ({px},{py}) lit [{:.4e} {:.4e} {:.4e}] prev-lit [{:.4e} {:.4e} {:.4e}] albedo [{:.3} {:.3} {:.3}] kind {:.0} n [{:.2} {:.2} {:.2}] rough {:.2} metallic {:.2} emission [{:.3e} {:.3e} {:.3e}]",
+                        lit[0], lit[1], lit[2], prev[0], prev[1], prev[2], g0[0], g0[1], g0[2], g0[3], g1[0], g1[1], g1[2], g1[3], g2[3], g2[0], g2[1], g2[2]);
+                    drop(mapped);
+                }
+                self.probe_buf.unmap();
+            }
+        }
         if self.binds.is_none() { self.binds = Some(self.make_binds(device, r)); }
         self.flip = 1 - self.flip;
         let cam = &r.camera;
@@ -938,7 +984,9 @@ impl Backend {
             horizon += sample_sky(glam::DVec3::new(a.cos() * 0.9781, 0.2079, a.sin() * 0.9781));
         }
         horizon /= 6.0;
-        let ground_albedo = 0.30 + 0.45 * r.precipitation.clamp(0.0, 1.0) as f64;
+        // Upwelling ground: snow cover in winter (the act's ground mood 0), earth and grass in
+        // spring (mood 1); falling snow whitens either.
+        let ground_albedo = (0.80 - 0.50 * r.atmosphere_mood.clamp(0.0, 1.0) as f64).max(0.30 + 0.45 * r.precipitation.clamp(0.0, 1.0) as f64);
         let ground = (horizon * 0.6 + zenith * 0.4) * ground_albedo + sun_radiance * (sun_dir.y.max(0.0) as f64) * ground_albedo / std::f64::consts::PI;
 
         // Visibility views.
@@ -1021,6 +1069,7 @@ impl Backend {
                 .min_by(|a, b| a[3].total_cmp(&b[3])).unwrap_or([0.0, 0.0, 0.0, -1.0]),
             report_dir: self.events.iter().filter(|e| e.kind == EVENT_MUZZLE).min_by(|a, b| (r.time - a.born).total_cmp(&(r.time - b.born)))
                 .map_or([0.0, 0.0, 1.0, 0.0], |e| [e.dir.x, e.dir.y, e.dir.z, 0.0]),
+            debug: [if self.debug_skip & 8192 != 0 { 1.0 } else { 0.0 }, self.probe.map_or(-1.0, |p| p.0 as f32), self.probe.map_or(-1.0, |p| p.1 as f32), 0.0],
             pshadow,
             puffs,
         };
@@ -1037,8 +1086,8 @@ impl Backend {
                 let half = (m.world_max - m.world_min) * 0.5;
                 let center = (m.world_max + m.world_min) * 0.5;
                 if m.visible && half.max_element() > 1.5 && (center - eye).length() < half.max_element() + 20.0 && !m.track_recv {
-                    println!("[raymarch]   mesh {i}: half {:.1?} center {:.1?} dist {:.1} emissive {:.2} own {} win {} glass {}",
-                        half, center, (center - eye).length(), m.emissive, m.emissive_own, m.emissive_win, m.glass);
+                    println!("[raymarch]   mesh {i}: half {:.1?} center {:.1?} dist {:.1} emissive {:.2} own {} win {} glass {} metallic {:.2} roughness {:.2}",
+                        half, center, (center - eye).length(), m.emissive, m.emissive_own, m.emissive_win, m.glass, m.metallic_factor, m.roughness_factor);
                 }
             }
             for (i, p) in r.smoke_puffs.iter().enumerate() {
@@ -1727,6 +1776,7 @@ impl Backend {
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-gbuffer")), occlusion_query_set: None,
             });
             pass.set_bind_group(0, &self.gbuffer_bind, &[]);
+            pass.set_bind_group(2, &r.track_bind, &[]);
             self.draw_scene(r, &mut pass, r.camera.view_proj(), 0.0, false, &self.gbuffer_pipe, &self.gbuffer_inst_pipe, &mut work);
         }
         // 3. Sky cache: this frame's phase of the by-direction atmosphere and clouds (every
@@ -1778,6 +1828,17 @@ impl Backend {
             pass.set_bind_group(1, &binds.visibility, &[]);
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
+        }
+        if let Some((px, py)) = self.probe {
+            let origin = wgpu::Origin3d { x: px, y: py, z: 0 };
+            let one = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
+            for (i, tex) in [&r.hdr_tex, &self.scratch._tex, &self.g0._tex, &self.g1._tex, &self.g2._tex].into_iter().enumerate() {
+                encoder.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo { texture: tex, mip_level: 0, origin, aspect: wgpu::TextureAspect::All },
+                    wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: (i * 256) as u64, bytes_per_row: None, rows_per_image: None } },
+                    one);
+            }
+            self.probe_pending.set(true);
         }
         // 6. Screen-space marched reflections of the lit frame on glossy and metallic surfaces.
         if self.debug_skip & 32 == 0 { self.post_pass(r, encoder, "rm-reflect", &self.reflect_pipe, &binds.reflect, &mut work); }

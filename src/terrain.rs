@@ -88,6 +88,18 @@ pub const TANK_STEP_M: f32 = crate::tank_support::TIGER_STEP_M;
 pub const TANK_BRIDGE_SPAN_M: f32 = crate::tank_support::TIGER_TRENCH_M;
 
 /// Height in metres, sampled (nearest) from the 16-bit heightmap, with the start point at origin.
+/// Snow compaction under a loaded track, metres, applied by [`Heightfield::vehicle_height_at`]:
+/// the game sets it from the act's season (`vehicle_ground::WINTER_TRACK_SINKAGE_M` in winter,
+/// zero otherwise). Process-wide so every heightfield and every ground closure agrees.
+static VEHICLE_SINKAGE_MM: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub fn set_vehicle_sinkage_m(sinkage_m: f32) {
+    let mm = if sinkage_m.is_finite() { (sinkage_m * 1000.0).round() as i32 } else { 0 };
+    VEHICLE_SINKAGE_MM.store(mm, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn vehicle_sinkage_m() -> f32 {
+    VEHICLE_SINKAGE_MM.load(std::sync::atomic::Ordering::Relaxed) as f32 * 0.001
+}
+
 pub struct Heightfield {
     pub res: usize,
     pub spacing: f32, // world metres between grid samples
@@ -113,12 +125,13 @@ impl Heightfield {
 
     /// The ground under a tank's hull centre at (x, z): as [`Self::height_at`], except over an
     /// opening narrower than a tank's trench crossing (`TANK_BRIDGE_SPAN_M`), which its tracks
-    /// bridge on the rim.
+    /// bridge on the rim, and less the snow its tracks compact ([`set_vehicle_sinkage_m`]; cellar
+    /// floors are hard supports).
     pub fn vehicle_height_at(&self, x: f32, z: f32) -> f32 {
         match self.openings.at(x, z) {
-            Some(opening) if opening.span() < TANK_BRIDGE_SPAN_M => self.grade_at(x, z),
+            Some(opening) if opening.span() < TANK_BRIDGE_SPAN_M => self.grade_at(x, z) - vehicle_sinkage_m(),
             Some(opening) => opening.floor_y,
-            None => self.grade_at(x, z),
+            None => self.grade_at(x, z) - vehicle_sinkage_m(),
         }
     }
 

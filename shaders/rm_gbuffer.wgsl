@@ -7,6 +7,22 @@
 @group(1) @binding(1) var mr_tex: texture_2d<f32>;
 @group(1) @binding(2) var normal_tex: texture_2d<f32>;
 @group(1) @binding(3) var samp: sampler;
+// The world tank-track map (renderer::stamp_tank_tracks): fixed 12.5 cm cells in 64 m pages.
+@group(2) @binding(0) var track_tex: texture_2d<f32>;
+@group(2) @binding(1) var track_samp: sampler;
+@group(2) @binding(2) var track_pages: texture_2d<u32>;
+
+fn sample_track(world: vec2<f32>) -> f32 {
+    let tile = vec2<i32>(floor(world / 64.0));
+    let lookup = tile + vec2<i32>(128);
+    if (any(lookup < vec2<i32>(0)) || any(lookup >= vec2<i32>(256))) { return 0.0; }
+    let entry = textureLoad(track_pages, lookup, 0).r;
+    if (entry == 0u) { return 0.0; }
+    let page = entry - 1u;
+    let local = vec2<i32>(floor((world - vec2<f32>(tile) * 64.0) / 0.125));
+    let atlas = vec2<i32>(i32(page % 16u), i32(page / 16u)) * 512 + local;
+    return textureLoad(track_tex, atlas, 0).r;
+}
 
 struct Push {
     model: mat4x4<f32>,
@@ -138,6 +154,19 @@ fn fs(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
         let source = textureSampleLevel(albedo_tex, terrain_detail_sampler, in.uv, macro_lod);
         albedo = terrain_material(source, world, normalize(in.normal).y, fr.wind.y, footprint);
         roughness = terrain_roughness(fr.wind.y);
+        // Tank ruts: where treads have compacted the snow the surface is pressed down. The
+        // compacted floor darkens and polishes; the rut's edges shade as a trough through the
+        // shading normal from the map's gradient (the terrain triangles do not move: a named
+        // approximation, docs/RAYMARCHING_ENGINE.md).
+        let rut = clamp(sample_track(world.xz) * 1.4, 0.0, 1.0);
+        if (rut > 0.0 || footprint < 0.5) {
+            let gx = clamp(sample_track(world.xz + vec2(0.125, 0.0)) * 1.4, 0.0, 1.0) - clamp(sample_track(world.xz - vec2(0.125, 0.0)) * 1.4, 0.0, 1.0);
+            let gz = clamp(sample_track(world.xz + vec2(0.0, 0.125)) * 1.4, 0.0, 1.0) - clamp(sample_track(world.xz - vec2(0.0, 0.125)) * 1.4, 0.0, 1.0);
+            albedo *= mix(vec3(1.0), vec3(0.55, 0.57, 0.60), rut);
+            roughness = mix(roughness, roughness * 0.7, rut);
+            // 0.3 m of sinkage over the map's 12.5 cm cell: the gradient tilts the normal.
+            n = normalize(n + vec3(gx, 0.0, gz) * 1.2);
+        }
     }
     out.g0 = vec4(albedo, select(0.0, kind, kind > 2.5));
     out.g1 = vec4(n, roughness);
