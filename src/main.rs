@@ -15936,6 +15936,9 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "raymarch-night-sight") {
+        return raymarch_showcase::run_night_sight(&capture_arg(&args, 2, "raymarch_night_sight"));
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-tracers") {
         return raymarch_showcase::run_tracers(&capture_arg(&args, 2, "raymarch_tracers"));
     }

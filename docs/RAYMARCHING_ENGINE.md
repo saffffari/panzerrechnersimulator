@@ -721,6 +721,45 @@ traversing 10.4 (21.6 %) before, 5.9 (8.8 %) after at 480x270; at rest 4.6 (5.8 
 after. `captures/rm_gun_before_after_sheet.png` (left before, right after at 480x270; top traversing,
 bottom at rest); `rm_gun3_*` the same after the fix at 800x450 and 640x360.
 
+## The gunner's sight at night (2026-10-28)
+
+Request: "At night it shouldn't be pitch black in the gun sights." The campaign's night is
+Christmas Eve 1942 at 23:00 UT under a 96 % Moon about 59 deg up (`celestial_sky::act_calendar`);
+under that sky the TZF reads (the snow mid-grey through the sight). What blacked it out were faults:
+
+- Firing the coax drew the 88's flash lobe at its muzzle on every round (the MG's tracers and
+  flash, below): the sight's eye fell from 3523 to 52.
+- The relayed port views' magenta sentinel (below) pulled the eye down in the eyepiece composite.
+- The cabin's main lamp lit the outside through the armour. `draw_scene` leaves a lamp's own
+  housing (the mesh enclosing the emitter) out of that lamp's shadow cube; the turret's bounds
+  enclose its lamp too, so the whole turret, mantlet and gun cast no shadow for it, and the 6 cd lamp
+  (1.1 m from the sight's objective) lit the barrel, the deck and the snow to 28 m with 0.12 lx of
+  warm light, a hundred times starlight; the eye metered the lamp-lit barrel. Only meshes smaller than
+  0.75 m (`FIXTURE_HOUSING_MAX_M`) now count as a housing. Moonless, clear: barrel 61 -> 12, snow
+  14 -> 26 (sRGB codes).
+
+The reticle: at the 480x270 default a Strich is 0.6 of a frame pixel, and the Strichbild, drawn in
+the crushed frame, had shrunk to a dark speck and a few dots. It is etched glass in the focal plane,
+not scene, and is now drawn by the upscale (`blit.wgsl` `strich_on`) at the output's resolution with
+four samples a pixel, at its true angular size (1 Strich = 2 pi / 6400 rad of the live field, so
+ranging and lead read as before), black, inside the TZF's field; in the eyepiece composite with the
+optic pass's field (`Renderer::optic_reticle_fov`). About 19 px tall for the central triangle on a
+1080-line screen.
+
+`raymarch-night-sight PREFIX` (full and new Moon, clear and overcast with snow, the sight and the
+eyepiece composite, each eye adapted to what it sees): `captures/rm_night9_*`. Sight eye and the snow
+in the field (sRGB code): full Moon clear 3552, 128; new Moon clear 3884, 26; full Moon overcast 3838,
+107; new Moon overcast 3901, 1. The sight has its own eye (view 0): in the composite the field shows
+exactly the sight's frame whatever the cabin's lamps do to the cabin's eye.
+
+Not done: a moonless overcast night is black through the sight, about as a dark-adapted eye finds
+it; a floor for the rod reproduction (`observer::ROD_DISPLAY_GAIN` is the owner's reproduction
+choice) would be a decision for the owner. The TZF passes extended scenes at their luminance
+(transmission not modelled) and does not yet brighten point sources by its light grasp (stars,
+flashes: M^2 x transmission at the eye). Under overcast with a Moon the cloud deck draws black while
+the snow it lights is bright; a lit cloud base should be at least as bright as the snow (sky model).
+The tracer's dazzle through the eye's field-average meter (the MG's tracers, below) is open.
+
 ## Magenta in the night cabin (fixed 2026-10-28)
 
 At night a band of saturated magenta noise lay left of the gunner's eyepiece and a streak across the

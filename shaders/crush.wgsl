@@ -1,6 +1,6 @@
 // The PS1 crush, at INTERNAL resolution: tonemap HDR→LDR (emissive bloom survives) → ordered Bayer
-// dither → posterize to `levels`/channel. Also draws the diegetic CRT-green gunsight reticle on top
-// (crisp, not dithered — it reads as a phosphor overlay).
+// dither → posterize to `levels`/channel. The gunner's reticle is etched glass, drawn after the
+// upscale at the output's resolution (blit.wgsl).
 
 @group(0) @binding(0) var hdr: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
@@ -313,33 +313,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
 
-    // TZF 9b/9c Strichbild — etched BLACK glass markings (a real optic's reticle is a dark
-    // etching in the field of view, not a glowing overlay). Seven aiming triangles hang
-    // point-UP with their tips on the aim line: the central Hauptdreieck's apex IS the aim
-    // point; the flanking triangles sit at 4-Strich clear gaps for lead, and their known
-    // widths range a target (a ~6 m T-34 hull spans the central 4-Strich base at ~1500 m).
-    // `cr.reticle` carries the live fov_y in radians (0 = reticle off) so one Strich stays a
-    // angular mil (1/6400 circle) approximation through each narrower gameplay field.
-    // Current gameplay zoom steps are uncalibrated; source assets do not identify a TZF variant.
-    if (cr.reticle > 0.001) {
-        let dims = vec2<f32>(textureDimensions(hdr));
-        let px_per_mil = (dims.y / cr.reticle) * 0.00098175; // 1 Strich = 2π/6400 rad
-        let d = (in.pos.xy - dims * 0.5) / px_per_mil;       // screen px → Strich (y down)
-        var on = false;
-        // Central triangle: 4 Strich wide at the base, 8 tall, apex on the aim point. The
-        // tip keeps a minimum etched width so the aiming spike survives the 640-px raster.
-        if (d.y >= 0.0 && d.y <= 8.0 && abs(d.x) <= max(d.y * 0.25, 0.40)) { on = true; }
-        // Three flanking triangles per side: 2 Strich wide, 4 tall, 4-Strich clear gaps
-        // (edges at 6–8, 12–14, 18–20 Strich).
-        for (var i = 0; i < 3; i = i + 1) {
-            let cx = 7.0 + f32(i) * 6.0;
-            if (d.y >= 0.0 && d.y <= 4.0
-                && abs(abs(d.x) - cx) <= max(d.y * 0.25, 0.30)) { on = true; }
-        }
-        // Outer horizontal reference bars at tip level, closing off the Strich row.
-        if (abs(d.y) <= 0.40 && abs(d.x) >= 24.0 && abs(d.x) <= 30.0) { on = true; }
-        if (on) { m = vec3(0.008, 0.008, 0.010); }
-    }
+    // The TZF Strichbild is drawn by blit.wgsl at the output's resolution (`cr.reticle` unused).
 
     // ── Optic masks: the eye pressed to an eyepiece. Black steel outside the aperture; a soft
     // breath-dark vignette inside so the picture pools at the centre. 1 = the TZF 9b's two
