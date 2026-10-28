@@ -324,6 +324,11 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- TPZ needle and instrument covers (2026-10-28; `game.rs` `TPZ_NEEDLE_WIDTH_SCALE`,
+  `Renderer::mark_instrument_cover`, `rm_glass.wgsl`): the TPZ needle is drawn at a quarter of its
+  source bar's width (2.5 mm) in the dial's plane; instrument covers carry an authored fixed dust
+  (millimetre flecks, a 3-6 % film) and a second glossy lobe (roughness 0.3) for their dust and
+  fingermarks, not a measured surface.
 - Sight lamps (2026-10-28; `Game::sight_lamp_states`, `interior_rig::SIGHT_LOAD_FIXTURES`,
   `SIGHT_ROUND_FIXTURES`, `KESSEL_SIGHT_LAMPS=0` removes them): a gameplay instrument the Tiger
   did not carry (its loader reported by voice or a tap): a loading lamp and a chambered-round lamp

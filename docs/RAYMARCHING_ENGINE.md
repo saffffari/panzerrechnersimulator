@@ -667,6 +667,20 @@ If the report came from the shader backend (the launcher's default, `-Renderer s
 eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
 and any aliasing of the small relayed views under motion would need their own look.
 
+## The TPZ needle and the instrument glass (2026-10-28)
+
+Request: "the TPZ needle is too wide. Also missing a reflective glass cover detail." The needle's
+source part is a 1 cm bar; it is now drawn 2.5 mm wide in the dial's plane (`TPZ_NEEDLE_WIDTH_SCALE`,
+its 1 cm stand-off from the face unchanged), two to three pixels from the gunner's head at 800x450.
+The TPZ and the driver's fuel readout already had clear covers through the glass path
+(`driver_panel.rs`, the cover clear of the needle's whole sweep); flagged as instrument covers
+(`Renderer::mark_instrument_cover`), the raymarch glass pass gives them a faint fixed dust (millimetre
+flecks and a light film, whatever the glass load) and a second, broader glossy lobe (roughness 0.3)
+so the cabin's lamps and the sun spread into a sheen that slides across the glass as the head moves.
+Head-on in a shut cabin the cover stays faint, as such a cover would: little stands in its mirror
+direction, and the dial's own illuminator lies behind it. Stills: `captures/rm_tpz1_tpz_lamp.png`,
+`_tpz_hatch.png`. No other covered gauge was found in the cabin to treat.
+
 ## Sight lamps (2026-10-28)
 
 Requests: "a small light indicator visible while in gun sights that displays loading status" and
