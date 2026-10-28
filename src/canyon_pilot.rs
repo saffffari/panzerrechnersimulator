@@ -216,7 +216,9 @@ impl CanyonPilot {
     /// dead hull within `HULL_BYPASS_LANE_M` of the travel line in the next `HULL_BYPASS_AHEAD_M`
     /// is passed on whichever side the street's measured floor grid shows clear for the Tiger's
     /// width, `HULL_BYPASS_CLEAR_M` from every hull; the choice holds until the hull is behind.
-    /// Route knowledge only: the hulls are where the crew watched them die.
+    /// Route knowledge only: the hulls are where the crew watched them die. A live T-34 parked
+    /// out of sight in the street (seed 101, 62.6 %, 19 m) blocks the same way and is passed the
+    /// same way; vehicle avoidance would otherwise hold both tanks nose to nose.
     fn hull_bypass(&mut self, g: &Game, here: Vec2) -> Option<Vec2> {
         let n = self.route.len();
         let a = self.route[self.cursor.min(n - 1)];
@@ -227,7 +229,7 @@ impl CanyonPilot {
         }
         let perp = Vec2::new(-along.y, along.x);
         let hulls: Vec<Vec2> = g.enemies.iter().enumerate()
-            .filter(|(i, e)| !e.alive && g.enemy_active.get(*i).copied().unwrap_or(true))
+            .filter(|(i, _)| g.enemy_active.get(*i).copied().unwrap_or(true))
             .map(|(_, e)| Vec2::new(e.pos.x, e.pos.z))
             .collect();
         if let Some((hull, carrot)) = self.bypass {
@@ -280,7 +282,7 @@ impl CanyonPilot {
     /// dead hull is within 10 m.
     fn hull_escape(&self, g: &Game, here: Vec2) -> Option<Vec2> {
         let hulls: Vec<Vec2> = g.enemies.iter().enumerate()
-            .filter(|(i, e)| !e.alive && g.enemy_active.get(*i).copied().unwrap_or(true))
+            .filter(|(i, _)| g.enemy_active.get(*i).copied().unwrap_or(true))
             .map(|(_, e)| Vec2::new(e.pos.x, e.pos.z))
             .collect();
         if !hulls.iter().any(|h| h.distance(here) < 10.0) {
