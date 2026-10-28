@@ -234,6 +234,7 @@ impl Game {
                 if !self.god {
                     damage = payload.damage.min(self.foot.hp.max(0.0));
                     self.foot.hp = (self.foot.hp-damage).max(0.0);
+                    if damage > 0.0 { self.stat_small_arms_hits_on_foot = self.stat_small_arms_hits_on_foot.saturating_add(1); }
                 }
                 friendly = payload.shot.team == Team::German;
                 self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.10, false, weapon);

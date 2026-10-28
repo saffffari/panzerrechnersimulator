@@ -44,6 +44,18 @@ impl Game {
         if let Some(audio)=&self.audio { audio.reset_soundscape(seed); }
         self.god = false;
         self.canyon_opening_fielded = false;
+        // The attempt's own start clock and weather phase (src/canyon.rs `variation`). The
+        // authored instant moves by whole hours on the same day; the renderer's
+        // `apply_authored_lighting` restarts the sky clock when the record's instant changes,
+        // and the winter fronts are phased by the mixed seed in `update`.
+        let variation = crate::canyon::variation(seed);
+        if let Some(utc) = self.scene_environment.lighting.utc {
+            self.scene_environment.lighting.utc = Some(utc.plus_seconds(variation.clock_offset_s));
+        }
+        self.canyon_weather_seed = variation.weather_seed;
+        println!("[canyon] attempt seed {seed}: start clock {} ({:+.2} h), weather phase {:#010x}",
+            self.scene_environment.lighting.utc.map_or_else(|| "act default".into(), |u| u.to_iso()),
+            variation.clock_offset_s / 3600.0, variation.weather_seed);
         self.set_playtest_return_fire(true);
         self.player = Tank::new(spec.start.x, spec.start.y, spec.heading, &self.hf, tank::TIGER_PARTS);
         self.spawn_xz = (spec.start.x, spec.start.y);
@@ -233,9 +245,89 @@ impl Game {
         println!("[canyon] course fielded: {receipt}");
         self.canyon_siting = Some(receipt);
         let mut run = crate::canyon::CanyonRun::new(spec);
+        run.seed = seed;
         run.director = Some(crate::canyon_director::Director::new(seed, fielded));
         self.canyon_run = Some(run);
         Ok(())
+    }
+
+    /// The opening card's facts for the fielded run.
+    pub fn canyon_brief(&self, best_s: Option<f32>) -> Option<crate::canyon::RunBrief> {
+        let run = self.canyon_run.as_ref()?;
+        Some(crate::canyon::RunBrief {
+            direction: crate::canyon::compass_word(run.spec.start, run.spec.goal),
+            length_m: run.spec.length_m,
+            seed: run.seed,
+            start_clock: self.scene_environment.lighting.utc
+                .map(|utc| crate::canyon::local_clock(utc, crate::celestial_sky::act_site(self.act.id).longitude_deg_east))
+                .unwrap_or_else(|| "-".into()),
+            weather: crate::canyon::weather_label(self.scene_environment.lighting.storm),
+            best_s,
+        })
+    }
+
+    /// Harness read-outs: the authored route, the garrison posts and the man's health on foot.
+    pub fn canyon_route(&self) -> Option<Vec<Vec2>> { self.canyon_spec.as_ref().map(|s| s.route.clone()) }
+    pub fn canyon_garrison_posts(&self) -> Vec<Vec2> {
+        self.canyon_spec.as_ref().map(|s| s.garrison.iter().map(|p| p.at).collect()).unwrap_or_default()
+    }
+    pub fn on_foot(&self) -> bool { self.mode == Mode::Foot }
+
+    /// The attempt's deployment seed, while a run is fielded.
+    pub fn canyon_seed(&self) -> Option<u64> {
+        self.canyon_run.as_ref().map(|run| run.seed)
+    }
+
+    /// The after-action card's facts, read from the run and the game's own counters. `times` is
+    /// the kept best/last record to compare against (already updated for a completed run, with
+    /// `previous_best` the best before this one). Presentation only.
+    pub fn canyon_run_report(&self, times: crate::canyon::Times, previous_best: Option<f32>)
+        -> Option<crate::canyon::RunReport> {
+        use crate::canyon::{RunOutcome, RunReport};
+        let run = self.canyon_run.as_ref()?;
+        let at = Vec2::new(self.player.pos.x, self.player.pos.z);
+        let progress = match run.finished_s {
+            Some(_) => 1.0,
+            None => crate::canyon_director::route_progress(&run.spec.route, at),
+        };
+        let outcome = match run.finished_s {
+            Some(_) => RunOutcome::Completed,
+            None => RunOutcome::Lost(self.game_over().or(self.death_cause)
+                .map_or("The Tiger was lost", |cause| cause.de())),
+        };
+        let new_best = matches!(outcome, RunOutcome::Completed)
+            && previous_best.map_or(true, |best| run.elapsed_s < best);
+        // The man's own body: a missing or pulverised limb is a capability he no longer has.
+        const PARTS: [&str; 11] = ["pelvis", "torso", "head", "left upper arm", "left forearm",
+            "right upper arm", "right forearm", "left thigh", "left shin", "right thigh", "right shin"];
+        let wounds: Vec<&'static str> = self.singleplayer_embodied_role().map(|role| {
+            let identity = singleplayer_crew::casualty_identity(role).identity;
+            let missing = self.living_wounds.missing(identity);
+            PARTS.iter().zip(missing).filter(|(_, lost)| *lost).map(|(name, _)| *name).collect()
+        }).unwrap_or_default();
+        let start_clock = self.scene_environment.lighting.utc
+            .map(|utc| crate::canyon::local_clock(utc, crate::celestial_sky::act_site(self.act.id).longitude_deg_east))
+            .unwrap_or_else(|| "-".into());
+        Some(RunReport {
+            outcome,
+            elapsed_s: run.elapsed_s,
+            progress,
+            distance_m: progress * run.spec.length_m,
+            length_m: run.spec.length_m,
+            shots: self.gun_shots,
+            kills: self.stat_kills_by_player,
+            hits_taken: self.stat_hits_on_player,
+            penetrations_taken: self.stat_pens_on_player,
+            enemies_fielded: run.director.as_ref().map_or(0, |d| d.total_spawned),
+            broken_modules: self.modules.iter().filter(|m| !m.functional).map(|m| m.kind.name()).collect(),
+            wounds,
+            seed: run.seed,
+            start_clock,
+            weather: crate::canyon::weather_label(self.weather_storm_now),
+            best_s: times.best_s,
+            new_best,
+            completed_runs: times.completed_runs,
+        })
     }
 
     /// Advance the run and request reinforcements without altering any combatant's laws.

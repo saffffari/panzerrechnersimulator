@@ -9252,6 +9252,10 @@ pub struct Game {
     player_burn: player_burn::PlayerBurn,
     /// The canyon's seeded approach platoons have been fielded for this run.
     canyon_opening_fielded: bool,
+    /// The attempt's weather-front phase (src/canyon.rs `variation`); 0 outside a Canyon run.
+    canyon_weather_seed: u32,
+    /// The storm value the winter fronts last sampled (the after-action card's weather word).
+    weather_storm_now: f32,
     /// The interaction key was pressed with the round lined up: drive it home without a flick.
     auto_ram: bool,
     /// Breech lever position: 0 = closed/down (fireable), 1 = fully open (breech workable).
@@ -9553,6 +9557,8 @@ pub struct Game {
     /// Training telemetry: rounds that connected with the player this match (bounces + pens).
     pub stat_hits_on_player: u32,
     pub stat_pens_on_player: u32,
+    /// Small-arms rounds that wounded the man on foot or head-out (harness read-out).
+    pub stat_small_arms_hits_on_foot: u32,
     /// Authoritative player gunnery outcomes, resolved when the live tracer reaches its target.
     stat_hits_by_player: u32,
     stat_pens_by_player: u32,
@@ -13229,6 +13235,8 @@ impl Game {
             prev_enter: false,
             player_burn: player_burn::PlayerBurn::default(),
             canyon_opening_fielded: false,
+            canyon_weather_seed: 0,
+            weather_storm_now: 0.0,
             auto_ram: false,
             engine_on: true,
             player_powertrain: crate::powertrain::Powertrain::default(),
@@ -13445,6 +13453,7 @@ impl Game {
             tiger_foot_policy: cached_default_foot_policy(PolicyRole::TigerCrew),
             soviet_foot_policy: cached_default_foot_policy(PolicyRole::SovietRifle),
             stat_hits_on_player: 0,
+            stat_small_arms_hits_on_foot: 0,
             stat_pens_on_player: 0,
             stat_hits_by_player: 0,
             stat_pens_by_player: 0,
@@ -16044,8 +16053,10 @@ impl Game {
             let base = if self.scene_environment.lighting.enabled {
                 (self.scene_environment.lighting.storm, self.scene_environment.lighting.fog_density)
             } else { *self.weather_baseline.get_or_insert((r.storm, r.fog_density)) };
-            let weather = crate::winter_weather::sample(r.time, self.act.seed, base.0, base.1);
+            // A Canyon attempt phases the same authored fronts by its own seed (src/canyon.rs).
+            let weather = crate::winter_weather::sample(r.time, self.act.seed ^ self.canyon_weather_seed, base.0, base.1);
             r.storm = weather.storm;
+            self.weather_storm_now = weather.storm;
             if let Some(encounter) = &mut self.winter_encounter { encounter.storm = weather.storm; }
             r.precipitation = (weather.storm / 0.98).clamp(0.0, 1.0);
             r.fog_density = weather.fog_density;

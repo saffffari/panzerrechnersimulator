@@ -1851,6 +1851,43 @@ pub fn draw_black(r: &mut Renderer) {
     r.set_ui_bg(BG_BLACK, BG_BLACK);
 }
 
+// ── The Canyon run's two cards (src/canyon.rs): the brief before the first attempt, and the
+// after-action card. Front-end text, outside play; play itself stays wordless. ──────────────────
+
+const COL_LOSS: [f32; 4] = [0.90, 0.44, 0.30, 1.0];
+
+pub fn draw_run_brief(r: &mut Renderer, brief: &crate::canyon::RunBrief) {
+    r.set_ui_bg(BG_BLACK, BG_BLACK);
+    r.draw_text_bold("CANYON RUN", 0.5, 0.09, 0.058, COL_TITLE, Align::Center);
+    r.draw_text("ONE TIGER  ·  ONE CREWMAN  ·  ONE LIFE", 0.5, 0.175, 0.026, COL_SUBTITLE, Align::Center);
+    let mut y = 0.29;
+    for line in brief.lines() {
+        r.draw_text(&line, 0.5, y, 0.029, COL_ITEM, Align::Center);
+        y += 0.056;
+    }
+    r.draw_text_bold("M  field map          HOME  controls          ESC  pause", 0.5, 0.675, 0.027, COL_SELECT, Align::Center);
+    r.draw_text(&brief.attempt_line(), 0.5, 0.76, 0.024, COL_HINT, Align::Center);
+    r.draw_text("PRESS ANY KEY", 0.5, 0.875, 0.026, COL_HINT, Align::Center);
+}
+
+pub fn draw_run_card(r: &mut Renderer, report: &crate::canyon::RunReport, armed: bool) {
+    r.set_ui_bg(BG_BLACK, BG_BLACK);
+    let won = report.outcome == crate::canyon::RunOutcome::Completed;
+    r.draw_text_bold(report.headline(), 0.5, 0.08, 0.052, COL_TITLE, Align::Center);
+    r.draw_text_bold(&report.cause_line(), 0.5, 0.165, 0.034, if won { COL_SELECT } else { COL_LOSS }, Align::Center);
+    let mut y = 0.285;
+    for (label, value) in report.rows() {
+        if !label.is_empty() {
+            r.draw_text_bold(&label, 0.435, y + 0.004, 0.022, COL_SUBTITLE, Align::Right);
+        }
+        r.draw_text(&value, 0.465, y, 0.029, COL_ITEM, Align::Left);
+        y += 0.05;
+    }
+    if armed {
+        r.draw_text("ENTER  new attempt          ESC  title", 0.5, 0.905, 0.026, COL_HINT, Align::Center);
+    }
+}
+
 // ── In-game navigation: physical paper map + pocket compass (no waypoints) ───────────────────────
 
 const COL_COMPASS: [f32; 4] = [0.92, 0.94, 0.97, 0.85];
