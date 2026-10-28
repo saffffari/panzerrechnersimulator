@@ -22,6 +22,9 @@ Two AI Tigers under the player's radio command (`src/platoon.rs`, `src/radio_llm
 - Driving: the shared `apply_vehicle_avoidance` and the inverse-mass hull pair solver; the course's
   clear-cell test is a wall veto, not a path planner. A 1.6 s reverse-and-swing watchdog is a
   driver behaviour, not a physical recovery.
+- Engagement: in contact the wingmen are driven by the evolved Tiger policy (`weights_tiger.bin`).
+  It proposes drive, steer and a fire intent only; every physical gate (gun lay, travel lock,
+  reload, ammunition, line of sight, avoidance, hull contact) is unchanged, as for the AI Tiger.
 - Perception: enemies track, lay on and accrue detection against the nearest Tiger; the detection
   envelope (engine, hatches, silent watch) still comes from the player's hull state.
 - Radio: the language model produces words and one validated order per transmission; it has no

@@ -22,6 +22,7 @@ or the title menu entry **Platoon** (Canyon v2, three Tigers). Environment:
 | `KESSEL_RADIO_TIMEOUT_MS` | per-call wall limit, default 6000. A timeout falls back to the offline parser for that message. |
 | `KESSEL_RADIO_OFFLINE=1` | force the offline parser even with a key (deterministic proofs). |
 | `KESSEL_RADIO_CURL` | path to `curl` if it is not on `PATH`. |
+| `KESSEL_PLATOON_POLICY` | wingmen's engagement policy: unset = `assets/ai/weights_tiger.bin`, `off`, `doctrine`, or a weight-file path. |
 
 In play: **T** opens the typed radio line (display-resolution `ab_glyph` text, outside the PS1
 crush, the menus' register). Type, **Enter** sends, **Escape** cancels, **Backspace** edits. The
@@ -132,6 +133,55 @@ the player. Movement orders halt for a contact inside 500 m (the Tiger cannot fi
 `follow` halts within 60 m of its slot for a contact inside 900 m. There is no path planning along
 the street grid for the wingmen yet (open item): goals are snapped to clear cells, the drive to
 them is a straight line with avoidance.
+
+### Fighting: the trained Tiger policy
+
+In contact, a wingman is fought by the neuroevolution Tiger policy from the duel training
+(`assets/ai/weights_tiger.bin`, the `ai::Mlp` 14 -> 16 -> 3 network the AI-Tiger showreel and
+campaign runs use). It takes over when the wingman has a visible target and the standing order
+allows it: under `follow` for a contact inside 900 m while the wingman is within a 250 m leash
+of the leader, under `advance` and `flank` for a contact inside 500 m. `hold`, `cover_me` and
+`fall_back` never hand over: those orders are about where the tank stays or goes, and the
+commander's word wins. Outside contact, or past the leash, the order controller drives again,
+and the log marks each hand-over (`[platoon] Anton fighting under the trained policy ...` /
+`... back on the order controller (follow)`).
+
+The policy only proposes, exactly as for the AI Tiger elsewhere: its drive and steer go through
+the same avoidance, wall veto, stuck watchdog and hull contact; its fire output (`> 0`) is one
+more condition on the trigger, on top of gun lay, travel lock, reload, ammunition, weapons hold
+and the friendly-line check. The gun is laid by the sim (`Tank::ai_aim`) on the target the order
+controller chose, and the observation is built from that same target, so `engage contact #3`
+points the policy at #3 rather than the nearest T-34.
+
+Observation (`platoon::wingman_policy_obs`, the `Game::tiger_executor_obs` layout and scaling
+built from the wingman's own tank): target offset and range over 300 m, relative bearing sin/cos,
+own speed, reload, breech, hp, living-enemy fraction, turret error, the target's facing toward
+us, its speed, and the bias. The wingmen have no breech model, so slot 7 is their reload cycle.
+
+What the trained weights do (probe from `trained_weights_load_and_answer_the_probes_when_present`,
+own Tiger at the origin facing +Z, loaded, full health):
+
+| T-34 at | drive | steer | fire |
+|---|---|---|---|
+| ahead 280 m | +0.66 | +0.94 | +0.90 |
+| ahead 150 m | +0.53 | +0.82 | +0.91 |
+| ahead 60 m | +0.50 | +0.58 | +0.91 |
+| right 150 m | +0.91 | +0.32 | +0.91 |
+| left 150 m | -0.09 | -0.71 | +0.26 |
+| behind 200 m | +0.85 | -0.91 | -0.16 |
+
+It evolved a clockwise orbit: it keeps driving and keeps turning right even with the target dead
+ahead, and wants to fire almost always. Because the Tiger has no stabiliser (trigger
+travel-locked above 0.6 m/s), the wingman's driver makes a **short halt** when the policy wants to
+fire and the gun is loaded: drive and steer go to zero until the round is away or 6 s pass, then
+the policy moves the tank again. This is the crew's halt-to-fire, not a change to any gate.
+
+`KESSEL_PLATOON_POLICY`: unset uses `weights_tiger.bin`; `off` leaves the order controller alone;
+`doctrine` uses the hand-built seed network (`Mlp::tiger_doctrine_seed`); any other value is a
+path to a KSL1 artifact. A missing or mismatched file falls back to the doctrine seed and the log
+says so. Caveat: the policy was evolved on the open arena and duel maps, not the canyon, so its
+flanking moves can run into walls the training never had; the wall veto and watchdog stay on top
+of it.
 
 ## Prompt and context design
 
@@ -279,3 +329,7 @@ read dark.
   the run-loop branch lands.
 - Voice input and spoken replies (TTS) are out of scope; the line is typed.
 - The curl transport should become a proper HTTP client once the lock-file churn is acceptable.
+- The trained-policy engagement is built and unit-tested but not yet seen in a headless run (the
+  GPU was reserved for other work when it landed). The next proof run should compare
+  `KESSEL_PLATOON_POLICY=off` against the default on the same seed: shots, hits, kills, hull hits
+  taken, and `policy_s` per wingman are all in the trace and receipt.
