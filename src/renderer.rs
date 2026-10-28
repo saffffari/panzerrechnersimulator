@@ -5875,7 +5875,7 @@ impl Renderer {
         persist_physical_pipeline_cache(pipeline_cache.as_ref(), pipeline_cache_path.as_deref());
 
         let raymarch = crate::graphics::raymarch_backend_enabled()
-            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih, rt_scene));
+            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih, rt_scene, &cabin_medium_view));
         Self {
             // Standard stays at the playtested 0.7; [ ] still dials continuously in-game, while
             // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.

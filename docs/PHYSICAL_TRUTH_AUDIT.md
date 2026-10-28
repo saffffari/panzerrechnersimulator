@@ -386,6 +386,10 @@ are presented as ray tracing, GI or a combustion/solver result:
   albedo for soot and earth. Ground ejecta speeds follow M(>v) ~ v^(-1.2) between 0.15 and 1 of the
   apex-limited maximum (crater scaling, mu about 0.4), drawn apart from direction. Gate:
   `raymarch-showcase` he_impact stills; `explosion_volumes` and `weapon_particle_math` unit tests.
+- Cabin or outside, per surface (2026-10-28; `rm_gbuffer.wgsl` `gb_cabin_air`): a surface is the
+  cabin's when the point 3 cm off its visible side lies in the cabin air's columns (2 cm columns,
+  `cabin_medium.rs`); the exterior grey swatch on a cabin-facing surface is read as the ivory there
+  (a reclassification by exact swatch, not per-part source data).
 - Crew compartment paint, grime, lamps (2026-10-28; `tank.rs` `tiger_paint_finish`,
   `rm_gbuffer.wgsl` `cabin_grime` and `lamp_lens`, `surface_wear::CAMPAIGN_START`): ivory from a
   common RAL 1001 conversion, not a measured surviving interior; grime an authored mask (dust up,
