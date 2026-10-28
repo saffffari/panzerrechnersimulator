@@ -83,6 +83,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("res") { return run_resolution(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("ao") { return run_occlusion(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("wear") { return run_wear(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("clouds") { return run_clouds(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_wreck_sunset_near.png")).exists(),
         "preserving existing showcase; choose a new prefix");
@@ -614,6 +615,120 @@ fn run_wear(prefix: &str) -> anyhow::Result<()> {
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "disclosure": "Staged fixture (banished enemies, held fire). Clear noon, sky clock pinned. The fight is ten rounds fired into the open and a minute at full throttle through the game's update. Station and observer cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=clouds`: the cloud layer in the world. Broken cloud at noon over the field
+/// and thirty seconds later (the shadows move with the layer), a shadow's edge on the Tiger, shafts
+/// through a gap toward a low sun, and the low weather: a fog bank over the field and a T-34 at
+/// 800 m in it. `KESSEL_RM_SKIP=131072` renders the same without per-position cloud shadows.
+fn run_clouds(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_field_noon.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(None);
+    // Broken cloud with a little haze, set again after every update (the act's weather would
+    // otherwise restore its own).
+    let weather = |r: &mut crate::renderer::Renderer, cover: f32, haze: f32| {
+        r.overcast = cover; r.storm = 0.0; r.fog_density = haze; r.precipitation = 0.0;
+    };
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    step(&mut g, &mut r, 30, &idle);
+    weather(&mut r, 0.5, 0.0012);
+    let tiger = g.player.pos;
+    let f = g.player.forward();
+    let side = f.cross(Vec3::Y).normalize_or_zero();
+    let note = |r: &crate::renderer::Renderer, what: &str| format!("{what}; cloud cover {:.2}, haze {:.4}/m", r.overcast, r.fog_density);
+    rig.observe(&mut r, tiger - f * 70.0 + side * 40.0 + Vec3::Y * 45.0, tiger + f * 120.0 - side * 30.0, 60.0);
+    let text = note(&r, "broken cloud over the field at noon: cloud shadows on the snow");
+    rig.still(&mut r, "field_noon", &text)?;
+    for _ in 0..30 { step(&mut g, &mut r, 60, &idle); weather(&mut r, 0.5, 0.0012); }
+    rig.observe(&mut r, tiger - f * 70.0 + side * 40.0 + Vec3::Y * 45.0, tiger + f * 120.0 - side * 30.0, 60.0);
+    let text = note(&r, "the same view thirty seconds later: the shadows have moved with the layer");
+    rig.still(&mut r, "field_noon_30s", &text)?;
+    rig.observe(&mut r, tiger + side * 11.0 - f * 4.0 + Vec3::Y * 2.2, tiger + Vec3::Y * 1.3, 55.0);
+    let text = note(&r, "the Tiger at 11 m under broken cloud");
+    rig.still(&mut r, "hull_noon", &text)?;
+    // Shafts: a low sun behind a broken layer, haze to carry them.
+    rig.clock(&mut r, "1942-12-21T12:25:00Z")?;
+    step(&mut g, &mut r, 30, &idle);
+    weather(&mut r, 0.45, 0.006);
+    let sun = r.sun_dir;
+    let toward = Vec3::new(sun.x, 0.0, sun.z).normalize_or_zero();
+    // Just above the horizon toward the sun: the far haze lit and shadowed by the layer above it.
+    rig.observe(&mut r, tiger - toward * 25.0 + Vec3::Y * 4.0, tiger + toward * 400.0 + Vec3::Y * 30.0, 80.0);
+    let text = note(&r, "toward a low sun through a broken layer: shafts in the haze");
+    rig.still(&mut r, "shafts_low_sun", &text)?;
+    // The low weather: fog banks pooled in the low ground under an overcast morning.
+    rig.clock(&mut r, "1942-12-21T07:30:00Z")?;
+    let floor = tiger.y - 6.0;
+    let banks = [0.03, 0.55, 30.0, floor];
+    r.fog_bank = banks;
+    step(&mut g, &mut r, 30, &idle);
+    weather(&mut r, 0.8, 0.0015);
+    let bank_note = |r: &crate::renderer::Renderer, what: &str| format!(
+        "{what}; fog banks {:.3}/m over {:.0} % of the low ground, {:.0} m deep above y {:.1}; cloud cover {:.2}",
+        r.fog_bank[0], r.fog_bank[1] * 100.0, r.fog_bank[2], r.fog_bank[3], r.overcast);
+    rig.observe(&mut r, tiger - f * 40.0 + side * 25.0 + Vec3::Y * 30.0, tiger + f * 200.0, 65.0);
+    let text = bank_note(&r, "fog banks over the field on an overcast morning");
+    rig.still(&mut r, "fog_bank", &text)?;
+    // A T-34 broadside at 800 m on a bearing whose sight line clears the terrain, seen from the
+    // commander's height on the Tiger, with the banks and without.
+    // Beside the Tiger at its commander's height (inside the turret is the turret).
+    let eye = tiger + side * 4.0 + Vec3::Y * 2.9;
+    let heading = f.x.atan2(-f.z);
+    let clear = |g: &Game, at: Vec3| {
+        let target = Vec3::new(at.x, g.hf.height_at(at.x, at.z), at.z);
+        (1..400).all(|i| {
+            let t = i as f32 / 400.0;
+            let q = eye.lerp(target, t);
+            g.hf.height_at(q.x, q.z) < q.y - 0.5 * t.min(1.0 - t) * 2.0
+        })
+    };
+    let mut spot = None;
+    for k in 0..72 {
+        let offset = ((k + 1) / 2) as f32 * 5f32.to_radians() * if k % 2 == 0 { 1.0 } else { -1.0 };
+        let dir = Vec3::new((heading + offset).sin(), 0.0, -(heading + offset).cos());
+        if clear(&g, tiger + dir * 800.0) { spot = Some(tiger + dir * 800.0); break; }
+    }
+    let spot = spot.context("no bearing clears the terrain to 800 m")?;
+    let t34 = g.debug_first_t34().context("fixture needs a T-34")?;
+    g.debug_place_enemy(t34, spot.x, spot.z, 1.57);
+    g.debug_set_enemy_active(t34, true);
+    step(&mut g, &mut r, 20, &idle);
+    weather(&mut r, 0.8, 0.0015);
+    let t34_pos = g.enemies[t34].pos;
+    let range = (t34_pos - eye).length();
+    // Floor the banks at the T-34's ground so it stands in one where the field covers it.
+    r.fog_bank = [banks[0], banks[1], banks[2], t34_pos.y - 6.0];
+    rig.observe(&mut r, eye, t34_pos + Vec3::Y * 1.2, 12.0);
+    let text = bank_note(&r, &format!("a T-34 broadside at {range:.0} m through 12 degrees from beside the Tiger at its commander's height, in the fog banks"));
+    rig.still(&mut r, "t34_800m_banks", &text)?;
+    r.fog_bank = [0.0; 4];
+    let text = bank_note(&r, &format!("the same T-34 at {range:.0} m without fog banks"));
+    rig.still(&mut r, "t34_800m_clear", &text)?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.clouds.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "cloud_shadows_off": std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v & 131072 != 0),
+        "disclosure": "Staged fixture (banished enemies, held fire). Cloud cover and haze set by hand per scene; sky clock pinned. Observer cameras. No image grading."
     }))?)?;
     Ok(())
 }

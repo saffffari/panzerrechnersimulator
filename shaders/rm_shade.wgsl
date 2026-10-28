@@ -194,20 +194,28 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
     var transmittance = v.a;
     let far = fr.vol_range.y;
     if (distance_m > far) {
-        // Beyond the grid: the weather layer without geometric occlusion (named approximation).
+        // Beyond the grid: six steps through the world medium (the weather layer and its fog
+        // banks), each lit by the sky and by the key beam through the cloud layer above it; no
+        // geometric occlusion (named approximation).
         let origin = fr.cam_pos.xyz + ray * far;
         var length_m = distance_m - far;
         if (ray.y > 0.001) { length_m = min(length_m, max(fr.medium.w - origin.y, 0.0) / ray.y); }
         length_m = min(length_m, 6000.0);
-        let sigma = fr.medium.x * 0.86;
-        if (sigma > 0.0 && length_m > 0.0) {
-            let t2 = exp(-sigma * length_m);
+        if (length_m > 0.0 && (fr.medium.x > 0.0 || fr.fog.y > 0.0)) {
             let albedo = mix(0.70, 0.92, fr.medium.y);
             let g = mix(0.74, 0.62, fr.medium.y);
-            var source = rm_sky_isotropic();
-            if (fr.sun_radiance.w > 0.5) { source += fr.sun_radiance.rgb * rm_hg(dot(ray, fr.sun_dir.xyz), g); }
-            radiance += transmittance * albedo * source * (1.0 - t2);
-            transmittance *= t2;
+            let sky = rm_sky_isotropic();
+            let phase = select(0.0, rm_hg(dot(ray, fr.sun_dir.xyz), g), fr.sun_radiance.w > 0.5);
+            let dt = length_m / 6.0;
+            for (var i = 0; i < 6; i = i + 1) {
+                let p = origin + ray * ((f32(i) + 0.5) * dt);
+                let sigma = rm_world_density(p);
+                if (sigma <= 0.0) { continue; }
+                let t_step = exp(-sigma * dt);
+                let source = sky + fr.sun_radiance.rgb * phase * rm_cloud_shadow(p);
+                radiance += transmittance * albedo * source * (1.0 - t_step);
+                transmittance *= t_step;
+            }
         }
     }
     return Fog(radiance, transmittance);

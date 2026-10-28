@@ -2603,6 +2603,9 @@ pub struct Renderer {
     /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
     /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
     pub wear: [f32; 4],
+    /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
+    /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
+    pub fog_bank: [f32; 4],
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -5898,6 +5901,7 @@ impl Renderer {
             player_snow_load: 0.0,
             world_snow_load: 0.0,
             wear: [0.0; 4],
+            fog_bank: [0.0; 4],
             frame: 0,
             hdr_view,
             hdr_tex,

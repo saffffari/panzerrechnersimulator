@@ -7,7 +7,26 @@ struct Medium { sigma_s: vec3<f32>, sigma_t: f32, emission: vec3<f32>, g: f32, h
 
 fn rm_medium_zero() -> Medium { return Medium(vec3(0.0), 0.0, vec3(0.0), 0.6, 0.0); }
 
-// World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x.
+// Fog banks (2026-10-28): patches of dense low fog that pool in the low ground below
+// fr.fog.w + fr.fog.z and drift with the wind; fr.fog.y of the ground lies under one. Named
+// approximation: a two-scale footprint field times a height profile, not a boundary-layer
+// simulation; the banks hold their shape as they drift.
+fn rm_fog_bank_density(p: vec3<f32>) -> f32 {
+    if (fr.fog.y <= 0.0 || fr.fog.x <= 0.0) { return 0.0; }
+    let drift = p.xz - vec2(fr.wind.x, fr.wind.z) * fr.cam_pos.w;
+    let footprint = rm_noise(vec3(drift.x / 260.0, 0.0, drift.y / 260.0), 61u) * 0.7
+        + rm_noise(vec3(drift.x / 70.0, 1.7, drift.y / 70.0), 67u) * 0.3;
+    let inside = smoothstep(1.0 - fr.fog.y - 0.08, 1.0 - fr.fog.y + 0.08, footprint);
+    if (inside <= 0.0) { return 0.0; }
+    let h = p.y - fr.fog.w;
+    let top = fr.fog.z * (0.6 + 0.8 * footprint);
+    let profile = 1.0 - smoothstep(top * 0.5, top, h);
+    let wisp = 0.75 + 0.25 * rm_noise(vec3(drift.x / 18.0, h / 6.0, drift.y / 18.0), 71u);
+    return fr.fog.x * inside * profile * wisp;
+}
+
+// World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x,
+// and the fog banks within it.
 fn rm_world_density(p: vec3<f32>) -> f32 {
     let bottom = fr.medium.z;
     let top = fr.medium.w;
@@ -40,7 +59,7 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
             }
         }
     }
-    return fr.medium.x * above * gust + spindrift;
+    return fr.medium.x * above * gust + spindrift + rm_fog_bank_density(p);
 }
 fn rm_cabin_density(p: vec3<f32>) -> f32 {
     if (fr.cabin.w <= 0.0) { return 0.0; }

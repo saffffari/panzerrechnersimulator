@@ -76,6 +76,14 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch cloud shadows and fog banks (2026-10-28; `rm_cloud_shadow.wgsl`, `rm_medium.wgsl`
+  `rm_fog_bank_density`, the far march in `rm_shade.wgsl` `fog_to`): the key beam is the clear-sky
+  one and the cloud layer's transmittance toward the sun is applied per position from a 16 m map
+  over 4 km (the same cloud field the sky draws, crossed from the eye's altitude); fog banks are a
+  drifting footprint field below a floor altitude, an authored presentation of radiation fog, not a
+  boundary-layer solve; beyond 320 m the medium is marched in six steps without geometric
+  occlusion. The cloud does not shadow the skylight. Gate: `KESSEL_SHOWCASE_SET=clouds` with and
+  without `KESSEL_RM_SKIP=131072`.
 - Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
   `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
   mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min

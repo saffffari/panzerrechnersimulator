@@ -19,6 +19,9 @@ const VOL_DIVISOR: u32 = 4;
 const VOL_SLICES: u32 = 96;
 const VOL_NEAR_M: f32 = 0.25;
 const VOL_FAR_M: f32 = 320.0;
+/// Cloud shadow map: texels per side and the half extent it covers around the eye.
+const CLOUD_SHADOW_RES: u32 = 256;
+const CLOUD_SHADOW_HALF_M: f32 = 2048.0;
 /// Reflection history: accumulated reflected radiance and the reflecting surface's eye distance.
 const REFL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// World-space occlusion history: open share and the eye distance it was measured at.
@@ -121,6 +124,8 @@ struct FrameUniform {
     debug: [f32; 4],
     wear: [f32; 4],
     vehicle: [f32; 4],
+    cloud: [f32; 4],
+    fog: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
 }
@@ -223,6 +228,13 @@ pub(super) struct Backend {
     sky_cache_buf: wgpu::Buffer,
     sky_cache_bind: wgpu::BindGroup,
     sky_cache_pipe: wgpu::RenderPipeline,
+    /// Cloud transmittance toward the key body by ground position around the eye (the sky's own
+    /// cloud field); `cloud_area` is its centre x, z, half extent and the eye's y this frame.
+    cloud_shadow: Target,
+    cloud_shadow_buf: wgpu::Buffer,
+    cloud_shadow_bind: wgpu::BindGroup,
+    cloud_shadow_pipe: wgpu::RenderPipeline,
+    cloud_area: [f32; 4],
     /// Phase refreshed this frame; `sky_cache_phases` means every texel (a sky jump).
     sky_phase: u32,
     prev_sky_key: Option<(Vec3, f32, f32)>,
@@ -314,7 +326,8 @@ pub(super) struct Backend {
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
     /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow, 32768 ray queries
-    /// (world-space occlusion and the reflection fallback), 65536 surface wear.
+    /// (world-space occlusion and the reflection fallback), 65536 surface wear, 131072 cloud
+    /// shadows (the eye's cloud attenuation for the whole frame instead).
     debug_skip: u32,
 }
 
@@ -412,6 +425,7 @@ fn rm_source(name: &str) -> String {
         "rm_sparks.wgsl" => include_str!("../shaders/rm_sparks.wgsl"),
         "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
         "rm_rt.wgsl" => include_str!("../shaders/rm_rt.wgsl"),
+        "rm_cloud_shadow.wgsl" => include_str!("../shaders/rm_cloud_shadow.wgsl"),
         "rm_rt_stub.wgsl" => include_str!("../shaders/rm_rt_stub.wgsl"),
         "rm_sky_cache.wgsl" => include_str!("../shaders/rm_sky_cache.wgsl"),
         "sky.wgsl" => include_str!("../shaders/sky.wgsl"),
@@ -555,6 +569,7 @@ impl Backend {
         let g1 = target(device, "rm-g1-normal", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g2 = target(device, "rm-g2-emission", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], wgpu::TextureFormat::Rgba16Float, gusage);
+        let cloud_shadow = target(device, "rm-cloud-shadow", CLOUD_SHADOW_RES, CLOUD_SHADOW_RES, wgpu::TextureFormat::R16Float, gusage);
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let history = target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let ao = [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)];
@@ -632,6 +647,7 @@ impl Backend {
                 readonly_storage(6, vis_stages), readonly_storage(7, vis_stages), readonly_storage(8, vis_stages),
                 tex2d_entry(9, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
                 sampler_filtering(10, vis_stages),
+                tex2d_entry(11, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -832,6 +848,25 @@ impl Backend {
             multiview: None, cache: None,
         });
 
+        // The cloud shadow map: the same atmosphere module, a ground-position entry point.
+        let cloud_shadow_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rm-cloud-shadow"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+        });
+        let cloud_shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-cloud-shadow"), layout: &sky_cache_bgl, entries: &[entry(0, cloud_shadow_buf.as_entire_binding())],
+        });
+        let cloud_shadow_source = physical_atmosphere_transport_shader_source(&format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_cloud_shadow.wgsl")));
+        let cloud_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rm-cloud-shadow"), source: wgpu::ShaderSource::Wgsl(cloud_shadow_source.into()),
+        });
+        let cloud_shadow_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-cloud-shadow"), layout: Some(&sky_cache_pl),
+            vertex: wgpu::VertexState { module: &cloud_shadow_shader, entry_point: Some("vs_cloud"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &cloud_shadow_shader, entry_point: Some("fs_cloud"), targets: &[Some(color_target(wgpu::TextureFormat::R16Float))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
+
         // HDR one-pixel particles and ballistic emitters.
         let premultiplied = Some(wgpu::ColorTargetState { format: hdr_format(), blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL });
         let points_shader = rm_shader(device, "rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]);
@@ -864,6 +899,7 @@ impl Backend {
             iw, ih, vol, frame_buf, shadow_views_buf, parcels_buf, cell_start_buf, cell_items_buf,
             lights_buf, light_cell_start_buf, light_cell_items_buf, weapon_buf, ember_buf,
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
+            cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, sky_sampler,
             scratch, history, ao, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false,
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
@@ -908,6 +944,7 @@ impl Backend {
                 entry(8, self.light_cell_items_buf.as_entire_binding()),
                 entry(9, wgpu::BindingResource::TextureView(&self.sky_cache.view)),
                 entry(10, wgpu::BindingResource::Sampler(&self.sky_sampler)),
+                entry(11, wgpu::BindingResource::TextureView(&self.cloud_shadow.view)),
             ],
         });
         let volume = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1062,9 +1099,22 @@ impl Backend {
         let sun_dir = r.sun_dir.normalize_or_zero();
         let origin = eye.as_dvec3();
         let beam_on = sun_dir.y > -0.02 && atmosphere.solar_irradiance.max_element() > 0.0;
+        // Cloud shadows (`rm_cloud_shadow.wgsl`): the frame carries the clear-sky beam and the
+        // cloud layer's transmittance is applied per position; KESSEL_RM_SKIP 131072 keeps the
+        // eye's own cloud attenuation for the whole frame instead.
+        let cloud_shadows = self.debug_skip & 131072 == 0;
+        let beam_atmosphere = if cloud_shadows {
+            let mut clear = atmosphere;
+            clear.cloud.coverage = 0.0;
+            clear
+        } else { atmosphere };
         let sun_radiance = if beam_on {
-            atmosphere.solar_irradiance * physical_environment::solar_transmittance_at(&atmosphere, origin, sun_dir.as_dvec3(), quality.source_steps.max(4))
+            atmosphere.solar_irradiance * physical_environment::solar_transmittance_at(&beam_atmosphere, origin, sun_dir.as_dvec3(), quality.source_steps.max(4))
         } else { glam::DVec3::ZERO };
+        let texel = 2.0 * CLOUD_SHADOW_HALF_M / CLOUD_SHADOW_RES as f32;
+        self.cloud_area = [(eye.x / texel).round() * texel, (eye.z / texel).round() * texel, CLOUD_SHADOW_HALF_M,
+            if cloud_shadows { eye.y } else { f32::NAN }];
+        queue.write_buffer(&self.cloud_shadow_buf, 0, bytemuck::bytes_of(&self.cloud_area));
         // The secondary body (the Moon by day, the Sun's glow below the horizon handled by the
         // transport itself): its disc is drawn analytically from the irradiance through the air.
         let secondary_dir = atmosphere.secondary_direction.normalize_or_zero();
@@ -1187,6 +1237,8 @@ impl Backend {
             wear: if self.debug_skip & 65536 != 0 { [0.0; 4] } else { r.wear },
             // The player's crew compartment: 0.9 m above the turret frame's origin (its basket
             // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
+            cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
+            fog: r.fog_bank,
             vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
                 let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
                 [c.x, c.y, c.z, 3.0]
@@ -1917,6 +1969,21 @@ impl Backend {
             pass.set_bind_group(0, &r.camera_bind, &[]);
             pass.set_bind_group(1, &r.physical_environment_bind, &[]);
             pass.set_bind_group(2, &self.sky_cache_bind, &[]);
+            work.fullscreen_raster_passes += 1;
+            pass.draw(0..3, 0..1);
+        }
+        // 3b. Cloud shadows: the layer's transmittance toward the key body around the eye.
+        if self.cloud_area[3].is_finite() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-cloud-shadow"),
+                color_attachments: &[Some(attachment(&self.cloud_shadow.view, wgpu::LoadOp::Clear(wgpu::Color::WHITE)))],
+                depth_stencil_attachment: None,
+                timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-cloud-shadow")), occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.cloud_shadow_pipe);
+            pass.set_bind_group(0, &r.camera_bind, &[]);
+            pass.set_bind_group(1, &r.physical_environment_bind, &[]);
+            pass.set_bind_group(2, &self.cloud_shadow_bind, &[]);
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }

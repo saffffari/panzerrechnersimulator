@@ -76,8 +76,9 @@ fine-grain and analytic-spark passes do not run and are not prepared.
    with the gather (0.07 before).
    gradient). Lamps/fires/flashes: the clustered list of the
    pixel's cell, depth faces or contact march, extinction marched through the froxel grid toward
-   the source. Emission. Then the integrated medium composites over the pixel; beyond 320 m an
-   analytic homogeneous weather layer lit by sun and sky. **Heat haze**: the integrated heat
+   the source. Emission. Then the integrated medium composites over the pixel; beyond 320 m a
+   six-step march through the world medium and its fog banks, lit by the sky and by the sun
+   through the cloud shadow. **Heat haze**: the integrated heat
    along the ray refracts the view (a climbing noise displacement of the G-buffer lookup, up to
    six native pixels through a fireball) — a presentation of refraction by the froxel heat field.
 6. **Reflections** (`rm_reflect.wgsl`): screen-space ray-marched reflections on glossy and
@@ -467,6 +468,55 @@ inner wall merged into pale vertical bars at this resolution.
 value-noise lookups per G-buffer fragment of the player's meshes, and four neighbour normal and
 depth reads per shaded pixel of the vehicle.
 
+## Clouds and low fog in the world (2026-10-28)
+
+Question: "do we have dynamic volumetric clouds and fog? low enough to be perceived within the
+environment? that also cause shadows?" Before this, no: the cloud layer (900 to 2,200 m in winter,
+cover from the weather's overcast) lived only in the sky, and the key beam carried the cloud's
+attenuation along the eye's own sun ray as one factor for the whole frame, so a cloud darkened
+everything or nothing.
+
+**Cloud shadows.** A 256x256 map over 4 km around the eye (`rm_cloud_shadow.wgsl`, 16 m texels,
+snapped to its grid) holds the layer's transmittance toward the key body from the eye's altitude,
+twelve samples through the layer of the same field, extinction and motion the sky marches. The
+frame now carries the clear-sky beam and `rm_sun_visibility` multiplies in the map wherever the key
+light is asked for: surfaces, the froxel medium, glass, reflections, sparks and snow points. The
+sun's disc, which the sky cache's cloud alpha already attenuates, was attenuated twice before (the
+eye's beam times that alpha) and is now attenuated once. `KESSEL_RM_SKIP=131072` restores the old
+single factor for the A/B.
+
+With half cover and a 1.3 km thick layer, the December noon sun (18 degrees up) crosses about 4 km
+of layer, so most of the ground lies in a cloud's shadow and the lit patches are where gaps line
+up along that slant: on the field still the frame's mean falls from 137 to 105 and a lit patch
+crosses the hill. Thirty seconds later the patches have moved with the layer.
+
+**Fog banks.** `Renderer::fog_bank` (extinction inside a bank, coverage, depth, floor altitude) puts
+patches of dense low fog into the world medium (`rm_medium.wgsl` `rm_fog_bank_density`): a
+two-scale footprint field drifting with the wind, a height profile that pools them below the floor
+plus their depth, so hills stand out of them. They enter the froxel volume like any other world
+medium. Beyond the grid's 320 m the weather layer is no longer one homogeneous segment: six steps
+through the same medium, each lit by the sky and by the key beam through the cloud shadow above
+it, so a bank swallows what stands in it at any range and the far haze is no longer lit by a sun
+the clouds hide.
+
+**Captures** (`KESSEL_SHOWCASE_SET=clouds`): broken cloud over the field at noon and thirty seconds
+later, the Tiger at 11 m under it (`captures/rm_clouds2_0_*`, against `rm_clouds2_131072_*` with the
+old single factor); fog banks (0.03/m over 55 % of the low ground, 30 m deep) on an overcast
+morning (`rm_clouds3_fog_bank`); a T-34 broadside at 800 m in the banks and without them, from
+beside the Tiger at its commander's height (`rm_clouds4_t34_800m_banks`, `_clear`): without banks
+it reads through the haze, in them it is a ghost.
+
+**Not done, and why.** The froxel grid still ends at 320 m: there is no second cascade, the far
+segment is a six-step march without geometric occlusion. Shafts through cloud gaps do not show:
+the shadow edges are kilometres apart, outside the grid, and the far march is too coarse to draw
+them (`rm_clouds4_shafts_low_sun`); they belong with the light-shaft work. The act's weather does
+not drive the fog banks yet: they are a renderer field the showcase sets, and no mission director
+transition moves them. The cloud layer does not reach the sky-cover map or the ambient bands:
+skylight under a cloud is the frame's mean sky, not shadowed per position.
+
+**Cost.** The cloud map's pass read 0.035 ms per frame under outside GPU load (a fullscreen
+timestamp, which under-reports); the far march is six density samples per pixel beyond 320 m.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -504,7 +554,11 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   glass panes' own reflection march stays screen-space with the sky beyond.
 - Only two lights have depth faces per frame; the others are unshadowed except by the screen-
   space contact test and the medium.
-- The analytic weather layer beyond 320 m has no geometric occlusion.
+- Beyond 320 m the world medium is a six-step march without geometric occlusion.
+- Cloud shadows: a flat layer crossed from the eye's altitude in twelve samples, a 16 m map over
+  4 km around the eye (clamped beyond); the cloud does not shadow the skylight.
+- Fog banks: a drifting two-scale footprint field times a height profile below a floor altitude
+  the weather sets, not a boundary-layer simulation.
 - Fire parcels are merged grains, not the grains themselves; the froxel grid (4 native pixels) is
   the flame's spatial resolution; embers add the grain detail.
 - Spark and tracer glow in the medium is an aggregate per burst, not per sample.
