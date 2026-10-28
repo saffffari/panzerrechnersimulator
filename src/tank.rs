@@ -784,6 +784,16 @@ pub struct Tank {
     /// player Tiger's live field is `Game::armor_scars` (it is saved with the campaign); every other
     /// vehicle carries its own here, and a wreck keeps it.
     pub scars: crate::armor_damage::ArmorField,
+    /// The force-based drivetrain an AI vehicle drives through (2026-10-28; `vehicle_spec` row by
+    /// `kind` and rig, `powertrain::ai_driver` at the levers). The player's lives on `Game`.
+    pub powertrain: crate::powertrain::Powertrain,
+    /// The sprung hull on its road-wheel stations (`suspension`): AI vehicles integrate it in
+    /// `vehicle_ground::settle_ride`; the player Tiger in `solid_city::settle_player_tank`.
+    pub ride: crate::suspension::Ride,
+    pub ride_layout: Option<Box<crate::suspension::Layout>>,
+    /// Pitch of the rigid rest of the hull on its supports (the ground's slope under it, without
+    /// the suspension's own squat and dive): the grade the drivetrain climbs.
+    pub grade_pitch: f32,
     // A tank is NOT an HP sponge — armor either holds (bounce, no effect) or is holed (a real
     // consequence). For the PLAYER Tiger the discrete penetration damage-state (individual crewmen +
     // modules, the spall model, fire) lives on `Game` (player-only, richer than the enemies need);
@@ -811,8 +821,12 @@ impl Tank {
             kind: EnemyKind::T34,
             drops_into_pits: false,
             scars: crate::armor_damage::ArmorField::default(),
+            powertrain: crate::powertrain::Powertrain::default(),
+            ride: crate::suspension::Ride::default(),
+            ride_layout: None,
+            grade_pitch: 0.0,
         };
-        crate::vehicle_ground::settle(&mut tank, |x,z|hf.vehicle_height_at(x,z));
+        crate::vehicle_ground::settle_rigid(&mut tank, |x,z|hf.vehicle_height_at(x,z));
         tank
     }
 
@@ -933,12 +947,24 @@ impl Tank {
         let before = self.pos;
         match (traction.left, traction.right) {
             (true, true) => {
-                // Preserve the established healthy drivetrain and every enemy's handling.
-                let target = drive * TOP_SPEED;
-                let d = (target - self.speed).clamp(-ACCEL * dt, ACCEL * dt);
-                self.speed += d;
-                self.heading += steer * TURN_RATE * dt;
-                self.pos += self.forward() * self.speed * dt;
+                // Mass and momentum (2026-10-28): the vehicle's own engine, gears, brakes and
+                // weight through `powertrain`, the AI's speed command worked by a driver at the
+                // levers (`powertrain::ai_driver`). Steering keeps its sign and range.
+                let spec = crate::vehicle_spec::for_tank(self.kind, &self.parts);
+                if !std::ptr::eq(self.powertrain.spec, spec) {
+                    self.powertrain = crate::powertrain::Powertrain::for_ai(spec);
+                }
+                let (demand, pedal) = crate::powertrain::ai_driver(spec, drive, self.speed);
+                let controls = crate::powertrain::Controls {
+                    drive: demand, steer, engine_running: true, transmission_ok: true,
+                    left_track: true, right_track: true, running_gear_factor: 1.0,
+                    parking_brake: false, driver_brake: Some(pedal),
+                };
+                let motion = self.powertrain.advance(dt, self.speed, self.grade_pitch, controls);
+                self.speed = motion.speed;
+                let midpoint = self.heading + motion.yaw * 0.5;
+                self.pos += Vec3::new(midpoint.sin(), 0.0, midpoint.cos()) * motion.distance;
+                self.heading += motion.yaw;
             }
             (false, false) => self.speed = 0.0,
             (left, _) => {
@@ -965,7 +991,7 @@ impl Tank {
                 self.pos = anchor - Mat4::from_rotation_y(self.heading).transform_vector3(broken_side);
             }
         }
-        self.finish_update(before, traverse, elevate, dt, hf);
+        self.finish_update(before, traverse, elevate, dt, hf, true);
     }
 
     /// Player-only stateful gearbox/engine path. Every hull-attached visual and ballistic source
@@ -974,7 +1000,7 @@ impl Tank {
     pub(crate) fn update_player_powertrain(&mut self, state: &mut crate::powertrain::Powertrain,
         controls: crate::powertrain::Controls, traverse:f32, elevate:f32, dt:f32, hf:&Heightfield) {
         let before=self.pos;
-        let motion=state.advance(dt,self.speed,self.pitch,controls);
+        let motion=state.advance(dt,self.speed,self.grade_pitch,controls);
         self.speed=motion.speed;
         if controls.left_track != controls.right_track {
             let side=if controls.left_track {-1.0}else{1.0};
@@ -987,10 +1013,13 @@ impl Tank {
             self.pos+=Vec3::new(midpoint.sin(),0.0,midpoint.cos())*motion.distance;
             self.heading+=motion.yaw;
         }
-        self.finish_update(before,traverse,elevate,dt,hf);
+        self.finish_update(before,traverse,elevate,dt,hf,false);
     }
 
-    fn finish_update(&mut self, before:Vec3, traverse:f32, elevate:f32, dt:f32, hf:&Heightfield) {
+    /// `ride`: integrate this vehicle's sprung hull (AI); the player's hull pose is settled after
+    /// its contacts by `solid_city::settle_player_tank`, so its pass here is the rigid fit.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_update(&mut self, before:Vec3, traverse:f32, elevate:f32, dt:f32, hf:&Heightfield, ride:bool) {
         // An open cellar's excavation face is a vertical step: no tank climbs more than its rated
         // obstacle out of the pit, and only a tank that may fall in drives over its rim.
         // Its tracks bridge a trench narrower than its crossing span.
@@ -1009,7 +1038,11 @@ impl Tank {
         }
         self.pos.x = gated.x;
         self.pos.z = gated.y;
-        crate::vehicle_ground::settle(self, |x,z|hf.vehicle_height_at(x,z));
+        if ride {
+            crate::vehicle_ground::settle_ride(self, dt, |x,z|hf.vehicle_height_at(x,z));
+        } else {
+            crate::vehicle_ground::settle_rigid(self, |x,z|hf.vehicle_height_at(x,z));
+        }
 
         self.turret_yaw += traverse * TRAVERSE * dt;
         self.gun_pitch = (self.gun_pitch + elevate * ELEV_RATE * dt).clamp(GUN_MIN, GUN_MAX);
@@ -1319,16 +1352,72 @@ mod tests {
     }
 
     #[test]
-    fn track_traction_healthy_motion_keeps_existing_rates() {
+    fn ai_tanks_drive_with_their_own_mass_power_and_brakes() {
         let hf = flat();
-        let mut tank = Tank::new(0.0, 0.0, 0.4, &hf, TIGER_PARTS);
-        tank.speed = 2.0;
-        tank.update_with_track_traction(0.8, -0.3, 0.5, -0.25, 0.2, &hf, TrackTraction::INTACT);
-        approx(tank.speed, 3.2, 1e-6);
-        approx(tank.heading, 0.4 - 0.3 * TURN_RATE * 0.2, 1e-6);
-        assert!((tank.pos - tank.forward() * 3.2 * 0.2).length() < 1e-6);
-        approx(tank.turret_yaw, 0.5 * TRAVERSE * 0.2, 1e-6);
-        approx(tank.gun_pitch, -0.25 * ELEV_RATE * 0.2, 1e-6);
+        // Full drive from rest for 4 s: no vehicle jumps to speed, the light T-34 outruns the
+        // heavy KV-2 and the Tiger, and each stays within its documented road speed.
+        let run = |kind: EnemyKind, parts: Parts, seconds: f32| {
+            let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, parts);
+            tank.kind = kind;
+            for _ in 0..(seconds * 60.0) as usize {
+                tank.update(1.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+            }
+            tank
+        };
+        let t34 = run(EnemyKind::T34, T34_PARTS, 4.0);
+        let kv2 = run(EnemyKind::Kv2, KV2_PARTS, 4.0);
+        let tiger = run(EnemyKind::T34, TIGER_PARTS, 4.0);
+        assert!(t34.speed > kv2.speed && t34.speed > tiger.speed, "t34 {} kv2 {} tiger {}", t34.speed, kv2.speed, tiger.speed);
+        assert!(t34.speed < 10.0 && tiger.speed < 6.0, "no instant top speed: t34 {} tiger {}", t34.speed, tiger.speed);
+        assert!(std::ptr::eq(kv2.powertrain.spec, &crate::vehicle_spec::KV2));
+        assert!(std::ptr::eq(tiger.powertrain.spec, &crate::vehicle_spec::TIGER_I));
+        let long = run(EnemyKind::T34, T34_PARTS, 60.0);
+        assert!(long.speed > 12.0 && long.speed <= crate::vehicle_spec::T34_76.road_speed * 1.02, "{}", long.speed);
+        // Let go at speed: it stops over metres, like a heavy machine, not on the spot.
+        let mut stopping = long.clone();
+        let start = stopping.pos;
+        let mut seconds = 0.0;
+        while stopping.speed > 0.05 && seconds < 30.0 {
+            stopping.update(0.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+            seconds += 1.0 / 60.0;
+        }
+        let distance = (stopping.pos - start).length();
+        assert!(seconds > 1.5 && distance > 8.0, "stopped in {seconds} s over {distance} m");
+        // Steering keeps its sign; the gun keeps its rates.
+        let mut tank = Tank::new(0.0, 0.0, 0.4, &hf, T34_PARTS);
+        for _ in 0..60 {
+            tank.update(0.5, -0.5, 0.5, -0.25, 1.0 / 60.0, &hf);
+        }
+        assert!(tank.heading < 0.4, "{}", tank.heading);
+        approx(tank.turret_yaw, 0.5 * TRAVERSE * 1.0, 1e-4);
+        approx(tank.gun_pitch, (-0.25 * ELEV_RATE * 1.0).max(GUN_MIN), 1e-4);
+    }
+
+    #[test]
+    fn ai_hull_rides_its_springs_over_a_bump_instead_of_snapping() {
+        // A 0.2 m ridge across the road: the rigid fit lifts the hull by the bump's whole height
+        // the frame a contact reaches it; the sprung hull rises less and slower, then settles.
+        let mut hf = Heightfield { res: 401, spacing: 0.1, heights: vec![0.0; 401 * 401], min_h: 0.0, max_h: 0.2,
+            openings: Default::default(), detail: None };
+        for z in 0..401 {
+            for x in 0..401 {
+                let wz = z as f32 * 0.1 - 20.0;
+                if (2.0..2.4).contains(&wz) { hf.heights[z * 401 + x] = 0.2; }
+            }
+        }
+        let origin = hf.height_at(0.0, -10.0);
+        let mut tank = Tank::new(0.0, -10.0, 0.0, &hf, T34_PARTS);
+        let mut peak_rate = 0.0_f32;
+        let mut last_y = tank.pos.y;
+        for _ in 0..(8.0 * 60.0) as usize {
+            tank.update(0.25, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+            peak_rate = peak_rate.max((tank.pos.y - last_y).abs() * 60.0);
+            last_y = tank.pos.y;
+        }
+        assert!(tank.pos.z > 4.0, "drove over it: {}", tank.pos.z);
+        assert!(tank.ride.active);
+        assert!(peak_rate < 1.0, "hull vertical speed {peak_rate} m/s");
+        assert!((tank.pos.y - origin).abs() < 0.05, "settled past it: {}", tank.pos.y);
     }
 
     #[test]
@@ -1387,7 +1476,9 @@ mod tests {
         approx(tank.heading, 0.4, 1e-6);
         assert!(tank.turret_yaw > 0.0 && tank.gun_pitch > 0.0);
         // Repair restores the actual drive path, without changing gun or engine state here.
-        tank.update_with_track_traction(1.0, 0.0, 0.0, 0.0, 0.2, &hf, TrackTraction::INTACT);
+        for _ in 0..30 {
+            tank.update_with_track_traction(1.0, 0.0, 0.0, 0.0, 0.1, &hf, TrackTraction::INTACT);
+        }
         assert!(tank.speed > 1.0 && tank.pos.length() > 0.2);
     }
 

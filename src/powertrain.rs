@@ -1,16 +1,16 @@
-//! Player Tiger longitudinal drivetrain. Gear ratios use the documented road speeds at 3000 rpm;
-//! mass/power/losses share tank_support's constants. The torque curve, clutch/shift durations,
-//! tireless-track adhesion and yaw inertia are explicit engineering estimates, not measurements.
-//! This state drives both chassis motion and the engine mixer. AI retains its existing controller.
+//! Tracked-vehicle longitudinal drivetrain, for the player Tiger and (since 2026-10-28) every AI
+//! tank. Gear ratios use each vehicle's road speeds at rated revolutions and its mass and power
+//! (`vehicle_spec`); the Tiger's row is the documented table this model was built on. The torque
+//! curve, clutch/shift durations, tireless-track adhesion and yaw inertia are explicit engineering
+//! estimates, not measurements; their engine speeds are stated for the Tiger's 3000 rpm and scale
+//! with each engine's rated speed. This state drives both chassis motion and the engine mixer.
 
-use crate::tank_support::{DRIVE_EFFICIENCY, ROLLING_RESISTANCE, SPEED_DRAG_N_S2_PER_M2, TIGER_ENGINE_W, TIGER_MASS_KG, TIGER_TRACK_X};
+use crate::tank_support::{DRIVE_EFFICIENCY, ROLLING_RESISTANCE, SPEED_DRAG_N_S2_PER_M2};
+use crate::vehicle_spec::{VehicleSpec, TIGER_I};
 
 pub const IDLE_RPM: f32 = 800.0;
 pub const RATED_RPM: f32 = 3000.0;
 const G: f32 = 9.81;
-const FORWARD_KMH: [f32; 8] = [2.8,4.2,6.1,9.1,14.0,20.8,30.1,45.0];
-// Only the 10–12 km/h reverse maximum is supported by the project spec; intermediate bands [E].
-const REVERSE_KMH: [f32; 4] = [2.8,4.4,7.0,11.0];
 const SHIFT_SECONDS: f32 = 0.24;
 const SHIFT_COOLDOWN_SECONDS: f32 = 0.6;
 const STEP_SECONDS: f32 = 1.0 / 120.0;
@@ -18,7 +18,8 @@ const STEP_SECONDS: f32 = 1.0 / 120.0;
 /// downhill pull the player's Tiger must overcome while climbing under power. At 1.0 the model
 /// is the unmodified historical estimate, which leaves long canyon climbs at a walking pace with
 /// nothing to do. Only a powered climb is eased; coasting, braking, rolling back and descending
-/// feel the full grade. Recorded in docs/PHYSICAL_TRUTH_AUDIT.md.
+/// feel the full grade. Recorded in docs/PHYSICAL_TRUTH_AUDIT.md. AI vehicles climb at 1.0
+/// (`Powertrain::for_ai`).
 pub const CLIMB_GRADE_SHARE: f32 = 0.5;
 /// Braking force as a share of the weight on the tracks: full application, and the driver's
 /// lighter foot when the tank is merely let roll to a stop. Below the hold speed he is fully on
@@ -28,7 +29,8 @@ const IDLE_BRAKE_ROLLING: f32 = 0.18;
 const IDLE_BRAKE_HOLD_MPS: f32 = 0.6;
 const IDLE_BRAKE_EASE_MPS: f32 = 2.5;
 /// Wheel rpm below which the automatic box drops a gear; an upshift must be predicted to recover
-/// above `UPSHIFT_RECOVERED_RPM` by the time the next selection is allowed.
+/// above `UPSHIFT_RECOVERED_RPM` by the time the next selection is allowed. (At the Tiger's 3000
+/// rated rpm; `Powertrain::rpm_of` scales them to other engines.)
 const DOWNSHIFT_RPM: f32 = 1400.0;
 const UPSHIFT_RECOVERED_RPM: f32 = 1500.0;
 /// A short shift at `UPSHIFT_RPM` is taken only when the next gear keeps this acceleration reserve
@@ -42,7 +44,7 @@ const CLUTCH_SLIP_RPM: f32 = 700.0;
 /// (2880 rpm: torque factor 1.007 at 0.96 of rated speed). `tank_support::ROLLING_RESISTANCE`
 /// is derived from it, so the level power limit in 8th gear is that speed.
 pub const TOP_SPEED_POWER_FRACTION: f32 = {
-    let rpm = RATED_RPM * crate::tank::TOP_SPEED / (FORWARD_KMH[7] / 3.6);
+    let rpm = RATED_RPM * crate::tank::TOP_SPEED / (45.0 / 3.6);
     (1.07 - 0.07 * (rpm - 1800.0) / 1200.0) * rpm / RATED_RPM
 };
 
@@ -56,6 +58,9 @@ pub struct Controls {
     pub right_track: bool,
     pub running_gear_factor: f32,
     pub parking_brake: bool,
+    /// An AI driver's brake pedal (0-1, share of `BRAKE_GRIP`). `None`: the player's controls,
+    /// where an opposing drive brakes and a released drive is the estimated idle foot.
+    pub driver_brake: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -67,6 +72,9 @@ pub struct BrokenTrackDrive { pub belt_speed_mps: f32, pub load: f32 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Powertrain {
+    pub spec: &'static VehicleSpec,
+    /// Share of the grade a powered climb feels (`CLIMB_GRADE_SHARE` for the player, 1 for AI).
+    pub climb_grade_share: f32,
     pub automatic: bool,
     pub gear: i8,
     pub rpm: f32,
@@ -85,34 +93,49 @@ pub struct Powertrain {
 
 impl Default for Powertrain {
     fn default() -> Self {
-        Self { automatic:true,gear:1,rpm:IDLE_RPM,throttle:0.0,load:0.0,shift_remaining:0.0,
+        Self { spec:&TIGER_I,climb_grade_share:CLIMB_GRADE_SHARE,
+            automatic:true,gear:1,rpm:IDLE_RPM,throttle:0.0,load:0.0,shift_remaining:0.0,
             drive_force_n:0.0,resistance_force_n:0.0,shift_cooldown:0.0,yaw_rate:0.0,
             observed_speed:0.0,single_track:false,broken_track_drive:[BrokenTrackDrive::default();2] }
     }
 }
 
-fn gear_speed(gear: i8) -> f32 {
-    if gear > 0 { FORWARD_KMH[(gear.clamp(1,8)-1) as usize]/3.6 }
-    else if gear < 0 { REVERSE_KMH[((-gear).clamp(1,4)-1) as usize]/3.6 }
+pub(crate) fn gear_speed(spec: &VehicleSpec, gear: i8) -> f32 {
+    let (f,r)=(spec.forward_kmh,spec.reverse_kmh);
+    if gear > 0 { f[(gear as usize).clamp(1,f.len())-1]/3.6 }
+    else if gear < 0 { r[((-gear) as usize).clamp(1,r.len())-1]/3.6 }
     else { f32::INFINITY }
 }
 
-fn max_torque(rpm: f32) -> f32 {
-    let rated = TIGER_ENGINE_W / (RATED_RPM * std::f32::consts::TAU / 60.0);
-    let rpm = rpm.clamp(IDLE_RPM,RATED_RPM*1.2);
-    let curve = if rpm < 1800.0 { 0.65 + 0.42*(rpm-IDLE_RPM)/1000.0 }
-        else { 1.07 - 0.07*((rpm-1800.0)/1200.0).clamp(0.0,1.0) };
-    (rated*curve).min(TIGER_ENGINE_W/(rpm*std::f32::consts::TAU/60.0))
+fn max_torque(spec: &VehicleSpec, rpm: f32) -> f32 {
+    let rated = spec.engine_w / (spec.rated_rpm * std::f32::consts::TAU / 60.0);
+    let rpm = rpm.clamp(spec.idle_rpm,spec.rated_rpm*1.2);
+    // The Tiger-calibrated curve, in engine speed as a share of rated speed.
+    let x = rpm * RATED_RPM / spec.rated_rpm;
+    let curve = if x < 1800.0 { 0.65 + 0.42*(x-IDLE_RPM)/1000.0 }
+        else { 1.07 - 0.07*((x-1800.0)/1200.0).clamp(0.0,1.0) };
+    (rated*curve).min(spec.engine_w/(rpm*std::f32::consts::TAU/60.0))
 }
 
-fn wheel_force(gear: i8, rpm: f32) -> f32 {
-    max_torque(rpm) * (RATED_RPM * std::f32::consts::TAU / 60.0)
-        * DRIVE_EFFICIENCY / gear_speed(gear)
+pub(crate) fn wheel_force(spec: &VehicleSpec, gear: i8, rpm: f32) -> f32 {
+    max_torque(spec, rpm) * (spec.rated_rpm * std::f32::consts::TAU / 60.0)
+        * DRIVE_EFFICIENCY / gear_speed(spec, gear)
 }
 
 impl Powertrain {
+    /// An AI vehicle's drivetrain: its own row, the full grade.
+    pub fn for_ai(spec: &'static VehicleSpec) -> Self {
+        Self { spec, climb_grade_share:1.0, rpm:spec.idle_rpm, ..Self::default() }
+    }
+
+    /// An engine speed stated for the Tiger's 3000 rated rpm, on this engine.
+    fn rpm_of(&self, tiger_rpm: f32) -> f32 { tiger_rpm * self.spec.rated_rpm / RATED_RPM }
+    fn mass(&self) -> f32 { self.spec.mass_kg }
+    fn top_gear(&self) -> i8 { self.spec.forward_kmh.len() as i8 }
+    fn top_reverse(&self) -> i8 { self.spec.reverse_kmh.len() as i8 }
+
     fn select(&mut self, gear: i8) {
-        let gear=gear.clamp(-4,8);
+        let gear=gear.clamp(-self.top_reverse(),self.top_gear());
         if self.gear != gear {
             self.gear=gear;
             self.shift_remaining=SHIFT_SECONDS;
@@ -123,11 +146,11 @@ impl Powertrain {
     /// Sequential manual selection; reject a moving reversal or an engine-overspeed downshift.
     pub fn shift_manual(&mut self, delta: i8) -> bool {
         if delta==0 {return false;}
-        let requested=(self.gear+delta.signum()).clamp(-4,8);
+        let requested=(self.gear+delta.signum()).clamp(-self.top_reverse(),self.top_gear());
         if requested==self.gear {return false;}
         let belt_speed=self.observed_speed.abs()*if self.single_track {2.0}else{1.0};
         if requested!=0 && ((self.observed_speed.abs()>0.35 && requested.signum() as f32!=self.observed_speed.signum())
-            || belt_speed/gear_speed(requested)*RATED_RPM>3300.0) {return false;}
+            || belt_speed/gear_speed(self.spec,requested)*self.spec.rated_rpm>self.rpm_of(3300.0)) {return false;}
         self.automatic=false;
         self.select(requested);
         true
@@ -135,7 +158,7 @@ impl Powertrain {
 
     pub fn select_automatic(&mut self) { self.automatic=true; }
 
-    pub fn rpm_normalized(&self) -> f32 { ((self.rpm-IDLE_RPM)/(RATED_RPM-IDLE_RPM)).clamp(0.0,1.0) }
+    pub fn rpm_normalized(&self) -> f32 { ((self.rpm-self.spec.idle_rpm)/(self.spec.rated_rpm-self.spec.idle_rpm)).clamp(0.0,1.0) }
 
     fn automatic_selection(&mut self, demand: f32, speed: f32, pitch: f32, traction: f32) {
         if !self.automatic || self.shift_cooldown>0.0 {return;}
@@ -144,15 +167,18 @@ impl Powertrain {
             return;
         }
         if self.gear==0 {return;}
+        let spec=self.spec;
+        let rated=spec.rated_rpm;
+        let mass=self.mass();
         let direction=self.gear.signum();
         let magnitude=self.gear.abs();
         let belt_speed=speed.abs()*if self.single_track {2.0}else{1.0};
-        let rpm=belt_speed/gear_speed(self.gear)*RATED_RPM;
+        let rpm=belt_speed/gear_speed(spec,self.gear)*rated;
         let climb=direction as f32*pitch.sin();
-        let climb=if climb>0.0 && demand.abs()>0.1 {climb*CLIMB_GRADE_SHARE}else{climb};
-        let resistance=TIGER_MASS_KG*G*(climb+ROLLING_RESISTANCE*pitch.cos()).max(0.0);
-        let maximum=if direction>0 {8}else{4};
-        if demand.abs()>0.1 && rpm>UPSHIFT_RPM && magnitude<maximum {
+        let climb=if climb>0.0 && demand.abs()>0.1 {climb*self.climb_grade_share}else{climb};
+        let resistance=mass*G*(climb+ROLLING_RESISTANCE*pitch.cos()).max(0.0);
+        let maximum=if direction>0 {self.top_gear()}else{self.top_reverse()};
+        if demand.abs()>0.1 && rpm>self.rpm_of(UPSHIFT_RPM) && magnitude<maximum {
             let next=direction*(magnitude+1);
             // Do not upshift into a bog after the clutch-open interval loses climbing momentum.
             // The test is the wheel rpm the next gear will have recovered to when the box may
@@ -162,28 +188,28 @@ impl Powertrain {
             // 1500 rpm at clutch-in held a Tiger starting on any grade over about 3 degrees in
             // first gear for good, with several times the needed force available in second.
             let belt_scale=if self.single_track {2.0}else{1.0};
-            let coast_loss=resistance/TIGER_MASS_KG*SHIFT_SECONDS*belt_scale;
+            let coast_loss=resistance/mass*SHIFT_SECONDS*belt_scale;
             let after=(belt_speed-coast_loss).max(0.0);
-            let next_rpm=after/gear_speed(next)*RATED_RPM;
-            let engaged_rpm=next_rpm.max(IDLE_RPM+CLUTCH_SLIP_RPM*demand.abs());
-            let available=wheel_force(next,engaged_rpm)*traction*demand.abs();
-            let effective_mass=TIGER_MASS_KG*if self.single_track {3.4}else{1.0};
+            let next_rpm=after/gear_speed(spec,next)*rated;
+            let engaged_rpm=next_rpm.max(spec.idle_rpm+self.rpm_of(CLUTCH_SLIP_RPM)*demand.abs());
+            let available=wheel_force(spec,next,engaged_rpm)*traction*demand.abs();
+            let effective_mass=mass*if self.single_track {3.4}else{1.0};
             let recovered=after+(available-resistance)/effective_mass*belt_scale
                 *(SHIFT_COOLDOWN_SECONDS-SHIFT_SECONDS);
-            let recovered_rpm=recovered/gear_speed(next)*RATED_RPM;
+            let recovered_rpm=recovered/gear_speed(spec,next)*rated;
             // The next gear must also clear the downshift's own bogging margin (1.05), or the
             // box hunts between the two; and a gear that would leave almost no acceleration
             // reserve is taken only once the present one is wound out.
-            let holds=available>(resistance*1.02+TIGER_MASS_KG*0.015).max(resistance*1.05);
-            let reserve=available-resistance>TIGER_MASS_KG*SHORT_SHIFT_RESERVE_MPS2;
-            if recovered_rpm>=UPSHIFT_RECOVERED_RPM && holds && (reserve || rpm>=WOUND_OUT_RPM) {
+            let holds=available>(resistance*1.02+mass*0.015).max(resistance*1.05);
+            let reserve=available-resistance>mass*SHORT_SHIFT_RESERVE_MPS2;
+            if recovered_rpm>=self.rpm_of(UPSHIFT_RECOVERED_RPM) && holds && (reserve || rpm>=self.rpm_of(WOUND_OUT_RPM)) {
                 self.select(next);
             }
         } else if magnitude>1 {
             let previous=direction*(magnitude-1);
-            let previous_rpm=belt_speed/gear_speed(previous)*RATED_RPM;
-            let bogging=demand.abs()>0.4 && rpm<2450.0 && wheel_force(self.gear,rpm)*traction<resistance*1.05;
-            if (rpm<DOWNSHIFT_RPM || bogging) && previous_rpm<2850.0 {self.select(previous);}
+            let previous_rpm=belt_speed/gear_speed(spec,previous)*rated;
+            let bogging=demand.abs()>0.4 && rpm<self.rpm_of(2450.0) && wheel_force(spec,self.gear,rpm)*traction<resistance*1.05;
+            if (rpm<self.rpm_of(DOWNSHIFT_RPM) || bogging) && previous_rpm<self.rpm_of(2850.0) {self.select(previous);}
         }
     }
 
@@ -192,6 +218,10 @@ impl Powertrain {
     pub fn advance(&mut self, dt:f32, speed:f32, pitch:f32, controls:Controls) -> Motion {
         self.broken_track_drive=[BrokenTrackDrive::default();2];
         if !dt.is_finite() || dt<=0.0 || !speed.is_finite() || !pitch.is_finite() {return Motion {speed,..Motion::default()};}
+        let spec=self.spec;
+        let rated=spec.rated_rpm;
+        let mass=self.mass();
+        let half_track=spec.steer_half_gauge_m;
         let steps=(dt/STEP_SECONDS).ceil().clamp(1.0,1200.0) as usize;
         let h=dt/steps as f32;
         let one=controls.left_track != controls.right_track;
@@ -204,7 +234,7 @@ impl Powertrain {
         let steer=if controls.steer.is_finite(){controls.steer.clamp(-1.0,1.0)}else{0.0};
         let demand=if drivetrain_ready {(raw_drive+if one {side*steer}else{0.0}).clamp(-1.0,1.0)}else{0.0};
         let traction=controls.running_gear_factor.clamp(0.0,1.0);
-        let mut v=if !any {0.0}else if one {speed.clamp(-TIGER_TRACK_X*0.35,TIGER_TRACK_X*0.35)}else{speed};
+        let mut v=if !any {0.0}else if one {speed.clamp(-half_track*0.35,half_track*0.35)}else{speed};
         let mut motion=Motion::default();
         for _ in 0..steps {
             self.shift_cooldown=(self.shift_cooldown-h).max(0.0);
@@ -215,58 +245,64 @@ impl Powertrain {
             self.throttle=if controls.engine_running && !opposing {demand.abs()}else{0.0};
             let coupled=drivetrain_ready && self.gear!=0 && self.shift_remaining<=0.0;
             let belt_speed=v.abs()*if one {2.0}else{1.0};
-            let wheel_rpm=belt_speed/gear_speed(self.gear)*RATED_RPM;
+            let wheel_rpm=belt_speed/gear_speed(spec,self.gear)*rated;
             let steering=if capable && !one {steer.abs()}else{0.0};
             let rpm_target=if !controls.engine_running {0.0}
-                else if coupled && any {wheel_rpm.max(IDLE_RPM+CLUTCH_SLIP_RPM*self.throttle+850.0*steering)}
-                else {IDLE_RPM+2200.0*self.throttle+850.0*steering};
+                else if coupled && any {wheel_rpm.max(spec.idle_rpm+self.rpm_of(CLUTCH_SLIP_RPM)*self.throttle+self.rpm_of(850.0)*steering)}
+                else {spec.idle_rpm+self.rpm_of(2200.0)*self.throttle+self.rpm_of(850.0)*steering};
             let response=1.0-(-h/if coupled {0.09}else{0.24}).exp();
-            self.rpm+=(rpm_target.min(3600.0)-self.rpm)*response;
-            let governor=((3150.0-wheel_rpm)/180.0).clamp(0.0,1.0);
+            self.rpm+=(rpm_target.min(self.rpm_of(3600.0))-self.rpm)*response;
+            let governor=((self.rpm_of(3150.0)-wheel_rpm)/self.rpm_of(180.0)).clamp(0.0,1.0);
             let mut force=if any && coupled && selected && !opposing {
-                wheel_force(self.gear,self.rpm)*self.throttle*governor*traction*self.gear.signum() as f32
+                wheel_force(spec,self.gear,self.rpm)*self.throttle*governor*traction*self.gear.signum() as f32
             }else{0.0};
             // Steering consumes power from the same engine. The resistance coefficient and
             // effective rotational mass are estimates; they do not change the geometric pivot.
-            let yaw_target=if capable && !one {steer*0.7*(self.rpm/1500.0).clamp(0.0,1.0)*traction}else{0.0};
+            let yaw_target=if capable && !one {steer*spec.max_yaw_rate*(self.rpm/self.rpm_of(1500.0)).clamp(0.0,1.0)*traction}else{0.0};
             self.yaw_rate+=(yaw_target-self.yaw_rate).clamp(-0.85*h,0.85*h);
-            let steering_power=TIGER_MASS_KG*G*0.10*TIGER_TRACK_X*self.yaw_rate.abs();
-            let engine_power=max_torque(self.rpm)*self.rpm.max(IDLE_RPM)*std::f32::consts::TAU/60.0;
+            let steering_power=mass*G*0.10*half_track*self.yaw_rate.abs();
+            let engine_power=max_torque(spec,self.rpm)*self.rpm.max(spec.idle_rpm)*std::f32::consts::TAU/60.0;
             let steering_share=(steering_power/(engine_power*DRIVE_EFFICIENCY).max(1.0)).clamp(0.0,0.8);
             force*=1.0-steering_share;
-            let normal=TIGER_MASS_KG*G*pitch.cos().max(0.0);
+            let normal=mass*G*pitch.cos().max(0.0);
             force=force.clamp(-0.8*normal*traction,0.8*normal*traction);
-            let compression=if coupled && self.throttle<0.02 && wheel_rpm>IDLE_RPM {
-                wheel_force(self.gear,self.rpm)*0.10
+            let compression=if coupled && self.throttle<0.02 && wheel_rpm>spec.idle_rpm {
+                wheel_force(spec,self.gear,self.rpm)*0.10
             }else{0.0};
             // See CLIMB_GRADE_SHARE: eased only while the tracks are driving up the slope.
             // Keyed on the selected direction, not the instantaneous force, so the open clutch of
             // a gear change does not hand the full grade back and make the box hunt.
             let powered_climb=self.throttle>0.02 && controls.engine_running && (self.gear as f32)*pitch.sin()>0.0;
-            let grade=TIGER_MASS_KG*G*pitch.sin()*if powered_climb {CLIMB_GRADE_SHARE}else{1.0};
+            let grade=mass*G*pitch.sin()*if powered_climb {self.climb_grade_share}else{1.0};
             let rolling=normal*ROLLING_RESISTANCE+SPEED_DRAG_N_S2_PER_M2*v*v;
             // The driver's foot. With no drive asked for he brakes: firmly enough at a crawl to
             // hold the tank on a slope, more gently at speed so it comes to rest like 57 tonnes
             // and not like a dropped anchor. Without this a stopped Tiger rolled away on any
             // slope past the rolling resistance (about 2 degrees), and with one track off it
-            // turned as it rolled.
-            let idle_brake=if demand.abs()<0.02 {
-                let hold=1.0-((v.abs()-IDLE_BRAKE_HOLD_MPS)/(IDLE_BRAKE_EASE_MPS-IDLE_BRAKE_HOLD_MPS)).clamp(0.0,1.0);
-                normal*(IDLE_BRAKE_ROLLING+(BRAKE_GRIP-IDLE_BRAKE_ROLLING)*hold)
-            }else{0.0};
+            // turned as it rolled. An AI driver works his own pedal, with the same hold at a crawl.
+            let hold=1.0-((v.abs()-IDLE_BRAKE_HOLD_MPS)/(IDLE_BRAKE_EASE_MPS-IDLE_BRAKE_HOLD_MPS)).clamp(0.0,1.0);
+            let idle_brake=match controls.driver_brake {
+                None if demand.abs()<0.02 => normal*(IDLE_BRAKE_ROLLING+(BRAKE_GRIP-IDLE_BRAKE_ROLLING)*hold),
+                None => 0.0,
+                Some(pedal) => {
+                    let pedal=if pedal.is_finite() {pedal.clamp(0.0,1.0)} else {0.0};
+                    let held=if demand.abs()<0.02 {BRAKE_GRIP*hold} else {0.0};
+                    normal*(BRAKE_GRIP*pedal).max(held)
+                }
+            };
             let braking=if opposing || controls.parking_brake {normal*BRAKE_GRIP}else{idle_brake};
             let motive=force-grade;
             let direction=if v.abs()>1e-5 {v.signum()}else{motive.signum()};
             let resistance=rolling+compression+braking;
             let net=if v.abs()<1e-5 && motive.abs()<=resistance {0.0}else{motive-direction*resistance};
-            let effective_mass=TIGER_MASS_KG*if one {3.4}else{1.0};
+            let effective_mass=mass*if one {3.4}else{1.0};
             let mut next=v+net/effective_mass*h;
             if v*next<0.0 && motive.abs()<=resistance {next=0.0;}
             if !any || controls.parking_brake && v.abs()<0.02 {next=0.0;}
             let distance=(v+next)*0.5*h;
             motion.distance+=distance;
             motion.yaw+=if !any {0.0}
-                else if one {side*distance/TIGER_TRACK_X}
+                else if one {side*distance/half_track}
                 else if controls.parking_brake {0.0}else{self.yaw_rate*h};
             self.drive_force_n=force;
             self.resistance_force_n=grade+direction*resistance;
@@ -280,8 +316,8 @@ impl Powertrain {
             if coupled && selected && !opposing && !controls.parking_brake && self.throttle>0.02
                 && (force.abs()>1.0 || !any) {
                 let attempt=BrokenTrackDrive {
-                    belt_speed_mps:gear_speed(self.gear)*self.rpm/RATED_RPM*self.gear.signum() as f32,
-                    load:if any {(force.abs()/wheel_force(self.gear,self.rpm).max(1.0)).clamp(0.0,1.0)}
+                    belt_speed_mps:gear_speed(spec,self.gear)*self.rpm/rated*self.gear.signum() as f32,
+                    load:if any {(force.abs()/wheel_force(spec,self.gear,self.rpm).max(1.0)).clamp(0.0,1.0)}
                         else {0.02*self.throttle},
                 };
                 for (i,intact) in [controls.left_track,controls.right_track].into_iter().enumerate() {
@@ -296,11 +332,40 @@ impl Powertrain {
     }
 }
 
+/// An AI driver on the drivetrain (2026-10-28). The AI's `drive` command is the speed it wants as
+/// a share of its vehicle's documented road speed (under the old kinematic controller it was a
+/// share of one 12 m/s for every kind); the driver turns it into throttle and brake pedal like a
+/// man at the levers, so the vehicle's own mass, power and gears decide how fast it gets there
+/// and how long it takes to stop. Returns (signed throttle demand, brake pedal). Gains [E]: full
+/// throttle from 1.5 m/s below the wanted speed, a light 3 % throttle coasting within 0.5 m/s
+/// above it, the pedal rising to full at 4 m/s over it; a reversal brakes fully first.
+pub const STOP_PEDAL: f32 = 0.4;
+
+pub fn ai_driver(spec: &VehicleSpec, drive: f32, speed: f32) -> (f32, f32) {
+    let drive = if drive.is_finite() { drive.clamp(-1.0, 1.0) } else { 0.0 };
+    let want = drive * spec.road_speed;
+    if want.abs() < 0.05 {
+        // Stop: off the throttle and a firm, not a panic, pedal (0.4 of full: about 0.26 g, 14 m
+        // from 30 km/h) [E]; the hold at a crawl is the drivetrain's own.
+        return (0.0, STOP_PEDAL);
+    }
+    if speed.abs() > 0.3 && want.signum() != speed.signum() {
+        return (0.0, 1.0);
+    }
+    let excess = speed.abs() - want.abs();
+    let throttle = (-excess / 1.5).clamp(0.03, 1.0);
+    let brake = ((excess - 0.5) / 3.5).clamp(0.0, 1.0);
+    if brake > 0.0 { (0.0, brake) } else { (want.signum() * throttle, 0.0) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tank_support::TIGER_TRACK_X;
+    fn gear_speed(gear:i8)->f32 {super::gear_speed(&TIGER_I,gear)}
+    fn wheel_force(gear:i8,rpm:f32)->f32 {super::wheel_force(&TIGER_I,gear,rpm)}
     fn controls(drive:f32)->Controls {Controls {drive,steer:0.0,engine_running:true,transmission_ok:true,
-        left_track:true,right_track:true,running_gear_factor:1.0,parking_brake:false}}
+        left_track:true,right_track:true,running_gear_factor:1.0,parking_brake:false,driver_brake:None}}
     fn run(state:&mut Powertrain, speed:&mut f32, seconds:f32, pitch:f32, input:Controls, dt:f32)->f32 {
         let mut distance=0.0;
         for _ in 0..(seconds/dt).round() as usize {let motion=state.advance(dt,*speed,pitch,input);*speed=motion.speed;distance+=motion.distance;}

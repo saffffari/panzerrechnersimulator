@@ -1,8 +1,57 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-28 (vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, 2026-10-28 (branch `vehicle-dynamics`, docs/VEHICLE_DYNAMICS.md)
+
+Every tank now has a sourced row (`src/vehicle_spec.rs`: Tiger I, T-34/76, SU-100, KV-2, IS-2,
+ISU-152, IS-3), a sprung hull (`src/suspension.rs`) and, for AI vehicles, the player's force-based
+drivetrain (`src/powertrain.rs`, `powertrain::ai_driver`). Sourced: masses, engine powers and rated
+speeds where stated, gear counts, documented road speeds, wheel counts, the Tiger's 800 mm wheels
+and 55/58 mm x 1.89 m torsion bars (tiger1.info), the Soviet wheel diameters, track widths,
+clearances, ground pressures and obstacle limits (de/ru/en Wikipedia data tables, read 2026-10-28;
+the row comments name each). Named estimates [E], each derived in the code comment beside it:
+
+- Per-gear road speeds of the Soviet boxes (geometric spreads from a first gear to the documented
+  top); idle speeds; the IS family's 2000 rpm rating; the yaw rates (0.45-0.6 rad/s).
+- Track gauges other than the ISU-152's 2.42 m; contact lengths derived from mean ground pressure
+  (`M / (2 b p)`); hull dimensions for inertia; CG heights at 0.45 of overall height (Tiger 1.30 m
+  as before); unsprung shares 0.13-0.15.
+- Spring rates. Tiger: from its bars, `G pi d^4 / (32 L) / a^2` with steel G 79.3 GPa and an
+  estimated 0.41 m arm (224 kN/m, 275 at the ends; 1.37 Hz heave). Others: static deflection for a
+  chosen heave frequency (Christie 1.25 Hz, torsion-bar heavies 1.4 Hz).
+- Wheel travel (Tiger 0.15 m jounce / 0.10 m droop; Christie 0.14 / 0.09; KV/IS 0.12 / 0.08); bump
+  stops at 8x the station rate with 0.3 damping; belly contact at 5 Hz, 0.5 damping.
+- Damping: 0.06-0.08 of critical from friction on every station; the Tiger's end-arm hydraulic
+  shock absorbers (not checked this session) at 0.5. No shock absorbers on the T-34/SU-100 (sourced)
+  or the KV/IS family (IS-3 sourced, others assumed).
+- The AI driver's pedal gains (full throttle 1.5 m/s under the wanted speed, brake to full at
+  4 m/s over); the AI's speed command is a share of its own road speed (previously of one 12 m/s
+  for every kind, reached at 6 m/s^2).
+- The crewman's head on his neck: 1.8 Hz, 0.5 damping, 0.08 m travel.
+
+Named simplifications: massless wheels and track (no unsprung bounce); stations move along the
+hull's vertical; the track bridges whatever lies beyond a wheel radius of every wheel (no wrap or
+tension); uniform-box inertias; frame-differenced accelerations bounded at 3 g for load transfer; a
+station's support rises no faster than `2 v + 0.1` m/s (the old embedded rule, now per station); the
+refusals (step, trench, gradient, tipping, belly hang-up) stay the rigid-rest rules of
+`tank_support`, which the "Tank ground contact" row's simplification (1) and (3) described for the
+pose and which now decide only what the hull may cross. AI stations sit on the footprint's
+declared contact span (`vehicle_ground`, 0.65 of the half-length, 0.75 of the half-width) because
+the drawn meshes are larger than the real vehicles; the player Tiger's stations are its 48 drawn
+road wheels' measured centres. The owner-directed `CLIMB_GRADE_SHARE` stays player-only; AI
+vehicles climb the full grade. Road wheels are not yet drawn moving with their stations
+(`Ride::travel` is computed for them; see docs/VEHICLE_DYNAMICS.md).
+
+Gate: `suspension::tests` (static pose, heave frequency within 8 % of the spec, pitch settling,
+load transfer, a bump ridden with energy only decaying, the track nose on a step, droop and free
+fall, belly crest, partition and determinism, stations against the baked wheels, head sway),
+`vehicle_spec::tests` (row consistency, bar-derived Tiger rates, `ride_table`), the powertrain
+tests unchanged, `tank::tests::ai_tanks_drive_with_their_own_mass_power_and_brakes` and
+`ai_hull_rides_its_springs_over_a_bump_instead_of_snapping`, `tank_support::tests` unchanged (the
+refusals), and the headless `vehdyn-trace` receipt on Canyon v2.
 
 ## Solo crew, wounds and first aid, 2026-10-27 (branch `crew-solo`)
 

@@ -307,6 +307,25 @@ pub(crate) fn load_glb_partitioned_roots_with_source_transforms(
     pages.into_iter().map(|page| page.finish(path)).collect()
 }
 
+/// World-space bounds of each scene root of a GLB as (name, min, max): a measuring aid for rigs
+/// whose parts are separate roots (`suspension::tests` finds the Tiger's road wheels with it).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn glb_root_bounds(path: &str) -> anyhow::Result<Vec<(String, Vec3, Vec3)>> {
+    let bytes = crate::resource::read(path)?;
+    let (doc, buffers, images) = gltf::import_slice(&bytes)
+        .with_context(|| format!("import glTF resource {path:?}"))?;
+    let mut out = Vec::new();
+    if let Some(scene) = doc.default_scene().or_else(|| doc.scenes().next()) {
+        for node in scene.nodes() {
+            let mut page = MeshAccum::new();
+            walk(&node, Mat4::IDENTITY, &buffers, &images, &mut page.vertices, &mut page.indices,
+                &mut page.mats, &mut page.min, &mut page.max, true);
+            out.push((node.name().unwrap_or("").to_owned(), page.min, page.max));
+        }
+    }
+    Ok(out)
+}
+
 /// Partition named descendant subtrees while preserving every ancestor transform. Page zero is
 /// the remainder; selected pages follow `subtrees` order. Missing, duplicate and nested selections
 /// fail instead of silently losing/duplicating geometry. The stricter animated-root API above is

@@ -254,7 +254,7 @@ pub fn write_run_card(prefix: &str, g: &Game, r: &mut Renderer, device: &wgpu::D
     Ok(Some(report))
 }
 
-fn build_course(seed: u64) -> anyhow::Result<(wgpu::Device, wgpu::Queue, Renderer, Game, std::path::PathBuf)> {
+pub(crate) fn build_course(seed: u64) -> anyhow::Result<(wgpu::Device, wgpu::Queue, Renderer, Game, std::path::PathBuf)> {
     let manifest = crate::canyon::manifest_path();
     act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
     graphics::set_active_preset(graphics::GraphicsPreset::High);
