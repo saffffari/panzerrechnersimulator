@@ -128,13 +128,13 @@ pub fn run(prefix: &str, seed: u64) -> anyhow::Result<()> {
     g.debug_mission_flare(anton, FlareColor::White, &mut r);
     step(&mut g, &mut r, 100);
     let eye = ground(&g, anton + (start - anton).normalize_or_zero() * 230.0) + Vec3::Y * 4.0;
-    let star = g.mission_flare_positions().first().copied().unwrap_or(ground(&g, anton) + Vec3::Y * 90.0);
+    let star = g.mission_flare_positions().last().copied().unwrap_or(ground(&g, anton) + Vec3::Y * 90.0);
     rig.observe(&mut r, eye, star * 0.5 + ground(&g, anton) * 0.5 + Vec3::Y * 20.0, 62.0);
     g.prepare_world_survey(&mut r, 1.0 / 60.0);
     let overlay = g.mission_overlay().context("overlay")?;
     rig.still(&mut g, &mut r, "04_white_star", "white parachute star over the hamlet 1.7 s after launch (its light on the snow, the launch smoke), the net's line for the beat", Some(&overlay))?;
     step(&mut g, &mut r, 60 * 8);
-    rig.observe(&mut r, eye, g.mission_flare_positions().first().copied().unwrap_or(star) * 0.6 + ground(&g, anton) * 0.4, 50.0);
+    rig.observe(&mut r, eye, g.mission_flare_positions().last().copied().unwrap_or(star) * 0.6 + ground(&g, anton) * 0.4, 50.0);
     g.prepare_world_survey(&mut r, 1.0 / 60.0);
     rig.still(&mut g, &mut r, "05_white_star_chute", "the same star ten seconds on: under its parachute, drifting downwind, its smoke thread", None)?;
 
@@ -156,7 +156,7 @@ pub fn run(prefix: &str, seed: u64) -> anyhow::Result<()> {
     g.debug_mission_open_beat(3, &mut r)?;
     step(&mut g, &mut r, 60 * 5);
     let yard = Vec2::new(345.0, 190.0);
-    let red = g.mission_flare_positions().first().copied();
+    let red = g.mission_flare_positions().last().copied();
     let eye = ground(&g, Vec2::new(250.0, 60.0)) + Vec3::Y * 7.0;
     rig.observe(&mut r, eye, red.map_or(ground(&g, yard) + Vec3::Y * 40.0, |p| p * 0.55 + ground(&g, yard) * 0.45), 58.0);
     g.prepare_world_survey(&mut r, 1.0 / 60.0);
@@ -171,13 +171,26 @@ pub fn run(prefix: &str, seed: u64) -> anyhow::Result<()> {
     step(&mut g, &mut r, 60 * 3);
     let goal = g.mission_map_guidance().and_then(|gd| gd.bearing.map(|(_, to, _)| to)).context("the head's mark")?;
     let eye = ground(&g, Vec2::new(1500.0, 300.0)) + Vec3::Y * 6.0;
-    let star = g.mission_flare_positions().first().copied().unwrap_or(ground(&g, goal) + Vec3::Y * 80.0);
+    let star = g.mission_flare_positions().last().copied().unwrap_or(ground(&g, goal) + Vec3::Y * 80.0);
     rig.observe(&mut r, eye, star * 0.55 + ground(&g, goal) * 0.45, 54.0);
     g.prepare_world_survey(&mut r, 1.0 / 60.0);
     let overlay = g.mission_overlay().context("overlay")?;
     rig.still(&mut g, &mut r, "08_head_star", "the white star over the ravine head 200 m off, the finale's line", Some(&overlay))?;
 
-    // 7. The compass with the march bearing set, from the crew's own eye (C raises it).
+    // 7. A star by itself at 350 m over open ground (the start basin), no other star burning,
+    //    for the visibility-at-range check the yard and head stills raised.
+    g.debug_place_tiger(start, 180f32.to_radians());
+    step(&mut g, &mut r, 60 * 14);
+    let far = Vec2::new(start.x, start.y - 350.0);
+    g.debug_mission_flare(far, FlareColor::White, &mut r);
+    step(&mut g, &mut r, 150);
+    let eye = ground(&g, start) + Vec3::Y * 4.0;
+    let star = g.mission_flare_positions().last().copied().unwrap_or(ground(&g, far) + Vec3::Y * 100.0);
+    rig.observe(&mut r, eye, star * 0.5 + ground(&g, far) * 0.5, 54.0);
+    g.prepare_world_survey(&mut r, 1.0 / 60.0);
+    rig.still(&mut g, &mut r, "10_star_350m", "one white star 2.5 s after launch, 350 m up the ravine over open ground, by day", None)?;
+
+    // 8. The compass with the march bearing set, from the crew's own eye (C raises it).
     g.jump_station(Station::Loader);
     anyhow::ensure!(g.toggle_compass(), "the compass can be raised");
     step(&mut g, &mut r, 45);

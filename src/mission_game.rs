@@ -236,7 +236,8 @@ impl Game {
     fn drive_mission_flares(&mut self, r: &mut Renderer) {
         let Some(m) = &self.mission else { return };
         let burning: Vec<(Vec3, f32)> = m.flares.iter().filter(|f| f.burning()).map(|f| (f.pos, f.brightness())).collect();
-        while self.mission_flare_slots.len() < burning.len().min(4) {
+        // The grains are cloned once, up front, so a star never waits on a mid-run clone.
+        while self.mission_flare_slots.len() < 4 {
             let slot = r.clone_actor_mesh(self.slots.mg_impact[0]);
             self.mission_flare_slots.push(slot);
         }
