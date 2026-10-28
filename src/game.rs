@@ -12,6 +12,10 @@ mod interior_impact_camera;
 mod live_playtest;
 #[path = "winter_encounter_ai.rs"]
 mod winter_encounter_ai;
+#[path = "enemy_ai_telemetry.rs"]
+mod enemy_ai_telemetry;
+#[path = "tank_doctrine.rs"]
+mod tank_doctrine;
 #[path = "street_encounter.rs"]
 mod street_encounter;
 #[path = "canyon_game.rs"]
@@ -9616,6 +9620,8 @@ pub struct Game {
     /// Training telemetry: rounds that connected with the player this match (bounces + pens).
     pub stat_hits_on_player: u32,
     pub stat_pens_on_player: u32,
+    /// Read-only measurement of the enemy crews' fighting (docs/ENEMY_TANK_AI.md).
+    enemy_ai_stats: enemy_ai_telemetry::EnemyAiTelemetry,
     /// Small-arms rounds that wounded the man on foot or head-out (harness read-out).
     pub stat_small_arms_hits_on_foot: u32,
     /// Authoritative player gunnery outcomes, resolved when the live tracer reaches its target.
@@ -13582,6 +13588,7 @@ impl Game {
             tiger_foot_policy: cached_default_foot_policy(PolicyRole::TigerCrew),
             soviet_foot_policy: cached_default_foot_policy(PolicyRole::SovietRifle),
             stat_hits_on_player: 0,
+            enemy_ai_stats: Default::default(),
             stat_small_arms_hits_on_foot: 0,
             stat_pens_on_player: 0,
             stat_hits_by_player: 0,
@@ -25465,6 +25472,7 @@ impl Game {
             ProjectileVehicle::Enemy(index) => {
                 // Rounds into a wreck mark its steel but are not hits on a fighting enemy.
                 if matches!(projectile.shooter, ProjectileShooter::Player) && self.enemies[index].alive {
+                    self.enemy_ai_stats.hit_taken(index, enemy_ai_telemetry::Aspect::of_facing(armor.facing));
                     self.stat_hits_by_player = self.stat_hits_by_player.saturating_add(1);
                     if penetrated {
                         self.stat_pens_by_player = self.stat_pens_by_player.saturating_add(1);
@@ -25551,6 +25559,11 @@ impl Game {
                 self.stat_hits_on_player = self.stat_hits_on_player.saturating_add(1);
                 if penetrated {
                     self.stat_pens_on_player = self.stat_pens_on_player.saturating_add(1);
+                }
+                if let ProjectileShooter::Enemy(i) = projectile.shooter {
+                    if i < self.enemies.len() {
+                        self.enemy_ai_stats.hit_on_tiger(i, enemy_ai_telemetry::Aspect::of_facing(armor.facing), penetrated);
+                    }
                 }
                 if !self.god {
                     let scar = self.record_vehicle_scar(&armor, &event, travel_world, r.time);
@@ -26127,6 +26140,9 @@ impl Game {
         configure_playtest_return_fire(&mut self.playtest_return_fire, &mut self.enemies, enabled);
     }
 
+    /// The enemy crews' fighting so far (docs/ENEMY_TANK_AI.md), for headless receipts.
+    pub fn enemy_ai_summary(&self) -> serde_json::Value { self.enemy_ai_stats.summary() }
+
     fn enemy_return_fire_allowed(&self) -> bool {
         self.playtest_return_fire.unwrap_or(true)
     }
@@ -26570,6 +26586,7 @@ impl Game {
         // Detection + platoon alert state machine first: accrue the per-enemy detection meters,
         // resolve the 5-second rule, and log every SPOTTED / platoon transition. The per-enemy
         // behaviour branch below reads the fresh alert state to decide who may track and fire.
+        self.enemy_ai_stats.tick(dt);
         let phase_t = std::time::Instant::now(); self.update_stealth(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyStealth, phase_t);
         let phase_t = std::time::Instant::now(); let winter_orders = self.winter_enemy_orders(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyOrders, phase_t);
         let phase_t = std::time::Instant::now(); self.update_at_guns(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAtGuns, phase_t);
@@ -26690,6 +26707,10 @@ impl Game {
             crate::vehicle_ground::settle(&mut self.enemies[i], |x,z|
                 (if channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
                     .unwrap_or_else(|| self.hf.vehicle_height_at(x,z)));
+            if self.enemy_active.get(i).copied().unwrap_or(false) {
+                self.enemy_ai_stats.frame(i, dt, mode != AiMode::Patrol, mode == AiMode::Track,
+                    self.enemies[i].speed, drive, self.enemies[i].pos);
+            }
 
             if !self.player.alive {
                 continue;
@@ -27090,6 +27111,13 @@ impl Game {
         self.enemy_gun_shots[i] = self.enemy_gun_shots[i].wrapping_add(1);
         self.enemies[i].present_fired();
         let kind = self.enemies[i].kind;
+        {
+            let tiger = Vec2::new(self.player.pos.x, self.player.pos.z);
+            let from = Vec2::new(self.enemies[i].pos.x, self.enemies[i].pos.z);
+            let aspect = tank_doctrine::aspect(self.player.heading, tiger, from);
+            let solution = tank_doctrine::kill_margin_mm(enemy_shell(kind), self.player.heading, tiger, from) > 0.0;
+            self.enemy_ai_stats.shot(i, aspect, solution);
+        }
         let (muzzle, laid_direction) = self.enemies[i].muzzle();
 
         // Dispersion fixes only the launch vector. Nothing here selects a target or terminal result;
@@ -28123,6 +28151,7 @@ impl Game {
         self.destroy_enemy_damage(idx,false,false);
     }
     fn destroy_enemy_damage(&mut self, idx: usize, ammo_hit:bool, fuel_hit:bool) {
+        if self.enemies.get(idx).is_some_and(|e| e.alive) { self.enemy_ai_stats.knocked_out(idx); }
         // Snapshot the (Copy) death pose before taking any &mut borrow of self.
         let (epos, eparts, ekind, alive, turret_world, gun_world) = {
             let e = match self.enemies.get(idx) {
