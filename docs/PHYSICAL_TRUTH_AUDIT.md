@@ -1,8 +1,70 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Solo crew, wounds and first aid, 2026-10-27 (branch `crew-solo`)
+
+Singleplayer musters five living men (`src/singleplayer_crew.rs`, `src/crew_solo.rs`,
+`src/first_aid.rs`, `docs/CREW_SOLO.md`). Wounds come only from the live penetration solver's
+anatomical events and the live cabin fire; nothing here invents a hit. Named approximations,
+none presented as physiology or a contact solve:
+
+- The wound time course is a rule-of-thumb model: bleeding in litres per minute by body region
+  and severity^1.5, clotting of minor wounds as an exponential over five minutes, performance
+  as piecewise functions of blood loss, fracture, burn, pain, morphine and concussion, and
+  death at 42 % loss. Severity is mapped from the solver's fragment work (`total_work_j / 350`,
+  clamped 0.2..0.85) and tissue outcome (detachment and pulverization are 1.0). Unconsciousness
+  from blast work above 150 J is `6 + blast_work_j / 60` seconds. Burn exposure is `fire *
+  0.02` severity per second in the hull, 0.6 of that in the turret, 0.15 head out, with no
+  position inside the compartment and no heat transport.
+- Morphine ampoules stand in for the Wehrmacht's ampoules and syringe; the box contents (6
+  dressings, 2 tourniquets, 3 morphine, 2 splints, 2 burn dressings, 3 triangular bandages, 2
+  canteens, scissors) are a design count, not a reviewed Kfz-Verbandkasten inventory.
+- Treatment is a stepwise hands-on procedure per wound kind (`first_aid::Procedure`): holds,
+  presses, wraps as alternating mouse strokes in a 0.25-1.8 s cadence, windlass turns as
+  presses half a second apart, a hands-off watch. The step tables, their seconds and counts,
+  the quality penalties (0.08 a wrap off cadence, 0.03 a mashed turn, 0.05 a hold let go,
+  0.15 an interruption, 0.2 a skipped cooling) and the quality-to-effect maps (a tourniquet
+  leaks `0.5 x (1 - quality)` of the bleed, a dressing's factor rises by `0.6 x (1 - quality)`
+  of the way back to untreated, a splint's performance factor is `0.45 + 0.25 x quality`,
+  improvised work is capped at 0.6) are design values standing in for skill, not a model of
+  tissue or of a bandage. No first-person hands are drawn doing them; the crosshair label and
+  the man's state are the feedback. The airway rule (an unconscious man on his back dies of it
+  at 240 s unless positioned) is a single timer.
+- Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
+  loss, the airway timer), spoken once per change of the set of men needing care.
+- The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
+- The crew figures carry no animation clips. A wounded man's slump is a rotation about his seat
+  by his performance; his anatomical hit volumes do not follow it (they stay at the seated
+  pose). Dragging a body off a seat translates the settled articulated ragdoll as one toward a
+  rest point over four seconds, with no contact against the interior; while the hands are on
+  a man or a body the crosshair target is held (a neighbour cannot steal it mid-hold).
+- Hands-on reach is 1.75 m from the eye to a man in the turret and 2.8 m down into the hull
+  front (the driver and radio operator sit low and forward of the basket floor's edge, and a
+  body there has slumped into the footwell); no leaning or kneeling pose is drawn for it.
+- The headless proof's fixture: clear weather, a parked range target that does not fire, and
+  a Tiger down to its last rounds, fired off before each strike so no live cartridge sits in
+  the compartment. With a full stowage every wounding lane tried through a plate into a seated
+  man (turret side, turret rear, hull side) found live rounds first and the Tiger went up, and
+  a killing solid shot through the gunner's seat set off eight rounds left in the rear stowage.
+  That is the model's own answer about the Tiger's stowage, not a defect of the crew; the
+  proof states the fixture in its receipt.
+- The driver's reaction (0.3 s / performance) and command ramp (2.5 / s × performance), the
+  gunner's settle (0.55 s / performance), lay tolerance (0.010 rad / performance) and hand
+  shake (a sinusoid scaled by 1 − performance on the desired lay), and the loader's stroke
+  cadence (0.75 s / performance through the existing auto-crew stroke machine) are design
+  values; the turret, gun and powertrain still move at their real rates through the existing
+  drives.
+- The gunner's target choice is nearest-first with an optical line from the eyepiece; no
+  recognition, no priority by threat.
+- Station entry refusal and the clamber cost reuse `switch_cost`; the clamber itself is the
+  existing camera interpolation.
+
+Gates: `crew-solo PREFIX` (eight stills and a JSON receipt, PASS/FAIL per check, nonzero exit
+on failure) and the unit tests `first_aid`, `crew_solo`, `singleplayer_crew`.
+
 
 ## Armor scars, 2026-10-27 (branch `armor-scars`, `docs/ARMOR_SCARS.md`)
 

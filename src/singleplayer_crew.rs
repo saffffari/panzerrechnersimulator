@@ -1,15 +1,16 @@
-//! The one singleplayer crewman, independent of LAN occupancy and input authority. He is the only
-//! person aboard: every station is a post he works, the other four seats stay empty (not dead),
-//! and his death ends the run. Leaving the vehicle keeps his identity.
+//! The singleplayer crew: five men aboard, one of them the player. The player is the commander
+//! (his identity, face, anatomical record and blood); every station is a post he can go and work,
+//! displacing the man who sits there. The other four are living crew driven by `crew_solo`: they
+//! work their stations, are wounded and killed by the same solvers, and stay dead. The player's
+//! own death ends the run; losing the others leaves him alone with their jobs.
 use super::*;
 
-/// The lone crewman's permanent identity: his face, anatomical record and blood. Stations are posts
-/// he works, never other people.
+/// The player's permanent identity: the commander.
 pub(super) const SINGLEPLAYER_CREWMAN: CrewRole = CrewRole::Commander;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SingleplayerCrew {
-    identity: CrewRole,
+    pub(super) identity: CrewRole,
 }
 
 pub(super) fn role_for_station(station: Station) -> CrewRole {
@@ -22,7 +23,7 @@ pub(super) fn role_for_station(station: Station) -> CrewRole {
     }
 }
 
-fn body_post(role: CrewRole) -> crate::lan::LanRole {
+pub(super) fn body_post(role: CrewRole) -> crate::lan::LanRole {
     match role {
         CrewRole::Commander => crate::lan::LanRole::Commander,
         CrewRole::Gunner => crate::lan::LanRole::Gunner,
@@ -36,13 +37,13 @@ pub(super) fn role_alive(crew: &[Crewman], role: CrewRole) -> bool {
     crew.iter().any(|person| person.role == role && person.ok)
 }
 
-/// Only the lone crewman stays on the roster. The other seats are empty, not casualties, so no
-/// receipt, readout or "no living operator" test counts them. Keeps his current state: a dead
-/// crewman is never revived by reconfiguration.
-fn keep_lone_crewman(crew: &mut Vec<Crewman>) {
-    crew.retain(|person| person.role == SINGLEPLAYER_CREWMAN);
-    if crew.is_empty() {
-        crew.push(Crewman { role: SINGLEPLAYER_CREWMAN, ok: true });
+/// Every seat is manned at the start. A dead crewman is never revived by reconfiguration: the
+/// roster is only filled where nobody has a record yet.
+fn fill_roster(crew: &mut Vec<Crewman>) {
+    for role in CrewRole::ALL {
+        if !crew.iter().any(|person| person.role == role) {
+            crew.push(Crewman { role, ok: true });
+        }
     }
 }
 
@@ -72,34 +73,38 @@ pub(super) fn casualty_identity(role: CrewRole) -> CouchCrewCasualty {
     }
 }
 
-/// The lone crewman's body at the post he is working, unless he is `excluded` (the viewer's own
-/// eyes, or outside the vehicle). Nobody else is ever aboard.
+/// The bodies aboard: every living man at the post `posts` gives him, except `excluded` (the
+/// viewer's own eyes, or the player outside the vehicle). Working another post never changes
+/// who a man is: identity stays, the anatomy moves.
 fn aboard_bodies(
     crew: &[Crewman],
-    identity: CrewRole,
-    post: CrewRole,
+    posts: &dyn Fn(CrewRole) -> crate::lan::LanRole,
     excluded: Option<CrewRole>,
 ) -> Vec<CouchCrewBody> {
-    if !role_alive(crew, identity) || excluded == Some(identity) {
-        return Vec::new();
+    let mut bodies = Vec::new();
+    for role in CrewRole::ALL {
+        if !role_alive(crew, role) || excluded == Some(role) {
+            continue;
+        }
+        let post = posts(role);
+        let torso = super::crew_solo::role_of_post(post).station();
+        let segments = crew_physics::rest_segments(
+            torso - crew_physics::CrewBodyPart::Torso.rest_center(),
+            Quat::IDENTITY,
+            1.0,
+        );
+        let mut casualty = casualty_identity(role);
+        casualty.role = post;
+        bodies.push(CouchCrewBody {
+            casualty,
+            pos: torso,
+            hit_volumes: crew_hit_volumes_from_segments(&segments, 1.0),
+        });
     }
-    let torso = post.station();
-    let segments = crew_physics::rest_segments(
-        torso - crew_physics::CrewBodyPart::Torso.rest_center(),
-        Quat::IDENTITY,
-        1.0,
-    );
-    // Working another post never changes who he is: identity stays, the anatomy moves.
-    let mut casualty = casualty_identity(identity);
-    casualty.role = body_post(post);
-    vec![CouchCrewBody {
-        casualty,
-        pos: torso,
-        hit_volumes: crew_hit_volumes_from_segments(&segments, 1.0),
-    }]
+    bodies
 }
 
-/// Mark struck people dead (each recorded once) and report whether the crewman is lost.
+/// Mark struck people dead (each recorded once) and report whether the player is lost.
 fn record_casualties(
     crew: &mut [Crewman],
     identity: CrewRole,
@@ -124,14 +129,15 @@ fn record_casualties(
 }
 
 impl Game {
-    /// Put the one singleplayer crewman aboard without modifying input or creating a LAN session.
+    /// Put the full singleplayer crew aboard without modifying input or creating a LAN session.
     /// A LAN or couch session keeps its own crew. Idempotent: revisiting configuration cannot
     /// restore a dead crewman.
     pub fn enable_singleplayer_crew(&mut self) {
         self.singleplayer_crew_active = self.lan_local_role.is_none() && !self.couch_crew_active;
         if self.singleplayer_crew_active && self.singleplayer_crew.is_none() {
             self.singleplayer_crew = Some(SingleplayerCrew { identity: SINGLEPLAYER_CREWMAN });
-            keep_lone_crewman(&mut self.crew);
+            fill_roster(&mut self.crew);
+            self.crew_solo.enabled = true;
         }
     }
 
@@ -140,7 +146,7 @@ impl Game {
             .then(|| self.crew.iter().filter(|person| person.ok).count())
     }
 
-    /// The crewman aboard, independent of the diagnostic UI's four human couch posts. An
+    /// The crew aboard, independent of the diagnostic UI's four human couch posts. An
     /// anatomical record means retained damage state exists; it does not infer an injury.
     pub fn singleplayer_crew_state_receipt(&self) -> Option<serde_json::Value> {
         self.singleplayer_crew_active.then(|| {
@@ -175,10 +181,27 @@ impl Game {
         }
     }
 
-    /// A reset match re-musters a fresh crew list; singleplayer keeps only its one crewman.
+    /// A reset match re-musters a fresh crew list and a fresh crew state.
     pub(super) fn reset_singleplayer_crew(&mut self) {
         if self.singleplayer_crew.is_some() {
-            keep_lone_crewman(&mut self.crew);
+            fill_roster(&mut self.crew);
+            let enabled = self.crew_solo.enabled;
+            self.crew_solo = crew_solo::CrewSolo::default();
+            self.crew_solo.enabled = enabled;
+        }
+    }
+
+    /// Physical post of every man for the anatomy/render passes: the player at the station he
+    /// works, each AI crewman at his own post unless the player displaced him.
+    fn solo_posts(&self) -> impl Fn(CrewRole) -> crate::lan::LanRole + '_ {
+        let identity = self.singleplayer_crew.map(|state| state.identity);
+        let player_post = body_post(role_for_station(self.station));
+        move |role| {
+            if Some(role) == identity {
+                player_post
+            } else {
+                self.crew_solo_post(role)
+            }
         }
     }
 
@@ -186,7 +209,7 @@ impl Game {
         let mut bodies = if self.singleplayer_crew_active {
             let identity = self.singleplayer_crew.unwrap().identity;
             let outside = (self.mode == Mode::Foot).then_some(identity);
-            aboard_bodies(&self.crew, identity, role_for_station(self.station), outside)
+            aboard_bodies(&self.crew, &self.solo_posts(), outside)
         } else if self.couch_crew_active {
             let mut bodies = couch_crew_bodies(
                 self.couch_crew_frame,
@@ -289,23 +312,23 @@ impl Game {
 
     pub(super) fn physical_crew_capacity(&self) -> usize {
         if self.singleplayer_crew_active {
-            1
+            CrewRole::ALL.len()
         } else {
             COUCH_CREW_ROLES.len()
         }
     }
 
-    /// A living AI gunner sits at the sights (the player is some other crewman).
+    /// A living gunner sits at the sights (the player is some other crewman).
     pub(super) fn gunner_at_his_sights(&self) -> bool {
         self.singleplayer_crew_active
             && self.singleplayer_embodied_role() != Some(CrewRole::Gunner)
             && role_alive(&self.crew, CrewRole::Gunner)
+            && self.crew_solo_post(CrewRole::Gunner) == crate::lan::LanRole::Gunner
     }
-    /// The drawn body of the AI gunner, when there is one aboard.
+    /// The drawn body of the gunner, when there is one at the sights.
     pub(super) fn gunner_body_slot(&self) -> Option<usize> {
         if !self.gunner_at_his_sights() { return None; }
-        let aboard = self.singleplayer_crew?.identity;
-        aboard_bodies(&self.crew, aboard, role_for_station(self.station), self.singleplayer_embodied_role())
+        aboard_bodies(&self.crew, &self.solo_posts(), self.singleplayer_embodied_role())
             .into_iter()
             .find(|body| body.casualty.role == crate::lan::LanRole::Gunner)
             .map(|body| self.slots.lan_crew[crew_identity_index(body.casualty.identity)])
@@ -328,11 +351,12 @@ impl Game {
         // This clears the shared source meshes, not the roster or any physics state.
         self.hide_couch_crew_rigs(r);
         let aboard = self.singleplayer_crew.unwrap().identity;
-        // Outside, the crewman is his dismounted body; the cabin is empty.
+        // Outside, the player is his dismounted body; the rest of the crew stays at work.
         let excluded = if self.mode == Mode::Foot { Some(aboard) } else { viewer };
-        for body in aboard_bodies(&self.crew, aboard, role_for_station(self.station), excluded) {
+        for body in aboard_bodies(&self.crew, &self.solo_posts(), excluded) {
             let identity = crew_identity_index(body.casualty.identity);
             let post = body.casualty.role;
+            let role = super::crew_solo::role_of_post(body.casualty.identity);
             let slot = if post == crate::lan::LanRole::Commander {
                 self.slots.commander_crew[identity]
             } else {
@@ -341,7 +365,13 @@ impl Game {
             let frame = blood_frame_for_role(post);
             let offset = blood_parent_model(&self.player, frame)
                 .transform_vector3(self.singleplayer_body_offset(body.casualty, frame));
-            let model = Mat4::from_translation(offset) * crew_live_model(&self.player, post);
+            // A hurt man slumps in his seat; the player's own body never does (it is his eyes).
+            let slump = if role == aboard || !self.crew_solo_active() {
+                Mat4::IDENTITY
+            } else {
+                super::crew_solo::slump_pose(self.crew_solo.man(role))
+            };
+            let model = Mat4::from_translation(offset) * crew_live_model(&self.player, post) * slump;
             if post != crate::lan::LanRole::Commander {
                 let missing=self.living_wounds.missing(body.casualty.identity);
                 let bits=missing.iter().enumerate().fold(0u16,|a,(i,b)|a|((*b as u16)<<i));
@@ -358,7 +388,8 @@ impl Game {
                 }
             }
             r.set_model(slot, model);
-            if post==crate::lan::LanRole::Commander && self.first_person.is_some() {
+            let witness = post==crate::lan::LanRole::Commander && role == aboard && self.first_person.is_some();
+            if witness {
                 self.first_person.as_ref().unwrap().draw_commander_witness(model,self.living_wounds.missing(body.casualty.identity),r);
                 r.set_visible(slot,false);
             }else{r.set_visible(slot,true);}
@@ -366,7 +397,7 @@ impl Game {
                 self.slots.crew_helmet[identity],
                 model * crew_helmet_live_pose(post),
             );
-            r.set_visible(self.slots.crew_helmet[identity], !(post==crate::lan::LanRole::Commander&&self.first_person.is_some()));
+            r.set_visible(self.slots.crew_helmet[identity], !witness);
         }
         self.drive_physical_crew_casualties(r);
     }
@@ -376,74 +407,82 @@ impl Game {
 mod tests {
     use super::*;
 
-    fn lone_crew() -> Vec<Crewman> {
-        let mut crew = default_crew();
-        keep_lone_crewman(&mut crew);
+    fn full_crew() -> Vec<Crewman> {
+        let mut crew = Vec::new();
+        fill_roster(&mut crew);
         crew
     }
 
+    fn own_posts(role: CrewRole) -> crate::lan::LanRole {
+        body_post(role)
+    }
+
     #[test]
-    fn singleplayer_roster_holds_one_crewman_and_empty_seats_are_not_casualties() {
-        let crew = lone_crew();
-        assert_eq!(crew.len(), 1);
-        assert_eq!(crew[0].role, SINGLEPLAYER_CREWMAN);
+    fn singleplayer_roster_holds_five_men_and_nobody_starts_a_casualty() {
+        let crew = full_crew();
+        assert_eq!(crew.len(), 5);
         let receipt = roster_receipt(&crew, &[]);
         let people = receipt.as_array().unwrap();
-        assert_eq!(people.len(), 1, "the other four seats are empty, not listed as incapacitated");
-        assert_eq!(people[0]["identity"], body_post(SINGLEPLAYER_CREWMAN).label());
-        assert_eq!(people[0]["incapacitated"], false);
+        assert_eq!(people.len(), 5);
+        assert!(people.iter().all(|p| p["incapacitated"] == false));
+        let mut again = crew.clone();
+        again[1].ok = false;
+        fill_roster(&mut again);
+        assert_eq!(again.len(), 5, "re-mustering never duplicates a man");
+        assert!(!again[1].ok, "nor revives one");
     }
 
     #[test]
-    fn singleplayer_crewman_has_one_body_at_whatever_post_he_works() {
-        let crew = lone_crew();
-        let me = casualty_identity(SINGLEPLAYER_CREWMAN);
-        for post in CrewRole::ALL {
-            let bodies = aboard_bodies(&crew, SINGLEPLAYER_CREWMAN, post, None);
-            assert_eq!(bodies.len(), 1, "exactly one person aboard at {post:?}");
-            assert_eq!(bodies[0].casualty.peer_id, me.peer_id, "working a post never changes who he is");
-            assert_eq!(bodies[0].casualty.identity, me.identity);
-            assert_eq!(bodies[0].casualty.role, body_post(post));
-            // His own eyes (or his dismounted body outside) leave the cabin empty.
-            assert!(aboard_bodies(&crew, SINGLEPLAYER_CREWMAN, post, Some(SINGLEPLAYER_CREWMAN)).is_empty());
-            // Excluding anyone else excludes nobody: nobody else exists.
-            assert_eq!(aboard_bodies(&crew, SINGLEPLAYER_CREWMAN, post, Some(CrewRole::Gunner)).len(), 1);
+    fn every_living_man_has_one_body_at_his_post_and_the_viewer_is_excluded() {
+        let crew = full_crew();
+        let bodies = aboard_bodies(&crew, &own_posts, None);
+        assert_eq!(bodies.len(), 5);
+        for role in CrewRole::ALL {
+            let me = casualty_identity(role);
+            let body = bodies.iter().find(|b| b.casualty.peer_id == me.peer_id).unwrap();
+            assert_eq!(body.casualty.identity, me.identity);
+            assert_eq!(body.casualty.role, body_post(role));
         }
+        let without_me = aboard_bodies(&crew, &own_posts, Some(SINGLEPLAYER_CREWMAN));
+        assert_eq!(without_me.len(), 4);
+        assert!(without_me.iter().all(|b| b.casualty.identity != crate::lan::LanRole::Commander));
+        // The player working the gun displaces the gunner to the cupola; identities stay put.
+        let displaced = |role: CrewRole| match role {
+            CrewRole::Commander => crate::lan::LanRole::Gunner,
+            CrewRole::Gunner => crate::lan::LanRole::Commander,
+            other => body_post(other),
+        };
+        let bodies = aboard_bodies(&crew, &displaced, None);
+        let gunner = bodies.iter().find(|b| b.casualty.identity == crate::lan::LanRole::Gunner).unwrap();
+        assert_eq!(gunner.casualty.role, crate::lan::LanRole::Commander);
+        let me = bodies.iter().find(|b| b.casualty.identity == crate::lan::LanRole::Commander).unwrap();
+        assert_eq!(me.casualty.role, crate::lan::LanRole::Gunner);
     }
 
     #[test]
-    fn singleplayer_crewman_death_ends_the_crew_is_recorded_once_and_never_revived() {
-        let mut crew = lone_crew();
+    fn a_crewman_death_does_not_end_the_crew_but_the_players_does() {
+        let mut crew = full_crew();
         let mut records = Vec::new();
         let mut last = None;
-        let mut struck = casualty_identity(SINGLEPLAYER_CREWMAN);
-        struck.role = crate::lan::LanRole::Driver; // killed while working the driver's post
-        assert!(record_casualties(&mut crew, SINGLEPLAYER_CREWMAN, &mut records, &mut last, &[struck]));
-        assert!(!role_alive(&crew, SINGLEPLAYER_CREWMAN));
-        assert_eq!(records, vec![struck]);
-        assert_eq!(last, Some(struck));
-        assert!(record_casualties(&mut crew, SINGLEPLAYER_CREWMAN, &mut records, &mut last, &[struck]));
-        assert_eq!(records.len(), 1, "repeat contacts cannot duplicate a body");
-        assert!(aboard_bodies(&crew, SINGLEPLAYER_CREWMAN, CrewRole::Driver, None).is_empty());
-        keep_lone_crewman(&mut crew);
-        assert!(!role_alive(&crew, SINGLEPLAYER_CREWMAN), "reconfiguration cannot revive him");
-        let receipt = roster_receipt(&crew, &[struck.identity]);
-        assert_eq!(receipt[0]["incapacitated"], true);
-        assert_eq!(receipt[0]["has_anatomical_record"], true);
-    }
-
-    #[test]
-    fn singleplayer_contact_on_an_empty_seat_harms_no_one() {
-        let mut crew = lone_crew();
-        let mut records = Vec::new();
-        let mut last = None;
-        // A contact addressed to an identity that is not aboard finds no person.
-        let empty_seat = casualty_identity(CrewRole::Loader);
-        assert!(!record_casualties(&mut crew, SINGLEPLAYER_CREWMAN, &mut records, &mut last, &[empty_seat]));
-        assert!(records.is_empty() && last.is_none());
+        let gunner = casualty_identity(CrewRole::Gunner);
+        assert!(!record_casualties(&mut crew, SINGLEPLAYER_CREWMAN, &mut records, &mut last, &[gunner]));
+        assert!(!role_alive(&crew, CrewRole::Gunner));
         assert!(role_alive(&crew, SINGLEPLAYER_CREWMAN));
+        assert_eq!(records, vec![gunner]);
+        assert_eq!(aboard_bodies(&crew, &own_posts, None).len(), 4, "the dead man is a ragdoll, not a body at a post");
+        assert!(!record_casualties(&mut crew, SINGLEPLAYER_CREWMAN, &mut records, &mut last, &[gunner]));
+        assert_eq!(records.len(), 1, "repeat contacts cannot duplicate a body");
+        let mut me = casualty_identity(SINGLEPLAYER_CREWMAN);
+        me.role = crate::lan::LanRole::Driver; // killed while working the driver's post
+        assert!(record_casualties(&mut crew, SINGLEPLAYER_CREWMAN, &mut records, &mut last, &[me]));
+        assert_eq!(last, Some(me));
+        fill_roster(&mut crew);
+        assert!(!role_alive(&crew, SINGLEPLAYER_CREWMAN), "reconfiguration cannot revive him");
+        let receipt = roster_receipt(&crew, &[me.identity]);
+        let mine = receipt.as_array().unwrap().iter().find(|p| p["identity"] == "COMMANDER").unwrap();
+        assert_eq!(mine["incapacitated"], true);
+        assert_eq!(mine["has_anatomical_record"], true);
     }
-
 
     #[test]
     fn singleplayer_displaced_body_and_radio_use_source_anatomy_in_the_correct_frame() {
@@ -501,8 +540,8 @@ mod tests {
         assert!(couch_crew_bodies(frame, &[], &NO_COUCH_IDENTITIES).is_empty());
         sanitize_couch_crew_frame(&mut frame, &[]);
         assert!(!frame.occupied(crate::lan::LanRole::Radio));
-        // The lone singleplayer crewman can still work the radio post the couch roster omits.
-        assert!(aboard_bodies(&lone_crew(), SINGLEPLAYER_CREWMAN, CrewRole::Radioman, None)
+        // The singleplayer crew has a radio operator the couch roster omits.
+        assert!(aboard_bodies(&full_crew(), &own_posts, None)
             .iter()
             .any(|body| body.casualty.role == crate::lan::LanRole::Radio));
     }

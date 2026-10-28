@@ -206,6 +206,11 @@ mod crew_physics;
 #[path = "singleplayer_crew.rs"]
 mod singleplayer_crew;
 use singleplayer_crew::SingleplayerCrew;
+#[path = "crew_solo.rs"]
+mod crew_solo;
+/// Seconds the player spends dragging a dead crewman off his station (the headless proof holds
+/// E for this long).
+pub const CREW_SOLO_CLEAR_BODY_S: f32 = crew_solo::CLEAR_BODY_S;
 #[path = "driver_controls.rs"]
 mod driver_controls;
 #[path = "crew_arm_animation.rs"]
@@ -7317,6 +7322,8 @@ pub struct TankInput {
     pub interaction: bool,
     pub ignition: bool, // Z — engine shutoff / crank (the silent-watch scout loop)
     pub hatch_toggle: bool, // occupied station hatch request; shared solo/LAN rising edge
+    /// K edge: the commander's standing order for the solo crew's gunner (fire at will / hold).
+    pub fire_order: bool,
     /// LAN crew authority for this frame. `None` preserves the exact solo control path. When set,
     /// simulation duties come from their real stations while this process's ordinary input remains
     /// the local crewman's camera/body input.
@@ -9454,6 +9461,8 @@ pub struct Game {
     driver_controls: driver_controls::Controls,
     crew_arm_animation: CrewArmAnimation,
     singleplayer_crew_active: bool,
+    /// The living solo crew: wounds, first aid, the AI stations' decisions (`crew_solo`).
+    crew_solo: crew_solo::CrewSolo,
     /// Persistent couch-player deaths, keyed by the stable peer IDs carried in `CrewFrame::roster`.
     /// Kept separate from the historical five `Crewman` stations: a living human can move into a
     /// fallen man's post without reviving him.
@@ -13466,6 +13475,7 @@ impl Game {
             driver_controls: driver_controls::Controls::default(),
             crew_arm_animation: CrewArmAnimation::new(),
             singleplayer_crew_active: false,
+            crew_solo: crew_solo::CrewSolo::default(),
             couch_kia_peers: Vec::new(),
             couch_casualties: Vec::new(),
             couch_ragdolls: Vec::new(),
@@ -15857,11 +15867,21 @@ impl Game {
             // INSIDE (Loader) you are ON YOUR FEET: WASD walks the body around the fighting
             // compartment instead of driving the tank (you can't drive from the loader's boots).
             let afoot_inside = at(Station::Loader);
-            let drive_cmd = driver_input.map_or(if coop.is_none() { input.drive } else { 0.0 }, |i| i.drive);
-            let steer_cmd = driver_input.map_or(if coop.is_none() { input.steer } else { 0.0 }, |i| i.steer);
+            // Solo with a living crew: the driver gives what the commander ordered (nothing when
+            // he is dead or out), unless the player himself sits at the levers.
+            let crew_drive = if coop.is_none() { self.crew_solo_drive_command() } else { None };
+            let crew_drives = crew_drive.is_some() && self.crew_solo_role_ok(CrewRole::Driver);
+            let (drive_cmd, steer_cmd) = match (coop, crew_drive) {
+                (Some(_), _) => (driver_input.map_or(0.0, |i| i.drive), driver_input.map_or(0.0, |i| i.steer)),
+                (None, Some(crew)) => crew,
+                (None, None) => {
+                    let hands = self.crew_solo_player_perf();
+                    (input.drive * hands, input.steer * hands)
+                }
+            };
             // Track loss removes ground traction inside Powertrain, not the operator's shaft command.
             let (drive, steer) = tank::TrackTraction::INTACT.gate_commands(drivetrain_available,
-                coop.is_some() || (acting.is_some() && !afoot_inside), drive_cmd, steer_cmd);
+                coop.is_some() || crew_drives || (acting.is_some() && !afoot_inside), drive_cmd, steer_cmd);
             // The engine-audio rev reads THIS (gated) command, not the raw key — holding W while
             // walking the interior must not roar the engine (it read as "driving from inside").
             self.drive_cmd = drive;
@@ -15879,17 +15899,22 @@ impl Game {
             });
             let local_ready = at(Station::Gunner) && !self.carrying_track_kit
                 && !self.panzerfaust_claimed && !self.compass_equipped && !self.map_held;
+            // The solo crew's gunner owns the lay while he has a target and is fit at the sights.
+            let ai_gunner = coop.is_none() && self.crew_solo_ai_gunner_laying();
             let lay_ok = if coop.is_some() {
                 gunner_input.is_some_and(|i| i.post == crate::lan::LanRole::Gunner
                     && !i.flag(crate::lan::F_SERVICE_BREECH))
                     && (!local_gunner_controls || local_ready)
-            } else { local_ready };
+            } else { local_ready || ai_gunner };
             // ── KB+MOUSE GUN LAY: in the sights the MOUSE writes the desired lay; the turret and
             // gun chase it at their real rates (the Tiger's slow hydraulic traverse IS the game —
             // you flick to the target and wait for the turret to arrive). Arrows still nudge.
             // Zoomed sight = finer mouse for the precision lay. Off-station the target tracks the
             // actual lay so re-entering the sights never jumps.
-            if lay_ok {
+            if ai_gunner {
+                // The gunner set `lay_yaw`/`lay_pitch` this step (`crew_solo`); the turret and
+                // gun chase it below at their real rates, as for a hand on the wheels.
+            } else if lay_ok {
                 // Sens ÷5 (playtest: full traverse speed arrived within a few mm of mouse — no
                 // room for a fine lay). MINUS on look_dx: turret-yaw+ swings toward +X, which is
                 // screen-LEFT for a camera looking +Z — the raw += read as inverted aim. (The
@@ -15968,7 +15993,7 @@ impl Game {
                 transmission_ok: self.module_ok(ModuleKind::Transmission),
                 left_track: track_traction.left, right_track: track_traction.right,
                 running_gear_factor,
-                parking_brake: !(coop.is_some() || (acting.is_some() && !afoot_inside)),
+                parking_brake: !(coop.is_some() || crew_drives || (acting.is_some() && !afoot_inside)),
             };
             self.player.update_player_powertrain(&mut self.player_powertrain, powertrain_controls,
                 traverse, elevate, dt, &self.hf);
@@ -16002,6 +16027,8 @@ impl Game {
             let main_trigger = gunner_input.is_some_and(|i| i.flag(crate::lan::F_FIRE_MAIN))
                 || (coop.is_none() && input.mg_coax);
             let lmb_edge = main_trigger && !self.prev_lmb;
+            // The solo crew's gunner pulls his own trigger once laid and ordered.
+            let ai_pulse = coop.is_none() && self.crew_solo_take_gunner_fire();
             let click_consumed = local_gunner_controls
                 && (self.primary_pickup_press || self.hover_station.is_some() || self.hover_hatch);
             // LAN clients render authoritative crew state but never commit a predicted round.
@@ -16012,7 +16039,7 @@ impl Game {
             // A deliberate pull remains audible with a failed round or disabled gun.
             // This is outside the discharge gate, but still respects view-entry clicks.
             let trigger_result = self.cartridge_primers.pull(
-                owns_fire_authority && lay_ok && lmb_edge && !click_consumed,
+                owns_fire_authority && lay_ok && ((lmb_edge && !click_consumed) || ai_pulse),
                 self.player_can_fire());
             if trigger_result != cartridge_primer::Pull::Ignored {
                 if let Some(a) = &self.audio {
@@ -16036,7 +16063,11 @@ impl Game {
     /// Crew service stays live when the local body steps outside. Human loading requires actual
     /// mouse/right-stick motion; only an unoccupied assisted seat receives timed AI strokes.
     fn update_crew_breech(&mut self, input: &TankInput, acting: Option<Station>, dt: f32) {
-        let Some(frame) = input.coop else { return; };
+        let Some(frame) = input.coop else {
+            // Solo: the living loader serves the breech at his own rate when he is at it.
+            self.crew_solo_service_breech(dt);
+            return;
+        };
         let loader = frame.input(crate::lan::LanRole::Loader);
         let servicing = !loader.flag(crate::lan::F_DISMOUNTED)
             && (loader.flag(crate::lan::F_SERVICE_BREECH)
@@ -16454,6 +16485,8 @@ impl Game {
                 self.update_crew_breech(input, None, dt);
                 self.update_crew_vehicle_mg(input, dt);
             } else {
+                // The crew inside keeps bleeding, burning and dying while the player is out.
+                self.crew_solo_update(input, dt);
                 let previous_tank_pos = self.player.pos;
                 let previous_pose = self.player_pose();
                 let track_traction = tank::TrackTraction {
@@ -16555,6 +16588,11 @@ impl Game {
             }
             self.update_activities(&activity_input, dt, r.camera.pos, r.camera.forward());
 
+            // The living solo crew decides first (orders, the gunner's lay and trigger, the
+            // driver's levers, wounds and the player's hands); the vehicle authority reads it.
+            if coop.is_none() {
+                self.crew_solo_update(input, dt);
+            }
             let acting = self.update_crew_vehicle_controls(input, dt, r, primary_was_held);
 
             // ── Station gate: only the ACTIVELY-manned seat's continuous controls are live, and only
@@ -16783,7 +16821,8 @@ impl Game {
                     self.loader_crouch_t += (target - self.loader_crouch_t).clamp(-6.0 * dt, 6.0 * dt);
                     let ram_locked = ram_consumed_look
                         || (self.grab && input.mg_coax && self.ram > 0.0);
-                    if !self.lever_pulling && !ram_locked && !casing_consumed_look {
+                    // Hands on a wounded man: the mouse is the hands (wrapping, turning), not the eyes.
+                    if !self.lever_pulling && !ram_locked && !casing_consumed_look && !self.crew_solo_hands_busy() {
                         self.head_yaw += input.look_dx * SENS; // unclamped — turn all the way around
                         self.head_pitch = (self.head_pitch - input.look_dy * SENS).clamp(-1.2, 1.0);
                     }
@@ -17221,6 +17260,14 @@ impl Game {
                     self.hover_station = Some(Station::Gunner);
                     self.hover_label = Some("GUNNER - TAKE THE SIGHTS [LMB]");
                 }
+            }
+
+            // The living solo crew: the driver's seat as an anchor, a dead man blocking a seat,
+            // and the crosshair on a wounded man, a body, or the first-aid box.
+            {
+                let (cam_pos, cam_fwd) = (r.camera.pos, r.camera.forward());
+                self.crew_solo_station_anchors(cam_pos, cam_fwd);
+                self.crew_solo_hover(cam_pos, cam_fwd);
             }
 
             // Non-campaign modes retain the simple red-X sandbox exit. A campaign attempt routes through
@@ -17775,7 +17822,10 @@ impl Game {
 
     /// A living singleplayer operator can manually work a vacant post. Casualties persist, but
     /// losing the designated loader cannot block the survivor's ordinary reload/traversal inputs.
-    fn crew_ok(&self, _role: CrewRole) -> bool {
+    fn crew_ok(&self, role: CrewRole) -> bool {
+        if self.crew_solo_active() {
+            return self.crew_solo_role_ok(role);
+        }
         !self.singleplayer_crew_active || self.singleplayer_embodied_role()
             .is_some_and(|active| {
                 let identity=singleplayer_crew::casualty_identity(active).identity;
@@ -17850,6 +17900,9 @@ impl Game {
     pub fn request_station(&mut self, s: Station) {
         if s == Station::Commander && self.station != Station::Loader { return; }
         if s == self.station || self.switch_t > 0.0 {
+            return;
+        }
+        if self.crew_solo_station_blocked(s).is_some() {
             return;
         }
         let mut origin=self.station_eye(self.station);
@@ -20744,6 +20797,10 @@ impl Game {
                 p.collected = true;
                 r.set_visible(p.slot, false);
                 self.foot.supplies.add(p.kind);
+                // The same supply sources that refill ammunition and fuel refill the first-aid box.
+                if matches!(p.kind, PickupKind::Ammo | PickupKind::Fuel | PickupKind::Medical) {
+                    self.crew_solo.aid_box.restock();
+                }
                 match p.kind {
                     PickupKind::Ammo => self.foot.ammo += 12, // Luger rounds
                     PickupKind::Medical => {
@@ -20783,6 +20840,8 @@ impl Game {
             {
                 soldier.looted = true;
                 recovered += u32::from(soldier.ammo_drop);
+                // Every soldier carries his own dressing packet; it goes into the box.
+                self.crew_solo.aid_box.scavenge_dressing();
             }
         }
         if recovered > 0 {
@@ -26011,6 +26070,15 @@ impl Game {
             return;
         }
         if s != self.station {
+            // A living crew: a dead man in the seat refuses the move, and every move costs the
+            // real clamber between posts.
+            if !self.crew_solo_begin_station_move(s) { return; }
+            if self.crew_solo_active() {
+                if s == Station::Loader { self.place_interior_exit(); }
+                self.station = s;
+                self.sights_mag = 0;
+                return;
+            }
             if s == Station::Loader && self.station == Station::Gunner {
                 self.request_station(s);
                 self.sights_mag = 0;
@@ -27561,6 +27629,12 @@ impl Game {
                 }
             }
             self.living_wounds.record(*casualty,events);
+            // The solo crew's physiology: a wound with a time course, or a closed record.
+            if couch_hits.iter().any(|c|c.peer_id==casualty.peer_id) {
+                self.crew_solo_record_kia(*casualty);
+            } else {
+                self.crew_solo_record_wounds(*casualty,events);
+            }
             if !couch_hits.iter().any(|c|c.peer_id==casualty.peer_id) {
                 for (i,event) in events.iter().enumerate().filter(|(_,e)|e.result.outcome!=crew_damage::CrewTissueOutcome::None) {
                     self.spawn_cubic_blood(*casualty,Some(parent.transform_point3(event.wound_local)),
@@ -31318,6 +31392,10 @@ impl Game {
         if !self.player.alive || self.mode != Mode::Tank { return InteractKind::None; }
         if self.carry_mesh.is_some() || self.carried_casing.is_some() || self.casing_pull > 0.0 {
             return InteractKind::Carrying;
+        }
+        // A crewman, his body, or the first-aid box under the crosshair: E (or LMB) held works.
+        if self.crew_solo.hover.is_some() {
+            return InteractKind::Click;
         }
         match self.hover {
             Some(Hotspot::RackSlot(_) | Hotspot::LoadedRound | Hotspot::SpentCasing

@@ -465,8 +465,8 @@ pub fn run_crew_battle_capture(
     g.set_defer_rtt_to_render(true);
     let initial = g.debug_crew_battle_snapshot();
     ensure!(
-        g.singleplayer_living_crew() == Some(1),
-        "recording requires the living singleplayer crewman"
+        g.singleplayer_living_crew() == Some(5),
+        "recording requires the living singleplayer crew"
     );
     let label = scenario.label();
     let mut inside = Picture::new(
