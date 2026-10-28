@@ -16202,8 +16202,9 @@ impl Game {
         self.snow_cover.update(dt, snowfall, self.player.speed, self.player.turret_yaw, self.rounds_spent);
         r.player_snow_load = self.snow_cover.player;
         r.world_snow_load = self.snow_cover.world;
-        // Wear and grime grow with time crewed, rounds fired and distance driven (`surface_wear`).
-        self.surface_wear.update(dt, self.player.speed, self.rounds_spent);
+        // Wear and grime grow with time crewed, rounds fired, distance driven and, on the glass,
+        // precipitation (`surface_wear`).
+        self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);
         r.wear = self.surface_wear.uniform();
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();

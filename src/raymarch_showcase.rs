@@ -825,8 +825,8 @@ fn run_shafts(prefix: &str) -> anyhow::Result<()> {
 /// `raymarch-cabin PREFIX`: the commander's post shut, as a player sees it on the act's own
 /// weather: the vision blocks, the cabin medium at rest, then while the tank drives (two pairs of
 /// consecutive frames, no history reset between them, so their difference is the frame-to-frame
-/// flicker); then the gunner's, driver's and radio operator's posts at rest. Short by design (one
-/// process, a few hundred frames).
+/// flicker); then the gunner's, driver's and radio operator's posts at rest, and the gunner's
+/// two-pass eyepiece composite. Short by design (one process, a few hundred frames).
 pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_commander.png")).exists(),
         "preserving existing capture; choose a new prefix");
@@ -881,6 +881,39 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
         step(&mut g, &mut r, 40, &idle);
         let text = note(&r, &format!("the {name}'s post at rest"));
         rig.still(&mut r, name, &text)?;
+    }
+    // The gunner's eyepiece composite as the live loop draws it: the optic pass, then the
+    // interior pass around the eyepiece, which reuses the optic pass's far maps and sky.
+    g.station = Station::Gunner;
+    step(&mut g, &mut r, 40, &idle);
+    if g.optic_composite_active() {
+        let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter);
+        r.begin_coop_shadow_frame(g.player.center());
+        r.weather_shelter = 1.0;
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, &mut r);
+        r.set_active_view(0);
+        r.render_optic_snapshot(&device, &queue);
+        let (eye, forward, fov) = g.gunner_interior_camera();
+        r.camera.pos = eye;
+        r.camera.set_forward(forward);
+        r.camera.fov_y = fov;
+        r.camera.zfar = crate::PROTECTED_INTERIOR_FAR_M;
+        r.precipitation = 0.0;
+        r.reticle = false;
+        r.optic_mask = 4.0;
+        g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, &mut r);
+        r.set_active_view(3);
+        r.rt_skip = true;
+        r.set_coop_shadow_reuse(true);
+        let path = format!("{prefix}_gunner_composite.png");
+        r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+        let stats = r.raymarch_stats().map(|s| format!("{s:?}"));
+        r.rt_skip = false;
+        r.set_coop_shadow_reuse(false);
+        r.end_coop_shadow_frame();
+        (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter) = saved;
+        rig.shots.push(serde_json::json!({ "name": "gunner_composite", "path": path, "raymarch": stats,
+            "note": "the live loop's two-pass eyepiece composite; the interior pass reuses the optic pass's far cascade, sky cover and sky cache" }));
     }
     fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "schema": "panzer.raymarch-cabin.v1", "manifest": manifest, "adapter": adapter.get_info().name,

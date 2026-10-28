@@ -254,6 +254,11 @@ pub(super) struct Backend {
     /// Phase refreshed this frame; `sky_cache_phases` means every texel (a sky jump).
     sky_phase: u32,
     prev_sky_key: Option<(Vec3, f32, f32)>,
+    /// This render samples the previous render's far cascade, sky cover and sky cache (a later
+    /// view of the same displayed frame: `Renderer::set_coop_shadow_reuse`).
+    reuse_maps: bool,
+    /// `Renderer::frame` of the last render that drew those maps.
+    maps_frame: Option<u32>,
     scratch: Target,
     /// The shaded frame before reflections, glass and points: next frame's bounce source. Kept
     /// apart from `scratch` so that the reflection pass's output does not re-enter the indirect
@@ -329,6 +334,8 @@ pub(super) struct Backend {
     prev_camera: Option<(Vec3, Vec3, f32, f32, Mat4)>,
     /// The cabin domains' world-to-local transforms last frame (`FrameUniform::cabin_motion`).
     prev_cabin: Option<[Mat4; super::cabin_medium::DOMAINS]>,
+    /// `KESSEL_GLASS_GRIME`: a fixed glass grime load in place of the game's.
+    glass_grime: Option<f32>,
     history_valid: bool,
     shadow_views: [Mat4; SHADOW_VIEWS],
     shadowed: [Option<usize>; POINT_SHADOWS],
@@ -1001,7 +1008,7 @@ impl Backend {
             lights_buf, light_cell_start_buf, light_cell_items_buf, weapon_buf, ember_buf,
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
-            sky_phase: 0, prev_sky_key: None, sky_sampler,
+            sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, history, ao, bounce, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
@@ -1010,6 +1017,7 @@ impl Backend {
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
             binds: None, flip: 0, prev_camera: None, prev_cabin: None, history_valid: false,
+            glass_grime: std::env::var("KESSEL_GLASS_GRIME").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)),
             shadow_views: [Mat4::IDENTITY; SHADOW_VIEWS], shadowed: [None; POINT_SHADOWS],
             lights: Vec::with_capacity(MAX_LIGHTS), parcels: Vec::with_capacity(MAX_PARCELS), embers: Vec::with_capacity(MAX_EMBERS),
             pairs: Vec::new(), cell_start: vec![0; CELL_COUNT + 1], cell_items: Vec::new(),
@@ -1339,13 +1347,22 @@ impl Backend {
         let ground_albedo = (0.80 - 0.50 * r.atmosphere_mood.clamp(0.0, 1.0) as f64).max(0.30 + 0.45 * r.precipitation.clamp(0.0, 1.0) as f64);
         let ground = (horizon * 0.6 + zenith * 0.4) * ground_albedo + sun_radiance * (sun_dir.y.max(0.0) as f64) * ground_albedo / std::f64::consts::PI;
 
-        // Visibility views.
+        // Visibility views. A later view of the same displayed frame (the gunner's eyepiece
+        // composite: its interior pass after the optic pass; split-screen views 2..N) samples the
+        // first view's far cascade, sky cover and sky cache: the sun and sky are the same and the
+        // eyes are metres apart. The near cascade follows its own eye.
+        self.reuse_maps = r.coop_shadow.reuse && self.maps_frame.is_some_and(|f| r.frame.wrapping_sub(f) <= 4);
+        if !self.reuse_maps { self.maps_frame = Some(r.frame); }
+        let previous_views = self.shadow_views;
         let near_half = if r.interior_light > 0.02 { 6.0 } else { 20.0 };
         let focus = eye + forward * SOLO_SHADOW_LOOK_AHEAD_M;
         self.shadow_views = [Mat4::IDENTITY; SHADOW_VIEWS];
         self.shadow_views[0] = stable_shadow_view_proj(sun_dir, focus, SOLO_SHADOW_HALF_M, FAR_SHADOW_DEPTH_HALF_M, SHADOW_FAR_RES);
         self.shadow_views[1] = stable_shadow_view_proj(sun_dir, eye, near_half, 60.0, SHADOW_NEAR_RES);
-        {
+        if self.reuse_maps {
+            self.shadow_views[0] = previous_views[0];
+            self.shadow_views[2] = previous_views[2];
+        } else {
             let texel = 2.0 * SKY_COVER_HALF_M / SKY_COVER_RES as f32;
             let snapped = Vec3::new((eye.x / texel).round() * texel, eye.y, (eye.z / texel).round() * texel);
             let top = snapped + Vec3::Y * 150.0;
@@ -1448,7 +1465,12 @@ impl Backend {
             report_dir: self.events.iter().filter(|e| e.kind == EVENT_MUZZLE).min_by(|a, b| (r.time - a.born).total_cmp(&(r.time - b.born)))
                 .map_or([0.0, 0.0, 1.0, 0.0], |e| [e.dir.x, e.dir.y, e.dir.z, 0.0]),
             debug: [if self.debug_skip & 8192 != 0 { 1.0 } else { 0.0 }, self.probe.map_or(-1.0, |p| p.0 as f32), self.probe.map_or(-1.0, |p| p.1 as f32), if self.debug_skip & 32768 != 0 { 1.0 } else { 0.0 }],
-            wear: if self.debug_skip & 65536 != 0 { [0.0; 4] } else { r.wear },
+            wear: if self.debug_skip & 65536 != 0 { [0.0; 4] } else {
+                // KESSEL_GLASS_GRIME=0..1 fixes the glass load (the panes' film) for review.
+                let mut wear = r.wear;
+                if let Some(glass) = self.glass_grime { wear[2] = glass; }
+                wear
+            },
             // The player's crew compartment: 0.9 m above the turret frame's origin (its basket
             // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
             cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
@@ -2213,9 +2235,9 @@ impl Backend {
             r.encode_raster_optics(encoder, &mut work);
         }
         // 1. Visibility maps from the scene geometry.
-        self.depth_pass(r, encoder, "rm-shadow-far", &self.shadow_far.view, 0, &mut work);
+        if !self.reuse_maps { self.depth_pass(r, encoder, "rm-shadow-far", &self.shadow_far.view, 0, &mut work); }
         self.depth_pass(r, encoder, "rm-shadow-near", &self.shadow_near.view, 1, &mut work);
-        self.depth_pass(r, encoder, "rm-sky-cover", &self.sky_cover.view, 2, &mut work);
+        if !self.reuse_maps { self.depth_pass(r, encoder, "rm-sky-cover", &self.sky_cover.view, 2, &mut work); }
         for slot in 0..POINT_SHADOWS {
             if self.shadowed[slot].is_none() { continue; }
             for face in 0..6 {
@@ -2250,7 +2272,7 @@ impl Backend {
         if let Some(sf) = &r.scatter_field { sf.encode_hiz(r, encoder); }
         // 3. Sky cache: this frame's phase of the by-direction atmosphere and clouds (every
         // texel after a sky jump). Misses and reflections sample it; the discs are analytic.
-        {
+        if !self.reuse_maps {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-sky"),
                 color_attachments: &[Some(attachment(&self.sky_cache.view, wgpu::LoadOp::Load))],

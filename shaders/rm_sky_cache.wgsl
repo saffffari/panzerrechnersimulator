@@ -29,7 +29,12 @@ fn fs_cache(in: VsOut) -> @location(0) vec4<f32> {
     let phase = i32(sky_cache.window.z);
     let columns = max(count / 2, 1);
     let rows = max(count / columns, 1);
-    let mine = (texel.x % columns) + columns * (texel.y % rows);
+    // Phases interleave 8x8-texel tiles, not single texels: a GPU warp's pixels lie in one tile,
+    // so a refreshed warp marches on every lane and the others leave at once. Interleaved texels
+    // left about 2 of a warp's 32 lanes marching and cost nearly a full refresh every frame
+    // (3.5 ms in a storm, 2026-10-28).
+    let tile = texel / 8;
+    let mine = (tile.x % columns) + columns * (tile.y % rows);
     // `discard` only demotes the invocation (it keeps executing); the return skips the march.
     if (phase < count && mine != phase) { discard; return vec4(0.0); }
     let u = (f32(texel.x) + 0.5) * sky_cache.dims.z;
