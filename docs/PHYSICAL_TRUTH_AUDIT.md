@@ -324,6 +324,11 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Winter whitewash (2026-10-28; `rm_gbuffer.wgsl` `apply_whitewash`, `Renderer::whitewash`): in
+  winter acts the player's Tiger's exterior paint (recognised by its exact swatch) takes a chalky
+  white coat (linear 0.56-0.72), thin where the brush ran dry, worn through on the decks, streaked
+  down the sides; an authored mask in the mesh frame, raymarch backend only. Gate: `raymarch-cabin`
+  stills `tiger_front_quarter`, `tiger_rear_quarter`.
 - Gunner sight view damping (2026-10-28; `Game::sight_view_model`, `KESSEL_SIGHT_DAMPING_S`): the
   gunner's view follows the hull's pitch and roll through a 0.25 s low-pass because the hull pose
   is fitted to the ground every frame without suspension dynamics; a comfort filter, not a head or

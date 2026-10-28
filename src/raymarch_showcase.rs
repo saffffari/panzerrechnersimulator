@@ -931,6 +931,16 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
         rig.shots.push(serde_json::json!({ "name": "gunner_composite", "path": path, "raymarch": stats,
             "note": "the live loop's two-pass eyepiece composite; the interior pass reuses the optic pass's far cascade, sky cover and sky cache" }));
     }
+    // The Tiger from outside: its winter coat (`apply_whitewash`), front and rear quarters.
+    let p = g.player.pos;
+    let f = g.player.forward();
+    let side = f.cross(Vec3::Y).normalize_or_zero();
+    for (name, eye) in [("tiger_front_quarter", p + f * 7.5 + side * 5.0 + Vec3::Y * 2.2),
+                        ("tiger_rear_quarter", p - f * 7.5 - side * 5.0 + Vec3::Y * 2.6)] {
+        rig.observe(&mut r, eye, p + Vec3::Y * 1.4, 55.0);
+        rig.still(&mut r, name, "the Tiger from outside at 9 m: its winter coat")?;
+    }
+    rig.station_camera();
     rig.shots.push(serde_json::json!({ "name": "sight_line_driving", "speed_m_s": speed,
         "raw_turn_deg_s": raw_turn, "raw_jolt_rms_deg_s": raw_jolt, "view_turn_deg_s": view_turn, "view_jolt_rms_deg_s": view_jolt,
         "damping_s": std::env::var("KESSEL_SIGHT_DAMPING_S").ok(),

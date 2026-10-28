@@ -2619,6 +2619,9 @@ pub struct Renderer {
     /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
     /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
     pub wear: [f32; 4],
+    /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
+    /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
+    pub whitewash: f32,
     /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
     /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
     pub fog_bank: [f32; 4],
@@ -5924,6 +5927,7 @@ impl Renderer {
             player_snow_load: 0.0,
             world_snow_load: 0.0,
             wear: [0.0; 4],
+            whitewash: 0.0,
             fog_bank: [0.0; 4],
             frame: 0,
             hdr_view,
