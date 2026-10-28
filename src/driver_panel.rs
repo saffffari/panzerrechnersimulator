@@ -383,11 +383,13 @@ impl FuelPanel {
         renderer.set_visible(self.slot, true);
         renderer.set_emissive(self.slot, 0.24);
         renderer.set_glass(self.cover, true);
+        renderer.mark_instrument_cover(self.cover);
         renderer.set_model(self.cover, hull);
         renderer.set_visible(self.cover, true);
         renderer.set_emissive(self.cover, 0.0);
         if let Some(slot) = self.tpz_cover {
             renderer.set_glass(slot, true);
+            renderer.mark_instrument_cover(slot);
             renderer.set_model(slot, turret);
             renderer.set_visible(slot, true);
             renderer.set_emissive(slot, 0.0);

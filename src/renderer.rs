@@ -1506,6 +1506,8 @@ struct MeshGpu {
     emissive_own: bool,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
     snow_vehicle: bool,
+    /// A clear cover over an instrument dial (`mark_instrument_cover`).
+    instrument_cover: bool,
     /// View-local geometry that is drawn through the ordinary raster material path but never enters
     /// the shared ray scene. Split-screen crew use this because each viewport hides a different body
     /// while views 2..N intentionally reuse view 1's TLAS.
@@ -3543,6 +3545,7 @@ fn make_mesh_gpu(
         emissive_win: false,
         emissive_own: false,
         snow_vehicle: false,
+        instrument_cover: false,
         raster_only,
         temporal_dynamic: false,
         glass: false,
@@ -6461,6 +6464,13 @@ impl Renderer {
     pub fn mark_snow_vehicle(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.snow_vehicle = true;
+        }
+    }
+    /// Flag glass mesh `idx` as a clear cover over an instrument dial: the raymarch glass pass
+    /// gives it a broad sheen of the cabin's lamps and a faint fixed dust (`rm_glass.wgsl`).
+    pub fn mark_instrument_cover(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.instrument_cover = true;
         }
     }
     /// Flag mesh `idx` as an OWN-COLOUR emissive that is NOT night-gated: a warm interior bulb or a

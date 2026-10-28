@@ -7626,6 +7626,9 @@ const LEVER_OPEN: f32 = 0.8; // open enough to work the breech
 const LEVER_SHUT: f32 = 0.15; // closed enough to fire
 
 /// One state drives both the visible reload lamp and its point light.
+/// The TPZ needle's width in the dial's plane against its source bar (1 cm): 2.5 mm, a needle.
+const TPZ_NEEDLE_WIDTH_SCALE: f32 = 0.25;
+
 /// The sight lamps' lenses in slot order: ready, working, armour-piercing, APCR, high explosive.
 fn sight_lamp_fixture(k: usize) -> crate::interior_rig::FiniteCubeLamp {
     if k < 2 { crate::interior_rig::SIGHT_LOAD_FIXTURES[k] } else { crate::interior_rig::SIGHT_ROUND_FIXTURES[(k - 2).min(2)] }
@@ -18437,10 +18440,16 @@ impl Game {
         r.set_emissive(self.slots.turret_disc, 0.0);
         // TPZ needle: 1:1 turret bearing, about the dial-face axis (from the backing's transform).
         let tpz_axis = driver_panel::tpz_axis();
+        // The source needle is a 1 cm bar, which read as a bar at 800x450: it is drawn 2.5 mm
+        // wide in the dial's plane; its stand-off from the face is unchanged (2026-10-28).
+        let width = Vec3::Y.cross(tpz_axis).normalize();
+        let thin = glam::Mat3::IDENTITY
+            - glam::Mat3::from_cols(width * width.x, width * width.y, width * width.z) * (1.0 - TPZ_NEEDLE_WIDTH_SCALE);
         r.set_model(
             self.slots.tpz_needle,
             tm * Mat4::from_translation(rig::TPZ_NEEDLE_POS)
-                * Mat4::from_axis_angle(tpz_axis, -yaw),
+                * Mat4::from_axis_angle(tpz_axis, -yaw)
+                * Mat4::from_mat3(thin),
         );
         r.set_model(
             self.slots.wheel1,

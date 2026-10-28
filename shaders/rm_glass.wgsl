@@ -170,6 +170,14 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let smudge = smoothstep(0.85 - 0.30 * load, 0.98, smear);
         dirt = clamp(speck * 0.5 + smudge * 0.4, 0.0, 1.0) * load * 0.5;
     }
+    // An instrument dial's cover (pc.extra.z): a faint fixed dust whatever the glass load, fine
+    // specks a millimetre across in the cover's own frame and a light film (2026-10-28).
+    let instrument = pc.extra.z > 0.5;
+    if (instrument) {
+        let fleck = smoothstep(0.78, 0.96, rm_noise(in.local * 650.0, 151u));
+        let film = 0.03 + 0.03 * rm_noise(in.local * 60.0, 157u);
+        dirt = max(dirt, clamp(fleck * 0.18 + film, 0.0, 1.0));
+    }
     let transmit = clear_transmit * (1.0 - dirt);
 
     // Reflection: the lit frame where the reflected ray lands, the cached sky beyond. With ray
@@ -199,6 +207,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         if (ndl > 0.0) {
             let vis = rm_sun_visibility(world, 0.05);
             spec += rm_ggx_specular(n, v, fr.sun_dir.xyz, rough, vec3(f0)) * fr.sun_radiance.rgb * ndl * vis;
+            if (instrument) { spec += rm_ggx_specular(n, v, fr.sun_dir.xyz, 0.3, vec3(f0)) * fr.sun_radiance.rgb * ndl * vis; }
             dirt_light += fr.sun_radiance.rgb * ndl * vis / RM_PI;
         }
     }
@@ -213,6 +222,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let vis = rm_light_visibility(index, world, 0.03);
         if (vis <= 0.001) { continue; }
         spec += rm_ggx_specular(n, v, s.dir, rough, vec3(f0)) * s.e * ndl * vis;
+        // An instrument cover's dust and fingermarks spread a lamp's glint into a broad sheen that
+        // slides across the glass as the head moves: a second, rougher lobe.
+        if (instrument) { spec += rm_ggx_specular(n, v, s.dir, 0.3, vec3(f0)) * s.e * ndl * vis; }
         dirt_light += s.e * ndl * vis / RM_PI;
     }
     dirt_light += rm_sky_hemisphere(n) * open_side;
