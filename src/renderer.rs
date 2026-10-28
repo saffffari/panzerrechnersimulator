@@ -2614,6 +2614,9 @@ pub struct Renderer {
     /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
     /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
     pub whitewash: f32,
+    /// The player's Tiger's exhaust puffs this frame (`exhaust_plume`), drawn by the raymarch
+    /// medium (parcel kind 7).
+    pub exhaust_puffs: Vec<crate::exhaust_plume::RenderPuff>,
     /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
     /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
     pub fog_bank: [f32; 4],
@@ -5916,6 +5919,7 @@ impl Renderer {
             world_snow_load: 0.0,
             wear: [0.0; 4],
             whitewash: 0.0,
+            exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
             frame: 0,
             hdr_view,

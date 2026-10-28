@@ -822,6 +822,79 @@ fn run_shafts(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `raymarch-exhaust PREFIX`: the Tiger's exhaust (`exhaust_plume`) on a winter noon from a cold
+/// engine: three seconds after the start, after fifteen seconds' idle, from the cupola head-out
+/// looking back, a hard pull from standstill, and the trail at speed in a crosswind (the act's
+/// wind at three times). Short by design.
+pub fn run_exhaust(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_cold_start.png")).exists(),
+        "preserving existing capture; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    g.hatch_open = false;
+    g.exhaust = crate::exhaust_plume::ExhaustPlume::default(); // a cold engine, just started
+    let rear_quarter = |g: &Game| {
+        let p = g.player.pos;
+        let f = g.player.forward();
+        let side = f.cross(Vec3::Y).normalize_or_zero();
+        (p - f * 11.0 + side * 7.0 + Vec3::Y * 2.4, p - f * 2.5 + Vec3::Y * 2.2)
+    };
+    let mut shot = |g: &Game, r: &mut crate::renderer::Renderer, rig: &mut Rig, name: &str, note: &str| -> anyhow::Result<()> {
+        let (eye, at) = rear_quarter(g);
+        rig.observe(r, eye, at, 60.0);
+        let text = format!("{note}; engine {:.0} %, {} puffs, signature {:.2}", g.exhaust.engine_temperature * 100.0,
+            g.exhaust.puff_count(), g.exhaust.signature());
+        rig.still(r, name, &text)
+    };
+    step(&mut g, &mut r, 180, &idle);
+    shot(&g, &mut r, &mut rig, "cold_start", "three seconds after a cold start, idling")?;
+    step(&mut g, &mut r, 720, &idle);
+    shot(&g, &mut r, &mut rig, "idle", "fifteen seconds of cold idle, no wind scaling")?;
+    // From the cupola, head out, looking back over the engine deck.
+    let head = g.player.commander_eye() + Vec3::Y * 0.65;
+    let back = g.player.pos - g.player.forward() * 6.0 + Vec3::Y * 1.6;
+    rig.observe(&mut r, head, back, 70.0);
+    rig.still(&mut r, "cupola_back", "from the cupola, head out, looking back over the engine deck at idle")?;
+    // A hard pull from standstill: full throttle at once.
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    step(&mut g, &mut r, 40, &drive);
+    shot(&g, &mut r, &mut rig, "hard_pull", "two-thirds of a second into a full-throttle pull from standstill")?;
+    // The trail at speed in a crosswind.
+    g.debug_set_wind_scale(3.0);
+    step(&mut g, &mut r, 420, &drive);
+    let p = g.player.pos;
+    let f = g.player.forward();
+    let side = f.cross(Vec3::Y).normalize_or_zero();
+    rig.observe(&mut r, p - f * 4.0 + side * 16.0 + Vec3::Y * 3.0, p - f * 9.0 + Vec3::Y * 2.0, 65.0);
+    let text = format!("the trail after seven seconds at full throttle in the act's wind at three times; speed {:.1} m/s, wind {:.1} m/s",
+        g.player.speed, r.weather_wind_world.length());
+    rig.still(&mut r, "trail_crosswind", &text)?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-exhaust.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies, held fire). The act's weather, clock 09:00 UTC pinned; the wind scaled by 3 for the last still. A cold engine at the start. Observer and commander cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
 /// `raymarch-cabin PREFIX`: the commander's post shut, as a player sees it on the act's own
 /// weather: the vision blocks, the cabin medium at rest, then while the tank drives (two pairs of
 /// consecutive frames, no history reset between them, so their difference is the frame-to-frame

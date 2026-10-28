@@ -4,7 +4,8 @@
 // add emission, and blend with the reprojected previous frame. Output: in-scattered radiance per
 // metre (rgb) and extinction per metre (a). rm_integrate.wgsl turns this into a per-slice table.
 struct Parcel { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, };
-// a: position xyz, radius m   b: colour rgb, kind (0 fire, 1 soot, 2 smoke, 3 glow, 4 segment, 5 fireball)
+// a: position xyz, radius m   b: colour rgb, kind (0 fire, 1 soot, 2 smoke, 3 glow, 4 segment, 5 fireball,
+// 6 muzzle flash, 7 exhaust: smoke whose c.w is its excess heat 0..1)
 // c: emission per m, extinction per m, noise seed, fireball age 0..1   d: segment end xyz
 @group(0) @binding(1) var<storage, read> parcels: array<Parcel>;
 @group(0) @binding(2) var<storage, read> cell_start: array<u32>;
@@ -65,6 +66,12 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
                 m.heat += w * 1.5 * (1.0 - 0.5 * age);
             } else if (kind == 1u || kind == 2u) {
                 w = (1.0 - dd) * (1.0 - dd) * (0.55 + 0.9 * flame_noise);
+            } else if (kind == 7u) {
+                // Exhaust: a billowing puff (a softer, larger-scale breakup than the flames'), its
+                // heat shimmering the air while young.
+                let billow = rm_noise(q * 1.8 + vec3(parcel.c.z, parcel.c.z * 0.7, 0.0), 89u);
+                w = (1.0 - dd) * (1.0 - dd) * (0.45 + 0.9 * billow);
+                m.heat += w * parcel.c.w * 0.5;
             } else if (kind == 6u) {
                 // Muzzle flash: a prolate lobe along the bore (d = direction, c.w = radius/length),
                 // brightest just ahead of the muzzle, torn by the shared noise.
@@ -84,7 +91,7 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
         let ext = parcel.c.y * w;
         m.sigma_t += ext;
         if (kind == 1u) { m.sigma_s += vec3(ext * 0.12); }
-        else if (kind == 2u) { m.sigma_s += parcel.b.rgb * ext * 0.75; }
+        else if (kind == 2u || kind == 7u) { m.sigma_s += parcel.b.rgb * ext * 0.75; }
         else if (kind == 5u || kind == 6u) { m.sigma_s += vec3(ext * 0.25); }
     }
     if (fire_emission > 0.0) {
