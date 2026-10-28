@@ -20,6 +20,8 @@ struct Light { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, };
 // stars, a = cloud transmittance toward the finite discs.
 @group(1) @binding(9) var sky_cache_tex: texture_2d<f32>;
 @group(1) @binding(10) var sky_cache_samp: sampler;
+// The cloud layer's transmittance toward the key body by ground position (rm_cloud_shadow.wgsl).
+@group(1) @binding(11) var cloud_shadow_tex: texture_2d<f32>;
 
 fn rm_sky_background(dir: vec3<f32>) -> vec4<f32> {
     return textureSampleLevel(sky_cache_tex, sky_cache_samp, rm_sky_cache_uv(dir), 0.0);
@@ -56,7 +58,17 @@ fn rm_pcf_near(uv: vec2<f32>, ref_depth: f32) -> f32 {
 }
 // Key-beam visibility of a world point from the two orthographic cascades. `bias_m` lifts the
 // receiver along the beam (metres) against self-shadowing on coarse facets.
+// Key-light visibility: the depth maps' occlusion times the cloud layer's transmittance above
+// the point (the frame's beam is the clear-sky one when cloud shadows are on).
 fn rm_sun_visibility(world: vec3<f32>, bias_m: f32) -> f32 {
+    return rm_sun_visibility_maps(world, bias_m) * rm_cloud_shadow(world);
+}
+fn rm_cloud_shadow(world: vec3<f32>) -> f32 {
+    if (fr.cloud.w < 0.5) { return 1.0; }
+    let uv = clamp((world.xz - fr.cloud.xy) / (2.0 * fr.cloud.z) + vec2(0.5), vec2(0.002), vec2(0.998));
+    return textureSampleLevel(cloud_shadow_tex, sky_cache_samp, uv, 0.0).r;
+}
+fn rm_sun_visibility_maps(world: vec3<f32>, bias_m: f32) -> f32 {
     let p = world + fr.sun_dir.xyz * bias_m;
     let near = rm_shadow_uv(shadow_views.vp[1] * vec4(p, 1.0));
     let near_texel = 2.0 * fr.shadow_params.y / fr.shadow_params.w;

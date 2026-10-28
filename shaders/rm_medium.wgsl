@@ -7,7 +7,26 @@ struct Medium { sigma_s: vec3<f32>, sigma_t: f32, emission: vec3<f32>, g: f32, h
 
 fn rm_medium_zero() -> Medium { return Medium(vec3(0.0), 0.0, vec3(0.0), 0.6, 0.0); }
 
-// World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x.
+// Fog banks (2026-10-28): patches of dense low fog that pool in the low ground below
+// fr.fog.w + fr.fog.z and drift with the wind; fr.fog.y of the ground lies under one. Named
+// approximation: a two-scale footprint field times a height profile, not a boundary-layer
+// simulation; the banks hold their shape as they drift.
+fn rm_fog_bank_density(p: vec3<f32>) -> f32 {
+    if (fr.fog.y <= 0.0 || fr.fog.x <= 0.0) { return 0.0; }
+    let drift = p.xz - vec2(fr.wind.x, fr.wind.z) * fr.cam_pos.w;
+    let footprint = rm_noise(vec3(drift.x / 260.0, 0.0, drift.y / 260.0), 61u) * 0.7
+        + rm_noise(vec3(drift.x / 70.0, 1.7, drift.y / 70.0), 67u) * 0.3;
+    let inside = smoothstep(1.0 - fr.fog.y - 0.08, 1.0 - fr.fog.y + 0.08, footprint);
+    if (inside <= 0.0) { return 0.0; }
+    let h = p.y - fr.fog.w;
+    let top = fr.fog.z * (0.6 + 0.8 * footprint);
+    let profile = 1.0 - smoothstep(top * 0.5, top, h);
+    let wisp = 0.75 + 0.25 * rm_noise(vec3(drift.x / 18.0, h / 6.0, drift.y / 18.0), 71u);
+    return fr.fog.x * inside * profile * wisp;
+}
+
+// World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x,
+// and the fog banks within it.
 fn rm_world_density(p: vec3<f32>) -> f32 {
     let bottom = fr.medium.z;
     let top = fr.medium.w;
@@ -18,9 +37,11 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
     // Spindrift: wind lifts loose snow into a shallow, streaky layer over the ground (the
     // sky-cover map gives the surface height under the point; beyond the map's edge the
     // layer fades into the general weather layer). Named in docs/RAYMARCHING_ENGINE.md.
+    // Only when snow is actually blowing: a snowing storm (snow fraction) or a wind above the
+    // 5 m/s threshold that lifts loose surface snow; the act's ordinary breeze lifts nothing.
     let wind_v = vec2(fr.wind.x, fr.wind.z);
     let wind_speed = length(wind_v);
-    let blow = smoothstep(2.5, 6.0, wind_speed) * max(fr.medium.y, 0.5);
+    let blow = max(smoothstep(5.0, 9.0, wind_speed), fr.medium.y * smoothstep(2.0, 5.0, wind_speed));
     var spindrift = 0.0;
     if (blow > 0.0) {
         let horizontal = length(p.xz - fr.cam_pos.xz);
@@ -34,15 +55,19 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
                 let streak = rm_noise(vec3(along * 0.3, across * 1.6, h * 2.5 + 3.0), 29u);
                 let fine = rm_noise(vec3(along * 1.1 - fr.cam_pos.w * 2.0, across * 4.0, 11.0), 31u);
                 let profile = pow(1.0 - clamp(h, 0.0, 0.9) / 0.9, 2.0);
-                spindrift = (0.03 + fr.medium.x * 3.0) * blow * profile * smoothstep(0.35, 0.85, streak * 0.7 + fine * 0.3) * edge;
+                spindrift = (0.012 + fr.medium.x * 2.0) * blow * profile * smoothstep(0.35, 0.85, streak * 0.7 + fine * 0.3) * edge;
             }
         }
     }
-    return fr.medium.x * above * gust + spindrift;
+    return fr.medium.x * above * gust + spindrift + rm_fog_bank_density(p);
 }
 fn rm_cabin_density(p: vec3<f32>) -> f32 {
     if (fr.cabin.w <= 0.0) { return 0.0; }
-    let d = p - fr.cabin.xyz;
+    // Centred on the crew compartment (fr.vehicle, 1.4 m up) where the pose is known: the
+    // cabin origin is the hull's ground-contact point, which left the haze below seated eye
+    // height (2026-10-28).
+    let centre = select(fr.cabin.xyz, fr.vehicle.xyz, fr.vehicle.w > 0.0);
+    let d = p - centre;
     let r = length(d * vec3(0.45, 0.75, 0.45));
     return fr.cabin.w * (1.0 - smoothstep(0.8, 1.15, r));
 }

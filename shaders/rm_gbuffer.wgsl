@@ -29,6 +29,9 @@ struct Push {
     // x emissive intensity, y metallic factor, z roughness factor,
     // w kind: 0 ordinary, 1 night window, 2 own-colour lamp, 3 terrain, 4 grass.
     params: vec4<f32>,
+    // x snow load 0..1 (snow_cover): the lying share goes to the shade pass in g0.a of ordinary
+    // surfaces. y 1 on the player's vehicle: surface wear (surface_wear.rs, fr.wear).
+    extra: vec4<f32>,
 };
 var<push_constant> pc: Push;
 
@@ -38,6 +41,9 @@ struct VsOut {
     @location(1) normal: vec3<f32>,
     @location(2) relative: vec3<f32>,
     @location(3) tangent: vec4<f32>,
+    // Where the snow breakup field is sampled: the mesh's own frame in metres for a single
+    // (possibly moving) mesh, world space for static instances.
+    @location(4) local: vec3<f32>,
 };
 
 fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
@@ -49,7 +55,7 @@ fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(c0 * inv_det, c1 * inv_det, c2 * inv_det);
 }
 
-fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>) -> VsOut {
+fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>) -> VsOut {
     let world = (model * vec4(pos, 1.0)).xyz;
     let linear = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
     let n = normalize(inverse_transpose_3x3(linear) * normal);
@@ -60,13 +66,15 @@ fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
     out.uv = uv;
     out.normal = n;
     out.tangent = vec4(t, tangent.w);
+    out.local = local;
     return out;
 }
 
 @vertex
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
       @location(3) tangent: vec4<f32>) -> VsOut {
-    return project(pc.model, pos, normal, uv, tangent);
+    let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+    return project(pc.model, pos, normal, uv, tangent, pos * metric);
 }
 
 @vertex
@@ -88,7 +96,59 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         n.y -= dot(derivative, n) / max(1.0 + derivative.y, 0.1);
         t += derivative * t.y;
     }
-    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w));
+    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz);
+}
+
+// Surface wear on the player's vehicle (surface_wear.rs): scratches where boots, cases and tools
+// drag, smudges at hand height inside, dirt on the compartment floor, slush thrown on the lower
+// hull. The hull and turret meshes carry both their outside and the crew compartment, so a face
+// counts as inside when it lies within reach of the compartment's centre (fr.vehicle) and faces
+// it. Masks are noise in the mesh's own frame (they ride the hull and turret). Worn edges and
+// cavity grime need neighbours and are drawn in the shade pass. Named approximation: procedural
+// masks scaled by whole-vehicle loads, not painted or simulated wear.
+struct Worn { albedo: vec3<f32>, roughness: f32 };
+fn apply_wear(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>, face: vec3<f32>, local: vec3<f32>) -> Worn {
+    var a = albedo;
+    var r = roughness;
+    let to_cabin = fr.vehicle.xyz - world;
+    let inside = select(0.0, 1.0, length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0);
+    let dy = world.y - fr.vehicle.y;
+    let mech = clamp(fr.wear.w, 0.0, 1.0);
+    let interior_grime = clamp(fr.wear.x, 0.0, 1.0);
+    let exterior_grime = clamp(fr.wear.y, 0.0, 1.0);
+    let up = smoothstep(0.3, 0.8, n.y);
+    // Scratches: thin strokes along two directions, gathered in patches, densest on faces that
+    // are stood and worked on and everywhere inside. They cut through paint and dirt to bright
+    // steel.
+    let s1 = rm_noise(vec3(local.x * 3.0 + local.z * 1.7, local.y * 2.0, (local.z - local.x * 0.58) * 140.0), 223u);
+    let s2 = rm_noise(vec3((local.x + local.z * 0.4) * 120.0, local.y * 2.0, local.z * 2.6 - local.x), 227u);
+    let strokes = max(smoothstep(0.82, 0.89, s1), smoothstep(0.84, 0.91, s2));
+    let patches = smoothstep(0.3, 0.65, rm_noise(local * 2.3, 229u));
+    // Inside, where hands and boots reach: the floor and the band at seat and hand height (on a
+    // tall wall, strokes merged into pale bars at this resolution).
+    let reach = 1.0 - smoothstep(0.3, 0.9, abs(dy));
+    let scratch = strokes * patches * mech * select(mix(0.4, 1.0, up), max(up, reach), inside > 0.5);
+    a = mix(a, a * 1.5 + vec3(0.05), scratch * 0.8);
+    r = mix(r, 0.35, scratch);
+    // Smudges inside: oil, soot and hands at seat and hand height, a darker film. (An oilier,
+    // glossier film made the matte ceiling mirror the vision blocks; the roughness stays.)
+    let blotch = smoothstep(0.42, 0.82, rm_fbm(local * vec3(5.0, 3.0, 5.0), 233u));
+    let hand = 1.0 - smoothstep(0.25, 0.9, abs(dy));
+    let smudge = inside * blotch * interior_grime * mix(0.35, 1.0, hand);
+    a *= 1.0 - 0.45 * smudge;
+    // Dust and grit on faces that look up: the compartment's floor and shelves inside; outside
+    // the deck between snowfalls. Light against the dark paint.
+    let grit = up * smoothstep(0.3, 0.75, rm_fbm(local * 4.0, 239u) + 0.15);
+    let floor = inside * (1.0 - smoothstep(-0.9, -0.3, dy));
+    let dust = grit * mix(exterior_grime * 0.5, interior_grime * mix(0.6, 1.0, floor), inside);
+    a = mix(a, vec3(0.36, 0.32, 0.27), dust * 0.75);
+    r = mix(r, 0.95, dust);
+    // Outside: slush and earth thrown on the running gear and the lower hull by the tracks.
+    let low = (1.0 - inside) * (1.0 - smoothstep(-1.0, -0.1, dy));
+    let spatter = low * exterior_grime * smoothstep(0.45, 0.75, rm_fbm(local * vec3(9.0, 5.0, 9.0), 241u) + exterior_grime * 0.35);
+    a = mix(a, vec3(0.42, 0.40, 0.37), spatter);
+    r = mix(r, 0.9, spatter);
+    return Worn(a, clamp(r, 0.08, 1.0));
 }
 
 struct GOut {
@@ -168,7 +228,15 @@ fn fs(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
             n = normalize(n + vec3(gx, 0.0, gz) * 1.2);
         }
     }
-    out.g0 = vec4(albedo, select(0.0, kind, kind > 2.5));
+    if (kind < 0.5 && pc.extra.y > 0.5) {
+        let worn = apply_wear(albedo, roughness, in.relative + fr.cam_pos.xyz, n, normalize(in.normal), in.local);
+        albedo = worn.albedo;
+        roughness = worn.roughness;
+    }
+    // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
+    // kinds 3+ keep their code.
+    let lying = rm_snow_lying(in.local, n, clamp(pc.extra.x, 0.0, 1.0));
+    out.g0 = vec4(albedo, select(lying * 0.9, kind, kind > 2.5));
     out.g1 = vec4(n, roughness);
     out.g2 = vec4(0.0, 0.0, 0.0, metallic);
     return out;

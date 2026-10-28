@@ -26,7 +26,11 @@ struct Frame {
     sky_cache: vec4<f32>,         // elevation min rad, elevation span rad, width, height
     report: vec4<f32>,            // xyz the gun's muzzle at its last report, w seconds since (-1 none)
     report_dir: vec4<f32>,        // xyz bore direction of that report
-    debug: vec4<f32>,             // x skip screen-space indirect light (KESSEL_RM_SKIP 8192); yz probe pixel (-1 none)
+    debug: vec4<f32>,             // x skip screen-space indirect light (KESSEL_RM_SKIP 8192); yz probe pixel (-1 none); w skip ray queries
+    wear: vec4<f32>,              // player's vehicle: x interior grime, y exterior grime, z glass grime, w mechanical wear
+    vehicle: vec4<f32>,           // player's crew compartment centre xyz, w its reach m (0 none)
+    cloud: vec4<f32>,             // cloud shadow map centre x, z, half extent m, w on
+    fog: vec4<f32>,               // fog banks: extinction inside /m, coverage, depth m, floor y
     pshadow: array<vec4<f32>, 2>, // xyz shadowed light position, w range m
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
 };
@@ -71,11 +75,15 @@ fn rm_hg(cos_theta: f32, g: f32) -> f32 {
     let gg = g * g;
     return (1.0 - gg) / (4.0 * RM_PI * pow(max(1.0 + gg - 2.0 * g * cos_theta, 0.0001), 1.5));
 }
-// Phase function of the media: the Henyey-Greenstein forward lobe with a 35 % isotropic share
-// standing in for the multiply-scattered light a thick cloud returns toward the eye (single
-// scattering alone leaves the lit side of a smoke cloud black; named approximation).
-fn rm_phase(cos_theta: f32, g: f32) -> f32 {
-    return mix(rm_hg(cos_theta, g), 1.0 / (4.0 * RM_PI), 0.35);
+// Phase function of the media: the Henyey-Greenstein lobe, with an isotropic share standing
+// in for the multiply-scattered light a DENSE cloud returns toward the eye (single scattering
+// alone leaves the lit side of a smoke cloud black). The share grows with the local extinction
+// (optical depth over 2 m): thin weather aerosol keeps its single-scattering lobe, which is what
+// a clear day's haze is, so it does not glow when the sun is behind the camera. Named
+// approximation (docs/RAYMARCHING_ENGINE.md).
+fn rm_phase_dense(cos_theta: f32, g: f32, sigma_t: f32) -> f32 {
+    let dense = 1.0 - exp(-sigma_t * 2.0);
+    return mix(rm_hg(cos_theta, g), 1.0 / (4.0 * RM_PI), 0.35 * dense);
 }
 fn rm_hash(x: u32) -> u32 {
     var s = x ^ (x >> 16u); s *= 0x7feb352du; s ^= s >> 15u; s *= 0x846ca68bu; s ^= s >> 16u;
@@ -177,4 +185,20 @@ fn rm_ggx_specular(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, f0:
 fn rm_heat_colour(t: f32) -> vec3<f32> {
     let x = clamp(t, 0.0, 1.0);
     return vec3(1.0, 0.18 + 0.82 * x * x, 0.02 + 0.98 * pow(x, 4.0));
+}
+// Snow lying on a face (snow_cover.rs): the share of the face covered at a load 0..1. Faces
+// flatter than about 63 degrees hold snow, those under about 32 degrees fully; a breakup field
+// at 10-40 cm, sampled in the mesh's own frame so the pattern rides a moving hull and turret,
+// leaves bare patches at low load and drifts at high load. Whether the falling snow reaches the
+// face (the sky-cover map: overhangs, the inside of a hull) multiplies in where the map is bound.
+// Named approximation: a coverage function, not an accumulated depth field.
+const RM_SNOW_ALBEDO: vec3<f32> = vec3<f32>(0.86, 0.89, 0.93);
+fn rm_snow_lying(local: vec3<f32>, n: vec3<f32>, load: f32) -> f32 {
+    if (load <= 0.001) { return 0.0; }
+    let lie = smoothstep(0.45, 0.85, n.y);
+    if (lie <= 0.0) { return 0.0; }
+    let breakup = rm_fbm(local * vec3(3.5, 6.0, 3.5), 97u);
+    let threshold = 1.0 - load;
+    let covered = smoothstep(threshold - 0.18, threshold + 0.12, breakup * 0.55 + lie * 0.30 + load * 0.15);
+    return clamp(lie * covered, 0.0, 1.0);
 }

@@ -31,6 +31,13 @@
   raymarch The froxel ray-marching backend (docs/RAYMARCHING_ENGINE.md): clustered
            lights, marched media, fireballs, embers, reflections, eyepiece glass.
 
+.PARAMETER Resolution
+  Internal render grid: 800x450 (default), 640x360, 480x272 or 320x180. The window is unchanged;
+  the frame is upscaled to it. Passing -Resolution also writes the grid into the saved graphics
+  preferences (which otherwise win at startup); the graphics menu offers the same grids in play.
+  Measured frame costs per grid are in docs/RAYMARCHING_ENGINE.md ("Internal resolution").
+  -InternalRes is an alias (integration-1 telemetry runs).
+
 .PARAMETER Logged
   Playtest telemetry (port of tools/launch_session_logged_playtest.sh): one JSON line per second
   (fps, frame-time mean/p50/p95/p99/max, CPU simulation and render-submission time, render work
@@ -45,9 +52,6 @@
 
 .PARAMETER Seed
   Pin the Canyon deployment seed (KESSEL_CANYON_SEED) for a reproducible run.
-
-.PARAMETER InternalRes
-  Internal render grid, WxH (default 800x450).
 
 .PARAMETER AssetRoot
   Where the git-ignored assets live (default: this checkout, or the main checkout when this is a
@@ -66,6 +70,7 @@
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Logged -Windowed
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Logged -Autopilot -Seed 29
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Resolution 480x272
 #>
 [CmdletBinding()]
 param(
@@ -77,7 +82,7 @@ param(
     [switch]$Logged,
     [switch]$Autopilot,
     [string]$Seed,
-    [ValidatePattern('^\d+x\d+$')] [string]$InternalRes = '800x450',
+    [Alias('InternalRes')] [ValidateSet('800x450', '640x360', '480x272', '320x180')] [string]$Resolution = '800x450',
     [string]$AssetRoot,
     [string]$Binary,
     [switch]$NoVsync
@@ -135,25 +140,34 @@ try { $sha = ([System.BitConverter]::ToString([System.Security.Cryptography.SHA2
 finally { $stream.Dispose() }
 Write-Host "Release: $Binary`nSHA256:  $sha"
 if (Test-Path $Config) { Write-Host "Saved graphics preferences: $Config" }
-else { Write-Host "First launch: 800x450, screen_bayer8, fullscreen=$(-not $Windowed)." }
+else { Write-Host "First launch: $Resolution, screen_bayer8, fullscreen=$(-not $Windowed)." }
 if ($Mode -eq 'check') { exit 0 }
 
-# --- first-launch graphics preferences (never overwritten afterwards) --------------------------
+# --- first-launch graphics preferences (afterwards only an explicit -Resolution changes them) ---
+$grid = $Resolution.Split('x') | ForEach-Object { [int]$_ }
 New-Item -ItemType Directory -Force (Split-Path $Config) | Out-Null
 if (-not (Test-Path $Config)) {
     $initial = [ordered]@{
-        version = 1; resolution = @(800, 450); window = @(1280, 720)
+        version = 1; resolution = @($grid[0], $grid[1]); window = @(1280, 720)
         fullscreen = (-not $Windowed); vsync = $true; shadows = 2048
         full_transport = $true; optics = 1; fps = $false
         exposure_ev = 0.0; saturation = 1.0; warmth = 0.0; gamma = 1.0
         storm = $null; sun_phase = 0; sun_speed = 1.0; dither_pattern = 3
         display = [ordered]@{
-            width = 800; height = 450; palette_levels = 31.0
+            width = $grid[0]; height = $grid[1]; palette_levels = 31.0
             ordered_dither = 1.0; retro_strength = 1.0; ldr_dither = 1.0
             ambient_white_balance = $false; ambient_white_balance_strength = 1.0
         }
     }
     [System.IO.File]::WriteAllText($Config, (($initial | ConvertTo-Json -Depth 5) + "`n"))
+}
+elseif ($PSBoundParameters.ContainsKey('Resolution')) {
+    # The saved preferences are applied at startup and would replace KESSEL_INTERNAL_RES.
+    $saved = Get-Content $Config -Raw | ConvertFrom-Json
+    $saved.resolution = @($grid[0], $grid[1])
+    $saved.display.width = $grid[0]; $saved.display.height = $grid[1]
+    [System.IO.File]::WriteAllText($Config, (($saved | ConvertTo-Json -Depth 5) + "`n"))
+    Write-Host "Saved graphics preferences: render grid set to $Resolution."
 }
 if ($NoVsync) {
     # Uncapped presentation for headroom measurements: a copy of the saved preferences with
@@ -178,7 +192,7 @@ $env:KESSEL_ASSET_ROOT        = $AssetRoot
 $env:KESSEL_CANYON_MANIFEST   = $Manifest
 $env:KESSEL_RENDERER          = $Renderer
 $env:KESSEL_GRAPHICS_PRESET   = 'high'
-$env:KESSEL_INTERNAL_RES      = $InternalRes
+$env:KESSEL_INTERNAL_RES      = $Resolution
 $env:KESSEL_DITHER_PATTERN    = 'screen_bayer8'
 $env:KESSEL_GEOMETRY_AA       = 'msaa4'
 if (-not $Windowed) { $env:KESSEL_FULLSCREEN = '1' }
@@ -211,7 +225,7 @@ if ($Logged) {
     "[launcher] binary=$Binary sha256=$sha"
     "[launcher] checkout=$Root asset_root=$AssetRoot manifest=$Manifest"
     "[launcher] commit $(& git -C $Root log -1 --format='%h %s' 2>$null)"
-    "[launcher] renderer=$Renderer preset=high internal=$InternalRes geometry_aa=msaa4 visibility=maps config=$Config platoon=$Platoon"
+    "[launcher] renderer=$Renderer preset=high internal=$Resolution geometry_aa=msaa4 visibility=maps config=$Config platoon=$Platoon"
     "[launcher] logged=$Logged autopilot=$Autopilot seed=$Seed session_log=$env:KESSEL_SESSION_LOG"
 ) | Set-Content $log
 $errLog = "$log.stderr"

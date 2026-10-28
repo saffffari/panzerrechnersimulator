@@ -1504,6 +1504,8 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
+    /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
+    snow_vehicle: bool,
     /// View-local geometry that is drawn through the ordinary raster material path but never enters
     /// the shared ray scene. Split-screen crew use this because each viewport hides a different body
     /// while views 2..N intentionally reuse view 1's TLAS.
@@ -1517,6 +1519,8 @@ struct MeshGpu {
     glass: bool,
     periscope_kind: u32, // 0 ordinary, 1 closed window, 2 mirror, 3 finite ideal thin lens
     periscope_focal_m: f32,
+    /// A mirror's plane normal in the mesh's own frame (raymarch ray queries fold at it).
+    mirror_normal: glam::Vec3,
     /// When true this mesh is TERRAIN: the fragment stage samples the tank-track map (rut darkening
     /// + a normal-perturbed dip). Signalled via params.w = 3.0.
     track_recv: bool,
@@ -2594,6 +2598,16 @@ pub struct Renderer {
     /// The player's gun muzzle (position, bore direction) this frame, so a backend can tell the
     /// gun's own report from a detonation downrange. Set by the game each update.
     pub muzzle_hint: Option<(glam::Vec3, glam::Vec3)>,
+    /// Snow lying on the player's vehicle and on the world, 0..1 (`snow_cover`), set by the game
+    /// each update; the raymarch shade pass turns them into coverage per pixel.
+    pub player_snow_load: f32,
+    pub world_snow_load: f32,
+    /// Wear on the player's vehicle (`surface_wear`): interior grime, exterior grime, glass grime,
+    /// mechanical wear, each 0..1; set by the game each update (raymarch backend).
+    pub wear: [f32; 4],
+    /// Fog banks in the world medium (raymarch backend): extinction inside a bank /m, coverage
+    /// 0..1, depth m above the floor, the floor's altitude y. All zero: none.
+    pub fog_bank: [f32; 4],
     /// Source-qualified admission for the observer's flash detector, never added light energy.
     pub observer_flash_source: bool,
     /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
@@ -2809,8 +2823,14 @@ pub struct Renderer {
     gpu_profile: Option<crate::gpu_profile::GpuProfile>,
 
     // ---- M-D hardware ray tracing (rt.rs) ----
+    /// Instanced batches already reported for a degenerate instance transform (see
+    /// `rt_safe_instance_transform`): one line per batch, not per frame.
+    rt_degenerate_reported: std::collections::HashSet<usize>,
     /// Device came up with EXPERIMENTAL_RAY_QUERY and KESSEL_NO_RT didn't veto it.
     pub rt_on: bool,
+    /// The scene BLASes and per-frame TLAS exist: `rt_on`, or the raymarch backend's ray queries
+    /// (`graphics::raymarch_ray_queries_wanted`). The exact surface pack stays `rt_on`-only.
+    pub rt_scene: bool,
     /// Splitscreen: views 2..N of the SAME sim frame reuse view 1's TLAS (scene transforms are
     /// camera-independent) — set true before their renders, cleared after. Never skips the very
     /// first build (the guard checks a TLAS exists).
@@ -2859,12 +2879,13 @@ pub struct Renderer {
     bloom_composite_pipe: wgpu::RenderPipeline,
     /// Veiling glare of the eye over the Gaussian bloom (raymarch chain only): a box-filtered
     /// pyramid of the blurred bright pass, one level per glare ring.
-    bloom_glare_pipe: wgpu::RenderPipeline,
-    bloom_composite_glare_pipe: wgpu::RenderPipeline,
-    bloom_copy_pipe: wgpu::RenderPipeline,
+    /// `None` on the physical backend, whose `bloom.wgsl` has no glare entry points.
+    bloom_glare_pipe: Option<wgpu::RenderPipeline>,
+    bloom_composite_glare_pipe: Option<wgpu::RenderPipeline>,
+    bloom_copy_pipe: Option<wgpu::RenderPipeline>,
     bloom_levels: Vec<wgpu::TextureView>,
     bloom_level_binds: Vec<wgpu::BindGroup>,
-    bloom_glare_bind: wgpu::BindGroup,
+    bloom_glare_bind: Option<wgpu::BindGroup>,
     bloom_bind_hdr: wgpu::BindGroup, // src = full-res HDR (bright pass)
     bloom_bind_a: wgpu::BindGroup,   // src = bloom_a
     bloom_bind_b: wgpu::BindGroup,   // src = bloom_b
@@ -3514,11 +3535,13 @@ fn make_mesh_gpu(
         emissive: 0.0,
         emissive_win: false,
         emissive_own: false,
+        snow_vehicle: false,
         raster_only,
         temporal_dynamic: false,
         glass: false,
         periscope_kind: 0,
         periscope_focal_m: 0.0,
+        mirror_normal: glam::Vec3::ZERO,
         track_recv: false,
         metallic_factor: m.metallic_factor,
         roughness_factor: m.roughness_factor,
@@ -3591,7 +3614,7 @@ impl Renderer {
         }
         let graphics_preset = crate::graphics::active_preset();
         let shader_backend = crate::graphics::shader_backend_enabled();
-        println!("[renderer] backend={} (ray queries {})", if crate::graphics::raymarch_backend_enabled() { "raymarch" } else if shader_backend { "shader" } else { "physical" }, if shader_backend { "disabled" } else { "adapter-dependent" });
+        println!("[renderer] backend={} (ray queries {})", if crate::graphics::raymarch_backend_enabled() { "raymarch" } else if shader_backend { "shader" } else { "physical" }, if shader_backend && !crate::graphics::raymarch_ray_queries_wanted() { "disabled" } else { "adapter-dependent" });
         // Until a caller sets an act clock the sky is Stalingrad's solstice noon.
         let default_sky_clock = crate::celestial_sky::SkyClock::for_act(
             1, crate::celestial_sky::ClockPhase::Day);
@@ -3835,6 +3858,10 @@ impl Renderer {
             .features()
             .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
             && crate::graphics::hardware_rt_enabled();
+        // The scene's acceleration structures: built for the physical integrator (`rt_on`) and
+        // for the raymarch backend's ray queries, which leave the physical deferred path off.
+        let rt_scene = device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
+            && (rt_on || crate::graphics::raymarch_ray_queries_wanted());
         // S4: the deferred combine IS the ray integrator — no RT, no deferred (Low tier
         // = the forward path).
         let deferred = rt_on
@@ -3860,7 +3887,7 @@ impl Renderer {
                     &material_bgl,
                     &sampler,
                     m,
-                    rt_on,
+                    rt_scene,
                     raster_only_mask[slot],
                     &mut material_cache,
                 );
@@ -3875,7 +3902,7 @@ impl Renderer {
         // M-D: one BLAS per scene mesh, all built in bulk at load (the world is rigid — these
         // never rebuild; TLAS membership per frame is the only steady-state RT work). Chunked
         // submits keep any single scratch allocation modest.
-        if rt_on {
+        if rt_scene {
             let t0 = std::time::Instant::now();
             for (m, src) in meshes.iter_mut().zip(scene.iter()) {
                 if !m.raster_only && m.index_count >= 3 && !src.vertices.is_empty() {
@@ -5397,10 +5424,12 @@ impl Renderer {
             "fs_composite",
             Some(add_blend),
         );
-        let bloom_composite_glare_pipe = bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", Some(add_blend));
+        // The veiling glare belongs to the stylized bloom (raster-fed backends); the physical
+        // backend's bloom.wgsl has no such entry points.
+        let bloom_composite_glare_pipe = shader_backend.then(|| bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", Some(add_blend)));
         // Glare pyramid: five box-filtered halvings of the blurred bright pass (a bilinear copy
         // into a half-size target is a 2x2 box); rings 1.5/3/6/12 deg read levels 1..4.
-        let bloom_copy_pipe = bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", None);
+        let bloom_copy_pipe = shader_backend.then(|| bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_composite_glare", None));
         let mut bloom_levels = Vec::new();
         let mut bloom_level_binds = Vec::new();
         for level in 0..5u32 {
@@ -5418,7 +5447,7 @@ impl Renderer {
             label: Some("bloom-glare-bgl"),
             entries: &[glare_tex(0), glare_tex(1), glare_tex(2), glare_tex(3), sampler_entry(4)],
         });
-        let bloom_glare_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bloom_glare_bind = shader_backend.then(|| device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bloom-glare-bind"), layout: &glare_bgl,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bloom_levels[1]) },
@@ -5427,12 +5456,12 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&bloom_levels[4]) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&bloom_sampler) },
             ],
-        });
+        }));
         let bloom_glare_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bloom-glare-pl"), bind_group_layouts: &[&bloom_bgl, &glare_bgl],
             push_constant_ranges: &[wgpu::PushConstantRange { stages: wgpu::ShaderStages::FRAGMENT, range: 0..std::mem::size_of::<BloomPush>() as u32 }],
         });
-        let bloom_glare_pipe = bloom_pipe(device, &bloom_shader, &bloom_glare_pl, "fs_glare", None);
+        let bloom_glare_pipe = shader_backend.then(|| bloom_pipe(device, &bloom_shader, &bloom_glare_pl, "fs_glare", None));
 
         // ---------- volumetric smoke ----------
         // binding 0 = scene depth (sampled with textureLoad for occlusion), 1 = SmokeUniform.
@@ -5802,7 +5831,7 @@ impl Renderer {
         persist_physical_pipeline_cache(pipeline_cache.as_ref(), pipeline_cache_path.as_deref());
 
         let raymarch = crate::graphics::raymarch_backend_enabled()
-            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih));
+            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih, rt_scene));
         Self {
             // Standard stays at the playtested 0.7; [ ] still dials continuously in-game, while
             // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.
@@ -5872,6 +5901,10 @@ impl Renderer {
             lights_offered: 0,
             lights_full: Vec::new(),
             muzzle_hint: None,
+            player_snow_load: 0.0,
+            world_snow_load: 0.0,
+            wear: [0.0; 4],
+            fog_bank: [0.0; 4],
             frame: 0,
             hdr_view,
             hdr_tex,
@@ -6030,7 +6063,9 @@ impl Renderer {
             active_view: 0,
             render_work: Cell::new(RenderWorkStats::default()),
             gpu_profile: crate::gpu_profile::GpuProfile::new(device),
+            rt_degenerate_reported: std::collections::HashSet::new(),
             rt_on,
+            rt_scene,
             rt_skip: false,
             optic_hide_pass: false,
             rt_tlas: None,
@@ -6296,7 +6331,7 @@ impl Renderer {
     /// Rare anatomical topology mask; retains index capacity and never mutates a shared actor buffer.
     pub fn upload_pose_indices(&mut self,slot:usize,indices:&[u32])->bool {
         let Some(mesh)=self.meshes.get_mut(slot) else{return false;};
-        if indices.is_empty() || indices.len()!=mesh.index_count as usize || (self.rt_on&&!mesh.raster_only) {return false;}
+        if indices.is_empty() || indices.len()!=mesh.index_count as usize || (self.rt_scene&&!mesh.raster_only) {return false;}
         let vertex_count=mesh.vbuf.size()/std::mem::size_of::<crate::gltf_load::Vertex>() as u64;
         if indices.iter().any(|i|*i as u64>=vertex_count){return false;}
         if self.raster_lighting&&self.portable_visibility {
@@ -6320,7 +6355,7 @@ impl Renderer {
         let Some(mesh) = self.meshes.get_mut(slot) else { return false; };
         if vertices.len() > 4096 || vertices.is_empty()
             || std::mem::size_of_val(vertices) as u64 != mesh.vbuf.size()
-            || (self.rt_on && !mesh.raster_only) { return false; }
+            || (self.rt_scene && !mesh.raster_only) { return false; }
         let mut lo=glam::Vec3::splat(f32::INFINITY);
         let mut hi=glam::Vec3::splat(f32::NEG_INFINITY);
         for vertex in vertices {
@@ -6413,6 +6448,12 @@ impl Renderer {
             g.emissive_win = true;
         }
     }
+    /// Mesh `idx` is part of the player's vehicle: its lying snow follows `player_snow_load`.
+    pub fn mark_snow_vehicle(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.snow_vehicle = true;
+        }
+    }
     /// Flag mesh `idx` as an OWN-COLOUR emissive that is NOT night-gated: a warm interior bulb or a
     /// kicked-up snow puff glows with its authored colour scaled by `set_emissive`, day or night.
     /// Signalled to the shader via params.w = 2.0 (own-colour, ungated) vs 1.0 (window, night-gated).
@@ -6466,6 +6507,12 @@ impl Renderer {
     pub fn set_glass(&mut self, idx: usize, on: bool) {
         if let Some(mesh) = self.meshes.get_mut(idx) {
             mesh.glass = on;
+        }
+    }
+    /// A periscope mirror's plane normal in its mesh's frame, for the raymarch ray queries.
+    pub fn set_periscope_mirror_normal(&mut self, idx: usize, normal: glam::Vec3) {
+        if let Some(mesh) = self.meshes.get_mut(idx) {
+            mesh.mirror_normal = normal.normalize_or_zero();
         }
     }
     pub fn set_periscope_optical_kind(&mut self, idx: usize, kind: u32) {
@@ -6678,7 +6725,7 @@ impl Renderer {
         queue: &wgpu::Queue,
         mesh: &CpuMesh,
     ) -> InstancedPrototype {
-        let bi = if self.rt_on {
+        let bi = if self.rt_scene {
             wgpu::BufferUsages::BLAS_INPUT
         } else {
             wgpu::BufferUsages::empty()
@@ -6694,7 +6741,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX | bi,
         });
         // M-D: the prototype's BLAS, built immediately (add_instanced is a load/editor-time path).
-        let blas = if self.rt_on && mesh.indices.len() >= 3 && !mesh.vertices.is_empty() {
+        let blas = if self.rt_scene && mesh.indices.len() >= 3 && !mesh.vertices.is_empty() {
             let set = crate::rt::make_blas(
                 device,
                 mesh.vertices.len() as u32,
@@ -7313,7 +7360,7 @@ impl Renderer {
     /// the same rule tells what the TLAS would hold, so both backends report one demand.
     fn batch_in_ray_scene(&self, batch: &InstBatch) -> bool {
         let prototype = &self.inst_prototypes[batch.prototype];
-        let geometry = if self.rt_on {
+        let geometry = if self.rt_scene {
             prototype.blas.is_some()
         } else {
             prototype.index_count >= 3
@@ -8013,7 +8060,11 @@ impl Renderer {
             exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
-            _grade_pad: [self.display_dither_pattern, 0.0],
+            // The eye's draw-in of regions far from its adapted level (crush.wgsl `eye_range`)
+            // applies where a dark cabin and bright ports share the field: a buttoned-up view that
+            // is not the gun sight's or the binoculars' full-field optic picture.
+            _grade_pad: [self.display_dither_pattern,
+                if self.interior_light > 0.5 && (self.optic_mask - 1.0).abs() > 0.5 && (self.optic_mask - 3.0).abs() > 0.5 { 1.0 } else { 0.0 }],
             display_grade: boosted_display_grade(self.display_grade, self.vision_boost),
             dither_right: self.camera.right().extend((self.camera.fov_y * 0.5).tan() * self.camera.aspect).to_array(),
             dither_up: self.camera.right().cross(self.camera.forward()).extend((self.camera.fov_y * 0.5).tan()).to_array(),
@@ -9091,11 +9142,21 @@ impl Renderer {
             }
             let surface = crate::rt_surface::SurfaceId(prototype_surfaces[batch.prototype]);
             for instance in 0..batch.object_id_capacity {
-                let model = batch
+                let stored = batch
                     .cpu_mats
                     .get(instance as usize)
                     .copied()
                     .unwrap_or(glam::Mat4::IDENTITY);
+                // A degenerate instance (zero scale, a collapsed axis, a non-finite entry) has no
+                // volume to trace; it enters the exact pack as a point-sized stand-in so the
+                // custom-data range stays dense, and is reported once per batch so the writer
+                // can be fixed (the raster path draws it as nothing either way).
+                let (model, degenerate) = rt_safe_instance_transform(stored);
+                if degenerate && !self.rt_degenerate_reported.contains(&batch_index) {
+                    self.rt_degenerate_reported.insert(batch_index);
+                    eprintln!("[rt] batch {batch_index} instance {instance} (flags {:.1}, {} instances, prototype {}) has a degenerate transform {:?}; traced as a point",
+                        batch.flags, batch.inst_count, batch.prototype, stored.to_cols_array_2d());
+                }
                 let custom = batch.object_custom_data(instance);
                 builder
                     .add_instance(custom, surface, model)
@@ -9408,10 +9469,12 @@ impl Renderer {
     /// Emissive geometry remains geometry: it participates in visibility and can return radiance
     /// when a secondary ray commits to it. Only explicit view-local/transparent paths stay out.
     fn rt_update(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        if !self.rt_on {
+        if !self.rt_scene {
             return;
         }
-        self.rt_rebuild_surface_pack(device);
+        if self.rt_on {
+            self.rt_rebuild_surface_pack(device);
+        }
         // Splitscreen views 2..N re-render the SAME sim frame: the TLAS built for view 1 is
         // exactly current — skip the rebuild (but never before the first build exists).
         if self.rt_skip && self.rt_tlas.is_some() && self.combine_rt_bind.is_some() {
@@ -9582,7 +9645,7 @@ impl Renderer {
             std::iter::empty::<&wgpu::BlasBuildEntry>(),
             std::iter::once(self.rt_tlas.as_ref().unwrap()),
         );
-        if self.combine_rt_bind.is_none() {
+        if self.rt_on && self.combine_rt_bind.is_none() {
             let rt_as_bgl = self
                 .rt_as_bgl
                 .as_ref()
@@ -11071,6 +11134,19 @@ impl Renderer {
 }
 
 // ---- small wgpu helpers ----
+
+/// An instance transform the exact ray scene can invert, and whether it had to be replaced: a
+/// transform whose linear part is singular or non-finite becomes a point-sized (1 mm) box at
+/// the same translation, which no ray meets.
+fn rt_safe_instance_transform(model: glam::Mat4) -> (glam::Mat4, bool) {
+    let finite = model.to_cols_array().iter().all(|v| v.is_finite());
+    let determinant = glam::Mat3::from_mat4(model).determinant();
+    if finite && determinant.is_finite() && determinant.abs() > 1.0e-9 {
+        return (model, false);
+    }
+    let translation = if finite { model.w_axis.truncate() } else { glam::Vec3::ZERO };
+    (glam::Mat4::from_scale_rotation_translation(glam::Vec3::splat(1.0e-3), glam::Quat::IDENTITY, translation), true)
+}
 
 fn camera_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

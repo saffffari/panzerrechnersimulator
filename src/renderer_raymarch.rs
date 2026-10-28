@@ -19,6 +19,15 @@ const VOL_DIVISOR: u32 = 4;
 const VOL_SLICES: u32 = 96;
 const VOL_NEAR_M: f32 = 0.25;
 const VOL_FAR_M: f32 = 320.0;
+/// Mesh slots the ray queries' optics table covers (periscope windows and mirrors).
+const MAX_OPTIC_SLOTS: usize = 8192;
+/// Cloud shadow map: texels per side and the half extent it covers around the eye.
+const CLOUD_SHADOW_RES: u32 = 256;
+const CLOUD_SHADOW_HALF_M: f32 = 2048.0;
+/// Reflection history: accumulated reflected radiance and the reflecting surface's eye distance.
+const REFL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// World-space occlusion history: open share and the eye distance it was measured at.
+const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const CELLS: [u32; 3] = [32, 18, 24];
 const CELL_COUNT: usize = (CELLS[0] * CELLS[1] * CELLS[2]) as usize;
 const MAX_PARCELS: usize = 16384;
@@ -115,6 +124,10 @@ struct FrameUniform {
     report: [f32; 4],
     report_dir: [f32; 4],
     debug: [f32; 4],
+    wear: [f32; 4],
+    vehicle: [f32; 4],
+    cloud: [f32; 4],
+    fog: [f32; 4],
     pshadow: [[f32; 4]; 2],
     puffs: [[f32; 4]; PUFF_LANES],
 }
@@ -155,7 +168,9 @@ struct Ember { pos: [f32; 3], packed: u32 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Push { model: [[f32; 4]; 4], params: [f32; 4] }
+struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4] }
+// extra: x snow load (`snow_cover`; G-buffer and glass only), y 1 on the player's vehicle
+// (surface wear), zw unused.
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -187,6 +202,8 @@ struct Binds {
     shade: [wgpu::BindGroup; 2],
     points: wgpu::BindGroup,
     reflect: wgpu::BindGroup,
+    /// The reflection pass's own binds: the post set plus the reflection history [1 - flip].
+    reflect_t: [wgpu::BindGroup; 2],
     lens: wgpu::BindGroup,
 }
 
@@ -213,10 +230,37 @@ pub(super) struct Backend {
     sky_cache_buf: wgpu::Buffer,
     sky_cache_bind: wgpu::BindGroup,
     sky_cache_pipe: wgpu::RenderPipeline,
+    /// Cloud transmittance toward the key body by ground position around the eye (the sky's own
+    /// cloud field); `cloud_area` is its centre x, z, half extent and the eye's y this frame.
+    cloud_shadow: Target,
+    cloud_shadow_buf: wgpu::Buffer,
+    cloud_shadow_bind: wgpu::BindGroup,
+    cloud_shadow_pipe: wgpu::RenderPipeline,
+    cloud_area: [f32; 4],
     /// Phase refreshed this frame; `sky_cache_phases` means every texel (a sky jump).
     sky_phase: u32,
     prev_sky_key: Option<(Vec3, f32, f32)>,
     scratch: Target,
+    /// The shaded frame before reflections, glass and points: next frame's bounce source. Kept
+    /// apart from `scratch` so that the reflection pass's output does not re-enter the indirect
+    /// loop (with ray-query reflections that loop diverged in the closed cabin).
+    history: Target,
+    /// Reflection history: the reflected radiance accumulated over frames (rgb) and the eye
+    /// distance of the reflecting surface (a); written by the reflection pass into [flip].
+    refl: [Target; 2],
+    refl_bgl: wgpu::BindGroupLayout,
+    /// World-space occlusion history (ray queries): x the open share, y the eye distance it was
+    /// measured at; written by the shade pass into [flip], read from [1 - flip].
+    ao: [Target; 2],
+    /// Ray queries against the scene TLAS (`Renderer::rt_scene`): the TLAS layout, this frame's
+    /// bind, and an empty TLAS bound until the scene's first exists.
+    rt_bgl: Option<wgpu::BindGroupLayout>,
+    rt_bind: Option<wgpu::BindGroup>,
+    rt_empty: Option<wgpu::Tlas>,
+    rt_empty_built: bool,
+    /// Per mesh slot: x y z a mirror's world normal, w the optic (0 none, 1 window, 2 mirror).
+    rt_optics_buf: Option<wgpu::Buffer>,
+    rt_optics: Vec<[f32; 4]>,
     shadow_far: Target,
     shadow_near: Target,
     sky_cover: Target,
@@ -286,7 +330,9 @@ pub(super) struct Backend {
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
-    /// 4096 veiling glare, 8192 screen-space indirect light.
+    /// 4096 veiling glare, 8192 screen-space indirect light, 16384 lying snow, 32768 ray queries
+    /// (world-space occlusion and the reflection fallback), 65536 surface wear, 131072 cloud
+    /// shadows (the eye's cloud attenuation for the whole frame instead).
     debug_skip: u32,
 }
 
@@ -307,7 +353,7 @@ fn volume_target(device: &wgpu::Device, label: &str, dims: [u32; 3]) -> Target {
         size: wgpu::Extent3d { width: dims[0], height: dims[1], depth_or_array_layers: dims[2] },
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D3,
         format: wgpu::TextureFormat::Rgba16Float,
-        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let view = tex.create_view(&Default::default());
@@ -383,6 +429,9 @@ fn rm_source(name: &str) -> String {
         "rm_points.wgsl" => include_str!("../shaders/rm_points.wgsl"),
         "rm_sparks.wgsl" => include_str!("../shaders/rm_sparks.wgsl"),
         "rm_glass.wgsl" => include_str!("../shaders/rm_glass.wgsl"),
+        "rm_rt.wgsl" => include_str!("../shaders/rm_rt.wgsl"),
+        "rm_cloud_shadow.wgsl" => include_str!("../shaders/rm_cloud_shadow.wgsl"),
+        "rm_rt_stub.wgsl" => include_str!("../shaders/rm_rt_stub.wgsl"),
         "rm_sky_cache.wgsl" => include_str!("../shaders/rm_sky_cache.wgsl"),
         "sky.wgsl" => include_str!("../shaders/sky.wgsl"),
         "terrain_material.wgsl" => include_str!("../shaders/terrain_material.wgsl"),
@@ -482,9 +531,12 @@ fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
 }
 
 impl Backend {
+    /// A mesh's snow load for the push constant (`snow_cover`), zero under `KESSEL_RM_SKIP` 16384.
+    fn snow_load(&self, load: f32) -> f32 { if self.debug_skip & 16384 != 0 { 0.0 } else { load } }
+
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
-        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32) -> Self {
+        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool) -> Self {
         let vol = [iw.div_ceil(VOL_DIVISOR).max(8), ih.div_ceil(VOL_DIVISOR).max(8), VOL_SLICES];
         let (sky_cache_size, sky_cache_phases) = {
             let spec = std::env::var("KESSEL_RM_SKY").ok();
@@ -522,7 +574,26 @@ impl Backend {
         let g1 = target(device, "rm-g1-normal", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g2 = target(device, "rm-g2-emission", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], wgpu::TextureFormat::Rgba16Float, gusage);
+        let cloud_shadow = target(device, "rm-cloud-shadow", CLOUD_SHADOW_RES, CLOUD_SHADOW_RES, wgpu::TextureFormat::R16Float, gusage);
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
+        let history = target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
+        let ao = [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)];
+        let refl = [target(device, "rm-refl-a", iw, ih, REFL_FORMAT, gusage), target(device, "rm-refl-b", iw, ih, REFL_FORMAT, gusage)];
+        let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
+            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT)],
+        }));
+        // Per mesh slot: what a ray query does at it (periscope windows pass, mirrors fold).
+        let rt_optics_buf = rt_scene.then(|| device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rm-rt-optics"), size: (MAX_OPTIC_SLOTS * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+        }));
+        let rt_empty = rt_scene.then(|| device.create_tlas(&wgpu::CreateTlasDescriptor {
+            label: Some("rm-rt-empty"), max_instances: 1,
+            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE, update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+        }));
         let shadow_far = depth_target(device, "rm-shadow-far", SHADOW_FAR_RES);
         let shadow_near = depth_target(device, "rm-shadow-near", SHADOW_NEAR_RES);
         let sky_cover = depth_target(device, "rm-sky-cover", SKY_COVER_RES);
@@ -586,6 +657,7 @@ impl Backend {
                 readonly_storage(6, vis_stages), readonly_storage(7, vis_stages), readonly_storage(8, vis_stages),
                 tex2d_entry(9, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
                 sampler_filtering(10, vis_stages),
+                tex2d_entry(11, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -603,7 +675,7 @@ impl Backend {
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT), float_tex_unfiltered(3, S::FRAGMENT),
                 depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT), tex3d(9, S::FRAGMENT),
-                float_tex_unfiltered(10, S::FRAGMENT),
+                float_tex_unfiltered(10, S::FRAGMENT), float_tex_unfiltered(11, S::FRAGMENT),
             ],
         });
         let points_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -618,6 +690,13 @@ impl Backend {
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT),
                 float_tex_unfiltered(3, S::FRAGMENT), float_tex_unfiltered(4, S::FRAGMENT), depth_tex(5, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), sampler_filtering(7, S::FRAGMENT),
+            ],
+        });
+        let refl_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-reflect-bgl"), entries: &[
+                uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT),
+                float_tex_unfiltered(3, S::FRAGMENT), float_tex_unfiltered(4, S::FRAGMENT), depth_tex(5, S::FRAGMENT, wgpu::TextureViewDimension::D2),
+                tex3d(6, S::FRAGMENT), sampler_filtering(7, S::FRAGMENT), float_tex_unfiltered(8, S::FRAGMENT),
             ],
         });
 
@@ -699,16 +778,38 @@ impl Backend {
             fragment: Some(wgpu::FragmentState { module: shader, entry_point: Some("fs"), targets: &[Some(color_target(hdr_format()))], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
-        let shade_shader = rm_shader(device, "rm-shade", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_shade.wgsl"]);
+        let rt_source = if rt_scene { "rm_rt.wgsl" } else { "rm_rt_stub.wgsl" };
+        let shade_shader = rm_shader(device, "rm-shade", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt_source, "rm_shade.wgsl"]);
+        let shade_layouts: Vec<&wgpu::BindGroupLayout> = [&shade_bgl, &visibility_bgl].into_iter().chain(rt_bgl.as_ref()).collect();
         let shade_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rm-shade-pl"), bind_group_layouts: &[&shade_bgl, &visibility_bgl], push_constant_ranges: &[],
+            label: Some("rm-shade-pl"), bind_group_layouts: &shade_layouts, push_constant_ranges: &[],
         });
-        let shade_pipe = fullscreen("rm-shade", &shade_shader, &shade_pl);
+        // Two targets: the lit frame and the occlusion history.
+        let shade_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-shade"), layout: Some(&shade_pl),
+            vertex: wgpu::VertexState { module: &shade_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &shade_shader, entry_point: Some("fs"),
+                targets: &[Some(color_target(hdr_format())), Some(color_target(AO_FORMAT))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-post-pl"), bind_group_layouts: &[&post_bgl, &visibility_bgl], push_constant_ranges: &[],
         });
-        let reflect_shader = rm_shader(device, "rm-reflect", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_reflect.wgsl"]);
-        let reflect_pipe = fullscreen("rm-reflect", &reflect_shader, &post_pl);
+        let reflect_shader = rm_shader(device, "rm-reflect", &["rm_common.wgsl", "rm_visibility.wgsl", rt_source, "rm_reflect.wgsl"]);
+        let reflect_layouts: Vec<&wgpu::BindGroupLayout> = [&refl_bgl, &visibility_bgl].into_iter().chain(rt_bgl.as_ref()).collect();
+        let reflect_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-reflect-pl"), bind_group_layouts: &reflect_layouts, push_constant_ranges: &[],
+        });
+        // Two targets: the lit frame and the reflection history.
+        let reflect_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-reflect"), layout: Some(&reflect_pl),
+            vertex: wgpu::VertexState { module: &reflect_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &reflect_shader, entry_point: Some("fs"),
+                targets: &[Some(color_target(hdr_format())), Some(color_target(REFL_FORMAT))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
         let lens_shader = rm_shader(device, "rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]);
         let lens_pipe = fullscreen("rm-lens", &lens_shader, &post_pl);
 
@@ -757,6 +858,25 @@ impl Backend {
             multiview: None, cache: None,
         });
 
+        // The cloud shadow map: the same atmosphere module, a ground-position entry point.
+        let cloud_shadow_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rm-cloud-shadow"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+        });
+        let cloud_shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-cloud-shadow"), layout: &sky_cache_bgl, entries: &[entry(0, cloud_shadow_buf.as_entire_binding())],
+        });
+        let cloud_shadow_source = physical_atmosphere_transport_shader_source(&format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_cloud_shadow.wgsl")));
+        let cloud_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rm-cloud-shadow"), source: wgpu::ShaderSource::Wgsl(cloud_shadow_source.into()),
+        });
+        let cloud_shadow_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-cloud-shadow"), layout: Some(&sky_cache_pl),
+            vertex: wgpu::VertexState { module: &cloud_shadow_shader, entry_point: Some("vs_cloud"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &cloud_shadow_shader, entry_point: Some("fs_cloud"), targets: &[Some(color_target(wgpu::TextureFormat::R16Float))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
+
         // HDR one-pixel particles and ballistic emitters.
         let premultiplied = Some(wgpu::ColorTargetState { format: hdr_format(), blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL });
         let points_shader = rm_shader(device, "rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]);
@@ -789,8 +909,10 @@ impl Backend {
             iw, ih, vol, frame_buf, shadow_views_buf, parcels_buf, cell_start_buf, cell_items_buf,
             lights_buf, light_cell_start_buf, light_cell_items_buf, weapon_buf, ember_buf,
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
+            cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, sky_sampler,
-            scratch, shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
+            scratch, history, ao, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
+            shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
@@ -806,7 +928,7 @@ impl Backend {
                 Some((it.next()?, it.next()?))
             }).filter(|&(x, y)| x < iw && y < ih),
             probe_buf: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rm-probe"), size: 5 * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+                label: Some("rm-probe"), size: (5 + VOL_SLICES as u64) * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
             }),
             probe_pending: Cell::new(false),
             optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
@@ -832,6 +954,7 @@ impl Backend {
                 entry(8, self.light_cell_items_buf.as_entire_binding()),
                 entry(9, wgpu::BindingResource::TextureView(&self.sky_cache.view)),
                 entry(10, wgpu::BindingResource::Sampler(&self.sky_sampler)),
+                entry(11, wgpu::BindingResource::TextureView(&self.cloud_shadow.view)),
             ],
         });
         let volume = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -864,7 +987,8 @@ impl Backend {
                 entry(7, wgpu::BindingResource::TextureView(&self.scatter[i].view)),
                 entry(8, wgpu::BindingResource::Sampler(&self.linear_sampler)),
                 entry(9, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
-                entry(10, wgpu::BindingResource::TextureView(&self.scratch.view)),
+                entry(10, wgpu::BindingResource::TextureView(&self.history.view)),
+                entry(11, wgpu::BindingResource::TextureView(&self.ao[1 - i].view)),
             ],
         }));
         let points = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -886,13 +1010,58 @@ impl Backend {
                 entry(7, wgpu::BindingResource::Sampler(&self.linear_sampler)),
             ],
         });
-        Binds { depth, visibility, volume, integrate, shade, points, reflect: post("rm-reflect"), lens: post("rm-lens") }
+        let reflect_t = std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-reflect-t"), layout: &self.refl_bgl, entries: &[
+                entry(0, frame.clone()),
+                entry(1, wgpu::BindingResource::TextureView(&self.scratch.view)),
+                entry(2, wgpu::BindingResource::TextureView(&self.g0.view)),
+                entry(3, wgpu::BindingResource::TextureView(&self.g1.view)),
+                entry(4, wgpu::BindingResource::TextureView(&self.g2.view)),
+                entry(5, wgpu::BindingResource::TextureView(&r.depth_view)),
+                entry(6, wgpu::BindingResource::TextureView(&self.integrated.view)),
+                entry(7, wgpu::BindingResource::Sampler(&self.linear_sampler)),
+                entry(8, wgpu::BindingResource::TextureView(&self.refl[1 - i].view)),
+            ],
+        }));
+        Binds { depth, visibility, volume, integrate, shade, points, reflect: post("rm-reflect"), reflect_t, lens: post("rm-lens") }
     }
 
     /// Per-frame CPU side: camera/history state, source radiance, shadow views, lights, medium
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
         let started = std::time::Instant::now();
+        // Ray queries: bind the scene TLAS (rebuilt in place by `rt_update` before this frame's
+        // passes), or an empty one until the scene's first exists.
+        if self.rt_bgl.is_some() {
+            if r.rt_tlas.is_none() && !self.rt_empty_built {
+                let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rm-rt-empty") });
+                enc.build_acceleration_structures(std::iter::empty::<&wgpu::BlasBuildEntry>(), self.rt_empty.iter());
+                queue.submit([enc.finish()]);
+                self.rt_empty_built = true;
+            }
+            // The periscope optics: windows pass a ray, mirrors fold it about their plane.
+            self.rt_optics.clear();
+            self.rt_optics.resize(r.meshes.len().min(MAX_OPTIC_SLOTS), [0.0; 4]);
+            for (i, mesh) in r.meshes.iter().enumerate().take(MAX_OPTIC_SLOTS) {
+                match mesh.periscope_kind {
+                    1 => self.rt_optics[i] = [0.0, 0.0, 0.0, 1.0],
+                    2 if mesh.mirror_normal != Vec3::ZERO => {
+                        let n = mesh.model.transform_vector3(mesh.mirror_normal).normalize_or_zero();
+                        self.rt_optics[i] = [n.x, n.y, n.z, 2.0];
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(buf) = &self.rt_optics_buf {
+                if !self.rt_optics.is_empty() { queue.write_buffer(buf, 0, bytemuck::cast_slice(&self.rt_optics)); }
+            }
+            self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref()).zip(self.rt_bgl.as_ref()).zip(self.rt_optics_buf.as_ref()).map(|((tlas, layout), optics)| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("rm-rt"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: tlas.as_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: optics.as_entire_binding() }],
+                })
+            });
+        }
         if self.probe_pending.replace(false) {
             if let Some((px, py)) = self.probe {
                 let slice = self.probe_buf.slice(..);
@@ -915,8 +1084,17 @@ impl Backend {
                     let lit = if hdr32 { f32s(0) } else { f16(0) };
                     let prev = if hdr32 { f32s(256) } else { f16(256) };
                     let g0 = f16(512); let g1 = f16(768); let g2 = f16(1024);
-                    println!("[rm-probe] px ({px},{py}) lit [{:.4e} {:.4e} {:.4e}] prev-lit [{:.4e} {:.4e} {:.4e}] albedo [{:.3} {:.3} {:.3}] kind {:.0} n [{:.2} {:.2} {:.2}] rough {:.2} metallic {:.2} emission [{:.3e} {:.3e} {:.3e}]",
+                    println!("[rm-probe] px ({px},{py}) lit [{:.4e} {:.4e} {:.4e}] prev-lit [{:.4e} {:.4e} {:.4e}] albedo [{:.3} {:.3} {:.3}] kind {:.3} n [{:.2} {:.2} {:.2}] rough {:.2} metallic {:.2} emission [{:.3e} {:.3e} {:.3e}]",
                         lit[0], lit[1], lit[2], prev[0], prev[1], prev[2], g0[0], g0[1], g0[2], g0[3], g1[0], g1[1], g1[2], g1[3], g2[3], g2[0], g2[1], g2[2]);
+                    // The medium column: transmittance and in-scatter (green) at round distances.
+                    let ln_range = (VOL_FAR_M / VOL_NEAR_M).ln();
+                    let mut column = String::new();
+                    for d in [1.0f32, 3.0, 5.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 320.0] {
+                        let slice = ((d / VOL_NEAR_M).ln() / ln_range * VOL_SLICES as f32).clamp(0.0, VOL_SLICES as f32 - 1.0) as usize;
+                        let v = f16(5 * 256 + slice * 256);
+                        column.push_str(&format!(" {d:.0}m T {:.4} S {:.3e}", v[3], v[1]));
+                    }
+                    println!("[rm-probe] medium column{column}");
                     drop(mapped);
                 }
                 self.probe_buf.unmap();
@@ -948,9 +1126,22 @@ impl Backend {
         let sun_dir = r.sun_dir.normalize_or_zero();
         let origin = eye.as_dvec3();
         let beam_on = sun_dir.y > -0.02 && atmosphere.solar_irradiance.max_element() > 0.0;
+        // Cloud shadows (`rm_cloud_shadow.wgsl`): the frame carries the clear-sky beam and the
+        // cloud layer's transmittance is applied per position; KESSEL_RM_SKIP 131072 keeps the
+        // eye's own cloud attenuation for the whole frame instead.
+        let cloud_shadows = self.debug_skip & 131072 == 0;
+        let beam_atmosphere = if cloud_shadows {
+            let mut clear = atmosphere;
+            clear.cloud.coverage = 0.0;
+            clear
+        } else { atmosphere };
         let sun_radiance = if beam_on {
-            atmosphere.solar_irradiance * physical_environment::solar_transmittance_at(&atmosphere, origin, sun_dir.as_dvec3(), quality.source_steps.max(4))
+            atmosphere.solar_irradiance * physical_environment::solar_transmittance_at(&beam_atmosphere, origin, sun_dir.as_dvec3(), quality.source_steps.max(4))
         } else { glam::DVec3::ZERO };
+        let texel = 2.0 * CLOUD_SHADOW_HALF_M / CLOUD_SHADOW_RES as f32;
+        self.cloud_area = [(eye.x / texel).round() * texel, (eye.z / texel).round() * texel, CLOUD_SHADOW_HALF_M,
+            if cloud_shadows { eye.y } else { f32::NAN }];
+        queue.write_buffer(&self.cloud_shadow_buf, 0, bytemuck::bytes_of(&self.cloud_area));
         // The secondary body (the Moon by day, the Sun's glow below the horizon handled by the
         // transport itself): its disc is drawn analytically from the irradiance through the air.
         let secondary_dir = atmosphere.secondary_direction.normalize_or_zero();
@@ -1069,7 +1260,16 @@ impl Backend {
                 .min_by(|a, b| a[3].total_cmp(&b[3])).unwrap_or([0.0, 0.0, 0.0, -1.0]),
             report_dir: self.events.iter().filter(|e| e.kind == EVENT_MUZZLE).min_by(|a, b| (r.time - a.born).total_cmp(&(r.time - b.born)))
                 .map_or([0.0, 0.0, 1.0, 0.0], |e| [e.dir.x, e.dir.y, e.dir.z, 0.0]),
-            debug: [if self.debug_skip & 8192 != 0 { 1.0 } else { 0.0 }, self.probe.map_or(-1.0, |p| p.0 as f32), self.probe.map_or(-1.0, |p| p.1 as f32), 0.0],
+            debug: [if self.debug_skip & 8192 != 0 { 1.0 } else { 0.0 }, self.probe.map_or(-1.0, |p| p.0 as f32), self.probe.map_or(-1.0, |p| p.1 as f32), if self.debug_skip & 32768 != 0 { 1.0 } else { 0.0 }],
+            wear: if self.debug_skip & 65536 != 0 { [0.0; 4] } else { r.wear },
+            // The player's crew compartment: 0.9 m above the turret frame's origin (its basket
+            // floor, about 0.4 m above the ground: the commander's eye is 2.41 m above it), 3 m reach.
+            cloud: [self.cloud_area[0], self.cloud_area[1], self.cloud_area[2], if cloud_shadows { 1.0 } else { 0.0 }],
+            fog: r.fog_bank,
+            vehicle: r.cabin_medium_pose.map_or([0.0; 4], |(_, turret)| {
+                let c = turret.transform_point3(Vec3::new(0.0, 0.9, 0.0));
+                [c.x, c.y, c.z, 3.0]
+            }),
             pshadow,
             puffs,
         };
@@ -1681,6 +1881,7 @@ impl Backend {
             let push = Push {
                 model: Mat4::IDENTITY.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor, if flags > 3.5 { 4.0 } else { 0.0 }] },
+                extra: [self.snow_load(r.world_snow_load), 0.0, 0.0, 0.0],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow || grass_depth { pass.set_bind_group(1, p.tex_bind.as_ref(), &[]); }
@@ -1703,6 +1904,7 @@ impl Backend {
             let push = Push {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
+                extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow { pass.set_bind_group(1, m.tex_bind.as_ref(), &[]); }
@@ -1731,7 +1933,8 @@ impl Backend {
     }
 
     /// A post pass over the lit HDR frame: copy it into `scratch`, then write the result back.
-    fn post_pass(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, label: &str, pipe: &wgpu::RenderPipeline, bind: &wgpu::BindGroup, work: &mut RenderWorkStats) {
+    fn post_pass(&self, r: &Renderer, encoder: &mut wgpu::CommandEncoder, label: &str, pipe: &wgpu::RenderPipeline, bind: &wgpu::BindGroup,
+        rt: Option<&wgpu::BindGroup>, work: &mut RenderWorkStats) {
         let binds = self.binds.as_ref().expect("raymarch binds prepared");
         encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.scratch._tex.as_image_copy(),
             wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
@@ -1744,6 +1947,7 @@ impl Backend {
         pass.set_pipeline(pipe);
         pass.set_bind_group(0, bind, &[]);
         pass.set_bind_group(1, &binds.visibility, &[]);
+        if let Some(rt) = rt { pass.set_bind_group(2, rt, &[]); }
         work.fullscreen_raster_passes += 1;
         pass.draw(0..3, 0..1);
     }
@@ -1795,6 +1999,21 @@ impl Backend {
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
+        // 3b. Cloud shadows: the layer's transmittance toward the key body around the eye.
+        if self.cloud_area[3].is_finite() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-cloud-shadow"),
+                color_attachments: &[Some(attachment(&self.cloud_shadow.view, wgpu::LoadOp::Clear(wgpu::Color::WHITE)))],
+                depth_stencil_attachment: None,
+                timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-cloud-shadow")), occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.cloud_shadow_pipe);
+            pass.set_bind_group(0, &r.camera_bind, &[]);
+            pass.set_bind_group(1, &r.physical_environment_bind, &[]);
+            pass.set_bind_group(2, &self.cloud_shadow_bind, &[]);
+            work.fullscreen_raster_passes += 1;
+            pass.draw(0..3, 0..1);
+        }
         // 4. Froxel media: light every cell, then integrate each column front to back.
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1819,29 +2038,57 @@ impl Backend {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-shade"),
-                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK)))],
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK))),
+                    Some(attachment(&self.ao[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: -1.0, b: 0.0, a: 0.0 })))],
                 depth_stencil_attachment: None,
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-shade")), occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shade_pipe);
             pass.set_bind_group(0, &binds.shade[self.flip], &[]);
             pass.set_bind_group(1, &binds.visibility, &[]);
+            if let Some(rt) = &self.rt_bind { pass.set_bind_group(2, rt, &[]); }
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
         if let Some((px, py)) = self.probe {
             let origin = wgpu::Origin3d { x: px, y: py, z: 0 };
             let one = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
-            for (i, tex) in [&r.hdr_tex, &self.scratch._tex, &self.g0._tex, &self.g1._tex, &self.g2._tex].into_iter().enumerate() {
+            for (i, tex) in [&r.hdr_tex, &self.history._tex, &self.g0._tex, &self.g1._tex, &self.g2._tex].into_iter().enumerate() {
                 encoder.copy_texture_to_buffer(
                     wgpu::TexelCopyTextureInfo { texture: tex, mip_level: 0, origin, aspect: wgpu::TextureAspect::All },
                     wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: (i * 256) as u64, bytes_per_row: None, rows_per_image: None } },
                     one);
             }
+            // The integrated medium column under the pixel: every slice (in-scatter rgb,
+            // transmittance a), so the readback can report the values at any distance.
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo { texture: &self.integrated._tex, mip_level: 0,
+                    origin: wgpu::Origin3d { x: px / VOL_DIVISOR, y: py / VOL_DIVISOR, z: 0 }, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyBufferInfo { buffer: &self.probe_buf, layout: wgpu::TexelCopyBufferLayout { offset: 5 * 256, bytes_per_row: Some(256), rows_per_image: Some(1) } },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: self.vol[2] });
             self.probe_pending.set(true);
         }
+        // The shaded frame is next frame's bounce source (after the probe has read last frame's).
+        encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.history._tex.as_image_copy(),
+            wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
         // 6. Screen-space marched reflections of the lit frame on glossy and metallic surfaces.
-        if self.debug_skip & 32 == 0 { self.post_pass(r, encoder, "rm-reflect", &self.reflect_pipe, &binds.reflect, &mut work); }
+        if self.debug_skip & 32 == 0 {
+            encoder.copy_texture_to_texture(r.hdr_tex.as_image_copy(), self.scratch._tex.as_image_copy(),
+                wgpu::Extent3d { width: self.iw, height: self.ih, depth_or_array_layers: 1 });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-reflect"),
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load)),
+                    Some(attachment(&self.refl[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: -1.0 })))],
+                depth_stencil_attachment: None,
+                timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-reflect")), occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.reflect_pipe);
+            pass.set_bind_group(0, &binds.reflect_t[self.flip], &[]);
+            pass.set_bind_group(1, &binds.visibility, &[]);
+            if let Some(rt) = &self.rt_bind { pass.set_bind_group(2, rt, &[]); }
+            work.fullscreen_raster_passes += 1;
+            pass.draw(0..3, 0..1);
+        }
         // 6b. Glass panes (port slits, sight and eyepiece glass, instrument covers) forward over
         // the lit frame, depth-tested against the opaque scene, back to front.
         if !self.panes.is_empty() && self.debug_skip & 1024 == 0 {
@@ -1864,7 +2111,8 @@ impl Backend {
                 // The slab thickness is the pane's thinnest local extent (port glass ~9 cm,
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
-                let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness] };
+                let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
+                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
@@ -1913,7 +2161,7 @@ impl Backend {
         }
         // 8. The eyepiece glass: refraction, dispersion and the lens edge of the TZF/binoculars.
         if self.optic_active && self.debug_skip & 64 == 0 {
-            self.post_pass(r, encoder, "rm-lens", &self.lens_pipe, &binds.lens, &mut work);
+            self.post_pass(r, encoder, "rm-lens", &self.lens_pipe, &binds.lens, None, &mut work);
         }
         // 9. The shared display stage: the crewman's eye, bloom, crush.
         if finish_ldr && r.autoexp && r.exposure_override.is_none() {
@@ -1940,12 +2188,12 @@ impl Backend {
             r.bloom_pass(encoder, "bloom-composite", &r.bloom_composite_pipe, &r.bloom_bind_a, &r.hdr_view, btexel, [0.0, 0.0], true);
             // The eye's veiling glare: wide rings over the blurred bright pass, scaled by the
             // bloom target's pixels per degree of view.
-            if self.debug_skip & 4096 == 0 {
+            if let (false, Some(glare_pipe), Some(composite_glare), Some(copy_pipe), Some(glare_bind)) = (self.debug_skip & 4096 != 0, &r.bloom_glare_pipe, &r.bloom_composite_glare_pipe, &r.bloom_copy_pipe, &r.bloom_glare_bind) {
                 let half_h = (r.camera.fov_y * 0.5).tan() * (self.iw as f32 / self.ih as f32);
                 let px_per_deg = r.bw as f32 / (2.0 * half_h.atan().to_degrees()).max(1.0);
-                r.bloom_pass(encoder, "bloom-glare-down", &r.bloom_copy_pipe, &r.bloom_bind_a, &r.bloom_levels[0], btexel, [0.0, 0.0], false);
+                r.bloom_pass(encoder, "bloom-glare-down", copy_pipe, &r.bloom_bind_a, &r.bloom_levels[0], btexel, [0.0, 0.0], false);
                 for level in 1..r.bloom_levels.len() {
-                    r.bloom_pass(encoder, "bloom-glare-down", &r.bloom_copy_pipe, &r.bloom_level_binds[level - 1], &r.bloom_levels[level], btexel, [0.0, 0.0], false);
+                    r.bloom_pass(encoder, "bloom-glare-down", copy_pipe, &r.bloom_level_binds[level - 1], &r.bloom_levels[level], btexel, [0.0, 0.0], false);
                 }
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1954,14 +2202,14 @@ impl Backend {
                         depth_stencil_attachment: None,
                         timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("bloom-glare")), occlusion_query_set: None,
                     });
-                    pass.set_pipeline(&r.bloom_glare_pipe);
+                    pass.set_pipeline(glare_pipe);
                     pass.set_bind_group(0, &r.bloom_bind_a, &[]);
-                    pass.set_bind_group(1, &r.bloom_glare_bind, &[]);
+                    pass.set_bind_group(1, glare_bind, &[]);
                     let push = BloomPush { texel: btexel, dir: [px_per_deg, 0.0] };
                     pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, 0, bytemuck::bytes_of(&push));
                     pass.draw(0..3, 0..1);
                 }
-                r.bloom_pass(encoder, "bloom-glare-composite", &r.bloom_composite_glare_pipe, &r.bloom_bind_b, &r.hdr_view, btexel, [0.0, 0.0], true);
+                r.bloom_pass(encoder, "bloom-glare-composite", composite_glare, &r.bloom_bind_b, &r.hdr_view, btexel, [0.0, 0.0], true);
                 work.bloom_passes += 7;
                 work.fullscreen_raster_passes += 7;
             }

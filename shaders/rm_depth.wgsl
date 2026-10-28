@@ -6,7 +6,7 @@ struct ShadowViews { vp: array<mat4x4<f32>, 16>, };
 @group(1) @binding(0) var albedo_tex: texture_2d<f32>;
 @group(1) @binding(3) var samp: sampler;
 
-struct Push { model: mat4x4<f32>, params: vec4<f32>, }; // params.x = view index
+struct Push { model: mat4x4<f32>, params: vec4<f32>, extra: vec4<f32>, }; // params.x = view index
 var<push_constant> pc: Push;
 
 @vertex

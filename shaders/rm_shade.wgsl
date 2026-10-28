@@ -11,8 +11,10 @@
 @group(0) @binding(7) var scatter: texture_3d<f32>;
 @group(0) @binding(8) var linear_samp: sampler;
 @group(0) @binding(9) var heat_integrated: texture_3d<f32>;
-// The previous frame's lit frame (the post-pass scratch copy), the source of the bounce.
+// The previous frame's shaded frame (before reflections, glass and points), the bounce source.
 @group(0) @binding(10) var lit_prev: texture_2d<f32>;
+// World-space occlusion history: x the open share, y the eye distance it was measured at.
+@group(0) @binding(11) var ao_prev: texture_2d<f32>;
 
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, };
 
@@ -62,7 +64,9 @@ fn contact_shadow(rel: vec3<f32>, dir: vec3<f32>, reach_m: f32, thickness_m: f32
 // what they leave open sees the sky. A separate near-field horizon (fading over 0.6..3 m) is the
 // contact occlusion. Horizon-based indirect light of the visible scene only: off-screen
 // surfaces bounce nothing and cover nothing here (named approximation).
-struct Gather { ao: f32, open: f32, irradiance: vec3<f32> };
+// ao: near-field contact; open: the hemisphere share the frame's surfaces leave open; covered:
+// the share they cover; irradiance: their previous-frame radiance over that share (x pi).
+struct Gather { ao: f32, open: f32, covered: f32, irradiance: vec3<f32> };
 fn previous_radiance(world: vec3<f32>) -> vec4<f32> {
     if (fr.prev_cam_pos.w < 0.5) { return vec4(0.0); }
     let rel = world - fr.prev_cam_pos.xyz;
@@ -106,7 +110,48 @@ fn screen_gather(pixel: vec2<i32>, rel: vec3<f32>, n: vec3<f32>, jitter: f32) ->
         }
         ao_sum += 1.0 - horizon_near * horizon_near;
     }
-    return Gather(clamp(ao_sum / 8.0, 0.0, 1.0), clamp(1.0 - bands / RM_PI, 0.0, 1.0), irradiance);
+    return Gather(clamp(ao_sum / 8.0, 0.0, 1.0), clamp(1.0 - bands / RM_PI, 0.0, 1.0), clamp(bands / RM_PI, 0.0, 1.0), irradiance);
+}
+
+// World-space occlusion by ray queries (rm_rt.wgsl): the share of the cosine-weighted hemisphere
+// that no surface closes within RM_AO_RANGE_M, two rays per pixel per frame, averaged over frames
+// through the reprojected history (the new estimate weighs 0.15; history whose recorded eye
+// distance disagrees with the reprojected point's is dropped, so a disocclusion starts fresh).
+// It sees what the frame does not: the far side of a hull, an overhang behind the eye, the cabin
+// walls around it. Cover beyond the range counts as open (named approximation).
+const RM_AO_RANGE_M: f32 = 4.0;
+const RM_AO_RAYS: u32 = 2u;
+const RM_AO_BLEND: f32 = 0.15;
+fn previous_open(world: vec3<f32>) -> f32 {
+    if (fr.prev_cam_pos.w < 0.5) { return -1.0; }
+    let rel = world - fr.prev_cam_pos.xyz;
+    let clip = fr.prev_view_proj * vec4(rel, 1.0);
+    if (clip.w <= 0.001) { return -1.0; }
+    let ndc = clip.xy / clip.w;
+    let uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < vec2(0.0)) || any(uv >= vec2(1.0))) { return -1.0; }
+    let h = textureLoad(ao_prev, vec2<i32>(uv * fr.res.xy), 0);
+    let d = length(rel);
+    if (h.y <= 0.0 || abs(h.y - d) > 0.02 * d + 0.03) { return -1.0; }
+    return h.x;
+}
+fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>) -> f32 {
+    let a = select(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), abs(n.y) > 0.9);
+    let t = normalize(cross(a, n));
+    let b = cross(n, t);
+    let origin = world + n * (0.015 + 0.002 * dist);
+    var open = 0.0;
+    for (var k = 0u; k < RM_AO_RAYS; k += 1u) {
+        let seed = u32(pixel.x) * 7919u + u32(pixel.y) * 104729u + u32(fr.vol.w) * 2654435761u + k * 40503u;
+        let r1 = rm_hash01(seed);
+        let phi = 2.0 * RM_PI * rm_hash01(seed ^ 0x9e3779b9u);
+        let s = sqrt(r1);
+        let d = t * (cos(phi) * s) + b * (sin(phi) * s) + n * sqrt(max(1.0 - r1, 0.0));
+        if (rm_ray_open(origin, d, RM_AO_RANGE_M)) { open += 1.0; }
+    }
+    let fresh = open / f32(RM_AO_RAYS);
+    let history = previous_open(world);
+    return select(fresh, mix(history, fresh, RM_AO_BLEND), history >= 0.0);
 }
 
 // Optical depth through the froxel medium between a surface point and a lamp.
@@ -149,27 +194,37 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
     var transmittance = v.a;
     let far = fr.vol_range.y;
     if (distance_m > far) {
-        // Beyond the grid: the weather layer without geometric occlusion (named approximation).
+        // Beyond the grid: six steps through the world medium (the weather layer and its fog
+        // banks), each lit by the sky and by the key beam through the cloud layer above it; no
+        // geometric occlusion (named approximation).
         let origin = fr.cam_pos.xyz + ray * far;
         var length_m = distance_m - far;
         if (ray.y > 0.001) { length_m = min(length_m, max(fr.medium.w - origin.y, 0.0) / ray.y); }
         length_m = min(length_m, 6000.0);
-        let sigma = fr.medium.x * 0.86;
-        if (sigma > 0.0 && length_m > 0.0) {
-            let t2 = exp(-sigma * length_m);
+        if (length_m > 0.0 && (fr.medium.x > 0.0 || fr.fog.y > 0.0)) {
             let albedo = mix(0.70, 0.92, fr.medium.y);
             let g = mix(0.74, 0.62, fr.medium.y);
-            var source = rm_sky_isotropic();
-            if (fr.sun_radiance.w > 0.5) { source += fr.sun_radiance.rgb * rm_phase(dot(ray, fr.sun_dir.xyz), g); }
-            radiance += transmittance * albedo * source * (1.0 - t2);
-            transmittance *= t2;
+            let sky = rm_sky_isotropic();
+            let phase = select(0.0, rm_hg(dot(ray, fr.sun_dir.xyz), g), fr.sun_radiance.w > 0.5);
+            let dt = length_m / 6.0;
+            for (var i = 0; i < 6; i = i + 1) {
+                let p = origin + ray * ((f32(i) + 0.5) * dt);
+                let sigma = rm_world_density(p);
+                if (sigma <= 0.0) { continue; }
+                let t_step = exp(-sigma * dt);
+                let source = sky + fr.sun_radiance.rgb * phase * rm_cloud_shadow(p);
+                radiance += transmittance * albedo * source * (1.0 - t_step);
+                transmittance *= t_step;
+            }
         }
     }
     return Fog(radiance, transmittance);
 }
 
+struct ShadeOut { @location(0) color: vec4<f32>, @location(1) open: vec4<f32>, };
+
 @fragment
-fn fs(in: VsOut) -> @location(0) vec4<f32> {
+fn fs(in: VsOut) -> ShadeOut {
     var pixel = vec2<i32>(in.pos.xy);
     var uv = in.uv;
     var depth = textureLoad(depth_tex, pixel, 0);
@@ -195,7 +250,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     if (depth >= 1.0) {
         let sky = rm_sky_radiance(ray);
         let fog = fog_to(in.uv, ray, 20000.0);
-        return vec4(sky * fog.transmittance + fog.radiance, 1.0);
+        return ShadeOut(vec4(sky * fog.transmittance + fog.radiance, 1.0), vec4(1.0, -1.0, 0.0, 0.0));
     }
     let rel = rm_relative_from_depth(uv, depth);
     let world = fr.cam_pos.xyz + rel;
@@ -204,18 +259,55 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let g1 = textureLoad(g1_tex, pixel, 0);
     let g2 = textureLoad(g2_tex, pixel, 0);
     var color = vec3(0.0);
+    var open_out = vec4(1.0, -1.0, 0.0, 0.0);
     if (g0.a > 8.5) {
         color = g2.rgb;
     } else {
-        let albedo = g0.rgb;
+        var albedo = g0.rgb;
         let n = normalize(g1.xyz);
-        let roughness = g1.w;
-        let metallic = g2.w;
+        var roughness = g1.w;
+        var metallic = g2.w;
+        // Lying snow on ordinary surfaces (the G-buffer's lying share in g0.a below 1): a matte
+        // white layer over the material where the face can hold it and the snow can reach it.
+        if (g0.a > 0.001 && g0.a < 0.95) {
+            let snow = g0.a / 0.9 * rm_sky_visibility(world, 0.06);
+            if (snow > 0.0) {
+                albedo = mix(albedo, RM_SNOW_ALBEDO, snow);
+                roughness = mix(roughness, 0.85, snow);
+                metallic = mix(metallic, 0.0, snow);
+            }
+        }
+        let terrain = g0.a > 2.5 && g0.a < 3.5;
+        let grass = g0.a > 3.5 && g0.a < 4.5;
+        let gather = screen_gather(pixel, rel, n, jitter);
+        // The player's vehicle (pixels within 4.5 m of its compartment's centre that are not the
+        // ground; fr.vehicle): paint worn through on its edges, grime gathered in its corners. Edges are the
+        // creases between neighbouring pixels' normals; corners are the near-field occlusion.
+        let vehicle = select(0.0, 1.0, !terrain && !grass && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
+        if (vehicle > 0.0 && max(fr.wear.w, max(fr.wear.x, fr.wear.y)) > 0.0) {
+            let dims = vec2<i32>(fr.res.xy) - vec2(1);
+            var crease = 0.0;
+            for (var k = 0; k < 4; k += 1) {
+                let o = select(select(vec2(0, -1), vec2(0, 1), k == 1), select(vec2(-1, 0), vec2(1, 0), k == 3), k >= 2);
+                let q = clamp(pixel + o, vec2(0), dims);
+                let nq = textureLoad(g1_tex, q, 0).xyz;
+                let dq = textureLoad(depth_tex, q, 0);
+                if (dq < 1.0 && abs(length(rm_relative_from_depth((vec2<f32>(q) + vec2(0.5)) * fr.res.zw, dq)) - dist) < 0.08 + 0.02 * dist) {
+                    crease = max(crease, 1.0 - dot(n, normalize(nq)));
+                }
+            }
+            let worn_edge = smoothstep(0.12, 0.45, crease) * clamp(fr.wear.w, 0.0, 1.0) * (0.55 + 0.45 * jitter);
+            albedo = mix(albedo, vec3(0.44, 0.43, 0.40), worn_edge * 0.85);
+            roughness = mix(roughness, 0.4, worn_edge);
+            let to_cabin = fr.vehicle.xyz - world;
+            let inside = select(0.0, 1.0, length(to_cabin) < fr.vehicle.w && dot(n, to_cabin) > 0.0);
+            let grime = mix(clamp(fr.wear.y, 0.0, 1.0), clamp(fr.wear.x, 0.0, 1.0), inside);
+            let corner = smoothstep(0.05, 0.6, 1.0 - gather.ao);
+            albedo *= 1.0 - 0.6 * corner * grime;
+        }
         let v = -ray;
         let f0 = mix(vec3(0.04), albedo, metallic);
         let diffuse = albedo * (1.0 - metallic) / RM_PI;
-        let terrain = g0.a > 2.5 && g0.a < 3.5;
-        let grass = g0.a > 3.5 && g0.a < 4.5;
         // Key beam.
         if (fr.sun_radiance.w > 0.5) {
             // Grass is dead straw: thin, two-sided, lit through; the beam wraps round a blade
@@ -246,10 +338,21 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // Skylight through the part of the hemisphere the frame's surfaces leave open, the
         // bounce from the part they cover. The upwelling-ground band stands in for off-screen
         // ground only (halved: most of the ground a surface sees is on screen).
-        let gather = screen_gather(pixel, rel, n, jitter);
         var ao = gather.ao;
         var open = gather.open;
         if (grass) { ao = mix(ao, 1.0, 0.7); open = mix(open, 1.0, 0.7); }
+        // With ray queries the rays' open share replaces the screen's where they find more cover
+        // (and the near-field contact term, which they include); the difference is cover the
+        // frame does not show (`hidden_cover`).
+        var hidden_cover = 0.0;
+        if (RM_RAY_QUERIES && !grass && fr.debug.w < 0.5) {
+            let rays = rt_open_share(world, n, dist, pixel);
+            open_out = vec4(rays, dist, 0.0, 0.0);
+            let seen = min(rays, open);
+            hidden_cover = open - seen;
+            open = seen;
+            ao = 1.0;
+        }
         // Grass blades ask the cover map from above their own canopy (they stand in it).
         let sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
         let up = clamp(n.y, -1.0, 1.0);
@@ -261,7 +364,14 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // in the mirror direction (its gloss weight).
         var env = hemisphere * mix(0.10, 1.0, sky_vis) * ao;
         if (fr.debug.x < 0.5) {
-            env = env * open + gather.irradiance * select(1.0, 0.6, grass) / RM_PI;
+            // Cover the frame does not show returns this surface's own radiance of the last frame
+            // (named approximation: the unseen walls of a room are lit like the seen one). The
+            // loop's gain is the albedo times the hidden share, below one, so it settles; the
+            // mean of the on-screen cover was tried first and diverged, a single lamp sample
+            // standing for a whole covered hemisphere.
+            var hidden = vec3(0.0);
+            if (hidden_cover > 0.0) { hidden = previous_radiance(world).rgb; }
+            env = env * open + gather.irradiance * select(1.0, 0.6, grass) / RM_PI + hidden * hidden_cover;
         }
         color += diffuse * RM_PI * env;
         let gloss = (1.0 - smoothstep(0.35, 0.8, roughness)) * mix(0.35, 1.0, metallic);
@@ -277,12 +387,19 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
             if (ndl <= 0.0 || max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }
             var vis = rm_light_visibility(index, world, 0.02 + 0.03 * (1.0 - ndl));
             if (vis <= 0.001) { continue; }
-            vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, jitter));
+            if (RM_RAY_QUERIES && lights[index].c.y < -0.5 && fr.debug.w < 0.5) {
+                // Lights without depth faces: one shadow ray toward the source, stopped short of
+                // its own fixture (the emitter sits inside its housing).
+                let reach = s.dist - max(0.15, 4.0 * lights[index].a.w);
+                if (reach > 0.02 && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), s.dir, 0.0, reach) >= 0.0) { continue; }
+            } else {
+                vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, jitter));
+            }
             let tau = lamp_tau(world, lights[index].a.xyz, 4u);
             color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
         }
         color += g2.rgb;
     }
     let fog = fog_to(in.uv, ray, dist);
-    return vec4(color * fog.transmittance + fog.radiance, 1.0);
+    return ShadeOut(vec4(color * fog.transmittance + fog.radiance, 1.0), open_out);
 }

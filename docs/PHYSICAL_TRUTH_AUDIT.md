@@ -103,12 +103,16 @@ are presented as ray tracing, GI or a combustion/solver result:
 - Spark samples' projected-area energy is capped (6 px, 3 px for event shards) so a shard
   passing the eye does not bloom into a disc; fragment and heavy-blast sparks trail 4-10
   samples per shard.
-- Media phase is Henyey-Greenstein with a 35 % isotropic share standing in for multiple
-  scattering (single scattering alone left the lit side of a thick smoke cloud black).
+- Media phase is Henyey-Greenstein with an isotropic share standing in for multiple
+  scattering (single scattering alone left the lit side of a thick smoke cloud black); the share
+  is 35 % of (1 - exp(-2 sigma_t)), so thin weather aerosol keeps its single-scattering lobe
+  (2026-10-28; it was a flat 35 %).
 - Heat haze is a screen-space displacement of the G-buffer lookup by the heat integrated along
   the ray (fire and fireball cells), not refraction through an index field.
 - Spindrift is a density field in the lowest 0.9 m over the cover map's surface, streaked along
-  the wind, fading at the map's 48 m edge; not saltating snow.
+  the wind, fading at the map's 48 m edge; not saltating snow. It lifts only above the 5 m/s
+  threshold for loose snow (or in wind while snowing), at 0.012/m plus twice the weather layer
+  (2026-10-28; it was 0.03/m from 2.5 m/s, a near-ground haze in the act's ordinary breeze).
 - Snow glitter: one random ice facet per centimetre of terrain (a hash, not a crystal model)
   flashes the key beam at the eye through a narrow lobe; one native pixel each.
 - Veiling glare (`stylized_bloom.wgsl` `fs_glare`, this chain only): see the "Light, sky and
@@ -126,8 +130,58 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch cabin haze centre (2026-10-28; `rm_medium.wgsl` `rm_cabin_density`): the haze
+  ellipsoid is centred on the crew compartment (0.9 m above the turret frame's origin) instead of
+  the hull's ground-contact point, which had left the fumes below seated eye height. The ellipsoid
+  itself remains an approximation of the compartment's volume. Gate: `KESSEL_SHOWCASE_SET=shafts`.
+- Raymarch lamp shadow rays and periscope folding (2026-10-28; `rm_shade.wgsl` light loop,
+  `rm_rt.wgsl` `rm_ray_open`): lamps without depth faces take one shadow ray per shaded pixel,
+  stopped 0.15 m short of the source so its own housing does not shadow it; occlusion rays pass
+  periscope windows and reflect at their mirrors, so the cabin takes skylight through the
+  periscopes, as the hemisphere's sky band, not as the image the periscope carries. Gate:
+  `KESSEL_SHOWCASE_SET=ao` and `=res` (`cabin_night`) with and without `KESSEL_RM_SKIP=32768`.
+- Raymarch cloud shadows and fog banks (2026-10-28; `rm_cloud_shadow.wgsl`, `rm_medium.wgsl`
+  `rm_fog_bank_density`, the far march in `rm_shade.wgsl` `fog_to`): the key beam is the clear-sky
+  one and the cloud layer's transmittance toward the sun is applied per position from a 16 m map
+  over 4 km (the same cloud field the sky draws, crossed from the eye's altitude); fog banks are a
+  drifting footprint field below a floor altitude, an authored presentation of radiation fog, not a
+  boundary-layer solve; beyond 320 m the medium is marched in six steps without geometric
+  occlusion. The cloud does not shadow the skylight. Gate: `KESSEL_SHOWCASE_SET=clouds` with and
+  without `KESSEL_RM_SKIP=131072`.
+- Surface wear on the player's Tiger (2026-10-28; `src/surface_wear.rs`, `rm_gbuffer.wgsl`
+  `apply_wear`, the shade pass's worn edges and cavity grime, the glass film): four scalar loads,
+  mechanical wear (+0.4 % of the remainder per round), interior grime (toward full over 40 min
+  crewed, +3 % per round), exterior grime (toward full over 3 km driven), glass grime (+2 % per
+  round, over 8 km; a wipe leaves 0.05), starting at 0.55 / 0.35 / 0.30 / 0.25 for a Tiger some
+  weeks into the cauldron. Presentation estimates, not measurements; procedural masks, not painted
+  or simulated wear; inside and outside told apart by facing the compartment's centre. Gate:
+  `KESSEL_SHOWCASE_SET=wear` (clean against after a fight, and every load at 1).
+- Raymarch ray queries (2026-10-28; `rm_rt.wgsl`, `rm_shade.wgsl` `rt_open_share`,
+  `rm_reflect.wgsl` `offscreen_reflection`): occlusion traced with two cosine rays per pixel per
+  frame to 4 m and averaged over frames (new estimate 0.15); cover beyond 4 m counts as open, and
+  cover the frame does not show returns the surface's own last-frame radiance. Reflections trace
+  screen-space misses to 80 m; an off-screen hit is a grey 0.3 surface facing the ray lit by the
+  sun cascades and the sky cover map; the reflected radiance is averaged over frames (0.2) through
+  the reflecting surface's reprojection. The TLAS is rebuilt each frame (no refit in wgpu 27).
+  Gate: `KESSEL_SHOWCASE_SET=ao` with and without `KESSEL_RM_SKIP=32768` (the closed cabin by day
+  78 to 39 mean luma: it was lit by skylight through walls the frame could not see).
+- Lying snow on the raymarch backend (`src/snow_cover.rs`, `rm_common.wgsl` `rm_snow_lying`): a
+  scalar load per vehicle (the player's Tiger, starting bare) and one for the world (0.7 at the
+  start of a winter act, everything else including enemy vehicles). Snowfall fills a load at
+  precipitation / 120 s x (1 - load); the Tiger sheds 0.5/s x ((speed - 2 m/s) / 10 m/s)^2 of it in
+  the air stream, 0.4/s per rad/s of turret traverse, and a shot keeps 55 %. These are
+  presentation estimates, not snow-physics measurements. The renderer covers faces flatter than
+  about 63 degrees that the falling snow can reach (the sky-cover map), broken by a noise field in
+  the mesh's frame, with a matte layer (albedo 0.86/0.89/0.93, roughness 0.85). Not modelled:
+  per-face accumulation (leeward faces, melt on hot parts), snow depth and its shadow, contact
+  puffs, falling clumps, enemy vehicles shedding snow, snow over the near-vertical optics. Gate:
+  `KESSEL_SHOWCASE_SET=snow` time series (loads 0.00, 0.58, 0.20, 0.43, 0.25, 0.23).
 - Tank ruts on the raymarch G-buffer: the track map darkens and polishes the compacted floor and
   tilts the shading normal by its gradient; the terrain triangles do not move.
+- Exact RT surface pack (physical backend): an instanced transform with a singular or
+  non-finite linear part is traced as a 1 mm point at its translation instead of aborting the
+  frame (`rt_safe_instance_transform`), reported once per batch with the matrix. A zero-volume
+  instance meets no ray; the departure is only that the frame continues.
 - Winter snow sinkage (`vehicle_ground::WINTER_TRACK_SINKAGE_M`): 0.40 m of settled steppe
   snow (declared for the December 1942 cauldron, not a station measurement) compacts to a
   quarter of its depth under every tracked vehicle fielded here, so tracks rest 0.30 m below the
@@ -861,7 +915,7 @@ refinement remain separate acceptance work, as recorded in the hand-prop note.
 | Recordings made at a distance, propagated again (2026-10-03) | Gun reports and strikes 700 m or more from the listener are voiced by the owner's recordings made at a distance. They are still placed at the propagated level and passed through the path's loss in each band, so the distance colour is partly counted twice. | `src/game.rs` (`recorded_gun_report`, `schedule_sound_from`, `DISTANT_RECORDING_M`) | The level is correct; the spectrum is darker than one pass of propagation would make it. The low bands that carry at range are barely affected. |
 | Own gun buttoned up, fitted to the listening references (2026-10-04) | For a listener in the closed tank the three gun recordings are filtered by per-band tables fitted so the result has the octave-band balance measured on the owner's two reference recordings, and the main and outside layers are held for 0.9 s (dense scattered copies of the recording) inside a 1.7 s tail. This replaces the hull and headset path for this one sound. Measured result: within about 1.5 dB of the reference from 31.5 Hz to 1 kHz, 4 dB low at 2 kHz, 9 dB at 4 kHz, 13 dB at 8 kHz; level within 7 dB of peak for 0.8 s. | `src/audio_calibrated.rs` (`CABIN_GUN_FIT`, `sustain_roar`), `tools/audio_reference_bands.py`, test `cabin_gun_capture_for_reference_measurement` | A film mix is the target, not a measurement of a Tiger. The hold is a presentation device. The references' loudness relative to the engine drone (about 9 dB) is not reproduced: the game's calibrated levels still decide that. |
 | Terrain visibility receiver lift (2026-10-04) | Sky and Sun visibility for the ground is evaluated 0.25 m above the surface along its smooth normal, so the coarse terrain triangles do not each show as a separate shade. | `shaders/stylized_mesh.wgsl` (`TERRAIN_VISIBILITY_LIFT_M`) | A receiver bias. Contact shadow on the ground from anything lower than 0.25 m is lost. The debt is the coarse mesh; a finer terrain mesh would remove the need. |
-| Eye: range drawn in, slower and wider adaptation (2026-10-04) | In the final display mapping, parts of the picture more than 1.5 stops from the eye's adapted level are drawn toward it at 0.32 of their distance, keeping colour. The eye's meter weights the whole field 0.50, the 10 degree surround 0.35 and the fovea 0.15 (was 0.20, 0.30, 0.50), and the cone and rod adaptation time constants are 4.5 to 8 s (were 1.2 to 4 s), the pupil's constriction 1.2 s (was 0.3 s). | `shaders/crush.wgsl` (`eye_range`), `src/observer.rs` | Stands in for the retina's local adaptation, which one global exposure cannot give. The owner could see neither the cabin nor the view through the ports by day, nor anything at night, and found the fast adaptation disorienting. These depart from the research values the eye model was built on. |
+| Eye: range drawn in, slower and wider adaptation (2026-10-04; restricted 2026-10-28) | In the final display mapping, parts of the picture more than 1.5 stops from the eye's adapted level are drawn toward it at 0.32 of their distance, keeping colour, in a closed cabin view only (buttoned up, not the gun sight's or binoculars' full-field picture: `eye_range_strength`); applied to exterior views it lifted every dark object toward grey and read as near-camera haze (measurements in docs/RAYMARCHING_ENGINE.md, "Near-camera haze"). `KESSEL_EYE_RANGE=knee,slope` overrides it for review. The eye's meter weights the whole field 0.50, the 10 degree surround 0.35 and the fovea 0.15 (was 0.20, 0.30, 0.50), and the cone and rod adaptation time constants are 4.5 to 8 s (were 1.2 to 4 s), the pupil's constriction 1.2 s (was 0.3 s). | `shaders/crush.wgsl` (`eye_range`), `src/observer.rs` | Stands in for the retina's local adaptation, which one global exposure cannot give. The owner could see neither the cabin nor the view through the ports by day, nor anything at night, and found the fast adaptation disorienting. These depart from the research values the eye model was built on. |
 | Sun's beam averaged over a disc; storm thins after dark; fast sky clock (2026-10-04) | The key beam at the camera is the mean of twelve samples over a 450 m disc. After dark the authored overcast, storm and haze fall to at most 0.42, 0.10 and 0.0016 so the Moon lights the ground. The sky clock runs fast (five minutes of day, two and a half each of sunrise and sunset, five of night) with true Sun and Moon positions. | `shaders/environment_probe.wgsl`, `src/game.rs` (`follow_the_night`), `src/renderer.rs` (`sky_clock_rate`) | The beam is still not evaluated per receiver, so there are no cloud shadows on the ground. The night weather is authored content chosen for play. |
 | Volumetric clouds: heaped density field and a dedicated view march (2026-10-04) | The cloud layer's density is a heaped field (flat bases, footprint tapering with height, two scales of billow), identical in the shader and its CPU twin. In the sky pass the layer is marched on its own: 32 view steps to 32 km, and at each lit sample five steps toward the key body for self-shadowing. Multiple scattering in the cloud is a three-octave series; skylight on the cloud is the clear-sky radiance along the view ray scaled by height; haze before a far cloud is one exponential over 32 km. | `shaders/physical_environment.wgsl` and `src/physical_environment.rs` (`cloud_relative_density`), `shaders/sky.wgsl` (`march_clouds`) | The raster sky only. The ray-traced path and the sky probe still evaluate the same density through the general atmosphere march, so their clouds are the right shape and place but flatly shaded. The multiple-scattering series and the skylight term are approximations, not transport solves. |
 | Cloud shadows on the ground (2026-10-04) | A 48 x 48 grid (250 m cells, 12 km across, snapped to cells) of the cloud layer's Beer-Lambert transmittance toward the key body rides with the sky probe. In the raster mesh shader a receiver's sunlight is the probe's area-mean beam times its own cloud transmittance over the area's mean, capped at 6. | `shaders/environment_probe.wgsl` (`probe_cloud_shadows`), `shaders/stylized_mesh.wgsl` (`cloud_shadow`) | Terrain and meshes only: grass, particles and smoke still take the area-mean beam. 250 m cells soften shadow edges. Flat-layer geometry. |
