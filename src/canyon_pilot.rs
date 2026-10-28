@@ -127,6 +127,8 @@ pub struct CanyonPilot {
     was_advancing: bool,
     /// The dead hull being passed and the aim point beside and beyond it.
     bypass: Option<(Vec2, Vec2)>,
+    /// The escape aim point out of a ring of hulls and when the commitment to it lapses.
+    escape: Option<(Vec2, f32)>,
     /// Rack slot the loader is reaching for, and the slots whose prompt never came this reload.
     round_slot: Option<usize>,
     skip_slots: Vec<usize>,
@@ -185,6 +187,7 @@ impl CanyonPilot {
             avoid_side: -1.0,
             was_advancing: false,
             bypass: None,
+            escape: None,
             round_slot: None,
             skip_slots: Vec::new(),
             reload_abandoned_at: None,
@@ -763,7 +766,15 @@ impl CanyonPilot {
             // in among several (the bypass and the ladder both failed twice), drive out along
             // the clearest corridor first.
             if t >= self.reverse_until {
-                if let Some(out) = (self.stuck_count >= 2).then(|| self.hull_escape(g, here)).flatten() {
+                // Committed for up to 6 s or until reached: re-choosing every frame flipped the
+                // heading and the hull only pivoted (seed 29, 57.9 %, 2026-10-27).
+                if self.escape.is_some_and(|(p, until)| t >= until || p.distance(here) < 2.5) {
+                    self.escape = None;
+                }
+                if self.escape.is_none() && self.stuck_count >= 2 {
+                    self.escape = self.hull_escape(g, here).map(|p| (p, t + 6.0));
+                }
+                if let Some((out, _)) = self.escape {
                     carrot = out;
                     run_up = false;
                     self.phase = "escaping";
