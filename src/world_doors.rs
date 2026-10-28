@@ -347,6 +347,13 @@ impl WorldDoors {
         door.blocked = false;
         true
     }
+    /// Where a door is and what it is doing, for its sound: the doorway's centre at 1 m, locked,
+    /// and whether its leaves are swinging open (else closing).
+    pub fn sound_state(&self, index: usize) -> Option<(Vec3, bool, bool)> {
+        let door = self.doors.get(index)?;
+        Some((door.frame.model.transform_point3(Vec3::new(0.0, 1.0, 0.0)), door.locked, door.target.abs() > 0.01))
+    }
+
     pub fn update(&mut self, dt: f32, blockers: &[(Vec3, f32, f32)]) {
         let duration = dt.clamp(0.0, 0.1);
         for door in &mut self.doors {

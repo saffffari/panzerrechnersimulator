@@ -32,7 +32,9 @@ impl Game {
         if self.cigarettes.total_unconsumed()==0 {return false;}
         self.hand_torch_on=false;self.compass_equipped=false;self.holster_mounted_sidearm();
         if self.mode==Mode::Tank&&self.station==Station::Gunner {self.jump_station(Station::Loader);}
+        let was_open=self.cigarettes.view().pack_open;
         self.cigarettes.toggle_pack();self.personal_primary_guard=true;self.consume_primary_press();
+        self.foley_hands(crate::acoustics::foley::Cue::Cigarette(if was_open {crate::acoustics::foley::CigCue::PackClose} else {crate::acoustics::foley::CigCue::PackOpen}));
         true
     }
     /// Review aid for headless stills: put the cigarette kit into a named state.
@@ -53,11 +55,14 @@ impl Game {
         }
     }
     pub fn toggle_hand_flashlight(&mut self)->bool {
-        if self.hand_torch_on {self.hand_torch_on=false;self.personal_primary_guard=true;return true;}
+        if self.hand_torch_on {self.hand_torch_on=false;self.personal_primary_guard=true;
+            self.foley_hands(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::LampSwitch));return true;}
         if !self.personal_hands_available() {return false;}
         self.cigarettes.stow();self.compass_equipped=false;self.holster_mounted_sidearm();
         if self.mode==Mode::Tank&&self.station==Station::Gunner {self.jump_station(Station::Loader);}
-        self.hand_torch_on=true;self.personal_primary_guard=true;self.consume_primary_press();true
+        self.hand_torch_on=true;self.personal_primary_guard=true;self.consume_primary_press();
+        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Flashlight,crate::acoustics::foley::Gesture::Grab));
+        self.foley_hands(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::LampSwitch));true
     }
     pub fn stow_personal_hand_item(&mut self)->bool {
         let active=self.cigarettes.stow()||self.hand_torch_on;
@@ -79,16 +84,26 @@ impl Game {
             if let Some(slot)=self.cigarette_pick {
                 if self.cigarettes.take(slot)==crate::cigarette::Action::Draw {
                     self.personal_primary_guard=true;self.cigarette_pick=None;
-                    if let Some(a)=&self.audio {
-                        a.play_at_ear(crate::audio::Sfx::Pickup,
-                            crate::sound_levels::QUIET_HANDLING.laf_db+crate::audio::effort_db(0.3));
-                    }
+                    self.foley_hands(crate::acoustics::foley::Cue::Cigarette(crate::acoustics::foley::CigCue::DrawCigarette));
                 }
             }
         }
         self.cigarette_left_was_down=left;
-        self.cigarettes.advance(dt,right&&self.cigarettes.active());
-        if self.cigarettes.take_butt() {self.cigarette_butt_pending=true;}
+        // The kit's own events, voiced: the lighter, each draw, the cough, the ember dying.
+        match self.cigarettes.advance(dt,right&&self.cigarettes.active()) {
+            crate::cigarette::Action::Light => {
+                self.foley_hands(crate::acoustics::foley::Cue::Cigarette(crate::acoustics::foley::CigCue::Flint));
+                self.foley_mouth(crate::acoustics::foley::Cue::Cigarette(crate::acoustics::foley::CigCue::Flame));
+            }
+            crate::cigarette::Action::Puff => self.foley_mouth(crate::acoustics::foley::Cue::Cigarette(crate::acoustics::foley::CigCue::Inhale)),
+            crate::cigarette::Action::Cough => self.foley_mouth(crate::acoustics::foley::Cue::Cigarette(crate::acoustics::foley::CigCue::Cough)),
+            crate::cigarette::Action::BurnedOut => self.foley_mouth(crate::acoustics::foley::Cue::Cigarette(crate::acoustics::foley::CigCue::BurnOut)),
+            _ => {}
+        }
+        if self.cigarettes.take_butt() {
+            self.cigarette_butt_pending=true;
+            self.foley_hands(crate::acoustics::foley::Cue::Cigarette(crate::acoustics::foley::CigCue::ButtFlick));
+        }
         // Each inhaled second restores the body; one cigarette's worth of tokes is one full bar.
         let dose=self.cigarettes.take_dose();
         if dose>0.0 {

@@ -1,0 +1,17 @@
+[panzerrechnersystem] resources: Override root=C:/shop/panzerrechnersystem assets=C:/shop/panzerrechnersystem\assets cooked_models=0
+[driver-visor] preserved source holder; 966 triangles → 1430; closed Schutzglas 97.3 mm; no hull armor cut
+[sound-world] cabin voxels: 4 frames from 3555661 triangles in 572 ms
+[audio] playback range: balanced (physical source levels unchanged)
+[audio] legacy reference recordings disabled; verified feedback bank and generated fallbacks are resolved below
+[audio] 24 gameplay feedback recordings loaded; video audition pending
+[audio] owner recordings: 36 cuts under 13 keys
+[audio] initialized: 24 verified feedback recordings (loaded); direct Sfx routes: 2 recorded replacements, 0 legacy references, 25 generated; 0 verified v1 layers; ammunition contacts use distinct authored modes; friction follows actual loader motion
+[sound-world] buttoned_report_from_right: reflected +8.8 dB at 1 kHz, T20 Some(0.171) s, lateral +0.12, escaped 0.54, L/R +5.3 dB
+[sound-world] cupola_open_report_from_right: reflected +4.0 dB at 1 kHz, T20 Some(0.22200002) s, lateral -0.02, escaped 0.89, L/R +10.8 dB
+[sound-world] head_out_report_from_right: reflected -7.4 dB at 1 kHz, T20 Some(0.192) s, lateral +0.98, escaped 1.00, L/R +13.7 dB
+[sound-world] on_foot_brick_wall_right_report_ahead: reflected -5.9 dB at 1 kHz, T20 Some(0.033) s, lateral +0.09, escaped 1.00, L/R +0.2 dB
+[sound-world] on_foot_open_snow_report_ahead: reflected -25.5 dB at 1 kHz, T20 Some(0.882) s, lateral +0.02, escaped 1.00, L/R +0.0 dB
+[sound-world] loader_boots_on_turret_floor: reflected +1.2 dB, T20 Some(0.09) s
+[sound-world] boots_on_timber_floor_indoors: reflected +10.8 dB, T20 Some(0.933) s
+[sound-world] boots_in_fresh_snow_open_field: reflected -8.5 dB, T20 Some(0.024) s
+[sound-world] 314 cues, 335 s of audio; checks passed: true; receipt C:/shop/panzerrechnersystem-soundworld/artifacts/sound-world-20261028/sound_world_20261028.json

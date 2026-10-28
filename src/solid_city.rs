@@ -839,6 +839,8 @@ impl Game {
                         self.buildings.get(instance).instance_id()
                     );
                     self.tank_ground.gave_way += 1;
+                    let at = self.player.center();
+                    self.foley(crate::acoustics::foley::Cue::Vehicle(crate::acoustics::foley::VehicleCue::FloorCollapse), 1.0, 0.0, at);
                     self.tank_ground.crushing = Some(record);
                     self.damage_structure(record, remaining, r);
                     self.crush_rumble = self.crush_rumble.max(1.2);

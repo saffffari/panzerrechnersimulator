@@ -100,7 +100,7 @@ impl Game {
         let interior = crate::audio::tiger_engine_interior_dba(telemetry);
         let headset = headset_loss_dba(SpectrumClass::Engine);
         match own_engine_enclosure_offset_db(self.listener_enclosure()) {
-            Some(offset) => interior + offset - headset,
+            Some(offset) => interior + offset - headset + self.engine_station_offset_db(listener),
             None => {
                 let exterior = Emission::from_level(&crate::sound_levels::TIGER_EXTERIOR_10M)
                     .shifted(interior - EXTERIOR_BELOW_INTERIOR_DB
