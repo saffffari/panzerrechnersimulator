@@ -147,7 +147,7 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>) ->
         let phi = 2.0 * RM_PI * rm_hash01(seed ^ 0x9e3779b9u);
         let s = sqrt(r1);
         let d = t * (cos(phi) * s) + b * (sin(phi) * s) + n * sqrt(max(1.0 - r1, 0.0));
-        if (rm_ray_blocked(origin, d, 0.0, RM_AO_RANGE_M) < 0.0) { open += 1.0; }
+        if (rm_ray_open(origin, d, RM_AO_RANGE_M)) { open += 1.0; }
     }
     let fresh = open / f32(RM_AO_RAYS);
     let history = previous_open(world);
@@ -387,7 +387,14 @@ fn fs(in: VsOut) -> ShadeOut {
             if (ndl <= 0.0 || max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }
             var vis = rm_light_visibility(index, world, 0.02 + 0.03 * (1.0 - ndl));
             if (vis <= 0.001) { continue; }
-            vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, jitter));
+            if (RM_RAY_QUERIES && lights[index].c.y < -0.5 && fr.debug.w < 0.5) {
+                // Lights without depth faces: one shadow ray toward the source, stopped short of
+                // its own fixture (the emitter sits inside its housing).
+                let reach = s.dist - max(0.15, 4.0 * lights[index].a.w);
+                if (reach > 0.02 && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), s.dir, 0.0, reach) >= 0.0) { continue; }
+            } else {
+                vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, jitter));
+            }
             let tau = lamp_tau(world, lights[index].a.xyz, 4u);
             color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
         }

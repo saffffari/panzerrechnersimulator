@@ -19,6 +19,8 @@ const VOL_DIVISOR: u32 = 4;
 const VOL_SLICES: u32 = 96;
 const VOL_NEAR_M: f32 = 0.25;
 const VOL_FAR_M: f32 = 320.0;
+/// Mesh slots the ray queries' optics table covers (periscope windows and mirrors).
+const MAX_OPTIC_SLOTS: usize = 8192;
 /// Cloud shadow map: texels per side and the half extent it covers around the eye.
 const CLOUD_SHADOW_RES: u32 = 256;
 const CLOUD_SHADOW_HALF_M: f32 = 2048.0;
@@ -256,6 +258,9 @@ pub(super) struct Backend {
     rt_bind: Option<wgpu::BindGroup>,
     rt_empty: Option<wgpu::Tlas>,
     rt_empty_built: bool,
+    /// Per mesh slot: x y z a mirror's world normal, w the optic (0 none, 1 window, 2 mirror).
+    rt_optics_buf: Option<wgpu::Buffer>,
+    rt_optics: Vec<[f32; 4]>,
     shadow_far: Target,
     shadow_near: Target,
     sky_cover: Target,
@@ -578,7 +583,12 @@ impl Backend {
             label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
-            }],
+            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT)],
+        }));
+        // Per mesh slot: what a ray query does at it (periscope windows pass, mirrors fold).
+        let rt_optics_buf = rt_scene.then(|| device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rm-rt-optics"), size: (MAX_OPTIC_SLOTS * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
         }));
         let rt_empty = rt_scene.then(|| device.create_tlas(&wgpu::CreateTlasDescriptor {
             label: Some("rm-rt-empty"), max_instances: 1,
@@ -901,7 +911,7 @@ impl Backend {
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, sky_sampler,
-            scratch, history, ao, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false,
+            scratch, history, ao, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
@@ -1029,9 +1039,26 @@ impl Backend {
                 queue.submit([enc.finish()]);
                 self.rt_empty_built = true;
             }
-            self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref()).zip(self.rt_bgl.as_ref()).map(|(tlas, layout)| {
+            // The periscope optics: windows pass a ray, mirrors fold it about their plane.
+            self.rt_optics.clear();
+            self.rt_optics.resize(r.meshes.len().min(MAX_OPTIC_SLOTS), [0.0; 4]);
+            for (i, mesh) in r.meshes.iter().enumerate().take(MAX_OPTIC_SLOTS) {
+                match mesh.periscope_kind {
+                    1 => self.rt_optics[i] = [0.0, 0.0, 0.0, 1.0],
+                    2 if mesh.mirror_normal != Vec3::ZERO => {
+                        let n = mesh.model.transform_vector3(mesh.mirror_normal).normalize_or_zero();
+                        self.rt_optics[i] = [n.x, n.y, n.z, 2.0];
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(buf) = &self.rt_optics_buf {
+                if !self.rt_optics.is_empty() { queue.write_buffer(buf, 0, bytemuck::cast_slice(&self.rt_optics)); }
+            }
+            self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref()).zip(self.rt_bgl.as_ref()).zip(self.rt_optics_buf.as_ref()).map(|((tlas, layout), optics)| {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("rm-rt"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: tlas.as_binding() }],
+                    label: Some("rm-rt"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: tlas.as_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: optics.as_entire_binding() }],
                 })
             });
         }

@@ -10817,7 +10817,9 @@ impl Game {
         let mut periscope_kinds = Vec::new();
         for part in periscope_parts {
             tiger_periscopes.push(scene.len());
-            periscope_kinds.push((part.kind,part.focal_m));
+            // A mirror is a flat face: its vertex normals' mean is its plane's normal.
+            let mirror_normal = part.mesh.vertices.iter().fold(Vec3::ZERO, |acc, v| acc + Vec3::from(v.normal));
+            periscope_kinds.push((part.kind,part.focal_m,mirror_normal));
             scene.push(part.mesh);
         }
         let gunner_sight=[scene.len(),scene.len()+1];
@@ -12433,11 +12435,12 @@ impl Game {
         for s in tiger_rtt.iter().flatten() {
             renderer.set_mesh_rtt_screen(*s);
         }
-        for (&slot, (kind,focal_m)) in slots.tiger_periscopes.iter().zip(periscope_kinds) {
+        for (&slot, (kind,focal_m,mirror_normal)) in slots.tiger_periscopes.iter().zip(periscope_kinds) {
             if kind == tiger_periscopes::RELAY_LENS {
                 renderer.set_periscope_lens(slot, focal_m);
             } else {
                 renderer.set_periscope_optical_kind(slot, kind);
+                if kind == tiger_periscopes::MIRROR { renderer.set_periscope_mirror_normal(slot, mirror_normal); }
             }
         }
         for spec in raster_optic_specs {

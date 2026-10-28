@@ -517,6 +517,54 @@ skylight under a cloud is the frame's mean sky, not shadowed per position.
 **Cost.** The cloud map's pass read 0.035 ms per frame under outside GPU load (a fullscreen
 timestamp, which under-reports); the far march is six density samples per pixel beyond 320 m.
 
+## Shadow tiers, many lights, and light through the periscopes (2026-10-28)
+
+Questions: "do all objects in the world cast shadows?" and "can we improve the look of the
+periscopes and their emission of light to tank interior with raymarching method?"
+
+**Who casts into what** (`Backend::draw_scene` for the depth passes, `Renderer::batch_in_ray_scene`
+and `rt_update` for the TLAS):
+
+| object tier | far sun cascade (2048, 240 m around the eye) | near sun cascade (1024, 20 m; 6 m from the cabin) | sky-cover map (512, 48 m) | point-light cubes (the two strongest lights, 256) | ray queries (TLAS, High) |
+| --- | --- | --- | --- | --- | --- |
+| terrain, buildings, rubble, vehicles, props, the Tiger inside and out | yes | yes | yes | yes, except a light's own housing | yes |
+| grass (alpha-tested instances) | no (coarser than a blade) | yes | yes | yes | no |
+| glass panes (ports, vision blocks, sight and eyepiece glass) | no | no | no | no | no (the mask passes them) |
+| periscope windows and mirrors | yes | yes | yes | yes | windows pass a ray, mirrors fold it |
+| lamp lenses (own-colour emitters) | no | no | no | no | yes (shadow rays stop 0.15 m short of a lamp) |
+| muzzle and impact flash meshes | not drawn (they are volumes) | | | | visible ones are in the TLAS |
+| smoke, flame and soot grains, glass sheen | no (they are media) | no | no | no | no |
+| raster-only dynamic instance batches | no | no | no | no | no |
+
+Beyond the far cascade's 240 m nothing shadows the sun except the cloud layer (above). Every lamp
+but the two strongest had no shadow at all, only a short screen-space contact march.
+
+**Many lights.** With ray queries, each lamp without depth faces now takes one shadow ray per
+shaded pixel toward its source, stopped 0.15 m (or four source radii) short of it, because the
+emitter sits inside its own housing. On the commander's post at night the ceiling around the dome
+lamp falls dark (the fan housing it hangs under shades it) and the frame's mean falls from 45.9 to
+35.3 (`captures/rm_lamps1_0_cabin_night` against `rm_lamps1_32768_*`, which also drops the ray-traced
+occlusion). The froxel medium's in-scatter of those lamps is still unshadowed (the volume pass does
+not bind the TLAS).
+
+**Periscopes.** The occlusion rays (above) now follow the periscopes' real optical path: a ray that
+meets a periscope window passes it, one that meets a mirror reflects about the mirror's plane (its
+normal from the mesh, in world space each frame), up to four segments. What a periscope shows, it
+also lets in. On the daytime cabin stills the change is small (mean 39.4 to 39.0 at the commander's
+post, 51.8 to 50.5 at the loader's): the apertures are small against the cabin's open hemisphere.
+Named approximation: the light let in is the sky band around the receiving surface's normal, not
+the radiance of the direction the periscope looks along.
+
+**The hatch.** An open hatch already lights the cabin as the area light it is: occlusion rays escape
+through it and bring in skylight (the commander's post, hatch open, 39 to 52 mean). The sun through
+it is the cascades' business; the near cascade's 6 m inside the cabin covers it.
+
+**Not done.** The cupola's eyepieces are still glass panes over the housings, not relayed views
+(the raster optic tiles are a shader-backend path); the TZF is the full frame at the sight's field
+with the lens presentation, the reticle drawn per internal pixel and the own barrel in its right
+edge ("Internal resolution"); its relay, exit pupil and eye relief are not modelled. Light through a
+periscope carries no image of the outside.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -552,8 +600,10 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 - Ray-query reflections: an off-screen hit is a grey (0.3) surface facing the ray, lit by sun and
   sky; the reflection history follows the reflecting surface, so a moving reflection trails; the
   glass panes' own reflection march stays screen-space with the sky beyond.
-- Only two lights have depth faces per frame; the others are unshadowed except by the screen-
-  space contact test and the medium.
+- Only two lights have depth faces per frame. With ray queries the others take one shadow ray
+  per shaded pixel (stopped 0.15 m short of the source); without them they are unshadowed except
+  by the screen-space contact test. The froxel medium's lamp in-scatter is unshadowed for them
+  either way.
 - Beyond 320 m the world medium is a six-step march without geometric occlusion.
 - Cloud shadows: a flat layer crossed from the eye's altitude in twelve samples, a 16 m map over
   4 km around the eye (clamped beyond); the cloud does not shadow the skylight.

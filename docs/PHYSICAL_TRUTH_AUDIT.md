@@ -76,6 +76,12 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch lamp shadow rays and periscope folding (2026-10-28; `rm_shade.wgsl` light loop,
+  `rm_rt.wgsl` `rm_ray_open`): lamps without depth faces take one shadow ray per shaded pixel,
+  stopped 0.15 m short of the source so its own housing does not shadow it; occlusion rays pass
+  periscope windows and reflect at their mirrors, so the cabin takes skylight through the
+  periscopes, as the hemisphere's sky band, not as the image the periscope carries. Gate:
+  `KESSEL_SHOWCASE_SET=ao` and `=res` (`cabin_night`) with and without `KESSEL_RM_SKIP=32768`.
 - Raymarch cloud shadows and fog banks (2026-10-28; `rm_cloud_shadow.wgsl`, `rm_medium.wgsl`
   `rm_fog_bank_density`, the far march in `rm_shade.wgsl` `fog_to`): the key beam is the clear-sky
   one and the cloud layer's transmittance toward the sun is applied per position from a 16 m map

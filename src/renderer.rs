@@ -1519,6 +1519,8 @@ struct MeshGpu {
     glass: bool,
     periscope_kind: u32, // 0 ordinary, 1 closed window, 2 mirror, 3 finite ideal thin lens
     periscope_focal_m: f32,
+    /// A mirror's plane normal in the mesh's own frame (raymarch ray queries fold at it).
+    mirror_normal: glam::Vec3,
     /// When true this mesh is TERRAIN: the fragment stage samples the tank-track map (rut darkening
     /// + a normal-perturbed dip). Signalled via params.w = 3.0.
     track_recv: bool,
@@ -3539,6 +3541,7 @@ fn make_mesh_gpu(
         glass: false,
         periscope_kind: 0,
         periscope_focal_m: 0.0,
+        mirror_normal: glam::Vec3::ZERO,
         track_recv: false,
         metallic_factor: m.metallic_factor,
         roughness_factor: m.roughness_factor,
@@ -6504,6 +6507,12 @@ impl Renderer {
     pub fn set_glass(&mut self, idx: usize, on: bool) {
         if let Some(mesh) = self.meshes.get_mut(idx) {
             mesh.glass = on;
+        }
+    }
+    /// A periscope mirror's plane normal in its mesh's frame, for the raymarch ray queries.
+    pub fn set_periscope_mirror_normal(&mut self, idx: usize, normal: glam::Vec3) {
+        if let Some(mesh) = self.meshes.get_mut(idx) {
+            mesh.mirror_normal = normal.normalize_or_zero();
         }
     }
     pub fn set_periscope_optical_kind(&mut self, idx: usize, kind: u32) {
