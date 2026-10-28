@@ -344,10 +344,12 @@ impl Trees {
     }
 
     /// The Tiger's bow is at `nose` heading `dir` with signed `speed` (m/s) on a slope `pitch`:
-    /// every standing trunk it meets resists by its bending strength (`tank_push::tree`, the
-    /// trunk measured from the drawn mesh) and falls once the bow has done the work to break it;
-    /// a sapling costs the tank almost nothing, and only a trunk stronger than the Tiger's push
-    /// (about 0.43 m across) holds it, as long as its momentum lasts. Returns the tank's speed
+    /// every standing tree it meets resists by the weaker of its stem's bending strength and its
+    /// root plate's anchorage (`tank_push::standing_tree`, the trunk measured from the drawn mesh,
+    /// the height from the placed model) and falls once the bow has done the work to break or tip
+    /// it; a sapling or a stripped dead tree costs the tank almost nothing, and only a big old
+    /// tree (about 0.7 m across and 12 m tall) holds a crawling Tiger, never one that arrives at
+    /// a few metres a second. Returns the tank's speed
     /// after the frame when a trunk was met.
     pub fn crush(
         &mut self,
@@ -374,7 +376,7 @@ impl Trees {
             if dx * dx + dz * dz > reach * reach {
                 continue;
             }
-            let resist = crate::tank_push::tree(2.0 * t.trunk_r);
+            let resist = crate::tank_push::standing_tree(2.0 * t.trunk_r, t.height);
             let step = crate::tank_push::press(v, pitch, resist, t.push_work, dt);
             out.rumble=out.rumble.max(crate::tank_push::collision_rumble(v,step.speed));
             v = step.speed;

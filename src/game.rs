@@ -29143,9 +29143,10 @@ impl Game {
                 // the bow follows. A named approximation of a loose mass being bulldozed; no
                 // toppling or rolling.
                 let h = index - self.scatter_cover_first;
-                let mass = self.scatter_heavy.get(h).map(|p| p.mass_kg).unwrap_or(1000.0);
+                let (mass, friction) = self.scatter_heavy.get(h).map(|p| (p.mass_kg, p.friction))
+                    .unwrap_or((1000.0, crate::scatter_field::SHOVE_FRICTION));
                 let resistance = crate::tank_push::Resistance::new(
-                    crate::scatter_field::SHOVE_FRICTION * mass * 9.81, crate::scatter_field::SHOVE_TRAVEL_M);
+                    friction * mass * 9.81, crate::scatter_field::SHOVE_TRAVEL_M);
                 let before = self.player.speed;
                 let absorbed = self.scatter_heavy_absorbed.get(h).copied().unwrap_or(0.0);
                 let step = crate::tank_push::press(self.player.speed, self.player.pitch * sgn, resistance, absorbed, dt);

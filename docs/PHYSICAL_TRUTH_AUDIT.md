@@ -147,6 +147,20 @@ presented as a contact solve, a fluid or ballistic result, or exact occlusion:
   model. Caps, nearest the route kept: 12 000 heavy, 3 000 medium occluders, 1 500 pushables,
   400 loot sockets. Everything else is visual, static after load, not burnable, not moved by
   shells, not kicked by crew on foot.
+- Woody pieces (2026-10-28): anything named as a branch, twig, sapling, stick, pole, slat,
+  plank, board, fence or log under 400 kg (per placement, its mass a green-wood cylinder of the
+  piece's longest extent and 85 % of its smallest) has no vehicle collision; a heavier log
+  resists by a rolling coefficient of 0.15 [I] over the 1 m shove. Not a rolling or snapping
+  solve.
+- Standing trees (`tank_push::standing_tree`, used by `trees.rs`): the bow meets the weaker of
+  the stem's bending strength (modulus of rupture 40 MPa at 1.2 m) and the root plate's
+  anchorage, 200 N·m per kg of stem [I] (tree-pulling regressions for conifers give about
+  100-200, Nicoll et al. 2006; frozen ground at the top), the stem a green-wood cone (density
+  800, form factor 0.5) of the measured trunk diameter and the placed height, tipping over 0.5
+  m of bow travel. Before this only stem bending was modelled, so a 0.5 m trunk held the Tiger
+  indefinitely; now only a tree of about 0.7 m and 12 m holds a crawling Tiger, and it goes over
+  to one that arrives at 3 m/s. The anchorage is a regression constant, not a soil or root
+  model.
 - Draw: three LODs by projected size (the source mesh; a grid-clustered reduction; one native
   pixel carrying the mean albedo); no metallic-roughness or normal maps for the field's
   prototypes (the kit has none); shadows and sky cover from the large tier at the reduced LOD
