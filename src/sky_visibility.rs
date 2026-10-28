@@ -460,8 +460,9 @@ impl SkyVisibility {
     }
 
     fn participates(m: &MeshGpu) -> bool {
-        // Opaque terrain, view-local bodies and armor all block environment transport.
-        m.visible && (!m.glass || m.periscope_kind==2)
+        // Opaque terrain, view-local bodies and armor all block environment transport (the
+        // raymarch backend's own tank aside: `Renderer::exclude_from_relay_visibility`).
+        m.visible && (!m.glass || m.periscope_kind==2) && !m.sky_visibility_excluded
     }
 
     fn batch_participates(b: &InstBatch) -> bool {

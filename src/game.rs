@@ -12052,6 +12052,10 @@ impl Game {
         renderer.display_tuning = authored_display;
         renderer.register_track_footprint(tank::TIGER_PARTS, &scene[slots.tiger[0]]);
         for slot in slots.tiger { renderer.mark_snow_vehicle(slot); }
+        for slot in slots.tiger { renderer.exclude_from_relay_visibility(slot); }
+        // The hull and turret were painted steel inside and out; the gun's machined parts stay bare.
+        renderer.mark_painted_steel(slots.tiger[0]);
+        renderer.mark_painted_steel(slots.tiger[1]);
         for (prototype, kind) in prototypes.iter().zip([
             EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
             EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3,

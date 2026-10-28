@@ -822,6 +822,118 @@ fn run_shafts(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One frame of the live loop's gunner eyepiece composite (main.rs `render_optic_composite`): the
+/// optic pass, then the interior pass around the eyepiece. With `capture`, the interior pass is the
+/// captured frame (so it follows an optic pass, as in play).
+fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+    capture: Option<(&str, u32, u32)>) -> anyhow::Result<()> {
+    let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter);
+    r.begin_coop_shadow_frame(g.player.center());
+    r.weather_shelter = 1.0;
+    g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, r);
+    r.set_active_view(0);
+    r.render_optic_snapshot(device, queue);
+    let (eye, forward, fov) = g.gunner_interior_camera();
+    r.camera.pos = eye;
+    r.camera.set_forward(forward);
+    r.camera.fov_y = fov;
+    r.camera.zfar = crate::PROTECTED_INTERIOR_FAR_M;
+    r.precipitation = 0.0;
+    r.reticle = false;
+    r.optic_mask = 4.0;
+    g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, r);
+    r.set_active_view(3);
+    r.rt_skip = true;
+    r.set_coop_shadow_reuse(true);
+    let result = match capture {
+        Some((path, w, h)) => r.render_to_png(device, queue, path, w, h),
+        None => { r.render_offscreen(device, queue); Ok(()) }
+    };
+    r.rt_skip = false;
+    r.set_coop_shadow_reuse(false);
+    r.end_coop_shadow_frame();
+    (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter) = saved;
+    result
+}
+
+/// `raymarch-gunner PREFIX`: the gunner's eyepiece composite as played: three seconds of the
+/// two-pass frame with a slow turret traverse, then two consecutive captured frames (the interior
+/// pass after its optic pass each time), and the same at rest. Flicker = their difference.
+pub fn run_gunner(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_traverse.png")).exists(),
+        "preserving existing capture; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    let instant = ephemeris::UtcInstant::parse_iso("1942-12-21T09:00:00Z")?;
+    r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.station = Station::Gunner;
+    step(&mut g, &mut r, 40, &idle);
+    anyhow::ensure!(g.optic_composite_active(), "the gunner's eyepiece composite is not active");
+    let traverse = TankInput { traverse: 0.25, ..TankInput::default() };
+    let mut shots = Vec::new();
+    let mut timings = serde_json::Map::new();
+    for (input, name) in [(&traverse, "traverse"), (&idle, "rest")] {
+        // Fenced frames (the GPU finishes each before the next starts): the two-pass composite's
+        // whole frame time, CPU included.
+        let mut ms = Vec::new();
+        for _ in 0..180 {
+            g.update(input, 1.0 / 60.0, &mut r);
+            let started = std::time::Instant::now();
+            eyepiece_frame(&mut g, &mut r, &device, &queue, None)?;
+            device.poll(wgpu::PollType::wait_indefinitely())?;
+            ms.push(started.elapsed().as_secs_f32() * 1000.0);
+        }
+        // One profiled frame (KESSEL_GPU_PROFILE=1): CPU encode and submit apart from the GPU's wait,
+        // and the GPU's passes, longest first.
+        if std::env::var("KESSEL_GPU_PROFILE").as_deref() == Ok("1") {
+            g.update(input, 1.0 / 60.0, &mut r);
+            r.begin_gpu_profile_frame();
+            let started = std::time::Instant::now();
+            eyepiece_frame(&mut g, &mut r, &device, &queue, None)?;
+            let cpu = started.elapsed().as_secs_f32() * 1000.0;
+            device.poll(wgpu::PollType::wait_indefinitely())?;
+            let total = started.elapsed().as_secs_f32() * 1000.0;
+            let mut passes = r.read_gpu_profile_frame(&device, &queue)?;
+            passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let sum: f64 = passes.iter().map(|p| p.1).sum();
+            println!("[raymarch-gunner] {name} profiled: cpu encode+submit {cpu:.2} ms, fenced {total:.2} ms, gpu pass sum {sum:.2} ms");
+            for (pass, t) in passes.iter().take(24) { println!("[raymarch-gunner]   {pass:32} {t:7.3} ms"); }
+        }
+        let settled = &mut ms[60..].to_vec();
+        settled.sort_by(|a, b| a.total_cmp(b));
+        let mean = settled.iter().sum::<f32>() / settled.len() as f32;
+        let p95 = settled[(settled.len() * 95 / 100).min(settled.len() - 1)];
+        println!("[raymarch-gunner] {name}: frame {mean:.2} ms mean, {p95:.2} ms p95 (two-pass composite, fenced, {}x{})", r.iw, r.ih);
+        timings.insert(name.into(), serde_json::json!({"mean_ms": mean, "p95_ms": p95}));
+        for k in 0..2 {
+            g.update(input, 1.0 / 60.0, &mut r);
+            let path = if k == 0 { format!("{prefix}_{name}.png") } else { format!("{prefix}_{name}_next.png") };
+            eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, cw, ch)))?;
+            shots.push(serde_json::json!({ "name": name, "path": path, "raymarch": r.raymarch_stats().map(|s| format!("{s:?}")) }));
+        }
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-gunner.v1", "manifest": manifest, "renderer": format!("{:?}", graphics::renderer_backend()),
+        "internal_resolution": [r.iw, r.ih], "skip": std::env::var("KESSEL_RM_SKIP").ok(), "shots": shots, "frame_times": timings,
+        "disclosure": "Staged fixture (banished enemies, held fire); the act's weather, 09:00 UTC pinned; the live loop's two-pass gunner composite, every frame."
+    }))?)?;
+    Ok(())
+}
+
 /// `raymarch-exhaust PREFIX`: the Tiger's exhaust (`exhaust_plume`) on a winter noon from a cold
 /// engine: three seconds after the start, after fifteen seconds' idle, from the cupola head-out
 /// looking back, a hard pull from standstill, and the trail at speed in a crosswind (the act's

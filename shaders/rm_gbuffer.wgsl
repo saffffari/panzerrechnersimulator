@@ -106,7 +106,24 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
 // it. Masks are noise in the mesh's own frame (they ride the hull and turret). Worn edges and
 // cavity grime need neighbours and are drawn in the shade pass. Named approximation: procedural
 // masks scaled by whole-vehicle loads, not painted or simulated wear.
-struct Worn { albedo: vec3<f32>, roughness: f32 };
+// `metal`: the share of bare steel the wear exposes (scratches through the paint).
+struct Worn { albedo: vec3<f32>, roughness: f32, metal: f32 };
+
+// The source model's default material (`Material.001`: metallic 1, roughness 0.45, albedo 0.09)
+// covers most of the Tiger's hull and turret, inside and out, so the whole crew compartment read as
+// bare dark metal (2026-10-28: "tank interior too metallic"). On the player's painted-steel meshes
+// (pc.extra.z, the hull and turret; the gun's machined parts are their own mesh) it is paint: the
+// crew compartment in the owner's muted gunmetal (`Interior Paint`, sRGB 104/110/118, satin), the
+// outside in the hull's grey (so the winter coat still finds it). Bare steel appears only where wear
+// cuts through (`apply_wear` scratches, the shade pass's worn edges).
+const RM_SOURCE_METAL: vec3<f32> = vec3<f32>(0.09, 0.09, 0.09);
+const RM_INTERIOR_PAINT: vec3<f32> = vec3<f32>(0.1384, 0.1559, 0.1811);
+fn paint_source_metal(albedo: vec3<f32>, metallic: f32, world: vec3<f32>, face: vec3<f32>) -> vec4<f32> {
+    if (pc.extra.z < 0.5 || metallic < 0.5 || any(abs(albedo - RM_SOURCE_METAL) > vec3(0.012))) { return vec4(albedo, -1.0); }
+    let to_cabin = fr.vehicle.xyz - world;
+    let inside = length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0;
+    return vec4(select(RM_TIGER_PAINT, RM_INTERIOR_PAINT, inside), select(0.75, 0.62, inside));
+}
 // Winter whitewash (2026-10-28): the crews' washable white coat, brushed over the grey in the
 // field. It lies only on the exterior paint (tank::tiger_paint_finish's exact swatch, sRGB 72/74/78:
 // tracks, exhausts, the interior and the textured markings keep their own finish, as crews left
@@ -116,9 +133,9 @@ struct Worn { albedo: vec3<f32>, roughness: f32 };
 const RM_TIGER_PAINT: vec3<f32> = vec3<f32>(0.0648, 0.0685, 0.0762);
 fn apply_whitewash(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>, face: vec3<f32>, local: vec3<f32>) -> Worn {
     let coat = clamp(fr.livery.x, 0.0, 1.0);
-    if (coat <= 0.0 || any(abs(albedo - RM_TIGER_PAINT) > vec3(0.006))) { return Worn(albedo, roughness); }
+    if (coat <= 0.0 || any(abs(albedo - RM_TIGER_PAINT) > vec3(0.006))) { return Worn(albedo, roughness, 0.0); }
     let to_cabin = fr.vehicle.xyz - world;
-    if (length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0) { return Worn(albedo, roughness); }
+    if (length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0) { return Worn(albedo, roughness, 0.0); }
     let up = smoothstep(0.3, 0.85, n.y);
     // Brush coverage: broad passes with the grey showing where the brush ran dry.
     let passes = rm_fbm(vec3(local.x * 1.3 + local.y * 0.4, local.y * 2.2, local.z * 1.3 - local.y * 0.3), 251u);
@@ -136,7 +153,7 @@ fn apply_whitewash(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<
     let side = 1.0 - up;
     let run = smoothstep(0.62, 0.95, rm_noise(vec3(local.x * 18.0, local.y * 0.7, local.z * 18.0), 271u)) * side;
     white *= 1.0 - 0.35 * run;
-    return Worn(mix(albedo, white, cover), mix(roughness, 0.92, cover));
+    return Worn(mix(albedo, white, cover), mix(roughness, 0.92, cover), 0.0);
 }
 
 fn apply_wear(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>, face: vec3<f32>, local: vec3<f32>) -> Worn {
@@ -160,8 +177,11 @@ fn apply_wear(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>,
     // tall wall, strokes merged into pale bars at this resolution).
     let reach = 1.0 - smoothstep(0.3, 0.9, abs(dy));
     let scratch = strokes * patches * mech * select(mix(0.4, 1.0, up), max(up, reach), inside > 0.5);
-    a = mix(a, a * 1.5 + vec3(0.05), scratch * 0.8);
-    r = mix(r, 0.35, scratch);
+    // Through the paint to steel: a light steel reflectance, partly metallic (the strokes are finer
+    // than a pixel; fully metallic they sparkled in the reflections).
+    a = mix(a, vec3(0.50, 0.50, 0.48), scratch * 0.8);
+    r = mix(r, 0.45, scratch);
+    let metal = scratch * 0.6;
     // Smudges inside: oil, soot and hands at seat and hand height, a darker film. (An oilier,
     // glossier film made the matte ceiling mirror the vision blocks; the roughness stays.)
     let blotch = smoothstep(0.42, 0.82, rm_fbm(local * vec3(5.0, 3.0, 5.0), 233u));
@@ -180,7 +200,7 @@ fn apply_wear(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>,
     let spatter = low * exterior_grime * smoothstep(0.45, 0.75, rm_fbm(local * vec3(9.0, 5.0, 9.0), 241u) + exterior_grime * 0.35);
     a = mix(a, vec3(0.42, 0.40, 0.37), spatter);
     r = mix(r, 0.9, spatter);
-    return Worn(a, clamp(r, 0.08, 1.0));
+    return Worn(a, clamp(r, 0.08, 1.0), metal * (1.0 - spatter));
 }
 
 struct GOut {
@@ -230,7 +250,7 @@ fn fs(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
         }
     }
     var roughness = clamp(mr.g * pc.params.z, 0.08, 1.0);
-    let metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
+    var metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
     var albedo = raw.rgb;
     if (kind > 2.5 && kind < 3.5) {
         // The campaign terrain material (snow cover, substrate, detail layers), shared with
@@ -261,12 +281,19 @@ fn fs(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
         }
     }
     if (kind < 0.5 && pc.extra.y > 0.5) {
+        let painted = paint_source_metal(albedo, metallic, in.relative + fr.cam_pos.xyz, normalize(in.normal));
+        if (painted.w >= 0.0) {
+            albedo = painted.rgb;
+            roughness = painted.w;
+            metallic = 0.0;
+        }
         let coated = apply_whitewash(albedo, roughness, in.relative + fr.cam_pos.xyz, n, normalize(in.normal), in.local);
         albedo = coated.albedo;
         roughness = coated.roughness;
         let worn = apply_wear(albedo, roughness, in.relative + fr.cam_pos.xyz, n, normalize(in.normal), in.local);
         albedo = worn.albedo;
         roughness = worn.roughness;
+        metallic = max(metallic, worn.metal);
     }
     // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
     // kinds 3+ keep their code.

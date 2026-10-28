@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Starts the MAIN release build from this checkout with the fixed 12900K / RTX 4090 profile:
-  shader renderer, high preset, 800x450 internal grid, screen Bayer-8 dither, MSAA 4, fullscreen.
+  shader renderer, high preset, 480x270 internal grid, screen Bayer-8 dither, MSAA 4, fullscreen.
   Saves, caches and graphics preferences stay inside artifacts/runtime so nothing touches
   the Linux-style ~/.local, ~/.cache or ~/.config layout the engine expects on Linux.
 
@@ -26,8 +26,8 @@
            lights, marched media, fireballs, embers, reflections, eyepiece glass.
 
 .PARAMETER Resolution
-  Internal render grid: 800x450 (default), 640x360, 480x272 or 320x180. The window is unchanged;
-  the frame is upscaled to it. Passing -Resolution also writes the grid into the saved graphics
+  Internal render grid: 480x270 (default since 2026-10-28), 800x450, 640x360, 480x272 or 320x180.
+  The window is unchanged; the frame is upscaled to it. Passing -Resolution also writes the grid into the saved graphics
   preferences (which otherwise win at startup); the graphics menu offers the same grids in play.
   Measured frame costs per grid are in docs/RAYMARCHING_ENGINE.md ("Internal resolution").
 
@@ -43,7 +43,7 @@ param(
     [switch]$Windowed,
     [switch]$Build,
     [ValidateSet('shader', 'raymarch')] [string]$Renderer = 'shader',
-    [ValidateSet('800x450', '640x360', '480x272', '320x180')] [string]$Resolution = '800x450'
+    [ValidateSet('480x270', '800x450', '640x360', '480x272', '320x180')] [string]$Resolution = '480x270'
 )
 $ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility, Microsoft.PowerShell.Management -ErrorAction SilentlyContinue

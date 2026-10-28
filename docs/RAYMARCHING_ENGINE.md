@@ -667,6 +667,60 @@ If the report came from the shader backend (the launcher's default, `-Renderer s
 eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
 and any aliasing of the small relayed views under motion would need their own look.
 
+## The gunner's view: artifacts, painted steel, the 480x270 grid, the cost inside (2026-10-28)
+
+Report (main 06a7d5f, gunner's post, sight raised): "see what I mean on the artifacts surrounding this
+sight; that's the whole interior" (long smears, white stripes along edges, grainy patches), then "like
+samples aren't high enough", "we can reduce pixel res for sure", "tank interior too metallic", and
+"noticing FPS drops a ton while inside but not head out of the hatch". Reproduced with
+`raymarch-gunner PREFIX` (the live loop's two-pass eyepiece composite every frame, three seconds of
+turret traverse, then at rest; consecutive captured frames; fenced frame times;
+`KESSEL_GPU_PROFILE=1` adds one profiled frame), isolated with `KESSEL_RM_SKIP`:
+
+- **No accumulation at all.** The composite draws the optic (25 deg) and the cabin round the eyepiece
+  (66 deg) every frame; the field-of-view change cut every history each pass, so neither the froxel
+  medium, the occlusion, the bounce nor the reflections ever accumulated: raw per-frame noise. Each
+  view slot (`Renderer::set_active_view`) now keeps its own histories (`Temporal`, created on first
+  use: the froxel in-scatter, the lit frame, the reflection, occlusion and bounce histories, the flip
+  and the previous camera and cabin pose).
+- **White stripes along edges.** The marched reflections on metal: the source model's default
+  material (`Material.001`, metallic 1, roughness 0.45) covers most of the hull and turret, so the
+  whole cabin was a dark mirror (also "too metallic"). The player's hull and turret now draw it as
+  painted steel (`paint_source_metal`: the owner's gunmetal `Interior Paint` inside, satin; the hull's
+  grey outside, so the winter coat still finds it); the gun's machined parts (their own mesh) stay
+  bare; wear scratches and the shade's worn edges now expose bare steel (partly metallic), so the
+  metal grows with use. Marched reflections fade out over roughness 0.2..0.5 (were 0.35..0.8): a rough
+  lobe's reflection is a blur the few marched rays drew as noise; the split-sum environment term
+  carries it. A reflected ray from the cabin that meets nothing (a seam of the model, a periscope's
+  window) sees sky only as far as the cover map opens the point to it.
+- **Samples.** A sample budget (`sample_budget`: 800x450's pixel count over the grid's, 1..3) scales
+  the ray-traced occlusion rays (2 to 5 at 480x270), the screen gather's directions (8 to 16) and the
+  rough reflection lobe's rays (1 to 3); the froxel grid stops shrinking below 160x90. The launcher's
+  default grid is now 480x270 (`tools/launch_windows.ps1 -Resolution`, a 16:9 grid added beside
+  480x272); saved graphics preferences still win, so an existing install changes with
+  `-Resolution 480x270` or the graphics menu.
+- **The cost inside.** The periscope relays need the shader backend's sky-visibility atlas, and its
+  static layer (66 tiles of the scene) keyed the player's own hull and turret (over 160,000 triangles
+  each, so "static"): every traverse, drive or turret creep redrew it whole, 88 ms of GPU and about
+  40 ms of CPU a frame, on every frame a vision block was in view; head out none was. On this backend
+  the player's tank is left out of that atlas (`Renderer::exclude_from_relay_visibility`; the relayed
+  views lose its own shadow) and the relays no longer rebuild the cabin lamps' shadow cubes (they draw
+  only the outside). Two-pass composite, fenced frames, 480x270, idle 4090:
+
+| | GPU pass sum | fenced frame (traverse / rest) |
+| --- | --- | --- |
+| before | 116 ms | 197 / 240 ms (800x450), 178 / 183 ms (480x270) |
+| after | 13 ms | 37 / 31 ms |
+| after, relays off | 7.4 ms | 28 / 30 ms |
+
+  CPU encoding (about 20 ms for the two passes) now bounds the composite; the two views' CPU work is
+  the next cost to take.
+
+Measured flicker (mean change between consecutive frames, sRGB codes; pixels off by more than 16):
+traversing 10.4 (21.6 %) before, 5.9 (8.8 %) after at 480x270; at rest 4.6 (5.8 %) before, 2.6 (3.2 %)
+after. `captures/rm_gun_before_after_sheet.png` (left before, right after at 480x270; top traversing,
+bottom at rest); `rm_gun3_*` the same after the fix at 800x450 and 640x360.
+
 ## The Tiger's exhaust (2026-10-28)
 
 Request: "a ton of white exhaust out the back of the Tiger, it was known for that." `exhaust_plume.rs`
@@ -941,9 +995,6 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   hull or ploughed by the belly.
 - The gun's own barrel and muzzle brake appear in the right of the gunner's field from the
   sight's registered objective; check the TZF 9b's objective position against its source.
-- Per-view temporal histories: the gunner's two-pass eyepiece composite alternates two cameras,
-  so the froxel, occlusion, bounce and reflection histories are cut every frame in both passes.
-  One history set per view slot (`Renderer::set_active_view`) would let each accumulate.
 - Indirect light comes only from what is on screen, one frame late; a probe grid (world-space,
   lit by the clustered lights and the cached sky) is the route to off-screen bounce.
 - Headless captures: `screenshot` accepts `KESSEL_SHOT_SIM_S=seconds` to run the simulation
