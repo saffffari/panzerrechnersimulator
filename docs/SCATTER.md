@@ -99,10 +99,33 @@ point:
 - is packed to 32 bytes: position, unit quaternion (4 × snorm16), f16 scale | u16 prototype,
   flags (tier, casualty, flat, ground class, hash), cell.
 
-Tiers: **large** (gravel piles, big stones, logs, barricades, supply crates, pallets, the
-biggest masonry) are static mass and sight cover: their world AABBs join `story_cover`
-(tank/foot/shell contact and LOS). **Medium** (crates, barrels, fences, benches, stretchers,
-concrete, mattresses, stones of 1–1.5 m) are LOS cover only (`occluders`). **Small** is visual.
+Tiers are decided by mass and size, not by the group's label (`effective_tier`,
+`estimate_mass_kg`; feedback of 2026-10-28: a Tiger must not rock over a tin). Each prototype
+gets an estimated mass from its bounding box and a material density with a fill fraction keyed
+by its name (stone and masonry 1800 kg/m³ at 55 %, wood 600 at 60 %, crates and furniture 450
+at 25 %, hollow or thin steel 7800 at 8 %, snow 250 at 50 %, a body 75 kg). Then:
+
+| threshold | effect |
+|---|---|
+| height < 0.15 m or mass < 5 kg | **crushable**: no vehicle collision at all, whatever the group says (tins, cases, helmets, bricks, kit); the track passes over it |
+| authored large but mass < 400 kg or height < 0.45 m | **cover only** (a gravel pile the track rides over; a supply crate becomes a pushable) |
+| mass ≥ 400 kg and height ≥ 0.45 m | **heavy static** (boulders, logs, barricades, pallets): static mass for the hull with a resistance scaled by its own mass, never a wall |
+| woody (branch, twig, sapling, stick, pole, slat, plank, board, fence, log) under 400 kg | **crushable**, whatever its size (2026-10-28, "tiny branches are no match, you just get stuck"); a log's mass is a green-wood cylinder (650 kg/m³) along its longest extent at 85 % of its smallest, so branch stubs do not count |
+| woody, authored large, 400 kg or more | **a real log**: heavy static, but it resists by rolling (0.15·m·g), not sliding |
+
+The tier is decided per placement from the scaled mass and height, so the same kit log is
+crushed at scale 1 (≈ 380 kg) and rolls at scale 1.3 (≈ 840 kg).
+
+**Heavy static** pieces join `story_cover` (shell and foot contact, LOS) at the end of the list;
+the hull's push treats that range with a friction resistance of 0.6·m·g (0.15·m·g for a log)
+over a 1 m shove
+(`tank_push::press`): the tank's momentum pays the work, and when it is done the piece slides
+1 m along the push (its GPU instance and its cover box move; `Renderer::scatter_shove`) and the
+bow follows. A 2 t boulder costs a Tiger at 1 m/s about 40 % of its speed; a 420 kg log a few
+per cent. **Medium** (crates, barrels, fences, benches, stretchers, concrete, stones of
+1–1.5 m) are LOS cover only (`occluders`); the pushable ones among them move with their own
+mass under the existing lightweight pushable model (the tank keeps m_v/(m_v+m_p) of its speed,
+0.9997 for a 15 kg jerrycan). **Small** is visual.
 Pushable group entries whose path resolves to a pushable profile (`manifest_scatter_profile`)
 and lie within 40 m of the route go through the existing lightweight pushable path
 (`scatter::Scatter::register_pages`, drawn by the CPU-paged instancing, pushed and crushed by
@@ -236,9 +259,12 @@ file: `captures/scatter_probe_start.png` / `_before.png` (the start recon camera
   direction, wind), not a ballistic, gait or wind-transport result.
 - Overlap is avoided only among medium/large pieces and bodies within one 32 m cell; small
   items overlap freely as litter does.
-- The large tier's cover is its world AABB, not its surface; the medium tier's cover is LOS
-  only; the small tier has no physical presence (the Tiger drives through a tin without a
-  sound). The lane keep-out is a 12 m half width about the route centreline.
+- The large tier's cover is its world AABB, not its surface; its push resistance is sliding
+  friction of its estimated mass on frozen ground, and giving way is a 1 m slide along the push
+  (no toppling, rolling or digging in); the medium tier's cover is LOS only; the small tier has
+  no physical presence (the Tiger drives through a tin without a sound; no crunch cue yet, and
+  crew on foot do not kick it). The lane keep-out is a 12 m half width about the route
+  centreline.
 - The field is static after load: no snow accumulates on it, nothing burns, shells do not move
   it (the pushable subset excepted).
 - Draw: the reduced LOD is a vertex clustering of the source, the pixel LOD a mean-albedo

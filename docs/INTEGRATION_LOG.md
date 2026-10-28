@@ -51,3 +51,35 @@ One line per merge: branch @ commit — conflicts — build / tests / smoke — 
 - raymarching-2 @ b697e14 (off `main` 8f7481e: `tools/build_render_gallery.py`, `tools/run_ai_fights.ps1`; no Rust or shader change) — none — merged in 3aad760; **`run_ai_fights.ps1` did not parse**: the usage comment's `tools\run_ai_fights.ps1` had been written with `\r` as a carriage return, which ended the comment and left `<checkout with assets>` as code (`The '<' operator is reserved for future use`, line 5) → fixed forward in b54fa01 (PowerShell parser: 0 errors); the gallery builder compiles and built a gallery from this worktree's `captures/` (2 stills)
 - **Gate for b54fa01 (+ this log)**: build ok; unit tests 1,926 passed / 90 failed / 61 ignored, failure set identical to round 2 (vs `origin/raymarching` 7904d3c 1,862 / 89 / 61 — the one extra is terrain-detail's `source_detail_tiles_carry_no_broad_structure`, `source_assets/` only); smoke **pending GPU window** (owner's hold) — `main` **advanced** to b54fa01 (+ this log)
 - Next: the renderer session's `raymarching` fix (black RTT sights on the raymarch backend, outdoor fog inside the hull, glass grime) gets its own round as soon as it is pushed — the owner is playing `main` and waiting on it.
+
+## Round 4 — 2026-10-28 (renderer fix, merged alone; the owner is playing `main`)
+
+- raymarching @ 8ab7931 (376942f vision blocks and sights relay the outside, no weather in the cabin air; 95de896 relay skip bit **524288** — 262144 stays the detail terrain; 8ab7931 optics start clean, sky cache refreshes in warp tiles, the gunner's eyepiece pass reuses the sight pass's maps) — taken as the renderer session's merge commit **27d2bdb** (`raymarching-main-merge`, built on `main` d9eecb8, fast-forward). Checked against a local merge of `origin/raymarching`: every auto-merged file identical; its three conflict resolutions verified — `docs/RAYMARCHING_ENGINE.md` open items (the "cupola eyepieces are glass panes, no relayed views" item replaced by the relay item; terrain-detail's rut items kept), `src/main.rs` subcommands (`raymarch-cabin` + `terrain-bench`/`terrain-showcase`/`armor-scars` all kept), `src/renderer_raymarch.rs` (skip-bit doc lists 262144 and 524288; the G-buffer mesh loop keeps the detail-terrain skip, the scar binding and `mesh_index`, plus the relayed-panel skip; scatter's GPU cull runs first, the relays as step 0b)
+- **Gate for 27d2bdb (+ this log)**: build ok; GPU-free shader validation ok; unit tests 1,927 passed / 90 failed / 61 ignored, failure set identical to round 3 (the one new test passes); smoke **pending GPU window** (owner's hold; the renderer session ran its own short repro captures) — `main` **advanced** to 27d2bdb (+ this log)
+
+## Round 5 — 2026-10-28
+
+- raymarching @ 660bde7 (fa9af06 gunner sight low-passes the hull's jolts, cabin dust rides the hull; b790d61 raymarch-cabin sight-line jolt capture; add17c6 two eyepiece fields, clean glass with ghost and wiping arcs; 1f2ab22 Tiger winter whitewash; 660bde7 sight lamps: loading status and chambered round) — taken through the renderer session's `raymarching-main-merge` @ aba9058, which adds one main-only commit (aba9058: a wounded loader still working blinks the loading lamp's working lens, from crew-solo's performance) — none — build ok — merged in a58e112
+- scatter @ 3805dd5 (interaction tiers by estimated mass and size: nothing under 15 cm or 5 kg collides with the hull, light large pieces are cover only, boulders/logs/barricades/pallets resist by their own mass) — none — build ok — merged in d1aee44
+- crew-solo @ 2518830 (solo crew legibility: nobody left at the cupola, bodies and blood where men fall; `crew_solo_capture.rs`) — none; stored LF (`git ls-files --eol`) — merged in f2043ac
+- **Gate for f2043ac (+ this log)**: build ok; GPU-free shader validation ok; unit tests 1,928 passed / 90 failed / 61 ignored, failure set identical to round 4 (the scatter tiering test and crew-solo's tests pass); smoke **pending GPU window** — `main` **advanced** to f2043ac (+ this log)
+
+## Round 6 — 2026-10-28
+
+- raymarching @ 2e175d5 (TPZ needle drawn 2.5 mm wide; instrument covers get dust and a lamp sheen) — through `raymarching-main-merge` @ a238074 — none — merged in d4f536e
+- platoon @ d0d97ba (wingmen fight with the trained Tiger policy in contact, short halt for its shots) — no textual conflict, but **the test build broke**: its new test's `terrain::Heightfield` literal lacks terrain-detail's `detail` field (E0063, `src/platoon.rs:1346`; the release build was fine) → fixed forward in c250280 (`detail: None`, as every other test literal on main) — merged in 91635d4
+- **Gate for c250280 (+ this log)**: build ok; GPU-free shader validation ok; unit tests 1,931 passed / 90 failed / 61 ignored, failure set identical to round 5 (13 platoon tests pass); smoke **pending GPU window** — `main` **advanced** to c250280 (+ this log)
+
+## Round 7 — 2026-10-28
+
+- raymarching @ 2e175d5 — nothing new
+- platoon @ d0d97ba — already in (round 6)
+- missions @ 96b8114 (branched from main 06a7d5f: a button folds the order sheet — Enter/Space/E/click/pad — M rereads it on the map; Enter clears the radio, platoon and intercom lines on the frame; touches `crew_solo.rs`, `platoon.rs`, `ui.rs`, `main.rs`) — none; stored LF — merged in fdd3e63
+- **Gate for fdd3e63 (+ this log)**: build ok; test build ok; GPU-free shader validation ok; unit tests 1,934 passed / 90 failed / 61 ignored, failure set identical to round 6 (mission, ui and platoon tests pass); smoke **pending GPU window** — `main` **advanced** to fdd3e63 (+ this log)
+- Seen on origin, not yet relayed as working: scatter @ 757f95e (+1)
+
+## Round 8 — 2026-10-28
+
+- raymarching @ 992d707 (the Tiger's exhaust: a winter plume from the engine model in the raymarch medium; new `src/exhaust_plume.rs`) — through `raymarching-main-merge` @ 787715a — none — merged in fe3fd6c
+- scatter @ 757f95e (trees fail at the weaker of stem snap and root-plate tip, woody pieces under 400 kg crushed, heavier logs roll; `tank_push.rs`, `trees.rs`) — none; stored LF — merged in 6a9cad2. Its session notes it is unverified in-engine: a treefall run hit a raymarching bloom bug the renderer session is checking.
+- **Gate for 6a9cad2 (+ this log)**: build ok; test build ok; GPU-free shader validation ok; unit tests 1,939 passed / 90 failed / 61 ignored, failure set identical to round 7 (scatter, trees, tank_push tests pass); smoke **pending GPU window** — `main` **advanced** to 6a9cad2 (+ this log)

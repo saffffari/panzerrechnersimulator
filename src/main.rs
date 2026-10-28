@@ -13462,7 +13462,8 @@ impl WindowState {
         // Mission guidance (src/mission.rs): the order sheet while it is held up and the net's
         // lines, display-resolution text outside the crush like the menus.
         if let Some(overlay) = self.game.mission_overlay() {
-            ui::draw_mission_overlay(&mut self.renderer, &overlay);
+            ui::draw_mission_overlay(&mut self.renderer, &overlay, self.show_map);
+            if overlay.order.is_some() { self.game.mission_note_order_presented(); }
         }
         if let Some(label) = self.game.hover_label_text() {
             let hint = interaction_hint(&label, self.game.interact_kind());
@@ -14736,6 +14737,22 @@ impl ApplicationHandler for App {
                     return;
                 }
 
+                // The held-up mission order (src/mission.rs) folds on a deliberate press; the press
+                // is spent on it and does not also fire, interact or work the breech. A key carried
+                // through the world build is not counted (`mission::ORDER_ARM_FRAMES`). With no
+                // order up, Enter clears the lines of words on the frame (net, platoon, intercom).
+                if pressed && matches!(state.state, AppState::Playing) && !state.show_controls {
+                    if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space | KeyCode::KeyE)
+                        && state.game.mission_dismiss_order() {
+                        state.window.request_redraw();
+                        return;
+                    }
+                    if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) {
+                        state.game.dismiss_play_lines();
+                        return;
+                    }
+                }
+
                 // Movement is level-triggered; track it regardless of state (only read while Playing).
                 match code {
                     KeyCode::KeyW => self.keys.w = down,
@@ -15129,6 +15146,12 @@ impl ApplicationHandler for App {
                 if !matches!(state.state, AppState::Playing) {
                     return;
                 }
+                // A click folds the held-up mission order (the close mark on its corner; the play
+                // cursor is captured, so the whole click is the mark). It does not also act.
+                if btn.is_pressed() && button == winit::event::MouseButton::Left && !state.show_map
+                    && state.game.mission_dismiss_order() {
+                    return;
+                }
                 if button == winit::event::MouseButton::Left {
                     self.keys.lmb = btn.is_pressed();
                 }
@@ -15242,7 +15265,7 @@ impl ApplicationHandler for App {
                 // before the read discards every mouse motion delivered since the last redraw
                 // (killed head-look, on-foot mouselook AND the mouse-driven reload).
                 let pads = self.gamepads.poll_all();
-                let pad = pads.active;
+                let mut pad = pads.active;
                 // In the keyboard setup, the first pad commits the run to persistent crew
                 // authority and that choice survives hot-unplug. Controller-only is committed at
                 // start_play, including its important zero-pad state: there is never a keyboard
@@ -15485,6 +15508,11 @@ impl ApplicationHandler for App {
                     // Commander globals were routed above; every other button stays station-owned.
                     AppState::Playing if couch => {}
                     AppState::Playing => {
+                        // A or B folds the held-up mission order and is spent on it.
+                        if (pad.interact_pressed || pad.back_pressed) && state.game.mission_dismiss_order() {
+                            pad.interact_pressed = false;
+                            pad.back_pressed = false;
+                        }
                         if pad.menu_pressed {
                             self.gamepads.set_haptics_enabled(false);
                             self.mouse_haptics.stop();
@@ -16695,6 +16723,10 @@ fn main() -> anyhow::Result<()> {
         let max_secs = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(120.0f32);
         let act = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(0u8);
         return showreel::run_ai_showreel(outdir, t34_weights, tiger_weights, count, max_secs, act);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo-kia" {
+        let prefix = capture_arg(&args, 2, "crew_solo_kia");
+        return crew_solo_capture::run_crew_solo_kia_capture(&prefix);
     }
     if args.len() >= 2 && args[1] == "crew-solo" {
         let prefix = capture_arg(&args, 2, "crew_solo");

@@ -33,6 +33,10 @@ none presented as physiology or a contact solve:
   tissue or of a bandage. No first-person hands are drawn doing them; the crosshair label and
   the man's state are the feedback. The airway rule (an unconscious man on his back dies of it
   at 240 s unless positioned) is a single timer.
+- A bleeding man emits surface-blood grains every half second, `clamp(rate_l_per_min x 14,
+  4, 48)` grains from a point chosen by the worst wound's region (lap, side, head, chest), and
+  96 more as he dies of it: a design rate for the pool's growth, through the real surface
+  transport, not a volume balance against his blood loss.
 - Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
   loss, the airway timer), spoken once per change of the set of men needing care.
 - The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
@@ -133,11 +137,30 @@ presented as a contact solve, a fluid or ballistic result, or exact occlusion:
   along the authored direction of flight with 30 % reversed, drift tails along the wind) is the
   authored rule with jitter, not a fragmentation, gait or wind-transport result.
 - Overlap avoidance covers medium/large pieces and bodies within one 32 m cell only.
-- Interaction tiers: the large tier is static mass and sight cover as a world AABB joining
-  `story_cover`; the medium tier is LOS cover only (`occluders`); the small tier has no physical
-  presence. Caps, nearest the route kept: 12 000 large, 3 000 medium occluders, 1 500 pushables
-  (through the existing lightweight pushable model), 400 loot sockets. Everything else is
-  visual, static after load, not burnable, not moved by shells.
+- Interaction tiers by estimated mass and size (2026-10-28, after the "tank rocks from a small
+  can" report): under 0.15 m or 5 kg nothing collides with the vehicle at all; an authored
+  large piece under 400 kg or 0.45 m is sight cover only; above both it is static mass whose
+  push resistance is sliding friction of its estimated mass (0.6·m·g over a 1 m shove), after
+  which it slides 1 m along the push (its instance and cover box move). The mass is a
+  bounding-box estimate with a material density by name, not a measured one. The medium tier
+  is LOS cover only (`occluders`); its pushables move under the existing lightweight pushable
+  model. Caps, nearest the route kept: 12 000 heavy, 3 000 medium occluders, 1 500 pushables,
+  400 loot sockets. Everything else is visual, static after load, not burnable, not moved by
+  shells, not kicked by crew on foot.
+- Woody pieces (2026-10-28): anything named as a branch, twig, sapling, stick, pole, slat,
+  plank, board, fence or log under 400 kg (per placement, its mass a green-wood cylinder of the
+  piece's longest extent and 85 % of its smallest) has no vehicle collision; a heavier log
+  resists by a rolling coefficient of 0.15 [I] over the 1 m shove. Not a rolling or snapping
+  solve.
+- Standing trees (`tank_push::standing_tree`, used by `trees.rs`): the bow meets the weaker of
+  the stem's bending strength (modulus of rupture 40 MPa at 1.2 m) and the root plate's
+  anchorage, 200 N·m per kg of stem [I] (tree-pulling regressions for conifers give about
+  100-200, Nicoll et al. 2006; frozen ground at the top), the stem a green-wood cone (density
+  800, form factor 0.5) of the measured trunk diameter and the placed height, tipping over 0.5
+  m of bow travel. Before this only stem bending was modelled, so a 0.5 m trunk held the Tiger
+  indefinitely; now only a tree of about 0.7 m and 12 m holds a crawling Tiger, and it goes over
+  to one that arrives at 3 m/s. The anchorage is a regression constant, not a soil or root
+  model.
 - Draw: three LODs by projected size (the source mesh; a grid-clustered reduction; one native
   pixel carrying the mean albedo); no metallic-roughness or normal maps for the field's
   prototypes (the kit has none); shadows and sky cover from the large tier at the reduced LOD
@@ -216,6 +239,9 @@ Two AI Tigers under the player's radio command (`src/platoon.rs`, `src/radio_llm
 - Driving: the shared `apply_vehicle_avoidance` and the inverse-mass hull pair solver; the course's
   clear-cell test is a wall veto, not a path planner. A 1.6 s reverse-and-swing watchdog is a
   driver behaviour, not a physical recovery.
+- Engagement: in contact the wingmen are driven by the evolved Tiger policy (`weights_tiger.bin`).
+  It proposes drive, steer and a fire intent only; every physical gate (gun lay, travel lock,
+  reload, ammunition, line of sight, avoidance, hull contact) is unchanged, as for the AI Tiger.
 - Perception: enemies track, lay on and accrue detection against the nearest Tiger; the detection
   envelope (engine, hatches, silent watch) still comes from the player's hull state.
 - Radio: the language model produces words and one validated order per transmission; it has no

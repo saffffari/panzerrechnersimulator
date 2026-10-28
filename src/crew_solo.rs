@@ -43,6 +43,18 @@ const GUNNER_ENGAGE_M: f32 = 1800.0;
 const AID_BOX_TURRET_LOCAL: Vec3 = Vec3::new(-0.70, 1.55, -0.58);
 /// Burn severity per second in a fully developed cabin fire, hull seats.
 const FIRE_BURN_PER_S: f32 = 0.02;
+/// Turret-local spot where a man the player has displaced stands by: the rear of the basket
+/// floor, not the cupola the player just left (the commander's post is the player's).
+const STANDBY_TURRET_LOCAL: Vec3 = Vec3::new(0.05, crate::interior_rig::FLOOR_STAND_Y, -0.68);
+/// The commander's post as `crew_live_model` places the standing figure.
+const COMMANDER_POST_TURRET_LOCAL: Vec3 = Vec3::new(0.564, crate::interior_rig::FLOOR_STAND_Y, -0.423);
+/// The loader is displaced only when the player is at the breech, within this of his post
+/// (turret-local planar distance) or with ammunition in hand; walking the compartment leaves
+/// him at work.
+const LOADER_POST_TURRET_XZ: Vec2 = Vec2::new(-0.72, 0.12);
+const LOADER_DISPLACE_M: f32 = 0.55;
+/// Seconds between blood emissions from a bleeding man.
+const BLEED_EMIT_S: f32 = 0.5;
 /// Hull-local point of the driver's seat used as the interior entry anchor.
 const DRIVER_SEAT_ANCHOR_HULL: Vec3 = Vec3::new(0.535, 1.40, 1.55);
 const DRIVER_SEAT_REACH_M: f32 = 1.95;
@@ -213,6 +225,8 @@ pub(super) struct CrewSolo {
     triage_called: Vec<CrewRole>,
     /// Every finished or abandoned procedure, for the receipt.
     pub procedures_done: Vec<Value>,
+    /// Blood emission clocks, one per man.
+    bleed_emit_t: [f32; 5],
     /// A dead man's body has been dragged off his station.
     pub body_cleared: [bool; 5],
     intercom: Vec<(String, f32)>,
@@ -248,6 +262,7 @@ impl Default for CrewSolo {
             prev_hands_button: false,
             triage_called: Vec::new(),
             procedures_done: Vec::new(),
+            bleed_emit_t: [0.0; 5],
             body_cleared: [false; 5],
             intercom: Vec::new(),
             prev_fire_order: false,
@@ -335,9 +350,51 @@ impl Game {
     pub(super) fn crew_solo_post(&self, role: CrewRole) -> LanRole {
         let own = singleplayer_crew::body_post(role);
         if self.mode == Mode::Tank && self.solo_player_post() == own {
+            if role == CrewRole::Loader && !self.crew_solo_player_at_breech() {
+                // Walking the compartment does not take the loader's post; the breech does.
+                return own;
+            }
             LanRole::Commander
         } else {
             own
+        }
+    }
+
+    /// The player, on the interior walk, is working the breech: close to the loader's post or
+    /// with a round or case in his hands.
+    fn crew_solo_player_at_breech(&self) -> bool {
+        if self.mode != Mode::Tank || self.station != Station::Loader {
+            return false;
+        }
+        self.grab
+            || self.carry_mesh.is_some()
+            || self.carried_casing.is_some()
+            || self.lever_pulling
+            || Vec2::new(self.walk_pos.x, self.walk_pos.z).distance(LOADER_POST_TURRET_XZ) < LOADER_DISPLACE_M
+    }
+
+    /// Where a displaced man stands relative to the commander's post (turret-local): a man the
+    /// player pushed out of his seat does not stand in the player's own place under the cupola.
+    pub(super) fn crew_solo_standby_offset(&self, casualty: CouchCrewCasualty) -> Option<Vec3> {
+        if !self.crew_solo_active() || casualty.role != LanRole::Commander {
+            return None;
+        }
+        let me = self.solo_identity().map(singleplayer_crew::body_post);
+        if Some(casualty.identity) == me {
+            return None;
+        }
+        Some(STANDBY_TURRET_LOCAL - COMMANDER_POST_TURRET_LOCAL)
+    }
+
+    /// World point of a living man's torso, where he actually is (his post, or the standby spot).
+    pub(super) fn crew_solo_man_point(&self, role: CrewRole) -> Vec3 {
+        let post = if Some(role) == self.solo_identity() { self.solo_player_post() } else { self.crew_solo_post(role) };
+        let mut casualty = singleplayer_crew::casualty_identity(role);
+        casualty.role = post;
+        let torso = crew_live_model(&self.player, post).transform_point3(Vec3::new(0.0, crew_live_torso_y(post), 0.0));
+        match self.crew_solo_standby_offset(casualty) {
+            Some(offset) => torso + self.player.turret_model().transform_vector3(offset),
+            None => torso,
         }
     }
 
@@ -399,6 +456,11 @@ impl Game {
     /// A dead man still in the seat the player wants.
     pub(super) fn crew_solo_station_blocked(&self, station: Station) -> Option<CrewRole> {
         if !self.crew_solo_active() {
+            return None;
+        }
+        // The interior walk is the compartment itself, never a seat a body can fill: the player
+        // can always drop into it, step past the dead and drag them.
+        if station == Station::Loader {
             return None;
         }
         let role = singleplayer_crew::role_for_station(station);
@@ -469,6 +531,7 @@ impl Game {
             if !singleplayer_crew::role_alive(&self.crew, role) {
                 continue;
             }
+            self.crew_solo_bleed_onto_the_station(role, dt);
             let events = self.crew_solo.man_mut(role).advance(dt);
             for event in events {
                 match event {
@@ -523,12 +586,60 @@ impl Game {
         }
     }
 
+    /// A bleeding man bleeds where he is: grains from the wound run down him onto the seat and
+    /// the floor, more the faster he bleeds, through the same surface-blood transport as a hit.
+    fn crew_solo_bleed_onto_the_station(&mut self, role: CrewRole, dt: f32) {
+        let rate = self.crew_solo.man(role).total_bleed_rate_l_per_s();
+        if rate <= 1.0e-5 {
+            self.crew_solo.bleed_emit_t[role_index(role)] = 0.0;
+            return;
+        }
+        let clock = &mut self.crew_solo.bleed_emit_t[role_index(role)];
+        *clock += dt;
+        if *clock < BLEED_EMIT_S {
+            return;
+        }
+        *clock = 0.0;
+        let aboard = Some(role) != self.solo_identity() || self.mode == Mode::Tank;
+        if !aboard {
+            return;
+        }
+        let post = if Some(role) == self.solo_identity() { self.solo_player_post() } else { self.crew_solo_post(role) };
+        let mut casualty = singleplayer_crew::casualty_identity(role);
+        casualty.role = post;
+        // The wound's region decides where the grains leave him: a leg bleeds into the lap and
+        // the floor, an arm beside him, the trunk and head down the front.
+        let worst = self.crew_solo.man(role).wounds.iter()
+            .filter(|w| w.bleed_rate_l_per_s() > 0.0)
+            .max_by(|a, b| a.bleed_rate_l_per_s().total_cmp(&b.bleed_rate_l_per_s()))
+            .map(|w| w.region);
+        let model = crew_live_model(&self.player, post);
+        let local = match worst {
+            Some(Region::Leg) => Vec3::new(0.0, crew_live_torso_y(post) - 0.45, 0.12),
+            Some(Region::Arm) => Vec3::new(0.18, crew_live_torso_y(post) - 0.15, 0.0),
+            Some(Region::Head) => Vec3::new(0.0, crew_live_torso_y(post) + 0.30, 0.04),
+            _ => Vec3::new(0.0, crew_live_torso_y(post), 0.08),
+        };
+        let mut point = model.transform_point3(local);
+        if let Some(offset) = self.crew_solo_standby_offset(casualty) {
+            point += self.player.turret_model().transform_vector3(offset);
+        }
+        // Grains per half second: a trickle at a dressed wound, a steady run at a femoral bleed.
+        let count = ((rate * 60.0 * 14.0).round() as usize).clamp(4, 48);
+        let seed = ((self.crew_solo.time_s * 53.0) as u32) ^ 0xB1EE_D000 ^ (role_index(role) as u32) << 8;
+        self.spawn_cubic_blood(casualty, Some(point), Vec3::NEG_Y, Vec3::ZERO, 0.25, 0.55, seed, role_index(role), count);
+    }
+
     fn crew_solo_bled_out(&mut self, role: CrewRole) {
         let post = self.crew_solo_post(role);
         let mut casualty = singleplayer_crew::casualty_identity(role);
         casualty.role = post;
         self.crew_ko_t = CREW_KO_DUR;
         self.crew_ko_world_dir = Vec3::NEG_Y;
+        // The last of it: what was still in him runs out as he folds.
+        let point = self.crew_solo_man_point(role) - Vec3::Y * 0.2;
+        let seed = ((self.crew_solo.time_s * 53.0) as u32) ^ 0xDEAD_B100 ^ role_index(role) as u32;
+        self.spawn_cubic_blood(casualty, Some(point), Vec3::NEG_Y, Vec3::ZERO, 0.6, 0.8, seed, role_index(role), 96);
         let wiped = self.record_physical_crew_casualties(&[casualty]);
         // A gentle collapse, not a fragment strike: the man folds where he sat.
         let seed = (self.crew_solo.time_s * 97.0) as u32 ^ 0x5EED_B10D ^ role_index(role) as u32;
@@ -994,8 +1105,7 @@ impl Game {
             if alive {
                 let Some((procedure, _)) = self.crew_solo.man(role).procedure_needed() else { continue; };
                 let post = self.crew_solo_post(role);
-                let torso = crew_live_model(&self.player, post)
-                    .transform_point3(Vec3::new(0.0, crew_live_torso_y(post), 0.0));
+                let torso = self.crew_solo_man_point(role);
                 let can = self.crew_solo.aid_box.can_start(procedure);
                 let reach = if matches!(post, LanRole::Driver | LanRole::Radio) { AID_REACH_HULL_M } else { AID_REACH_M };
                 consider(torso, HoverAction::Treat(role, procedure), offer_label(role, procedure, can), reach);
@@ -1149,6 +1259,13 @@ impl Game {
     }
 
     // ── Public readouts ─────────────────────────────────────────────────────────────────────
+
+    /// Enter: the intercom line on the frame leaves it now. True when one was showing.
+    pub fn crew_intercom_clear(&mut self) -> bool {
+        let showing = self.crew_solo.intercom.iter().any(|(_, left)| *left > 0.0);
+        for line in &mut self.crew_solo.intercom { line.1 = line.1.min(0.0); }
+        showing
+    }
 
     /// The latest intercom line on the air, for the front end. `KESSEL_INTERCOM=0` silences it.
     pub fn intercom_line(&self) -> Option<&str> {
@@ -1332,6 +1449,33 @@ impl Game {
             "needed": needed, "count": run.count, "progress": run.progress, "quality": run.quality}))
     }
 
+    /// Every man's body as the renderer sees it: alive at which post (or standing by), or a
+    /// casualty ragdoll (settled, where), and the surface blood that has reached the cabin.
+    pub fn debug_crew_solo_bodies(&self) -> Value {
+        let me = self.solo_identity();
+        let men: Vec<Value> = CrewRole::ALL.iter().map(|&role| {
+            let alive = singleplayer_crew::role_alive(&self.crew, role) && !self.crew_solo.man(role).dead;
+            let identity = singleplayer_crew::body_post(role);
+            let ragdoll = self.couch_ragdolls.iter().find(|b| b.casualty.identity == identity).map(|body| {
+                let center = blood_parent_model(&self.player, body.frame)
+                    .transform_point3(crew_physics::center_of_mass(&body.segments));
+                json!({"settled": body.settled, "age": body.age, "center": center.to_array(),
+                    "frame": format!("{:?}", body.frame), "post_at_death": body.casualty.role.label()})
+            });
+            let post = if Some(role) == me { self.solo_player_post() } else { self.crew_solo_post(role) };
+            let mut casualty = singleplayer_crew::casualty_identity(role);
+            casualty.role = post;
+            json!({"role": role.name(), "player": Some(role) == me, "alive": alive,
+                "post": post.label(), "standing_by": alive && self.crew_solo_standby_offset(casualty).is_some(),
+                "point": alive.then(|| self.crew_solo_man_point(role).to_array()),
+                "ragdoll": ragdoll, "body_cleared": self.crew_solo.body_cleared[role_index(role)],
+                "bleed_l_per_min": self.crew_solo.man(role).total_bleed_rate_l_per_s() * 60.0})
+        }).collect();
+        json!({"men": men, "casualty_records": self.couch_casualties.len(), "ragdolls": self.couch_ragdolls.len(),
+            "surface_blood": self.debug_surface_blood(), "intercom": self.crew_solo.intercom_line(),
+            "crew_ko_t": self.crew_ko_t})
+    }
+
     pub fn debug_crew_solo_procedures_done(&self) -> Vec<Value> {
         self.crew_solo.procedures_done.clone()
     }
@@ -1401,8 +1545,7 @@ impl Game {
         let turret = self.player.turret_model();
         let alive = singleplayer_crew::role_alive(&self.crew, role) && !self.crew_solo.man(role).dead;
         let (target_world, post) = if alive {
-            let post = self.crew_solo_post(role);
-            (crew_live_model(&self.player, post).transform_point3(Vec3::new(0.0, crew_live_torso_y(post), 0.0)), post)
+            (self.crew_solo_man_point(role), self.crew_solo_post(role))
         } else {
             let identity = singleplayer_crew::body_post(role);
             let Some(body) = self.couch_ragdolls.iter().find(|b| b.casualty.identity == identity) else {
@@ -1417,7 +1560,7 @@ impl Game {
             LanRole::Driver | LanRole::Radio => Vec3::new(local.x.clamp(-0.6, 0.6), 0.0, 0.62),
             LanRole::Gunner => Vec3::new(0.62, 0.0, -0.25),
             LanRole::Loader => Vec3::new(-0.45, 0.0, -0.40),
-            LanRole::Commander => Vec3::new(0.25, 0.0, -0.62),
+            LanRole::Commander => Vec3::new(0.55, 0.0, -0.40),
         };
         self.debug_walk_to(stand);
         self.loader_face_world(target_world);
@@ -1454,8 +1597,7 @@ impl Game {
         let post = self.crew_solo_post(role);
         let frame = blood_frame_for_role(post);
         let parent = blood_parent_model(&self.player, frame);
-        let torso_world = crew_live_model(&self.player, post)
-            .transform_point3(Vec3::new(0.0, crew_live_torso_y(post), 0.0));
+        let torso_world = self.crew_solo_man_point(role);
         let torso_local = parent.inverse().transform_point3(torso_world) - Vec3::Y * aim_down_m;
         let (part, bounds) = match frame {
             BloodFrame::Turret => (ArmorPart::Turret, rig_armor_bounds(crate::ballistics::ArmorScheme::TigerI, ArmorPart::Turret)),

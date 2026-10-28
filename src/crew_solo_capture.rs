@@ -584,6 +584,144 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     Ok(())
 }
 
+/// Short reproduction of two play reports (`crew-solo-kia PREFIX`): does a loader killed by a
+/// live penetration leave a body at his station and blood on it, seen from the interior walk;
+/// does a bleeding man bleed onto his station over time; does a displaced man stand clear of
+/// the cupola. One run, a few stills, a JSON receipt; no full proof.
+pub fn run_crew_solo_kia_capture(prefix: &str) -> anyhow::Result<()> {
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let info = adapter.get_info();
+    println!("[crew-solo-kia] adapter={} ({:?}, {:?})", info.name, info.device_type, info.backend);
+    let (device, queue) = crate::request_device(&adapter);
+    let map = crate::world::act(0);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
+    g.enable_singleplayer_crew();
+    g.mute_audio();
+    g.set_defer_rtt_to_render(true);
+    g.god = false;
+    g.targets_only = true;
+    g.brawl = false;
+    g.debug_hold_enemy_fire();
+    for i in 1..g.enemies.len() {
+        g.debug_crew_solo_set_enemy_active(i, false);
+    }
+    r.set_weather_override(None);
+    r.overcast = 0.08;
+    r.storm = 0.0;
+    r.fog_density = 0.00035;
+    r.precipitation = 0.0;
+    let heading = g.player.heading;
+    let mut spot = Spot { range: 160.0, bearing: 0.0, heading };
+    'search: for &range in &[160.0f32, 200.0, 240.0, 120.0, 300.0] {
+        for &bearing_deg in &[0.0f32, 15.0, -15.0, 30.0, -30.0] {
+            let bearing = heading + bearing_deg.to_radians();
+            let target = g.player.pos + Vec3::new(bearing.sin(), 0.0, bearing.cos()) * range;
+            g.debug_place_enemy(0, target.x, target.z, bearing + std::f32::consts::PI);
+            g.update(&TankInput::default(), DT, &mut r);
+            let (recognizable, los) = g.debug_crew_solo_target_visible(0);
+            spot = Spot { range, bearing: bearing_deg, heading };
+            if recognizable && los {
+                break 'search;
+            }
+        }
+    }
+    g.debug_engage_all();
+    // The Tiger's last round is the one in the chamber; it is fired off before the strike.
+    g.debug_crew_solo_ammunition_left(0);
+    let mut proof = Proof { prefix: prefix.to_owned(), device: &device, queue: &queue, checks: Vec::new(), strikes: Vec::new(), stills: Vec::new(), pass: true };
+    let idle = TankInput::default();
+    let hold_e = TankInput { mg_coax: true, interaction: true, ..TankInput::default() };
+    let mut target = 0usize;
+    run_for(&mut g, &mut r, &idle, 1.0);
+
+    // 1. Displacement: the player at the sights, the gunner stands by at the rear of the basket,
+    //    nobody under the cupola. Seen from the interior walk afterwards.
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_face_gunner_sight();
+    run_for(&mut g, &mut r, &idle, 0.2);
+    g.click_station();
+    run_for(&mut g, &mut r, &idle, 1.2);
+    let at_sights = g.debug_crew_solo_bodies();
+    let gunner_standing_by = at_sights["men"].as_array().and_then(|men| men.iter().find(|m| m["role"] == "gunner")).map(|m| m["standing_by"] == true).unwrap_or(false);
+    let nobody_at_cupola = at_sights["men"].as_array().map_or(false, |men| men.iter().all(|m| m["player"] == true || m["alive"] == false || m["standing_by"] == true || m["post"] != "COMMANDER"));
+    proof.check(
+        "player at the sights: the gunner stands by at the rear of the basket and no figure is left under the cupola",
+        g.station == Station::Gunner && gunner_standing_by && nobody_at_cupola,
+        json!({"bodies": at_sights}),
+    );
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_crew_solo_go_to(CrewRole::Commander);
+    run_for(&mut g, &mut r, &idle, 0.2);
+    proof.still(&mut r, "kia_01_cupola_after_the_player_left_it")?;
+    let walking = g.debug_crew_solo_bodies();
+    let loader_at_post_while_walking = walking["men"].as_array().and_then(|men| men.iter().find(|m| m["role"] == "loader")).map(|m| m["post"] == "LOADER").unwrap_or(false);
+    proof.check(
+        "walking the compartment leaves the loader at his post",
+        loader_at_post_while_walking,
+        json!({"bodies": walking}),
+    );
+
+    // 2. The loader killed by a live solid shot, with the player at the driver's seat.
+    g.jump_station(Station::Commander);
+    run_for(&mut g, &mut r, &idle, 1.0);
+    empty_the_breech(&mut g, &mut r, &mut target, spot);
+    let (_, in_seat) = take_driver_seat(&mut g, &mut r, &idle);
+    anyhow::ensure!(in_seat, "could not take the driver's seat");
+    let blood_before = g.debug_surface_blood();
+    let strike = g.debug_crew_solo_strike(CrewRole::Loader, true, Arc::Side, 0.0);
+    proof.strikes.push(strike.clone());
+    anyhow::ensure!(g.player.alive, "the proof's own body was killed by the loader strike");
+    run_for(&mut g, &mut r, &idle, 2.5);
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_crew_solo_go_to(CrewRole::Loader);
+    run_for(&mut g, &mut r, &idle, 0.3);
+    proof.still(&mut r, "kia_02_loader_dead_from_the_walk")?;
+    let after = g.debug_crew_solo_bodies();
+    let loader = after["men"].as_array().and_then(|men| men.iter().find(|m| m["role"] == "loader").cloned()).unwrap_or(json!(null));
+    let emitted_before = blood_before["emitted"].as_u64().unwrap_or(0);
+    let emitted_after = after["surface_blood"]["emitted"].as_u64().unwrap_or(0);
+    proof.check(
+        "loader killed: a settled body at his post, blood emitted and retained in the cabin, the intercom said so",
+        loader["alive"] == false && loader["ragdoll"]["settled"] == true && emitted_after > emitted_before
+            && after["surface_blood"]["retained_cells"].as_u64().unwrap_or(0) > 0,
+        json!({"loader": loader, "strike": strike, "blood_before": blood_before, "bodies": after}),
+    );
+    run_for(&mut g, &mut r, &idle, 8.0);
+    proof.still(&mut r, "kia_03_loader_dead_eight_seconds_on")?;
+
+    // 3. A bleeding man bleeds onto his station: a staged femoral bleed (named so) on the first
+    //    man the cone left alive.
+    let bleeder = AI_ROLES.into_iter().find(|&role| !dead(&g, role)).unwrap_or(CrewRole::Radioman);
+    g.debug_crew_solo_stage_wound(bleeder, WoundKind::Bleeding, Region::Leg, 0.8);
+    let before = g.debug_surface_blood()["emitted"].as_u64().unwrap_or(0);
+    run_for(&mut g, &mut r, &idle, 30.0);
+    let during = g.debug_surface_blood();
+    g.debug_crew_solo_go_to(bleeder);
+    run_for(&mut g, &mut r, &idle, 0.3);
+    proof.still(&mut r, "kia_04_bleeding_man_thirty_seconds")?;
+    proof.check(
+        "a bleeding man keeps bleeding onto his seat and the floor (grains emitted over thirty seconds)",
+        during["emitted"].as_u64().unwrap_or(0) > before + 100,
+        json!({"bleeder": bleeder.name(), "emitted_before": before, "surface_blood": during,
+            "man": g.debug_crew_solo_bodies()["men"]}),
+    );
+    let _ = hold_e;
+
+    let receipt_path = format!("{prefix}.json");
+    let receipt = json!({"command": "crew-solo-kia", "adapter": info.name, "backend": if r.shader_backend { "shader" } else { "physical/raymarch" },
+        "pass": proof.pass, "checks": proof.checks, "strikes": proof.strikes, "stills": proof.stills,
+        "bodies": g.debug_crew_solo_bodies(), "crew": g.crew_solo_receipt()});
+    std::fs::write(&receipt_path, serde_json::to_string_pretty(&receipt)?).with_context(|| format!("writing {receipt_path}"))?;
+    println!("[crew-solo-kia] receipt {receipt_path}");
+    println!("[crew-solo-kia] {}", if proof.pass { "ALL PASS" } else { "FAILURES" });
+    anyhow::ensure!(proof.pass, "crew-solo-kia check failed; see {receipt_path}");
+    Ok(())
+}
+
 pub fn run_crew_solo_capture(prefix: &str) -> anyhow::Result<()> {
     let instance = crate::create_instance();
     let adapter = crate::request_adapter(&instance, None);

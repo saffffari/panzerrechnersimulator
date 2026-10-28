@@ -9415,6 +9415,12 @@ pub struct Game {
     /// Casualty positions of the strewn field offered to the pickup seeding beside the act's
     /// authored sockets (`scatter_field::Built::loot_sockets`).
     scatter_loot_sockets: Vec<Vec2>,
+    /// The strewn field's heavy static pieces (`story_cover[scatter_cover_first..]`): their mass
+    /// sets the hull's push resistance, the work each has absorbed accumulates until it gives
+    /// way and is shoved along (`resolve_tank_crush`).
+    scatter_heavy: Vec<crate::scatter_field::HeavyPiece>,
+    scatter_heavy_absorbed: Vec<f32>,
+    scatter_cover_first: usize,
     /// Destruction records that fall together: every proxy of one manifest wall, doorway or shed
     /// maps to the range of its placement's records (they share the drawn instance).
     destructible_groups: std::collections::HashMap<usize, std::ops::Range<usize>>,
@@ -12479,11 +12485,15 @@ impl Game {
         // GPU-culled scatter path and is purely visual.
         let mut scatter_loot_sockets: Vec<Vec2> = Vec::new();
         let mut scatter_medium_cover: Vec<(Vec3, Vec3)> = Vec::new();
+        let mut scatter_heavy: Vec<crate::scatter_field::HeavyPiece> = Vec::new();
+        let scatter_cover_first = story_cover.len();
         let strewn = if isolated_population { None } else {
             manifest.as_ref().and_then(|m| crate::scatter_field::Layers::beside_manifest(m.path())).map(|layers| layers.build(&hf))
         };
         if let Some(mut built) = strewn {
-            story_cover.extend(built.cover_large.drain(..));
+            // heavy pieces are appended last, so [scatter_cover_first..] of story_cover is theirs
+            story_cover.extend(built.cover_large.iter().map(|h| (h.min, h.max)));
+            scatter_heavy = built.cover_large.drain(..).collect();
             scatter_medium_cover.append(&mut built.cover_medium);
             scatter_loot_sockets = std::mem::take(&mut built.loot_sockets);
             let mut by_proto: std::collections::BTreeMap<usize, Vec<Mat4>> = Default::default();
@@ -13329,6 +13339,9 @@ impl Game {
             projectile_scratch: Vec::with_capacity(256),
             projectile_cover: projectile_cover::Index::default(),
             scatter_loot_sockets,
+            scatter_heavy_absorbed: vec![0.0; scatter_heavy.len()],
+            scatter_heavy,
+            scatter_cover_first,
             projectile_flight_audio: projectile_flight_audio::Runtime::default(),
             crew_battle_audit: None,
             next_projectile_id: 1,
@@ -29116,7 +29129,8 @@ impl Game {
         // and the legacy story overlay's wreck columns. The manifest's walls, piers, doorways and
         // sheds are destruction records since 2026-09-29 and give way above. The bow stops at these
         // by the unyielding push (no work, speed to rest); pushing a wreck along is not modelled.
-        for &(min, max) in &self.story_cover {
+        for index in 0..self.story_cover.len() {
+            let (min, max) = self.story_cover[index];
             if min.y > self.player.pos.y + 2.2 {
                 continue;
             }
@@ -29125,6 +29139,38 @@ impl Game {
                 continue;
             };
             contact = true;
+            if index >= self.scatter_cover_first {
+                // A heavy strewn piece (a boulder, a log, a barricade; `scatter_field` tiers by
+                // mass and size, so nothing light or low reaches this list): it resists by the
+                // friction of its own mass on frozen ground over a shove's travel, the tank's
+                // momentum pays, and when the work is done the piece slides along the push and
+                // the bow follows. A named approximation of a loose mass being bulldozed; no
+                // toppling or rolling.
+                let h = index - self.scatter_cover_first;
+                let (mass, friction) = self.scatter_heavy.get(h).map(|p| (p.mass_kg, p.friction))
+                    .unwrap_or((1000.0, crate::scatter_field::SHOVE_FRICTION));
+                let resistance = crate::tank_push::Resistance::new(
+                    friction * mass * 9.81, crate::scatter_field::SHOVE_TRAVEL_M);
+                let before = self.player.speed;
+                let absorbed = self.scatter_heavy_absorbed.get(h).copied().unwrap_or(0.0);
+                let step = crate::tank_push::press(self.player.speed, self.player.pitch * sgn, resistance, absorbed, dt);
+                self.player.speed = step.speed;
+                self.crush_rumble = self.crush_rumble.max(crate::tank_push::collision_rumble(before, step.speed));
+                if step.gave_way {
+                    let delta = dir * crate::scatter_field::SHOVE_TRAVEL_M;
+                    self.story_cover[index] = (min + delta, max + delta);
+                    if let Some(piece) = self.scatter_heavy.get_mut(h) {
+                        piece.min += delta;
+                        piece.max += delta;
+                        r.scatter_shove(piece.instance, delta);
+                    }
+                    if let Some(a) = self.scatter_heavy_absorbed.get_mut(h) { *a = 0.0; }
+                } else {
+                    if let Some(a) = self.scatter_heavy_absorbed.get_mut(h) { *a += step.work_j; }
+                    self.player.pos += push * overlap;
+                }
+                continue;
+            }
             self.player.pos += push * overlap;
             self.player.speed = crate::tank_push::press(
                 self.player.speed, self.player.pitch * sgn, crate::tank_push::Resistance::UNYIELDING, 0.0, dt).speed;
