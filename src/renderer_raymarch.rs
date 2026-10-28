@@ -180,8 +180,9 @@ struct Ember { pos: [f32; 3], packed: u32 }
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4], scars: [u32; 4] }
 // extra: x snow load (`snow_cover`; G-buffer and glass only), y 1 on the player's vehicle
-// (surface wear), zw unused. scars: this mesh's armor wounds (first record, count, flags;
-// renderer_scars.rs). 112 bytes, inside the 128-byte push-constant floor the device requires.
+// (surface wear), z 1 on an instrument dial's cover (glass only), w unused. scars: this mesh's
+// armor wounds (first record, count, flags; renderer_scars.rs). 112 bytes, inside the 128-byte
+// push-constant floor the device requires.
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -2413,7 +2414,8 @@ impl Backend {
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
                 let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
-                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 }, 0.0, 0.0], scars: [0; 4] };
+                    extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
+                        if m.instrument_cover { 1.0 } else { 0.0 }, 0.0], scars: [0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));

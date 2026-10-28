@@ -945,6 +945,26 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
     rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
     step(&mut g, &mut r, 10, &idle);
 
+    // The TPZ from the gunner's head by the cabin's lamps, then with the cupola hatch open at
+    // noon: its needle and its glass cover (the commander's post supplies the cabin lighting).
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    for (open, name, note) in [(false, "tpz_lamp", "the TPZ from the gunner's head by the cabin lamps, hatch shut"),
+                               (true, "tpz_hatch", "the TPZ from the gunner's head, the cupola hatch open at noon")] {
+        g.hatch_open = open;
+        rig.station_camera();
+        step(&mut g, &mut r, 30, &idle);
+        let (eye, _, _) = g.gunner_interior_camera();
+        let dial = g.player.turret_model().transform_point3(crate::interior_rig::TPZ_NEEDLE_POS);
+        r.camera.pos = eye;
+        r.camera.set_forward(dial - eye);
+        r.camera.fov_y = 40f32.to_radians();
+        r.optic_mask = 0.0;
+        r.reticle = false;
+        rig.still(&mut r, name, note)?;
+    }
+    g.hatch_open = false;
+
     // The Tiger from outside: its winter coat (`apply_whitewash`), front and rear quarters.
     let p = g.player.pos;
     let f = g.player.forward();
