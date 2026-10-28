@@ -96,10 +96,18 @@ simulation is deterministic per seed) and goes on: at 1635 s the Tiger is alive 
 last complete trace row). The process then ended on its own: exit status 1, no `_result.json`,
 no card, the trace cut mid-row at 1636 s, and nothing in the captured stdout/stderr after the
 director's "platoon 0 eliminated" — no panic text, no error. The last log lines are the
-director's; a reinforcement platoon is due 60 s after a lull. Whether this is a crash in the
-game at that point of the course or an external kill is not established from one run; a second
-3000 s attempt with `RUST_BACKTRACE=1` is `pilot_fullrun_v3long2_s101_20261027` (see the end
-of §5 for its result if it landed before this document was last edited).
+director's; a reinforcement platoon is due 60 s after a lull.
+
+It was not the game. From 19:03 every launch of this binary on the machine died the same way
+within seconds, at a different point of loading each time (`pilot_fullrun_v3long2_s101`,
+`_v3long3_s101`, two 20 s diagnostics, and `ui runbrief`, which never touches the Canyon world):
+exit status −1 (0xFFFFFFFF, the code .NET's `Process.Kill` / `Stop-Process` sets), no text,
+with a private `KESSEL_PIPELINE_CACHE_DIR` and with a frozen copy of the workshop manifest
+alike. The main checkout's `heights.npy` hash was unchanged (fnv1a64 3a9d12d0aaa33e7e, as in
+every log). At that time sibling sessions were running two 3000 s `canyon-ai-run` attempts of
+their own binary, an armour review, a raymarch capture, a graphics benchmark and two release
+builds on the same box. The 84 % run was alive and unhurt when it was terminated; a completion
+needs a quiet machine and ~35 minutes, and is the first thing to do next.
 
 ## 5. What is still in the way
 
@@ -116,9 +124,11 @@ of §5 for its result if it landed before this document was last edited).
    modules and the rack in one hit). Balance is the owner's call under the physical-truth rules.
 4. The old baseline's stolen prompt was inferred from the new logging, not recorded in the
    baseline itself (see §1).
-5. **The 3000 s attempt stopped at 84 % without a word** (§4). If the rerun stops at the same
-   second it is a game-side fault at that point of the course, to be handed over with the
-   trace, not worked around in the pilot.
+5. **No completion was recorded.** The 3000 s attempt was terminated from outside at 84 %
+   (§4) and every relaunch after 19:03 was killed during loading. Rerun
+   `canyon-ai-run captures/pilot_fullrun_v3long_s101 101 3000` on a quiet machine; the
+   trajectory is deterministic per seed, so it will pass 84 % at 1635 s with the same 14 kills
+   and no hit taken, and the last 16 % (choke 3, the final basin) is new ground for the pilot.
 
 ## Reproduce
 
