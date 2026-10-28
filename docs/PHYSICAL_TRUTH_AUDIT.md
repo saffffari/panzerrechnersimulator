@@ -84,7 +84,8 @@ are presented as ray tracing, GI or a combustion/solver result:
   marched reflections fade out over roughness 0.2..0.5, the split-sum term carrying rough lobes; a
   sample budget scales the occlusion, gather and reflection rays below 800x450. The relays' sky-
   visibility atlas leaves the player's tank out (its own shadow is missing from the relayed views)
-  and the relays do not rebuild the cabin lamps' shadow cubes. Gate: `raymarch-gunner`.
+  and the relays do not rebuild the cabin lamps' shadow cubes: the relayed views take no light from
+  point sources (lamps, fires, flashes; `CabinShadows::prepare_unmapped`). Gate: `raymarch-gunner`.
 - Tiger exhaust plume (2026-10-28; `src/exhaust_plume.rs`, `rm_volume.wgsl` kind 7): puffs, not a
   fluid solver. Flow from the powertrain's speed and load; an engine temperature from a warm-up
   model (7 min at idle, faster under load, 30 min to cool); winter condensate always visible, densest

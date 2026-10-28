@@ -572,6 +572,28 @@ impl CabinShadows {
         scene
     }
 
+    /// Registration without cubes, for the raymarch backend's relayed port views, which draw no
+    /// lamp cubes (`renderer_raymarch.rs` encode, step 0): every admitted point source is
+    /// registered with zero reach, so those exterior views take no light from point sources. A
+    /// source left unregistered returned the unresolved-visibility sentinel, which drew the cabin
+    /// lamps' light on the relayed views as magenta at night (2026-10-28).
+    pub fn prepare_unmapped(&self, renderer: &Renderer, queue: &wgpu::Queue) {
+        let mut uniform = Uniform {
+            lamps: [[0.0; 4]; MAX_LIGHTS],
+            projections: [[NEAR, 0.0, 1.0, 0.0]; MAX_LIGHTS],
+            torch_position: [0.0; 4],
+            torch_direction: [self.torch_direction.x, self.torch_direction.y, self.torch_direction.z, 28f32.to_radians().cos()],
+            range: [NEAR, FAR, 2.0 / SIDE as f32, 0.0],
+            cabin_frame: self.cabin_frame.get().to_array(),
+        };
+        for (i, lamp) in renderer.lights.iter().take(MAX_LIGHTS).enumerate() {
+            if !active_fixture(lamp) { continue; }
+            uniform.lamps[i] = [lamp.pos.x, lamp.pos.y, lamp.pos.z, 1.0];
+            uniform.range[3] += 1.0;
+        }
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+    }
+
     pub fn prepare(&self, renderer: &Renderer, queue: &wgpu::Queue, camera: &CameraUniform) {
         let registered = self.lights.borrow();
         let emitting_meshes = self.emitting_meshes.borrow();
