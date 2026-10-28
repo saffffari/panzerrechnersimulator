@@ -825,8 +825,8 @@ fn run_shafts(prefix: &str) -> anyhow::Result<()> {
 /// `raymarch-cabin PREFIX`: the commander's post shut, as a player sees it on the act's own
 /// weather: the vision blocks, the cabin medium at rest, then while the tank drives (two pairs of
 /// consecutive frames, no history reset between them, so their difference is the frame-to-frame
-/// flicker); then the gunner's, driver's and radio operator's posts at rest, and the gunner's
-/// two-pass eyepiece composite. Short by design (one process, a few hundred frames).
+/// flicker); then the gunner's, driver's and radio operator's posts at rest, the gunner's
+/// two-pass eyepiece composite, and the gunner's sight on the move (its jolt rate). Short by design (one process, a few hundred frames).
 pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_commander.png")).exists(),
         "preserving existing capture; choose a new prefix");
@@ -915,6 +915,29 @@ pub fn run_cabin(prefix: &str) -> anyhow::Result<()> {
         rig.shots.push(serde_json::json!({ "name": "gunner_composite", "path": path, "raymarch": stats,
             "note": "the live loop's two-pass eyepiece composite; the interior pass reuses the optic pass's far cascade, sky cover and sky cache" }));
     }
+    // The gunner's sight on the move: the view's frame-to-frame turn while driving, split into
+    // the steady part (a 9-frame running mean) and the jolt about it (KESSEL_SIGHT_DAMPING_S).
+    g.station = Station::Gunner;
+    step(&mut g, &mut r, 30, &idle);
+    let mut forwards = Vec::new();
+    for _ in 0..300 {
+        g.update(&drive, 1.0 / 60.0, &mut r);
+        forwards.push(r.camera.forward());
+    }
+    let turns: Vec<f32> = forwards.windows(2).map(|w| w[0].angle_between(w[1]) * 60.0).collect();
+    let mean_turn = turns.iter().sum::<f32>() / turns.len().max(1) as f32;
+    let jolt = (turns.windows(9).map(|w| {
+        let m = w.iter().sum::<f32>() / 9.0;
+        (w[4] - m).powi(2)
+    }).sum::<f32>() / turns.len().saturating_sub(8).max(1) as f32).sqrt();
+    let path = format!("{prefix}_gunner_driving.png");
+    r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+    rig.shots.push(serde_json::json!({ "name": "gunner_driving", "path": path,
+        "sight_turn_mean_deg_s": mean_turn.to_degrees(), "sight_jolt_rms_deg_s": jolt.to_degrees(),
+        "speed_m_s": g.player.speed, "damping_s": std::env::var("KESSEL_SIGHT_DAMPING_S").ok(),
+        "note": "the gunner's sight after 5 s at full throttle; the view's turn rate and its jolt about a 9-frame mean" }));
+    println!("[raymarch-cabin] gunner sight driving: mean turn {:.2} deg/s, jolt rms {:.2} deg/s, speed {:.1} m/s",
+        mean_turn.to_degrees(), jolt.to_degrees(), g.player.speed);
     fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "schema": "panzer.raymarch-cabin.v1", "manifest": manifest, "adapter": adapter.get_info().name,
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
