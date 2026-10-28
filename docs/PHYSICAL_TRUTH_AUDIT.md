@@ -76,6 +76,10 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch cabin haze centre (2026-10-28; `rm_medium.wgsl` `rm_cabin_density`): the haze
+  ellipsoid is centred on the crew compartment (0.9 m above the turret frame's origin) instead of
+  the hull's ground-contact point, which had left the fumes below seated eye height. The ellipsoid
+  itself remains an approximation of the compartment's volume. Gate: `KESSEL_SHOWCASE_SET=shafts`.
 - Raymarch lamp shadow rays and periscope folding (2026-10-28; `rm_shade.wgsl` light loop,
   `rm_rt.wgsl` `rm_ray_open`): lamps without depth faces take one shadow ray per shaded pixel,
   stopped 0.15 m short of the source so its own housing does not shadow it; occlusion rays pass

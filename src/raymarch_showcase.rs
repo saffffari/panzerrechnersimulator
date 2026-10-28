@@ -84,6 +84,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("ao") { return run_occlusion(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("wear") { return run_wear(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("clouds") { return run_clouds(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("shafts") { return run_shafts(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_wreck_sunset_near.png")).exists(),
         "preserving existing showcase; choose a new prefix");
@@ -729,6 +730,94 @@ fn run_clouds(prefix: &str) -> anyhow::Result<()> {
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "cloud_shadows_off": std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v & 131072 != 0),
         "disclosure": "Staged fixture (banished enemies, held fire). Cloud cover and haze set by hand per scene; sky clock pinned. Observer cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=shafts`: light shafts in the medium. Outside: a low sun through a burning
+/// wreck's smoke, and toward the sun over the Tiger in haze. Inside: the commander's post after
+/// three rounds (their fumes in the compartment) with the turret turned so the front vision block
+/// faces a low sun, the same post with the hatch open at noon, and the shut post twice in
+/// consecutive frames to measure flicker.
+fn run_shafts(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_smoke_low_sun.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(None);
+    let weather = |r: &mut crate::renderer::Renderer, cover: f32, haze: f32| {
+        r.overcast = cover; r.storm = 0.0; r.fog_density = haze; r.precipitation = 0.0;
+    };
+    // A low sun, clear, haze to carry the shafts.
+    rig.clock(&mut r, "1942-12-21T12:15:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    let wreck = g.debug_stage_burning_t34(WRECK.x, WRECK.y).context("fixture needs a T-34")?;
+    step(&mut g, &mut r, 300, &idle);
+    weather(&mut r, 0.0, 0.004);
+    let sun = r.sun_dir;
+    let toward = Vec3::new(sun.x, 0.0, sun.z).normalize_or_zero();
+    let origin = g.enemies[wreck].pos;
+    let note = |r: &crate::renderer::Renderer, what: &str| format!("{what}; sun {:.1} deg up, haze {:.4}/m, cloud cover {:.2}",
+        r.sun_dir.y.asin().to_degrees(), r.fog_density, r.overcast);
+    let stand = origin - toward * 45.0;
+    let stand = Vec3::new(stand.x, g.hf.height_at(stand.x, stand.z) + 2.0, stand.z);
+    rig.observe(&mut r, stand, origin + Vec3::Y * 4.0, 60.0);
+    let text = note(&r, "toward a low sun through the burning wreck's smoke");
+    rig.still(&mut r, "smoke_low_sun", &text)?;
+    let tiger = g.player.pos;
+    rig.observe(&mut r, tiger - toward * 18.0 + Vec3::Y * 1.6, tiger + toward * 60.0 + Vec3::Y * 4.0, 70.0);
+    let text = note(&r, "toward a low sun over the Tiger in haze");
+    rig.still(&mut r, "tiger_low_sun", &text)?;
+    // Inside: three rounds' fumes, the turret turned so its front faces the sun.
+    g.debug_set_he_loaded(false);
+    g.debug_lay_gun_at(tiger + toward * 300.0 + Vec3::Y * 2.0);
+    step(&mut g, &mut r, 60, &idle);
+    for _ in 0..3 {
+        g.debug_fire_laid(&mut r);
+        step(&mut g, &mut r, 60, &idle);
+    }
+    weather(&mut r, 0.0, 0.004);
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    g.hatch_open = false;
+    rig.station_camera();
+    step(&mut g, &mut r, 20, &idle);
+    weather(&mut r, 0.0, 0.004);
+    let text = note(&r, "the commander's post after three rounds, the turret's front toward a low sun");
+    rig.still(&mut r, "cabin_low_sun", &text)?;
+    let text = note(&r, "the same, the next still (flicker)");
+    rig.still(&mut r, "cabin_low_sun_next", &text)?;
+    // The hatch open at noon.
+    rig.clock(&mut r, "1942-12-21T09:00:00Z")?;
+    g.hatch_open = true;
+    step(&mut g, &mut r, 30, &idle);
+    weather(&mut r, 0.0, 0.004);
+    let text = note(&r, "the commander's post, hatch open at noon, after three rounds");
+    rig.still(&mut r, "cabin_hatch_noon", &text)?;
+    g.station = Station::Loader;
+    rig.station_camera();
+    step(&mut g, &mut r, 20, &idle);
+    weather(&mut r, 0.0, 0.004);
+    let text = note(&r, "from the loader's post: the commander's hatch open at noon, the fumes in the turret");
+    rig.still(&mut r, "loader_hatch_noon", &text)?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.shafts.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies, held fire, one burning T-34, three rounds fired into the open). Clock, cloud and haze set by hand; sky clock pinned. Observer and station cameras. No image grading."
     }))?)?;
     Ok(())
 }

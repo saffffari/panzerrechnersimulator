@@ -565,6 +565,38 @@ with the lens presentation, the reticle drawn per internal pixel and the own bar
 edge ("Internal resolution"); its relay, exit pupil and eye relief are not modelled. Light through a
 periscope carries no image of the outside.
 
+## Light shafts (2026-10-28)
+
+Request: "light shafts and god rays would be great too, outside and also interior." The froxel
+medium already lights every cell through the sun cascades (`rm_volume.wgsl`), so a shaft is any
+occluder's shadow volume in a lit medium. `KESSEL_SHOWCASE_SET=shafts` stages them
+(`captures/rm_shafts2_*`, sun 5.7 degrees up, clear, haze 0.004/m):
+
+- Toward a low sun over the Tiger, its shadow volume runs back through the haze toward the eye as
+  a dark shaft beside the bright forward-scattered glow (`rm_shafts1_tiger_low_sun`). This is the
+  outdoor god ray, and it works within the grid's 320 m.
+- Through the burning wreck's smoke the plume reads as a dark mass against the glow; the smoke
+  parcels do not resolve into beams at the grid's four-pixel cells (`rm_shafts2_smoke_low_sun`).
+- Inside, the commander's open hatch at noon throws a sharp hatch-shaped patch of sun into the
+  turret (the near cascade is 6 m across inside the cabin, 1.2 cm texels, so apertures shape the
+  beam); the beam in the propellant fumes three rounds later is faint (`rm_shafts2_loader_hatch_noon`).
+  The cupola's vision blocks are mirror periscopes: no direct beam passes them in a depth map
+  (`rm_shafts2_cabin_low_sun`, the turret's front toward the sun).
+
+One fault fixed on the way: the cabin haze's ellipsoid was centred on the hull's ground-contact
+point (the cabin medium's origin), so the fumes ended below seated eye height. It is now centred
+on the crew compartment (`fr.vehicle`), as the wear is.
+
+Flicker: two consecutive stills of the cabin differ by 2.65 sRGB codes on average (the occlusion
+and reflection histories, the dither).
+
+**Not done, and why.** Finer cabin froxels: shrinking the grid's range inside the cabin would pack
+its 96 slices into the compartment, but lamps, fires and smoke beyond the new range would drop out
+of the grid and a burning wreck would vanish from the view through a port; at 1 m the slices are
+already about 8 cm deep and a vision block's beam spans about ten cells across. Shafts through
+cloud gaps need the grid beyond 320 m (a second cascade, not built). The volume does not bind the
+TLAS, so lamp beams in the medium are unshadowed beyond the two lights with depth faces.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The

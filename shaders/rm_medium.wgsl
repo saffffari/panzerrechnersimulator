@@ -63,7 +63,11 @@ fn rm_world_density(p: vec3<f32>) -> f32 {
 }
 fn rm_cabin_density(p: vec3<f32>) -> f32 {
     if (fr.cabin.w <= 0.0) { return 0.0; }
-    let d = p - fr.cabin.xyz;
+    // Centred on the crew compartment (fr.vehicle, 1.4 m up) where the pose is known: the
+    // cabin origin is the hull's ground-contact point, which left the haze below seated eye
+    // height (2026-10-28).
+    let centre = select(fr.cabin.xyz, fr.vehicle.xyz, fr.vehicle.w > 0.0);
+    let d = p - centre;
     let r = length(d * vec3(0.45, 0.75, 0.45));
     return fr.cabin.w * (1.0 - smoothstep(0.8, 1.15, r));
 }
