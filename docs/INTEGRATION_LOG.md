@@ -63,3 +63,9 @@ One line per merge: branch @ commit — conflicts — build / tests / smoke — 
 - scatter @ 3805dd5 (interaction tiers by estimated mass and size: nothing under 15 cm or 5 kg collides with the hull, light large pieces are cover only, boulders/logs/barricades/pallets resist by their own mass) — none — build ok — merged in d1aee44
 - crew-solo @ 2518830 (solo crew legibility: nobody left at the cupola, bodies and blood where men fall; `crew_solo_capture.rs`) — none; stored LF (`git ls-files --eol`) — merged in f2043ac
 - **Gate for f2043ac (+ this log)**: build ok; GPU-free shader validation ok; unit tests 1,928 passed / 90 failed / 61 ignored, failure set identical to round 4 (the scatter tiering test and crew-solo's tests pass); smoke **pending GPU window** — `main` **advanced** to f2043ac (+ this log)
+
+## Round 6 — 2026-10-28
+
+- raymarching @ 2e175d5 (TPZ needle drawn 2.5 mm wide; instrument covers get dust and a lamp sheen) — through `raymarching-main-merge` @ a238074 — none — merged in d4f536e
+- platoon @ d0d97ba (wingmen fight with the trained Tiger policy in contact, short halt for its shots) — no textual conflict, but **the test build broke**: its new test's `terrain::Heightfield` literal lacks terrain-detail's `detail` field (E0063, `src/platoon.rs:1346`; the release build was fine) → fixed forward in c250280 (`detail: None`, as every other test literal on main) — merged in 91635d4
+- **Gate for c250280 (+ this log)**: build ok; GPU-free shader validation ok; unit tests 1,931 passed / 90 failed / 61 ignored, failure set identical to round 5 (13 platoon tests pass); smoke **pending GPU window** — `main` **advanced** to c250280 (+ this log)
