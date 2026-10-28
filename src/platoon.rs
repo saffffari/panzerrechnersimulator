@@ -557,6 +557,13 @@ impl Game {
         if !self.platoon.as_ref().unwrap().placed {
             self.platoon_place_in_formation();
         }
+        {
+            let n = self.enemies.len();
+            let p = self.platoon.as_mut().unwrap();
+            if p.enemy_kill_credit.len() < n {
+                p.enemy_kill_credit.resize(n, None);
+            }
+        }
         // Radio traffic finished on the worker: apply at this frame boundary.
         let results = self.platoon.as_mut().unwrap().radio.poll();
         for r in &results {
@@ -654,7 +661,8 @@ impl Game {
                     }
                 }
                 Standing::Hold | Standing::Cover => (0.0, 0.0),
-                Standing::Advance(goal) => navigate(here, heading, *goal, 0.8, ARRIVE_M),
+                // Fight first, then move: the Tiger cannot fire on the move.
+                Standing::Advance(goal) => if in_contact { (0.0, 0.0) } else { navigate(here, heading, *goal, 0.8, ARRIVE_M) },
                 Standing::Flank { side, anchor, heading: fh } => {
                     let fwd = Vec2::new(fh.sin(), fh.cos());
                     let right = Vec2::new(fwd.y, -fwd.x);
@@ -668,7 +676,7 @@ impl Game {
                         (0.0, 0.0)
                     } else if in_contact {
                         let error = wrap(to.x.atan2(to.y) - (heading + PI));
-                        (-0.7, (-error * 1.5).clamp(-0.6, 0.6))
+                        (-0.7, (error * 1.5).clamp(-0.6, 0.6))
                     } else {
                         navigate(here, heading, *goal, 0.8, ARRIVE_M)
                     }
@@ -705,7 +713,10 @@ impl Game {
             // Keep the wingman out of the walls the player's course measured: fall back to the
             // previous position when the new one is not clear for a tank.
             let moved = xz(self.allies[index].tank.pos);
-            if moved.distance_squared(xz(previous)) > 1e-6 && !self.winter_patrol_point_clear(moved) {
+            if moved.distance_squared(xz(previous)) > 1e-6
+                && !self.winter_patrol_point_clear(moved)
+                && self.winter_patrol_point_clear(xz(previous))
+            {
                 self.allies[index].tank.pos.x = previous.x;
                 self.allies[index].tank.pos.z = previous.z;
                 self.allies[index].tank.speed = 0.0;
