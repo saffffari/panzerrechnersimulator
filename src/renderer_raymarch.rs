@@ -280,8 +280,19 @@ pub(super) struct Backend {
     /// `KESSEL_RM_SKIP` bitmask for fault isolation: 1 sparks/tracers, 2 embers, 4 snow/dust,
     /// 8 synthetic effect lights, 16 all parcels, 32 reflections, 64 lens, 128 effect-mesh
     /// parcels, 256 burst parcels, 512 grain parcels, 1024 glass panes, 2048 event sequels,
-    /// 4096 veiling glare.
+    /// 4096 veiling glare, 8192 detail terrain (terrain_lod; neither it nor the coarse mesh draws).
     debug_skip: u32,
+    /// The detail terrain's LOD draw (docs/TERRAIN_DETAIL.md), built once the game attaches a
+    /// detail surface; it replaces the coarse terrain mesh in every pass.
+    terrain: Option<TerrainDraw>,
+    gbuffer_bgl: wgpu::BindGroupLayout,
+    material_bgl: wgpu::BindGroupLayout,
+}
+
+struct TerrainDraw {
+    lod: crate::terrain_lod::TerrainLod,
+    gbuffer_pipe: wgpu::RenderPipeline,
+    depth_pipe: wgpu::RenderPipeline,
 }
 
 fn target(device: &wgpu::Device, label: &str, w: u32, h: u32, format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> Target {
@@ -795,8 +806,58 @@ impl Backend {
             weapon_draws: Vec::new(), tracer_range: (0, 0), panes: Vec::new(), events: Vec::with_capacity(MAX_EVENTS), wind: Vec3::ZERO,
             optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
             debug_skip: std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
+            terrain: None, gbuffer_bgl, material_bgl: material_bgl.clone(),
         }
     }
+
+    /// The detail terrain's programs: the G-buffer and the depth maps draw the same LOD vertices.
+    fn make_terrain(&self, device: &wgpu::Device, queue: &wgpu::Queue, detail: crate::terrain_relief::Shared) -> TerrainDraw {
+        use wgpu::ShaderStages as S;
+        let lod = crate::terrain_lod::TerrainLod::new(device, queue, detail);
+        let prelude = lod.shader_prelude();
+        let module = |label: &str, source: String| device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        let gbuffer_shader = module("rm-terrain-gbuffer", format!("{}\n{}\n{}\n{}", rm_source("rm_common.wgsl"),
+            rm_source("terrain_material.wgsl"), prelude, include_str!("../shaders/rm_terrain_gbuffer.wgsl")));
+        let depth_shader = module("rm-terrain-depth", format!("{}\n{}", prelude, include_str!("../shaders/rm_terrain_depth.wgsl")));
+        let layouts = crate::terrain_lod::TerrainLod::vertex_layouts();
+        let gbuffer_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-terrain-gbuffer-pl"), bind_group_layouts: &[&self.gbuffer_bgl, &self.material_bgl, &lod.bgl], push_constant_ranges: &[],
+        });
+        let targets: Vec<Option<wgpu::ColorTargetState>> = (0..3).map(|_| Some(wgpu::ColorTargetState {
+            format: wgpu::TextureFormat::Rgba16Float, blend: None, write_mask: wgpu::ColorWrites::ALL,
+        })).collect();
+        let gbuffer_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-terrain-gbuffer"), layout: Some(&gbuffer_pl),
+            vertex: wgpu::VertexState { module: &gbuffer_shader, entry_point: Some("vs_terrain"), buffers: &layouts, compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(), bias: Default::default() }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &gbuffer_shader, entry_point: Some("fs_terrain"), targets: &targets, compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
+        let depth_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-terrain-depth-pl"), bind_group_layouts: &[&self.depth_bgl, &self.material_bgl, &lod.bgl],
+            push_constant_ranges: &[wgpu::PushConstantRange { stages: S::VERTEX, range: 0..std::mem::size_of::<Push>() as u32 }],
+        });
+        let depth_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-terrain-depth"), layout: Some(&depth_pl),
+            vertex: wgpu::VertexState { module: &depth_shader, entry_point: Some("vs_terrain_depth"), buffers: &layouts, compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(), bias: wgpu::DepthBiasState { constant: 1, slope_scale: 1.5, clamp: 0.0 } }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &depth_shader, entry_point: Some("fs_terrain_depth"), targets: &[], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
+        TerrainDraw { lod, gbuffer_pipe, depth_pipe }
+    }
+
+    /// Detail terrain statistics for this frame (None without a detail surface).
+    pub(super) fn terrain_stats(&self) -> Option<crate::terrain_lod::LodStats> { self.terrain.as_ref().map(|t| t.lod.stats) }
+
+    pub(super) fn terrain_lod(&self) -> Option<&crate::terrain_lod::TerrainLod> { self.terrain.as_ref().map(|t| &t.lod) }
 
     fn make_binds(&self, device: &wgpu::Device, r: &Renderer) -> Binds {
         let frame = self.frame_buf.as_entire_binding();
@@ -974,6 +1035,20 @@ impl Backend {
         self.collect_parcels(r, rel_vp, eye, vz, ln_range);
         self.collect_lights(r, rel_vp, eye, vz, ln_range);
         let pshadow = self.point_shadow_views(r);
+        if self.terrain.is_none() {
+            if let Some(detail) = r.terrain_detail.clone() { self.terrain = Some(self.make_terrain(device, queue, detail)); }
+        }
+        if let Some(terrain) = &mut self.terrain {
+            let mut views = [Mat4::IDENTITY; crate::terrain_lod::SLOTS];
+            let mut active = [false; crate::terrain_lod::SLOTS];
+            for v in 0..crate::terrain_lod::GBUFFER_SLOT.min(SHADOW_VIEWS) {
+                views[v] = self.shadow_views[v];
+                active[v] = v < 3 || self.shadowed[(v - 3) / 6].is_some();
+            }
+            views[crate::terrain_lod::GBUFFER_SLOT] = r.camera.view_proj();
+            active[crate::terrain_lod::GBUFFER_SLOT] = true;
+            terrain.lod.prepare(device, queue, eye, &views, &active);
+        }
         queue.write_buffer(&self.shadow_views_buf, 0, bytemuck::bytes_of(&ShadowViewsUniform {
             vp: self.shadow_views.map(|m| m.to_cols_array_2d()),
         }));
@@ -1642,8 +1717,11 @@ impl Backend {
             pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
         }
         pass.set_pipeline(mesh_pipe);
+        let detail_terrain = self.terrain.is_some() || self.debug_skip & 8192 != 0;
         for m in &r.meshes {
             if !m.visible || m.glass { continue; }
+            // The detail terrain draws the ground; the coarse mesh is its fallback.
+            if detail_terrain && m.track_recv { continue; }
             if !shadow && r.optic_hide_pass && m.optic_hidden { continue; }
             if !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
             if shadow && (m.emissive_own || encloses(m.world_min, m.world_max)) { continue; }
@@ -1663,6 +1741,21 @@ impl Backend {
                 if range.is_empty() { continue; }
                 if shadow { work.shadow_mesh_draws += 1; } else { work.scene_mesh_draws += 1; }
                 pass.draw_indexed(range, 0, 0..1);
+            }
+        }
+        if let (Some(terrain), false) = (&self.terrain, self.debug_skip & 8192 != 0) {
+            let Some(material) = r.meshes.iter().find(|m| m.track_recv) else { return };
+            if shadow {
+                pass.set_pipeline(&terrain.depth_pipe);
+                let push = Push { model: Mat4::IDENTITY.to_cols_array_2d(), params: [view_index, 0.0, 0.0, 0.0] };
+                pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
+            } else {
+                pass.set_pipeline(&terrain.gbuffer_pipe);
+            }
+            pass.set_bind_group(1, material.tex_bind.as_ref(), &[]);
+            let slot = if shadow { view_index as usize } else { crate::terrain_lod::GBUFFER_SLOT };
+            if terrain.lod.draw(pass, slot) > 0 {
+                if shadow { work.shadow_mesh_draws += 1; } else { work.scene_mesh_draws += 1; }
             }
         }
     }

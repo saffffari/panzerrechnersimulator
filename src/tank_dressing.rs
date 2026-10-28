@@ -391,7 +391,7 @@ mod tests {
             heights: vec![0.0; 4],
             min_h: 0.0,
             max_h: 0.0,
-            openings: Default::default(),
+            openings: Default::default(), detail: None,
         }
     }
 

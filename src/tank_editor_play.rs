@@ -30,7 +30,7 @@ pub(super) fn flat_floor() -> (CpuMesh, Heightfield) {
         heights: vec![0.0; 33 * 33],
         min_h: 0.0,
         max_h: 0.0,
-        openings: Default::default(),
+        openings: Default::default(), detail: None,
     };
     let mesh = crate::prims::box_mesh(
         Vec3::new(-FLOOR_HALF_M, -0.25, -FLOOR_HALF_M),

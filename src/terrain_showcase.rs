@@ -1,0 +1,198 @@
+//! `terrain-showcase PREFIX`: the four terrain viewpoints of docs/TERRAIN_DETAIL.md, day and
+//! night, on the Canyon v2 workshop: near ground at the Tiger, a crater field the Tiger's own HE
+//! digs, a ridge 1.8 km away, and the ruts of a twelve-second drive. Run once as is and once with
+//! `KESSEL_TERRAIN_DETAIL=off` (the coarse 1025 grid) for before/after. The receipt records the
+//! terrain LOD statistics, the CPU cost of a ground query, and the GPU surface probed against the
+//! physics surface at lattice nodes around the Tiger, the craters and the ruts. Observer cameras
+//! and staged fire (banished enemies, held enemy fire, scripted gun lays); no image grading.
+use crate::{
+    act_manifest, celestial_sky, ephemeris,
+    game::{Game, Station, TankInput},
+    graphics, world,
+};
+use glam::{Vec2, Vec3};
+use std::fs;
+
+const TIGER: Vec2 = Vec2::new(-418.0, -408.0);
+const TIGER_HEADING: f32 = 1.38;
+/// The crater field: open snow beside the course just south of its start (the course keeps its
+/// central 24 m clear of dressing), the Tiger facing down the course.
+const FIELD_TIGER: Vec2 = Vec2::new(-791.0, 760.0);
+const FIELD_SIDE_M: f32 = 9.0;
+/// The ridge: 291 m above the course, 1.8 km away on azimuth 65 deg (found on the cooked heights).
+const RIDGE_AZIMUTH_DEG: f32 = 65.0;
+const RIDGE_DISTANCE_M: f32 = 1800.0;
+const DAY: &str = "1942-12-21T10:40:00Z";
+const NIGHT: &str = "1942-12-21T19:30:00Z";
+
+struct Rig<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    prefix: String,
+    cw: u32,
+    ch: u32,
+    shots: Vec<serde_json::Value>,
+}
+
+impl Rig<'_> {
+    fn clock(&self, r: &mut crate::renderer::Renderer, utc: &str) -> anyhow::Result<()> {
+        let instant = ephemeris::UtcInstant::parse_iso(utc)?;
+        r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
+        Ok(())
+    }
+    fn still(&mut self, g: &mut Game, r: &mut crate::renderer::Renderer, name: &str, eye: Vec3, target: Vec3, fov_deg: f32, note: &str) -> anyhow::Result<()> {
+        for (utc, when) in [(DAY, "day"), (NIGHT, "night")] {
+            eprintln!("[terrain-showcase] {name} {when}");
+            self.clock(r, utc)?;
+            g.update(&TankInput::default(), 1.0 / 60.0, r);
+            r.camera.pos = eye;
+            r.camera.set_forward(target - eye);
+            r.camera.fov_y = fov_deg.to_radians();
+            r.optic_mask = 0.0;
+            r.reticle = false;
+            r.interior_light = 0.0;
+            r.interior_haze = 0.0;
+            r.weather_shelter = 0.0;
+            r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+            r.reset_history();
+            let settled = crate::converge_headless_screenshot(r, self.device, self.queue, 20)?;
+            let path = format!("{}_{name}_{when}.png", self.prefix);
+            r.render_to_png(self.device, self.queue, &path, self.cw, self.ch)?;
+            self.shots.push(serde_json::json!({
+                "name": name, "when": when, "path": path, "note": note, "eye": eye.to_array(), "target": target.to_array(),
+                "clock_utc": utc, "exposure": settled.measured_exposure,
+                "terrain_lod": r.terrain_lod_stats().map(|s| format!("{s:?}")),
+            }));
+        }
+        Ok(())
+    }
+}
+
+fn step(g: &mut Game, r: &mut crate::renderer::Renderer, frames: u32, input: &TankInput) {
+    for _ in 0..frames { g.update(input, 1.0 / 60.0, r); }
+}
+
+fn ground(g: &Game, p: Vec2, above: f32) -> Vec3 {
+    Vec3::new(p.x, g.hf.height_at(p.x, p.y) + above, p.y)
+}
+
+pub fn run(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(graphics::shader_backend_enabled(), "terrain-showcase requires KESSEL_RENDERER=raymarch");
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_ground_day.png")).exists(),
+        "preserving existing captures; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new() };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, TIGER_HEADING);
+    r.set_weather_override(Some(0.0));
+    let idle = TankInput::default();
+    step(&mut g, &mut r, 60, &idle);
+    let detail = g.hf.detail.is_some();
+
+    // The CPU cost of a ground query, cold and warm, over a 20 m square at the Tiger.
+    let probe_points: Vec<Vec2> = (0..4096).map(|k| TIGER + Vec2::new((k % 64) as f32 * 0.311 - 10.0, (k / 64) as f32 * 0.297 - 10.0)).collect();
+    let timed = |g: &Game| {
+        let t = std::time::Instant::now();
+        let sum: f32 = probe_points.iter().map(|p| g.hf.height_at(p.x, p.y)).sum();
+        (t.elapsed().as_secs_f64() * 1e9 / probe_points.len() as f64, sum)
+    };
+    let (cold_ns, _) = timed(&g);
+    let (warm_ns, _) = timed(&g);
+
+    let tiger = g.player.pos;
+    let forward = g.player.forward();
+    let side = Vec3::new(-forward.z, 0.0, forward.x);
+
+    // 1. Near ground at the Tiger: a low eye at the track, the snow surface running to the hull.
+    let eye = ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(side.x, side.z) * 7.5 + Vec2::new(forward.x, forward.z) * 6.0, 1.25);
+    let look = ground(&g, Vec2::new(tiger.x, tiger.z) + Vec2::new(forward.x, forward.z) * 1.5, 0.4);
+    rig.still(&mut g, &mut r, "ground", eye, look, 58.0, "near ground at the Tiger: snow waves, wind crust, drift, the track's contact")?;
+
+    // 2. A ridge 1.8 km away across the valley.
+    let a = RIDGE_AZIMUTH_DEG.to_radians();
+    let dir = Vec2::new(a.sin(), -a.cos());
+    let eye = ground(&g, Vec2::new(tiger.x, tiger.z) - dir * 6.0, 28.0);
+    let far = Vec2::new(eye.x, eye.z) + dir * RIDGE_DISTANCE_M;
+    let target = Vec3::new(far.x, g.hf.height_at(far.x, far.y) - 40.0, far.y);
+    rig.still(&mut g, &mut r, "ridge2km", eye, target, 30.0, "the canyon wall 1.8 km away: coarse LOD levels, rock on the scoured faces, drifts in the gullies")?;
+
+    // 3. A crater field: five 88 mm HE rounds into the snow 35-55 m down the course.
+    g.debug_place_tiger(FIELD_TIGER, 0.0);
+    step(&mut g, &mut r, 30, &idle);
+    let (tiger, forward) = (g.player.pos, g.player.forward());
+    let side = Vec3::new(-forward.z, 0.0, forward.x);
+    let field = Vec2::new(tiger.x, tiger.z) + Vec2::new(forward.x, forward.z) * 45.0 + Vec2::new(side.x, side.z) * FIELD_SIDE_M;
+    g.debug_set_he_loaded(true);
+    for k in 0..5 {
+        let offset = Vec2::new(forward.x, forward.z) * ((k as f32 - 2.0) * 4.5) + Vec2::new(side.x, side.z) * ((k % 2) as f32 * 7.0 - 3.5);
+        let aim = ground(&g, field + offset, 0.2);
+        g.debug_lay_gun_at(aim);
+        step(&mut g, &mut r, 30, &idle);
+        g.debug_fire_laid(&mut r);
+        step(&mut g, &mut r, 30, &idle);
+        g.debug_reload();
+    }
+    step(&mut g, &mut r, 60 * 25, &idle);
+    let craters = g.hf.detail.as_ref().map_or(0, |d| d.craters().len());
+    let center = ground(&g, field, 0.0);
+    let eye = center + Vec3::new(side.x, 0.0, side.z) * 13.0 - forward * 8.0 + Vec3::Y * 6.0;
+    rig.still(&mut g, &mut r, "craters", eye, center, 55.0, "five 88 mm HE craters in settled snow after 25 s: bowls, thrown rims, frozen earth")?;
+
+    // 4. Ruts: back at the first spot, twelve seconds of driving on, then look back along them.
+    g.debug_place_tiger(TIGER, TIGER_HEADING);
+    step(&mut g, &mut r, 30, &idle);
+    let tiger = g.player.pos;
+    g.station = Station::Driver;
+    let start = g.player.pos;
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    step(&mut g, &mut r, 60 * 12, &drive);
+    step(&mut g, &mut r, 120, &idle);
+    let end = g.player.pos;
+    let mid = (start + end) * 0.5;
+    let back = (start - end).normalize_or_zero();
+    let eye = ground(&g, Vec2::new(end.x, end.z) + Vec2::new(back.x, back.z) * 4.0 + Vec2::new(-back.z, back.x) * 4.5, 3.2);
+    let look = ground(&g, Vec2::new(mid.x, mid.z), 0.0);
+    rig.still(&mut g, &mut r, "ruts", eye, look, 55.0, "the Tiger's ruts after a 12 s drive: compacted snow, shoved berms, tread-band width")?;
+
+    // The GPU surface against the physics surface at lattice nodes (finest level, unmorphed).
+    let mut agreement = serde_json::Value::Null;
+    if let Some(d) = g.hf.detail.clone() {
+        let lattice = d.lattice;
+        let snap = |p: Vec2| ((p + d.half) / lattice).round() * lattice - d.half;
+        let mut nodes: Vec<Vec2> = Vec::new();
+        for c in [Vec2::new(tiger.x, tiger.z), field, Vec2::new(mid.x, mid.z), Vec2::new(end.x, end.z)] {
+            for k in 0..1024 {
+                nodes.push(snap(c + Vec2::new((k % 32) as f32 - 16.0, (k / 32) as f32 - 16.0) * lattice * 1.0));
+            }
+        }
+        eprintln!("[terrain-showcase] probing {} lattice nodes", nodes.len());
+        if let Some(gpu) = r.probe_terrain(&device, &queue, &nodes) {
+            let worst = nodes.iter().zip(&gpu).map(|(p, h)| (d.height_at(p.x, p.y) - h).abs()).fold(0.0f32, f32::max);
+            agreement = serde_json::json!({"lattice_nodes": nodes.len(), "max_abs_difference_m": worst,
+                "sites": ["tiger", "crater field", "rut midpoint", "drive end"]});
+            println!("[terrain-showcase] GPU vs physics surface at {} lattice nodes: max |dh| = {worst:.6} m", nodes.len());
+        }
+    }
+
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.terrain-showcase.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "detail_surface": detail,
+        "terrain_lod": r.terrain_lod_stats().map(|s| format!("{s:?}")),
+        "ground_query_ns": {"cold": cold_ns, "warm": warm_ns, "points": probe_points.len()},
+        "craters": craters, "drive_m": start.distance(end),
+        "gpu_physics_agreement": agreement, "shots": rig.shots,
+        "disclosure": "Staged fixtures (banished enemies, held fire, the Tiger placed, scripted gun lays and a straight drive). Clock overridden per still, clear weather. Observer cameras, not a player run. No image grading."
+    }))?)?;
+    println!("[terrain-showcase] {} stills -> {prefix}_*.png (detail surface: {detail})", rig.shots.len());
+    Ok(())
+}

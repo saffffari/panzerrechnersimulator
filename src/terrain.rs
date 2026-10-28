@@ -99,6 +99,10 @@ pub struct Heightfield {
     /// Excavations cut into the grid (open cellars, `terrain_opening`): inside one the heightfield
     /// has no surface of its own and reports its host's cellar floor.
     pub openings: crate::terrain_opening::TerrainOpenings,
+    /// The detail surface below this grid (`terrain_relief`, docs/TERRAIN_DETAIL.md): when
+    /// present it IS the ground every query reads, and `heights` holds its samples at this grid's
+    /// nodes for the systems that draw or cut the coarse mesh.
+    pub detail: Option<crate::terrain_relief::Shared>,
 }
 
 impl Heightfield {
@@ -128,6 +132,9 @@ impl Heightfield {
     /// (before 2026-09-29 this was bilinear, which departs from the drawn triangles by a quarter
     /// of a cell's twist: up to 0.2 m on the urban-intro streets).
     pub fn grade_at(&self, x: f32, z: f32) -> f32 {
+        if let Some(detail) = &self.detail {
+            return detail.height_at(x, z);
+        }
         let half = (self.res as f32 - 1.0) * 0.5;
         let gx = (x / self.spacing) + half;
         let gz = (z / self.spacing) + half;
@@ -178,8 +185,29 @@ impl Heightfield {
         Vec3::new(xz.x, self.height_at(xz.x, xz.y), xz.y)
     }
 
+    /// Make `detail` the ground (see [`Self::detail`]): resample this grid's nodes from it so the
+    /// coarse mesh and cellar cuts stand on the same surface at every node.
+    pub fn attach_detail(&mut self, detail: crate::terrain_relief::Shared) {
+        let half = (self.res as f32 - 1.0) * 0.5 * self.spacing;
+        let (mut min_h, mut max_h) = (f32::INFINITY, f32::NEG_INFINITY);
+        for j in 0..self.res {
+            for i in 0..self.res {
+                let h = detail.height_at(i as f32 * self.spacing - half, j as f32 * self.spacing - half);
+                self.heights[j * self.res + i] = h;
+                min_h = min_h.min(h);
+                max_h = max_h.max(h);
+            }
+        }
+        self.min_h = min_h;
+        self.max_h = max_h;
+        self.detail = Some(detail);
+    }
+
     /// Cut openings into the terrain (replaces any earlier set).
     pub fn set_openings(&mut self, openings: Vec<crate::terrain_opening::TerrainOpening>) {
+        if let Some(detail) = &self.detail {
+            detail.set_openings(openings.iter().map(|o| [o.min.x, o.min.y, o.max.x, o.max.y]).collect());
+        }
         self.openings = crate::terrain_opening::TerrainOpenings::new(openings);
     }
 
@@ -304,7 +332,7 @@ fn load_homeland(act_id: u8, half_extent_m: f32) -> anyhow::Result<(CpuMesh, Hei
         heights: heights.clone(),
         min_h,
         max_h,
-        openings: Default::default(),
+        openings: Default::default(), detail: None,
     };
     let half_world = (res as f32 - 1.0) * 0.5 * spacing;
     let mut vertices = Vec::with_capacity(res * res);
@@ -561,7 +589,7 @@ pub fn load_authored_grid(
         heights: heights.to_vec(),
         min_h,
         max_h,
-        openings: Default::default(),
+        openings: Default::default(), detail: None,
     };
     println!(
         "[panzerrechnersystem] authored terrain: {res}² collision, {render_res}² render ({} triangles{})",
@@ -569,6 +597,56 @@ pub fn load_authored_grid(
         if render_res == res { ", the collision surface" } else { ", DEBUG decimated: not the collision surface" },
     );
     Ok((mesh, heightfield))
+}
+
+/// A grid's own triangle surface (the rule of [`Heightfield::grade_at`] without detail), for
+/// re-seating things authored on a grid that a detail surface has since replaced.
+pub fn grid_grade(heights: &[f32], res: usize, spacing: f32, x: f32, z: f32) -> f32 {
+    let half = (res as f32 - 1.0) * 0.5;
+    let gx = (x / spacing) + half;
+    let gz = (z / spacing) + half;
+    let last = res.saturating_sub(2) as f32;
+    let x0 = gx.floor().clamp(0.0, last) as usize;
+    let z0 = gz.floor().clamp(0.0, last) as usize;
+    let (tx, tz) = ((gx - x0 as f32).clamp(0.0, 1.0), (gz - z0 as f32).clamp(0.0, 1.0));
+    let h = |i: usize, j: usize| heights[j.min(res - 1) * res + i.min(res - 1)];
+    let (h00, h10, h01, h11) = (h(x0, z0), h(x0 + 1, z0), h(x0, z0 + 1), h(x0 + 1, z0 + 1));
+    if tx + tz <= 1.0 {
+        h00 + (h10 - h00) * tx + (h01 - h00) * tz
+    } else {
+        h11 + (h01 - h11) * (1.0 - tx) + (h10 - h11) * (1.0 - tz)
+    }
+}
+
+/// Attach the manifest's `terrain.detail` surface (tools/worldgen/canyon_terrain_detail.py) to an
+/// authored heightfield and redraw the coarse mesh from it. `KESSEL_TERRAIN_DETAIL=off` keeps
+/// the 1025 grid (the fallback, and the "before" of docs/TERRAIN_DETAIL.md). Returns whether the
+/// detail surface is now the ground. The authored nodes must be read BEFORE this for re-seating.
+pub fn attach_manifest_detail(
+    hf: &mut Heightfield,
+    mesh: &mut CpuMesh,
+    manifest: &crate::act_manifest::ActManifest,
+    wind: glam::Vec2,
+) -> anyhow::Result<bool> {
+    let block = &manifest.value()["terrain"]["detail"];
+    if block.is_null() || std::env::var("KESSEL_TERRAIN_DETAIL").as_deref() == Ok("off") {
+        return Ok(false);
+    }
+    let dir = manifest.path().parent().unwrap_or_else(|| std::path::Path::new("."));
+    let started = std::time::Instant::now();
+    let detail = crate::terrain_relief::Detail::load(dir, block, wind)?;
+    anyhow::ensure!(
+        (detail.half - (hf.res as f32 - 1.0) * 0.5 * hf.spacing).abs() < 0.01,
+        "terrain detail covers {} m, the authored grid {} m", detail.half * 2.0, (hf.res as f32 - 1.0) * hf.spacing
+    );
+    println!(
+        "[panzerrechnersystem] terrain detail: {}² at {:.4} m, lattice {:.4} m, from {} ({:.0} ms)",
+        detail.res, detail.spacing, detail.lattice, detail.source, started.elapsed().as_secs_f32() * 1000.0
+    );
+    hf.attach_detail(std::sync::Arc::new(detail));
+    let texture = mesh.texture.take();
+    *mesh = mesh_from_grid(&hf.heights, hf.res, hf.spacing, authored_render_res(hf.res), texture, 1.0);
+    Ok(true)
 }
 
 /// Load an external 16-bit heightmap (`assets/terrain/actN/heightmap.png` + `.json` sidecar) —
@@ -630,7 +708,7 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
         heights,
         min_h,
         max_h,
-        openings: Default::default(),
+        openings: Default::default(), detail: None,
     };
     println!("[panzerrechnersystem] terrain: act {act_id} heightmap {res}² collision, {:.0} m/side, relief {:.0} m, render {}²",
              meta.meters_per_side, max_h - min_h, render_res.min(res));
@@ -710,7 +788,7 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
         heights: heights.clone(),
         min_h,
         max_h,
-        openings: Default::default(),
+        openings: Default::default(), detail: None,
     };
 
     // Build the mesh (world space, origin-centred).
@@ -828,7 +906,7 @@ mod tests {
             }
         }
         let mesh = super::mesh_from_grid(&heights, res, spacing, res, None, 1.0);
-        let hf = super::Heightfield { res, spacing, heights: heights.clone(), min_h: 0.0, max_h: 1.5, openings: Default::default() };
+        let hf = super::Heightfield { res, spacing, heights: heights.clone(), min_h: 0.0, max_h: 1.5, openings: Default::default(), detail: None };
         let mut worst = 0.0_f32;
         for tri in mesh.indices.chunks(3) {
             let p = |k: usize| glam::Vec3::from(mesh.vertices[tri[k] as usize].pos);

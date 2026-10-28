@@ -1223,7 +1223,7 @@ mod tests {
     fn a_vehicle_stops_at_the_edge_of_the_terrain_grid() {
         // 201 samples at 5 m: the grid spans +-500 m.
         let hf = Heightfield { res: 201, spacing: 5.0, heights: vec![0.0; 201 * 201],
-            min_h: 0.0, max_h: 0.0, openings: Default::default() };
+            min_h: 0.0, max_h: 0.0, openings: Default::default(), detail: None };
         let limit = 500.0 - TERRAIN_EDGE_CLEARANCE_M;
         assert_eq!(terrain_edge_step(&hf, Vec2::new(10.0, 0.0), Vec2::new(11.0, 0.5)), None);
         assert_eq!(terrain_edge_step(&hf, Vec2::new(limit - 0.1, 40.0), Vec2::new(limit + 0.3, 40.2)),
@@ -1233,7 +1233,7 @@ mod tests {
         // A fixture staged beyond the grid is not dragged back; a degenerate grid constrains nothing.
         assert_eq!(terrain_edge_step(&hf, Vec2::new(600.0, 0.0), Vec2::new(601.0, 0.0)), None);
         let tiny = Heightfield { res: 2, spacing: 1.0, heights: vec![0.0; 4],
-            min_h: 0.0, max_h: 0.0, openings: Default::default() };
+            min_h: 0.0, max_h: 0.0, openings: Default::default(), detail: None };
         assert_eq!(terrain_edge_step(&tiny, Vec2::ZERO, Vec2::new(50.0, 0.0)), None);
         assert_eq!(terrain_edge_step(&hf, Vec2::ZERO, Vec2::new(f32::NAN, 0.0)), None);
     }

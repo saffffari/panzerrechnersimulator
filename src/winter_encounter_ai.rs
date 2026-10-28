@@ -626,7 +626,7 @@ mod tests {
     }
 
     fn flat() -> crate::terrain::Heightfield {
-        crate::terrain::Heightfield { res: 2, spacing: 8000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default() }
+        crate::terrain::Heightfield { res: 2, spacing: 8000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default(), detail: None }
     }
     fn unknown() -> Observation { Observation { visible: None, radio_fix: None, on_foot: true } }
     fn blind() -> [Observation; SLOTS] { [unknown(); SLOTS] }

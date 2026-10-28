@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn source_body_lands_without_fixed_ring_height_or_perpetual_spin() {
         let hf=Heightfield {res:17,spacing:4.0,heights:vec![0.0;289],min_h:0.0,max_h:0.0,
-            openings:Default::default()};
+            openings:Default::default(),detail:None};
         let mut body=Body::launch(source(1.0),Mat4::IDENTITY,Mat4::from_translation(Vec3::Y*3.0),
             0.8,Vec3::new(1.0,3.5,0.0),Vec3::X).unwrap();
         for _ in 0..1200 {body.advance(1.0/120.0,&hf,Mat4::from_translation(Vec3::Y*-10.0));}
@@ -295,7 +295,7 @@ mod tests {
         let initial_center=body.center;
         let speed=body.velocity.length();let spin=body.angular_speed();
         let hf=Heightfield {res:17,spacing:4.0,heights:vec![0.0;289],min_h:0.0,max_h:0.0,
-            openings:Default::default()};
+            openings:Default::default(),detail:None};
         let mut rise=0.0_f32;
         for _ in 0..1440 {
             body.advance(1.0/120.0,&hf,Mat4::IDENTITY);
@@ -335,7 +335,7 @@ mod tests {
                 let z=(z as f32-128.0)*spacing;
                 shift.y+0.018*(x-shift.x)-0.011*(z-shift.z)
             })).collect();
-            Heightfield {res,spacing,heights,min_h:-30.0,max_h:30.0,openings:Default::default()}
+            Heightfield {res,spacing,heights,min_h:-30.0,max_h:30.0,openings:Default::default(),detail:None}
         };
         let ground=[terrain(Vec3::ZERO),terrain(translation)];
         let mut bodies=hulls.map(make);

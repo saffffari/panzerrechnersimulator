@@ -1658,7 +1658,7 @@ pub fn manifest_heightfield(manifest: &crate::act_manifest::ActManifest) -> Heig
         heights: terrain.heights.clone(),
         min_h: 0.0,
         max_h: 0.0,
-        openings: Default::default(),
+        openings: Default::default(), detail: None,
     }
 }
 
@@ -1811,7 +1811,7 @@ mod tests {
             heights: vec![0.0; 4],
             min_h: 0.0,
             max_h: 0.0,
-            openings: Default::default(),
+            openings: Default::default(), detail: None,
         }
     }
 
