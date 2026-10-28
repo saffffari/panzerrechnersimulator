@@ -504,6 +504,55 @@ impl Game {
         out
     }
 
+    /// The player Tiger's road-wheel station supports at `pose` (`suspension::station_support`
+    /// over each track line's support samples, the end stations through the measured track
+    /// run-up `tank_support::track_bottom`) and its belly contacts.
+    fn player_ride_ground(
+        &self,
+        pose: TankPose,
+        solids: &[TankSolid],
+        rubble: &crate::building_set::LocalRubble<'_>,
+        previous: Option<&TankRest>,
+    ) -> crate::suspension::Ground {
+        let samples = self.tank_samples(pose, solids, rubble, previous);
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        let mut ground = crate::suspension::Ground::default();
+        for sample in &samples {
+            match sample.line {
+                Line::LeftTrack => left.push((sample.s, sample.height)),
+                Line::RightTrack => right.push((sample.s, sample.height)),
+                Line::Belly => {
+                    if let Some(bottom) = tank_support::belly_bottom(sample.s) {
+                        ground.belly.push((sample.s, bottom, sample.height));
+                    }
+                }
+            }
+        }
+        let Some(layout) = self.player.ride_layout.as_deref() else { return ground };
+        let r = layout.spec.wheel_radius();
+        let rise = |s: f32| tank_support::track_bottom(s);
+        ground.wheel = layout
+            .stations
+            .iter()
+            .enumerate()
+            .map(|(i, st)| {
+                let line = if st.x > 0.0 { &left } else { &right };
+                crate::suspension::station_support(line, st.s, r, layout.end_of(i), &rise)
+            })
+            .collect();
+        ground
+    }
+
+    /// The rigid rest under the player hull at its last settle (height, pitch, roll): the pose the
+    /// hull snapped to before the sprung model, logged beside the sprung pose by `vehdyn-trace`.
+    pub fn tank_ground_carrier(&self) -> &str {
+        self.tank_ground.carried_by
+    }
+
+    pub fn player_rigid_rest(&self) -> Option<(f32, f32, f32)> {
+        self.tank_rest.as_ref().map(|rest| (rest.settled.y0, rest.settled.pitch(), rest.settled.slope_x.atan()))
+    }
+
     fn settle_tank_pose(
         &self,
         pose: TankPose,
@@ -575,39 +624,53 @@ impl Game {
                 }
             }
         };
+        // The sprung hull (`suspension`, 2026-10-28) on the road-wheel stations of the measured
+        // track run, against the supports under the pose the refusal rules allowed.
+        if self.player.ride_layout.as_ref().is_none_or(|l| !std::ptr::eq(l.spec, &crate::vehicle_spec::TIGER_I)) {
+            self.player.ride_layout = Some(Box::new(crate::suspension::Layout::tiger_measured()));
+            self.player.ride.active = false;
+        }
+        let mut ground = if dt > 0.0 {
+            Some(self.player_ride_ground(pose, &solids, &rubble, reference.as_ref()))
+        } else {
+            None
+        };
         drop(rubble);
         self.player.pos.x = pose.pos.x;
         self.player.pos.z = pose.pos.z;
         self.player.heading = pose.heading;
 
-        // Height: the tracks lift the hull onto what they climb, no faster than driving up a
-        // steep face lets them (rubble that lands around a standing tank does not lift it: the
-        // hull stays embedded in it); where the supports drop away faster than the tank can drive
-        // down a 60° slope, it falls under gravity. A hull just placed (no continuous last
-        // settle: a spawn, a fixture) is set on its rest.
-        let placed = reference.is_none();
-        let mut rest_y = settled.plane.y0;
-        let max_rise = (self.player.speed.abs() * 2.0 + 0.1) * dt + 0.002;
-        let embedded = !placed && rest_y > before.pos.y + max_rise;
-        if embedded {
-            rest_y = before.pos.y + max_rise;
-        }
-        let follow = (self.player.speed.abs() * 1.8 + 0.5) * dt + 0.02;
-        let falling = !placed && rest_y < before.pos.y - follow;
-        if falling {
-            self.tank_fall_vy -= 9.81 * dt;
-            self.player.pos.y = (before.pos.y + self.tank_fall_vy * dt).max(rest_y);
-            if self.player.pos.y <= rest_y + 1.0e-4 {
-                self.tank_fall_vy = 0.0;
+        // Height and tilt: the rigid rest (`settled`) is the grade the drivetrain climbs and the
+        // pose a placed hull (a spawn, a respawn, a fixture: no continuous last settle) starts
+        // from; a continuing hull rides its springs onto what the stations meet. A station's
+        // support rises no faster than driving up a steep face lets the tracks climb (rubble that
+        // lands around a standing tank does not lift it: `Ride::rise_limit`); where the supports
+        // drop away past the wheels' droop travel the hull falls under gravity on its own.
+        let xz = Vec2::new(self.player.pos.x, self.player.pos.z);
+        self.player.grade_pitch = settled.plane.pitch();
+        let placed = reference.is_none() || !self.player.ride.continues(xz);
+        let mut embedded = false;
+        if placed {
+            self.player.ride.reset(settled.plane.y0, settled.plane.pitch(), settled.plane.slope_x.atan(), xz,
+                self.player.speed, self.player.heading);
+        } else if let Some(ground) = ground.as_mut() {
+            let max_rise = (self.player.speed.abs() * 2.0 + 0.1) * dt + 0.002;
+            self.player.ride.rise_limit(ground, max_rise);
+            embedded = self.player.ride.limited;
+            let layout = self.player.ride_layout.as_deref().expect("layout");
+            self.player.ride.step(layout, ground, self.player.speed, self.player.heading, dt);
+            if !self.player.ride.active {
+                self.player.ride.reset(settled.plane.y0, settled.plane.pitch(), settled.plane.slope_x.atan(), xz,
+                    self.player.speed, self.player.heading);
             }
-        } else {
-            self.player.pos.y = rest_y;
-            self.tank_fall_vy = 0.0;
         }
-        // The hull turns onto its new supports at most as fast as it tips over an edge.
-        let max_turn = if placed { f32::INFINITY } else { 1.5 * dt + 1.0e-4 };
-        self.player.pitch = before.pitch + (settled.plane.pitch() - before.pitch).clamp(-max_turn, max_turn);
-        self.player.roll = before.roll + (settled.plane.slope_x.atan() - before.roll).clamp(-max_turn, max_turn);
+        self.player.ride.xz = xz;
+        self.player.pos.y = self.player.ride.y;
+        self.player.pitch = self.player.ride.pitch;
+        self.player.roll = self.player.ride.roll;
+        let airborne = !placed && self.player.ride.load.iter().all(|&f| f <= 0.0);
+        let falling = airborne && self.player.ride.vy < -0.5;
+        self.tank_fall_vy = if falling { self.player.ride.vy } else { 0.0 };
         self.tank_rest = Some(TankRest {
             pose: self.player_pose(),
             plane: RestPlane {

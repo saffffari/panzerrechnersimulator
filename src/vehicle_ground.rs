@@ -60,10 +60,99 @@ pub(crate) fn solve(center: Vec2, heading: f32, half_extents: Vec2,
     Some(Pose {height,pitch,roll})
 }
 
-pub(crate) fn settle(tank: &mut crate::tank::Tank, height_at: impl Fn(f32,f32)->f32) {
+/// The rigid fit, taken as the pose: spawns, placements, and the player's pass before its own
+/// support solve.
+pub(crate) fn settle_rigid(tank: &mut crate::tank::Tank, height_at: impl Fn(f32,f32)->f32) {
     if let Some(pose) = solve(Vec2::new(tank.pos.x,tank.pos.z),tank.heading,
         tank.parts.hull_half_extents,height_at) {
         tank.pos.y=pose.height;tank.pitch=pose.pitch;tank.roll=pose.roll;
+        tank.grade_pitch=pose.pitch;
+    }
+}
+
+/// Re-settle after a motion constraint or a contact push moved the hull within the frame. A hull
+/// whose suspension is running keeps its integrated pose (the next frame's step meets the new
+/// supports); it is re-seated on the rigid rest only where that stands more than its whole
+/// jounce travel and 0.1 m above the sprung hull: a support the ride's own samples did not see
+/// (the Act-II bridge deck this call is given and the drive's heightfield is not). Otherwise, the
+/// rigid fit as before.
+pub(crate) fn settle(tank: &mut crate::tank::Tank, height_at: impl Fn(f32,f32)->f32) {
+    let xz=Vec2::new(tank.pos.x,tank.pos.z);
+    if tank.ride.continues(xz) {
+        if let Some(pose)=solve(xz,tank.heading,tank.parts.hull_half_extents,&height_at) {
+            tank.grade_pitch=pose.pitch;
+            let jounce=tank.ride_layout.as_ref().map_or(0.15,|l|l.spec.jounce_m);
+            if pose.height>tank.ride.y+jounce+0.1 {
+                tank.ride.reset(pose.height,pose.pitch,pose.roll,xz,tank.speed,tank.heading);
+            }
+        }
+        tank.pos.y=tank.ride.y;tank.pitch=tank.ride.pitch;tank.roll=tank.ride.roll;
+        return;
+    }
+    settle_rigid(tank,height_at);
+}
+
+/// One frame of an AI vehicle's sprung hull (`suspension`) on the heightfield: the rigid fit gives
+/// the grade (and the start pose after a placement); each road-wheel station's support is the
+/// wheel envelope over samples 0.1 m apart within its wheel radius on its track line, the end
+/// stations also over the track run-up to the hull's ends (0.2 m apart, `AI_APPROACH_TAN`).
+pub(crate) fn settle_ride(tank: &mut crate::tank::Tank, dt: f32, height_at: impl Fn(f32,f32)->f32) {
+    use crate::suspension::{station_support, End, Ground, Layout, AI_APPROACH_TAN};
+    let xz=Vec2::new(tank.pos.x,tank.pos.z);
+    let Some(rigid)=solve(xz,tank.heading,tank.parts.hull_half_extents,&height_at) else { return };
+    tank.grade_pitch=rigid.pitch;
+    let spec=crate::vehicle_spec::for_tank(tank.kind,&tank.parts);
+    if tank.ride_layout.as_ref().is_none_or(|l|!std::ptr::eq(l.spec,spec)) {
+        tank.ride_layout=Some(Box::new(Layout::for_footprint(spec,tank.parts.hull_half_extents)));
+        tank.ride.active=false;
+    }
+    if !tank.ride.continues(xz) {
+        tank.ride.reset(rigid.height,rigid.pitch,rigid.roll,xz,tank.speed,tank.heading);
+        tank.pos.y=rigid.height;tank.pitch=rigid.pitch;tank.roll=rigid.roll;
+        return;
+    }
+    let layout=tank.ride_layout.as_deref().expect("layout");
+    let yaw=Mat3::from_rotation_y(tank.heading);
+    let cos_p=rigid.pitch.cos();
+    let at=|x:f32,s:f32| { let w=yaw*Vec3::new(x,0.0,s*cos_p); height_at(xz.x+w.x,xz.y+w.z) };
+    let r=spec.wheel_radius();
+    let (rear,front)=layout.run;
+    let rise=|s:f32| -> Option<f32> {
+        if s>front && s<=layout.ends.1+1e-4 { Some((s-front)*AI_APPROACH_TAN) }
+        else if s<rear && s>=layout.ends.0-1e-4 { Some((rear-s)*AI_APPROACH_TAN) }
+        else { None }
+    };
+    let mut ground=Ground { wheel:Vec::with_capacity(layout.stations.len()), belly:Vec::with_capacity(layout.belly.len()) };
+    let mut points:Vec<(f32,f32)>=Vec::with_capacity(32);
+    for (i,st) in layout.stations.iter().enumerate() {
+        points.clear();
+        let n=(r/0.1).ceil() as i32;
+        for k in -n..=n {
+            let s=st.s+(k as f32*0.1).clamp(-r,r);
+            points.push((s,at(st.x,s)));
+        }
+        let end=layout.end_of(i);
+        let reach=match end { End::Front=>layout.ends.1-st.s, End::Rear=>st.s-layout.ends.0, End::Middle=>0.0 };
+        let dir=if end==End::Front {1.0} else {-1.0};
+        let mut d=0.2;
+        while d<=reach+1e-4 {
+            let s=st.s+dir*d;
+            points.push((s,at(st.x,s)));
+            d+=0.2;
+        }
+        ground.wheel.push(station_support(&points,st.s,r,end,&rise));
+    }
+    for &(s,clearance) in &layout.belly {
+        ground.belly.push((s,clearance,at(0.0,s)));
+    }
+    let max_rise=(tank.speed.abs()*2.0+0.1)*dt+0.002;
+    tank.ride.rise_limit(&mut ground,max_rise);
+    tank.ride.step(layout,&ground,tank.speed,tank.heading,dt);
+    tank.ride.xz=xz;
+    if tank.ride.active {
+        tank.pos.y=tank.ride.y;tank.pitch=tank.ride.pitch;tank.roll=tank.ride.roll;
+    } else {
+        settle_rigid(tank,height_at);
     }
 }
 

@@ -45,6 +45,9 @@ mod simulation_uploads;
 mod session_log;
 mod sim_phase;
 mod canyon_autopilot;
+mod suspension;
+mod vehdyn_trace;
+mod vehicle_spec;
 mod scene_visibility;
 mod scatter_field;
 mod scene_visibility_gpu;
@@ -16290,6 +16293,14 @@ fn main() -> anyhow::Result<()> {
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
             args.get(4).and_then(|s| s.parse().ok()).unwrap_or(7200.0),
             args.get(5).map(String::as_str),
+        );
+    }
+    if args.len() >= 2 && args[1] == "vehdyn-trace" {
+        return vehdyn_trace::run(
+            &capture_arg(&args, 2, "vehdyn_trace"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(450.0),
+            args.get(5).and_then(|s| s.parse().ok()).unwrap_or(60.0),
         );
     }
     if args.len() >= 2 && args[1] == "canyon-finish-check" {

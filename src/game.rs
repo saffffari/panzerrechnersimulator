@@ -9487,6 +9487,8 @@ pub struct Game {
     // (decays each frame), its deterministic oscillator phase, the throttle on grind FX/audio, and
     // whether last frame was already in contact (gates the one-shot contact crunch + telemetry).
     crush_rumble: f32,
+    /// The crewman's head on his neck over the hull's accelerations (`suspension::HeadSway`).
+    head_sway: crate::suspension::HeadSway,
     crush_phase: f32,
     crush_fx_t: f32,
     crush_was: bool,
@@ -13558,6 +13560,7 @@ impl Game {
             chunks,
             demo_struct,
             crush_rumble: 0.0,
+            head_sway: crate::suspension::HeadSway::default(),
             crush_phase: 0.0,
             crush_fx_t: 0.0,
             crush_was: false,
@@ -16096,7 +16099,7 @@ impl Game {
                 transmission_ok: self.module_ok(ModuleKind::Transmission),
                 left_track: track_traction.left, right_track: track_traction.right,
                 running_gear_factor,
-                parking_brake: !(coop.is_some() || crew_drives || (acting.is_some() && !afoot_inside)),
+                parking_brake: !(coop.is_some() || crew_drives || (acting.is_some() && !afoot_inside)), driver_brake: None,
             };
             self.player.update_player_powertrain(&mut self.player_powertrain, powertrain_controls,
                 traverse, elevate, dt, &self.hf);
@@ -16604,8 +16607,8 @@ impl Game {
                     drive:0.0,steer:0.0,engine_running:self.engine_on && self.module_ok(ModuleKind::Engine),
                     transmission_ok:self.module_ok(ModuleKind::Transmission),
                     left_track:track_traction.left,right_track:track_traction.right,
-                    running_gear_factor:self.exterior.speed_factor(),parking_brake:true,
-                };
+                    running_gear_factor:self.exterior.speed_factor(),parking_brake:true, driver_brake: None,
+            };
                 self.player.update_player_powertrain(&mut self.player_powertrain,powertrain_controls,
                     0.0,0.0,dt,&self.hf);
                 self.drive_cmd = 0.0;
@@ -17592,6 +17595,24 @@ impl Game {
             r.camera.pos.y += (self.crush_phase * 61.0).sin() * 0.035 * k;
             r.camera.pitch += (self.crush_phase * 47.0).sin() * 0.0045 * k;
             self.crush_rumble = (self.crush_rumble - dt * 2.2).max(0.0);
+        }
+        // The eye rides the sprung hull (the camera already follows its pose) and the crewman's
+        // head lags the seat's acceleration on his neck (`suspension::HeadSway`): the slow squat
+        // on starting off, the lurch forward when the hull stops, the lean in a turn. The gunner's
+        // eye is at the sight's browpad and stays on it.
+        if matches!(self.mode, Mode::Tank) && !matches!(self.station, Station::Gunner) {
+            let hull = self.player.hull_model();
+            let eye = hull.inverse().transform_point3(r.camera.pos);
+            let ride = &self.player.ride;
+            let seat = Vec3::new(
+                ride.lateral_accel - eye.y * ride.roll_accel,
+                ride.heave_accel + eye.z * ride.pitch_accel,
+                ride.along_accel - eye.y * ride.pitch_accel,
+            );
+            let offset = self.head_sway.step(seat, dt);
+            r.camera.pos += hull.transform_vector3(offset);
+        } else {
+            self.head_sway = crate::suspension::HeadSway::default();
         }
 
         // Snow, wreck smoke and flames agree on one zoned WORLD wind. Camera rotation only changes
@@ -33304,7 +33325,10 @@ mod tests {
         assert_eq!(target.speed, 0.0);
         let stopped = target.pos;
         for _ in 0..300 { settle_stationary_target(&mut target, 1.0 / 60.0, &hf); }
-        assert_eq!(target.pos, stopped);
+        // The ground position holds exactly; the hull may still rock on its springs (the T-34's
+        // Christie suspension has no shock absorbers, `vehicle_spec::T34_76`), by millimetres.
+        assert_eq!((target.pos.x, target.pos.z), (stopped.x, stopped.z));
+        assert!((target.pos.y - stopped.y).abs() < 0.005, "{} vs {}", target.pos.y, stopped.y);
         assert_eq!(target.heading, 0.4);
         assert_eq!(target.hp, 37.0);
         assert!(target.alive);
@@ -35589,6 +35613,10 @@ mod tests {
             kind: EnemyKind::T34,
             drops_into_pits: false,
             scars: Default::default(),
+            powertrain: Default::default(),
+            ride: Default::default(),
+            ride_layout: None,
+            grade_pitch: 0.0,
         };
         let driver_before = crew_live_hit_center(&player, crate::lan::LanRole::Driver);
         let gunner_before = crew_live_hit_center(&player, crate::lan::LanRole::Gunner);
