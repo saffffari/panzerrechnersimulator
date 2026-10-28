@@ -874,6 +874,8 @@ impl Backend {
 
     /// Per-frame CPU side: camera/history state, source radiance, shadow views, lights, medium
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
+    pub(super) fn shadow_views(&self) -> &[Mat4] { &self.shadow_views[..3] }
+
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
         let started = std::time::Instant::now();
         if self.binds.is_none() { self.binds = Some(self.make_binds(device, r)); }
@@ -1679,6 +1681,8 @@ impl Backend {
         pass.set_bind_group(0, &binds.depth, &[]);
         work.shadow_passes += 1;
         self.draw_scene(r, &mut pass, self.shadow_views[index], index as f32, true, &self.depth_pipe, &self.depth_inst_pipe, work);
+        // The strewn field's large tier casts into the cascades and the sky cover (views 0..3).
+        if index < 3 { if let Some(sf) = &r.scatter_field { sf.draw(&mut pass, index, work); } }
     }
 
     /// A post pass over the lit HDR frame: copy it into `scratch`, then write the result back.
@@ -1704,6 +1708,8 @@ impl Backend {
         let started = std::time::Instant::now();
         let binds = self.binds.as_ref().expect("raymarch binds prepared");
         let mut work = RenderWorkStats { scene_renders: 1, ..RenderWorkStats::default() };
+        // 0. The strewn field's GPU cull for every view of this frame.
+        if let Some(sf) = &r.scatter_field { sf.encode_cull(r, encoder); }
         // 1. Visibility maps from the scene geometry.
         self.depth_pass(r, encoder, "rm-shadow-far", &self.shadow_far.view, 0, &mut work);
         self.depth_pass(r, encoder, "rm-shadow-near", &self.shadow_near.view, 1, &mut work);
@@ -1728,7 +1734,10 @@ impl Backend {
             });
             pass.set_bind_group(0, &self.gbuffer_bind, &[]);
             self.draw_scene(r, &mut pass, r.camera.view_proj(), 0.0, false, &self.gbuffer_pipe, &self.gbuffer_inst_pipe, &mut work);
+            if let Some(sf) = &r.scatter_field { sf.draw(&mut pass, 3, &mut work); }
         }
+        // 2b. This frame's depth into the strewn field's Hi-Z for the next frame's occlusion cull.
+        if let Some(sf) = &r.scatter_field { sf.encode_hiz(r, encoder); }
         // 3. Sky cache: this frame's phase of the by-direction atmosphere and clouds (every
         // texel after a sky jump). Misses and reflections sample it; the discs are analytic.
         {
@@ -1944,4 +1953,10 @@ impl Renderer {
     }
 
     pub fn raymarch_stats(&self) -> Option<Stats> { self.raymarch.as_ref().map(|rm| rm.stats) }
+    pub fn scatter_stats(&self) -> Option<super::renderer_scatter::ScatterStats> { self.scatter_field.as_ref().map(|s| s.stats()) }
+    /// Install the strewn field of the act (`scatter_field::Built`) on the GPU. Drawn by the
+    /// raymarch backend only; the shader backend keeps its CPU-paged instancing.
+    pub fn install_scatter_field(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, built: crate::scatter_field::Built) {
+        self.scatter_field = Some(super::renderer_scatter::ScatterGpu::new(device, queue, built, self.iw, self.ih, &self.depth_view));
+    }
 }
