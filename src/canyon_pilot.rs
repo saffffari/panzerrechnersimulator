@@ -81,6 +81,9 @@ const CASE_DROP_LOOK: Vec3 = Vec3::new(-0.75, 1.15, -0.80);
 const RAM_FLICK_FRAMES: u32 = 6;
 /// Whole-cycle retries before the pilot gives up on a reload.
 const RELOAD_RETRIES: u32 = 2;
+/// After an abandoned reload the crew drives on for this long before the loader tries again
+/// (the turret has turned and other rack slots may be in reach by then).
+const RELOAD_REST_S: f32 = 45.0;
 /// How long the gunner stays on a contact that has slipped out of sight before the crew goes
 /// back to driving (the station changes each way cost seconds and a walk position).
 const ENGAGE_HOLD_S: f32 = 3.0;
@@ -124,6 +127,11 @@ pub struct CanyonPilot {
     was_advancing: bool,
     /// The dead hull being passed and the aim point beside and beyond it.
     bypass: Option<(Vec2, Vec2)>,
+    /// Rack slot the loader is reaching for, and the slots whose prompt never came this reload.
+    round_slot: Option<usize>,
+    skip_slots: Vec<usize>,
+    /// When the last reload was given up and the crew drove on with the gun unready.
+    reload_abandoned_at: Option<f32>,
     /// The last contact actually seen and when: the gunner keeps his seat and his lay on it for
     /// a few seconds after it slips out of sight instead of climbing back to the cupola at once.
     last_target: Option<(Vec3, Option<usize>)>,
@@ -177,6 +185,9 @@ impl CanyonPilot {
             avoid_side: -1.0,
             was_advancing: false,
             bypass: None,
+            round_slot: None,
+            skip_slots: Vec::new(),
+            reload_abandoned_at: None,
             last_target: None,
             last_target_at: -100.0,
             debug: std::env::var("KESSEL_PILOT_DBG").is_ok(),
@@ -276,6 +287,24 @@ impl CanyonPilot {
         input.look_dy += delta.y / sensitivity.y;
     }
 
+    /// The armour-piercing round nearest the loader's eye that has not failed to prompt this
+    /// reload (the `rack_ap` gaze target with the failed slots left out).
+    fn rack_round(&self, g: &Game) -> Option<(usize, Vec3)> {
+        let eye = g.station_eye(Station::Loader);
+        let tm = g.player.turret_model();
+        crate::interior_rig::SHELL_SLOTS.iter().enumerate()
+            .filter(|(i, _)| !g.slot_taken[*i] && !g.slot_nature_he[*i] && !self.skip_slots.contains(i))
+            .map(|(i, (frame, pos, _))| {
+                let at = if *frame == crate::interior_rig::Frame::Hull {
+                    g.player.hull_model().transform_point3(*pos)
+                } else {
+                    tm.transform_point3(*pos)
+                };
+                (i, at)
+            })
+            .min_by(|a, b| a.1.distance_squared(eye).total_cmp(&b.1.distance_squared(eye)))
+    }
+
     fn gaze_point(g: &Game, name: &str) -> Option<Vec3> {
         g.capture_gaze_target(&serde_json::json!({ "gaze": name }))
     }
@@ -338,6 +367,13 @@ impl CanyonPilot {
             return false;
         }
         self.pilot_log(g, t, "TIMEOUT");
+        if self.stage == ReloadStage::GrabRound {
+            // That slot never showed its prompt from the loader's post (a hull bin behind the
+            // turret basket, typically, once the ready racks are empty): reach for another.
+            if let Some(slot) = self.round_slot.take() {
+                self.skip_slots.push(slot);
+            }
+        }
         if self.stage_tries < RELOAD_RETRIES {
             self.stage_tries += 1;
             self.reload_waypoint = if g.walk_pos.x < 0.0 { 2 } else { 0 };
@@ -359,6 +395,15 @@ impl CanyonPilot {
     fn reload(&mut self, g: &mut Game, r: &Renderer, t: f32, dt: f32) -> TankInput {
         let mut input = TankInput::default();
         if self.phase == "reload_stalled" {
+            // Give the run back to the road rather than freezing at the breech (the missions
+            // branch's rule, kept through the stage-machine rewrite): drive on with the gun
+            // unready and try again after `RELOAD_REST_S`.
+            println!("[canyon-pilot] reload abandoned at {t:.1}s (breech {:?}, lever {:.2}, {} slot(s) out of reach); driving on",
+                g.breech, g.lever_open, self.skip_slots.len());
+            self.reload_at = None;
+            self.reload_abandoned_at = Some(t);
+            self.mouse_velocity = Vec2::ZERO;
+            self.phase = "advance";
             return input;
         }
         self.phase = self.stage.label();
@@ -434,7 +479,8 @@ impl CanyonPilot {
                 if g.grab {
                     input.mg_coax = true;
                     self.enter_stage(g, t, ReloadStage::Ram);
-                } else if let Some(rack) = Self::gaze_point(g, "rack_ap") {
+                } else if let Some((slot, rack)) = self.rack_round(g) {
+                    self.round_slot = Some(slot);
                     let at = self.nudged(g, rack, &NUDGES_WIDE);
                     self.look(g, r, at, dt, &mut input);
                     let on_round = matches!(g.hover, Some(Hotspot::RackSlot(_)));
@@ -445,7 +491,7 @@ impl CanyonPilot {
                     self.consider_nudge(t, on_round, NUDGES_WIDE.len());
                     self.stage_timed_out(g, t);
                 } else {
-                    // No armour-piercing round left in any rack.
+                    // No armour-piercing round left in reach (or in any rack).
                     self.phase = "reload_stalled";
                 }
             }
@@ -553,7 +599,9 @@ impl CanyonPilot {
         let target = if t - self.last_target_at < ENGAGE_HOLD_S { self.last_target } else { None };
         let mut input = if self.reload_at.is_some() {
             self.reload(g, r, t, dt)
-        } else if !g.breech_loaded() {
+        } else if !g.breech_loaded() && self.reload_abandoned_at.is_none_or(|at| t - at > RELOAD_REST_S) {
+            self.reload_abandoned_at = None;
+            self.skip_slots.clear();
             // Same Q action as the native gunner: leave the sight for the free-walk interior.
             g.sights_mag = 0;
             g.commander_outside = false;
