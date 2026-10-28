@@ -80,6 +80,8 @@ mod campaign;
 mod campaign_save;
 mod canyon;
 mod canyon_attempt;
+mod mission;
+mod mission_capture;
 mod wreck_fire_review;
 mod raymarch_showcase;
 mod canyon_director;
@@ -2333,6 +2335,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 287.0,
                 true,
                 _g.map_world_position(),
+                None,
             );
             r.render_held_map_texture(&device, &queue, _g.held_map_slot());
             r.ui_reset();
@@ -13252,7 +13255,7 @@ impl WindowState {
         }
         ui::draw_held_map_print(&mut self.renderer, &self.game.act, &self.game.marks,
             &self.pencil_marks, &self.map_pins, route, sheets, self.map_cursor, heading,
-            self.pencil_down, self.game.map_world_position());
+            self.pencil_down, self.game.map_world_position(), self.game.mission_map_guidance().as_ref());
         self.renderer.render_held_map_texture(&self.device, &self.queue, self.game.held_map_slot());
     }
 
@@ -13396,6 +13399,11 @@ impl WindowState {
         }
         // What the outlined thing is and which button works it: small, bottom centre, in the
         // outline's own colour (owner, 2026-10-03; play is otherwise wordless).
+        // Mission guidance (src/mission.rs): the order sheet while it is held up and the net's
+        // lines, display-resolution text outside the crush like the menus.
+        if let Some(overlay) = self.game.mission_overlay() {
+            ui::draw_mission_overlay(&mut self.renderer, &overlay);
+        }
         if let Some(label) = self.game.hover_label_text() {
             let hint = interaction_hint(&label, self.game.interact_kind());
             pixel_font::draw_centered(&mut self.renderer, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
@@ -16094,6 +16102,12 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "campaign-verify" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return run_campaign_verify(outdir);
+    }
+    if args.len() >= 2 && args[1] == "mission-captures" {
+        return mission_capture::run(
+            &capture_arg(&args, 2, "mission_captures"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+        );
     }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {
         return canyon_attempt::run(

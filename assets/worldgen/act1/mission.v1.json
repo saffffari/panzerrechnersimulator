@@ -1,0 +1,78 @@
+{
+  "schema": "kessel.mission",
+  "version": 1,
+  "id": "act1-die-stadt",
+  "title": "BEFEHL: AUSBRUCH NACH WESTEN",
+  "act_id": 1,
+  "callsign": "Kiebitz",
+  "net": "",
+  "note": "Act One's existing director objectives (src/campaign.rs ACT1_OBJECTIVES) expressed as beats. The rules are unchanged: every beat completes on the campaign director's own credit; this sheet only adds the written order and the paper marks. The campaign carries no radio net, so the beats say nothing on the air (CLAUDE.md, first principle).",
+  "order": [
+    "One Tiger, one crewman. Stalingrad, January 1943. The district's defenders stand in the streets around you.",
+    "Three guarded map sites lie west; each holds a sheet you need. Behind them the western cordon and a KV-2 hold the way out.",
+    "Break out west to the extraction gate with all three sheets. There is no relief and no second vehicle."
+  ],
+  "beats": [
+    {
+      "id": "route",
+      "title": "Choose the corridor west",
+      "goal": "observe",
+      "at": {"ref": "route_site", "index": 0},
+      "radius_m": 150.0,
+      "trigger": {"kind": "start"},
+      "complete": {"kind": "campaign_objective", "objective": "Act1ChooseBreakoutRoute"},
+      "map": {"mark": "box", "bearing": true},
+      "pacing": {}
+    },
+    {
+      "id": "layers",
+      "title": "Read the city's two layers",
+      "goal": "recover",
+      "at": {"ref": "route_site", "index": 1},
+      "radius_m": 150.0,
+      "complete": {"kind": "campaign_objective", "objective": "Act1WitnessCityLayers"},
+      "map": {"mark": "box", "bearing": true},
+      "pacing": {}
+    },
+    {
+      "id": "third_sheet",
+      "title": "Recover the third sheet",
+      "goal": "recover",
+      "at": {"ref": "route_site", "index": 2},
+      "radius_m": 150.0,
+      "complete": {"kind": "recover"},
+      "map": {"mark": "box", "bearing": true},
+      "pacing": {}
+    },
+    {
+      "id": "cordon",
+      "title": "Break the western cordon",
+      "goal": "destroy",
+      "at": {"ref": "encounter_role", "role": "blocking_force"},
+      "radius_m": 400.0,
+      "complete": {"kind": "campaign_objective", "objective": "Act1BreakWesternCord"},
+      "map": {"mark": "cross", "bearing": true},
+      "pacing": {}
+    },
+    {
+      "id": "kv2",
+      "title": "The KV-2 at the gate",
+      "goal": "destroy",
+      "at": {"ref": "encounter_role", "role": "boss"},
+      "radius_m": 400.0,
+      "complete": {"kind": "campaign_objective", "objective": "Act1DefeatKv2"},
+      "map": {"mark": "cross", "bearing": true},
+      "pacing": {}
+    },
+    {
+      "id": "exit",
+      "title": "The extraction gate",
+      "goal": "reach",
+      "at": {"ref": "act_goal"},
+      "radius_m": 120.0,
+      "complete": {"kind": "campaign_objective", "objective": "Act1ReachWesternExit"},
+      "map": {"mark": "pin", "bearing": true},
+      "pacing": {}
+    }
+  ]
+}

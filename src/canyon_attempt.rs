@@ -414,6 +414,10 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     g.enable_canyon_course_seeded(seed)?;
     g.enable_singleplayer_crew();
     g.set_defer_rtt_to_render(true);
+    // KESSEL_CANYON_AI_INVINCIBLE=1: a traversal and mission proof, never a survivability result.
+    // The receipt's `final.god` and `driver` disclose it.
+    let invincible = std::env::var("KESSEL_CANYON_AI_INVINCIBLE").as_deref() == Ok("1");
+    if invincible { g.god = true; println!("[canyon-ai] INVINCIBLE traversal proof: the Tiger takes no damage"); }
     let mut film = cuts.map(|path| Film::new(prefix, path)).transpose()?;
     if film.is_none() {
         g.mute_audio();
@@ -440,8 +444,11 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
         }
         if step % 60 == 0 || g.game_over().is_some() || g.canyon_finished().is_some() {
             state = g.canyon_ai_state(&pilot, t + dt);
+            state["mission_beat"] = serde_json::json!(g.mission_current_beat());
+            state["mission_finished"] = serde_json::json!(g.mission_finished());
             let key = format!(
-                "{}|{}|{}|{}|{}|{}|{}",
+                "{}|{}|{}|{}|{}|{}|{}|{}",
+                state["mission_beat"],
                 state["phase"],
                 state["shots"],
                 state["kills"],
@@ -479,7 +486,7 @@ pub fn run(prefix: &str, seed: u64, max_s: f32, cuts: Option<&str>) -> anyhow::R
     }
     crate::simulation_uploads::drain(&device, &queue)?;
     trace.flush()?;
-    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression","manifest":manifest,"simulation_hz":60,"film":cuts.is_some()});
+    let receipt = serde_json::json!({"schema":"panzer.canyon-ai-attempt.v1","seed":seed,"max_seconds":max_s,"outcome":outcome,"wall_seconds":began.elapsed().as_secs_f64(),"final":state,"driver":if invincible {"rule-based crew inputs; known map route; geometry sight within 420 m; INVINCIBLE (KESSEL_CANYON_AI_INVINCIBLE=1): a traversal and mission proof, not a survivability result"} else {"rule-based crew inputs; known map route; geometry sight within 420 m; no automatic repair or damage suppression"},"manifest":manifest,"simulation_hz":60,"film":cuts.is_some(),"mission":g.mission_report()});
     fs::write(
         format!("{prefix}_result.json"),
         serde_json::to_vec_pretty(&receipt)?,

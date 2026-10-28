@@ -16,6 +16,8 @@ mod winter_encounter_ai;
 mod street_encounter;
 #[path = "canyon_game.rs"]
 mod canyon_game;
+#[path = "mission_game.rs"]
+mod mission_game;
 #[path = "canyon_map.rs"]
 mod canyon_map;
 #[path = "player_capture.rs"]
@@ -9447,9 +9449,15 @@ pub struct Game {
     /// The CANYON course a course workshop declares (`canyon_course`), its run once fielded and the
     /// guns' siting receipt (src/canyon.rs, game/canyon_game.rs).
     canyon_spec: Option<crate::canyon::CourseSpec>,
-    canyon_paper: Option<u32>,
+    canyon_paper: Option<(u32, [f32; 4])>,
     canyon_run: Option<crate::canyon::CanyonRun>,
     canyon_siting: Option<serde_json::Value>,
+    /// The mission in play (src/mission.rs, docs/MISSIONS.md): its beats, cues and radio.
+    mission: Option<crate::mission::MissionState>,
+    /// Campaign objective credits seen this attempt (the mission reads them non-destructively).
+    mission_objectives: Vec<(crate::campaign::ObjectiveId, u16)>,
+    /// Cloned emissive grains that carry the burning stars.
+    mission_flare_slots: Vec<usize>,
     /// Where the street encounter's field-of-fire probe sited the guns, once it has run.
     street_siting: Option<street_encounter::StreetSiting>,
     /// Headless campaign harness only: the district's street grid and the route it is following.
@@ -13372,6 +13380,9 @@ impl Game {
             canyon_paper,
             canyon_run: None,
             canyon_siting: None,
+            mission: None,
+            mission_objectives: Vec::new(),
+            mission_flare_slots: Vec::new(),
             street_siting: None,
             harness_streets: None,
             harness_gun_shots: [0; at_guns::AT_GUNS],
@@ -13833,6 +13844,11 @@ impl Game {
             inv.fuel_liters,
             rack,
         );
+        // The act's mission sheet (docs/MISSIONS.md): the written order and the paper marks over
+        // the director's own objectives. A missing sheet is fine; a broken one is reported.
+        if let Err(error) = self.enable_mission_from_sheet() {
+            eprintln!("[mission] act {} sheet refused: {error:#}", start.act_id);
+        }
         Ok(())
     }
 
@@ -17558,6 +17574,7 @@ impl Game {
         self.update_cigarette_pickup_prompt(r);
         self.update_winter_mission(dt);
         self.update_canyon_run(dt, r);
+        self.update_mission(dt, r, input);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
         {
             let mut bx: Vec<(Vec3, Vec3, f32)> = Vec::new();
@@ -18711,6 +18728,8 @@ impl Game {
         let tip=crate::hand_prop_models::cigarette_tip_light(self.cigarettes.view(),self.hand_prop_anchors);
         r.set_hand_cigarette(tip);
         if let Some(light)=tip {lights.push(light);}
+        // Mission signal stars (src/mission_game.rs): modeled emitters with a true source size.
+        lights.extend(self.mission_lights());
         r.set_lights(&lights);
     }
 
@@ -29046,6 +29065,7 @@ impl Game {
             slot += 1;
         }
         let _ = slot; // remaining slots were already zeroed by clear_smoke above
+        self.mission_smoke(r);
     }
 
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {

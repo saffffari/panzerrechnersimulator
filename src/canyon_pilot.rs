@@ -487,7 +487,9 @@ impl CanyonPilot {
             self.stage_tries = 0;
             self.enter_stage(g, t, ReloadStage::Walk);
             self.reload(g, r, t, dt)
-        } else if let Some((at, gun)) = target {
+        } else if let Some((at, gun)) = target.filter(|_| g.lever_open < LEVER_OPEN) {
+            // Only a gun that can fire is worth stopping for; with the lever still open after an
+            // abandoned reload the pilot drives on rather than standing in the open.
             self.phase = "engage";
             g.commander_outside = false;
             g.request_station(Station::Gunner);

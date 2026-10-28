@@ -2096,6 +2096,7 @@ pub fn draw_held_map_print(
     _heading_deg: f32,
     pencil_down: bool,
     player_position: glam::Vec2,
+    mission: Option<&crate::mission::MapGuidance>,
 ) {
     let (mx, my, mw, mh) = (0.17f32, 0.34f32, 0.66f32, 0.59f32);
     let paper = [0.78, 0.73, 0.60, 0.98];
@@ -2376,6 +2377,10 @@ pub fn draw_held_map_print(
 
     let (px, py) = proj(player_position.x, player_position.y);
     r.fill_rect(px-0.004,py-0.006,0.008,0.012,[0.04,0.22,0.25,1.0]);
+    // The mission's marks (src/mission.rs) in the same plan projection.
+    if let Some(guidance) = mission {
+        draw_mission_marks(r, guidance, &|p: glam::Vec2| proj(p.x, p.y), (mx, my, mw, mh));
+    }
 
     // Player graphite: thousands of tiny stable points give a satisfyingly scratchy pencil line.
     for (_, p) in pencil.iter().filter(|(id, _)| *id == act.id) {
@@ -2530,4 +2535,161 @@ pub fn draw_controls(r: &mut Renderer) {
     r.draw_text("Driver: PgUp / PgDn manual gear · End automatic",0.5,0.890,0.024,COL_ITEM,Align::Center);
     r.fill_rect(0.34,0.930,0.32,0.054,[0.12,0.13,0.14,1.0]);
     r.draw_text("Back  ·  Home / Esc",0.5,0.940,0.029,COL_ITEM,Align::Center);
+}
+
+// ── Missions (src/mission.rs, docs/MISSIONS.md): the order sheet, the net's lines and the paper's
+// marks. The order and the lines are display-resolution text outside the crush, like the menus;
+// the marks are pigment on the held sheet's albedo, registered to the paper like the pencil. ──────
+
+const COL_NET: [f32; 4] = [0.74, 0.90, 0.76, 1.0];
+const COL_NET_OWN: [f32; 4] = [0.92, 0.92, 0.88, 1.0];
+const COL_NOTE: [f32; 4] = [0.86, 0.80, 0.62, 1.0];
+
+/// Break a line into pieces of at most `width` characters at word boundaries.
+pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() { line.push(' '); }
+        line.push_str(word);
+    }
+    if !line.is_empty() { lines.push(line); }
+    lines
+}
+
+pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay) {
+    // The written order (Befehl): a typed field-order slip held up over the world, then folded.
+    if let Some((title, lines, first, alpha)) = &overlay.order {
+        let mut body: Vec<String> = Vec::new();
+        for line in lines {
+            body.extend(wrap_text(line, 66));
+            body.push(String::new());
+        }
+        let (x, w) = (0.17f32, 0.66f32);
+        let h = 0.135 + body.len() as f32 * 0.030 + 0.07;
+        let y = 0.15;
+        let a = alpha.clamp(0.0, 1.0);
+        r.fill_rect(x + 0.006, y + 0.008, w, h, [0.0, 0.0, 0.0, 0.35 * a]);
+        r.fill_rect(x, y, w, h, [0.80, 0.75, 0.62, 0.94 * a]);
+        r.fill_rect(x, y, w, 0.004, [0.52, 0.46, 0.34, 0.6 * a]);
+        r.fill_rect(x + 0.02, y + 0.085, w - 0.04, 0.0015, [0.30, 0.26, 0.20, 0.6 * a]);
+        let ink = [0.16, 0.14, 0.11, 0.95 * a];
+        let faded = [0.36, 0.33, 0.27, 0.90 * a];
+        r.draw_text_bold(title, 0.5, y + 0.030, 0.022, ink, Align::Center);
+        r.draw_text("Kampfgruppe  ·  Nachhut  ·  schriftlicher Befehl", 0.5, y + 0.062, 0.018, faded, Align::Center);
+        let mut ty = y + 0.108;
+        for line in &body {
+            if !line.is_empty() { r.draw_text(line, x + 0.03, ty, 0.025, ink, Align::Left); }
+            ty += 0.030;
+        }
+        r.draw_text_bold(first, x + 0.03, ty + 0.012, 0.018, [0.58, 0.08, 0.065, 0.95 * a], Align::Left);
+        r.draw_text("M  the map carries the marks and the bearing", 0.5, y + h - 0.034, 0.018, faded, Align::Center);
+    }
+    // The net: a signals log, top left, oldest first.
+    let mut y = 0.05;
+    for (from, text, alpha) in &overlay.radio {
+        let (color, line) = if from.is_empty() {
+            ([COL_NOTE[0], COL_NOTE[1], COL_NOTE[2], 0.9 * alpha], text.clone())
+        } else if from.eq_ignore_ascii_case("kiebitz") {
+            ([COL_NET_OWN[0], COL_NET_OWN[1], COL_NET_OWN[2], 0.85 * alpha], format!("{}: {}", from.to_uppercase(), text))
+        } else {
+            ([COL_NET[0], COL_NET[1], COL_NET[2], 0.95 * alpha], format!("{}: {}", from.to_uppercase(), text))
+        };
+        r.draw_text(&line, 0.02, y, 0.020, color, Align::Left);
+        y += 0.028;
+    }
+}
+
+/// The mission's pigment on the held sheet. `proj` maps a world point to the sheet's normalized
+/// screen position; `paper` is the printed rectangle (x, y, w, h) for the slip and clipping.
+pub fn draw_mission_marks(
+    r: &mut Renderer,
+    guidance: &crate::mission::MapGuidance,
+    proj: &dyn Fn(glam::Vec2) -> (f32, f32),
+    paper: (f32, f32, f32, f32),
+) {
+    use crate::mission::MarkKind;
+    let aspect = r.ih.max(1) as f32 / r.iw.max(1) as f32;
+    let graphite = [0.07, 0.08, 0.08, 1.0];
+    let red = [0.58, 0.06, 0.05, 1.0];
+    let faded = [0.26, 0.26, 0.24, 0.80];
+    let (px, py, pw, ph) = paper;
+    let inside = |x: f32, y: f32| x >= px && x <= px + pw && y >= py && y <= py + ph;
+    let dot = |r: &mut Renderer, x: f32, y: f32, s: f32, c: [f32; 4]| {
+        if inside(x, y) { r.fill_rect(x - s * aspect * 0.5, y - s * 0.5, s * aspect, s, c); }
+    };
+    let ring = |r: &mut Renderer, cx: f32, cy: f32, radius: f32, n: usize, dashed: bool, c: [f32; 4]| {
+        for k in 0..n {
+            if dashed && k % 3 == 2 { continue; }
+            let a = k as f32 / n as f32 * std::f32::consts::TAU;
+            dot(r, cx + a.cos() * radius * aspect, cy + a.sin() * radius, 0.0042, c);
+        }
+    };
+    let line = |r: &mut Renderer, (ax, ay): (f32, f32), (bx, by): (f32, f32), dashed: bool, c: [f32; 4]| {
+        let steps = (((bx - ax) / aspect).hypot(by - ay) / 0.0036).ceil().max(1.0) as usize;
+        for k in 0..=steps {
+            if dashed && (k / 4) % 2 == 1 { continue; }
+            let t = k as f32 / steps as f32;
+            dot(r, ax + (bx - ax) * t, ay + (by - ay) * t, 0.0038, c);
+        }
+    };
+
+    // The dead-reckoned position: a pencil ring the size of the crew's uncertainty.
+    if let Some((estimate, error_m)) = guidance.estimate {
+        let (ex, ey) = proj(estimate);
+        let (fx, _) = proj(estimate + glam::Vec2::new(error_m, 0.0));
+        let radius = ((fx - ex) / aspect).abs().clamp(0.006, 0.08);
+        ring(r, ex, ey, radius, 32, true, graphite);
+        dot(r, ex, ey, 0.006, graphite);
+    }
+    // The bearing: a dashed pencil line to the mark with its three figures.
+    if let Some((from, to, bearing)) = guidance.bearing {
+        let a = proj(from);
+        let b = proj(to);
+        line(r, a, b, true, graphite);
+        let (mx, my) = (a.0 + (b.0 - a.0) * 0.45, a.1 + (b.1 - a.1) * 0.45);
+        if inside(mx, my) {
+            r.draw_text_bold(&format!("{:03.0}", bearing.rem_euclid(360.0)), mx + 0.014, my - 0.020, 0.017, graphite, Align::Left);
+        }
+    }
+    for &(at, kind, number, done) in &guidance.marks {
+        let (x, y) = proj(at);
+        if !inside(x, y) { continue; }
+        let color = if done { faded } else if matches!(kind, MarkKind::Pin | MarkKind::Cross) { red } else { graphite };
+        match kind {
+            MarkKind::Box => {
+                let (hw, hh) = (0.024 * aspect, 0.021);
+                for (cx, cy) in [(x - hw, y - hh), (x + hw, y - hh), (x - hw, y + hh), (x + hw, y + hh)] {
+                    dot(r, cx, cy, 0.0065, color);
+                }
+                line(r, (x - hw, y - hh), (x - hw, y + hh), true, color);
+                line(r, (x + hw, y - hh), (x + hw, y + hh), true, color);
+                line(r, (x - hw, y - hh), (x + hw, y - hh), true, color);
+                line(r, (x - hw, y + hh), (x + hw, y + hh), true, color);
+            }
+            MarkKind::Cross => {
+                let d = 0.014;
+                line(r, (x - d * aspect, y - d), (x + d * aspect, y + d), false, color);
+                line(r, (x - d * aspect, y + d), (x + d * aspect, y - d), false, color);
+            }
+            MarkKind::Pin => {
+                r.fill_rect(x - 0.0012, y + 0.001, 0.0024, 0.019, [0.63, 0.57, 0.50, 0.95]);
+                r.fill_rect(x - 0.0062, y - 0.0050, 0.0124, 0.0100, color);
+            }
+            MarkKind::Circle => ring(r, x, y, 0.016, 22, false, color),
+        }
+        r.draw_text_bold(&number.to_string(), x + 0.024 * aspect + 0.008, y - 0.014, 0.017, color, Align::Left);
+    }
+    // The slip clipped to the sheet's corner: the open beat's number and title.
+    if let Some(slip) = &guidance.slip {
+        let (sw, sh) = (0.46f32, 0.052f32);
+        let (sx, sy) = (px + 0.012, py + 0.012);
+        r.fill_rect(sx + 0.003, sy + 0.004, sw, sh, [0.0, 0.0, 0.0, 0.18]);
+        r.fill_rect(sx, sy, sw, sh, [0.86, 0.82, 0.70, 0.97]);
+        r.fill_rect(sx, sy, sw, 0.003, [0.42, 0.38, 0.30, 0.5]);
+        r.draw_text_bold(slip, sx + 0.012, sy + 0.015, 0.019, [0.12, 0.11, 0.09, 1.0], Align::Left);
+    }
 }
