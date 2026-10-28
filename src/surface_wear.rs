@@ -13,7 +13,9 @@
 //! crew keeps what they look through clear; the film grows from there).
 
 /// The starting state: mechanical wear, interior grime, exterior grime, glass grime.
-pub const CAMPAIGN_START: [f32; 4] = [0.55, 0.35, 0.30, 0.0];
+/// Interior grime 0.65 (2026-10-28, "metal looks too new, should have more dirt and grime"): weeks
+/// of cauldron living, firing and no depot cleaning.
+pub const CAMPAIGN_START: [f32; 4] = [0.55, 0.65, 0.30, 0.0];
 /// Seconds of crewed running that take interior grime from clean toward full (1 - 1/e).
 const INTERIOR_GRIME_S: f32 = 2400.0;
 /// Interior grime and mechanical wear added by one main-gun round (fraction of what remains).

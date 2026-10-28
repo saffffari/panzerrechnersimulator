@@ -198,6 +198,8 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
         let lend = light_cell_start[cell_index + 1u];
         for (var i = lstart; i < lend; i += 1u) {
             let index = light_cell_items[i];
+            // A lamp in the crew compartment lights only the compartment's air (rm_shade.wgsl).
+            if (cabin_domain < 0 && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }
             let s = rm_light_sample(index, p);
             if (max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }
             let shadowed = lights[index].c.y >= 0.0;

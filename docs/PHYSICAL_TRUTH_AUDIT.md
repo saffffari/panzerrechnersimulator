@@ -386,11 +386,17 @@ are presented as ray tracing, GI or a combustion/solver result:
   albedo for soot and earth. Ground ejecta speeds follow M(>v) ~ v^(-1.2) between 0.15 and 1 of the
   apex-limited maximum (crater scaling, mu about 0.4), drawn apart from direction. Gate:
   `raymarch-showcase` he_impact stills; `explosion_volumes` and `weapon_particle_math` unit tests.
-- Lamp housings in point shadows (2026-10-28; `renderer_raymarch.rs` `draw_scene`,
-  `FIXTURE_HOUSING_MAX_M`): a mesh enclosing a shadowed lamp's position is left out of that lamp's
-  cube only when it is smaller than 0.75 m (the fixture); larger enclosing meshes (the turret round
-  its cabin lamp) occlude. A fixture modelled inside a large mesh's own triangles still shadows its
-  bulb within the near plane's 3 cm.
+- Crew compartment paint, grime, lamps (2026-10-28; `tank.rs` `tiger_paint_finish`,
+  `rm_gbuffer.wgsl` `cabin_grime` and `lamp_lens`, `surface_wear::CAMPAIGN_START`): ivory from a
+  common RAL 1001 conversion, not a measured surviving interior; grime an authored mask (dust up,
+  oil low, soot high) at one scalar load, 0.65 at the start (an estimate of weeks in the cauldron);
+  lamp lenses an authored profile (core, rim, glint, cage) carrying the cube face's emission; the
+  raymarch camera halo 0.06 at half spread, a presentation choice.
+- Cabin lamps stay in the cabin (2026-10-28; `rm_shade.wgsl`, `rm_volume.wgsl`): any mesh enclosing
+  a shadowed lamp's position is left out of that lamp's cube as its housing, which for the cabin lamps
+  includes the whole turret and gun; a lamp inside the crew compartment's air domains therefore lights
+  only surfaces facing that air and the air itself, the armour taken as opaque. Interior fittings of
+  the turret and gun meshes cast no shadow for the cabin lamps.
 - TZF reticle at the output's resolution (2026-10-28; `blit.wgsl`): the Strichbild is drawn after the
   upscale at its true angular size, four samples a pixel, rather than in the crushed frame; a
   presentation of the glass reticle, it changes no light.

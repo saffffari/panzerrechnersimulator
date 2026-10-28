@@ -155,7 +155,10 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     }
     // This is lens scatter over the visible image, not an unshadowed surface light or a volume.
     // No fixed tint: orange fire produces an orange surround, cool sky a cool surround.
-    return vec4(c.rgb * INTENSITY * surround, 1.0);
+    // pc.dir.x > 0 overrides the halo's strength (the raymarch backend, whose eye scatter is the
+    // veil pass: RM_BLOOM_INTENSITY in renderer_raymarch.rs).
+    let intensity = select(INTENSITY, pc.dir.x, pc.dir.x > 0.0);
+    return vec4(c.rgb * intensity * surround, 1.0);
 }
 
 // --- Veiling glare of the crewman's eye (raymarch backend chain) -----------------------------

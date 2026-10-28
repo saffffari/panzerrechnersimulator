@@ -45,9 +45,6 @@ const MAX_PARCELS: usize = 16384;
 const MAX_CELL_ITEMS: usize = 1 << 18;
 /// Scene lights the renderer keeps from the game (`Renderer::set_lights`) for clustering.
 pub const MAX_SCENE_LIGHTS: usize = 448;
-/// The largest mesh taken as a lamp's own housing (`draw_scene`), metres: a fixture, not the
-/// compartment round it.
-const FIXTURE_HOUSING_MAX_M: f32 = 0.75;
 /// A small-arms tracer pellet's intensity, renderer units (its colour's photopic weight is
 /// 36 982 lx per unit, so this is about 60 cd): an estimate from the trace requirement, a 7.62 mm
 /// trace seen by day to about 850 yd (780 m; ARDEC/Orbital ATK, NDIA 2018), against a point-source
@@ -190,6 +187,10 @@ const PARCEL_FIREBALL: f32 = 5.0;
 const PARCEL_FLASH: f32 = 6.0;
 /// The Tiger's exhaust: smoke that carries heat while young (`exhaust_plume`).
 const PARCEL_EXHAUST: f32 = 7.0;
+/// The raymarch frame's compact camera halo (`stylized_bloom.wgsl` fs_composite, fs_blur): its
+/// strength and the blur's spread against the shader backend's 0.18 and 1.
+const RM_BLOOM_INTENSITY: f32 = 0.06;
+const RM_BLOOM_SPREAD: f32 = 0.5;
 /// Hermite smoothstep of `x` between `a` and `b`.
 fn smooth(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
@@ -2287,11 +2288,11 @@ impl Backend {
     fn draw_scene<'a>(&'a self, r: &'a Renderer, pass: &mut wgpu::RenderPass<'a>, vp: Mat4, view_index: f32,
         shadow: bool, mesh_pipe: &'a wgpu::RenderPipeline, inst_pipe: &'a wgpu::RenderPipeline, work: &mut RenderWorkStats) {
         let planes = frustum_planes(vp);
-        // A point light's own housing (a fixture-sized mesh enclosing the emitter position) is
-        // not an occluder of that light: the modeled source sits inside its fixture. Named in the
-        // raymarch engine document. Only fixture-sized: the turret's bounds enclose its cabin lamp
-        // too, and exempting the turret let that lamp light the barrel, the deck and the snow
-        // round the tank through the armour (2026-10-28).
+        // A point light's own housing (the mesh enclosing the emitter position) is not an
+        // occluder of that light: the modeled source sits inside its fixture. Named in the
+        // raymarch engine document. The turret and gun meshes enclose the cabin lamps too; what
+        // keeps those lamps' light inside the armour is the cabin gate in the shade and volume
+        // passes (a lamp in the crew compartment lights only the compartment).
         let enclosing = (view_index >= 3.0).then(|| {
             let slot = ((view_index as usize) - 3) / 6;
             self.shadowed[slot].map(|i| {
@@ -2300,8 +2301,7 @@ impl Backend {
             })
         }).flatten();
         let encloses = |mn: Vec3, mx: Vec3| enclosing.is_some_and(|(p, m)| {
-            (mx - mn).max_element() < FIXTURE_HOUSING_MAX_M
-                && p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
+            p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
         });
         let visible = r.inst_spatial_index.query(vp);
         let stages = if shadow { wgpu::ShaderStages::VERTEX } else { wgpu::ShaderStages::VERTEX_FRAGMENT };
@@ -2371,7 +2371,7 @@ impl Backend {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
                 extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
-                    if m.painted_steel { 1.0 } else { 0.0 }, 0.0],
+                    if m.painted_steel { 1.0 } else { 0.0 }, m.lamp_lens as f32],
                 scars: range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]),
             };
             let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
@@ -2711,9 +2711,12 @@ impl Backend {
             work.fullscreen_raster_passes += 4;
             let btexel = [1.0 / r.bw as f32, 1.0 / r.bh as f32];
             r.bloom_pass(encoder, "bloom-bright", &r.bloom_bright_pipe, &r.bloom_bind_hdr, &r.bloom_a_view, btexel, [0.0, 0.0], false);
-            r.bloom_pass(encoder, "bloom-blur-h", &r.bloom_blur_pipe, &r.bloom_bind_a, &r.bloom_b_view, btexel, [1.0, 0.0], false);
-            r.bloom_pass(encoder, "bloom-blur-v", &r.bloom_blur_pipe, &r.bloom_bind_b, &r.bloom_a_view, btexel, [0.0, 1.0], false);
-            r.bloom_pass(encoder, "bloom-composite", &r.bloom_composite_pipe, &r.bloom_bind_a, &r.hdr_view, btexel, [0.0, 0.0], true);
+            // The camera's compact halo at RM_BLOOM_INTENSITY and RM_BLOOM_SPREAD: the eye's own
+            // scatter is the veil below. At the shader backend's 0.18 and full spread a cabin lamp
+            // read as a large flat glow round a lens a few pixels across (2026-10-28).
+            r.bloom_pass(encoder, "bloom-blur-h", &r.bloom_blur_pipe, &r.bloom_bind_a, &r.bloom_b_view, btexel, [RM_BLOOM_SPREAD, 0.0], false);
+            r.bloom_pass(encoder, "bloom-blur-v", &r.bloom_blur_pipe, &r.bloom_bind_b, &r.bloom_a_view, btexel, [0.0, RM_BLOOM_SPREAD], false);
+            r.bloom_pass(encoder, "bloom-composite", &r.bloom_composite_pipe, &r.bloom_bind_a, &r.hdr_view, btexel, [RM_BLOOM_INTENSITY, 0.0], true);
             // The eye's veiling glare: wide rings over the blurred bright pass, scaled by the
             // bloom target's pixels per degree of view.
             if let (false, Some(glare_pipe), Some(composite_glare), Some(copy_pipe), Some(glare_bind)) = (self.debug_skip & 4096 != 0, &r.bloom_glare_pipe, &r.bloom_composite_glare_pipe, &r.bloom_copy_pipe, &r.bloom_glare_bind) {
