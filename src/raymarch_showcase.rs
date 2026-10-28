@@ -822,6 +822,69 @@ fn run_shafts(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `raymarch-tracers PREFIX`: coax MG bursts at night on clear weather, from the gunner's sight
+/// and from outside beside the tank: the small-arms tracer's streak, its light and no halo.
+pub fn run_tracers(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_coax_sight.png")).exists(),
+        "preserving existing capture; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    rig.clock(&mut r, "1942-12-21T19:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    step(&mut g, &mut r, 30, &idle);
+    let tiger = g.player.pos;
+    // Fire across the hull's right, away from the moon low over the bow at this hour.
+    let forward = g.player.forward().cross(Vec3::Y).normalize_or_zero();
+    g.station = Station::Gunner;
+    g.debug_lay_gun_at(tiger + forward * 150.0 + Vec3::Y * 1.0);
+    let coax = TankInput { coax: true, mg_coax: true, ..TankInput::default() };
+    rig.station_camera();
+    step(&mut g, &mut r, 90, &idle);
+    rig.still(&mut r, "sight_quiet", "the TZF at night before firing")?;
+    let path = format!("{prefix}_sight_quiet_composite.png");
+    eyepiece_frame(&mut g, &mut r, &device, &queue, None)?;
+    eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, rig.cw, rig.ch)))?;
+    // One round in five is a tracer: keep the burst going until one is in flight.
+    step(&mut g, &mut r, 70, &coax);
+    fire_until_tracer(&mut g, &mut r, &coax);
+    rig.still(&mut r, "coax_sight", "coax bursts at night through the TZF")?;
+    step(&mut g, &mut r, 6, &coax);
+    fire_until_tracer(&mut g, &mut r, &coax);
+    let side = forward.cross(Vec3::Y).normalize_or_zero();
+    rig.observe(&mut r, tiger + side * 6.0 + Vec3::Y * 2.4 + forward * 3.0, tiger + forward * 25.0 + Vec3::Y * 1.6, 60.0);
+    rig.still(&mut r, "coax_outside", "the same from outside beside the tank: tracer streaks, their heads' light on the snow")?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-tracers.v1", "manifest": manifest, "renderer": format!("{:?}", graphics::renderer_backend()),
+        "internal_resolution": [r.iw, r.ih], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies, held fire); clear, 19:00 UTC pinned; coax held from the gunner's post."
+    }))?)?;
+    Ok(())
+}
+
+/// Keep firing (at most a second more) until a tracer is in flight, then four frames more: from
+/// the sight the first ten metres of its path lie behind the 88's barrel.
+fn fire_until_tracer(g: &mut Game, r: &mut crate::renderer::Renderer, input: &TankInput) {
+    for _ in 0..60 {
+        if r.has_weapon_tracers() { break; }
+        g.update(input, 1.0 / 60.0, r);
+    }
+    step(g, r, 4, input);
+}
+
 /// One frame of the live loop's gunner eyepiece composite (main.rs `render_optic_composite`): the
 /// optic pass, then the interior pass around the eyepiece. With `capture`, the interior pass is the
 /// captured frame (so it follows an optic pass, as in play).

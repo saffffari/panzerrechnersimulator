@@ -721,6 +721,53 @@ traversing 10.4 (21.6 %) before, 5.9 (8.8 %) after at 480x270; at rest 4.6 (5.8 
 after. `captures/rm_gun_before_after_sheet.png` (left before, right after at 480x270; top traversing,
 bottom at rest); `rm_gun3_*` the same after the fix at 800x450 and 640x360.
 
+## The MG's tracers and flash (2026-10-28)
+
+Request: "MG tracer emission is too large radius, should be tighter like a small-arms bullet." Five
+sources made the MGs' fire glow far past a bullet's size, and one of them blinded the gunner's
+sight at night:
+
+- The coaxial MG34 fired from 72 % of the way out along the 88's barrel (`Tank::coax_muzzle`, placed
+  ahead of an older sight eye). Its flash mesh therefore sat 1.3 m from the 88's muzzle, where the
+  self-luminous pass took it for the 88's own flash and drew a forward fire lobe (0.8-4 m) at the
+  muzzle on every MG round: the bright orange blob at the edge of the TZF's field, and a night
+  exposure that fell from 3523 to 52. The player's Tiger now fires its coax from the source mantlet
+  port (`TIGER_COAX_PORT`, gun frame (-0.497, 0.153, 0.575): the through-hole that mirrors the sight
+  aperture, found by ray-casting `tiger_gun.glb`), and no small-arms flash mesh takes the cannon-lobe
+  path. AI tanks keep the generic emitter. From the sight, the first ten metres of a coax tracer's
+  path lie behind the barrel (port and objective sit either side of it at one height).
+- The legacy MG tracer meshes (2.4 m boxes) and impact spurts became 2.4 m fireball parcels; they are
+  skipped on raymarch (`Renderer::mark_legacy_small_arms_fx`). The MG's flash mesh is drawn a hand's
+  breadth across (`mark_small_arms_flash`, radius 3-10 cm).
+- Each tracer segment carried a 35 cm glow parcel in the froxel grid, whose cells are centimetres to
+  metres across; small-arms tracers now carry none.
+- The drawn strip (`rm_sparks.wgsl` `vs_tracer`) had a fixed radiance of about 175 000 cd/m2, some
+  ten thousand times what a pellet spread over one exposure's path delivers to a near eye; its glare
+  read as a broad band and dropped the exposure 68-fold. The strip now carries exactly the pellet's
+  light: each pixel I x focal^2 / (depth^2 x strip length in pixels), so the whole strip delivers
+  I / depth^2 to the eye at any length or distance.
+- A small-arms hot impact lit a 0.12 light for 0.14 s (near 400 cd s) and a 22 cm glow; it is now
+  about 5 cd s over 40 ms and a few centimetres (an estimate: a thousandth of the bullet's ~3.5 kJ
+  radiated by incandescent steel at ~10 lm/W).
+
+The pellet's intensity, one value for the strip and the head's light (`TRACER_INTENSITY`, about
+60 cd, kept equal to the shader's by a unit test), comes from the trace requirement: a 7.62 mm trace
+is required visible to about 850 yd (780 m) by day (ARDEC/Orbital ATK, NDIA 2018); against a 1e-4 lx
+point-source threshold (Venus by day) that needs 1e-4 x 780^2 = 61 cd. No published candela figure
+was found; this is an estimate. The heads of the eight nearest tracers within 150 m light the
+scene (a cost bound), shadowed by a ray query where queries are on. `raymarch-tracers PREFIX`
+(night, clear, coax laid across the hull's right; fires until a tracer is in flight):
+`captures/rm_tracers9_*`. Firing the coax now holds the sight's exposure (3531 without a tracer in
+flight, against 52 before); from outside the tracer reads as a point with the eye's glare, exposure
+3500.
+
+Not done: with a tracer a dozen metres out in the sight's field the frozen capture still goes dark
+(metered 2043 but the rods give up the moonlit snow). The eye's meter (`exposure.wgsl`) averages the
+pellet's light over the whole field; a point source acts on adaptation through veiling glare
+(Stiles-Holladay, 10 E / theta^2, in which a sight's magnification cancels), some four stops less.
+Time-averaged over sustained fire the field average is about +1.6 stops. A point-source layer for
+the meter is the next item (the sight at night).
+
 ## The Tiger's exhaust (2026-10-28)
 
 Request: "a ton of white exhaust out the back of the Tiger, it was known for that." `exhaust_plume.rs`

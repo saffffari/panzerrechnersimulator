@@ -12910,12 +12910,15 @@ impl Game {
                                                    // MG34 FX: flash + tracers ride the FX gunfire path (hidden until fired); the impact spurts
                                                    // take the own-colour warm-white path so a snow/dirt kick reads as powder, not orange fire.
         renderer.set_visible(slots.mg_flash, false);
+        renderer.mark_small_arms_flash(slots.mg_flash);
         for &s in slots.mg_tracer.iter() {
             renderer.set_visible(s, false);
+            renderer.mark_legacy_small_arms_fx(s);
         }
         for &s in slots.mg_impact.iter() {
             renderer.mark_own_emissive(s);
             renderer.set_visible(s, false);
+            renderer.mark_legacy_small_arms_fx(s);
         }
         // The pre-allocated collapsed-rubble heaps sit HIDDEN until their wall is felled (the intact
         // wall is shown; on collapse this flips — intact hidden, rubble revealed).
@@ -26650,7 +26653,7 @@ impl Game {
     /// swept flight clock resolves the later contact. Ordinary MG rounds do no armor damage.
     fn fire_mg_round(&mut self, coax: bool) {
         let (mpos, mdir) = if coax {
-            self.player.coax_muzzle()
+            self.player.tiger_coax_muzzle()
         } else {
             self.player.hull_mg_muzzle()
         };

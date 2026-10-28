@@ -237,6 +237,10 @@ pub const TIGER_PARTS: Parts = Parts {
 /// The source has no historical lens prescription; this locates the existing optic camera, it
 /// does not assert a TZF variant or force the barrel into the resulting field of view.
 pub const TIGER_SIGHT_OBJECTIVE: Vec3 = Vec3::new(0.494174, 0.153528, 0.5611);
+/// The coaxial MG34's port in the source mantlet, gun frame: the through-hole on the gunner's
+/// right that mirrors the sight aperture (centre found by ray-casting `tiger_gun.glb`, 2026-10-28:
+/// x -0.524..-0.468, y 0.128..0.180), its muzzle at the mantlet face (z 0.51-0.56) plus a centimetre.
+pub const TIGER_COAX_PORT: Vec3 = Vec3::new(-0.497, 0.153, 0.575);
 /// Center of the named `gunner sight lens` in the unmodified turret export.
 pub const TIGER_SIGHT_EYEPIECE: Vec3 = Vec3::new(0.4966112, 1.9940362, 0.5398246);
 
@@ -1089,15 +1093,23 @@ impl Tank {
 
     /// Coaxial MG34: mounted COAXIALLY with the main gun (same axis as the barrel). Returns (port
     /// world position, fire direction). The direction is the GUN's own forward, so the coax fires
-    /// exactly PARALLEL to the main gun — laying the gun on a target also lays the coax. The FX port
-    /// is placed on the barrel line but FORWARD of the gunner's sight eye (`gunsight`, at ~0.5·gun_len)
-    /// and just right/below it, so in the optic the tracers stream AWAY toward the reticle instead of
-    /// blooming across the lens near-plane. Purely an emitter offset — the fire axis is the gun axis.
+    /// exactly PARALLEL to the main gun — laying the gun on a target also lays the coax. This is the
+    /// AI tanks' generic emitter, out along the barrel; the player's Tiger fires from its source
+    /// mantlet port (`tiger_coax_muzzle`).
     pub fn coax_muzzle(&self) -> (Vec3, Vec3) {
         let g = self.gun_model();
         let pos = g.transform_point3(Vec3::new(-0.22, -0.16, self.parts.gun_len * 0.72));
         let dir = g.transform_vector3(Vec3::Z).normalize();
         (pos, dir)
+    }
+
+    /// The player's Tiger's coaxial MG34 at its real mantlet port (`TIGER_COAX_PORT`), firing along
+    /// the gun. It was placed 72 % of the way out along the barrel, ahead of an older sight eye; the
+    /// sight's objective now sits at the mantlet, and that emitter put every MG flash in the TZF's
+    /// field next to the 88's muzzle (2026-10-28).
+    pub fn tiger_coax_muzzle(&self) -> (Vec3, Vec3) {
+        let g = self.gun_model();
+        (g.transform_point3(TIGER_COAX_PORT), g.transform_vector3(Vec3::Z).normalize())
     }
 
     /// Hull / bow MG34: the radio-operator's forward machine gun in the FRONT HULL, right side.

@@ -51,7 +51,7 @@ impl WeaponParticles {
 }
 impl Renderer {
     pub(crate) fn analytic_weapon_particles_active(&self)->bool {self.shader_backend}
-    pub(super) fn has_weapon_tracers(&self)->bool {!self.weapon_particles.segments.is_empty()}
+    pub(crate) fn has_weapon_tracers(&self)->bool {!self.weapon_particles.segments.is_empty()}
     pub(crate) fn set_analytic_weapon_particles(&mut self,bursts:&[Record],segments:&[Record]) {
         assert!(bursts.len()<=math::MAX_BURSTS && segments.len()<=math::MAX_TRACERS,"bounded weapon records");
         self.weapon_particles.bursts.clear();self.weapon_particles.bursts.extend_from_slice(bursts);

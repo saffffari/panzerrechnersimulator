@@ -1517,6 +1517,10 @@ struct MeshGpu {
     painted_steel: bool,
     /// Left out of the sky-visibility atlas (`exclude_from_relay_visibility`).
     sky_visibility_excluded: bool,
+    /// A small-arms muzzle flash (`mark_small_arms_flash`).
+    small_arms_flash: bool,
+    /// A legacy small-arms effect mesh the raymarch backend leaves out (`mark_legacy_small_arms_fx`).
+    legacy_small_arms_fx: bool,
     /// View-local geometry that is drawn through the ordinary raster material path but never enters
     /// the shared ray scene. Split-screen crew use this because each viewport hides a different body
     /// while views 2..N intentionally reuse view 1's TLAS.
@@ -3568,6 +3572,8 @@ fn make_mesh_gpu(
         instrument_cover: false,
         painted_steel: false,
         sky_visibility_excluded: false,
+        small_arms_flash: false,
+        legacy_small_arms_fx: false,
         raster_only,
         temporal_dynamic: false,
         glass: false,
@@ -6519,6 +6525,22 @@ impl Renderer {
             if let Some(g) = self.meshes.get_mut(idx) {
                 g.sky_visibility_excluded = true;
             }
+        }
+    }
+    /// Flag self-luminous mesh `idx` as a small-arms muzzle flash: the raymarch medium draws it at
+    /// most 10 cm in radius (an MG 34's flash), not the size of its scaled mesh.
+    pub fn mark_small_arms_flash(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.small_arms_flash = true;
+        }
+    }
+    /// Flag mesh `idx` as one of the MG's legacy tracer streaks or impact spurts: the raymarch
+    /// backend draws small-arms tracers and impacts from the analytic weapon records (one-pixel
+    /// streaks, armour sparks, ground ejecta) and leaves these out. Drawn there, a 2.4 m tracer box
+    /// became a glowing ball 2.4 m in radius and a spurt a flat glowing block (2026-10-28).
+    pub fn mark_legacy_small_arms_fx(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.legacy_small_arms_fx = true;
         }
     }
     /// Flag glass mesh `idx` as a clear cover over an instrument dial: the raymarch glass pass

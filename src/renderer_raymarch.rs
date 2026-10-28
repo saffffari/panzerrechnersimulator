@@ -45,6 +45,12 @@ const MAX_PARCELS: usize = 16384;
 const MAX_CELL_ITEMS: usize = 1 << 18;
 /// Scene lights the renderer keeps from the game (`Renderer::set_lights`) for clustering.
 pub const MAX_SCENE_LIGHTS: usize = 448;
+/// A small-arms tracer pellet's intensity, renderer units (its colour's photopic weight is
+/// 36 982 lx per unit, so this is about 60 cd): an estimate from the trace requirement, a 7.62 mm
+/// trace seen by day to about 850 yd (780 m; ARDEC/Orbital ATK, NDIA 2018), against a point-source
+/// threshold of 1e-4 lx (Venus by day): 1e-4 x 780^2 = 61 cd. It lights the scene from the head
+/// (`collect_lights`) and sets the drawn strip's radiance (`rm_sparks.wgsl` RM_TRACER_INTENSITY).
+const TRACER_INTENSITY: f32 = 0.00165;
 /// Lights the backend synthesizes from ballistic bursts and tracer heads.
 const MAX_EFFECT_LIGHTS: usize = 64;
 const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS;
@@ -1609,8 +1615,12 @@ impl Backend {
                     let at_muzzle = heavy && r.muzzle_hint.is_some_and(|(m, _)| (origin - m).length() < 2.5);
                     let flash = if at_muzzle { 3.0 * (1.0 - age / 0.09).max(0.0) }
                         else if heavy { 2.2 * (1.0 - age / 0.9).max(0.0).powf(2.5) }
-                        else { 0.12 * (1.0 - age / 0.14).max(0.0) };
-                    (origin + Vec3::Y * if heavy && !at_muzzle { 1.2 } else { 0.2 }, Vec3::new(1.0, 0.62, 0.22), flash)
+                        // A small-arms round's hot impact: its sparks' light, about 5 cd s (an
+                        // estimate: a thousandth of the bullet's ~3.5 kJ radiated by incandescent
+                        // steel at ~10 lm/W), spread over 40 ms so that each impact reaches two
+                        // frames. It held 0.12 for 0.14 s, near 400 cd s (2026-10-28).
+                        else { 0.005 * (1.0 - age / 0.04).max(0.0) };
+                    (origin + Vec3::Y * if heavy && !at_muzzle { 1.2 } else if heavy { 0.2 } else { 0.03 }, Vec3::new(1.0, 0.62, 0.22), flash)
                 }
                 k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (3.0 + 12.0 * age).min(60.0), Vec3::new(1.0, 0.55, 0.12), 1.5 * (1.0 - age / 17.0).max(0.0)),
                 k if k == wm::HOT_RIM => (origin + n * 0.05, Vec3::new(1.0, 0.35, 0.08), 0.004 * (-age / 2.5).exp()),
@@ -1634,10 +1644,17 @@ impl Backend {
                 });
             }
         }
-        for segment in r.weapon_particles.segments.iter().take(8) {
-            let head = Vec3::from_array([segment.direction_life[0], segment.direction_life[1], segment.direction_life[2]]);
+        // Small-arms tracer heads (the segments are the MGs' tracers, one round in five; the 88 mm
+        // tracer is its own mesh): a burning pellet a few millimetres across at TRACER_INTENSITY,
+        // about 60 cd (15 lx on snow two metres below), lit for the eight nearest within 150 m of
+        // the eye (a cost bound, named in the ledger).
+        let mut heads: Vec<Vec3> = r.weapon_particles.segments.iter()
+            .map(|s| Vec3::from_array([s.direction_life[0], s.direction_life[1], s.direction_life[2]]))
+            .filter(|h| h.is_finite() && (*h - eye).length() < 150.0).collect();
+        heads.sort_by(|a, b| (*a - eye).length_squared().total_cmp(&(*b - eye).length_squared()));
+        for head in heads.into_iter().take(8) {
             let color = Vec3::new(1.0, 0.4621, 0.0296);
-            self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.01], b: [color.x, color.y, color.z, 0.0025], c: [range_of(color, 0.0025), -1.0, 2.0, 0.0] });
+            self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.003], b: [color.x, color.y, color.z, TRACER_INTENSITY], c: [range_of(color, TRACER_INTENSITY), -1.0, 2.0, 0.0] });
         }
         // Depth faces for the two strongest lights near the eye.
         let mut ranked: Vec<(f32, usize)> = self.lights.iter().enumerate().filter_map(|(i, l)| {
@@ -1773,16 +1790,21 @@ impl Backend {
         // The game's self-luminous effect meshes (muzzle and impact flash balls, FX orange)
         // become torn volumetric flashes sized by their bounds.
         for m in &r.meshes {
-            if !m.visible || m.emissive <= 0.0 || m.emissive_own || m.emissive_win || m.track_recv || self.debug_skip & 128 != 0 { continue; }
+            if !m.visible || m.emissive <= 0.0 || m.emissive_own || m.emissive_win || m.track_recv || m.legacy_small_arms_fx || self.debug_skip & 128 != 0 { continue; }
             if self.parcels.len() >= MAX_PARCELS - 8 { break; }
             let center = (m.world_min + m.world_max) * 0.5;
             let half = (m.world_max - m.world_min) * 0.5;
             if !center.is_finite() || half.max_element() <= 0.0 || (center - eye).length() > VOL_FAR_M { continue; }
-            let radius = half.max_element().clamp(0.05, 6.0);
+            // A small-arms muzzle flash is a hand's breadth, whatever its mesh's scale: drawn at
+            // the mesh's size it glowed as a ball near a metre across with a wide halo at night
+            // (2026-10-28).
+            let radius = if m.small_arms_flash { half.max_element().clamp(0.03, 0.10) } else { half.max_element().clamp(0.05, 6.0) };
             let x = m.emissive;
             let color = Vec3::new(1.0, 0.24, 0.03).lerp(Vec3::new(1.0, 0.9, 0.7), (x / 8.0).clamp(0.0, 1.0));
-            // The gun's own flash mesh becomes a forward lobe along the bore, not a ball.
-            if let Some((muzzle, dir)) = r.muzzle_hint.filter(|(m, _)| (center - *m).length() < 2.5) {
+            // The gun's own flash mesh becomes a forward lobe along the bore, not a ball. Never a
+            // small-arms flash: the coax's, then out along the barrel, took this path and drew the
+            // 88's fire lobe at the muzzle on every MG round (2026-10-28).
+            if let Some((muzzle, dir)) = r.muzzle_hint.filter(|(p, _)| !m.small_arms_flash && (center - *p).length() < 2.5) {
                 let length = (radius * 2.2).clamp(0.8, 4.0);
                 let lobe = muzzle + dir * (length * 0.45);
                 self.parcels.push(Parcel {
@@ -1841,7 +1863,9 @@ impl Backend {
             // which outlives this record.
             if kind == wm::BLAST && heavy { continue; }
             let (center, radius, fade, color) = match kind {
-                k if k == wm::BLAST => (origin + n * 0.1, 0.22 + 0.3 * age, (1.0 - age / 0.14).max(0.0), [1.0, 0.62, 0.22]),
+                // A small-arms hot impact (heavy blasts are events): its sparks' glow, a few
+                // centimetres for the light's 40 ms (it was a 22 cm ball for 0.14 s, 2026-10-28).
+                k if k == wm::BLAST => (origin + n * 0.03, 0.04 + 0.5 * age, (1.0 - age / 0.04).max(0.0), [1.0, 0.62, 0.22]),
                 k if k == wm::HOT_RIM => (origin, (burst.parameters[0] + burst.parameters[1]) * 2.0 + 0.05, (-age / 2.5).exp(), [1.0, 0.45, 0.12]),
                 k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (20.0 * age).min(120.0), (6.0 + 12.0 * age).min(60.0), (1.0 - age / 17.0).max(0.0), [1.0, 0.59, 0.05]),
                 k if k == wm::PRESSURE_VENT => (origin + n * (4.0 * age).min(3.0), (0.5 + 3.0 * age).min(3.0), (1.0 - age / 0.65).max(0.0), [1.0, 0.59, 0.05]),
@@ -1870,17 +1894,9 @@ impl Backend {
                 });
             }
         }
-        for segment in &r.weapon_particles.segments {
-            if self.parcels.len() >= MAX_PARCELS { break; }
-            let a = Vec3::from_array([segment.origin_age[0], segment.origin_age[1], segment.origin_age[2]]);
-            let b = Vec3::from_array([segment.direction_life[0], segment.direction_life[1], segment.direction_life[2]]);
-            self.parcels.push(Parcel {
-                a: [a.x, a.y, a.z, 0.35],
-                b: [1.0, 0.4621, 0.0296, PARCEL_SEGMENT],
-                c: [1.2, 0.0, 0.0, 0.0],
-                d: [b.x, b.y, b.z, 0.0],
-            });
-        }
+        // Small-arms tracers carry no glow parcel: a 35 cm glowing strip round every round drew the
+        // pellet as a wide halo in the froxel grid (whose cells are centimetres to metres across);
+        // the one-pixel streak and the head's light (`collect_lights`) are the tracer (2026-10-28).
         for (index, parcel) in self.parcels.iter().enumerate() {
             let center = Vec3::from_array([parcel.a[0], parcel.a[1], parcel.a[2]]);
             let rad = parcel.a[3];
@@ -2189,7 +2205,7 @@ impl Backend {
         // A relayed port's entrance face shows its exterior view (`encode`, 5b), not its material.
         let relayed = !shadow && self.relays(r);
         for (mesh_index, m) in r.meshes.iter().enumerate() {
-            if !m.visible || m.glass { continue; }
+            if !m.visible || m.glass || m.legacy_small_arms_fx { continue; }
             // The detail terrain draws the ground; the coarse mesh is its fallback.
             if detail_terrain && m.track_recv { continue; }
             if relayed && r.raster_optic_panel(mesh_index) { continue; }
@@ -2646,6 +2662,16 @@ mod shader_tests {
         wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(), wgpu::naga::valid::Capabilities::all())
             .validate(&module)
             .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(source)));
+    }
+
+    /// The tracer strip and the tracer head's light are one pellet: the shader's constant is the
+    /// backend's.
+    #[test]
+    fn tracer_strip_and_head_light_share_one_intensity() {
+        let source = include_str!("../shaders/rm_sparks.wgsl");
+        let line = source.lines().find(|l| l.starts_with("const RM_TRACER_INTENSITY")).expect("RM_TRACER_INTENSITY");
+        let value: f32 = line.split('=').nth(1).unwrap().trim().trim_end_matches(';').parse().unwrap();
+        assert_eq!(value, TRACER_INTENSITY);
     }
 
     /// Every raymarch pipeline's WGSL, assembled as `Backend::new` assembles it, with and without
