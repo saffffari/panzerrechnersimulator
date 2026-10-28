@@ -1560,15 +1560,16 @@ mod tests {
             r.advance(hands(false, false, 50.0, 0.1));
         }
         assert_eq!(r.count, 0);
-        // Alternating strokes at a good cadence count cleanly.
+        // Alternating strokes at a good cadence count cleanly; the fifth group is one frame.
         for i in 0..5 {
-            for _ in 0..7 {
+            let frames = if i == 4 { 1 } else { 7 };
+            for _ in 0..frames {
                 r.advance(hands(false, false, if i % 2 == 0 { -50.0 } else { 50.0 }, 0.1));
             }
         }
         assert_eq!(r.count, 5);
         assert!(r.quality > 0.99);
-        // A stroke flicked back the other way far too fast is a loose wrap.
+        // A stroke flicked back the other way a tenth of a second later is a loose wrap.
         r.advance(hands(false, false, 50.0, 0.05));
         assert_eq!(r.step, 3, "the sixth wrap finished the step");
         assert!(r.quality < 1.0);
