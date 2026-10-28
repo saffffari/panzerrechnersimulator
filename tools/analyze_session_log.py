@@ -271,7 +271,8 @@ def main():
                 continue
             per = {k: statistics.fmean(r["game"]["sim_phases_ms"][k] * r["game"]["sim_phases_ms"]["updates"] / max(1, r["frame_ms"]["n"]) for r in rs) for k in names}
             total = statistics.fmean(r["cpu_sim_ms"]["mean"] for r in rs)
-            other = total - sum(per.values())
+            # "enemy_ai.stealth" etc. are inside enemy_ai: only top-level phases add up.
+            other = total - sum(v for k, v in per.items() if "." not in k)
             out["sim_phases"][key] = {"seconds": len(rs), **per, "other": other, "cpu_sim": total}
             p(f"| {key} ({len(rs)} s) | " + " | ".join(f"{per[k]:.2f}" for k in names) + f" | {other:.2f} | {total:.2f} |")
         p("")

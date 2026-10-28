@@ -13,15 +13,21 @@ pub enum Phase {
     Fx,
     WrecksFireHaze,
     CanyonMission,
+    /// Inside `enemy_ai`: the stealth/detection pass, the winter encounter's orders (street
+    /// routing), the anti-tank guns. The rest of `enemy_ai` is the per-vehicle loop.
+    EnemyStealth,
+    EnemyOrders,
+    EnemyAtGuns,
 }
 
-const NAMES: [&str; 7] = [
+const NAMES: [&str; 10] = [
     "infantry", "enemy_ai", "vehicle_contacts", "projectiles", "fx", "wrecks_fire_haze", "canyon_mission",
+    "enemy_ai.stealth", "enemy_ai.orders", "enemy_ai.at_guns",
 ];
 
 #[derive(Default)]
 pub struct SimPhases {
-    ms: [f64; 7],
+    ms: [f64; 10],
     updates: u32,
 }
 

@@ -26078,9 +26078,9 @@ impl Game {
         // Detection + platoon alert state machine first: accrue the per-enemy detection meters,
         // resolve the 5-second rule, and log every SPOTTED / platoon transition. The per-enemy
         // behaviour branch below reads the fresh alert state to decide who may track and fire.
-        self.update_stealth(dt);
-        let winter_orders = self.winter_enemy_orders(dt);
-        self.update_at_guns(dt);
+        let phase_t = std::time::Instant::now(); self.update_stealth(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyStealth, phase_t);
+        let phase_t = std::time::Instant::now(); let winter_orders = self.winter_enemy_orders(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyOrders, phase_t);
+        let phase_t = std::time::Instant::now(); self.update_at_guns(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAtGuns, phase_t);
 
         // Snapshot once before the stable-index update loop: avoidance for enemy N must not depend
         // on whether enemy N-1 has already moved this frame. The parked/dead player hull remains a
