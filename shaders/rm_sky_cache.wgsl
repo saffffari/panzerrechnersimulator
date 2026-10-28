@@ -48,7 +48,7 @@ fn fs_cache(in: VsOut) -> @location(0) vec4<f32> {
     let transport = physical_environment_transport(clear, cam.cam_pos, direction, PHYSICAL_ENV_INFINITY_M);
     let background = transport.inscattered_radiance;
     let clouds = march_clouds(cam.cam_pos, direction, vec2<f32>(texel), background);
-    // Unresolved stars enter above the air like the discs; the discs themselves are analytic.
-    let stars = physical_stellar_radiance(environment, direction) * transport.transmittance;
-    return vec4((background + stars) * clouds.transmittance + clouds.radiance, clouds.transmittance);
+    // The stars are drawn per pixel by the shade pass (rm_shade.wgsl rm_pixel_star), one native
+    // pixel each; the discs are analytic. The cache holds the sky between them.
+    return vec4(background * clouds.transmittance + clouds.radiance, clouds.transmittance);
 }

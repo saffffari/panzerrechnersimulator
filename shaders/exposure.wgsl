@@ -208,10 +208,25 @@ fn cs(@builtin(local_invocation_index) li: u32) {
     var i = li;
     loop {
         if (i >= total) { break; }
-        let cell = vec2<f32>(f32(i % grid.x), f32(i / grid.x)) + vec2(0.5);
+        let cell_index = vec2<u32>(i % grid.x, i / grid.x);
+        let cell = vec2<f32>(cell_index) + vec2(0.5);
         let uv = cell / vec2<f32>(grid);
-        let pixel = vec2<i32>(min(uv * dim, dim - vec2(1.0)));
-        let c = textureLoad(hdr, pixel, 0).rgb;
+        // The cell's own pixels, averaged: an area meter, as the field average it models. One
+        // point sample a cell caught or missed a source smaller than a cell (the Moon, a tracer) by
+        // where it fell, and the eye jumped thirtyfold between grids (2026-10-28). Every pixel is
+        // read up to 4 x 4 a cell (frames to 1024 x 576), evenly spaced beyond.
+        let lo = vec2<i32>(floor(vec2<f32>(cell_index) / vec2<f32>(grid) * dim));
+        let hi = max(vec2<i32>(floor(vec2<f32>(cell_index + vec2(1u)) / vec2<f32>(grid) * dim)), lo + vec2(1));
+        let size = hi - lo;
+        let n = min(size, vec2(4));
+        let last = vec2<i32>(dim) - vec2(1);
+        var c = vec3(0.0);
+        for (var y = 0; y < n.y; y += 1) {
+            for (var x = 0; x < n.x; x += 1) {
+                c += textureLoad(hdr, min(lo + (vec2(x, y) * size) / n, last), 0).rgb;
+            }
+        }
+        c /= f32(n.x * n.y);
         let lp = clamp_luminance(dot(c, vec3(OBS_PHOTOPIC_R, OBS_PHOTOPIC_G, OBS_PHOTOPIC_B)));
         let ls = clamp_luminance(dot(c, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)));
         let ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);

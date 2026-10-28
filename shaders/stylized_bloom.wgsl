@@ -33,6 +33,8 @@ const KNEE: f32 = 0.7;
 const INTENSITY: f32 = 0.18;
 const SPREAD: f32 = 1.0; // a restrained halo preserves the boundary of small emissive cells
 const PORTAL_INTENSITY: f32 = 0.14; // modest lens response; never adds surface illumination
+// The sky discs' most exposed brightness into the halo and the veil (fs_bright).
+const SKY_DISC_LIMIT: f32 = 6.0;
 
 fn aperture_source(depth: f32, mask: f32) -> f32 {
     // Depth is the nearest actual triangle (including the hatch lid and its handle). The clear
@@ -63,8 +65,22 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
 
 @fragment
 fn fs_bright(in: VsOut) -> @location(0) vec4<f32> {
-    let c = textureSample(src, samp, in.uv).rgb;
+    var c = textureSample(src, samp, in.uv).rgb;
     let exposure = max(camera.exposure, 1e-6);
+    // The Sun's and the Moon's discs (sky pixels, at the scene's far depth) feed the halo and the
+    // eye's veil at most at SKY_DISC_LIMIT times display white: at ten thousand times white the
+    // Sun's halo and veil buried its disc in a round glow. Owner-directed presentation (2026-10-28,
+    // "a visibly stepped border for the sun"; docs/PHYSICAL_TRUTH_AUDIT.md): the disc keeps its
+    // full radiance in the frame and in the eye's meter.
+    let depth_size = vec2<i32>(textureDimensions(scene_depth));
+    let corner = vec2<i32>(floor(in.uv * vec2<f32>(depth_size) - vec2(0.5)));
+    var sky = true;
+    for (var y = 0; y < 2; y += 1) { for (var x = 0; x < 2; x += 1) {
+        let p = clamp(corner + vec2(x, y), vec2(0), depth_size - vec2(1));
+        sky = sky && textureLoad(scene_depth, p, 0) >= 1.0;
+    } }
+    let raw = max(c.r, max(c.g, c.b)) * exposure;
+    if (sky && raw > SKY_DISC_LIMIT) { c *= SKY_DISC_LIMIT / raw; }
     let exposed = c * exposure;
     let br = max(exposed.r, max(exposed.g, exposed.b));
     // Soft-knee threshold (Karis / UE bloom): smooth quadratic ramp across [T-KNEE, T+KNEE].
@@ -157,12 +173,17 @@ const GLARE_SCALE: f32 = 0.5;
 @group(1) @binding(2) var glare_l3: texture_2d<f32>;
 @group(1) @binding(3) var glare_l4: texture_2d<f32>;
 @group(1) @binding(4) var glare_samp: sampler;
-// One ring of twelve taps from the pyramid level whose texel is about half the tap spacing, so
-// a point source spreads into a smooth veil instead of twelve copies of itself.
-fn glare_ring(level: u32, uv: vec2<f32>, radius: vec2<f32>, phase: f32) -> vec3<f32> {
+// One ring of taps from its pyramid level, enough of them that neighbouring taps lie within 1.5 of
+// that level's texels (12 to 64), so a point source spreads into a smooth veil instead of copies of
+// itself: in a narrow field (the TZF's 25 deg, the binoculars' 10) twelve taps of the outer rings
+// lay several texels apart and drew a ring of dots round the Moon (2026-10-28). `radius_px` is the
+// ring's radius in the bloom target's pixels, `texel_px` the level's texel in those pixels.
+fn glare_ring(level: u32, uv: vec2<f32>, radius: vec2<f32>, phase: f32, radius_px: f32, texel_px: f32) -> vec3<f32> {
     var sum = vec3(0.0);
-    for (var k = 0u; k < 12u; k += 1u) {
-        let a = f32(k) * 0.5235988 + phase;
+    let taps = clamp(u32(ceil(6.2831853 * radius_px / (1.5 * texel_px))), 12u, 64u);
+    let step_angle = 6.2831853 / f32(taps);
+    for (var k = 0u; k < taps; k += 1u) {
+        let a = f32(k) * step_angle + phase;
         let p = uv + vec2(cos(a), sin(a)) * radius;
         var c = vec3(0.0);
         switch level {
@@ -173,7 +194,7 @@ fn glare_ring(level: u32, uv: vec2<f32>, radius: vec2<f32>, phase: f32) -> vec3<
         }
         sum += c;
     }
-    return sum / 12.0;
+    return sum / f32(taps);
 }
 @fragment
 fn fs_glare(in: VsOut) -> @location(0) vec4<f32> {
@@ -184,7 +205,7 @@ fn fs_glare(in: VsOut) -> @location(0) vec4<f32> {
         let theta_deg = 1.5 * exp2(f32(ring));
         let radius = theta_deg * px_per_deg * pc.texel;
         let phase = select(0.0, 0.2617994, (ring & 1u) == 1u);
-        veil += glare_ring(ring + 1u, in.uv, radius, phase);
+        veil += glare_ring(ring + 1u, in.uv, radius, phase, theta_deg * px_per_deg, exp2(f32(ring + 2u)));
     }
     return vec4(veil * (GLARE_RING_SHARE * GLARE_SCALE), 1.0);
 }
