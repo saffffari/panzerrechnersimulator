@@ -862,6 +862,17 @@ pub fn run_tracers(prefix: &str) -> anyhow::Result<()> {
     step(&mut g, &mut r, 70, &coax);
     fire_until_tracer(&mut g, &mut r, &coax);
     rig.still(&mut r, "coax_sight", "coax bursts at night through the TZF")?;
+    // As in play: two seconds more of fire rendered frame by frame, the eye adapting as it goes
+    // (no snap to the still's light: a tracer's lit snow sweeps past in a fifth of a second).
+    for _ in 0..120 {
+        g.update(&coax, 1.0 / 60.0, &mut r);
+        r.render_offscreen(&device, &queue);
+    }
+    let [live_exposure, _] = r.debug_read_active_exposure(&device, &queue)?;
+    let path = format!("{prefix}_coax_sight_live.png");
+    r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+    rig.shots.push(serde_json::json!({ "name": "coax_sight_live", "path": path, "exposure": live_exposure,
+        "note": "after two seconds of coax fire rendered frame by frame, the eye adapting as in play" }));
     step(&mut g, &mut r, 6, &coax);
     fire_until_tracer(&mut g, &mut r, &coax);
     let side = forward.cross(Vec3::Y).normalize_or_zero();

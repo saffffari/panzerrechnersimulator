@@ -214,6 +214,22 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
 // renderer_raymarch.rs, about 60 cd; its head lights the scene with the same value).
 const RM_TRACER_INTENSITY: f32 = 0.00165;
 
+// The eyepiece's barrel distortion (rm_lens.wgsl: the frame at q shows the scene at q (1 + k r^2),
+// r = |q| / 0.45) applied to a clip position drawn after the lens pass: the point where the scene
+// point lands, by two fixed-point steps. Only while the TZF (optic 1) or the binoculars (3) are up.
+fn eyepiece_clip(c: vec4<f32>) -> vec4<f32> {
+    let mode = fr.optic.x;
+    let tzf = abs(mode - 1.0) < 0.5;
+    let binocular = abs(mode - 3.0) < 0.5;
+    if (!(tzf || binocular) || c.w <= 0.0) { return c; }
+    let aspect = fr.res.x / fr.res.y;
+    let k = select(0.055, 0.035, binocular);
+    let s = (c.xy / c.w) * vec2(0.5 * aspect, 0.5);
+    var q = s;
+    for (var i = 0; i < 2; i += 1) { q = s / (1.0 + k * dot(q, q) / (0.45 * 0.45)); }
+    return vec4(q / vec2(0.5 * aspect, 0.5) * c.w, c.z, c.w);
+}
+
 @vertex fn vs_tracer(@builtin(vertex_index) vertex: u32,
     @location(0) start: vec4<f32>, @location(1) end: vec4<f32>,
     @location(2) unused_normal: vec4<f32>, @location(3) unused_parameters: vec4<f32>, @location(4) unused_meta: vec4<u32>) -> WeaponOut {
@@ -223,6 +239,8 @@ const RM_TRACER_INTENSITY: f32 = 0.00165;
     if (a.z < 0.0) { let t = a.z / (a.z - b.z); a = mix(a, b, t); a.z = 0.0; wa = mix(wa, wb, t); }
     if (b.z < 0.0) { let t = b.z / (b.z - a.z); b = mix(b, a, t); b.z = 0.0; wb = mix(wb, wa, t); }
     if (a.w <= 0.0 || b.w <= 0.0) { return weapon_hidden(); }
+    a = eyepiece_clip(a);
+    b = eyepiece_clip(b);
     let pa = a.xy / a.w * fr.res.xy * 0.5; let pb = b.xy / b.w * fr.res.xy * 0.5;
     let delta = pb - pa;
     // The strip is the pellet's path over this frame's exposure and carries exactly its light: each

@@ -137,8 +137,10 @@ are presented as ray tracing, GI or a combustion/solver result:
   exposure's path (pixel-plane geometry, the depth along the view axis); only the eight nearest heads
   within 150 m light the scene; a hot impact's light is ~5 cd s spread over 40 ms so that it reaches
   two frames (the real flash lasts milliseconds). The player's coax fires from the source mantlet
-  port; AI tanks' coax emitter stays out along the barrel. The eye's meter counts a tracer's light as
-  part of the field average rather than as veiling glare (open). Gate: `raymarch-tracers`.
+  port; AI tanks' coax emitter stays out along the barrel. The eye's meter does not see the strips
+  (drawn after it); their veiling glare reaches it computed on the host (CIE disability glare by the
+  meter's windows, occlusion by the barrel ignored); in a sight the strips take the eyepiece's
+  barrel distortion by a two-step inverse, not its lateral colour. Gate: `raymarch-tracers`.
 - TPZ needle and instrument covers (2026-10-28; `game.rs` `TPZ_NEEDLE_WIDTH_SCALE`,
   `Renderer::mark_instrument_cover`, `rm_glass.wgsl`): the TPZ needle is drawn at a quarter of its
   source bar's width (2.5 mm) in the dial's plane; instrument covers carry an authored fixed dust

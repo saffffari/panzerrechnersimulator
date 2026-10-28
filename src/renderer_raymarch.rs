@@ -366,6 +366,9 @@ pub(super) struct Backend {
     explosion_pending: Option<Vec<u8>>,
     /// The installed atlas's slots (role and aspect); none without an atlas.
     explosion_slots: Option<crate::explosion_volumes::ExplosionVolumes>,
+    /// The tracers' veiling glare at the fixation point, photopic and scotopic cd/m^2
+    /// (`collect_lights`), for the eye's meter (`exposure.wgsl` veil lanes).
+    pub(super) point_veil: [f32; 2],
     heat_integrated: Target,
     linear_sampler: wgpu::Sampler,
     sky_sampler: wgpu::Sampler,
@@ -1039,7 +1042,7 @@ impl Backend {
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
-            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, heat_integrated, linear_sampler, cmp_sampler,
+            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
             points_pipe, sparks_pipe, tracers_pipe,
@@ -1550,6 +1553,51 @@ impl Backend {
             .map(|s| Vec3::from_array([s.direction_life[0], s.direction_life[1], s.direction_life[2]]))
             .filter(|h| h.is_finite() && (*h - eye).length() < 150.0).collect();
         heads.sort_by(|a, b| (*a - eye).length_squared().total_cmp(&(*b - eye).length_squared()));
+        // Their veiling glare as the eye's meter would read it: the strips are drawn after the
+        // meter (`encode`), whose field average took a pellet's light as if spread over the field
+        // (2026-10-28). CIE disability glare, L_v = E (10 / theta^3 + 5 / theta^2), theta in degrees
+        // from the source (at least 0.5), E the pellet's illuminance at the eye, taken by the
+        // meter's three windows (`observer.rs`): the fovea at fixation sees the veil at the
+        // source's angle from fixation; the 10 deg Gaussian and the whole field see its integral,
+        // 2 pi (5 ln(30 / 0.5) + 10 (1 / 0.5 - 1 / 30)) = 252 E deg^2, over their areas. Heads in
+        // the view's frustum, occlusion (the barrel before a coax tracer) ignored.
+        self.point_veil = [0.0; 2];
+        {
+            let forward = r.camera.forward().normalize_or_zero();
+            let tint = [1.0f64, 0.4621, 0.0296];
+            let lux = |w: [f64; 3]| (tint[0] * w[0] + tint[1] * w[1] + tint[2] * w[2]) as f32 * TRACER_INTENSITY;
+            let (per_p, per_s) = (lux(crate::observer::PHOTOPIC_WEIGHTS), lux(crate::observer::SCOTOPIC_WEIGHTS));
+            let half_v = 0.5 * r.camera.fov_y;
+            let half_h = (half_v.tan() * r.camera.aspect).atan();
+            let field_deg2 = (2.0 * half_v.to_degrees()) * (2.0 * half_h.to_degrees());
+            let sigma = crate::observer::METER_GAUSSIAN_SIGMA_DEG as f32;
+            let (w_f, w_g, w_w) = (crate::observer::METER_FOVEA_WEIGHT as f32, crate::observer::METER_GAUSSIAN_WEIGHT as f32,
+                crate::observer::METER_FIELD_WEIGHT as f32);
+            const VEIL_INTEGRAL_DEG2: f32 = 252.0;
+            for s in &r.weapon_particles.segments {
+                let head = Vec3::from_array([s.direction_life[0], s.direction_life[1], s.direction_life[2]]);
+                let d = head - eye;
+                let dist2 = d.length_squared();
+                if !head.is_finite() || dist2 < 0.01 { continue; }
+                let dir = d / dist2.sqrt();
+                let along = dir.dot(forward);
+                if along <= 0.0 { continue; }
+                let right = forward.cross(Vec3::Y).normalize_or_zero();
+                let up = right.cross(forward);
+                if (dir.dot(right) / along).abs() > half_h.tan() || (dir.dot(up) / along).abs() > half_v.tan() { continue; }
+                let theta = along.clamp(-1.0, 1.0).acos().to_degrees().max(0.5);
+                let fovea = 10.0 / (theta * theta * theta) + 5.0 / (theta * theta);
+                let gauss = VEIL_INTEGRAL_DEG2 * (-0.5 * theta * theta / (sigma * sigma)).exp()
+                    / (2.0 * std::f32::consts::PI * sigma * sigma);
+                let field = VEIL_INTEGRAL_DEG2 / field_deg2.max(1.0);
+                let k = w_f * fovea + w_g * gauss + w_w * field;
+                self.point_veil[0] += per_p / dist2 * k;
+                self.point_veil[1] += per_s / dist2 * k;
+                if std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() {
+                    println!("[rm-veil] head dist {:.1} theta {theta:.2} deg E {:.3e} lx L_v {:.3e} cd/m2", dist2.sqrt(), per_p / dist2, per_p / dist2 * k);
+                }
+            }
+        }
         for head in heads.into_iter().take(8) {
             let color = Vec3::new(1.0, 0.4621, 0.0296);
             self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.003], b: [color.x, color.y, color.z, TRACER_INTENSITY], c: [range_of(color, TRACER_INTENSITY), -1.0, 2.0, 0.0] });
@@ -2446,7 +2494,7 @@ impl Backend {
         // 7. One-pixel snow, dust and embers, then ballistic emitters, in HDR before bloom/crush.
         let particles = if self.debug_skip & 4 != 0 { 0 } else { r.pixel_particle_count.get() };
         let embers = if self.debug_skip & 2 != 0 { 0 } else { self.embers.len() as u32 };
-        if particles > 0 || embers > 0 || !self.weapon_draws.is_empty() || self.tracer_range.1 > 0 {
+        if particles > 0 || embers > 0 || !self.weapon_draws.is_empty() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-points"),
                 color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load))],
@@ -2474,12 +2522,6 @@ impl Backend {
                     work.scene_instanced_draws += 1;
                 }
             }
-            if self.tracer_range.1 > 0 && self.debug_skip & 1 == 0 {
-                pass.set_pipeline(&self.tracers_pipe);
-                pass.set_vertex_buffer(0, self.weapon_buf.slice(..));
-                pass.draw(0..6, self.tracer_range.0..self.tracer_range.0 + self.tracer_range.1);
-                work.scene_instanced_draws += 1;
-            }
         }
         // 8. The eyepiece glass: refraction, dispersion and the lens edge of the TZF/binoculars.
         if self.optic_active && self.debug_skip & 64 == 0 {
@@ -2503,6 +2545,23 @@ impl Backend {
                 // The relayed views' particles take the same eye (one frame later).
                 optics.copy_eye_mapping(encoder, eye);
             }
+        }
+        // 9b. The small-arms tracers, after the eye's meter: their light adapts the eye as veiling
+        // glare (`point_veil`), not as a share of the field; in a sight they take the eyepiece's
+        // distortion themselves (`rm_sparks.wgsl` vs_tracer) and the crush's field mask.
+        if self.tracer_range.1 > 0 && self.debug_skip & 1 == 0 {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-tracers"),
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load))],
+                depth_stencil_attachment: None,
+                timestamp_writes: None, occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, &binds.points, &[]);
+            pass.set_bind_group(1, &binds.visibility, &[]);
+            pass.set_pipeline(&self.tracers_pipe);
+            pass.set_vertex_buffer(0, self.weapon_buf.slice(..));
+            pass.draw(0..6, self.tracer_range.0..self.tracer_range.0 + self.tracer_range.1);
+            work.scene_instanced_draws += 1;
         }
         if finish_ldr {
             work.bloom_passes += 4;

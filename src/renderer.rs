@@ -1037,7 +1037,10 @@ struct ExposureClockUniform {
     aspect: f32,
     monocular: f32,
     transient_source: f32,
-    _pad: [f32;3],
+    /// The veil of point sources drawn after the meter, photopic and scotopic cd/m^2
+    /// (`exposure.wgsl` veil_photopic/veil_scotopic; the raymarch backend's tracers).
+    point_veil: [f32;2],
+    _pad: f32,
 }
 
 /// The WGSL clock is eight scalar lanes. Keep this assertion beside the host declaration so a
@@ -5244,7 +5247,8 @@ impl Renderer {
                 aspect: 16.0 / 9.0,
                 monocular: 0.0,
                 transient_source: 0.0,
-                _pad: [0.0;3],
+                point_veil: [0.0;2],
+                _pad: 0.0,
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -8006,7 +8010,8 @@ impl Renderer {
                 // The gunner's TZF is one eye at a sight; every other view is both eyes.
                 monocular: if (self.optic_mask - 1.0).abs() < 0.5 { 1.0 } else { 0.0 },
                 transient_source: if self.observer_flash_source {1.0}else{0.0},
-                _pad: [0.0;3],
+                point_veil: [0.0;2],
+                _pad: 0.0,
             }),
         );
 
@@ -8107,6 +8112,8 @@ impl Renderer {
         }
         if let Some(mut rm) = self.raymarch.take() {
             rm.prepare(self, device, queue);
+            // The tracers' veil for the eye's meter (the clock's lanes 5 and 6).
+            queue.write_buffer(&self.exp_clock_buf, 20, bytemuck::cast_slice(&rm.point_veil));
             self.raymarch = Some(rm);
         }
 
