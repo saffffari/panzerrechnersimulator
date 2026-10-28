@@ -27,8 +27,12 @@ struct ExposureClock {
     aspect: f32,
     monocular: f32,
     transient_source: f32,
-    _pad0: f32,
-    _pad1: f32,
+    // The veiling glare of small point sources the frame draws after this meter (the small-arms
+    // tracers), already weighted by the meter's three windows: photopic and scotopic cd/m^2
+    // (renderer_raymarch.rs `point_veil`). A point source acts on adaptation through the eye's
+    // scatter round its image, not as a share of the field average.
+    veil_photopic: f32,
+    veil_scotopic: f32,
     _pad2: f32,
 };
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
@@ -272,9 +276,9 @@ fn cs(@builtin(local_invocation_index) li: u32) {
     // One shared view adaptation driven by the incident light in the existing spatial windows.
     // No aperture classification, independent port exposure, or scene-dependent luminance floor.
     let lp = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_p + OBS_GAUSSIAN_WEIGHT * gauss_p
-        + OBS_FIELD_WEIGHT * field_p);
+        + OBS_FIELD_WEIGHT * field_p + max(clock.veil_photopic, 0.0));
     let ls = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_s + OBS_GAUSSIAN_WEIGHT * gauss_s
-        + OBS_FIELD_WEIGHT * field_s);
+        + OBS_FIELD_WEIGHT * field_s + max(clock.veil_scotopic, 0.0));
     let field = clamp_luminance(w.w / max(w.x, 1.0));
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);

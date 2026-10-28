@@ -935,12 +935,18 @@ scene (a cost bound), shadowed by a ray query where queries are on. `raymarch-tr
 flight, against 52 before); from outside the tracer reads as a point with the eye's glare, exposure
 3500.
 
-Not done: with a tracer a dozen metres out in the sight's field the frozen capture still goes dark
-(metered 2043 but the rods give up the moonlit snow). The eye's meter (`exposure.wgsl`) averages the
-pellet's light over the whole field; a point source acts on adaptation through veiling glare
-(Stiles-Holladay, 10 E / theta^2, in which a sight's magnification cancels), some four stops less.
-Time-averaged over sustained fire the field average is about +1.6 stops. A point-source layer for
-the meter is the next item (the sight at night).
+The eye and the tracers (2026-10-28): the strips are drawn after the eye's meter (`encode` step
+9b; in a sight they take the eyepiece's barrel distortion themselves, `rm_sparks.wgsl`
+`eyepiece_clip`, and the crush's field mask), so the meter no longer averages a pellet's light over
+the field. Their effect on adaptation enters as veiling glare (`point_veil`, the clock's lanes 5
+and 6): CIE disability glare, E (10 / theta^3 + 5 / theta^2), taken by the meter's three windows
+(the 1 deg fovea at the source's angle from fixation, the Gaussian and the field by the veil's
+integral, 252 E deg^2, over their areas). Night coax fire, 480x270: quiet sight 3553 (snow 128);
+frozen with tracers in flight 2043 -> 2323; after two seconds of fire rendered frame by frame as in
+play (`coax_sight_live`) 2650, snow 23. What remains is the tracers' own light: each 60 cd head lights
+the snow under its path to about 27 lx against the Moon's 0.2, and that patch passes through the
+fovea by the aim point; the eye adapts to it. The pellet's intensity is an estimate from the trace
+requirement; a dim night trace (the German Glimmspur) would be far dimmer.
 
 ## The Tiger's exhaust (2026-10-28)
 
