@@ -2664,7 +2664,7 @@ fn run_campaign_ai(
     let preset = std::env::var("KESSEL_GRAPHICS_PRESET")
         .ok()
         .and_then(|value| graphics::GraphicsPreset::parse(&value))
-        .unwrap_or(graphics::GraphicsPreset::Laptop);
+        .unwrap_or(graphics::GraphicsPreset::Low);
     if std::env::var_os("KESSEL_NO_RT").is_none() {
         std::env::set_var("KESSEL_NO_RT", "1");
     }
@@ -16760,7 +16760,7 @@ fn main() -> anyhow::Result<()> {
             .get(5)
             .map(|value| {
                 graphics::GraphicsPreset::parse(value).ok_or_else(|| {
-                    anyhow::anyhow!("gfxbench preset must be laptop or high/4090 (got {value:?})")
+                    anyhow::anyhow!("gfxbench preset must be low, high or ultra (got {value:?})")
                 })
             })
             .transpose()?;

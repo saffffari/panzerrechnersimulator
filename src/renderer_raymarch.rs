@@ -15,25 +15,18 @@ use super::*;
 use glam::{Mat4, Vec3};
 use std::collections::HashMap;
 
-const VOL_DIVISOR: u32 = 4;
 /// The froxel grid's least size: below 640x360 the grid stops shrinking with the pixels (a coarser
 /// pixel grid spends the saving on the medium's cells instead).
-const VOL_MIN: [u32; 2] = [160, 90];
 
 /// The per-pixel sample budget of the noisy terms (2026-10-28, "like samples aren't high enough";
 /// "we can reduce pixel res"): 800x450's pixel count over this grid's, 1 at 800x450 and above, up
 /// to 3 below. The occlusion rays, the screen gather's directions and the rough reflection lobe
 /// take that many times their base count, so a lower grid's frame settles cleaner, not cheaper.
-fn sample_budget(iw: u32, ih: u32) -> f32 {
-    (360_000.0 / (iw.max(1) * ih.max(1)) as f32).clamp(1.0, 3.0)
-}
-const VOL_SLICES: u32 = 96;
 const VOL_NEAR_M: f32 = 0.25;
 const VOL_FAR_M: f32 = 320.0;
 /// Mesh slots the ray queries' optics table covers (periscope windows and mirrors).
 const MAX_OPTIC_SLOTS: usize = 8192;
 /// Cloud shadow map: texels per side and the half extent it covers around the eye.
-const CLOUD_SHADOW_RES: u32 = 256;
 const CLOUD_SHADOW_HALF_M: f32 = 2048.0;
 /// Reflection history: accumulated reflected radiance and the reflecting surface's eye distance.
 const REFL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -60,24 +53,18 @@ const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS;
 const MAX_LIGHT_CELL_ITEMS: usize = 1 << 17;
 const MAX_EMBERS: usize = 1 << 18;
 const EMBER_REACH_M: f32 = 90.0;
-const SHADOW_FAR_RES: u32 = 2048;
-const SHADOW_NEAR_RES: u32 = 1024;
 const SKY_COVER_RES: u32 = 512;
 const SKY_COVER_HALF_M: f32 = 48.0;
-const POINT_FACE_RES: u32 = 256;
 const POINT_SHADOWS: usize = 2;
 const SHADOW_VIEWS: usize = 16;
 const PUFF_LANES: usize = 13 * 3;
 /// Direction-indexed sky cache (rm_sky_cache.wgsl): equirectangular, this many texels across the
 /// full azimuth, 3/8 as many down the elevation window below. `KESSEL_RM_SKY=width[,phases]`
 /// overrides; `phases` is how many frames one full refresh takes (a 2-row x N/2-column pattern).
-const SKY_CACHE_WIDTH: u32 = 768;
 const SKY_CACHE_PHASES: u32 = 16;
 /// The cache marches the cloud layer with fewer view and light steps than the per-pixel sky
 /// pass did (32/5): its texel is 0.47 deg and refreshed over 16 frames, so the finer march bought
 /// nothing visible. Named in docs/RAYMARCHING_ENGINE.md.
-const SKY_CACHE_CLOUD_VIEW_STEPS: u32 = 20;
-const SKY_CACHE_CLOUD_LIGHT_STEPS: u32 = 4;
 const SKY_CACHE_ELEVATION_MIN_RAD: f32 = -20.0 * std::f32::consts::PI / 180.0;
 const SKY_CACHE_ELEVATION_SPAN_RAD: f32 = 110.0 * std::f32::consts::PI / 180.0;
 /// Irradiance below which a light stops being gathered, in the renderer's radiometric scale
@@ -306,6 +293,8 @@ pub(super) struct Backend {
     pub iw: u32,
     pub ih: u32,
     pub vol: [u32; 3],
+    /// The active preset's budgets, fixed for this backend's lifetime (`graphics::RaymarchQuality`).
+    quality: crate::graphics::RaymarchQuality,
     frame_buf: wgpu::Buffer,
     shadow_views_buf: wgpu::Buffer,
     parcels_buf: wgpu::Buffer,
@@ -675,16 +664,17 @@ impl Backend {
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
         sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool) -> Self {
-        let vol = [iw.div_ceil(VOL_DIVISOR).max(VOL_MIN[0].min(iw)), ih.div_ceil(VOL_DIVISOR).max(VOL_MIN[1].min(ih)), VOL_SLICES];
+        let quality = crate::graphics::active_preset().raymarch();
+        let vol = [iw.div_ceil(quality.vol_divisor).max(quality.vol_min[0].min(iw)), ih.div_ceil(quality.vol_divisor).max(quality.vol_min[1].min(ih)), quality.vol_slices];
         let (sky_cache_size, sky_cache_phases) = {
             let spec = std::env::var("KESSEL_RM_SKY").ok();
             let mut parts = spec.as_deref().unwrap_or("").split(',');
-            let width = parts.next().and_then(|v| v.trim().parse::<u32>().ok()).filter(|w| *w >= 64).unwrap_or(SKY_CACHE_WIDTH);
+            let width = parts.next().and_then(|v| v.trim().parse::<u32>().ok()).filter(|w| *w >= 64).unwrap_or(quality.sky_cache_width);
             let phases = parts.next().and_then(|v| v.trim().parse::<u32>().ok()).filter(|p| (1..=16).contains(p)).unwrap_or(SKY_CACHE_PHASES);
             ([width, (width * 3 / 8).max(32)], phases)
         };
         println!("[raymarch] froxel grid {}x{}x{} over {:.2}..{:.0} m; cascades {}/{} px, sky cover {} px, {} point-light cubes {} px, {} clustered lights, sky cache {}x{} in {} phases",
-            vol[0], vol[1], vol[2], VOL_NEAR_M, VOL_FAR_M, SHADOW_FAR_RES, SHADOW_NEAR_RES, SKY_COVER_RES, POINT_SHADOWS, POINT_FACE_RES, MAX_LIGHTS,
+            vol[0], vol[1], vol[2], VOL_NEAR_M, VOL_FAR_M, quality.shadow_far_res, quality.shadow_near_res, SKY_COVER_RES, quality.point_shadows, quality.point_face_res, MAX_LIGHTS,
             sky_cache_size[0], sky_cache_size[1], sky_cache_phases);
         let uniform = |label: &str, size: u64| device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label), size, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
@@ -714,7 +704,7 @@ impl Backend {
         let g1 = target(device, "rm-g1-normal", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g2 = target(device, "rm-g2-emission", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], wgpu::TextureFormat::Rgba16Float, gusage);
-        let cloud_shadow = target(device, "rm-cloud-shadow", CLOUD_SHADOW_RES, CLOUD_SHADOW_RES, wgpu::TextureFormat::R16Float, gusage);
+        let cloud_shadow = target(device, "rm-cloud-shadow", quality.cloud_shadow_res, quality.cloud_shadow_res, wgpu::TextureFormat::R16Float, gusage);
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
@@ -731,12 +721,12 @@ impl Backend {
             label: Some("rm-rt-empty"), max_instances: 1,
             flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE, update_mode: wgpu::AccelerationStructureUpdateMode::Build,
         }));
-        let shadow_far = depth_target(device, "rm-shadow-far", SHADOW_FAR_RES);
-        let shadow_near = depth_target(device, "rm-shadow-near", SHADOW_NEAR_RES);
+        let shadow_far = depth_target(device, "rm-shadow-far", quality.shadow_far_res);
+        let shadow_near = depth_target(device, "rm-shadow-near", quality.shadow_near_res);
         let sky_cover = depth_target(device, "rm-sky-cover", SKY_COVER_RES);
         let point_faces_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rm-point-faces"),
-            size: wgpu::Extent3d { width: POINT_FACE_RES, height: POINT_FACE_RES, depth_or_array_layers: (POINT_SHADOWS * 6) as u32 },
+            size: wgpu::Extent3d { width: quality.point_face_res, height: quality.point_face_res, depth_or_array_layers: (POINT_SHADOWS * 6) as u32 },
             mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: DEPTH,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         });
@@ -1025,9 +1015,9 @@ impl Backend {
             label: Some("rm-sky-cache"), layout: &sky_cache_bgl, entries: &[entry(0, sky_cache_buf.as_entire_binding())],
         });
         let sky_entry = rm_source("sky.wgsl")
-            .replace("const CLOUD_VIEW_STEPS: i32 = 32;", &format!("const CLOUD_VIEW_STEPS: i32 = {SKY_CACHE_CLOUD_VIEW_STEPS};"))
-            .replace("const CLOUD_LIGHT_STEPS: i32 = 5;", &format!("const CLOUD_LIGHT_STEPS: i32 = {SKY_CACHE_CLOUD_LIGHT_STEPS};"));
-        assert!(sky_entry.contains(&format!("const CLOUD_VIEW_STEPS: i32 = {SKY_CACHE_CLOUD_VIEW_STEPS};")), "sky.wgsl cloud step constants moved");
+            .replace("const CLOUD_VIEW_STEPS: i32 = 32;", &format!("const CLOUD_VIEW_STEPS: i32 = {};", quality.cloud_view_steps))
+            .replace("const CLOUD_LIGHT_STEPS: i32 = 5;", &format!("const CLOUD_LIGHT_STEPS: i32 = {};", quality.cloud_light_steps));
+        assert!(sky_entry.contains(&format!("const CLOUD_VIEW_STEPS: i32 = {};", quality.cloud_view_steps)), "sky.wgsl cloud step constants moved");
         let sky_cache_source = physical_atmosphere_transport_shader_source(&format!("{}\n{}", sky_entry, rm_source("rm_sky_cache.wgsl")));
         let sky_cache_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rm-sky-cache"), source: wgpu::ShaderSource::Wgsl(sky_cache_source.into()),
@@ -1093,7 +1083,7 @@ impl Backend {
         let tracers_pipe = weapon_pipeline("rm-tracers", "vs_tracer");
 
         Self {
-            iw, ih, vol, frame_buf, shadow_views_buf, parcels_buf, cell_start_buf, cell_items_buf,
+            iw, ih, vol, quality, frame_buf, shadow_views_buf, parcels_buf, cell_start_buf, cell_items_buf,
             lights_buf, light_cell_start_buf, light_cell_items_buf, weapon_buf, ember_buf,
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
@@ -1118,7 +1108,7 @@ impl Backend {
                 Some((it.next()?, it.next()?))
             }).filter(|&(x, y)| x < iw && y < ih),
             probe_buf: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rm-probe"), size: (5 + VOL_SLICES as u64) * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+                label: Some("rm-probe"), size: (5 + vol[2] as u64) * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
             }),
             probe_pending: Cell::new(false),
             optic_active: false, stats: Stats::default(), encode_ms: Cell::new(0.0),
@@ -1342,7 +1332,8 @@ impl Backend {
                     let ln_range = (VOL_FAR_M / VOL_NEAR_M).ln();
                     let mut column = String::new();
                     for d in [1.0f32, 3.0, 5.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 320.0] {
-                        let slice = ((d / VOL_NEAR_M).ln() / ln_range * VOL_SLICES as f32).clamp(0.0, VOL_SLICES as f32 - 1.0) as usize;
+                        let slices = self.vol[2] as f32;
+                        let slice = ((d / VOL_NEAR_M).ln() / ln_range * slices).clamp(0.0, slices - 1.0) as usize;
                         let v = f16(5 * 256 + slice * 256);
                         column.push_str(&format!(" {d:.0}m T {:.4} S {:.3e}", v[3], v[1]));
                     }
@@ -1409,7 +1400,7 @@ impl Backend {
         let sun_radiance = if beam_on {
             atmosphere.solar_irradiance * physical_environment::solar_transmittance_at(&beam_atmosphere, origin, sun_dir.as_dvec3(), quality.source_steps.max(4))
         } else { glam::DVec3::ZERO };
-        let texel = 2.0 * CLOUD_SHADOW_HALF_M / CLOUD_SHADOW_RES as f32;
+        let texel = 2.0 * CLOUD_SHADOW_HALF_M / self.quality.cloud_shadow_res as f32;
         self.cloud_area = [(eye.x / texel).round() * texel, (eye.z / texel).round() * texel, CLOUD_SHADOW_HALF_M,
             if cloud_shadows { eye.y } else { f32::NAN }];
         queue.write_buffer(&self.cloud_shadow_buf, 0, bytemuck::bytes_of(&self.cloud_area));
@@ -1461,8 +1452,8 @@ impl Backend {
         let near_half = if r.interior_light > 0.02 { 6.0 } else { 20.0 };
         let focus = eye + forward * SOLO_SHADOW_LOOK_AHEAD_M;
         self.shadow_views = [Mat4::IDENTITY; SHADOW_VIEWS];
-        self.shadow_views[0] = stable_shadow_view_proj(sun_dir, focus, SOLO_SHADOW_HALF_M, FAR_SHADOW_DEPTH_HALF_M, SHADOW_FAR_RES);
-        self.shadow_views[1] = stable_shadow_view_proj(sun_dir, eye, near_half, 60.0, SHADOW_NEAR_RES);
+        self.shadow_views[0] = stable_shadow_view_proj(sun_dir, focus, SOLO_SHADOW_HALF_M, FAR_SHADOW_DEPTH_HALF_M, self.quality.shadow_far_res);
+        self.shadow_views[1] = stable_shadow_view_proj(sun_dir, eye, near_half, 60.0, self.quality.shadow_near_res);
         if self.reuse_maps {
             self.shadow_views[0] = previous_views[0];
             self.shadow_views[2] = previous_views[2];
@@ -1558,7 +1549,7 @@ impl Backend {
             medium: [r.fog_density.max(0.0), world_medium.snow_fraction, world_medium.layer[0], world_medium.layer[1]],
             cabin: [r.atmo_origin.x, r.atmo_origin.y, r.atmo_origin.z, cabin_sigma],
             wind: [wind.x, r.atmosphere_mood.clamp(0.0, 1.0), wind.y, gust],
-            shadow_params: [SOLO_SHADOW_HALF_M, near_half, SHADOW_FAR_RES as f32, SHADOW_NEAR_RES as f32],
+            shadow_params: [SOLO_SHADOW_HALF_M, near_half, self.quality.shadow_far_res as f32, self.quality.shadow_near_res as f32],
             light_count: [self.lights.len() as f32, self.shadowed[0].map_or(-1.0, |i| i as f32), self.shadowed[1].map_or(-1.0, |i| i as f32), self.parcels.len() as f32],
             optic: [r.optic_mask, r.camera.fov_y, r.optic_blast.clamp(0.0, 1.0), atmosphere.sun_angular_radius_rad as f32],
             secondary_dir: [secondary_dir.x as f32, secondary_dir.y as f32, secondary_dir.z as f32, atmosphere.secondary_angular_radius_rad as f32],
@@ -1582,7 +1573,7 @@ impl Backend {
             optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
             // KESSEL_WHITEWASH=0..1 fixes the winter coat for review.
             livery: [self.whitewash.unwrap_or(r.whitewash).clamp(0.0, 1.0), 0.0, 0.0, 0.0],
-            samples: [sample_budget(self.iw, self.ih), 0.0, 0.0, 0.0],
+            samples: [self.quality.sample_budget(self.iw, self.ih), 0.0, 0.0, 0.0],
             stars: {
                 let latitude = r.sky_clock.site.latitude_deg.to_radians();
                 let sidereal = (crate::ephemeris::apparent_sidereal_time_deg(r.sky_clock.now())
@@ -1723,7 +1714,7 @@ impl Backend {
         }).collect();
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
         self.shadowed = [None; POINT_SHADOWS];
-        for (slot, &(_, index)) in ranked.iter().take(POINT_SHADOWS).enumerate() {
+        for (slot, &(_, index)) in ranked.iter().take(self.quality.point_shadows.min(POINT_SHADOWS)).enumerate() {
             self.shadowed[slot] = Some(index);
             self.lights[index].c[1] = slot as f32;
         }

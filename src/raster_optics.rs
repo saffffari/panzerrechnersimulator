@@ -56,6 +56,9 @@ struct Prepared {
     camera: crate::camera::Camera,
     source_eye: Vec3,
     extent: [u32; 2],
+    /// Re-render this port's exterior scene this frame. A pane that is not refreshed is still
+    /// drawn from its retained layer (`GraphicsPreset::optic_relays_per_frame`).
+    refresh: bool,
 }
 
 #[repr(C)]
@@ -552,13 +555,19 @@ impl Renderer {
             if !mesh.visible || optics.blocked[port] || optics.occluded[port] {return None;}
             capture_camera(spec,mesh.model,&self.camera,optics.width as f32/optics.height as f32)
                 .map(|(camera,area,source_eye)| {
-                    (Prepared {port,camera,source_eye,extent:aperture_extent(spec,mesh.model,&self.camera,
+                    (Prepared {port,camera,source_eye,refresh:true,extent:aperture_extent(spec,mesh.model,&self.camera,
                         [self.iw,self.ih],[optics.width,optics.height])},area)
                 })
         }).collect();
         candidates.sort_by(|a,b|b.1.total_cmp(&a.1));
         candidates.truncate(MAX_VISIBLE);
         let mut prepared=optics.prepared.borrow_mut();prepared.clear();
+        // The largest pane refreshes every frame; the rest share the remaining budget in turn.
+        let budget=crate::graphics::active_preset().optic_relays_per_frame().max(1);
+        let rest=candidates.len().saturating_sub(1);
+        for (rank,(view,_)) in candidates.iter_mut().enumerate() {
+            view.refresh=rank==0 || rest<budget || (rank-1+self.frame as usize)%rest<budget-1;
+        }
         for (view,_) in candidates {
             let layer=&optics.layers[view.port];
             let mut cam=*camera;
@@ -703,7 +712,7 @@ impl Renderer {
 
     pub(super) fn encode_raster_optics(&self, encoder:&mut wgpu::CommandEncoder, work:&mut RenderWorkStats) {
         let Some(optics)=&self.raster_optics else {return;};
-        for view in optics.prepared.borrow().iter() {
+        for view in optics.prepared.borrow().iter().filter(|view|view.refresh) {
             let layer=&optics.layers[view.port];
             self.encode_raster_scene(encoder,&layer.camera_bind,view.camera.view_proj(),&layer.color,&layer.depth,true,Some(view.extent),work);
             self.encode_raster_optic_weather(encoder,layer,&optics.weather,view.extent,work);

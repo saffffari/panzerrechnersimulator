@@ -889,7 +889,7 @@ mod tests {
     fn both_presets_draw_the_collision_grid_and_only_a_debug_gate_decimates_it() {
         use crate::debug_gates::DebugGates;
         use crate::graphics::GraphicsPreset;
-        for preset in [GraphicsPreset::Laptop, GraphicsPreset::High] {
+        for preset in GraphicsPreset::ALL {
             let everything = |key: &str| match key {
                 "KESSEL_DEBUG_TERRAIN_RENDER_RES" => Some("256".to_string()),
                 _ => None,

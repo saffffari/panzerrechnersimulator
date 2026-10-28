@@ -23,9 +23,15 @@ fn tile_scissor_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("KESSEL_SHADOW_TILE_SCISSOR").as_deref() != Ok("0"))
 }
+/// Opt-in only (`KESSEL_RETAIN_RIGID_SKY_DEPTH=1`; the Linux playtest launchers already forced 0).
+/// Retaining a large rigid mesh such as the player's hull in the static atlas re-keys every static
+/// group whenever its transform changes by one float bit, and the suspension moves the hull every
+/// tick even when parked. That redrew all 66 tiles over the whole scene each frame: 113 ms/frame
+/// at the commander station (gfxbench, 4090, 480x270, 2026-10-28). In the dynamic layer the same
+/// hull costs 0.3 ms via its clustered occluder; the frame matches (0.16 % of pixels, noise).
 fn retain_rigid_depth_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("KESSEL_RETAIN_RIGID_SKY_DEPTH").as_deref() != Ok("0"))
+    *ENABLED.get_or_init(|| std::env::var("KESSEL_RETAIN_RIGID_SKY_DEPTH").as_deref() == Ok("1"))
 }
 /// Footprint half extent around the focus. A seated crewman needs the whole hull inside the
 /// footprint at fine texels; on foot a room-scale footprint covers walls and roofs.

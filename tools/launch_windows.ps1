@@ -84,15 +84,18 @@
   LAN gameplay UDP port (default 28460). Discovery stays on 28461.
 
 .PARAMETER Tier
-  Graphics profile. auto (default) picks from the GPU: the 4090 profile on an RTX 4080/4090/5080/
-  5090 class card, else the laptop profile. laptop: 480x272 internal grid, laptop preset, gameplay
-  transport sampling, no MSAA, the shader backend unless a ray-tracing laptop GPU (RTX 30/40/50,
-  Radeon RX 6000/7000, Arc A) is present, in which case raymarch. 4090: the profile above.
-  A tier changes resolution and sampling only, never the scene or the simulation (CLAUDE.md).
-  The laptop profile keeps its own saved preferences (graphics.laptop.v1.json).
+  Graphics preset (alias -Graphics): Low, High or Ultra. auto (default) picks High on a desktop
+  RTX 4080/4090/5080/5090 class card, else Low. The old names still work: laptop = Low, 4090 = High.
+  Low: 480x272 grid, smaller froxel/shadow/sky budgets, one shadowed lamp, a rolling periscope
+    refresh, gameplay transport sampling, no MSAA; the shader backend unless a ray-tracing GPU
+    (RTX 20-50, Radeon RX 6000/7000, Arc A) is present, in which case raymarch.
+  High: 480x270 grid, the desktop reference budgets, MSAA 4, full transport sampling.
+  Ultra: 800x450 grid, denser froxels, 4K sun shadows, finer sky and clouds, more samples per pixel.
+  A preset changes resolution and sampling only, never the scene or the simulation (CLAUDE.md).
+  Low and Ultra keep their own saved preferences (graphics.laptop.v1.json, graphics.ultra.v1.json).
 
 .PARAMETER Laptop
-  Shorthand for -Tier laptop.
+  Shorthand for -Graphics Low.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1
@@ -103,6 +106,7 @@
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Resolution 480x272
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Host Canyon
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Join 192.168.1.50 -Role gunner -Laptop
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Graphics Ultra
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Join auto -Windowed
 #>
 [CmdletBinding()]
@@ -125,7 +129,9 @@ param(
     [ValidateSet('commander', 'driver', 'gunner', 'loader', 'radio')] [string]$Role,
     [string]$Name,
     [ValidateRange(1, 65535)] [int]$Port = 28460,
-    [ValidateSet('auto', 'laptop', '4090')] [string]$Tier = 'auto',
+    # Address the host listens on. 127.0.0.1 keeps a same-PC two-window test off the network (no firewall prompt).
+    [string]$Bind = '0.0.0.0',
+    [Alias('Graphics')] [ValidateSet('auto', 'low', 'high', 'ultra', 'laptop', '4090')] [string]$Tier = 'auto',
     [switch]$Laptop
 )
 $ErrorActionPreference = 'Stop'
@@ -139,7 +145,7 @@ if (-not $Binary) {
 }
 if ($HostMission -and $Join) { throw 'Choose either -Host or -Join.' }
 $Lan = [bool]($HostMission -or $Join)
-if ($Laptop) { $Tier = 'laptop' }
+if ($Laptop) { $Tier = 'low' }
 $WorkshopRel = 'assets\worldgen\workshops\gaea-canyon-run-v2\manifest.v1.json'
 if (-not $AssetRoot) {
     $AssetRoot = $Root
@@ -161,11 +167,17 @@ $Config   = Join-Path $Runtime 'winter-playtest-state\graphics.v1.json'
 # --- graphics tier --------------------------------------------------------------------------
 $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
 if ($Tier -eq 'auto') {
-    $Tier = if ($gpus | Where-Object { $_ -match 'RTX\s*(4080|4090|5080|5090)' -and $_ -notmatch 'Laptop' }) { '4090' } else { 'laptop' }
+    $Tier = if ($gpus | Where-Object { $_ -match 'RTX\s*(4080|4090|5080|5090)' -and $_ -notmatch 'Laptop' }) { 'high' } else { 'low' }
 }
+$Tier = switch ($Tier.ToLower()) { 'laptop' { 'low' } '4090' { 'high' } default { $Tier.ToLower() } }
 $GraphicsPreset = 'high'; $GeometryAA = 'msaa4'; $Transport = 'full'
-if ($Tier -eq 'laptop') {
-    $GraphicsPreset = 'laptop'; $GeometryAA = 'off'; $Transport = 'gameplay'
+if ($Tier -eq 'ultra') {
+    $GraphicsPreset = 'ultra'
+    if (-not $PSBoundParameters.ContainsKey('Resolution')) { $Resolution = '800x450' }
+    $Config = Join-Path $Runtime 'winter-playtest-state\graphics.ultra.v1.json'
+}
+if ($Tier -eq 'low') {
+    $GraphicsPreset = 'low'; $GeometryAA = 'off'; $Transport = 'gameplay'
     if (-not $PSBoundParameters.ContainsKey('Resolution')) { $Resolution = '480x272' }
     if (-not $PSBoundParameters.ContainsKey('Renderer')) {
         $rtCapable = $gpus | Where-Object { $_ -match 'RTX\s*[2-5]0\d0|Radeon.*RX\s*[67]\d{3}|Arc.*A\d{3}' }
@@ -293,7 +305,7 @@ if ($Lan) {
         Write-Host "Found: $line"
     }
     if ($HostMission) {
-        $GameArgs += '--host', '--mission', $HostMission.ToLower(), '--bind', "0.0.0.0:$Port"
+        $GameArgs += '--host', '--mission', $HostMission.ToLower(), '--bind', "${Bind}:$Port"
         # A fresh deployment each hosting unless -Seed pins one; clients take the host's.
         $GameArgs += '--seed', $(if ($Seed) { $Seed } else { [string](Get-Random -Minimum 1 -Maximum 2147483647) })
         if (-not $Role) { $Role = 'commander' }

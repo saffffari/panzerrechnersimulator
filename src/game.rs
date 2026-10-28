@@ -15755,7 +15755,7 @@ impl Game {
         r.camera.zfar = 6000.0;
         let screen_count = self.rtt_screens.len();
         let high_couch_union = self.couch_crew_active
-            && matches!(r.graphics_preset, crate::graphics::GraphicsPreset::High)
+            && r.graphics_preset.is_desktop()
             && self.rtt_priority_enabled;
         let refresh_indices: Vec<usize> = if high_couch_union {
             let view_alignments: Vec<Vec<f32>> = [

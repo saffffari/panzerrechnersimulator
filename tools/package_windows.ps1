@@ -7,7 +7,7 @@
   crew co-op on the same Wi-Fi (docs\LAN_WINDOWS.md). The folder holds:
 
     panzerrechnersystem.exe              the release build of this checkout
-    tools\launch_windows.ps1              launcher (-Host / -Join / -Laptop tiers)
+    tools\launch_windows.ps1              launcher (-Host / -Join / -Graphics Low|High|Ultra)
     tools\setup_firewall.ps1              the two inbound UDP rules, Private networks only
     assets\ catalog\                      exactly the runtime assets the game loads, at their
                                           logical paths (tools\windows_payload.py)
@@ -148,7 +148,7 @@ Crew co-op on one Wi-Fi (every laptop on the same network, marked Private):
   The host's seat is Commander; friends get the next free seat (F6 asks for another). The AI crew
   mans every seat nobody holds and steps aside when a friend takes it.
 
-Laptops: the launcher picks the laptop profile (480x272, laptop preset) unless an RTX 4080/4090/
+Laptops: the launcher picks the Low preset (480x272; -Graphics High or Ultra to override) unless an RTX 4080/4090/
 5080/5090 desktop card is present. Integrated graphics (Intel UHD/Iris Xe, Radeon iGPU) are far too
 slow for this game; a laptop needs a discrete GPU. See LAN_WINDOWS.md, "Laptop GPUs".
 
