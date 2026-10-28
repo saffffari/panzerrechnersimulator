@@ -6365,6 +6365,11 @@ impl Renderer {
         self.apply_weather_override();
     }
 
+    /// Read back a mesh's visibility and model (headless verification of what is drawn).
+    pub fn debug_mesh_state(&self, idx: usize) -> Option<(bool, glam::Mat4)> {
+        self.meshes.get(idx).map(|g| (g.visible, g.model))
+    }
+
     pub fn set_model(&mut self, idx: usize, m: glam::Mat4) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.model = m;

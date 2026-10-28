@@ -90,6 +90,7 @@ impl Game {
                 "death_cause": self.game_over().map(|c| format!("{c:?}")),
             },
             "canyon": self.canyon_snapshot(),
+            "crew_solo": self.crew_solo_session_json(),
         })
     }
 }

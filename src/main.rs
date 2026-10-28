@@ -9683,6 +9683,8 @@ struct Keys {
     e: bool,     // E held: the one interaction key (see App::interaction_primary)
     g: bool,     // G — held field repair (locks all stations)
     k: bool,     // K — solo crew: the gunner's standing order (fire at will / hold fire)
+    y: bool,     // Y — solo crew: yes to a crewman's request
+    n: bool,     // N — solo crew: no to a crewman's request
     shift: bool, // on-foot run (hold)
     ctrl: bool,  // hold to crouch on foot or while walking inside the tank
     mmb: bool,   // middle mouse held — coax MG34 at the gunner sights
@@ -9721,6 +9723,8 @@ impl Keys {
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
             fire_order: self.k,
+            crew_yes: self.y,
+            crew_no: self.n,
             coop: None,
             coop_host: false,
             couch_crew: false,
@@ -14770,6 +14774,8 @@ impl ApplicationHandler for App {
                     KeyCode::KeyE => self.keys.e = down,
                     KeyCode::KeyG => self.keys.g = down,
                     KeyCode::KeyK => self.keys.k = down,
+                    KeyCode::KeyY => self.keys.y = down,
+                    KeyCode::KeyN => self.keys.n = down,
                     // Shift/Ctrl: on-foot run + crouch (held). Shift ALSO edge-cycles the gun
                     // sights while in the tank (see the Playing match below, Tank-mode gated).
                     KeyCode::ShiftLeft | KeyCode::ShiftRight => self.keys.shift = down,
@@ -16733,6 +16739,14 @@ fn main() -> anyhow::Result<()> {
         let max_secs = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(120.0f32);
         let act = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(0u8);
         return showreel::run_ai_showreel(outdir, t34_weights, tiger_weights, count, max_secs, act);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo-designate" {
+        let prefix = capture_arg(&args, 2, "crew_solo_designate");
+        return crew_solo_capture::run_crew_solo_designate_capture(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "crew-solo-empties" {
+        let prefix = capture_arg(&args, 2, "crew_solo_empties");
+        return crew_solo_capture::run_crew_solo_empties_capture(&prefix);
     }
     if args.len() >= 2 && args[1] == "crew-solo-kia" {
         let prefix = capture_arg(&args, 2, "crew_solo_kia");

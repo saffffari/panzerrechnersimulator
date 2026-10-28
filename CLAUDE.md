@@ -90,6 +90,10 @@ cargo run -- koop prefix                            # headless: KOOP splitscreen
 cargo run -- absitzen outdir                        # headless: on-foot slice — dismount, walk, loot, Luger, stealth beats
 cargo run -- lasttiger                              # headless: the Last Tiger loop — bail burning, survive cook-off, remount a spare
 cargo run -- climb                                  # headless: the mount/dismount climb ritual (3 timed moves each way) + jump
+cargo run -- crew-solo-designate prefix             # headless, short: commander's MMB designation -> gunner slews, TPZ second
+                                                    #   pointer, refine, mid-slew handover, contact under hold fire; 2 PNGs
+cargo run -- crew-solo-empties prefix               # headless, short: empties rack full -> ask, refuse (floor clutter), approve
+                                                    #   (side hatch open, cases heaved out), contact shuts the hatch; 2 PNGs
 cargo run -- crew-solo-kia prefix                   # headless, short: solo crew legibility — displaced man stands clear of the
                                                     #   cupola, a loader killed leaves a body and blood, a bleeder bleeds on; 4 PNGs
 cargo run -- crew-solo prefix                       # headless: solo living crew — AI stations, a real penetration wounds the

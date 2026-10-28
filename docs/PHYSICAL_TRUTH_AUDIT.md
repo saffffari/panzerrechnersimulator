@@ -37,6 +37,39 @@ none presented as physiology or a contact solve:
   4, 48)` grains from a point chosen by the worst wound's region (lap, side, head, chest), and
   96 more as he dies of it: a design rate for the pool's growth, through the real surface
   transport, not a volume balance against his blood loss.
+- Stowing spent cases upright in a rear-wall rack is a crew-habit choice for this Tiger, not a
+  historical claim (practice varied by crew and unit; cases also went out of the hatch or onto
+  the floor). The slot stands are generated from the turret's source triangles (a 100-degree
+  ray fan from a point in the rear of the basket, the case stood a hand's width in from the
+  wall on the surface a downward ray finds, if the upward ray finds headroom), so no slot is
+  invented where the wall and floor are not; the margins (0.03 m from the wall, 0.01 m above
+  the stand, 0.04 m headroom) are design values. The loader's carry to the rack is a pose
+  interpolation over the stow time with no hands drawn; the stow time, the rushed and hurt
+  thresholds are design values.
+- Dumping the empties out of the side escape hatch with the commander's leave, and letting them
+  collect on the floor otherwise, is a crew-habit choice, not a historical claim. The open hatch
+  is the real lid state (sound enclosure, light and weather through the real opening, small-arms
+  rays against the moved lid); the main-gun armour solve does not model an open hatch as a hole
+  in the plate. The loader does not move to the hatch: his body stays at his post while the case
+  is placed just outside the aperture and given the heave's velocity (CASING_THROW_SPEED outward,
+  1.2 m/s up), so a rifleman can hit the aperture but not a man standing in it. The dump only
+  happens between reloads with no contact in the gunner's sight; the 1.8 s per case is a design
+  value. Floor clutter is counted, not collided: loose cases within 0.7 m of the loader's post
+  stretch his stroke period (a quarter per case, at most double), cases within 0.32 m of the
+  player's feet slow his step (0.18 per case, never below half) and are kicked with 1.4 times
+  the foot's velocity; there is no foot-to-case contact solve and no trip or fall.
+- The AI loader's working round is exempt from the off-station ram decay while he holds it
+  (`loader_holding`); his stroke cadence (1.5 s per stroke at full performance) is set so the
+  reload stays about six seconds.
+- The commander's designation range is the hit distance of a ray from his eye to the terrain
+  heightfield or a 2.4 m sphere round a contact's centre: a game shortcut, not a rangefinder or
+  a stadiametric estimate, and it is the distance to whatever the eye ray meets first (a rise of
+  ground in front of the intended point gives the rise's range). The gunner's response uses the
+  ordinary lay and traverse drives at their real rates; his acknowledgement is immediate. The
+  second pointer on the gunner's turret position indicator is the same source needle drawn at
+  0.72 scale 4 mm in front of the first. That the Tiger I's indicator carried a commander's
+  pointer is the brief's direction and is not verified here against a primary source; the
+  turret's own 12-hour pointer is the existing instrument.
 - Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
   loss, the airway timer), spoken once per change of the set of men needing care.
 - The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
