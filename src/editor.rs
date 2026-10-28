@@ -6877,7 +6877,7 @@ impl EditorState {
         self.renderer.draw_text(
             &format!(
                 "{}  {}x{}",
-                match self.renderer.graphics_preset { GraphicsPreset::High => "High", GraphicsPreset::Laptop => "Low" },
+                self.renderer.graphics_preset.label(),
                 self.renderer.iw,
                 self.renderer.ih,
             ),
@@ -8901,7 +8901,7 @@ mod tests {
     fn editor_graphics_policy_matches_live_play_and_honors_valid_override() {
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::IntegratedGpu, None),
-            GraphicsPreset::Laptop
+            GraphicsPreset::Low
         );
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::DiscreteGpu, None),
@@ -8913,11 +8913,11 @@ mod tests {
         );
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::DiscreteGpu, Some("laptop")),
-            GraphicsPreset::Laptop
+            GraphicsPreset::Low
         );
         assert_eq!(
             resolve_editor_graphics_preset(wgpu::DeviceType::IntegratedGpu, Some("invalid")),
-            GraphicsPreset::Laptop
+            GraphicsPreset::Low
         );
     }
 

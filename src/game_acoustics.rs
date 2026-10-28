@@ -220,7 +220,7 @@ impl Game {
     /// never the scene or the transport law (CLAUDE.md).
     fn acoustic_ray_budget(&self) -> (u32, u32, u32) {
         match crate::graphics::active_preset() {
-            crate::graphics::GraphicsPreset::High => (48, 384, 768),
+            crate::graphics::GraphicsPreset::High | crate::graphics::GraphicsPreset::Ultra => (48, 384, 768),
             _ => (16, 128, 256),
         }
     }
@@ -318,7 +318,7 @@ impl Game {
     pub(super) fn acoustic_room_for(&mut self, source: Vec3) -> Option<Rc<StereoIr>> {
         // At most this many traced convolutions per update; beyond it a voice takes the
         // parametric tail (a named cost bound: ~6 ms per convolved voice in release).
-        let budget = match crate::graphics::active_preset() { crate::graphics::GraphicsPreset::High => 4, _ => 2 };
+        let budget = if crate::graphics::active_preset().is_desktop() { 4 } else { 2 };
         if self.acoustics.convolutions >= budget {
             self.acoustics.parametric_rooms += 1;
             return None;

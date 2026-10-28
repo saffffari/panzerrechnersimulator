@@ -113,7 +113,7 @@ mod tests {
             _ => Some("1".to_string()),
         };
         let nothing = |_: &str| None;
-        for preset in [GraphicsPreset::Laptop, GraphicsPreset::High] {
+        for preset in GraphicsPreset::ALL {
             // A release build never reads the environment: every gate stays closed.
             assert!(DebugGates::resolve(false, preset, everything_on).is_shipping(), "{preset:?}");
             // A debug build without an explicit opt-in is closed too.
@@ -134,7 +134,7 @@ mod tests {
         assert!(DebugGates::resolve(true, GraphicsPreset::High, junk).is_shipping());
         // Asking for the full grid is the shipping mesh, not an open gate.
         let full = |key: &str| (key == "KESSEL_DEBUG_TERRAIN_RENDER_RES").then(|| "full".to_string());
-        assert!(DebugGates::resolve(true, GraphicsPreset::Laptop, full).is_shipping());
+        assert!(DebugGates::resolve(true, GraphicsPreset::Low, full).is_shipping());
         // The shipping constant is what the live code uses when nothing is set in this process.
         assert!(DebugGates::SHIPPING.hearing_time_scale == 1.0);
     }

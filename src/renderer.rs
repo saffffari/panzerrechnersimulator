@@ -121,7 +121,7 @@ impl TransportQuality {
             return IntegrationQuality { view_steps: view as u32, source_steps: source as u32,
                 solar_disk_samples: disk as u32, cloud_column_steps: cloud as u32 };
         }
-        if self == Self::Gameplay || preset == crate::graphics::GraphicsPreset::Laptop {
+        if self == Self::Gameplay || preset == crate::graphics::GraphicsPreset::Low {
             IntegrationQuality {
                 view_steps: 12,
                 source_steps: 8,
