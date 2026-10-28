@@ -82,6 +82,8 @@ mod canyon;
 mod canyon_attempt;
 mod mission;
 mod mission_capture;
+mod radio_llm;
+mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
 mod canyon_director;
@@ -13214,6 +13216,11 @@ impl WindowState {
                 Some(ui::MenuAction::LoadCheckpoint) => self.load_campaign_checkpoint(),
                 Some(ui::MenuAction::Canyon) => { self.canyon_v2 = false; self.start_play(PlayMode::Canyon); },
                 Some(ui::MenuAction::CanyonV2) => { self.canyon_v2 = true; self.start_play(PlayMode::Canyon); },
+                Some(ui::MenuAction::Platoon) => {
+                    std::env::set_var(game::platoon::ENV_PLATOON, "2");
+                    self.canyon_v2 = true;
+                    self.start_play(PlayMode::Canyon);
+                },
                 None => {},
             },
             KeyCode::Escape if self.menu.resume_available => {
@@ -13347,6 +13354,21 @@ impl WindowState {
         // cues remain: the interaction dot, the dismount ring and the co-op capture bar.
         self.renderer.ui_reset();
         self.draw_compound_hud(0.5); // STÜTZPUNKT capture bar (no-op outside the Koop mission)
+        // Platoon radio: the typed line and the wingmen's replies, display-resolution text outside
+        // the crush like the menus (the one place play carries words, by the mode's design).
+        {
+            let lines = self.game.platoon_hud_lines();
+            let mut y = 0.86;
+            for (callsign, text, alpha, entry) in lines.iter().rev() {
+                let color = if *entry { [1.0, 0.82, 0.46, alpha * 0.95] } else if callsign == radio_llm::PLAYER_CALLSIGN { [0.92, 0.92, 0.88, alpha * 0.85] } else { [0.72, 0.92, 0.74, alpha * 0.95] };
+                let line = if callsign.is_empty() { text.clone() } else if *entry { format!("{} > {}", callsign.to_uppercase(), text) } else { format!("{}: {}", callsign.to_uppercase(), text) };
+                self.renderer.draw_text(&line, 0.02, y, 0.020, color, ui::Align::Left);
+                y -= 0.028;
+            }
+            if self.game.platoon.is_some() && !self.game.platoon_typing() && lines.is_empty() {
+                self.renderer.draw_text("T: FUNK", 0.02, 0.86, 0.016, [0.6, 0.6, 0.58, 0.35], ui::Align::Left);
+            }
+        }
         if self.game.is_tank_editor_play() {
             // Developer workshop only, reached from the editor.
             tank_editor_acceptance::draw_workshop_status(&mut self.renderer);
@@ -14239,6 +14261,9 @@ impl WindowState {
             return;
         }
         if self.build_act_world(1) {
+            if game::platoon::requested() {
+                self.game.enable_platoon();
+            }
             self.show_map = false;
             self.show_controls = false;
             self.run_report = None;
@@ -14640,6 +14665,15 @@ impl ApplicationHandler for App {
                     return;
                 };
                 native_input_audit::key(&format!("{code:?}"),down);
+                // Platoon radio line open: every key is text (or Enter/Escape/Backspace) until it
+                // closes; the driver's level-triggered keys are released so the hull does not creep.
+                if matches!(state.state, AppState::Playing) && state.game.platoon_typing() {
+                    if down {
+                        state.game.platoon_radio_key(code, text.as_deref());
+                    }
+                    self.keys = Keys::default();
+                    return;
+                }
                 // Display changes are available from every screen and consume the key so they
                 // cannot also select a menu item, skip a replay, or start a campaign.
                 if pressed && self.modifiers.alt_key()
@@ -14748,6 +14782,11 @@ impl ApplicationHandler for App {
                         }
                     }
                     AppState::Playing => match code {
+                        // T keys the platoon radio (platoon mode only): opens the typed line.
+                        KeyCode::KeyT if state.game.platoon.is_some() && state.couch_keyboard_has_authority() && !state.show_map => {
+                            state.game.platoon_radio_key(code, None);
+                            self.keys = Keys::default();
+                        }
                         // Home toggles the controls reference (pauses the game).
                         KeyCode::Home if state.couch_keyboard_has_authority() => {
                             state.show_controls = !state.show_controls;
@@ -16107,6 +16146,13 @@ fn main() -> anyhow::Result<()> {
         return mission_capture::run(
             &capture_arg(&args, 2, "mission_captures"),
             args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+        );
+    }
+    if args.len() >= 2 && args[1] == "platoon-proof" {
+        return platoon_proof::run(
+            &capture_arg(&args, 2, "platoon_proof"),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(29),
+            args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200.0),
         );
     }
     if args.len() >= 2 && args[1] == "canyon-ai-run" {

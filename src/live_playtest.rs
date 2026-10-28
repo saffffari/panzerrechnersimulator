@@ -224,7 +224,7 @@ impl Game {
             let pl = &self.stealth.platoons[self.stealth.platoon_index_of(i)];
             let radio_fix = matches!(pl.state,AlertState::Engaged|AlertState::Searching).then_some(pl.last_known);
             winter_encounter_ai::Observation {
-                visible: visible.then(|| self.threat_center()), radio_fix, on_foot:self.winter_foot_target(),
+                visible: visible.then(|| self.enemy_threat_center(i)), radio_fix, on_foot:self.winter_foot_target(),
             }
         }).collect();
         // In the streets a leader closing on a report halts where the reported area comes into view:

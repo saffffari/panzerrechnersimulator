@@ -1,8 +1,37 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Platoon wingmen, 2026-10-27 (`KESSEL_PLATOON=2`, branch `platoon`)
+
+Two AI Tigers under the player's radio command (`src/platoon.rs`, `src/radio_llm.rs`,
+`docs/PLATOON_MODE.md`). What is shared truth and what is simplified:
+
+- Armour: a wingman is hit through the same swept `ArmorScheme::TigerI` contact and the same
+  `ballistics` plate solver as the player's hull. No friendly-fire exemption exists: the player's
+  rounds can hole a wingman and a wingman's rounds can hole the player; the gunnery only refuses
+  to fire when a friendly hull lies within 6 m of the shot line.
+- Behind the plate: a **simplified deterministic casualty model**, not the player's fragment
+  shower. Five fixed seat points and six modules take a kill/loss probability from the solver's
+  `behind_armor` lethality and the entry side (`ArmorPart`, `Facing`), drawn from a counter hash.
+  Side hits pick a flank by hash because the plate contact does not report left from right. No
+  fragment geometry, no interior occlusion, no fire spread timing. Named as such in the code
+  (`platoon_on_penetration`) and the mode doc.
+- Driving: the shared `apply_vehicle_avoidance` and the inverse-mass hull pair solver; the course's
+  clear-cell test is a wall veto, not a path planner. A 1.6 s reverse-and-swing watchdog is a
+  driver behaviour, not a physical recovery.
+- Perception: enemies track, lay on and accrue detection against the nearest Tiger; the detection
+  envelope (engine, hatches, silent watch) still comes from the player's hull state.
+- Radio: the language model produces words and one validated order per transmission; it has no
+  access to the simulation beyond the context JSON and can move nothing. The squelch burst is a
+  synthesized stereo buffer, not a receiver model.
+
+Gates: `platoon-proof PREFIX` (scripted orders over the grammar, replies with their path, exterior
+captures, JSON receipt), `cargo test --bin panzerrechnersystem radio_llm platoon`. Off by default;
+no shipping preset fields the platoon without `KESSEL_PLATOON=2`.
+
 
 ## Plate-solve obliquity ceiling and the Canyon run loop, 2026-10-27 (branch `run-loop`)
 
