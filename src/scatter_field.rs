@@ -45,6 +45,31 @@ pub const HEAVY_MASS_KG: f32 = 400.0;
 pub const HEAVY_HEIGHT_M: f32 = 0.45;
 pub const SHOVE_FRICTION: f32 = 0.6;
 pub const SHOVE_TRAVEL_M: f32 = 1.0;
+/// Woody pieces (branches, twigs, saplings, slats, poles, boards, logs) are crushed, snapped or
+/// pressed under the tracks below this mass whatever their size; above it a log resists by
+/// rolling (`LOG_ROLL_FRICTION`, a log with stubs over frozen ground [I]), never by sliding.
+pub const WOODY_CRUSH_MASS_KG: f32 = 400.0;
+pub const LOG_ROLL_FRICTION: f32 = 0.15;
+
+/// A branch, twig, sapling, slat, pole, board or log, by the asset's name.
+pub fn is_woody(path: &str) -> bool {
+    let stem = Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+    ["log", "branch", "twig", "sapling", "stick", "pole", "slat", "plank", "board", "fence", "bough", "limb"]
+        .iter().any(|n| stem.contains(n))
+}
+
+/// The tier one placed piece actually gets: its authored tier bounded by its mass and height
+/// (woody pieces by `WOODY_CRUSH_MASS_KG` first).
+pub fn effective_tier_of(authored: Tier, mass_kg: f32, height_m: f32, woody: bool) -> Tier {
+    if woody && mass_kg < WOODY_CRUSH_MASS_KG {
+        return Tier::Small;
+    }
+    if woody && authored == Tier::Large {
+        // a real log: static, resisting by rolling, however low it lies
+        return Tier::Large;
+    }
+    effective_tier(authored, mass_kg, height_m)
+}
 
 /// The tier a prototype actually gets: its authored tier bounded by its mass and height.
 pub fn effective_tier(authored: Tier, mass_kg: f32, height_m: f32) -> Tier {
@@ -67,6 +92,14 @@ pub fn estimate_mass_kg(path: &str, half: Vec3, casualty: bool) -> f32 {
     let stem = Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|n| stem.contains(n));
     let volume = (8.0 * half.x * half.y * half.z).max(1.0e-6);
+    if has(&["log", "branch", "twig", "sapling", "stick", "pole", "bough", "limb"]) {
+        // a cylinder along the longest extent, its diameter 85 % of the smallest (bark and stubs
+        // widen the box), green wood
+        let e = [2.0 * half.x, 2.0 * half.y, 2.0 * half.z];
+        let length = e.iter().cloned().fold(0.0f32, f32::max);
+        let d = 0.85 * e.iter().cloned().fold(f32::INFINITY, f32::min);
+        return std::f32::consts::FRAC_PI_4 * d * d * length * 650.0;
+    }
     let (density, fill) = if has(&["stone", "rock", "masonry", "concrete", "gravel", "brick", "clod", "debris", "cement"]) {
         (1800.0, 0.55)
     } else if has(&["snow", "drift"]) {
@@ -91,6 +124,9 @@ pub struct HeavyPiece {
     pub max: Vec3,
     pub mass_kg: f32,
     pub instance: u32,
+    /// Resistance coefficient against the push: `SHOVE_FRICTION` sliding, `LOG_ROLL_FRICTION`
+    /// for a log that rolls.
+    pub friction: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,6 +175,7 @@ pub struct Prototype {
     /// size bounds (`effective_tier`).
     pub mass_kg: f32,
     pub authored_tier: Tier,
+    pub woody: bool,
 }
 
 struct Group {
@@ -548,7 +585,8 @@ impl Layers {
                         let casualty = e["casualty"].as_bool().unwrap_or(false);
                         let mass_kg = estimate_mass_kg(&asset, half, casualty);
                         let authored_tier = tier;
-                        let tier = effective_tier(authored_tier, mass_kg, height);
+                        let woody = is_woody(&asset);
+                        let tier = effective_tier_of(authored_tier, mass_kg, height, woody);
                         // crushable pieces have no collision of any kind; heavy ones are static
                         let pushable = e["pushable"].as_bool().unwrap_or(false)
                             && tier == Tier::Medium
@@ -570,6 +608,7 @@ impl Layers {
                             center,
                             mass_kg,
                             authored_tier,
+                            woody,
                         });
                         proto_index.insert(key, prototypes.len() - 1);
                         prototypes.len() - 1
@@ -688,12 +727,13 @@ impl Layers {
             }
         };
         let crushable = prototypes.iter().filter(|p| p.authored_tier != Tier::Small && p.tier == Tier::Small).count();
+        let woody_crushable = prototypes.iter().filter(|p| p.woody && p.tier == Tier::Small).count();
         let demoted = prototypes.iter().filter(|p| p.authored_tier == Tier::Large && p.tier == Tier::Medium).count();
         let heavy: Vec<String> = prototypes.iter().filter(|p| p.tier == Tier::Large)
             .map(|p| format!("{} {:.0} kg", Path::new(&p.path).file_stem().and_then(|s| s.to_str()).unwrap_or("?"), p.mass_kg)).collect();
         println!(
-            "[scatter] layers {}: {} prototypes in {} groups, {} rules, {} sources, seed {seed:#x}; tiers by mass and size: {} authored medium/large pieces are crushable (under {CRUSH_HEIGHT_M} m or {CRUSH_MASS_KG} kg), {} authored large pieces are cover only (under {HEAVY_MASS_KG} kg or {HEAVY_HEIGHT_M} m), heavy static: {}",
-            path.display(), prototypes.len(), groups.len(), rules.len(), sources.len(), crushable, demoted, heavy.join(", ")
+            "[scatter] layers {}: {} prototypes in {} groups, {} rules, {} sources, seed {seed:#x}; tiers by mass and size: {} authored medium/large pieces are crushable (under {CRUSH_HEIGHT_M} m or {CRUSH_MASS_KG} kg), {} woody prototypes crushable at scale 1 (under {WOODY_CRUSH_MASS_KG} kg; decided per placement), {} authored large pieces are cover only (under {HEAVY_MASS_KG} kg or {HEAVY_HEIGHT_M} m), heavy static at scale 1: {}",
+            path.display(), prototypes.len(), groups.len(), rules.len(), sources.len(), crushable, woody_crushable, demoted, heavy.join(", ")
         );
         Ok(Layers { seed, wind, lane_half, prototypes, groups, rules, sources, ground, keep_clear, path: path.to_owned() })
     }
@@ -942,7 +982,8 @@ fn place_one(
     };
     let y = ground - sink - drop;
     let pos = Vec3::new(p.x, y, p.y);
-    let tier = proto.tier;
+    // the tier of this placement: the prototype's authored tier bounded by its scaled mass
+    let tier = effective_tier_of(proto.authored_tier, proto.mass_kg * scale * scale * scale, proto.height * scale, proto.woody);
     let hash = rng.next_u32();
     let flags = (tier as u32) | ((proto.casualty as u32) << 2) | ((proto.flat as u32) << 3) | ((class as u32 & 7) << 4) | (hash & 0xffff_ff00);
     let q = rot;
@@ -970,12 +1011,13 @@ fn place_one(
         }
         if tier == Tier::Large {
             // `instance` is local to the cell here; `build` adds the cell's first index
-            out.cover_large.push(HeavyPiece { min, max, mass_kg: proto.mass_kg * scale * scale * scale, instance: out.placements.len() as u32 });
+            let friction = if proto.woody { LOG_ROLL_FRICTION } else { SHOVE_FRICTION };
+            out.cover_large.push(HeavyPiece { min, max, mass_kg: proto.mass_kg * scale * scale * scale, instance: out.placements.len() as u32, friction });
         } else {
             out.cover_medium.push((min, max));
         }
     }
-    if proto.pushable && tier != Tier::Large && ctx.lane_distance(p) < PUSHABLE_ROUTE_M {
+    if proto.pushable && tier == Tier::Medium && ctx.lane_distance(p) < PUSHABLE_ROUTE_M {
         out.pushables.push((proto_index, packed.model()));
     } else {
         out.placements.push(packed);
@@ -1281,6 +1323,21 @@ mod tests {
         assert!(estimate_mass_kg("Modular Props/barricade_a_1.glb", Vec3::new(1.47, 0.43, 0.2), false) > HEAVY_MASS_KG);
         assert!(estimate_mass_kg("stone_3.glb", Vec3::new(1.26, 1.33, 1.06), false) > 1000.0);
         assert_eq!(estimate_mass_kg("casualty_0.glb", Vec3::new(0.5, 0.16, 0.9), true), 75.0);
+    }
+
+    #[test]
+    fn branches_and_small_logs_are_crushed_and_only_real_logs_roll() {
+        // the kit's fallen log with its stubs: 3.3 x 1.93 x 0.56 m box, 0.48 m cylinder, ~380 kg
+        let log = estimate_mass_kg("tree_log_1.glb", Vec3::new(1.65, 0.965, 0.28), false);
+        assert!((300.0..450.0).contains(&log), "{log} kg");
+        assert!(is_woody("tree_log_1.glb") && is_woody("wooden_plank_1.glb") && !is_woody("stone_2.glb"));
+        // at scale 1 it is crushed; at scale 1.3 (837 kg) it is a log that resists by rolling
+        assert_eq!(effective_tier_of(Tier::Large, log, 1.93, true), Tier::Small);
+        assert_eq!(effective_tier_of(Tier::Large, log * 1.3f32.powi(3), 1.93 * 1.3, true), Tier::Large);
+        // a branch, a slat, a sapling: crushed whatever their size
+        assert_eq!(effective_tier_of(Tier::Medium, 40.0, 1.8, true), Tier::Small);
+        // stones are not woody: a 2 t boulder stays heavy
+        assert_eq!(effective_tier_of(Tier::Large, 2000.0, 1.5, false), Tier::Large);
     }
 
     #[test]

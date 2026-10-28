@@ -110,6 +110,30 @@ pub fn tree(d: f32) -> Resistance {
     Resistance::new(moment / BOW_CONTACT_H_M, TRUNK_BEND_M)
 }
 
+/// Critical turning moment of a tree's root plate per kilogram of stem [I]: tree-pulling
+/// regressions for conifers give roughly 100-200 N m/kg (Nicoll et al. 2006, Can. J. For. Res.
+/// 36:1871); frozen ground anchors at the top of that range.
+pub const ROOT_ANCHORAGE_NM_PER_KG: f32 = 200.0;
+/// Green stem wood density (kg/m^3) and the stem's form factor (stem volume over the cylinder of
+/// its base diameter and height) [I].
+pub const STEM_DENSITY: f32 = 800.0;
+pub const STEM_FORM: f32 = 0.5;
+/// How far the bow drives a tipping root plate before the tree is over [I].
+pub const ROOT_PLATE_TILT_M: f32 = 0.5;
+
+/// A standing tree of trunk diameter `d` and height `h` (m) pushed at the bow's height: it fails
+/// by whichever comes first, the stem snapping (`tree`) or the root plate turning over in the
+/// ground. For the trunks a tank meets the root plate is the weaker by far (a 0.5 m, 10 m tree
+/// tips at about 130 kN where its stem would need 410 kN), so only a big old tree holds the
+/// Tiger at a crawl, and even that one goes over to a tank that arrives with some speed.
+pub fn standing_tree(d: f32, h: f32) -> Resistance {
+    let snap = tree(d);
+    let d = d.max(0.01);
+    let stem_kg = STEM_DENSITY * STEM_FORM * std::f32::consts::FRAC_PI_4 * d * d * h.max(0.5);
+    let overturn = Resistance::new(ROOT_ANCHORAGE_NM_PER_KG * stem_kg / BOW_CONTACT_H_M, ROOT_PLATE_TILT_M);
+    if overturn.force_n < snap.force_n { overturn } else { snap }
+}
+
 /// A free-standing brick wall or pier of thickness `t`, width `w` and height `h` (m) pushed over
 /// about its base at the bow's height (or its top, if lower).
 pub fn free_standing_brick(t: f32, w: f32, h: f32) -> Resistance {
@@ -257,6 +281,31 @@ mod tests {
         assert!((270e3..290e3).contains(&crawl));
         // At 10 m/s the engine gives 0.6 x 478 kW / 10 m/s = 28.7 kN.
         assert!((tractive_force(10.0, 0.0) - 28_680.0).abs() < 50.0);
+    }
+
+    #[test]
+    fn trees_tip_over_before_their_stems_snap_and_only_a_giant_holds_a_crawling_tiger() {
+        let push = tractive_force(0.0, 0.0) - rolling_force(0.0);
+        // (diameter, height, holds a crawling Tiger)
+        for (d, h, holds) in [(0.1, 4.0, false), (0.21, 4.5, false), (0.34, 10.0, false), (0.46, 7.9, false),
+            (0.5, 10.7, false), (0.73, 12.7, true)] {
+            let r = standing_tree(d, h);
+            assert!(r.force_n <= tree(d).force_n);
+            assert_eq!(r.force_n >= push, holds, "tree {d} m x {h} m: {} N against {push} N", r.force_n);
+        }
+        // The giant goes over to a Tiger that arrives at 3 m/s: its work is less than the energy.
+        let giant = standing_tree(0.73, 12.7);
+        assert!(giant.work_j < 0.5 * MASS_KG * 3.0 * 3.0, "{} J", giant.work_j);
+        let mut v = 3.0;
+        let mut absorbed = 0.0;
+        let mut over = false;
+        for _ in 0..120 {
+            let step = press(v, 0.0, giant, absorbed, 1.0 / 60.0);
+            v = step.speed;
+            absorbed += step.work_j;
+            if step.gave_way { over = true; break; }
+        }
+        assert!(over && v > 1.0, "the giant held a 3 m/s Tiger (v {v})");
     }
 
     #[test]

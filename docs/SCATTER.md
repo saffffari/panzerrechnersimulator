@@ -110,9 +110,15 @@ at 25 %, hollow or thin steel 7800 at 8 %, snow 250 at 50 %, a body 75 kg). Then
 | height < 0.15 m or mass < 5 kg | **crushable**: no vehicle collision at all, whatever the group says (tins, cases, helmets, bricks, kit); the track passes over it |
 | authored large but mass < 400 kg or height < 0.45 m | **cover only** (a gravel pile the track rides over; a supply crate becomes a pushable) |
 | mass ≥ 400 kg and height ≥ 0.45 m | **heavy static** (boulders, logs, barricades, pallets): static mass for the hull with a resistance scaled by its own mass, never a wall |
+| woody (branch, twig, sapling, stick, pole, slat, plank, board, fence, log) under 400 kg | **crushable**, whatever its size (2026-10-28, "tiny branches are no match, you just get stuck"); a log's mass is a green-wood cylinder (650 kg/m³) along its longest extent at 85 % of its smallest, so branch stubs do not count |
+| woody, authored large, 400 kg or more | **a real log**: heavy static, but it resists by rolling (0.15·m·g), not sliding |
+
+The tier is decided per placement from the scaled mass and height, so the same kit log is
+crushed at scale 1 (≈ 380 kg) and rolls at scale 1.3 (≈ 840 kg).
 
 **Heavy static** pieces join `story_cover` (shell and foot contact, LOS) at the end of the list;
-the hull's push treats that range with a friction resistance of 0.6·m·g over a 1 m shove
+the hull's push treats that range with a friction resistance of 0.6·m·g (0.15·m·g for a log)
+over a 1 m shove
 (`tank_push::press`): the tank's momentum pays the work, and when it is done the piece slides
 1 m along the push (its GPU instance and its cover box move; `Renderer::scatter_shove`) and the
 bow follows. A 2 t boulder costs a Tiger at 1 m/s about 40 % of its speed; a 420 kg log a few
