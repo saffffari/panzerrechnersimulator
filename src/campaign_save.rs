@@ -36,7 +36,11 @@ pub struct LoadedCheckpoint {
 pub fn default_path() -> Result<PathBuf> {
     state_path(
         std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
-        std::env::var_os("HOME").map(PathBuf::from),
+        // Windows has no HOME unless a shell sets one: the exe started by double-click (or the
+        // packaged launcher without XDG) keeps its saves under the user profile.
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from),
     )
 }
 

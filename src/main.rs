@@ -127,6 +127,8 @@ mod infantry;
 mod infantry_combat;
 mod interior_rig;
 mod lan;
+mod net_ifaces;
+mod lan_crew_proof;
 mod mechanic_capture;
 mod blizzard_battle_capture;
 mod combat_scene_suite;
@@ -218,6 +220,20 @@ fn create_instance() -> wgpu::Instance {
     })
 }
 fn request_adapter(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> wgpu::Adapter {
+    // `KESSEL_ADAPTER=<name substring>`: run on a named GPU instead of the high-performance one
+    // (measuring a laptop-class integrated GPU on a machine that also has a discrete card).
+    if let Ok(wanted) = std::env::var("KESSEL_ADAPTER") {
+        let wanted = wanted.to_ascii_lowercase();
+        let found = instance
+            .enumerate_adapters(wgpu::Backends::all())
+            .into_iter()
+            .filter(|adapter| adapter.get_info().name.to_ascii_lowercase().contains(&wanted))
+            .find(|adapter| surface.is_none_or(|surface| adapter.is_surface_supported(surface)));
+        match found {
+            Some(adapter) => return adapter,
+            None => eprintln!("[panzerrechnersystem] KESSEL_ADAPTER={wanted:?} matched no adapter; using the default"),
+        }
+    }
     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: surface,
@@ -9730,6 +9746,7 @@ impl Keys {
             crew_no: self.n,
             coop: None,
             coop_host: false,
+            coop_ai_crew: false,
             couch_crew: false,
             couch_identities: [None; game::COUCH_CREW_ROLES.len()],
         }
@@ -9761,6 +9778,9 @@ fn lan_role_input(
     }
     if input.hatch_toggle {
         flags |= lan::F_HATCH_TOGGLE;
+    }
+    if input.fire_order {
+        flags |= lan::F_FIRE_ORDER;
     }
     match role {
         lan::LanRole::Commander => {
@@ -11195,6 +11215,77 @@ enum AppState {
 /// death skip or the world build cannot dismiss them unread.
 const RUN_CARD_ARM_S: f32 = 0.6;
 
+/// `asset-trace`: build every world LAN co-op can host (garage, arena, the three campaign acts and
+/// the Canyon v2 course) once, so `KESSEL_ASSET_TRACE` records what each one loads for the
+/// portable Windows folder (`tools/windows_payload.py`). Nothing is rendered or timed.
+fn run_asset_trace() -> anyhow::Result<()> {
+    anyhow::ensure!(
+        std::env::var_os("KESSEL_ASSET_TRACE").is_some(),
+        "asset-trace needs KESSEL_ASSET_TRACE=FILE"
+    );
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    graphics::set_active_preset(graphics::GraphicsPreset::for_adapter(info.device_type));
+    println!("[asset-trace] adapter {}", info.name);
+    let (device, queue) = request_device(&adapter);
+    let mut worlds = vec![("garage", world::garage()), ("arena", world::act(0))];
+    for act in 1..=world::ACT_COUNT {
+        worlds.push(("campaign act", world::act(act)));
+    }
+    for (label, map) in worlds {
+        let started = std::time::Instant::now();
+        let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &map)?;
+        match label {
+            "garage" => game.garage_setup(),
+            "arena" => game.arena_setup(),
+            _ => {}
+        }
+        renderer.load_menu_meshes(&device, &queue, &tank::build_tiger());
+        println!("[asset-trace] built {label} {} in {:.1} s", map.id, started.elapsed().as_secs_f32());
+    }
+    select_lan_canyon_manifest()?;
+    let started = std::time::Instant::now();
+    let (_renderer, mut game) = Game::build_act(&device, &queue, false, &world::act(1))?;
+    if game::platoon::requested() {
+        game.enable_platoon();
+    }
+    println!("[asset-trace] built canyon v2 in {:.1} s", started.elapsed().as_secs_f32());
+    act_manifest::select_runtime_manifest(None)?;
+    Ok(())
+}
+
+/// Host and every client select the same Canyon v2 course file before building act 1; the
+/// launcher pins it with `KESSEL_CANYON_MANIFEST` so a frozen workshop snapshot matches too.
+fn select_lan_canyon_manifest() -> anyhow::Result<()> {
+    let path = std::env::var_os(canyon::MANIFEST_ENV)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(canyon::V2_MANIFEST));
+    let act = act_manifest::select_runtime_manifest(Some(path.clone()))?;
+    anyhow::ensure!(act == Some(1), "the canyon course {} is not an Act One map", path.display());
+    Ok(())
+}
+
+/// "FRIENDS JOIN 192.168.1.50 (Wi-Fi)" with the other physical addresses after it.
+fn lan_host_address_line(session: &lan::LanSession) -> String {
+    let port = session.local_addr().map_or(lan::DEFAULT_PORT, |addr| addr.port());
+    let port = if port == lan::DEFAULT_PORT { String::new() } else { format!(":{port}") };
+    let addresses = session.host_addresses();
+    match addresses.split_first() {
+        None => "NO LAN ADDRESS: CONNECT THIS PC TO THE WI-FI".to_owned(),
+        Some((best, rest)) => {
+            let others: Vec<String> = rest
+                .iter()
+                .filter(|iface| iface.kind.physical())
+                .take(2)
+                .map(|iface| format!("{}{port}", iface.addr))
+                .collect();
+            let tail = if others.is_empty() { String::new() } else { format!("   OR {}", others.join(", ")) };
+            format!("FRIENDS JOIN {}{port}  {}{tail}", best.addr, best.describe().trim_start_matches(&best.addr.to_string()).trim())
+        }
+    }
+}
+
 fn close_requires_confirmation(state: AppState, has_lan_session: bool) -> bool {
     !has_lan_session && matches!(state, AppState::Playing | AppState::Paused)
 }
@@ -11527,6 +11618,8 @@ struct WindowState {
     /// process renders from its claimed physical station.
     lan: Option<lan::LanSession>,
     lan_status: String,
+    /// The LAN session reported a live link this frame (client: welcomed and not timed out).
+    lan_crew_connected: bool,
     editor_child: Option<std::process::Child>,
     lan_crew: lan::CrewFrame,
     lan_scene: Option<(lan::LanMission, u64, u8)>,
@@ -11685,6 +11778,7 @@ impl WindowState {
             x_exit_frac: 0.0,
             lan: None,
             lan_status: String::new(),
+            lan_crew_connected: false,
             editor_child: None,
             lan_crew: lan::CrewFrame::default(),
             lan_scene: None,
@@ -12206,6 +12300,10 @@ impl WindowState {
 
     fn reset_lan_browser(&mut self) {
         self.lan_browser = None;
+        self.lan_menu.this_pc = net_ifaces::lan_addresses()
+            .first()
+            .map(net_ifaces::Ipv4Interface::describe)
+            .unwrap_or_else(|| "has no LAN address".to_owned());
         match lan::LanBrowser::bind() {
             Ok(browser) => {
                 self.lan_browser = Some(browser);
@@ -12267,18 +12365,7 @@ impl WindowState {
     }
 
     fn local_lan_name() -> String {
-        let name: String = std::env::var("USER")
-            .or_else(|_| std::env::var("USERNAME"))
-            .unwrap_or_else(|_| "crew".to_owned())
-            .trim()
-            .chars()
-            .take(24)
-            .collect();
-        if name.is_empty() {
-            "crew".to_owned()
-        } else {
-            name
-        }
+        lan::local_player_name()
     }
 
     fn fresh_lan_seed(&self) -> u64 {
@@ -12495,6 +12582,17 @@ impl WindowState {
                 self.campaign = Some(campaign::CampaignRun::new(seed));
                 anyhow::ensure!(self.build_act_world(1), "LAN campaign build failed");
             }
+            lan::LanMission::Canyon => {
+                self.play_mode = Some(PlayMode::Canyon);
+                self.current_act = 1;
+                self.campaign = None;
+                self.canyon_v2 = true;
+                select_lan_canyon_manifest()?;
+                anyhow::ensure!(self.build_act_world(1), "LAN canyon build failed");
+                if game::platoon::requested() {
+                    self.game.enable_platoon();
+                }
+            }
         }
         self.state = AppState::Playing;
         self.menu.resume_available = false;
@@ -12513,10 +12611,14 @@ impl WindowState {
         seed: u64,
         act: u8,
     ) -> anyhow::Result<()> {
+        if mission == lan::LanMission::Canyon {
+            select_lan_canyon_manifest()?;
+        }
         let mut map = match mission {
             lan::LanMission::Garage => world::garage(),
             lan::LanMission::Arena => world::act(0),
             lan::LanMission::Campaign => world::act(act.clamp(1, world::ACT_COUNT)),
+            lan::LanMission::Canyon => world::act(1),
         };
         if mission == lan::LanMission::Campaign {
             map.seed ^= seed as u32 ^ (seed >> 32) as u32;
@@ -12528,7 +12630,7 @@ impl WindowState {
         match mission {
             lan::LanMission::Garage => game.garage_setup(),
             lan::LanMission::Arena => game.arena_setup(),
-            lan::LanMission::Campaign => {}
+            lan::LanMission::Campaign | lan::LanMission::Canyon => {}
         }
         // Prediction is visual only. The host's snapshots are the sole source of player damage,
         // module loss and death, so a client's locally-running enemy AI cannot create a false KO.
@@ -12543,6 +12645,7 @@ impl WindowState {
             lan::LanMission::Garage => PlayMode::Garage,
             lan::LanMission::Arena => PlayMode::Gefecht,
             lan::LanMission::Campaign => PlayMode::Kampagne,
+            lan::LanMission::Canyon => PlayMode::Canyon,
         });
         self.current_act = act;
         self.campaign = None;
@@ -12576,6 +12679,7 @@ impl WindowState {
         let seed = session.seed();
         let host = session.is_host();
         self.lan_status = poll.status;
+        self.lan_crew_connected = poll.connected;
         self.lan_crew = poll.crew;
         if !host && !poll.connected {
             // Stay in networked mode while waiting for/reconnecting to the authority; dropping
@@ -12614,6 +12718,8 @@ impl WindowState {
         }
         input.coop = Some(self.lan_crew);
         input.coop_host = host;
+        // The host's living crew mans every seat no human holds (src/crew_solo.rs, LAN section).
+        input.coop_ai_crew = host;
     }
 
     fn lan_post_update(&mut self) {
@@ -13419,6 +13525,25 @@ impl WindowState {
             // Developer workshop only, reached from the editor.
             tank_editor_acceptance::draw_workshop_status(&mut self.renderer);
         }
+        // Getting a crew together is not diagnostics: a joining friend with no answer sees what to
+        // check, and a host nobody has joined yet sees the address to read out. Both go away by
+        // themselves (connected / first crewman aboard); F3 shows the rest.
+        if let Some(session) = self.lan.as_ref().filter(|_| !self.show_stats) {
+            let mut lines: Vec<(String, [f32; 4])> = Vec::new();
+            if let (Some(trouble), Some(server)) = (session.join_trouble(), session.server()) {
+                lines.push((trouble.headline(server), [1.0, 0.78, 0.46, 0.95]));
+                for check in trouble.checks() {
+                    lines.push((format!("- {check}"), [0.86, 0.86, 0.80, 0.85]));
+                }
+            } else if !session.is_host() && !self.lan_crew_connected {
+                lines.push((self.lan_status.clone(), [0.70, 0.90, 0.72, 0.85]));
+            } else if session.is_host() && session.peer_count() == 0 {
+                lines.push((lan_host_address_line(session), [0.70, 0.90, 0.72, 0.80]));
+            }
+            for (k, (line, color)) in lines.iter().enumerate() {
+                self.renderer.draw_text(line, 0.02, 0.035 + k as f32 * 0.030, 0.020, *color, ui::Align::Left);
+            }
+        }
         // LAN connection and seat diagnostics are a debug overlay, shown with the F3 stats.
         if let Some(session) = self.lan.as_ref().filter(|_| self.show_stats) {
             let local = session.local_role();
@@ -13458,6 +13583,16 @@ impl WindowState {
                 [0.58, 0.72, 0.60, 0.85],
                 ui::Align::Left,
             );
+            if session.is_host() {
+                self.renderer.draw_text(
+                    &lan_host_address_line(session),
+                    0.02,
+                    0.094,
+                    0.018,
+                    [0.58, 0.72, 0.60, 0.85],
+                    ui::Align::Left,
+                );
+            }
         }
         self.game.draw_repair_cue(&mut self.renderer);
         // The one line of survival text: the player's own body is on fire.
@@ -14350,6 +14485,10 @@ impl WindowState {
     /// resume and no checkpoint; the card's Enter is a fresh deployment.
     fn show_canyon_run_card(&mut self) -> bool {
         if self.play_mode != Some(PlayMode::Canyon) {
+            return false;
+        }
+        // A LAN client never ends or restarts the host's run; it keeps following the snapshots.
+        if self.lan.as_ref().is_some_and(|session| !session.is_host()) {
             return false;
         }
         self.canyon_finish = None;
@@ -16265,6 +16404,19 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "lan-verify" {
         return lan::run_loopback_verify();
+    }
+    if args.len() >= 2 && args[1] == "lan-probe" {
+        return lan::run_probe(&args[2..]);
+    }
+    if args.len() >= 2 && args[1] == "lan-crew" {
+        return lan_crew_proof::run(&capture_arg(&args, 2, "captures/lan_crew"));
+    }
+    if args.len() >= 2 && args[1] == "asset-trace" {
+        return run_asset_trace();
+    }
+    if args.len() >= 2 && args[1] == "lan-ifaces" {
+        net_ifaces::print_report(lan::DEFAULT_PORT, lan::DISCOVERY_PORT);
+        return Ok(());
     }
     if args.len() >= 2 && args[1] == "replay-aftermath" {
         return run_replay_aftermath(&capture_arg(&args, 2, "captures/astra/replay_aftermath"),

@@ -1,0 +1,349 @@
+{
+  "adapter": "Intel(R) UHD Graphics 770",
+  "backend": "Vulkan",
+  "contacts": {
+    "at_guns": [
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 0,
+        "position": [
+          -732.0,
+          -20.271860122680664,
+          -114.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 1,
+        "position": [
+          -540.0,
+          -16.69817543029785,
+          -137.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 2,
+        "position": [
+          224.0,
+          -11.291549682617188,
+          -263.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 3,
+        "position": [
+          364.0,
+          -1.1656218767166138,
+          -551.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      },
+      {
+        "apcr_left": 2,
+        "crew_alive": 4,
+        "gun": 4,
+        "position": [
+          781.0,
+          49.369258880615234,
+          657.0
+        ],
+        "riflemen_at_gun": 0,
+        "shots": 0,
+        "state": "Hidden"
+      }
+    ],
+    "confirmed_sightings": 0,
+    "crews": [
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 0,
+        "position": [
+          1151.458251953125,
+          14.296640396118164,
+          427.87847900390625
+        ],
+        "role": "leader",
+        "slot": 0,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 0,
+        "position": [
+          1179.7430419921875,
+          8.920702934265137,
+          399.59478759765625
+        ],
+        "role": "wingman",
+        "slot": 1,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 0,
+        "position": [
+          1208.0279541015625,
+          3.6577811241149902,
+          371.3110656738281
+        ],
+        "role": "wingman",
+        "slot": 2,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 1,
+        "position": [
+          351.67999267578125,
+          -14.66908073425293,
+          277.39825439453125
+        ],
+        "role": "leader",
+        "slot": 3,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 1,
+        "position": [
+          351.67999267578125,
+          -14.052186012268066,
+          317.39825439453125
+        ],
+        "role": "wingman",
+        "slot": 4,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 2,
+        "position": [
+          -747.0700073242188,
+          -23.048215866088867,
+          39.58822250366211
+        ],
+        "role": "leader",
+        "slot": 6,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 2,
+        "position": [
+          -747.0700073242188,
+          -22.553699493408203,
+          2.7470016479492188
+        ],
+        "role": "wingman",
+        "slot": 7,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 2,
+        "position": [
+          -747.0700073242188,
+          -21.545236587524414,
+          -33.25299835205078
+        ],
+        "role": "wingman",
+        "slot": 8,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 3,
+        "position": [
+          -584.3927001953125,
+          -19.348793029785156,
+          -211.50628662109375
+        ],
+        "role": "leader",
+        "slot": 9,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 3,
+        "position": [
+          -558.3423461914062,
+          -18.955209732055664,
+          -237.5570526123047
+        ],
+        "role": "wingman",
+        "slot": 10,
+        "visible_now": false
+      },
+      {
+        "alive": true,
+        "detection": 0.0,
+        "main_gun_shots": 0,
+        "phase": "patrol",
+        "platoon": 3,
+        "position": [
+          -532.88671875,
+          -18.85045051574707,
+          -263.01312255859375
+        ],
+        "role": "wingman",
+        "slot": 11,
+        "visible_now": false
+      }
+    ],
+    "elapsed_s": 0.7083330154418945,
+    "layout": "streets",
+    "sounds_heard": 0,
+    "streets": null
+  },
+  "drive_input": 0.0,
+  "frame_total": {
+    "count": 60,
+    "max_ms": 3188.6542000000004,
+    "mean_ms": 3022.7271933333327,
+    "min_ms": 2964.7815,
+    "p50_ms": 3008.3968,
+    "p95_ms": 3133.3696,
+    "p99_ms": 3154.0489,
+    "total_ms": 181363.63159999996
+  },
+  "gpu": {
+    "measured_frames": 0,
+    "note": "GPU pass timestamps; readback excluded from frame timer; passes may overlap; scene preparation and TLAS build not timed by pass queries",
+    "passes": []
+  },
+  "human_views": 1,
+  "internal_resolution": [
+    480,
+    272
+  ],
+  "manifest": "C:/shop/panzerrechnersystem/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json",
+  "mission": null,
+  "player_state": {
+    "gun_pitch": 0.0,
+    "heading": 3.1415927410125732,
+    "position": [
+      -791.0159912109375,
+      -10.246827125549316,
+      745.7830200195312
+    ],
+    "speed": 0.0,
+    "turret_yaw": 0.0
+  },
+  "queue_tail_wait": {
+    "count": 60,
+    "max_ms": 3107.6139,
+    "mean_ms": 2973.460808333333,
+    "min_ms": 2920.3713000000002,
+    "p50_ms": 2962.0272999999997,
+    "p95_ms": 3055.5753999999997,
+    "p99_ms": 3087.1609000000003,
+    "total_ms": 178407.64849999998
+  },
+  "render_submission": {
+    "count": 60,
+    "max_ms": 75.626,
+    "mean_ms": 45.842138333333324,
+    "min_ms": 40.7628,
+    "p50_ms": 42.8489,
+    "p95_ms": 69.8224,
+    "p99_ms": 72.2588,
+    "total_ms": 2750.5282999999995
+  },
+  "requested_canyon_seed": "19421003",
+  "scenario": "commander",
+  "scene": {
+    "active_loose_rounds_peak": 0,
+    "instance_batches": 4865,
+    "instances": 35529,
+    "point_lights": {
+      "admitted_last_frame": 10,
+      "budget": 32,
+      "offered_last_frame": 10
+    },
+    "surface_fire_patches_peak": 0,
+    "surface_wall_fire_patches_peak": 0,
+    "tlas": {
+      "blas": 0,
+      "capacity": 131072,
+      "live_instances": 26316,
+      "missing_instances_last_frame": 0,
+      "needed": 28549,
+      "overflow_frames": 0,
+      "reserved_instance_ids": 307510,
+      "scene_mesh_slots": 2233,
+      "slot_layout_end": 0
+    }
+  },
+  "schema": "panzer.winter-benchmark/v2",
+  "scope": "Offscreen fenced scene frame at internal_resolution; optional surface_equivalent_blit includes desktop-size blit encoding but excludes compositor/vsync; human_views reports the actual solo/cooperative workload. The cooperative case includes commander, gunner optic and interior views. Per-view crew-rig visibility updates, HUD, input polling and presentation are excluded. Final desktop blit is excluded unless surface_equivalent_blit is present. Stress initial enemy positions and scheduled fire are fixtures, not AI validation. Audio muted. God mode holds the measured workload alive. No claim of universal worst case or native frame-rate certification.",
+  "simulation": {
+    "count": 60,
+    "max_ms": 5.8914,
+    "mean_ms": 3.4239033333333344,
+    "min_ms": 2.9068,
+    "p50_ms": 3.1403999999999996,
+    "p95_ms": 5.699400000000001,
+    "p99_ms": 5.825699999999999,
+    "total_ms": 205.43420000000006
+  },
+  "simulation_dt_s": 0.008333333767950535,
+  "station": "commander_closed",
+  "surface_equivalent_blit": null,
+  "timed_frames": 60,
+  "update_mode": "single",
+  "variant": "shipping",
+  "warmup_frames": 24,
+  "work_per_frame": {
+    "peak_scene_draws": 5060,
+    "scene_draws": 5060.0,
+    "scene_renders": 5.0,
+    "shadow_passes": 31.4
+  }
+}

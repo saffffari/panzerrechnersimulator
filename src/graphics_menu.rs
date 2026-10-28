@@ -383,7 +383,11 @@ pub fn config_path() -> anyhow::Result<std::path::PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|p| std::path::PathBuf::from(p).join(".config")))
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|p| std::path::PathBuf::from(p).join(".config"))
+        })
         .context("no config directory")?;
     Ok(base.join("panzerrechnersystem/graphics.v1.json"))
 }

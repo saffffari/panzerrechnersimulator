@@ -1,10 +1,15 @@
 # Panzerrechnersystem LAN crew co-op
 
 Status: playable in development builds. Local split-screen supports four people on one machine;
-LAN supports all five Tiger posts. Protocol version 1 uses UDP **28460** for gameplay and UDP
-**28461** for optional nearby-game discovery. Manual IP joining remains available if discovery is
-blocked. A packaged Linux host/client permission and firewall smoke test is still required before
-friend release; Mac interoperability is historical/fallback coverage only.
+LAN supports all five Tiger posts. The protocol (version 9) uses UDP **28460** for gameplay and
+UDP **28461** for optional nearby-game discovery. Manual IP joining remains available if
+discovery is blocked. **Windows laptops: `docs/LAN_WINDOWS.md`** (portable folder, firewall
+script, launcher switches, troubleshooting, what is and is not verified, what is not replicated).
+Mac interoperability is historical/fallback coverage only.
+
+Empty seats are worked by the host's living AI crew (gunner, driver, loader; see
+`docs/LAN_WINDOWS.md`, "The crew"); the fallback rules below apply to whatever a dead crewman
+leaves behind.
 
 ## The shape of the game
 
@@ -71,7 +76,7 @@ after a survivor climbs over him to take control; only the viewing player's own 
 
 From the title screen choose **Crew co-op**. The next page can:
 
-- host Campaign, Garage, or Arena;
+- host Campaign, Garage, Arena or Canyon (left/right on the Host row);
 - join a nearby compatible Tiger that appears automatically;
 - join a hostname/IP manually (the gameplay port is optional); or
 - select Keyboard + controllers or Controllers only and start local split-screen crew play.
@@ -97,11 +102,13 @@ cargo run --release -- --join 192.168.1.50 --role loader --name HANS
 cargo run --release -- --join 192.168.1.50 --role radio --name FRITZ
 ```
 
-The host's mission and seed override the values requested by clients. `garage`, `arena`, and the
-complete three-act `campaign` are valid missions. Add `--bind 0.0.0.0:PORT` on the host and use
+The host's mission and seed override the values requested by clients. `garage`, `arena`, the
+complete three-act `campaign` and the Canyon v2 run `canyon` are valid missions. Add `--bind 0.0.0.0:PORT` on the host and use
 `HOST:PORT` on clients to choose another UDP port. If a firewall is active, permit inbound UDP on
-that port and UDP 28461 for discovery on the trusted LAN. A multihomed host currently advertises on
-its default IPv4 LAN interface; Manual IP is the fallback when the desired interface differs.
+that port and UDP 28461 for discovery on the trusted LAN (`tools/setup_firewall.ps1` on Windows).
+A multihomed host sends its beacon to every IPv4 adapter's directed broadcast plus
+255.255.255.255 and shows the default-route Wi-Fi/Ethernet address to type; Manual IP remains the
+fallback.
 
 In LAN play, `F6` requests the next open seat. The top-left HUD shows connection state and all five
 seats: `YOU`, `MAN`, or `AI`. Role claims are host-arbitrated, so two clients cannot own the same
@@ -141,5 +148,7 @@ cargo run -- koop /tmp/kessel-koop
 
 `lan-verify` opens two real localhost UDP sockets and proves handshake, role assignment, host
 mission authority, two-person fallback, gunner input delivery and world-snapshot reconciliation.
+`lan-probe host` / `lan-probe join` run the same transport between two processes or two machines
+without a GPU (`docs/LAN_WINDOWS.md`).
 The `koop` proof walks the Stützpunkt mission with all four local posts, exercises casualty takeover,
 and writes per-seat plus 2×2 split-screen captures.

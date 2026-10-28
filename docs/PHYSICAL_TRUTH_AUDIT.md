@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-28 (vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-28 (vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -52,6 +52,23 @@ fall, belly crest, partition and determinism, stations against the baked wheels,
 tests unchanged, `tank::tests::ai_tanks_drive_with_their_own_mass_power_and_brakes` and
 `ai_hull_rides_its_springs_over_a_bump_instead_of_snapping`, `tank_support::tests` unchanged (the
 refusals), and the headless `vehdyn-trace` receipt on Canyon v2.
+
+## LAN co-op on Windows, 2026-10-28 (branch `lan-windows`, `docs/LAN_WINDOWS.md`)
+
+- **The living crew in empty LAN seats** (`crew_solo.rs`, LAN section). On the host the solo
+  crew's AI gunner, driver and loader work every seat no human holds, through the same lay,
+  trigger, lever and breech paths as solo and as a human (no new authority path). Debt, named:
+  a man displaced by a human at his post is **not drawn** on any machine while displaced (solo
+  stands him by under the cupola; LAN has no standby pose yet). His body is a render rig only in
+  either mode; nothing collides with or is hit through the missing figure, and the host's crew
+  damage still uses the existing LAN crew model. Wounds, first aid and bleeding stay solo-only in
+  LAN (the crew alive mask is what replicates).
+- **Laptop tier** (`tools/launch_windows.ps1 -Laptop`/`-Tier auto`): 480x272 grid, `laptop`
+  preset, `gameplay` transport sampling, no MSAA, shader backend unless a ray-tracing GPU is
+  present. Resolution and sampling only; emitters, occluders, materials, damage and dynamics are
+  the shipping ones. Measured on an Intel UHD 770: about 3.0 s a frame at 480x272 and at
+  320x180 (GPU-bound on shadow passes and draws, not fill): integrated graphics are below the
+  floor, stated in the doc, no further shortcut taken.
 
 ## Solo crew, wounds and first aid, 2026-10-27 (branch `crew-solo`)
 

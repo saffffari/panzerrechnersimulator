@@ -7347,6 +7347,9 @@ pub struct TankInput {
     /// the local crewman's camera/body input.
     pub coop: Option<crate::lan::CrewFrame>,
     pub coop_host: bool,
+    /// LAN host: the living crew's AI men work every seat no human holds and step aside when a
+    /// human takes the post (`crew_solo`, LAN section). Off for couch, showreel and harness frames.
+    pub coop_ai_crew: bool,
     /// This `CrewFrame` belongs to the single-machine four-person couch mode. Unlike LAN (whose
     /// historical behavior remains unchanged), occupied posts are physical mortal bodies: a
     /// penetrating hit can kill one peer while the remaining crew keeps the Tiger fighting.
@@ -9531,6 +9534,12 @@ pub struct Game {
     singleplayer_crew_active: bool,
     /// The living solo crew: wounds, first aid, the AI stations' decisions (`crew_solo`).
     crew_solo: crew_solo::CrewSolo,
+    /// LAN host with the living crew on: this frame's crew, so the AI men can tell which seats no
+    /// human holds. `None` everywhere else.
+    lan_ai_frame: Option<crate::lan::CrewFrame>,
+    /// Seats the AI crew is working (bit = `LanRole as u8`): computed by the host each frame,
+    /// received by clients in the world snapshot; draws the men at their posts.
+    lan_ai_mask: u8,
     /// Persistent couch-player deaths, keyed by the stable peer IDs carried in `CrewFrame::roster`.
     /// Kept separate from the historical five `Crewman` stations: a living human can move into a
     /// fallen man's post without reviving him.
@@ -13586,6 +13595,8 @@ impl Game {
             crew_arm_animation: CrewArmAnimation::new(),
             singleplayer_crew_active: false,
             crew_solo: crew_solo::CrewSolo::default(),
+            lan_ai_frame: None,
+            lan_ai_mask: 0,
             couch_kia_peers: Vec::new(),
             couch_casualties: Vec::new(),
             couch_ragdolls: Vec::new(),
@@ -15986,10 +15997,16 @@ impl Game {
             let afoot_inside = at(Station::Loader);
             // Solo with a living crew: the driver gives what the commander ordered (nothing when
             // he is dead or out), unless the player himself sits at the levers.
-            let crew_drive = if coop.is_none() { self.crew_solo_drive_command() } else { None };
+            // LAN host: the AI driver at an empty seat gives what the commander channel orders.
+            let crew_drive = if coop.is_none() {
+                self.crew_solo_drive_command()
+            } else {
+                self.crew_lan_ai_drive_command()
+            };
             let crew_drives = crew_drive.is_some() && self.crew_solo_role_ok(CrewRole::Driver);
             let (drive_cmd, steer_cmd) = match (coop, crew_drive) {
-                (Some(_), _) => (driver_input.map_or(0.0, |i| i.drive), driver_input.map_or(0.0, |i| i.steer)),
+                (Some(_), Some(crew)) => crew,
+                (Some(_), None) => (driver_input.map_or(0.0, |i| i.drive), driver_input.map_or(0.0, |i| i.steer)),
                 (None, Some(crew)) => crew,
                 (None, None) => {
                     let hands = self.crew_solo_player_perf();
@@ -16016,12 +16033,15 @@ impl Game {
             });
             let local_ready = at(Station::Gunner) && !self.carrying_track_kit
                 && !self.panzerfaust_claimed && !self.compass_equipped && !self.map_held;
-            // The solo crew's gunner owns the lay while he has a target and is fit at the sights.
-            let ai_gunner = coop.is_none() && self.crew_solo_ai_gunner_laying();
+            // The solo crew's gunner owns the lay while he has a target and is fit at the sights;
+            // on a LAN host so does the AI gunner at a seat no human holds.
+            let ai_gunner = (coop.is_none() || self.lan_ai_frame.is_some())
+                && self.crew_solo_ai_gunner_laying();
             let lay_ok = if coop.is_some() {
-                gunner_input.is_some_and(|i| i.post == crate::lan::LanRole::Gunner
-                    && !i.flag(crate::lan::F_SERVICE_BREECH))
-                    && (!local_gunner_controls || local_ready)
+                ai_gunner
+                    || (gunner_input.is_some_and(|i| i.post == crate::lan::LanRole::Gunner
+                        && !i.flag(crate::lan::F_SERVICE_BREECH))
+                        && (!local_gunner_controls || local_ready))
             } else { local_ready || ai_gunner };
             // ── KB+MOUSE GUN LAY: in the sights the MOUSE writes the desired lay; the turret and
             // gun chase it at their real rates (the Tiger's slow hydraulic traverse IS the game —
@@ -16145,7 +16165,8 @@ impl Game {
                 || (coop.is_none() && input.mg_coax);
             let lmb_edge = main_trigger && !self.prev_lmb;
             // The solo crew's gunner pulls his own trigger once laid and ordered.
-            let ai_pulse = coop.is_none() && self.crew_solo_take_gunner_fire();
+            let ai_pulse = (coop.is_none() || self.lan_ai_frame.is_some())
+                && self.crew_solo_take_gunner_fire();
             let click_consumed = local_gunner_controls
                 && (self.primary_pickup_press || self.hover_station.is_some() || self.hover_hatch);
             // LAN clients render authoritative crew state but never commit a predicted round.
@@ -16185,12 +16206,28 @@ impl Game {
             self.crew_solo_service_breech(dt);
             return;
         };
+        let local_manual_loader = input.coop_host && acting == Some(Station::Loader);
+        if self.lan_ai_frame.is_some() && !frame.occupied(crate::lan::LanRole::Loader) {
+            if self.crew_lan_ai_mans(CrewRole::Loader) {
+                // The living crew's loader at his own breech, at his own rate.
+                if local_manual_loader {
+                    self.coop_reload_clock = 0.0;
+                } else {
+                    self.crew_lan_ai_service_breech(dt);
+                }
+                return;
+            }
+            if !frame.gunner_is_loader() && !local_manual_loader {
+                // The loader is dead and no human hand is at the breech: nobody loads.
+                self.coop_reload_clock = 0.0;
+                return;
+            }
+        }
         let loader = frame.input(crate::lan::LanRole::Loader);
         let servicing = !loader.flag(crate::lan::F_DISMOUNTED)
             && (loader.flag(crate::lan::F_SERVICE_BREECH)
                 || (!self.couch_crew_active && !frame.occupied(crate::lan::LanRole::Loader)
                     && !frame.gunner_is_loader()));
-        let local_manual_loader = input.coop_host && acting == Some(Station::Loader);
         if !self.player.alive || !servicing || local_manual_loader {
             self.coop_reload_clock = 0.0;
             return;
@@ -16392,6 +16429,11 @@ impl Game {
             }
         }
         effective_input.coop = coop;
+        self.lan_ai_frame =
+            coop.filter(|_| input.coop_ai_crew && input.coop_host && !self.couch_crew_active);
+        if self.lan_ai_frame.is_some() {
+            self.lan_ai_mask = self.crew_lan_ai_mask();
+        }
         if self.couch_crew_active
             && self
                 .couch_local_peer
@@ -16602,6 +16644,7 @@ impl Game {
         }
         if let Mode::Foot = self.mode {
             if coop.is_some() {
+                self.crew_lan_ai_update(dt);
                 self.update_crew_vehicle_controls(input, dt, r, primary_was_held);
                 self.update_crew_breech(input, None, dt);
                 self.update_crew_vehicle_mg(input, dt);
@@ -16713,6 +16756,8 @@ impl Game {
             // driver's levers, wounds and the player's hands); the vehicle authority reads it.
             if coop.is_none() {
                 self.crew_solo_update(input, dt, r.camera.pos, r.camera.forward());
+            } else {
+                self.crew_lan_ai_update(dt);
             }
             let acting = self.update_crew_vehicle_controls(input, dt, r, primary_was_held);
 
@@ -18307,7 +18352,9 @@ impl Game {
             r.set_visible(slot, false);
         }
         for identity in crate::lan::LanRole::ALL {
-            let post = frame.input(identity).post;
+            // An AI crewman of the living crew works an empty seat at his own post.
+            let ai = !frame.occupied(identity) && self.lan_ai_mask & (1 << identity as u8) != 0;
+            let post = if ai { identity } else { frame.input(identity).post };
             let identity_index = crew_identity_index(identity);
             let slot = if post == crate::lan::LanRole::Commander {
                 self.slots.commander_crew[identity_index]
@@ -18316,8 +18363,9 @@ impl Game {
             };
             let local_body = hidden_role == Some(identity);
             let local_perch = hidden_post == Some(post);
-            let visible = frame.occupied(identity)
-                && !frame.input(identity).flag(crate::lan::F_DISMOUNTED)
+            let visible = (ai
+                || (frame.occupied(identity)
+                    && !frame.input(identity).flag(crate::lan::F_DISMOUNTED)))
                 && !local_body
                 && !local_perch;
             r.set_visible(slot, visible);
@@ -24322,6 +24370,7 @@ impl Game {
             fire: self.fire,
             module_mask,
             crew_mask,
+            ai_crew_mask: self.lan_ai_mask,
             act_complete: self.act_complete,
             armor_scars: armor_window.to_vec(),
             armor_scar_total: self.armor_scars.scars().len() as u16,
@@ -24429,6 +24478,7 @@ impl Game {
             crew.ok = snapshot.crew_mask & (1 << i) != 0;
         }
         self.act_complete = snapshot.act_complete;
+        self.lan_ai_mask = snapshot.ai_crew_mask;
         self.armor_scars.apply_window(usize::from(snapshot.armor_scar_total),
             usize::from(snapshot.armor_scar_start), &snapshot.armor_scars);
         // Buildings arrive separately, per instance (`apply_net_buildings`).

@@ -202,6 +202,7 @@ fn pipeline_cache_file() -> Option<PathBuf> {
         .or_else(|| {
             std::env::var_os("HOME")
                 .filter(|path| !path.is_empty())
+                .or_else(|| std::env::var_os("USERPROFILE").filter(|path| !path.is_empty()))
                 .map(|home| {
                     let home = PathBuf::from(home);
                     if cfg!(target_os = "macos") {

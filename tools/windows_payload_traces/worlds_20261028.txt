@@ -1,0 +1,483 @@
+absent	assets/ai/weights_foot_german.bin
+present	assets/ai/weights_foot_soviet.bin
+present	assets/ai/weights_foot_tiger.bin
+present	assets/audio/library
+present	assets/authoring/battlefield/crater_scar.glb
+present	assets/authoring/battlefield/draught_horse_a_wreck_detail.glb
+present	assets/authoring/battlefield/draught_horse_b_wreck_detail.glb
+present	assets/authoring/battlefield/dropped_rifle.glb
+present	assets/authoring/battlefield/greatcoat_heap_a.glb
+present	assets/authoring/battlefield/greatcoat_heap_b.glb
+present	assets/authoring/battlefield/gun_pit_parapet.glb
+present	assets/authoring/battlefield/kv1_wreck_burnt.glb
+present	assets/authoring/battlefield/kv1_wreck_detail.glb
+present	assets/authoring/battlefield/loose_wheel.glb
+present	assets/authoring/battlefield/lorry_wreck_burnt.glb
+present	assets/authoring/battlefield/lorry_wreck_detail.glb
+present	assets/authoring/battlefield/panje_sledge_overturned_wreck_detail.glb
+present	assets/authoring/battlefield/panje_sledge_wreck_detail.glb
+present	assets/authoring/battlefield/pz3_wreck_burnt.glb
+present	assets/authoring/battlefield/pz3_wreck_detail.glb
+present	assets/authoring/battlefield/scorched_earth.glb
+present	assets/authoring/battlefield/shell_chip.glb
+present	assets/authoring/battlefield/snow_drift.glb
+present	assets/authoring/canyon-v2/blood_snow_00.glb
+present	assets/authoring/canyon-v2/blood_snow_01.glb
+present	assets/authoring/canyon-v2/blood_snow_02.glb
+present	assets/authoring/canyon-v2/blood_snow_03.glb
+present	assets/authoring/canyon-v2/blood_snow_04.glb
+present	assets/authoring/canyon-v2/blood_snow_05.glb
+present	assets/authoring/canyon-v2/blood_snow_06.glb
+present	assets/authoring/canyon-v2/blood_snow_07.glb
+present	assets/authoring/canyon-v2/blood_snow_08.glb
+present	assets/authoring/canyon-v2/blood_snow_09.glb
+present	assets/authoring/canyon-v2/blood_snow_10.glb
+present	assets/authoring/canyon-v2/blood_snow_11.glb
+present	assets/authoring/canyon-v2/casualty_0.glb
+present	assets/authoring/canyon-v2/casualty_1.glb
+present	assets/authoring/canyon-v2/casualty_2.glb
+present	assets/authoring/canyon-v2/casualty_3.glb
+present	assets/authoring/canyon-v2/casualty_4.glb
+present	assets/authoring/canyon-v2/casualty_5.glb
+present	assets/authoring/canyon-v2/outpost.glb
+present	assets/authoring/canyon-v2/resting_tree_log.glb
+present	assets/authoring/canyon-v2/rock_0.glb
+present	assets/authoring/canyon-v2/rock_1.glb
+present	assets/authoring/canyon-v2/rock_2.glb
+present	assets/authoring/canyon-v2/wreck_cart.glb
+present	assets/authoring/canyon-v2/wreck_gun45.glb
+present	assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb
+present	assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb
+present	assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb
+present	assets/authoring/scatter/blood_0.glb
+present	assets/authoring/scatter/blood_1.glb
+present	assets/authoring/scatter/blood_2.glb
+present	assets/authoring/scatter/blood_3.glb
+present	assets/authoring/scatter/burnt_board_0.glb
+present	assets/authoring/scatter/burnt_board_1.glb
+present	assets/authoring/scatter/burnt_board_2.glb
+present	assets/authoring/scatter/canteen.glb
+present	assets/authoring/scatter/case_45mm.glb
+present	assets/authoring/scatter/case_762.glb
+present	assets/authoring/scatter/case_76mm.glb
+present	assets/authoring/scatter/case_792.glb
+present	assets/authoring/scatter/case_88mm.glb
+present	assets/authoring/scatter/clod_0.glb
+present	assets/authoring/scatter/clod_1.glb
+present	assets/authoring/scatter/clod_2.glb
+present	assets/authoring/scatter/clod_3.glb
+present	assets/authoring/scatter/drift_tail_long.glb
+present	assets/authoring/scatter/drift_tail_short.glb
+present	assets/authoring/scatter/gas_mask_canister.glb
+present	assets/authoring/scatter/helmet_m40.glb
+present	assets/authoring/scatter/helmet_ssh40.glb
+present	assets/authoring/scatter/masonry_0.glb
+present	assets/authoring/scatter/masonry_1.glb
+present	assets/authoring/scatter/masonry_2.glb
+present	assets/authoring/scatter/masonry_3.glb
+present	assets/authoring/scatter/mess_tin.glb
+present	assets/authoring/scatter/plate_fragment_0.glb
+present	assets/authoring/scatter/plate_fragment_1.glb
+present	assets/authoring/scatter/plate_fragment_2.glb
+present	assets/authoring/scatter/plate_fragment_3.glb
+present	assets/authoring/scatter/shard_0.glb
+present	assets/authoring/scatter/shard_1.glb
+present	assets/authoring/scatter/shard_2.glb
+present	assets/authoring/scatter/shard_3.glb
+present	assets/authoring/scatter/snow_lump_0.glb
+present	assets/authoring/scatter/snow_lump_1.glb
+present	assets/authoring/scatter/snow_lump_2.glb
+present	assets/authoring/scatter/snow_lump_3.glb
+present	assets/authoring/scatter/stretcher.glb
+present	assets/authoring/scatter/track_link_t34.glb
+present	assets/authoring/scatter/track_link_tiger.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_field_binoculars_physical.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_relaxed_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_seated_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_standing_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_relaxed_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_seated_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_standing_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_relaxed_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_seated_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_standing_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_relaxed_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_seated_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_standing_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_relaxed_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_seated_static.glb
+present	assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_standing_static.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/animation/relaxed_first_person_bindings.v1.json
+present	assets/flavor/Characters/german-ww2-soldier-cc0/animation/seated_first_person_bindings.v1.json
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_steel_helmet_panzertruppe_relaxed_static.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_seated_static.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_00.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_01.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_02.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_03.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_04.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_00.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_01.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_02.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_03.glb
+present	assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_04.glb
+present	assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/skeleton_character_psx_relaxed_static.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_aim_00.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_00.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_01.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_02.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_03.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_fire_01.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_fire_02.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_idle_00.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_idle_01.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_00.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_01.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_02.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_03.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_00.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_01.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_02.glb
+present	assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_03.glb
+present	assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/enigma_machine_runtime.glb
+present	assets/flavor/luger/baked/luger_runtime.glb
+present	assets/flavor/psx-fire-extinguisher/extinguisher.glb
+absent	assets/hero/act1/canyon_wrecks.glb
+absent	assets/hero/act1/getreidesilo.glb
+absent	assets/hero/act1/hauptbahnhof.glb
+absent	assets/hero/act1/kasaner_kirche.glb
+absent	assets/hero/act1/mamajew_huegel.glb
+absent	assets/hero/act1/springbrunnen.glb
+absent	assets/hero/act2/canal_bridge.glb
+absent	assets/hero/act2/the_old_house.glb
+absent	assets/hero/act2/the_windmill.glb
+absent	assets/hero/act2/village_church.glb
+absent	assets/hero/act2/water_tower.glb
+absent	assets/hero/act3/brickworks.glb
+absent	assets/hero/act3/forest_cemetery.glb
+absent	assets/hero/act3/rail_station.glb
+absent	assets/hero/act3/the_blocked_highway.glb
+absent	assets/hero/act3/town_church.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/ceiling_lamp_fps_1.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/crate_1.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/floor_1.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/metal_barrel_fps_1.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/stairs_1.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/tunnel_1.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/tunnel_1_end.glb
+present	assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/wall_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1_frame.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bedside_table_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/coffee_table_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/wardrobe_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_5.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_pistol_loose_1pc_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_pistol_loose_3pcs_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_pistol_loose_mp_1_casing.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_pistol_loose_mp_2_casing.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/canned_food_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/canned_food_mp_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/canned_food_mp_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/canned_food_mp_5_rusty.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/cigs_packet_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/flashlight_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/flashlight_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/glass_bottle_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/glass_bottle_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/hand_saw_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/lighter_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/matchbox_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/meat_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/notebook_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1_empty.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/arc_1_wall_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/doorway_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/floor_ceiling_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/pillar_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_concrete.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_wood.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/window_1_single_frame_only.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/window_1_single_no_glass.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/cig_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/concrete_block_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/cross_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/jerrycan_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/open_book_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/plate_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/spoon_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/tin_can_mp_1_rusty.glb
+present	assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/tin_can_mp_1_rusty_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1_0.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_2_0.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_2_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_2_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_2_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_3_0.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_3_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_3_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_3_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_4_0.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_4_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_4_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_4_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Doors & Gates/door_hr_14.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_2_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_1_hollow_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/concrete_fence_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/fence_a_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/fence_b_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_horizonatal_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hl_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_regular.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_wide.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_3_regular.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hs_1_regular.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_2_hole.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/garage_door_frame_hr_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_1_broken.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_6.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_bx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_hr_3_middle_angle.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1_hole_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1_m1a_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hs_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_rx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_rx_1_1_3_height_1_2_width.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_rx_1_1_4_width.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_top_part_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/window_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/window_hs_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bench_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bench_mx_1_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bolt_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cardboard_box_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cardboard_box_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bags_mp_1_pallet_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/concrete_block_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/first_aid_kit_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/first_aid_kit_hr_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/gear_mx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/gear_mx_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/glass_bottle_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/glass_bottle_mx_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/handheld_fm_radio_etx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/hexagon_nut_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/jerrycan_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/ladder_hr_1_short.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/mail_box_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/package_hr_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/paint_can_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pipe_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pipe_mx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/scrap_metal_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/scrap_metal_mx_1_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/scrap_metal_mx_1_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/shelf_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/shelf_mx_7.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/spring_mx_1_large.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/stool_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/tire_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/tire_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/toolbox_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_barrel_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_2_a.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_2_b.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_2_c.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_2.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_3.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_4.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Structures/water_tower_hm_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/axe_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/glass_bottle_mx_3_broken.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/hammer_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/misc_tool_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/pick_axe_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/shovel_mx_1.glb
+present	assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/wrench_mx_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/fern_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/fern_2.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/grass_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/grass_2.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/grass_3.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/grass_4.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/pine_tree_n_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/pine_tree_n_2.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/pine_tree_n_3.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_2.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_3.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_4.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_5.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_5.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_6.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_7.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_8.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_9.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_log_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_stump_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/wheat_1.glb
+present	assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/wheat_1_1.glb
+present	assets/props/hand_compass_artie31/hand_compass.glb
+present	assets/sounds/owner_20261003/breech_reload.ogg
+present	assets/sounds/owner_20261003/cannon_single_shot.ogg
+present	assets/sounds/owner_20261003/distant_round_fire_and_impact.ogg
+present	assets/sounds/owner_20261003/distant_tank_fire_2shots.ogg
+present	assets/sounds/owner_20261003/engine_shutdown.ogg
+present	assets/sounds/owner_20261003/engine_start.ogg
+present	assets/sounds/owner_20261003/main_gun_outside_2shots_with_impacts.ogg
+present	assets/sounds/owner_20261003/shells_hitting_floor.ogg
+present	assets/sounds/owner_20261003/t34_main_gun_close.ogg
+present	assets/sounds/owner_20261003/tank_fire_and_impacts_distant.ogg
+present	assets/sounds/owner_20261003/tank_hatch_closing.ogg
+present	assets/sounds/owner_20261003/tank_hatch_opening.ogg
+present	assets/sounds/pizza_private/feedback_20260905/15b20b7d2b4712645595816ab157deb63ab8e4d196fdc2337d4112080a447ef4.ogg
+present	assets/sounds/pizza_private/feedback_20260905/2a4108cad327b73dcd49ba5cdd8541affd69ca4d968780070e5ed39091505aef.ogg
+present	assets/sounds/pizza_private/feedback_20260905/2be44528721ca5e3076e97498a881a8d953029dcae7fd14a6be1ff668973ff38.ogg
+present	assets/sounds/pizza_private/feedback_20260905/3168aada71e598aaaae5dbfc56c88a6522df0eaa7327a10512879fe705943305.ogg
+present	assets/sounds/pizza_private/feedback_20260905/335e8f26f641ebc7351fe3e8755108eeae22e8fe5f5991ea658df1bb292ad619.ogg
+present	assets/sounds/pizza_private/feedback_20260905/347d781360c26835523695474ec2fa4e9c71132ef93b9ca6ad1709e7cf6371ea.ogg
+present	assets/sounds/pizza_private/feedback_20260905/3f9b3966d8afd0abe3927019496918d53a950ae59a2713f12bce521eb8d402bd.ogg
+present	assets/sounds/pizza_private/feedback_20260905/45dd54cd2b01d77b1226785afd59850ed6f51b21bb8d3bfe3ba0c77e0dc6066c.ogg
+present	assets/sounds/pizza_private/feedback_20260905/746aac40f17627316f1a15188b8a8b49c454c4e2e9359a2088c6034f1dc969df.ogg
+present	assets/sounds/pizza_private/feedback_20260905/75f84769cee592ec0faa47f7d9f1c86e962630b072a7e375a058c9754f071026.ogg
+present	assets/sounds/pizza_private/feedback_20260905/8477c4356a0add0c8c3b0d9c9776acd40868f279c714e3e8beab8434903788ab.ogg
+present	assets/sounds/pizza_private/feedback_20260905/8f537a47c60ea37b5a8c8d726cc4e0520b7d48424173049e9b39a5da81958d9d.ogg
+present	assets/sounds/pizza_private/feedback_20260905/95ea6add338e775db3656f216b078674f315f4c7592d27019fb3af784d9e9378.ogg
+present	assets/sounds/pizza_private/feedback_20260905/a48e2d21244737797351c3d998eb2cc9c5885d2c48aaa6c18c1441d7722491c4.ogg
+present	assets/sounds/pizza_private/feedback_20260905/ae1589902de4c5858ac4579094d4457405697afcf3f2d36a16a70fc7a3d541ef.ogg
+present	assets/sounds/pizza_private/feedback_20260905/baad4f0fdff4425e0da2c422a1bb14e4a34ae3cedd92e94b51cf64bbc79bd0d4.ogg
+present	assets/sounds/pizza_private/feedback_20260905/daf7e38fd682b515f368633d5971207d784bc5aa5958a30be9423302b183223f.ogg
+present	assets/sounds/pizza_private/feedback_20260905/ea4a0fff1b82676157e9d5ad286827b92fcb13c64e6b2a18f09b7640cf0830ed.ogg
+present	assets/sounds/pizza_private/feedback_20260905/f258c7fd4a3a1423c9dda57b4c0f15a897d488173d138a94338ec631dc287614.ogg
+present	assets/sounds/pizza_private/feedback_20260905/f4bb037fc1bde8d5a5f6657fa40e81295fd9e9eee39412e06fbcebf4335d3099.ogg
+present	assets/sounds/pizza_private/feedback_20260905/f4e05b30bfb28e4536ee65241b74c50cb76d2e86631c802900654bae84381ed5.ogg
+present	assets/sounds/pizza_private/feedback_20260905/f6230dd31c3f3d0b3df2b1d3230c585fd4f69731e2067813dbcb0f45148e7976.ogg
+present	assets/sounds/pizza_private/feedback_20260905/f68325bcda389ec55293d4f38f859151664ce95b652b95fc19876c6c49ba93f1.ogg
+present	assets/tanks/T34-76/baked/t34_gun.glb
+present	assets/tanks/T34-76/baked/t34_hull.glb
+present	assets/tanks/T34-76/baked/t34_turret.glb
+absent	assets/tanks/su100/baked/su100_hull.glb
+present	assets/tanks/tiger/baked/tiger_gun.glb
+present	assets/tanks/tiger/baked/tiger_hatch.glb
+present	assets/tanks/tiger/baked/tiger_hull.glb
+present	assets/tanks/tiger/baked/tiger_part_breechcover.glb
+present	assets/tanks/tiger/baked/tiger_part_gunlever.glb
+present	assets/tanks/tiger/baked/tiger_part_hatchlever.glb
+present	assets/tanks/tiger/baked/tiger_part_tpz.glb
+present	assets/tanks/tiger/baked/tiger_part_wheel1.glb
+present	assets/tanks/tiger/baked/tiger_part_wheel2.glb
+absent	assets/tanks/tiger/baked/tiger_port_gun.glb
+absent	assets/tanks/tiger/baked/tiger_port_hull.glb
+present	assets/tanks/tiger/baked/tiger_port_turret.glb
+present	assets/tanks/tiger/baked/tiger_rack_fitting.glb
+absent	assets/tanks/tiger/baked/tiger_rtt_gun.glb
+present	assets/tanks/tiger/baked/tiger_rtt_hull.glb
+present	assets/tanks/tiger/baked/tiger_rtt_screens.json
+present	assets/tanks/tiger/baked/tiger_rtt_turret.glb
+present	assets/tanks/tiger/baked/tiger_turret.glb
+present	assets/tanks/tiger/repair_link.glb
+absent	assets/terrain/act0/heightmap.png
+present	assets/terrain/act1_rgb/act1_ground_hires.png
+present	assets/terrain/act2/act2_ground_hires.png
+present	assets/terrain/act2/ground_class.png
+present	assets/terrain/act3/act3_ground_hires.png
+present	assets/terrain/act3/ground_class.png
+present	assets/terrain/canyon_v2/ground_class.png
+present	assets/terrain/canyon_v2/rock_snow_material.png
+present	assets/terrain/stalingrad_100km_height16.png
+present	assets/worldgen/act1/heights.npy
+present	assets/worldgen/act1/manifest.v1.json
+absent	assets/worldgen/act1/manifest_edits.json
+present	assets/worldgen/act2/heights.npy
+present	assets/worldgen/act2/manifest.v1.json
+absent	assets/worldgen/act2/manifest_edits.json
+present	assets/worldgen/act3/heights.npy
+present	assets/worldgen/act3/manifest.v1.json
+absent	assets/worldgen/act3/manifest_edits.json
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_00.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_01.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_02.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_03.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_04.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_05.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_06.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_07.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_08.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_09.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_10.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/blood_drops_v6_11.glb
+present	assets/worldgen/workshops/gaea-canyon-run-v2/detail/heights.4097.npy
+present	assets/worldgen/workshops/gaea-canyon-run-v2/detail/surface.4097.png
+present	assets/worldgen/workshops/gaea-canyon-run-v2/heights.npy
+present	assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json
+present	assets/worldgen/workshops/gaea-canyon-run-v2/manifest_edits.json

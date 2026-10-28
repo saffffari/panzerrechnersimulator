@@ -18,7 +18,8 @@ pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
 /// 7: buildings left the world packet for per-instance building packets.
 /// 8: armor scars stream as a rotating window of packed v2 records (`ARMOR_SCAR_WINDOW`).
-pub const PROTOCOL_VERSION: u8 = 8;
+/// 9: the world packet carries which empty seats the living AI crew is working (`ai_crew_mask`).
+pub const PROTOCOL_VERSION: u8 = 9;
 /// Scars per world packet; a host field of `MAX_ARMOR_SCARS` reaches a client in 32 packets.
 pub const ARMOR_SCAR_WINDOW: usize = 16;
 const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
@@ -49,6 +50,11 @@ pub const MAX_NET_BUILDING_PARTIAL: usize = 300;
 /// peer, sent only while some instance differs from its baseline.
 const MAX_BUILDING_PACKETS_PER_PUBLISH: usize = 4;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
+/// A client with no Welcome after this long tells the player what to check (`JoinTrouble`).
+pub const JOIN_TROUBLE_AFTER: Duration = Duration::from_secs(4);
+/// The advertiser re-reads the adapters this often: a laptop that changes Wi-Fi or wakes a VPN
+/// gets a new subnet while hosting.
+const DISCOVERY_REFRESH: Duration = Duration::from_secs(10);
 const HELLO_PERIOD: Duration = Duration::from_millis(350);
 const INPUT_PERIOD: Duration = Duration::from_millis(20);
 const WORLD_PERIOD: Duration = Duration::from_millis(50);
@@ -73,6 +79,8 @@ pub const F_REPAIR: u16 = 1 << 6;
 pub const F_BINOCULARS: u16 = 1 << 7;
 pub const F_HATCH_TOGGLE: u16 = 1 << 8;
 pub const F_DISMOUNTED: u16 = 1 << 9;
+/// K: toggle the living crew's standing order (fire at will / hold fire). A pulse, like the hatch.
+pub const F_FIRE_ORDER: u16 = 1 << 10;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
@@ -130,6 +138,8 @@ pub enum LanMission {
     Garage = 0,
     Arena = 1,
     Campaign = 2,
+    /// The Canyon v2 winter run (`KESSEL_CANYON_MANIFEST` pins the course file on every machine).
+    Canyon = 3,
 }
 
 impl LanMission {
@@ -138,6 +148,7 @@ impl LanMission {
             "garage" | "training" => Some(Self::Garage),
             "arena" | "battle" | "gefecht" => Some(Self::Arena),
             "campaign" | "kampagne" => Some(Self::Campaign),
+            "canyon" | "schlucht" => Some(Self::Canyon),
             _ => None,
         }
     }
@@ -147,6 +158,7 @@ impl LanMission {
             Self::Garage => "GARAGE",
             Self::Arena => "ARENA",
             Self::Campaign => "CAMPAIGN",
+            Self::Canyon => "CANYON",
         }
     }
 
@@ -155,6 +167,7 @@ impl LanMission {
             0 => Some(Self::Garage),
             1 => Some(Self::Arena),
             2 => Some(Self::Campaign),
+            3 => Some(Self::Canyon),
             _ => None,
         }
     }
@@ -181,7 +194,7 @@ impl LanConfig {
         let mut join: Option<String> = None;
         let mut bind = format!("0.0.0.0:{DEFAULT_PORT}");
         let mut role = LanRole::Commander;
-        let mut name = std::env::var("USER").unwrap_or_else(|_| "crew".to_string());
+        let mut name = local_player_name();
         let mut mission = LanMission::Garage;
         let mut seed = 1u64;
         let mut i = 1;
@@ -208,7 +221,7 @@ impl LanConfig {
                 }
                 "--mission" => {
                     i += 1;
-                    let value = args.get(i).ok_or("--mission needs garage|arena|campaign")?;
+                    let value = args.get(i).ok_or("--mission needs garage|arena|campaign|canyon")?;
                     mission = LanMission::parse(value)
                         .ok_or_else(|| format!("unknown mission '{value}'"))?;
                 }
@@ -243,6 +256,65 @@ impl LanConfig {
             mission,
             seed,
         }))
+    }
+}
+
+/// The player's callsign from the login: `USERNAME` on Windows, `USER` on Linux/macOS. Bounded to
+/// 24 characters; "crew" when neither is set.
+pub fn local_player_name() -> String {
+    let name: String = ["USERNAME", "USER"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|value| value.trim().to_owned())
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(24)
+        .collect();
+    if name.is_empty() { "crew".to_owned() } else { name }
+}
+
+/// Why a join has had no Welcome yet, for the screen and the console. Detected, not guessed: a
+/// Windows `WSAECONNRESET` on the client socket is the ICMP "port unreachable" the host machine
+/// sends back when it is reachable but nothing listens on the game port; silence is what a
+/// blocking firewall, Wi-Fi client isolation or a wrong address all look like.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JoinTrouble {
+    /// Nothing at all came back from the host address.
+    NoAnswer,
+    /// The host machine answered "port unreachable": it is up, but no Tiger is hosted on the port.
+    NotHosting,
+    /// The host refused: five crew already aboard.
+    Full,
+}
+
+impl JoinTrouble {
+    pub fn headline(self, server: SocketAddr) -> String {
+        match self {
+            JoinTrouble::NoAnswer => format!("NO ANSWER FROM {server}"),
+            JoinTrouble::NotHosting => {
+                format!("{} IS UP BUT NOT HOSTING ON UDP {}", server.ip(), server.port())
+            }
+            JoinTrouble::Full => "TANK FULL - FIVE CREW ALREADY ABOARD".to_owned(),
+        }
+    }
+
+    /// The checklist, most likely cause first.
+    pub fn checks(self) -> &'static [&'static str] {
+        match self {
+            JoinTrouble::NoAnswer => &[
+                "Same Wi-Fi as the host? (not a guest network; a phone hotspot works)",
+                "Host firewall: run tools\\setup_firewall.ps1 on the HOST once, or allow Private networks at the prompt",
+                "Wi-Fi client isolation (guest/AP isolation) blocks laptop-to-laptop traffic",
+                "Type the address the host's Crew co-op screen shows (not a vEthernet or VPN one)",
+            ],
+            JoinTrouble::NotHosting => &[
+                "The host PC answered, but its game is not hosting: choose Host LAN there first",
+                "Check the port: the default is 28460",
+            ],
+            JoinTrouble::Full => &["Five crew already aboard: wait for a seat or host another Tiger"],
+        }
     }
 }
 
@@ -459,7 +531,14 @@ impl LanBrowser {
                     self.cache.ingest(&packet[..bytes], source, now);
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::Interrupted | io::ErrorKind::ConnectionReset
+                    ) =>
+                {
+                    continue
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -473,7 +552,12 @@ impl LanBrowser {
 /// alter ordering, packet loss, or authority in the gameplay transport.
 pub struct LanAdvertiser {
     socket: UdpSocket,
-    target: SocketAddr,
+    /// Every up interface's directed broadcast plus the limited broadcast (`net_ifaces`). A
+    /// limited broadcast alone leaves a multihomed Windows laptop on one adapter only, often the
+    /// Hyper-V/WSL switch.
+    targets: Vec<SocketAddr>,
+    /// When the adapters were last read; `None` keeps fixed (test) targets.
+    refreshed: Option<Instant>,
     beacon: LanBeacon,
     period: Duration,
     last_sent: Option<Instant>,
@@ -481,33 +565,40 @@ pub struct LanAdvertiser {
 
 impl LanAdvertiser {
     pub fn new(beacon: LanBeacon) -> io::Result<Self> {
-        Self::bind_to(
+        let mut advertiser = Self::bind_to(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT)),
+            discovery_targets(),
             beacon,
             DISCOVERY_PERIOD,
-        )
+        )?;
+        advertiser.refreshed = Some(Instant::now());
+        Ok(advertiser)
     }
 
     fn bind_to(
         bind: SocketAddr,
-        target: SocketAddr,
+        targets: Vec<SocketAddr>,
         beacon: LanBeacon,
         period: Duration,
     ) -> io::Result<Self> {
         validate_beacon(&beacon)?;
         let socket = UdpSocket::bind(bind)?;
         socket.set_nonblocking(true)?;
-        if matches!(target.ip(), IpAddr::V4(ip) if ip == Ipv4Addr::BROADCAST) {
-            socket.set_broadcast(true)?;
-        }
+        // Directed broadcasts need SO_BROADCAST as much as 255.255.255.255 does; a unicast test
+        // target is unaffected by it.
+        socket.set_broadcast(true)?;
         Ok(Self {
             socket,
-            target,
+            targets,
+            refreshed: None,
             beacon,
             period,
             last_sent: None,
         })
+    }
+
+    pub fn targets(&self) -> &[SocketAddr] {
+        &self.targets
     }
 
     pub fn beacon(&self) -> &LanBeacon {
@@ -528,17 +619,38 @@ impl LanAdvertiser {
         self.beacon.occupied_crew = occupied_crew.min(self.beacon.max_crew);
     }
 
+    /// Send the beacon to every target. One adapter refusing (down, no route, a VPN that drops
+    /// broadcasts) is ignored while any other target accepts; the error is returned only when
+    /// every target failed.
     pub fn advertise_now(&mut self) -> io::Result<()> {
-        let packet = encode_beacon(&self.beacon)?;
-        let sent = self.socket.send_to(&packet, self.target)?;
-        if sent != packet.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "partial LAN discovery datagram",
-            ));
+        let now = Instant::now();
+        if self
+            .refreshed
+            .is_some_and(|at| now.saturating_duration_since(at) >= DISCOVERY_REFRESH)
+        {
+            self.targets = discovery_targets();
+            self.refreshed = Some(now);
         }
-        self.last_sent = Some(Instant::now());
-        Ok(())
+        let packet = encode_beacon(&self.beacon)?;
+        let mut last_error = None;
+        let mut delivered = 0usize;
+        for target in &self.targets {
+            match self.socket.send_to(&packet, target) {
+                Ok(sent) if sent == packet.len() => delivered += 1,
+                Ok(_) => {
+                    last_error = Some(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "partial LAN discovery datagram",
+                    ))
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        self.last_sent = Some(now);
+        match (delivered, last_error) {
+            (0, Some(error)) => Err(error),
+            _ => Ok(()),
+        }
     }
 
     pub fn tick(&mut self) -> io::Result<bool> {
@@ -552,6 +664,10 @@ impl LanAdvertiser {
         self.advertise_now()?;
         Ok(true)
     }
+}
+
+fn discovery_targets() -> Vec<SocketAddr> {
+    crate::net_ifaces::broadcast_targets(&crate::net_ifaces::ipv4_interfaces(), DISCOVERY_PORT)
 }
 
 fn bounded_session_name(value: &str) -> String {
@@ -728,6 +844,18 @@ impl CrewFrame {
     }
 }
 
+/// The crew frame a host builds from these humans (seat and input; peer ids in order), the empty
+/// seats filled as `LanSession::poll` fills them. For harnesses that drive the host path without
+/// sockets (`lan-crew`).
+pub fn host_crew_frame(humans: &[(LanRole, RoleInput)]) -> CrewFrame {
+    let mut frame = CrewFrame::default();
+    for (id, (role, input)) in humans.iter().enumerate() {
+        frame.roster[*role as usize] = id as u32;
+        frame.inputs[*role as usize] = input.sanitized();
+    }
+    fill_empty_roles(frame)
+}
+
 fn fill_empty_roles(mut frame: CrewFrame) -> CrewFrame {
     let fallback_role = if frame.occupied(LanRole::Commander) {
         LanRole::Commander
@@ -797,6 +925,9 @@ pub struct WorldSnapshot {
     pub fire: f32,
     pub module_mask: u16,
     pub crew_mask: u8,
+    /// Seats (bit = `LanRole as u8`) an AI crewman of the living crew is working: empty of any
+    /// human, the man alive and at his own post. Host-computed; clients draw the men from it.
+    pub ai_crew_mask: u8,
     pub act_complete: bool,
     /// Host-authoritative localized armor wounds and field patches on the player Tiger: one
     /// window of at most `ARMOR_SCAR_WINDOW` records starting at host index `armor_scar_start`,
@@ -921,6 +1052,15 @@ pub struct LanSession {
     /// Client look motion accumulated across frames between 20 ms input packets.
     pending_look: [f32; 2],
     status: String,
+    /// Client: when this join attempt started, whether any Welcome ever arrived, and what the
+    /// socket heard instead (`JoinTrouble`).
+    join_started: Instant,
+    ever_welcomed: bool,
+    port_unreachable: bool,
+    refused_full: bool,
+    trouble_reported: Option<JoinTrouble>,
+    /// Host: the addresses friends can type, best first (`net_ifaces::lan_addresses`).
+    host_addresses: Vec<crate::net_ifaces::Ipv4Interface>,
 }
 
 impl LanSession {
@@ -940,6 +1080,9 @@ impl LanSession {
                     config.mission.label(),
                     config.requested_role.label()
                 );
+                for iface in host_offer(addr) {
+                    println!("[lan] friends can join {}:{}  {}", iface.addr, addr.port(), iface.describe());
+                }
                 (
                     socket,
                     SessionKind::Host {
@@ -953,10 +1096,13 @@ impl LanSession {
             }
             LanModeConfig::Join { server } => {
                 let server = resolve_one(server)?;
-                let bind = if server.is_ipv6() {
-                    "[::]:0"
-                } else {
-                    "0.0.0.0:0"
+                // A loopback host is answered on loopback: no wildcard bind, so a same-machine
+                // test never raises the Windows Defender Firewall prompt.
+                let bind = match (server.is_ipv6(), server.ip().is_loopback()) {
+                    (true, true) => "[::1]:0",
+                    (true, false) => "[::]:0",
+                    (false, true) => "127.0.0.1:0",
+                    (false, false) => "0.0.0.0:0",
                 };
                 let socket = UdpSocket::bind(bind)?;
                 socket.set_nonblocking(true)?;
@@ -999,6 +1145,10 @@ impl LanSession {
         } else {
             None
         };
+        let host_addresses = match socket.local_addr() {
+            Ok(addr) if host_mode => host_offer(addr),
+            _ => Vec::new(),
+        };
         Ok(Self {
             socket,
             kind,
@@ -1032,7 +1182,46 @@ impl LanSession {
             pending_pulses: 0,
             pending_look: [0.0; 2],
             status,
+            join_started: now,
+            ever_welcomed: false,
+            port_unreachable: false,
+            refused_full: false,
+            trouble_reported: None,
+            host_addresses,
         })
+    }
+
+    /// Host: the addresses friends can type, best first. A host bound to one address offers that.
+    pub fn host_addresses(&self) -> &[crate::net_ifaces::Ipv4Interface] {
+        &self.host_addresses
+    }
+
+    /// Client: the join has had no Welcome for `JOIN_TROUBLE_AFTER`, and what the socket heard.
+    pub fn join_trouble(&self) -> Option<JoinTrouble> {
+        let SessionKind::Client { .. } = self.kind else {
+            return None;
+        };
+        if self.connected {
+            return None;
+        }
+        if self.ever_welcomed && !self.refused_full {
+            return None;
+        }
+        join_trouble_at(self.refused_full, self.port_unreachable, self.join_started, Instant::now())
+    }
+
+    pub fn server(&self) -> Option<SocketAddr> {
+        match self.kind {
+            SessionKind::Client { server } => Some(server),
+            SessionKind::Host { .. } => None,
+        }
+    }
+
+    pub fn peer_count(&self) -> usize {
+        match &self.kind {
+            SessionKind::Host { peers, .. } => peers.len(),
+            SessionKind::Client { .. } => 0,
+        }
     }
 
     pub fn local_role(&self) -> LanRole {
@@ -1138,12 +1327,30 @@ impl LanSession {
                 }
             }
             SessionKind::Client { server } => {
-                self.pending_pulses |= local_input.flags & F_HATCH_TOGGLE;
+                self.pending_pulses |= local_input.flags & (F_HATCH_TOGGLE | F_FIRE_ORDER);
                 // Packets leave every 20 ms; frames between sends must not lose their motion.
                 if self.connected {
                     accumulate_look(&mut self.pending_look, local_input.look_dx, local_input.look_dy);
                 } else {
                     self.pending_look = [0.0; 2];
+                }
+                if !self.connected && !self.ever_welcomed {
+                    if let Some(trouble) = join_trouble_at(
+                        self.refused_full,
+                        self.port_unreachable,
+                        self.join_started,
+                        now,
+                    ) {
+                        self.status = trouble.headline(*server);
+                        if self.trouble_reported != Some(trouble) {
+                            self.trouble_reported = Some(trouble);
+                            eprintln!("[lan] {} after {:.0} s; check:", trouble.headline(*server),
+                                now.duration_since(self.join_started).as_secs_f32());
+                            for check in trouble.checks() {
+                                eprintln!("[lan]   - {check}");
+                            }
+                        }
+                    }
                 }
                 if !self.connected && now.duration_since(self.last_hello) >= HELLO_PERIOD {
                     let _ = self.socket.send_to(
@@ -1272,6 +1479,16 @@ impl LanSession {
             match self.socket.recv_from(&mut buf) {
                 Ok((n, addr)) => self.handle_packet(&buf[..n], addr),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                // Windows reports an ICMP "port unreachable" for an earlier send_to as
+                // WSAECONNRESET on the next receive of an unconnected UDP socket. It is not a
+                // socket failure: on the host it is a crewman who quit; on a client before any
+                // Welcome it says the host machine is up but not hosting. Keep draining.
+                Err(e) if e.kind() == io::ErrorKind::ConnectionReset => {
+                    if !self.is_host() && !self.ever_welcomed {
+                        self.port_unreachable = true;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => {
                     self.status = format!("LAN RECEIVE ERROR: {e}");
                     break;
@@ -1294,6 +1511,7 @@ impl LanSession {
             P_CLAIM => self.handle_claim(rd, addr),
             P_FULL => {
                 if matches!(self.kind, SessionKind::Client { server } if server == addr) {
+                    self.refused_full = true;
                     self.status = "TANK FULL — FIVE CREW ALREADY ABOARD".into();
                 }
             }
@@ -1412,6 +1630,9 @@ impl LanSession {
             self.last_building_seq = None;
         }
         self.confirmed_epoch = Some(epoch);
+        self.ever_welcomed = true;
+        self.port_unreachable = false;
+        self.refused_full = false;
         self.local_id = id;
         self.local_role = role;
         self.requested_role = role;
@@ -1553,6 +1774,34 @@ impl LanSession {
             addr,
         );
     }
+}
+
+/// The addresses a host bound to `bind` can offer friends: every LAN address for a wildcard bind,
+/// that one address for a specific bind, none on loopback.
+fn host_offer(bind: SocketAddr) -> Vec<crate::net_ifaces::Ipv4Interface> {
+    match bind.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => crate::net_ifaces::lan_addresses(),
+        IpAddr::V4(ip) if !ip.is_loopback() => crate::net_ifaces::ipv4_interfaces()
+            .into_iter()
+            .filter(|iface| iface.addr == ip)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn join_trouble_at(
+    refused_full: bool,
+    port_unreachable: bool,
+    join_started: Instant,
+    now: Instant,
+) -> Option<JoinTrouble> {
+    if refused_full {
+        return Some(JoinTrouble::Full);
+    }
+    if now.duration_since(join_started) < JOIN_TROUBLE_AFTER {
+        return None;
+    }
+    Some(if port_unreachable { JoinTrouble::NotHosting } else { JoinTrouble::NoAnswer })
 }
 
 fn resolve_one(value: &str) -> io::Result<SocketAddr> {
@@ -1804,6 +2053,7 @@ fn encode_world(
     w.f32(snapshot.fire);
     w.u16(snapshot.module_mask);
     w.u8(snapshot.crew_mask);
+    w.u8(snapshot.ai_crew_mask & 0x1F);
     w.u8(snapshot.act_complete as u8);
     encode_armor_scars(&mut w, snapshot)?;
     (w.0.len() <= MAX_PACKET).then_some(w.0)
@@ -2199,6 +2449,7 @@ fn decode_world_body(
         fire: finite_unit(rd.f32()?).max(0.0),
         module_mask: rd.u16()?,
         crew_mask: rd.u8()?,
+        ai_crew_mask: rd.u8()? & 0x1F,
         act_complete: rd.u8()? != 0,
         armor_scars: Vec::new(),
         armor_scar_total: 0,
@@ -2344,8 +2595,332 @@ pub fn run_loopback_verify() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `lan-probe`: the real gameplay transport between two processes, with no GPU, window or assets.
+///
+/// `lan-probe host [SECONDS] [BIND]` hosts a stand-in Tiger: the real `LanSession` host with the
+/// discovery beacon on every adapter, answering joins and publishing a moving synthetic snapshot.
+/// `lan-probe join ADDRESS|auto [SECONDS]` joins it (or a real game host) as a gunner, finds it by
+/// discovery with `auto`, and reports Welcome, snapshot rate and round-trip time, or the
+/// `JoinTrouble` checklist. Exit status 0 only when the join completed and snapshots arrived.
+pub fn run_probe(args: &[String]) -> anyhow::Result<()> {
+    let mode = args.first().map(String::as_str).unwrap_or("");
+    match mode {
+        "host" => {
+            let seconds: u64 = args.get(1).and_then(|v| v.parse().ok()).unwrap_or(60);
+            let bind = args.get(2).cloned().unwrap_or_else(|| format!("0.0.0.0:{DEFAULT_PORT}"));
+            probe_host(&bind, Duration::from_secs(seconds))
+        }
+        "join" => {
+            let target = args.get(1).map(String::as_str).unwrap_or("auto");
+            let seconds: u64 = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(10);
+            probe_join(target, Duration::from_secs(seconds))
+        }
+        "discover" => {
+            let seconds: u64 = args.get(1).and_then(|v| v.parse().ok()).unwrap_or(4);
+            let sessions = discover_sessions(Duration::from_secs(seconds))?;
+            for session in &sessions {
+                let beacon = &session.beacon;
+                println!(
+                    "JOIN {} {} {}/{} {}{}",
+                    session.join_address(),
+                    beacon.mission.label(),
+                    beacon.occupied_crew,
+                    beacon.max_crew,
+                    beacon.session_name,
+                    if session.compatible() { String::new() } else { format!(" (protocol v{}, this build v{PROTOCOL_VERSION})", beacon.protocol_version) }
+                );
+            }
+            anyhow::ensure!(
+                sessions.iter().any(DiscoveredSession::compatible),
+                "no compatible Tiger heard on UDP {DISCOVERY_PORT} in {seconds} s"
+            );
+            Ok(())
+        }
+        _ => anyhow::bail!(
+            "usage: lan-probe host [SECONDS] [BIND] | lan-probe join ADDRESS|auto [SECONDS] | lan-probe discover [SECONDS]"
+        ),
+    }
+}
+
+fn probe_host(bind: &str, duration: Duration) -> anyhow::Result<()> {
+    let config = LanConfig {
+        mode: LanModeConfig::Host { bind: bind.to_owned() },
+        requested_role: LanRole::Commander,
+        name: format!("{} probe", local_player_name()),
+        mission: LanMission::Arena,
+        seed: 1942,
+    };
+    let mut host = LanSession::new(&config)?;
+    if let Some(advertiser) = host.advertiser.as_ref() {
+        let targets: Vec<String> = advertiser.targets().iter().map(ToString::to_string).collect();
+        println!("[lan-probe] beacons to {}", targets.join(", "));
+    } else {
+        println!("[lan-probe] no discovery beacon (loopback or IPv6 bind)");
+    }
+    println!("[lan-probe] hosting on {} for {} s", host.local_addr()?, duration.as_secs());
+    let start = Instant::now();
+    let mut joined = std::collections::BTreeSet::new();
+    let mut fire_seen = false;
+    while start.elapsed() < duration {
+        let poll = host.poll(RoleInput { post: LanRole::Commander, ..RoleInput::default() });
+        for role in LanRole::ALL {
+            if role != LanRole::Commander && poll.crew.occupied(role) && joined.insert(role as u8) {
+                println!("[lan-probe] crewman at {} after {:.1} s", role.label(), start.elapsed().as_secs_f32());
+            }
+        }
+        if !fire_seen && poll.crew.input(LanRole::Gunner).flag(F_FIRE_MAIN) && poll.crew.occupied(LanRole::Gunner) {
+            fire_seen = true;
+            println!("[lan-probe] gunner input arrived (FIRE)");
+        }
+        let t = start.elapsed().as_secs_f32();
+        host.publish(WorldSnapshot {
+            player: NetTankState { pos: [t, 0.0, 0.0], alive: true, hp: 1.0, ..NetTankState::default() },
+            crew_mask: 0x1F,
+            ..WorldSnapshot::default()
+        });
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    println!("[lan-probe] host done: {} crewman(s) joined, gunner input {}", joined.len(),
+        if fire_seen { "seen" } else { "not seen" });
+    Ok(())
+}
+
+/// Listen on the discovery port for `duration` and return every Tiger heard.
+fn discover_sessions(duration: Duration) -> anyhow::Result<Vec<DiscoveredSession>> {
+    let mut browser = LanBrowser::bind()
+        .map_err(|e| anyhow::anyhow!("discovery port UDP {DISCOVERY_PORT} unavailable ({e}); join by address"))?;
+    let deadline = Instant::now() + duration;
+    while Instant::now() < deadline {
+        browser.poll()?;
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(browser.sessions().to_vec())
+}
+
+fn probe_join(target: &str, duration: Duration) -> anyhow::Result<()> {
+    let server = if target.eq_ignore_ascii_case("auto") {
+        let found = discover_sessions(Duration::from_secs(4))?
+            .into_iter()
+            .find(DiscoveredSession::compatible);
+        let Some(session) = found else {
+            anyhow::bail!(
+                "no compatible Tiger heard on UDP {DISCOVERY_PORT} in 4 s: discovery is blocked or \
+                 nothing is hosting; join by the host's address instead"
+            );
+        };
+        println!("[lan-probe] discovered \"{}\" at {}", session.beacon.session_name, session.server);
+        session.join_address()
+    } else {
+        normalize_join_address(target).map_err(anyhow::Error::msg)?
+    };
+    let config = LanConfig {
+        mode: LanModeConfig::Join { server: server.clone() },
+        requested_role: LanRole::Gunner,
+        name: local_player_name(),
+        mission: LanMission::Garage,
+        seed: 0,
+    };
+    let mut client = LanSession::new(&config)?;
+    println!("[lan-probe] joining {server} from {}", client.local_addr()?);
+    let start = Instant::now();
+    let mut welcomed_at = None;
+    let mut snapshots = 0u32;
+    let mut first_snapshot = None;
+    let mut last_x = None;
+    let mut reported = None;
+    while start.elapsed() < duration {
+        let poll = client.poll(RoleInput { flags: F_FIRE_MAIN, post: LanRole::Gunner, ..RoleInput::default() });
+        if poll.connected && welcomed_at.is_none() {
+            welcomed_at = Some(start.elapsed());
+            println!("[lan-probe] WELCOME after {:.0} ms as {} ({} seed {})",
+                start.elapsed().as_secs_f64() * 1e3, client.local_role().label(),
+                client.mission().label(), client.seed());
+        }
+        if let Some(snapshot) = poll.snapshot {
+            snapshots += 1;
+            first_snapshot.get_or_insert(start.elapsed());
+            last_x = Some(snapshot.player.pos[0]);
+        }
+        if let Some(trouble) = client.join_trouble() {
+            if reported != Some(trouble) {
+                reported = Some(trouble);
+                println!("[lan-probe] {}", trouble.headline(client.server().expect("client")));
+                for check in trouble.checks() {
+                    println!("[lan-probe]   - {check}");
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let Some(welcomed) = welcomed_at else {
+        anyhow::bail!("no Welcome from {server} in {} s", duration.as_secs());
+    };
+    let streamed = first_snapshot.map_or(0.0, |first| (duration - first).as_secs_f32());
+    let rate = if streamed > 0.0 { snapshots as f32 / streamed } else { 0.0 };
+    println!(
+        "[lan-probe] PASS: welcome {:.0} ms, {snapshots} snapshots ({rate:.1}/s; host sends 20/s), last host x {:.2}",
+        welcomed.as_secs_f64() * 1e3,
+        last_x.unwrap_or(f32::NAN)
+    );
+    anyhow::ensure!(snapshots > 0, "welcomed but no world snapshots arrived");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_player_name_prefers_windows_username_and_is_bounded() {
+        // The process environment is shared by parallel tests: read only, then check the rules.
+        let name = super::local_player_name();
+        assert!(!name.is_empty() && name.chars().count() <= 24);
+        assert!(!name.chars().any(char::is_control));
+        if let Ok(user) = std::env::var("USERNAME").or_else(|_| std::env::var("USER")) {
+            if !user.trim().is_empty() {
+                assert_eq!(name, user.trim().chars().take(24).collect::<String>());
+            }
+        }
+    }
+
+    #[test]
+    fn a_silent_host_is_reported_after_the_trouble_delay() {
+        use super::*;
+        // A bound socket that never answers stands in for a firewall-dropped host.
+        let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let config = LanConfig {
+            mode: LanModeConfig::Join { server: silent.local_addr().unwrap().to_string() },
+            requested_role: LanRole::Gunner,
+            name: "probe".into(),
+            mission: LanMission::Garage,
+            seed: 0,
+        };
+        let mut client = LanSession::new(&config).unwrap();
+        client.poll(RoleInput::default());
+        assert_eq!(client.join_trouble(), None, "no verdict before {JOIN_TROUBLE_AFTER:?}");
+        client.join_started -= JOIN_TROUBLE_AFTER + Duration::from_millis(1);
+        let poll = client.poll(RoleInput::default());
+        assert_eq!(client.join_trouble(), Some(JoinTrouble::NoAnswer));
+        assert!(poll.status.starts_with("NO ANSWER FROM 127.0.0.1:"), "{}", poll.status);
+        assert!(JoinTrouble::NoAnswer.checks().iter().any(|c| c.contains("setup_firewall.ps1")));
+    }
+
+    #[test]
+    fn a_closed_port_on_a_live_machine_reads_as_not_hosting() {
+        use super::*;
+        // Reserve a loopback port, then close it: the OS answers ICMP port-unreachable. Windows
+        // surfaces it as WSAECONNRESET on the next receive; Linux and macOS report nothing on an
+        // unconnected socket, so there the verdict is NoAnswer and both are accepted.
+        let port = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let config = LanConfig {
+            mode: LanModeConfig::Join { server: format!("127.0.0.1:{port}") },
+            requested_role: LanRole::Gunner,
+            name: "probe".into(),
+            mission: LanMission::Garage,
+            seed: 0,
+        };
+        let mut client = LanSession::new(&config).unwrap();
+        let deadline = Instant::now() + Duration::from_millis(900);
+        while Instant::now() < deadline {
+            let poll = client.poll(RoleInput::default());
+            assert!(!poll.status.starts_with("LAN RECEIVE ERROR"), "{}", poll.status);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        client.join_started -= JOIN_TROUBLE_AFTER;
+        client.poll(RoleInput::default());
+        let trouble = client.join_trouble().unwrap();
+        if cfg!(windows) {
+            assert_eq!(trouble, JoinTrouble::NotHosting);
+        } else {
+            assert!(matches!(trouble, JoinTrouble::NotHosting | JoinTrouble::NoAnswer));
+        }
+    }
+
+    #[test]
+    fn host_survives_a_vanished_client_port_and_keeps_serving_others() {
+        use super::*;
+        let host_cfg = LanConfig {
+            mode: LanModeConfig::Host { bind: "127.0.0.1:0".into() },
+            requested_role: LanRole::Commander,
+            name: "host".into(),
+            mission: LanMission::Arena,
+            seed: 7,
+        };
+        let mut host = LanSession::new(&host_cfg).unwrap();
+        let server = host.local_addr().unwrap().to_string();
+        let join = |role| LanConfig {
+            mode: LanModeConfig::Join { server: server.clone() },
+            requested_role: role,
+            name: "c".into(),
+            mission: LanMission::Garage,
+            seed: 0,
+        };
+        let mut quitter = LanSession::new(&join(LanRole::Driver)).unwrap();
+        let mut stayer = LanSession::new(&join(LanRole::Gunner)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && !(quitter.connected && stayer.connected) {
+            quitter.poll(RoleInput::default());
+            stayer.poll(RoleInput::default());
+            host.poll(RoleInput::default());
+            host.publish(WorldSnapshot::default());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(quitter.connected && stayer.connected);
+        drop(quitter); // its port closes: the host's next sends to it bounce as port-unreachable
+        let mut snapshots_after = 0;
+        let deadline = Instant::now() + Duration::from_millis(600);
+        while Instant::now() < deadline {
+            let poll = host.poll(RoleInput::default());
+            assert!(!poll.status.starts_with("LAN RECEIVE ERROR"), "{}", poll.status);
+            host.publish(WorldSnapshot::default());
+            snapshots_after += stayer.poll(RoleInput::default()).snapshot.is_some() as u32;
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(snapshots_after >= 5, "the remaining crewman kept receiving ({snapshots_after})");
+    }
+
+    #[test]
+    fn one_refusing_discovery_target_does_not_silence_the_others() {
+        use super::*;
+        let mut browser =
+            LanBrowser::bind_to("127.0.0.1:0".parse().unwrap(), Duration::from_secs(1)).unwrap();
+        let good = browser.local_addr().unwrap();
+        let beacon = LanBeacon::new("Multihomed Tiger", LanMission::Arena, 0, 1, 5, 30_002);
+        // An IPv6 destination on the IPv4 socket fails at send_to, like a dead adapter.
+        let refusing: SocketAddr = "[::1]:9".parse().unwrap();
+        let mut advertiser = LanAdvertiser::bind_to(
+            "127.0.0.1:0".parse().unwrap(),
+            vec![refusing, good],
+            beacon.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        advertiser.advertise_now().expect("one target accepted");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while browser.sessions().is_empty() && Instant::now() < deadline {
+            browser.poll().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(browser.sessions().len(), 1);
+        let mut only_refusing = LanAdvertiser::bind_to(
+            "127.0.0.1:0".parse().unwrap(),
+            vec![refusing],
+            beacon,
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(only_refusing.advertise_now().is_err(), "all targets failing is reported");
+    }
+
+    #[test]
+    fn ai_crew_mask_round_trips_in_the_world_packet() {
+        use super::*;
+        let snapshot = WorldSnapshot { ai_crew_mask: 0b0_1110, crew_mask: 0x1F, ..WorldSnapshot::default() };
+        let packet = encode_world(&snapshot, CrewFrame::default(), LanMission::Arena, 3, 9).unwrap();
+        let mut rd = Reader::packet(&packet).unwrap();
+        assert_eq!(rd.u8(), Some(P_WORLD));
+        let (decoded, ..) = decode_world_body(&mut rd).unwrap();
+        assert_eq!(decoded.ai_crew_mask, 0b0_1110);
+    }
+
     #[test]
     fn look_motion_between_packets_is_summed_and_delivered_once() {
         let mut pending = [0.0; 2];
@@ -3198,7 +3773,7 @@ mod tests {
         let beacon = LanBeacon::new("Loopback Tiger", LanMission::Garage, 0, 1, 5, 30_001);
         let mut advertiser = LanAdvertiser::bind_to(
             "127.0.0.1:0".parse().unwrap(),
-            target,
+            vec![target],
             beacon,
             Duration::ZERO,
         )
