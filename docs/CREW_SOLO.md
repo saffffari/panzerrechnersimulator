@@ -144,67 +144,63 @@ a splinted man is at 70 %.
 | **E** held on a wounded man, a body, or the first-aid box | treat / drag aside / self-aid |
 | **LMB** on the driver's seat from the basket floor | take the driver's seat |
 
-## Verified by play (headless, `crew-solo captures/crew_solo_20261027`)
+## Verified by play (headless, 2026-10-28)
 
-See the receipt `captures/crew_solo_20261027.json` and the eight stills beside it. The proof
-runs on the act-0 arena with one parked T-34 160 m ahead that holds its fire. Every strike is
-the live armour solve, fragment cloud and anatomy aimed through the side plate at the man's
-seat (`debug_crew_solo_strike`), with seeds iterated until the intended class of outcome; the
-receipt lists every attempt.
+Command, from the worktree, with the main checkout's asset library:
 
-Checks, in order (the receipt holds each one's detail):
+```bash
+bash tools/crew_solo_proof.sh captures/crew_solo_20261028 C:/shop/panzerrechnersystem
+```
 
-1. Five men aboard; gunner, driver and loader working their own posts; player at the cupola.
-2. The gunner lays on the T-34 and fires under fire-at-will (he killed it with the first
-   round; the proof keeps a queue of parked targets and rolls the next one up).
-3. The loader serves the breech back to loaded at a human rate (3-12 s).
-4. Hold-fire holds the gunner for eight seconds; the commander's fire command releases one
-   shot.
-5. The driver moves the tank on the commander's forward order and halts on none.
-6. A live 76 mm penetration through the hull side at the driver's seat, with the player at
-   the cupola, leaves at least one man wounded and alive (in the recorded run it wounded the
-   gunner, loader and radio operator in the legs and killed the driver outright).
-7. The crosshair on the wounded man from the interior walk names the procedure he needs.
-8. The first procedure is worked end to end by hand (steps in order, items taken, quality
-   kept, the bleed controlled), then every procedure the man and the next-worst man need, then
-   a staged fracture's splint (the fracture is injected and named so in the receipt: a 76 mm
-   cone rarely breaks a bone); three or more distinct procedures, a still of the hands at
-   each.
-9. A minute later the treated man is alive, at his post, working degraded.
-10. The dead driver's body blocks the seat; dragged off (hold E), the seat is taken from the
-    basket floor with the clamber.
-11. The gunner is killed by a live solid shot; nobody lays or fires the gun for ten seconds.
-12. The dead gunner in the seat refuses the sights; holding E at the body drags it off; the
-    player takes the sights, lays and fires by hand with no AI shot counted.
-13. With the driver dead the tank does not move on the commander's order; the player takes the
-    seat and drives.
+Result: **all 23 checks pass** (shader backend, RTX 4090, act-0 arena). Receipt
+`captures/crew_solo_20261028.json`; stills `captures/crew_solo_20261028_*.png`: `01` the crew
+from the cupola, `02` after the gunner's first shot, `02b` an empty standing in the rear-wall
+rack, `03` the hit crewman, `04_<procedure>_<man>` one per procedure and man (pressure
+dressing on the loader and the radio operator, morphine on the loader, splint on the gunner,
+airway and pressure dressing on the driver), `05` the dead gunner from the cupola, `06` the
+player at the sights, `07` the driver dead and the tank halted, `08` the player driving.
 
-State at the time of writing (2026-10-27 evening): the run of 18:55 passed checks 1-10 in
-their earlier single-hold form (the receipt and stills were since overwritten by later
-attempts; the log of that run is quoted in the hand-over note). That run then lost the Tiger
-to its own stowage at the gunner strike (a solid 76 mm slug through the gunner's seat set off
-the eight rounds left in the rear racks); the fixture now fires the last rounds off before
-every strike. The procedure medkit (check 8 in its present form) and checks 11-13 with the
-new fixture are **not yet verified by play**: the GPU was held for the owner's other work
-(Kerbal Space Program at 97 % and 18.8 GB of 24.5 GB; the engine then comes up without ray
-queries and dies at renderer construction), and a hold on launching the game was in force.
-Pending captures: the whole `crew-solo` set (`01` crew at posts, `02` after the first shot,
-`03` crewman hit, `04_<procedure>_<man>` one per procedure, `05` dead gunner from the cupola,
-`06` the player at the sights, `07` driver dead and the tank halted, `08` the player driving)
-and the JSON receipt. Rerun with
-`tools/crew_solo_proof.sh captures/crew_solo_<date> C:/shop/panzerrechnersystem` and replace
-this paragraph with the result.
+Checks, in order:
 
-## Medkit: done versus designed
+1. five men aboard; gunner, driver and loader working their own posts; player at the cupola.
+2. gunner lays on the T-34 and fires under fire-at-will.
+3. loader serves the breech back to loaded at a human rate (3-12 s).
+4. hold-fire holds the gunner; the commander's fire command releases one shot.
+5. the loader stands the commanded shot's empty upright in the rear-wall rack.
+6. driver moves the tank on the commander's forward order and halts on none.
+7. the live penetration leaves at least one crewman wounded and alive to treat.
+8. crosshair on the wounded man offers the procedure he needs, by name.
+9. the first procedure is worked end to end by hand: steps in order, items taken, a good job, the bleed controlled.
+10. three or more distinct procedures worked by hand, each with a still of the hands at it.
+11. a minute later the treated man is alive, at his post, working degraded.
+12. the driver's seat is reachable from the interior walk and the move costs the clamber.
+13. gunner killed; nobody lays or fires the gun for ten seconds.
+14. the dead gunner in the seat refuses the sights.
+15. holding E at the body drags it off the seat.
+16. the player takes the sights once the body is clear.
+17. the handed-up round goes home: by the loader if he lives, by the player's own hands at the breech if he is dead.
+18. the player lays and fires the gun himself (a loaded round leaves the breech); no AI shot is counted.
+19. driver dead; the tank does not move on the commander's order.
+20. the player drags the driver's body off, takes the seat, and drives the tank himself.
 
-Done in code and unit-tested: the seven procedures with their step tables, cadence and turn
-rules, quality and interruption model, the varied finite kit with improvisation and
-scavenging, triage, the airway timer, the first-person driving of a procedure from the
-interior walk with the look locked to the hands, the crosshair as the step readout, the
-intercom lines for the result. Designed, not built: first-person hands and props for the
-procedures (there are no arm animations in the project yet), the man's breathing and voice
-as audio (no assets), scavenging a wreck's own kit (wreck pickups restock the box as a whole),
-and the morphine overdose beyond the one-dose-an-hour refusal.
+Fixture, stated in the receipt: clear weather; parked range targets that do not fire (the
+88 kills a T-34 with one round, so a queue of them is rolled up, each placed where the gunner
+can see it from the muzzle); the Tiger down to its last rounds, fired off before each strike,
+because with a full stowage every lane tried into a seated man set off live rounds. The wound
+is a live penetration: solid 76 mm APCR through the right hull side at the radio operator,
+raked 35 degrees rearward, with the player up in the turret (a filled round's burst inside the
+compartment killed every man near it, the player included, in earlier attempts). Its fragment
+cloud reached three men; the proof treats the one with the fewest indicated wounds first, then
+the next, then a staged fracture (named so) on the least-hurt man. The gunner and driver KIAs
+are staged through the casualty ledger, ragdoll and blood path (`debug_crew_solo_kia`):
+every live lane into those seats also wrecked the gun, sight and traverse or the transmission
+the proof goes on to use. A live-penetration KIA is covered by `crew-solo-kia` (the loader).
+In the recorded run the loader lived, so the handed-up round was loaded by him; an earlier run
+of the same harness had the loader dead and the player loaded the breech by hand in 1.3 s.
+
+What it does not cover: the held-mouse cartridge carry (it has its own `reload` proof), the
+raymarch backend for the full set (the short `crew-solo-kia` check runs there), audio, and a
+human at the controls.
 
 ## Verified against the play reports (2026-10-28, `crew-solo-kia`, raymarch backend)
 

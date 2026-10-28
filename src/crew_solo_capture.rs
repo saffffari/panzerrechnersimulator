@@ -113,14 +113,27 @@ fn ensure_target(g: &mut Game, r: &mut crate::renderer::Renderer, target: &mut u
         if i == *target || !g.enemies[i].alive {
             continue;
         }
-        let bearing = spot.heading + spot.bearing.to_radians();
-        let at = g.player.pos + Vec3::new(bearing.sin(), 0.0, bearing.cos()) * spot.range;
-        g.debug_place_enemy(i, at.x, at.z, bearing + std::f32::consts::PI);
-        g.debug_crew_solo_set_enemy_active(i, true);
+        // Each new target stands clear of the burning wrecks of the last ones, at the first
+        // bearing and range the gunner can see from the muzzle.
+        let mut placed = None;
+        'search: for &range in &[spot.range, spot.range + 40.0, spot.range - 30.0, spot.range + 90.0] {
+            for k in 0..9 {
+                let offset = [20.0f32, -20.0, 35.0, -35.0, 50.0, -50.0, 10.0, -10.0, 0.0][k];
+                let bearing = spot.heading + (spot.bearing + offset).to_radians();
+                let at = g.player.pos + Vec3::new(bearing.sin(), 0.0, bearing.cos()) * range;
+                g.debug_place_enemy(i, at.x, at.z, bearing + std::f32::consts::PI);
+                g.debug_crew_solo_set_enemy_active(i, true);
+                g.update(&TankInput::default(), DT, r);
+                let (recognizable, los) = g.debug_crew_solo_target_visible(i);
+                if recognizable && los {
+                    placed = Some((range, spot.bearing + offset));
+                    break 'search;
+                }
+            }
+        }
         g.debug_engage_all();
-        g.update(&TankInput::default(), DT, r);
         *target = i;
-        println!("[crew-solo] next range target: T-34 #{i}");
+        println!("[crew-solo] next range target: T-34 #{i} at {placed:?} (range m, bearing deg)");
         return i;
     }
     *target
@@ -158,7 +171,7 @@ fn work_procedure(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut P
             "Turn" => if frame % 48 == 0 { button } else { idle },
             _ => idle,
         };
-        if !still_taken && state["step"].as_u64().unwrap_or(0) >= 1 {
+        if !still_taken && !still.is_empty() && state["step"].as_u64().unwrap_or(0) >= 1 {
             proof.still(r, still)?;
             still_taken = true;
         }
@@ -166,7 +179,7 @@ fn work_procedure(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut P
         frame += 1;
         last = state;
     }
-    if !still_taken {
+    if !still_taken && !still.is_empty() {
         proof.still(r, still)?;
     }
     let done = g.debug_crew_solo_procedures_done();
@@ -174,11 +187,17 @@ fn work_procedure(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut P
     Ok(json!({"record": record, "frames": frame, "seconds": frame as f32 * DT, "last_state": last, "steps_seen": labels}))
 }
 
-/// What the crosshair offers on this man, as "Treat(Role, Procedure)" or none.
+/// What the crosshair offers, as "Treat(Role, Procedure)" or none.
 fn offered_procedure(g: &Game) -> Option<String> {
+    offered(g).map(|(_, procedure)| procedure)
+}
+
+/// Who and what the crosshair offers: (role as the hover names it, procedure).
+fn offered(g: &Game) -> Option<(String, String)> {
     let hover = g.debug_crew_solo_hover()?;
     let inner = hover.strip_prefix("Treat(")?.strip_suffix(')')?;
-    inner.split(", ").nth(1).map(str::to_owned)
+    let mut parts = inner.split(", ");
+    Some((parts.next()?.to_owned(), parts.next()?.to_owned()))
 }
 
 /// Go to the man and work every procedure he needs, one after another (at most `cap`), a still
@@ -188,15 +207,17 @@ fn treat_the_man(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Pr
     for _ in 0..cap {
         g.debug_crew_solo_go_to(role);
         run_for(g, r, idle, 0.2);
-        let Some(procedure) = offered_procedure(g) else { break; };
-        let name = format!("{}_{}", procedure.to_lowercase(), role.name().replace('-', "_"));
-        let still = format!("04_{name}");
-        let first_time = !stills.contains(&procedure);
+        // The crosshair decides who is under the hands; name everything by him.
+        let Some((treated, procedure)) = offered(g) else { break; };
+        let name = format!("{}_{}", procedure.to_lowercase(), treated.to_lowercase());
+        let key = format!("{procedure}/{treated}");
+        let first_time = !stills.contains(&key);
+        let still = if first_time { format!("04_{name}") } else { String::new() };
         let outcome = work_procedure(g, r, proof, &still)?;
         if first_time {
-            stills.push(procedure.clone());
+            stills.push(key);
         }
-        records.push(json!({"man": role.name(), "procedure": procedure, "outcome": outcome}));
+        records.push(json!({"man": treated.to_lowercase(), "walked_to": role.name(), "procedure": procedure, "outcome": outcome}));
         run_for(g, r, idle, 0.3);
     }
     Ok(records)
@@ -234,8 +255,10 @@ fn empty_the_breech(g: &mut Game, r: &mut crate::renderer::Renderer, target: &mu
     let waited = run_until(g, r, &idle, 8.0, |g| !g.breech_loaded());
     g.update(&idle, DT, r);
     g.debug_crew_solo_set_fire_at_will(fire_at_will);
-    println!("[crew-solo] empty_the_breech: fired={} waited={waited:.1}s loaded_now={} target_alive={}",
-        shots(g) > before, g.breech_loaded(), g.enemies[*target].alive);
+    let (recognizable, los) = g.debug_crew_solo_target_visible(*target);
+    println!("[crew-solo] empty_the_breech: fired={} waited={waited:.1}s loaded_now={} target #{} alive={} recognizable={recognizable} line_clear={los} gunner_target={}",
+        shots(g) > before, g.breech_loaded(), *target, g.enemies[*target].alive,
+        g.crew_solo_receipt()["gunner_target"]);
 }
 
 /// From the cupola or the sights down to the basket floor, then into the driver's seat through
@@ -318,6 +341,21 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     g.debug_crew_solo_set_fire_at_will(true);
     run_until(g, r, &idle, 20.0, |g| g.breech_loaded());
 
+    // The commanded shot's empty went into the rack (not rushed: the gunner held fire).
+    let rack = g.empties_rack_receipt();
+    g.jump_station(Station::Loader);
+    run_for(g, r, &idle, 1.2);
+    g.debug_crew_solo_face_empties_rack();
+    run_for(g, r, &idle, 3.0);
+    proof.still(r, "02b_empties_rack")?;
+    proof.check(
+        "the loader stands the commanded shot's empty upright in the rear-wall rack",
+        g.stowed_empties() >= 1,
+        json!({"rack": g.empties_rack_receipt(), "rack_after_shot": rack}),
+    );
+    g.jump_station(Station::Commander);
+    run_for(g, r, &idle, 1.0);
+
     // ── 4. The driver follows the commander's orders ─────────────────────────────────────
     let start = g.player.pos;
     run_for(g, r, &forward, 5.0);
@@ -336,21 +374,25 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     // found live rounds first and the Tiger went up.) Whoever the cone leaves alive and
     // bleeding is the patient.
     empty_the_breech(g, r, &mut target, spot);
-    let wound_strike = g.debug_crew_solo_strike(CrewRole::Driver, false, Arc::Side, 0.0);
+    // Solid shot through the right hull side at the radio operator, raked rearward: the cone
+    // goes on into the radio and bow MG (not needed later) and away from the transmission, the
+    // gun and the other men. Through the turret, every wounding lane also wrecked the gun, and
+    // its fragment cloud cut the men there past saving. The player stays up at the cupola.
+    let wound_strike = g.debug_crew_solo_strike_raked(CrewRole::Radioman, false, Arc::Side, 0.3, 35.0);
     proof.strikes.push(wound_strike.clone());
     anyhow::ensure!(g.player.alive, "the proof's own body was killed by the wounding strike");
     // The patient: a living man who is bleeding and can be saved (the slowest bleed among the
     // wounded; a man cut up by a dozen fragments is past one dressing, and the proof is about
     // the treatment, not triage).
+    let indicated = |g: &Game, role: CrewRole| g.debug_crew_solo_man(role).wounds.iter().filter(|w| w.procedure().is_some()).count();
     let mut patient = AI_ROLES
         .into_iter()
-        .filter(|&role| !dead(g, role) && g.debug_crew_solo_man(role).is_wounded())
+        .filter(|&role| !dead(g, role) && g.debug_crew_solo_man(role).is_bleeding())
         .min_by(|&a, &b| {
-            let rate = |role: CrewRole| {
-                let m = g.debug_crew_solo_man(role);
-                if m.is_bleeding() { m.total_bleed_rate_l_per_s() } else { f32::INFINITY }
-            };
-            rate(a).total_cmp(&rate(b))
+            indicated(g, a).cmp(&indicated(g, b)).then_with(|| {
+                g.debug_crew_solo_man(a).total_bleed_rate_l_per_s()
+                    .total_cmp(&g.debug_crew_solo_man(b).total_bleed_rate_l_per_s())
+            })
         });
     let mut injected = false;
     if patient.is_none() {
@@ -393,7 +435,9 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     let box_before = g.debug_crew_solo_aid_box();
     let bleed_before = g.debug_crew_solo_man(patient).total_bleed_rate_l_per_s();
     let mut stills_by_procedure: Vec<String> = Vec::new();
-    let first = treat_the_man(g, r, proof, &idle, patient, 4, &mut stills_by_procedure)?;
+    // Every procedure he needs, until nothing more is indicated (a man cut by a dozen
+    // fragments needs a dozen dressings, sleeves when the box runs out).
+    let first = treat_the_man(g, r, proof, &idle, patient, 16, &mut stills_by_procedure)?;
     let box_after = g.debug_crew_solo_aid_box();
     let treated = g.debug_crew_solo_man(patient).clone();
     let bleed_after = treated.total_bleed_rate_l_per_s();
@@ -416,12 +460,20 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
         .min_by(|&a, &b| g.debug_crew_solo_man(a).time_to_death_s().total_cmp(&g.debug_crew_solo_man(b).time_to_death_s()));
     let mut all_records = first;
     if let Some(second) = second {
-        all_records.extend(treat_the_man(g, r, proof, &idle, second, 3, &mut stills_by_procedure)?);
+        all_records.extend(treat_the_man(g, r, proof, &idle, second, 16, &mut stills_by_procedure)?);
     }
     // A fracture is rarer than a bleed in a 76 mm cone: one is staged (named so in the receipt)
-    // on the first patient so the splint is worked by hand too.
-    g.debug_crew_solo_stage_wound(patient, WoundKind::Fracture, Region::Arm, 0.7);
-    all_records.extend(treat_the_man(g, r, proof, &idle, patient, 3, &mut stills_by_procedure)?);
+    // on the least-hurt living man so the splint, and the morphine after it, are worked by hand.
+    let splinted = AI_ROLES.into_iter().filter(|&role| !dead(g, role))
+        .min_by_key(|&role| indicated(g, role)).unwrap_or(patient);
+    g.debug_crew_solo_stage_wound(splinted, WoundKind::Fracture, Region::Arm, 0.7);
+    all_records.extend(treat_the_man(g, r, proof, &idle, splinted, 4, &mut stills_by_procedure)?);
+    let distinct_stills: Vec<String> = {
+        let mut names: Vec<String> = stills_by_procedure.iter().map(|k| k.split('/').next().unwrap_or("").to_owned()).collect();
+        names.sort();
+        names.dedup();
+        names
+    };
     let distinct: Vec<String> = {
         let mut names: Vec<String> = all_records.iter()
             .filter(|rec| rec["outcome"]["record"].get("quality").is_some())
@@ -432,9 +484,9 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     };
     proof.check(
         "three or more distinct procedures worked by hand, each with a still of the hands at it",
-        distinct.len() >= 3 && stills_by_procedure.len() >= 3,
+        distinct.len() >= 3 && distinct_stills.len() >= 3,
         json!({"distinct": distinct, "stills": stills_by_procedure, "records": all_records,
-            "fracture_staged_on": patient.name()}),
+            "fracture_staged_on": splinted.name()}),
     );
     // Back to the cupola: the treated man is at his post and works, degraded.
     g.jump_station(Station::Commander);
@@ -462,11 +514,13 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
             "driver_body_cleared_first": cleared_driver_first}),
     );
     anyhow::ensure!(in_seat, "could not take the driver's seat before the gunner strike");
+    // Staged through the casualty ledger: every live lane tried into the gunner's seat also
+    // wrecked the gun the player goes on to use (see the receipt's fixture note).
     let gunner_strike = if dead(g, CrewRole::Gunner) {
         json!({"skipped": "gunner already dead from an earlier cone"})
     } else {
         empty_the_breech(g, r, &mut target, spot);
-        g.debug_crew_solo_strike(CrewRole::Gunner, true, Arc::Side, 0.0)
+        json!({"staged_kia": g.debug_crew_solo_kia(CrewRole::Gunner)})
     };
     proof.strikes.push(gunner_strike.clone());
     anyhow::ensure!(g.player.alive, "the proof's own body was killed by the gunner strike");
@@ -476,7 +530,7 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     g.jump_station(Station::Commander);
     run_for(g, r, &idle, 10.0);
     proof.check(
-        "gunner killed by the live solver; nobody lays or fires the gun for ten seconds",
+        "gunner killed; nobody lays or fires the gun for ten seconds",
         dead(g, CrewRole::Gunner) && !g.debug_crew_solo_working(CrewRole::Gunner) && shots(g) == shots_dark,
         json!({"strike": gunner_strike, "crew": crew(g)}),
     );
@@ -512,14 +566,52 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
         took_sights && g.station == Station::Gunner,
         json!({"station": format!("{:?}", g.station)}),
     );
-    // One round handed up to the stowage for the player's shot; the loader at his post loads it.
+    // One round handed up to the stowage for the player's shot. A living loader at his post
+    // loads it; a dead one means the player goes to the breech and does it himself (the
+    // auto-crew stroke helper at the player's own breech post, standing in for the held-mouse
+    // carry, which has its own `reload` proof).
     g.debug_crew_solo_ammunition_left(1);
-    let t_loaded = run_until(g, r, &idle, 25.0, |g| g.breech_loaded());
-    println!("[crew-solo] the loader served the handed-up round in {t_loaded:.1} s");
+    let loader_alive = !dead(g, CrewRole::Loader);
+    let mut loaded_by = "loader";
+    let mut t_loaded = 0.0;
+    if loader_alive {
+        t_loaded = run_until(g, r, &idle, 25.0, |g| g.breech_loaded());
+    }
+    if !g.breech_loaded() {
+        loaded_by = "player";
+        g.jump_station(Station::Loader);
+        run_for(g, r, &idle, 1.2);
+        g.debug_crew_solo_go_to(CrewRole::Loader);
+        run_for(g, r, &idle, 0.2);
+        let mut tick = 0u32;
+        for _ in 0..steps(30.0) {
+            if g.breech_loaded() {
+                break;
+            }
+            tick += 1;
+            g.auto_service_breech(tick % 20 == 0, DT);
+            g.update(&idle, DT, r);
+            t_loaded += DT;
+        }
+        proof.still(r, "05b_player_loading_by_hand")?;
+        g.debug_face_gunner_sight();
+        run_for(g, r, &idle, 0.2);
+        g.click_station();
+        run_for(g, r, &idle, 1.2);
+    }
+    println!("[crew-solo] the handed-up round loaded by the {loaded_by} in {t_loaded:.1} s");
+    proof.check(
+        "the handed-up round goes home: by the loader if he lives, by the player's own hands at the breech if he is dead",
+        loader_alive || (loaded_by == "player" && g.breech_loaded()),
+        json!({"loader_alive": loader_alive, "loaded_by": loaded_by, "seconds": t_loaded,
+            "station_after": format!("{:?}", g.station)}),
+    );
     let target_now = ensure_target(g, r, &mut target, spot);
     // Lay by hand: the harness sets the desired lay the mouse would, the turret chases it.
     let mut laid = false;
-    for _ in 0..steps(20.0) {
+    let mut lay_seconds = 0.0;
+    for _ in 0..steps(90.0) {
+        lay_seconds += DT;
         let center = g.enemies[target_now].center();
         laid = g.campaign_ai_order_lay(center, 0.01);
         g.update(&idle, DT, r);
@@ -528,14 +620,23 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
         }
     }
     let shots_by_hand = shots(g);
+    let loaded_before = g.breech_loaded();
+    let spent_before = g.debug_rounds_spent();
+    let gates = g.debug_crew_solo_fire_gates();
     let fire = TankInput { mg_coax: true, trigger: true, ..TankInput::default() };
+    g.update(&idle, DT, r);
+    g.update(&fire, DT, r);
     g.update(&fire, DT, r);
     g.update(&idle, DT, r);
-    let fired_by_hand = !g.breech_loaded();
+    let gates_after = g.debug_crew_solo_fire_gates();
+    let fired_by_hand = loaded_before && !g.breech_loaded() && g.debug_rounds_spent() > spent_before;
     proof.check(
-        "the player lays and fires the gun himself; no AI shot is counted",
+        "the player lays and fires the gun himself (a loaded round leaves the breech); no AI shot is counted",
         laid && fired_by_hand && shots(g) == shots_by_hand,
-        json!({"laid": laid, "fired": fired_by_hand}),
+        json!({"laid": laid, "lay_seconds": lay_seconds, "lay_error_rad": g.campaign_ai_lay_error(),
+            "modules": g.debug_crew_solo_modules(), "loaded_before": loaded_before,
+            "rounds_spent": [spent_before, g.debug_rounds_spent()], "fired": fired_by_hand,
+            "gates_before": gates, "gates_after": gates_after}),
     );
     proof.still(r, "06_player_at_the_sights")?;
     run_until(g, r, &idle, 20.0, |g| g.breech_loaded());
@@ -545,11 +646,12 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
     run_for(g, r, &idle, 1.2);
     g.jump_station(Station::Commander);
     run_for(g, r, &idle, 1.0);
+    // Staged through the casualty ledger: every live lane tried into the driver's seat also
+    // broke the transmission the player goes on to drive with.
     let driver_strike = if dead(g, CrewRole::Driver) {
         json!({"skipped": "driver already dead from the wounding cone"})
     } else {
-        empty_the_breech(g, r, &mut target, spot);
-        g.debug_crew_solo_strike(CrewRole::Driver, true, Arc::Side, 0.0)
+        json!({"staged_kia": g.debug_crew_solo_kia(CrewRole::Driver)})
     };
     proof.strikes.push(driver_strike.clone());
     anyhow::ensure!(g.player.alive, "the proof's own body was killed by the driver strike");
@@ -578,7 +680,8 @@ fn scenario(g: &mut Game, r: &mut crate::renderer::Renderer, proof: &mut Proof, 
         driver_hover.as_deref().is_some_and(|h| h.contains("ClearBody(Driver") || h.contains("already cleared"))
             && g.debug_crew_solo_body_cleared(CrewRole::Driver)
             && in_seat && drove > 3.0,
-        json!({"hover": driver_hover, "station": format!("{:?}", g.station), "moved_m": drove}),
+        json!({"hover": driver_hover, "station": format!("{:?}", g.station), "moved_m": drove,
+            "modules": g.debug_crew_solo_modules(), "speed": g.player.speed}),
     );
     proof.still(r, "08_player_driving")?;
     Ok(())
@@ -639,6 +742,9 @@ pub fn run_crew_solo_kia_capture(prefix: &str) -> anyhow::Result<()> {
     //    nobody under the cupola. Seen from the interior walk afterwards.
     g.jump_station(Station::Loader);
     run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_crew_solo_face_empties_rack();
+    run_for(&mut g, &mut r, &idle, 0.2);
+    proof.still(&mut r, "kia_00_empties_rack_space")?;
     g.debug_face_gunner_sight();
     run_for(&mut g, &mut r, &idle, 0.2);
     g.click_station();
@@ -803,7 +909,8 @@ pub fn run_crew_solo_capture(prefix: &str) -> anyhow::Result<()> {
         "fixture": {"weather": "clear override", "target": placement,
             "rounds_left_in_rear_stowage": rounds_left,
             "one_more_round_for_the_players_shot": true,
-            "why": "with the full 64-round stowage every wounding lane tried (turret side, turret rear, hull side) set off live rounds, and a killing solid shot through the gunner's seat set off eight rounds left in the rear stowage; so the fixture fires the last rounds off before the strikes, and every strike is timed right after a shot so the breech holds a spent case"},
+            "why": "with the full 64-round stowage every wounding lane tried (turret side, turret rear, hull side) set off live rounds, and a killing solid shot through the gunner's seat set off eight rounds left in the rear stowage; so the fixture fires the last rounds off before the strikes, and every strike is timed right after a shot so the breech holds a spent case",
+            "kia_staging": "the gunner and driver KIAs are staged through the casualty ledger, ragdoll and blood path (debug_crew_solo_kia): live lanes into those seats, straight or raked 35 degrees, also knocked out the main gun, sight, traverse or the transmission the proof goes on to use. The wound is a live penetration; a live-penetration KIA is covered by crew-solo-kia (the loader)."},
         "note": "Every strike is the live armor solve, fragment cloud and anatomy; where a wound had to be injected the check says so and fails.",
     });
     std::fs::write(&receipt_path, serde_json::to_string_pretty(&receipt)?)

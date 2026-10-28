@@ -16868,7 +16868,8 @@ impl Game {
                         }
                     }
                     for (i, casing) in self.casings.iter().enumerate() {
-                        if !casing.active || casing.carried { continue; }
+                        // A case standing in the empties rack is stowed, not loose brass.
+                        if !casing.active || casing.carried || casing.stowed.is_some() { continue; }
                         let model = Mat4::from_rotation_translation(casing.rotation, casing.pos);
                         if let Some(distance) = ray_loader_case(eye, look, model, 2.2) {
                             if distance < nearest {

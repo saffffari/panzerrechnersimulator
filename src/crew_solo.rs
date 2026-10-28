@@ -62,6 +62,9 @@ pub const EMPTIES_RACK_SLOTS: usize = 12;
 const STOW_S: f32 = 2.2;
 /// A loader hurt below this stops stowing and lets the empties fall.
 const STOW_PERF_MIN: f32 = 0.7;
+/// The recess behind the rear-wall bands: probe height and the shelf's accepted height range
+/// (turret-local metres), read off the probed wall profile.
+const RACK_ROWS: [(f32, (f32, f32)); 2] = [(2.02, (1.55, 1.95)), (1.2, (0.88, 1.12))];
 /// Reach from the hands to a slot centre to count as placing the case in it.
 const STOW_REACH_M: f32 = 0.45;
 /// Hull-local point of the driver's seat used as the interior entry anchor.
@@ -214,6 +217,8 @@ pub(super) struct EmptiesRack {
     /// Stowed, dumped and dropped counts for the receipts and the salvage paths.
     pub stowed_total: u32,
     pub dropped_total: u32,
+    /// What the probe found per slot, for the receipt.
+    pub probe_trace: Vec<String>,
 }
 
 impl EmptiesRack {
@@ -929,10 +934,13 @@ impl Game {
 
     // ── The empties rack ────────────────────────────────────────────────────────────────────
 
-    /// Probe the slot poses once from the turret's interior triangles: from a point in the
-    /// rear of the basket, rays fan out along the curved rear wall; each case stands a hand's
-    /// width in from the wall on whatever floor or shelf a downward ray finds, if there is
-    /// headroom for it. Slots with no real stand stay empty.
+    /// Probe the slot poses once from the turret's interior triangles. The rear wall carries
+    /// curved bands with a recess behind them (back wall at about z -1.16, a shelf at about
+    /// y 1.0); the cases stand upright in that offset space, behind the upper band. Rays fan
+    /// out along the rear arc at the recess's height to find the back wall; each case stands a
+    /// hand's width in from it on the shelf a downward ray finds, if the shelf is at recess
+    /// height and an upward ray finds headroom for the case's full length. Slots with no real
+    /// stand stay empty.
     fn crew_solo_probe_empties_rack(&mut self) {
         if self.crew_solo.empties_rack.probed() {
             return;
@@ -940,40 +948,80 @@ impl Game {
         let models = self.fire_surface_models();
         let contacts = self.cabin_fire.source_contacts(&models);
         let turret = self.player.turret_model();
-        let origin_local = Vec3::new(0.0, 1.45, -0.55);
-        let mut poses = Vec::with_capacity(EMPTIES_RACK_SLOTS);
+        let turret_inverse = turret.inverse();
+        // A contact's point is in the struck frame's own coordinates; bring it to the turret's.
+        let to_turret = |c: &surface_fire::Contact| turret_inverse.transform_point3(models[c.frame].transform_point3(c.point));
+        let mut trace = Vec::with_capacity(EMPTIES_RACK_SLOTS * 2 + 14);
+        // The rear wall's profile by height (turret-local), straight back along the centreline:
+        // where the basket ends and the bustle overhang begins.
+        for step in 0..14 {
+            let y = 0.75 + step as f32 * 0.1;
+            let from = turret.transform_point3(Vec3::new(0.0, y, -0.15));
+            let to = turret.transform_point3(Vec3::new(0.0, y, -2.4));
+            let hit = contacts.sweep_batch(&[[from, to]])[0].map(|c| to_turret(&c));
+            trace.push(match hit {
+                Some(p) => format!("profile y {y:.2}: rear surface at z {:.2}", p.z),
+                None => format!("profile y {y:.2}: nothing within 2.4 m"),
+            });
+        }
         let span = 100.0_f32.to_radians();
+        let mut best: Option<(usize, Vec<Option<(Vec3, Quat)>>, f32)> = None;
+        for &(probe_y, shelf) in &RACK_ROWS {
+        let origin_local = Vec3::new(0.0, probe_y, -0.55);
+        let mut poses = Vec::with_capacity(EMPTIES_RACK_SLOTS);
+        trace.push(format!("row at probe height {probe_y:.2}, shelf {:.2}..{:.2}", shelf.0, shelf.1));
         for i in 0..EMPTIES_RACK_SLOTS {
             let theta = -span * 0.5 + span * (i as f32 + 0.5) / EMPTIES_RACK_SLOTS as f32;
             let dir_local = Vec3::new(theta.sin(), 0.0, -theta.cos());
             let from = turret.transform_point3(origin_local);
             let to = turret.transform_point3(origin_local + dir_local * 2.0);
-            let Some(wall) = contacts.sweep_batch(&[[from, to]])[0] else { poses.push(None); continue; };
-            let wall_local = turret.inverse().transform_point3(wall.point);
+            let Some(wall) = contacts.sweep_batch(&[[from, to]])[0] else {
+                trace.push(format!("{i}: no wall within 2 m"));
+                poses.push(None);
+                continue;
+            };
+            let wall_local = to_turret(&wall);
             let stand_xz = wall_local - dir_local * (SPENT_CASE_RADIUS + 0.03);
-            // The floor or shelf under that spot, then the headroom above it.
-            let top = turret.transform_point3(Vec3::new(stand_xz.x, 1.6, stand_xz.z));
-            let bottom = turret.transform_point3(Vec3::new(stand_xz.x, 0.3, stand_xz.z));
-            let Some(floor) = contacts.sweep_batch(&[[top, bottom]])[0] else { poses.push(None); continue; };
-            let floor_local = turret.inverse().transform_point3(floor.point);
-            if floor_local.y > 1.15 {
+            // The floor or shelf under that spot, from just under the wall hit's height down.
+            let top = turret.transform_point3(Vec3::new(stand_xz.x, wall_local.y, stand_xz.z));
+            let bottom = turret.transform_point3(Vec3::new(stand_xz.x, shelf.0 - 0.2, stand_xz.z));
+            let Some(floor) = contacts.sweep_batch(&[[top, bottom]])[0] else {
+                trace.push(format!("{i}: wall at {:.2},{:.2},{:.2}; no surface below", wall_local.x, wall_local.y, wall_local.z));
+                poses.push(None);
+                continue;
+            };
+            let floor_local = to_turret(&floor);
+            if floor_local.y < shelf.0 || floor_local.y > shelf.1 {
+                trace.push(format!("{i}: surface at y {:.2} is not the recess shelf", floor_local.y));
                 poses.push(None);
                 continue;
             }
             let center = Vec3::new(stand_xz.x, floor_local.y + 0.01 + SPENT_CASE_HALF_LENGTH, stand_xz.z);
             let head_from = turret.transform_point3(center);
             let head_to = turret.transform_point3(center + Vec3::Y * (SPENT_CASE_HALF_LENGTH + 0.04));
-            if contacts.sweep_batch(&[[head_from, head_to]])[0].is_some() {
+            if let Some(head) = contacts.sweep_batch(&[[head_from, head_to]])[0] {
+                let head_local = to_turret(&head);
+                trace.push(format!("{i}: stand y {:.2}, headroom blocked at y {:.2}", floor_local.y, head_local.y));
                 poses.push(None);
                 continue;
             }
+            trace.push(format!("{i}: stand at {:.2},{:.2},{:.2}", center.x, floor_local.y, center.z));
             // Upright: the case's long axis (local Z) stands on Y, its base turned to the wall.
             let rotation = Quat::from_rotation_y(theta) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
             poses.push(Some((center, rotation)));
         }
-        let found = poses.iter().filter(|p| p.is_some()).count();
-        println!("[crew] empties rack probed: {found} of {EMPTIES_RACK_SLOTS} upright stands along the rear wall");
+        let count = poses.iter().filter(|p| p.is_some()).count();
+        if best.as_ref().is_none_or(|(c, _, _)| count > *c) {
+            best = Some((count, poses, probe_y));
+        }
+        }
+        let (found, poses, row_y) = best.unwrap_or((0, vec![None; EMPTIES_RACK_SLOTS], 0.0));
+        println!("[crew] empties rack probed: {found} of {EMPTIES_RACK_SLOTS} upright stands along the rear wall (row probed at y {row_y:.2})");
+        for line in &trace {
+            println!("[crew]   rack {line}");
+        }
         self.crew_solo.empties_rack.poses = Some(poses);
+        self.crew_solo.empties_rack.probe_trace = trace;
     }
 
     /// The loader, at his post and fit, has just freed the hot case: he stows it upright in the
@@ -1064,6 +1112,26 @@ impl Game {
         }
     }
 
+    /// Walk to the rear of the basket and face the empties rack (headless review).
+    pub fn debug_crew_solo_face_empties_rack(&mut self) -> bool {
+        if self.mode != Mode::Tank || self.station != Station::Loader {
+            return false;
+        }
+        self.crew_solo_probe_empties_rack();
+        self.debug_walk_to(Vec3::new(-0.10, 0.0, -0.05));
+        // The middle of the filled row (or of the whole row before any case is in it).
+        let rack = &self.crew_solo.empties_rack;
+        let filled: Vec<Vec3> = (0..EMPTIES_RACK_SLOTS).filter(|&i| rack.slots[i].is_some())
+            .filter_map(|i| rack.pose(i).map(|(c, _)| c)).collect();
+        let all: Vec<Vec3> = (0..EMPTIES_RACK_SLOTS).filter_map(|i| rack.pose(i).map(|(c, _)| c)).collect();
+        let pick = if filled.is_empty() { &all } else { &filled };
+        let aim = if pick.is_empty() { Vec3::new(0.0, 1.95, -1.05) }
+            else { pick.iter().copied().sum::<Vec3>() / pick.len() as f32 };
+        let point = self.player.turret_model().transform_point3(aim);
+        self.loader_face_world(point);
+        true
+    }
+
     /// Spent cases standing in the rack; the salvage and resupply paths read this.
     pub fn stowed_empties(&self) -> usize {
         self.crew_solo.empties_rack.count()
@@ -1078,7 +1146,7 @@ impl Game {
         let rack = &self.crew_solo.empties_rack;
         json!({"slots": EMPTIES_RACK_SLOTS, "stands_found": rack.poses.as_ref().map(|p| p.iter().filter(|x| x.is_some()).count()),
             "in_rack": rack.count(), "stowed_total": rack.stowed_total, "dropped_total": rack.dropped_total,
-            "loose_aboard": self.loose_empties_aboard(),
+            "loose_aboard": self.loose_empties_aboard(), "probe_trace": rack.probe_trace,
             "poses": rack.poses.as_ref().map(|p| p.iter().map(|x| x.map(|(c, _)| c.to_array())).collect::<Vec<_>>())})
     }
 
@@ -1612,6 +1680,29 @@ impl Game {
         }
     }
 
+    /// Modules out of action and the engine state (headless receipts).
+    pub fn debug_crew_solo_modules(&self) -> Value {
+        json!({"engine_on": self.engine_on, "down": self.modules.iter().filter(|m| !m.functional)
+            .map(|m| m.kind.name()).collect::<Vec<_>>()})
+    }
+
+    pub fn debug_rounds_spent(&self) -> u32 {
+        self.rounds_spent
+    }
+
+    /// Every gate between the player's trigger at the sights and a discharge (headless receipts).
+    pub fn debug_crew_solo_fire_gates(&self) -> Value {
+        json!({"station": format!("{:?}", self.station), "switch_t": self.switch_t,
+            "activity": self.activity.is_some(), "hover_station": self.hover_station.map(|s| format!("{s:?}")),
+            "hover_hatch": self.hover_hatch, "primary_pickup_press": self.primary_pickup_press,
+            "prev_lmb": self.prev_lmb, "lever_open": self.lever_open, "breech": format!("{:?}", self.breech),
+            "tank_can_fire": self.player.can_fire(), "gun_ok": self.module_ok(ModuleKind::MainGun),
+            "crew_ok_gunner": self.crew_ok(CrewRole::Gunner), "player_can_fire": self.player_can_fire(),
+            "carrying_track_kit": self.carrying_track_kit, "panzerfaust": self.panzerfaust_claimed,
+            "compass": self.compass_equipped, "map": self.map_held, "sidearm": self.sidearm_is_drawn(),
+            "primer_trigger_pulls": self.cartridge_primers.trigger_pulls})
+    }
+
     /// Whether the gunner could see enemy `index` from the muzzle: (through the medium, clear
     /// of terrain, cover and trees).
     pub fn debug_crew_solo_target_visible(&self, index: usize) -> (bool, bool) {
@@ -1794,11 +1885,46 @@ impl Game {
         true
     }
 
+    /// Headless staging: kill a man outright through the same casualty ledger, ragdoll and blood
+    /// path a death in the compartment takes, without a penetration (the koop proof stages its
+    /// KIAs the same way). Used where a live cone would also wreck the gun or the drivetrain the
+    /// proof goes on to use; receipts name it.
+    pub fn debug_crew_solo_kia(&mut self, role: CrewRole) -> bool {
+        if Some(role) == self.solo_identity()
+            || !singleplayer_crew::role_alive(&self.crew, role)
+            || self.crew_solo.man(role).dead
+        {
+            return false;
+        }
+        let post = self.crew_solo_post(role);
+        let mut casualty = singleplayer_crew::casualty_identity(role);
+        casualty.role = post;
+        let side = self.player.hull_model().transform_vector3(Vec3::new(-0.8, 0.15, -0.5)).normalize_or_zero();
+        self.crew_ko_t = CREW_KO_DUR;
+        self.crew_ko_world_dir = side;
+        let point = self.crew_solo_man_point(role);
+        let seed = ((self.crew_solo.time_s * 61.0) as u32) ^ 0x57A6_ED00 ^ role_index(role) as u32;
+        self.crew_solo_record_kia(casualty);
+        self.record_physical_crew_casualties(&[casualty]);
+        self.spawn_couch_ragdoll(casualty, side, 0.5, seed);
+        self.spawn_cubic_blood(casualty, Some(point), side, Vec3::ZERO, 0.8, 1.2, seed ^ 0xB10D, role_index(role), 192);
+        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "staged_kia": role.name(), "post": post.label()}));
+        println!("[panzerrechnersystem] CREWMAN KIA (staged) — {} at {}", role.name(), post.label());
+        true
+    }
+
     /// Strike a crewman with a real penetration: the live armor solve, fragment cloud, anatomy
     /// and retained-wound path, aimed at his seat through the plate `arc` names (the side
     /// nearest him, or the rear), `aim_down_m` below his torso centre (legs for a wounding
     /// shot). Returns a receipt with every attempt and what the solver produced.
     pub fn debug_crew_solo_strike(&mut self, role: CrewRole, lethal: bool, arc: Arc, aim_down_m: f32) -> Value {
+        self.debug_crew_solo_strike_raked(role, lethal, arc, aim_down_m, 0.0)
+    }
+
+    /// As `debug_crew_solo_strike`, with the shot raked `rake_deg` toward the rear in the
+    /// horizontal plane (a side shot that has passed the man goes on behind the breech or the
+    /// transmission instead of into them). The rake is the plate obliquity the armour solve sees.
+    pub fn debug_crew_solo_strike_raked(&mut self, role: CrewRole, lethal: bool, arc: Arc, aim_down_m: f32, rake_deg: f32) -> Value {
         let post = self.crew_solo_post(role);
         let frame = blood_frame_for_role(post);
         let parent = blood_parent_model(&self.player, frame);
@@ -1816,11 +1942,14 @@ impl Game {
         // climbs away from the sponson racks instead of into them (a side hit at rack height
         // is the Tiger's own catastrophic case, which this proof is not about).
         let rise = if lethal { 0.0 } else { 0.30 };
+        let rake = rake_deg.to_radians();
         let entry_local = match arc {
-            // Through the side plate nearest the man.
+            // Through the side plate nearest the man, raked toward the rear by `rake`.
             Arc::Side => {
                 let from_right = torso_local.x < 0.0;
-                Vec3::new(if from_right { min.x } else { max.x }, torso_local.y - rise, torso_local.z)
+                let plate_x = if from_right { min.x } else { max.x };
+                let run = (plate_x - torso_local.x).abs() / rake.cos().max(0.2);
+                Vec3::new(plate_x, torso_local.y - rise, torso_local.z + run * rake.sin())
             }
             // Through the rear plate behind him.
             _ => Vec3::new(torso_local.x, torso_local.y - rise, min.z),
@@ -1828,17 +1957,19 @@ impl Game {
         let axis_local = (torso_local - entry_local).normalize_or_zero();
         let entry_world = parent.transform_point3(entry_local);
         let dir_world = parent.transform_vector3(axis_local).normalize_or_zero();
-        // A killing shot from close; a wounding one from where the round arrives with less left.
-        let range = if lethal { 60.0 } else { 350.0 };
-        let shooter = entry_world - dir_world * range;
+        let shooter_at = |range: f32| entry_world - dir_world * range;
         let facing = facing_from(arc, part == ArmorPart::Turret);
         let plate = crate::ballistics::ArmorScheme::TigerI.plate(facing);
-        // A killing shot is a solid APCR slug first: its energy is the man's death, and without
-        // a filler it does not fill the compartment with a burst that finds the stowage.
-        let shells: &[&'static crate::ballistics::ShellSpec] = if lethal {
-            &[&crate::ballistics::BR_354P, &crate::ballistics::BR_412, &crate::ballistics::BR_471]
+        // A killing shot is a solid APCR slug first, from close: its energy is the man's death,
+        // and without a filler it does not fill the compartment with a burst that finds the
+        // stowage. A wounding shot is solid only (a filled round's burst inside the hull or
+        // turret is lethal to every man near it), from farther out, coming closer until the
+        // plate gives.
+        let shots: &[(&'static crate::ballistics::ShellSpec, f32)] = if lethal {
+            &[(&crate::ballistics::BR_354P, 60.0), (&crate::ballistics::BR_412, 60.0), (&crate::ballistics::BR_471, 60.0)]
         } else {
-            &[&crate::ballistics::BR_350B, &crate::ballistics::BR_412]
+            &[(&crate::ballistics::BR_354P, 350.0), (&crate::ballistics::BR_354P, 200.0),
+              (&crate::ballistics::BR_354P, 100.0), (&crate::ballistics::BR_354P, 40.0)]
         };
         let mut attempts = Vec::new();
         let breech_before = format!("{:?}", self.breech);
@@ -1847,10 +1978,11 @@ impl Game {
         self.god = false;
         for attempt in 0..16u32 {
             let seed = 0xC5E0_0000u32.wrapping_add(attempt).wrapping_add(role_index(role) as u32 * 0x100);
-            let shell = shells[attempt as usize % shells.len()];
-            let event = crate::ballistics::resolve(shell, range, plate, 0.0, seed);
+            let (shell, range) = shots[(attempt as usize).min(shots.len() * 4 - 1) / 4 % shots.len()];
+            let shooter = shooter_at(range);
+            let event = crate::ballistics::resolve(shell, range, plate, rake_deg.abs(), seed);
             if !matches!(event.terminal, crate::ballistics::Terminal::Penetration) {
-                attempts.push(json!({"attempt": attempt, "shell": shell.name, "terminal": format!("{:?}", event.terminal)}));
+                attempts.push(json!({"attempt": attempt, "shell": shell.name, "range_m": range, "terminal": format!("{:?}", event.terminal)}));
                 continue;
             }
             self.armor_scars.record(facing, entry_local, &event);
@@ -1869,7 +2001,7 @@ impl Game {
             );
             let man = self.crew_solo.man(role);
             let dead = !singleplayer_crew::role_alive(&self.crew, role) || man.dead;
-            attempts.push(json!({"attempt": attempt, "shell": shell.name, "terminal": "Penetration",
+            attempts.push(json!({"attempt": attempt, "shell": shell.name, "range_m": range, "terminal": "Penetration",
                 "dead": dead, "wounded": man.is_wounded(), "state": man.state_label()}));
             let done = if lethal { dead } else { man.is_wounded() || dead };
             if done || !self.player.alive {
@@ -1880,7 +2012,7 @@ impl Game {
         json!({
             "role": role.name(), "post": post.label(), "lethal_intent": lethal,
             "breech_before": breech_before, "live_rounds_before": live_before,
-            "arc": format!("{arc:?}"), "aim_down_m": aim_down_m,
+            "arc": format!("{arc:?}"), "aim_down_m": aim_down_m, "rake_deg": rake_deg,
             "entry_local": entry_local.to_array(), "attempts": attempts,
             "result": man.state_label(), "dead": !singleplayer_crew::role_alive(&self.crew, role) || man.dead,
             "player_alive": self.player.alive,
