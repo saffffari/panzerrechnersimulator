@@ -18,11 +18,16 @@ presented as a contact solve, a fluid or ballistic result, or exact occlusion:
   along the authored direction of flight with 30 % reversed, drift tails along the wind) is the
   authored rule with jitter, not a fragmentation, gait or wind-transport result.
 - Overlap avoidance covers medium/large pieces and bodies within one 32 m cell only.
-- Interaction tiers: the large tier is static mass and sight cover as a world AABB joining
-  `story_cover`; the medium tier is LOS cover only (`occluders`); the small tier has no physical
-  presence. Caps, nearest the route kept: 12 000 large, 3 000 medium occluders, 1 500 pushables
-  (through the existing lightweight pushable model), 400 loot sockets. Everything else is
-  visual, static after load, not burnable, not moved by shells.
+- Interaction tiers by estimated mass and size (2026-10-28, after the "tank rocks from a small
+  can" report): under 0.15 m or 5 kg nothing collides with the vehicle at all; an authored
+  large piece under 400 kg or 0.45 m is sight cover only; above both it is static mass whose
+  push resistance is sliding friction of its estimated mass (0.6·m·g over a 1 m shove), after
+  which it slides 1 m along the push (its instance and cover box move). The mass is a
+  bounding-box estimate with a material density by name, not a measured one. The medium tier
+  is LOS cover only (`occluders`); its pushables move under the existing lightweight pushable
+  model. Caps, nearest the route kept: 12 000 heavy, 3 000 medium occluders, 1 500 pushables,
+  400 loot sockets. Everything else is visual, static after load, not burnable, not moved by
+  shells, not kicked by crew on foot.
 - Draw: three LODs by projected size (the source mesh; a grid-clustered reduction; one native
   pixel carrying the mean albedo); no metallic-roughness or normal maps for the field's
   prototypes (the kit has none); shadows and sky cover from the large tier at the reduced LOD

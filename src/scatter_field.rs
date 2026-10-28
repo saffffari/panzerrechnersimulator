@@ -33,6 +33,65 @@ pub const MAX_LOOT_SOCKETS: usize = 400;
 /// Pushables are only taken this close to the route: the lightweight pushable path rewrites a
 /// whole renderer page when one of its bodies moves, so the pool stays small and near the Tiger.
 const PUSHABLE_ROUTE_M: f32 = 40.0;
+/// Interaction thresholds by mass and size (`docs/SCATTER.md` section 2). Anything under either
+/// crush limit has no vehicle collision at all, whatever its group says: a tin, a case, a helmet,
+/// a brick is crushed under the track. An authored large piece under either heavy limit is cover
+/// only (a gravel pile the track rides over, a crate the bow shoves as a pushable). Only pieces
+/// above both heavy limits are static mass for the hull, and then with a resistance scaled by
+/// their own mass (`SHOVE_FRICTION` on frozen ground over `SHOVE_TRAVEL_M`), never a wall.
+pub const CRUSH_HEIGHT_M: f32 = 0.15;
+pub const CRUSH_MASS_KG: f32 = 5.0;
+pub const HEAVY_MASS_KG: f32 = 400.0;
+pub const HEAVY_HEIGHT_M: f32 = 0.45;
+pub const SHOVE_FRICTION: f32 = 0.6;
+pub const SHOVE_TRAVEL_M: f32 = 1.0;
+
+/// The tier a prototype actually gets: its authored tier bounded by its mass and height.
+pub fn effective_tier(authored: Tier, mass_kg: f32, height_m: f32) -> Tier {
+    if height_m < CRUSH_HEIGHT_M || mass_kg < CRUSH_MASS_KG {
+        Tier::Small
+    } else if authored == Tier::Large && (mass_kg < HEAVY_MASS_KG || height_m < HEAVY_HEIGHT_M) {
+        Tier::Medium
+    } else {
+        authored
+    }
+}
+
+/// Mass from the bounding box and a material density with a fill fraction, keyed by the asset's
+/// name: solid stone and masonry, wood, hollow or thin steel, snow, a body at 75 kg. An estimate,
+/// named as such; it decides the interaction tier and the shove resistance, nothing else.
+pub fn estimate_mass_kg(path: &str, half: Vec3, casualty: bool) -> f32 {
+    if casualty {
+        return 75.0;
+    }
+    let stem = Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| stem.contains(n));
+    let volume = (8.0 * half.x * half.y * half.z).max(1.0e-6);
+    let (density, fill) = if has(&["stone", "rock", "masonry", "concrete", "gravel", "brick", "clod", "debris", "cement"]) {
+        (1800.0, 0.55)
+    } else if has(&["snow", "drift"]) {
+        (250.0, 0.5)
+    } else if has(&["log", "stump", "tree"]) {
+        (600.0, 0.6)
+    } else if has(&["crate", "supply", "pallet", "bench", "stool", "shelf", "ladder", "board", "plank", "fence", "stretcher", "mattress", "luggage", "package", "box"]) {
+        (450.0, 0.25)
+    } else if has(&["barricade", "barrel", "jerrycan", "bucket", "can", "tin", "canister", "helmet", "case", "shard", "plate", "track", "gear", "spring", "bolt", "nut", "wheel", "tire", "pipe", "scrap", "rifle", "mess", "canteen", "tool", "axe", "shovel", "hammer", "wrench", "saw", "pick"]) {
+        (7800.0, 0.08)
+    } else {
+        (400.0, 0.3)
+    };
+    volume * density * fill
+}
+
+/// A heavy static piece of the field: its world box, its mass and the GPU instance it is, so the
+/// hull's push can shove it along when it gives way.
+#[derive(Clone, Copy, Debug)]
+pub struct HeavyPiece {
+    pub min: Vec3,
+    pub max: Vec3,
+    pub mass_kg: f32,
+    pub instance: u32,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
@@ -76,6 +135,10 @@ pub struct Prototype {
     pub center_xz: Vec2,
     pub half: Vec3,
     pub center: Vec3,
+    /// Estimated mass (`estimate_mass_kg`) and the tier the group authored before the mass and
+    /// size bounds (`effective_tier`).
+    pub mass_kg: f32,
+    pub authored_tier: Tier,
 }
 
 struct Group {
@@ -238,8 +301,9 @@ pub struct Built {
     pub placements: Vec<Packed>,
     pub cells: Vec<Cell>,
     pub prototypes: Vec<Prototype>,
-    /// Large tier: static mass and LOS cover (world AABBs).
-    pub cover_large: Vec<(Vec3, Vec3)>,
+    /// Large tier: heavy static pieces (world AABB, mass, GPU instance) for the hull's push, and
+    /// LOS cover.
+    pub cover_large: Vec<HeavyPiece>,
     /// Medium tier: LOS cover only.
     pub cover_medium: Vec<(Vec3, Vec3)>,
     /// (prototype, model) pairs for the lightweight pushable path; not in `placements`.
@@ -481,7 +545,13 @@ impl Layers {
                         let center_xz = Vec2::new(center.x, center.z);
                         let radius = Vec2::new(half.x, half.z).length().max(0.01);
                         let height = (mesh.max.y - mesh.min.y).max(0.01);
+                        let casualty = e["casualty"].as_bool().unwrap_or(false);
+                        let mass_kg = estimate_mass_kg(&asset, half, casualty);
+                        let authored_tier = tier;
+                        let tier = effective_tier(authored_tier, mass_kg, height);
+                        // crushable pieces have no collision of any kind; heavy ones are static
                         let pushable = e["pushable"].as_bool().unwrap_or(false)
+                            && tier == Tier::Medium
                             && crate::worldgen::manifest_scatter_profile(&asset).is_some();
                         prototypes.push(Prototype {
                             path: asset.clone(),
@@ -489,7 +559,7 @@ impl Layers {
                             tier,
                             pushable,
                             flat: e["flat"].as_bool().unwrap_or(false),
-                            casualty: e["casualty"].as_bool().unwrap_or(false),
+                            casualty,
                             sink: j_f32(&e["sink"], 0.0),
                             conform: j_f32(&e["conform"], 1.0),
                             classes: class_mask(&e["classes"]),
@@ -498,6 +568,8 @@ impl Layers {
                             center_xz,
                             half,
                             center,
+                            mass_kg,
+                            authored_tier,
                         });
                         proto_index.insert(key, prototypes.len() - 1);
                         prototypes.len() - 1
@@ -615,9 +687,13 @@ impl Layers {
                 }
             }
         };
+        let crushable = prototypes.iter().filter(|p| p.authored_tier != Tier::Small && p.tier == Tier::Small).count();
+        let demoted = prototypes.iter().filter(|p| p.authored_tier == Tier::Large && p.tier == Tier::Medium).count();
+        let heavy: Vec<String> = prototypes.iter().filter(|p| p.tier == Tier::Large)
+            .map(|p| format!("{} {:.0} kg", Path::new(&p.path).file_stem().and_then(|s| s.to_str()).unwrap_or("?"), p.mass_kg)).collect();
         println!(
-            "[scatter] layers {}: {} prototypes in {} groups, {} rules, {} sources, seed {seed:#x}",
-            path.display(), prototypes.len(), groups.len(), rules.len(), sources.len()
+            "[scatter] layers {}: {} prototypes in {} groups, {} rules, {} sources, seed {seed:#x}; tiers by mass and size: {} authored medium/large pieces are crushable (under {CRUSH_HEIGHT_M} m or {CRUSH_MASS_KG} kg), {} authored large pieces are cover only (under {HEAVY_MASS_KG} kg or {HEAVY_HEIGHT_M} m), heavy static: {}",
+            path.display(), prototypes.len(), groups.len(), rules.len(), sources.len(), crushable, demoted, heavy.join(", ")
         );
         Ok(Layers { seed, wind, lane_half, prototypes, groups, rules, sources, ground, keep_clear, path: path.to_owned() })
     }
@@ -773,7 +849,7 @@ fn band_contains(band: &Band, s: &Source, p: Vec2, wind: Vec2) -> bool {
 
 struct CellOut {
     placements: Vec<Packed>,
-    cover_large: Vec<(Vec3, Vec3)>,
+    cover_large: Vec<HeavyPiece>,
     cover_medium: Vec<(Vec3, Vec3)>,
     pushables: Vec<(usize, Mat4)>,
     loot: Vec<Vec2>,
@@ -893,12 +969,13 @@ fn place_one(
             max = max.max(w);
         }
         if tier == Tier::Large {
-            out.cover_large.push((min, max));
+            // `instance` is local to the cell here; `build` adds the cell's first index
+            out.cover_large.push(HeavyPiece { min, max, mass_kg: proto.mass_kg * scale * scale * scale, instance: out.placements.len() as u32 });
         } else {
             out.cover_medium.push((min, max));
         }
     }
-    if proto.pushable && ctx.lane_distance(p) < PUSHABLE_ROUTE_M {
+    if proto.pushable && tier != Tier::Large && ctx.lane_distance(p) < PUSHABLE_ROUTE_M {
         out.pushables.push((proto_index, packed.model()));
     } else {
         out.placements.push(packed);
@@ -1050,6 +1127,7 @@ impl Layers {
         for list in outputs {
             for (_index, out) in list {
                 let first = placements.len() as u32;
+                let cover_large_cell: Vec<HeavyPiece> = out.cover_large.iter().map(|h| HeavyPiece { instance: first + h.instance, ..*h }).collect();
                 let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
                 for p in &out.placements {
                     let proto = &self.prototypes[p.proto()];
@@ -1066,7 +1144,7 @@ impl Layers {
                         p
                     }));
                 }
-                cover_large.extend(out.cover_large);
+                cover_large.extend(cover_large_cell);
                 cover_medium.extend(out.cover_medium);
                 pushables.extend(out.pushables);
                 loot.extend(out.loot);
@@ -1092,18 +1170,18 @@ impl Layers {
         }
         // caps on the parts that feed linear per-frame consumers (nearest the route first)
         let lane = |min: &Vec3, max: &Vec3| ctx.lane_distance(Vec2::new((min.x + max.x) * 0.5, (min.z + max.z) * 0.5));
-        let cap = |list: &mut Vec<(Vec3, Vec3)>, limit: usize| {
-            if list.len() > limit {
-                let mut keyed: Vec<(f32, (Vec3, Vec3))> = list.iter().map(|&(a, b)| (lane(&a, &b), (a, b))).collect();
-                keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
-                keyed.truncate(limit);
-                *list = keyed.into_iter().map(|(_, ab)| ab).collect();
-            }
-        };
         let large_total = cover_large.len();
         let medium_total = cover_medium.len();
-        cap(&mut cover_large, MAX_LARGE_COVER);
-        cap(&mut cover_medium, MAX_MEDIUM_COVER);
+        if cover_large.len() > MAX_LARGE_COVER {
+            cover_large.sort_by(|a, b| lane(&a.min, &a.max).total_cmp(&lane(&b.min, &b.max)));
+            cover_large.truncate(MAX_LARGE_COVER);
+        }
+        if cover_medium.len() > MAX_MEDIUM_COVER {
+            let mut keyed: Vec<(f32, (Vec3, Vec3))> = cover_medium.iter().map(|&(a, b)| (lane(&a, &b), (a, b))).collect();
+            keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
+            keyed.truncate(MAX_MEDIUM_COVER);
+            cover_medium = keyed.into_iter().map(|(_, ab)| ab).collect();
+        }
         let pushable_total = pushables.len();
         if pushables.len() > MAX_PUSHABLES {
             pushables.sort_by(|a, b| {
@@ -1185,6 +1263,25 @@ impl Layers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiers_follow_mass_and_size_not_the_label() {
+        // a tin, a case, a helmet, a brick: no collision whatever the group says
+        assert_eq!(effective_tier(Tier::Medium, 0.4, 0.12), Tier::Small);
+        assert_eq!(effective_tier(Tier::Large, 3.0, 0.3), Tier::Small);
+        // a gravel pile is low: the track rides over it (cover only)
+        assert_eq!(effective_tier(Tier::Large, 1500.0, 0.26), Tier::Medium);
+        // a supply crate is light: a pushable, not a wall
+        assert_eq!(effective_tier(Tier::Large, 150.0, 0.9), Tier::Medium);
+        // a boulder and a log stay static, with their mass
+        assert_eq!(effective_tier(Tier::Large, 2000.0, 2.0), Tier::Large);
+        assert_eq!(effective_tier(Tier::Large, 420.0, 0.5), Tier::Large);
+        // mass estimates: a jerrycan is light, a 1 m stone is heavy, a body is 75 kg
+        assert!(estimate_mass_kg("Props/jerrycan_mx_1.glb", Vec3::new(0.17, 0.23, 0.09), false) < 30.0);
+        assert!(estimate_mass_kg("Modular Props/barricade_a_1.glb", Vec3::new(1.47, 0.43, 0.2), false) > HEAVY_MASS_KG);
+        assert!(estimate_mass_kg("stone_3.glb", Vec3::new(1.26, 1.33, 1.06), false) > 1000.0);
+        assert_eq!(estimate_mass_kg("casualty_0.glb", Vec3::new(0.5, 0.16, 0.9), true), 75.0);
+    }
 
     #[test]
     fn half_round_trips() {
