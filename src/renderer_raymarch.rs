@@ -26,8 +26,8 @@ const CLOUD_SHADOW_RES: u32 = 256;
 const CLOUD_SHADOW_HALF_M: f32 = 2048.0;
 /// Reflection history: accumulated reflected radiance and the reflecting surface's eye distance.
 const REFL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// World-space occlusion history: open share and the eye distance it was measured at.
-const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// The shade pass's histories (shares, bounce): four half floats each.
+const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const CELLS: [u32; 3] = [32, 18, 24];
 const CELL_COUNT: usize = (CELLS[0] * CELLS[1] * CELLS[2]) as usize;
 const MAX_PARCELS: usize = 16384;
@@ -249,9 +249,11 @@ pub(super) struct Backend {
     /// distance of the reflecting surface (a); written by the reflection pass into [flip].
     refl: [Target; 2],
     refl_bgl: wgpu::BindGroupLayout,
-    /// World-space occlusion history (ray queries): x the open share, y the eye distance it was
-    /// measured at; written by the shade pass into [flip], read from [1 - flip].
+    /// The shade pass's stochastic terms' history: `ao` x the ray-traced open share, y the
+    /// screen gather's open share, z its contact term, w the eye distance; `bounce` rgb the
+    /// gathered bounce irradiance, a that distance. Written into [flip], read from [1 - flip].
     ao: [Target; 2],
+    bounce: [Target; 2],
     /// Ray queries against the scene TLAS (`Renderer::rt_scene`): the TLAS layout, this frame's
     /// bind, and an empty TLAS bound until the scene's first exists.
     rt_bgl: Option<wgpu::BindGroupLayout>,
@@ -448,8 +450,16 @@ fn rm_source(name: &str) -> String {
     compiled.to_owned()
 }
 
+/// A pipeline's WGSL from its parts. `rm_rt_g3.wgsl`: the ray-query module bound at group 3, for
+/// passes whose group 2 is taken (the glass panes' material).
+fn rm_assemble(parts: &[&str]) -> String {
+    parts.iter().map(|&name| if name == "rm_rt_g3.wgsl" {
+        rm_source("rm_rt.wgsl").replace("@group(2)", "@group(3)")
+    } else { rm_source(name) }).collect::<Vec<_>>().join("\n")
+}
+
 fn rm_shader(device: &wgpu::Device, label: &str, parts: &[&str]) -> wgpu::ShaderModule {
-    let source = parts.iter().map(|name| rm_source(name)).collect::<Vec<_>>().join("\n");
+    let source = rm_assemble(parts);
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -578,6 +588,7 @@ impl Backend {
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let history = target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let ao = [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)];
+        let bounce = [target(device, "rm-bounce-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-bounce-b", iw, ih, AO_FORMAT, gusage)];
         let refl = [target(device, "rm-refl-a", iw, ih, REFL_FORMAT, gusage), target(device, "rm-refl-b", iw, ih, REFL_FORMAT, gusage)];
         let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
@@ -675,7 +686,7 @@ impl Backend {
                 uniform_entry(0, S::VERTEX_FRAGMENT), float_tex_unfiltered(1, S::FRAGMENT), float_tex_unfiltered(2, S::FRAGMENT), float_tex_unfiltered(3, S::FRAGMENT),
                 depth_tex(4, S::FRAGMENT, wgpu::TextureViewDimension::D2),
                 tex3d(6, S::FRAGMENT), tex3d(7, S::FRAGMENT), sampler_filtering(8, S::FRAGMENT), tex3d(9, S::FRAGMENT),
-                float_tex_unfiltered(10, S::FRAGMENT), float_tex_unfiltered(11, S::FRAGMENT),
+                float_tex_unfiltered(10, S::FRAGMENT), float_tex_unfiltered(11, S::FRAGMENT), float_tex_unfiltered(12, S::FRAGMENT),
             ],
         });
         let points_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -790,7 +801,7 @@ impl Backend {
             vertex: wgpu::VertexState { module: &shade_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
             primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
             fragment: Some(wgpu::FragmentState { module: &shade_shader, entry_point: Some("fs"),
-                targets: &[Some(color_target(hdr_format())), Some(color_target(AO_FORMAT))], compilation_options: Default::default() }),
+                targets: &[Some(color_target(hdr_format())), Some(color_target(AO_FORMAT)), Some(color_target(AO_FORMAT))], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -814,9 +825,11 @@ impl Backend {
         let lens_pipe = fullscreen("rm-lens", &lens_shader, &post_pl);
 
         // Glass panes: forward over the lit frame, depth-tested, premultiplied.
-        let glass_shader = rm_shader(device, "rm-glass", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_glass.wgsl"]);
+        let glass_rt = if rt_scene { "rm_rt_g3.wgsl" } else { "rm_rt_stub.wgsl" };
+        let glass_shader = rm_shader(device, "rm-glass", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", glass_rt, "rm_glass.wgsl"]);
+        let glass_layouts: Vec<&wgpu::BindGroupLayout> = [&post_bgl, &visibility_bgl, material_bgl].into_iter().chain(rt_bgl.as_ref()).collect();
         let glass_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rm-glass-pl"), bind_group_layouts: &[&post_bgl, &visibility_bgl, material_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
+            label: Some("rm-glass-pl"), bind_group_layouts: &glass_layouts, push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
         });
         let glass_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("rm-glass"), layout: Some(&glass_pl),
@@ -911,7 +924,7 @@ impl Backend {
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, sky_sampler,
-            scratch, history, ao, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
+            scratch, history, ao, bounce, refl, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             scatter, integrated, heat, heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
@@ -989,6 +1002,7 @@ impl Backend {
                 entry(9, wgpu::BindingResource::TextureView(&self.heat_integrated.view)),
                 entry(10, wgpu::BindingResource::TextureView(&self.history.view)),
                 entry(11, wgpu::BindingResource::TextureView(&self.ao[1 - i].view)),
+                entry(12, wgpu::BindingResource::TextureView(&self.bounce[1 - i].view)),
             ],
         }));
         let points = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2039,7 +2053,8 @@ impl Backend {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-shade"),
                 color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK))),
-                    Some(attachment(&self.ao[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: -1.0, b: 0.0, a: 0.0 })))],
+                    Some(attachment(&self.ao[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 1.0, b: 1.0, a: -1.0 }))),
+                    Some(attachment(&self.bounce[self.flip].view, wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: -1.0 })))],
                 depth_stencil_attachment: None,
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-shade")), occlusion_query_set: None,
             });
@@ -2106,6 +2121,7 @@ impl Backend {
             pass.set_pipeline(&self.glass_pipe);
             pass.set_bind_group(0, &binds.reflect, &[]);
             pass.set_bind_group(1, &binds.visibility, &[]);
+            if let Some(rt) = &self.rt_bind { pass.set_bind_group(3, rt, &[]); }
             for &i in &self.panes {
                 let m = &r.meshes[i];
                 // The slab thickness is the pane's thinnest local extent (port glass ~9 cm,
@@ -2253,4 +2269,40 @@ impl Renderer {
     }
 
     pub fn raymarch_stats(&self) -> Option<Stats> { self.raymarch.as_ref().map(|rm| rm.stats) }
+}
+
+#[cfg(test)]
+mod shader_tests {
+    use super::*;
+
+    fn validate(label: &str, source: &str) {
+        let module = wgpu::naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(source)));
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(), wgpu::naga::valid::Capabilities::all())
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(source)));
+    }
+
+    /// Every raymarch pipeline's WGSL, assembled as `Backend::new` assembles it, with and without
+    /// ray queries: the shaders compile at run time, so this is where a mistake shows without a GPU.
+    #[test]
+    fn every_raymarch_shader_validates_with_and_without_ray_queries() {
+        let common: &[(&str, &[&str])] = &[
+            ("rm-depth", &["rm_depth.wgsl"]),
+            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_gbuffer.wgsl"]),
+            ("rm-volume", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_volume.wgsl"]),
+            ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
+            ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
+            ("rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]),
+            ("rm-sparks", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_sparks.wgsl"]),
+        ];
+        for (label, parts) in common { validate(label, &rm_assemble(parts)); }
+        for (rt, glass_rt) in [("rm_rt.wgsl", "rm_rt_g3.wgsl"), ("rm_rt_stub.wgsl", "rm_rt_stub.wgsl")] {
+            validate(&format!("rm-shade {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt, "rm_shade.wgsl"]));
+            validate(&format!("rm-reflect {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", rt, "rm_reflect.wgsl"]));
+            validate(&format!("rm-glass {glass_rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", glass_rt, "rm_glass.wgsl"]));
+        }
+        validate("rm-cloud-shadow", &physical_atmosphere_transport_shader_source(
+            &format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_cloud_shadow.wgsl"))));
+    }
 }

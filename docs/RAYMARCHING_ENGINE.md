@@ -597,6 +597,56 @@ already about 8 cm deep and a vision block's beam spans about ten cells across. 
 cloud gaps need the grid beyond 320 m (a second cascade, not built). The volume does not bind the
 TLAS, so lamp beams in the medium are unshadowed beyond the two lights with depth faces.
 
+## Blown-out panes and shimmer in the cabin (diagnosed 2026-10-28)
+
+Report, from a running window (backend not recorded): two periscope panes in the cabin blown out
+to flat near-white, each with a wide halo of coarse, noisy dithered pixels beyond its edge, and a
+"weird shimmering effect"; "interior lighting doesn't look right". Diagnosed from the code; the
+before-and-after stills are pending a GPU window (captures were on hold at the user's request).
+
+What made the panes white, on this backend:
+
+- **The pane reflected the sky indoors.** `rm_glass.wgsl` marched the reflected ray through the
+  depth buffer and, on a miss, reflected the sky cut to 15 % under cover. Inside a closed cabin the
+  reflected ray points back into the compartment, mostly behind the eye, so it missed and the pane
+  reflected 15 % of the sky: three to four orders of magnitude above the compartment's radiance.
+  Its grime was lit by the same sky term, because the
+  top-down cover map counts a cabin under its roof as merely covered. Fixed: with ray queries a miss
+  is traced through the scene (a hit the frame shows takes the lit frame, an unseen one is a grey
+  surface lit by sun and sky, a clear ray the sky), and the grime is lit by the share of the viewer's
+  hemisphere that rays can leave through (four fixed rays, periscope folds included).
+- **Part of the brightness is real.** What lies behind a cupola eyepiece is the periscope's mirror
+  and window, lit from outside; daylight through a periscope is the outside's radiance less the
+  optics' losses, several stops above a shut cabin. The eye's range draw-in compresses it but does
+  not bring it into range. It is flat because no image is relayed (an open item above).
+
+What made the halo shimmer:
+
+- The pane's own reflection march used a per-frame offset; its edge flickered between a hit and the
+  fallback, and the veiling glare and bloom around it flickered with it. Now fixed per pixel.
+- The shade pass's screen-space gather samples with a per-frame jitter and had no temporal filter: a
+  few slices landing on very bright pixels lit a neighbour one frame and not the next. Its open
+  share, contact term and bounce irradiance are now averaged through the reprojected history (new
+  estimates weigh 0.2), with a disocclusion mask (the recorded eye distance must agree) and a firefly
+  clamp (a new bounce estimate may not exceed eight times the history's luminance).
+- The contact-shadow marches (sun and lamps) and the worn-edge mask, which are not accumulated, used
+  the per-frame jitter; they now use a fixed per-pixel offset, a still pattern under the dither.
+
+The halo's coarse look is the crush's ordered dither over the smooth glare gradient (the art
+style's 8x8 Bayer at the palette's levels); with the pane's radiance and its flicker corrected the
+glare follows. The glare itself is the eye's scatter and is not clipped at the pane's edge. The
+froxel history is reprojected by the camera only, so a moving light can trail in the medium; that
+is not this shimmer.
+
+Gate: `every_raymarch_shader_validates_with_and_without_ray_queries` (naga, no GPU) assembles and
+validates every pipeline's WGSL with and without ray queries. Pending the GPU window: the same
+interior view before and after (`KESSEL_SHOWCASE_SET=ao`, `commander_noon_shut` and the loader's;
+`=res` `cabin_night`), and two consecutive stills to measure the flicker against today's 2.65 codes.
+
+If the report came from the shader backend (the launcher's default, `-Renderer shader`), the
+eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
+and any aliasing of the small relayed views under motion would need their own look.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The

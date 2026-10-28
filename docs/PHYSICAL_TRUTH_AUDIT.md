@@ -130,6 +130,13 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Raymarch temporal filter and pane reflections (2026-10-28; `rm_shade.wgsl` `shade_history`,
+  `rm_glass.wgsl` `pane_offscreen`): the screen gather's open share, contact term and bounce are
+  averaged over frames (new estimates 0.2) with a disocclusion mask and a firefly clamp (eight times
+  the history's luminance), which delays a genuine brightening by a few frames; the contact marches
+  use a fixed per-pixel offset (a still pattern, not converged). A glass pane's reflected misses are
+  traced through the scene instead of reflecting the sky under cover. Before-and-after captures are
+  pending a GPU window.
 - Raymarch cabin haze centre (2026-10-28; `rm_medium.wgsl` `rm_cabin_density`): the haze
   ellipsoid is centred on the crew compartment (0.9 m above the turret frame's origin) instead of
   the hull's ground-contact point, which had left the fumes below seated eye height. The ellipsoid
