@@ -667,6 +667,33 @@ If the report came from the shader backend (the launcher's default, `-Renderer s
 eyepieces there are the RTT screens, drawn unlit at the relayed view's radiance; their brightness
 and any aliasing of the small relayed views under motion would need their own look.
 
+## The Tiger's exhaust (2026-10-28)
+
+Request: "a ton of white exhaust out the back of the Tiger, it was known for that." `exhaust_plume.rs`
+puffs the two stacks on the rear plate (`Hull_1207`/`Hull_1208`: x +-0.41 m, outlets 2.09 m up,
+z -3.18) ten times a second each, from the powertrain's speed and load and a new engine temperature
+(warm-up 7 min at idle, faster under load; a stopped engine cools over half an hour; the game starts
+cold). In winter the exhaust's water vapour condenses into a dense white plume, densest from a cold
+engine at idle and thinner once warm but never gone below freezing; elsewhere it is a bluish-grey
+haze that only a cold engine whitens; a hard opening of the throttle runs rich and sends black
+puffs. Each puff leaves with an effective jet speed (a quarter of the bore's exit speed, 18 m/s at
+idle to 95 at rated speed) on top of the tank's own velocity, rises while hot (its excess
+temperature falls over 1.5 s), relaxes toward the wind over 0.35 s and grows by entrainment, so the
+plume trails behind a moving tank, curls downwind and pools round a standing one. Its extinction
+falls only inversely with its radius (the cold air it entrains keeps condensing the vapour). The
+medium draws the puffs as parcel kind 7 (`rm_volume.wgsl`): smoke lit by the key beam, sky and the
+clustered lamps, a softer billow than the flames, and heat that shimmers the air above the stacks
+while young; `KESSEL_RM_SKIP=1048576` leaves them out. Gameplay: the plume's summed optical depth
+(`ExhaustPlume::signature`) widens the enemy's detection radius by up to 25 % by day, 7.5 % by
+night, and it hides what lies behind the tank in the rendered view. `raymarch-exhaust PREFIX`:
+`captures/rm_exhaust2_*` (a cold start, fifteen seconds' idle, head out of the cupola looking
+back, a hard pull, the trail at 9.6 m/s in a 5.5 m/s wind).
+
+Not done: the plume casts no shadow (the beam march sees only the continuous medium, not the
+parcels); the vision blocks' relayed views do not show it (they are the shader backend's raster
+captures); puffs pass through the snow surface; the shader backend draws no exhaust; the GPU cost
+of up to 320 large parcels near the eye is unmeasured.
+
 ## The TPZ needle and the instrument glass (2026-10-28)
 
 Request: "the TPZ needle is too wide. Also missing a reflective glass cover detail." The needle's
