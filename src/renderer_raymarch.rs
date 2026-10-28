@@ -163,6 +163,8 @@ const PARCEL_GLOW: f32 = 3.0;
 const PARCEL_SEGMENT: f32 = 4.0;
 const PARCEL_FIREBALL: f32 = 5.0;
 const PARCEL_FLASH: f32 = 6.0;
+/// The Tiger's exhaust: smoke that carries heat while young (`exhaust_plume`).
+const PARCEL_EXHAUST: f32 = 7.0;
 
 /// One clustered light. Layout shared with rm_visibility.wgsl.
 #[repr(C)]
@@ -375,7 +377,7 @@ pub(super) struct Backend {
     /// (world-space occlusion and the reflection fallback), 65536 surface wear, 131072 cloud
     /// shadows (the eye's cloud attenuation for the whole frame instead), 262144 detail terrain
     /// (terrain_lod; neither it nor the coarse mesh draws; 8192 on the terrain-detail branch),
-    /// 524288 relayed exterior views on the vision blocks and sights.
+    /// 524288 relayed exterior views on the vision blocks and sights, 1048576 the exhaust plume.
     debug_skip: u32,
     /// The detail terrain's LOD draw (docs/TERRAIN_DETAIL.md), built once the game attaches a
     /// detail surface; it replaces the coarse terrain mesh in every pass.
@@ -1809,6 +1811,19 @@ impl Backend {
             });
         }
         self.event_parcels(r.time);
+        // The exhaust's puffs (KESSEL_RM_SKIP 1048576 leaves them out).
+        if self.debug_skip & 1048576 == 0 {
+            for puff in &r.exhaust_puffs {
+                if self.parcels.len() >= MAX_PARCELS - 64 { break; }
+                if puff.density <= 0.0 || (puff.pos - eye).length() > VOL_FAR_M + puff.radius { continue; }
+                self.parcels.push(Parcel {
+                    a: [puff.pos.x, puff.pos.y, puff.pos.z, puff.radius],
+                    b: [puff.colour[0], puff.colour[1], puff.colour[2], PARCEL_EXHAUST],
+                    c: [0.0, puff.density, puff.seed, puff.heat],
+                    d: [0.0; 4],
+                });
+            }
+        }
         for segment in &r.weapon_particles.segments {
             if self.parcels.len() >= MAX_PARCELS { break; }
             let a = Vec3::from_array([segment.origin_age[0], segment.origin_age[1], segment.origin_age[2]]);

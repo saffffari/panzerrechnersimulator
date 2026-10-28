@@ -324,6 +324,16 @@ are presented as ray tracing, GI or a combustion/solver result:
   winter before, a bug), halved because most of the ground a surface sees is on screen. Gate:
   `KESSEL_RM_PROBE` on the noon Tiger still, hull plate 0.0039 -> 0.0068 (green, renderer
   units) against flat snow 0.171.
+- Tiger exhaust plume (2026-10-28; `src/exhaust_plume.rs`, `rm_volume.wgsl` kind 7): puffs, not a
+  fluid solver. Flow from the powertrain's speed and load; an engine temperature from a warm-up
+  model (7 min at idle, faster under load, 30 min to cool); winter condensate always visible, densest
+  cold at idle; black puffs on a hard throttle opening; effective jet speed a quarter of the bore's
+  exit speed; buoyancy from the puff's decaying excess heat; drag toward the wind over 0.35 s;
+  entrainment growth; extinction falling with the inverse of the radius (cold air keeps condensing
+  the vapour). Densities, lifetimes and rates are presentation estimates sized from the engine's
+  displacement and the stacks' bore. No shadow, no ground contact, raymarch backend only. The plume
+  widens the enemy's detection radius by up to 25 % by day. Gate: `raymarch-exhaust`; unit tests in
+  the module.
 - TPZ needle and instrument covers (2026-10-28; `game.rs` `TPZ_NEEDLE_WIDTH_SCALE`,
   `Renderer::mark_instrument_cover`, `rm_glass.wgsl`): the TPZ needle is drawn at a quarter of its
   source bar's width (2.5 mm) in the dial's plane; instrument covers carry an authored fixed dust

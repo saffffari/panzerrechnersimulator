@@ -9294,6 +9294,8 @@ pub struct Game {
     /// silent, detection envelope collapsed (see update_stealth). Restart is a crank + a LOUD beat.
     pub engine_on: bool,
     pub player_powertrain: crate::powertrain::Powertrain,
+    /// The Tiger's exhaust plume and its engine temperature (`exhaust_plume`).
+    pub exhaust: crate::exhaust_plume::ExhaustPlume,
     pub engine_crank_t: f32, // > 0: the starter is turning; engine catches when it hits 0
     start_noise_t: f32,      // post-start racket: temporarily widens the envelope
     prev_ignition: bool,
@@ -13396,6 +13398,7 @@ impl Game {
             auto_ram: false,
             engine_on: true,
             player_powertrain: crate::powertrain::Powertrain::default(),
+            exhaust: crate::exhaust_plume::ExhaustPlume::default(),
             engine_crank_t: 0.0,
             start_noise_t: 0.0,
             prev_ignition: false,
@@ -17522,6 +17525,18 @@ impl Game {
         r.set_weather_wind(wind_at(self.act.id, r.camera.pos) * self.weather_wind_scale);
 
         r.set_cabin_medium_pose(self.player.hull_model(), self.player.turret_model());
+
+        // The exhaust (`exhaust_plume`): the engine's flow out of the two stacks, riding the world
+        // wind; the raymarch medium draws its puffs.
+        {
+            let running = self.engine_on && self.player.alive && self.module_ok(ModuleKind::Engine);
+            let pt = self.player_powertrain;
+            let wind = Vec3::new(r.weather_wind_world.x, 0.0, r.weather_wind_world.y);
+            let winter = self.act.season == crate::world::Season::Winter;
+            self.exhaust.update(dt, running, pt.rpm, pt.load, pt.throttle, self.player.hull_model(), wind, winter);
+            r.exhaust_puffs.clear();
+            r.exhaust_puffs.extend(self.exhaust.render_puffs());
+        }
 
         // Windowed solo/LAN and local four-seat play defer the rolling periscope render until the
         // render graph, where its exterior scene can populate the same shadow map as the main view.
@@ -26945,9 +26960,11 @@ impl Game {
                                                                      // SILENT WATCH: engine off collapses the envelope — a cold, still, buttoned
                                                                      // Tiger is a grey rock in the snow. The minute after a restart is the opposite.
                 let silent = if self.engine_on { 1.0 } else { 0.42 };
+                // The exhaust's column marks a running tank at range, by day far more than by night.
+                let exhaust_mark = 1.0 + 0.25 * self.exhaust.signature() * if self.night { 0.3 } else { 1.0 };
                 let bark = if self.start_noise_t > 0.0 { 1.7 } else { 1.0 };
                 (
-                    stealth::detection_radius(sf, self.night) * open * silent * bark,
+                    stealth::detection_radius(sf, self.night) * open * silent * bark * exhaust_mark,
                     stealth::movement_mult(sf) * if self.engine_on { 1.0 } else { 0.55 } * bark,
                 )
             }
@@ -31796,6 +31813,9 @@ impl Game {
     pub fn wipe_glass(&mut self) { self.surface_wear.wipe_glass(); }
 
     /// Headless-only: set the wear loads (mechanical, interior grime, exterior grime, glass grime).
+    /// Review: scale the act's wind (a crosswind for the exhaust review).
+    pub fn debug_set_wind_scale(&mut self, scale: f32) { self.weather_wind_scale = scale.max(0.0); }
+
     pub fn debug_set_wear(&mut self, loads: [f32; 4]) {
         self.surface_wear = crate::surface_wear::SurfaceWear::new(loads);
     }
