@@ -12,6 +12,7 @@ use glam::{Vec2, Vec3};
 
 use super::stealth::PLATOON_SIZE;
 use super::street_nav::{Leg, StreetNav, CARROT_M, REPLAN_OFF_M};
+use super::tank_doctrine;
 
 /// Enemy slots the encounter may field: two platoons in stealth's contiguous platoon slots.
 pub(super) const SLOTS: usize = 2 * PLATOON_SIZE;
@@ -24,6 +25,8 @@ pub(super) const SPACING_M: f32 = 40.0;
 /// A platoon that lost its leader holds and fights from the halt this long before joining
 /// another platoon's leader.
 pub(super) const REGROUP_S: f32 = 30.0;
+/// ... and joins only a leader this close; with none in reach it fights on alone (a straggler).
+pub(super) const JOIN_RANGE_M: f32 = 600.0;
 /// A leader's contact report reaches the other platoon leader after the same hand-off time a
 /// spotter needs inside its own platoon.
 const RELAY_S: f32 = super::stealth::FIVE_SEC_RULE;
@@ -88,6 +91,15 @@ pub(super) struct Observation {
     /// Existing platoon memory. Never a caller-supplied current hidden position.
     pub radio_fix: Option<Vec3>,
     pub on_foot: bool,
+    /// The armoured target's hull heading as its silhouette shows it; Some only with `visible`.
+    pub heading: Option<f32>,
+    /// Its gun is laid on this tank (the crew looks down the barrel); only with `visible`.
+    pub gun_on_me: bool,
+    /// A round from the target struck this tank, or burst beside it, since the last orders.
+    pub struck: bool,
+    /// This tank's own main-gun discharges so far, and whether its gun is loaded.
+    pub shots: u32,
+    pub loaded: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -104,6 +116,8 @@ pub(super) struct Order {
 pub(super) struct Hull {
     pub pos: Vec3,
     pub heading: f32,
+    /// Signed hull speed along its heading, m/s.
+    pub speed: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -117,6 +131,67 @@ struct Crew {
     visible_now: bool,
     observed_fix: Option<Vec3>,
     observed_t: f32,
+    /// Fighting an armoured target (docs/ENEMY_TANK_AI.md).
+    assault: Assault,
+    /// The armour fix this crew acts on this frame; a wingman reads its leader's.
+    known_fix: Option<Vec3>,
+    /// Seconds halted at (or in view of, or with no street to) a reported area.
+    linger_s: f32,
+}
+
+/// Doctrine against armour: tuning knobs, not historical claims (docs/ENEMY_TANK_AI.md).
+/// Throttle while bounding between firing posts and while closing on a remembered fix.
+const BOUND_SPEED: f32 = 0.62;
+const CLOSE_SPEED: f32 = 0.5;
+/// Shots from one post before the crew relocates (shoot, then move).
+const SHOTS_PER_POST: u32 = 2;
+/// Least time between two choices of post.
+const DECIDE_S: f32 = 2.0;
+/// A post held this long without the target in sight is given up for a closer one.
+const POST_HOLD_S: f32 = 14.0;
+/// Posts a crew found no street to are remembered and avoided (this many, this close).
+const REFUSED_POSTS: usize = 4;
+const REFUSED_RADIUS_M: f32 = 25.0;
+/// Reversing out of the line of fire after a hit or under the target's gun.
+const WITHDRAW_S: f32 = 4.5;
+/// Ordered to drive but not moving for this long: the tank is pinned; it backs off and re-plans.
+const STUCK_S: f32 = 3.0;
+/// Bearings round the target at which firing posts are sampled.
+const CANDIDATE_BEARINGS: usize = 24;
+/// The target's frontal arc (half angle) where its armour defeats the 76 mm and its gun bears.
+const FRONT_ARC_RAD: f32 = 0.61;
+/// In contact with armour a platoon follows it this far from its beat.
+const ASSAULT_LEASH_M: f32 = 1400.0;
+/// Within this range of the target, with the target in the platoon's sight, at least one tank of
+/// a platoon stays at its post covering the others' bounds.
+const OVERWATCH_RANGE_M: f32 = 800.0;
+/// Eye heights above the ground for a post's sight probes: the commander's cupola, and the hull
+/// roof (a post from which the hull roof cannot see the target is hull-down).
+const TURRET_EYE_M: f32 = 2.3;
+const HULL_EYE_M: f32 = 1.1;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Assault {
+    active: bool,
+    /// The firing position the crew is making for or holding.
+    post: Option<Vec2>,
+    /// The fix the post was chosen against.
+    against: Vec2,
+    arrived: bool,
+    at_post_s: f32,
+    since_choice_s: f32,
+    shots_seen: u32,
+    shots_at_post: u32,
+    withdraw_s: f32,
+    stuck_s: f32,
+    halt_s: f32,
+    /// Posts pushed closer without regaining sight.
+    press: i32,
+    /// The target's hull heading when last seen.
+    heading: Option<f32>,
+    last_drive: f32,
+    /// Posts no street led to, newest first.
+    refused: [Option<Vec2>; REFUSED_POSTS],
 }
 
 /// The last report a leader passed on the company net.
@@ -139,6 +214,7 @@ pub(super) struct WinterEncounter {
     pub storm: f32,
     pub sounds_heard: u32,
     pub confirmed_sightings: u32,
+    pub flashes_seen: u32,
     /// In a street district (a manifest revision's `street_encounter`): the measured streets the
     /// tanks drive along. `None` on open ground (the courtyard), where they drive straight.
     streets: Option<Streets>,
@@ -148,7 +224,14 @@ pub(super) struct WinterEncounter {
 /// through the real terrain and cover)? Used only in the streets, to halt where a reported area
 /// comes into view.
 pub(super) type SightTest<'a> = &'a dyn Fn(Vec3, Vec2) -> bool;
+/// Ground height at a point (the caller's terrain), for sight probes from candidate posts.
+pub(super) type Ground<'a> = &'a dyn Fn(Vec2) -> f32;
 
+/// Throttle closing on a report or a fix outside armour contact.
+const INVESTIGATE_SPEED: f32 = 0.4;
+/// A crew halted at a reported area, in view of it, or with no street to it, gives the report up
+/// after this long instead of waiting out the sound memory.
+const INVESTIGATE_LINGER_S: f32 = 20.0;
 /// Leaders investigating a report in the streets halt once the reported area is in view this close.
 pub(super) const STREET_VIEW_HALT_M: f32 = 170.0;
 /// ... and otherwise close on it along the streets no nearer than this.
@@ -210,10 +293,11 @@ impl WinterEncounter {
                     else { Role::Wingman { leader: slot(platoon_of(i), 0), place: i % PLATOON_SIZE } },
                 waypoint: 1, dwell: 8.0 + platoon_of(i) as f32 * 8.0, heard: None, heard_t: 0.0,
                 phase: Phase::Patrol, visible_now: false, observed_fix: None, observed_t: 0.0,
+                assault: Assault::default(), known_fix: None, linger_s: 0.0,
             }).collect(),
             trails: vec![Vec::new(), Vec::new()],
             relay: None,
-            elapsed: 0.0, storm: 0.66, sounds_heard: 0, confirmed_sightings: 0,
+            elapsed: 0.0, storm: 0.66, sounds_heard: 0, confirmed_sightings: 0, flashes_seen: 0,
             streets: None,
         }
     }
@@ -236,6 +320,7 @@ impl WinterEncounter {
                     else { Role::Wingman { leader: first, place } },
                 waypoint: 1, dwell: 0.0, heard: None, heard_t: 0.0,
                 phase: Phase::Patrol, visible_now: false, observed_fix: None, observed_t: 0.0,
+                assault: Assault::default(), known_fix: None, linger_s: 0.0,
             });
         }
         if let Some(streets) = &mut self.streets {
@@ -261,6 +346,18 @@ impl WinterEncounter {
         if let Some(crew) = self.crews.get_mut(i) { crew.visible_now = value; }
     }
     pub fn phase(&self, i: usize) -> Phase { self.crews[i].phase }
+    /// Where the crew is looking for the target: its armour fix or its own last sighting.
+    pub fn cue(&self, i: usize) -> Option<Vec3> {
+        self.crews.get(i).and_then(|c| c.known_fix.or(c.observed_fix))
+    }
+    /// Debug/capture telemetry: the crew's armour-fighting state (docs/ENEMY_TANK_AI.md).
+    pub fn doctrine(&self, i: usize) -> serde_json::Value {
+        let c = &self.crews[i];
+        let a = &c.assault;
+        serde_json::json!({"active":a.active,"fix":c.known_fix.map(|f|[f.x,f.z]),"post":a.post.map(|p|[p.x,p.y]),
+            "arrived":a.arrived,"at_post_s":a.at_post_s,"shots_at_post":a.shots_at_post,"withdraw_s":a.withdraw_s,
+            "press":a.press,"refused":a.refused.iter().flatten().count(),"heard":c.heard.map(|h|[h.x,h.z])})
+    }
     pub fn tick(&mut self, dt: f32) { self.elapsed += dt.max(0.0); }
 
     /// A real hostile muzzle report, delivered once at discharge. Obstruction attenuates
@@ -281,41 +378,335 @@ impl WinterEncounter {
         self.sounds_heard = self.sounds_heard.saturating_add(1);
     }
 
+    /// A crew saw the target's muzzle flash at `origin`: where it was at that moment, as exact as a
+    /// sighting but no track of it afterwards. A wingman signals it to its leader as well.
+    pub fn saw_flash(&mut self, i: usize, origin: Vec3) {
+        if i >= self.crews.len() || !origin.is_finite() { return; }
+        let keeper = match self.crews[i].role { Role::Wingman { leader, .. } => Some(leader), _ => None };
+        for k in std::iter::once(i).chain(keeper) {
+            let c = &mut self.crews[k];
+            c.observed_fix = Some(origin);
+            c.observed_t = super::stealth::SEARCH_TIMEOUT;
+        }
+        self.flashes_seen = self.flashes_seen.saturating_add(1);
+    }
+
     /// Orders for every slot. `hulls[i]` is Some for a fielded tank that is still alive.
     pub fn orders(&mut self, hulls: &[Option<Hull>], observations: &[Observation],
-        dt: f32, sees: SightTest) -> Vec<Option<Order>> {
+        dt: f32, sees: SightTest, ground: Ground) -> Vec<Option<Order>> {
         let dt = dt.max(0.0);
         self.update_roles(hulls, dt);
         self.update_trails(hulls);
         let relayed = self.update_relay(hulls, observations, dt);
+        let mut platoon_tanks = vec![0usize; self.routes.len()];
+        for i in 0..self.crews.len() {
+            if hulls[i].is_some() && !matches!(self.crews[i].role, Role::Absent) {
+                platoon_tanks[self.command_platoon(i)] += 1;
+            }
+        }
+        let mut platoon_sees = vec![false; self.routes.len()];
+        for i in 0..self.crews.len() {
+            if hulls[i].is_some() && observations[i].visible.is_some() && !observations[i].on_foot {
+                platoon_sees[self.command_platoon(i)] = true;
+            }
+        }
         let mut out = vec![None; self.crews.len()];
         // Leaders and independent tanks decide first; wingmen then read their leader's order.
         for i in 0..self.crews.len() {
             let Some(hull) = hulls[i] else { continue; };
             let mut observation = observations[i];
-            out[i] = match self.crews[i].role {
+            match self.crews[i].role {
                 Role::Leader => {
                     let platoon = platoon_of(i);
                     observation.radio_fix = observation.radio_fix
                         .or_else(|| relayed.filter(|r| r.from != platoon).map(|r| r.fix));
-                    Some(self.lead(i, platoon, hull, observation, dt, sees))
                 }
-                Role::Straggler => {
-                    // No radio and no leader to watch: only its own senses and memory.
-                    observation.radio_fix = None;
-                    Some(self.lead(i, platoon_of(i), hull, observation, dt, sees))
-                }
-                Role::Leaderless { .. } => Some(self.hold(i, hull, observation, dt)),
-                Role::Wingman { .. } | Role::Absent => None,
+                // No radio and no leader to watch: only its own senses and memory.
+                Role::Straggler | Role::Leaderless { .. } => observation.radio_fix = None,
+                Role::Wingman { .. } | Role::Absent => continue,
+            }
+            if let Some((fix, visible)) = self.armour_fix(i, &observation).filter(|_| self.within_leash(i, hull)) {
+                out[i] = Some(self.assault(i, hull, observation, fix, visible, hulls, &platoon_sees, &platoon_tanks, dt, sees, ground));
+                continue;
+            }
+            self.stand_down(i);
+            out[i] = match self.crews[i].role {
+                Role::Leader | Role::Straggler => Some(self.lead(i, platoon_of(i), hull, observation, dt, sees)),
+                _ => Some(self.hold(i, hull, observation, dt)),
             };
         }
         for i in 0..self.crews.len() {
             let (Some(hull), Role::Wingman { leader, place }) = (hulls[i], self.crews[i].role)
             else { continue; };
             let (Some(leader_hull), Some(leader_order)) = (hulls[leader], out[leader]) else { continue; };
+            // A wingman watching its leader's tank fights the armour the leader is fighting.
+            let observation = Observation { radio_fix: None, ..observations[i] };
+            if let Some((fix, visible)) = self.armour_fix(i, &observation).filter(|_| self.within_leash(i, hull)) {
+                out[i] = Some(self.assault(i, hull, observation, fix, visible, hulls, &platoon_sees, &platoon_tanks, dt, sees, ground));
+                continue;
+            }
+            self.stand_down(i);
             out[i] = Some(self.follow(i, hull, observations[i], leader_hull, leader_order, place, dt));
         }
         out
+    }
+
+    /// In contact with armour a tank follows it up to `ASSAULT_LEASH_M` from its beat.
+    fn within_leash(&self, i: usize, hull: Hull) -> bool {
+        xz(hull.pos).distance(self.routes[platoon_of(i)][0]) <= ASSAULT_LEASH_M
+    }
+
+    /// The platoon whose leader this tank takes its orders from.
+    fn command_platoon(&self, i: usize) -> usize {
+        match self.crews[i].role { Role::Wingman { leader, .. } => platoon_of(leader), _ => platoon_of(i) }
+    }
+
+    /// The armoured target this crew knows of: in its own sight, in its own memory, by radio (a
+    /// leader) or by its leader's signals (a wingman). A man on foot is not fought this way.
+    fn armour_fix(&self, i: usize, observation: &Observation) -> Option<(Vec3, bool)> {
+        if observation.on_foot { return None; }
+        if let Some(target) = observation.visible { return Some((target, true)); }
+        let c = &self.crews[i];
+        c.observed_fix.or(match c.role {
+            Role::Leader | Role::Straggler => observation.radio_fix,
+            Role::Wingman { leader, .. } => self.crews[leader].known_fix,
+            _ => None,
+        }).map(|fix| (fix, false))
+    }
+
+    /// Contact with armour lost: the crew returns to its ordinary orders.
+    fn stand_down(&mut self, i: usize) {
+        let c = &mut self.crews[i];
+        c.known_fix = None;
+        if c.assault.active { c.assault = Assault::default(); }
+    }
+
+    /// Fix and flank (docs/ENEMY_TANK_AI.md). The leader holds a hull-down post and fires to fix
+    /// the target; wingmen bound along the streets to posts on its flanks and rear where the
+    /// crew's armour solution says a 76 mm round goes through, one tank of a platoon moving at a
+    /// time while the target is in the platoon's sight. A crew shoots twice from a post, then
+    /// moves; under the target's gun or after a hit it backs out of the line of fire.
+    #[allow(clippy::too_many_arguments)]
+    fn assault(&mut self, i: usize, hull: Hull, observation: Observation, fix: Vec3, visible: bool,
+        hulls: &[Option<Hull>], platoon_sees: &[bool], platoon_tanks: &[usize], dt: f32, sees: SightTest,
+        ground: Ground) -> Order {
+        let platoon = self.command_platoon(i);
+        let place = match self.crews[i].role { Role::Wingman { place, .. } => place, _ => 0 };
+        {
+            let c = &mut self.crews[i];
+            remember(c, observation, dt, &mut self.confirmed_sightings);
+            c.known_fix = Some(fix);
+            c.heard = None;
+            c.heard_t = 0.0;
+        }
+        let mut a = self.crews[i].assault;
+        if !a.active { a = Assault { active: true, shots_seen: observation.shots, ..Assault::default() }; }
+        if visible { if let Some(h) = observation.heading { a.heading = Some(h); } }
+        let pos = xz(hull.pos);
+        let target = xz(fix);
+        // Unseen, the crew assumes the target faces it: never a hidden pose.
+        let heading = a.heading.unwrap_or_else(|| { let d = pos - target; d.x.atan2(d.y) });
+        let range = pos.distance(target);
+        let margin = tank_doctrine::kill_margin_mm(&crate::ballistics::BR_350B, heading, target, pos);
+        if observation.shots > a.shots_seen {
+            a.shots_at_post += observation.shots - a.shots_seen;
+            a.halt_s = 0.0;
+        }
+        a.shots_seen = observation.shots;
+        a.since_choice_s += dt;
+        if a.last_drive.abs() > 0.15 && hull.speed.abs() < 0.3 { a.stuck_s += dt; }
+        else { a.stuck_s = (a.stuck_s - dt).max(0.0); }
+        let to = target - pos;
+        let to_target = wrap(to.x.atan2(to.y) - hull.heading);
+        let face = |error: f32| if error.abs() < 0.08 { 0.0 } else { (error * 1.6).clamp(-0.55, 0.55) };
+
+        // Reactions: a hit or the target's gun on an exposed tank sends it back out of the line
+        // of fire, unless it holds a loaded killing shot; a pinned tank backs off and re-plans.
+        if a.withdraw_s <= 0.0 {
+            let killing_shot = visible && margin > 0.0 && observation.loaded;
+            let jitter = [0.0, 0.7, 1.4][i % 3];
+            if observation.struck && !killing_shot {
+                a.withdraw_s = WITHDRAW_S + jitter;
+            } else if visible && observation.gun_on_me && margin <= 0.0 && a.shots_at_post >= 1 {
+                a.withdraw_s = WITHDRAW_S * 0.7 + jitter;
+            } else if a.stuck_s > STUCK_S {
+                a.withdraw_s = 2.0 + jitter;
+                a.stuck_s = 0.0;
+            }
+            if a.withdraw_s > 0.0 {
+                if debug_log() {
+                    println!("[t34-ai] t={:.1} #{i} withdraws (struck {}, gun on it {}, pinned {})", self.elapsed,
+                        observation.struck, observation.gun_on_me, a.stuck_s == 0.0 && !observation.struck && !observation.gun_on_me);
+                }
+                a.post = None;
+                a.arrived = false;
+                if let Some(streets) = self.streets.as_mut() { streets.legs[i] = None; }
+            }
+        }
+
+        let (drive, steer) = if a.withdraw_s > 0.0 {
+            a.withdraw_s -= dt;
+            // Back away with the nose (the thickest plate, the gun) kept on the threat. A tank
+            // pinned while reversing stops trying.
+            if a.stuck_s > STUCK_S { a.withdraw_s = 0.0; a.stuck_s = 0.0; }
+            (-0.6, face(to_target))
+        } else {
+            let lost = a.arrived && !visible && a.at_post_s > POST_HOLD_S;
+            let replace = a.post.is_none()
+                || a.against.distance(target) > 60.0
+                || (a.arrived && a.shots_at_post >= SHOTS_PER_POST)
+                || (a.arrived && visible && observation.gun_on_me && a.shots_at_post >= 1)
+                || lost;
+            if replace && a.since_choice_s >= DECIDE_S
+                && self.may_bound(platoon, i, platoon_sees[platoon], platoon_tanks[platoon], range, hulls) {
+                if lost { a.press += 1; }
+                if visible { a.press = 0; }
+                a.post = self.choose_post(i, place, pos, target, heading, a.press, &a.refused, hulls, sees, ground);
+                if debug_log() {
+                    println!("[t34-ai] t={:.1} #{i} place {place} at {pos} fix {target} range {range:.0} seen {visible} margin {margin:.0} -> post {:?}",
+                        self.elapsed, a.post);
+                }
+                a.against = target;
+                a.arrived = false;
+                a.at_post_s = 0.0;
+                a.shots_at_post = 0;
+                a.since_choice_s = 0.0;
+            }
+            match a.post {
+                Some(post) if !a.arrived => {
+                    if visible && margin > 0.0 && observation.loaded && range < 500.0 && a.halt_s < 4.0 {
+                        // A short halt for a killing shot on the way.
+                        a.halt_s += dt;
+                        (0.0, face(to_target))
+                    } else {
+                        let speed = if platoon_sees[platoon] { BOUND_SPEED } else { CLOSE_SPEED };
+                        let step = match self.streets.as_mut() {
+                            Some(streets) => streets.drive_to(i, pos, hull.heading, post, speed, 6.0),
+                            None => Some(navigate_arrive(pos, hull.heading, post, speed, 6.0)),
+                        };
+                        match step {
+                            Some((_, _, true)) => {
+                                a.arrived = true;
+                                (0.0, face(to_target))
+                            }
+                            Some((drive, steer, false)) => (drive, steer),
+                            None => {
+                                // No street leads there: remember it and choose again.
+                                if debug_log() { println!("[t34-ai] t={:.1} #{i} no street to {post}", self.elapsed); }
+                                a.refused.rotate_right(1);
+                                a.refused[0] = Some(post);
+                                a.post = None;
+                                (0.0, face(to_target))
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    a.at_post_s += dt;
+                    (0.0, face(to_target))
+                }
+            }
+        };
+        a.last_drive = drive;
+        self.crews[i].assault = a;
+        // The leader fires to fix the target; others fire where the round can kill, when the
+        // target's gun is on them, or at close range.
+        let fire = visible && (margin > 0.0 || observation.gun_on_me || range < 300.0 || place == 0);
+        let phase = if visible { Phase::Track } else { Phase::Search };
+        let aim = if visible { fix } else {
+            let radial = (pos - target).normalize_or_zero();
+            let sweep = (self.elapsed * 0.16 + i as f32 * 1.7).sin() * 18.0;
+            fix + Vec3::new(radial.y * sweep, 0.0, -radial.x * sweep)
+        };
+        self.crews[i].phase = phase;
+        Order { phase, drive, steer, aim, fire }
+    }
+
+    /// Bounding overwatch: with the target in the platoon's sight and close, at least one tank
+    /// stays at its post covering while the others move. A bound ends when the mover arrives,
+    /// finds no street, is pinned or is driven back.
+    fn may_bound(&self, platoon: usize, i: usize, seen: bool, tanks: usize, range: f32, hulls: &[Option<Hull>]) -> bool {
+        if !seen || range > OVERWATCH_RANGE_M { return true; }
+        let movers = (0..self.crews.len()).filter(|&j| j != i && hulls[j].is_some()
+            && self.command_platoon(j) == platoon && {
+                let a = &self.crews[j].assault;
+                a.active && a.post.is_some() && !a.arrived && a.withdraw_s <= 0.0
+            }).count();
+        movers < tanks.saturating_sub(1).max(1)
+    }
+
+    /// The next firing post for tank `i` against a target at `target` facing `heading`: a ring of
+    /// candidates on the target's flanks and rear (the leader nearer its own bearing), scored by
+    /// the armour solution there, the distance to drive, exposure to the target's frontal arc on
+    /// the way, spacing from the platoon's other tanks and posts, then by sight probes from the
+    /// best few: the target in view from the cupola, and the hull roof below the line (hull-down).
+    #[allow(clippy::too_many_arguments)]
+    fn choose_post(&self, i: usize, place: usize, pos: Vec2, target: Vec2, heading: f32, press: i32,
+        refused: &[Option<Vec2>], hulls: &[Option<Hull>], sees: SightTest, ground: Ground) -> Option<Vec2> {
+        let own = tank_doctrine::relative_bearing(heading, target, pos);
+        let side_of = |b: f32| if b >= 0.0 { 1.0 } else { -1.0 };
+        let leader_side = match self.crews[i].role {
+            Role::Wingman { leader, .. } => hulls.get(leader).copied().flatten()
+                .map_or(side_of(own), |h| side_of(tank_doctrine::relative_bearing(heading, target, xz(h.pos)))),
+            _ => side_of(own),
+        };
+        // Pincer: the first wingman takes the leader's other side, the second goes deeper on his;
+        // the leader stays in its own sector. Preferences, not rails: in a canyon the far flank may
+        // be rock, and any post a street reaches is better than none.
+        let (side, ideal) = match place {
+            0 => (side_of(own), own.abs().max(FRONT_ARC_RAD + 0.25)),
+            p if p % 2 == 1 => (-leader_side, 1.9),
+            _ => (leader_side, 2.4),
+        };
+        let scale = 0.8f32.powi(press.clamp(0, 6));
+        let mut others: Vec<Vec2> = Vec::new();
+        for (j, h) in hulls.iter().enumerate() {
+            let Some(h) = h else { continue; };
+            if j == i { continue; }
+            others.push(xz(h.pos));
+            if let Some(post) = self.crews.get(j).and_then(|c| c.assault.post) { others.push(post); }
+        }
+        let mut candidates: Vec<(f32, Vec2)> = Vec::new();
+        for k in 0..CANDIDATE_BEARINGS {
+            let bearing = -std::f32::consts::PI + (k as f32 + 0.5) * std::f32::consts::TAU / CANDIDATE_BEARINGS as f32;
+            for r in [140.0f32, 200.0, 270.0, 350.0, 430.0] {
+                let r = (r * scale).max(110.0);
+                let a = heading + bearing;
+                let raw = target + Vec2::new(a.sin(), a.cos()) * r;
+                let c = match &self.streets {
+                    Some(s) => match s.nav.nearest_clear(raw, 20.0).filter(|&c| s.nav.reachable(pos, c)) {
+                        Some(c) => c,
+                        None => continue,
+                    },
+                    None => raw,
+                };
+                let b = tank_doctrine::relative_bearing(heading, target, c);
+                let margin = tank_doctrine::kill_margin_mm(&crate::ballistics::BR_350B, heading, target, c);
+                let mut score = if margin > 0.0 { 40.0 + margin.min(40.0) } else { margin.max(-80.0) * 0.5 };
+                if place == 0 { score *= 0.4; }
+                // The crew's side of the pincer and its depth round the target.
+                if side_of(b) != side { score -= 20.0; }
+                score -= (b.abs() - ideal).abs() * 12.0;
+                score -= pos.distance(c) / 12.0;
+                score -= (target.distance(c) - 260.0).abs() / 10.0;
+                // The straight way there through the target's frontal arc.
+                if (1..=4).any(|k| {
+                    let p = pos.lerp(c, k as f32 / 4.0);
+                    p.distance(target) < 600.0 && tank_doctrine::relative_bearing(heading, target, p).abs() < FRONT_ARC_RAD
+                }) { score -= 30.0; }
+                if others.iter().any(|o| o.distance(c) < 40.0) { score -= 50.0; }
+                if refused.iter().flatten().any(|r| r.distance(c) < REFUSED_RADIUS_M) { continue; }
+                candidates.push((score, c));
+            }
+        }
+        candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+        candidates.truncate(6);
+        candidates.into_iter().map(|(score, c)| {
+            let floor = ground(c);
+            let high = sees(Vec3::new(c.x, floor + TURRET_EYE_M, c.y), target);
+            let low = high && sees(Vec3::new(c.x, floor + HULL_EYE_M, c.y), target);
+            (score + if high { 35.0 } else { 0.0 } + if high && !low { 20.0 } else { 0.0 }, c)
+        }).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, c)| c)
     }
 
     /// A leader's death leaves its wingmen leaderless; after the regroup wait they join another
@@ -332,7 +723,12 @@ impl WinterEncounter {
                     self.crews[i].role = if waited < REGROUP_S {
                         Role::Leaderless { waited }
                     } else if let Some(leader) = (0..self.routes.len()).map(|p| slot(p, 0))
-                        .find(|&l| hulls[l].is_some() && self.crews[l].role == Role::Leader)
+                        .filter(|&l| hulls[l].is_some() && self.crews[l].role == Role::Leader)
+                        .filter(|&l| hulls[l].zip(hulls[i]).is_some_and(|(a, b)| xz(a.pos).distance(xz(b.pos)) <= JOIN_RANGE_M))
+                        .min_by(|&a, &b| {
+                            let d = |l: usize| xz(hulls[l].unwrap().pos).distance(xz(hulls[i].unwrap().pos));
+                            d(a).total_cmp(&d(b))
+                        })
                     {
                         // The lowest column place no living wingman of this leader holds. Counting
                         // wingmen instead handed out a place that a surviving wingman still
@@ -431,17 +827,17 @@ impl WinterEncounter {
                     (0.0, (error * 1.8).clamp(-0.45, 0.45))
                 } else if let Some((drive, steer, arrived)) = (!flanked)
                     .then(|| streets.nav.nearest_clear(goal, 40.0)).flatten()
-                    .and_then(|flank| streets.drive_to(i, xz(pos), heading, flank, 0.25, 12.0)) {
+                    .and_then(|flank| streets.drive_to(i, xz(pos), heading, flank, INVESTIGATE_SPEED, 12.0)) {
                     streets.closing[i] = Some((key, arrived));
                     (drive, steer)
                 } else {
                     // No street to the flank position (or reached it): close on the area itself.
                     streets.closing[i] = Some((key, true));
-                    streets.drive_to(i, xz(pos), heading, key, 0.25, STREET_CLOSE_M)
+                    streets.drive_to(i, xz(pos), heading, key, INVESTIGATE_SPEED, STREET_CLOSE_M)
                         .map_or((0.0, 0.0), |(drive, steer, _)| (drive, steer))
                 }
             } else if range < 105.0 { (if error.abs() < 0.8 { -0.12 } else { 0.0 }, (error * 1.8).clamp(-0.45, 0.45)) }
-                else { navigate(xz(pos), heading, goal, 0.25, 12.0) };
+                else { navigate(xz(pos), heading, goal, INVESTIGATE_SPEED, 12.0) };
             let sweep = (self.elapsed * 0.16 + i as f32 * 1.7).sin() * 24.0;
             (phase, fix + Vec3::new(radial.y * sweep, 0.0, -radial.x * sweep), drive, steer)
         } else {
@@ -477,6 +873,10 @@ impl WinterEncounter {
             (Phase::Patrol, pos + Vec3::new(sweep.sin(), 0.0, sweep.cos()) * 140.0, drive, steer)
         };
         c.phase = phase;
+        if phase == Phase::Investigate && drive == 0.0 {
+            c.linger_s += dt;
+            if c.linger_s > INVESTIGATE_LINGER_S { c.heard = None; c.heard_t = 0.0; c.linger_s = 0.0; }
+        } else { c.linger_s = 0.0; }
         // Patrol/contact area stays local. A retreating player cannot drag this encounter
         // across the act; observation can continue but movement returns toward the route.
         let home = self.routes[platoon][0];
@@ -569,6 +969,12 @@ fn remember(c: &mut Crew, observation: Observation, dt: f32, confirmed: &mut u32
     }
 }
 
+/// `KESSEL_T34_DBG=1`: print the crews' armour-fighting decisions (posts, refusals, withdrawals).
+fn debug_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KESSEL_T34_DBG").as_deref() == Ok("1"))
+}
+
 /// The point `distance` metres back along a leader's track (newest point first).
 fn along_trail(trail: &[Vec2], leader: Vec2, distance: f32) -> Vec2 {
     let mut left = distance;
@@ -586,6 +992,12 @@ fn along_trail(trail: &[Vec2], leader: Vec2, distance: f32) -> Vec2 {
 
 fn xz(v: Vec3) -> Vec2 { Vec2::new(v.x, v.z) }
 fn wrap(a: f32) -> f32 { (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI }
+/// `navigate` on open ground, reporting arrival like `Streets::drive_to`.
+fn navigate_arrive(pos: Vec2, heading: f32, goal: Vec2, speed: f32, stop: f32) -> (f32, f32, bool) {
+    if pos.distance(goal) <= stop { return (0.0, 0.0, true); }
+    let (drive, steer) = navigate(pos, heading, goal, speed, stop);
+    (drive, steer, false)
+}
 fn navigate(pos: Vec2, heading: f32, goal: Vec2, speed: f32, stop: f32) -> (f32, f32) {
     let to = goal - pos;
     if to.length() <= stop { return (0.0, 0.0); }
@@ -614,21 +1026,22 @@ mod tests {
         }
         assert_eq!(ai.role(1),old_role);
         let hulls: Vec<_>=(0..ai.slots()).map(|i| {
-            let(p,heading)=ai.start(i);Some(Hull{pos:Vec3::new(p.x,1.0,p.y),heading})
+            let(p,heading)=ai.start(i);Some(Hull{pos:Vec3::new(p.x,1.0,p.y),heading,speed:0.0})
         }).collect();
         let mut obs=vec![unknown();ai.slots()];
-        assert_eq!(ai.orders(&hulls,&obs,0.1,&|_,_|true).len(),ai.slots());
+        assert_eq!(ai.orders(&hulls,&obs,0.1,&|_,_|true,&|_|0.0).len(),ai.slots());
         for i in 6..ai.slots() {ai.hear(i,hulls[i].unwrap().pos,hulls[i].unwrap().pos+Vec3::Z*200.0,900.0,false);}
-        ai.orders(&hulls,&obs,0.1,&|_,_|true);
+        ai.orders(&hulls,&obs,0.1,&|_,_|true,&|_|0.0);
         for o in &mut obs {o.radio_fix=Some(Vec3::new(1200.0,1.0,300.0));}
-        let orders=ai.orders(&hulls,&obs,0.1,&|_,_|false);
+        let orders=ai.orders(&hulls,&obs,0.1,&|_,_|false,&|_|0.0);
         assert!(orders.iter().enumerate().filter(|(i,_)|i%3==0).all(|(_,o)|o.is_some_and(|o|o.phase==Phase::Search)));
     }
 
     fn flat() -> crate::terrain::Heightfield {
         crate::terrain::Heightfield { res: 2, spacing: 8000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default(), detail: None }
     }
-    fn unknown() -> Observation { Observation { visible: None, radio_fix: None, on_foot: true } }
+    fn unknown() -> Observation { Observation { visible: None, radio_fix: None, on_foot: true, heading: None,
+        gun_on_me: false, struck: false, shots: 0, loaded: true } }
     fn blind() -> [Observation; SLOTS] { [unknown(); SLOTS] }
     fn muster(ai: &WinterEncounter) -> Vec<Option<Tank>> {
         (0..SLOTS).map(|i| fielded(i).then(|| {
@@ -637,12 +1050,12 @@ mod tests {
         })).collect()
     }
     fn hulls(tanks: &[Option<Tank>]) -> [Option<Hull>; SLOTS] {
-        std::array::from_fn(|i| tanks[i].as_ref().map(|t| Hull { pos: t.center(), heading: t.heading }))
+        std::array::from_fn(|i| tanks[i].as_ref().map(|t| Hull { pos: t.center(), heading: t.heading, speed: t.speed }))
     }
     fn step(ai: &mut WinterEncounter, tanks: &mut [Option<Tank>], observations: &[Observation; SLOTS],
         dt: f32) -> Vec<Option<Order>> {
         ai.tick(dt);
-        let orders = ai.orders(&hulls(tanks), observations, dt, &|_, _| true);
+        let orders = ai.orders(&hulls(tanks), observations, dt, &|_, _| true, &|_| 0.0);
         for i in 0..SLOTS {
             if let (Some(tank), Some(order)) = (tanks[i].as_mut(), orders[i]) {
                 tank.update(order.drive, order.steer, 0.0, 0.0, dt, &flat());
@@ -724,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn on_contact_wingmen_form_line_abreast_and_fire_only_on_the_leaders_target() {
+    fn on_contact_with_a_man_on_foot_wingmen_form_line_abreast_and_fire_only_on_the_leaders_target() {
         let mut ai = WinterEncounter::new();
         // Platoon A mustered in column on its own beat; B stays out of this test.
         let mut tanks: Vec<Option<Tank>> = muster(&ai).into_iter().enumerate()
@@ -734,7 +1147,6 @@ mod tests {
         let target = Vec3::new(leader_start.x + ahead.x * 200.0, 2.0, leader_start.y + ahead.y * 200.0);
         let mut seen = blind();
         seen[0].visible = Some(target);
-        seen[0].on_foot = false;
         let mut orders = vec![None; SLOTS];
         for _ in 0..60 * 10 { orders = step(&mut ai, &mut tanks, &seen, 0.1); }
         let leader = tanks[0].as_ref().unwrap();
@@ -800,10 +1212,10 @@ mod tests {
 
     fn lone_leader_orders(ai: &mut WinterEncounter, pos: Vec3, heading: f32, observation: Observation, dt: f32) -> Order {
         let mut hulls = [None; SLOTS];
-        hulls[0] = Some(Hull { pos, heading });
+        hulls[0] = Some(Hull { pos, heading, speed: 0.0 });
         let mut observations = blind();
         observations[0] = observation;
-        ai.orders(&hulls, &observations, dt, &|_, _| true)[0].unwrap()
+        ai.orders(&hulls, &observations, dt, &|_, _| true, &|_| 0.0)[0].unwrap()
     }
 
     #[test]
@@ -853,17 +1265,114 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_contacts_hold_standoff_and_can_return_fire_without_charging() {
+    fn a_man_on_foot_is_held_at_standoff_and_fired_on_without_charging() {
         let mut ai = WinterEncounter::new();
         let target = Vec3::new(1880.0,2.0,165.0);
-        for (range,expected) in [(80.0,-1),(200.0,0),(300.0,1)] {
+        for (range,expected) in [(60.0,-1),(120.0,0),(170.0,1)] {
             let p = target - Vec3::Z * range;
-            let o = lone_leader_orders(&mut ai,p,0.0,Observation { visible:Some(target),on_foot:false,..unknown() },0.1);
+            let o = lone_leader_orders(&mut ai,p,0.0,Observation { visible:Some(target),..unknown() },0.1);
             assert!(o.fire); assert_eq!(if o.drive == 0.0 { 0 } else { o.drive.signum() as i32 },expected);
             assert!(o.drive.abs() <= 0.2);
         }
-        let o = lone_leader_orders(&mut ai,target-Vec3::Z*120.0,0.0,Observation { visible:Some(target),..unknown() },0.1);
-        assert_eq!(o.drive,0.0); assert!(o.fire);
+    }
+
+    /// Fly the encounter against a stationary Tiger on open ground; every tank sees it unless
+    /// `sight` says otherwise. Shots are counted the way the game does: a fire order with a loaded
+    /// gun discharges and starts a 5.5 s reload. Returns the tanks and per-frame orders.
+    fn duel(ai: &mut WinterEncounter, tanks: &mut [Option<Tank>], tiger: Vec3, tiger_heading: f32,
+        seconds: f32, mut each: impl FnMut(f32, &[Option<Tank>], &[Option<Order>])) {
+        let dt = 0.05;
+        let mut shots = [0u32; SLOTS];
+        let mut reload = [0.0f32; SLOTS];
+        for frame in 0..(seconds / dt) as usize {
+            let mut seen = blind();
+            for i in 0..SLOTS {
+                if tanks[i].is_some() {
+                    seen[i] = Observation { visible: Some(tiger), on_foot: false, heading: Some(tiger_heading),
+                        shots: shots[i], loaded: reload[i] <= 0.0, ..unknown() };
+                }
+            }
+            ai.tick(dt);
+            let orders = ai.orders(&hulls(tanks), &seen, dt, &|_, _| true, &|_| 0.0);
+            for i in 0..SLOTS {
+                reload[i] = (reload[i] - dt).max(0.0);
+                if let (Some(tank), Some(order)) = (tanks[i].as_mut(), orders[i]) {
+                    tank.update(order.drive, order.steer, 0.0, 0.0, dt, &flat());
+                    if order.fire && reload[i] <= 0.0 { shots[i] += 1; reload[i] = 5.5; }
+                }
+            }
+            each(frame as f32 * dt, tanks, &orders);
+        }
+    }
+
+    #[test]
+    fn against_a_tiger_the_platoon_fixes_and_flanks_instead_of_waiting_to_be_shot() {
+        let mut ai = WinterEncounter::new();
+        let mut tanks: Vec<Option<Tank>> = muster(&ai).into_iter().enumerate()
+            .map(|(i, tank)| tank.filter(|_| i < 3)).collect();
+        // The Tiger 380 m ahead of the platoon's leader, facing it square.
+        let (leader_start, heading) = ai.start(0);
+        let ahead = Vec2::new(heading.sin(), heading.cos());
+        let tiger_xz = leader_start + ahead * 380.0;
+        let tiger = Vec3::new(tiger_xz.x, 1.0, tiger_xz.y);
+        let tiger_heading = heading + std::f32::consts::PI;
+        let bearing = |t: &Tank| tank_doctrine::relative_bearing(tiger_heading, tiger_xz, xz(t.pos));
+        let mut flank_reached = [None::<f32>; 3];
+        let mut idle = [0.0f32; 3];
+        let mut all_moving = 0.0f32;
+        duel(&mut ai, &mut tanks, tiger, tiger_heading, 150.0, |t, tanks, orders| {
+            let mut bounding = 0;
+            for i in 0..3 {
+                let tank = tanks[i].as_ref().unwrap();
+                let margin = tank_doctrine::kill_margin_mm(&crate::ballistics::BR_350B, tiger_heading, tiger_xz, xz(tank.pos));
+                if bearing(tank).abs() > 1.05 && margin > 0.0 && flank_reached[i].is_none() { flank_reached[i] = Some(t); }
+                if tank.speed.abs() < 0.5 { idle[i] += 0.05; }
+                if orders[i].is_some_and(|o| o.drive > 0.2) && tank.speed > 2.0 { bounding += 1; }
+            }
+            if bounding == 3 { all_moving += 0.05; }
+        });
+        println!("flank reached {flank_reached:?}, idle {idle:?}, all three moving {all_moving:.1} s");
+        for i in [1, 2] {
+            let t = flank_reached[i].unwrap_or_else(|| panic!("wingman {i} never reached a killing flank post: {flank_reached:?}"));
+            assert!(t < 120.0, "wingman {i} took {t:.0} s to reach the flank");
+        }
+        let side = |i: usize| bearing(tanks[i].as_ref().unwrap()).signum();
+        assert_ne!(side(1), side(2), "the wingmen take the Tiger's two flanks (a pincer)");
+        assert!(bearing(tanks[0].as_ref().unwrap()).abs() > FRONT_ARC_RAD,
+            "the leader leaves the Tiger's frontal arc for its fixing post");
+        assert!(idle.iter().sum::<f32>() / (3.0 * 150.0) < 0.75, "the platoon does not sit still: {idle:?}");
+        assert!(all_moving < 8.0, "one tank covers while the others bound: {all_moving:.1} s");
+    }
+
+    #[test]
+    fn a_struck_tank_backs_out_of_the_line_of_fire_and_one_under_the_gun_moves() {
+        let setup = || {
+            let ai = WinterEncounter::new();
+            let tanks: Vec<Option<Tank>> = muster(&ai).into_iter().enumerate().map(|(i, t)| t.filter(|_| i == 0)).collect();
+            let (start, heading) = ai.start(0);
+            let tiger_xz = start + Vec2::new(heading.sin(), heading.cos()) * 260.0;
+            (ai, tanks, Vec3::new(tiger_xz.x, 1.0, tiger_xz.y), heading + std::f32::consts::PI)
+        };
+        let seen = |tiger: Vec3, th: f32, struck: bool, shots: u32, gun_on_me: bool| {
+            let mut o = blind();
+            o[0] = Observation { visible: Some(tiger), on_foot: false, heading: Some(th), struck, shots, gun_on_me, ..unknown() };
+            o
+        };
+        // Square to the Tiger's front, with no killing shot from there: struck, it reverses.
+        let (mut ai, mut tanks, tiger, th) = setup();
+        for _ in 0..20 { step(&mut ai, &mut tanks, &seen(tiger, th, false, 0, false), 0.05); }
+        let o = step(&mut ai, &mut tanks, &seen(tiger, th, true, 0, false), 0.05)[0].unwrap();
+        assert!(o.drive < 0.0, "struck, it reverses: {o:?}");
+        for _ in 0..20 {
+            assert!(step(&mut ai, &mut tanks, &seen(tiger, th, false, 0, false), 0.05)[0].unwrap().drive < 0.0, "and keeps backing off");
+        }
+        for _ in 0..200 { step(&mut ai, &mut tanks, &seen(tiger, th, false, 0, false), 0.05); }
+        assert!(step(&mut ai, &mut tanks, &seen(tiger, th, false, 0, false), 0.05)[0].unwrap().drive >= 0.0, "the withdrawal ends");
+        // The Tiger's gun laid on it after it fired from its post: it pulls back rather than duel.
+        let (mut ai, mut tanks, tiger, th) = setup();
+        for _ in 0..100 { step(&mut ai, &mut tanks, &seen(tiger, th, false, 0, false), 0.05); }
+        let moved = (0..100).any(|_| step(&mut ai, &mut tanks, &seen(tiger, th, false, 1, true), 0.05)[0].unwrap().drive < 0.0);
+        assert!(moved, "under the Tiger's gun after its shot, the crew pulls back");
     }
 
     // ── The street layout, on a synthetic district: four 120 m blocks on a 300 m square, 20 m
@@ -887,7 +1396,7 @@ mod tests {
     fn step_seeing(ai: &mut WinterEncounter, tanks: &mut [Option<Tank>], observations: &[Observation; SLOTS],
         dt: f32, sees: SightTest) -> Vec<Option<Order>> {
         ai.tick(dt);
-        let orders = ai.orders(&hulls(tanks), observations, dt, sees);
+        let orders = ai.orders(&hulls(tanks), observations, dt, sees, &|_| 0.0);
         for i in 0..SLOTS {
             if let (Some(tank), Some(order)) = (tanks[i].as_mut(), orders[i]) {
                 tank.update(order.drive, order.steer, 0.0, 0.0, dt, &flat());
@@ -954,26 +1463,29 @@ mod tests {
     }
 
     #[test]
-    fn in_the_streets_the_platoon_fights_in_column_not_line_abreast() {
+    fn in_the_streets_a_platoon_flanks_a_tiger_along_the_streets_without_entering_a_block() {
         let mut ai = street_encounter();
         let mut tanks: Vec<Option<Tank>> = muster(&ai).into_iter().enumerate().map(|(i, t)| t.filter(|_| i < 3)).collect();
-        for _ in 0..60 * 20 { step_seeing(&mut ai, &mut tanks, &blind(), 0.05, &|_, _| false); }
-        let leader = tanks[0].as_ref().unwrap().center();
-        let ahead = Vec2::new(tanks[0].as_ref().unwrap().heading.sin(), tanks[0].as_ref().unwrap().heading.cos());
-        let target = Vec3::new(leader.x + ahead.x * 180.0, 1.0, leader.z + ahead.y * 180.0);
-        let mut seen = blind();
-        seen[0].visible = Some(target);
-        seen[0].on_foot = false;
-        let mut orders = vec![None; SLOTS];
-        for _ in 0..60 * 20 {
-            orders = step_seeing(&mut ai, &mut tanks, &seen, 0.05, &|_, _| false);
-            for i in 1..3 { assert!(!in_block(xz(tanks[i].as_ref().unwrap().pos)), "wingman {i} left the street"); }
-        }
-        for i in [1, 2] {
-            let order = orders[i].unwrap();
-            assert!(order.fire && order.aim == target, "wingman {i} engages the leader's target");
-            let back = xz(tanks[0].as_ref().unwrap().pos) - xz(tanks[i].as_ref().unwrap().pos);
-            assert!(back.length() < SPACING_M * i as f32 + 30.0, "wingman {i} closes up behind the leader: {back}");
-        }
+        for _ in 0..30 * 20 { step_seeing(&mut ai, &mut tanks, &blind(), 0.05, &|_, _| false); }
+        // The Tiger in the district's centre crossing, facing the platoon's leader.
+        let tiger_xz = Vec2::new(150.0, 150.0);
+        let to_leader = xz(tanks[0].as_ref().unwrap().pos) - tiger_xz;
+        let tiger_heading = to_leader.x.atan2(to_leader.y);
+        let tiger = Vec3::new(tiger_xz.x, 1.0, tiger_xz.y);
+        let mut travelled = [0.0f32; 3];
+        let mut last: Vec<Vec2> = (0..3).map(|i| xz(tanks[i].as_ref().unwrap().pos)).collect();
+        duel(&mut ai, &mut tanks, tiger, tiger_heading, 120.0, |_, tanks, _| {
+            for i in 0..3 {
+                let at = xz(tanks[i].as_ref().unwrap().pos);
+                assert!(!in_block(at), "tank {i} drove into a block at {at}");
+                travelled[i] += at.distance(last[i]);
+                last[i] = at;
+            }
+        });
+        println!("travelled {travelled:?}");
+        assert!(travelled[1] > 60.0 && travelled[2] > 60.0, "the wingmen manoeuvre: {travelled:?}");
+        let off_front = (1..3).filter(|&i| tank_doctrine::relative_bearing(tiger_heading, tiger_xz,
+            xz(tanks[i].as_ref().unwrap().pos)).abs() > FRONT_ARC_RAD).count();
+        assert!(off_front >= 1, "a wingman works out of the Tiger's frontal arc along the streets");
     }
 }

@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-28 (enemy tank crews: fix and flank, armour solution, flash and engine cues); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -197,6 +197,46 @@ query cost; `KESSEL_TERRAIN_DETAIL=off` for the coarse grid) and `terrain-bench 
 (GPU pass timings with/without the terrain, `KESSEL_RM_SKIP=262144` since integration, 8192 on the branch); unit tests
 `terrain_relief::tests`, `terrain_lod::tests`.
 
+
+## Enemy tank crews, 2026-10-28 (branch `t34-ai`, `docs/ENEMY_TANK_AI.md`)
+
+Canyon T-34 platoons now fight an armoured target by fix and flank (`src/winter_encounter_ai.rs`,
+`src/tank_doctrine.rs`); the crews still drive, lay, reload and fire through the same `Tank`
+dynamics, turret traverse, reload clock, dispersion and authoritative shell solve as before. What is
+decision-making only, and what is simplified:
+
+- Armour solution: a crew's choice of post reads `kill_margin_mm`, the flat-plate budget of its
+  BR-350B at the post's range minus `ballistics::effective_thickness` of the Tiger I hull face
+  presented (front/side/rear by bearing from the hull's corner angle, plates from
+  `ArmorScheme::TigerI`). It is crew knowledge of the enemy's armour, evaluated against the pose
+  the crew last saw (or, unseen, a Tiger assumed to face it); no shell outcome is decided by it.
+  It ignores turret faces, scars and the solver's per-shot variation.
+- Hull-down: a candidate post counts as hull-down when the caller's optical sight test sees the
+  target from 2.3 m above the post's ground and not from 1.1 m: two sight rays, not a visibility
+  solve of the hull's silhouette.
+- Gun-on-me: a crew in sight of the target reads its bore within about 6 degrees of its own hull
+  as a gun laid on it (`GUN_ON_ME_COS`). A visual cue, not a model of what the eye resolves.
+- Struck: a Tiger round striking the tank, or bursting on the ground within 9 m of it, counts as
+  fire on it (`STRUCK_BESIDE_M`).
+- Muzzle flash: when the Tiger fires its main gun, a crew looking at least side-on toward it,
+  within 2 km, with a clear line (`los_clear`) through air whose `weather_view.transmittance`
+  passes 3 % (`FLASH_MIN_TRANSMITTANCE`; silhouettes need 10 %), gets an exact fix of where the
+  flash was at that moment, held 22 s like a sighting. A recognition knob, not a photometric flash
+  model; the threshold is lower because the flash outshines a hull.
+- Cued search: a crew whose fix (flash, sighting, radio or leader's signal) lies within 40 m of
+  the Tiger accrues its detection meter 3 times faster (`CUED_SEARCH_*`); the envelope, arc,
+  weather-contrast and line-of-sight gates are unchanged. A rule of thumb for cued detection, not
+  a model of visual search.
+- Engine noise: every 3 s each crew within an earshot radius (260 m idling to 700 m at full speed,
+  minus up to 45 % in the storm, cut to 62 % through cover by `hear`) receives the existing
+  uncertain sound report (rounded to a 32 m cell). The radius is tuning, not the acoustic
+  propagation model the audio layer runs.
+- Arena: `arena_setup` installs the evolved T-34 policy (`assets/ai/weights_academy.bin`) when it
+  loads; it proposes manoeuvre and a fire hold only, as in the AI lab.
+
+Gates: `cargo test --bin panzerrechnersystem winter_encounter_ai tank_doctrine enemy_ai_telemetry`
+(CPU-only duels on open ground and a street district), `canyon-ai-run` receipts' `enemy_ai`
+block, `ai-gauntlet`.
 
 ## Platoon wingmen, 2026-10-27 (`KESSEL_PLATOON=2`, branch `platoon`)
 

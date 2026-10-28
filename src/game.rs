@@ -544,6 +544,8 @@ const LUGER_FLASH_FX: usize = 3;
 const PANZERFAUST_RACK: usize = 3;
 const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbours within this
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
+/// The evolved T-34 policy the arena's crews fight by (docs/ENEMY_TANK_AI.md).
+const ARENA_T34_POLICY: &str = "assets/ai/weights_academy.bin";
 const ENEMY_RELOAD: f32 = 5.5; // s — per-enemy cadence (the swarm's volume of fire = the pressure)
 const N_ENEMIES: usize = 6; // swarm size (independent shooters for now)
 /// The first level's district reaches about 300 m from the spawn; beyond this the Tiger has left
@@ -7954,6 +7956,16 @@ const NIGHT_FOG_DENSITY: f32 = 0.0016;
 /// in his sight and lay on. The slowest crew takes the base plus the whole spread; darkness
 /// lengthens it by up to the night share.
 const FIRST_SHOT_BASE_S: f32 = 1.6;
+/// A crew sees the Tiger's muzzle flash up to this range where the air passes at least this share
+/// of its light (docs/ENEMY_TANK_AI.md: a recognition knob, not a photometric model of the flash).
+const FLASH_SEEN_M: f32 = 2000.0;
+const FLASH_MIN_TRANSMITTANCE: f32 = 0.03;
+/// A Tiger round striking the ground this close to a T-34 counts as fire on it.
+const STRUCK_BESIDE_M: f32 = 9.0;
+/// A crew whose fix lies within this distance of the Tiger is cued: its detection meter fills
+/// this many times faster (the envelope, line of sight and weather gates are unchanged).
+const CUED_SEARCH_M: f32 = 40.0;
+const CUED_SEARCH_GAIN: f32 = 3.0;
 const FIRST_SHOT_SKILL_SPREAD_S: f32 = 2.2;
 const FIRST_SHOT_NIGHT_SHARE: f32 = 1.0;
 fn first_shot_delay_s(skill: f32, darkness: f32) -> f32 {
@@ -9622,6 +9634,9 @@ pub struct Game {
     pub stat_pens_on_player: u32,
     /// Read-only measurement of the enemy crews' fighting (docs/ENEMY_TANK_AI.md).
     enemy_ai_stats: enemy_ai_telemetry::EnemyAiTelemetry,
+    /// Per enemy: a Tiger round struck it or burst beside it since its crew's last orders.
+    enemy_struck: Vec<bool>,
+    engine_listen_s: f32,
     /// Small-arms rounds that wounded the man on foot or head-out (harness read-out).
     pub stat_small_arms_hits_on_foot: u32,
     /// Authoritative player gunnery outcomes, resolved when the live tracer reaches its target.
@@ -13589,6 +13604,8 @@ impl Game {
             soviet_foot_policy: cached_default_foot_policy(PolicyRole::SovietRifle),
             stat_hits_on_player: 0,
             enemy_ai_stats: Default::default(),
+            enemy_struck: Vec::new(),
+            engine_listen_s: 0.0,
             stat_small_arms_hits_on_foot: 0,
             stat_pens_on_player: 0,
             stat_hits_by_player: 0,
@@ -24623,7 +24640,7 @@ impl Game {
             id, shooter, shell, muzzle, direction, seed,
         ));
         self.weapon_vfx.muzzle(muzzle, direction, weapon_vfx::Weapon::Cannon(shell.caliber_mm as u16));
-        if matches!(shooter,ProjectileShooter::Player) { self.winter_report_discharge(muzzle,900.0); }
+        if matches!(shooter,ProjectileShooter::Player) { self.winter_report_discharge(muzzle,900.0); self.tiger_muzzle_flash(muzzle); }
         id
     }
 
@@ -25395,6 +25412,14 @@ impl Game {
             | ProjectileContactKind::Rubble(_) => {
                 // The round's crack reached the listener in flight (`hear_passing_round`); here
                 // only its strike on the ground is heard.
+                if matches!(projectile.shooter, ProjectileShooter::Player) {
+                    // A Tiger round bursting beside a T-34 is felt by its crew as being under fire.
+                    for i in 0..self.enemies.len() {
+                        if self.enemies[i].alive && self.enemies[i].center().distance(contact.pos) < STRUCK_BESIDE_M {
+                            self.mark_enemy_struck(i);
+                        }
+                    }
+                }
                 if outcome == Outcome::NearMiss {
                     let near = projectile.closest_player_point;
                     if let Some(scale) = near_miss_puff_scale(projectile.closest_player_distance) {
@@ -25473,6 +25498,7 @@ impl Game {
                 // Rounds into a wreck mark its steel but are not hits on a fighting enemy.
                 if matches!(projectile.shooter, ProjectileShooter::Player) && self.enemies[index].alive {
                     self.enemy_ai_stats.hit_taken(index, enemy_ai_telemetry::Aspect::of_facing(armor.facing));
+                    self.mark_enemy_struck(index);
                     self.stat_hits_by_player = self.stat_hits_by_player.saturating_add(1);
                     if penetrated {
                         self.stat_pens_by_player = self.stat_pens_by_player.saturating_add(1);
@@ -26231,8 +26257,14 @@ impl Game {
                 e.pos = Vec3::new(-3000.0, 0.0, -3000.0);
             }
         }
+        // The ruin field is the ground the T-34 policy was evolved on (docs/AI_SHOWREEL.md), so
+        // its crews fight by it here; without the weights the scripted flanking swarm drives.
+        self.enemy_policy = crate::ai::Mlp::load(ARENA_T34_POLICY)
+            .map_err(|error| eprintln!("[arena] no T-34 policy at {ARENA_T34_POLICY} ({error}); scripted swarm drives"))
+            .ok();
         println!(
-            "[panzerrechnersystem] ARENA: 3 enemies at 40-90 m in the ruin field, player MORTAL, clear day"
+            "[panzerrechnersystem] ARENA: 3 enemies at 40-90 m in the ruin field, player MORTAL, clear day, T-34s {}",
+            if self.enemy_policy.is_some() { "driven by the evolved policy" } else { "scripted" }
         );
     }
 
@@ -26901,7 +26933,11 @@ impl Game {
             let contrast=if r>0.0 {self.weather_view.transmittance(ecenter,player_pos)}else{0.0};
             rate[i] = if contrast>=crate::weather_visibility::RECOGNITION_CONTRAST && self.los_clear(ecenter, player_pos) {
                 let skill = f32::from(self.enemy_skill.get(i).copied().unwrap_or(42)) / 100.0;
-                r * contrast * (0.72 + 0.68 * skill)
+                // A crew that knows where to look (a flash, a sighting or a radio fix on the spot)
+                // picks the Tiger out sooner than one sweeping the whole front.
+                let cued = self.winter_encounter.as_ref().and_then(|e| e.cue(i))
+                    .is_some_and(|fix| Vec2::new(fix.x - player_pos.x, fix.z - player_pos.z).length() < CUED_SEARCH_M);
+                r * contrast * (0.72 + 0.68 * skill) * if cued { CUED_SEARCH_GAIN } else { 1.0 }
             } else {
                 0.0
             };
@@ -26912,6 +26948,34 @@ impl Game {
         }
         let enemies = &self.enemies;
         self.stealth.tick(dt, &rate, &alive, player_pos, |i| enemies[i].kind.name());
+    }
+
+    /// The Tiger fired its main gun. A crew looking that way (at least its side arc) with a clear
+    /// line to the muzzle, through air that passes `FLASH_MIN_TRANSMITTANCE` of the light, sees
+    /// where the flash was: an exact fix of that moment (`WinterEncounter::saw_flash`), not a
+    /// track. The flash outshines a hull's silhouette, hence the lower bar than recognition.
+    fn tiger_muzzle_flash(&mut self, muzzle: Vec3) {
+        if self.winter_encounter.is_none() || self.winter_foot_target() { return; }
+        for i in 0..self.enemies.len() {
+            if !self.enemies[i].alive || !self.enemy_active.get(i).copied().unwrap_or(false) { continue; }
+            let eye = self.enemies[i].center() + Vec3::Y;
+            let mut to = muzzle - eye;
+            to.y = 0.0;
+            if to.length() > FLASH_SEEN_M { continue; }
+            let dir = to.normalize_or_zero();
+            let cos = self.enemies[i].forward().dot(dir).max(self.enemies[i].turret_forward().dot(dir));
+            if stealth::arc_weight(cos) < stealth::W_SIDE { continue; }
+            if self.weather_view.transmittance(eye, muzzle) < FLASH_MIN_TRANSMITTANCE || !self.los_clear(eye, muzzle) { continue; }
+            self.winter_encounter.as_mut().unwrap().saw_flash(i, muzzle);
+        }
+    }
+
+    /// The tank enemy `i` engages: the player's Tiger or, in platoon mode, the nearer wingman.
+    pub(super) fn enemy_threat_tank(&self, i: usize) -> Option<&Tank> {
+        if self.winter_foot_target() { return None; }
+        let centre = self.enemy_threat_center(i);
+        if self.player.center().distance_squared(centre) < 1e-6 { return Some(&self.player); }
+        self.allies.iter().map(|ally| &ally.tank).find(|tank| tank.center().distance_squared(centre) < 1e-6)
     }
 
     /// Is the straight line from `from` to `to` clear of cover, terrain and live tree trunks? A cover
