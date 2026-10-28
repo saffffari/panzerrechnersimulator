@@ -69,3 +69,11 @@ One line per merge: branch @ commit — conflicts — build / tests / smoke — 
 - raymarching @ 2e175d5 (TPZ needle drawn 2.5 mm wide; instrument covers get dust and a lamp sheen) — through `raymarching-main-merge` @ a238074 — none — merged in d4f536e
 - platoon @ d0d97ba (wingmen fight with the trained Tiger policy in contact, short halt for its shots) — no textual conflict, but **the test build broke**: its new test's `terrain::Heightfield` literal lacks terrain-detail's `detail` field (E0063, `src/platoon.rs:1346`; the release build was fine) → fixed forward in c250280 (`detail: None`, as every other test literal on main) — merged in 91635d4
 - **Gate for c250280 (+ this log)**: build ok; GPU-free shader validation ok; unit tests 1,931 passed / 90 failed / 61 ignored, failure set identical to round 5 (13 platoon tests pass); smoke **pending GPU window** — `main` **advanced** to c250280 (+ this log)
+
+## Round 7 — 2026-10-28
+
+- raymarching @ 2e175d5 — nothing new
+- platoon @ d0d97ba — already in (round 6)
+- missions @ 96b8114 (branched from main 06a7d5f: a button folds the order sheet — Enter/Space/E/click/pad — M rereads it on the map; Enter clears the radio, platoon and intercom lines on the frame; touches `crew_solo.rs`, `platoon.rs`, `ui.rs`, `main.rs`) — none; stored LF — merged in fdd3e63
+- **Gate for fdd3e63 (+ this log)**: build ok; test build ok; GPU-free shader validation ok; unit tests 1,934 passed / 90 failed / 61 ignored, failure set identical to round 6 (mission, ui and platoon tests pass); smoke **pending GPU window** — `main` **advanced** to fdd3e63 (+ this log)
+- Seen on origin, not yet relayed as working: scatter @ 757f95e (+1)
