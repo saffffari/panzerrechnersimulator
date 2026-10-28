@@ -202,6 +202,17 @@ What it does not cover: the held-mouse cartridge carry (it has its own `reload` 
 raymarch backend for the full set (the short `crew-solo-kia` check runs there), audio, and a
 human at the controls.
 
+## Medkit: done versus designed
+
+Done in code and unit-tested: the seven procedures with their step tables, cadence and turn
+rules, quality and interruption model, the varied finite kit with improvisation and
+scavenging, triage, the airway timer, the first-person driving of a procedure from the
+interior walk with the look locked to the hands, the crosshair as the step readout, the
+intercom lines for the result. Designed, not built: first-person hands and props for the
+procedures (there are no arm animations in the project yet), the man's breathing and voice
+as audio (no assets), scavenging a wreck's own kit (wreck pickups restock the box as a whole),
+and the morphine overdose beyond the one-dose-an-hour refusal.
+
 ## Verified against the play reports (2026-10-28, `crew-solo-kia`, raymarch backend)
 
 Two reports from play on the integrated main: a figure left at the cupola when the player
