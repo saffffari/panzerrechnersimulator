@@ -46,6 +46,7 @@ mod session_log;
 mod sim_phase;
 mod canyon_autopilot;
 mod scene_visibility;
+mod scatter_field;
 mod scene_visibility_gpu;
 mod display_preview;
 mod acoustics;
@@ -271,10 +272,18 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     if adapter.features().contains(renderer::HDR_FULL_FLOAT_FEATURES) {
         features |= renderer::HDR_FULL_FLOAT_FEATURES;
     }
+    // The strewn field's GPU culling (renderer_scatter.rs) draws every visible prototype of a
+    // texture page in one multi-draw when the adapter offers it; otherwise one indirect draw per
+    // bucket with the bucket's base in a push constant.
+    if adapter.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) {
+        features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
+    }
     let mut limits = wgpu::Limits {
         max_push_constant_size: REQUIRED_PUSH_CONSTANT_SIZE,
         ..Default::default()
     };
+    // The scatter cull binds nine storage buffers in one compute stage.
+    limits.max_storage_buffers_per_shader_stage = al.max_storage_buffers_per_shader_stage.min(12);
     // Several 32-bit float targets in one pass exceed the default 32 bytes per sample.
     limits.max_color_attachment_bytes_per_sample = al.max_color_attachment_bytes_per_sample.min(96);
     // Portable exact source visibility needs the same lossless geometry capacity without RT.
@@ -304,7 +313,7 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         const RT_MAX_BUFFER_BYTES: u64 = 4 * 1024 * 1024 * 1024;
         limits.max_buffer_size = al.max_buffer_size.min(RT_MAX_BUFFER_BYTES);
         limits.max_storage_buffer_binding_size = al.max_storage_buffer_binding_size;
-        limits.max_storage_buffers_per_shader_stage = RT_STORAGE_BUFFERS_PER_STAGE;
+        limits.max_storage_buffers_per_shader_stage = al.max_storage_buffers_per_shader_stage.clamp(RT_STORAGE_BUFFERS_PER_STAGE, 12);
         limits.max_blas_primitive_count = al.max_blas_primitive_count.min(1 << 22);
         limits.max_blas_geometry_count = al.max_blas_geometry_count.min(4);
         // Act scale is 60k+ instanced building modules and dressing; the renderer's capacity is
@@ -938,6 +947,7 @@ fn run_gfxbench(
     }
     let _ = gpu_samples.report();
     if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
+    if let Some(stats) = r.scatter_stats() { println!("[gfxbench] scatter {stats:?}"); }
     times.sort_by(f32::total_cmp);
     let n = times.len();
     let avg: f32 = times.iter().sum::<f32>() / n as f32;

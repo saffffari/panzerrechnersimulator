@@ -9356,6 +9356,9 @@ pub struct Game {
     /// Static substantial pieces from the additive story layer. Unlike cans, grass and luggage,
     /// these wrecks/barricades stop a tank and catch rounds as well as blocking sight.
     story_cover: Vec<(Vec3, Vec3)>,
+    /// Casualty positions of the strewn field offered to the pickup seeding beside the act's
+    /// authored sockets (`scatter_field::Built::loot_sockets`).
+    scatter_loot_sockets: Vec<Vec2>,
     /// Destruction records that fall together: every proxy of one manifest wall, doorway or shed
     /// maps to the range of its placement's records (they share the drawn instance).
     destructible_groups: std::collections::HashMap<usize, std::ops::Range<usize>>,
@@ -12399,7 +12402,35 @@ impl Game {
         // Static tableau pieces (a tram car, a wreck, a dugout's earth mound) are static mass for
         // tanks, feet, shells and sight like the district's other hard dressing.
         story_cover.extend(tableau_registration.cover.iter().copied());
+        // The strewn field (scatter_field.rs): the large tier is static mass and cover like the
+        // tableaux above, the medium tier sight cover only, pushables go through the lightweight
+        // pushable path, bodies offer loot sockets; everything else is drawn by the renderer's
+        // GPU-culled scatter path and is purely visual.
+        let mut scatter_loot_sockets: Vec<Vec2> = Vec::new();
+        let mut scatter_medium_cover: Vec<(Vec3, Vec3)> = Vec::new();
+        let strewn = if isolated_population { None } else {
+            manifest.as_ref().and_then(|m| crate::scatter_field::Layers::beside_manifest(m.path())).map(|layers| layers.build(&hf))
+        };
+        if let Some(mut built) = strewn {
+            story_cover.extend(built.cover_large.drain(..));
+            scatter_medium_cover.append(&mut built.cover_medium);
+            scatter_loot_sockets = std::mem::take(&mut built.loot_sockets);
+            let mut by_proto: std::collections::BTreeMap<usize, Vec<Mat4>> = Default::default();
+            for (proto, model) in built.pushables.drain(..) {
+                by_proto.entry(proto).or_default().push(model);
+            }
+            for (proto_index, models) in by_proto {
+                let proto = &built.prototypes[proto_index];
+                let Some(profile) = crate::worldgen::manifest_scatter_profile(&proto.path) else { continue };
+                let prototype = renderer.register_instanced_prototype(device, queue, &proto.mesh);
+                scatter.register_pages(&mut renderer, device, prototype, &proto.mesh, &[&models], profile);
+            }
+            renderer.install_scatter_field(device, queue, built);
+        }
         for &(min, max) in &story_cover {
+            occluders.push(stealth::Occluder::from_aabb(min, max));
+        }
+        for &(min, max) in &scatter_medium_cover {
             occluders.push(stealth::Occluder::from_aabb(min, max));
         }
         for asset in &story.batches {
@@ -13223,6 +13254,7 @@ impl Game {
             projectiles: Vec::with_capacity(256),
             projectile_scratch: Vec::with_capacity(256),
             projectile_cover: projectile_cover::Index::default(),
+            scatter_loot_sockets,
             projectile_flight_audio: projectile_flight_audio::Runtime::default(),
             crew_battle_audit: None,
             next_projectile_id: 1,
@@ -13643,10 +13675,13 @@ impl Game {
                 PickupKind::Medical => 2,
                 PickupKind::Cigarettes => 3,
             };
-            let candidates = campaign_loot_candidates(self.act.id, pickup.kind);
+            let mut candidates = campaign_loot_candidates(self.act.id, pickup.kind).to_vec();
+            // The strewn field's bodies are where a crew would look: its sockets join the act's.
+            candidates.extend(self.scatter_loot_sockets.iter().copied());
             if candidates.is_empty() {
                 continue;
             }
+            let candidates = candidates.as_slice();
             let salt = folded_seed
                 .wrapping_add((kind_index as u32 + 1).wrapping_mul(0x9E37_79B9))
                 .wrapping_add(u32::from(self.act.id).wrapping_mul(0x85EB_CA6B));

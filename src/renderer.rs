@@ -23,6 +23,8 @@ use crate::ui::{Align, Ui};
 mod renderer_fine_vfx;
 #[path = "renderer_weapon_particles.rs"]
 pub(crate) mod renderer_weapon_particles;
+#[path = "renderer_scatter.rs"]
+mod renderer_scatter;
 #[path = "renderer_raymarch.rs"]
 pub(crate) mod raymarch;
 
@@ -2554,6 +2556,8 @@ pub struct Renderer {
     pub shader_backend: bool,
     /// The raymarch frame pipeline (`KESSEL_RENDERER=raymarch`); None on the other backends.
     raymarch: Option<raymarch::Backend>,
+    /// The strewn field's GPU side (`renderer_scatter.rs`), installed once per act.
+    scatter_field: Option<renderer_scatter::ScatterGpu>,
     raster_optics: Option<raster_optics::RasterOptics>,
     raster_ssao: Option<raster_ssao::RasterSsao>,
     geometry_aa: Option<renderer_aa::GeometryAa>,
@@ -5843,6 +5847,7 @@ impl Renderer {
             graphics_preset,
             shader_backend,
             raymarch,
+            scatter_field: None,
             raster_optics: shader_backend.then(|| {
                 raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler,
                     &sky_visibility.sampling_bgl, &cabin_shadows.sampling_bgl, &cabin_medium_view)
@@ -8048,6 +8053,10 @@ impl Renderer {
         }
         if let Some(mut rm) = self.raymarch.take() {
             rm.prepare(self, device, queue);
+            if let Some(mut sf) = self.scatter_field.take() {
+                sf.prepare(self, rm.shadow_views(), device, queue);
+                self.scatter_field = Some(sf);
+            }
             self.raymarch = Some(rm);
         }
 
