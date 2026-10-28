@@ -370,6 +370,14 @@ are presented as ray tracing, GI or a combustion/solver result:
   displacement and the stacks' bore. No shadow, no ground contact, raymarch backend only. The plume
   widens the enemy's detection radius by up to 25 % by day. Gate: `raymarch-exhaust`; unit tests in
   the module.
+- Lamp housings in point shadows (2026-10-28; `renderer_raymarch.rs` `draw_scene`,
+  `FIXTURE_HOUSING_MAX_M`): a mesh enclosing a shadowed lamp's position is left out of that lamp's
+  cube only when it is smaller than 0.75 m (the fixture); larger enclosing meshes (the turret round
+  its cabin lamp) occlude. A fixture modelled inside a large mesh's own triangles still shadows its
+  bulb within the near plane's 3 cm.
+- TZF reticle at the output's resolution (2026-10-28; `blit.wgsl`): the Strichbild is drawn after the
+  upscale at its true angular size, four samples a pixel, rather than in the crushed frame; a
+  presentation of the glass reticle, it changes no light.
 - Small-arms tracers and flashes (2026-10-28; `rm_sparks.wgsl` `vs_tracer`,
   `renderer_raymarch.rs` `TRACER_INTENSITY`, `tank.rs` `TIGER_COAX_PORT`): the tracer pellet is
   about 60 cd, an estimate from the 7.62 mm trace requirement (visible by day to ~780 m) against a

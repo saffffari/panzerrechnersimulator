@@ -2612,6 +2612,8 @@ pub struct Renderer {
     pub vision_boost: f32,
     pub fog_density: f32,
     pub reticle: bool,
+    /// The optic snapshot's vertical field when it carried the reticle (`render_optic_snapshot`).
+    optic_reticle_fov: f32,
     /// Legacy gunner-optic obscuration envelope. Retained while the game-side producer migrates;
     /// the screen-space snow-dust veil was not a modeled medium and is no longer rendered.
     pub optic_blast: f32,
@@ -5811,14 +5813,14 @@ impl Renderer {
         // per view (each render is its own submit, so sequential writes never race).
         let blit_ubuf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("blit-crop"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         blit_ubuf
             .slice(..)
             .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::bytes_of(&[0.0f32, 0.0, 1.0, 1.0]));
+            .copy_from_slice(bytemuck::bytes_of(&[0.0f32, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]));
         blit_ubuf.unmap();
         let blit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("blit-bgl"),
@@ -5827,7 +5829,8 @@ impl Renderer {
                 sampler_entry(1),
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    // The crop (vertex) and the reticle (fragment).
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -5911,6 +5914,7 @@ impl Renderer {
             vision_boost: 0.0,
             fog_density: 0.02,
             reticle: false,
+            optic_reticle_fov: 0.0,
             optic_blast: 0.0,
             optic_eye: [0.0; 2],
             observer_flash_source: false,
@@ -7947,6 +7951,7 @@ impl Renderer {
     }
     fn upload_uniforms(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.apply_weather_override();
+        queue.write_buffer(&self.blit_ubuf, 16, bytemuck::bytes_of(&self.blit_reticle()));
         self.prepare_scene_visibility(device,queue);
         // Actor topology can change between frames. Refresh source/instance tables before writing
         // per-frame material state, not later in rt_update after that write already used old sizes.
@@ -8174,7 +8179,8 @@ impl Renderer {
             dither: self.display_tuning.map(|p| p.ordered_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.15 + m * 0.45 }),
             // The TZF Strichbild scales in TRUE mils: the shader needs the live vertical FOV
             // (radians) to keep 1 Strich = 1/6400 circle at every magnification. 0 = off.
-            reticle: if self.reticle { self.camera.fov_y } else { 0.0 },
+            // The Strichbild is drawn by the blit at the output's resolution (`blit_reticle`).
+            reticle: 0.0,
             frame: (self.frame & 0xFFFF) as f32,
             rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
             rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
@@ -9040,6 +9046,15 @@ impl Renderer {
         format: wgpu::TextureFormat,
     ) {
         self.blit_rect(device, encoder, target, format, None);
+    }
+
+    /// The blit's reticle lane (`blit.wgsl`): the TZF's field in radians while the gunner's sight
+    /// (optic mask 1) or its eyepiece composite (mask 4, the optic snapshot's field) is shown,
+    /// else 0; and the source frame's aspect.
+    fn blit_reticle(&self) -> [f32; 4] {
+        let fov = if self.optic_mask > 0.5 && self.optic_mask < 1.5 && self.reticle { self.camera.fov_y }
+            else if self.optic_mask > 3.5 { self.optic_reticle_fov } else { 0.0 };
+        [fov, self.iw as f32 / self.ih.max(1) as f32, 0.0, 0.0]
     }
 
     /// Full-frame crop for every non-splitscreen blit — a coop view render may have left a
@@ -10527,6 +10542,9 @@ impl Renderer {
     /// `optic_tex`. Nothing reaches the window — pass B (an interior render with optic_mask =
     /// 4.0) drops this snapshot into the eyepiece circle during its own crush.
     pub fn render_optic_snapshot(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // The eyepiece composite's frame (optic mask 4) shows this snapshot; its blit draws the
+        // reticle with this pass's field.
+        self.optic_reticle_fov = if self.reticle { self.camera.fov_y } else { 0.0 };
         self.frame = self.frame.wrapping_add(1);
         self.menu_mode = false;
         self.upload_uniforms(device, queue);

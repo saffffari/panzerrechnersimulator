@@ -875,6 +875,60 @@ pub fn run_tracers(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `raymarch-night-sight PREFIX`: the gunner's TZF at night under four skies (full and new moon,
+/// clear and overcast with snow), each as the sight's own view and as the live eyepiece composite,
+/// each eye adapted to what it sees; the shots record both eyes' exposures.
+pub fn run_night_sight(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_full_clear_sight.png")).exists(),
+        "preserving existing capture; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.station = Station::Gunner;
+    step(&mut g, &mut r, 30, &idle);
+    let tiger = g.player.pos;
+    let across = g.player.forward().cross(Vec3::Y).normalize_or_zero();
+    g.debug_lay_gun_at(tiger + across * 150.0 + Vec3::Y * 1.0);
+    rig.station_camera();
+    let mut composites = Vec::new();
+    for (name, utc, weather) in [("full_clear", "1942-12-21T19:00:00Z", 0.0), ("new_clear", "1942-12-06T22:00:00Z", 0.0),
+        ("full_overcast", "1942-12-21T19:00:00Z", 2.0), ("new_overcast", "1942-12-06T22:00:00Z", 2.0)] {
+        // KESSEL_SHOWCASE_SCENES=new_clear_sight,... renders only the skies named there.
+        if std::env::var("KESSEL_SHOWCASE_SCENES").is_ok_and(|only| !only.contains(name)) { continue; }
+        r.set_weather_override(Some(weather));
+        rig.clock(&mut r, utc)?;
+        step(&mut g, &mut r, 60, &idle);
+        r.set_active_view(0);
+        rig.still(&mut r, &format!("{name}_sight"), "the TZF's own view, the eye adapted to it")?;
+        let path = format!("{prefix}_{name}_composite.png");
+        r.set_active_view(3);
+        r.reset_active_exposure_for_headless_capture(&queue);
+        eyepiece_frame(&mut g, &mut r, &device, &queue, None)?;
+        eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, rig.cw, rig.ch)))?;
+        let [exposure, _] = r.debug_read_active_exposure(&device, &queue)?;
+        composites.push(serde_json::json!({ "name": name, "path": path, "clock_utc": utc, "weather": weather, "cabin_eye_exposure": exposure }));
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-night-sight.v1", "manifest": manifest, "renderer": format!("{:?}", graphics::renderer_backend()),
+        "internal_resolution": [r.iw, r.ih], "shots": rig.shots, "composites": composites,
+        "disclosure": "Staged fixture (banished enemies, held fire); clock pinned; weather override 0 (clear) or 2 (overcast, snowing); gun laid across the hull's right."
+    }))?)?;
+    Ok(())
+}
+
 /// Keep firing (at most a second more) until a tracer is in flight, then four frames more: from
 /// the sight the first ten metres of its path lie behind the 88's barrel.
 fn fire_until_tracer(g: &mut Game, r: &mut crate::renderer::Renderer, input: &TankInput) {

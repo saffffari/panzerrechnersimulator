@@ -45,6 +45,9 @@ const MAX_PARCELS: usize = 16384;
 const MAX_CELL_ITEMS: usize = 1 << 18;
 /// Scene lights the renderer keeps from the game (`Renderer::set_lights`) for clustering.
 pub const MAX_SCENE_LIGHTS: usize = 448;
+/// The largest mesh taken as a lamp's own housing (`draw_scene`), metres: a fixture, not the
+/// compartment round it.
+const FIXTURE_HOUSING_MAX_M: f32 = 0.75;
 /// A small-arms tracer pellet's intensity, renderer units (its colour's photopic weight is
 /// 36 982 lx per unit, so this is about 60 cd): an estimate from the trace requirement, a 7.62 mm
 /// trace seen by day to about 850 yd (780 m; ARDEC/Orbital ATK, NDIA 2018), against a point-source
@@ -1656,6 +1659,14 @@ impl Backend {
             let color = Vec3::new(1.0, 0.4621, 0.0296);
             self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.003], b: [color.x, color.y, color.z, TRACER_INTENSITY], c: [range_of(color, TRACER_INTENSITY), -1.0, 2.0, 0.0] });
         }
+        // KESSEL_RM_LIGHTS_DEBUG=1 prints the frame's lights relative to the eye (how the cabin
+        // lamp's leak onto the barrel was found, 2026-10-28).
+        if std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() {
+            for (i, l) in self.lights.iter().enumerate() {
+                let p = Vec3::from_array([l.a[0], l.a[1], l.a[2]]);
+                println!("[rm-lights] {i} rel {:?} dist {:.2} r {:.3} rgb {:?} I {:.3e} range {:.2} kind {}", (p - eye).to_array(), (p - eye).length(), l.a[3], &l.b[..3], l.b[3], l.c[0], l.c[2]);
+            }
+        }
         // Depth faces for the two strongest lights near the eye.
         let mut ranked: Vec<(f32, usize)> = self.lights.iter().enumerate().filter_map(|(i, l)| {
             let d2 = (Vec3::from_array([l.a[0], l.a[1], l.a[2]]) - eye).length_squared();
@@ -2151,9 +2162,11 @@ impl Backend {
     fn draw_scene<'a>(&'a self, r: &'a Renderer, pass: &mut wgpu::RenderPass<'a>, vp: Mat4, view_index: f32,
         shadow: bool, mesh_pipe: &'a wgpu::RenderPipeline, inst_pipe: &'a wgpu::RenderPipeline, work: &mut RenderWorkStats) {
         let planes = frustum_planes(vp);
-        // A point light's own housing (the mesh enclosing the emitter position) is not an
-        // occluder of that light: the modeled source sits inside its fixture. Named in the
-        // raymarch engine document.
+        // A point light's own housing (a fixture-sized mesh enclosing the emitter position) is
+        // not an occluder of that light: the modeled source sits inside its fixture. Named in the
+        // raymarch engine document. Only fixture-sized: the turret's bounds enclose its cabin lamp
+        // too, and exempting the turret let that lamp light the barrel, the deck and the snow
+        // round the tank through the armour (2026-10-28).
         let enclosing = (view_index >= 3.0).then(|| {
             let slot = ((view_index as usize) - 3) / 6;
             self.shadowed[slot].map(|i| {
@@ -2162,7 +2175,8 @@ impl Backend {
             })
         }).flatten();
         let encloses = |mn: Vec3, mx: Vec3| enclosing.is_some_and(|(p, m)| {
-            p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
+            (mx - mn).max_element() < FIXTURE_HOUSING_MAX_M
+                && p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
         });
         let visible = r.inst_spatial_index.query(vp);
         let stages = if shadow { wgpu::ShaderStages::VERTEX } else { wgpu::ShaderStages::VERTEX_FRAGMENT };
