@@ -87,6 +87,15 @@ const ENGAGE_HOLD_S: f32 = 3.0;
 /// Beyond this angle off the bore the hull pivots toward the contact instead of waiting for the
 /// 6 deg/s traverse alone.
 const ENGAGE_PIVOT_RAD: f32 = 0.35;
+/// Knocked-out hull bypass (`hull_bypass`): how far ahead along the route a dead hull is looked
+/// for, how close to the travel line it must lie to block, the clearance kept from every hull, and
+/// how far behind the Tiger a passed hull is let go.
+const HULL_BYPASS_AHEAD_M: f32 = 26.0;
+const HULL_BYPASS_LANE_M: f32 = 6.0;
+const HULL_BYPASS_CLEAR_M: f32 = 5.0;
+const HULL_BYPASS_BEHIND_M: f32 = 4.0;
+/// The Tiger's half width plus a little: the street floor grid is measured for a T-34.
+const TIGER_HALF_WIDTH_M: f32 = 2.0;
 
 pub struct CanyonPilot {
     route: Vec<Vec2>,
@@ -113,6 +122,8 @@ pub struct CanyonPilot {
     avoid_until: f32,
     avoid_side: f32,
     was_advancing: bool,
+    /// The dead hull being passed and the aim point beside and beyond it.
+    bypass: Option<(Vec2, Vec2)>,
     /// The last contact actually seen and when: the gunner keeps his seat and his lay on it for
     /// a few seconds after it slips out of sight instead of climbing back to the cupola at once.
     last_target: Option<(Vec3, Option<usize>)>,
@@ -165,6 +176,7 @@ impl CanyonPilot {
             avoid_until: 0.0,
             avoid_side: -1.0,
             was_advancing: false,
+            bypass: None,
             last_target: None,
             last_target_at: -100.0,
             debug: std::env::var("KESSEL_PILOT_DBG").is_ok(),
@@ -183,6 +195,70 @@ impl CanyonPilot {
         self.reverse_until = t + 2.5 + 0.7 * grade;
         self.avoid_until = self.reverse_until + 8.0 + 2.5 * grade;
         self.best_cursor_at = t;
+        // A bypass that ended in a stall is re-chosen (with the side preference flipped).
+        self.bypass = None;
+    }
+
+    /// Knocked-out hulls are the obstruction the authored route cannot know about: the defence
+    /// dies in the hamlet's 20 m street (Canyon v2 seed 29, 2026-10-27: dead T-34s 7, 60 and 100 m
+    /// along the frontage, and the perpendicular detour ladder ran the hull into the houses). A
+    /// dead hull within `HULL_BYPASS_LANE_M` of the travel line in the next `HULL_BYPASS_AHEAD_M`
+    /// is passed on whichever side the street's measured floor grid shows clear for the Tiger's
+    /// width, `HULL_BYPASS_CLEAR_M` from every hull; the choice holds until the hull is behind.
+    /// Route knowledge only: the hulls are where the crew watched them die.
+    fn hull_bypass(&mut self, g: &Game, here: Vec2) -> Option<Vec2> {
+        let n = self.route.len();
+        let a = self.route[self.cursor.min(n - 1)];
+        let b = self.route[(self.cursor + 3).min(n - 1)];
+        let along = (b - a).normalize_or_zero();
+        if along == Vec2::ZERO {
+            return None;
+        }
+        let perp = Vec2::new(-along.y, along.x);
+        let hulls: Vec<Vec2> = g.enemies.iter().enumerate()
+            .filter(|(i, e)| !e.alive && g.enemy_active.get(*i).copied().unwrap_or(true))
+            .map(|(_, e)| Vec2::new(e.pos.x, e.pos.z))
+            .collect();
+        if let Some((hull, carrot)) = self.bypass {
+            if (hull - here).dot(along) > -HULL_BYPASS_BEHIND_M {
+                return Some(carrot);
+            }
+            self.bypass = None;
+        }
+        let blocking = hulls.iter().copied()
+            .filter(|h| {
+                let rel = *h - here;
+                (0.0..HULL_BYPASS_AHEAD_M).contains(&rel.dot(along)) && rel.dot(perp).abs() < HULL_BYPASS_LANE_M
+            })
+            .min_by(|x, y| (*x - here).dot(along).total_cmp(&(*y - here).dot(along)))?;
+        let nav = g.winter_encounter.as_ref().and_then(|w| w.streets()).map(|s| s.nav());
+        let lat = (blocking - here).dot(perp);
+        let ahead = (blocking - here).dot(along);
+        // Pass on the far side of the hull from the travel line; after a stall, try the other first.
+        let mut first = if lat >= 0.0 { -1.0 } else { 1.0 };
+        if self.stuck_count % 2 == 1 {
+            first = -first;
+        }
+        let seg_dist = |p: Vec2, s0: Vec2, s1: Vec2| {
+            let d = s1 - s0;
+            let k = ((p - s0).dot(d) / d.length_squared().max(1e-6)).clamp(0.0, 1.0);
+            p.distance(s0 + d * k)
+        };
+        for side in [first, -first] {
+            for off in [5.0, 6.5, 8.0, 9.5] {
+                let p = here + along * (ahead + 9.0) + perp * (lat + side * off);
+                let start = here.lerp(p, 0.3);
+                let clear_of_hulls = hulls.iter().all(|h| h.distance(p) >= HULL_BYPASS_CLEAR_M
+                    && seg_dist(*h, start, p) >= HULL_BYPASS_CLEAR_M - 1.0);
+                let clear_floor = nav.is_none_or(|nav| [-TIGER_HALF_WIDTH_M, 0.0, TIGER_HALF_WIDTH_M]
+                    .iter().all(|w| nav.segment_clear(start + perp * *w, p + perp * *w)));
+                if clear_of_hulls && clear_floor {
+                    self.bypass = Some((blocking, p));
+                    return Some(p);
+                }
+            }
+        }
+        None
     }
 
     fn look(&mut self, g: &Game, r: &Renderer, target: Vec3, dt: f32, input: &mut TankInput) {
@@ -579,6 +655,14 @@ impl CanyonPilot {
                     self.phase = "detouring";
                 }
             }
+            // A dead hull on the line is passed on clear floor; a run-up never moves one.
+            if t >= self.reverse_until {
+                if let Some(past) = self.hull_bypass(g, here) {
+                    carrot = past;
+                    run_up = false;
+                    self.phase = "bypassing";
+                }
+            }
             let mut input = navigation_input(carrot - here, g.player.heading);
             if run_up && input.drive > 0.0 {
                 input.drive = 1.0;
@@ -616,7 +700,7 @@ impl CanyonPilot {
         if g.mode == Mode::Tank && g.station != Station::Loader {
             (input.drive, input.steer) = g.safe_ai_tiger_drive(input.drive, input.steer);
         }
-        self.was_advancing = matches!(self.phase, "advance" | "backing_off" | "detouring" | "run_up");
+        self.was_advancing = matches!(self.phase, "advance" | "backing_off" | "detouring" | "run_up" | "bypassing");
         // Mirror native primary-click dispatch. Held ammunition is owned by Game::update.
         if input.mg_coax && !self.primary_held {
             let eye = r.camera.pos;

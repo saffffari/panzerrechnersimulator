@@ -93,6 +93,7 @@ def snapshot_line(rec):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("log")
     ap.add_argument("--console")
@@ -210,7 +211,12 @@ def main():
             continue
         fenced.append(gpu.get("fenced_frame_wall_ms") or float("nan"))
         sums.append(gpu.get("pass_sum_ms") or 0.0)
+        # A label can repeat within one frame (12 point-light faces, glare levels, a second
+        # scene render for an optic): sum it per frame first.
+        frame = defaultdict(float)
         for label, ms in gpu.get("passes_ms", []):
+            frame[label] += ms
+        for label, ms in frame.items():
             passes[label].append(ms)
     out["gpu_samples"] = len(sums)
     if sums:

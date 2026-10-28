@@ -56,6 +56,10 @@
 .PARAMETER Binary
   Release executable (default: <CARGO_TARGET_DIR or target>\release\panzerrechnersystem.exe).
 
+.PARAMETER NoVsync
+  Present uncapped (a vsync-off copy of the saved graphics preferences) so frame times show the
+  real headroom rather than the display's refresh interval.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Mode menu -Windowed
@@ -75,7 +79,8 @@ param(
     [string]$Seed,
     [ValidatePattern('^\d+x\d+$')] [string]$InternalRes = '800x450',
     [string]$AssetRoot,
-    [string]$Binary
+    [string]$Binary,
+    [switch]$NoVsync
 )
 $ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility, Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
@@ -149,6 +154,14 @@ if (-not (Test-Path $Config)) {
         }
     }
     [System.IO.File]::WriteAllText($Config, (($initial | ConvertTo-Json -Depth 5) + "`n"))
+}
+if ($NoVsync) {
+    # Uncapped presentation for headroom measurements: a copy of the saved preferences with
+    # vsync off, rewritten each launch so the player's own file keeps its setting.
+    $prefs = Get-Content $Config -Raw | ConvertFrom-Json
+    $prefs.vsync = $false
+    $Config = Join-Path (Split-Path $Config) 'graphics.novsync.v1.json'
+    [System.IO.File]::WriteAllText($Config, (($prefs | ConvertTo-Json -Depth 5) + "`n"))
 }
 
 # --- environment ------------------------------------------------------------------------------

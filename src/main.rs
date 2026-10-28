@@ -14655,7 +14655,7 @@ impl ApplicationHandler for App {
                 }
                 self.last = None;
                 state.ft_last = None;
-                if occluded && state.lan.is_none() && matches!(state.state, AppState::Playing) {
+                if occluded && state.lan.is_none() && state.autopilot.is_none() && matches!(state.state, AppState::Playing) {
                     state.enter_pause();
                     self.keys = Keys::default();
                     self.x_hold = 0.0;
@@ -15177,8 +15177,10 @@ impl ApplicationHandler for App {
                     }
                 }
                 // A solo game pauses on focus loss and stops submitting GPU work while hidden.
-                // Focus/visibility events request a fresh frame; LAN authority keeps ticking.
-                if state.lan.is_none() && (!self.window_focused || self.window_occluded) {
+                // Focus/visibility events request a fresh frame; LAN authority keeps ticking. An
+                // autopilot telemetry run keeps playing unfocused (it reads no keyboard or mouse).
+                let unfocused = !self.window_focused && state.autopilot.is_none();
+                if state.lan.is_none() && (unfocused || self.window_occluded) {
                     self.gamepads.set_haptics_enabled(false);
                     self.mouse_haptics.stop();
                     self.last = None;
