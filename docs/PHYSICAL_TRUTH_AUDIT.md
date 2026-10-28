@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (missions: signal stars, smoke columns, alerts; raymarch backend ledger entry); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -65,6 +65,20 @@ Gates: `raymarch-showcase PREFIX` (16 stills with a JSON receipt; `KESSEL_SHOWCA
 for 18 more across the day and the weather) and `gfxbench` with `KESSEL_GPU_PROFILE=1` on the
 raymarch backend; the shader and physical backends are unchanged and remain the shipping
 defaults until this backend passes the same reviews.
+
+## Missions: signal stars, smoke columns, alerts (2026-10-27, branch `missions`)
+
+`src/mission.rs`, `src/mission_game.rs`, `docs/MISSIONS.md`. The mission's in-world cues are
+things in the world, with these named limits:
+
+| Cue | What it does | Where | Limit |
+| --- | --- | --- | --- |
+| Signal star (flare) | A 26.5 mm star: launched at 46 m/s, gravity to the apex (about 110 m), parachute descent at 3.2 m/s drifting with the ground wind, 24 s burn fading over 3.5 s. One point light with a 90 mm source radius and the star's colour, occluded and scattered like every other light; a 0.42 m emissive grain so the star is not sub-pixel at a kilometre; a launch-smoke thread and a thin thread above the star in the volumetric pool. | `mission::Flare`, `Game::mission_lights`, `mission_smoke`, `drive_mission_flares` | The radiant intensity (900, renderer units) is set by eye, not photometrically; the grain is larger than the star; the parachute is not a drag model (a fixed terminal rate and a bounded approach to the wind). |
+| Smoke column | Three source-connected media supports from the base to the height, leaning downwind by the ratio of wind speed to a 2.2 m/s rise, growing over the first 20 s, fading over the duration. | `Game::mission_smoke` | No flame, no ember light, no heat: a burnt-out vehicle still smouldering. The pool is 12 supports shared with every other plume. |
+| Alert | Unaware platoons within the radius enter the stealth model's own Searching state with the Tiger's current position as the last known area and the model's own 22 s timeout; guns within the radius (field-of-fire factor as `at_guns_hear`) have `heard`. | `Game::mission_alert`, `stealth::AlertState::Searching`, `at_guns_hear` | Grants knowledge the model could have given only by hearing; nothing is aimed, fired or moved by the cue itself. |
+| Release | A platoon through the course director's own entry and siting (`canyon_platoon_site`, `canyon_reinforcement_entry`). | `Game::mission_release_platoon` | None beyond the director's. |
+| Compass bezel | The pocket compass body turns to the ordered bearing; the needle keeps north. | `hand_map::compass_models`, `hand_compass::models` | The body carries the dial and the housing together, so the housing turns with the bezel (a real Marschkompass turns only the ring). |
+| Position estimate | A pencil ring on the map: the true position displaced by an error of 4.5 cm per metre travelled since the last fix (a completed beat), 12 m to 110 m, in a direction fixed per fix. | `MissionState::estimate` | A design value standing in for dead-reckoning error, not a measurement. |
 
 ## Native geometry coverage, 2026-10-01 (consolidated shader renderer)
 

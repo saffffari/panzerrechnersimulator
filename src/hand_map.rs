@@ -142,7 +142,9 @@ pub(super) fn model(camera: &Camera, view: MapView) -> Mat4 {
         * Mat4::from_translation(-Vec3::new(focus.x,focus.y,0.0)*(view.zoom-1.0).clamp(0.0,1.0))
 }
 
-pub(super) fn compass_models(camera: &Camera, view: MapView) -> [Mat4; 2] {
+/// `march_bearing_deg` turns the body (its dial and north mark) to the ordered bearing, as the
+/// Marschkompass bezel is set: walk until the needle lies over the mark and you face the bearing.
+pub(super) fn compass_models(camera: &Camera, view: MapView, march_bearing_deg: Option<f32>) -> [Mat4; 2] {
     // Reuse the exact C-compass pages at their runtime 52.5 mm size, resting on the lower-left
     // fold, clear of the vision-port casing beside the loader's right hand.
     let body = model(camera,view)
@@ -150,7 +152,8 @@ pub(super) fn compass_models(camera: &Camera, view: MapView) -> [Mat4; 2] {
         * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
     let f = camera.forward();
     let heading = crate::world::heading_of(Vec2::new(f.x, f.z));
-    [body, body * Mat4::from_rotation_y(heading.to_radians())]
+    let needle = body * Mat4::from_rotation_y(heading.to_radians());
+    [body * Mat4::from_rotation_y(march_bearing_deg.unwrap_or(0.0).to_radians()), needle]
 }
 
 impl super::Game {
@@ -256,7 +259,7 @@ mod tests {
                 assert!(clip.w > camera.znear);
                 assert!((clip.x / clip.w).abs() < 1.0 && (clip.y / clip.w).abs() < 1.0);
             }
-            let [body, needle] = compass_models(&camera,MapView::default());
+            let [body, needle] = compass_models(&camera,MapView::default(),None);
             assert!(body
                 .to_scale_rotation_translation()
                 .0

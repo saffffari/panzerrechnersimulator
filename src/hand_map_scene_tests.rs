@@ -36,7 +36,7 @@ fn physical_map_overview_and_zoom_preserve_ink_and_depth() -> anyhow::Result<()>
         assert!(game.prepare_held_map(&mut renderer,true));
         assert_eq!(renderer.optic_mask,0.0);
         renderer.ui_reset();
-        crate::ui::draw_held_map_print(&mut renderer,&act,&[],&pencil,&pins,None,0,focus,0.0,false,player);
+        crate::ui::draw_held_map_print(&mut renderer,&act,&[],&pencil,&pins,None,0,focus,0.0,false,player,None);
         renderer.render_held_map_texture(&device,&queue,game.held_map_slot());
         renderer.ui_reset();
         renderer.reset_history();

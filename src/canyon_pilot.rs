@@ -22,6 +22,9 @@ pub struct CanyonPilot {
     avoid_until: f32,
     avoid_side: f32,
     was_advancing: bool,
+    /// Attempts at the lever-and-seat tail of one reload before the pilot drives on with the
+    /// gun unusable (a stalled ritual used to hold the attempt forever).
+    reload_retries: u32,
     pub reloads: u32,
     pub phase: &'static str,
 }
@@ -62,6 +65,7 @@ impl CanyonPilot {
             avoid_until: 0.0,
             avoid_side: -1.0,
             was_advancing: false,
+            reload_retries: 0,
             reloads: 0,
             phase: "approach",
         }
@@ -160,10 +164,25 @@ impl CanyonPilot {
         } else {
             if g.breech_loaded() && g.lever_open < LEVER_OPEN && g.station == Station::Gunner {
                 self.reloads += 1;
+                self.reload_retries = 0;
                 self.reload_at = None;
                 self.mouse_velocity = Vec2::ZERO;
+            } else if self.reload_retries < 3 {
+                // The lever did not close or the seat was not taken: back to the lever (the
+                // ritual from 11 s on: gaze lever, close it, breech, cupola, the gunner's seat).
+                self.reload_retries += 1;
+                self.phase = "reload_retry";
+                println!("[canyon-pilot] reload incomplete at {t:.1}s (loaded {}, lever {:.2}, station {:?}); retry {}",
+                    g.breech_loaded(), g.lever_open, g.station, self.reload_retries);
+                self.reload_at = Some(t - 11.0);
             } else {
+                // Give the attempt back to the road rather than holding it at the breech.
                 self.phase = "reload_stalled";
+                println!("[canyon-pilot] reload abandoned at {t:.1}s (loaded {}, lever {:.2}, station {:?}); driving on",
+                    g.breech_loaded(), g.lever_open, g.station);
+                self.reload_retries = 0;
+                self.reload_at = None;
+                self.mouse_velocity = Vec2::ZERO;
             }
         }
         if let Some(name) = gaze {
@@ -198,7 +217,9 @@ impl CanyonPilot {
             self.reload_at = Some(t);
             self.mouse_velocity = Vec2::ZERO;
             self.reload(g, r, t, dt)
-        } else if let Some((at, gun)) = target {
+        } else if let Some((at, gun)) = target.filter(|_| g.lever_open < LEVER_OPEN) {
+            // Only a gun that can fire is worth stopping for; with the lever still open after an
+            // abandoned reload the pilot drives on rather than standing in the open.
             self.phase = "engage";
             g.commander_outside = false;
             g.request_station(Station::Gunner);

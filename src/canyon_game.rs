@@ -235,6 +235,13 @@ impl Game {
         let mut run = crate::canyon::CanyonRun::new(spec);
         run.director = Some(crate::canyon_director::Director::new(seed, fielded));
         self.canyon_run = Some(run);
+        // The course's mission sheet (docs/MISSIONS.md): orders, beats, cues. Without one the
+        // run plays as before; a broken sheet is reported and the run plays on.
+        match self.enable_mission_from_sheet() {
+            Ok(true) => {}
+            Ok(false) => println!("[mission] no mission sheet for this course"),
+            Err(error) => eprintln!("[mission] sheet refused: {error:#}"),
+        }
         Ok(())
     }
 
@@ -411,6 +418,29 @@ impl Game {
         self.stealth.platoons.push(platoon);
         println!("[canyon-director] {} T-34s enter at {:?}; identities {}..{}; ordinary patrol, no target fix",
             count,positions,first,first+count);
+    }
+
+    /// A mission beat's platoon (src/mission_game.rs): at a knot of the corridor near `fraction`,
+    /// or, without one, through the director's own hidden entry ahead of the Tiger. The same
+    /// siting rules as every other platoon; false when no legal ground was found.
+    pub(super) fn mission_release_platoon(&mut self, count: usize, fraction: Option<f32>, r: &mut Renderer) -> bool {
+        let count = count.clamp(1, stealth::PLATOON_SIZE);
+        let Some(knots) = self.canyon_run.as_ref().map(|run| run.spec.route.len()) else { return false };
+        let site = match fraction {
+            Some(f) => {
+                let centre = ((f.clamp(0.05, 0.95)) * knots as f32) as usize;
+                (0..12).flat_map(|step| [centre + step * 4, centre.saturating_sub(step * 4)])
+                    .filter(|&j| j >= 60 && j + 12 < knots)
+                    .find_map(|j| self.canyon_platoon_site(j, count, None))
+            }
+            None => self.canyon_reinforcement_entry(count, r.camera.pos),
+        };
+        let Some((route, positions)) = site else { return false };
+        self.append_canyon_platoon(route, positions, count, r);
+        if let Some(d) = self.canyon_run.as_mut().and_then(|run| run.director.as_mut()) {
+            if fraction.is_some() { d.total_spawned += count as u32; } else { d.admitted(count); }
+        }
+        true
     }
 
     /// The elapsed time of a completed run, once the Tiger has reached the goal.
