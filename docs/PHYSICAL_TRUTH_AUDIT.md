@@ -1,8 +1,55 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-27 (platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-10-27 (terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Terrain detail, 2026-10-27 (branch `terrain-detail`, docs/TERRAIN_DETAIL.md)
+
+The Canyon v2 ground is the native 4097² Gaea export (1.2207 m; the 1025² grid it replaced was a
+4x downsample) refined on a 0.076 m lattice that physics (`Heightfield::grade_at` ->
+`terrain_relief::Detail::height_at`) and the raymarch backend's CDLOD terrain both evaluate; the
+GPU surface matches the physics surface to 0.25 mm at 4096 probed lattice nodes (the rut atlas
+is half-float on the GPU). Named
+approximations:
+
+- Nothing below 1.22 m exists in the source. Relief octaves 0.31-9.77 m (geometry at the finest
+  level) and 0.15 m (shading normal only) are procedural value noise per ground class, amplitudes
+  declared from field descriptions of snow waves, sastrugi, rubble and frozen ruts, not measured.
+- Snow depth: 0.40 m declared settled cover redistributed by the Winstral maximum upwind slope
+  (100 m reach, linear response, constants declared, not fitted to a 1942 survey); obstacles enter
+  as box envelopes; no transport, sintering or melt over time.
+- Ground class is derived per 1.22 m node from depth, slope, the course centreline and building
+  footprints (rules in the cook), not surveyed.
+- Ruts: tread bands from the hull's lowest 5 cm (as the track map), compaction 0.75 x local
+  depth capped at 0.45 m, berm a quarter; boots 0.5 x depth capped 0.30 m every 0.75 m. A
+  compaction rule, not a snow/soil constitutive solve; geometry and physics read the 12.5 cm map
+  band-limited (3x3 binomial at 0.1 m); stamps are anti-aliased by cell coverage.
+- Craters: cube-root scaling R = k W^(1/3), k 0.8 (frozen soil) to 1.3 (settled snow) m/kg^(1/3),
+  depth 0.4 R, rim 0.12 of depth; filler mass taken as TNT. Not a cratering solve. The wreckage
+  layer's authored scars stay meshes (not carved).
+- Ground material (2026-10-28): the 2.56 m PSX detail tiles are hex-tiled with hashed rotation
+  and offset, high-passed on upload and blended over two octaves; macro albedo/roughness drift
+  follows cooked snow depth, wind exposure and relief with declared shares (+3 %, -4 %, +-1 %),
+  and war dust/soot as value noise. A presentation of texture detail, not a measured BRDF field.
+- LOD: away from the camera the drawn surface omits the finer relief octaves (morph-faded) and
+  samples the lattice coarser; the physics surface keeps them. Bound: the omitted octaves' summed
+  amplitude, <= 1.5 cm within 80 m, <= 5 cm within 160 m, <= 0.45 m (rubble; snow 0.3 m) beyond
+  1.3 km where a pixel at 800x450 spans about 1.8 m. Rendered vertices are exact surface samples
+  at every level.
+- The raster/shader backends still draw the coarse 1025² mesh, now sampled from the detail
+  surface at its nodes; between nodes it departs from the physics surface by the native residual
+  (std 0.16 m, p99 0.41 m) plus relief. Open item; the raymarch backend is the one that draws
+  the physics surface.
+- The physics surface at a few fixed points (renderer track map on the raster path, the authored
+  `crater_scar` decal rims, prop placements re-seated by the ground change under their anchor)
+  is unchanged in kind.
+
+Gates: `terrain-showcase PREFIX` (four viewpoints, day and night, GPU-vs-physics probe, ground
+query cost; `KESSEL_TERRAIN_DETAIL=off` for the coarse grid) and `terrain-bench PREFIX FRAMES`
+(GPU pass timings with/without the terrain, `KESSEL_RM_SKIP=262144` since integration, 8192 on the branch); unit tests
+`terrain_relief::tests`, `terrain_lod::tests`.
+
 
 ## Platoon wingmen, 2026-10-27 (`KESSEL_PLATOON=2`, branch `platoon`)
 

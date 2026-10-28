@@ -391,7 +391,7 @@ mod tests {
         let(parts,_,_,_,_,_,_,_)=tiger_hatches::load_player_tiger()?;
         let lid=crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hatch.glb")?;
         let source=surface_fire::CabinFire::new(&[(0,&parts[0]),(1,&parts[1]),(2,&parts[2]),(6,&lid)]);
-        let hf=Heightfield {res:2,spacing:2000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default()};
+        let hf=Heightfield {res:2,spacing:2000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default(),detail:None};
         for heading in [0.0,1.17] {
             let mut tank=Tank::new(19.0,-32.0,heading,&hf,tank::TIGER_PARTS);
             tank.pitch=0.08;tank.roll=-0.05;tank.turret_yaw=0.61;

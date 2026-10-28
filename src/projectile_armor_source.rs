@@ -88,7 +88,7 @@ mod tests {
     }
     #[test]
     fn swept_source_horizontal_armor_is_not_discarded_and_follows_hull_rotation() {
-        let hf=crate::terrain::Heightfield {res:2,spacing:1000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default()};
+        let hf=crate::terrain::Heightfield {res:2,spacing:1000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default(),detail:None};
         let mut tank=Tank::new(0.0,0.0,0.0,&hf,crate::tank::TIGER_PARTS);
         tank.pos=Vec3::new(12.0,3.0,-7.0);tank.heading=0.71;tank.pitch=0.32;tank.roll=-0.18;
         let mesh=crate::prims::box_mesh(Vec3::new(-1.0,0.0,-2.0),Vec3::new(1.0,2.0,2.0),[100,100,100]);

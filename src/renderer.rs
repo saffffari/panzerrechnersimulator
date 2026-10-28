@@ -27,7 +27,7 @@ pub(crate) mod renderer_weapon_particles;
 pub(crate) mod raymarch;
 
 #[path = "track_ruts.rs"]
-mod track_ruts;
+pub(crate) mod track_ruts;
 
 #[path = "held_map_render.rs"]
 mod held_map_render;
@@ -2728,6 +2728,9 @@ pub struct Renderer {
     track_lookup: wgpu::Texture,
     track_atlas: track_ruts::Atlas,
     track_footprints: HashMap<[u32; 2], track_ruts::Footprint>,
+    /// The detail ground surface (`terrain_relief`), drawn by the raymarch backend's terrain LOD
+    /// in place of the coarse terrain mesh (docs/TERRAIN_DETAIL.md).
+    pub(crate) terrain_detail: Option<crate::terrain_relief::Shared>,
     /// Kept from `new` so the front-end can upload extra meshes after construction (the main-menu
     /// turntable Tiger, `menu_meshes`) reusing the same material bind-group layout.
     material_bgl: wgpu::BindGroupLayout,
@@ -5947,6 +5950,7 @@ impl Renderer {
             track_lookup,
             track_atlas: track_ruts::Atlas::default(),
             track_footprints: HashMap::new(),
+            terrain_detail: None,
             shadow_view,
             shadow_pipe,
             shadow_bind,
@@ -6133,7 +6137,7 @@ impl Renderer {
             optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
-            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, smoke_puffs, breech_gas,
+            track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
             pressure_fronts, heat_sources, ui, held_map_surface);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
@@ -6592,6 +6596,21 @@ impl Renderer {
     /// Compatibility no-op. Dynamic tanks are represented by their exact BLAS/TLAS geometry.
     pub fn set_rt_boxes(&mut self, boxes: &[(glam::Vec3, glam::Vec3, f32)]) {
         let _ = boxes;
+    }
+
+    /// Hand the detail ground surface to the raymarch backend's terrain LOD.
+    pub fn set_terrain_detail(&mut self, detail: Option<crate::terrain_relief::Shared>) {
+        self.terrain_detail = detail;
+    }
+
+    /// The detail terrain LOD's statistics this frame (raymarch backend with a detail surface).
+    pub fn terrain_lod_stats(&self) -> Option<crate::terrain_lod::LodStats> {
+        self.raymarch.as_ref().and_then(|rm| rm.terrain_stats())
+    }
+
+    /// The GPU's own terrain surface at `points` (finest level), for the physics/render check.
+    pub fn probe_terrain(&self, device: &wgpu::Device, queue: &wgpu::Queue, points: &[glam::Vec2]) -> Option<Vec<f32>> {
+        self.raymarch.as_ref().and_then(|rm| rm.terrain_lod()).map(|lod| lod.probe(device, queue, points))
     }
 
     /// Flag mesh `idx` as TERRAIN — it samples the tank-track map (ruts darken + dip-shade it).

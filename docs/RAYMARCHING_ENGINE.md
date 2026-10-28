@@ -727,7 +727,11 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 
 - The cupola periscope eyepieces are glass panes over the periscope housing, not relayed views;
   the raster optic tiles (an offscreen view per periscope) do not run on this backend.
-- Ruts are shading only: the terrain triangles are not displaced, so a rut has no depth in the
+- Track ruts on terrain: on branch `terrain-detail` the ground is the detail surface
+  (docs/TERRAIN_DETAIL.md): ruts, boot prints and craters are geometry in every pass and the
+  terrain LOD replaces the coarse mesh; without a `terrain.detail` block the coarse mesh is still
+  drawn without the renderer's track map.
+- Ruts are shading only on the coarse terrain mesh: its triangles are not displaced, so a rut has no depth in the
   silhouette and casts no shadow of its own. Vehicles sink 0.30 m into the winter snowpack
   (`vehicle_ground::WINTER_TRACK_SINKAGE_M`, sim side), but the snow is not banked against the
   hull or ploughed by the belly.

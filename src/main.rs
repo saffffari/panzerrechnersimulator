@@ -162,6 +162,9 @@ mod tank_support;
 mod track_snow;
 mod tank_dressing;
 mod terrain;
+mod terrain_lod;
+mod terrain_relief;
+mod terrain_showcase;
 mod terrain_opening;
 mod texelsplat;
 mod trees;
@@ -16137,6 +16140,13 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "terrain-bench") {
+        let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(240);
+        return terrain_showcase::bench(&capture_arg(&args, 2, "terrain_bench"), frames);
+    }
+    if args.get(1).is_some_and(|s| s == "terrain-showcase") {
+        return terrain_showcase::run(&capture_arg(&args, 2, "terrain_showcase"));
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-showcase") {
         return raymarch_showcase::run(&capture_arg(&args, 2, "raymarch_showcase"));
     }

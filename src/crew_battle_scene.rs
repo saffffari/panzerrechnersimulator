@@ -199,7 +199,7 @@ mod tests {
             heights: vec![0.0; 4],
             min_h: 0.0,
             max_h: 0.0,
-            openings: Default::default(),
+            openings: Default::default(), detail: None,
         };
         for (range, bearing, turret) in [
             (30.0, 90.0_f32, true),

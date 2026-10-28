@@ -9761,7 +9761,7 @@ impl Game {
         let atmosphere = crate::sound_propagation::Atmosphere::for_season(act.season);
         crate::sound_propagation::set_active_atmosphere(atmosphere);
         crew_physics::set_speed_of_sound_mps(atmosphere.speed_of_sound());
-        let (terrain_mesh, mut hf) = if isolated_tank {
+        let (mut terrain_mesh, mut hf) = if isolated_tank {
             tank_editor_play::flat_floor()
         } else { match &manifest {
             Some(manifest) => terrain::load_authored_grid(
@@ -9779,6 +9779,15 @@ impl Game {
             }
         }};
 
+        // The detail ground (docs/TERRAIN_DETAIL.md): the native-resolution surface with relief,
+        // ruts and craters becomes the heightfield every system reads. Authored placements were
+        // seated on the coarse grid; they keep their offset from the ground (`reseat` below).
+        let authored_grid = hf.heights.clone();
+        let detail_ground = match &manifest {
+            Some(manifest) if !isolated_tank => terrain::attach_manifest_detail(
+                &mut hf, &mut terrain_mesh, manifest, crate::world::weather_wind_profile(act.id).direction)?,
+            _ => false,
+        };
         let mut scene: Vec<CpuMesh> = vec![terrain_mesh];
 
         // Scene-mesh slots of the city's emissive window panes / lamp heads, paired with their glow
@@ -12047,6 +12056,14 @@ impl Game {
             EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
             EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3,
         ]) { renderer.register_track_footprint(tank::parts_for(kind), &prototype[0]); }
+        if let Some(detail) = &hf.detail {
+            detail.register_track_footprint(tank::TIGER_PARTS, &scene[slots.tiger[0]]);
+            for (prototype, kind) in prototypes.iter().zip([
+                EnemyKind::T34, EnemyKind::Su100, EnemyKind::Kv2,
+                EnemyKind::Isu152, EnemyKind::Is2, EnemyKind::Is3,
+            ]) { detail.register_track_footprint(tank::parts_for(kind), &prototype[0]); }
+            renderer.set_terrain_detail(Some(detail.clone()));
+        }
 
         // Physical ammunition casts moving cabin shadows without rebuilding all static armor
         // depth whenever the loader's hand spring moves a shell by a fraction of a millimetre.
@@ -12169,7 +12186,16 @@ impl Game {
         // (occluders, destructibles, window glow) is built independently and survives untouched.
         if let Some(manifest) = &manifest {
             let mpath = manifest.path();
-            let paging = crate::editor::manifest_pages_from(manifest)?;
+            let mut paging = crate::editor::manifest_pages_from(manifest)?;
+            if detail_ground {
+                let (res, spacing) = (hf.res, hf.spacing);
+                for page in paging.prototypes.iter_mut().flat_map(|p| p.pages.iter_mut()) {
+                    for model in &mut page.transforms {
+                        let (x, z) = (model.w_axis.x, model.w_axis.z);
+                        model.w_axis.y += hf.height_at(x, z) - terrain::grid_grade(&authored_grid, res, spacing, x, z);
+                    }
+                }
+            }
             let (manifest_prototypes, manifest_pages, compiled_instances) = paging.stats();
             let buffers_before = renderer.instanced_paging_stats().1;
             for asset in &paging.prototypes {
@@ -16295,6 +16321,16 @@ impl Game {
         if self.player.alive && self.player.speed.abs() > 0.25 {
             r.stamp_tank_tracks(self.player.hull_model(), self.player.parts, 0.28);
         }
+        // The detail ground keeps the same compaction as relief every query reads (terrain_relief).
+        if let Some(detail) = &self.hf.detail {
+            let moving = |t: &Tank| t.alive && t.speed.abs() > 0.25;
+            for t in std::iter::once(&self.player).chain(self.enemies.iter()).chain(self.allies.iter().map(|a| &a.tank)).filter(|t| moving(t)) {
+                detail.stamp_tracks(t.hull_model(), t.parts);
+            }
+            for (i, soldier) in self.soldiers.iter().enumerate().filter(|(_, s)| s.alive) {
+                detail.stamp_walker(1 + i as u64, soldier.pos);
+            }
+        }
         for e in self
             .enemies
             .iter()
@@ -20165,6 +20201,9 @@ impl Game {
             dt,
             &self.hf,
         );
+        if let Some(detail) = self.hf.detail.as_ref().filter(|_| !self.foot.airborne) {
+            detail.stamp_walker(0, self.foot.pos);
+        }
         let story_near = self.story_cover_near_move(previous_foot_pos, self.foot.pos, 0.5);
         self.foot.pos = crate::building_runtime::resolve_walk_xz_against_bounds(
             previous_foot_pos,
@@ -24979,6 +25018,9 @@ impl Game {
                 }
                 if projectile.shell.kind != crate::ballistics::ShellKind::He {
                     self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
+                } else if let (ProjectileContactKind::Terrain, Some(detail)) = (contact.kind, &self.hf.detail) {
+                    // The burst digs its crater in the detail ground (filler taken as TNT).
+                    detail.crater(contact.pos, projectile.shell.filler_g / 1000.0);
                 }
             }
             ProjectileContactKind::RangeLimit => unreachable!("range limit retires before resolve"),
@@ -32287,7 +32329,7 @@ mod tests {
             heights: vec![0.0; 4],
             min_h: 0.0,
             max_h: 0.0,
-            openings: Default::default(),
+            openings: Default::default(), detail: None,
         }
     }
 
@@ -33151,7 +33193,7 @@ mod tests {
 
     #[test]
     fn ai_track_commands_clear_a_parked_t34_with_real_tank_dynamics() {
-        let hf=Heightfield {res:2,spacing:1000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default()};
+        let hf=Heightfield {res:2,spacing:1000.0,heights:vec![0.0;4],min_h:0.0,max_h:0.0,openings:Default::default(),detail:None};
         let mut tiger=Tank::new(0.0,0.0,0.0,&hf,tank::TIGER_PARTS);
         let blocker=Tank::new(0.0,8.0,0.0,&hf,tank::T34_PARTS);
         let obstacle=vehicle_motion(1,&blocker);
@@ -33471,7 +33513,7 @@ mod tests {
             heights: vec![2.0; 4],
             min_h: 2.0,
             max_h: 2.0,
-            openings: Default::default(),
+            openings: Default::default(), detail: None,
         };
         let deck = act2_bridge_deck_height(&hf, Vec2::new(0.0, ACT2_BRIDGE_Z_M))
             .expect("bridge centre has a walkable deck");
