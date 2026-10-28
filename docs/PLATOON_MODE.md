@@ -142,8 +142,10 @@ procedure, 3-14 words, the leader's language, acknowledge in the tank's own word
 from that tank's context, no invented sightings, no chatter or modern slang, `Out.` / `Over.`,
 personality colours word choice not length. Request: `max_tokens` 400, `output_config.effort`
 `low`, `output_config.format` a JSON schema (`addressee`, `order` enum, `target`, `replies[]`),
-one user message = the context JSON plus the transmission. Thinking is left at the model's
-default (adaptive); no prefill, no tools.
+one user message = the context JSON plus the transmission. Thinking is disabled (`thinking:
+{type: "disabled"}`, accepted on Haiku 5.5 at effort `high` or below): a radio call is a small
+classification plus one line, and thinking tokens both slowed the reply and ate the output
+budget in the first live run. `max_tokens` is 800. No prefill, no tools.
 
 Context JSON (`RadioContext::to_json`), all read from the simulation at the moment of keying:
 
@@ -186,9 +188,9 @@ spawn cost is tens of milliseconds against a network round trip of hundreds. Per
 ```
 
 Cost is computed from the response's `usage` at the price table in `radio_llm.rs`
-(Haiku 5.5: $0.10 / $0.50 per MTok). A context of this size is roughly 900-1300 input tokens and
-40-120 output tokens, i.e. about $0.0002 per transmission on Haiku 5.5; Sonnet 5.5 would be
-about $0.004, Opus 5.5 about $0.008. Measured numbers from the proof are in the next section.
+(Haiku 5.5: $0.10 / $0.50 per MTok). Measured: 1,760-2,000 input tokens and 30-130 output tokens
+per transmission, about $0.0002 on Haiku 5.5 (Sonnet 5.5 would be about $0.004, Opus 5.5 about
+$0.008), median latency 1.8 s. Numbers from the live proof are in the verification section.
 
 ## What was verified
 
@@ -216,14 +218,37 @@ no `ANTHROPIC_API_KEY`):
 | Captures | `captures/platoon_proof_20261027_t{002,030,070,110,160}.png` and `_final.png` (exterior chase view with the radio log drawn on the still), `_radio.jsonl`, `_trace.jsonl`, `_result.json` |
 | Wall time | 131 s for 200 simulated seconds |
 
-Caveats of this run: the rule-based leader pilot stalled after its first engagement (from t=30 s), so
+Caveat of this run: the rule-based leader pilot stalled after its first engagement (from t=30 s), so
 formation following under movement is only evidenced for the first 30 s and in the recoveries
-after orders. The **live model path was not exercised**: no key is present on this machine
-(process, user and machine environment all unset), so every call went through the offline
-parser. The live path is wired end to end (request body, structured output, validation, timeout
-and refusal fallback) but its latency and cost are estimates (table above) until a run with
-`ANTHROPIC_API_KEY` set prints the `path=llm ... latency= ... cost=` lines; `platoon-proof` will
-record them in `_result.json` (`radio.latency_ms_median`, `radio.cost_usd`) with no code change.
+after orders.
+
+### Live model run (same script, `ANTHROPIC_API_KEY` set, `claude-haiku-5-5`)
+
+`platoon-proof platoon_proof_live_20261027 29 200`, 2026-10-27, after the request was tuned
+(thinking disabled, `max_tokens` 800):
+
+| Item | Measured |
+|---|---|
+| Transmissions / answered by the model | 14 / 14 (no fallback) |
+| Latency per call | median 1.77 s, min 1.16 s, max 3.94 s |
+| Tokens per call | 1,760-2,000 in, 29-127 out |
+| Cost per call | $0.00019-0.00025 (Haiku 5.5 list price); $0.0031 for the whole run |
+| Orders recognised | all 11; `advance to the next waypoint` resolved to `marker Wegpunkt 49` from the context, `Hartmann, how are you?` was classed `none` (the offline parser calls it `report_status`) |
+| Replies | period register in the leader's language, personality visible (Berta: "flanking right, moving out", "eager for target"; Anton: terse counts), facts only from the context |
+
+Three request-shape lessons, all now in the code: (1) with adaptive thinking left on, Haiku's
+thinking tokens counted against a 400-token `max_tokens` and roughly a third of the replies came
+back truncated (`bad_output_json: EOF ...`) or as a thinking block with no text; thinking is now
+disabled for the radio and `max_tokens` is 800, after which 14/14 calls succeeded. (2) The model
+sometimes returns a correct order with an empty `replies` array (4 of 14 calls, 29-33 output
+tokens); the validator now fills a missing acknowledgement for every addressed living tank from
+the offline templates and logs `filled n missing acknowledgement(s)`. (3) The API error message is
+part of the fallback reason in the log, so a rejected request shape is diagnosable from the log
+alone.
+
+The first two live attempts were also useful as fallback proofs: a placeholder key gave HTTP 401
+and a key pasted with masked bullet characters gave an empty HTTP 400 from the edge; in both
+cases all 14 transmissions were answered by the offline parser in about 200 ms each.
 
 Headless note: the proof's exterior stills run raster-only because the renderer's RT surface
 pack panics on a degenerate instanced transform (`RT batch 4798 instance 703 ... transform is

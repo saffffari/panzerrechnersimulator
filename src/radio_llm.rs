@@ -568,7 +568,7 @@ pub fn system_prompt() -> String {
     s.push_str("- none: the transmission is not an order (acknowledgement, chatter, unclear). Addressed tanks still answer: ask the leader to say again, or acknowledge.\n\n");
     s.push_str("TARGET: \"\" when none; \"bearing N\" (compass degrees, 0 = north, clockwise; convert clock positions using the leader's heading: 12 o'clock = leader heading); \"contact <label>\" where <label> is EXACTLY a contact label from the context; \"marker <name>\" EXACTLY from context markers; or \"left\" / \"right\" / \"front\" / \"rear\". Never invent a contact or marker.\n");
     s.push_str("ADDRESSEE: \"all\" or one exact callsign. A transmission naming no tank addresses all.\n\n");
-    s.push_str("REPLIES: one entry per addressed tank that is alive (dead tanks do not answer). Period tank radio procedure, not conversation: 3 to 14 words, in the language the leader used, acknowledge the order in the tank's own words, state only facts in that tank's context (ammunition, damage, dead crew, contacts with bearing and range). ");
+    s.push_str("REPLIES: exactly one entry per addressed tank that is alive (dead tanks do not answer); an empty replies array is wrong whenever an addressed tank is alive. Use the exact callsign from the context. Period tank radio procedure, not conversation: 3 to 14 words, in the language the leader used, acknowledge the order in the tank's own words, state only facts in that tank's context (ammunition, damage, dead crew, contacts with bearing and range). ");
     s.push_str("No invented sightings, no chatter, no modern slang, no humour. End with \"Out.\" when nothing more is expected, \"Over.\" when the leader must answer. Let the one-line personality colour word choice slightly, never length. ");
     s.push_str("A report_status reply names rounds, damage and crew; a spot reply names contacts or says no contact.\n");
     s
@@ -607,8 +607,11 @@ pub fn request_body(model: &str, text: &str, ctx: &RadioContext) -> Value {
     );
     json!({
         "model": model,
-        "max_tokens": 400,
+        "max_tokens": 800,
         "system": system_prompt(),
+        // No extended thinking: a radio call is a small classification plus one line, and the
+        // thinking tokens would both slow the reply and count against max_tokens.
+        "thinking": {"type": "disabled"},
         "output_config": {"effort": "low", "format": {"type": "json_schema", "schema": output_schema()}},
         "messages": [{"role": "user", "content": user}],
     })
@@ -664,7 +667,10 @@ fn call_llm(cfg: &RadioConfig, text: &str, ctx: &RadioContext) -> Result<LlmOk, 
         if code != "200" {
             let v: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
             let kind = v["error"]["type"].as_str().unwrap_or("unknown");
-            return Err(format!("http_{code}:{kind}"));
+            // The message is part of the reason so a rejected request shape shows up in the log.
+            let message: String = v["error"]["message"].as_str().unwrap_or("").chars().take(120).collect();
+            let message = message.replace(['\n', '\r', ' '], "_");
+            return Err(if message.is_empty() { format!("http_{code}:{kind}") } else { format!("http_{code}:{kind}:{message}") });
         }
         let v: Value = serde_json::from_str(payload).map_err(|e| format!("bad_json:{e}"))?;
         parse_llm_response(&v, ctx)
@@ -679,6 +685,9 @@ pub fn parse_llm_response(v: &Value, ctx: &RadioContext) -> Result<LlmOk, String
     let stop = v["stop_reason"].as_str().unwrap_or("");
     if stop == "refusal" {
         return Err("refusal".into());
+    }
+    if stop == "max_tokens" {
+        return Err("max_tokens".into());
     }
     let text = v["content"]
         .as_array()
@@ -720,8 +729,12 @@ pub fn validate_output(parsed: &Value, ctx: &RadioContext) -> Result<(Option<Rad
         for r in items {
             let cs = r["callsign"].as_str().unwrap_or("").trim();
             let text = r["text"].as_str().unwrap_or("").trim();
-            let Some(w) = ctx.wingmen.iter().find(|w| w.callsign.eq_ignore_ascii_case(cs)) else { continue };
+            let Some(w) = ctx.wingmen.iter().find(|w| w.callsign.eq_ignore_ascii_case(cs)) else {
+                println!("[radio] dropped reply: unknown callsign \"{cs}\"");
+                continue;
+            };
             if !w.alive || text.is_empty() || !addressee.includes(&w.callsign) {
+                println!("[radio] dropped reply from {}: alive={} empty={} addressed={}", w.callsign, w.alive, text.is_empty(), addressee.includes(&w.callsign));
                 continue;
             }
             let mut text = text.to_string();
@@ -730,6 +743,23 @@ pub fn validate_output(parsed: &Value, ctx: &RadioContext) -> Result<(Option<Rad
             }
             replies.push(RadioReply { callsign: w.callsign.clone(), text });
         }
+    }
+    // The model sometimes returns an order with an empty reply list. A living, addressed tank
+    // always acknowledges on the net, so fill the gap from the templates and say so in the log.
+    let mut filled = 0;
+    for w in &ctx.wingmen {
+        if !w.alive || !addressee.includes(&w.callsign) || replies.iter().any(|r| r.callsign == w.callsign) {
+            continue;
+        }
+        let text = match &order {
+            Some(o) => compose_reply_offline(o, w),
+            None => "Say again, over.".to_string(),
+        };
+        replies.push(RadioReply { callsign: w.callsign.clone(), text });
+        filled += 1;
+    }
+    if filled > 0 {
+        println!("[radio] filled {filled} missing acknowledgement(s) from the templates");
     }
     Ok((order, replies))
 }
