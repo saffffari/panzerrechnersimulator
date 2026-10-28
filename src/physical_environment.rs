@@ -61,6 +61,10 @@ pub struct AtmosphereParameters {
     /// sin(latitude), cos(latitude), local apparent sidereal radians, enabled.
     /// Stars are a deterministic illustrative field, not a surveyed star catalogue.
     pub star_frame: [f64;4],
+    /// Upward diffuse spectral flux under the cloud base from sources below it (the cauldron's
+    /// fires: `KESSEL_FIRE_GLOW_FLUX`); the cloud returns its diffuse reflectance of it to the
+    /// ground. Zero means none.
+    pub ground_glow_flux: DVec3,
 }
 
 /// Moonless zenith night sky at sunspot minimum, as measured at La Palma (Benn & Ellison 1998:
@@ -71,6 +75,23 @@ pub struct AtmosphereParameters {
 pub const NIGHT_SKY_ZENITH_RADIANCE: DVec3 = DVec3::new(3.4e-9 / 0.9, 2.7e-9 / 0.9, 2.3e-9 / 0.9);
 /// Height of the airglow layer, m (research section 2.4).
 pub const AIRGLOW_LAYER_ALTITUDE_M: f64 = 90_000.0;
+/// The Stalingrad cauldron's fire glow (named in docs/PHYSICAL_TRUTH_AUDIT.md): the upward diffuse
+/// flux under the cloud deck from the burning city, villages, vehicles and dumps across the pocket,
+/// renderer irradiance in the three bands. A 1900 K Planck spectrum at the bands' 680, 550 and
+/// 440 nm, (1, 0.21, 0.02), at 1.2e-3 lx photopic: an estimate, not a measurement, set so the
+/// overcast moonless night is lit by the glow the cloud returns, about 1e-3 lx on the snow; to
+/// the rods, weak in its red, some four fifths of the clear moonless sky (about 7e-4 lx of
+/// bluer light). A clear sky lets it escape; only the cloud's diffuse reflectance brings it
+/// down. Without it an overcast moonless night is airglow through fifty optical depths of cloud,
+/// about 1e-4 lx, and the gunner's sight black (2026-10-28).
+pub const KESSEL_FIRE_GLOW_FLUX: DVec3 = DVec3::new(
+    KESSEL_FIRE_GLOW_LUX / KESSEL_FIRE_GLOW_LUX_PER_UNIT,
+    0.21 * KESSEL_FIRE_GLOW_LUX / KESSEL_FIRE_GLOW_LUX_PER_UNIT,
+    0.02 * KESSEL_FIRE_GLOW_LUX / KESSEL_FIRE_GLOW_LUX_PER_UNIT,
+);
+const KESSEL_FIRE_GLOW_LUX: f64 = 1.2e-3;
+/// Photopic lux of the glow's spectrum per unit of its first band (observer::PHOTOPIC_WEIGHTS).
+const KESSEL_FIRE_GLOW_LUX_PER_UNIT: f64 = 12458.6 + 0.21 * 52558.9 + 0.02 * 7965.8;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CloudLayerParameters {
@@ -123,6 +144,7 @@ impl Default for AtmosphereParameters {
             airglow_zenith_radiance: NIGHT_SKY_ZENITH_RADIANCE,
             airglow_layer_altitude_m: AIRGLOW_LAYER_ALTITUDE_M,
             cloud_offset_m: DVec3::ZERO, cloud_evolution_s: 0.0, star_frame:[0.0;4],
+            ground_glow_flux: DVec3::ZERO,
             cloud: CloudLayerParameters {
                 bottom_altitude_m: 900.0,
                 top_altitude_m: 2_200.0,
@@ -1003,6 +1025,8 @@ fn cloud_diffuse_boundary(
     // The emitting night-sky layer is a diffuse source above the cloud.
     lower_flux += airglow_hemispheric_flux(atmosphere, atmosphere.cloud.top_altitude_m)
         * cloud_diffuse.transmittance;
+    // The fires' upward glow under the cloud, returned by the cloud's diffuse reflectance.
+    lower_flux += atmosphere.ground_glow_flux.max(DVec3::ZERO) * cloud_diffuse.reflectance;
     if lower_flux.max_element() <= 0.0 {
         return CloudDiffuseBoundary {
             handled_cloud_scattering: true,
@@ -1291,6 +1315,8 @@ pub struct GpuPhysicalEnvironment {
     pub airglow_zenith_altitude: [f32; 4],
     pub cloud_motion: [f32;4],
     pub star_frame: [f32;4],
+    /// Upward diffuse flux under the cloud base from below (xyz); w unused.
+    pub ground_glow: [f32;4],
 }
 
 impl GpuPhysicalEnvironment {
@@ -1374,6 +1400,12 @@ impl GpuPhysicalEnvironment {
                 atmosphere.airglow_zenith_radiance.y as f32,
                 atmosphere.airglow_zenith_radiance.z as f32,
                 atmosphere.airglow_layer_altitude_m as f32,
+            ],
+            ground_glow: [
+                atmosphere.ground_glow_flux.x as f32,
+                atmosphere.ground_glow_flux.y as f32,
+                atmosphere.ground_glow_flux.z as f32,
+                0.0,
             ],
         }
     }
@@ -1939,7 +1971,7 @@ mod tests {
 
     #[test]
     fn gpu_abis_are_whole_sixteen_byte_lanes() {
-        assert_eq!(std::mem::size_of::<GpuPhysicalEnvironment>(), 240);
+        assert_eq!(std::mem::size_of::<GpuPhysicalEnvironment>(), 256);
         assert_eq!(std::mem::align_of::<GpuPhysicalEnvironment>(), 16);
         assert_eq!(std::mem::size_of::<GpuPhysicalSnowField>(), 80);
         assert_eq!(std::mem::align_of::<GpuPhysicalSnowField>(), 16);

@@ -150,7 +150,7 @@ fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
     assert_eq!(layout(&smoke,"Smoke"),layout(&old,"Smoke"));
     assert_eq!(layout(&smoke,"Smoke").0,1840+384);
     assert_eq!(layout(&smoke,"PhysicalEnvironment"),layout(&sky,"PhysicalEnvironment"));
-    assert_eq!(layout(&smoke,"PhysicalEnvironment").0,240);
+    assert_eq!(layout(&smoke,"PhysicalEnvironment").0,256);
     assert_eq!(layout(&smoke,"EnvironmentProbe").0,68*16);
 }
 

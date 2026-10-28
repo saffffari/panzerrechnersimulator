@@ -1043,7 +1043,10 @@ struct ExposureClockUniform {
     aspect: f32,
     monocular: f32,
     transient_source: f32,
-    _pad: [f32;3],
+    /// The veil of point sources drawn after the meter, photopic and scotopic cd/m^2
+    /// (`exposure.wgsl` veil_photopic/veil_scotopic; the raymarch backend's tracers).
+    point_veil: [f32;2],
+    _pad: f32,
 }
 
 /// The WGSL clock is eight scalar lanes. Keep this assertion beside the host declaration so a
@@ -1510,6 +1513,8 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
+    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage.
+    lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
     snow_vehicle: bool,
     /// A clear cover over an instrument dial (`mark_instrument_cover`).
@@ -2892,6 +2897,8 @@ pub struct Renderer {
     /// Ray-visible pools with unchanged live counts have stable TLAS ranges and can rewrite only
     /// their small reserved ranges between full static-tail updates.
     rt_moving_batches_dirty: bool,
+    /// gfxbench: this frame's CPU ms for the TLAS rewrite, `encoder.finish` and `submit`.
+    pub bench_cpu_ms: [f32; 3],
     /// One stable TLAS range start per instanced batch (`None` for non-RT batches). Recomputed only
     /// when topology/capacity changes; moving-pool live counts never invalidate it.
     rt_batch_slot_offsets: Vec<Option<u32>>,
@@ -3571,6 +3578,7 @@ fn make_mesh_gpu(
         emissive: 0.0,
         emissive_win: false,
         emissive_own: false,
+        lamp_lens: 0,
         snow_vehicle: false,
         instrument_cover: false,
         painted_steel: false,
@@ -5255,7 +5263,8 @@ impl Renderer {
                 aspect: 16.0 / 9.0,
                 monocular: 0.0,
                 transient_source: 0.0,
-                _pad: [0.0;3],
+                point_veil: [0.0;2],
+                _pad: 0.0,
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -5873,7 +5882,7 @@ impl Renderer {
         persist_physical_pipeline_cache(pipeline_cache.as_ref(), pipeline_cache_path.as_deref());
 
         let raymarch = crate::graphics::raymarch_backend_enabled()
-            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih, rt_scene));
+            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih, rt_scene, &cabin_medium_view));
         Self {
             // Standard stays at the playtested 0.7; [ ] still dials continuously in-game, while
             // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.
@@ -6125,6 +6134,7 @@ impl Renderer {
             rt_prev_count: 0,
             rt_batches_dirty: true,
             rt_moving_batches_dirty: false,
+            bench_cpu_ms: [0.0; 3],
             rt_batch_slot_offsets: Vec::new(),
             rt_surface_gpu: None,
             rt_surface_dirty: rt_on,
@@ -6558,6 +6568,13 @@ impl Renderer {
     pub fn mark_instrument_cover(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.instrument_cover = true;
+        }
+    }
+    /// Flag own-colour emissive mesh `idx` as a lamp: the raymarch G-buffer draws each face as a
+    /// round lens in a dark bezel (`rm_gbuffer.wgsl` `lamp_lens`), behind a wire cage if `caged`.
+    pub fn mark_lamp_lens(&mut self, idx: usize, caged: bool) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.lamp_lens = if caged { 2 } else { 1 };
         }
     }
     /// Flag mesh `idx` as an OWN-COLOUR emissive that is NOT night-gated: a warm interior bulb or a
@@ -8063,7 +8080,8 @@ impl Renderer {
                 // The gunner's TZF is one eye at a sight; every other view is both eyes.
                 monocular: if (self.optic_mask - 1.0).abs() < 0.5 { 1.0 } else { 0.0 },
                 transient_source: if self.observer_flash_source {1.0}else{0.0},
-                _pad: [0.0;3],
+                point_veil: [0.0;2],
+                _pad: 0.0,
             }),
         );
 
@@ -8097,6 +8115,8 @@ impl Renderer {
         let sidereal = (crate::ephemeris::apparent_sidereal_time_deg(self.sky_clock.now())
             + self.sky_clock.site.longitude_deg_east).to_radians();
         physical_environment.star_frame = [latitude.sin(),latitude.cos(),sidereal,1.0];
+        // The cauldron's fires under the cloud deck (named in the physical truth audit).
+        physical_environment.ground_glow_flux = physical_environment::KESSEL_FIRE_GLOW_FLUX;
         // The ephemeris supplies both bodies: the key carries the direct beam along `sun_dir`
         // (diagnostic fixtures may stage that direction), the secondary lights only air and
         // cloud. Night is whatever these give: no floor, no fraction of the Sun.
@@ -8168,6 +8188,8 @@ impl Renderer {
                 sf.prepare(self, rm.shadow_views(), device, queue);
                 self.scatter_field = Some(sf);
             }
+            // The tracers' veil for the eye's meter (the clock's lanes 5 and 6).
+            queue.write_buffer(&self.exp_clock_buf, 20, bytemuck::cast_slice(&rm.point_veil));
             self.raymarch = Some(rm);
         }
 
@@ -10121,10 +10143,19 @@ impl Renderer {
             label: Some("bench-frame"),
         });
         self.flush_track_stamps(device, &mut encoder);
+        let rt_started = std::time::Instant::now();
         self.rt_update(device, &mut encoder);
+        let rt_ms = rt_started.elapsed().as_secs_f32() * 1000.0;
         self.accum_prepare(device, queue);
         self.render_internal(&mut encoder, true);
-        queue.submit([encoder.finish()]);
+        let finish_started = std::time::Instant::now();
+        let commands = encoder.finish();
+        let finish_ms = finish_started.elapsed().as_secs_f32() * 1000.0;
+        let submit_started = std::time::Instant::now();
+        queue.submit([commands]);
+        // The CPU side of the frame the GPU pass timings cannot see: the TLAS rewrite and its
+        // build's per-instance work inside wgpu (at record, finish and submit), for gfxbench.
+        self.bench_cpu_ms = [rt_ms, finish_ms, submit_started.elapsed().as_secs_f32() * 1000.0];
     }
 
     /// Dump the just-completed active view's actual lighting targets without rendering, changing

@@ -110,6 +110,27 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
 // it. Masks are noise in the mesh's own frame (they ride the hull and turret). Worn edges and
 // cavity grime need neighbours and are drawn in the shade pass. Named approximation: procedural
 // masks scaled by whole-vehicle loads, not painted or simulated wear.
+// The crew compartment's air (cabin_medium.rs; as rm_visibility.wgsl rm_cabin_domain): a surface
+// belongs to the cabin when the point 3 cm off its visible side lies in that air (gb_in_cabin, set
+// once per fragment). The former test, a face turned toward the compartment's centre, read every
+// upward face above that centre (the breech's top, the turret ring, bins at shoulder height) as
+// the outside: whitewashed and grey instead of ivory and grimed (2026-10-28).
+@group(0) @binding(5) var gb_cabin_columns: texture_2d_array<f32>;
+var<private> gb_in_cabin: bool;
+fn gb_cabin_air(point: vec3<f32>) -> bool {
+    for (var domain = 0u; domain < 3u; domain += 1u) {
+        let grid = fr.cabin_air.grid_min_step[domain];
+        let size = fr.cabin_air.grid_size[domain];
+        if (grid.w < 0.5 || any(point < fr.cabin_air.bounds_min[domain].xyz) || any(point > fr.cabin_air.bounds_max[domain].xyz)) { continue; }
+        let p = (fr.cabin_air.world_to_local[domain] * vec4(point, 1.0)).xyz;
+        let cell = vec2<i32>(floor((p.xz - grid.xy) / grid.z));
+        if (any(cell < vec2(0)) || any(cell >= vec2<i32>(size.xy))) { continue; }
+        let interval = textureLoad(gb_cabin_columns, cell, i32(size.z), 0).xy;
+        if (interval.y > interval.x && p.y >= interval.x && p.y <= interval.y) { return true; }
+    }
+    return false;
+}
+
 // `metal`: the share of bare steel the wear exposes (scratches through the paint).
 struct Worn { albedo: vec3<f32>, roughness: f32, metal: f32 };
 
@@ -117,16 +138,67 @@ struct Worn { albedo: vec3<f32>, roughness: f32, metal: f32 };
 // covers most of the Tiger's hull and turret, inside and out, so the whole crew compartment read as
 // bare dark metal (2026-10-28: "tank interior too metallic"). On the player's painted-steel meshes
 // (pc.extra.z, the hull and turret; the gun's machined parts are their own mesh) it is paint: the
-// crew compartment in the owner's muted gunmetal (`Interior Paint`, sRGB 104/110/118, satin), the
+// crew compartment in ivory (`Interior Paint`, Elfenbein RAL 1001, sRGB 205/186/136, satin), the
 // outside in the hull's grey (so the winter coat still finds it). Bare steel appears only where wear
 // cuts through (`apply_wear` scratches, the shade pass's worn edges).
 const RM_SOURCE_METAL: vec3<f32> = vec3<f32>(0.09, 0.09, 0.09);
-const RM_INTERIOR_PAINT: vec3<f32> = vec3<f32>(0.1384, 0.1559, 0.1811);
+const RM_INTERIOR_PAINT: vec3<f32> = vec3<f32>(0.6105, 0.4910, 0.2462);
 fn paint_source_metal(albedo: vec3<f32>, metallic: f32, world: vec3<f32>, face: vec3<f32>) -> vec4<f32> {
     if (pc.extra.z < 0.5 || metallic < 0.5 || any(abs(albedo - RM_SOURCE_METAL) > vec3(0.012))) { return vec4(albedo, -1.0); }
-    let to_cabin = fr.vehicle.xyz - world;
-    let inside = length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0;
-    return vec4(select(RM_TIGER_PAINT, RM_INTERIOR_PAINT, inside), select(0.75, 0.62, inside));
+    let inside = gb_in_cabin;
+    return vec4(select(RM_TIGER_PAINT, RM_INTERIOR_PAINT, inside), select(0.75, 0.70, inside));
+}
+
+// The crew compartment's dirt (2026-10-28, "metal looks too new, should have more dirt and grime"),
+// at the interior grime load (fr.wear.x, surface_wear.rs): dust settled on what faces up, oil and
+// grease low down and on bare steel (darker and glossier), propellant soot on the roof and upper
+// walls, and an all-over dulling; broken up in the mesh's own frame so the dirt rides the tank.
+// Edges worn bright stay to the shade pass. An authored mask, not accumulated per face.
+fn cabin_grime(albedo: vec3<f32>, roughness: f32, metallic: f32, world: vec3<f32>, n: vec3<f32>, local: vec3<f32>) -> Worn {
+    let load = clamp(fr.wear.x, 0.0, 1.0);
+    if (load <= 0.0) { return Worn(albedo, roughness, metallic); }
+    // 0 at the compartment's middle height, 1 a metre and more below it (the floor and the hull).
+    let low = clamp((fr.vehicle.y - world.y) / 1.0, 0.0, 1.0);
+    let blotch = rm_fbm(local * 2.3, 61u);
+    let fine = rm_noise(local * 11.0, 67u);
+    let dust = smoothstep(0.45, 0.95, n.y) * smoothstep(0.25, 0.70, blotch * 0.7 + fine * 0.3) * load;
+    let oil = smoothstep(0.52, 0.78, rm_fbm(local * 1.7 + vec3(5.1, 0.0, 2.3), 71u))
+        * mix(0.3, 1.0, low) * mix(0.55, 1.0, metallic) * load;
+    let soot = smoothstep(0.1, 0.8, -n.y + 0.4 * (1.0 - low)) * (0.45 + 0.55 * blotch) * load;
+    var a = albedo * mix(1.0, 0.80, load);
+    var r = mix(roughness, max(roughness, 0.55), load * 0.6);
+    var m = metallic;
+    a = mix(a, a * vec3(0.50, 0.48, 0.45), soot * 0.85);
+    a = mix(a, vec3(0.045, 0.038, 0.030), oil * 0.8);
+    r = mix(r, 0.30, oil * 0.8);
+    a = mix(a, vec3(0.30, 0.27, 0.22), dust * 0.85);
+    r = mix(r, 0.95, dust);
+    m = m * (1.0 - dust);
+    return Worn(a, r, m);
+}
+
+// The cabin's lamps (Renderer::mark_lamp_lens, pc.extra.w 1, or 2 for the dome lamp behind its
+// wire cage): each face of the fixture's cube is a round lens in a dark bezel, its core hotter and
+// whiter than its rim, with a glint where the filament shows in the glass (2026-10-28, "lights ...
+// read as just flat full-bright colour instead of a physical 3D shape emitting light"). The lens
+// carries the face's whole emission (2.67 x its mean profile), so the transported light is
+// unchanged. Returns the emission in rgb; a negative alpha marks bezel and cage (housing steel).
+fn lamp_lens(local: vec3<f32>, base: vec3<f32>, caged: bool) -> vec4<f32> {
+    let a = abs(local);
+    var uv = local.xy;
+    var h = a.z;
+    if (a.x >= a.y && a.x >= a.z) { uv = local.yz; h = a.x; } else if (a.y >= a.z) { uv = local.xz; h = a.y; }
+    uv = uv / max(h, 1e-5);
+    let rho = length(uv) / 0.78;
+    if (rho >= 1.0) { return vec4(0.0, 0.0, 0.0, -1.0); }
+    if (caged && (abs(uv.x) < 0.07 || abs(uv.y) < 0.07 || abs(rho - 0.62) < 0.06)) { return vec4(0.0, 0.0, 0.0, -1.0); }
+    let core = exp(-(rho / 0.42) * (rho / 0.42));
+    let peak = max(base.r, max(base.g, base.b));
+    var e = base * 2.67 * (0.45 + 1.9 * core);
+    e = mix(e, vec3(peak) * 2.67 * (0.45 + 1.9 * core), 0.5 * core);
+    let glint = exp(-dot(uv - vec2(0.30, 0.32), uv - vec2(0.30, 0.32)) / 0.006);
+    e += vec3(peak) * 2.5 * glint;
+    return vec4(e, 1.0);
 }
 // Winter whitewash (2026-10-28): the crews' washable white coat, brushed over the grey in the
 // field. It lies only on the exterior paint (tank::tiger_paint_finish's exact swatch, sRGB 72/74/78:
@@ -138,8 +210,7 @@ const RM_TIGER_PAINT: vec3<f32> = vec3<f32>(0.0648, 0.0685, 0.0762);
 fn apply_whitewash(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>, face: vec3<f32>, local: vec3<f32>) -> Worn {
     let coat = clamp(fr.livery.x, 0.0, 1.0);
     if (coat <= 0.0 || any(abs(albedo - RM_TIGER_PAINT) > vec3(0.006))) { return Worn(albedo, roughness, 0.0); }
-    let to_cabin = fr.vehicle.xyz - world;
-    if (length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0) { return Worn(albedo, roughness, 0.0); }
+    if (gb_in_cabin) { return Worn(albedo, roughness, 0.0); }
     let up = smoothstep(0.3, 0.85, n.y);
     // Brush coverage: broad passes with the grey showing where the brush ran dry.
     let passes = rm_fbm(vec3(local.x * 1.3 + local.y * 0.4, local.y * 2.2, local.z * 1.3 - local.y * 0.3), 251u);
@@ -163,8 +234,7 @@ fn apply_whitewash(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<
 fn apply_wear(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>, face: vec3<f32>, local: vec3<f32>) -> Worn {
     var a = albedo;
     var r = roughness;
-    let to_cabin = fr.vehicle.xyz - world;
-    let inside = select(0.0, 1.0, length(to_cabin) < fr.vehicle.w && dot(face, to_cabin) > 0.0);
+    let inside = select(0.0, 1.0, gb_in_cabin);
     let dy = world.y - fr.vehicle.y;
     let mech = clamp(fr.wear.w, 0.0, 1.0);
     let interior_grime = clamp(fr.wear.x, 0.0, 1.0);
@@ -229,11 +299,18 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     var n = normalize(in.normal);
     let view = normalize(-in.relative);
     if (dot(n, view) < 0.0) { n = -n; }
+    gb_in_cabin = gb_cabin_air(in.relative + fr.cam_pos.xyz + n * 0.03);
     let x = pc.params.x;
+    var housing = false;
     if (x > 0.0) {
         var glow = vec3(0.0);
         if (kind > 1.5 && kind < 2.5) {
             glow = raw.rgb * x + raw.rgb * max(x - 3.0, 0.0) * 0.15;
+            if (pc.extra.w > 0.5) {
+                let lens = lamp_lens(in.local, glow, pc.extra.w > 1.5);
+                housing = lens.w < 0.0;
+                glow = select(lens.rgb, vec3(0.0), housing);
+            }
         } else if (kind > 0.5 && kind < 1.5) {
             glow = (raw.rgb * x + raw.rgb * max(x - 3.0, 0.0) * 0.18) * clamp(fr.sun_dir.w, 0.0, 1.0);
         } else if (kind < 0.5) {
@@ -260,6 +337,12 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     var roughness = clamp(mr.g * pc.params.z, 0.08, 1.0);
     var metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
     var albedo = raw.rgb;
+    if (housing) {
+        // A lamp's bezel and cage: dark, worn steel, lit by the cabin like any fitting.
+        albedo = vec3(0.06, 0.058, 0.055);
+        roughness = 0.45;
+        metallic = 0.8;
+    }
     if (kind > 2.5 && kind < 3.5) {
         // The campaign terrain material (snow cover, substrate, detail layers), shared with
         // the shader backend so both read the same authored ground.
@@ -288,6 +371,13 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
             n = normalize(n + vec3(gx, 0.0, gz) * 1.2);
         }
     }
+    if (kind < 0.5 && gb_in_cabin && all(abs(albedo - RM_TIGER_PAINT) < vec3(0.006))) {
+        // The exterior's Panzergrau carried onto the cabin's side of an exterior-painted part (the
+        // cupola's ring, the hatches): that side was ivory like the rest of the compartment.
+        albedo = RM_INTERIOR_PAINT;
+        roughness = 0.70;
+        metallic = 0.0;
+    }
     if (kind < 0.5 && pc.extra.y > 0.5) {
         let painted = paint_source_metal(albedo, metallic, in.relative + fr.cam_pos.xyz, normalize(in.normal));
         if (painted.w >= 0.0) {
@@ -302,6 +392,13 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         albedo = worn.albedo;
         roughness = worn.roughness;
         metallic = max(metallic, worn.metal);
+        // The crew compartment's faces.
+        if (gb_in_cabin) {
+            let dirty = cabin_grime(albedo, roughness, metallic, in.relative + fr.cam_pos.xyz, n, in.local);
+            albedo = dirty.albedo;
+            roughness = dirty.roughness;
+            metallic = dirty.metal;
+        }
     }
     // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
     // kinds 3+ keep their code.

@@ -420,8 +420,7 @@ fn fs(in: VsOut) -> ShadeOut {
             albedo = mix(albedo, vec3(0.50, 0.50, 0.48), worn_edge * 0.85);
             roughness = mix(roughness, 0.45, worn_edge);
             metallic = mix(metallic, 1.0, worn_edge * 0.8);
-            let to_cabin = fr.vehicle.xyz - world;
-            let inside = select(0.0, 1.0, length(to_cabin) < fr.vehicle.w && dot(n, to_cabin) > 0.0);
+            let inside = select(0.0, 1.0, rm_cabin_domain(world + n * 0.03) >= 0);
             let grime = mix(clamp(fr.wear.y, 0.0, 1.0), clamp(fr.wear.x, 0.0, 1.0), inside);
             let corner = smoothstep(0.05, 0.6, 1.0 - gather.ao);
             albedo *= 1.0 - 0.6 * corner * grime;
@@ -466,7 +465,9 @@ fn fs(in: VsOut) -> ShadeOut {
         // (and the near-field contact term, which they include); the difference is cover the
         // frame does not show (`hidden_cover`).
         var hidden_cover = 0.0;
-        if (RM_RAY_QUERIES && !grass && fr.debug.w < 0.5) {
+        let rays_used = RM_RAY_QUERIES && !grass && fr.debug.w < 0.5;
+        let receiver_in_cabin = rm_cabin_domain(world + n * 0.03) >= 0;
+        if (rays_used) {
             let rays = rt_open_share(world, n, dist, pixel, history);
             shares_out.x = rays;
             let seen = min(rays, open);
@@ -474,8 +475,10 @@ fn fs(in: VsOut) -> ShadeOut {
             open = seen;
             ao = 1.0;
         }
-        // Grass blades ask the cover map from above their own canopy (they stand in it).
-        let sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
+        // Grass blades ask the cover map from above their own canopy (they stand in it); without
+        // ray queries the crew compartment asks it from inside (rm_cabin_sky_visibility).
+        var sky_vis = rm_sky_visibility(world, select(select(0.05, 0.4, terrain), 0.55, grass));
+        if (receiver_in_cabin && !rays_used) { sky_vis = rm_cabin_sky_visibility(world, n); }
         let up = clamp(n.y, -1.0, 1.0);
         let sky_band = mix(fr.sky_horizon.rgb, fr.sky_zenith.rgb, clamp(up, 0.0, 1.0));
         let hemisphere = mix(fr.sky_ground.rgb * 0.5, sky_band, 0.5 + 0.5 * up);
@@ -483,7 +486,13 @@ fn fs(in: VsOut) -> ShadeOut {
         // bounce through the covered share. Lambert takes albedo x that; the GGX lobe takes its
         // directional albedo x that, less the share the screen-space reflection pass draws
         // in the mirror direction (its gloss weight).
-        var env = hemisphere * mix(0.10, 1.0, sky_vis) * ao;
+        // A covered point keeps a tenth of the sky (the low sky round eaves and trees). The crew
+        // compartment is sealed steel: without ray queries it takes only what the cover map sees
+        // open above it (an open hatch), as its air does (rm_volume.wgsl); the residual lit a
+        // closed cabin like open ground, a tenth of daylight (2026-10-28). With ray queries the
+        // rays' open share (vision blocks, hatches) carries it.
+        let residual = select(0.10, 0.0, receiver_in_cabin && !rays_used);
+        var env = hemisphere * mix(residual, 1.0, sky_vis) * ao;
         if (fr.debug.x < 0.5) {
             // Cover the frame does not show returns this surface's own radiance of the last frame
             // (named approximation: the unseen walls of a room are lit like the seen one). The
@@ -498,12 +507,17 @@ fn fs(in: VsOut) -> ShadeOut {
         // The marched reflection's share (rm_reflect.wgsl's `gloss`): the rest is this term's.
         let gloss = (1.0 - smoothstep(0.2, 0.5, roughness)) * mix(0.35, 1.0, metallic);
         color += env_brdf(f0, roughness, max(dot(n, v), 0.001)) * env * (1.0 - gloss);
-        // Lamps, fires, flashes: the lights binned into this pixel's cell.
+        // Lamps, fires, flashes: the lights binned into this pixel's cell. A lamp in the crew
+        // compartment lights only surfaces facing the compartment's air: the armour is opaque
+        // whatever the lamp's shadow cube holds (its housing, which the turret and gun meshes
+        // count as, is exempt from it). The cabin lamp lit the barrel, the deck and the snow round
+        // the tank through the mantlet (2026-10-28).
         let cell = rm_cell_index(uv, dist);
         let lstart = light_cell_start[cell];
         let lend = light_cell_start[cell + 1u];
         for (var i = lstart; i < lend; i += 1u) {
             let index = light_cell_items[i];
+            if (!receiver_in_cabin && rm_cabin_domain(lights[index].a.xyz) >= 0) { continue; }
             let s = rm_light_sample(index, world);
             let ndl = dot(n, s.dir);
             if (ndl <= 0.0 || max(s.e.r, max(s.e.g, s.e.b)) <= 0.0) { continue; }

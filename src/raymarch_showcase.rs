@@ -862,6 +862,17 @@ pub fn run_tracers(prefix: &str) -> anyhow::Result<()> {
     step(&mut g, &mut r, 70, &coax);
     fire_until_tracer(&mut g, &mut r, &coax);
     rig.still(&mut r, "coax_sight", "coax bursts at night through the TZF")?;
+    // As in play: two seconds more of fire rendered frame by frame, the eye adapting as it goes
+    // (no snap to the still's light: a tracer's lit snow sweeps past in a fifth of a second).
+    for _ in 0..120 {
+        g.update(&coax, 1.0 / 60.0, &mut r);
+        r.render_offscreen(&device, &queue);
+    }
+    let [live_exposure, _] = r.debug_read_active_exposure(&device, &queue)?;
+    let path = format!("{prefix}_coax_sight_live.png");
+    r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+    rig.shots.push(serde_json::json!({ "name": "coax_sight_live", "path": path, "exposure": live_exposure,
+        "note": "after two seconds of coax fire rendered frame by frame, the eye adapting as in play" }));
     step(&mut g, &mut r, 6, &coax);
     fire_until_tracer(&mut g, &mut r, &coax);
     let side = forward.cross(Vec3::Y).normalize_or_zero();
@@ -871,6 +882,68 @@ pub fn run_tracers(prefix: &str) -> anyhow::Result<()> {
         "schema": "panzer.raymarch-tracers.v1", "manifest": manifest, "renderer": format!("{:?}", graphics::renderer_backend()),
         "internal_resolution": [r.iw, r.ih], "shots": rig.shots,
         "disclosure": "Staged fixture (banished enemies, held fire); clear, 19:00 UTC pinned; coax held from the gunner's post."
+    }))?)?;
+    Ok(())
+}
+
+/// `raymarch-interior PREFIX`: the crew compartment's paint, metal and lamps: the commander's,
+/// loader's, driver's and radio operator's posts and the gunner's head by the cabin lamps at night
+/// with the hatches shut, the same with the cupola hatch open at noon, and the turret's dome lamp
+/// close up at night.
+pub fn run_interior(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_night_commander.png")).exists(),
+        "preserving existing capture; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    for (clock, open, light) in [("1942-12-21T19:00:00Z", false, "night"), ("1942-12-21T09:00:00Z", true, "noon")] {
+        rig.clock(&mut r, clock)?;
+        g.hatch_open = open;
+        g.commander_outside = false;
+        for (station, name) in [(Station::Commander, "commander"), (Station::Loader, "loader"),
+                                (Station::Driver, "driver"), (Station::Radioman, "radioman")] {
+            g.station = station;
+            rig.station_camera();
+            step(&mut g, &mut r, 40, &idle);
+            let note = format!("the {name}'s post, {}", if open { "the cupola hatch open at noon" } else { "by the cabin lamps at night, hatches shut" });
+            rig.still(&mut r, &format!("{light}_{name}"), &note)?;
+        }
+        g.station = Station::Gunner;
+        step(&mut g, &mut r, 40, &idle);
+        let (eye, forward, _) = g.gunner_interior_camera();
+        let right = forward.cross(Vec3::Y).normalize_or_zero();
+        // Back from the eyepiece and turned toward the breech and the turret wall.
+        let head = eye - forward * 0.25 + Vec3::Y * 0.05;
+        rig.observe(&mut r, head, head + (forward * 0.4 - right * 0.9 - Vec3::Y * 0.25), 70.0);
+        rig.still(&mut r, &format!("{light}_gunner_breech"), "from the gunner's seat toward the breech and the turret wall")?;
+        rig.station_camera();
+    }
+    rig.clock(&mut r, "1942-12-21T19:00:00Z")?;
+    g.hatch_open = false;
+    g.station = Station::Loader;
+    step(&mut g, &mut r, 40, &idle);
+    let dome = g.player.turret_model().transform_point3(crate::interior_rig::TURRET_DOME_LAMP_POS);
+    let below = dome - Vec3::Y * 0.45 + g.player.turret_forward() * 0.2;
+    rig.observe(&mut r, below, dome, 40.0);
+    rig.still(&mut r, "night_dome_lamp", "the turret's dome lamp from 0.5 m at night")?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-interior.v1", "manifest": manifest, "renderer": format!("{:?}", graphics::renderer_backend()),
+        "internal_resolution": [r.iw, r.ih], "shots": rig.shots,
+        "disclosure": "Clear; clocks pinned; staged posts at rest."
     }))?)?;
     Ok(())
 }
@@ -992,7 +1065,7 @@ fn fire_until_tracer(g: &mut Game, r: &mut crate::renderer::Renderer, input: &Ta
 /// One frame of the live loop's gunner eyepiece composite (main.rs `render_optic_composite`): the
 /// optic pass, then the interior pass around the eyepiece. With `capture`, the interior pass is the
 /// captured frame (so it follows an optic pass, as in play).
-fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+pub(crate) fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
     capture: Option<(&str, u32, u32)>) -> anyhow::Result<()> {
     let saved = (r.camera, r.reticle, r.optic_mask, r.precipitation, r.weather_shelter);
     r.begin_coop_shadow_frame(g.player.center());

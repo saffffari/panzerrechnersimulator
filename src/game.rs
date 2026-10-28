@@ -12672,9 +12672,11 @@ impl Game {
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
         for s in breech_lamp.into_iter().flatten() {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
+            renderer.mark_lamp_lens(s, false);
         }
         for s in sight_lamps.into_iter().flatten() {
             renderer.mark_own_emissive(s);
+            renderer.mark_lamp_lens(s, false);
         }
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
         let authored_grass_mask = manifest.as_ref().and_then(|m|
@@ -12934,6 +12936,9 @@ impl Game {
         // with their authored amber / white-grey instead of the FX orange. The bulb's mesh and
         // transported power are driven together; snow puffs sit idle until a near-miss arms one.
         renderer.mark_own_emissive(slots.bulb);
+        // The cabin's lamps draw as lenses in their housings; the dome lamp behind a wire cage.
+        renderer.mark_lamp_lens(slots.bulb, true);
+        for &s in &slots.annun { renderer.mark_lamp_lens(s, false); }
         renderer.set_visible(slots.bulb, false);
         // The Enigma is an ordinary textured PBR object attached to the hull; it emits no light and
         // joins the same ray scene as the surrounding radio rack. The glasses are camera-local
@@ -12952,7 +12957,8 @@ impl Game {
         renderer.mark_raster_only(slots.held_map);
         renderer.set_emissive(slots.held_map, 0.0);
         renderer.set_visible(slots.held_map, false);
-        renderer.mark_own_emissive(slots.hatch);
+        // The cupola hatch lid is ordinary steel (it once glowed under the crosshair): no
+        // own-colour emissive mark, so it shadows and covers like the turret round it.
         for &s in slots.snow.iter() {
             renderer.mark_own_emissive(s);
             renderer.set_visible(s, false);

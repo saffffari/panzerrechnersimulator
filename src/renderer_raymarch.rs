@@ -28,8 +28,19 @@ const VOL_FAR_M: f32 = 320.0;
 const MAX_OPTIC_SLOTS: usize = 8192;
 /// Cloud shadow map: texels per side and the half extent it covers around the eye.
 const CLOUD_SHADOW_HALF_M: f32 = 2048.0;
-/// Reflection history: accumulated reflected radiance and the reflecting surface's eye distance.
-const REFL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The format of every stored radiance (reflection history, froxel in-scatter and its history,
+/// the integrated column, the sky cache): the frame's own (`hdr_format`), 32-bit floats where the
+/// device filters them. Radiance at night is 1e-9..1e-7 renderer units, below half float's least
+/// value (6e-8): in half floats the falling snow scattered nothing and the cloud deck and the sky
+/// behind the snow drew black, whatever lit them (2026-10-28).
+fn radiance_format() -> wgpu::TextureFormat { hdr_format() }
+/// The radiance volumes' storage declarations in the compute sources, in `radiance_format`.
+fn radiance_storage(source: String) -> String {
+    if radiance_format() != wgpu::TextureFormat::Rgba32Float { return source; }
+    source
+        .replace("var out_scatter: texture_storage_3d<rgba16float, write>", "var out_scatter: texture_storage_3d<rgba32float, write>")
+        .replace("var out_integrated: texture_storage_3d<rgba16float, write>", "var out_integrated: texture_storage_3d<rgba32float, write>")
+}
 /// The shade pass's histories (shares, bounce): four half floats each.
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const CELLS: [u32; 3] = [32, 18, 24];
@@ -38,9 +49,6 @@ const MAX_PARCELS: usize = 16384;
 const MAX_CELL_ITEMS: usize = 1 << 18;
 /// Scene lights the renderer keeps from the game (`Renderer::set_lights`) for clustering.
 pub const MAX_SCENE_LIGHTS: usize = 448;
-/// The largest mesh taken as a lamp's own housing (`draw_scene`), metres: a fixture, not the
-/// compartment round it.
-const FIXTURE_HOUSING_MAX_M: f32 = 0.75;
 /// A small-arms tracer pellet's intensity, renderer units (its colour's photopic weight is
 /// 36 982 lx per unit, so this is about 60 cd): an estimate from the trace requirement, a 7.62 mm
 /// trace seen by day to about 850 yd (780 m; ARDEC/Orbital ATK, NDIA 2018), against a point-source
@@ -177,6 +185,10 @@ const PARCEL_FIREBALL: f32 = 5.0;
 const PARCEL_FLASH: f32 = 6.0;
 /// The Tiger's exhaust: smoke that carries heat while young (`exhaust_plume`).
 const PARCEL_EXHAUST: f32 = 7.0;
+/// The raymarch frame's compact camera halo (`stylized_bloom.wgsl` fs_composite, fs_blur): its
+/// strength and the blur's spread against the shader backend's 0.18 and 1.
+const RM_BLOOM_INTENSITY: f32 = 0.06;
+const RM_BLOOM_SPREAD: f32 = 0.5;
 /// Hermite smoothstep of `x` between `a` and `b`.
 fn smooth(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
@@ -264,10 +276,10 @@ impl Temporal {
         let gusage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
         Self {
             history: target(device, "rm-history", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST),
-            refl: [target(device, "rm-refl-a", iw, ih, REFL_FORMAT, gusage), target(device, "rm-refl-b", iw, ih, REFL_FORMAT, gusage)],
+            refl: [target(device, "rm-refl-a", iw, ih, radiance_format(), gusage), target(device, "rm-refl-b", iw, ih, radiance_format(), gusage)],
             ao: [target(device, "rm-ao-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-ao-b", iw, ih, AO_FORMAT, gusage)],
             bounce: [target(device, "rm-bounce-a", iw, ih, AO_FORMAT, gusage), target(device, "rm-bounce-b", iw, ih, AO_FORMAT, gusage)],
-            scatter: [volume_target(device, "rm-scatter-a", vol), volume_target(device, "rm-scatter-b", vol)],
+            scatter: [volume_target(device, "rm-scatter-a", vol, radiance_format()), volume_target(device, "rm-scatter-b", vol, radiance_format())],
             flip: 0,
             prev_camera: None,
             prev_cabin: None,
@@ -360,6 +372,9 @@ pub(super) struct Backend {
     explosion_pending: Option<Vec<u8>>,
     /// The installed atlas's slots (role and aspect); none without an atlas.
     explosion_slots: Option<crate::explosion_volumes::ExplosionVolumes>,
+    /// The tracers' veiling glare at the fixation point, photopic and scotopic cd/m^2
+    /// (`collect_lights`), for the eye's meter (`exposure.wgsl` veil lanes).
+    pub(super) point_veil: [f32; 2],
     heat_integrated: Target,
     linear_sampler: wgpu::Sampler,
     sky_sampler: wgpu::Sampler,
@@ -462,12 +477,12 @@ fn target(device: &wgpu::Device, label: &str, w: u32, h: u32, format: wgpu::Text
     Target { _tex: tex, view }
 }
 
-fn volume_target(device: &wgpu::Device, label: &str, dims: [u32; 3]) -> Target {
+fn volume_target(device: &wgpu::Device, label: &str, dims: [u32; 3], format: wgpu::TextureFormat) -> Target {
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width: dims[0], height: dims[1], depth_or_array_layers: dims[2] },
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D3,
-        format: wgpu::TextureFormat::Rgba16Float,
+        format,
         usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
@@ -495,12 +510,12 @@ fn depth_tex(binding: u32, vis: wgpu::ShaderStages, dim: wgpu::TextureViewDimens
 fn tex3d(binding: u32, vis: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
     tex2d_entry(binding, vis, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D3)
 }
-fn storage3d(binding: u32) -> wgpu::BindGroupLayoutEntry {
+fn storage3d(binding: u32, format: wgpu::TextureFormat) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding, visibility: wgpu::ShaderStages::COMPUTE,
         ty: wgpu::BindingType::StorageTexture {
             access: wgpu::StorageTextureAccess::WriteOnly,
-            format: wgpu::TextureFormat::Rgba16Float,
+            format,
             view_dimension: wgpu::TextureViewDimension::D3,
         },
         count: None,
@@ -570,9 +585,9 @@ fn rm_source(name: &str) -> String {
 /// A pipeline's WGSL from its parts. `rm_rt_g3.wgsl`: the ray-query module bound at group 3, for
 /// passes whose group 2 is taken (the glass panes' material).
 fn rm_assemble(parts: &[&str]) -> String {
-    parts.iter().map(|&name| if name == "rm_rt_g3.wgsl" {
+    radiance_storage(parts.iter().map(|&name| if name == "rm_rt_g3.wgsl" {
         rm_source("rm_rt.wgsl").replace("@group(2)", "@group(3)")
-    } else { rm_source(name) }).collect::<Vec<_>>().join("\n")
+    } else { rm_source(name) }).collect::<Vec<_>>().join("\n"))
 }
 
 fn rm_shader(device: &wgpu::Device, label: &str, parts: &[&str]) -> wgpu::ShaderModule {
@@ -663,7 +678,8 @@ impl Backend {
 
     pub(super) fn new(device: &wgpu::Device, material_bgl: &wgpu::BindGroupLayout, track_bgl: &wgpu::BindGroupLayout,
         terrain_detail_view: &wgpu::TextureView, terrain_detail_sampler: &wgpu::Sampler,
-        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool) -> Self {
+        sky_pipe: &wgpu::RenderPipeline, iw: u32, ih: u32, rt_scene: bool,
+        cabin_medium_view: &wgpu::TextureView) -> Self {
         let quality = crate::graphics::active_preset().raymarch();
         let vol = [iw.div_ceil(quality.vol_divisor).max(quality.vol_min[0].min(iw)), ih.div_ceil(quality.vol_divisor).max(quality.vol_min[1].min(ih)), quality.vol_slices];
         let (sky_cache_size, sky_cache_phases) = {
@@ -703,7 +719,7 @@ impl Backend {
         let g0 = target(device, "rm-g0-albedo", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g1 = target(device, "rm-g1-normal", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
         let g2 = target(device, "rm-g2-emission", iw, ih, wgpu::TextureFormat::Rgba16Float, gusage);
-        let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], wgpu::TextureFormat::Rgba16Float, gusage);
+        let sky_cache = target(device, "rm-sky-cache", sky_cache_size[0], sky_cache_size[1], radiance_format(), gusage);
         let cloud_shadow = target(device, "rm-cloud-shadow", quality.cloud_shadow_res, quality.cloud_shadow_res, wgpu::TextureFormat::R16Float, gusage);
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -737,8 +753,9 @@ impl Backend {
             dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: layer, array_layer_count: Some(1), ..Default::default()
         })).collect();
         let temporal = vec![Temporal::new(device, iw, ih, vol)];
-        let integrated = volume_target(device, "rm-integrated", vol);
-        let heat = volume_target(device, "rm-heat", vol);
+        let integrated = volume_target(device, "rm-integrated", vol, radiance_format());
+        // Heat is a hot-gas measure, not light: half floats hold it.
+        let heat = volume_target(device, "rm-heat", vol, wgpu::TextureFormat::Rgba16Float);
         // The baked explosion volumes, when the local atlas is installed (tools/bake_explosion_volumes.py).
         let mut explosions = match crate::explosion_volumes::ExplosionVolumes::load() {
             Ok(v) => { println!("[raymarch] explosion volumes: {} slots", v.slots.len()); Some(v) }
@@ -755,7 +772,7 @@ impl Backend {
         });
         let explosion_atlas = Target { view: explosion_tex.create_view(&Default::default()), _tex: explosion_tex };
         let explosion_pending = explosions.as_mut().map(|v| std::mem::take(&mut v.voxels));
-        let heat_integrated = volume_target(device, "rm-heat-integrated", vol);
+        let heat_integrated = volume_target(device, "rm-heat-integrated", vol, wgpu::TextureFormat::Rgba16Float);
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rm-linear"), address_mode_u: wgpu::AddressMode::ClampToEdge, address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge, mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
@@ -780,7 +797,9 @@ impl Backend {
             label: Some("rm-gbuffer-bgl"), entries: &[uniform_entry(0, S::VERTEX_FRAGMENT),
                 tex2d_entry(1, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2Array),
                 sampler_filtering(2, S::FRAGMENT),
-                readonly_storage(3, S::VERTEX_FRAGMENT), readonly_storage(4, S::VERTEX_FRAGMENT)],
+                readonly_storage(3, S::VERTEX_FRAGMENT), readonly_storage(4, S::VERTEX_FRAGMENT),
+                // The cabin air's columns (`rm_gbuffer.wgsl` gb_cabin_air; 3 and 4 are the scars').
+                tex2d_entry(5, S::FRAGMENT, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array)],
         });
         let gbuffer_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-gbuffer"), layout: &gbuffer_bgl, entries: &[
@@ -789,6 +808,7 @@ impl Backend {
                 entry(2, wgpu::BindingResource::Sampler(terrain_detail_sampler)),
                 entry(3, scars_buf.as_entire_binding()),
                 entry(4, scar_near_buf.as_entire_binding()),
+                entry(5, wgpu::BindingResource::TextureView(cabin_medium_view)),
             ],
         });
         let vis_stages = S::FRAGMENT | S::COMPUTE;
@@ -810,12 +830,12 @@ impl Backend {
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-volume-bgl"), entries: &[
                 uniform_entry(0, S::COMPUTE), readonly_storage(1, S::COMPUTE), readonly_storage(2, S::COMPUTE), readonly_storage(3, S::COMPUTE),
-                tex3d(4, S::COMPUTE), sampler_filtering(5, S::COMPUTE), storage3d(6), depth_tex(7, S::COMPUTE, wgpu::TextureViewDimension::D2),
-                storage3d(8), tex3d(9, S::COMPUTE),
+                tex3d(4, S::COMPUTE), sampler_filtering(5, S::COMPUTE), storage3d(6, radiance_format()), depth_tex(7, S::COMPUTE, wgpu::TextureViewDimension::D2),
+                storage3d(8, wgpu::TextureFormat::Rgba16Float), tex3d(9, S::COMPUTE),
             ],
         });
         let integrate_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rm-integrate-bgl"), entries: &[uniform_entry(0, S::COMPUTE), tex3d(1, S::COMPUTE), storage3d(2), tex3d(3, S::COMPUTE), storage3d(4)],
+            label: Some("rm-integrate-bgl"), entries: &[uniform_entry(0, S::COMPUTE), tex3d(1, S::COMPUTE), storage3d(2, radiance_format()), tex3d(3, S::COMPUTE), storage3d(4, wgpu::TextureFormat::Rgba16Float)],
         });
         let shade_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-shade-bgl"), entries: &[
@@ -982,7 +1002,7 @@ impl Backend {
             vertex: wgpu::VertexState { module: &reflect_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
             primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
             fragment: Some(wgpu::FragmentState { module: &reflect_shader, entry_point: Some("fs"),
-                targets: &[Some(color_target(hdr_format())), Some(color_target(REFL_FORMAT))], compilation_options: Default::default() }),
+                targets: &[Some(color_target(hdr_format())), Some(color_target(radiance_format()))], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
         let lens_shader = rm_shader(device, "rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]);
@@ -1031,7 +1051,7 @@ impl Backend {
             label: Some("rm-sky-cache"), layout: Some(&sky_cache_pl),
             vertex: wgpu::VertexState { module: &sky_cache_shader, entry_point: Some("vs_cache"), buffers: &[], compilation_options: Default::default() },
             primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState { module: &sky_cache_shader, entry_point: Some("fs_cache"), targets: &[Some(color_target(wgpu::TextureFormat::Rgba16Float))], compilation_options: Default::default() }),
+            fragment: Some(wgpu::FragmentState { module: &sky_cache_shader, entry_point: Some("fs_cache"), targets: &[Some(color_target(radiance_format()))], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
 
@@ -1090,7 +1110,7 @@ impl Backend {
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
-            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, heat_integrated, linear_sampler, cmp_sampler,
+            integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
             depth_pipe, depth_inst_pipe, depth_grass_pipe, depth_scar_pipe, gbuffer_scar_pipe, scar_patch_pipe,
             scars_buf, scar_near_buf, scar_ranges: HashMap::new(), scar_near_count: 0, scar_leaks: Vec::new(), glass_pipe, gbuffer_pipe, gbuffer_inst_pipe, volume_pipe, integrate_pipe, shade_pipe, reflect_pipe, lens_pipe,
@@ -1334,7 +1354,7 @@ impl Backend {
                     for d in [1.0f32, 3.0, 5.0, 10.0, 20.0, 30.0, 50.0, 100.0, 200.0, 320.0] {
                         let slices = self.vol[2] as f32;
                         let slice = ((d / VOL_NEAR_M).ln() / ln_range * slices).clamp(0.0, slices - 1.0) as usize;
-                        let v = f16(5 * 256 + slice * 256);
+                        let v = if radiance_format() == wgpu::TextureFormat::Rgba32Float { f32s(5 * 256 + slice * 256) } else { f16(5 * 256 + slice * 256) };
                         column.push_str(&format!(" {d:.0}m T {:.4} S {:.3e}", v[3], v[1]));
                     }
                     println!("[rm-probe] medium column{column}");
@@ -1694,6 +1714,51 @@ impl Backend {
             .map(|s| Vec3::from_array([s.direction_life[0], s.direction_life[1], s.direction_life[2]]))
             .filter(|h| h.is_finite() && (*h - eye).length() < 150.0).collect();
         heads.sort_by(|a, b| (*a - eye).length_squared().total_cmp(&(*b - eye).length_squared()));
+        // Their veiling glare as the eye's meter would read it: the strips are drawn after the
+        // meter (`encode`), whose field average took a pellet's light as if spread over the field
+        // (2026-10-28). CIE disability glare, L_v = E (10 / theta^3 + 5 / theta^2), theta in degrees
+        // from the source (at least 0.5), E the pellet's illuminance at the eye, taken by the
+        // meter's three windows (`observer.rs`): the fovea at fixation sees the veil at the
+        // source's angle from fixation; the 10 deg Gaussian and the whole field see its integral,
+        // 2 pi (5 ln(30 / 0.5) + 10 (1 / 0.5 - 1 / 30)) = 252 E deg^2, over their areas. Heads in
+        // the view's frustum, occlusion (the barrel before a coax tracer) ignored.
+        self.point_veil = [0.0; 2];
+        {
+            let forward = r.camera.forward().normalize_or_zero();
+            let tint = [1.0f64, 0.4621, 0.0296];
+            let lux = |w: [f64; 3]| (tint[0] * w[0] + tint[1] * w[1] + tint[2] * w[2]) as f32 * TRACER_INTENSITY;
+            let (per_p, per_s) = (lux(crate::observer::PHOTOPIC_WEIGHTS), lux(crate::observer::SCOTOPIC_WEIGHTS));
+            let half_v = 0.5 * r.camera.fov_y;
+            let half_h = (half_v.tan() * r.camera.aspect).atan();
+            let field_deg2 = (2.0 * half_v.to_degrees()) * (2.0 * half_h.to_degrees());
+            let sigma = crate::observer::METER_GAUSSIAN_SIGMA_DEG as f32;
+            let (w_f, w_g, w_w) = (crate::observer::METER_FOVEA_WEIGHT as f32, crate::observer::METER_GAUSSIAN_WEIGHT as f32,
+                crate::observer::METER_FIELD_WEIGHT as f32);
+            const VEIL_INTEGRAL_DEG2: f32 = 252.0;
+            for s in &r.weapon_particles.segments {
+                let head = Vec3::from_array([s.direction_life[0], s.direction_life[1], s.direction_life[2]]);
+                let d = head - eye;
+                let dist2 = d.length_squared();
+                if !head.is_finite() || dist2 < 0.01 { continue; }
+                let dir = d / dist2.sqrt();
+                let along = dir.dot(forward);
+                if along <= 0.0 { continue; }
+                let right = forward.cross(Vec3::Y).normalize_or_zero();
+                let up = right.cross(forward);
+                if (dir.dot(right) / along).abs() > half_h.tan() || (dir.dot(up) / along).abs() > half_v.tan() { continue; }
+                let theta = along.clamp(-1.0, 1.0).acos().to_degrees().max(0.5);
+                let fovea = 10.0 / (theta * theta * theta) + 5.0 / (theta * theta);
+                let gauss = VEIL_INTEGRAL_DEG2 * (-0.5 * theta * theta / (sigma * sigma)).exp()
+                    / (2.0 * std::f32::consts::PI * sigma * sigma);
+                let field = VEIL_INTEGRAL_DEG2 / field_deg2.max(1.0);
+                let k = w_f * fovea + w_g * gauss + w_w * field;
+                self.point_veil[0] += per_p / dist2 * k;
+                self.point_veil[1] += per_s / dist2 * k;
+                if std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() {
+                    println!("[rm-veil] head dist {:.1} theta {theta:.2} deg E {:.3e} lx L_v {:.3e} cd/m2", dist2.sqrt(), per_p / dist2, per_p / dist2 * k);
+                }
+            }
+        }
         for head in heads.into_iter().take(8) {
             let color = Vec3::new(1.0, 0.4621, 0.0296);
             self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.003], b: [color.x, color.y, color.z, TRACER_INTENSITY], c: [range_of(color, TRACER_INTENSITY), -1.0, 2.0, 0.0] });
@@ -2278,11 +2343,11 @@ impl Backend {
     fn draw_scene<'a>(&'a self, r: &'a Renderer, pass: &mut wgpu::RenderPass<'a>, vp: Mat4, view_index: f32,
         shadow: bool, mesh_pipe: &'a wgpu::RenderPipeline, inst_pipe: &'a wgpu::RenderPipeline, work: &mut RenderWorkStats) {
         let planes = frustum_planes(vp);
-        // A point light's own housing (a fixture-sized mesh enclosing the emitter position) is
-        // not an occluder of that light: the modeled source sits inside its fixture. Named in the
-        // raymarch engine document. Only fixture-sized: the turret's bounds enclose its cabin lamp
-        // too, and exempting the turret let that lamp light the barrel, the deck and the snow
-        // round the tank through the armour (2026-10-28).
+        // A point light's own housing (the mesh enclosing the emitter position) is not an
+        // occluder of that light: the modeled source sits inside its fixture. Named in the
+        // raymarch engine document. The turret and gun meshes enclose the cabin lamps too; what
+        // keeps those lamps' light inside the armour is the cabin gate in the shade and volume
+        // passes (a lamp in the crew compartment lights only the compartment).
         let enclosing = (view_index >= 3.0).then(|| {
             let slot = ((view_index as usize) - 3) / 6;
             self.shadowed[slot].map(|i| {
@@ -2291,8 +2356,7 @@ impl Backend {
             })
         }).flatten();
         let encloses = |mn: Vec3, mx: Vec3| enclosing.is_some_and(|(p, m)| {
-            (mx - mn).max_element() < FIXTURE_HOUSING_MAX_M
-                && p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
+            p.x > mn.x - m && p.x < mx.x + m && p.y > mn.y - m && p.y < mx.y + m && p.z > mn.z - m && p.z < mx.z + m
         });
         let visible = r.inst_spatial_index.query(vp);
         let stages = if shadow { wgpu::ShaderStages::VERTEX } else { wgpu::ShaderStages::VERTEX_FRAGMENT };
@@ -2341,7 +2405,10 @@ impl Backend {
             if relayed && r.raster_optic_panel(mesh_index) { continue; }
             if !shadow && r.optic_hide_pass && m.optic_hidden { continue; }
             if !aabb_in_frustum(&planes, m.world_min, m.world_max) { continue; }
-            if shadow && (m.emissive_own || encloses(m.world_min, m.world_max)) { continue; }
+            // A glowing own-colour emitter (a bulb, a flame) casts no shadow of its own light; one
+            // that is dark (the cupola hatch lid, a round) is ordinary geometry: the lid, left out,
+            // opened a hole over the commander in the sun cascades and the sky cover (2026-10-28).
+            if shadow && ((m.emissive_own && m.emissive > 0.0) || encloses(m.world_min, m.world_max)) { continue; }
             // Self-luminous effect meshes (muzzle flash and impact flash balls) are drawn as
             // volumetric emitters by the froxel grid, never as glowing sphere silhouettes.
             if m.emissive > 0.0 && !m.emissive_own && !m.emissive_win && !m.track_recv { continue; }
@@ -2362,7 +2429,7 @@ impl Backend {
                 model: m.model.to_cols_array_2d(),
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
                 extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
-                    if m.painted_steel { 1.0 } else { 0.0 }, 0.0],
+                    if m.painted_steel { 1.0 } else { 0.0 }, m.lamp_lens as f32],
                 scars: range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]),
             };
             let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
@@ -2639,7 +2706,7 @@ impl Backend {
         // 7. One-pixel snow, dust and embers, then ballistic emitters, in HDR before bloom/crush.
         let particles = if self.debug_skip & 4 != 0 { 0 } else { r.pixel_particle_count.get() };
         let embers = if self.debug_skip & 2 != 0 { 0 } else { self.embers.len() as u32 };
-        if particles > 0 || embers > 0 || !self.weapon_draws.is_empty() || self.tracer_range.1 > 0 {
+        if particles > 0 || embers > 0 || !self.weapon_draws.is_empty() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rm-points"),
                 color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load))],
@@ -2667,12 +2734,6 @@ impl Backend {
                     work.scene_instanced_draws += 1;
                 }
             }
-            if self.tracer_range.1 > 0 && self.debug_skip & 1 == 0 {
-                pass.set_pipeline(&self.tracers_pipe);
-                pass.set_vertex_buffer(0, self.weapon_buf.slice(..));
-                pass.draw(0..6, self.tracer_range.0..self.tracer_range.0 + self.tracer_range.1);
-                work.scene_instanced_draws += 1;
-            }
         }
         // 8. The eyepiece glass: refraction, dispersion and the lens edge of the TZF/binoculars.
         if self.optic_active && self.debug_skip & 64 == 0 {
@@ -2697,14 +2758,34 @@ impl Backend {
                 optics.copy_eye_mapping(encoder, eye);
             }
         }
+        // 9b. The small-arms tracers, after the eye's meter: their light adapts the eye as veiling
+        // glare (`point_veil`), not as a share of the field; in a sight they take the eyepiece's
+        // distortion themselves (`rm_sparks.wgsl` vs_tracer) and the crush's field mask.
+        if self.tracer_range.1 > 0 && self.debug_skip & 1 == 0 {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rm-tracers"),
+                color_attachments: &[Some(attachment(&r.hdr_view, wgpu::LoadOp::Load))],
+                depth_stencil_attachment: None,
+                timestamp_writes: None, occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, &binds.points, &[]);
+            pass.set_bind_group(1, &binds.visibility, &[]);
+            pass.set_pipeline(&self.tracers_pipe);
+            pass.set_vertex_buffer(0, self.weapon_buf.slice(..));
+            pass.draw(0..6, self.tracer_range.0..self.tracer_range.0 + self.tracer_range.1);
+            work.scene_instanced_draws += 1;
+        }
         if finish_ldr {
             work.bloom_passes += 4;
             work.fullscreen_raster_passes += 4;
             let btexel = [1.0 / r.bw as f32, 1.0 / r.bh as f32];
             r.bloom_pass(encoder, "bloom-bright", &r.bloom_bright_pipe, &r.bloom_bind_hdr, &r.bloom_a_view, btexel, [0.0, 0.0], false);
-            r.bloom_pass(encoder, "bloom-blur-h", &r.bloom_blur_pipe, &r.bloom_bind_a, &r.bloom_b_view, btexel, [1.0, 0.0], false);
-            r.bloom_pass(encoder, "bloom-blur-v", &r.bloom_blur_pipe, &r.bloom_bind_b, &r.bloom_a_view, btexel, [0.0, 1.0], false);
-            r.bloom_pass(encoder, "bloom-composite", &r.bloom_composite_pipe, &r.bloom_bind_a, &r.hdr_view, btexel, [0.0, 0.0], true);
+            // The camera's compact halo at RM_BLOOM_INTENSITY and RM_BLOOM_SPREAD: the eye's own
+            // scatter is the veil below. At the shader backend's 0.18 and full spread a cabin lamp
+            // read as a large flat glow round a lens a few pixels across (2026-10-28).
+            r.bloom_pass(encoder, "bloom-blur-h", &r.bloom_blur_pipe, &r.bloom_bind_a, &r.bloom_b_view, btexel, [RM_BLOOM_SPREAD, 0.0], false);
+            r.bloom_pass(encoder, "bloom-blur-v", &r.bloom_blur_pipe, &r.bloom_bind_b, &r.bloom_a_view, btexel, [0.0, RM_BLOOM_SPREAD], false);
+            r.bloom_pass(encoder, "bloom-composite", &r.bloom_composite_pipe, &r.bloom_bind_a, &r.hdr_view, btexel, [RM_BLOOM_INTENSITY, 0.0], true);
             // The eye's veiling glare: wide rings over the blurred bright pass, scaled by the
             // bloom target's pixels per degree of view.
             if let (false, Some(glare_pipe), Some(composite_glare), Some(copy_pipe), Some(glare_bind)) = (self.debug_skip & 4096 != 0, &r.bloom_glare_pipe, &r.bloom_composite_glare_pipe, &r.bloom_copy_pipe, &r.bloom_glare_bind) {
@@ -2766,6 +2847,7 @@ impl Renderer {
         atmosphere.cloud.coverage = self.overcast.clamp(0.0, 1.0) as f64;
         atmosphere.cloud_offset_m = self.weather_offset.as_dvec3();
         atmosphere.cloud_evolution_s = self.time as f64;
+        atmosphere.ground_glow_flux = physical_environment::KESSEL_FIRE_GLOW_FLUX;
         self.celestial.apply_to(&mut atmosphere);
         atmosphere.sun_direction = self.sun_dir.as_dvec3().normalize_or_zero();
         atmosphere

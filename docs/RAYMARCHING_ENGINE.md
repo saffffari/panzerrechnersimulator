@@ -800,6 +800,74 @@ Not done: the volumes are single snapshots grown, cooled and thinned in time, no
 is bounded by the froxel grid (a shape 8 m across at 25 m spans about 15 cells); the cloud is one
 colour of soot and earth (a burst in snow is whiter low down); the shader backend draws no volumes.
 
+## The crew compartment: ivory paint, grime and lamps (2026-10-28)
+
+Requests: "tank interior too metallic; it would have been some metal but also some painted metal";
+"lights are too large; they read as just flat full-bright colour instead of a physical 3D shape
+emitting light. Metal looks too new too, should have more dirt and grime."
+
+- Paint: the cabin is the historical ivory, Elfenbein RAL 1001 (sRGB 205/186/136, a common conversion
+  of the swatch; satin, roughness 0.70), for the source's `Interior Paint` surfaces (`tank.rs`
+  `tiger_paint_finish`) and for the default metal the raymarch reads as painted inside
+  (`RM_INTERIOR_PAINT`). It replaces the owner's 2026-09-09 muted gunmetal at the owner's request.
+- Grime (`rm_gbuffer.wgsl` `cabin_grime`, at the interior grime load, now 0.65 at the campaign's
+  start: `surface_wear::CAMPAIGN_START`): on the hull's, turret's and gun's faces toward the crew
+  compartment, dust on what faces up, oil and grease low down and on bare steel (dark and glossy),
+  propellant soot on the roof and upper walls, and an all-over dulling, broken up in the mesh's frame.
+  Bare steel keeps its worn-bright edges (the shade pass).
+- Lamps (`lamp_lens`, `Renderer::mark_lamp_lens`): each face of a lamp's cube is a round lens in a
+  dark steel bezel, a hot whitened core over a deeper rim, and a glint where the filament shows; the
+  dome lamp behind a wire cage. The lens carries the face's whole emission, so the light transported
+  is unchanged. The raymarch frame's compact camera halo is now 0.06 at half the spread
+  (`RM_BLOOM_INTENSITY`, `RM_BLOOM_SPREAD`; the shader backend keeps 0.18): at the old strength a
+  lamp a few pixels across sat in a flat glow many times its size. The eye's own scatter is the veil.
+
+- Which surfaces are the cabin's (the material reclassification check): the G-buffer now asks
+  whether the point 3 cm off a surface's visible side lies in the crew compartment's air (the
+  cabin-air columns, `cabin_medium.rs`, bound to the G-buffer: `gb_cabin_air`; the shade pass's
+  corner grime asks the same). The former test, a face turned toward the compartment's centre, read
+  every upward face above that centre (the breech's top, the turret ring, bins at shoulder height)
+  as outside: whitewashed and grey (probe: albedo 0.61, roughness 0.92 on an upward cabin face, now
+  0.39/0.33/0.22 dusty ivory). The exterior's Panzergrau carried onto the cabin's side of an
+  exterior-painted part (the cupola's ring, the hatches: their paint covers both faces) is now the
+  interior ivory there.
+
+`raymarch-interior PREFIX` (four posts and the gunner's head by the cabin lamps at night and with
+the cupola hatch open at noon; the dome lamp close up): `captures/rm_int12_*` against `rm_int0_*`.
+
+Not done: the hull's posts at night are lit only by their small panel lamps, so the eye sees them in
+rod vision, colourless and flat (the reproduction's rod gain, `observer::ROD_DISPLAY_GAIN`); the dome
+lamp's cube sits behind a steel plate of the source turret mesh, so its lens is not seen (its light
+reaches the cabin, the turret mesh being its housing); the grime is an authored mask at one scalar
+load, not accumulated per face; contact points polished bright are the shade pass's worn edges, not
+traced from where hands go; the noon cabin by the hatch's light is still grainy.
+
+## The cabin without ray queries (2026-10-28)
+
+Finding (the presets work): with ray queries off (`KESSEL_RM_RT=0`, or a GPU without them) the
+commander's cabin rendered like open ground at noon, frame mean 111 against 25 with them (sRGB, the
+eye adapted to each). A cupola wall took 1.4e-3 renderer units against 2.5e-6. Three causes:
+
+- The cupola hatch lid carried the own-colour emissive mark of a hover glow it no longer has, and the
+  raymarch's depth passes leave own-colour emitters out (a bulb casts no shadow of its own light):
+  the sun cascades and the sky cover had a hole over the commander. The mark is gone (`game.rs`),
+  and an own-colour mesh now drops out of the depth passes only while it glows (`draw_scene`).
+- Inside the compartment the sky cover map was asked as on open ground: lifted 5 cm (above a roof
+  plate thinner than that) through a 3 x 3 filter whose taps, 28 cm apart, reached past the armour to
+  the deck and the ground beside the turret; the upper turret read 30-70 % open sky. Without ray
+  queries a cabin surface now asks it 30 cm into the compartment along its normal, unlifted, with
+  one bilinear compare (`rm_cabin_sky_visibility`); an open hatch still opens it.
+- Covered points keep a tenth of the sky (the low sky round eaves); without ray queries the
+  compartment keeps none (its air already did), and an off-screen reflection in it returns the
+  surface's own lit radiance where the map sees cover, not the sky (`rm_reflect.wgsl`).
+
+`gfxbench` with `KESSEL_BENCH_STATION=commander KESSEL_RETAIN_RIGID_SKY_DEPTH=0`, the cupola wall
+(renderer units): ray queries off 1.4e-3 -> 8.5e-7, on 2.5e-6 -> 9.7e-7 (the lid now covers for the
+ray path's sky term too). With the hatch open the fallback is still brighter than the traced cabin:
+the cover map counts every point under the opening as under open sky, whatever the solid angle the
+opening subtends. Lamps without a shadow cube light through steel without ray queries (no
+occlusion for them). With ray queries the open-hatch cabin is grainy (the rays' open share).
+
 ## The gunner's sight at night (2026-10-28)
 
 Request: "At night it shouldn't be pitch black in the gun sights." The campaign's night is
@@ -809,13 +877,14 @@ under that sky the TZF reads (the snow mid-grey through the sight). What blacked
 - Firing the coax drew the 88's flash lobe at its muzzle on every round (the MG's tracers and
   flash, below): the sight's eye fell from 3523 to 52.
 - The relayed port views' magenta sentinel (below) pulled the eye down in the eyepiece composite.
-- The cabin's main lamp lit the outside through the armour. `draw_scene` leaves a lamp's own
-  housing (the mesh enclosing the emitter) out of that lamp's shadow cube; the turret's bounds
-  enclose its lamp too, so the whole turret, mantlet and gun cast no shadow for it, and the 6 cd lamp
-  (1.1 m from the sight's objective) lit the barrel, the deck and the snow to 28 m with 0.12 lx of
-  warm light, a hundred times starlight; the eye metered the lamp-lit barrel. Only meshes smaller than
-  0.75 m (`FIXTURE_HOUSING_MAX_M`) now count as a housing. Moonless, clear: barrel 61 -> 12, snow
-  14 -> 26 (sRGB codes).
+- The cabin's lamps lit the outside through the armour. `draw_scene` leaves a lamp's own housing
+  (the mesh enclosing the emitter) out of that lamp's shadow cube; the turret and gun meshes enclose
+  the cabin lamps too, so they cast no shadow for them, and a 6 cd lamp 1.1 m from the sight's
+  objective lit the barrel, the deck and the snow to 28 m with 0.12 lx of warm light, a hundred times
+  starlight; the eye metered the lamp-lit barrel. A lamp inside the crew compartment's air domains
+  now lights only surfaces facing that air and the air itself (`rm_shade.wgsl`, `rm_volume.wgsl`).
+  (A first fix counted only fixture-sized meshes as housings; the turret's own roof fan then put the
+  dome lamp out, and it was withdrawn.) Moonless, clear: barrel 61 -> 12, snow 14 -> 26 (sRGB codes).
 
 The reticle: at the 480x270 default a Strich is 0.6 of a frame pixel, and the Strichbild, drawn in
 the crushed frame, had shrunk to a dark speck and a few dots. It is etched glass in the focal plane,
@@ -831,13 +900,69 @@ in the field (sRGB code): full Moon clear 3552, 128; new Moon clear 3884, 26; fu
 107; new Moon overcast 3901, 1. The sight has its own eye (view 0): in the composite the field shows
 exactly the sight's frame whatever the cabin's lamps do to the cabin's eye.
 
-Not done: a moonless overcast night is black through the sight, about as a dark-adapted eye finds
-it; a floor for the rod reproduction (`observer::ROD_DISPLAY_GAIN` is the owner's reproduction
-choice) would be a decision for the owner. The TZF passes extended scenes at their luminance
-(transmission not modelled) and does not yet brighten point sources by its light grasp (stars,
-flashes: M^2 x transmission at the eye). Under overcast with a Moon the cloud deck draws black while
-the snow it lights is bright; a lit cloud base should be at least as bright as the snow (sky model).
-The tracer's dazzle through the eye's field-average meter (the MG's tracers, below) is open.
+Not done: the TZF passes extended scenes at their luminance (transmission not modelled) and does not
+yet brighten point sources by its light grasp (stars, flashes: M^2 x transmission at the eye). The
+moonless overcast night and the black cloud deck under a Moon are the next section's.
+
+## Night under cloud: the cauldron's fire glow, a lit deck, full-float radiance (2026-10-28)
+
+Requests: "at night it shouldn't be pitch black in the gun sights", dark but readable, for the
+moonless overcast night; and the full Moon behind overcast drew the cloud deck black over bright
+snow. Three causes, three changes:
+
+- Radiance in half floats. The frame is 32-bit, but the raymarch kept the froxel in-scatter and its
+  history, the integrated medium column, the sky cache and the reflection history in half floats.
+  Night radiance is 1e-9..1e-7 renderer units and half float's least value 6e-8, so a froxel's
+  in-scatter under a moonlit deck (sigma_s L, about 2e-9) stored as zero: the falling snow scattered
+  no light and, opaque past 200 m, hid the sky behind a black wall; the sky cache held a moonless sky
+  at zero. These stores now take the frame's format (`renderer_raymarch.rs` `radiance_format`); half
+  floats remain only on a device without float32 filtering, as for the frame. The heat volumes, not
+  light, stay half floats.
+- The deck from below (`sky.wgsl` `march_clouds`). The cloud march lights a sample by the key body
+  through 1.4 km of cloud and the clear sky along the ray; in a deck fifty optical depths thick the
+  first is nothing and the second, at night, is the moonlit clear sky, a hundredth of what leaves the
+  base. Below the layer each sample's source is now at least the delta-Eddington exit radiance along
+  the ray, so a lit base is as bright as the light it sends down: `cloud_base_floor`, the solve that
+  lights the ground (`physical_cloud_diffuse_boundary`) in compact form, the key's beam as it reaches
+  the cloud diffused through a six-step column, the night-sky layer through it and the fires' glow
+  returned by it (the general solve per texel took the sky cache from 1.65 to 3.8 ms).
+- The cauldron's fire glow (`physical_environment::KESSEL_FIRE_GLOW_FLUX`). With no Moon, the light
+  under an overcast was airglow through the deck, about 0.1 mlx: the sight black. The Stalingrad
+  pocket burned every night (the city, villages, vehicles, dumps); a deck returns that glow to the
+  snow. It is a named source: an upward diffuse flux under the cloud base of 1.2 mlx photopic with a
+  1900 K Planck colour (1, 0.21, 0.02) at the bands' 680/550/440 nm, which both cloud-boundary solvers
+  (GPU and CPU) return to the ground by the cloud's diffuse reflectance (0.85 for the act's deck).
+  Clear skies let it escape; nothing else is added. On the snow about 1 mlx, to the rods about four
+  fifths of the clear moonless sky's light (the rods are weak in its red). Its value is an estimate
+  set for a dark but readable sight, not a measurement.
+
+`raymarch-night-sight` at 480x270 (`captures/rm_night18_*` against `rm_night12_*`), the sight's eye,
+sRGB codes (green) of the sky a few degrees up and of the snow:
+
+| Sky | before: sky, snow | after: sky, snow |
+|---|---|---|
+| full Moon, clear | 83, 122 | 87, 120 |
+| new Moon, clear | 17, 23 | 31, 23 |
+| full Moon, overcast with snow | 1, 107 | 124, 97 |
+| new Moon, overcast with snow | 0, 2 | 30, 17 |
+
+Under the full Moon and snowfall the sight is a moonlit white-out; moonless under cloud it is dark,
+the snow, the horizon and the barrel readable, the black reticle lost against the dark field (the
+reticle's own lamp is the sight lamps' section). The clear moonless sky near the horizon is now
+brighter than the snow (van Rhijn brightening of the airglow, previously stored as zero).
+
+Cost (`gfxbench`, 800x450, RTX 4090, GPU profile): the sky cache 1.65 -> 1.63 ms; the froxel
+lighting 0.119 -> 0.127 ms and the column integration 0.041 -> 0.069 ms for the 32-bit volumes; the
+profiled GPU total 5.09 -> 5.04 ms. By day the floor barely moves the deck (`KESSEL_SHOWCASE_SET=palette`,
+`captures/rm_deck_c_*` against `rm_deck_b_*`): noon under the dry deck, the top of the frame 142, 163,
+176 -> 153, 166, 176 (a thick patch whitens), dusk unchanged. At night under the dry deck with the eye
+adapted to the burning wreck the deck stays near black, as the moonlit snow round it; the general
+solve and its compact form render it alike.
+
+Not done: the glow is uniform over the pocket and constant through the night (no fires' direction,
+no flicker, no horizon glow under a clear sky, nothing after the breakout leaves the cauldron); the
+cloud and snow exchange no second bounce (a snow ground under a deck would raise both by about
+1 / (1 - 0.8 x 0.85), threefold); the reticle has no illumination at night.
 
 ## Magenta in the night cabin (fixed 2026-10-28)
 
@@ -892,12 +1017,18 @@ scene (a cost bound), shadowed by a ray query where queries are on. `raymarch-tr
 flight, against 52 before); from outside the tracer reads as a point with the eye's glare, exposure
 3500.
 
-Not done: with a tracer a dozen metres out in the sight's field the frozen capture still goes dark
-(metered 2043 but the rods give up the moonlit snow). The eye's meter (`exposure.wgsl`) averages the
-pellet's light over the whole field; a point source acts on adaptation through veiling glare
-(Stiles-Holladay, 10 E / theta^2, in which a sight's magnification cancels), some four stops less.
-Time-averaged over sustained fire the field average is about +1.6 stops. A point-source layer for
-the meter is the next item (the sight at night).
+The eye and the tracers (2026-10-28): the strips are drawn after the eye's meter (`encode` step
+9b; in a sight they take the eyepiece's barrel distortion themselves, `rm_sparks.wgsl`
+`eyepiece_clip`, and the crush's field mask), so the meter no longer averages a pellet's light over
+the field. Their effect on adaptation enters as veiling glare (`point_veil`, the clock's lanes 5
+and 6): CIE disability glare, E (10 / theta^3 + 5 / theta^2), taken by the meter's three windows
+(the 1 deg fovea at the source's angle from fixation, the Gaussian and the field by the veil's
+integral, 252 E deg^2, over their areas). Night coax fire, 480x270: quiet sight 3553 (snow 128);
+frozen with tracers in flight 2043 -> 2323; after two seconds of fire rendered frame by frame as in
+play (`coax_sight_live`) 2650, snow 23. What remains is the tracers' own light: each 60 cd head lights
+the snow under its path to about 27 lx against the Moon's 0.2, and that patch passes through the
+fovea by the aim point; the eye adapts to it. The pellet's intensity is an estimate from the trace
+requirement; a dim night trace (the German Glimmspur) would be far dimmer.
 
 ## The Tiger's exhaust (2026-10-28)
 
@@ -1095,7 +1226,10 @@ two observers across dawn/noon/dusk/night × clear/dry overcast/blizzard, plus l
 (`captures/rm_palette_v7_*.png`) for judging colour; `KESSEL_SHOWCASE_SET=haze` and `=snow`
 write the series of "Near-camera haze" and "Snow on surfaces"; `KESSEL_SHOWCASE_SCENES=a,b`
 filters any set. `screenshot` accepts `KESSEL_SHOT_WEATHER=clear|clouds|storm[:N]`,
-`KESSEL_SHOT_FOG`, `KESSEL_SKY_UTC`. `KESSEL_RM_LIVE_SHADERS=1` reloads `shaders/rm_*.wgsl` from
+`KESSEL_SHOT_FOG`, `KESSEL_SKY_UTC`. `gfxbench` with `KESSEL_BENCH_STATION=gunner` times the
+gunner's frame as played at the TZF (the optic pass, then the cabin pass round the eyepiece reusing its
+maps; 2026-10-28, 800x450: rm-sky, the far cascade and the sky cover once a frame, 30 ms a frame with
+`KESSEL_RETAIN_RIGID_SKY_DEPTH=0`). `KESSEL_RM_LIVE_SHADERS=1` reloads `shaders/rm_*.wgsl` from
 disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights and binning stats.
 
 ## Named approximations (also in the ledger)
@@ -1150,6 +1284,9 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
   saltating particles, and ends at the map's 48 m edge.
 - The veiling glare is the CIE veil at half strength over a four-ring pyramid; the eye's ciliary
   corona and lenticular halo are not modelled.
+- Under cloud at night the cauldron's fire glow is one uniform, constant upward flux (an estimate);
+  the cloud base seen from below is floored by a compact two-stream (six column steps, the secondary
+  body and the clear sky above the deck left out).
 - Surface wear: four scalar loads for the player's Tiger (no per-face history); procedural masks
   in the mesh frame, not painted or simulated wear; inside and outside told apart by facing the
   compartment's centre; worn edges from neighbouring normals in screen space (silhouette-adjacent

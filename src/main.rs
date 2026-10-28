@@ -929,7 +929,8 @@ fn run_gfxbench(
     let bench_station = std::env::var("KESSEL_BENCH_STATION").ok();
     if let Some(station) = bench_station.as_deref() {
         g.station = match station { "loader" => game::Station::Loader, "commander" => game::Station::Commander,
-            "driver" => game::Station::Driver, _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
+            "driver" => game::Station::Driver, "gunner" => game::Station::Gunner,
+            _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
     }
     if std::env::var("KESSEL_BENCH_HATCH").as_deref() == Ok("open") { g.toggle_hatch(); }
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
@@ -940,6 +941,7 @@ fn run_gfxbench(
     const WARMUP: u32 = 60;
     let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut times = Vec::with_capacity(frames as usize);
+    let mut cpu_ms = [0.0f32; 3];
     for i in 0..(frames + WARMUP) {
         g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
@@ -959,16 +961,26 @@ fn run_gfxbench(
         }
         r.begin_gpu_profile_frame();
         let t0 = std::time::Instant::now();
-        r.render_offscreen(&device, &queue);
+        if bench_station.as_deref() == Some("gunner") {
+            // The gunner's frame as played at the TZF: the optic pass, then the cabin pass round
+            // the eyepiece, which reuses the optic pass's maps.
+            raymarch_showcase::eyepiece_frame(&mut g, &mut r, &device, &queue, None)?;
+        } else {
+            r.render_offscreen(&device, &queue);
+        }
         device.poll(wgpu::PollType::wait_indefinitely()).ok();
         let frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
         let gpu_frame = r.read_gpu_profile_frame(&device, &queue)?;
         if i >= WARMUP {
             times.push(frame_ms);
             gpu_samples.record(gpu_frame);
+            for (sum, ms) in cpu_ms.iter_mut().zip(r.bench_cpu_ms) { *sum += ms; }
         }
     }
     let _ = gpu_samples.report();
+    let timed = frames.max(1) as f32;
+    println!("[gfxbench] cpu: TLAS rewrite {:.2} ms, encoder finish {:.2} ms, submit {:.2} ms (mean per frame)",
+        cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
     if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
     if let Some(stats) = r.scatter_stats() { println!("[gfxbench] scatter {stats:?}"); }
     times.sort_by(f32::total_cmp);
@@ -16339,6 +16351,9 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "raymarch-interior") {
+        return raymarch_showcase::run_interior(&capture_arg(&args, 2, "raymarch_interior"));
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-sky") {
         return raymarch_showcase::run_sky(&capture_arg(&args, 2, "raymarch_sky"));
     }
