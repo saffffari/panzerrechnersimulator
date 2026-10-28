@@ -17,7 +17,10 @@ pub const DEFAULT_PORT: u16 = 28_460;
 pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
 /// 7: buildings left the world packet for per-instance building packets.
-pub const PROTOCOL_VERSION: u8 = 7;
+/// 8: armor scars stream as a rotating window of packed v2 records (`ARMOR_SCAR_WINDOW`).
+pub const PROTOCOL_VERSION: u8 = 8;
+/// Scars per world packet; a host field of `MAX_ARMOR_SCARS` reaches a client in 32 packets.
+pub const ARMOR_SCAR_WINDOW: usize = 16;
 const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
 const DISCOVERY_VERSION: u8 = 1;
 const DISCOVERY_BEACON: u8 = 1;
@@ -795,8 +798,12 @@ pub struct WorldSnapshot {
     pub module_mask: u16,
     pub crew_mask: u8,
     pub act_complete: bool,
-    /// Host-authoritative localized armor wounds and field patches on the player Tiger.
+    /// Host-authoritative localized armor wounds and field patches on the player Tiger: one
+    /// window of at most `ARMOR_SCAR_WINDOW` records starting at host index `armor_scar_start`,
+    /// out of `armor_scar_total` (`ArmorField::apply_window`).
     pub armor_scars: Vec<crate::armor_damage::ArmorScar>,
+    pub armor_scar_total: u16,
+    pub armor_scar_start: u16,
 }
 
 /// One building instance's state for LAN, relative to the instantiation baseline that host and
@@ -1798,58 +1805,51 @@ fn encode_world(
     w.u16(snapshot.module_mask);
     w.u8(snapshot.crew_mask);
     w.u8(snapshot.act_complete as u8);
-    encode_armor_scars(&mut w, &snapshot.armor_scars)?;
+    encode_armor_scars(&mut w, snapshot)?;
     (w.0.len() <= MAX_PACKET).then_some(w.0)
 }
 
-fn encode_armor_scars(w: &mut Writer, scars: &[crate::armor_damage::ArmorScar]) -> Option<()> {
-    if scars.len() > crate::armor_damage::MAX_ARMOR_SCARS
-        || scars
-            .iter()
-            .any(|scar| scar.radius_mm < 20 || scar.loss_mm == 0)
+fn encode_armor_scars(w: &mut Writer, snapshot: &WorldSnapshot) -> Option<()> {
+    let scars = &snapshot.armor_scars;
+    let total = usize::from(snapshot.armor_scar_total);
+    let start = usize::from(snapshot.armor_scar_start);
+    if scars.len() > ARMOR_SCAR_WINDOW
+        || total > crate::armor_damage::MAX_ARMOR_SCARS
+        || start + scars.len() > total
+        || !scars.iter().all(crate::armor_damage::valid_scar)
     {
         return None;
     }
+    w.u16(snapshot.armor_scar_total);
+    w.u16(snapshot.armor_scar_start);
     w.u8(scars.len() as u8);
     for scar in scars {
-        w.u8(crate::armor_damage::facing_code(scar.facing));
-        for coordinate in scar.local_cm {
-            w.u16(coordinate as u16);
+        for byte in scar.pack() {
+            w.u8(byte);
         }
-        w.u16(scar.radius_mm);
-        w.u16(scar.loss_mm);
-        w.u8(scar.kind as u8);
     }
     Some(())
 }
 
-fn decode_armor_scars(rd: &mut Reader<'_>) -> Option<Vec<crate::armor_damage::ArmorScar>> {
+fn decode_armor_scars(rd: &mut Reader<'_>) -> Option<(Vec<crate::armor_damage::ArmorScar>, u16, u16)> {
+    let total = rd.u16()?;
+    let start = rd.u16()?;
     let count = usize::from(rd.u8()?);
-    if count > crate::armor_damage::MAX_ARMOR_SCARS {
+    if count > ARMOR_SCAR_WINDOW
+        || usize::from(total) > crate::armor_damage::MAX_ARMOR_SCARS
+        || usize::from(start) + count > usize::from(total)
+    {
         return None;
     }
     let mut scars = Vec::with_capacity(count);
     for _ in 0..count {
-        let facing = crate::armor_damage::facing_from_code(rd.u8()?)?;
-        let mut local_cm = [0i16; 3];
-        for coordinate in &mut local_cm {
-            *coordinate = rd.u16()? as i16;
+        let mut packed = [0u8; crate::armor_damage::PACKED_SCAR_BYTES];
+        for byte in &mut packed {
+            *byte = rd.u8()?;
         }
-        let radius_mm = rd.u16()?;
-        let loss_mm = rd.u16()?;
-        let kind = crate::armor_damage::ScarKind::from_u8(rd.u8()?)?;
-        if radius_mm < 20 || loss_mm == 0 {
-            return None;
-        }
-        scars.push(crate::armor_damage::ArmorScar {
-            facing,
-            local_cm,
-            radius_mm,
-            loss_mm,
-            kind,
-        });
+        scars.push(crate::armor_damage::ArmorScar::unpack(&packed)?);
     }
-    Some(scars)
+    Some((scars, total, start))
 }
 
 fn bit_set(bits: &[u8], index: usize) -> bool {
@@ -2200,8 +2200,12 @@ fn decode_world_body(
         module_mask: rd.u16()?,
         crew_mask: rd.u8()?,
         act_complete: rd.u8()? != 0,
-        armor_scars: decode_armor_scars(rd)?,
+        armor_scars: Vec::new(),
+        armor_scar_total: 0,
+        armor_scar_start: 0,
     };
+    let (scars, total, start) = decode_armor_scars(rd)?;
+    let snapshot = WorldSnapshot { armor_scars: scars, armor_scar_total: total, armor_scar_start: start, ..snapshot };
     Some((snapshot, crew, mission, seed, epoch))
 }
 
@@ -2648,13 +2652,15 @@ mod tests {
             module_mask: 0x0fff,
             hatch_open: true,
             roof_hatches: [true, false],
-            armor_scars: vec![crate::armor_damage::ArmorScar {
-                facing: crate::ballistics::Facing::HullSide,
-                local_cm: [-181, 104, 32],
-                radius_mm: 110,
-                loss_mm: 74,
-                kind: crate::armor_damage::ScarKind::Hole,
-            }],
+            armor_scars: vec![crate::armor_damage::ArmorScar::from_v1(
+                crate::ballistics::Facing::HullSide,
+                [-181, 104, 32],
+                110,
+                74,
+                crate::armor_damage::ScarKind::Hole,
+            )],
+            armor_scar_total: 3,
+            armor_scar_start: 2,
             ..WorldSnapshot::default()
         };
         let packet = encode_world(&snapshot, frame, LanMission::Campaign, 42, 0xE001).unwrap();
@@ -2711,15 +2717,17 @@ mod tests {
         let snapshot = WorldSnapshot {
             act: 3,
             enemies: vec![NetTankState::default(); 24],
-            armor_scars: (0..crate::armor_damage::MAX_ARMOR_SCARS)
-                .map(|index| crate::armor_damage::ArmorScar {
-                    facing: crate::ballistics::Facing::TurretFront,
-                    local_cm: [index as i16, 190, 120],
-                    radius_mm: 220,
-                    loss_mm: 112,
-                    kind: crate::armor_damage::ScarKind::Patched,
-                })
+            armor_scars: (0..ARMOR_SCAR_WINDOW)
+                .map(|index| crate::armor_damage::ArmorScar::from_v1(
+                    crate::ballistics::Facing::TurretFront,
+                    [index as i16, 190, 120],
+                    220,
+                    112,
+                    crate::armor_damage::ScarKind::Patched,
+                ))
                 .collect(),
+            armor_scar_total: crate::armor_damage::MAX_ARMOR_SCARS as u16,
+            armor_scar_start: (crate::armor_damage::MAX_ARMOR_SCARS - ARMOR_SCAR_WINDOW) as u16,
             ..WorldSnapshot::default()
         };
         let packet = encode_world(

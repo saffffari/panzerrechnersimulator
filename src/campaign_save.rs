@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{anyhow, ensure, Context, Result};
 use serde_json::{json, Value};
 
-use crate::armor_damage::{self, ArmorScar, ScarKind, MAX_ARMOR_SCARS};
+use crate::armor_damage::{self, ArmorField, ArmorScar, ScarKind, MAX_ARMOR_SCARS};
 use crate::campaign::{
     ActEntryCheckpoint, CampaignInventory, CampaignRun, PersistentBuildingSnapshot,
     PersistentSnapshot, StorySiteId, TigerSnapshot,
@@ -18,7 +18,10 @@ use crate::campaign::{
 use crate::run_route::SectorEdge;
 
 const SCHEMA: &str = "panzerrechnersystem.campaign-checkpoint";
-const VERSION: u64 = 1;
+/// 2: armor scars are one packed hex string (`armor_damage::PACKED_SCAR_BYTES` per scar) with
+/// plate normal, shot direction and terminal geometry. Version 1 files still load.
+const VERSION: u64 = 2;
+const VERSION_V1_SCARS: u64 = 1;
 const SEMANTICS: &str = "act-entrance-same-attempt";
 const MAX_SAVE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_BUILDINGS: usize = 256;
@@ -254,15 +257,7 @@ fn edge_json(edge: Option<SectorEdge>) -> Value {
 fn encode(checkpoint: &ActEntryCheckpoint, night: bool, compatibility: &str) -> Result<Vec<u8>> {
     let tiger = &checkpoint.entrance.tiger;
     let inventory = &checkpoint.entrance.inventory;
-    let scars: Vec<_> = tiger
-        .armor_scars
-        .iter()
-        .map(|scar| {
-            json!({
-        "facing":armor_damage::facing_code(scar.facing), "local_cm":scar.local_cm,
-        "radius_mm":scar.radius_mm,"loss_mm":scar.loss_mm,"kind":scar.kind as u8})
-        })
-        .collect();
+    let scars = hex_encode(&ArmorField::pack_all(&tiger.armor_scars));
     let buildings: Vec<_> = checkpoint.entrance.buildings.iter().map(|b| json!({
         "version":b.version,"act_id":b.act_id,"instance_id":b.instance_id,"blueprint_id":b.blueprint_id,
         "blueprint_revision":b.blueprint_revision,"layout_hash":b.layout_hash,
@@ -301,6 +296,53 @@ fn encode(checkpoint: &ActEntryCheckpoint, night: bool, compatibility: &str) -> 
     Ok(encoded)
 }
 
+/// Version-1 checkpoints stored each scar as an object with a centimetre position.
+fn v1_scars(value: &Value) -> Result<Vec<ArmorScar>> {
+    let mut scars = Vec::new();
+    for scar in list(value, MAX_ARMOR_SCARS)? {
+        let coords = list(&scar["local_cm"], 3)?;
+        ensure!(coords.len() == 3, "armor scar needs three coordinates");
+        let mut local_cm = [0i16; 3];
+        for (i, v) in coords.iter().enumerate() {
+            local_cm[i] = v
+                .as_i64()
+                .and_then(|n| i16::try_from(n).ok())
+                .context("invalid scar coordinate")?;
+        }
+        let radius_mm: u16 = number(&scar["radius_mm"], "scar radius")?;
+        let loss_mm: u16 = number(&scar["loss_mm"], "scar loss")?;
+        ensure!(radius_mm >= 20 && loss_mm > 0, "invalid physical scar");
+        scars.push(ArmorScar::from_v1(
+            armor_damage::facing_from_code(number(&scar["facing"], "scar facing")?)
+                .context("unknown armor facing")?,
+            local_cm,
+            radius_mm,
+            loss_mm,
+            ScarKind::from_u8(number(&scar["kind"], "scar kind")?)
+                .filter(|kind| *kind != ScarKind::Pock)
+                .context("unknown scar kind")?,
+        ));
+    }
+    Ok(scars)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(DIGITS[(byte >> 4) as usize] as char);
+        out.push(DIGITS[(byte & 15) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode(text: &str) -> Option<Vec<u8>> {
+    let digit = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    let bytes = text.as_bytes();
+    (bytes.len() % 2 == 0).then_some(())?;
+    bytes.chunks_exact(2).map(|pair| Some(digit(pair[0])? << 4 | digit(pair[1])?)).collect()
+}
+
 fn number<T: TryFrom<u64>>(value: &Value, name: &str) -> Result<T> {
     value
         .as_u64()
@@ -335,7 +377,7 @@ fn decode(bytes: &[u8], compatibility: &str) -> Result<LoadedCheckpoint> {
     let envelope: Value = serde_json::from_slice(bytes).context("parse campaign checkpoint")?;
     ensure!(
         envelope["schema"] == SCHEMA
-            && envelope["version"].as_u64() == Some(VERSION)
+            && matches!(envelope["version"].as_u64(), Some(VERSION | VERSION_V1_SCARS))
             && envelope["semantics"] == SEMANTICS,
         "unsupported campaign checkpoint format"
     );
@@ -352,30 +394,14 @@ fn decode(bytes: &[u8], compatibility: &str) -> Result<LoadedCheckpoint> {
         .as_bool()
         .context("checkpoint time of day missing")?;
     let t = &p["entrance"]["tiger"];
-    let mut scars = Vec::new();
-    for scar in list(&t["armor_scars"], MAX_ARMOR_SCARS)? {
-        let coords = list(&scar["local_cm"], 3)?;
-        ensure!(coords.len() == 3, "armor scar needs three coordinates");
-        let mut local_cm = [0i16; 3];
-        for (i, v) in coords.iter().enumerate() {
-            local_cm[i] = v
-                .as_i64()
-                .and_then(|n| i16::try_from(n).ok())
-                .context("invalid scar coordinate")?;
-        }
-        let radius_mm: u16 = number(&scar["radius_mm"], "scar radius")?;
-        let loss_mm: u16 = number(&scar["loss_mm"], "scar loss")?;
-        ensure!(radius_mm >= 20 && loss_mm > 0, "invalid physical scar");
-        scars.push(ArmorScar {
-            facing: armor_damage::facing_from_code(number(&scar["facing"], "scar facing")?)
-                .context("unknown armor facing")?,
-            local_cm,
-            radius_mm,
-            loss_mm,
-            kind: ScarKind::from_u8(number(&scar["kind"], "scar kind")?)
-                .context("unknown scar kind")?,
-        });
-    }
+    let scars = if envelope["version"].as_u64() == Some(VERSION) {
+        let text = t["armor_scars"].as_str().context("armor scars must be packed text")?;
+        let bytes = hex_decode(text).context("armor scars are not hex")?;
+        ArmorField::unpack_all(&bytes).context("invalid packed armor scar")?
+    } else {
+        v1_scars(&t["armor_scars"])?
+    };
+
     let system_condition = numbers::<u8>(&t["system_condition"], 12)?
         .try_into()
         .map_err(|_| anyhow!("checkpoint needs twelve Tiger systems"))?;
@@ -527,13 +553,13 @@ mod tests {
     fn disk_roundtrip_restores_entrance_not_live_damage_and_replays_same_retry() {
         let mut initial = CampaignRun::new(42).persistent().clone();
         initial.inventory.ap_rounds = 17;
-        initial.tiger.armor_scars.push(ArmorScar {
-            facing: crate::ballistics::Facing::HullSide,
-            local_cm: [-30, 120, -90],
-            radius_mm: 80,
-            loss_mm: 35,
-            kind: ScarKind::Hole,
-        });
+        initial.tiger.armor_scars.push(ArmorScar::from_v1(
+            crate::ballistics::Facing::HullSide,
+            [-30, 120, -90],
+            80,
+            35,
+            ScarKind::Hole,
+        ));
         initial.buildings.push(PersistentBuildingSnapshot {
             version: 2,
             act_id: 1,
@@ -774,6 +800,40 @@ mod tests {
         fs::write(&blocked, b"keep").unwrap();
         assert!(write_atomic(&blocked.join("nested/checkpoint.json"), b"new").is_err());
         assert_eq!(fs::read(&blocked).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn hundreds_of_armor_scars_round_trip_and_version_one_files_still_load() {
+        use crate::ballistics::Facing;
+        let mut field = ArmorField::default();
+        for i in 0..MAX_ARMOR_SCARS {
+            let local = glam::Vec3::new(1.8, 0.4 + (i / 32) as f32 * 0.06, -2.5 + (i % 32) as f32 * 0.16);
+            field.record_pock(Facing::HullSide, local, glam::Vec3::X, -glam::Vec3::X, 7.92, 3600.0, 80.0, 0.0);
+        }
+        assert_eq!(field.scars().len(), MAX_ARMOR_SCARS);
+        let mut snapshot = CampaignRun::new(11).persistent().clone();
+        snapshot.tiger.armor_scars = field.scars().to_vec();
+        let run = CampaignRun::with_snapshot(11, snapshot.clone());
+        let bytes = encode(&run.export_act_entry_checkpoint().unwrap(), false, "world").unwrap();
+        assert!(bytes.len() < 64 * 1024, "{} bytes for {} scars", bytes.len(), MAX_ARMOR_SCARS);
+        let loaded = decode(&bytes, "world").unwrap();
+        assert_eq!(loaded.run.persistent().tiger.armor_scars, snapshot.tiger.armor_scars);
+
+        // A version-1 file: the old object list with centimetre positions.
+        let mut old: Value = serde_json::from_slice(&bytes).unwrap();
+        old["version"] = json!(VERSION_V1_SCARS);
+        old["payload"]["entrance"]["tiger"]["armor_scars"] = json!([
+            {"facing":1,"local_cm":[-30,120,-90],"radius_mm":80,"loss_mm":35,"kind":1}]);
+        old["payload_checksum"] = json!(checksum(&serde_json::to_vec(&old["payload"]).unwrap()));
+        let loaded = decode(&serde_json::to_vec(&old).unwrap(), "world").unwrap();
+        assert_eq!(loaded.run.persistent().tiger.armor_scars,
+            vec![ArmorScar::from_v1(Facing::HullSide, [-30, 120, -90], 80, 35, ScarKind::Hole)]);
+
+        // Damaged packed text is rejected, not partly applied.
+        let mut bad: Value = serde_json::from_slice(&bytes).unwrap();
+        bad["payload"]["entrance"]["tiger"]["armor_scars"] = json!("zz");
+        bad["payload_checksum"] = json!(checksum(&serde_json::to_vec(&bad["payload"]).unwrap()));
+        assert!(decode(&serde_json::to_vec(&bad).unwrap(), "world").is_err());
     }
 
     #[test]

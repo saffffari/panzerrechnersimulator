@@ -8228,6 +8228,8 @@ struct CampaignHulk {
     models: [Mat4; 3],
     ember: f32,
     burning: bool,
+    /// The wounds it died with, in hull/turret-local frames (the turret frame is `models[1]`).
+    scars: crate::armor_damage::ArmorField,
 }
 
 /// Read-only ground-plane state used by the policy-preserving vehicle safety layer. IDs are stable
@@ -9167,6 +9169,8 @@ pub struct Game {
     armor_tick: u32,         // counter-based penetration roll (deterministic, no rand)
     /// Persistent localized dents, holes and field patches on the one campaign Tiger.
     armor_scars: crate::armor_damage::ArmorField,
+    /// Rotating LAN cursor over `armor_scars` (`net_snapshot`).
+    armor_net_cursor: std::cell::Cell<usize>,
     /// Visual concussion: elapsed seconds into the eye's disturbance after a heavy hit and its
     /// duration (0 = none). Hearing is the ear model's (`hearing`), not this.
     concussion_t: f32,
@@ -13176,6 +13180,7 @@ impl Game {
             ai_tick: 0,
             armor_tick: 0,
             armor_scars: crate::armor_damage::ArmorField::default(),
+            armor_net_cursor: std::cell::Cell::new(0),
             concussion_t: 0.0,
             concussion_dur: 0.0,
             hearing: crate::hearing::Hearing::default(),
@@ -14796,6 +14801,7 @@ impl Game {
                 models,
                 ember: if w.burning { 0.22 } else { 0.0 },
                 burning: w.burning,
+                scars: e.scars.clone(),
             });
         }
     }
@@ -23534,6 +23540,18 @@ impl Game {
     /// Compact host-authoritative state for LAN reconciliation. Transient particles remain local;
     /// the machine, ammunition, crew/modules and every active enemy are authoritative.
     pub fn net_snapshot(&self) -> crate::lan::WorldSnapshot {
+        // The scar field streams in windows: every other packet carries the newest records (a
+        // fresh hit shows at once), the rest walk the whole field so a late joiner converges.
+        let scars = self.armor_scars.scars();
+        let window = crate::lan::ARMOR_SCAR_WINDOW;
+        let tick = self.armor_net_cursor.get();
+        self.armor_net_cursor.set(tick.wrapping_add(1));
+        let armor_start = if scars.len() <= window || tick % 2 == 0 {
+            scars.len().saturating_sub(window)
+        } else {
+            (tick / 2 * window) % scars.len()
+        };
+        let armor_window = &scars[armor_start..(armor_start + window).min(scars.len())];
         let tank = |t: &Tank| crate::lan::NetTankState {
             pos: t.pos.to_array(),
             heading: t.heading,
@@ -23577,7 +23595,9 @@ impl Game {
             module_mask,
             crew_mask,
             act_complete: self.act_complete,
-            armor_scars: self.armor_scars.scars().to_vec(),
+            armor_scars: armor_window.to_vec(),
+            armor_scar_total: self.armor_scars.scars().len() as u16,
+            armor_scar_start: armor_start as u16,
         }
     }
 
@@ -23681,8 +23701,8 @@ impl Game {
             crew.ok = snapshot.crew_mask & (1 << i) != 0;
         }
         self.act_complete = snapshot.act_complete;
-        self.armor_scars =
-            crate::armor_damage::ArmorField::from_scars(snapshot.armor_scars.clone());
+        self.armor_scars.apply_window(usize::from(snapshot.armor_scar_total),
+            usize::from(snapshot.armor_scar_start), &snapshot.armor_scars);
         // Buildings arrive separately, per instance (`apply_net_buildings`).
         let _ = renderer;
     }
@@ -24763,12 +24783,9 @@ impl Game {
                 ProjectileVehicle::Enemy(index) => enemy_armor(self.enemies[index].kind),
             };
             let base_plate = armor.surface_plate.map_or_else(||scheme.plate(armor.facing),|surface|surface.plate);
-            let plate = if armor.vehicle == ProjectileVehicle::Player {
-                self.armor_scars
-                    .plate_at(base_plate, armor.facing, armor.local_point)
-            } else {
-                base_plate
-            };
+            // Every vehicle's own wounds: a crater or hole is thinner plate for the next round.
+            let plate = self.vehicle_scars(armor.vehicle)
+                .plate_at(base_plate, armor.facing, armor.local_point);
             let horizontal = if armor.surface_plate.is_some() {
                 (-travel_direction.normalize_or_zero()).dot(armor.world_normal).abs().clamp(0.0,1.0).acos().to_degrees()
             }else{crate::ballistics::horiz_obliquity_deg(travel_direction, armor.world_normal)};
@@ -24922,6 +24939,45 @@ impl Game {
         ricochet
     }
 
+    /// The scar field of a struck vehicle: the player's campaign-saved field or the vehicle's own.
+    fn vehicle_scars(&self, vehicle: ProjectileVehicle) -> &crate::armor_damage::ArmorField {
+        match vehicle {
+            ProjectileVehicle::Player => &self.armor_scars,
+            ProjectileVehicle::Enemy(index) => &self.enemies[index].scars,
+            ProjectileVehicle::Ally(index) => &self.allies[index].tank.scars,
+        }
+    }
+
+    fn vehicle_scars_mut(&mut self, vehicle: ProjectileVehicle) -> &mut crate::armor_damage::ArmorField {
+        match vehicle {
+            ProjectileVehicle::Player => &mut self.armor_scars,
+            ProjectileVehicle::Enemy(index) => &mut self.enemies[index].scars,
+            ProjectileVehicle::Ally(index) => &mut self.allies[index].tank.scars,
+        }
+    }
+
+    /// The hull or turret frame a contact's `local_point` was measured in.
+    fn armor_contact_frame(&self, armor: &VehicleArmorContact) -> Mat4 {
+        let tank = match armor.vehicle {
+            ProjectileVehicle::Player => &self.player,
+            ProjectileVehicle::Enemy(index) => &self.enemies[index],
+            ProjectileVehicle::Ally(index) => &self.allies[index].tank,
+        };
+        if armor.part == ArmorPart::Hull { tank.hull_model() } else { tank.turret_model() }
+    }
+
+    /// Leave the strike's permanent mark on whichever vehicle took it, with the struck surface's
+    /// real normal and the shell's real path in that vehicle's frame.
+    fn record_vehicle_scar(&mut self, armor: &VehicleArmorContact, event: &crate::ballistics::ImpactEvent,
+        travel_world: Vec3, now_s: f32) -> crate::armor_damage::ArmorScar {
+        let frame = self.armor_contact_frame(armor);
+        let to_local = frame.inverse();
+        let normal = to_local.transform_vector3(armor.world_normal).normalize_or_zero();
+        let dir = to_local.transform_vector3(travel_world).normalize_or_zero();
+        self.vehicle_scars_mut(armor.vehicle)
+            .record_at(armor.facing, armor.local_point, normal, dir, event, now_s)
+    }
+
     fn resolve_authoritative_vehicle_impact(
         &mut self,
         projectile: &AuthoritativeProjectile,
@@ -24932,6 +24988,10 @@ impl Game {
         r: &mut Renderer,
     ) {
         let penetrated = outcome == Outcome::Penetrate;
+        let travel_world = projectile.velocity.normalize_or_zero();
+        if armor.vehicle != ProjectileVehicle::Player {
+            self.record_vehicle_scar(&armor, &event, travel_world, r.time);
+        }
         match armor.vehicle {
             ProjectileVehicle::Enemy(index) => {
                 if matches!(projectile.shooter, ProjectileShooter::Player) {
@@ -25007,12 +25067,11 @@ impl Game {
                     self.stat_pens_on_player = self.stat_pens_on_player.saturating_add(1);
                 }
                 if !self.god {
-                    let scar = self
-                        .armor_scars
-                        .record(armor.facing, armor.local_point, &event);
+                    let scar = self.record_vehicle_scar(&armor, &event, travel_world, r.time);
                     println!(
-                        "[armor] {:?} {:?} at {:?}: radius {} mm, loss {} mm",
-                        scar.facing, scar.kind, scar.local_cm, scar.radius_mm, scar.loss_mm
+                        "[armor] {:?} {:?} at {:?} mm: radius {} mm, loss {} mm, depth {:.1} mm, aperture {} mm",
+                        scar.facing, scar.kind, scar.local_mm, scar.radius_mm, scar.loss_mm,
+                        scar.depth_m() * 1000.0, scar.aperture_mm
                     );
                     // What the shell breaks where it lands, whether or not it goes through.
                     self.apply_exterior_strike(armor, &event, penetrated, projectile.seed, projectile.velocity.normalize_or_zero());
@@ -29228,7 +29287,7 @@ impl Game {
                                         "[armor] {:?} {:?} at {:?}: radius {} mm, loss {} mm",
                                         scar.facing,
                                         scar.kind,
-                                        scar.local_cm,
+                                        scar.local_mm,
                                         scar.radius_mm,
                                         scar.loss_mm
                                     );
@@ -34601,6 +34660,7 @@ mod tests {
             parts: tank::TIGER_PARTS,
             kind: EnemyKind::T34,
             drops_into_pits: false,
+            scars: Default::default(),
         };
         let driver_before = crew_live_hit_center(&player, crate::lan::LanRole::Driver);
         let gunner_before = crew_live_hit_center(&player, crate::lan::LanRole::Gunner);
@@ -34674,6 +34734,7 @@ mod tests {
             parts: tank::TIGER_PARTS,
             kind: EnemyKind::T34,
             drops_into_pits: false,
+            scars: Default::default(),
         };
         let casualty = CouchCrewCasualty {
             peer_id: 22,
@@ -34727,6 +34788,7 @@ mod tests {
             parts: tank::TIGER_PARTS,
             kind: EnemyKind::T34,
             drops_into_pits: false,
+            scars: Default::default(),
         };
         let casualty = CouchCrewCasualty {
             peer_id: 33,
