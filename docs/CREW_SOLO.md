@@ -35,6 +35,19 @@ hover, station entry, and the penetration path's wound record.
 - The loader serves the breech with the existing auto-crew stroke state machine at a human
   cadence (`LOADER_STROKE_S = 0.75 s` per stroke against `RAM_PER_PRESS_OK` and `RAM_DECAY`,
   about six seconds from the shot to the next round seated at full performance).
+- **Empties.** After freeing the hot case the loader turns and stands it upright in the
+  empties rack along the curved inner rear wall of the turret, slot by slot
+  (`EMPTIES_RACK_SLOTS = 12`), and is away from the breech for 2.2 s / performance; the case
+  is the real case geometry and rides the turret in its slot for the rest of the run, in view
+  from the cupola and the sights. The slot stands are probed once from the turret's own
+  interior triangles (a ray fan along the rear wall, the floor or shelf under each spot, the
+  headroom above), so a slot exists only where a case can stand; the probe's count is printed
+  and in the receipt. He lets the case fall to the floor instead when he is rushed (a contact
+  under fire at will), hurt (performance under 0.7), or the rack is full ("Loader: rack's
+  full."). The player as loader stows the same way: carry the case to the rack and let go
+  within reach of an empty slot ("EMPTIES RACK - LET GO TO STAND THE CASE IN IT"); the floor
+  and the throw stay as they were. `stowed_empties()` and `loose_empties_aboard()` are the
+  counts the salvage and resupply paths read.
 - The player can take any station as before (sight anchor, breech, cupola, and now the
   **driver's seat** from the front of the basket floor). The man he displaces stands by at
   the rear of the basket floor, never under the cupola (the player is the commander; nobody

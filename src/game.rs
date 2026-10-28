@@ -5693,7 +5693,8 @@ fn unracked_88mm_aboard(loose: &[LooseShell], carried: Option<CarriedMesh>, rack
 /// at rest and not in the loader's hands, else the slowest uncarried one.
 fn casing_pool_slot(cases: &[Casing]) -> Option<usize> {
     if let Some(free) = cases.iter().position(|case| !case.active) { return Some(free); }
-    let loose = || cases.iter().enumerate().filter(|(_, case)| !case.carried);
+    // Cases in the hands or stowed in the rack are never given up for a new one.
+    let loose = || cases.iter().enumerate().filter(|(_, case)| !case.carried && case.stowed.is_none());
     loose().find(|(_, case)| case.vel.length_squared() < 1.0e-4).map(|(index, _)| index)
         .or_else(|| loose().min_by(|a, b| a.1.vel.length_squared().total_cmp(&b.1.vel.length_squared()))
             .map(|(index, _)| index))
@@ -5709,6 +5710,9 @@ mod lay_yaw_lead_tests {
         for case in &mut cases { case.active = true; }
         cases[0].carried = true;                 // in the hands: never taken
         cases[1].vel = Vec3::new(0.0, -2.0, 0.4); // still tumbling
+        cases[2].stowed = Some(0);               // standing in the empties rack: never taken
+        assert_eq!(casing_pool_slot(&cases), Some(3), "oldest loose case at rest");
+        cases[2].stowed = None;
         assert_eq!(casing_pool_slot(&cases), Some(2), "oldest case at rest");
         cases[2].vel = Vec3::X; cases[3].vel = Vec3::X * 3.0;
         assert_eq!(casing_pool_slot(&cases), Some(2), "none at rest: the slowest loose case");
@@ -8196,6 +8200,14 @@ struct Casing {
     outside_rest: bool,
     /// Where it was, in the turret's frame, when it last made a sound.
     sounded_at: Vec3,
+    /// Stowed upright in the empties rack at this slot (solo crew): no solving, it rides the
+    /// turret at the slot's pose and is never recycled.
+    stowed: Option<u8>,
+    /// Seconds left of the loader's carry from the breech to the slot; the pose lerps meanwhile.
+    stow_t: f32,
+    stow_s: f32,
+    /// Turret-local pose the carry started from.
+    stow_from: (Vec3, Quat),
 }
 
 /// The tank's envelope in hull coordinates. Brass inside it rides with the vehicle.
@@ -17103,6 +17115,7 @@ impl Game {
                 let (cam_pos, cam_fwd) = (r.camera.pos, r.camera.forward());
                 self.crew_solo_station_anchors(cam_pos, cam_fwd);
                 self.crew_solo_hover(cam_pos, cam_fwd);
+                self.crew_solo_rack_hover();
             }
 
             // Non-campaign modes retain the simple red-X sandbox exit. A campaign attempt routes through
@@ -18339,6 +18352,9 @@ impl Game {
             + Vec3::Y * (0.65 + 0.35 * s(2)) + back * (2.0 + 0.60 * s(3));
         let Some(k) = self.spawn_casing_from(position, velocity) else { return; };
         self.casings[k].rotation = rotation.normalize();
+        // The solo crew's loader stows the empty upright in the rear rack unless he is rushed,
+        // hurt, or the rack is full; then it tumbles as before.
+        self.crew_solo_offer_stow(k, position, rotation.normalize());
         if let Some(a) = &self.audio {
             a.play_mechanical(crate::acoustics::MechanicalParams {
                 cue: crate::acoustics::MechanicalCue::CasingExtract,
@@ -28633,12 +28649,20 @@ impl Game {
             aboard: false,
             outside_rest: false,
             sounded_at: Vec3::splat(f32::MAX),
+            stowed: None,
+            stow_t: 0.0,
+            stow_s: 0.0,
+            stow_from: (Vec3::ZERO, Quat::IDENTITY),
         };
         Some(k)
     }
 
     fn release_carried_casing(&mut self) -> bool {
         let Some(k) = self.carried_casing.take() else { return false; };
+        // Let go at an empty rack slot: the case goes in upright instead of to the floor.
+        if self.crew_solo_stow_from_hands(k) {
+            return true;
+        }
         let case = &mut self.casings[k];
         case.carried = false;
         case.drop_rest = shell_collision::DropRest::default();
@@ -30105,6 +30129,24 @@ impl Game {
                 c.pos = self.carry_pos;
                 c.rotation = self.carry_rotation;
                 c.angular_vel = self.carry_angular_vel;
+            } else if let Some(rack_slot) = c.stowed {
+                // Upright in the rack, riding the turret; the loader's carry from the breech
+                // is a pose lerp over the stow time (no hands are drawn for it).
+                if let Some((center, rotation)) = self.crew_solo.empties_rack.pose(rack_slot as usize) {
+                    c.stow_t = (c.stow_t - dt.max(0.0)).max(0.0);
+                    let t = if c.stow_s > 0.0 { 1.0 - c.stow_t / c.stow_s } else { 1.0 };
+                    let t = t.clamp(0.0, 1.0);
+                    let smooth = t * t * (3.0 - 2.0 * t);
+                    let (from_pos, from_rot) = c.stow_from;
+                    let lift = Vec3::Y * (0.18 * (std::f32::consts::PI * t).sin());
+                    let local_pos = from_pos.lerp(center, smooth) + lift;
+                    let local_rot = from_rot.slerp(rotation, smooth);
+                    c.pos = frames[0].transform_point3(local_pos);
+                    c.rotation = (frames[0].to_scale_rotation_translation().1 * local_rot).normalize();
+                    c.vel = Vec3::ZERO;
+                    c.angular_vel = Vec3::ZERO;
+                    c.aboard = true;
+                }
             } else if !c.outside_rest {
                 let aboard = brass_aboard(hull_inverse, c.pos);
                 if aboard != c.aboard {

@@ -37,6 +37,15 @@ none presented as physiology or a contact solve:
   4, 48)` grains from a point chosen by the worst wound's region (lap, side, head, chest), and
   96 more as he dies of it: a design rate for the pool's growth, through the real surface
   transport, not a volume balance against his blood loss.
+- Stowing spent cases upright in a rear-wall rack is a crew-habit choice for this Tiger, not a
+  historical claim (practice varied by crew and unit; cases also went out of the hatch or onto
+  the floor). The slot stands are generated from the turret's source triangles (a 100-degree
+  ray fan from a point in the rear of the basket, the case stood a hand's width in from the
+  wall on the surface a downward ray finds, if the upward ray finds headroom), so no slot is
+  invented where the wall and floor are not; the margins (0.03 m from the wall, 0.01 m above
+  the stand, 0.04 m headroom) are design values. The loader's carry to the rack is a pose
+  interpolation over the stow time with no hands drawn; the stow time, the rushed and hurt
+  thresholds are design values.
 - Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
   loss, the airway timer), spoken once per change of the set of men needing care.
 - The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
