@@ -2280,6 +2280,26 @@ impl Game {
         self.crew_solo_working(role)
     }
 
+    /// What the renderer will draw of the crew this frame: every living-figure slot (seated and
+    /// standing pools, one per man) that is visible, with the man it belongs to and where its
+    /// origin stands in the turret's frame. Read from the renderer, not from the crew model.
+    pub fn debug_crew_solo_visible_figures(&self, r: &Renderer) -> Value {
+        let names = ["commander", "gunner", "driver", "loader", "radio-operator"];
+        let inverse = self.player.turret_model().inverse();
+        let mut figures = Vec::new();
+        for (pool, slots) in [("seated", &self.slots.lan_crew), ("standing", &self.slots.commander_crew)] {
+            for (identity, &slot) in slots.iter().enumerate() {
+                if let Some((true, model)) = r.debug_mesh_state(slot) {
+                    let origin = inverse.transform_point3(model.transform_point3(Vec3::ZERO));
+                    let cupola = Vec2::new(origin.x, origin.z).distance(Vec2::new(COMMANDER_POST_TURRET_LOCAL.x, COMMANDER_POST_TURRET_LOCAL.z));
+                    figures.push(json!({"man": names[identity], "pool": pool,
+                        "turret_local": origin.to_array(), "from_cupola_post_m": cupola}));
+                }
+            }
+        }
+        json!(figures)
+    }
+
     /// Walk the interior body to a floor spot in small steps through the ordinary floor/breech
     /// clamp, routing round the breech by the side corridor when the straight line is blocked.
     /// The result is a reachable standing spot, never a teleport through the gun.

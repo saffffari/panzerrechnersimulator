@@ -750,6 +750,17 @@ pub fn run_crew_solo_kia_capture(prefix: &str) -> anyhow::Result<()> {
     g.click_station();
     run_for(&mut g, &mut r, &idle, 1.2);
     let at_sights = g.debug_crew_solo_bodies();
+    // What the renderer draws, not what the crew model says: render once so the rig pass runs.
+    proof.still(&mut r, "kia_00b_from_the_sights")?;
+    let drawn_at_sights = g.debug_crew_solo_visible_figures(&r);
+    let commander_drawn = drawn_at_sights.as_array().map_or(0, |f| f.iter().filter(|x| x["man"] == "commander").count());
+    let under_cupola = drawn_at_sights.as_array().map_or(0, |f| f.iter()
+        .filter(|x| x["from_cupola_post_m"].as_f64().unwrap_or(9.0) < 0.35).count());
+    proof.check(
+        "drawn by the renderer with the player at the sights: no commander figure anywhere (the player is the commander) and no figure standing in the cupola post",
+        g.station == Station::Gunner && commander_drawn == 0 && under_cupola == 0,
+        json!({"figures": drawn_at_sights}),
+    );
     let gunner_standing_by = at_sights["men"].as_array().and_then(|men| men.iter().find(|m| m["role"] == "gunner")).map(|m| m["standing_by"] == true).unwrap_or(false);
     let nobody_at_cupola = at_sights["men"].as_array().map_or(false, |men| men.iter().all(|m| m["player"] == true || m["alive"] == false || m["standing_by"] == true || m["post"] != "COMMANDER"));
     proof.check(
@@ -762,6 +773,15 @@ pub fn run_crew_solo_kia_capture(prefix: &str) -> anyhow::Result<()> {
     g.debug_crew_solo_go_to(CrewRole::Commander);
     run_for(&mut g, &mut r, &idle, 0.2);
     proof.still(&mut r, "kia_01_cupola_after_the_player_left_it")?;
+    let drawn_walking = g.debug_crew_solo_visible_figures(&r);
+    let commander_walking = drawn_walking.as_array().map_or(0, |f| f.iter().filter(|x| x["man"] == "commander").count());
+    let under_cupola_walking = drawn_walking.as_array().map_or(0, |f| f.iter()
+        .filter(|x| x["from_cupola_post_m"].as_f64().unwrap_or(9.0) < 0.35).count());
+    proof.check(
+        "drawn by the renderer with the player on the compartment floor looking at the cupola: no commander figure and nobody in the cupola post",
+        commander_walking == 0 && under_cupola_walking == 0,
+        json!({"figures": drawn_walking}),
+    );
     let walking = g.debug_crew_solo_bodies();
     let loader_at_post_while_walking = walking["men"].as_array().and_then(|men| men.iter().find(|m| m["role"] == "loader")).map(|m| m["post"] == "LOADER").unwrap_or(false);
     proof.check(

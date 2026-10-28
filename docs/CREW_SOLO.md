@@ -262,6 +262,17 @@ the player could not drop into the compartment to find him; and a loader who die
 player walked the compartment had been displaced to the cupola, so his body was not at his
 station. Both rules are changed above.
 
+## Verified: what the renderer draws (2026-10-28, `crew-solo-kia`, raymarch)
+
+The cupola report is now checked against the renderer, not only the crew model: after a frame
+is rendered, the visible crew-figure slots are read back (`debug_crew_solo_visible_figures`).
+With the player at the sights the renderer draws the driver, loader and radio operator at their
+posts and the displaced gunner standing by at the rear of the basket (0.57 m from the cupola
+post); from the compartment floor it draws the four men at their own posts. In neither view is a
+commander figure drawn, nor any figure within 0.35 m of the cupola post. The seated man seen
+when looking up toward the cupola from the floor is the gunner on his own seat, below and ahead
+of the commander's place, where a Tiger's gunner sits. All six `crew-solo-kia` checks pass.
+
 ## Verified: the empties (2026-10-28, `crew-solo-empties`)
 
 `crew-solo-empties captures/crew_solo_empties_20261028` (shader backend): all six checks
