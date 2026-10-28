@@ -25,17 +25,25 @@
   raymarch The froxel ray-marching backend (docs/RAYMARCHING_ENGINE.md): clustered
            lights, marched media, fireballs, embers, reflections, eyepiece glass.
 
+.PARAMETER Resolution
+  Internal render grid: 800x450 (default), 640x360, 480x272 or 320x180. The window is unchanged;
+  the frame is upscaled to it. Passing -Resolution also writes the grid into the saved graphics
+  preferences (which otherwise win at startup); the graphics menu offers the same grids in play.
+  Measured frame costs per grid are in docs/RAYMARCHING_ENGINE.md ("Internal resolution").
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Mode menu -Windowed
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Resolution 480x272
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('play', 'menu', 'check')] [string]$Mode = 'play',
     [switch]$Windowed,
     [switch]$Build,
-    [ValidateSet('shader', 'raymarch')] [string]$Renderer = 'shader'
+    [ValidateSet('shader', 'raymarch')] [string]$Renderer = 'shader',
+    [ValidateSet('800x450', '640x360', '480x272', '320x180')] [string]$Resolution = '800x450'
 )
 $ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility, Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
@@ -77,25 +85,34 @@ try { $sha = ([System.BitConverter]::ToString([System.Security.Cryptography.SHA2
 finally { $stream.Dispose() }
 Write-Host "Release: $Binary`nSHA256:  $sha"
 if (Test-Path $Config) { Write-Host "Saved graphics preferences: $Config" }
-else { Write-Host "First launch: 800x450, screen_bayer8, fullscreen=$(-not $Windowed)." }
+else { Write-Host "First launch: $Resolution, screen_bayer8, fullscreen=$(-not $Windowed)." }
 if ($Mode -eq 'check') { exit 0 }
 
-# --- first-launch graphics preferences (never overwritten afterwards) --------------------------
+# --- first-launch graphics preferences (afterwards only an explicit -Resolution changes them) ---
+$grid = $Resolution.Split('x') | ForEach-Object { [int]$_ }
 New-Item -ItemType Directory -Force (Split-Path $Config) | Out-Null
 if (-not (Test-Path $Config)) {
     $initial = [ordered]@{
-        version = 1; resolution = @(800, 450); window = @(1280, 720)
+        version = 1; resolution = @($grid[0], $grid[1]); window = @(1280, 720)
         fullscreen = (-not $Windowed); vsync = $true; shadows = 2048
         full_transport = $true; optics = 1; fps = $false
         exposure_ev = 0.0; saturation = 1.0; warmth = 0.0; gamma = 1.0
         storm = $null; sun_phase = 0; sun_speed = 1.0; dither_pattern = 3
         display = [ordered]@{
-            width = 800; height = 450; palette_levels = 31.0
+            width = $grid[0]; height = $grid[1]; palette_levels = 31.0
             ordered_dither = 1.0; retro_strength = 1.0; ldr_dither = 1.0
             ambient_white_balance = $false; ambient_white_balance_strength = 1.0
         }
     }
     [System.IO.File]::WriteAllText($Config, (($initial | ConvertTo-Json -Depth 5) + "`n"))
+}
+elseif ($PSBoundParameters.ContainsKey('Resolution')) {
+    # The saved preferences are applied at startup and would replace KESSEL_INTERNAL_RES.
+    $saved = Get-Content $Config -Raw | ConvertFrom-Json
+    $saved.resolution = @($grid[0], $grid[1])
+    $saved.display.width = $grid[0]; $saved.display.height = $grid[1]
+    [System.IO.File]::WriteAllText($Config, (($saved | ConvertTo-Json -Depth 5) + "`n"))
+    Write-Host "Saved graphics preferences: render grid set to $Resolution."
 }
 
 # --- environment ------------------------------------------------------------------------------
@@ -111,7 +128,7 @@ foreach ($d in $env:XDG_STATE_HOME, $env:XDG_CACHE_HOME, $env:XDG_CONFIG_HOME) {
 $env:KESSEL_ASSET_ROOT        = $Root
 $env:KESSEL_RENDERER          = $Renderer
 $env:KESSEL_GRAPHICS_PRESET   = 'high'
-$env:KESSEL_INTERNAL_RES      = '800x450'
+$env:KESSEL_INTERNAL_RES      = $Resolution
 $env:KESSEL_DITHER_PATTERN    = 'screen_bayer8'
 $env:KESSEL_GEOMETRY_AA       = 'msaa4'
 if (-not $Windowed) { $env:KESSEL_FULLSCREEN = '1' }

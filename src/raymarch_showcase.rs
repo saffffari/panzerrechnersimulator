@@ -330,10 +330,10 @@ fn run_haze(prefix: &str) -> anyhow::Result<()> {
 }
 
 /// `KESSEL_SHOWCASE_SET=res`: the stills for judging an internal resolution (run once per
-/// `KESSEL_INTERNAL_RES`): a live T-34 at 1,500 m through the TZF, the Tiger at 25 m in low sun,
+/// `KESSEL_INTERNAL_RES`): a live T-34 at the longest clear range up to 1,500 m through the TZF, the Tiger at 25 m in low sun,
 /// the burning wreck at dusk, the commander's cabin at night. Same fixtures at every grid.
 fn run_resolution(prefix: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_t34_1500m_sight.png")).exists(),
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_t34_sight.png")).exists(),
         "preserving existing showcase; choose a new prefix");
     let manifest = crate::canyon::manifest_path();
     act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
@@ -342,6 +342,15 @@ fn run_resolution(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    // KESSEL_RES_MENU_SWITCH=WxH: switch the grid through the graphics menu's own path after the
+    // act is built (the in-game route), so the stills check that path on this backend.
+    if let Ok(size) = std::env::var("KESSEL_RES_MENU_SWITCH") {
+        let (w, h) = size.split_once('x').context("KESSEL_RES_MENU_SWITCH=WxH")?;
+        let mut settings = crate::graphics_menu::Settings::from_renderer(&r);
+        settings.resolution = (w.parse()?, h.parse()?);
+        settings.apply(&mut r, &device, &queue)?;
+        println!("[raymarch-showcase] graphics menu switched the grid to {}x{}", r.iw, r.ih);
+    }
     let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: 2400, ch: 1350, shots: Vec::new(), observer: None };
     g.mute_audio();
     g.debug_banish_enemies();
@@ -352,10 +361,36 @@ fn run_resolution(prefix: &str) -> anyhow::Result<()> {
     r.set_weather_override(Some(0.0));
     rig.clock(&mut r, "1942-12-21T10:30:00Z")?;
     step(&mut g, &mut r, 30, &idle);
-    // A live T-34 1,500 m ahead of the Tiger, broadside, laid on through the gunner's sight.
+    // A live T-34 broadside on the bearing, nearest the Tiger's front, whose sight line clears the
+    // terrain to the longest range up to 1,500 m (the workshop's hills hide most bearings),
+    // laid on through the gunner's sight.
     let tiger = g.player.pos;
     let forward = g.player.forward();
-    let far = tiger + Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero() * 1500.0;
+    let eye = tiger + Vec3::Y * 2.3;
+    // The heightfield (and the drawn terrain) ends `half` metres from the origin; beyond it the
+    // lookup clamps and a tank would stand under the drawn ground.
+    let half = (g.hf.res as f32 - 1.0) * 0.5 * g.hf.spacing - 60.0;
+    // The whole hull in view: the sight line to the ground under the target clears every crest
+    // on the way by half a metre.
+    let clear = |g: &Game, far: Vec3| {
+        if far.x.abs() > half || far.z.abs() > half { return false; }
+        let target = Vec3::new(far.x, g.hf.height_at(far.x, far.z), far.z);
+        (1..400).all(|i| {
+            let p = eye.lerp(target, i as f32 / 400.0);
+            g.hf.height_at(p.x, p.z) < p.y - 0.5 * (i as f32 / 400.0).min(1.0 - i as f32 / 400.0) * 2.0
+        })
+    };
+    let heading = forward.x.atan2(-forward.z);
+    let mut best = (0.0f32, Vec3::ZERO);
+    for k in 0..72 {
+        let offset = ((k + 1) / 2) as f32 * 5f32.to_radians() * if k % 2 == 0 { 1.0 } else { -1.0 };
+        let dir = Vec3::new((heading + offset).sin(), 0.0, -(heading + offset).cos());
+        let reach = (6..=30).rev().map(|n| n as f32 * 50.0).find(|&d| clear(&g, tiger + dir * d)).unwrap_or(0.0);
+        if reach > best.0 + 1.0 { best = (reach, tiger + dir * reach); }
+        if reach >= 1500.0 { break; }
+    }
+    anyhow::ensure!(best.0 >= 300.0, "no bearing clears the terrain beyond 300 m");
+    let far = best.1;
     let t34 = g.debug_first_t34().context("fixture needs a T-34")?;
     g.debug_place_enemy(t34, far.x, far.z, 1.57);
     g.debug_set_enemy_active(t34, true);
@@ -365,7 +400,23 @@ fn run_resolution(prefix: &str) -> anyhow::Result<()> {
     g.station = Station::Gunner;
     rig.station_camera();
     step(&mut g, &mut r, 40, &idle);
-    rig.still(&mut r, "t34_1500m_sight", "a live T-34 broadside at 1,500 m through the TZF")?;
+    // The target's measured range and the width a 6.7 m hull subtends at this internal grid.
+    let range = (g.enemies[t34].pos - r.camera.pos).length();
+    let hull_px = 6.7 / range * r.ih as f32 / (2.0 * (r.camera.fov_y * 0.5).tan());
+    let field_deg = r.camera.fov_y.to_degrees();
+    // Where the hull centre sits in the sight: degrees right of and above the sight axis (the
+    // gun is laid with its superelevation, so the target sits below the reticle's tip).
+    let to_t34 = (g.enemies[t34].pos + Vec3::Y * 1.2 - r.camera.pos).normalize();
+    let (fwd, right) = (r.camera.forward(), r.camera.right());
+    let up = right.cross(fwd);
+    let off = (to_t34.dot(right).atan2(to_t34.dot(fwd)).to_degrees(), to_t34.dot(up).atan2(to_t34.dot(fwd)).to_degrees());
+    rig.still(&mut r, "t34_sight", &format!(
+        "a live T-34 broadside at {range:.0} m through the TZF ({field_deg:.1} deg field): its 6.7 m hull spans {hull_px:.1} internal pixels, {:.2} deg right and {:.2} deg up of the sight axis", off.0, off.1))?;
+    // Staging check: the same T-34 from above.
+    let t34_pos = g.enemies[t34].pos;
+    rig.observe(&mut r, t34_pos + Vec3::new(0.0, 160.0, 220.0), t34_pos, 50.0);
+    rig.still(&mut r, "t34_staging_high", "the sight's T-34 from 270 m up and back")?;
+    rig.station_camera();
     rig.observe(&mut r, tiger + Vec3::new(-14.0, 3.2, -2.0) + forward * -10.0, tiger + Vec3::Y * 1.4, 50.0);
     rig.still(&mut r, "tiger_25m", "the Tiger at about 25 m, mid-morning sun")?;
     let wreck = g.debug_stage_burning_t34(WRECK.x, WRECK.y).context("fixture needs a second T-34")?;
@@ -384,13 +435,13 @@ fn run_resolution(prefix: &str) -> anyhow::Result<()> {
         "schema": "panzer.raymarch-showcase.res.v1", "manifest": manifest, "adapter": adapter.get_info().name,
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
-        "disclosure": "Staged fixtures (banished enemies, held fire, a live T-34 at 1,500 m, one burning T-34). Clock and weather overridden. No image grading."
+        "disclosure": "Staged fixtures (banished enemies, held fire, a live T-34 at the longest clear range up to 1,500 m, one burning T-34). Clock and weather overridden. No image grading."
     }))?)?;
     Ok(())
 }
 
 /// `KESSEL_SHOWCASE_SET=snow`: snow lying on the Tiger over time (`snow_cover`): the clean hull,
-/// after two minutes of steady snowfall, after a fast drive, after a shot, after a traverse; the
+/// after two minutes of steady snowfall, after a fast drive, after a shot, after a traverse;
 /// each from behind and from above the hull, the sky clock pinned. The world keeps its winter cover.
 fn run_snow(prefix: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_0_clean.png")).exists(),

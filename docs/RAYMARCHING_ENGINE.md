@@ -269,9 +269,86 @@ would have slid over a moving hull.
 
 **Cost.** By construction: one three-octave value noise per G-buffer fragment of a face that can
 hold snow on a mesh with a load, and one nine-tap sky-cover lookup per shaded pixel that holds
-snow. `KESSEL_RM_SKIP=16384` sets every load to zero for the A/B. Not yet measured: while this
-was built the GPU was held at 97 % by other applications, which inflates timestamp queries by an
-unknown factor.
+snow. `KESSEL_RM_SKIP=16384` sets every load to zero for the A/B. Measured interleaved (two runs
+each, `gfxbench` 800x450, the Act-I city at its winter load) while another application held the
+GPU: the shade pass 0.174 and 0.164 ms with snow, 0.164 and 0.170 ms without; the G-buffer's
+run-to-run spread (6.0 to 8.6 ms) under that contention hides its share. The cost is below what
+these runs resolve; an idle-GPU rerun is owed.
+
+## Internal resolution (2026-10-28)
+
+Question: "we could also potentially do well to reduce pixel res, what would that buy us graphics
+wise?" The presets are 800x450 (default), 640x360, 480x272 and 320x180. `tools/launch_windows.ps1
+-Resolution WxH` sets the grid and writes it into the saved graphics preferences, which the game
+applies at startup and which would otherwise replace it. The graphics menu's "Render resolution"
+cycles the same grids in play; `KESSEL_RES_MENU_SWITCH=WxH` drives that path headless (build at
+one grid, switch through the menu's own apply), and it renders on this backend.
+
+**What scales with the grid.** The per-pixel passes do: G-buffer fill, shade, reflections, glass,
+lens, crush, bloom and glare, the points. So does the froxel volume, which is a quarter of the grid
+on each side (200x113x96 at 800x450, 80x45x96 at 320x180): a smaller grid also coarsens fire, smoke
+and fog-shaft detail. What does not scale: the sky cache (768x288 over sixteen frames), the sun
+cascades (2048/1024), the sky-cover map (512), the point-light cube faces (256), the geometry
+submission (sixteen scene traversals per frame) and the CPU's light, parcel and event preparation.
+At 800x450 those fixed costs are most of the frame (table above), so a smaller grid can save at
+most the per-pixel share.
+
+Measured (`gfxbench`, `KESSEL_GPU_PROFILE=1`, 240 frames each) while another application held the
+GPU at 96-100 %: every raster pass is inflated about threefold against the idle figures above
+and the frame totals sit near 30 ms at every grid, so the totals do not separate the grids; the
+pass split does.
+
+| ms | 320x180 | 480x272 | 640x360 | 800x450 | 1280x720 |
+| --- | --- | --- | --- | --- | --- |
+| frame avg (contended) | 31.5 | 32.9 | 31.9 | 30.3 | 41.3 |
+| G-buffer | 7.6 | 7.2 | 7.0 | 6.2 | 6.6 |
+| sky cache / sky cover / far cascade | 3.5 / 2.2 / 2.8 | 3.5 / 2.2 / 2.6 | 3.4 / 2.1 / 2.6 | 3.5 / 2.3 / 2.1 | 3.5 / 2.2 / 3.3 |
+| froxel volume | 0.08 | 0.14 | 0.23 | 0.39 | 6.7 |
+| shade | 0.06 | 0.08 | 0.12 | 0.17 | 0.38 |
+| integrate | 0.04 | 0.03 | 0.04 | 1.19 | 0.13 |
+
+The G-buffer does not shrink with the grid: it is bound by geometry (vertices and draws), not by
+fragments. The fixed passes do not move. The per-pixel passes scale with area as expected and add
+up to well under 2 ms at 800x450 (0.2 ms at 320x180). A smaller grid therefore buys about a
+millisecond, and there is little to reinvest; 1280x720 is where the volume starts to cost (its
+froxel grid is 320x180x96). The ways to buy frame time on this backend are the fixed passes: the
+sky cache's march (3.5 ms), the far cascade and the sky-cover map's geometry passes, and the
+G-buffer's draw count. An idle-GPU rerun is still owed for the absolute figures.
+
+**What it costs to look at.** `KESSEL_SHOWCASE_SET=res` renders the same stills at each grid, output
+2400x1350: a live T-34 broadside through the TZF at the longest range up to 1,500 m whose sight line
+clears the terrain (1,500 m on the Canyon v2 workshop, laid with the gun's superelevation, so it
+sits 0.85 degrees below the reticle tip), the Tiger at 25 m, the burning wreck at sunset, the
+commander's post at night (`captures/rm_res_sheet.png`, `rm_resv2_t34_sheet.png`).
+
+| grid | T-34 hull at 1,500 m in the 25 degree TZF field |
+| --- | --- |
+| 800x450 | 4.5 px |
+| 640x360 | 3.6 px |
+| 480x272 | 2.7 px |
+| 320x180 | 1.8 px |
+
+This fixture's T-34 is pale with snow against a bright snowfield in clear air; its pixels sit
+within about 10 % of the background's luminance, a faint smudge at 800x450 and 640x360, a single
+darker pixel at 480x272, gone at 320x180. The TZF reticle is drawn per internal pixel in the crush
+pass: at 640x360 the flanking triangles become bars, at 480x272 two of the six drop out, at
+320x180 they merge into blocks. On the Tiger at 25 m the road wheels and their hubs read at
+640x360 and above, the wheels still read at 480x272, and at 320x180 they merge into blobs while
+the ordered dither turns into visible blocks on the hull side and the grass stalks into brown
+squares. The light, colour and composition of every still hold at every grid.
+
+**Display-resolution optic (design, not built).** The live gunner view is a two-pass composite:
+the sight picture renders as its own frame (`render_optic_snapshot`), then the cabin pass seats
+it in the eyepiece circle. Two changes would decouple the optic from the grid: render the sight
+frame at twice the cabin grid (a second target set kept alive while the sight is up, about 40 MB at
+1600x900), and draw the reticle in the final blit at window resolution, positioned from the
+eyepiece circle the cabin pass already knows. With a 1600x900 sight frame the T-34 at 1,500 m
+would span 9 px.
+
+**Separate finding.** The Tiger's own barrel and muzzle brake appear in the right of the TZF field
+on this backend (the stills show it at every grid): the sight camera sits left of the gun and
+nothing hides the gun from it. Whether the real TZF 9b field shows the barrel needs the sight's
+mounting geometry; until then it is recorded here, not hidden.
 
 ## A/B against the shader backend
 
