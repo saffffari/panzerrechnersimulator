@@ -38,6 +38,13 @@ const LOADER_STROKE_S: f32 = 1.5;
 const GUNNER_SETTLE_S: f32 = 0.55;
 /// The driver's reaction to an order (seconds at full performance).
 const DRIVER_REACT_S: f32 = 0.30;
+
+/// Which order a drive/steer pair is (each axis: back/left, none, forward/right), ignoring how
+/// much; the driver reacts anew only when this changes (`crew_driver_follow`).
+fn order_intent(order: Vec2) -> (i8, i8) {
+    let axis = |v: f32| if v > 0.05 { 1 } else if v < -0.05 { -1 } else { 0 };
+    (axis(order.x), axis(order.y))
+}
 /// Engagement range the gunner will open fire at on his own (metres).
 const GUNNER_ENGAGE_M: f32 = 1800.0;
 /// Turret-local point of the Kfz-Verbandkasten on the rear right wall, by the extinguisher
@@ -962,9 +969,16 @@ impl Game {
     /// `working` is whether a fit man sits there at all.
     fn crew_driver_follow(&mut self, order: Vec2, working: bool, dt: f32) {
         if order != self.crew_solo.driver_order {
+            // He reacts to a new order (forward, back, a side, stop), not to every shade of an
+            // analog one: a stick or the canyon pilot moves the order a little each frame, and
+            // restarting his reaction on each of those left him on a stale command through
+            // every bend. Within one order the change reaches the levers at his hands' rate.
+            let new_order = order_intent(order) != order_intent(self.crew_solo.driver_order);
             self.crew_solo.driver_order = order;
-            self.crew_solo.driver_react_s = 0.0;
-            if working && order != Vec2::ZERO {
+            if new_order {
+                self.crew_solo.driver_react_s = 0.0;
+            }
+            if new_order && working && order != Vec2::ZERO {
                 let word = if order.x > 0.0 {
                     "Driver: forward."
                 } else if order.x < 0.0 {
