@@ -7801,8 +7801,14 @@ impl Renderer {
         let wind = glam::Vec3::new(self.weather_wind_world.x,0.0,self.weather_wind_world.y)*gust;
         let dust = if self.atmo_enabled { self.atmo_dust } else { 0.0 };
         let mut field = self.pixel_particle_field.borrow_mut();
+        // The cabin's dust rides the hull: its sphere turns, pitches and rolls with the vehicle
+        // (it was translated only, so turning the tank swirled it through the crew; 2026-10-28).
+        let dust_model = self.cabin_medium_pose.map_or(glam::Mat4::from_translation(self.atmo_origin), |(hull, _)| {
+            let (_, rotation, _) = hull.to_scale_rotation_translation();
+            glam::Mat4::from_rotation_translation(rotation, self.atmo_origin)
+        });
         let points = field.update(self.camera.pos,wind,self.time,self.precipitation,
-            self.atmo_origin,dust,glam::Mat4::from_translation(self.atmo_origin));
+            self.atmo_origin,dust,dust_model);
         self.pixel_particle_count.set(points.len() as u32);
         if points.is_empty() { return; }
         queue.write_buffer(&self.pixel_particle_vertices,0,bytemuck::cast_slice(points));

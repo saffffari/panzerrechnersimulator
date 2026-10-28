@@ -9240,6 +9240,9 @@ pub struct Game {
     /// stage restores the historical engagement envelope (and makes the 4-mil stadia triangles
     /// span ~14 px — readable for ranging) without touching the pixel aesthetic.
     pub sights_mag: u8,
+    /// The hull pitch and roll the gunner's sight view follows (`sight_view_model`): the true
+    /// values through a low-pass of `sight_damping_s()`.
+    sight_steady: Option<Vec2>,
     /// God mode (the menu's Invincible toggle; also the trainer's parked referee): penetrations,
     /// fire cook-offs, and on-foot hits all resolve (sound/FX) but never damage crew/modules or kill.
     pub god: bool,
@@ -13315,6 +13318,7 @@ impl Game {
             pressure_last_arrival_s: -1.0,
             act_complete: false,
             sights_mag: 0,
+            sight_steady: None,
             god: false,
             grab: false,
             bail_presses: 0,
@@ -16792,13 +16796,28 @@ impl Game {
             // Infantry remains persistent while mounted; rifles cannot damage the Tiger.
             let phase_t = std::time::Instant::now(); self.update_infantry_passive(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Infantry, phase_t);
 
+            // The gunner's sight view follows the hull's pitch and roll through a low-pass: the hull
+            // pose is fitted to the ground under the tracks every frame (`vehicle_ground`), so each
+            // bump reached the 2.5-5x view as a jolt (2026-10-28, "motion sickening"). A jump larger
+            // than 20 degrees (a respawn, a teleport) is taken at once.
+            {
+                let target = Vec2::new(self.player.pitch, self.player.roll);
+                let tau = sight_damping_s();
+                let blend = if tau > 0.0 { 1.0 - (-dt.max(0.0) / tau).exp() } else { 1.0 };
+                self.sight_steady = Some(match self.sight_steady {
+                    Some(s) if (target - s).abs().max_element() < 0.35 => s + (target - s) * blend,
+                    _ => target,
+                });
+            }
+
             // ── Per-station first-person camera (four seats; lerped across a station switch so you SEE
             // the scramble). GUNNER: down the sight. LOADER: at the breech, hands busy (no free-look).
             // DRIVER: hull-forward through the visor slit. COMMANDER: cupola head-look + binoculars. ──
             let (fwd, fov, reticle): (Vec3, f32, bool) = match self.station {
                 Station::Gunner => {
-                    // The sight's own line: the bore, unless a strike knocked the sight out of true.
-                    let mdir = self.sight_line();
+                    // The sight's own line (the bore, unless a strike knocked the sight out of
+                    // true), seen with the hull's jolts low-passed (`sight_view_model`).
+                    let mdir = self.sight_view_line();
                     // A destroyed gunner sight (TZF) blinds the optic — no reticle to lay with.
                     let fov = [25f32, 12.0, 6.0][self.sights_mag.min(2) as usize].to_radians();
                     (mdir, fov, self.module_ok(ModuleKind::GunnerSight))
@@ -23856,6 +23875,35 @@ impl Game {
         self.sight_model().transform_vector3(Vec3::Z).normalize()
     }
 
+    /// The gunner's view through the sight: the sight's pose with the hull's pitch and roll
+    /// replaced by their low-passed values (`sight_steady`). A comfort filter, named in the
+    /// ledger: the traverse, elevation and heading stay immediate, the sight mesh and the bore
+    /// keep the true pose, and on rough ground the bore (where the shell goes) wanders about the
+    /// reticle by the filtered jolts. `KESSEL_SIGHT_DAMPING_S=0` restores the raw view.
+    pub(super) fn sight_view_model(&self) -> Mat4 {
+        let Some(steady) = self.sight_steady else { return self.sight_model(); };
+        let p = &self.player;
+        let level = Mat4::from_translation(p.pos) * Mat4::from_rotation_y(p.heading);
+        let true_tilt = Mat4::from_rotation_x(-p.pitch) * Mat4::from_rotation_z(p.roll);
+        let steady_tilt = Mat4::from_rotation_x(-steady.x) * Mat4::from_rotation_z(steady.y);
+        level * steady_tilt * true_tilt.inverse() * level.inverse() * self.sight_model()
+    }
+
+    pub(super) fn sight_view_line(&self) -> Vec3 {
+        self.sight_view_model().transform_vector3(Vec3::Z).normalize()
+    }
+}
+
+/// Time constant of the gunner sight view's low-pass on the hull's pitch and roll, seconds
+/// (`KESSEL_SIGHT_DAMPING_S`, 0 = the raw view). 0.25 s passes slopes and a slow pitch and takes
+/// out most of a bump's jolt; a comfort estimate, not a measured head-and-brow-pad response.
+fn sight_damping_s() -> f32 {
+    static TAU: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *TAU.get_or_init(|| std::env::var("KESSEL_SIGHT_DAMPING_S").ok()
+        .and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(0.25, |v| v.clamp(0.0, 2.0)))
+}
+
+impl Game {
     /// Apply the current main-gun and armor-hit camera impulses to an already-authored base pose.
     /// This does not advance any timers, so the keyboard view, all controller split views, and a
     /// deterministic film camera can sample the exact same physical instant independently.
@@ -23931,7 +23979,7 @@ impl Game {
     pub fn coop_view_camera(&self, role: crate::lan::LanRole) -> (Vec3, Vec3, f32, f32, bool) {
         match role {
             crate::lan::LanRole::Gunner => {
-                let mdir = self.sight_line();
+                let mdir = self.sight_view_line();
                 let fov = [25f32, 12.0, 6.0][self.sights_mag.min(2) as usize].to_radians();
                 (
                     self.player.gunsight(),
