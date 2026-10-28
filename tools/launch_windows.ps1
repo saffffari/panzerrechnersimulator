@@ -31,10 +31,37 @@
   raymarch The froxel ray-marching backend (docs/RAYMARCHING_ENGINE.md): clustered
            lights, marched media, fireballs, embers, reflections, eyepiece glass.
 
+.PARAMETER Logged
+  Playtest telemetry (port of tools/launch_session_logged_playtest.sh): one JSON line per second
+  (fps, frame-time mean/p50/p95/p99/max, CPU simulation and render-submission time, render work
+  counts, gameplay snapshot) to artifacts\runtime\session-<stamp>.jsonl, with KESSEL_GPU_PROFILE=1
+  so one fenced frame every KESSEL_SESSION_LOG_GPU_S seconds (default 2) records per-pass GPU time.
+  The console goes to session-<stamp>.console.log beside it; session-latest.* copies follow.
+
+.PARAMETER Autopilot
+  The rule-based Canyon crew (src/canyon_autopilot.rs) plays the run instead of the keyboard;
+  the process exits once the after-action card has shown (0 completed, 1 knocked out,
+  3 stalled, 4 time limit). Meant for -Logged telemetry runs.
+
+.PARAMETER Seed
+  Pin the Canyon deployment seed (KESSEL_CANYON_SEED) for a reproducible run.
+
+.PARAMETER InternalRes
+  Internal render grid, WxH (default 800x450).
+
+.PARAMETER AssetRoot
+  Where the git-ignored assets live (default: this checkout, or the main checkout when this is a
+  git worktree without its own assets). A Canyon v2 workshop inside this checkout still wins.
+
+.PARAMETER Binary
+  Release executable (default: <CARGO_TARGET_DIR or target>\release\panzerrechnersystem.exe).
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Mode menu -Windowed
   powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Logged -Windowed
+  powershell -ExecutionPolicy Bypass -File tools\launch_windows.ps1 -Renderer raymarch -Logged -Autopilot -Seed 29
 #>
 [CmdletBinding()]
 param(
@@ -42,13 +69,32 @@ param(
     [switch]$Windowed,
     [switch]$Build,
     [switch]$Platoon,
-    [ValidateSet('shader', 'raymarch')] [string]$Renderer = 'shader'
+    [ValidateSet('shader', 'raymarch')] [string]$Renderer = 'shader',
+    [switch]$Logged,
+    [switch]$Autopilot,
+    [string]$Seed,
+    [ValidatePattern('^\d+x\d+$')] [string]$InternalRes = '800x450',
+    [string]$AssetRoot,
+    [string]$Binary
 )
 $ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Utility, Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
 $Root     = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Binary   = Join-Path $Root 'target\release\panzerrechnersystem.exe'
-$Manifest = Join-Path $Root 'assets\worldgen\workshops\gaea-canyon-run-v2\manifest.v1.json'
+$Target   = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root 'target' }
+if (-not $Binary) { $Binary = Join-Path $Target 'release\panzerrechnersystem.exe' }
+$WorkshopRel = 'assets\worldgen\workshops\gaea-canyon-run-v2\manifest.v1.json'
+if (-not $AssetRoot) {
+    $AssetRoot = $Root
+    # A git worktree has no git-ignored assets of its own: read them from the main checkout.
+    if (-not (Test-Path (Join-Path $Root 'assets\tanks\tiger\baked\tiger_hull.glb'))) {
+        $common = & git -C $Root rev-parse --path-format=absolute --git-common-dir 2>$null
+        if ($common) { $AssetRoot = Split-Path $common.Trim() }
+    }
+}
+$AssetRoot = (Resolve-Path $AssetRoot).Path
+# A Canyon v2 workshop snapshot inside this checkout (frozen for a run) wins over the asset root's.
+$Manifest = Join-Path $Root $WorkshopRel
+if (-not (Test-Path $Manifest)) { $Manifest = Join-Path $AssetRoot $WorkshopRel }
 $Runtime  = Join-Path $Root 'artifacts\runtime'
 $Config   = Join-Path $Runtime 'winter-playtest-state\graphics.v1.json'
 
@@ -72,10 +118,10 @@ if ($doc.act_id -ne 1 -or $doc.terrain.grass_season -ne 'winter') {
 }
 $required = @()
 $required += Join-Path (Split-Path $Manifest) $doc.terrain.heights
-$required += $doc.assets | ForEach-Object { Join-Path $Root $_ }
-foreach ($k in 'texture', 'rock_map', 'snow_map', 'ground_class') { $required += Join-Path $Root $doc.terrain.$k }
-foreach ($p in 'hull', 'turret', 'gun') { $required += Join-Path $Root "assets\tanks\tiger\baked\tiger_$p.glb" }
-foreach ($s in 'json', 'png') { $required += Join-Path $Root "catalog\maps\canyon_v2_survey_20260930.$s" }
+$required += $doc.assets | ForEach-Object { Join-Path $AssetRoot $_ }
+foreach ($k in 'texture', 'rock_map', 'snow_map', 'ground_class') { $required += Join-Path $AssetRoot $doc.terrain.$k }
+foreach ($p in 'hull', 'turret', 'gun') { $required += Join-Path $AssetRoot "assets\tanks\tiger\baked\tiger_$p.glb" }
+foreach ($s in 'json', 'png') { $required += Join-Path $AssetRoot "catalog\maps\canyon_v2_survey_20260930.$s" }
 $missing = $required | Where-Object { -not (Test-Path $_ -PathType Leaf) -or (Get-Item $_).Length -eq 0 }
 if ($missing) { throw ("Missing required assets:`n" + ($missing -join "`n")) }
 Write-Host "Validated $($required.Count) required asset paths."
@@ -115,10 +161,11 @@ $env:XDG_CACHE_HOME  = Join-Path $Runtime 'cache'
 $env:XDG_CONFIG_HOME = Join-Path $Runtime 'config'
 foreach ($d in $env:XDG_STATE_HOME, $env:XDG_CACHE_HOME, $env:XDG_CONFIG_HOME) { New-Item -ItemType Directory -Force $d | Out-Null }
 
-$env:KESSEL_ASSET_ROOT        = $Root
+$env:KESSEL_ASSET_ROOT        = $AssetRoot
+$env:KESSEL_CANYON_MANIFEST   = $Manifest
 $env:KESSEL_RENDERER          = $Renderer
 $env:KESSEL_GRAPHICS_PRESET   = 'high'
-$env:KESSEL_INTERNAL_RES      = '800x450'
+$env:KESSEL_INTERNAL_RES      = $InternalRes
 $env:KESSEL_DITHER_PATTERN    = 'screen_bayer8'
 $env:KESSEL_GEOMETRY_AA       = 'msaa4'
 if (-not $Windowed) { $env:KESSEL_FULLSCREEN = '1' }
@@ -133,15 +180,26 @@ if ($Platoon) {
     if ($env:ANTHROPIC_API_KEY) { Write-Host 'Platoon radio: Claude model (ANTHROPIC_API_KEY set).' }
     else { Write-Host 'Platoon radio: offline keyword parser (no ANTHROPIC_API_KEY).' }
 }
+if ($Seed) { $env:KESSEL_CANYON_SEED = $Seed }
+if ($Autopilot) { $env:KESSEL_CANYON_AUTOPILOT = '1' }
 
 # --- launch -----------------------------------------------------------------------------------
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $log = Join-Path $Runtime "winter-playtest-$stamp-$PID.log"
+if ($Logged) {
+    # Telemetry: one JSON line per second; one fenced GPU pass-timing frame every two seconds.
+    $env:KESSEL_SESSION_LOG = Join-Path $Runtime "session-$stamp.jsonl"
+    $env:KESSEL_GPU_PROFILE = '1'
+    $log = Join-Path $Runtime "session-$stamp.console.log"
+    Write-Host "Session log:  $env:KESSEL_SESSION_LOG`nConsole log:  $log"
+}
 @(
     "[launcher] timestamp=$(Get-Date -Format o) mode=$Mode launcher_pid=$PID windowed=$Windowed"
     "[launcher] binary=$Binary sha256=$sha"
-    "[launcher] asset_root=$Root manifest=$Manifest"
-    "[launcher] renderer=$Renderer preset=high geometry_aa=msaa4 visibility=maps config=$Config platoon=$Platoon"
+    "[launcher] checkout=$Root asset_root=$AssetRoot manifest=$Manifest"
+    "[launcher] commit $(& git -C $Root log -1 --format='%h %s' 2>$null)"
+    "[launcher] renderer=$Renderer preset=high internal=$InternalRes geometry_aa=msaa4 visibility=maps config=$Config platoon=$Platoon"
+    "[launcher] logged=$Logged autopilot=$Autopilot seed=$Seed session_log=$env:KESSEL_SESSION_LOG"
 ) | Set-Content $log
 $errLog = "$log.stderr"
 $proc = Start-Process -FilePath $Binary -WorkingDirectory $Root -PassThru -NoNewWindow `
@@ -152,5 +210,10 @@ $proc.WaitForExit()
 Get-Content "$log.stdout", $errLog -ErrorAction SilentlyContinue | Add-Content $log
 Remove-Item "$log.stdout", $errLog -ErrorAction SilentlyContinue
 Add-Content $log "[launcher] exit_status=$($proc.ExitCode) timestamp=$(Get-Date -Format o)"
+if ($Logged) {
+    # Windows symlinks need privileges; the latest pair are plain copies.
+    Copy-Item $env:KESSEL_SESSION_LOG (Join-Path $Runtime 'session-latest.jsonl') -ErrorAction SilentlyContinue
+    Copy-Item $log (Join-Path $Runtime 'session-latest.console.log') -ErrorAction SilentlyContinue
+}
 if ($proc.ExitCode -ne 0) { Write-Warning "Panzerrechnersystem exited with status $($proc.ExitCode). Log: $log" }
 exit $proc.ExitCode

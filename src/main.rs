@@ -43,6 +43,7 @@
 
 mod simulation_uploads;
 mod session_log;
+mod canyon_autopilot;
 mod scene_visibility;
 mod scene_visibility_gpu;
 mod display_preview;
@@ -11524,6 +11525,8 @@ struct WindowState {
     clock_reset: bool,
     /// Opt-in playtest telemetry (`KESSEL_SESSION_LOG`); None in ordinary play.
     session_log: Option<session_log::SessionLog>,
+    /// `KESSEL_CANYON_AUTOPILOT=1`: the rule-based crew plays the Canyon run (telemetry runs).
+    autopilot: Option<canyon_autopilot::CanyonAutopilot>,
     last_sim_ms: f32,
     /// The solo controls reference froze the world and paused its audio; cleared on resume.
     controls_audio_paused: bool,
@@ -11660,6 +11663,7 @@ impl WindowState {
             canyon_briefed: false,
             clock_reset: false,
             session_log: session_log::SessionLog::from_env(),
+            autopilot: None,
             last_sim_ms: 0.0,
             controls_audio_paused: false,
         };
@@ -13329,6 +13333,7 @@ impl WindowState {
                     },
                     "point_lights": {"offered": lights_offered, "admitted": lights_admitted},
                     "instances": {"batches": instance_batches, "live": instances},
+                    "extras": self.renderer.session_render_extras(),
                 });
                 let game = self.game.session_telemetry();
                 if let Some(log) = self.session_log.as_mut() { log.write(game, render); }
@@ -14246,7 +14251,9 @@ impl WindowState {
     /// Build the course from its workshop and drop in with the one crewman. Called by `start_play`.
     fn start_canyon(&mut self) {
         self.canyon_finish = None;
-        let path = if self.canyon_v2 { std::path::PathBuf::from(canyon::V2_MANIFEST) }
+        // `KESSEL_CANYON_MANIFEST` pins the course file for v2 too (a frozen workshop snapshot).
+        let path = if self.canyon_v2 { std::env::var_os(canyon::MANIFEST_ENV).map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(canyon::V2_MANIFEST)) }
             else { canyon::manifest_path() };
         let selected = act_manifest::select_runtime_manifest(Some(path.clone())).and_then(|act| {
             anyhow::ensure!(act == Some(1), "the canyon course is an Act One map");
@@ -14271,6 +14278,10 @@ impl WindowState {
             self.pencil_marks.retain(|(sheet,_)| *sheet != 1);
             self.map_pins.retain(|(sheet,_)| *sheet != 1);
             println!("[canyon] run started: {} (seed {:?})", path.display(), self.game.canyon_seed());
+            if canyon_autopilot::requested() {
+                self.autopilot = Some(canyon_autopilot::CanyonAutopilot::new(&self.game));
+                self.canyon_briefed = true;
+            }
             if self.canyon_briefed {
                 self.state = AppState::Playing;
                 self.set_play_cursor(true);
@@ -14299,6 +14310,9 @@ impl WindowState {
             (times, times.best_s)
         });
         self.run_report = self.game.canyon_run_report(times, previous_best);
+        if let Some(autopilot) = self.autopilot.as_mut() {
+            autopilot.run_over(self.game.canyon_finished().is_some());
+        }
         if let Some(report) = &self.run_report {
             println!("[canyon] after-action: {} — {}; {:?}", report.headline(), report.cause_line(), report.rows());
         }
@@ -14622,7 +14636,7 @@ impl ApplicationHandler for App {
                     self.x_was_down = false;
                     self.couch_commander_exit.cancel();
                     state.x_exit_frac = 0.0;
-                    if state.lan.is_none() && matches!(state.state, AppState::Playing) {
+                    if state.lan.is_none() && state.autopilot.is_none() && matches!(state.state, AppState::Playing) {
                         state.enter_pause();
                         state.pause_menu.message = "PAUSED WHILE THE GAME WINDOW WAS INACTIVE".to_owned();
                     }
@@ -15136,6 +15150,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                if let Some(code) = state.autopilot.as_ref().and_then(|a| a.exit_due()) {
+                    println!("[autopilot] exiting with status {code}");
+                    std::process::exit(code);
+                }
                 if let Some(child) = state.editor_child.as_mut() {
                     match child.try_wait() {
                         Ok(Some(_)) => {
@@ -15839,6 +15857,11 @@ impl ApplicationHandler for App {
                                 } else {
                                     0.0
                                 };
+                            }
+                        }
+                        if state.play_mode == Some(PlayMode::Canyon) {
+                            if let Some(autopilot) = state.autopilot.as_mut() {
+                                input = autopilot.step(&mut state.game, &state.renderer, dt);
                             }
                         }
                         let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());

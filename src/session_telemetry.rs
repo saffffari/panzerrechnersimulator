@@ -78,6 +78,17 @@ impl Game {
             },
             "on_foot_hp": self.foot.hp,
             "body_burn": self.player_burn.heat,
+            "run": {
+                "main_gun_shots": self.gun_shots,
+                "hits_by_player": self.stat_hits_by_player,
+                "kills_by_player": self.stat_kills_by_player,
+                "hits_on_player": self.stat_hits_on_player,
+                "penetrations_on_player": self.stat_pens_on_player,
+                "live_blasts": self.blasts.iter().filter(|b| b.t > 0.0).count(),
+                "mission_beat": self.mission_current_beat(),
+                "mission_finished": self.mission_finished(),
+                "death_cause": self.game_over().map(|c| format!("{c:?}")),
+            },
             "canyon": self.canyon_snapshot(),
         })
     }

@@ -6504,6 +6504,26 @@ impl Renderer {
         (self.lights_offered, self.lights.len())
     }
 
+    /// Session-log extras: the weather the frame was drawn under and, on the raymarch backend,
+    /// its per-frame work counts (lights, media parcels, events, sparks). Read-only.
+    pub fn session_render_extras(&self) -> serde_json::Value {
+        let rm = self.raymarch.as_ref().map(|b| {
+            let s = &b.stats;
+            serde_json::json!({
+                "lights": s.lights, "shadowed_lights": s.shadowed_lights, "light_cell_items": s.light_cell_items,
+                "parcels": s.parcels, "cell_items": s.cell_items, "merged_grains": s.merged_grains,
+                "embers": s.embers, "spark_records": s.spark_records, "tracer_records": s.tracer_records,
+                "panes": s.panes, "events": s.events, "sky_phase": s.sky_phase,
+                "prepare_ms": s.prepare_ms, "encode_ms": s.encode_ms,
+            })
+        });
+        serde_json::json!({
+            "weather": {"storm": self.storm, "overcast": self.overcast, "precipitation": self.precipitation},
+            "lights_full": self.lights_full.len(),
+            "raymarch": rm,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn admitted_lights_for_review(&self) -> &[PointLight] {
         &self.lights
