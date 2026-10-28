@@ -3557,7 +3557,7 @@ fn run_mg_demo(prefix: &str) -> anyhow::Result<()> {
         g.aim_at_enemy();
         for step in 0..=46 {
             g.update(&hold, dt, &mut r);
-            let (mpos, mdir) = g.player.coax_muzzle();
+            let (mpos, mdir) = g.player.tiger_coax_muzzle();
             if step == 30 {
                 over_barrel(&mut r, mpos, mdir);
                 r.render_to_png(&device, &queue, &format!("{prefix}_coax_a.png"), cw, ch)?;
@@ -15936,6 +15936,9 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "raymarch-tracers") {
+        return raymarch_showcase::run_tracers(&capture_arg(&args, 2, "raymarch_tracers"));
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-gunner") {
         return raymarch_showcase::run_gunner(&capture_arg(&args, 2, "raymarch_gunner"));
     }

@@ -95,6 +95,15 @@ are presented as ray tracing, GI or a combustion/solver result:
   displacement and the stacks' bore. No shadow, no ground contact, raymarch backend only. The plume
   widens the enemy's detection radius by up to 25 % by day. Gate: `raymarch-exhaust`; unit tests in
   the module.
+- Small-arms tracers and flashes (2026-10-28; `rm_sparks.wgsl` `vs_tracer`,
+  `renderer_raymarch.rs` `TRACER_INTENSITY`, `tank.rs` `TIGER_COAX_PORT`): the tracer pellet is
+  about 60 cd, an estimate from the 7.62 mm trace requirement (visible by day to ~780 m) against a
+  1e-4 lx detection threshold, not a measured candela; the strip conserves that light over the
+  exposure's path (pixel-plane geometry, the depth along the view axis); only the eight nearest heads
+  within 150 m light the scene; a hot impact's light is ~5 cd s spread over 40 ms so that it reaches
+  two frames (the real flash lasts milliseconds). The player's coax fires from the source mantlet
+  port; AI tanks' coax emitter stays out along the barrel. The eye's meter counts a tracer's light as
+  part of the field average rather than as veiling glare (open). Gate: `raymarch-tracers`.
 - TPZ needle and instrument covers (2026-10-28; `game.rs` `TPZ_NEEDLE_WIDTH_SCALE`,
   `Renderer::mark_instrument_cover`, `rm_glass.wgsl`): the TPZ needle is drawn at a quarter of its
   source bar's width (2.5 mm) in the dial's plane; instrument covers carry an authored fixed dust

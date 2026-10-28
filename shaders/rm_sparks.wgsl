@@ -203,6 +203,10 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
     return WeaponOut(position, center, weapon_palette(page) * weight * gain, 0.0);
 }
 
+// A small-arms tracer pellet's intensity, renderer units (`TRACER_INTENSITY` in
+// renderer_raymarch.rs, about 60 cd; its head lights the scene with the same value).
+const RM_TRACER_INTENSITY: f32 = 0.00165;
+
 @vertex fn vs_tracer(@builtin(vertex_index) vertex: u32,
     @location(0) start: vec4<f32>, @location(1) end: vec4<f32>,
     @location(2) unused_normal: vec4<f32>, @location(3) unused_parameters: vec4<f32>, @location(4) unused_meta: vec4<u32>) -> WeaponOut {
@@ -212,18 +216,26 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
     if (a.z < 0.0) { let t = a.z / (a.z - b.z); a = mix(a, b, t); a.z = 0.0; wa = mix(wa, wb, t); }
     if (b.z < 0.0) { let t = b.z / (b.z - a.z); b = mix(b, a, t); b.z = 0.0; wb = mix(wb, wa, t); }
     if (a.w <= 0.0 || b.w <= 0.0) { return weapon_hidden(); }
-    let tracer = vec3(1.0, 0.4621, 0.0296) * 4.725;
     let pa = a.xy / a.w * fr.res.xy * 0.5; let pb = b.xy / b.w * fr.res.xy * 0.5;
     let delta = pb - pa;
+    // The strip is the pellet's path over this frame's exposure and carries exactly its light: each
+    // pixel I x focal^2 / (depth^2 x the strip's length in pixels), so the whole strip delivers
+    // I / depth^2 to the eye at any length or distance (2026-10-28: a fixed ~175 000 cd/m2 made a
+    // near tracer some ten thousand times too bright, its glare a broad band across the view).
+    let focal = 0.5 * fr.res.y / tan(0.5 * fr.optic.y);
+    let per_pixel = RM_TRACER_INTENSITY * focal * focal / max(length(delta), 1.0);
+    let tint = vec3(1.0, 0.4621, 0.0296);
     if (dot(delta, delta) <= 0.00000001) {
-        return WeaponOut(pixel_quad((wa + wb) * 0.5, vertex), (wa + wb) * 0.5, tracer, 0.0);
+        let w = max(0.5 * (a.w + b.w), 0.05);
+        return WeaponOut(pixel_quad((wa + wb) * 0.5, vertex), (wa + wb) * 0.5, tint * per_pixel / (w * w), 0.0);
     }
     let normal = normalize(vec2(-delta.y, delta.x));
     var endpoints = array<u32, 6>(0u, 1u, 0u, 0u, 1u, 1u); var sides = array<f32, 6>(-0.5, -0.5, 0.5, 0.5, -0.5, 0.5);
     let endpoint = endpoints[vertex]; var clip = select(a, b, endpoint == 1u);
     clip.x += normal.x * sides[vertex] * 2.0 / fr.res.x * clip.w;
     clip.y += normal.y * sides[vertex] * 2.0 / fr.res.y * clip.w;
-    return WeaponOut(clip, select(wa, wb, endpoint == 1u), tracer, 0.0);
+    let w = max(clip.w, 0.05);
+    return WeaponOut(clip, select(wa, wb, endpoint == 1u), tint * per_pixel / (w * w), 0.0);
 }
 
 @fragment fn fs_weapon(in: WeaponOut) -> @location(0) vec4<f32> {
