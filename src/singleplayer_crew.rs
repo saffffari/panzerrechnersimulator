@@ -272,6 +272,10 @@ impl Game {
                 self.station_eye(Station::Commander)-Vec3::Y*0.06);
             return head-segments[crew_physics::CrewBodyPart::Head.index()].pos;
         }
+        // A man the player displaced stands by at the rear of the basket, not under the cupola.
+        if let Some(standby) = self.crew_solo_standby_offset(body) {
+            return reach_offset + standby;
+        }
         if !self.singleplayer_crew_active
             || self.mode != Mode::Tank
             || self

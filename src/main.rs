@@ -16420,6 +16420,10 @@ fn main() -> anyhow::Result<()> {
         let act = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(0u8);
         return showreel::run_ai_showreel(outdir, t34_weights, tiger_weights, count, max_secs, act);
     }
+    if args.len() >= 2 && args[1] == "crew-solo-kia" {
+        let prefix = capture_arg(&args, 2, "crew_solo_kia");
+        return crew_solo_capture::run_crew_solo_kia_capture(&prefix);
+    }
     if args.len() >= 2 && args[1] == "crew-solo" {
         let prefix = capture_arg(&args, 2, "crew_solo");
         return crew_solo_capture::run_crew_solo_capture(&prefix);
