@@ -7306,6 +7306,10 @@ pub struct TankInput {
     pub hatch_toggle: bool, // occupied station hatch request; shared solo/LAN rising edge
     /// K edge: the commander's standing order for the solo crew's gunner (fire at will / hold).
     pub fire_order: bool,
+    /// Y / N: the commander's answer to a crewman's request (the loader asking to dump the
+    /// empties out of the side escape hatch).
+    pub crew_yes: bool,
+    pub crew_no: bool,
     /// LAN crew authority for this frame. `None` preserves the exact solo control path. When set,
     /// simulation duties come from their real stations while this process's ordinary input remains
     /// the local crewman's camera/body input.
@@ -16608,6 +16612,7 @@ impl Game {
                 if coop.is_none()
                     && matches!(self.breech, Breech::Empty)
                     && acting != Some(Station::Loader)
+                    && !self.crew_solo.loader_holding
                 {
                     self.ram = (self.ram - RAM_DECAY * dt).max(0.0);
                 }
@@ -16683,10 +16688,13 @@ impl Game {
                     if wish_w.length_squared() > 0.01 && self.cupola_focus.index.is_none() {
                         let ang = self.player.heading + self.player.turret_yaw;
                         let wish_l = glam::Quat::from_rotation_y(-ang) * wish_w;
-                        let next = self.walk_pos + wish_l * if crouching { 0.65 * dt } else { 1.15 * dt };
+                        // Loose empties underfoot slow the step (and get kicked, below).
+                        let clutter = self.crew_solo_floor_clutter_factor(self.walk_pos);
+                        let next = self.walk_pos + wish_l * clutter * if crouching { 0.65 * dt } else { 1.15 * dt };
                         self.walk_pos = clamp_interior_walk(self.walk_pos, next);
                     }
                     let walk_delta = self.walk_pos - previous_walk_pos;
+                    self.crew_solo_kick_brass(walk_delta, dt);
                     self.update_walk_sound(Vec2::new(walk_delta.x,walk_delta.z).length(),dt,
                         true,wish_w.length_squared()>0.01,self.loader_crouch_t,true,
                         turret.transform_point3(Vec3::new(self.walk_pos.x,crate::interior_rig::FLOOR_STAND_Y,self.walk_pos.z)));

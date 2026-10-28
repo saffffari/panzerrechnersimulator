@@ -28,10 +28,12 @@ const AID_REACH_HULL_M: f32 = 2.8;
 const AID_CONE_COS: f32 = 0.84;
 /// Seconds an intercom line stays legible.
 const INTERCOM_S: f32 = 3.2;
-/// The loader's stroke cadence at full performance: with `RAM_PER_PRESS_OK` and `RAM_DECAY`
-/// this comes to about six seconds from the shot to the next round seated, the rate of a
-/// practised man handling a 10 kg cartridge in a cramped turret.
-const LOADER_STROKE_S: f32 = 0.75;
+/// The loader's stroke cadence at full performance: three strokes of `RAM_PER_PRESS_OK` seat a
+/// round, which with the case fumble comes to about six seconds from the shot to the next round
+/// seated, the rate of a practised man handling a 10 kg cartridge in a cramped turret. While he
+/// works the round in he is holding it, so the off-station ram decay does not apply to him; a
+/// hurt or hampered loader is slower, never stalled.
+const LOADER_STROKE_S: f32 = 1.5;
 /// The gunner's settle on a target before he fires (seconds at full performance).
 const GUNNER_SETTLE_S: f32 = 0.55;
 /// The driver's reaction to an order (seconds at full performance).
@@ -65,6 +67,17 @@ const STOW_PERF_MIN: f32 = 0.7;
 /// The recess behind the rear-wall bands: probe height and the shelf's accepted height range
 /// (turret-local metres), read off the probed wall profile.
 const RACK_ROWS: [(f32, (f32, f32)); 2] = [(2.02, (1.55, 1.95)), (1.2, (0.88, 1.12))];
+/// Index of the turret's side escape hatch among the roof/side lids.
+const ESCAPE_HATCH: usize = 3;
+/// Seconds per case for the loader to take an empty and heave it out of the open escape
+/// hatch, at full performance.
+const DUMP_EACH_S: f32 = 1.8;
+/// Seconds between repeats of an unanswered request.
+const ASK_AGAIN_S: f32 = 30.0;
+/// Loose cases within this of the loader's post get under his feet (turret-local planar m).
+const CLUTTER_LOADER_M: f32 = 0.7;
+/// Loose cases within this of the player's feet slow and are kicked (planar m).
+const CLUTTER_FEET_M: f32 = 0.32;
 /// Reach from the hands to a slot centre to count as placing the case in it.
 const STOW_REACH_M: f32 = 0.45;
 /// Hull-local point of the driver's seat used as the interior entry anchor.
@@ -244,6 +257,15 @@ impl EmptiesRack {
     }
 }
 
+/// The commander's answer to the loader's request to dump the empties out of the side hatch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DumpPermission {
+    NotAsked,
+    Asked,
+    Approved,
+    Refused,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct CrewSolo {
     /// Full-crew solo is on (set by `enable_singleplayer_crew`).
@@ -281,6 +303,16 @@ pub(super) struct CrewSolo {
     /// The empties rack and the loader's time away from the breech stowing a case.
     pub empties_rack: EmptiesRack,
     loader_busy_s: f32,
+    /// The loader has a round in his hands at the breech this step (the ram does not slip back).
+    pub loader_holding: bool,
+    pub dump_permission: DumpPermission,
+    ask_clock: f32,
+    dump_clock: f32,
+    /// The loader opened the side hatch to dump (and so closes it again).
+    dump_hatch_open: bool,
+    pub dumped_total: u32,
+    prev_yes: bool,
+    prev_no: bool,
     /// A dead man's body has been dragged off his station.
     pub body_cleared: [bool; 5],
     intercom: Vec<(String, f32)>,
@@ -319,6 +351,14 @@ impl Default for CrewSolo {
             bleed_emit_t: [0.0; 5],
             empties_rack: EmptiesRack::default(),
             loader_busy_s: 0.0,
+            loader_holding: false,
+            dump_permission: DumpPermission::NotAsked,
+            ask_clock: 0.0,
+            dump_clock: 0.0,
+            dump_hatch_open: false,
+            dumped_total: 0,
+            prev_yes: false,
+            prev_no: false,
             body_cleared: [false; 5],
             intercom: Vec::new(),
             prev_fire_order: false,
@@ -551,6 +591,7 @@ impl Game {
         self.crew_solo_gunner_think(dt);
         self.crew_solo_driver_think(input, dt);
         self.crew_solo_hands(input, dt);
+        self.crew_solo_empties_dump(input, dt);
     }
 
     fn crew_solo_fire_exposure(&mut self, dt: f32) {
@@ -903,6 +944,7 @@ impl Game {
             self.crew_solo.say("Loader: up.");
         }
         self.crew_solo.prev_breech_loaded = loaded_now;
+        self.crew_solo.loader_holding = false;
         if !self.crew_solo_working(CrewRole::Loader) || !self.player.alive || loaded_now {
             self.crew_solo.loader_clock = 0.0;
             return;
@@ -913,8 +955,11 @@ impl Game {
             return;
         }
         let perf = self.crew_solo.man(CrewRole::Loader).performance().max(0.15);
+        // Empties rolling round his feet slow him: a quarter more per case, at most double.
+        let underfoot = self.crew_solo_cases_near_turret_xz(LOADER_POST_TURRET_XZ, CLUTTER_LOADER_M);
+        let clutter = (1.0 + 0.25 * underfoot as f32).min(2.0);
         self.crew_solo.loader_clock += dt;
-        let stroke = self.crew_solo.loader_clock >= LOADER_STROKE_S / perf;
+        let stroke = self.crew_solo.loader_clock >= LOADER_STROKE_S * clutter / perf;
         if stroke {
             self.crew_solo.loader_clock = 0.0;
         }
@@ -924,6 +969,7 @@ impl Game {
             // Ramming is strokes against the ordinary ram decay the tank arm already applies
             // off-station; a second decay here would never let the round home.
             Breech::Empty => {
+                self.crew_solo.loader_holding = true;
                 if stroke {
                     self.service_breech(true, dt);
                 }
@@ -1148,6 +1194,227 @@ impl Game {
             "in_rack": rack.count(), "stowed_total": rack.stowed_total, "dropped_total": rack.dropped_total,
             "loose_aboard": self.loose_empties_aboard(), "probe_trace": rack.probe_trace,
             "poses": rack.poses.as_ref().map(|p| p.iter().map(|x| x.map(|(c, _)| c.to_array())).collect::<Vec<_>>())})
+    }
+
+    // ── Dumping the empties ─────────────────────────────────────────────────────────────────
+
+    /// With the rack full the loader asks to dump the empties out of the side escape hatch.
+    /// Approved (Y), he opens the hatch between reloads when no contact is in the gunner's
+    /// sight, heaves the cases out one by one, rack first, then the loose ones, and shuts it;
+    /// a contact makes him shut it at once. Refused (N) or unanswered, the cases fall to the
+    /// floor and stay there, underfoot. N later withdraws an approval; Y later grants it.
+    fn crew_solo_empties_dump(&mut self, input: &TankInput, dt: f32) {
+        let yes = input.crew_yes && !self.crew_solo.prev_yes;
+        let no = input.crew_no && !self.crew_solo.prev_no;
+        self.crew_solo.prev_yes = input.crew_yes;
+        self.crew_solo.prev_no = input.crew_no;
+        let loader_ok = self.crew_solo_working(CrewRole::Loader) && self.player.alive;
+        let rack = &self.crew_solo.empties_rack;
+        let full = rack.probed() && rack.is_full();
+
+        match self.crew_solo.dump_permission {
+            DumpPermission::NotAsked => {
+                if full && loader_ok {
+                    self.crew_solo.dump_permission = DumpPermission::Asked;
+                    self.crew_solo.ask_clock = 0.0;
+                    self.crew_solo.say("Loader: rack's full. Out the side hatch? (Y/N)");
+                }
+            }
+            DumpPermission::Asked => {
+                self.crew_solo.ask_clock += dt;
+                if self.crew_solo.ask_clock >= ASK_AGAIN_S && loader_ok {
+                    self.crew_solo.ask_clock = 0.0;
+                    self.crew_solo.say("Loader: empties, Herr Kommandant? (Y/N)");
+                }
+            }
+            DumpPermission::Approved | DumpPermission::Refused => {}
+        }
+        if yes && self.crew_solo.dump_permission != DumpPermission::Approved
+            && self.crew_solo.dump_permission != DumpPermission::NotAsked
+        {
+            self.crew_solo.dump_permission = DumpPermission::Approved;
+            self.crew_solo.say("Commander: out with them.");
+            self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "dump": "approved"}));
+        }
+        if no && self.crew_solo.dump_permission != DumpPermission::Refused
+            && self.crew_solo.dump_permission != DumpPermission::NotAsked
+        {
+            self.crew_solo.dump_permission = DumpPermission::Refused;
+            self.crew_solo.say("Commander: keep the hatch shut.");
+            self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "dump": "refused"}));
+        }
+
+        let contact = self.crew_solo.gunner_target.is_some();
+        let has_empties = self.crew_solo.empties_rack.count() > 0 || self.loose_empties_aboard() > 0;
+        let may_dump = self.crew_solo.dump_permission == DumpPermission::Approved
+            && loader_ok
+            && !contact
+            && has_empties
+            && matches!(self.breech, Breech::Loaded)
+            && self.crew_solo.loader_busy_s <= 0.0;
+        if !may_dump {
+            if self.crew_solo.dump_hatch_open {
+                self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "dump_gate_closed": {
+                    "permission": format!("{:?}", self.crew_solo.dump_permission), "loader_ok": loader_ok,
+                    "contact": contact, "has_empties": has_empties, "breech": format!("{:?}", self.breech),
+                    "loader_busy_s": self.crew_solo.loader_busy_s}}));
+                self.roof_hatches.open[ESCAPE_HATCH] = false;
+                self.crew_solo.dump_hatch_open = false;
+                self.crew_solo.say(if contact { "Loader: contact, hatch shut." } else { "Loader: hatch shut." });
+            }
+            self.crew_solo.dump_clock = 0.0;
+            return;
+        }
+        if !self.roof_hatches.open[ESCAPE_HATCH] {
+            self.roof_hatches.open[ESCAPE_HATCH] = true;
+            self.crew_solo.dump_hatch_open = true;
+            self.crew_solo.say("Loader: side hatch open.");
+        }
+        if !self.access_hatch_open(ESCAPE_HATCH) {
+            return; // the lid is still swinging
+        }
+        let perf = self.crew_solo.man(CrewRole::Loader).performance().max(0.15);
+        self.crew_solo.dump_clock += dt;
+        if self.crew_solo.dump_clock < DUMP_EACH_S / perf {
+            return;
+        }
+        self.crew_solo.dump_clock = 0.0;
+        // Rack first (last in, first out), then a loose case from the floor.
+        let from_rack = (0..EMPTIES_RACK_SLOTS).rev().find_map(|i| self.crew_solo.empties_rack.slots[i].map(|k| (i, k)));
+        let casing = match from_rack {
+            Some((slot, k)) => {
+                self.crew_solo.empties_rack.slots[slot] = None;
+                Some(k)
+            }
+            None => self.casings.iter().position(|c| c.active && !c.carried && c.stowed.is_none() && c.aboard),
+        };
+        if let Some(k) = casing {
+            self.crew_solo_heave_out(k);
+        }
+    }
+
+    /// The case leaves through the open escape hatch: placed just outside the aperture with the
+    /// heave's velocity outward and up, then the ordinary case physics carries it to wherever it
+    /// lands (the deck, the track guard or the ground), where it stays.
+    fn crew_solo_heave_out(&mut self, k: usize) {
+        let turret = self.player.turret_model();
+        let center = turret.transform_point3(tiger_hatches::APERTURE_CENTERS[ESCAPE_HATCH]);
+        let normal = turret.transform_vector3(tiger_hatches::APERTURE_NORMALS[ESCAPE_HATCH]).normalize_or_zero();
+        let seed = self.crew_solo.dumped_total.wrapping_mul(2654435761) ^ 0xD0_4D5E;
+        let jitter = |n: u32| hash01(seed.wrapping_add(n)) - 0.5;
+        let case = &mut self.casings[k];
+        case.stowed = None;
+        case.stow_t = 0.0;
+        case.carried = false;
+        case.pos = center + normal * 0.22 + Vec3::Y * 0.05;
+        case.vel = normal * (CASING_THROW_SPEED + jitter(1)) + Vec3::Y * (1.2 + 0.4 * jitter(2));
+        case.rotation = (Quat::from_rotation_y(jitter(3) * 2.0) * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 * 0.8)).normalize();
+        case.angular_vel = Vec3::new(jitter(4), jitter(5), jitter(6)).normalize_or_zero() * 6.0;
+        case.drop_rest = shell_collision::DropRest::default();
+        case.impact_cooldown = 0.0;
+        case.aboard = false;
+        case.outside_rest = false;
+        self.crew_solo.dumped_total += 1;
+        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "dumped_empty": k,
+            "in_rack": self.crew_solo.empties_rack.count()}));
+    }
+
+    /// Loose aboard cases within `radius` of a turret-local floor point (planar).
+    fn crew_solo_cases_near_turret_xz(&self, point: Vec2, radius: f32) -> usize {
+        if !self.crew_solo_active() {
+            return 0;
+        }
+        let inverse = self.player.turret_model().inverse();
+        self.casings.iter().filter(|c| c.active && !c.carried && c.stowed.is_none() && c.aboard)
+            .filter(|c| {
+                let local = inverse.transform_point3(c.pos);
+                local.y < crate::interior_rig::FLOOR_STAND_Y + 0.25 && Vec2::new(local.x, local.z).distance(point) < radius
+            })
+            .count()
+    }
+
+    /// The player's step over loose empties: slower with each one underfoot (never below half).
+    pub(super) fn crew_solo_floor_clutter_factor(&self, walk_pos: Vec3) -> f32 {
+        let n = self.crew_solo_cases_near_turret_xz(Vec2::new(walk_pos.x, walk_pos.z), CLUTTER_FEET_M);
+        (1.0 - 0.18 * n as f32).max(0.5)
+    }
+
+    /// Walking into loose empties kicks them along the step: the resting case is woken with the
+    /// foot's speed and rolls on through the ordinary case physics.
+    pub(super) fn crew_solo_kick_brass(&mut self, walk_delta_turret: Vec3, dt: f32) {
+        if !self.crew_solo_active() || dt <= 0.0 {
+            return;
+        }
+        let step = Vec2::new(walk_delta_turret.x, walk_delta_turret.z);
+        if step.length() < 1.0e-4 {
+            return;
+        }
+        let turret = self.player.turret_model();
+        let inverse = turret.inverse();
+        let feet = Vec2::new(self.walk_pos.x, self.walk_pos.z);
+        let foot_velocity = turret.transform_vector3(Vec3::new(step.x, 0.0, step.y) / dt);
+        for c in self.casings.iter_mut().filter(|c| c.active && !c.carried && c.stowed.is_none() && c.aboard) {
+            let local = inverse.transform_point3(c.pos);
+            if local.y > crate::interior_rig::FLOOR_STAND_Y + 0.25 {
+                continue;
+            }
+            if Vec2::new(local.x, local.z).distance(feet) < CLUTTER_FEET_M * 0.8 {
+                c.vel = foot_velocity * 1.4 + Vec3::Y * 0.3;
+                c.angular_vel += Vec3::new(foot_velocity.z, 0.0, -foot_velocity.x) * 4.0;
+                c.drop_rest = shell_collision::DropRest::default();
+            }
+        }
+    }
+
+    pub fn crew_solo_dump_receipt(&self) -> Value {
+        json!({"permission": format!("{:?}", self.crew_solo.dump_permission),
+            "dumped_total": self.crew_solo.dumped_total, "hatch_open": self.roof_hatches.open[ESCAPE_HATCH],
+            "hatch_opened_by_loader": self.crew_solo.dump_hatch_open,
+            "outside_resting": self.casings.iter().filter(|c| c.active && c.outside_rest).count(),
+            "loose_aboard": self.loose_empties_aboard(), "in_rack": self.stowed_empties()})
+    }
+
+    /// Headless: stand a case upright in every free rack slot (a run's worth of empties), so the
+    /// full-rack request comes up without firing a dozen rounds. The receipt names it.
+    pub fn debug_crew_solo_fill_empties_rack(&mut self) -> usize {
+        self.crew_solo_probe_empties_rack();
+        let mut filled = 0;
+        while let Some(slot) = self.crew_solo.empties_rack.free_slot() {
+            let Some((center, rotation)) = self.crew_solo.empties_rack.pose(slot) else { break };
+            let turret = self.player.turret_model();
+            let world = turret.transform_point3(center);
+            let Some(k) = self.spawn_casing_from(world, Vec3::ZERO) else { break };
+            let world_rot = (turret.to_scale_rotation_translation().1 * rotation).normalize();
+            self.crew_solo_stow_case(k, slot, world, world_rot, 0.0);
+            filled += 1;
+        }
+        filled
+    }
+
+    /// Walk to the rear of the basket and face the open side escape hatch (headless review).
+    pub fn debug_crew_solo_face_escape_hatch(&mut self) -> bool {
+        if self.mode != Mode::Tank || self.station != Station::Loader {
+            return false;
+        }
+        self.debug_walk_to(Vec3::new(-0.35, 0.0, -0.30));
+        let point = self.player.turret_model().transform_point3(tiger_hatches::APERTURE_CENTERS[ESCAPE_HATCH]);
+        self.loader_face_world(point);
+        true
+    }
+
+    /// Headless: drop a spent case at a turret-local floor spot (clutter for the refusal check).
+    pub fn debug_crew_solo_drop_case(&mut self, turret_local: Vec3) -> bool {
+        let world = self.player.turret_model().transform_point3(turret_local);
+        self.spawn_casing_from(world, Vec3::ZERO).is_some()
+    }
+
+    pub fn debug_crew_solo_walk_pos(&self) -> Vec3 {
+        self.walk_pos
+    }
+
+    pub fn debug_crew_solo_floor_clutter(&self) -> (usize, f32) {
+        (self.crew_solo_cases_near_turret_xz(LOADER_POST_TURRET_XZ, CLUTTER_LOADER_M),
+            self.crew_solo_floor_clutter_factor(self.walk_pos))
     }
 
     // ── The player's hands ──────────────────────────────────────────────────────────────────
@@ -1594,6 +1861,7 @@ impl Game {
             "treatments": self.crew_solo.treatments,
             "procedures": self.crew_solo.procedures_done,
             "empties_rack": self.empties_rack_receipt(),
+            "empties_dump": self.crew_solo_dump_receipt(),
             "player_station": format!("{:?}", self.station),
             "log": self.crew_solo.log,
         })

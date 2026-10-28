@@ -828,6 +828,177 @@ pub fn run_crew_solo_kia_capture(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Short check of the empties' lifecycle (`crew-solo-empties PREFIX`): with the rack full the
+/// loader asks to dump out of the side hatch; refused, the next empty falls to the floor and the
+/// floor clutter slows and kicks; approved, he opens the hatch between reloads, heaves the cases
+/// out one by one, shuts it when a contact comes into the gunner's sight, resumes, and shuts it
+/// when done. One run, a few stills, a JSON receipt.
+pub fn run_crew_solo_empties_capture(prefix: &str) -> anyhow::Result<()> {
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let info = adapter.get_info();
+    println!("[crew-solo-empties] adapter={} ({:?}, {:?})", info.name, info.device_type, info.backend);
+    let (device, queue) = crate::request_device(&adapter);
+    let map = crate::world::act(0);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
+    g.enable_singleplayer_crew();
+    g.mute_audio();
+    g.set_defer_rtt_to_render(true);
+    g.god = true;
+    g.targets_only = true;
+    g.brawl = false;
+    g.debug_hold_enemy_fire();
+    for i in 0..g.enemies.len() {
+        g.debug_crew_solo_set_enemy_active(i, false);
+    }
+    r.set_weather_override(None);
+    r.overcast = 0.08;
+    r.storm = 0.0;
+    r.fog_density = 0.00035;
+    r.precipitation = 0.0;
+    let heading = g.player.heading;
+    let ranges = [160.0f32, 200.0, 240.0, 120.0];
+    let bearings = [0.0f32, 15.0, -15.0, 30.0, -30.0];
+    let mut found = false;
+    for range in ranges {
+        if found {
+            break;
+        }
+        for bearing_deg in bearings {
+            let bearing = heading + bearing_deg.to_radians();
+            let target = g.player.pos + Vec3::new(bearing.sin(), 0.0, bearing.cos()) * range;
+            g.debug_place_enemy(0, target.x, target.z, bearing + std::f32::consts::PI);
+            g.debug_crew_solo_set_enemy_active(0, true);
+            g.update(&TankInput::default(), DT, &mut r);
+            let (recognizable, los) = g.debug_crew_solo_target_visible(0);
+            if recognizable && los {
+                found = true;
+                break;
+            }
+        }
+    }
+    g.debug_crew_solo_set_enemy_active(0, false);
+    let target_spot = (g.enemies[0].pos, g.enemies[0].heading);
+    let mut proof = Proof { prefix: prefix.to_owned(), device: &device, queue: &queue, checks: Vec::new(), strikes: Vec::new(), stills: Vec::new(), pass: true };
+    let idle = TankInput::default();
+    let yes = TankInput { crew_yes: true, ..TankInput::default() };
+    let no = TankInput { crew_no: true, ..TankInput::default() };
+    run_for(&mut g, &mut r, &idle, 1.0);
+
+    // 1. A run's worth of empties in the rack (staged, named): the loader asks.
+    let filled = g.debug_crew_solo_fill_empties_rack();
+    run_for(&mut g, &mut r, &idle, 1.0);
+    let asked = g.crew_solo_dump_receipt();
+    let line = g.intercom_line().map(str::to_owned);
+    proof.check(
+        "rack full: the loader asks the commander to dump out of the side hatch",
+        asked["permission"] == "Asked" && line.as_deref().is_some_and(|l| l.contains("side hatch")),
+        json!({"filled": filled, "target_found": found, "dump": asked, "intercom": line}),
+    );
+
+    // 2. Refused: a commanded shot's empty falls to the floor; the floor clutter is underfoot.
+    g.update(&no, DT, &mut r);
+    g.update(&idle, DT, &mut r);
+    g.debug_crew_solo_set_enemy_active(0, true);
+    g.debug_engage_all();
+    g.debug_crew_solo_set_fire_at_will(false);
+    run_until(&mut g, &mut r, &idle, 20.0, |g| g.breech_loaded());
+    let shots_before = shots(&g);
+    g.debug_crew_solo_fire_command();
+    run_until(&mut g, &mut r, &idle, 20.0, |g| shots(g) > shots_before);
+    run_for(&mut g, &mut r, &idle, 3.0);
+    let refused = g.crew_solo_dump_receipt();
+    proof.check(
+        "refused: the hatch stays shut and the next empty is on the floor, not in the rack",
+        refused["permission"] == "Refused" && refused["hatch_open"] == false
+            && refused["loose_aboard"].as_u64().unwrap_or(0) >= 1 && refused["in_rack"].as_u64() == Some(filled as u64),
+        json!({"dump": refused, "shots": [shots_before, shots(&g)]}),
+    );
+    // More empties round the loader's feet (staged, named), then the player walks through them.
+    for (x, z) in [(-0.60f32, 0.05f32), (-0.70, 0.20), (-0.55, 0.30), (-0.45, 0.10)] {
+        g.debug_crew_solo_drop_case(Vec3::new(x, crate::interior_rig::FLOOR_STAND_Y + 0.08, z));
+    }
+    run_for(&mut g, &mut r, &idle, 1.5);
+    let (at_loader, _) = g.debug_crew_solo_floor_clutter();
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_loader_face_local(Vec3::new(-0.6, 0.8, 0.2));
+    run_for(&mut g, &mut r, &idle, 0.2);
+    proof.still(&mut r, "empties_01_floor_clutter_at_the_breech")?;
+    let walk = TankInput { drive: 1.0, ..TankInput::default() };
+    let start = g.debug_crew_solo_walk_pos();
+    run_for(&mut g, &mut r, &walk, 1.0);
+    let walked = g.debug_crew_solo_walk_pos().distance(start);
+    proof.check(
+        "refused: empties collect round the loader's feet (slowing his strokes); the player can still walk through them",
+        at_loader >= 3 && walked > 0.05,
+        json!({"cases_at_loader_post": at_loader, "walked_m_in_1s": walked}),
+    );
+
+    // 3. Approved, with no contact in sight: hatch open, out they go.
+    g.debug_crew_solo_set_enemy_active(0, false);
+    g.jump_station(Station::Commander);
+    run_for(&mut g, &mut r, &idle, 1.0);
+    g.update(&yes, DT, &mut r);
+    g.update(&idle, DT, &mut r);
+    run_until(&mut g, &mut r, &idle, 20.0, |g| g.breech_loaded());
+    let t_open = run_until(&mut g, &mut r, &idle, 10.0, |g| g.crew_solo_dump_receipt()["hatch_open"] == true);
+    run_until(&mut g, &mut r, &idle, 15.0, |g| g.crew_solo_dump_receipt()["dumped_total"].as_u64().unwrap_or(0) >= 3);
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_crew_solo_face_escape_hatch();
+    run_for(&mut g, &mut r, &idle, 0.4);
+    proof.still(&mut r, "empties_02_side_hatch_open_dumping")?;
+    let dumping = g.crew_solo_dump_receipt();
+    proof.check(
+        "approved: the loader opens the side hatch between reloads and heaves the empties out",
+        dumping["dumped_total"].as_u64().unwrap_or(0) >= 3,
+        json!({"seconds_to_open": t_open, "dump": dumping}),
+    );
+
+    // 4. A contact comes into sight (a fresh T-34 where the first one stood; the first was
+    //    killed by the commanded shot): the hatch is shut at once; gone again, he resumes.
+    let _ = target_spot;
+    let mut contact = 0usize;
+    if g.enemies[0].alive {
+        g.debug_crew_solo_set_enemy_active(0, true);
+        g.debug_engage_all();
+    } else {
+        contact = ensure_target(&mut g, &mut r, &mut contact, Spot { range: 160.0, bearing: 0.0, heading });
+    }
+    let t_shut = run_until(&mut g, &mut r, &idle, 6.0, |g| g.crew_solo_dump_receipt()["hatch_open"] == false);
+    let shut = g.crew_solo_dump_receipt();
+    proof.check(
+        "a contact in the gunner's sight shuts the hatch at once",
+        shut["hatch_open"] == false && t_shut < 6.0,
+        json!({"seconds_to_shut": t_shut, "dump": shut, "contact": contact}),
+    );
+    g.debug_crew_solo_set_enemy_active(contact, false);
+    run_until(&mut g, &mut r, &idle, 120.0, |g| {
+        let d = g.crew_solo_dump_receipt();
+        d["in_rack"] == 0 && d["loose_aboard"] == 0 && d["hatch_open"] == false
+    });
+    run_for(&mut g, &mut r, &idle, 4.0);
+    let done = g.crew_solo_dump_receipt();
+    proof.check(
+        "all empties out, the hatch shut again, the cases lying outside where they fell",
+        done["in_rack"] == 0 && done["hatch_open"] == false
+            && done["dumped_total"].as_u64().unwrap_or(0) >= filled as u64
+            && done["outside_resting"].as_u64().unwrap_or(0) >= 1,
+        json!({"dump": done}),
+    );
+
+    let receipt_path = format!("{prefix}.json");
+    let receipt = json!({"command": "crew-solo-empties", "adapter": info.name, "pass": proof.pass,
+        "checks": proof.checks, "stills": proof.stills, "crew": g.crew_solo_receipt(),
+        "fixture": "rack filled by debug_crew_solo_fill_empties_rack; four extra empties dropped at the loader's post; the range target is toggled active to stand for a contact; the Tiger is invulnerable (god) for this check"});
+    std::fs::write(&receipt_path, serde_json::to_string_pretty(&receipt)?).with_context(|| format!("writing {receipt_path}"))?;
+    println!("[crew-solo-empties] receipt {receipt_path}");
+    println!("[crew-solo-empties] {}", if proof.pass { "ALL PASS" } else { "FAILURES" });
+    anyhow::ensure!(proof.pass, "crew-solo-empties check failed; see {receipt_path}");
+    Ok(())
+}
+
 pub fn run_crew_solo_capture(prefix: &str) -> anyhow::Result<()> {
     let instance = crate::create_instance();
     let adapter = crate::request_adapter(&instance, None);

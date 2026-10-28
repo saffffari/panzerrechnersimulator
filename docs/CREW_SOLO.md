@@ -33,8 +33,11 @@ hover, station entry, and the penetration path's wound record.
   Buttoned up at the cupola with nothing under the crosshair, **LMB** is the fire command: one
   shot when he is laid. He calls contacts and shots on the intercom.
 - The loader serves the breech with the existing auto-crew stroke state machine at a human
-  cadence (`LOADER_STROKE_S = 0.75 s` per stroke against `RAM_PER_PRESS_OK` and `RAM_DECAY`,
-  about six seconds from the shot to the next round seated at full performance).
+  cadence (`LOADER_STROKE_S = 1.5 s` per stroke, three strokes of `RAM_PER_PRESS_OK` seat a
+  round: about six seconds from the shot to the next round seated at full performance). While
+  he works the round in he is holding it, so the off-station ram decay does not apply to him; a
+  hurt or hampered loader is slower, never stalled. (Until 2026-10-28 the decay applied and a
+  loader below about 0.55 performance, or with cases underfoot, could never seat a round.)
 - **Empties.** After freeing the hot case the loader turns and stands it upright in the
   empties rack along the curved inner rear wall of the turret, slot by slot
   (`EMPTIES_RACK_SLOTS = 12`), and is away from the breech for 2.2 s / performance; the case
@@ -48,6 +51,21 @@ hover, station entry, and the penetration path's wound record.
   within reach of an empty slot ("EMPTIES RACK - LET GO TO STAND THE CASE IN IT"); the floor
   and the throw stay as they were. `stowed_empties()` and `loose_empties_aboard()` are the
   counts the salvage and resupply paths read.
+- **When the rack is full** the loader asks: "Loader: rack's full. Out the side hatch? (Y/N)",
+  repeated every 30 s while unanswered. **Y** approves, **N** refuses; either can be changed
+  later. Approved, he opens the turret's side escape hatch between reloads (breech loaded, no
+  contact in the gunner's sight), heaves the empties out one by one through the aperture, rack
+  first and then the loose ones off the floor (1.8 s a case / performance), and shuts the hatch
+  when they are gone; a contact coming into the gunner's sight makes him shut it at once
+  ("Loader: contact, hatch shut."). The open hatch is the real lid state: the cabin's sound
+  becomes the open-hatch enclosure, daylight and weather come in through the real opening, and
+  rifle fire resolves against the moved lid, so the aperture is a real hole for small arms.
+  The cases land outside where the case physics puts them (deck, track guard or ground) and
+  stay there. Refused or unanswered, the next empties fall to the floor and stay: loose cases
+  round the loader's post slow his strokes (a quarter more per case, at most double), and the
+  player's step over loose cases is slower (down to half) and kicks them along. As loader, the
+  player has the same choice through the ordinary interactions: the side hatch lid (LMB) and
+  throwing a carried case (X) through the open aperture.
 - The player can take any station as before (sight anchor, breech, cupola, and now the
   **driver's seat** from the front of the basket floor). The man he displaces stands by at
   the rear of the basket floor, never under the cupola (the player is the commander; nobody
@@ -139,6 +157,7 @@ a splinted man is at 70 %.
 | Input | Action |
 | --- | --- |
 | **K** | standing order for the gunner: fire at will / hold fire |
+| **Y / N** | answer a crewman's request (the loader asking to dump the empties out of the side hatch) |
 | **LMB** buttoned at the cupola, nothing hovered | fire command |
 | **WASD** from cupola / sights / radio seat | orders to the driver |
 | **E** held on a wounded man, a body, or the first-aid box | treat / drag aside / self-aid |
@@ -152,7 +171,7 @@ Command, from the worktree, with the main checkout's asset library:
 bash tools/crew_solo_proof.sh captures/crew_solo_20261028 C:/shop/panzerrechnersystem
 ```
 
-Result: **all 23 checks pass** (shader backend, RTX 4090, act-0 arena). Receipt
+Result: **all 20 checks pass** (shader backend, RTX 4090, act-0 arena). Receipt
 `captures/crew_solo_20261028.json`; stills `captures/crew_solo_20261028_*.png`: `01` the crew
 from the cupola, `02` after the gunner's first shot, `02b` an empty standing in the rear-wall
 rack, `03` the hit crewman, `04_<procedure>_<man>` one per procedure and man (pressure
@@ -227,6 +246,19 @@ report was also a rule: a dead man's body blocked the *interior walk* as if it w
 the player could not drop into the compartment to find him; and a loader who died while the
 player walked the compartment had been displaced to the cupola, so his body was not at his
 station. Both rules are changed above.
+
+## Verified: the empties (2026-10-28, `crew-solo-empties`)
+
+`crew-solo-empties captures/crew_solo_empties_20261028` (shader backend): all six checks
+pass. The rack is filled by a debug helper (named in the receipt) so the request comes up
+without a dozen shots; the loader asks; refused, the commanded shot's empty falls to the floor
+with the rack still full; four more cases are dropped at the loader's post (named) and the
+player walks through them; approved, the loader opens the side hatch and heaves the cases out
+(stills `empties_01_floor_clutter_at_the_breech`, `empties_02_side_hatch_open_dumping`: the
+open aperture to daylight, a case mid-heave, upright cases in the rack beside it); a T-34
+coming into the gunner's sight shuts the hatch at once; with the contact gone he resumes,
+empties the rack and the floor, shuts the hatch, and the cases lie outside where they fell.
+The Tiger is invulnerable for this check (it is about the empties, not the fight).
 
 ## Unit tests
 

@@ -46,6 +46,21 @@ none presented as physiology or a contact solve:
   the stand, 0.04 m headroom) are design values. The loader's carry to the rack is a pose
   interpolation over the stow time with no hands drawn; the stow time, the rushed and hurt
   thresholds are design values.
+- Dumping the empties out of the side escape hatch with the commander's leave, and letting them
+  collect on the floor otherwise, is a crew-habit choice, not a historical claim. The open hatch
+  is the real lid state (sound enclosure, light and weather through the real opening, small-arms
+  rays against the moved lid); the main-gun armour solve does not model an open hatch as a hole
+  in the plate. The loader does not move to the hatch: his body stays at his post while the case
+  is placed just outside the aperture and given the heave's velocity (CASING_THROW_SPEED outward,
+  1.2 m/s up), so a rifleman can hit the aperture but not a man standing in it. The dump only
+  happens between reloads with no contact in the gunner's sight; the 1.8 s per case is a design
+  value. Floor clutter is counted, not collided: loose cases within 0.7 m of the loader's post
+  stretch his stroke period (a quarter per case, at most double), cases within 0.32 m of the
+  player's feet slow his step (0.18 per case, never below half) and are kicked with 1.4 times
+  the foot's velocity; there is no foot-to-case contact solve and no trip or fall.
+- The AI loader's working round is exempt from the off-station ram decay while he holds it
+  (`loader_holding`); his stroke cadence (1.5 s per stroke at full performance) is set so the
+  reload stays about six seconds.
 - Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
   loss, the airway timer), spoken once per change of the set of men needing care.
 - The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.
