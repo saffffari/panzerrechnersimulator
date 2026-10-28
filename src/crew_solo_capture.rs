@@ -999,6 +999,158 @@ pub fn run_crew_solo_empties_capture(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Short check of the commander's designation (`crew-solo-designate PREFIX`): from the cupola
+/// he designates a bearing; the living gunner acknowledges and slews the turret there at the
+/// real traverse rate and reports on; the TPZ's second pointer shows the designation; a second
+/// designation on the same bearing refines the range; a designation mid-slew with the player
+/// dropping into the sights leaves the turret part-way there; a designated contact becomes the
+/// gunner's target under hold-fire with no shot; a dead gunner leaves the turret where it was.
+pub fn run_crew_solo_designate_capture(prefix: &str) -> anyhow::Result<()> {
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let info = adapter.get_info();
+    println!("[crew-solo-designate] adapter={} ({:?}, {:?})", info.name, info.device_type, info.backend);
+    let (device, queue) = crate::request_device(&adapter);
+    let map = crate::world::act(0);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
+    g.enable_singleplayer_crew();
+    g.mute_audio();
+    g.set_defer_rtt_to_render(true);
+    g.god = true;
+    g.targets_only = true;
+    g.brawl = false;
+    g.debug_hold_enemy_fire();
+    for i in 0..g.enemies.len() {
+        g.debug_crew_solo_set_enemy_active(i, false);
+    }
+    r.set_weather_override(None);
+    r.overcast = 0.08;
+    r.storm = 0.0;
+    r.fog_density = 0.00035;
+    r.precipitation = 0.0;
+    g.debug_crew_solo_set_fire_at_will(false);
+    let mut proof = Proof { prefix: prefix.to_owned(), device: &device, queue: &queue, checks: Vec::new(), strikes: Vec::new(), stills: Vec::new(), pass: true };
+    let idle = TankInput::default();
+    run_for(&mut g, &mut r, &idle, 1.0);
+    let heading = g.player.heading;
+    let ground_point = |g: &Game, rel_deg: f32, range: f32| {
+        let b = heading + rel_deg.to_radians();
+        let p = g.player.pos + Vec3::new(b.sin(), 0.0, b.cos()) * range;
+        Vec3::new(p.x, g.debug_ground_height(p.x, p.z), p.z)
+    };
+    let wrap = |a: f32| {
+        let mut d = a % std::f32::consts::TAU;
+        if d > std::f32::consts::PI { d -= std::f32::consts::TAU; }
+        if d < -std::f32::consts::PI { d += std::f32::consts::TAU; }
+        d
+    };
+
+    // 1. Designate ground 75 degrees off the bow, 600 m: acknowledged, pointer up, slewed, on.
+    let yaw0 = g.player.turret_yaw;
+    let d1 = g.debug_crew_solo_designate_at(ground_point(&g, 75.0, 600.0));
+    let ack = g.intercom_line().map(str::to_owned);
+    let pointer = g.debug_crew_solo_tpz_needles_visible();
+    let t_on = run_until(&mut g, &mut r, &idle, 40.0, |g| g.debug_crew_solo_designation()["on_target_after_s"].is_number());
+    let des = g.debug_crew_solo_designation();
+    let bearing = des["bearing_rad"].as_f64().unwrap_or(0.0) as f32;
+    let err = wrap(bearing - g.player.turret_yaw);
+    let swing = wrap(bearing - yaw0).abs();
+    proof.check(
+        "designation acknowledged, the TPZ's second pointer shows it, the gunner slews there at the real traverse rate and reports on",
+        d1.is_some() && ack.as_deref().is_some_and(|l| l.contains("Traversing")) && pointer
+            && des["on_target_after_s"].is_number() && err.abs() < 0.03
+            && t_on >= swing.to_degrees() / 6.0 * 0.8,
+        json!({"designation": des, "ack": ack, "pointer": pointer, "seconds_to_on": t_on,
+            "swing_deg": swing.to_degrees(), "turret_error_rad": err, "traverse_floor_s": swing.to_degrees() / 6.0}),
+    );
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_crew_solo_face_tpz();
+    run_for(&mut g, &mut r, &idle, 0.3);
+    proof.still(&mut r, "designate_01_tpz_two_pointers_on")?;
+    g.jump_station(Station::Commander);
+    run_for(&mut g, &mut r, &idle, 1.0);
+
+    // 2. A second designation on the same bearing refines the range.
+    let before = g.debug_crew_solo_designation();
+    let d2 = g.debug_crew_solo_designate_at(ground_point(&g, 75.5, 400.0));
+    let after = g.debug_crew_solo_designation();
+    proof.check(
+        "a second designation on the same bearing refines the range instead of starting over",
+        // The refined range is whatever the new eye ray strikes (here the same rise of ground
+        // both times); the check is that it refines the standing designation, keeping its age.
+        d2.is_some() && after["refinements"] == 1 && after["age_s"].as_f64() >= before["age_s"].as_f64()
+            && after["range_m"] == d2.as_ref().map_or(json!(null), |d| d["range_m"].clone()),
+        json!({"before": before, "after": after, "second_cast": d2}),
+    );
+
+    // 3. Designate the other side, then drop into the sights mid-slew: the turret is part-way
+    //    there when the player takes over the lay.
+    let yaw_start = g.player.turret_yaw;
+    g.debug_crew_solo_designate_at(ground_point(&g, -60.0, 700.0));
+    let target_bearing = g.debug_crew_solo_designation()["bearing_rad"].as_f64().unwrap_or(0.0) as f32;
+    run_for(&mut g, &mut r, &idle, 6.0);
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_face_gunner_sight();
+    run_for(&mut g, &mut r, &idle, 0.2);
+    let took = g.click_station();
+    run_for(&mut g, &mut r, &idle, 1.0);
+    let covered = wrap(g.player.turret_yaw - yaw_start).abs();
+    let total = wrap(target_bearing - yaw_start).abs();
+    proof.check(
+        "dropping into the sights mid-slew finds the turret already on its way to the designated bearing",
+        took && g.station == Station::Gunner && covered > 0.25 * total,
+        json!({"covered_deg": covered.to_degrees(), "total_deg": total.to_degrees()}),
+    );
+    proof.still(&mut r, "designate_02_sights_mid_slew")?;
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.jump_station(Station::Commander);
+    run_for(&mut g, &mut r, &idle, 1.0);
+
+    // 4. A designated contact becomes the gunner's target; under hold-fire there is no shot.
+    let target = ground_point(&g, 20.0, 180.0);
+    g.debug_place_enemy(0, target.x, target.z, heading + std::f32::consts::PI);
+    g.debug_crew_solo_set_enemy_active(0, true);
+    g.update(&idle, DT, &mut r);
+    let shots_before = shots(&g);
+    let center = g.enemies[0].center();
+    g.debug_crew_solo_designate_at(center);
+    let got = run_until(&mut g, &mut r, &idle, 30.0, |g| g.crew_solo_receipt()["gunner_target"] == 0);
+    run_for(&mut g, &mut r, &idle, 8.0);
+    proof.check(
+        "a designated contact becomes the gunner's target; under hold-fire he lays and holds",
+        g.crew_solo_receipt()["gunner_target"] == 0 && shots(&g) == shots_before,
+        json!({"seconds_to_target": got, "shots": [shots_before, shots(&g)], "designation": g.debug_crew_solo_designation()}),
+    );
+    g.debug_crew_solo_set_enemy_active(0, false);
+    run_for(&mut g, &mut r, &idle, 1.0);
+
+    // 5. A dead gunner: the designation stands on the TPZ, the turret stays where it is.
+    g.debug_crew_solo_kia(CrewRole::Gunner);
+    run_for(&mut g, &mut r, &idle, 1.0);
+    let yaw_dead = g.player.turret_yaw;
+    g.debug_crew_solo_designate_at(ground_point(&g, 120.0, 500.0));
+    run_for(&mut g, &mut r, &idle, 8.0);
+    proof.check(
+        "with the gunner dead the designation stands on the TPZ and the turret does not move",
+        g.debug_crew_solo_tpz_needles_visible() && wrap(g.player.turret_yaw - yaw_dead).abs() < 0.01,
+        json!({"turret_moved_rad": wrap(g.player.turret_yaw - yaw_dead), "designation": g.debug_crew_solo_designation()}),
+    );
+
+    let receipt_path = format!("{prefix}.json");
+    let receipt = json!({"command": "crew-solo-designate", "adapter": info.name, "pass": proof.pass,
+        "checks": proof.checks, "stills": proof.stills, "session": g.crew_solo_session_json(),
+        "log": g.crew_solo_receipt()["log"],
+        "fixture": "designations made through debug_crew_solo_designate_at (the same cast from the commander's eye, with the look direction aimed at the point instead of the mouse); range targets parked and not firing; the gunner's KIA in step 5 is staged; the Tiger is invulnerable for this check"});
+    std::fs::write(&receipt_path, serde_json::to_string_pretty(&receipt)?).with_context(|| format!("writing {receipt_path}"))?;
+    println!("[crew-solo-designate] receipt {receipt_path}");
+    println!("[crew-solo-designate] {}", if proof.pass { "ALL PASS" } else { "FAILURES" });
+    anyhow::ensure!(proof.pass, "crew-solo-designate check failed; see {receipt_path}");
+    Ok(())
+}
+
 pub fn run_crew_solo_capture(prefix: &str) -> anyhow::Result<()> {
     let instance = crate::create_instance();
     let adapter = crate::request_adapter(&instance, None);

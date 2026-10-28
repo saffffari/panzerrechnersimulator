@@ -67,6 +67,14 @@ const STOW_PERF_MIN: f32 = 0.7;
 /// The recess behind the rear-wall bands: probe height and the shelf's accepted height range
 /// (turret-local metres), read off the probed wall profile.
 const RACK_ROWS: [(f32, (f32, f32)); 2] = [(2.02, (1.55, 1.95)), (1.2, (0.88, 1.12))];
+/// The commander's target designation lasts this long unless replaced or fulfilled.
+const DESIGNATION_TTL_S: f32 = 90.0;
+/// A second designation within this bearing of the first refines its range (radians, ~3 deg).
+const DESIGNATION_REFINE_RAD: f32 = 0.05;
+/// Farthest the commander's eye ray is taken to estimate a range (metres).
+const DESIGNATION_RANGE_MAX_M: f32 = 2500.0;
+/// The turret counts as on the designated bearing inside this (radians, ~1.1 deg).
+const DESIGNATION_ON_RAD: f32 = 0.02;
 /// Index of the turret's side escape hatch among the roof/side lids.
 const ESCAPE_HATCH: usize = 3;
 /// Seconds per case for the loader to take an empty and heave it out of the open escape
@@ -257,6 +265,23 @@ impl EmptiesRack {
     }
 }
 
+/// The commander's designation: where he looked when he pressed the middle mouse button.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Designation {
+    /// The point under the view centre (world), from the eye ray's first hit.
+    pub point: Vec3,
+    /// The turret yaw (hull-relative) that lays the gun on it.
+    pub bearing: f32,
+    /// Estimated range: the ray's hit distance (a game shortcut; no rangefinder).
+    pub range_m: f32,
+    /// A living contact the ray struck, if any.
+    pub enemy: Option<usize>,
+    pub set_t: f32,
+    pub refinements: u8,
+    pub on_target_after_s: Option<f32>,
+    pub turret_yaw_at_set: f32,
+}
+
 /// The commander's answer to the loader's request to dump the empties out of the side hatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DumpPermission {
@@ -313,6 +338,10 @@ pub(super) struct CrewSolo {
     pub dumped_total: u32,
     prev_yes: bool,
     prev_no: bool,
+    pub designation: Option<Designation>,
+    prev_designate: bool,
+    /// The gunner is slewing to the commander's designation this step (no contact of his own).
+    slewing_to_designation: bool,
     /// A dead man's body has been dragged off his station.
     pub body_cleared: [bool; 5],
     intercom: Vec<(String, f32)>,
@@ -359,6 +388,9 @@ impl Default for CrewSolo {
             dumped_total: 0,
             prev_yes: false,
             prev_no: false,
+            designation: None,
+            prev_designate: false,
+            slewing_to_designation: false,
             body_cleared: [false; 5],
             intercom: Vec::new(),
             prev_fire_order: false,
@@ -542,7 +574,8 @@ impl Game {
 
     /// The gunner has a target and owns the lay this frame.
     pub(super) fn crew_solo_ai_gunner_laying(&self) -> bool {
-        self.crew_solo_ai_gunner_active() && self.crew_solo.gunner_target.is_some()
+        self.crew_solo_ai_gunner_active()
+            && (self.crew_solo.gunner_target.is_some() || self.crew_solo.slewing_to_designation)
     }
 
     pub(super) fn crew_solo_take_gunner_fire(&mut self) -> bool {
@@ -575,7 +608,7 @@ impl Game {
 
     /// Advance the crew: wounds, fire, the AI stations' decisions, the player's orders and his
     /// hands-on work. Runs before the vehicle authority reads drive/lay/trigger.
-    pub(super) fn crew_solo_update(&mut self, input: &TankInput, dt: f32) {
+    pub(super) fn crew_solo_update(&mut self, input: &TankInput, dt: f32, eye: Vec3, look: Vec3) {
         if !self.crew_solo_active() {
             return;
         }
@@ -588,6 +621,7 @@ impl Game {
         self.crew_solo_fire_exposure(dt);
         self.crew_solo_time_course(dt);
         self.crew_solo_orders(input);
+        self.crew_solo_designate_input(input, eye, look);
         self.crew_solo_gunner_think(dt);
         self.crew_solo_driver_think(input, dt);
         self.crew_solo_hands(input, dt);
@@ -812,6 +846,40 @@ impl Game {
                 && game.enemies[i].pos.distance(game.player.pos) <= GUNNER_ENGAGE_M
                 && game.optical_los_clear(eye, game.enemies[i].center())
         };
+        // The commander's designation first: a designated contact the gunner can see becomes
+        // his target (the designation is then fulfilled); otherwise he slews to the designated
+        // bearing and holds there, firing at nothing, until it expires or is replaced.
+        self.crew_solo.slewing_to_designation = false;
+        if let Some(d) = self.crew_solo.designation {
+            if self.crew_solo.time_s - d.set_t > DESIGNATION_TTL_S {
+                self.crew_solo.designation = None;
+                self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "designation": "expired"}));
+            } else if let Some(i) = d.enemy.filter(|&i| visible(self, i)) {
+                if self.crew_solo.gunner_target != Some(i) {
+                    self.crew_solo.gunner_target = Some(i);
+                    self.crew_solo.gunner_settle_s = 0.0;
+                }
+                self.crew_solo.designation = None;
+                self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "designation": "fulfilled", "enemy": i}));
+            } else {
+                self.crew_solo.gunner_target = None;
+                self.crew_solo.gunner_fire_pulse = false;
+                self.crew_solo.slewing_to_designation = true;
+                let laid = self.campaign_ai_order_lay(d.point, DESIGNATION_ON_RAD);
+                if laid && d.on_target_after_s.is_none() {
+                    let after = self.crew_solo.time_s - d.set_t;
+                    if let Some(live) = self.crew_solo.designation.as_mut() {
+                        live.on_target_after_s = Some(after);
+                    }
+                    self.crew_solo.say("Gunner: on.");
+                    self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "designation": "on_target",
+                        "after_s": after, "bearing_rad": d.bearing, "range_m": d.range_m}));
+                    println!("[crew] designation on target after {after:.1} s (bearing {:.1} deg, range {:.0} m)",
+                        d.bearing.to_degrees(), d.range_m);
+                }
+                return;
+            }
+        }
         // Keep the man on his target while it lives and stays in view; otherwise the nearest.
         let keep = self.crew_solo.gunner_target.filter(|&i| visible(self, i));
         let target = keep.or_else(|| {
@@ -1194,6 +1262,159 @@ impl Game {
             "in_rack": rack.count(), "stowed_total": rack.stowed_total, "dropped_total": rack.dropped_total,
             "loose_aboard": self.loose_empties_aboard(), "probe_trace": rack.probe_trace,
             "poses": rack.poses.as_ref().map(|p| p.iter().map(|x| x.map(|(c, _)| c.to_array())).collect::<Vec<_>>())})
+    }
+
+    // ── The commander's designation ─────────────────────────────────────────────────────────
+
+    /// MMB (pad RB) at the cupola, buttoned or head out: designate what the view centre is on.
+    fn crew_solo_designate_input(&mut self, input: &TankInput, eye: Vec3, look: Vec3) {
+        let press = input.coax && !self.crew_solo.prev_designate;
+        self.crew_solo.prev_designate = input.coax;
+        if !press
+            || self.mode != Mode::Tank
+            || self.station != Station::Commander
+            || self.switch_t > 0.0
+            || !self.player.alive
+            || self.map_held
+            || self.compass_equipped
+        {
+            return;
+        }
+        self.crew_solo_designate(eye, look);
+    }
+
+    /// Cast from the commander's eye along his look: the first living contact (a sphere round
+    /// its centre) or the terrain; the hit distance is the range estimate. A second designation
+    /// on about the same bearing refines the range instead of starting over.
+    pub(super) fn crew_solo_designate(&mut self, eye: Vec3, look: Vec3) -> Option<Designation> {
+        let look = look.normalize_or_zero();
+        if look.length_squared() < 0.5 || !eye.is_finite() {
+            return None;
+        }
+        let mut best: Option<(f32, Option<usize>)> = None;
+        for (i, e) in self.enemies.iter().enumerate() {
+            if !e.alive || !self.enemy_active.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let to = e.center() - eye;
+            let along = to.dot(look);
+            if along <= 0.0 || along > DESIGNATION_RANGE_MAX_M {
+                continue;
+            }
+            let miss = (to - look * along).length();
+            if miss <= 2.4 && best.is_none_or(|(t, _)| along < t) {
+                best = Some((along, Some(i)));
+            }
+        }
+        if let Some(t) = ray_terrain(eye, look, &self.hf, DESIGNATION_RANGE_MAX_M) {
+            if best.is_none_or(|(b, _)| t < b) {
+                best = Some((t, None));
+            }
+        }
+        let (range, enemy) = best.unwrap_or((DESIGNATION_RANGE_MAX_M, None));
+        let point = eye + look * range;
+        let shell = if self.he_loaded { &crate::ballistics::SPRGR_88 } else { &crate::ballistics::PZGR_39 };
+        let bearing = scripted_gun_lay(&self.player, point, shell).0;
+        let refine = self.crew_solo.designation.filter(|d| {
+            let mut diff = (d.bearing - bearing) % std::f32::consts::TAU;
+            if diff > std::f32::consts::PI { diff -= std::f32::consts::TAU; }
+            if diff < -std::f32::consts::PI { diff += std::f32::consts::TAU; }
+            diff.abs() < DESIGNATION_REFINE_RAD
+        });
+        let designation = match refine {
+            Some(old) => Designation { point, bearing, range_m: range, enemy: enemy.or(old.enemy),
+                refinements: old.refinements.saturating_add(1), ..old },
+            None => Designation { point, bearing, range_m: range, enemy, set_t: self.crew_solo.time_s,
+                refinements: 0, on_target_after_s: None, turret_yaw_at_set: self.player.turret_yaw },
+        };
+        self.crew_solo.designation = Some(designation);
+        let to = point - self.player.pos;
+        let rel = (to.x.atan2(to.z) - self.player.heading).rem_euclid(std::f32::consts::TAU);
+        let oclock = ((rel / std::f32::consts::TAU * 12.0).round() as i32).rem_euclid(12);
+        let oclock = if oclock == 0 { 12 } else { oclock };
+        let range_word = (range / 50.0).round() as i32 * 50;
+        let gunner = self.crew_solo_ai_gunner_active();
+        if gunner {
+            let line = match (refine.is_some(), enemy.is_some()) {
+                (true, _) => format!("Gunner: range {range_word}."),
+                (false, true) => format!("Gunner: tank, {oclock} o'clock, {range_word}. Traversing."),
+                (false, false) => format!("Gunner: {oclock} o'clock, {range_word}. Traversing."),
+            };
+            self.crew_solo.say(line);
+        }
+        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "designation": if refine.is_some() { "refined" } else { "set" },
+            "bearing_rad": bearing, "range_m": range, "enemy": enemy, "oclock": oclock, "gunner_alive": gunner}));
+        println!("[crew] commander designates {oclock} o'clock, {range:.0} m (turret bearing {:.1} deg{}){}",
+            bearing.to_degrees(), if enemy.is_some() { ", a contact" } else { "" },
+            if refine.is_some() { ", refined" } else { "" });
+        Some(designation)
+    }
+
+    /// The second pointer on the gunner's turret position indicator: the commander's
+    /// designated bearing, while a designation stands. The turret's own pointer turns with the
+    /// turret; the two lying together is the "on" cue.
+    pub(super) fn crew_solo_drive_tpz_commander_needle(&self, turret: Mat4, axis: Vec3, r: &mut Renderer) {
+        let slot = self.slots.tpz_commander_needle;
+        let Some(d) = self.crew_solo.designation.filter(|_| self.crew_solo_active()) else {
+            r.set_visible(slot, false);
+            return;
+        };
+        // Drawn a few millimetres in front of the turret pointer and shorter, so both read.
+        let model = turret
+            * Mat4::from_translation(crate::interior_rig::TPZ_NEEDLE_POS + axis.normalize_or_zero() * 0.004)
+            * Mat4::from_axis_angle(axis, -d.bearing)
+            * Mat4::from_scale(Vec3::splat(0.72));
+        r.set_model(slot, model);
+        r.set_visible(slot, self.interior_light > 0.02);
+    }
+
+    pub fn crew_solo_session_json(&self) -> Value {
+        if !self.crew_solo_active() {
+            return Value::Null;
+        }
+        json!({
+            "designation": self.crew_solo.designation.map(|d| json!({"bearing_rad": d.bearing,
+                "range_m": d.range_m, "contact": d.enemy, "age_s": self.crew_solo.time_s - d.set_t,
+                "refinements": d.refinements, "on_target_after_s": d.on_target_after_s})),
+            "turret_yaw_rad": self.player.turret_yaw,
+            "gunner_target": self.crew_solo.gunner_target,
+            "fire_at_will": self.crew_solo.fire_at_will,
+            "men": CrewRole::ALL.iter().map(|&role| json!({"role": role.name(),
+                "state": self.crew_solo.man(role).state_label(),
+                "performance": self.crew_solo.man(role).performance()})).collect::<Vec<_>>(),
+        })
+    }
+
+    /// Headless: designate a world point from the commander's eye, through the same cast.
+    pub fn debug_crew_solo_designate_at(&mut self, point: Vec3) -> Option<Value> {
+        let eye = self.station_eye(Station::Commander);
+        let d = self.crew_solo_designate(eye, point - eye)?;
+        Some(json!({"bearing_rad": d.bearing, "range_m": d.range_m, "contact": d.enemy, "refinements": d.refinements}))
+    }
+
+    pub fn debug_crew_solo_designation(&self) -> Value {
+        self.crew_solo.designation.map_or(Value::Null, |d| json!({"bearing_rad": d.bearing,
+            "range_m": d.range_m, "contact": d.enemy, "age_s": self.crew_solo.time_s - d.set_t,
+            "refinements": d.refinements, "on_target_after_s": d.on_target_after_s,
+            "turret_yaw_at_set": d.turret_yaw_at_set}))
+    }
+
+    pub fn debug_ground_height(&self, x: f32, z: f32) -> f32 {
+        self.hf.height_at(x, z)
+    }
+
+    pub fn debug_crew_solo_tpz_needles_visible(&self) -> bool {
+        self.crew_solo.designation.is_some()
+    }
+
+    pub fn debug_crew_solo_face_tpz(&mut self) -> bool {
+        if self.mode != Mode::Tank || self.station != Station::Loader {
+            return false;
+        }
+        self.debug_walk_to(Vec3::new(0.45, 0.0, -0.10));
+        let point = self.player.turret_model().transform_point3(crate::interior_rig::TPZ_NEEDLE_POS);
+        self.loader_face_world(point);
+        true
     }
 
     // ── Dumping the empties ─────────────────────────────────────────────────────────────────

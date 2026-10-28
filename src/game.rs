@@ -8546,6 +8546,7 @@ struct Slots {
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
+    tpz_commander_needle: usize, // second TPZ pointer: the commander's designated bearing (solo crew)
     wheel1: usize,        // elevation handwheel — cranks with gun pitch
     wheel2: usize,        // commander's auxiliary traverse flywheel — follows turret yaw
     chamber_round: usize, // the chambered 8.8 round, visible while Breech::Loaded
@@ -11330,6 +11331,12 @@ impl Game {
             "assets/tanks/tiger/baked/tiger_part_wheel2.glb",
             [60, 60, 60],
         ));
+        // The commander's pointer on the same dial: the same source needle, drawn shorter.
+        let tpz_commander_needle = scene.len();
+        scene.push(part(
+            "assets/tanks/tiger/baked/tiger_part_tpz.glb",
+            [200, 40, 30],
+        ));
         let driver_fuel_panel = driver_panel::FuelPanel::append(&mut scene, tpz_needle);
         // Project-authored low-poly 88 mm rounds: no imported-ordnance fallback or runtime payload.
         let ap_round = round_88_mesh(false);
@@ -11908,6 +11915,7 @@ impl Game {
             snow,
             hatch,
             tpz_needle,
+            tpz_commander_needle,
             wheel1,
             wheel2,
             chamber_round,
@@ -16337,7 +16345,7 @@ impl Game {
                 self.update_crew_vehicle_mg(input, dt);
             } else {
                 // The crew inside keeps bleeding, burning and dying while the player is out.
-                self.crew_solo_update(input, dt);
+                self.crew_solo_update(input, dt, r.camera.pos, r.camera.forward());
                 let previous_tank_pos = self.player.pos;
                 let previous_pose = self.player_pose();
                 let track_traction = tank::TrackTraction {
@@ -16442,7 +16450,7 @@ impl Game {
             // The living solo crew decides first (orders, the gunner's lay and trigger, the
             // driver's levers, wounds and the player's hands); the vehicle authority reads it.
             if coop.is_none() {
-                self.crew_solo_update(input, dt);
+                self.crew_solo_update(input, dt, r.camera.pos, r.camera.forward());
             }
             let acting = self.update_crew_vehicle_controls(input, dt, r, primary_was_held);
 
@@ -18440,6 +18448,7 @@ impl Game {
             tm * Mat4::from_translation(rig::TPZ_NEEDLE_POS)
                 * Mat4::from_axis_angle(tpz_axis, -yaw),
         );
+        self.crew_solo_drive_tpz_commander_needle(tm, tpz_axis, r);
         r.set_model(
             self.slots.wheel1,
             tm * Mat4::from_translation(rig::WHEEL1_POS)

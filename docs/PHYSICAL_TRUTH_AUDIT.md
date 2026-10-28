@@ -61,6 +61,15 @@ none presented as physiology or a contact solve:
 - The AI loader's working round is exempt from the off-station ram decay while he holds it
   (`loader_holding`); his stroke cadence (1.5 s per stroke at full performance) is set so the
   reload stays about six seconds.
+- The commander's designation range is the hit distance of a ray from his eye to the terrain
+  heightfield or a 2.4 m sphere round a contact's centre: a game shortcut, not a rangefinder or
+  a stadiametric estimate, and it is the distance to whatever the eye ray meets first (a rise of
+  ground in front of the intended point gives the rise's range). The gunner's response uses the
+  ordinary lay and traverse drives at their real rates; his acknowledgement is immediate. The
+  second pointer on the gunner's turret position indicator is the same source needle drawn at
+  0.72 scale 4 mm in front of the first. That the Tiger I's indicator carried a commander's
+  pointer is the brief's direction and is not verified here against a primary source; the
+  turret's own 12-hour pointer is the existing instrument.
 - Triage ordering is the model's own time-to-death estimate (bleed rate against the fatal
   loss, the airway timer), spoken once per change of the set of men needing care.
 - The first-aid box has no mesh; it is a hotspot at a turret-local point on the rear right wall.

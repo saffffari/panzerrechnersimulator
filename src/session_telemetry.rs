@@ -79,6 +79,7 @@ impl Game {
             "on_foot_hp": self.foot.hp,
             "body_burn": self.player_burn.heat,
             "canyon": self.canyon_snapshot(),
+            "crew_solo": self.crew_solo_session_json(),
         })
     }
 }

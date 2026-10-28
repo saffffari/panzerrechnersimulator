@@ -32,6 +32,20 @@ hover, station entry, and the penetration path's wound record.
   fires under the standing order. **K** toggles the standing order (fire at will / hold fire).
   Buttoned up at the cupola with nothing under the crosshair, **LMB** is the fire command: one
   shot when he is laid. He calls contacts and shots on the intercom.
+- **Designation.** From the cupola, buttoned or head out, **MMB** (pad **RB**) designates what
+  the view centre is on: a ray from the commander's eye to the first living contact (a 2.4 m
+  sphere round its centre) or the terrain, out to 2.5 km. The hit distance is the range
+  estimate; the bearing is the turret yaw that lays the gun on the point. A living gunner
+  acknowledges ("Gunner: 3 o'clock, 250. Traversing.") and slews the turret there through the
+  ordinary drive at the real powered or hand traverse rate, elevating for the range, holding
+  fire, and reports "Gunner: on." A designated contact he can see becomes his target, under the
+  standing order (hold fire means he lays and holds). Dropping into the sights mid-slew, the
+  player finds the turret part-way there and takes over the lay. A second MMB on about the same
+  bearing (within 3 degrees) refines the range; any other replaces it; it expires after 90 s.
+  With the gunner dead the designation stands on the dial and the turret stays where it is.
+  The gunner's turret position indicator shows it: a second, shorter pointer at the commander's
+  bearing beside the turret's own pointer, the two lying together being the "on" cue. The
+  session log carries the designation (bearing, range, contact, refinements, seconds to on).
 - The loader serves the breech with the existing auto-crew stroke state machine at a human
   cadence (`LOADER_STROKE_S = 1.5 s` per stroke, three strokes of `RAM_PER_PRESS_OK` seat a
   round: about six seconds from the shot to the next round seated at full performance). While
@@ -158,6 +172,7 @@ a splinted man is at 70 %.
 | --- | --- |
 | **K** | standing order for the gunner: fire at will / hold fire |
 | **Y / N** | answer a crewman's request (the loader asking to dump the empties out of the side hatch) |
+| **MMB** (pad **RB**) at the cupola | designate the bearing under the view centre for the gunner; again on the same bearing refines the range |
 | **LMB** buttoned at the cupola, nothing hovered | fire command |
 | **WASD** from cupola / sights / radio seat | orders to the driver |
 | **E** held on a wounded man, a body, or the first-aid box | treat / drag aside / self-aid |
@@ -259,6 +274,20 @@ open aperture to daylight, a case mid-heave, upright cases in the rack beside it
 coming into the gunner's sight shuts the hatch at once; with the contact gone he resumes,
 empties the rack and the floor, shuts the hatch, and the cases lie outside where they fell.
 The Tiger is invulnerable for this check (it is about the empties, not the fight).
+
+## Verified: the designation (2026-10-28, `crew-solo-designate`)
+
+`crew-solo-designate captures/crew_solo_designate_20261028` (shader backend): all five checks
+pass. Designations go through the same cast from the commander's eye with the look aimed at the
+point (`debug_crew_solo_designate_at`). Ground 75 degrees off the bow: acknowledged, the second
+pointer up, the turret on after 13.5 s (75 degrees at the 6 deg/s powered traverse, plus the
+settle). The commander's eye ray met a rise of ground at about 230 m though the point asked was
+600 m away; the range is what the eye sees. A second designation on the same bearing refined the
+standing one. Designating 60 degrees the other way and dropping into the sights six seconds
+later found the turret more than a quarter of the way there. A designated T-34 became the
+gunner's target under hold fire with no shot. With the gunner dead (staged) the designation
+stood on the dial and the turret did not move. Stills: `designate_01_tpz_two_pointers_on` (the
+dial under its lamp, the two pointers together), `designate_02_sights_mid_slew`.
 
 ## Unit tests
 

@@ -193,6 +193,7 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play) |
 | **K** | solo crew: the gunner's standing order, fire at will / hold fire |
 | **Y / N** | solo crew: yes / no to a crewman's request (the loader asking to dump the empties out of the side hatch) |
+| **MMB** (pad **RB**) at the cupola | solo crew: designate the bearing under the view centre for the gunner (he traverses there and holds); again on the same bearing refines the range |
 | **LMB** buttoned at the cupola, nothing under the crosshair | solo crew: fire command to the gunner |
 | **E** (hold) on a wounded crewman, a body, or the first-aid box | solo crew: treat him / drag the body off the seat / treat yourself |
 | **LMB** on the driver's seat from the front of the basket floor | solo crew: take the driver's seat (the clamber takes a beat) |
