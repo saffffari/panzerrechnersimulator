@@ -5,7 +5,9 @@
 // metre (rgb) and extinction per metre (a). rm_integrate.wgsl turns this into a per-slice table.
 struct Parcel { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, };
 // a: position xyz, radius m   b: colour rgb, kind (0 fire, 1 soot, 2 smoke, 3 glow, 4 segment, 5 fireball,
-// 6 muzzle flash, 7 exhaust: smoke whose c.w is its excess heat 0..1)
+// 6 muzzle flash, 7 exhaust: smoke whose c.w is its excess heat 0..1, 8 a baked explosion volume:
+// a.w its bounding radius, c.x emission and c.y extinction per metre at full value, c.z its atlas
+// slot, c.w its yaw, d.xyz its half extents, d.w its flame's temperature 0..1)
 // c: emission per m, extinction per m, noise seed, fireball age 0..1   d: segment end xyz
 @group(0) @binding(1) var<storage, read> parcels: array<Parcel>;
 @group(0) @binding(2) var<storage, read> cell_start: array<u32>;
@@ -15,6 +17,18 @@ struct Parcel { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, };
 @group(0) @binding(6) var out_scatter: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(7) var depth_tex: texture_depth_2d;
 @group(0) @binding(8) var out_heat: texture_storage_3d<rgba16float, write>;
+// The baked explosion volumes (explosion_volumes.rs): (density, flame), 64^3 slots stacked in depth.
+@group(0) @binding(9) var explosion_atlas: texture_3d<f32>;
+
+// Density and flame of atlas slot `slot` at `local` in [-1, 1]^3 (y up); the depth is clamped to
+// the slot's own texel centres so neighbouring slots never bleed into each other.
+fn explosion_sample(local: vec3<f32>, slot: u32) -> vec2<f32> {
+    let side = f32(textureDimensions(explosion_atlas).x);
+    let slots = f32(textureDimensions(explosion_atlas).z) / side;
+    let uvw = local * 0.5 + vec3(0.5);
+    let z = (f32(slot) + clamp(uvw.z, 0.5 / side, 1.0 - 0.5 / side)) / max(slots, 1.0);
+    return textureSampleLevel(explosion_atlas, linear_samp, vec3(uvw.x, uvw.y, z), 0.0).rg;
+}
 
 const SUN_MARCH_STEPS: u32 = 6u;
 const LAMP_MARCH_STEPS: u32 = 4u;
@@ -33,6 +47,30 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
         let kind = u32(parcel.b.w);
         var w = 0.0;
         var colour = parcel.b.rgb;
+        if (kind == 8u) {
+            // A baked explosion volume: its shape and its fire come from the atlas, not a ball.
+            let rel = p - parcel.a.xyz;
+            let cy = cos(parcel.c.w);
+            let sy = sin(parcel.c.w);
+            let local = vec3(cy * rel.x - sy * rel.z, rel.y, sy * rel.x + cy * rel.z) / max(parcel.d.xyz, vec3(0.01));
+            if (any(abs(local) >= vec3(1.0))) { continue; }
+            // The slot's faint floor (resampling haze) and its side and top faces fall to nothing,
+            // so the box never shows; the base stands on the ground.
+            let window = (1.0 - smoothstep(0.8, 1.0, abs(local.x))) * (1.0 - smoothstep(0.8, 1.0, abs(local.z)))
+                * (1.0 - smoothstep(0.8, 1.0, local.y));
+            let s = max(explosion_sample(local, u32(parcel.c.z + 0.5)) - vec2(0.03), vec2(0.0)) / 0.97 * window;
+            let ext = parcel.c.y * s.x;
+            m.sigma_t += ext;
+            m.sigma_s += parcel.b.rgb * ext * 0.75;
+            // Flames: their own grid, at the burst's temperature (hotter where the grid is dense).
+            let flame = s.y * parcel.d.w;
+            if (flame > 0.0) {
+                m.emission += rm_heat_colour(clamp(0.3 + 0.6 * flame, 0.0, 1.0)) * parcel.c.x * flame;
+                m.heat += flame * 1.5;
+                m.sigma_t += parcel.c.y * 0.25 * flame;
+            }
+            continue;
+        }
         if (kind == 4u) {
             // Tracer: glow around a segment, radius in a.w.
             let ab = parcel.d.xyz - parcel.a.xyz;

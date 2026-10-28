@@ -138,9 +138,9 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     rig.still(&mut r, "he_muzzle_cloud", "88 mm report at +0.5 s: the blast's snow cloud ahead of the muzzle, smoke supports")?;
     step(&mut g, &mut r, flight_frames.saturating_sub(30) + 3, &idle);
     rig.observe(&mut r, side, impact + Vec3::Y * 1.2, 58.0);
-    rig.still(&mut r, "he_impact_flash", "HE detonation at +0.05 s: fireball core, flash light on the snow, ejecta")?;
+    rig.still(&mut r, "he_impact_flash", "HE detonation at +0.05 s: the fireball's last afterburn, flash light on the snow, ejecta")?;
     step(&mut g, &mut r, 14, &idle);
-    rig.still(&mut r, "he_impact_bloom", "HE detonation at +0.3 s: rolling fireball, sparks, soot column")?;
+    rig.still(&mut r, "he_impact_bloom", "HE detonation at +0.3 s: the burst's smoke and thrown earth, sparks, ejecta")?;
     step(&mut g, &mut r, 48, &idle);
     rig.still(&mut r, "he_impact_smoke", "HE detonation at +1.1 s: soot and lingering embers")?;
     step(&mut g, &mut r, 114, &idle);
@@ -871,6 +871,56 @@ pub fn run_tracers(prefix: &str) -> anyhow::Result<()> {
         "schema": "panzer.raymarch-tracers.v1", "manifest": manifest, "renderer": format!("{:?}", graphics::renderer_backend()),
         "internal_resolution": [r.iw, r.ih], "shots": rig.shots,
         "disclosure": "Staged fixture (banished enemies, held fire); clear, 19:00 UTC pinned; coax held from the gunner's post."
+    }))?)?;
+    Ok(())
+}
+
+/// `raymarch-sky PREFIX`: the sky's bodies at the frame's own pixel scale: the night sky away from
+/// the Moon, the Moon in a 60 deg view and in the binoculars' 10 deg field, and the low winter Sun at
+/// dusk the same two ways. Run once per grid (KESSEL_INTERNAL_RES=480x270, 800x450).
+pub fn run_sky(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_stars.png")).exists(),
+        "preserving existing capture; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    let eye = g.player.pos + Vec3::Y * 3.0;
+    let toward = |d: glam::DVec3| d.as_vec3().normalize_or_zero();
+    rig.clock(&mut r, "1942-12-21T19:00:00Z")?;
+    step(&mut g, &mut r, 30, &idle);
+    let moon = toward(r.celestial().state.moon.engine_direction());
+    let away = Vec3::new(-moon.x, 0.0, -moon.z).normalize_or_zero() * 0.82 + Vec3::Y * 0.57;
+    rig.observe(&mut r, eye, eye + away * 100.0, 60.0);
+    rig.still(&mut r, "stars", "the night sky away from the Moon, 35 deg up, 60 deg field")?;
+    rig.observe(&mut r, eye, eye + moon * 100.0, 60.0);
+    rig.still(&mut r, "moon_wide", "the Moon in a 60 deg field")?;
+    rig.observe(&mut r, eye, eye + moon * 100.0, 10.0);
+    rig.still(&mut r, "moon_binocular", "the Moon in the binoculars' 10 deg field")?;
+    rig.clock(&mut r, "1942-12-21T12:45:00Z")?;
+    step(&mut g, &mut r, 30, &idle);
+    let sun = toward(r.celestial().state.sun.engine_direction());
+    rig.observe(&mut r, eye, eye + sun * 100.0, 60.0);
+    rig.still(&mut r, "sun_wide", "the low winter Sun at dusk in a 60 deg field")?;
+    rig.observe(&mut r, eye, eye + sun * 100.0, 10.0);
+    rig.still(&mut r, "sun_binocular", "the low winter Sun in the binoculars' 10 deg field")?;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-sky.v1", "manifest": manifest, "renderer": format!("{:?}", graphics::renderer_backend()),
+        "internal_resolution": [r.iw, r.ih], "shots": rig.shots,
+        "disclosure": "Clear (weather override 0); clocks pinned; observer cameras at the Tiger, 3 m up."
     }))?)?;
     Ok(())
 }

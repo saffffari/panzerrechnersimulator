@@ -721,6 +721,49 @@ traversing 10.4 (21.6 %) before, 5.9 (8.8 %) after at 480x270; at rest 4.6 (5.8 
 after. `captures/rm_gun_before_after_sheet.png` (left before, right after at 480x270; top traversing,
 bottom at rest); `rm_gun3_*` the same after the fix at 800x450 and 640x360.
 
+## Explosions from OpenVDB volumes (2026-10-28)
+
+Request: "The explosive effects aren't realistic, they are spheres, not like explosion clouds." An
+88 mm HE burst was spheres throughout: a 1.3 s orange fireball of three noise-torn balls, five soot
+balls and four dust balls from the medium's detonation event, three large dark lobes per blast from
+the game's smoke supports (`weapon_vfx.rs`, albedo 0.08: the dominant dark ball), eight white balls of
+swept snow, and the ground ejecta filling a crisp-faced cone.
+
+The shapes now come from simulated volumes. `tools/bake_explosion_volumes.py` runs under Blender
+(its bundled `openvdb` reads the files) and bakes chosen OpenVDB volumes from the owner's
+Cloudscapes V2 PRO library: each file's density and flames grids (temperature where there are no
+flames), cropped to their joint active bounds, box-resampled into a 64^3 slot, Y up, normalised per
+channel at the 99.8th percentile, into `assets/vfx/explosion_volumes/atlas.{bin,json}` (twelve slots,
+6 MB, local like every runtime asset). Six "burst" slots are fresh ground bursts with their ejecta
+streaks (`Ground_explosion_21, 22, 23, 25, 26, 29`), six "cloud" slots developed clouds of soot and
+earth (`1, 3, 4, 6, 8, 9`), chosen from side projections of all thirty; the tall columns and
+mushrooms are bomb-scale and the "Fire ball" volumes streaking trails. `explosion_volumes.rs` loads
+the atlas into one 3D texture; the froxel pass (`rm_volume.wgsl`, parcel kind 8) samples a slot in
+the parcel's yawed box, its density as soot and earth, its flames as emission at the burst's
+temperature, with the box's side and top faces and a 3 % floor faded to nothing.
+
+A detonation (medium event) is now one burst volume cross-fading from 0.6 s into one cloud volume,
+each chosen and yawed by the event's seed. Sizes, rise and drift are the parcel model's (burst
+1.2-5.2 m, cloud 2.5-8 m half extent, rising 4 m and drifting with the wind over 14 s, for an
+88 mm-class burst); the fireball is the afterburn of a TNT-class charge, a 60 ms decay (it shone for
+1.3 s). Each shape's extinction is set from a mean optical depth across it (burst 3.5 at 2.5 m,
+cloud 4 at 3 m, falling with its area as it spreads: an estimate) through the slots' measured fill
+(a line meets on average a tenth of a box's width at full density). The swept snow is eight small
+cloud volumes lying on the snow. A kill's, turret pop's or cook-off's fireball mesh becomes a burst
+volume sized by its bounds. With volumes drawn the game leaves out its three smoke lobes per blast.
+The ground ejecta's speed is now drawn apart from its direction by the crater-scaling law
+M(>v) ~ v^(-1.2) (Housen & Holsapple, mu about 0.4) between 0.15 and 1 of the apex-limited maximum
+(`weapon_particle_math::ground_speed_share`, mirrored in `rm_sparks.wgsl`): one random number set
+both, so every grain lay in a cone with crisp faces that read as a translucent box.
+
+Without the atlas the medium keeps its parcel detonation. `raymarch-showcase` stills `he_impact_*`
+(an 88 mm HE round into snow 45 m ahead at sunset): `captures/rm_vdb18_*` against
+`captures/rm_vdb0_*` (the parcels).
+
+Not done: the volumes are single snapshots grown, cooled and thinned in time, not sequences; detail
+is bounded by the froxel grid (a shape 8 m across at 25 m spans about 15 cells); the cloud is one
+colour of soot and earth (a burst in snow is whiter low down); the shader backend draws no volumes.
+
 ## The gunner's sight at night (2026-10-28)
 
 Request: "At night it shouldn't be pitch black in the gun sights." The campaign's night is

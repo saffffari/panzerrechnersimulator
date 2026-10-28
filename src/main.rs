@@ -160,6 +160,7 @@ mod vehicle_ground;
 mod snow_cover;
 mod surface_wear;
 mod exhaust_plume;
+mod explosion_volumes;
 mod powertrain;
 mod tank_push;
 mod tank_support;
@@ -16190,6 +16191,9 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "raymarch-sky") {
+        return raymarch_showcase::run_sky(&capture_arg(&args, 2, "raymarch_sky"));
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-night-sight") {
         return raymarch_showcase::run_night_sight(&capture_arg(&args, 2, "raymarch_night_sight"));
     }
