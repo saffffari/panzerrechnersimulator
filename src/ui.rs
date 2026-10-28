@@ -571,8 +571,10 @@ mod pause_menu_tests {
 
     #[test]
     fn fixed_profile_removes_only_graphics_routes_and_preserves_setting_actions() {
-        assert_eq!(title_row_count(true), 7);
-        assert_eq!(title_row_count(false), 8);
+        // Eight title rows since the platoon branch added "Platoon"; the fixed profile drops
+        // only Graphics.
+        assert_eq!(title_row_count(true), 8);
+        assert_eq!(title_row_count(false), 9);
         assert!(!MENU_ACTIONS[..title_row_count(true)].contains(&MenuAction::Graphics));
         for row in 0..4 {
             assert_eq!(pause_action_row(PausePage::Settings, row, true), row + 2);
