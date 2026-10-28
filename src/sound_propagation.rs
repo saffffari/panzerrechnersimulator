@@ -239,6 +239,25 @@ pub enum Enclosure {
     OnFoot,
 }
 
+/// How a sound outside the vehicle reached the listener's ears: through the air to the head, through
+/// the closed plates alone, or through the plates and `open` hatches. The levels of each way are the
+/// insertion losses below; `acoustics::spatial` uses it to decide which direction cues survive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transmission {
+    /// Nothing between the source and the head (head-out, on foot, or a source in the same
+    /// compartment).
+    Direct,
+    /// Every hatch closed: the sound comes in through the armour.
+    Plates,
+    /// `open` hatches stand open beside the closed plates.
+    Hatches { open: usize },
+}
+
+/// Loss through `open` open hatches (SL §8's one-hatch figure, each further hatch another opening).
+pub fn hatch_open_insertion_loss_bands(open: usize) -> Bands {
+    [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.0].map(|one| loss_through_openings_db(one, open))
+}
+
 impl Enclosure {
     pub fn aboard(self) -> bool {
         !matches!(self, Self::OnFoot)
@@ -253,8 +272,7 @@ impl Enclosure {
         match self {
             Self::Buttoned => [15.0, 25.0, 28.0, 32.0, 36.0, 37.0, 40.0, 42.0, 42.0],
             // One open hatch is the report's figure; each further open hatch is another opening.
-            Self::HatchOpen => [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.0]
-                .map(|one| loss_through_openings_db(one, open_hatches())),
+            Self::HatchOpen => hatch_open_insertion_loss_bands(open_hatches()),
             Self::HeadOut | Self::OnFoot => [0.0; BANDS],
         }
     }
@@ -262,6 +280,16 @@ impl Enclosure {
     /// Whole-impulse peak loss for an exterior source (SL §8 "For whole impulses"): buttoned
     /// −25 dB for low-frequency blast (20–30), −35 dB for cracks and small arms (30–40); an open
     /// hatch −5/−8 dB [E]; head-out and on foot 0.
+    /// The way an exterior sound reaches the ears in this enclosure (the open-hatch count is the
+    /// game's current one).
+    pub fn transmission(self) -> Transmission {
+        match self {
+            Self::Buttoned => Transmission::Plates,
+            Self::HatchOpen => Transmission::Hatches { open: open_hatches() },
+            Self::HeadOut | Self::OnFoot => Transmission::Direct,
+        }
+    }
+
     pub fn peak_loss_db(self, class: SpectrumClass) -> f32 {
         let low_frequency = matches!(class, SpectrumClass::LowFrequencyBlast | SpectrumClass::Engine
             | SpectrumClass::Wind);
@@ -519,6 +547,9 @@ pub struct EarLevel {
     pub spectrum: Bands,
     pub class: SpectrumClass,
     pub a_duration_ms: f32,
+    /// How the sound came in: direct for a source at the ear or in the same compartment, else
+    /// the listener's plates and open hatches (binaural rendering, `acoustics::spatial`).
+    pub transmission: Transmission,
 }
 
 impl EarLevel {
@@ -599,6 +630,7 @@ pub fn propagate(emission: &Emission, path: &Path) -> EarLevel {
         spectrum: spectrum_at_ear,
         class: emission.class,
         a_duration_ms: emission.a_duration_ms,
+        transmission: if propagates { path.enclosure.transmission() } else { Transmission::Direct },
     }
 }
 

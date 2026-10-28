@@ -135,6 +135,17 @@ impl Audio {
         self.local_acoustics.set((reverb, headset));
     }
 
+    /// Where the listener's ears are with respect to the vehicle's steel this frame (SL §8): the
+    /// continuous exterior voices (other vehicles, fires, the own loose track) take their direction
+    /// cues through it. One-shot world events carry their own path in their `EarLevel`.
+    pub fn set_listener_enclosure(&self, enclosure: crate::sound_propagation::Enclosure) {
+        self.listener_enclosure.set(enclosure);
+    }
+
+    pub(crate) fn listener_transmission(&self) -> crate::sound_propagation::Transmission {
+        self.listener_enclosure.get().transmission()
+    }
+
     /// Play the owner's recording `key` as a sound made beside the listener, at `level_dba` at
     /// his ear, from `bearing_deg`, in the place he is in. False if it is not installed.
     pub(crate) fn play_owner_local(&self, key: &str, level_dba: f32, bearing_deg: f32) -> bool {

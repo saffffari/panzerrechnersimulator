@@ -1216,7 +1216,7 @@ fn deterministic_pizza_variant(event_index: usize, ordinal: u64, variants: usize
     ((ordinal % variants as u64) as usize + event_index % variants) % variants
 }
 
-fn sha256_hex(input: &[u8]) -> String {
+pub(crate) fn sha256_hex(input: &[u8]) -> String {
     const INITIAL: [u32; 8] = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,
@@ -1593,6 +1593,8 @@ pub struct Audio {
     /// The owner's own cut field recordings, and the acoustics of where the listener is now.
     owner_bank: owner::OwnerBank,
     local_acoustics: std::cell::Cell<(crate::acoustics::ReverbParams, bool)>,
+    /// The listener's enclosure this frame, for the continuous exterior voices' direction cues.
+    listener_enclosure: std::cell::Cell<crate::sound_propagation::Enclosure>,
     named_effects:named_effects::Bank,
     /// Immutable load-time provenance and route report; never used to select/play a source.
     bank_metadata: serde_json::Value,
@@ -1860,6 +1862,7 @@ impl Audio {
             feedback_bank,
             owner_bank,
             local_acoustics: std::cell::Cell::new((crate::acoustics::ReverbParams::STEEL_INTERIOR, true)),
+            listener_enclosure: std::cell::Cell::new(crate::sound_propagation::Enclosure::Buttoned),
             named_effects,
             bank_metadata,
             mechanisms: RefCell::new(feedback::Mechanisms::default()),
