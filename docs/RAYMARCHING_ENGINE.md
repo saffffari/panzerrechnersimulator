@@ -1705,6 +1705,16 @@ brighter or denser than the frame's fresh estimate is now stale and dropped towa
 then only the report's snow cloud remains. The same rule ends the soft discs left by distant guns'
 flashes in the overhead `crew_battle`.
 
+**A ricochet as a wedge.** The overhead `crew_battle` (seed 20261029) showed a hard-edged pale
+orange wedge for half a second where a T-34's round glanced off at 3.3 s, and an inverted one at
+4 s. Neither glare nor a medium: painting the ricochet sparks (`rm_sparks.wgsl`, kind 2) a flat
+colour turned the wedge that colour. A cannon ricochet's record carries 384 sparks times
+`SPARK_MULTIPLIER` (1000) samples, each drawn as one pixel in its own random direction: a
+continuous sheet, which fanning toward the witness camera tiled into a solid shape. The record's
+sparks are now drawn as they are, 384 dotted streaks of eight samples along their own paths over
+14 ms, each carrying its spark's whole light; the other samples are not drawn (as the heavy blast's
+sparks already were). Captures: `captures/screenshots/crew_battle_overhead_before_after.png`.
+
 **Fireballs as balloons.** A spark shower's glow in the air (`PARCEL_GLOW`, a soft sphere by
 construction) had grown to 3 m for 1.6 s round every armour hit and, for a full cook-off, to a
 60 m sphere rising 120 m for 17 s (the yellow balloon over the overhead `crew_battle`). Bounded now

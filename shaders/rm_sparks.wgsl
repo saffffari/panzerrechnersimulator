@@ -58,6 +58,9 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
     return vec4(vec2(edge.x * 2.0 - 1.0, 1.0 - edge.y * 2.0) * clip.w, clip.z, clip.w);
 }
 
+// Samples drawn along each ricochet spark's path (vs_spark, kind 2).
+const RICOCHET_TRAIL: u32 = 8u;
+
 @vertex fn vs_spark(@builtin(vertex_index) vertex: u32,
     @location(0) origin_age: vec4<f32>, @location(1) direction_life: vec4<f32>,
     @location(2) normal_offset: vec4<f32>, @location(3) parameters: vec4<f32>, @location(4) identity: vec4<u32>) -> WeaponOut {
@@ -161,11 +164,22 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
         velocity = axis * speed; width = (0.0015 + 0.002 * q) * sqrt(1.0 - t / life); tail = clamp(speed * 0.002, width, 0.04);
         page = select(select(2u, 4u, t < 0.075), 3u, t < 0.02);
     } else if (kind == 2u) {
-        let heavy = parameters.w > 0.5; let life = select(0.24 + 0.40 * q, 0.55 + 0.85 * q, heavy); if (t >= life) { return weapon_hidden(); }
-        axis = normalize(direction_life.xyz * 0.75 + weapon_direction(seed + 19u) * 0.30 + n * 0.25);
+        // A ricochet's sparks: the record's identity.z sparks, each a dotted streak of
+        // RICOCHET_TRAIL samples along its own path over 14 ms (an eye's exposure), carrying the
+        // spark's whole light between them. Its other samples (the SPARK_MULTIPLIER share of
+        // each spark, 1000) are not drawn: scattered each in its own direction they made a
+        // continuous sheet, and a shower fanning toward the eye drew a solid wedge across the
+        // overhead crew_battle (2026-10-29).
+        let shard = index / RICOCHET_TRAIL; let trail = index % RICOCHET_TRAIL;
+        if (shard >= identity.z) { return weapon_hidden(); }
+        let sseed = identity.x * 3948571u + shard * 977u; let sq = weapon_random(sseed);
+        t = max(t - f32(trail) * 0.002, 0.0);
+        gain = f32(identity.y) / (f32(identity.z) * f32(RICOCHET_TRAIL));
+        let heavy = parameters.w > 0.5; let life = select(0.24 + 0.40 * sq, 0.55 + 0.85 * sq, heavy); if (t >= life) { return weapon_hidden(); }
+        axis = normalize(direction_life.xyz * 0.75 + weapon_direction(sseed + 19u) * 0.30 + n * 0.25);
         if (dot(axis, n) < 0.05) { axis = normalize(axis + n * (0.06 - dot(axis, n))); }
-        let speed = select(5.0 + 15.0 * q, 14.0 + 30.0 * q, heavy); velocity = axis * speed;
-        width = select(0.003 + 0.005 * q, 0.008 + 0.010 * q, heavy) * max(1.0 - t / direction_life.w, 0.15);
+        let speed = select(5.0 + 15.0 * sq, 14.0 + 30.0 * sq, heavy); velocity = axis * speed;
+        width = select(0.003 + 0.005 * sq, 0.008 + 0.010 * sq, heavy) * max(1.0 - t / direction_life.w, 0.15);
         tail = clamp(speed * 0.008, 0.025, 0.32); page = select(select(2u, 4u, t < 0.16), 3u, t < 0.055);
     } else {
         // A heavy exterior blast's sparks trail four samples along each path (a dotted
