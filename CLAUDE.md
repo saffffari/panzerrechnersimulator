@@ -152,6 +152,15 @@ prefixes are routed there automatically. For tools that require an explicit outp
 cannot silently replace another one. Do not mix runtime textures, packaged artwork, build-cache
 previews, or downloaded visual references into this folder.
 
+**Where the owner looks (Windows):** every screenshot must end up in
+`C:\shop\panzerrechnersystem\captures\screenshots\` and every video in
+`C:\shop\panzerrechnersystem\captures\videos\` (the main checkout's folders), including work done in
+worktrees. Both stay flat, with no subfolders, so the whole set can be clicked through sorted by date
+modified. Worktrees prefix their filenames with the worktree name. Existing harness outputs are not
+moved: after producing media, run `powershell -ExecutionPolicy Bypass -File tools\sync_captures.ps1`,
+which copies every checkout's `captures/` and `artifacts/` media into the two folders (flattened to
+`<worktree>-<subfolders>-<file>`, timestamps kept, already-copied files skipped). See AGENTS.md.
+
 **Headless screenshot mode is the primary verification loop**, not the windowed one — an agent
 (or you) renders a PNG and reads it back to confirm a change, deterministically, with no display
 needed. All three subcommands build the full `Game` (terrain + tanks + FX) then render exactly the
