@@ -33,7 +33,12 @@ fn explosion_sample(local: vec3<f32>, slot: u32) -> vec2<f32> {
 const SUN_MARCH_STEPS: u32 = 6u;
 const LAMP_MARCH_STEPS: u32 = 4u;
 
-fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Medium {
+// `in_cabin`: the point lies in a cabin's air (rm_cabin_domain). A parcel whose centre lies outside
+// every cabin (a burst's glow, a fireball, smoke, a cook-off's flame) adds nothing there: the armour
+// keeps it out, as it keeps the cabin's lights off the outside (rm_shade.wgsl). The cabin's own
+// fire grains lie inside and stay. A cook-off's glow round the hull filled the cabin's air orange
+// for 17 s (2026-10-28 night).
+fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium, in_cabin: bool) -> Medium {
     var m = m_in;
     // Flames accumulate into a temperature field: dense overlapping parcels become a white-hot
     // core, thin fringes cool to deep red. The emission is then a function of that field, so
@@ -44,6 +49,7 @@ fn parcel_medium(p: vec3<f32>, cell: u32, flame_noise: f32, m_in: Medium) -> Med
     let end = cell_start[cell + 1u];
     for (var i = start; i < end; i += 1u) {
         let parcel = parcels[cell_items[i]];
+        if (in_cabin && rm_cabin_domain(parcel.a.xyz) < 0) { continue; }
         let kind = u32(parcel.b.w);
         var w = 0.0;
         var colour = parcel.b.rgb;
@@ -167,7 +173,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     let cell = vec3<u32>(id * RM_CELLS / dims);
     let cell_index = (cell.z * RM_CELLS.y + cell.y) * RM_CELLS.x + cell.x;
     let flame_noise = rm_fbm(p * vec3(9.0, 6.0, 9.0) + vec3(0.0, -fr.cam_pos.w * 2.6, 0.0), 41u);
-    m = parcel_medium(p, cell_index, flame_noise, m);
+    m = parcel_medium(p, cell_index, flame_noise, m, cabin_domain >= 0);
     if (d > scene_d + slice_width) {
         textureStore(out_scatter, vec3<i32>(id), vec4(0.0, 0.0, 0.0, m.sigma_t));
         textureStore(out_heat, vec3<i32>(id), vec4(0.0));
@@ -236,7 +242,14 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
                 let h = textureSampleLevel(history, linear_samp, vec3(prev_uv, prev_slice / fr.vol.z), 0.0);
                 // Emission and dense local media change fast; thin weather converges slowly.
                 let local = clamp(length(m.emission) * 4.0 + m.sigma_t * 2.0, 0.0, 1.0);
-                let alpha = mix(0.10, 0.5, local);
+                // A medium that has gone out is stale history, not jitter noise (a factor of a few
+                // at most in these media): history far brighter or denser than this frame's
+                // estimate is dropped toward it. The gun's flash is three frames of fire grains in
+                // clear air, where the slow rate held it as an orange disc beside the muzzle for
+                // two seconds, smeared wider by every frame's reprojection (2026-10-28 night).
+                let lum = vec3(0.2126, 0.7152, 0.0722);
+                let excess = max(dot(h.rgb, lum) / max(dot(result.rgb, lum), 1.0e-7), h.a / max(result.a, 1.0e-7));
+                let alpha = max(mix(0.10, 0.5, local), smoothstep(2.0, 6.0, excess));
                 result = mix(h, result, alpha);
             }
         }

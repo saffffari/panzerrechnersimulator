@@ -188,6 +188,8 @@ const PARCEL_FIRE: f32 = 0.0;
 const PARCEL_SOOT: f32 = 1.0;
 const PARCEL_SMOKE: f32 = 2.0;
 const PARCEL_GLOW: f32 = 3.0;
+/// The largest a spark shower's glow in the air may grow (`collect_parcels`).
+const GLOW_MAX_RADIUS_M: f32 = 2.5;
 const PARCEL_SEGMENT: f32 = 4.0;
 const PARCEL_FIREBALL: f32 = 5.0;
 const PARCEL_FLASH: f32 = 6.0;
@@ -2025,9 +2027,13 @@ impl Backend {
                 // centimetres for the light's 40 ms (it was a 22 cm ball for 0.14 s, 2026-10-28).
                 k if k == wm::BLAST => (origin + n * 0.03, 0.04 + 0.5 * age, (1.0 - age / 0.04).max(0.0), [1.0, 0.62, 0.22]),
                 k if k == wm::HOT_RIM => (origin, (burst.parameters[0] + burst.parameters[1]) * 2.0 + 0.05, (-age / 2.5).exp(), [1.0, 0.45, 0.12]),
-                k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (20.0 * age).min(120.0), (6.0 + 12.0 * age).min(60.0), (1.0 - age / 17.0).max(0.0), [1.0, 0.59, 0.05]),
-                k if k == wm::PRESSURE_VENT => (origin + n * (4.0 * age).min(3.0), (0.5 + 3.0 * age).min(3.0), (1.0 - age / 0.65).max(0.0), [1.0, 0.59, 0.05]),
-                _ => (origin + n * 0.25 + Vec3::Y * (-2.0 * age * age).max(-1.5) + n * 3.0 * age, (0.35 + 2.5 * age).min(3.0), (1.0 - age / 1.6).max(0.0), [1.0, 0.42, 0.06]),
+                // The glow of a spark shower in the air round its emitter is a brief, tight bloom
+                // (2026-10-28 night): a full cook-off's had grown to a 60 m sphere rising 120 m
+                // for 17 s, an armour hit's to 3 m for 1.6 s, each a soft uniform disc ("sphere"
+                // explosions). The sparks themselves, their light and the fire carry the rest.
+                k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (6.0 * age).min(3.0), (1.0 + 2.0 * age).min(GLOW_MAX_RADIUS_M), (1.0 - age / 1.2).max(0.0), [1.0, 0.59, 0.05]),
+                k if k == wm::PRESSURE_VENT => (origin + n * (4.0 * age).min(1.5), (0.4 + 2.0 * age).min(1.2), (1.0 - age / 0.65).max(0.0), [1.0, 0.59, 0.05]),
+                _ => (origin + n * 0.15, (0.15 + 1.5 * age).min(0.5), (1.0 - age / 0.25).max(0.0), [1.0, 0.42, 0.06]),
             };
             if fade <= 0.0 { continue; }
             let strength = (count / 4000.0).min(6.0).sqrt() * fade;

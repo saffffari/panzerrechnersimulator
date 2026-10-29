@@ -786,6 +786,17 @@ impl Game {
                 projectile.shell.caliber_mm,normal,if self.act.season==crate::world::Season::Winter {1.0}else{0.0});
         }
     }
+    /// Showcase hooks (`raymarch-showcase`, `KESSEL_SHOWCASE_SET=explosions`): a full ammunition
+    /// cook-off's plume at `point`, and a cannon round's sparks off armour at `point`, as the
+    /// game presents them. No projectile, damage, sound or light of their own.
+    pub(crate) fn debug_full_cookoff(&mut self, point: Vec3, r: &Renderer) {
+        self.weapon_vfx.gpu_analytic = r.analytic_weapon_particles_active();
+        self.weapon_vfx.full_cookoff_plume(point, Vec3::Y);
+    }
+    pub(crate) fn debug_armor_sparks(&mut self, point: Vec3, incoming: Vec3, normal: Vec3, r: &Renderer) {
+        self.weapon_vfx.gpu_analytic = r.analytic_weapon_particles_active();
+        self.weapon_vfx.armor_sparks(point, incoming, normal, Weapon::Cannon(88));
+    }
     /// Bench hook (`gfxbench`, `KESSEL_BENCH_IMPACT`): an HE shell striking the ground at `point`'s
     /// map position, presented as a real one is (the detonation's blast record and
     /// `present_source_ground_impact`'s ejecta record). No projectile, damage, sound or light.

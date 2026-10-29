@@ -86,6 +86,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("t34") { return run_t34(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("optics") { return run_optics(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("vehicles") { return run_vehicles(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("explosions") { return run_explosions(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("dial") { return run_dial(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("sky") { return run_sky_live(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("lamps") { return run_lamps(prefix); }
@@ -819,6 +820,74 @@ fn run_sky_live(prefix: &str) -> anyhow::Result<()> {
         "preset": format!("{preset:?}"), "renderer": format!("{:?}", graphics::renderer_backend()),
         "internal_resolution": [r.iw, r.ih], "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "disclosure": "Staged fixture (banished enemies, held fire). Live frames, the sky clock running at the game's rate from 10:30. Observer camera. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=explosions`: a cannon round's sparks off armour 245 m away and a full
+/// ammunition cook-off 70 m away, seen from beside the Tiger as played (live frames, the eye
+/// adapting), at noon in light overcast: frames at 0.1, 0.5, 1, 2, 5 and 10 s after each.
+fn run_explosions(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_hit_0_1s.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let instant = ephemeris::UtcInstant::parse_iso("1942-12-21T10:30:00Z")?;
+    r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    r.set_weather_override(Some(0.0));
+    let idle = TankInput::default();
+    step(&mut g, &mut r, 30, &idle);
+    let f = g.player.forward();
+    let ground = |g: &Game, p: Vec3| Vec3::new(p.x, g.hf.height_at(p.x, p.z), p.z);
+    // Beside the Tiger, clear of its exhaust.
+    let eye = g.player.pos + f.cross(Vec3::Y).normalize() * 9.0 + f * 2.0 + Vec3::Y * 2.6;
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    let mut shots = Vec::new();
+    for (name, distance) in [("hit", 245.0f32), ("cookoff", 70.0)] {
+        let at = ground(&g, g.player.pos + f * distance) + Vec3::Y * 1.2;
+        match name {
+            "hit" => g.debug_armor_sparks(at, f, -f, &r),
+            _ => g.debug_full_cookoff(at, &r),
+        }
+        let target = at + Vec3::Y * if name == "cookoff" { 12.0 } else { 0.0 };
+        let mut t = 0.0f32;
+        for (label, until) in [("0_1s", 0.1f32), ("0_5s", 0.5), ("1s", 1.0), ("2s", 2.0), ("5s", 5.0), ("10s", 10.0)] {
+            while t < until - 1e-4 {
+                g.update(&idle, 1.0 / 60.0, &mut r);
+                r.camera.pos = eye;
+                r.camera.set_forward(target - eye);
+                r.camera.fov_y = 55f32.to_radians();
+                r.optic_mask = 0.0;
+                r.reticle = false;
+                r.interior_light = 0.0;
+                r.interior_haze = 0.0;
+                r.weather_shelter = 0.0;
+                r.render_offscreen(&device, &queue);
+                t += 1.0 / 60.0;
+            }
+            let path = format!("{prefix}_{name}_{label}.png");
+            r.render_to_png(&device, &queue, &path, cw, ch)?;
+            shots.push(serde_json::json!({ "name": format!("{name}_{label}"), "path": path, "seconds_after": until }));
+        }
+        step(&mut g, &mut r, 120, &idle);
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.explosions.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [cw, ch], "shots": shots,
+        "disclosure": "Staged fixture: a cannon round's armour sparks 245 m ahead and a full ammunition cook-off 70 m ahead, presented as the game presents them (debug hooks: no projectile, damage, sound or light of their own). Live frames, clear noon, an observer camera behind the Tiger. No image grading."
     }))?)?;
     Ok(())
 }
