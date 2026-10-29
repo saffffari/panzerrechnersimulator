@@ -1,0 +1,125 @@
+[panzerrechnersystem] resources: Override root=C:\shop\panzerrechnersystem assets=C:\shop\panzerrechnersystem\assets cooked_models=0
+[panzerrechnersystem] wgpu instance backends: Backends(VULKAN | METAL | DX12 | BROWSER_WEBGPU)
+[panzerrechnersystem] device capabilities: backend=Vulkan, push_constants=128/256, ray_query=true, ray_vertex_return=true, pipeline_cache=true
+[panzerrechnersystem] exact RT buffers: max_buffer=4096 MiB, max_binding=2047 MiB, storage_buffers/stage=12
+[panzerrechnersystem] HDR frame format: Rgba32Float
+[panzerrechnersystem] game act-manifest: source=C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run/manifest.v1.json schema=kessel.act/v1 act=1 name="Die Stadt" seed=539363625 terrain=C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run\heights.npy dimensions=1025x1025 spacing=4.882812m world=5000.00m terrain_id=fnv1a64:bd94603ba67da1de source_bytes=4202628 source_hash=fnv1a64:1f76762e4cdc0b82
+[panzerrechnersystem] authored terrain: 1025² collision, 1025² render (2097152 triangles, the collision surface)
+[panzerrechnersystem] landmark 'canyon_wrecks': manifest blockout (hero assets/hero/act1/canyon_wrecks.glb not installed)
+[panzerrechnersystem] building canyon.settlement.b06: terrain under the footprint spans 0.80 m (-25.47..-24.67); the entry floor stands at the centre height -25.41
+[panzerrechnersystem] building canyon.strongpoint.b02: terrain under the footprint spans 0.54 m (20.81..21.35); the entry floor stands at the centre height 21.35
+[panzerrechnersystem] cellars: 14 opened and 0 trench(es) dug (3909 m² of terrain cut; terrain redrawn: 2099191 triangles, 748 coarse cells drawn from the collision grid, 568 source triangles clipped, 428 soil faces)
+[panzerrechnersystem] rubble: 495 mounds of failed modules laid in 88 ms
+[panzerrechnersystem] urban tableaux: SKIPPED a1_cellar_embrasure_two_layers: host urban_intro.c3r2.w01 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_red_cross_cellar: host urban_intro.c2r1.e02 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_chimney_field_dugout: host urban_intro.c0r3.e02 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_tram_on_its_rails: host urban_intro.c2r3.e00 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_white_canopy_canister: host urban_intro.c2r1.e00 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_burned_cellar_household: host urban_intro.c3r2.e05 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_factory_cellar_ward: host urban_intro.c3r3.r00 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_factory_cellar_ward_doctor: host urban_intro.c3r3.w02 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_gumrak_burning_stores: host urban_intro.gumrak.store is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_gumrak_burning_stores_house: host urban_intro.gumrak.house is not in this revision's building_instances
+[panzerrechnersystem] rubble layer urban.rubble.layer: top surface generated from its mesh, measured error 0.017 m in the asset frame
+[panzerrechnersystem] building canyon.choke1.lone: 111 compiler placements / 4 rooms / 1 floors at (-749.0,-73.5)
+[panzerrechnersystem] building canyon.choke2.lone: 51 compiler placements / 1 rooms / 1 floors at (295.5,-533.0)
+[panzerrechnersystem] building canyon.factory.b01: 862 compiler placements / 108 rooms / 6 floors at (392.0,277.0)
+[panzerrechnersystem] building canyon.factory.b02: 229 compiler placements / 16 rooms / 2 floors at (271.5,-81.5)
+[panzerrechnersystem] building canyon.factory.b03: 51 compiler placements / 1 rooms / 1 floors at (288.5,9.5)
+[panzerrechnersystem] building canyon.factory.b05: 51 compiler placements / 1 rooms / 1 floors at (262.5,-35.0)
+[panzerrechnersystem] building canyon.factory.b08: 600 compiler placements / 32 rooms / 6 floors at (271.5,246.0)
+[panzerrechnersystem] building canyon.factory.b09: 437 compiler placements / 20 rooms / 5 floors at (286.5,402.0)
+[panzerrechnersystem] building canyon.factory.b10: 43 compiler placements / 1 rooms / 1 floors at (314.5,89.0)
+[panzerrechnersystem] building canyon.factory.b11: 493 compiler placements / 30 rooms / 5 floors at (373.5,490.5)
+[panzerrechnersystem] building canyon.factory.b12: 55 compiler placements / 2 rooms / 1 floors at (375.0,433.5)
+[panzerrechnersystem] building canyon.factory.b13: 32 compiler placements / 1 rooms / 1 floors at (311.0,153.5)
+[panzerrechnersystem] building canyon.factory.b14: 36 compiler placements / 1 rooms / 1 floors at (308.5,333.5)
+[panzerrechnersystem] building canyon.hamlet.b01: 9 compiler placements / 1 rooms / 1 floors at (-700.0,223.5)
+[panzerrechnersystem] building canyon.hamlet.b02: 206 compiler placements / 7 rooms / 2 floors at (-696.0,389.5)
+[panzerrechnersystem] building canyon.hamlet.b03: 9 compiler placements / 1 rooms / 1 floors at (-693.0,343.0)
+[panzerrechnersystem] building canyon.hamlet.b04: 9 compiler placements / 1 rooms / 1 floors at (-776.0,217.0)
+[panzerrechnersystem] building canyon.hamlet.b05: 9 compiler placements / 1 rooms / 1 floors at (-703.0,312.5)
+[panzerrechnersystem] building canyon.hamlet.b06: 59 compiler placements / 4 rooms / 2 floors at (-795.5,472.5)
+[panzerrechnersystem] building canyon.settlement.b01: 55 compiler placements / 2 rooms / 1 floors at (14.0,-589.5)
+[panzerrechnersystem] building canyon.settlement.b02: 9 compiler placements / 1 rooms / 1 floors at (39.5,-576.5)
+[panzerrechnersystem] building canyon.settlement.b03: 9 compiler placements / 1 rooms / 1 floors at (71.5,-572.0)
+[panzerrechnersystem] building canyon.settlement.b04: 9 compiler placements / 1 rooms / 1 floors at (43.5,-685.0)
+[panzerrechnersystem] building canyon.settlement.b05: 9 compiler placements / 1 rooms / 1 floors at (43.0,-617.0)
+[panzerrechnersystem] building canyon.settlement.b06: 9 compiler placements / 1 rooms / 1 floors at (-393.5,-347.0)
+[panzerrechnersystem] building canyon.settlement.b07: 9 compiler placements / 1 rooms / 1 floors at (83.0,-599.0)
+[panzerrechnersystem] building canyon.settlement.b08: 9 compiler placements / 1 rooms / 1 floors at (92.0,-675.5)
+[panzerrechnersystem] building canyon.settlement.b09: 109 compiler placements / 4 rooms / 1 floors at (-185.0,-496.0)
+[panzerrechnersystem] building canyon.settlement.b10: 9 compiler placements / 1 rooms / 1 floors at (-224.0,-473.0)
+[panzerrechnersystem] building canyon.settlement.b11: 9 compiler placements / 1 rooms / 1 floors at (-397.0,-360.0)
+[panzerrechnersystem] building canyon.settlement.b12: 9 compiler placements / 1 rooms / 1 floors at (24.0,-668.5)
+[panzerrechnersystem] building canyon.settlement.b13: 9 compiler placements / 1 rooms / 1 floors at (7.5,-667.0)
+[panzerrechnersystem] building canyon.settlement.b14: 9 compiler placements / 1 rooms / 1 floors at (-24.5,-609.0)
+[panzerrechnersystem] building canyon.settlement.b15: 9 compiler placements / 1 rooms / 1 floors at (-65.5,-605.5)
+[panzerrechnersystem] building canyon.settlement.b16: 45 compiler placements / 3 rooms / 2 floors at (-383.0,-365.5)
+[panzerrechnersystem] building canyon.settlement.b17: 9 compiler placements / 1 rooms / 1 floors at (-416.5,-362.5)
+[panzerrechnersystem] building canyon.settlement.b18: 9 compiler placements / 1 rooms / 1 floors at (-203.5,-478.0)
+[panzerrechnersystem] building canyon.settlement.b19: 46 compiler placements / 3 rooms / 2 floors at (-3.0,-580.5)
+[panzerrechnersystem] building canyon.settlement.b20: 2 compiler placements / 1 rooms / 1 floors at (39.5,-562.0)
+[panzerrechnersystem] building canyon.settlement.b22: 9 compiler placements / 1 rooms / 1 floors at (36.5,-592.0)
+[panzerrechnersystem] building canyon.settlement.b23: 47 compiler placements / 1 rooms / 1 floors at (57.5,-666.0)
+[panzerrechnersystem] building canyon.settlement.b24: 9 compiler placements / 1 rooms / 1 floors at (-214.5,-458.0)
+[panzerrechnersystem] building canyon.settlement.b25: 139 compiler placements / 5 rooms / 2 floors at (87.0,-576.5)
+[panzerrechnersystem] building canyon.settlement.b26: 9 compiler placements / 1 rooms / 1 floors at (89.0,-617.5)
+[panzerrechnersystem] building canyon.strongpoint.b01: 57 compiler placements / 2 rooms / 1 floors at (1337.0,274.0)
+[panzerrechnersystem] building canyon.strongpoint.b02: 105 compiler placements / 4 rooms / 1 floors at (1054.5,407.5)
+[panzerrechnersystem] building canyon.strongpoint.b03: 732 compiler placements / 90 rooms / 5 floors at (1055.5,390.5)
+[panzerrechnersystem] building canyon.strongpoint.b04: 273 compiler placements / 16 rooms / 2 floors at (1334.0,250.5)
+[panzerrechnersystem] building canyon.strongpoint.b05: 180 compiler placements / 7 rooms / 2 floors at (1095.5,400.0)
+[panzerrechnersystem] building canyon.strongpoint.b06: 193 compiler placements / 7 rooms / 2 floors at (1131.5,373.0)
+[panzerrechnersystem] building canyon.strongpoint.b07: 219 compiler placements / 12 rooms / 2 floors at (1300.5,291.0)
+[panzerrechnersystem] building canyon.strongpoint.b08: 161 compiler placements / 6 rooms / 1 floors at (1231.5,320.0)
+[panzerrechnersystem] building canyon.strongpoint.b09: 2 compiler placements / 1 rooms / 1 floors at (1062.0,439.0)
+[panzerrechnersystem] building render: 10806 instances in 1559 pages over 202 shared prototypes (5870 initially visible) for 53 buildings
+[panzerrechnersystem] destructibles: 29719 standing structures (0 chunk-gridded, 0 chunks)
+[driver-visor] preserved source holder; 966 triangles → 1430; closed Schutzglas 97.3 mm; no hull armor cut
+[panzerrechnersystem] RTT periscopes: 9 screens, 1 tile render(s)/frame, scheduler=visible/stale (override: KESSEL_RTT_UPDATES_PER_FRAME=all|N)
+[panzerrechnersystem] cupola hatch: baked GLB (4833 verts)
+[renderer] internal resolution 1280x720 (one-shot runtime profile)
+[renderer] 130 raster-only mesh materials share 7 uploads: 480.7 MiB -> 44.8 MiB texture payload
+[renderer] backend=raymarch (ray queries adapter-dependent)
+[renderer] transport quality full (KESSEL_TRANSPORT_QUALITY); smoke steps [18.0, 22.0, 26.0, 6.0], glass fog steps 12, surface passes [2.0, 2.0, 1.0, 0.0]
+[renderer] loading 474 KiB Vulkan pipeline cache from C:\Users\saffari\.cache\kessel\wgpu\shader-graphics-v1-wgpu_pipeline_cache_vulkan_4318_9860.bin
+[visibility] source geometry shadow maps
+[rt] 1986 scene BLASes built in 30 ms
+[renderer] composing sky shader module
+[renderer] sky module accepted in 10 ms (63 KiB)
+[renderer] compiling sky pipeline
+[renderer] sky pipeline ready in 10 ms
+[renderer] ray query unavailable or disabled; using forward lighting without creating ray-query resources
+[renderer] ambient-only SSAO: on (64 deterministic depth samples)
+[renderer] compiling volume pipeline (17 KiB)
+[renderer] volume pipeline ready in 6 ms
+[renderer] persisted 566 KiB Vulkan pipeline cache to C:\Users\saffari\.cache\kessel\wgpu\shader-graphics-v1-wgpu_pipeline_cache_vulkan_4318_9860.bin
+[raymarch] froxel grid 320x180x96 over 0.25..320 m; cascades 2048/1024 px, sky cover 512 px, 2 point-light cubes 256 px, 512 clustered lights, sky cache 768x288 in 16 phases
+[raymarch] explosion volumes: 12 slots
+[renderer] native geometry AA:4xMSAA; linear HDR resolve; conservative nearest depth for media
+[display] dither: screen Bayer4
+[world] immutable manifest page scale: 512 m
+[panzerrechnersystem] act 1 world from C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run/manifest.v1.json: 696 placements in 219 pages / 21 packed instance buffers over 21 shared prototypes; culling index 88 occupied 128m cells / 2673 page refs / 0 broad fallbacks; 159 physical structures / 820 aperture-aware proxies (0 legacy hollow-shell buildings awaiting modular replacement)
+[panzerrechnersystem] urban tableaux: 0 instances, 0 static proxies (over-coverage <= 0.000 m), 0 attachments, 0 lights, 0 smoke, 0 sounds
+[panzerrechnersystem] district: 11502 instances in 1778 pages / 223 instance buffers over 223 GPU prototypes; culling index 88 occupied 128m cells / 2673 page refs / 0 broad fallbacks (113 destructible trees, 161 lightweight pushables)
+[panzerrechnersystem] Soviet infantry: exact 17-pose shared character active for 60 actors
+[mixed-combat] German original-rig crouch: five fixed-root stages, shared relaxed/aim geometry
+[mixed-combat] soviet_rifle loaded generation 512 from assets/ai/weights_foot_soviet.bin
+[foot-ai] loaded tiger_crew KSL2 generation 512 score 99.666 from assets/ai/weights_foot_tiger.bin
+[foot-ai] loaded soviet_rifle KSL2 generation 512 score 99.683 from assets/ai/weights_foot_soviet.bin
+[panzerrechnersystem] cover: 30685 LOS occluders (0 Act-I city cells + authored dressing/cover)
+[rt] TLAS demand at build: 8682 of 131072 TLAS instances (2116 scene-mesh slots + 6566 live instances; 283887 reserved instance IDs)
+[sky-visibility] 66 source tiles x 384px, local +/-4.5 m, coarse +/-10752.0 m: 200 meshes, 1778 instanced batches
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_commander_cabin.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_commander_binocular_05s.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_commander_binocular_4s.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] hatch OPEN — exposed (fire vents, but so does the danger)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_commander_headout.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_commander_headout_binocular.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_commander_back_inside_2s.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_gunner_tzf_05s.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_gunner_tzf_4s.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] hatch CLOSED — buttoned up
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_commander_night.png (3840x2160, internal 1280x720, retro 0.70)
+[panzerrechnersystem] wrote artifacts\integration-smoke-20261028\r17\optics_loader_night.png (3840x2160, internal 1280x720, retro 0.70)

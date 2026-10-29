@@ -1,0 +1,128 @@
+{
+  "adapter": "NVIDIA GeForce RTX 4090",
+  "disclosure": "Staged fixture (banished enemies, held fire). Clock and weather overridden. Live frames: the eye adapts as in play; nothing converged.",
+  "internal_resolution": [
+    1280,
+    720
+  ],
+  "manifest": "assets/worldgen/workshops/gaea-canyon-run/manifest.v1.json",
+  "output_resolution": [
+    3840,
+    2160
+  ],
+  "preset": "High",
+  "renderer": "Raymarch",
+  "schema": "panzer.raymarch-showcase.optics.v1",
+  "shots": [
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.31805419921875,
+        -13.01770305633545,
+        -410.0350646972656
+      ],
+      "name": "commander_cabin",
+      "note": "commander's post, buttoned up, 4 s",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_commander_cabin.png"
+    },
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.31805419921875,
+        -13.017716407775879,
+        -409.4349670410156
+      ],
+      "name": "commander_binocular_05s",
+      "note": "binoculars raised from inside the cupola, half a second",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_commander_binocular_05s.png"
+    },
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.31805419921875,
+        -13.01771354675293,
+        -409.43499755859375
+      ],
+      "name": "commander_binocular_4s",
+      "note": "binoculars raised from inside the cupola, four seconds",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_commander_binocular_4s.png"
+    },
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.3211669921875,
+        -12.468145370483398,
+        -410.0937194824219
+      ],
+      "name": "commander_headout",
+      "note": "commander head out, 4 s",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_commander_headout.png"
+    },
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.3211669921875,
+        -12.468145370483398,
+        -410.0937194824219
+      ],
+      "name": "commander_headout_binocular",
+      "note": "head out with the binoculars, 3 s",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_commander_headout_binocular.png"
+    },
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.31805419921875,
+        -13.01771354675293,
+        -410.0350036621094
+      ],
+      "name": "commander_back_inside_2s",
+      "note": "back inside the cupola, 2 s after head out",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_commander_back_inside_2s.png"
+    },
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.3998107910156,
+        -13.661386489868164,
+        -408.07659912109375
+      ],
+      "name": "gunner_tzf_05s",
+      "note": "the gunner at the TZF, half a second",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_gunner_tzf_05s.png"
+    },
+    {
+      "clock_utc": "1942-12-21T10:30:00Z",
+      "eye": [
+        -449.3998107910156,
+        -13.661386489868164,
+        -408.07659912109375
+      ],
+      "name": "gunner_tzf_4s",
+      "note": "the gunner at the TZF, four seconds",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_gunner_tzf_4s.png"
+    },
+    {
+      "clock_utc": "1942-12-21T19:30:00Z",
+      "eye": [
+        -449.31805419921875,
+        -13.01771354675293,
+        -410.0350036621094
+      ],
+      "name": "commander_night",
+      "note": "commander's post at night, buttoned up, 6 s",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_commander_night.png"
+    },
+    {
+      "clock_utc": "1942-12-21T19:30:00Z",
+      "eye": [
+        -450.49566650390625,
+        -13.399382591247559,
+        -409.50604248046875
+      ],
+      "name": "loader_night",
+      "note": "loader's post at night, 6 s",
+      "path": "artifacts\\integration-smoke-20261028\\r17\\optics_loader_night.png"
+    }
+  ]
+}
