@@ -53,6 +53,14 @@
 .PARAMETER Seed
   Pin the Canyon deployment seed (KESSEL_CANYON_SEED) for a reproducible run.
 
+.PARAMETER MaxSeconds
+  With -Autopilot: end the run after this many seconds of play (KESSEL_CANYON_AUTOPILOT_MAX_S,
+  exit 4 time limit; the game's default is 2400).
+
+.PARAMETER KesselEnv
+  Extra KESSEL_* settings as NAME=VALUE (e.g. -KesselEnv KESSEL_ACOUSTICS=0). The launcher clears
+  every inherited KESSEL_* variable, so this is the way to pass one through.
+
 .PARAMETER AssetRoot
   Where the git-ignored assets live (default: this checkout, or the main checkout when this is a
   git worktree without its own assets). A Canyon v2 workshop inside this checkout still wins.
@@ -119,6 +127,8 @@ param(
     [switch]$Logged,
     [switch]$Autopilot,
     [string]$Seed,
+    [ValidateRange(1, 86400)] [int]$MaxSeconds,
+    [string[]]$KesselEnv,
     [Alias('InternalRes')] [ValidateSet('480x270', '800x450', '640x360', '480x272', '320x180')] [string]$Resolution = '480x270',
     [string]$AssetRoot,
     [string]$Binary,
@@ -288,6 +298,12 @@ if ($Platoon) {
 }
 if ($Seed) { $env:KESSEL_CANYON_SEED = $Seed }
 if ($Autopilot) { $env:KESSEL_CANYON_AUTOPILOT = '1' }
+if ($MaxSeconds) { $env:KESSEL_CANYON_AUTOPILOT_MAX_S = [string]$MaxSeconds }
+foreach ($pair in $KesselEnv) {
+    $name, $value = $pair -split '=', 2
+    if ($name -notlike 'KESSEL_*' -or $null -eq $value) { throw "-KesselEnv takes KESSEL_NAME=VALUE, got '$pair'" }
+    Set-Item "Env:$name" $value
+}
 
 # --- LAN crew co-op arguments --------------------------------------------------------------------
 $GameArgs = @()
@@ -336,7 +352,7 @@ if ($Logged) {
     "[launcher] commit $(& git -C $Root log -1 --format='%h %s' 2>$null)"
     "[launcher] renderer=$Renderer tier=$Tier preset=$GraphicsPreset internal=$Resolution geometry_aa=$GeometryAA transport=$Transport visibility=maps config=$Config platoon=$Platoon"
     "[launcher] lan=$Lan args=$($GameArgs -join ' ')"
-    "[launcher] logged=$Logged autopilot=$Autopilot seed=$Seed session_log=$env:KESSEL_SESSION_LOG"
+    "[launcher] logged=$Logged autopilot=$Autopilot seed=$Seed max_s=$MaxSeconds kessel_env=$($KesselEnv -join ',') session_log=$env:KESSEL_SESSION_LOG"
 ) | Set-Content $log
 $errLog = "$log.stderr"
 $startArgs = @{ FilePath = $Binary; WorkingDirectory = $Root; PassThru = $true; NoNewWindow = $true

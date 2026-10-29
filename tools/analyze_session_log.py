@@ -255,7 +255,8 @@ def main():
         return "enemy < 150 m" if n < 150 else "enemy 150-420 m" if n < 420 else "enemy > 420 m"
     phased = [r for r in play if g(r, "game", "sim_phases_ms")]
     if phased:
-        names = [k for k in phased[0]["game"]["sim_phases_ms"] if k != "updates"]
+        # Numeric phases only; "seg" / "seg_max" are the checkpoint segments (a map each).
+        names = [k for k, v in phased[0]["game"]["sim_phases_ms"].items() if k != "updates" and isinstance(v, (int, float))]
         groups = defaultdict(list)
         for r in phased:
             groups["all"].append(r)

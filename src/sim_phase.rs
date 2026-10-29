@@ -29,6 +29,11 @@ const NAMES: [&str; 10] = [
 pub struct SimPhases {
     ms: [f64; 10],
     updates: u32,
+    /// Checkpoint segments over the whole update (`seg_begin` / `seg`): each mark charges the
+    /// time since the previous mark to its label, so the segments add up to the update and no
+    /// untimed remainder hides between the phases. (label, total ms, worst single update ms)
+    seg: Vec<(&'static str, f64, f64)>,
+    seg_t: Option<Instant>,
 }
 
 impl SimPhases {
@@ -40,6 +45,24 @@ impl SimPhases {
         self.updates += 1;
     }
 
+    /// Start the checkpoint clock for this update.
+    pub fn seg_begin(&mut self) {
+        self.seg_t = Some(Instant::now());
+    }
+
+    /// Charge the time since the previous mark to `label`.
+    pub fn seg(&mut self, label: &'static str) {
+        let now = Instant::now();
+        if let Some(t) = self.seg_t {
+            let ms = (now - t).as_secs_f64() * 1000.0;
+            match self.seg.iter_mut().find(|(l, ..)| *l == label) {
+                Some(e) => { e.1 += ms; e.2 = e.2.max(ms); }
+                None => self.seg.push((label, ms, ms)),
+            }
+        }
+        self.seg_t = Some(now);
+    }
+
     /// Mean milliseconds per `Game::update` call for each phase since the last take, then reset.
     pub fn take(&mut self) -> serde_json::Value {
         let n = self.updates.max(1) as f64;
@@ -48,6 +71,10 @@ impl SimPhases {
             out.insert((*name).into(), serde_json::json!(ms / n));
         }
         out.insert("updates".into(), serde_json::json!(self.updates));
+        let seg: serde_json::Map<_, _> = self.seg.iter().map(|(l, ms, _)| ((*l).to_string(), serde_json::json!(ms / n))).collect();
+        let seg_max: serde_json::Map<_, _> = self.seg.iter().map(|(l, _, mx)| ((*l).to_string(), serde_json::json!(mx))).collect();
+        out.insert("seg".into(), serde_json::Value::Object(seg));
+        out.insert("seg_max".into(), serde_json::Value::Object(seg_max));
         *self = Self::default();
         serde_json::Value::Object(out)
     }

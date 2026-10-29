@@ -83,13 +83,134 @@ impl CabinVoxels {
     }
 }
 
+/// The scene's masonry boxes in vertical columns of a uniform x/z grid, so a ray tests only the
+/// boxes in the columns it crosses, nearest column first, and stops once a hit lies before the
+/// next column. It returns exactly the linear scan's first entry (ties go to the earlier box).
+/// Canyon v2 has ~10,000 boxes within 150 m; scanning all of them for each of a cabin ray's up to
+/// 80 queries was 98 % of the trace time and made 1.5 s simulation updates in contact (2026-10-28).
+pub(super) struct BoxGrid {
+    boxes: Vec<(Vec3, Vec3)>,
+    origin: Vec2,
+    dims: [i32; 2],
+    /// Column `c` holds `items[start[c]..start[c + 1]]`.
+    start: Vec<u32>,
+    items: Vec<u32>,
+}
+
+impl BoxGrid {
+    const CELL_M: f32 = 8.0;
+
+    pub fn new(boxes: Vec<(Vec3, Vec3)>) -> Self {
+        let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for (min, max) in &boxes {
+            lo = lo.min(Vec2::new(min.x, min.z));
+            hi = hi.max(Vec2::new(max.x, max.z));
+        }
+        if boxes.is_empty() {
+            lo = Vec2::ZERO;
+            hi = Vec2::ZERO;
+        }
+        let dims = [((hi.x - lo.x) / Self::CELL_M).floor() as i32 + 1, ((hi.y - lo.y) / Self::CELL_M).floor() as i32 + 1];
+        let mut grid = Self { boxes, origin: lo, dims, start: Vec::new(), items: Vec::new() };
+        let cells = (dims[0] * dims[1]) as usize;
+        let mut start = vec![0u32; cells + 1];
+        for (min, max) in &grid.boxes {
+            let (a, b) = grid.span(*min, *max);
+            for z in a[1]..=b[1] {
+                for x in a[0]..=b[0] { start[(z * dims[0] + x) as usize + 1] += 1; }
+            }
+        }
+        for c in 0..cells { start[c + 1] += start[c]; }
+        let mut fill = start.clone();
+        let mut items = vec![0u32; start[cells] as usize];
+        for (i, (min, max)) in grid.boxes.iter().enumerate() {
+            let (a, b) = grid.span(*min, *max);
+            for z in a[1]..=b[1] {
+                for x in a[0]..=b[0] {
+                    let c = (z * dims[0] + x) as usize;
+                    items[fill[c] as usize] = i as u32;
+                    fill[c] += 1;
+                }
+            }
+        }
+        grid.start = start;
+        grid.items = items;
+        grid
+    }
+
+    fn cell_of(&self, x: f32, z: f32) -> [i32; 2] {
+        [(((x - self.origin.x) / Self::CELL_M).floor() as i32).clamp(0, self.dims[0] - 1),
+         (((z - self.origin.y) / Self::CELL_M).floor() as i32).clamp(0, self.dims[1] - 1)]
+    }
+
+    fn span(&self, min: Vec3, max: Vec3) -> ([i32; 2], [i32; 2]) {
+        (self.cell_of(min.x, min.z), self.cell_of(max.x, max.z))
+    }
+
+    /// The nearest box entry along `o + d t` with `t < limit` (`rt::ray_box_entry`), as the
+    /// linear scan over every box finds it.
+    pub fn first_entry(&self, o: Vec3, d: Vec3, limit: f32) -> Option<(f32, Vec3)> {
+        if self.boxes.is_empty() { return None; }
+        // The ray's span over the grid's x/z rectangle (the columns are unbounded in y).
+        let size = Vec2::new(self.dims[0] as f32, self.dims[1] as f32) * Self::CELL_M;
+        let (oxz, dxz) = (Vec2::new(o.x, o.z), Vec2::new(d.x, d.z));
+        let (mut t0, mut t1) = (0.0f32, limit);
+        for axis in 0..2 {
+            let (lo, hi) = (self.origin[axis], self.origin[axis] + size[axis]);
+            if dxz[axis].abs() < 1.0e-12 {
+                if oxz[axis] < lo || oxz[axis] > hi { return None; }
+            } else {
+                let (mut a, mut b) = ((lo - oxz[axis]) / dxz[axis], (hi - oxz[axis]) / dxz[axis]);
+                if a > b { std::mem::swap(&mut a, &mut b); }
+                t0 = t0.max(a);
+                t1 = t1.min(b);
+            }
+        }
+        if t0 > t1 { return None; }
+        let p = o + d * t0;
+        let mut c = self.cell_of(p.x, p.z);
+        let step = [if d.x > 0.0 { 1 } else { -1 }, if d.z > 0.0 { 1 } else { -1 }];
+        let mut t_max = [f32::INFINITY; 2];
+        let mut t_delta = [f32::INFINITY; 2];
+        for axis in 0..2 {
+            if dxz[axis].abs() > 1.0e-12 {
+                let edge = self.origin[axis] + (c[axis] + i32::from(step[axis] > 0)) as f32 * Self::CELL_M;
+                t_max[axis] = (edge - oxz[axis]) / dxz[axis];
+                t_delta[axis] = Self::CELL_M / dxz[axis].abs();
+            }
+        }
+        let mut best: Option<(f32, Vec3, u32)> = None;
+        loop {
+            let cell = (c[1] * self.dims[0] + c[0]) as usize;
+            for &i in &self.items[self.start[cell] as usize..self.start[cell + 1] as usize] {
+                let (min, max) = self.boxes[i as usize];
+                if let Some((t, n)) = rt::ray_box_entry(o, d, min, max) {
+                    let better = match best {
+                        None => t < limit,
+                        Some((bt, _, bi)) => t < bt || (t == bt && i < bi),
+                    };
+                    if better { best = Some((t, n, i)); }
+                }
+            }
+            // Leave this column; a hit before its far edge cannot be beaten further on.
+            let exit = t_max[0].min(t_max[1]);
+            if exit > t1 || best.is_some_and(|(bt, ..)| bt + 1.0e-4 < exit) { break; }
+            let axis = if t_max[0] < t_max[1] { 0 } else { 1 };
+            c[axis] += step[axis];
+            if c[axis] < 0 || c[axis] >= self.dims[axis] { break; }
+            t_max[axis] += t_delta[axis];
+        }
+        best.map(|(t, n, _)| (t, n))
+    }
+}
+
 /// The scene in one frame of reference: the hull's (aboard) or the world's (outside).
 pub(super) struct GameScene<'a> {
     voxels: Option<&'a CabinVoxels>,
     models: [Mat4; surface_fire::FRAMES],
     inverses: [Mat4; surface_fire::FRAMES],
     hf: &'a Heightfield,
-    boxes: Vec<(Vec3, Vec3)>,
+    boxes: BoxGrid,
     ground: Material,
     /// Scene frame → world.
     to_world: Mat4,
@@ -106,12 +227,8 @@ impl AcousticScene for GameScene<'_> {
         let limit = best.map_or(reach, |b| b.distance);
         let (o, d) = (self.to_world.transform_point3(origin), self.to_world.transform_vector3(dir));
         let local_normal = |n: Vec3| self.to_local.transform_vector3(n).normalize_or_zero();
-        for &(min, max) in &self.boxes {
-            if let Some((t, n)) = rt::ray_box_entry(o, d, min, max) {
-                if t < best.map_or(limit, |b| b.distance) {
-                    best = Some(Hit { distance: t, normal: local_normal(n), material: Material::Masonry });
-                }
-            }
+        if let Some((t, n)) = self.boxes.first_entry(o, d, limit) {
+            best = Some(Hit { distance: t, normal: local_normal(n), material: Material::Masonry });
         }
         // Terrain: march, then bisect the crossing; the normal from the height gradient.
         let limit = best.map_or(reach, |b| b.distance);
@@ -256,9 +373,9 @@ impl Game {
         let to_local = to_world.inverse();
         let models: [Mat4; surface_fire::FRAMES] = world_models.map(|m| to_local * m);
         let inverses = models.map(|m| m.inverse());
-        let boxes = self.occluders.iter()
+        let boxes = BoxGrid::new(self.occluders.iter()
             .filter(|o| ((o.min + o.max) * 0.5).distance(listener_world) < 150.0)
-            .map(|o| (o.min, o.max)).collect();
+            .map(|o| (o.min, o.max)).collect());
         let ground = match crate::sound_propagation::active_atmosphere().ground {
             crate::sound_propagation::Ground::Snow => Material::Snow,
             _ => Material::Ground,
@@ -316,6 +433,10 @@ impl Game {
     /// The room a source is heard in: its traced field, a neighbouring traced field of the same
     /// kind while that is being traced, or `None` for the parametric tail.
     pub(super) fn acoustic_room_for(&mut self, source: Vec3) -> Option<Rc<StereoIr>> {
+        if !acoustics_enabled() {
+            self.acoustics.parametric_rooms += 1;
+            return None;
+        }
         // At most this many traced convolutions per update; beyond it a voice takes the
         // parametric tail (a named cost bound: ~6 ms per convolved voice in release).
         let budget = if crate::graphics::active_preset().is_desktop() { 4 } else { 2 };
@@ -359,7 +480,7 @@ impl Game {
     /// Spend this update's ray budget on the queued traces; keep the listener's own field warm.
     pub(super) fn advance_acoustic_traces(&mut self) {
         let ear = self.ear_pos;
-        if ear == Vec3::ZERO { return; }
+        if ear == Vec3::ZERO || !acoustics_enabled() { return; }
         // The listener's own field (his hands, feet and voice) and, aboard, the four plates.
         let local = ear + self.ear_forward * 0.3 - Vec3::Y * 0.4;
         let _ = self.acoustic_field_for(local);
@@ -545,7 +666,9 @@ impl Game {
             self.acoustics.last_head_out = self.listener_enclosure() == crate::sound_propagation::Enclosure::HeadOut;
             self.acoustics.last_binocular = self.binocular_raise;
         }
+        self.sim_phase.seg("world_foley.prelude");
         self.advance_acoustic_traces();
+        self.sim_phase.seg("world_foley.traces");
         let hull = self.player.hull_model();
         let turret = self.player.turret_model();
         let wind = wind_at(self.act.id, r.camera.pos) * self.weather_wind_scale;
@@ -581,6 +704,7 @@ impl Game {
         if aboard && r.interior_light > 0.05 && self.listener_aboard_inside() {
             self.foley_loop(Cue::Env(EnvCue::LampBuzz), 0, turret.transform_point3(crate::interior_rig::TURRET_DOME_LAMP_POS), 0.0, 1.0);
         }
+        self.sim_phase.seg("world_foley.weather_loops");
         // Engine and exhaust cooling after shutdown: pings slowing over minutes [E].
         if self.engine_on { self.acoustics.engine_off_s = 0.0; } else { self.acoustics.engine_off_s += dt; }
         if !self.engine_on && self.acoustics.last_engine_on && std::mem::take(&mut self.acoustics.starved) {
@@ -618,6 +742,7 @@ impl Game {
         }
         self.acoustics.last_snow_load = load;
 
+        self.sim_phase.seg("world_foley.engine_wrecks_snow");
         // The Tiger moving: tracks on the ground they meet, braking, gear changes.
         let speed = self.player.speed.abs();
         if alive && speed > 0.4 {
@@ -659,6 +784,7 @@ impl Game {
         for (i, at, v) in near.into_iter().take(4) {
             self.foley_loop(Cue::Vehicle(VehicleCue::EnemyTrackClank), i, at, 20.0 * (v / 5.0).max(0.05).log10(), (v / 5.0).clamp(0.4, 2.0));
         }
+        self.sim_phase.seg("world_foley.tracks_enemies");
         // The extinguisher: the spray while the trigger is held.
         if self.ext_want_spray && !self.acoustics.last_ext {
             self.foley(Cue::Extinguisher(ExtCue::SprayStart), 1.0, 0.0, self.ear_pos + self.ear_forward * 0.5 - Vec3::Y * 0.3);
@@ -692,7 +818,9 @@ impl Game {
                 self.foley(Cue::Body(crate::acoustics::foley::BodyCue::FuelCapClose), 1.0, 0.0, at);
             }
         }
+        self.sim_phase.seg("world_foley.hands_misc");
         self.flush_foley_loops(dt);
+        self.sim_phase.seg("world_foley.flush");
     }
 
     /// Where the own Maybach is heard from: the engine compartment behind the firewall. Inside
@@ -815,9 +943,67 @@ impl Game {
 }
 
 
+/// `KESSEL_ACOUSTICS=0` turns the traced rooms off (no traces, every voice on the parametric tail
+/// it takes anyway once the convolution budget is spent): the A/B switch for their cost.
+fn acoustics_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KESSEL_ACOUSTICS").as_deref() != Ok("0"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The box grid returns exactly what the linear scan over every box returns: the same
+    /// nearest entry distance and normal (ties to the earlier box), for rays from inside and
+    /// outside the boxes' area, with and without a limit, vertical and horizontal.
+    #[test]
+    fn box_grid_matches_the_linear_scan() {
+        let mut seed = 0x1234_5678u32;
+        let mut rand = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as f32 / u32::MAX as f32
+        };
+        let mut boxes = Vec::new();
+        for _ in 0..4000 {
+            let c = Vec3::new(rand() * 300.0 - 150.0, rand() * 6.0, rand() * 300.0 - 150.0);
+            let h = Vec3::new(0.2 + rand() * 12.0, 0.5 + rand() * 6.0, 0.2 + rand() * 12.0);
+            boxes.push((c - h, c + h));
+        }
+        // Two identical boxes straddling a column edge: the tie goes to the first.
+        boxes.push((Vec3::new(-0.5, 0.0, -0.5), Vec3::new(0.5, 3.0, 0.5)));
+        boxes.push((Vec3::new(-0.5, 0.0, -0.5), Vec3::new(0.5, 3.0, 0.5)));
+        let linear = |o: Vec3, d: Vec3, limit: f32| {
+            let mut best: Option<(f32, Vec3)> = None;
+            for &(min, max) in &boxes {
+                if let Some((t, n)) = rt::ray_box_entry(o, d, min, max) {
+                    if t < best.map_or(limit, |b| b.0) { best = Some((t, n)); }
+                }
+            }
+            best
+        };
+        let grid = BoxGrid::new(boxes.clone());
+        let mut hits = 0;
+        for k in 0..20_000 {
+            let o = Vec3::new(rand() * 500.0 - 250.0, rand() * 10.0 - 1.0, rand() * 500.0 - 250.0);
+            let d = match k % 10 {
+                0 => Vec3::Y,
+                1 => Vec3::NEG_Y,
+                2 => Vec3::X,
+                _ => Vec3::new(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0, rand() * 2.0 - 1.0).normalize_or(Vec3::Z),
+            };
+            let limit = if k % 3 == 0 { 400.0 } else { 1.0 + rand() * 60.0 };
+            let (a, b) = (linear(o, d, limit), grid.first_entry(o, d, limit));
+            assert_eq!(a, b, "ray {k}: o {o} d {d} limit {limit}");
+            hits += usize::from(a.is_some());
+        }
+        assert!(hits > 2000, "the test rays must hit boxes often ({hits})");
+        assert_eq!(grid.first_entry(Vec3::new(0.0, 1.0, -5.0), Vec3::Z, 100.0),
+            linear(Vec3::new(0.0, 1.0, -5.0), Vec3::Z, 100.0));
+        assert!(BoxGrid::new(Vec::new()).first_entry(Vec3::ZERO, Vec3::X, 100.0).is_none());
+    }
 
     /// The voxelized cabin alone, in the hull's frame (no terrain, no world).
     struct VoxelOnly<'a>(&'a CabinVoxels, [Mat4; surface_fire::FRAMES], [Mat4; surface_fire::FRAMES]);

@@ -16346,6 +16346,7 @@ impl Game {
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
         self.sim_phase.count_update();
+        self.sim_phase.seg_begin();
         if let Some(arms)=&self.first_person {arms.clear(r);}
         self.armor_clock_s = r.time;
         // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
@@ -16453,6 +16454,7 @@ impl Game {
                 ..TankInput::default()
             };
         }
+        self.sim_phase.seg("input_prelude");
         self.route_personal_hand_input(&mut effective_input,dt);
         if self.carrying_track_kit {
             effective_input.coax = false;
@@ -16512,6 +16514,7 @@ impl Game {
                     mask | (1 << frame.input(role).post as u8)
                 })
         });
+        self.sim_phase.seg("input_routing");
         self.drive_lan_crew_rigs(coop, r);
         // KOOP STÜTZPUNKT mission phases (inert None outside the mission).
         self.update_compound(dt);
@@ -16524,6 +16527,7 @@ impl Game {
                 .iter()
                 .any(|&role| frame.input(role).flag(crate::lan::F_REPAIR));
         }
+        self.sim_phase.seg("lan_rigs_compound");
         self.update_station_hatches(input);
         let can_use_visor=matches!(self.mode,Mode::Tank)&&matches!(self.station,Station::Driver)
             &&self.switch_t<=0.0&&self.activity.is_none()&&!self.climb.active&&self.player.alive
@@ -16557,6 +16561,7 @@ impl Game {
         self.driver_visor_lean = tiger_driver_visor::advance_lean(self.driver_visor_lean, driver_aim, dt);
         // The act clock runs with simulated time: the Sun and the Moon move, dusk becomes night.
         // No night key is written here; darkness is whatever the ephemeris and the air give.
+        self.sim_phase.seg("hatches_visor");
         self.apply_tank_editor_atmosphere(r);
         self.enemy_report_audit.clock_s = r.time;
         r.time += dt;
@@ -16564,7 +16569,9 @@ impl Game {
         self.follow_the_night(r);
         self.weather_view=r.weather_visibility();
         self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
+        self.sim_phase.seg("editor_atmosphere_night");
         self.update_world_doors(dt, r);
+        self.sim_phase.seg("world_doors");
         let mut pressure_index = 0;
         while pressure_index < self.pressure_arrivals.len() {
             if self.pressure_arrivals[pressure_index].0.at <= r.time {
@@ -16639,6 +16646,7 @@ impl Game {
         // stays live below (enemy AI runs in each arm; FX pools + tank/enemy transform pushes run in
         // the shared tail) so the abandoned Tiger and the swarm keep rendering while dismounted.
         // A body on fire cannot jump or climb: Space beats the flames out instead.
+        self.sim_phase.seg("hatch_track_grass");
         let burning = self.update_player_burn(dt, input.jump && !self.prev_jump);
         // Space is the way in and out of hatches, the cabin and a spare tank (owner's second
         // revision: E for this kept bailing him out of the tank in combat).
@@ -16648,6 +16656,7 @@ impl Game {
         if self.climb.active || (!matches!(self.mode, Mode::Foot) && self.station != Station::Loader) {
             self.walk_sounds.reset();
         }
+        self.sim_phase.seg("burn_traversal");
         if let Mode::Foot = self.mode {
             if coop.is_some() {
                 self.crew_lan_ai_update(dt);
@@ -16703,7 +16712,7 @@ impl Game {
                         else { "CLOSE HATCH [LMB] - STEP TO THE OPENING TO ENTER" });
                 }
             }
-            let phase_t = std::time::Instant::now(); self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb) self.sim_phase.add(crate::sim_phase::Phase::Infantry, phase_t);
+            let phase_t = std::time::Instant::now(); self.update_infantry(input, dt, r); self.sim_phase.add(crate::sim_phase::Phase::Infantry, phase_t); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
             let phase_t = std::time::Instant::now(); self.enemy_ai(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAi, phase_t);
             let phase_t = std::time::Instant::now(); self.resolve_vehicle_contacts(dt); self.sim_phase.add(crate::sim_phase::Phase::VehicleContacts, phase_t);
                                          // A climb that finished INTO the tank this frame flips the mode — the tank arm picks
@@ -16727,9 +16736,11 @@ impl Game {
             } else {
                 self.building_weather_shelter_at(r.camera.pos)
             };
+            self.sim_phase.seg("foot");
         } else {
             // Headless hook: pin the commander buttoned-up interior view every frame (the screenshot
             // harness forces the gunner optic after build, so re-assert this over it). No-op in play.
+            self.sim_phase.seg("tank.entry");
             if self.force_buttoned {
                 self.station = Station::Commander;
                 self.commander_outside = false;
@@ -16756,21 +16767,25 @@ impl Game {
                     if self.interact_equip() { self.primary_pickup_press = true; }
                 }
             }
+            self.sim_phase.seg("tank.switch_pickup");
             self.update_activities(&activity_input, dt, r.camera.pos, r.camera.forward());
 
             // The living solo crew decides first (orders, the gunner's lay and trigger, the
             // driver's levers, wounds and the player's hands); the vehicle authority reads it.
+            self.sim_phase.seg("tank.activities");
             if coop.is_none() {
                 self.crew_solo_update(input, dt, r.camera.pos, r.camera.forward());
             } else {
                 self.crew_lan_ai_update(dt);
             }
+            self.sim_phase.seg("tank.crew_solo");
             let acting = self.update_crew_vehicle_controls(input, dt, r, primary_was_held);
 
             // ── Station gate: only the ACTIVELY-manned seat's continuous controls are live, and only
             // while not mid-switch and not mid-activity. The existing DAMAGE gates stack on top (a downed
             // driver / wrecked track still immobilises; a downed gunner still freezes the lay). Space is
             // the ONE context button — at the gunner's seat it FIRES, at the breech it services the reload.
+            self.sim_phase.seg("tank.vehicle_controls");
             let mut ram_consumed_look = false;
             let mut casing_consumed_look = false;
             if self.player.alive {
@@ -16938,9 +16953,11 @@ impl Game {
                     self.ram = (self.ram - RAM_DECAY * dt).max(0.0);
                 }
             }
+            self.sim_phase.seg("tank.player_controls");
             self.update_crew_vehicle_mg(input, dt);
 
             // enemy return-fire AI: track the player and shoot when laid + reloaded.
+            self.sim_phase.seg("tank.mg");
             let phase_t = std::time::Instant::now(); self.enemy_ai(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAi, phase_t);
             let phase_t = std::time::Instant::now(); self.resolve_vehicle_contacts(dt); self.sim_phase.add(crate::sim_phase::Phase::VehicleContacts, phase_t);
 
@@ -16951,6 +16968,7 @@ impl Game {
             r.set_visible(self.slots.luger_impact, false);
             r.set_visible(self.slots.panzerfaust, false);
             r.set_visible(self.slots.panzerfaust_sight, false);
+            self.sim_phase.seg("tank.enemy_ai_contacts");
             for &slot in self
                 .slots
                 .luger_flash
@@ -16962,7 +16980,9 @@ impl Game {
             }
             r.set_visible(self.slots.hammer, false);
             // Infantry remains persistent while mounted; rifles cannot damage the Tiger.
+            self.sim_phase.seg("tank.slots");
             let phase_t = std::time::Instant::now(); self.update_infantry_passive(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Infantry, phase_t);
+            self.sim_phase.seg("tank.infantry_passive");
 
             // The gunner's sight view follows the hull's pitch and roll through a low-pass: the hull
             // pose is fitted to the ground under the tracks every frame (`vehicle_ground`), so each
@@ -17091,6 +17111,7 @@ impl Game {
                 _ if binocular_optics_ready(self.binocular_raise) => 3.0,
                 _ => 0.0,
             };
+            self.sim_phase.seg("tank.after_infantry");
             if matches!(self.station, Station::Commander) {
                 r.camera.yaw += self.head_yaw;
                 r.camera.pitch = self.head_pitch - 0.10; // slight default downtilt over the deck
@@ -17113,6 +17134,7 @@ impl Game {
             // Mode-gated: the INSIDE hotspots exist only while you're actually IN the tank — the
             // station freezes on dismount, and walking past the hull outside was popping the
             // breech-reload prompts through the armor.
+            self.sim_phase.seg("tank.station_misc");
             if matches!(self.mode, Mode::Tank)
                 && matches!(self.station, Station::Loader)
                 && self.switch_t <= 0.0
@@ -17266,6 +17288,7 @@ impl Game {
                 // emission or adds geometry around the touched object.
             }
             // Eye position — blended from the seat you're leaving while the switch runs.
+            self.sim_phase.seg("tank.view_block");
             let eye_to = if self.optic_composite_active() {
                 // The remote optical entrance belongs only to the magnified sight pass.
                 // Station transitions always interpolate between physical cabin eye positions.
@@ -17290,6 +17313,7 @@ impl Game {
             if self.switch_t>0.0&&self.switch_near_restore.is_none() {
                 self.switch_near_restore=Some(self.cupola_focus.saved_near.unwrap_or(r.camera.znear));
             }
+            self.sim_phase.seg("tank.eye_switch");
             self.update_cupola_focus(input.aim, dt, r);
             if self.switch_t>0.0 {r.camera.znear=r.camera.znear.min(0.005);}
             else if let Some(near)=self.switch_near_restore.take() {r.camera.znear=near;}
@@ -17304,6 +17328,7 @@ impl Game {
             // Buttoned up = inside the tank: any turret/hull station with the hatch shut. Only an exposed
             // Commander (hatch open) or a hatched-out Driver (re-setting a track) is open to the air.
             // Head-out only counts if the hatch is actually OPEN (you can't peer through a closed lid).
+            self.sim_phase.seg("tank.cupola_focus");
             if !self.hatch_open {
                 self.commander_outside = false;
             }
@@ -17368,6 +17393,7 @@ impl Game {
             let loader_round_owns_input = matches!(self.station, Station::Loader)
                 && self.primary_loader_owns_click();
 
+            self.sim_phase.seg("tank.hatch_block");
             self.hover_lever = !loader_round_owns_input && self.cupola_grip_hover(r);
             if self.hover_lever {
                 self.hover_label = Some(if self.hatch_open {
@@ -17473,6 +17499,7 @@ impl Game {
 
             // Non-campaign modes retain the simple red-X sandbox exit. A campaign attempt routes through
             // the director below, where reaching the same place cannot bypass live contacts or story.
+            self.sim_phase.seg("tank.lever_hover");
             if self.tank_editor_scene.is_none() && self.campaign.is_none() && self.standalone_fuel_liters.is_none()
                 && !self.act_complete && self.player.alive {
                 let p = self.player.center();
@@ -17484,11 +17511,13 @@ impl Game {
                     );
                 }
             }
+            self.sim_phase.seg("tank.tail");
         } // end Mode::Tank arm
 
         // A held Space is consumed in both modes, including across the end of a climb.
         self.prev_jump = input.jump;
         self.prev_enter = input.enter;
+        self.sim_phase.seg("prev_inputs");
         self.update_driver_visor_hover(r);
         self.update_ignition_hover(r);
         self.update_equipment_hover(r);
@@ -17496,13 +17525,16 @@ impl Game {
         self.update_port_occlusion(r);
         self.update_hatch_access_prompt(r);
         self.update_interaction_outline(r);
+        self.sim_phase.seg("hover_outline");
         if self.player.alive {
             self.update_campaign_director(dt, input.reload);
             self.sync_campaign_map_case_visibility(r);
         }
+        self.sim_phase.seg("alive_block");
         if self.platoon.is_some() { self.platoon_update(dt); } else { self.update_allied_tigers(dt); }
         self.update_finale_pressure(dt);
 
+        self.sim_phase.seg("platoon_allies_pressure");
         if self.concussion_dur > 0.0 {
             self.concussion_t += dt;
             if self.concussion_t >= self.concussion_dur {
@@ -17549,6 +17581,7 @@ impl Game {
         // distant battles and unseen nearby enemies cannot disclose combat through the score.
         let soundscape_combat=self.soundscape_combat_t>0.0;
         self.soundscape_combat_t=(self.soundscape_combat_t-dt).max(0.0);
+        self.sim_phase.seg("camera_turret_rates");
         if let Some(a) = &self.audio {
             let shelter = if buttoned_up {
                 tank_weather_shelter(self.station, false, self.hatch_open)
@@ -17631,11 +17664,13 @@ impl Game {
             a.update_shell_shriek(dt);
         }
         // Traced rooms, the weather on the steel, the tracks' ground, brakes, gears, cooling.
+        self.sim_phase.seg("engine_turret_audio");
         self.update_world_foley(dt, r, turret_rate);
 
         // Random booms on the horizon with no simulated source. Removed pending simulated off-map
         // indirect fire; kept only behind a debug-only gate, off in both presets.
         self.ambient_t -= dt;
+        self.sim_phase.seg("world_foley");
         if self.tank_editor_scene.is_none() && self.ambient_t <= 0.0
             && crate::debug_gates::DebugGates::active().ambient_booms
         {
@@ -17701,6 +17736,7 @@ impl Game {
         // Windowed solo/LAN and local four-seat play defer the rolling periscope render until the
         // render graph, where its exterior scene can populate the same shadow map as the main view.
         // Headless tools keep automatic update-time behavior unless they explicitly opt in.
+        self.sim_phase.seg("ambient_rumble_headsway");
         if !self.couch_crew_active && !self.defer_rtt_to_render {
             self.refresh_rtt_periscopes(r);
         }
@@ -17735,6 +17771,7 @@ impl Game {
         r.set_model(self.slots.tiger[0], self.player.hull_model());
         r.set_model(self.slots.tiger[1], self.player.turret_model());
         r.set_model(self.slots.tiger[2], self.player.visual_gun_model());
+        self.sim_phase.seg("rtt_refresh");
         let roof_before = self.roof_hatches.phase;
         self.roof_hatches.advance(dt);
         if let Some(a) = &self.audio {
@@ -17768,11 +17805,13 @@ impl Game {
             // Ports 0..7 are the cupola blocks, registered first in block order.
             r.set_raster_optic_blocked(block, !self.exterior.block_clear(block));
         }
+        self.sim_phase.seg("roof_glass_slots");
         self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
         self.drive_portable_items(dt, r);
 
         // Advance wreck fire clocks, tumbling turret-pop physics, and delayed cook-offs.
+        self.sim_phase.seg("dressing_scars_portable");
         let phase_t = std::time::Instant::now(); self.update_wrecks(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
         self.enemy_crew.update(dt, &self.enemies, &self.wrecks, &self.hf, &self.occluders);
         self.enemy_crew.draw(r);
@@ -17781,6 +17820,7 @@ impl Game {
 
         // Advance falling trees (shared tail — trees keep toppling while on foot too) and route
         // their events into the pooled FX + the ranged-audio scheduler.
+        self.sim_phase.seg("wrecks");
         let mut tree_events = Vec::new();
         self.trees.update(dt, r, &mut tree_events);
         self.route_tree_events(tree_events);
@@ -17795,6 +17835,7 @@ impl Game {
 
         // Advance the PLAYER's interior fire: it grows once lit and, once established, reaches the
         // ammunition on a countdown — an unchecked fire cooks off the ammo (catastrophic kill).
+        self.sim_phase.seg("trees_scatter_push");
         let phase_t = std::time::Instant::now(); self.update_fire(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
         let phase_t = std::time::Instant::now(); self.update_haze(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
 
@@ -17802,6 +17843,7 @@ impl Game {
         // the field as a BURNING WRECK — its hull (and, unless the turret popped, its turret) keep
         // their frozen death pose and glow with a flickering orange fire; a catastrophic kill drives
         // the blown-off turret/gun along their ballistic arc instead.
+        self.sim_phase.seg("fire_haze");
         for ei in 0..self.enemies.len() {
             let rigs = [
                 self.slots.t34[ei],
@@ -17961,12 +18003,14 @@ impl Game {
 
         // Resolve cannon flight after every moving vehicle has advanced. This is host simulation,
         // not presentation: all split views sample the same stable-ID projectile pool below.
+        self.sim_phase.seg("enemy_ally_hulk_loops");
         let phase_t = std::time::Instant::now(); self.advance_projectiles(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Projectiles, phase_t);
         self.dispatch_shell_flight_audio(r);
         self.sync_authoritative_tracer_presentation();
         self.update_panzerfaust_shot(dt, r);
         self.drive_panzerfaust_rack(r);
         let phase_t = std::time::Instant::now(); self.update_fx(dt, r); self.sim_phase.add(crate::sim_phase::Phase::Fx, phase_t);
+        self.sim_phase.seg("projectiles_fx_panzerfaust");
         self.update_track_snow(dt,r);
         self.update_scene_environment(r);
         self.update_personal_hand_presentation(dt,r);
@@ -17986,6 +18030,7 @@ impl Game {
         self.update_cupola_pistol(&sidearm_input,dt,r);
         if let Some(arms)=&self.first_person {arms.draw(self,dt,r);}
         self.update_cigarette_pickup_prompt(r);
+        self.sim_phase.seg("presentation_arms_props");
         self.update_winter_mission(dt);
         let phase_t = std::time::Instant::now(); self.update_canyon_run(dt, r); self.sim_phase.add(crate::sim_phase::Phase::CanyonMission, phase_t);
         let phase_t = std::time::Instant::now(); self.update_mission(dt, r, input); self.sim_phase.add(crate::sim_phase::Phase::CanyonMission, phase_t);
@@ -18028,6 +18073,7 @@ impl Game {
 
         // A crew casualty is shared cabin information: advance the authored directional blood
         // spray once per simulation frame, then project it through whichever camera renders next.
+        self.sim_phase.seg("missions");
         if self.force_crew_ko.is_none() && self.crew_ko_t > 0.0 {
             self.crew_ko_t = (self.crew_ko_t - dt).max(0.0);
         }
@@ -18038,6 +18084,7 @@ impl Game {
 
         // Resolve arrivals after this tick's projectile contacts have emitted their sounds.
         // Draining before flight added an avoidable extra simulation tick to close impacts.
+        self.sim_phase.seg("crew_ko");
         self.drain_scheduled_audio(dt, r, r.time);
 
         // The ears (hearing.rs), last in the frame: every shot, hit, burst and passing round of
@@ -18046,12 +18093,14 @@ impl Game {
         // may compress recovery, named as such), take the engine's continuous level as exposure
         // and as the middle-ear reflex's drive, and are rendered by every voice's listener stage.
         // Runs in BOTH modes: a dismounted crewman keeps his damaged hearing.
+        self.sim_phase.seg("drain_audio");
         let recovery_scale = crate::debug_gates::DebugGates::active().hearing_time_scale;
         let engine_exposure = if self.engine_on && self.player.alive { self.engine_ear_laf_dba } else { 0.0 };
         self.hearing.advance(dt, dt * recovery_scale, engine_exposure);
         if let Some(a) = &self.audio {
             a.set_ear_state(&self.hearing.render());
         }
+        self.sim_phase.seg("tail");
     }
 
     /// A living singleplayer operator can manually work a vacant post. Casualties persist, but
