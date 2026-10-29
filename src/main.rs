@@ -14815,7 +14815,7 @@ impl ApplicationHandler for App {
         let fullscreen = graphics::fixed_playtest_graphics()
             || std::env::var("KESSEL_FULLSCREEN").is_ok_and(|v| v == "1");
         let attrs = Window::default_attributes()
-            .with_title("Panzerrechnersystem")
+            .with_title(concat!("Panzerrechnersystem — ", env!("KESSEL_BUILD_ID")))
             .with_decorations(true)
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
             .with_maximized(!fullscreen)
