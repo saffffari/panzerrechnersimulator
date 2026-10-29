@@ -1,0 +1,1 @@
+[autopilot-result] {"outcome":"knocked_out","play_s":792.3,"progress":0.3831,"reloads":6}
