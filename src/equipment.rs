@@ -651,6 +651,7 @@ impl Game {
 
     /// Shared final draw: walking inside, climbing and walking outside use the same source props.
     pub(super) fn drive_carried_tools(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_carried_tools");
         let jam = self.exterior.ring_jam.filter(|_| self.module_fault(ModuleKind::TurretTraverse)
             == tiger_damage::Fault::RingJammed);
         r.set_visible(self.slots.ring_fragment, jam.is_some());
