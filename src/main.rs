@@ -934,6 +934,14 @@ fn run_gfxbench(
             _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
     }
     if std::env::var("KESSEL_BENCH_HATCH").as_deref() == Ok("open") { g.toggle_hatch(); }
+    // `KESSEL_BENCH_IMPACT=AHEAD_M,RIGHT_M,PERIOD`: every PERIOD timed frames a 76.2 mm HE shell
+    // (6.2 kg, 680 m/s, 20 deg down from ahead) strikes the ground that far ahead of and right of
+    // the tank: its blast sparks and ground ejecta, the combat records the relays draw.
+    let bench_impact = std::env::var("KESSEL_BENCH_IMPACT").ok().map(|value| {
+        let v: Vec<f32> = value.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        anyhow::ensure!(v.len() == 3 && v[2] >= 1.0, "KESSEL_BENCH_IMPACT is AHEAD_M,RIGHT_M,PERIOD");
+        Ok((v[0], v[1], v[2] as u32))
+    }).transpose()?;
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
     let center = r.camera.pos;
     r.reticle = false;
@@ -943,7 +951,14 @@ fn run_gfxbench(
     let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut times = Vec::with_capacity(frames as usize);
     let mut cpu_ms = [0.0f32; 3];
+    let mut worst_pass: std::collections::BTreeMap<String, f64> = Default::default();
     for i in 0..(frames + WARMUP) {
+        if let Some((ahead, right, _)) = bench_impact.filter(|&(_, _, period)| i >= WARMUP && (i - WARMUP) % period == 0) {
+            let forward = g.player.forward();
+            let point = g.player.pos + forward * ahead + Vec3::new(-forward.z, 0.0, forward.x) * right;
+            let incoming = (-forward * 20f32.to_radians().cos() - Vec3::Y * 20f32.to_radians().sin()) * 680.0;
+            g.debug_ground_strike(point, incoming, 6.2, 76.2, &r);
+        }
         g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
         // exercises city, terrain, tanks and the FX pools from every bearing.
@@ -974,11 +989,23 @@ fn run_gfxbench(
         let gpu_frame = r.read_gpu_profile_frame(&device, &queue)?;
         if i >= WARMUP {
             times.push(frame_ms);
+            let mut frame_passes: std::collections::BTreeMap<&str, f64> = Default::default();
+            for (label, ms) in &gpu_frame { *frame_passes.entry(label.as_str()).or_default() += ms; }
+            for (label, ms) in frame_passes {
+                let worst = worst_pass.entry(label.to_string()).or_default();
+                *worst = worst.max(ms);
+            }
             gpu_samples.record(gpu_frame);
             for (sum, ms) in cpu_ms.iter_mut().zip(r.bench_cpu_ms) { *sum += ms; }
         }
     }
     let _ = gpu_samples.report();
+    if !worst_pass.is_empty() {
+        let mut worst: Vec<_> = worst_pass.into_iter().collect();
+        worst.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let top: Vec<String> = worst.iter().take(4).map(|(label, ms)| format!("{label} {ms:.2} ms")).collect();
+        println!("[gfxbench] worst frame per pass: {}", top.join(", "));
+    }
     let timed = frames.max(1) as f32;
     println!("[gfxbench] cpu: TLAS rewrite {:.2} ms, encoder finish {:.2} ms, submit {:.2} ms (mean per frame)",
         cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);

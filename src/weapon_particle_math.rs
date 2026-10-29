@@ -99,6 +99,26 @@ pub fn ground_speed_share(u:f32)->f32 {
     // Inverse of the bounded power law: u = 0 the slowest, u = 1 the fastest.
     (floor/(1.0-u.clamp(0.0,1.0)*(1.0-floor))).powf(1.0/EXPONENT)
 }
+/// The samples each of a view's visible `bursts` draws when the view may draw `budget`: all of
+/// them under budget; over it, each burst its share of what the hot rims (512 samples of one ring,
+/// never thinned) leave, never fewer than its source count (`meta[2]`, the samples before the
+/// thousandfold quadrature). The shader weighs each sample by `meta[2] / meta[1]`, so a thinned
+/// burst carries the same emission in fewer, brighter samples; ground grains keep the grain size
+/// of the full count and take its optical depth (`weapon_particles.wgsl`). The shares are floored,
+/// so they fit; only source counts that cannot fit exceed the budget, which the caller omits.
+pub fn thinned_counts(bursts:&[Record],budget:u64)->Vec<u32> {
+    let requested:u64=bursts.iter().map(|r|u64::from(r.meta[1])).sum();
+    let fixed=|r:&Record|r.meta[3]==HOT_RIM || r.meta[3]==TRACER;
+    if requested<=budget {return bursts.iter().map(|r|r.meta[1]).collect();}
+    let kept:u64=bursts.iter().filter(|r|fixed(r)).map(|r|u64::from(r.meta[1])).sum();
+    let (share_budget,share_requested)=(budget.saturating_sub(kept),(requested-kept).max(1));
+    bursts.iter().map(|r| {
+        let full=r.meta[1];
+        if fixed(r) {return full;}
+        let share=(u64::from(full) as u128*share_budget as u128/share_requested as u128) as u64;
+        (share.min(u64::from(full)) as u32).max(r.meta[2].min(full)).max(1)
+    }).collect()
+}
 pub fn random(seed:u32)->f32 {
     let mut s=seed^(seed>>16);s=s.wrapping_mul(0x7feb352d);s^=s>>15;
     s=s.wrapping_mul(0x846ca68b);s^=s>>16;(s>>8) as f32/16777216.0
@@ -243,6 +263,29 @@ mod tests {
         assert_eq!(emitted,MAX_SPARKS_PER_VIEW);
         // Independent samples divide the old total weight; multiplying count cannot multiply power.
         for area in [0.001_f64,1.0,37.0] {assert!((area/1000.0*1000.0-area).abs()<1e-10);}
+    }
+    #[test] fn a_view_over_budget_thins_every_burst_and_keeps_its_light() {
+        let burst=|kind:u32,source:u32|Record {origin_age:[0.0;4],direction_life:[0.0,0.0,1.0,1.85],normal_offset:[0.0,1.0,0.0,0.0],
+            parameters:[0.0;4],meta:[7,source*SPARK_MULTIPLIER,source,kind]};
+        // An HE strike seen by a 240x136 port at 8 samples a pixel: blast sparks and ground ejecta.
+        let (blast,ground,rim)=(burst(BLAST,384),burst(GROUND,384),Record {meta:[9,RIM_SAMPLES,RIM_SAMPLES,HOT_RIM],..burst(HOT_RIM,1)});
+        let budget=240*136*8;
+        let drawn=thinned_counts(&[blast,ground,rim],budget);
+        let total=drawn.iter().map(|&n|u64::from(n)).sum::<u64>();
+        assert!(total<=budget && total+2>=budget,"{total} of {budget}");
+        assert_eq!(drawn[2],RIM_SAMPLES,"a hot rim is never thinned");
+        for (r,&n) in [blast,ground].iter().zip(&drawn) {
+            assert!(n>=r.meta[2] && n<r.meta[1]);
+            // Each sample is weighed by source / drawn: the burst's emission is the same.
+            let total=n as f64*(r.meta[2] as f64/n as f64);
+            assert!((total-r.meta[2] as f64).abs()<1e-9);
+        }
+        // Under budget nothing changes; a starved view still asks for every burst's source samples.
+        assert_eq!(thinned_counts(&[blast,ground],u64::MAX),vec![blast.meta[1],ground.meta[1]]);
+        assert_eq!(thinned_counts(&[blast,ground],100),vec![384,384]);
+        // The shader takes the full count as identity.z * 1000 (ground grain size, optical depth).
+        assert_eq!(SPARK_MULTIPLIER,1000);
+        assert!(include_str!("../shaders/weapon_particles.wgsl").contains("f32(identity.z*1000u)/f32(identity.y)"));
     }
     #[test] fn analytic_sparks_keep_complete_support_on_rotated_source_plane() {
         for n in [Vec3::X,Vec3::NEG_Z,Vec3::new(0.3,0.8,-0.4).normalize()] {
