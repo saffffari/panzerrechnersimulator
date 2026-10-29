@@ -221,8 +221,11 @@ impl Renderer {
         if !self.fine_vfx.materials.contains_key(&batch) || ids.len()!=b.inst_count as usize {return false;}
         let stored=self.fine_vfx.particle_ids.entry(batch).or_default();stored.clear();stored.extend_from_slice(ids);true
     }
+    /// `budget`: the grains this view may draw (`MAX_PER_VIEW` for the main view, a relayed port's
+    /// preset `relay_effect_budget`). Its coverage rule is unchanged: optional density goes first,
+    /// then whole far parents, counted as omitted.
     pub(super) fn prepare_fine_vfx_view(&self,device:&wgpu::Device,queue:&wgpu::Queue,
-        camera:&Camera,extent:[u32;2],depth:&wgpu::TextureView,smoke:&wgpu::Buffer,previous:Option<Frame>)->Frame {
+        camera:&Camera,extent:[u32;2],depth:&wgpu::TextureView,smoke:&wgpu::Buffer,previous:Option<Frame>,budget:u64)->Frame {
         let mut allocations=0;
         let mut frame=previous.unwrap_or_else(|| {
             allocations+=1;
@@ -262,7 +265,8 @@ impl Renderer {
             }
         }
         frame.parents.sort_by(|a,b|b.depth.total_cmp(&a.depth));
-        allocate_counts(&mut frame.parents,MAX_PER_VIEW);
+        let budget=budget.min(MAX_PER_VIEW);
+        allocate_counts(&mut frame.parents,budget);
         for parent in &frame.parents {
             if parent.count==0 {
                 receipt.saturated_parents+=1;receipt.omitted_projected_area_px+=parent.area as f64;
@@ -286,7 +290,7 @@ impl Renderer {
                 else {frame.draws.push(Draw {first,parents:1,grains});}
             }
         }
-        assert!(receipt.rendered_grains<=MAX_PER_VIEW);
+        assert!(receipt.rendered_grains<=budget);
         let needed=frame.instances.len();let capacity=buffer_capacity(frame.capacity,needed);
         if capacity>frame.capacity {
             frame.buffer=Some(device.create_buffer(&wgpu::BufferDescriptor {label:Some("native-grain-parent-instances"),size:(capacity*std::mem::size_of::<Instance>()) as u64,
@@ -307,7 +311,7 @@ impl Renderer {
         for frame in frames.values_mut(){frame.active=false;}
         // The raymarch backend draws its own grains in the main view; only its relayed ports take these.
         if self.raymarch.is_none() {
-            let main=self.prepare_fine_vfx_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX));
+            let main=self.prepare_fine_vfx_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX),MAX_PER_VIEW);
             frames.insert(usize::MAX,main);
         }
         self.prepare_fine_vfx_ports(device,queue,&mut frames);

@@ -157,6 +157,9 @@ struct FrameUniform {
     /// Per cabin domain: this frame's world point to where the same point of that rigid frame
     /// was in the previous frame (identity when the domain is off or the history is cut).
     cabin_motion: [[[f32; 4]; 4]; super::cabin_medium::DOMAINS],
+    /// Other vehicles worn at their edges and corners (`Renderer::set_worn_vehicles`): x the count.
+    worn_count: [f32; 4],
+    worn: [[[f32; 4]; 2]; super::MAX_WORN_VEHICLES],
 }
 
 /// `KESSEL_RM_SKIP` bit: no relayed exterior views on the vision blocks and sights.
@@ -213,11 +216,12 @@ struct Ember { pos: [f32; 3], packed: u32 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4], scars: [u32; 4] }
+struct Push { model: [[f32; 4]; 4], params: [f32; 4], extra: [f32; 4], scars: [u32; 4], vehicle: [f32; 4] }
 // extra: x snow load (`snow_cover`; G-buffer and glass only), y 1 on the player's vehicle
 // (surface wear), z 1 on an instrument dial's cover (glass) or on painted steel (G-buffer:
 // `Renderer::mark_painted_steel`), w unused. scars: this mesh's armor wounds (first record, count,
-// flags; renderer_scars.rs). 112 bytes, inside the 128-byte push-constant floor the device requires.
+// flags; renderer_scars.rs). vehicle: another vehicle's finish (`vehicle_finish::pack`; G-buffer).
+// 128 bytes, the push-constant floor the device requires.
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -1615,6 +1619,8 @@ impl Backend {
             puffs,
             cabin_air,
             cabin_motion,
+            worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, 0.0, 0.0, 0.0],
+            worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2391,6 +2397,7 @@ impl Backend {
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [b.emissive, p.metallic_factor, p.roughness_factor, if flags > 3.5 { 4.0 } else { 0.0 }] },
                 extra: [self.snow_load(r.world_snow_load), 0.0, 0.0, 0.0],
                 scars: [0; 4],
+                vehicle: [0.0; 4],
             };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
             if !shadow || grass_depth { pass.set_bind_group(1, p.tex_bind.as_ref(), &[]); }
@@ -2438,6 +2445,7 @@ impl Backend {
                 extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
                     if m.painted_steel { 1.0 } else { 0.0 }, m.lamp_lens as f32],
                 scars: range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]),
+                vehicle: if shadow { [0.0; 4] } else { m.vehicle_finish },
             };
             let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
             pass.set_push_constants(stages, 0, bytemuck::bytes_of(&push));
@@ -2454,7 +2462,7 @@ impl Backend {
             let Some(material) = r.meshes.iter().find(|m| m.track_recv) else { return };
             if shadow {
                 pass.set_pipeline(&terrain.depth_pipe);
-                let push = Push { model: Mat4::IDENTITY.to_cols_array_2d(), params: [view_index, 0.0, 0.0, 0.0], extra: [0.0; 4], scars: [0; 4] };
+                let push = Push { model: Mat4::IDENTITY.to_cols_array_2d(), params: [view_index, 0.0, 0.0, 0.0], extra: [0.0; 4], scars: [0; 4], vehicle: [0.0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
             } else {
                 pass.set_pipeline(&terrain.gbuffer_pipe);
@@ -2701,7 +2709,7 @@ impl Backend {
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
                 let push = Push { model: m.model.to_cols_array_2d(), params: [0.0, m.metallic_factor, m.roughness_factor, thickness],
                     extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
-                        if m.instrument_cover { 1.0 } else { 0.0 }, 0.0], scars: [0; 4] };
+                        if m.instrument_cover { 1.0 } else { 0.0 }, 0.0], scars: [0; 4], vehicle: [0.0; 4] };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&push));
                 pass.set_bind_group(2, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));

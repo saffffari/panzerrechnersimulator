@@ -323,6 +323,40 @@ fn load_parts(hull: &str, turret: &str, gun: &str) -> Option<[CpuMesh; 3]> {
     ])
 }
 
+/// Soviet 4BO protective green, the T-34's factory paint (2026-10-28, "the T-34 is too bright,
+/// doesn't read as a real T-34 colour"). No instrumental measurement of surviving 4BO is published;
+/// the reference is the Federal Standard 595 chip matched to the Soviet colour card, FS 34102
+/// (CIELAB D65 37 / -5 / 11, FED-STD-595C as tabulated at people.csail.mit.edu/jaffer/Color/fs595c),
+/// sRGB 86/89/69, linear reflectance 0.093 / 0.100 / 0.060 (luminance 0.095). The surviving samples
+/// matched to FS 34095 and FS 34096 (also there) bound each tank's factory variance in the shader
+/// (`rm_gbuffer.wgsl` `t34_paint`). The source GLB had a light yellowish olive (luminance 0.135)
+/// at roughness 0: a near mirror, which read as fresh gloss. 4BO was a flat oil paint.
+pub(crate) const SOVIET_4BO_SRGB: [u8; 3] = [86, 89, 69];
+/// Weathered track and running-gear steel, the Tiger's (`exterior_finishes::TRACK_STEEL`).
+pub(crate) const TRACK_STEEL_SRGB: [u8; 3] = [58, 58, 56];
+
+/// The T-34's finishes: the body and its bolts and fittings (painted with it) in 4BO at a flat
+/// paint's roughness; the near-black "Truck" parts (running gear, tracks, small dark fittings) as
+/// weathered track steel, the Tiger's (`exterior_finishes::TRACK_STEEL`, sRGB 58/58/56).
+pub(crate) fn t34_paint_finish(_node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
+    let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
+    match material {
+        Some("T-34 Body" | "T-34 nails") => Some(crate::gltf_load::MaterialOverride {
+            swatch: if material == Some("T-34 Body") { 10 } else { 11 },
+            base: [linear(SOVIET_4BO_SRGB[0] as f32), linear(SOVIET_4BO_SRGB[1] as f32), linear(SOVIET_4BO_SRGB[2] as f32), 1.0],
+            metallic: 0.0,
+            roughness: 0.82,
+        }),
+        Some("T-34 Truck") => Some(crate::gltf_load::MaterialOverride {
+            swatch: 12,
+            base: [linear(TRACK_STEEL_SRGB[0] as f32), linear(TRACK_STEEL_SRGB[1] as f32), linear(TRACK_STEEL_SRGB[2] as f32), 1.0],
+            metallic: 0.48,
+            roughness: 0.90,
+        }),
+        _ => None,
+    }
+}
+
 #[path = "tiger_exterior_finishes.rs"]
 mod exterior_finishes;
 
@@ -444,15 +478,18 @@ pub fn build_tiger() -> [CpuMesh; 3] {
 }
 
 pub fn build_t34() -> [CpuMesh; 3] {
-    load_parts(
-        "assets/tanks/T34-76/baked/t34_hull.glb",
-        "assets/tanks/T34-76/baked/t34_turret.glb",
-        "assets/tanks/T34-76/baked/t34_gun.glb",
-    )
+    // `KESSEL_VEHICLE_FINISH=0` keeps the source model's materials (the before, for review).
+    let source = std::env::var("KESSEL_VEHICLE_FINISH").as_deref() == Ok("0");
+    let load = |part: &str| {
+        let path = format!("assets/tanks/T34-76/baked/t34_{part}.glb");
+        if source { crate::gltf_load::load_glb(&path).ok() }
+        else { crate::gltf_load::load_glb_with_material_override(&path, t34_paint_finish).ok() }
+    };
+    (|| Some([load("hull")?, load("turret")?, load("gun")?]))()
     .unwrap_or_else(|| {
         eprintln!("[panzerrechnersystem] t34 GLBs missing — using box placeholder");
-        let body = [84, 92, 78];
-        let dark = [56, 62, 52];
+        let body = SOVIET_4BO_SRGB;
+        let dark = TRACK_STEEL_SRGB;
         [
             box_mesh(Vec3::new(-1.5, 0.3, -3.0), Vec3::new(1.5, 1.35, 3.0), body),
             box_mesh(Vec3::new(-1.05, 0.0, -1.1), Vec3::new(1.05, 0.6, 1.2), body),
@@ -476,14 +513,14 @@ fn load_su100() -> Option<[CpuMesh; 2]> {
 /// the baked GLBs; falls back to procedural boxes (a squat casemate hull + a long 100 mm barrel) if
 /// the assets are missing.
 pub fn build_su100() -> [CpuMesh; 3] {
-    let dark = [48, 56, 46];
+    let dark = TRACK_STEEL_SRGB;
     // A degenerate near-zero box for the unused turret slot (always hidden by the casemate render path).
     let placeholder = || box_mesh(Vec3::splat(-0.02), Vec3::splat(0.02), dark);
     if let Some([hull, gun]) = load_su100() {
         return [hull, placeholder(), gun];
     }
     eprintln!("[panzerrechnersystem] su100 GLBs missing — using box placeholder");
-    let body = [70, 82, 64]; // Soviet green
+    let body = SOVIET_4BO_SRGB; // Soviet green
     [
         // Low hull with a taller sloped-forward casemate suggested by the raised body height.
         box_mesh(
@@ -502,7 +539,7 @@ pub fn build_su100() -> [CpuMesh; 3] {
 }
 
 fn hidden_part() -> CpuMesh {
-    box_mesh(Vec3::splat(-0.015), Vec3::splat(0.015), [42, 48, 38])
+    box_mesh(Vec3::splat(-0.015), Vec3::splat(0.015), TRACK_STEEL_SRGB)
 }
 
 /// Join several same-material primitives into one rigid rig part. Heavy tanks currently have no
@@ -529,9 +566,9 @@ fn merge_meshes<const N: usize>(meshes: [CpuMesh; N]) -> CpuMesh {
 /// KV-2: broad KV running gear, an unmistakably tall rotating box turret, and a separately elevating
 /// 152 mm howitzer. No complete KV-1 donor is retained, so there is exactly one turret and one gun.
 pub fn build_kv2() -> [CpuMesh; 3] {
-    let body = [74, 86, 66];
-    let turret = [70, 82, 62];
-    let dark = [44, 50, 40];
+    let body = SOVIET_4BO_SRGB;
+    let turret = SOVIET_4BO_SRGB;
+    let dark = TRACK_STEEL_SRGB;
     [
         merge_meshes([
             box_mesh(
@@ -599,13 +636,13 @@ pub fn build_isu152() -> [CpuMesh; 3] {
         box_mesh(
             Vec3::new(-1.86, 0.26, -3.45),
             Vec3::new(1.86, 2.15, 3.45),
-            [68, 78, 60],
+            SOVIET_4BO_SRGB,
         ),
         hidden_part(),
         box_mesh(
             Vec3::new(-0.18, -0.18, 0.0),
             Vec3::new(0.18, 0.18, 4.35),
-            [42, 48, 38],
+            TRACK_STEEL_SRGB,
         ),
     ]
 }
@@ -614,9 +651,9 @@ pub fn build_isu152() -> [CpuMesh; 3] {
 /// shipped IS-2 GLB has useful source hierarchy, but `load_glb` intentionally flattens it; treating
 /// that complete vehicle as the hull made the visible gun ignore the AI's lay.
 pub fn build_is2() -> [CpuMesh; 3] {
-    let body = [66, 78, 60];
-    let turret = [63, 75, 57];
-    let dark = [40, 47, 37];
+    let body = SOVIET_4BO_SRGB;
+    let turret = SOVIET_4BO_SRGB;
+    let dark = TRACK_STEEL_SRGB;
     [
         merge_meshes([
             box_mesh(
@@ -685,9 +722,9 @@ pub fn build_is2() -> [CpuMesh; 3] {
 /// Late-war pike-nose threat: lower hull and flatter stepped turret are their own articulated rig,
 /// rather than a complete IS-2 donor hidden beneath a second turret and gun.
 pub fn build_is3() -> [CpuMesh; 3] {
-    let body = [62, 74, 58];
-    let turret = [59, 71, 55];
-    let dark = [38, 45, 35];
+    let body = SOVIET_4BO_SRGB;
+    let turret = SOVIET_4BO_SRGB;
+    let dark = TRACK_STEEL_SRGB;
     [
         merge_meshes([
             box_mesh(

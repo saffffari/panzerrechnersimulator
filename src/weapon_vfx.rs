@@ -786,6 +786,18 @@ impl Game {
                 projectile.shell.caliber_mm,normal,if self.act.season==crate::world::Season::Winter {1.0}else{0.0});
         }
     }
+    /// Bench hook (`gfxbench`, `KESSEL_BENCH_IMPACT`): an HE shell striking the ground at `point`'s
+    /// map position, presented as a real one is (the detonation's blast record and
+    /// `present_source_ground_impact`'s ejecta record). No projectile, damage, sound or light.
+    pub(crate) fn debug_ground_strike(&mut self,point:Vec3,velocity:Vec3,mass_kg:f32,caliber_mm:f32,r:&Renderer) {
+        let h=0.05;let p=Vec3::new(point.x,self.hf.height_at(point.x,point.z),point.z);
+        let dx=(self.hf.height_at(p.x+h,p.z)-self.hf.height_at(p.x-h,p.z))/(2.0*h);
+        let dz=(self.hf.height_at(p.x,p.z+h)-self.hf.height_at(p.x,p.z-h))/(2.0*h);
+        self.weapon_vfx.gpu_analytic=r.analytic_weapon_particles_active();
+        self.weapon_vfx.blast(p-velocity.normalize_or_zero()*0.08,(caliber_mm*0.038).clamp(1.2,5.5));
+        self.weapon_vfx.ground_impact(0,self.enemy_report_audit.clock_s,p,velocity,mass_kg,caliber_mm,
+            Vec3::new(-dx,1.0,-dz).normalize(),if self.act.season==crate::world::Season::Winter {1.0}else{0.0});
+    }
     pub(super) fn drive_weapon_vfx(&mut self, dt: f32, r: &mut Renderer) {
         // A glowing wound follows the struck source frame, including a physically detached
         // turret. Released smoke/fragments retain their independent world-space trajectories.

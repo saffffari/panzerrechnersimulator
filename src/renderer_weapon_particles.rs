@@ -12,7 +12,7 @@ struct View {vp:[[f32;4];4],eye:[f32;4],extent:[f32;4]}
 pub(super) struct Frame {
     bind:wgpu::BindGroup,uniform:wgpu::Buffer,buffer:wgpu::Buffer,
     draws:Vec<(u32,u32)>,tracer_first:u32,tracers:u32,extent:[u32;2],
-    requested:u64,submitted:u64,omitted:u64,omitted_bursts:u32,active:bool,
+    requested:u64,submitted:u64,omitted:u64,omitted_bursts:u32,thinned:u64,budget:u64,active:bool,
     submitted_by_kind:[u64;9],
 }
 pub(super) struct WeaponParticles {
@@ -57,8 +57,11 @@ impl Renderer {
         self.weapon_particles.bursts.clear();self.weapon_particles.bursts.extend_from_slice(bursts);
         self.weapon_particles.segments.clear();self.weapon_particles.segments.extend_from_slice(segments);
     }
+    /// `budget`: the samples this view may draw. The main view keeps `MAX_SPARKS_PER_VIEW`; a relayed
+    /// port takes its preset's `relay_effect_budget`, so a 240x136 port no longer draws 47 samples a
+    /// pixel (1.5 million in one strike, 54 ms at the loader's ports, round 14).
     pub(super) fn prepare_weapon_particle_view(&self,device:&wgpu::Device,queue:&wgpu::Queue,camera:&Camera,
-        extent:[u32;2],depth:&wgpu::TextureView,smoke:&wgpu::Buffer,previous:Option<Frame>)->Frame {
+        extent:[u32;2],depth:&wgpu::TextureView,smoke:&wgpu::Buffer,previous:Option<Frame>,budget:u64)->Frame {
         let mut frame=previous.unwrap_or_else(|| {
             let uniform=device.create_buffer(&wgpu::BufferDescriptor {label:Some("analytic-weapon-camera"),size:std::mem::size_of::<View>() as u64,
                 usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false});
@@ -69,9 +72,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {binding:0,resource:wgpu::BindingResource::TextureView(depth)},
                 wgpu::BindGroupEntry {binding:1,resource:smoke.as_entire_binding()},wgpu::BindGroupEntry {binding:2,resource:uniform.as_entire_binding()},
             ]});
-            Frame {bind,uniform,buffer,draws:Vec::new(),tracer_first:0,tracers:0,extent,requested:0,submitted:0,omitted:0,omitted_bursts:0,active:true,submitted_by_kind:[0;9]}
+            Frame {bind,uniform,buffer,draws:Vec::new(),tracer_first:0,tracers:0,extent,requested:0,submitted:0,omitted:0,omitted_bursts:0,thinned:0,budget,active:true,submitted_by_kind:[0;9]}
         });
         frame.draws.clear();frame.extent=extent;frame.active=true;frame.requested=0;frame.submitted=0;frame.omitted=0;frame.omitted_bursts=0;frame.submitted_by_kind=[0;9];
+        frame.thinned=0;frame.budget=budget;
         let view=View {vp:camera.relative_view_proj().to_cols_array_2d(),eye:camera.pos.extend(0.0).to_array(),
             extent:[extent[0] as f32,extent[1] as f32,extent[1] as f32/(2.0*(camera.fov_y*0.5).tan()),0.0]};
         queue.write_buffer(&frame.uniform,0,bytemuck::bytes_of(&view));
@@ -79,15 +83,23 @@ impl Renderer {
         let mut bursts:Vec<_>=self.weapon_particles.bursts.iter().copied().filter(|r|r.active()).collect();
         bursts.sort_by(|a,b|a.origin().distance_squared(camera.pos).total_cmp(&b.origin().distance_squared(camera.pos)));
         let mut records=Vec::with_capacity(bursts.len()+self.weapon_particles.segments.len());
-        let mut available=math::MAX_SPARKS_PER_VIEW;
-        for burst in bursts {
+        let visible:Vec<_>=bursts.into_iter().filter(|burst| {
             let center=burst.origin()-camera.pos;let radius=Vec3::splat(burst.support_radius());
-            if !aabb_in_frustum(&planes,center-radius,center+radius){continue;}
+            aabb_in_frustum(&planes,center-radius,center+radius)
+        }).collect();
+        let budget=budget.min(u64::from(math::MAX_SPARKS_PER_VIEW));
+        let counts=math::thinned_counts(&visible,budget);
+        let mut available=budget;
+        for (mut burst,drawn) in visible.into_iter().zip(counts) {
             let count=burst.meta[1];frame.requested+=u64::from(count);
-            // Never brighten a smaller surviving prefix to compensate for a saturated budget.
-            if count>available {frame.omitted+=u64::from(count);frame.omitted_bursts+=1;continue;}
-            available-=count;frame.submitted+=u64::from(count);frame.submitted_by_kind[burst.meta[3] as usize]+=u64::from(count);
-            frame.draws.push((records.len() as u32,count));records.push(burst);
+            // Over budget every burst draws its share of samples (`math::thinned_counts`), each
+            // carrying the emission of the samples it stands for: the shower's light is kept and
+            // its density falls. Only a burst that cannot draw even its own source samples is
+            // left out, nearest first kept, and counted.
+            if u64::from(drawn)>available {frame.omitted+=u64::from(count);frame.omitted_bursts+=1;continue;}
+            available-=u64::from(drawn);frame.thinned+=u64::from(count-drawn);burst.meta[1]=drawn;
+            frame.submitted+=u64::from(drawn);frame.submitted_by_kind[burst.meta[3] as usize]+=u64::from(drawn);
+            frame.draws.push((records.len() as u32,drawn));records.push(burst);
         }
         // Additive sparks do not depend on ordering; matte ground grains require far-to-near
         // emitter order. Individual grains remain an explicitly approximate unsorted mixture.
@@ -103,7 +115,8 @@ impl Renderer {
         let mut frames=std::mem::take(&mut self.weapon_particles.frames);for frame in frames.values_mut(){frame.active=false;}
         // The raymarch backend draws its own sparks in the main view; only its relayed ports take these.
         if self.raymarch.is_none() {
-            let main=self.prepare_weapon_particle_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX));
+            let main=self.prepare_weapon_particle_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX),
+                u64::from(math::MAX_SPARKS_PER_VIEW));
             frames.insert(usize::MAX,main);
         }
         self.prepare_weapon_particle_ports(device,queue,&mut frames);self.weapon_particles.frames=frames;
@@ -127,6 +140,7 @@ impl Renderer {
         let mut views:Vec<_>=self.weapon_particles.frames.iter().filter(|(_,f)|f.active).map(|(&key,f)|serde_json::json!({
             "view":if key==usize::MAX {"main".into()}else{format!("port{key}")},"native_extent":f.extent,
             "requested_particles":f.requested,"submitted_particles":f.submitted,"omitted_particles":f.omitted,
+            "thinned_particles":f.thinned,"sample_budget":f.budget,
             "submitted_sparks":f.submitted_by_kind[..4].iter().sum::<u64>(),"submitted_pressure_jet_grains":f.submitted_by_kind[math::PRESSURE_VENT as usize],
             "submitted_full_cookoff_grains":f.submitted_by_kind[math::FULL_COOKOFF as usize],"submitted_ground_grains":f.submitted_by_kind[math::GROUND as usize],"omitted_bursts":f.omitted_bursts,
             "submitted_hot_rim_grains":f.submitted_by_kind[math::HOT_RIM as usize],

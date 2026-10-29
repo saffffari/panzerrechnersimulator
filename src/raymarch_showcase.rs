@@ -83,6 +83,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("res") { return run_resolution(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("ao") { return run_occlusion(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("wear") { return run_wear(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("t34") { return run_t34(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("clouds") { return run_clouds(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("shafts") { return run_shafts(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
@@ -500,6 +501,74 @@ fn run_occlusion(prefix: &str) -> anyhow::Result<()> {
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "ray_queries_off": std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v & 32768 != 0),
         "disclosure": "Staged fixture (banished enemies, held fire). Clear noon, sky clock pinned. Observer and station cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=t34`: the T-34's finish (`vehicle_finish`): three T-34s parked in a row
+/// beside the Tiger, seen near (12 m), mid (45 m) and far (160 m) at a 40 degree field, in
+/// clear mid-morning sun from behind the observer and under a dry overcast. With
+/// `KESSEL_VEHICLE_FINISH=0` the same stills show the source model's own materials (the before).
+fn run_t34(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_clear_near.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    r.set_weather_override(Some(0.0));
+    rig.clock(&mut r, "1942-12-21T10:30:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    step(&mut g, &mut r, 30, &idle);
+    // Three T-34s in a row on the Tiger's right, 8 m apart, facing the same way.
+    let forward = g.player.forward();
+    let right = Vec3::new(-forward.z, 0.0, forward.x);
+    let heading = g.player.heading;
+    let slots = g.debug_t34_slots(3);
+    anyhow::ensure!(slots.len() == 3, "fixture needs three enemy slots");
+    for (k, &slot) in slots.iter().enumerate() {
+        let at = g.player.pos + right * (8.0 * (k as f32 + 1.0));
+        g.debug_place_enemy(slot, at.x, at.z, heading);
+        g.debug_set_enemy_active(slot, true);
+    }
+    step(&mut g, &mut r, 30, &idle);
+    let first = g.enemies[slots[0]].pos;
+    let row = (g.player.pos + g.enemies[slots[2]].pos) * 0.5;
+    let sun = r.sun_dir.normalize_or_zero();
+    let back = -Vec3::new(sun.x, 0.0, sun.z).normalize_or_zero();
+    for (wname, dry_overcast) in [("clear", false), ("overcast", true)] {
+        let weather = |r: &mut crate::renderer::Renderer| {
+            if dry_overcast { r.overcast = 0.82; r.storm = 0.0; r.fog_density = 0.0009; r.precipitation = 0.0; }
+        };
+        // The clear stills hold the weather clear; the overcast ones release it and set a dry deck.
+        r.set_weather_override(if dry_overcast { None } else { Some(0.0) });
+        weather(&mut r);
+        step(&mut g, &mut r, 30, &idle);
+        for (dname, target, d) in [("near", (g.player.pos + first) * 0.5, 12.0f32), ("mid", row, 45.0), ("far", row, 160.0)] {
+            weather(&mut r);
+            let look = target + Vec3::Y * 1.2;
+            let eye = look - back * d + Vec3::Y * (1.0 + d * 0.05);
+            rig.observe(&mut r, eye, look, 40.0);
+            rig.still(&mut r, &format!("{wname}_{dname}"), &format!("{wname}: the Tiger and three T-34s from {d:.0} m"))?;
+        }
+    }
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.t34.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "vehicle_finish": std::env::var("KESSEL_VEHICLE_FINISH").ok(),
+        "disclosure": "Staged fixture (banished enemies, three enemy slots made T-34s and parked). Clock and weather overridden. Observer cameras. No image grading."
     }))?)?;
     Ok(())
 }

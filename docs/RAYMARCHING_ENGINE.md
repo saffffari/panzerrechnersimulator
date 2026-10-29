@@ -1288,6 +1288,127 @@ Parked at the commander's station (`gfxbench day 240`, act 1, Low): static pass 
 average, 0.34 % of pixels by more than 8 codes, none by more than 16: the key lattice and the coarse
 slack.
 
+## The T-34's paint, and every other vehicle's wear (2026-10-28)
+
+Request: the T-34 "is too bright, doesn't read as a real T-34 colour, and looks brand new"; grime,
+wear, mud, whatever makes it battle-hardened. The source model (`assets/tanks/T34-76/baked`) has no
+textures, three flat materials: "T-34 Body" linear (0.157, 0.138, 0.039), a light yellowish olive of
+luminance 0.135; "T-34 Truck" (0.0147, the running gear and dark fittings); "T-34 nails" (0.084,
+bolts and fittings). All three at roughness 0: a near mirror, the sky's reflection on every face,
+which more than anything read as fresh gloss. The Tiger's wear and whitewash reached only the
+player's vehicle.
+
+**The paint.** No instrumental measurement of surviving 4BO is published that I could find. The
+reference is the Federal Standard 595 chip matched to the Soviet colour card, FS 34102 (CIELAB D65
+37 / -5 / 11 in FED-STD-595C as tabulated at people.csail.mit.edu/jaffer/Color/fs595c): sRGB 86/89/69,
+linear reflectance 0.093 / 0.100 / 0.060, luminance 0.095. The chips matched to surviving samples in
+the same table, FS 34095 (33 / -6 / 14) and FS 34096 (35 / -3 / 8), bound each tank's batch. The
+1941 recipe (40-60 % yellow ochre, 15-20 % zinc chromate, 8-13 % ultramarine, 10-20 % white) and the
+field mixing from four components are why it varied. The Aberdeen trials' captured T-34 was
+assigned FS 24052 (25 / -2 / 5), darker still (recipe and Aberdeen: "The Mysteries of Soviet Green,
+part 1", breakthroughassault.co.uk, a modelling reference, not a laboratory one); the card's chip is
+used as the mean.
+`tank::t34_paint_finish` sets the body and its bolts to it at roughness 0.82 (a flat oil paint) and
+the dark parts to the Tiger's track steel; the code-native Soviet rigs (SU-100 fallback, KV-2,
+ISU-152, IS-2, IS-3) take the same two codes.
+
+**Each vehicle's finish** (`vehicle_finish.rs`; `rm_gbuffer.wgsl` `vehicle_finish`): every enemy
+vehicle draws a seed when its slot activates (a wreck archived to the graveyard keeps it), and from
+it its loads: mechanical wear 0.35-0.8, mud and grime 0.45-0.95, and in winter a 40 % chance of the
+remains of a field whitewash at 0.4-0.9 (winter 1942 practice was mixed; the share is an estimate).
+The G-buffer turns them into: the batch's paint between the three chips, a little lighter or darker,
+touch-up patches, faded and chalked on what faces up; the whitewash patchy, scrubbed off low down
+and where the crew climb, thin in brush streaks; chips through paint to steel, older ones rusted;
+dust on the decks, dirt run down the sides from seams, a dark film under overhangs; mud and frozen
+slush caked on the running gear and spattered up the lower hull; exhaust soot on the hull's rear
+plate; and on a burnt-out wreck the paint burnt off to scorched, rusting steel. The shade pass gives
+them the Tiger's worn edges (bare steel at the creases) and corner grime at their own loads
+(`Renderer::set_worn_vehicles`, the nearest 16 within 250 m). The friendly Tigers take the wear,
+mud and grime on their Panzergrau. Each record rides the mesh's push constant (now 128 bytes, the
+device floor).
+
+`KESSEL_SHOWCASE_SET=t34` (three T-34s beside the Tiger at 12, 45 and 160 m, 40 deg field, clear
+sun from behind the observer and a dry overcast; `KESSEL_VEHICLE_FINISH=0` for the source's
+materials): `captures/t34fin2_before_*` and `captures/t34fin2_after_*`, sheets
+`captures/t34fin2_sheet_{near,mid,far}.png` (before left, after right; clear above, overcast below).
+The yellow olive and its sun highlight are gone; the turret reads as a flat 4BO with streaks, the
+running gear carries slush and the lower front a band of mud; the three tanks differ in tone and one
+carries a scrubbed whitewash. The hull's decks are white in both: lying snow (`snow_cover`).
+
+**Image maps: not now.** At the internal grids the game runs (480x270 to 800x450, 40 deg) a pixel
+on a T-34 spans:
+
+| range | 800x450 | 480x270 |
+| --- | --- | --- |
+| 12 m | 1.9 cm (hull 345 px long) | 3.2 cm (207 px) |
+| 45 m | 7.3 cm (92 px) | 12 cm (55 px) |
+| 160 m | 26 cm (26 px) | 43 cm (16 px) |
+
+A texture authored at the detail that would justify one (a 1024 map over the 6.7 m hull, 0.65 cm a
+texel: welds, rivets, painted numbers, per-panel weathering) is minified 11 to 66 times from mid
+range out and averages to the colour the procedural layers already give; the masks above vary at 5
+cm to 1 m, which is what the pixels resolve. Only within about 15 m, where a pixel is under 3 cm, would
+authored detail show. If that range matters later (a wreck the crew walks past, a close kill), the
+cheap step is a world-space hex-tiled detail tile from the owner's PSX library (the pizza kit's metal
+and grime), as the terrain's detail layer does, blended in by distance; the model's UVs (present)
+would allow true maps, at the cost of authoring them per vehicle.
+
+Not done: the instanced scenery wrecks (the wreck library's props) keep their own materials (an
+instance would need its own seed in the instance record); the abandoned Tigers keep the source look
+(the player may take one over); the loads are fixed per vehicle, not accumulated from its driving
+and fighting; chips are a few centimetres, sub-pixel beyond about 15 m; the relayed views and the
+shader backend take the new colour and roughness but not the masks.
+
+## The relays' sparks and grains in combat (2026-10-28)
+
+Round 14's 300 s Low smoke had its worst frames in combat at the loader's station:
+`analytic-thousandfold-sparks` 54.5 ms (a 234 ms frame) and 45.9 ms, against 2.6 ms in an ordinary
+combat second. Both of the relays' one-pixel effect passes are the shader backend's, drawn once
+per relayed port: the weapon sparks and ejecta (`renderer_weapon_particles.rs`) and the fire and
+soot grains (`renderer_fine_vfx.rs`, the `native-pixel-hdr-effects` pass). Their sample caps were
+absolute and sized for a whole frame: 1,536,000 sparks and 8,388,608 grains a view. A port is
+240x136. In one 76.2 mm HE strike 15 m ahead (`KESSEL_BENCH_IMPACT`, below) three ports each drew
+1,536,000 sparks (47 a pixel, half of them ground ejecta) and one drew 3,478,528 grains from
+1,722 overlapping smoke parcels (some 36 deep), and every grain and ejecta pixel runs the full
+medium light: the environment lanes, the sun through the atlas and each point light's cabin
+shadow and weather march. Not the spark count alone, not overdraw from sparks near the eye: the
+caps ignored how few pixels a port has, and the per-pixel cost scales with the lights.
+
+- **A budget per native pixel of the port** (`RaymarchQuality::relay_effect_samples_per_pixel`:
+  Low 8, High 16, Ultra 32; `relay_effect_budget`), for each of the two passes. The shader
+  backend's own main view keeps the absolute caps.
+- **Sparks over budget are thinned, not dropped** (`weapon_particle_math::thinned_counts`): each
+  visible burst draws its share of what the hot rims (never thinned) leave, never fewer than its
+  source count, and the shader weighs each sample by source / drawn, so the shower's light is the
+  same in fewer samples. Ground ejecta keep the full count's grain size and take the optical depth
+  of the grains each sample stands for. Before, a burst over the cap was left out whole.
+- **Grains keep their coverage rule** (at least two samples per covered pixel of a parcel, so no
+  grain is opaque): optional density goes first, then whole far parcels, counted as omitted
+  (`omitted_projected_area_px`). In the strike above the port kept the nearest 108 of 986 parcels;
+  the rest lay behind them.
+
+`gfxbench-drive 330 10 PRESET 137` with `KESSEL_BENCH_IMPACT=15,0,60` (an HE strike every second),
+480x272, commander's station, three ports, idle 4090; "before" is the same build with
+`KESSEL_RELAY_EFFECT_SPP=1000` (the old caps):
+
+| | Low before | Low after | High before | High after |
+| --- | --- | --- | --- | --- |
+| port sparks, worst frame | 16.6 ms | 3.8 ms | 23.9 ms | 8.4 ms |
+| port grains, worst frame | 78.0 ms | 6.6 ms | 69.2 ms | 11.3 ms |
+| frame p99 / mean | 84.1 / 26.5 ms | 32.2 / 24.4 ms | 84.7 / 32.6 ms | 42.9 / 30.8 ms |
+
+Parked at the commander's station (act 1, `gfxbench day 200`, same strikes, Low): grains 21.0 ->
+4.4 ms and sparks 8.0 -> 2.1 ms at worst, frame p99 49.6 -> 28.9 ms. `captures/relayfx_sheet.png`
+(old caps, Low, High, one second after the last strike): on Low the dust and spark spray in the
+vision blocks is sparser and more speckled; High is close to the old picture.
+
+Bench switches: `KESSEL_BENCH_IMPACT=AHEAD_M,RIGHT_M,PERIOD` (gfxbench and gfxbench-drive) fires a
+76.2 mm HE shell (6.2 kg, 680 m/s, 20 deg down) into the ground ahead of the tank every PERIOD
+timed frames: the detonation's blast record and the ground ejecta record, nothing else
+(`Game::debug_ground_strike`). gfxbench prints each pass's worst frame; gfxbench-drive with
+`KESSEL_BENCH_RECEIPTS=1` prints the spark and grain receipts of its worst effects frame.
+`KESSEL_RELAY_EFFECT_SPP` overrides the preset's rate.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The

@@ -39,6 +39,8 @@ struct Frame {
     puffs: array<vec4<f32>, 39>,  // 13 x ([pos, age], [dir, strength], [radius, density, phase, albedo])
     cabin_air: RmCabinAir,        // the player's cabin air domains (cabin_medium.rs; rm_visibility.wgsl)
     cabin_motion: array<mat4x4<f32>, 3>, // per domain: world point now -> same frame point last frame
+    worn_count: vec4<f32>,        // x other vehicles worn at their edges and corners (Renderer::set_worn_vehicles)
+    worn: array<vec4<f32>, 32>,   // per vehicle: centre xyz + reach m, then mechanical wear, exterior grime
 };
 // cabin_medium.rs `Uniform` (shaders/cabin_medium.wgsl `CabinMedium`): hull, turret, cupola.
 struct RmCabinAir {

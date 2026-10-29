@@ -729,7 +729,8 @@ impl Renderer {
         for view in optics.prepared.borrow().iter() {
             let layer=&optics.layers[view.port];
             let prepared=self.prepare_fine_vfx_view(device,queue,&view.camera,view.extent,
-                &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port));
+                &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port),
+                crate::graphics::active_preset().raymarch().relay_effect_budget(view.extent));
             frames.insert(view.port,prepared);
         }
     }
@@ -740,7 +741,8 @@ impl Renderer {
         for view in optics.prepared.borrow().iter() {
             let layer=&optics.layers[view.port];
             let frame=self.prepare_weapon_particle_view(device,queue,&view.camera,view.extent,
-                &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port));
+                &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port),
+                crate::graphics::active_preset().raymarch().relay_effect_budget(view.extent));
             frames.insert(view.port,frame);
         }
     }

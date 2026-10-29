@@ -31,6 +31,14 @@ pub fn run(from_s: f32, render_s: f32, requested_preset: Option<graphics::Graphi
     let mut passes: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
     let mut walls = Vec::new();
     let mut fenced = 0usize;
+    let mut worst_effects = (0.0f64, serde_json::Value::Null);
+    // `KESSEL_BENCH_IMPACT=AHEAD_M,RIGHT_M,PERIOD`, as in gfxbench: an HE ground strike every PERIOD
+    // rendered frames, that far ahead of and right of the tank.
+    let impact = std::env::var("KESSEL_BENCH_IMPACT").ok().map(|value| {
+        let v: Vec<f32> = value.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        anyhow::ensure!(v.len() == 3 && v[2] >= 1.0, "KESSEL_BENCH_IMPACT is AHEAD_M,RIGHT_M,PERIOD");
+        Ok((v[0], v[1], v[2] as usize))
+    }).transpose()?;
     let steps = ((from_s + render_s) / dt).ceil() as usize;
     for step in 0..steps {
         let t = step as f32 * dt;
@@ -43,6 +51,12 @@ pub fn run(from_s: f32, render_s: f32, requested_preset: Option<graphics::Graphi
         if t < from_s {
             if step % 8 == 0 { crate::simulation_uploads::drain(&device, &queue)?; }
             continue;
+        }
+        if let Some((ahead, right, _)) = impact.filter(|&(_, _, period)| walls.len() % period == 0) {
+            let forward = g.player.forward();
+            let point = g.player.pos + forward * ahead + Vec3::new(-forward.z, 0.0, forward.x) * right;
+            let incoming = (-forward * 20f32.to_radians().cos() - Vec3::Y * 20f32.to_radians().sin()) * 680.0;
+            g.debug_ground_strike(point, incoming, 6.2, 76.2, &r);
         }
         crate::simulation_uploads::drain(&device, &queue)?;
         r.begin_gpu_profile_frame();
@@ -57,6 +71,14 @@ pub fn run(from_s: f32, render_s: f32, requested_preset: Option<graphics::Graphi
         let mut frame: std::collections::BTreeMap<String, f64> = Default::default();
         for (label, ms) in r.read_gpu_profile_frame(&device, &queue)? { *frame.entry(label).or_default() += ms; }
         fenced += 1;
+        // The spark and grain receipts of the frame whose port effects cost the most so far.
+        let effects = frame.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0)
+            + frame.get("native-pixel-hdr-effects").copied().unwrap_or(0.0);
+        if std::env::var_os("KESSEL_BENCH_RECEIPTS").is_some() && effects > worst_effects.0 {
+            worst_effects = (effects, serde_json::json!({"t": t, "station": format!("{:?}", g.station),
+                "sparks_ms": frame.get("analytic-thousandfold-sparks"), "grains_ms": frame.get("native-pixel-hdr-effects"),
+                "sparks": r.debug_weapon_particle_receipt(), "grains": r.debug_fine_vfx_receipt()}));
+        }
         for (label, ms) in frame { passes.entry(label).or_default().push(ms); }
         if step % 600 == 0 {
             println!("[gfxbench-drive] t={t:.0} s station {:?} speed {:.1} m/s at ({:.0}, {:.0})",
@@ -78,6 +100,7 @@ pub fn run(from_s: f32, render_s: f32, requested_preset: Option<graphics::Graphi
         (sum / fenced as f64, label.clone(), n, p50, p95, p99, max)
     }).collect();
     rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    if !worst_effects.1.is_null() { println!("[gfxbench-drive] worst port effects frame: {}", worst_effects.1); }
     let (passes, tiles) = r.sky_visibility_static_redraws();
     println!("[gfxbench-drive] visibility atlas: {passes} static passes redrew {tiles} tiles ({:.1} a pass)",
         tiles as f64 / passes.max(1) as f64);
