@@ -39,11 +39,23 @@ pub fn run(from_s: f32, render_s: f32, requested_preset: Option<graphics::Graphi
         anyhow::ensure!(v.len() == 3 && v[2] >= 1.0, "KESSEL_BENCH_IMPACT is AHEAD_M,RIGHT_M,PERIOD");
         Ok((v[0], v[1], v[2] as usize))
     }).transpose()?;
+    // `KESSEL_BENCH_SIM_LOG=PATH`: one JSON line per simulated second with `game.sim_phases_ms` (as the
+    // windowed session log has it) and that second's worst fenced sparks pass, so a headless run
+    // reads with tools/sim_calls.py and tools/sim_segments.py.
+    let mut sim_log = std::env::var_os("KESSEL_BENCH_SIM_LOG").map(std::fs::File::create).transpose()?;
+    let mut second_sparks = 0.0f64;
     let steps = ((from_s + render_s) / dt).ceil() as usize;
     for step in 0..steps {
         let t = step as f32 * dt;
         let input = pilot.step(&mut g, &r, t, dt);
         g.update(&input, dt, &mut r);
+        if let Some(file) = sim_log.as_mut().filter(|_| step > 0 && step % 60 == 0) {
+            use std::io::Write;
+            let line = serde_json::json!({"t_s": t, "game": {"sim_phases_ms": g.sim_phase.take(),
+                "station": format!("{:?}", g.station)}, "sparks_ms_max": second_sparks});
+            writeln!(file, "{line}")?;
+            second_sparks = 0.0;
+        }
         if g.game_over().is_some() || g.canyon_finished().is_some() {
             println!("[gfxbench-drive] the run ended at {t:.1} s");
             break;
@@ -72,6 +84,7 @@ pub fn run(from_s: f32, render_s: f32, requested_preset: Option<graphics::Graphi
         for (label, ms) in r.read_gpu_profile_frame(&device, &queue)? { *frame.entry(label).or_default() += ms; }
         fenced += 1;
         // The spark and grain receipts of the frame whose port effects cost the most so far.
+        second_sparks = second_sparks.max(frame.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0));
         let effects = frame.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0)
             + frame.get("native-pixel-hdr-effects").copied().unwrap_or(0.0);
         if std::env::var_os("KESSEL_BENCH_RECEIPTS").is_some() && effects > worst_effects.0 {
