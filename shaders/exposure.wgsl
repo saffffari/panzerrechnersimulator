@@ -139,6 +139,9 @@ fn rod_adaptation() -> f32 {
 fn relax(value: f32, goal: f32, tau: f32, dt: f32) -> f32 {
     return value + (goal - value) * (1.0 - exp(-dt / tau));
 }
+fn rise_tau(base_tau: f32, excess_log: f32) -> f32 {
+    return mix(base_tau, OBS_DAZZLE_TAU, smoothstep(OBS_DAZZLE_FROM_LOG, OBS_DAZZLE_FROM_LOG + 0.5, excess_log));
+}
 
 fn bleach_step(b: f32, retinal: f32, regeneration: f32, photosensitivity: f32, dt: f32) -> f32 {
     let bleached = 1.0 - (1.0 - b) * exp(-(retinal / photosensitivity) * dt);
@@ -146,7 +149,7 @@ fn bleach_step(b: f32, retinal: f32, regeneration: f32, photosensitivity: f32, d
 }
 
 fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: bool,
-           transient_source: bool, dt: f32) {
+           transient_source: bool, inside: bool, dt: f32) {
     let goal = pupil_diameter(lp, monocular);
     let constricting = goal < state[4];
     state[4] = relax(state[4], goal, select(OBS_PUPIL_DILATE_FAST_TAU, OBS_PUPIL_CONSTRICT_TAU,
@@ -159,10 +162,14 @@ fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: 
     let retinal_ratio = log10(area / pupil_area(goal));
     let cone_target = log10(lp) + retinal_ratio;
     let rod_target = log10(ls) + retinal_ratio;
+    // Rising: the comfortable rate; inside the hull, falling to the dazzle rate for a cabin decades
+    // brighter (observer::rise_tau).
+    let cone_rise = select(0.0, cone_target - state[8], inside);
+    let rod_rise = select(0.0, rod_target - state[9], inside);
     state[8] = relax(state[8], cone_target,
-        select(OBS_CONE_TAU_DOWN, OBS_CONE_TAU_UP, cone_target > state[8]), dt);
+        select(OBS_CONE_TAU_DOWN, rise_tau(OBS_CONE_TAU_UP, cone_rise), cone_target > state[8]), dt);
     state[9] = relax(state[9], rod_target,
-        select(OBS_ROD_TAU_DOWN, OBS_ROD_TAU_UP, rod_target > state[9]), dt);
+        select(OBS_ROD_TAU_DOWN, rise_tau(OBS_ROD_TAU_UP, rod_rise), rod_target > state[9]), dt);
     // Contrast alone mistakes a steady window for a new flash every frame. Detect onset
     // from threshold-independent field energy so changing adaptation cannot re-arm that window.
     let rising = field > OBS_FLASH_ONSET_RATIO * state[21];
@@ -243,7 +250,8 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         let wf = select(0.0, 1.0, angle <= fovea);
         sp += vec4(lp, wg * lp, wf * lp, 0.0);
         ss += vec4(ls, wg * ls, wf * ls, 0.0);
-        sw += vec4(1.0, wg, wf, lp);
+        // w: the frame's log10 luminance sum (its log-average, the inside reference's floor).
+        sw += vec4(1.0, wg, wf, log10(clamp_luminance(lp)));
         if (lp > flash_level) {
             sp.w += lp;
             ss.w += 1.0;
@@ -286,14 +294,21 @@ fn cs(@builtin(local_invocation_index) li: u32) {
     let inside = (mode & 1u) != 0u;
     let optic = (mode & 2u) != 0u;
     // Inside the hull (observer::inside_meter): a quarter of the cabin's log changes about the
-    // slow reference. The reference itself follows the meter everywhere.
+    // slow reference. The reference follows the meter everywhere and never lies below the frame's
+    // log-average (observer::inside_reference_floor): a port in view barely lifts the log-average,
+    // the whole cabin brightening (a fire) lifts it and the reference with it at once. The
+    // scotopic log-average is the photopic one shifted by the field's S/P ratio (named).
+    let log_average_p = w.w / max(w.x, 1.0);
+    let log_average_s = log_average_p + log10(clamp_luminance(field_s) / clamp_luminance(field_p));
     var lp = metered_p;
     var ls = metered_s;
     if (inside && state[1] >= 0.0) {
+        state[22] = max(state[22], log_average_p);
+        state[23] = max(state[23], log_average_s);
         lp = clamp_luminance(pow(10.0, state[22] + OBS_INSIDE_RESPONSE * (log10(metered_p) - state[22])));
         ls = clamp_luminance(pow(10.0, state[23] + OBS_INSIDE_RESPONSE * (log10(metered_s) - state[23])));
     }
-    let field = clamp_luminance(w.w / max(w.x, 1.0));
+    let field = clamp_luminance(field_p);
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);
     let monocular = clock.monocular > 0.5;
@@ -334,7 +349,7 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         let steps = u32(ceil(dt / OBS_MAX_STEP));
         let h = dt / f32(max(steps, 1u));
         for (var k = 0u; k < steps; k += 1u) {
-            substep(lp, ls, coverage, bright, field, monocular, clock.transient_source > 0.5, h);
+            substep(lp, ls, coverage, bright, field, monocular, clock.transient_source > 0.5, inside, h);
         }
     }
     write_mapping(monocular);

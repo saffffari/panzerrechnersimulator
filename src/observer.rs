@@ -76,6 +76,22 @@ pub const CONE_TAU_UP_S: f64 = 4.5;
 pub const CONE_TAU_DOWN_S: f64 = 6.0;
 pub const ROD_TAU_UP_S: f64 = 5.0;
 pub const ROD_TAU_DOWN_S: f64 = 8.0;
+/// Dazzle inside the hull (2026-10-28 night; `exposure.wgsl`, the eye's inside mode): the eye's
+/// light adaptation to a field far brighter than it is adapted to is fast, the receptors' gain
+/// falling within a second; the owner-directed 4.5 s above keeps glances from swinging the picture.
+/// Inside the hull a glance is already damped (`inside_meter`), so a target rising more than
+/// `DAZZLE_FROM_LOG` decades over the adapted level is the whole cabin brightening (a fire, the
+/// ammunition going up): it relaxes toward `DAZZLE_TAU_S`, reached half a decade further. Outside,
+/// the comfortable rates stand (`Eye::step`). The ammunition
+/// going up inside the hull (4.7 decades) had left the picture washed out for more than ten seconds.
+pub const DAZZLE_FROM_LOG: f64 = 0.5;
+pub const DAZZLE_TAU_S: f64 = 0.6;
+/// The time constant toward a brighter target `excess_log` decades above the adapted level.
+pub fn rise_tau(base_tau_s: f64, excess_log: f64) -> f64 {
+    let t = ((excess_log - DAZZLE_FROM_LOG) / 0.5).clamp(0.0, 1.0);
+    let w = t * t * (3.0 - 2.0 * t);
+    base_tau_s + (DAZZLE_TAU_S - base_tau_s) * w
+}
 
 pub const DISPLAY_ADAPTATION_CD_M2: f64 = 100.0;
 pub const DISPLAY_KEY: f64 = 0.18;
@@ -121,7 +137,11 @@ pub const MAX_STEP_S: f64 = 0.25;
 /// the hull the eye follows this share of the cabin's log-luminance changes, about a reference that
 /// follows the meter with `INSIDE_REFERENCE_TAU_S`. Looking from a dark corner to a lit port moves
 /// it a quarter as far; climbing in from daylight, the reference carries the dark adaptation over
-/// some tens of seconds; climbing out, the eye is outside and adapts at its own rates.
+/// some tens of seconds; climbing out, the eye is outside and adapts at its own rates. The reference
+/// never lies below the frame's log-average luminance (its geometric mean; 2026-10-28 night): a port
+/// in view barely lifts that, but the whole cabin brightening (a fire, the ammunition going up)
+/// lifts it and the reference with it at once. Following the meter alone, a burning cabin stayed
+/// clipped orange for twenty seconds.
 pub const INSIDE_RESPONSE: f64 = 0.25;
 pub const INSIDE_REFERENCE_TAU_S: f64 = 20.0;
 /// An optic's own eye (the TZF's field, the binoculars) that has not been looked through for this
@@ -136,11 +156,20 @@ pub fn inside_meter(meter: Meter, reference_log: [f64; 2]) -> Meter {
     Meter { photopic_cd_m2: damp(meter.photopic_cd_m2, reference_log[0]),
         scotopic_cd_m2: damp(meter.scotopic_cd_m2, reference_log[1]), ..meter }
 }
+/// The inside reference for a frame of log-average `log_average` (log10 photopic, scotopic): raised
+/// to it at once, never left below it.
+pub fn inside_reference_floor(reference_log: [f64; 2], log_average: [f64; 2]) -> [f64; 2] {
+    [reference_log[0].max(log_average[0]), reference_log[1].max(log_average[1])]
+}
 /// The inside reference after `dt_s` more of `meter` (log10 photopic, scotopic).
 pub fn inside_reference_step(reference_log: [f64; 2], meter: Meter, dt_s: f64) -> [f64; 2] {
     let k = 1.0 - (-dt_s.max(0.0) / INSIDE_REFERENCE_TAU_S).exp();
     [reference_log[0] + (meter.photopic_cd_m2.max(METER_MIN_CD_M2).log10() - reference_log[0]) * k,
      reference_log[1] + (meter.scotopic_cd_m2.max(METER_MIN_CD_M2).log10() - reference_log[1]) * k]
+}
+/// The log-average (log10 of the geometric mean) of a frame's luminances, the inside reference's floor.
+pub fn log_average(luminances: &[f64]) -> f64 {
+    luminances.iter().map(|l| l.max(METER_MIN_CD_M2).log10()).sum::<f64>() / luminances.len().max(1) as f64
 }
 
 /// What the meter reports for one frame.
@@ -539,6 +568,8 @@ pub fn wgsl_constants() -> String {
     push("OBS_CONE_TAU_DOWN", CONE_TAU_DOWN_S);
     push("OBS_ROD_TAU_UP", ROD_TAU_UP_S);
     push("OBS_ROD_TAU_DOWN", ROD_TAU_DOWN_S);
+    push("OBS_DAZZLE_FROM_LOG", DAZZLE_FROM_LOG);
+    push("OBS_DAZZLE_TAU", DAZZLE_TAU_S);
     push("OBS_DISPLAY_ADAPTATION", DISPLAY_ADAPTATION_CD_M2);
     push("OBS_DISPLAY_KEY", DISPLAY_KEY);
     push("OBS_ROD_SATURATION_TD", ROD_SATURATION_SCOT_TD);
@@ -997,6 +1028,22 @@ mod tests {
     }
 
     #[test]
+    fn a_dazzling_rise_adapts_within_seconds_an_ordinary_one_at_the_comfortable_rate() {
+        assert_eq!(rise_tau(CONE_TAU_UP_S, 0.4), CONE_TAU_UP_S);
+        assert!((rise_tau(CONE_TAU_UP_S, 3.0) - DAZZLE_TAU_S).abs() < 1e-12);
+        // The ammunition going up inside the hull: 4.7 decades. Two seconds on the rising cone
+        // level, in 0.25 s steps as the GPU eye integrates, leave it within three quarters of a decade.
+        let mut level = 0.0f64;
+        for _ in 0..8 { level += (4.7 - level) * (1.0 - (-0.25 / rise_tau(CONE_TAU_UP_S, 4.7 - level)).exp()); }
+        assert!(4.7 - level < 0.75, "{level}");
+        let generated = wgsl_constants();
+        for name in ["OBS_DAZZLE_FROM_LOG", "OBS_DAZZLE_TAU"] {
+            assert!(generated.contains(name));
+            assert!(include_str!("../shaders/exposure.wgsl").contains(name), "{name} unused by the GPU eye");
+        }
+    }
+
+    #[test]
     fn inside_the_hull_the_eye_follows_a_quarter_of_the_cabin_and_the_reference_carries_the_rest() {
         let cabin = Meter::uniform(0.5, 0.8);
         let reference = [cabin.photopic_cd_m2.log10(), cabin.scotopic_cd_m2.log10()];
@@ -1017,6 +1064,32 @@ mod tests {
             assert!(generated.contains(name));
             assert!(include_str!("../shaders/exposure.wgsl").contains(name), "{name} unused by the GPU eye");
         }
+    }
+
+    #[test]
+    fn inside_the_hull_a_glance_at_a_port_is_damped_but_a_burning_cabin_is_not() {
+        let cabin = [0.5f64.log10(), 0.8f64.log10()];
+        // A cabin at 0.5 cd/m^2 with a port of 5 % of the frame at 500: the port lifts the
+        // log-average 0.15 decades, which lies below the reference, so the floor leaves it and
+        // the gaze on the port moves the eye's target 10^(0.25 x 3) = 5.6 times, not 1,000.
+        let mut frame = vec![0.5; 95];
+        frame.extend([500.0; 5]);
+        let with_port = log_average(&frame);
+        assert!((with_port - (0.5f64.log10() + 0.05 * 3.0)).abs() < 1e-9);
+        let reference = inside_reference_floor(cabin, [with_port, with_port + 0.2]);
+        assert!(reference[0] - cabin[0] < 0.16, "{reference:?}");
+        let damped = inside_meter(Meter::uniform(500.0, 800.0), reference);
+        assert!(damped.photopic_cd_m2 < 0.5 * 10.0, "{}", damped.photopic_cd_m2);
+        // A sight's bright field filling the gaze with the cabin dark round it (the gunner at the
+        // TZF): the reference, followed to the meter, stays above the frame's log-average.
+        let followed = [5f64.log10(), 8f64.log10()];
+        assert_eq!(inside_reference_floor(followed, cabin), followed);
+        // The cabin on fire: everything 300 times brighter lifts the log-average as far, the
+        // reference with it at once, and the eye's target follows the cabin fully.
+        let burning = vec![150.0; 100];
+        let reference = inside_reference_floor(cabin, [log_average(&burning), 240f64.log10()]);
+        let damped = inside_meter(Meter::uniform(150.0, 240.0), reference);
+        assert!((damped.photopic_cd_m2 / 150.0 - 1.0).abs() < 1e-9);
     }
 
     #[test]

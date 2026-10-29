@@ -1658,6 +1658,77 @@ before left), `captures/dial_final_*`; lamps `captures/lamps_before_after.png`,
 `_commander_lamps_off.png`; sky `captures/sky_night_before_after.png`, `captures/sky_final_*`;
 speckle `captures/green_dots_clamp.png` (driver's post, before left).
 
+## A burning cabin, and flashes that stayed as discs (2026-10-28, night)
+
+The integrator's reel on main 1b8f797 (raymarch Ultra, 800x450) showed two faults.
+
+**The orange cabin.** In `blizzard-battle 30 inside` a T-34 holes the Tiger's side at 9.5 s, the
+ammunition goes up ("CATASTROPHIC — ammunition detonation") and from then to the end the whole cabin
+frame is orange, low in contrast, nothing readable. The probe (`KESSEL_RM_PROBE`) puts a cabin wall
+at 1e-6 before and 0.05 (red) after: the burning cabin is about a third as bright as sunlit snow,
+a believable energy. What was wrong was the eye and the air:
+
+- The inside eye damped every change to a quarter about a reference that followed the meter over
+  20 s: a burning cabin, 4.7 decades up, stayed washed out for tens of seconds. The reference now
+  never lies below the frame's log-average luminance (its geometric mean, summed in the meter's
+  reduction; `observer::inside_reference_floor`). A port or the sight's bright field in view barely
+  lifts the log-average, which stays below the reference, so the glance damping and every ordinary
+  cabin view are unchanged (the fireflies set renders with identical frame statistics and
+  flicker); the whole cabin brightening lifts it, and the reference with it, at once. (A first
+  try anchored the eye to the log-average outright: it brightened the gunner's cabin round the
+  sight to grey daylight and five times the visible noise, and was dropped.)
+- Inside, a rise of more than half a decade over the adapted level is now the dazzle it is, at a
+  0.6 s time constant (`observer::rise_tau`); glances keep the owner's 4.5 s, and outside the hull
+  nothing changes (the 100 ms glance test stands).
+- The Tiger's own cook-off added a spark-shower glow: a uniformly emissive sphere growing to 60 m
+  round the hull for 17 s, and every media parcel, wherever its centre, was added to the cabin's
+  froxels. Exterior parcels now stay out of the cabin air (`parcel_medium`, the counterpart of the
+  rule that keeps the cabin's lights off the outside), and the glow is bounded (below).
+
+Frames 1.5, 3.5, 9.5 and 15.5 s after the detonation (`captures/screenshots/burning_cabin_before_after.png`,
+clip `captures/videos/burning_cabin_before_after.mp4`), the frame's mean green and its spread,
+before -> after: 1.5 s after 138 -> 103 and 31 -> 41, 3.5 s after 131 -> 104 and 18 -> 30,
+9.5 s after 118 -> 80 and 24 -> 38, 15.5 s after 109 -> 81 and 27 -> 39; no channel clips in
+either. The fire stays orange (it is a fire) and the spall's glowing chips dot the walls; the
+breech and the mechanisms read within seconds.
+
+**The gun's flash as a disc.** In `drive_day` an orange disc with a pale ring stood beside the
+muzzle for two seconds after every shot, drifting with the world as the turret traversed. Neither
+a light nor a surface: the probe found it in the froxel grid's in-scatter, inside the snow cloud
+the report lifts. The flash is three frames of fire grains (kind 0 parcels at the muzzle); the
+grid's temporal filter took new estimates at 0.10 in clear air, so the flash's in-scatter stayed
+in the history, smeared wider by each frame's reprojection. Fault isolation, for the record:
+`KESSEL_RM_SKIP` 512 (grain parcels) removed it, 8, 4096, 8192, 128, 256 did not; with the fire
+grains' emission zeroed or the history off it was gone. History more than two to six times
+brighter or denser than the frame's fresh estimate is now stale and dropped toward it
+(`rm_volume.wgsl`): the flash shows for its three frames as a tight bloom and lights the snow,
+then only the report's snow cloud remains. The same rule ends the soft discs left by distant guns'
+flashes in the overhead `crew_battle`.
+
+**Spark showers as wedges and cones.** The overhead `crew_battle` (seed 20261029) showed a
+hard-edged pale orange wedge for half a second where a T-34's round glanced off at 3.3 s, and a
+solid orange cone rising from a T-34's cook-off at 4 s. Neither glare nor a medium: painting the
+ricochet sparks (`rm_sparks.wgsl`, kind 2) a flat colour turned the wedge that colour. A cannon
+ricochet's record carries 384 sparks times `SPARK_MULTIPLIER` (1000) samples, a cook-off's 768
+times 1000, each drawn as one pixel in its own random direction: a continuous sheet, which,
+fanning toward the witness camera or rising as a plume, tiled into a solid shape. A ricochet's, a
+pressure vent's and a cook-off's sparks (kinds 2, 5, 6) are now drawn as they are, dotted streaks
+of eight samples (`SPARK_TRAIL`) along each spark's own path over 14 ms, each carrying its spark's
+whole light; the other samples are not drawn (as the heavy blast's sparks already were). Captures:
+`captures/screenshots/crew_battle_overhead_before_after.png`.
+
+**Fireballs as balloons.** A spark shower's glow in the air (`PARCEL_GLOW`, a soft sphere by
+construction) had grown to 3 m for 1.6 s round every armour hit and, for a full cook-off, to a
+60 m sphere rising 120 m for 17 s (the yellow balloon over the overhead `crew_battle`). Bounded now
+to a brief tight bloom: an armour hit's 0.5 m for 0.25 s, a pressure vent's 1.2 m, a cook-off's at
+most 2.5 m (`GLOW_MAX_RADIUS_M`) for 1.2 s. The sparks themselves, their lights and the fires carry
+the event (`KESSEL_SHOWCASE_SET=explosions`: a cook-off at 70 m and armour sparks at 245 m from
+beside the Tiger, live frames 0.1 to 10 s after). Captures:
+`captures/screenshots/glare_discs_before_after.png` (the drive_day flash, then the cook-off),
+`captures/screenshots/crew_battle_overhead_before_after.png` (the integrator's reel above, this
+build below); clips `captures/videos/crew_battle_overhead_before_after.mp4` and
+`captures/videos/drive_day_gun_flash_before_after.mp4`.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
