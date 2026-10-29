@@ -417,7 +417,9 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         var glow = vec3(0.0);
         if (kind > 1.5 && kind < 2.5) {
             glow = raw.rgb * x + raw.rgb * max(x - 3.0, 0.0) * 0.15;
-            if (pc.extra.w > 0.5) {
+            // An indicator cube (pc.extra.w 4, Renderer::mark_indicator_lamp) glows uniformly on
+            // every face; the lens profile is the older modes' only.
+            if (pc.extra.w > 0.5 && pc.extra.w < 3.5) {
                 let lens = lamp_lens(in.local, glow, u32(pc.extra.w + 0.5));
                 housing = lens.w < 0.0;
                 glow = select(lens.rgb, vec3(0.0), housing);
@@ -453,6 +455,13 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         albedo = vec3(0.06, 0.058, 0.055);
         roughness = 0.45;
         metallic = 0.8;
+    }
+    if (kind > 1.5 && kind < 2.5 && pc.extra.w > 3.5 && pc.extra.w < 4.5) {
+        // An indicator cube switched off: dark glass in its colour (owner, 2026-10-28: "dark,
+        // unlit glass in its colour tint at low albedo"), a twelfth of the lit colour, glossy.
+        albedo = raw.rgb * 0.08;
+        roughness = 0.15;
+        metallic = 0.0;
     }
     if (kind > 2.5 && kind < 3.5) {
         // The campaign terrain material (snow cover, substrate, detail layers), shared with

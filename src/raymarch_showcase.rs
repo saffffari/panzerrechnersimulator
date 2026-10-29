@@ -88,6 +88,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("vehicles") { return run_vehicles(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("dial") { return run_dial(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("sky") { return run_sky_live(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("lamps") { return run_lamps(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("clouds") { return run_clouds(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("shafts") { return run_shafts(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
@@ -605,6 +606,90 @@ fn run_dial(prefix: &str) -> anyhow::Result<()> {
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "disclosure": "Staged fixture (banished enemies, held fire). Clock pinned at noon, then 19:00. The game's station cameras; one camera aimed at the TPZ from the gunner's eye. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=lamps`: every cabin lamp group close up on its plinth (`lamp_mounts`), lit
+/// and with the cabin lights switched off; then the gunner at the sight and the commander at his
+/// post, on and off. Noon, hatch shut, an armour-piercing round ready.
+fn run_lamps(prefix: &str) -> anyhow::Result<()> {
+    use crate::lamp_mounts::{self as mounts, Mount, MountFrame};
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_dome_on.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    rig.clock(&mut r, "1942-12-21T12:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    g.hatch_open = false;
+    rig.station_camera();
+    step(&mut g, &mut r, 60, &idle);
+    // Each group: its mount and offsets, the camera's distance out along the face and its lift.
+    let groups: [(&str, Mount, &[f32], f32); 7] = [
+        ("dome", mounts::DOME, &[0.0], 0.30),
+        ("annunciators", mounts::ANNUNCIATORS[1].0, &[0.04], 0.35),
+        ("breech_left", mounts::BREECH[0], &[0.0], 0.55),
+        ("breech_right", mounts::BREECH[1], &[0.0], 0.55),
+        ("gunner_sight_lamps", mounts::SIGHT[0][0].0, &[mounts::SIGHT[0][0].1, mounts::SIGHT[0][1].1], 0.25),
+        ("commander_sight_lamps", mounts::SIGHT[1][0].0, &[0.0], 0.25),
+        ("ignition", mounts::IGNITION, &[0.0], 0.25),
+    ];
+    for (name, mount, alongs, back) in groups {
+        for on in [true, false] {
+            g.set_cabin_lights(on);
+            step(&mut g, &mut r, 4, &idle);
+            let frame = match mount.frame {
+                MountFrame::Hull => g.player.hull_model(), MountFrame::Turret => g.player.turret_model(),
+                MountFrame::Gun => g.player.visual_gun_model(),
+            };
+            let centre = alongs.iter().map(|&a| frame.transform_point3(mount.lamp(0.008, a).transform_point3(Vec3::ZERO)))
+                .fold(Vec3::ZERO, |s, p| s + p) / alongs.len() as f32;
+            let normal = frame.transform_vector3(mount.normal).normalize();
+            // Look at the lamp from in front of its face and a little to the side, so the plinth
+            // and the face it stands on show.
+            let side = normal.cross(Vec3::Y).normalize_or_zero();
+            let side = if side.length_squared() > 0.0 { side } else { Vec3::X };
+            let eye = centre + normal * back + side * back * 0.45 + Vec3::Y * back * 0.2;
+            rig.observe(&mut r, eye, centre, if name.starts_with("breech") { 60.0 } else { 40.0 });
+            let state = if on { "on" } else { "off" };
+            rig.still(&mut r, &format!("{name}_{state}"), &format!("the {name} on their plinths, cabin lights {state}"))?;
+        }
+    }
+    rig.station_camera();
+    let (cw, ch) = (rig.cw, rig.ch);
+    for on in [true, false] {
+        let state = if on { "on" } else { "off" };
+        g.set_cabin_lights(on);
+        g.station = Station::Gunner;
+        step(&mut g, &mut r, 30, &idle);
+        let path = format!("{prefix}_gunner_{state}.png");
+        eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, cw, ch)))?;
+        rig.shots.push(serde_json::json!({ "name": format!("gunner_{state}"), "path": path, "note": format!("the gunner at the sight, cabin lights {state}") }));
+        g.station = Station::Commander;
+        step(&mut g, &mut r, 30, &idle);
+        rig.still(&mut r, &format!("commander_{state}"), &format!("the commander's post, cabin lights {state}"))?;
+    }
+    g.set_cabin_lights(true);
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.lamps.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies, held fire). Clock pinned at noon, hatch shut. Observer cameras aimed at each lamp group; then the game's station cameras. No image grading."
     }))?)?;
     Ok(())
 }

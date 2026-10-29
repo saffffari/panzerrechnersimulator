@@ -12728,13 +12728,10 @@ impl Game {
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
         // Every cabin lamp is a uniformly lit cube on its plinth, no bezel, frame or lens profile
         // (owner feedback 2026-10-28: "a fully lit cube, uniformly emissive, with no border").
-        for s in breech_lamp.into_iter().flatten() {
-            renderer.mark_own_emissive(s); // the reload lamp is a lamp
+        for s in breech_lamp.into_iter().flatten().chain(sight_lamps.into_iter().flatten()).chain([ignition_lamp]) {
+            renderer.mark_own_emissive(s); // the reload, sight and ignition lamps are lamps
+            renderer.mark_indicator_lamp(s);
         }
-        for s in sight_lamps.into_iter().flatten() {
-            renderer.mark_own_emissive(s);
-        }
-        renderer.mark_own_emissive(ignition_lamp);
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
         let authored_grass_mask = manifest.as_ref().and_then(|m|
             m.value()["terrain"]["ground_class"].as_str()).map(str::to_owned);
@@ -12993,6 +12990,8 @@ impl Game {
         // with their authored amber / white-grey instead of the FX orange. The bulb's mesh and
         // transported power are driven together; snow puffs sit idle until a near-miss arms one.
         renderer.mark_own_emissive(slots.bulb);
+        renderer.mark_indicator_lamp(slots.bulb);
+        for &s in &slots.annun { renderer.mark_indicator_lamp(s); }
         renderer.set_visible(slots.bulb, false);
         // The Enigma is an ordinary textured PBR object attached to the hull; it emits no light and
         // joins the same ray scene as the surrounding radio rack. The glasses are camera-local

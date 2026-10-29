@@ -1597,7 +1597,10 @@ lamp's power that washed his post red, is a 1.2 cm cube on his panel at an indic
 (`interior_rig::IGNITION_FIXTURE`). The test `every_cabin_lamp_stands_on_a_plinth_on_one_flat_face`
 checks each footprint against the source GLB. A switch, `Game::set_cabin_lights` (and
 `toggle_cabin_lights`, `cabin_lights_on`), turns them all and the TPZ's illuminator off: each lamp
-stays a visible unlit cube and its light is zero. No key is bound; the switch's sound can drive it.
+stays a visible cube of dark glass in its colour (a twelfth of its lit colour, glossy;
+`Renderer::mark_indicator_lamp`, `lamp_lens` 4) and its light is zero. `KESSEL_SHOWCASE_SET=lamps`
+shows every group close up, on and off, and the gunner's and commander's posts
+(`captures/lamps_close_sheet.png`, `captures/lamps_station_sheet.png`). No key is bound; the switch's sound can drive it.
 No authored lamp exists outside the tank: the Canyon and act manifests carry no lights, the
 buildings' room fixtures are PSX ceiling panels placed at ceiling height, and fires, flares and
 blasts are transient sources.
