@@ -7624,6 +7624,9 @@ struct LooseShell {
     drop_rest: shell_collision::DropRest,
     impact_cooldown: f32,
     sounded_at: Vec3, // turret-local place of its last contact sound
+    /// Its one landing since it was dropped, released or knocked loose has sounded; later
+    /// bounces, slides and the hull's rocking are silent (a new drop is a new body).
+    landed: bool,
 }
 
 // Every cartridge in the initial physical inventory can be set down without deleting another
@@ -8270,6 +8273,9 @@ struct Casing {
     rotation: Quat,
     angular_vel: Vec3,
     impact_cooldown: f32,
+    /// Its one landing since it was ejected, dropped, tossed or heaved has sounded; later
+    /// bounces, slides and the hull's rocking are silent. Reset while it is carried.
+    landed: bool,
     /// Riding the loader's hands: the lightweight hand spring supplies its pose.
     carried: bool,
     drop_rest: shell_collision::DropRest,
@@ -18710,6 +18716,7 @@ impl Game {
             drop_rest: shell_collision::DropRest::default(),
             impact_cooldown: 0.0,
             sounded_at: Vec3::splat(f32::MAX),
+            landed: false,
         };
         self.ram = 0.0;
         self.grab = false;
@@ -29723,6 +29730,7 @@ impl Game {
             rotation: self.carry_rotation,
             angular_vel: Vec3::new(s(4) - 0.5, s(5) - 0.5, s(6) - 0.5).normalize_or_zero() * (3.0 + 6.0 * s(7)),
             impact_cooldown: 0.0,
+            landed: false,
             drop_rest: shell_collision::DropRest::default(),
             aboard: false,
             outside_rest: false,
@@ -29749,6 +29757,7 @@ impl Game {
         }
         let case = &mut self.casings[k];
         case.carried = false;
+        case.landed = false;
         case.drop_rest = shell_collision::DropRest::default();
         case.impact_cooldown = 0.0;
         case.pos = self.carry_pos;
@@ -30745,8 +30754,11 @@ impl Game {
             sh.rotation = (turret_rotation.conjugate() * body.rotation).normalize();
             sh.angular_vel = inv.transform_vector3(body.angular_velocity);
             sh.impact_cooldown = (sh.impact_cooldown - dt.max(0.0).min(0.1)).max(0.0);
-            if cartridge_contact_audible(&report) && sh.impact_cooldown <= 0.0
+            // One sound per real drop: the first audible landing (its level follows the impact
+            // speed, i.e. the height it fell). Bounces and the hull's rocking after it are silent.
+            if !sh.landed && cartridge_contact_audible(&report) && sh.impact_cooldown <= 0.0
                 && contact_has_travelled(&report, sh.pos, sh.sounded_at) {
+                sh.landed = true;
                 sh.impact_cooldown = 0.120;
                 sh.sounded_at = sh.pos;
                 contacts.push(crate::audio::CartridgeContact {
@@ -31233,6 +31245,8 @@ impl Game {
             if !c.active { r.set_visible(slot, false); continue; }
             c.impact_cooldown = (c.impact_cooldown - dt.max(0.0)).max(0.0);
             if c.carried {
+                // In the hands: its next landing is a new drop.
+                c.landed = false;
                 c.pos = self.carry_pos;
                 c.rotation = self.carry_rotation;
                 c.angular_vel = self.carry_angular_vel;
@@ -31367,8 +31381,10 @@ impl Game {
                 }
             }
             let place = turret_inverse.transform_point3(c.pos);
-            if cartridge_contact_audible(&report) && c.impact_cooldown <= 0.0
+            // One sound per real drop (see `LooseShell::landed`).
+            if !c.landed && cartridge_contact_audible(&report) && c.impact_cooldown <= 0.0
                 && contact_has_travelled(&report, place, c.sounded_at) {
+                c.landed = true;
                 c.impact_cooldown = 0.120;
                 c.sounded_at = place;
                 contacts.push(crate::audio::CartridgeContact {
