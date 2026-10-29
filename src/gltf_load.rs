@@ -16,6 +16,45 @@ use std::sync::Arc;
 #[path = "gltf_material_channels.rs"]
 mod material_channels;
 
+/// A constant roughness below this on an opaque dielectric with no roughness map that is not glass
+/// is an exporter's default, not an authored polish: the 2026-10-28 audit of every GLB found 92
+/// such materials at exactly 0 (the wreck library's KV-1, T-34-85, Panther and Tiger II, the live
+/// T-34, the PSX kit's planks and panels), each a near mirror that caught the sky as a "weird
+/// highlight" no other surface had. They take `UNAUTHORED_ROUGHNESS`, the Tiger's own paint.
+const UNAUTHORED_ROUGHNESS_BELOW: f32 = 0.3;
+const UNAUTHORED_ROUGHNESS: f32 = 0.75;
+fn source_roughness(material: &gltf::Material<'_>) -> f32 {
+    let pbr = material.pbr_metallic_roughness();
+    let roughness = pbr.roughness_factor();
+    // `KESSEL_GLB_SOURCE_ROUGHNESS=1` keeps every source factor (review of the before).
+    static SOURCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *SOURCE.get_or_init(|| std::env::var("KESSEL_GLB_SOURCE_ROUGHNESS").as_deref() == Ok("1")) {
+        return roughness;
+    }
+    let name = material.name().unwrap_or("").to_ascii_lowercase();
+    let glass = name.contains("glass") || name.contains("lens") || material.alpha_mode() == gltf::material::AlphaMode::Blend;
+    if roughness < UNAUTHORED_ROUGHNESS_BELOW && pbr.metallic_factor() < 0.5
+        && pbr.metallic_roughness_texture().is_none() && !glass {
+        UNAUTHORED_ROUGHNESS
+    } else {
+        roughness
+    }
+}
+
+/// A painted (base-colour textured) material with a constant metallic factor of 0.5 or more and
+/// no metallic-roughness map makes every texel bare metal: the audit's one case is the frozen
+/// casualty's body (`deadman_prone.glb`, metallic 1.0), which mirrored the sky. It is a dielectric.
+/// Untextured metal (the rifle's steel, the round's brass) keeps its factor.
+fn source_metallic(material: &gltf::Material<'_>) -> f32 {
+    let pbr = material.pbr_metallic_roughness();
+    let metallic = pbr.metallic_factor();
+    if metallic >= 0.5 && pbr.base_color_texture().is_some() && pbr.metallic_roughness_texture().is_none() {
+        0.0
+    } else {
+        metallic
+    }
+}
+
 #[derive(Clone)]
 pub struct CpuImage {
     pub width: u32,
@@ -234,6 +273,8 @@ pub(crate) fn load_glb_partitioned_roots_with_source_transforms(
     let (doc, buffers, images) = gltf::import_slice(&bytes)
         .with_context(|| format!("import glTF resource {path:?} resolved to {resolved:?}"))?;
     let mut pages: Vec<_> = (0..=moving_roots.len()).map(|_| MeshAccum::new()).collect();
+    // The wreck library's vehicles carry their own finishes (`tank::wreck_library_finish`).
+    let finish = finish.or_else(|| crate::tank::wreck_library_finish(path));
     for page in &mut pages { page.mats.material_override = finish; }
     let mut found = vec![false; moving_roots.len()];
 
@@ -527,8 +568,8 @@ fn walk(
                 // breech steel or other unselected nodes that use the same material identity.
                 material: finish.map(|f| usize::MAX - usize::from(f.swatch)).or(material.index()), vertices: base as usize..vertices.len(),
                 base: finish.map_or(pbr.base_color_factor(), |f| f.base),
-                metallic: finish.map_or(pbr.metallic_factor(), |f| f.metallic),
-                roughness: finish.map_or(pbr.roughness_factor(), |f| f.roughness),
+                metallic: finish.map_or(source_metallic(&material), |f| f.metallic),
+                roughness: finish.map_or(source_roughness(&material), |f| f.roughness),
                 base_textured: pbr.base_color_texture().is_some(),
                 any_textured,
             });
@@ -734,7 +775,8 @@ mod partition_tests {
                     assert!(material.metallic_roughness_texture().is_none());
                     assert!(primitive.material().normal_texture().is_none());
                     let count = primitive.get(&gltf::Semantic::Positions).unwrap().count();
-                    out.push((count, material.metallic_factor(), material.roughness_factor()));
+                    // The loader's reading of the source (`source_roughness`: an unauthored 0 is paint).
+                    out.push((count, material.metallic_factor(), super::source_roughness(&primitive.material())));
                 }
             }
             for child in node.children() { collect(child, out); }
@@ -761,6 +803,47 @@ mod partition_tests {
             }
             assert_eq!(cursor, loaded.vertices.len(), "all source primitives covered");
         }
+    }
+
+    #[test]
+    fn the_wreck_library_has_colour_and_a_paint_finish() {
+        // The KV-1's body had no base colour (glTF white) at roughness 0: it loads as 4BO paint.
+        let kv1 = load_glb("assets/tanks/wrecks/kv1.glb").unwrap();
+        let base = kv1.texture.as_ref().unwrap();
+        let mr = kv1.metallic_roughness_texture.as_ref().unwrap();
+        let columns: Vec<([u8; 3], u8)> = (0..base.width as usize)
+            .map(|c| ([base.rgba[c * 4], base.rgba[c * 4 + 1], base.rgba[c * 4 + 2]], mr.rgba[c * 4 + 1])).collect();
+        assert!(columns.iter().all(|(rgb, _)| *rgb != [255, 255, 255]), "no white default left: {columns:?}");
+        assert!(columns.iter().any(|(rgb, _)| *rgb == crate::tank::SOVIET_4BO_SRGB), "{columns:?}");
+        assert!(columns.iter().all(|(_, r)| *r >= 150), "no mirror left: {columns:?}");
+        assert!(crate::tank::wreck_library_finish("assets/tanks/wrecks/is2.glb").is_none());
+    }
+
+    #[test]
+    fn an_unauthored_zero_roughness_is_paint_but_glass_and_maps_keep_theirs() {
+        // The audit's outliers: the KV-1 wreck's body and the PSX kit's planks were exact zeros.
+        let bytes = crate::resource::read("assets/tanks/wrecks/kv1.glb").unwrap();
+        let source = gltf::Gltf::from_slice(&bytes).unwrap();
+        let body = source.materials().find(|m| m.name() == Some("KV-1 Body")).unwrap();
+        assert_eq!(body.pbr_metallic_roughness().roughness_factor(), 0.0);
+        assert_eq!(super::source_roughness(&body), super::UNAUTHORED_ROUGHNESS);
+        let port = crate::resource::read("assets/tanks/tiger/baked/tiger_port_turret.glb").unwrap();
+        let port = gltf::Gltf::from_slice(&port).unwrap();
+        let glass = port.materials().find(|m| m.name() == Some("Glass")).unwrap();
+        assert_eq!(super::source_roughness(&glass), glass.pbr_metallic_roughness().roughness_factor());
+    }
+
+    #[test]
+    fn a_painted_texture_is_not_bare_metal_but_brass_stays_brass() {
+        let body = crate::resource::read("assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb").unwrap();
+        let body = gltf::Gltf::from_slice(&body).unwrap();
+        let skin = body.materials().find(|m| m.name() == Some("HoboTexture_dead")).unwrap();
+        assert_eq!(skin.pbr_metallic_roughness().metallic_factor(), 1.0);
+        assert_eq!(super::source_metallic(&skin), 0.0);
+        let round = crate::resource::read("assets/tanks/tiger/baked/tiger_part_round.glb").unwrap();
+        let round = gltf::Gltf::from_slice(&round).unwrap();
+        let brass = round.materials().find(|m| m.name() == Some("brass")).unwrap();
+        assert_eq!(super::source_metallic(&brass), 1.0);
     }
 
     #[test]

@@ -43,7 +43,14 @@ impl Record {
         if self.meta[3]==HOT_RIM {return self.parameters[0]+self.parameters[1]+0.003;}
         let t=self.origin_age[3].max(0.0);
         // Conservative analytic ballistic bound, including the retained physical streak support.
-        0.5+(if self.meta[3]==FULL_COOKOFF {110.0}else{44.0*self.parameters[2].max(1.0)})*t+4.905*t*t
+        // Ground ejecta leave at most at their own speed (`sample`'s `max_speed`, under 11 m/s for
+        // the 6.1 m apex), not the sparks' 44 m/s: a quarter of the radius, a sixteenth of the area.
+        let speed=match self.meta[3] {
+            FULL_COOKOFF=>110.0,
+            GROUND=>(2.0*self.parameters[0]/self.parameters[1].max(0.0001)).sqrt().min((2.0*9.81*GROUND_APEX_TARGET_M).sqrt()),
+            _=>44.0*self.parameters[2].max(1.0),
+        };
+        0.5+speed*t+4.905*t*t
     }
 }
 /// Explicit thin heated-rim estimate, not a constitutive perforation or melting solver.
@@ -106,6 +113,18 @@ pub fn ground_speed_share(u:f32)->f32 {
 /// burst carries the same emission in fewer, brighter samples; ground grains keep the grain size
 /// of the full count and take its optical depth (`weapon_particles.wgsl`). The shares are floored,
 /// so they fit; only source counts that cannot fit exceed the budget, which the caller omits.
+/// The samples burst `r` may draw at `distance` m in a view of `extent` pixels whose pixel spans
+/// `pixel_angle` rad: `rate` samples a pixel over the pixels its support radius covers (at least
+/// one), never fewer than its source count nor more than it requested; hot rims are never thinned.
+/// The support is the conservative ballistic bound, so a near burst keeps its full count.
+pub fn footprint_count(r:Record,distance:f32,pixel_angle:f32,rate:f32,extent:[u32;2])->u32 {
+    let full=r.meta[1];
+    if r.meta[3]==HOT_RIM || r.meta[3]==TRACER || !(distance.is_finite() && pixel_angle>0.0 && rate>0.0) {return full;}
+    let radius_px=r.support_radius()/(distance.max(0.1)*pixel_angle);
+    let area=(std::f32::consts::PI*radius_px*radius_px).clamp(1.0,(extent[0]*extent[1]) as f32);
+    let cap=(rate*area).ceil() as u64;
+    (cap.min(u64::from(full)) as u32).max(r.meta[2].min(full)).max(1)
+}
 pub fn thinned_counts(bursts:&[Record],budget:u64)->Vec<u32> {
     let requested:u64=bursts.iter().map(|r|u64::from(r.meta[1])).sum();
     let fixed=|r:&Record|r.meta[3]==HOT_RIM || r.meta[3]==TRACER;
@@ -263,6 +282,34 @@ mod tests {
         assert_eq!(emitted,MAX_SPARKS_PER_VIEW);
         // Independent samples divide the old total weight; multiplying count cannot multiply power.
         for area in [0.001_f64,1.0,37.0] {assert!((area/1000.0*1000.0-area).abs()<1e-10);}
+    }
+    #[test] fn a_distant_burst_draws_no_more_samples_than_its_pixels_hold() {
+        let blast=Record {origin_age:[0.0,0.0,0.0,0.3],direction_life:[0.0,0.0,1.0,1.85],normal_offset:[0.0,1.0,0.0,0.0],
+            parameters:[0.0,0.0,1.0,0.0],meta:[7,384*SPARK_MULTIPLIER,384,BLAST]};
+        let (angle,rate,extent)=(2.0*(0.35f32).tan()/136.0,8.0,[240u32,136]);
+        // At 600 m its support covers some sixty pixels: a few hundred samples, not 384,000, and
+        // never fewer than its source count.
+        let far=footprint_count(blast,600.0,angle,rate,extent);
+        assert!((384..1000).contains(&far), "{far}");
+        // Near, it covers the port: the view's rate over every pixel, then the view budget.
+        assert_eq!(footprint_count(blast,15.0,angle,rate,extent),(240*136*8).min(384_000));
+        let rim=Record {meta:[1,RIM_SAMPLES,RIM_SAMPLES,HOT_RIM],..blast};
+        assert_eq!(footprint_count(rim,600.0,angle,rate,extent),RIM_SAMPLES);
+    }
+    #[test] fn ground_ejecta_stay_inside_their_own_speed_support() {
+        // A 76.2 mm HE strike's ejecta: fast enough to hit the 6.1 m apex cap (10.9 m/s).
+        for t in [0.02f32,0.3,1.0,2.5] {
+            let ground=Record {origin_age:[3.0,1.0,-2.0,t],direction_life:[0.3,-0.34,0.89,3.0],normal_offset:[0.0,1.0,0.0,0.0],
+                parameters:[40_000.0,40.0,1.0,220.0],meta:[11,384*SPARK_MULTIPLIER,384,GROUND]};
+            let support=ground.support_radius();
+            assert!(support<0.5+11.0*t+4.905*t*t, "{support} at {t} s");
+            let origin=ground.origin();
+            for index in 0..ground.meta[1].min(20_000) {
+                if let Some(s)=sample(ground,index) {
+                    assert!(s.center.distance(origin)<=support, "sample {index} at {t} s beyond {support} m");
+                }
+            }
+        }
     }
     #[test] fn a_view_over_budget_thins_every_burst_and_keeps_its_light() {
         let burst=|kind:u32,source:u32|Record {origin_age:[0.0;4],direction_life:[0.0,0.0,1.0,1.85],normal_offset:[0.0,1.0,0.0,0.0],
