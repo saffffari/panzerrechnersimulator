@@ -2883,6 +2883,15 @@ pub struct Renderer {
     /// on the first frame — instanced batches arrive after Renderer::new.
     rt_tlas: Option<wgpu::Tlas>,
     rt_tlas_cap: u32,
+    /// The raymarch backend's split scene (`rt_update_split`): `rt_tlas` holds the meshes and the
+    /// moving pools, rebuilt every frame; this TLAS the static instanced batches, rebuilt only when
+    /// one of them changes. wgpu 27 handles every instance of a TLAS on every build (about 0.2 us
+    /// each on the CPU), and the ~16k static instances cost ~3 ms a frame (2026-10-28).
+    pub(crate) rt_split: bool,
+    pub(crate) rt_static_tlas: Option<wgpu::Tlas>,
+    rt_static_cap: u32,
+    rt_static_count: u32,
+    rt_static_dirty: bool,
     /// Frames whose ray scene overflowed the TLAS, the instances missing in the latest frame, and
     /// the overflow last reported (logged again whenever it changes).
     rt_overflow_frames: u64,
@@ -3911,6 +3920,12 @@ impl Renderer {
         // for the raymarch backend's ray queries, which leave the physical deferred path off.
         let rt_scene = device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
             && (rt_on || crate::graphics::raymarch_ray_queries_wanted());
+        // The raymarch backend's ray queries read a static and a per-frame TLAS (two acceleration
+        // structures in one stage); the physical integrator keeps the one combined TLAS.
+        // `KESSEL_RT_SPLIT=0` keeps the combined one for A/B (and for `bvhview`, which sees one).
+        let rt_split = rt_scene && !rt_on
+            && device.limits().max_acceleration_structures_per_shader_stage >= 2
+            && std::env::var("KESSEL_RT_SPLIT").as_deref() != Ok("0");
         // S4: the deferred combine IS the ray integrator — no RT, no deferred (Low tier
         // = the forward path).
         let deferred = rt_on
@@ -5882,7 +5897,9 @@ impl Renderer {
         persist_physical_pipeline_cache(pipeline_cache.as_ref(), pipeline_cache_path.as_deref());
 
         let raymarch = crate::graphics::raymarch_backend_enabled()
-            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih, rt_scene, &cabin_medium_view));
+            .then(|| raymarch::Backend::new(device, &material_bgl, &track_bgl, &terrain_detail_view, &terrain_detail_sampler, &sky_depth_pipe, iw, ih,
+                // Its ray queries read two TLASes (`rt_split`) in one stage.
+                rt_scene && device.limits().max_acceleration_structures_per_shader_stage >= 2, &cabin_medium_view));
         Self {
             // Standard stays at the playtested 0.7; [ ] still dials continuously in-game, while
             // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.
@@ -6128,6 +6145,11 @@ impl Renderer {
             optic_hide_pass: false,
             rt_tlas: None,
             rt_tlas_cap: 0,
+            rt_split,
+            rt_static_tlas: None,
+            rt_static_cap: 0,
+            rt_static_count: 0,
+            rt_static_dirty: true,
             rt_overflow_frames: 0,
             rt_overflow_now: 0,
             rt_overflow_reported: None,
@@ -6746,6 +6768,7 @@ impl Renderer {
             b.flags = flags;
             if rt_membership_changed {
                 self.rt_batches_dirty = true;
+                self.rt_static_dirty = true;
                 if self.rt_on {
                     self.rt_surface_dirty = true;
                     self.combine_rt_bind = None;
@@ -7055,6 +7078,7 @@ impl Renderer {
             batches.push(batch);
         }
         self.rt_batches_dirty = true;
+        self.rt_static_dirty = true;
         if self.rt_on {
             self.rt_surface_dirty = true;
             self.combine_rt_bind = None;
@@ -7259,6 +7283,7 @@ impl Renderer {
             self.reassign_instanced_object_ids();
         }
         self.rt_batches_dirty = true;
+        self.rt_static_dirty = true;
         let mut wmin = glam::Vec3::splat(f32::INFINITY);
         let mut wmax = glam::Vec3::splat(f32::NEG_INFINITY);
         for t in transforms {
@@ -7414,6 +7439,7 @@ impl Renderer {
         if rt_member {
             // Visible counts define the compact TLAS layout; the source records do not change.
             self.rt_batches_dirty = true;
+            self.rt_static_dirty = true;
         }
         true
     }
@@ -7456,6 +7482,7 @@ impl Renderer {
         self.inst_spatial_index.update(handle.batch, Some(bounds));
         if rt_member {
             self.rt_batches_dirty = true;
+            self.rt_static_dirty = true;
         }
         true
     }
@@ -9622,6 +9649,110 @@ impl Renderer {
 
     /// The compact TLAS layout of the current scene: mesh slots, then each ray-visible page's
     /// visible instances.
+    /// One TLAS instance per live (unhidden) instance of the chosen batches, from `first_slot`.
+    fn rt_write_batches(&self, tlas: &mut wgpu::Tlas, plan: &RtInstancedSlotPlan, cap: usize) {
+        for (batch_index, b) in self.inst_batches.iter().enumerate() {
+            let Some(start) = plan.offsets.get(batch_index).copied().flatten() else { continue };
+            let Some(set) = &self.inst_prototypes[b.prototype].blas else { continue };
+            let mut slot = start as usize;
+            for instance in 0..b.inst_count {
+                if b.is_hidden(instance) {
+                    continue;
+                }
+                if slot >= cap {
+                    break;
+                }
+                tlas[slot] = b.cpu_mats.get(instance as usize).map(|mat| {
+                    wgpu::TlasInstance::new(
+                        &set.blas,
+                        crate::rt::rows_3x4(*mat),
+                        b.object_custom_data(instance),
+                        crate::rt::MASK_PROTO,
+                    )
+                });
+                slot += 1;
+            }
+        }
+    }
+
+    /// A TLAS of at least `needed` instances (rounded up to 1024, at most the device's limit).
+    fn rt_ensure_tlas(device: &wgpu::Device, tlas: &mut Option<wgpu::Tlas>, cap: &mut u32, needed: u32, label: &str) -> bool {
+        if tlas.is_some() && *cap >= needed {
+            return false;
+        }
+        let size = needed.max(1).next_multiple_of(1024).min(TLAS_MAX_INSTANCES);
+        *tlas = Some(device.create_tlas(&wgpu::CreateTlasDescriptor {
+            label: Some(label),
+            max_instances: size,
+            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+            update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+        }));
+        *cap = size;
+        true
+    }
+
+    /// The raymarch backend's split scene (`rt_split`): the meshes and the moving pools in the
+    /// per-frame TLAS (`rt_tlas`), the other instanced batches in the static one, rebuilt only
+    /// when a static batch changes (`rt_static_dirty`). Same instances, masks and custom data as
+    /// the combined layout; the raymarch's queries take the nearer hit of the two.
+    fn rt_update_split(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let pools: Vec<Option<u32>> = self.inst_batches.iter()
+            .map(|b| (b.moving_rt_pool && self.batch_in_ray_scene(b)).then_some(b.rt_live_count()))
+            .collect();
+        let plan = plan_rt_instanced_slots(self.meshes.len() as u32, &pools).expect("RT instanced slot count overflow");
+        let needed = plan.end.min(TLAS_MAX_INSTANCES);
+        if Self::rt_ensure_tlas(device, &mut self.rt_tlas, &mut self.rt_tlas_cap, needed, "scene-tlas-dynamic") {
+            self.rt_prev_count = 0;
+        }
+        let mut tlas = self.rt_tlas.take().expect("dynamic tlas just ensured");
+        let cap = self.rt_tlas_cap as usize;
+        for (i, m) in self.meshes.iter().enumerate() {
+            if i >= cap {
+                break;
+            }
+            tlas[i] = match &m.blas {
+                Some(set) if m.visible && !m.raster_only => Some(wgpu::TlasInstance::new(
+                    &set.blas,
+                    crate::rt::rows_3x4(m.model),
+                    regular_object_custom_data(i, m.temporal_dynamic),
+                    if m.glass { crate::rt::MASK_GLASS } else { crate::rt::MASK_WORLD },
+                )),
+                _ => None,
+            };
+        }
+        self.rt_write_batches(&mut tlas, &plan, cap);
+        for i in rt_vacated_slots(self.rt_prev_count, needed, self.rt_tlas_cap) {
+            tlas[i] = None;
+        }
+        self.rt_prev_count = needed;
+        self.rt_tlas = Some(tlas);
+
+        let rebuild_static = self.rt_static_dirty || self.rt_static_tlas.is_none();
+        if rebuild_static {
+            let statics: Vec<Option<u32>> = self.inst_batches.iter()
+                .map(|b| (!b.moving_rt_pool && self.batch_in_ray_scene(b)).then_some(b.rt_live_count()))
+                .collect();
+            let plan = plan_rt_instanced_slots(0, &statics).expect("RT instanced slot count overflow");
+            let needed = plan.end.min(TLAS_MAX_INSTANCES);
+            if Self::rt_ensure_tlas(device, &mut self.rt_static_tlas, &mut self.rt_static_cap, needed, "scene-tlas-static") {
+                self.rt_static_count = 0;
+            }
+            let mut tlas = self.rt_static_tlas.take().expect("static tlas just ensured");
+            self.rt_write_batches(&mut tlas, &plan, self.rt_static_cap as usize);
+            for i in rt_vacated_slots(self.rt_static_count, needed, self.rt_static_cap) {
+                tlas[i] = None;
+            }
+            self.rt_static_count = needed;
+            self.rt_static_tlas = Some(tlas);
+            self.rt_static_dirty = false;
+        }
+        let static_tlas = self.rt_static_tlas.as_ref().filter(|_| rebuild_static);
+        encoder.build_acceleration_structures(
+            std::iter::empty::<&wgpu::BlasBuildEntry>(),
+            std::iter::once(self.rt_tlas.as_ref().unwrap()).chain(static_tlas),
+        );
+    }
+
     fn rt_slot_plan(&self) -> RtInstancedSlotPlan {
         let live_counts: Vec<Option<u32>> = self
             .inst_batches
@@ -9649,6 +9780,13 @@ impl Renderer {
         // Splitscreen views 2..N re-render the SAME sim frame: the TLAS built for view 1 is
         // exactly current — skip the rebuild (but never before the first build exists).
         if self.rt_skip && self.rt_tlas.is_some() && self.combine_rt_bind.is_some() {
+            return;
+        }
+        if self.rt_split {
+            if self.rt_skip && self.rt_tlas.is_some() && self.rt_static_tlas.is_some() {
+                return;
+            }
+            self.rt_update_split(device, encoder);
             return;
         }
         // A topology or live-count change computes a dense hardware layout. Reserved custom-data
@@ -10130,7 +10268,7 @@ impl Renderer {
                 .iter()
                 .filter(|p| p.blas.is_some())
                 .count();
-        (blases, self.rt_prev_count)
+        (blases, self.rt_prev_count + if self.rt_split { self.rt_static_count } else { 0 })
     }
 
     /// Render one full frame into the internal targets with no window and no readback — the
