@@ -201,7 +201,7 @@ struct Family {
 const SR: f32 = crate::acoustics::SAMPLE_RATE as f32;
 
 /// Leading silence trimmed to 2 ms before the first sample within 40 dB of the peak.
-fn trim_head(mono: &[f32]) -> Vec<f32> {
+pub(super) fn trim_head(mono: &[f32]) -> Vec<f32> {
     let peak = mono.iter().fold(0.0f32, |a, b| a.max(b.abs()));
     if peak <= 0.0 { return Vec::new(); }
     let onset = mono.iter().position(|x| x.abs() > peak * 0.01).unwrap_or(0);
@@ -213,7 +213,7 @@ fn trim_head(mono: &[f32]) -> Vec<f32> {
 }
 
 /// Linear-interpolation resample by `factor` (< 1 lowers pitch and lengthens).
-fn resample(mono: &[f32], factor: f32) -> Vec<f32> {
+pub(super) fn resample(mono: &[f32], factor: f32) -> Vec<f32> {
     if (factor - 1.0).abs() < 1e-4 || mono.len() < 2 { return mono.to_vec(); }
     let n = ((mono.len() - 1) as f32 / factor) as usize;
     (0..n).map(|i| {

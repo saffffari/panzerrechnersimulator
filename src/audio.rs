@@ -58,6 +58,9 @@ mod owner;
 mod hit_recordings;
 #[path = "audio_recorded_fx.rs"]
 mod recorded_fx;
+#[path = "audio_main_gun.rs"]
+mod main_gun;
+pub(crate) use main_gun::MainGunVoice;
 pub(crate) use recorded_fx::{BodyContact as RecordedBodyContact, Fx as RecordedFx, Material as RecordedMaterial,
     StepSurface as RecordedStepSurface, MAX_VOICES_PER_UPDATE as RECORDED_FX_VOICES_PER_UPDATE};
 pub(crate) use hit_recordings::{hardness_of as hit_hardness_of, high_pass as hit_high_pass, HitFamily, HitVoice};
@@ -1608,6 +1611,8 @@ pub struct Audio {
     hit_bank: hit_recordings::HitBank,
     /// The owner's other library recordings (equipment, breech, wounds, materials, footsteps...).
     recorded_fx: recorded_fx::RecordedBank,
+    /// Candidate own-gun voices, composed on first use (`MainGunVoice`).
+    main_gun: main_gun::MainGunBank,
     local_acoustics: std::cell::Cell<(crate::acoustics::ReverbParams, bool)>,
     /// The listener's enclosure this frame, for the continuous exterior voices' direction cues.
     listener_enclosure: std::cell::Cell<crate::sound_propagation::Enclosure>,
@@ -1888,6 +1893,7 @@ impl Audio {
             owner_bank,
             hit_bank,
             recorded_fx,
+            main_gun: Default::default(),
             local_acoustics: std::cell::Cell::new((crate::acoustics::ReverbParams::STEEL_INTERIOR, true)),
             listener_enclosure: std::cell::Cell::new(crate::sound_propagation::Enclosure::Buttoned),
             local_room: RefCell::new(None),

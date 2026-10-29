@@ -51,6 +51,8 @@ mod game_acoustics;
 mod game_hit_sounds;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
+#[path = "main_gun_candidates.rs"]
+pub(crate) mod main_gun_candidates;
 #[path = "hit_sounds_proof.rs"]
 pub(crate) mod hit_sounds_proof;
 #[path = "sound_world_proof.rs"]
@@ -2791,6 +2793,32 @@ const DISTANT_RECORDING_M: f32 = 700.0;
 const OUTSIDE_BLAST_LAYER_DB: f32 = -6.0;
 /// The recording made inside a firing tank, for a listener inside, relative to the main one.
 const INSIDE_RECORDING_LAYER_DB: f32 = -3.0;
+
+/// THE OWN GUN'S VOICE — the one line to change when the owner picks a candidate from the
+/// `main-gun-candidates` renders (`audio::MainGunVoice`: Current, A, B, C). `Current` keeps the
+/// shipping layer stack below.
+pub(crate) const MAIN_GUN_VOICE: crate::audio::MainGunVoice = crate::audio::MainGunVoice::Current;
+/// OWNER-DIRECTED PRESENTATION for a candidate own-gun voice heard aboard or head-out: the
+/// reproduced level sits this far under the calibrated one (the physical level still drives the
+/// ears), so the loudest sound in the game stays out of the master limiter.
+pub(crate) const MAIN_GUN_PRESENT_TRIM_DB: f32 = -4.0;
+/// A candidate own-gun voice's sample peak is held here, under the master limiter's ceiling, so
+/// its attack is never squashed (the shipping stack drives the limiter 7–15 dB).
+pub(crate) const MAIN_GUN_PEAK_CAP_DBFS: f32 = -4.0;
+
+/// The ear a candidate own-gun voice is placed at: the presentation trim for the firer, and
+/// buttoned up the hull's airborne insertion loss over the headset (the blast is outside the
+/// plates: a dark thump inside).
+pub(crate) fn main_gun_presented_ear(mut ear: crate::sound_propagation::EarLevel, firer: bool, buttoned: bool)
+    -> crate::sound_propagation::EarLevel
+{
+    if firer { ear.laf_db += MAIN_GUN_PRESENT_TRIM_DB; }
+    if buttoned {
+        let hull = crate::sound_propagation::Enclosure::Buttoned.insertion_loss_bands();
+        for (t, h) in ear.transfer_db.iter_mut().zip(hull) { *t += h; }
+    }
+    ear
+}
 
 /// Share of the horizon, 0 to 1, that the ground closes off around a listener: sixteen bearings,
 /// each looked along at 60, 150 and 320 m for ground standing above a 6 degree line of sight.
@@ -26448,6 +26476,24 @@ impl Game {
         // Buttoned up, the shot is voiced to the owner's listening references: a dark roar that
         // the cabin holds. With a hatch open or the head out, the path decides as before.
         let buttoned = matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned);
+        // A candidate voice (`MAIN_GUN_VOICE`): one source voice at the calibrated level, the
+        // presentation trim, the hull's loss buttoned up, the cabin's or the open ground's room.
+        let candidate = (MAIN_GUN_VOICE != crate::audio::MainGunVoice::Current)
+            .then(|| self.audio.as_ref().and_then(|a| a.main_gun_voice(MAIN_GUN_VOICE))).flatten();
+        if let Some(mono) = candidate {
+            let mut heard = ear;
+            if !buttoned { heard.transfer_db = transfer; }
+            self.hear_recording_at_ear(pick, &heard, bearing);
+            let shown = main_gun_presented_ear(heard, true, buttoned);
+            let traced = if buttoned { self.acoustic_room_for(muzzle) } else { None };
+            let room = match &traced {
+                Some(ir) => crate::audio::Room::Traced(ir),
+                None => crate::audio::Room::Parametric(if buttoned { crate::acoustics::ReverbParams::STEEL_INTERIOR } else { reverb }),
+            };
+            if let Some(audio) = &self.audio {
+                audio.play_world_mono_in_room_peak_capped(&mono, &shown, bearing, room, MAIN_GUN_PEAK_CAP_DBFS);
+            }
+        } else {
         let (transfer, reverb) = if buttoned {
             (crate::audio::CABIN_GUN_MAIN_LOSS_DB, crate::audio::CABIN_GUN_REVERB)
         } else { (transfer, reverb) };
@@ -26484,6 +26530,7 @@ impl Game {
                 audio.play_world_at_ear(crate::audio::Sfx::PlayerGunInt2, &inside, 0.0,
                     crate::acoustics::ReverbParams::DIRECT);
             }
+        }
         }
         if let Some(a) = &self.audio {
             a.play_mechanical(
