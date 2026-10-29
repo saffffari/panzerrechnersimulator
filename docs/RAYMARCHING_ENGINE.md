@@ -837,7 +837,8 @@ emitting light. Metal looks too new too, should have more dirt and grime."
   Bare steel keeps its worn-bright edges (the shade pass).
 - Lamps (`lamp_lens`, `Renderer::mark_lamp_lens`): each face of a lamp's cube is a round lens in a
   dark steel bezel, a hot whitened core over a deeper rim, and a glint where the filament shows; the
-  dome lamp behind a wire cage. The lens carries the face's whole emission, so the light transported
+  dome lamp behind a wire cage. The indicator lamps lost the bezel that evening (`mark_lamp_face`,
+  "Vehicle materials and indicator lamps" below). The lens carries the face's whole emission, so the light transported
   is unchanged. The raymarch frame's compact camera halo is now 0.06 at half the spread
   (`RM_BLOOM_INTENSITY`, `RM_BLOOM_SPREAD`; the shader backend keeps 0.18): at the old strength a
   lamp a few pixels across sat in a flat glow many times its size. The eye's own scatter is the veil.
@@ -1408,8 +1409,9 @@ cheap step is a world-space hex-tiled detail tile from the owner's PSX library (
 and grime), as the terrain's detail layer does, blended in by distance; the model's UVs (present)
 would allow true maps, at the cost of authoring them per vehicle.
 
-Not done: the instanced scenery wrecks (the wreck library's props) keep their own materials (an
-instance would need its own seed in the instance record); the abandoned Tigers keep the source look
+Not done: the instanced scenery wrecks (the wreck library's props) take a paint and track steel at
+load (that evening, below) but not the per-vehicle masks (an instance would need its own seed in
+the instance record); the abandoned Tigers keep the source look
 (the player may take one over); the loads are fixed per vehicle, not accumulated from its driving
 and fighting; chips are a few centimetres, sub-pixel beyond about 15 m; the relayed views and the
 shader backend take the new colour and roughness but not the masks.
@@ -1463,6 +1465,84 @@ timed frames: the detonation's blast record and the ground ejecta record, nothin
 (`Game::debug_ground_strike`). gfxbench prints each pass's worst frame; gfxbench-drive with
 `KESSEL_BENCH_RECEIPTS=1` prints the spark and grain receipts of its worst effects frame.
 `KESSEL_RELAY_EFFECT_SPP` overrides the preset's rate.
+
+**The tail: a strike's first frames at range** (evening). The integrator's 300 s A/B (round 15)
+still had one 28.1 ms `analytic-thousandfold-sparks` frame at the loader's port, with two spark
+records. A per-pixel budget bounds a port's samples, not where they land: in the first frames of a
+strike the whole burst lies within half a metre of its origin, and at 60 m that is a few pixels.
+`gfxbench day 240 ... low` with `KESSEL_BENCH_STATION=loader KESSEL_BENCH_IMPACT=60,0,30` and
+`KESSEL_BENCH_RECEIPTS=1`: the worst frame (11.4 ms) was the first strike's first frame, 261,120
+samples, half of them ground ejecta, blended into a dozen pixels one after another.
+
+- **Each burst draws at most the view's rate over the pixels its support covers**
+  (`weapon_particle_math::footprint_count`, at least one pixel and never fewer than its source
+  count; rims and tracers as before), before the budget is shared. The samples carry the source /
+  drawn weight, so the light is the same.
+- **The ground ejecta's support is their own speed** (`Record::support_radius`: under 11 m/s for the
+  6.1 m apex), not the sparks' 44 m/s bound, which made their support sixteen times the area they
+  fill and the cap moot. The bound is still conservative, and it also culls the raymarch view's
+  ejecta more tightly.
+
+Worst port-sparks frame, Low, 480x272, act 1 parked, a 76.2 mm HE strike every half second straight
+ahead (before = `KESSEL_SPARK_FOOTPRINT=0`, the bench switch that skips the cap):
+
+| strike ahead | loader before | loader after | commander before | commander after |
+| --- | --- | --- | --- | --- |
+| 15 m | 2.46 ms | 1.73 ms | 2.14 ms | 2.24 ms |
+| 60 m | 11.37 ms | 2.08 ms | 11.79 ms | 1.92 ms |
+| 150 m | 9.63 ms | 1.81 ms | 11.40 ms | 2.27 ms |
+| 400 m | 5.48 ms | 1.30 ms | 7.47 ms | 1.15 ms |
+
+The mean at 150 m at the loader went from 5.73 to 1.28 ms a frame. The port's picture is the same
+(`captures/sparks_footprint_ab.png`: 60 m above, 150 m below; left without the cap, right with).
+
+## Vehicle materials and indicator lamps (2026-10-28, evening)
+
+Owner feedback: a "weird highlight" on the KV-1, the T-34 and some other models, and of the small
+green indicator lamps, "whats up with these lights they now have metal borders?".
+
+**The audit.** Every material in every GLB under `assets/` (2,484 in 1,461 files) was read for
+roughness and metallic outliers and for anything that leaves the shading path:
+
+- 104 opaque, untextured dielectrics under roughness 0.3, 92 of them at exactly 0, the exporter's
+  default: the wreck library's KV-1, T-34-85, Panther and Tiger II, the live T-34's source (already
+  given its 4BO finish that afternoon), and the PSX kit's planks and panels. At roughness 0 the shade
+  pass draws a mirror: each caught the sky as a sharp highlight no other surface had.
+- The wreck library's KV-1 body, Panther body and wheels and Tiger II camouflage had no base colour,
+  which glTF reads as white: a white mirror, the KV-1 beside the Tiger in Canyon v2 the worst.
+- One painted texture with a constant metallic of 1.0 and no metallic map, the frozen casualty's body
+  (`deadman_prone.glb`): bare metal skin. The rest of the metal is untextured and genuine (the
+  rifle's steel, cartridge brass) or is replaced by the Tiger's own finish.
+- No GLB emission reaches the renderer (the loader reads none), and the clearcoat, specular and
+  transmission extensions are ignored, so no source material skips the scene's shading. The one
+  special case in the shade pass was the worn edges of the Tiger and the 16 nearest vehicles: a
+  pixel-wide steel rim on every crease however far away, the rim along the KV-1's and T-34's edges.
+
+**The fixes.**
+
+- `gltf_load::source_roughness`: a constant roughness under 0.3 on an opaque dielectric without a
+  roughness map that is not glass becomes 0.75, the Tiger's paint; `source_metallic`: a painted
+  texture with a constant metallic of 0.5 or more and no map is a dielectric.
+  `KESSEL_GLB_SOURCE_ROUGHNESS=1` shows the source factors.
+- `tank::wreck_library_finish` paints the library's wrecks at load: KV-1 and T-34-85 in 4BO with
+  track steel, Panther and Tiger II in Panzergrau with track steel (the ledger names the anachronism).
+- The worn edge covers the share of the pixel its 12 mm strip fills (`RM_WORN_STRIP_M`), so a
+  distant tank's edges are no longer bright lines.
+
+**The lamps.** The bezel was the `lamp_lens` profile's housing: each 1 to 2.4 cm cube face a round
+lens in dark steel. The breech's reload lamps, the sight's loading and round lamps and the
+annunciators are now indicator lamps (`Renderer::mark_lamp_face`, `lamp_lens` mode 3): the G-buffer
+cuts the cube's corners away (`lamp_face_cut`), lit or dark, so each reads as a small round glass
+with its hot core and glint and nothing round it. A first try that lit the whole square face read as
+a dim flat square, the look the lenses had replaced. The dome lamp keeps its caged housing.
+
+Captures (480x270, High; `KESSEL_SHOWCASE_SET=vehicles`, the map's KV-1 wreck between a T-34 and the
+Tiger at 16 and 45 m, clear and dry overcast; before = `KESSEL_GLB_SOURCE_ROUGHNESS=1
+KESSEL_VEHICLE_FINISH=0`): `captures/vehicles_before_*`, `captures/vehicles_after2_*`, sheets
+`captures/vehicles_sheet_clear.png`, `captures/vehicles_sheet_overcast.png` and the KV-1 close
+`captures/vehicles_kv1_sheet.png`. Lamps: `captures/lamps_crop4.png` (the gunner at the TZF: the
+afternoon's bezels, the evening's eye with bezels, round lenses without), from
+`captures/optics_lamps4_*`.
 
 ## A/B against the shader backend
 

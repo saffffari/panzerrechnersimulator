@@ -1516,7 +1516,8 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
-    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage.
+    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage; 3 an indicator's
+    /// round lens alone, no bezel (`mark_lamp_face`).
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
     snow_vehicle: bool,
@@ -6620,6 +6621,13 @@ impl Renderer {
     pub fn mark_instrument_cover(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.instrument_cover = true;
+        }
+    }
+    /// Mesh `idx` is an indicator lamp: the raymarch G-buffer draws it as the round lens alone, lit or
+    /// dark, the cube's corners cut away and no bezel (`rm_gbuffer.wgsl` `lamp_lens` mode 3).
+    pub fn mark_lamp_face(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.lamp_lens = 3;
         }
     }
     /// Flag own-colour emissive mesh `idx` as a lamp: the raymarch G-buffer draws each face as a

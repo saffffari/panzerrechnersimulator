@@ -88,10 +88,23 @@ impl Renderer {
             aabb_in_frustum(&planes,center-radius,center+radius)
         }).collect();
         let budget=budget.min(u64::from(math::MAX_SPARKS_PER_VIEW));
+        // Each burst first draws at most the view's samples a pixel over the pixels its support
+        // covers (`math::footprint_count`): a strike's first frames at 60 m otherwise piled a
+        // quarter of a million one-pixel blends onto a dozen pixels of a port (11 ms on the bench,
+        // 28 ms once in round 15).
+        let pixel_angle=2.0*(camera.fov_y*0.5).tan()/extent[1].max(1) as f32;
+        let rate=budget as f32/(extent[0].max(1)*extent[1].max(1)) as f32;
+        // `KESSEL_SPARK_FOOTPRINT=0` (bench switch): no footprint cap, the share of the budget alone.
+        static FOOTPRINT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let footprint=*FOOTPRINT.get_or_init(|| std::env::var("KESSEL_SPARK_FOOTPRINT").as_deref()!=Ok("0"));
+        let full:Vec<u32>=visible.iter().map(|b|b.meta[1]).collect();
+        let visible:Vec<_>=visible.into_iter().map(|mut b| {
+            if footprint {b.meta[1]=math::footprint_count(b,b.origin().distance(camera.pos),pixel_angle,rate,extent);}b
+        }).collect();
         let counts=math::thinned_counts(&visible,budget);
         let mut available=budget;
-        for (mut burst,drawn) in visible.into_iter().zip(counts) {
-            let count=burst.meta[1];frame.requested+=u64::from(count);
+        for ((mut burst,drawn),count) in visible.into_iter().zip(counts).zip(full) {
+            frame.requested+=u64::from(count);
             // Over budget every burst draws its share of samples (`math::thinned_counts`), each
             // carrying the emission of the samples it stands for: the shower's light is kept and
             // its density falls. Only a burst that cannot draw even its own source samples is

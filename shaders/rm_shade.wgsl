@@ -141,6 +141,8 @@ const RM_AO_BLEND: f32 = 0.15;
 // new bounce estimate may not exceed RM_GATHER_CAP times that history's luminance.
 const RM_GATHER_BLEND: f32 = 0.2;
 const RM_GATHER_CAP: f32 = 2.0;
+// Width of the paint worn through along an edge (an estimate), for the worn-edge share of a pixel.
+const RM_WORN_STRIP_M: f32 = 0.012;
 // shares: this texel's (rays open, screen open, contact ao, eye distance); local_*: the same-surface
 // 3 x 3 means of the open shares and the bounce.
 struct ShadeHistory { shares: vec4<f32>, bounce: vec3<f32>, valid: bool, local_shares: vec2<f32>, local_bounce: vec3<f32> };
@@ -455,7 +457,12 @@ fn fs(in: VsOut) -> ShadeOut {
                     crease = max(crease, 1.0 - dot(n, normalize(nq)));
                 }
             }
-            let worn_edge = smoothstep(0.12, 0.45, crease) * mech * (0.55 + 0.45 * still);
+            // Paint worn through along an edge is a strip about a centimetre wide; the crease is a
+            // pixel wide. Far off, a pixel spans many centimetres and the strip only part of it:
+            // without this every edge of a distant tank was a bright steel rim.
+            let pixel_m = dist * 2.0 / max(fr.view_proj[1][1] * fr.res.y, 1e-3);
+            let strip = clamp(RM_WORN_STRIP_M / max(pixel_m, 1e-4), 0.0, 1.0);
+            let worn_edge = smoothstep(0.12, 0.45, crease) * mech * (0.55 + 0.45 * still) * strip;
             // Worn through to steel (2026-10-28: bare metal where the paint wears, not pale paint).
             albedo = mix(albedo, vec3(0.50, 0.50, 0.48), worn_edge * 0.85);
             roughness = mix(roughness, 0.45, worn_edge);
