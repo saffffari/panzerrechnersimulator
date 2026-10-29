@@ -89,6 +89,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("dial") { return run_dial(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("sky") { return run_sky_live(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("lamps") { return run_lamps(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("fireflies") { return run_fireflies(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("clouds") { return run_clouds(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("shafts") { return run_shafts(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
@@ -606,6 +607,68 @@ fn run_dial(prefix: &str) -> anyhow::Result<()> {
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "disclosure": "Staged fixture (banished enemies, held fire). Clock pinned at noon, then 19:00. The game's station cameras; one camera aimed at the TPZ from the gunner's eye. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=fireflies`: the gunner at the sight as played, every frame simulated and
+/// rendered and every frame written at the internal grid (`{prefix}_{clip}_{frame:03}.png`), for
+/// the frame-to-frame flicker of the cabin round the eyepiece: overcast noon, the turret still and
+/// then traversing; the same at dusk with the cabin lights off. `KESSEL_FIREFLY_FRAMES` frames a
+/// clip (90).
+fn run_fireflies(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_noon_still_000.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let frames: u32 = std::env::var("KESSEL_FIREFLY_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    let preset = match std::env::var("KESSEL_GRAPHICS_PRESET").as_deref() {
+        Ok("low") => graphics::GraphicsPreset::Low, Ok("ultra") => graphics::GraphicsPreset::Ultra, _ => graphics::GraphicsPreset::High };
+    graphics::set_active_preset(preset);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let clock = |r: &mut crate::renderer::Renderer, utc: &str| -> anyhow::Result<()> {
+        let instant = ephemeris::UtcInstant::parse_iso(utc)?;
+        r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
+        Ok(())
+    };
+    clock(&mut r, "1942-12-21T12:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.station = Station::Gunner;
+    g.hatch_open = false;
+    let idle = TankInput::default();
+    step(&mut g, &mut r, 60, &idle);
+    let (iw, ih) = (r.iw, r.ih);
+    let mut clips = Vec::new();
+    for (clip, utc, lights, traverse) in [("noon_still", "1942-12-21T12:00:00Z", true, 0.0f32),
+                                          ("noon_traverse", "1942-12-21T12:00:00Z", true, 0.5),
+                                          ("dusk_still", "1942-12-21T13:40:00Z", true, 0.0),
+                                          ("dusk_dark_still", "1942-12-21T13:40:00Z", false, 0.0)] {
+        clock(&mut r, utc)?;
+        g.set_cabin_lights(lights);
+        let input = TankInput { traverse, ..TankInput::default() };
+        // Settle as the live loop would, then record.
+        for _ in 0..30 { g.update(&input, 1.0 / 60.0, &mut r); eyepiece_frame(&mut g, &mut r, &device, &queue, None)?; }
+        for frame in 0..frames {
+            g.update(&input, 1.0 / 60.0, &mut r);
+            let path = format!("{prefix}_{clip}_{frame:03}.png");
+            eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, iw, ih)))?;
+        }
+        clips.push(serde_json::json!({ "clip": clip, "clock_utc": utc, "cabin_lights": lights, "traverse": traverse, "frames": frames }));
+    }
+    g.set_cabin_lights(true);
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.fireflies.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "preset": format!("{preset:?}"), "internal_resolution": [iw, ih], "clips": clips, "skip": std::env::var("KESSEL_RM_SKIP").ok(),
+        "disclosure": "Staged fixture (banished enemies, held fire). Live frames at 60 Hz simulated time, the gunner's eyepiece composite as the live loop draws it, each frame written at the internal grid."
     }))?)?;
     Ok(())
 }
