@@ -67,8 +67,18 @@ const CLOUD_HAZE_M: f32 = 32000.0;
 
 struct CloudLayer { radiance: vec3<f32>, transmittance: f32, };
 
+// An integer hash of the pixel (2026-10-28). The sine hash it replaces, fract(sin(dot(p, k)) * 43758),
+// loses its low bits when the argument reaches 10^5 (a sky-cache texel's coordinates times k), and
+// its "noise" falls into bands.
 fn cloud_jitter(pixel: vec2<f32>) -> f32 {
-    return fract(sin(dot(pixel, vec2(127.1, 311.7))) * 43758.5453);
+    let p = vec2<u32>(vec2<i32>(floor(pixel)) & vec2(0x7fffffff));
+    var h = p.x * 1664525u + p.y * 2246822519u + 1013904223u;
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+    return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
 // Optical depth of cloud between `point` and the Sun: five samples, each step nearly twice the

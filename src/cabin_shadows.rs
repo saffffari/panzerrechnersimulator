@@ -1246,7 +1246,8 @@ mod tests {
         let position = crate::interior_rig::TURRET_DOME_LAMP_POS;
         let underside = crate::interior_rig::TURRET_FAN_UNDERSIDE_Y;
         let separation = underside - position.y;
-        assert!((separation - crate::interior_rig::TURRET_DOME_LAMP_HALF_SIZE).abs() < 1e-6);
+        // The lamp hangs one plinth height below the fan (`lamp_mounts`).
+        assert!((separation - crate::interior_rig::TURRET_DOME_LAMP_HALF_SIZE * (1.0 + crate::lamp_mounts::PLINTH_HEIGHT)).abs() < 1e-6);
         assert!(NEAR < separation && separation < 0.035);
         let projection = face_view_proj(position, 2);
         let blocker = projection.project_point3(glam::Vec3::new(position.x, underside, position.z));

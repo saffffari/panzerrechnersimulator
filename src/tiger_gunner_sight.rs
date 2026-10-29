@@ -69,6 +69,13 @@ pub fn load(tube: CpuMesh) -> anyhow::Result<Source> {
     })
 }
 
+/// The TZF's exit pupil and eye relief (estimates for a 2.5x sight; no published TZF 9 figure was
+/// found) and its apparent field (the 25 degree true field at 2.5x, by the tangent rule): seen from
+/// the cabin rather than from the eyecup, the eyepiece shows only the exit pupil's light
+/// (`raster_optics::Eyepiece`; owner feedback 2026-10-28, "like the sun inside the tank").
+pub const TZF_EXIT_PUPIL_M: f32 = 0.007;
+pub const TZF_EYE_RELIEF_M: f32 = 0.025;
+pub const TZF_APPARENT_FIELD_RAD: f32 = 1.012;
 /// Use the same linear, nearest-sampled exterior view and glass glow as the other optical panes.
 /// The circular source lens supplies the silhouette; the corners only fit its capture frustum.
 pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::RasterOpticSpec {
@@ -83,6 +90,15 @@ pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::Raster
         objective: crate::tank::TIGER_SIGHT_OBJECTIVE,
         objective_outward: Vec3::Z,
         preserve_ray_direction: false,
+        eyepiece: Some(crate::renderer::Eyepiece {
+            center: Vec3::new((lens.min.x + lens.max.x) * 0.5, (lens.min.y + lens.max.y) * 0.5, z),
+            // The entrance disk faces the gunner, down the gun's -z.
+            axis: -Vec3::Z,
+            lens_radius_m: (lens.max.x - lens.min.x).max(lens.max.y - lens.min.y) * 0.5,
+            exit_pupil_radius_m: TZF_EXIT_PUPIL_M * 0.5,
+            eye_relief_m: TZF_EYE_RELIEF_M,
+            half_field_rad: TZF_APPARENT_FIELD_RAD * 0.5,
+        }),
     }
 }
 

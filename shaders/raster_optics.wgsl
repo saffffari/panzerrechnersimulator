@@ -30,10 +30,11 @@ struct PaneOutput { @location(0) color: vec4<f32>, @location(1) glow: vec4<f32> 
 @fragment fn fs(in: Out) -> PaneOutput {
     // 2 identifies a visible exterior relay; 1 remains the ordinary lamp-lens glow mask.
     // Both are depth-tested on the real pane, so a hidden/occluded optic cannot seed bloom.
-    return PaneOutput(vec4(relayed(in), 1.0), vec4(0.0, 0.0, 0.0, 2.0));
+    return PaneOutput(vec4(relayed(in) * panel.eye.w, 1.0), vec4(0.0, 0.0, 0.0, 2.0));
 }
-// The raymarch backend's panel: the same relayed radiance, one target.
-@fragment fn fs_relay(in: Out) -> @location(0) vec4<f32> { return vec4(relayed(in), 1.0); }
+// The raymarch backend's panel: the same relayed radiance, one target. `panel.eye.w` is the share
+// of the field an eyepiece passes to this eye (raster_optics::Eyepiece); 1 for a vision block.
+@fragment fn fs_relay(in: Out) -> @location(0) vec4<f32> { return vec4(relayed(in) * panel.eye.w, 1.0); }
 fn relayed(in: Out) -> vec3<f32> {
     // A pane direction outside the captured field takes the nearest captured direction instead
     // of leaving a black hole in a daylit block (see OFF_AXIS_ACCEPTANCE in raster_optics.rs).

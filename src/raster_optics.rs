@@ -48,6 +48,50 @@ pub struct RasterOpticSpec {
     /// The source relay has been verified to preserve incident direction. Use the actual
     /// observer pupil, without re-aiming a tilted entrance normal toward the horizon.
     pub preserve_ray_direction: bool,
+    /// A telescope's eyepiece (the gunner's sight), not a vision block: its image leaves through a
+    /// small exit pupil (`Eyepiece::radiance_scale`).
+    pub eyepiece: Option<Eyepiece>,
+}
+
+/// A telescope eyepiece seen from the cabin. Its field reaches an eye only through the exit
+/// pupil, a few millimetres across and an eye relief behind the glass: an eye there sees the whole
+/// lens filled with the field; an eye farther off sees the field only where the lens lines up with
+/// the pupil, a spot the pupil's size; beyond the apparent field it sees the dark tube. A vision
+/// block's glass is the size of its image and shows the field from anywhere in front of it.
+#[derive(Clone, Copy, Debug)]
+pub struct Eyepiece {
+    /// The lens centre and the axis toward the eye, in the mesh's frame.
+    pub center: Vec3,
+    pub axis: Vec3,
+    pub lens_radius_m: f32,
+    pub exit_pupil_radius_m: f32,
+    pub eye_relief_m: f32,
+    /// Half the apparent field (the true field times the magnification).
+    pub half_field_rad: f32,
+}
+
+impl Eyepiece {
+    /// The share of the field's radiance the pane shows to an eye at `eye` (world), with the mesh
+    /// at `model`: 1 with the eye in the exit pupil (within `EYE_BOX_M` of it); farther off, the
+    /// exit pupil's share of the lens's area, the spot's light spread over the lens (the mean a few
+    /// pixels of lens resolve; named approximation); 0 outside the apparent field.
+    pub fn radiance_scale(&self, model: Mat4, eye: Vec3) -> f32 {
+        const EYE_BOX_M: f32 = 0.02;
+        let axis = model.transform_vector3(self.axis).normalize_or_zero();
+        let pupil = model.transform_point3(self.center + self.axis.normalize_or_zero() * self.eye_relief_m);
+        let lens = model.transform_point3(self.center);
+        let to_eye = eye - lens;
+        let off_axis = to_eye.normalize_or_zero().dot(axis).clamp(-1.0, 1.0).acos();
+        let in_field = 1.0 - smoothstep(self.half_field_rad - 0.05, self.half_field_rad + 0.05, off_axis);
+        let far = (self.exit_pupil_radius_m / self.lens_radius_m.max(1e-4)).powi(2).min(1.0);
+        let near = 1.0 - smoothstep(EYE_BOX_M, 3.0 * EYE_BOX_M, eye.distance(pupil));
+        (far + (1.0 - far) * near) * in_field
+    }
+}
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 #[derive(Clone)]
@@ -580,7 +624,9 @@ impl Renderer {
             let panel=PanelUniform {main_view_proj:camera.view_proj,model:mesh.model.to_cols_array_2d(),
                 source_direction_view_proj:(view.camera.relative_view_proj()
                     *relay_rotation(&optics.specs[view.port],mesh.model)).to_cols_array_2d(),
-                eye:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,0.0],
+                // eye.w: the share of the field's radiance this pane shows (an eyepiece's exit pupil).
+                eye:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,
+                    optics.specs[view.port].eyepiece.map_or(1.0,|e|e.radiance_scale(mesh.model,self.camera.pos))],
                 source_eye:[view.source_eye.x,view.source_eye.y,view.source_eye.z,0.0],layer:[view.port as u32,0,view.extent[0],view.extent[1]]};
             queue.write_buffer(&layer.panel_buf,0,bytemuck::bytes_of(&panel));
             let smoke=super::SmokeUniform {
@@ -917,6 +963,21 @@ mod tests {
         assert!(!transmitting_panel(&specs,&[true],2));
     }
 
+    #[test] fn an_eyepiece_shows_its_field_only_through_the_exit_pupil() {
+        let e=Eyepiece {center:Vec3::ZERO,axis:-Vec3::Z,lens_radius_m:0.02,exit_pupil_radius_m:0.0035,
+            eye_relief_m:0.025,half_field_rad:0.5};
+        let model=Mat4::from_translation(Vec3::new(1.0,2.0,0.5));
+        let at=|p:Vec3|e.radiance_scale(model,model.transform_point3(p));
+        // The eye at the eyecup sees the whole field.
+        assert!((at(Vec3::new(0.0,0.0,-0.025))-1.0).abs()<1e-6);
+        // From the commander's seat, a metre back and inside the apparent field: the exit pupil's
+        // share of the lens, (3.5 / 20)^2 = 3 %.
+        let far=at(Vec3::new(0.3,0.0,-1.0));
+        assert!((far-0.030625).abs()<1e-4,"{far}");
+        // Beside the sight, outside the apparent field: the dark tube.
+        assert_eq!(at(Vec3::new(1.0,0.0,-0.3)),0.0);
+    }
+
     fn front_port() -> RasterOpticSpec {
         RasterOpticSpec {mesh:2,
             entry_indices: 0..6,
@@ -924,7 +985,7 @@ mod tests {
             Vec3::new(-0.055,-0.0175,0.0),Vec3::new(0.055,-0.0175,0.0),
             Vec3::new(0.055,0.0175,0.0),Vec3::new(-0.055,0.0175,0.0)],
             entry_outward:Vec3::Z,objective:Vec3::new(0.0,0.14,0.045),objective_outward:Vec3::Z,
-            preserve_ray_direction:false}
+            preserve_ray_direction:false,eyepiece:None}
     }
     fn viewer(distance:f32, fov:f32) -> crate::camera::Camera {
         let mut camera=crate::camera::Camera::new(16.0/9.0);
