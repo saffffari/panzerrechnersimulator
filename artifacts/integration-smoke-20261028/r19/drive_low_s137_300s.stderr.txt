@@ -1,0 +1,9 @@
+[panzerrechnersystem] su100 GLBs missing — using box placeholder
+[mixed-combat] german_rifle uses combat doctrine; checkpoint assets/ai/weights_foot_german.bin unavailable: open resource "assets/ai/weights_foot_german.bin" (resolved to "C:\\shop\\panzerrechnersystem\\assets\\ai/weights_foot_german.bin")
+[audio] playback range: balanced (physical source levels unchanged)
+[audio] live mixer deadline isolation: 100ms hardware-buffer-derived queue with two scheduling blocks, callback never runs source DSP
+[audio] legacy reference recordings disabled; verified feedback bank and generated fallbacks are resolved below
+[audio] 24 gameplay feedback recordings loaded; video audition pending
+[audio] owner recordings: 36 cuts under 13 keys
+[audio] initialized: 24 verified feedback recordings (loaded); direct Sfx routes: 2 recorded replacements, 0 legacy references, 25 generated; 0 verified v1 layers; ammunition contacts use distinct authored modes; friction follows actual loader motion
+[soundscape] 137 enabled cues, 0 scene zones; run seed 137
