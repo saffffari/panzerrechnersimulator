@@ -1555,6 +1555,7 @@ impl Game {
         case.angular_vel = Vec3::new(jitter(4), jitter(5), jitter(6)).normalize_or_zero() * 6.0;
         case.drop_rest = shell_collision::DropRest::default();
         case.impact_cooldown = 0.0;
+        case.landed = false;
         case.aboard = false;
         case.outside_rest = false;
         self.crew_solo.dumped_total += 1;
