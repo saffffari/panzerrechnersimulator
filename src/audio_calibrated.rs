@@ -729,6 +729,28 @@ impl Audio {
         self.place_world_render_in(mono, measured, ear, bearing_deg, room, EarBus::World);
     }
 
+    /// `play_world_mono_in_room` with the voice's sample peak held at `peak_cap_dbfs`: where the
+    /// calibrated short-term level would put an impulsive recording's attack into the master
+    /// limiter, the whole voice is lowered instead (the attack keeps its shape; its LAF falls).
+    pub(crate) fn play_world_mono_in_room_peak_capped(&self, mono: &[f32], ear: &EarLevel, bearing_deg: f32,
+        room: Room<'_>, peak_cap_dbfs: f32) -> f32
+    {
+        if mono.is_empty() || !ear.laf_db.is_finite() { return 0.0; }
+        let measured = measure_mono(mono);
+        let rendered = render_for_ear_in(mono, ear, bearing_deg, room);
+        let level = measure_render_window(&rendered, measured.max_frame);
+        let mut gain = reproduction::voice_gain(ear.laf_db, level);
+        let peak = rendered.iter().fold(0.0f32, |a, b| a.max(b.abs()));
+        let cap = 10f32.powf(peak_cap_dbfs / 20.0);
+        let mut capped_db = 0.0;
+        if peak * gain > cap && peak > 0.0 {
+            capped_db = 20.0 * (cap / (peak * gain)).log10();
+            gain = cap / peak;
+        }
+        self.play_stereo_on(rendered, gain, EarBus::World);
+        capped_db
+    }
+
     fn place_world_render(&self, mono: &[f32], measured: MeasuredSource, ear: &EarLevel,
         bearing_deg: f32, reverb: ReverbParams, bus: EarBus)
     {

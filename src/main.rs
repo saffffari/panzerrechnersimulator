@@ -16993,6 +16993,21 @@ fn main() -> anyhow::Result<()> {
         let prefix = capture_arg(&args, 2, "crew_solo");
         return crew_solo_capture::run_crew_solo_capture(&prefix);
     }
+    if args.len() >= 2 && args[1] == "recorded-fx-reel" {
+        // CPU-only renders of the owner's library recordings: catalogue, hits by component, crush.
+        let outdir = args.get(2).map(String::as_str).unwrap_or("captures/recorded_fx_reel");
+        return game::recorded_fx_reel::run(outdir);
+    }
+    if args.len() >= 2 && args[1] == "main-gun-candidates" {
+        // CPU-only renders of the own 88's voice candidates from three listening places.
+        let outdir = args.get(2).map(String::as_str).unwrap_or("captures/main_gun_candidates");
+        return game::main_gun_candidates::run(outdir);
+    }
+    if args.len() >= 2 && args[1] == "hit-sounds" {
+        // CPU-only A/B of the tank-hit recordings against the voices they replace.
+        let outdir = args.get(2).map(String::as_str).unwrap_or("captures/hit_sounds");
+        return game::hit_sounds_proof::run(outdir);
+    }
     if args.len() >= 2 && args[1] == "sound-world" {
         // CPU-only proof of the traced rooms and the foley catalogue through the live mixer.
         let outdir = args.get(2).map(String::as_str).unwrap_or("captures/sound_world");

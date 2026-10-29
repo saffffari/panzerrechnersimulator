@@ -131,7 +131,14 @@ pub fn action_phase(foot: &crate::foot::FootSoldier) -> (f32,f32) {
 impl super::Game {
     pub(super) fn update_p08_reload(&mut self, dt: f32, request: bool) {
         if request { self.foot.begin_p08_reload(); }
-        let events=self.foot.advance_p08_reload(dt);
+        let mut events=self.foot.advance_p08_reload(dt);
+        // Chambering after an empty-gun reload: the toggle pulled up and back and let run home,
+        // one recording for both (the separate toggle-close clip is then not played).
+        if events&4!=0 {
+            let at=self.hands_pos();
+            if self.recorded(crate::audio::RecordedFx::LugerRack,0.0,at) { events&=!(4|8); self.acoustics.luger_rack_close=true; }
+        }
+        if events&8!=0 && std::mem::take(&mut self.acoustics.luger_rack_close) { events&=!8; }
         if let Some(audio)=&self.audio {
             for (bit,key,gain) in [(1,"p08_mag_out",0.65),(2,"p08_mag_in",0.72),(4,"p08_toggle_pull",0.60),(8,"p08_toggle_close",0.72)] {
                 if events&bit!=0 { audio.play_control(key,gain); }

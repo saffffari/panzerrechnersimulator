@@ -816,6 +816,9 @@ impl Game {
                 "Commander: hold fire."
             };
             self.crew_solo.say(line);
+            // The intercom key pressed for the order.
+            let at = self.hands_pos();
+            self.recorded(crate::audio::RecordedFx::SwitchButton, -4.0, at);
         }
         let command_press = input.mg_coax && !self.crew_solo.prev_command_lmb;
         self.crew_solo.prev_command_lmb = input.mg_coax;
@@ -834,6 +837,8 @@ impl Game {
         {
             self.crew_solo.fire_command = true;
             self.crew_solo.say("Commander: fire!");
+            let at = self.hands_pos();
+            self.recorded(crate::audio::RecordedFx::SwitchButton, -4.0, at);
         }
     }
 
@@ -1697,6 +1702,8 @@ impl Game {
                 || start.distance(here) > 0.10
             {
                 self.crew_solo.say(format!("{}: left half done.", role_short(role)));
+                let bag = self.player.turret_model().transform_point3(AID_BOX_TURRET_LOCAL);
+                self.recorded(crate::audio::RecordedFx::BagClose, 0.0, bag);
                 self.crew_solo.procedures_done.push(json!({"t": self.crew_solo.time_s, "man": role.name(),
                     "procedure": run.procedure.label(), "abandoned_at_step": run.step, "quality": run.quality}));
                 return;
@@ -1710,6 +1717,8 @@ impl Game {
                             self.crew_solo.say("No water left. Dress it dry.");
                         } else {
                             self.crew_solo.say("Nothing left in the box.");
+                            let bag = self.player.turret_model().transform_point3(AID_BOX_TURRET_LOCAL);
+                            self.recorded(crate::audio::RecordedFx::BagClose, 0.0, bag);
                             self.crew_solo.procedures_done.push(json!({"t": self.crew_solo.time_s, "man": role.name(),
                                 "procedure": run.procedure.label(), "out_of_kit_at_step": run.step}));
                             return;
@@ -1724,15 +1733,19 @@ impl Game {
                 if let Some(step) = run.steps().get(step_before) {
                     self.crew_solo.aid_box.take_for(step);
                 }
-                // A step of the procedure done: a bandage torn and wound, a strap pulled.
+                // A step of the procedure done: the kit's recording at the hands (the bandage tear
+                // foley where it is not installed).
                 let at = self.hands_pos() - Vec3::Y * 0.3;
-                self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::BandageTear), 1.0, 0.0, at);
+                self.recorded_or_foley(crate::audio::RecordedFx::MedkitUse, 0.0,
+                    crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::BandageTear), 1.0, 0.0, at);
             }
             match outcome {
                 Progress::Working | Progress::StepDone => {
                     self.crew_solo.procedure = Some((role, run, start));
                 }
                 Progress::Finished => {
+                    let bag = self.player.turret_model().transform_point3(AID_BOX_TURRET_LOCAL);
+                    self.recorded(crate::audio::RecordedFx::BagClose, 0.0, bag);
                     let result = self.crew_solo.man_mut(role).finish_procedure(&run);
                     let quality = if run.improvised { run.quality.min(0.6) } else { run.quality };
                     match result {
@@ -1781,6 +1794,9 @@ impl Game {
                 if let Some(run) = man.begin_procedure(procedure, wound, &self.crew_solo.aid_box) {
                     self.crew_solo.procedure = Some((role, run, here));
                     self.crew_solo.say(format!("{}: hold still.", role_short(role)));
+                    // The first-aid bag opened at its place in the turret.
+                    let bag = self.player.turret_model().transform_point3(AID_BOX_TURRET_LOCAL);
+                    self.recorded(crate::audio::RecordedFx::BagOpen, 0.0, bag);
                 }
             }
             Some(action @ HoverAction::ClearBody(role)) => {

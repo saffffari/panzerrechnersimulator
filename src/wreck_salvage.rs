@@ -156,6 +156,8 @@ impl Game {
                         self.grab = true;
                         self.set_carry_pose(sh.pos, sh.rotation, sh.vel, Vec3::ZERO);
                         self.consume_primary_press();
+                        // A live 88 lifted off the snow by a wreck (silent before the recordings).
+                        self.recorded(crate::audio::RecordedFx::ShellPickup, 0.0, sh.pos);
                     }
                 }
             }

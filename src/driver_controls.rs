@@ -63,7 +63,10 @@ impl Game {
             && self.hover==Some(Hotspot::Ignition) {
             self.driver_controls.request();
         }
-        self.driver_controls.advance(dt)
+        let pressed=self.driver_controls.advance(dt);
+        // The starter button under the driver's hand, at the moment the hand reaches it.
+        if pressed { let at=self.player.hull_model().transform_point3(BUTTON); self.recorded(crate::audio::RecordedFx::SwitchButton,0.0,at); }
+        pressed
     }
     pub(super) fn update_ignition_hover(&mut self,r:&Renderer) {
         if self.mode!=Mode::Tank || self.station!=Station::Driver || self.switch_t>0.0

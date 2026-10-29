@@ -73,17 +73,22 @@ impl Game {
     /// their current object implicitly, and a draw/holster press cannot discharge a weapon.
     pub fn toggle_mounted_sidearm(&mut self)->bool {
         if self.cupola_pistol.equipped || self.cupola_pistol.drawn {
-            self.cupola_pistol.holster();return true;
+            self.cupola_pistol.holster();
+            let at=self.hands_pos();self.recorded(crate::audio::RecordedFx::ItemEquip,-3.0,at);
+            return true;
         }
         if !self.mounted_sidearm_hands_available() {return false;}
         self.cupola_pistol.equipped=true;
+        let at=self.hands_pos();self.recorded(crate::audio::RecordedFx::ItemEquip,-3.0,at);
         self.primary_pickup_press=true;
         true
     }
 
     pub fn holster_mounted_sidearm(&mut self)->bool {
         if !self.cupola_pistol.equipped && !self.cupola_pistol.drawn {return false;}
-        self.cupola_pistol.holster();true
+        self.cupola_pistol.holster();
+        let at=self.hands_pos();self.recorded(crate::audio::RecordedFx::ItemEquip,-3.0,at);
+        true
     }
 
     /// Keep the pistol's original buttons for the post-camera update, and remove them from

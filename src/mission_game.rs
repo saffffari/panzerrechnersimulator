@@ -104,7 +104,10 @@ impl Game {
     pub fn mission_dismiss_order(&mut self) -> bool {
         let folded = self.mission.as_mut().is_some_and(MissionState::dismiss_order);
         if folded {
-            if let Some(audio) = &self.audio { audio.play_control_at("map_close", 0.40, 345.0); }
+            let at = self.hands_pos();
+            if !self.recorded(crate::audio::RecordedFx::PaperPage, -2.0, at) {
+                if let Some(audio) = &self.audio { audio.play_control_at("map_close", 0.40, 345.0); }
+            }
             for line in self.mission.as_mut().unwrap().take_log() { println!("{line}"); }
         }
         folded

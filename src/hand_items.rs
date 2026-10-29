@@ -56,13 +56,13 @@ impl Game {
     }
     pub fn toggle_hand_flashlight(&mut self)->bool {
         if self.hand_torch_on {self.hand_torch_on=false;self.personal_primary_guard=true;
-            self.foley_hands(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::LampSwitch));return true;}
+            self.recorded_or_foley_hands(crate::audio::RecordedFx::SwitchButton,0.0,crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::LampSwitch));return true;}
         if !self.personal_hands_available() {return false;}
         self.cigarettes.stow();self.compass_equipped=false;self.holster_mounted_sidearm();
         if self.mode==Mode::Tank&&self.station==Station::Gunner {self.jump_station(Station::Loader);}
         self.hand_torch_on=true;self.personal_primary_guard=true;self.consume_primary_press();
-        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Flashlight,crate::acoustics::foley::Gesture::Grab));
-        self.foley_hands(crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::LampSwitch));true
+        self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemEquip, -4.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Flashlight,crate::acoustics::foley::Gesture::Grab));
+        self.recorded_or_foley_hands(crate::audio::RecordedFx::SwitchButton,0.0,crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::LampSwitch));true
     }
     pub fn stow_personal_hand_item(&mut self)->bool {
         let active=self.cigarettes.stow()||self.hand_torch_on;

@@ -251,7 +251,12 @@ impl Game {
                 if !self.god {
                     damage = payload.damage.min(self.foot.hp.max(0.0));
                     self.foot.hp = (self.foot.hp-damage).max(0.0);
-                    if damage > 0.0 { self.stat_small_arms_hits_on_foot = self.stat_small_arms_hits_on_foot.saturating_add(1); }
+                    if damage > 0.0 {
+                        self.stat_small_arms_hits_on_foot = self.stat_small_arms_hits_on_foot.saturating_add(1);
+                        // A bullet into the man on foot: the penetrating wound, critical if it killed.
+                        let fx = if self.foot.hp <= 0.0 { crate::audio::RecordedFx::WoundCritical } else { crate::audio::RecordedFx::WoundPenetrating };
+                        self.recorded(fx, 0.0, contact.pos);
+                    }
                 }
                 friendly = payload.shot.team == Team::German;
                 self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.10, false, weapon);
@@ -291,6 +296,7 @@ impl Game {
                             energy_j:energy,blast_origin_world:contact.pos,explosive_energy_j:0.0,
                             behind_armor:0.0,blast_proximity_m:0.0,
                         },projectile.seed);
+                        self.recorded(crate::audio::RecordedFx::WoundPenetrating, 0.0, contact.pos);
                     }
                     if wiped {self.player.alive=false;self.death_cause=Some(DeathCause::CrewLost);}
                     self.recompute_hp();
@@ -304,6 +310,8 @@ impl Game {
                 let before=self.mixed_combat.actors.get(index).map_or(100.0,|a|a.hp);
                 self.infantry_contact(index,contact.pos,projectile.velocity,projectile.shell.mass_kg,0.0,false,"ballistic small arms");
                 damage=before-self.mixed_combat.actors.get(index).map_or(before,|a|a.hp);
+                // A body in the world struck (the infantry's own wound voice stays as it was).
+                if damage > 0.0 { self.recorded(crate::audio::RecordedFx::MaterialImpact(crate::audio::RecordedMaterial::Body), -6.0, contact.pos); }
                 self.weapon_vfx.impact(contact.pos, projectile.velocity.normalize_or_zero(), 0.10, false, weapon);
             }
             ProjectileContactKind::RangeLimit => {} // Retirement never invents an impact in air.

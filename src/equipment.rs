@@ -353,14 +353,16 @@ impl Game {
         self.foot.panzerfaust_swap_t = 0.0;
         self.foot.weapon = crate::foot::FootWeapon::Panzerfaust;
         self.primary_pickup_press = true;
-        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Panzerfaust, crate::acoustics::foley::Gesture::Grab));
+        self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemPickup, 0.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Panzerfaust, crate::acoustics::foley::Gesture::Grab));
         true
     }
 
     pub(super) fn take_toolbox(&mut self) -> bool {
         if !self.equipment_hands_free() { return false; }
         self.carrying_track_kit = true;
-        if let Some(audio)=&self.audio {
+        let source=self.toolbox_model().transform_point3(Vec3::ZERO);
+        if self.recorded(crate::audio::RecordedFx::ItemPickup, 2.0, source) {}
+        else if let Some(audio)=&self.audio {
             let level=crate::sound_levels::QUIET_HANDLING.laf_db;
             let source=self.toolbox_model().transform_point3(Vec3::ZERO);
             let bearing=bearing_deg_from(self.equipment_look,source-self.equipment_eye);
@@ -375,7 +377,8 @@ impl Game {
     }
 
     pub(super) fn put_down_toolbox(&mut self) {
-        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Toolbox, crate::acoustics::foley::Gesture::SetDown));
+        // Set down, not dropped: the drop recording 6 dB under its 1 m reference [E].
+        self.recorded_or_foley_hands(crate::audio::RecordedFx::EquipDrop, -6.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Toolbox, crate::acoustics::foley::Gesture::SetDown));
         let eye = self.equipment_eye;
         let look = self.equipment_look;
         let mount = self.player.turret_model().transform_point3(TOOLBOX_MOUNT);
