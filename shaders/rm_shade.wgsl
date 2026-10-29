@@ -132,13 +132,20 @@ const RM_AO_BLEND: f32 = 0.15;
 // steps, the occlusion rays): each frame's estimate is blended into the history reprojected
 // through the previous view (new estimates weigh RM_GATHER_BLEND). Disocclusion mask: a history
 // texel whose recorded eye distance disagrees with the reprojected point's, or that falls off
-// the previous frame, is dropped and the frame starts from its own estimate. Firefly clamp: a
-// new bounce estimate may not exceed eight times the history's luminance, so a single slice
-// landing on a bright pane brightens a pixel over a few frames instead of flashing.
+// the previous frame, is dropped and the frame starts from its own estimate. The history the new
+// estimates blend into is the mean of the 3 x 3 texels of the same surface round the reprojected
+// point (a spatio-temporal filter): a single pixel's lucky ray to the open sky or slice onto a
+// bright pane no longer survives as a single bright pixel. Against each pixel's own history the
+// open shares near an open hatch (two to four rays a frame each) and the bounce off sunlit panes
+// salted a dark cabin's walls with them (2026-10-28, "why do surfaces sparkle"). Firefly clamp: a
+// new bounce estimate may not exceed RM_GATHER_CAP times that history's luminance.
 const RM_GATHER_BLEND: f32 = 0.2;
-struct ShadeHistory { shares: vec4<f32>, bounce: vec3<f32>, valid: bool };
+const RM_GATHER_CAP: f32 = 2.0;
+// shares: this texel's (rays open, screen open, contact ao, eye distance); local_*: the same-surface
+// 3 x 3 means of the open shares and the bounce.
+struct ShadeHistory { shares: vec4<f32>, bounce: vec3<f32>, valid: bool, local_shares: vec2<f32>, local_bounce: vec3<f32> };
 fn shade_history(world: vec3<f32>, motion: mat4x4<f32>) -> ShadeHistory {
-    var none = ShadeHistory(vec4(0.0), vec3(0.0), false);
+    var none = ShadeHistory(vec4(0.0), vec3(0.0), false, vec2(0.0), vec3(0.0));
     if (fr.prev_cam_pos.w < 0.5) { return none; }
     let rel = (motion * vec4(world, 1.0)).xyz - fr.prev_cam_pos.xyz;
     let clip = fr.prev_view_proj * vec4(rel, 1.0);
@@ -150,7 +157,24 @@ fn shade_history(world: vec3<f32>, motion: mat4x4<f32>) -> ShadeHistory {
     let shares = textureLoad(shares_prev, texel, 0);
     let d = length(rel);
     if (shares.w <= 0.0 || abs(shares.w - d) > 0.02 * d + 0.03) { return none; }
-    return ShadeHistory(shares, textureLoad(bounce_prev, texel, 0).rgb, true);
+    // The history of the same surface round the texel (eye distances that agree).
+    let last = vec2<i32>(fr.res.xy) - vec2(1);
+    var local_shares = vec2(0.0);
+    var local_bounce = vec3(0.0);
+    var count = 0.0;
+    for (var y = -1; y <= 1; y += 1) {
+        for (var x = -1; x <= 1; x += 1) {
+            let q = clamp(texel + vec2(x, y), vec2(0), last);
+            let s = textureLoad(shares_prev, q, 0);
+            if (s.w > 0.0 && abs(s.w - d) <= 0.04 * d + 0.05) {
+                local_shares += s.xy;
+                local_bounce += textureLoad(bounce_prev, q, 0).rgb;
+                count += 1.0;
+            }
+        }
+    }
+    return ShadeHistory(shares, textureLoad(bounce_prev, texel, 0).rgb, true,
+        local_shares / max(count, 1.0), local_bounce / max(count, 1.0));
 }
 fn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, history: ShadeHistory) -> f32 {
@@ -170,7 +194,7 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
         if (rm_ray_open(origin, d, RM_AO_RANGE_M)) { open += 1.0; }
     }
     let fresh = open / f32(rays);
-    return select(fresh, mix(history.shares.x, fresh, RM_AO_BLEND), history.valid);
+    return select(fresh, mix(history.local_shares.x, fresh, RM_AO_BLEND), history.valid);
 }
 
 // Optical depth through the froxel medium between a surface point and a lamp.
@@ -389,13 +413,13 @@ fn fs(in: VsOut) -> ShadeOut {
         let history = shade_history(world, motion);
         var gather = fresh_gather;
         if (history.valid) {
-            gather.open = mix(history.shares.y, fresh_gather.open, RM_GATHER_BLEND);
+            gather.open = mix(history.local_shares.y, fresh_gather.open, RM_GATHER_BLEND);
             gather.ao = mix(history.shares.z, fresh_gather.ao, RM_GATHER_BLEND);
             var irradiance = fresh_gather.irradiance;
-            let cap = 8.0 * luminance(history.bounce) + 1.0e-7;
+            let cap = RM_GATHER_CAP * luminance(history.local_bounce) + 1.0e-7;
             let l = luminance(irradiance);
             if (l > cap) { irradiance *= cap / l; }
-            gather.irradiance = mix(history.bounce, irradiance, RM_GATHER_BLEND);
+            gather.irradiance = mix(history.local_bounce, irradiance, RM_GATHER_BLEND);
         }
         shares_out = vec4(1.0, gather.open, gather.ao, dist);
         bounce_out = vec4(gather.irradiance, dist);

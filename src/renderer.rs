@@ -1048,7 +1048,8 @@ struct ExposureClockUniform {
     /// The veil of point sources drawn after the meter, photopic and scotopic cd/m^2
     /// (`exposure.wgsl` veil_photopic/veil_scotopic; the raymarch backend's tracers).
     point_veil: [f32;2],
-    _pad: f32,
+    /// 1: the eye is inside the hull; 2: an optic's own eye (`exposure.wgsl` mode).
+    mode: f32,
 }
 
 /// The WGSL clock is eight scalar lanes. Keep this assertion beside the host declaration so a
@@ -2457,6 +2458,10 @@ fn plan_instanced_page(
 /// (three history ping-pongs, shared reject snapshots, previous camera); unused slots cost ~12.9 MB
 /// VRAM each at 640×360 and are inert until something renders them.
 pub const MAX_VIEWS: usize = 5;
+/// The single player's optic eye: the view slot (its own eye and histories) the TZF's optic pass
+/// and the binoculars from inside the cupola render on, so putting the eye to them does not swing
+/// the cabin eye (view 0) and they adapt at once to their field (`observer::OPTIC_RESNAP_GAP_S`).
+pub const OPTIC_EYE_VIEW: usize = 3;
 
 /// One viewport's temporal state. Reprojection assumes a CONTINUOUS camera; in splitscreen each
 /// viewport re-renders every frame with its own camera, so history/reject state must never be
@@ -5287,7 +5292,7 @@ impl Renderer {
                 monocular: 0.0,
                 transient_source: 0.0,
                 point_veil: [0.0;2],
-                _pad: 0.0,
+                mode: 0.0,
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -8138,7 +8143,7 @@ impl Renderer {
                 monocular: if (self.optic_mask - 1.0).abs() < 0.5 { 1.0 } else { 0.0 },
                 transient_source: if self.observer_flash_source {1.0}else{0.0},
                 point_veil: [0.0;2],
-                _pad: 0.0,
+                mode: self.eye_mode(),
             }),
         );
 
@@ -10746,6 +10751,14 @@ impl Renderer {
     /// posed the optic camera, reticle and circular mask) and snapshot the CRUSHED result into
     /// `optic_tex`. Nothing reaches the window — pass B (an interior render with optic_mask =
     /// 4.0) drops this snapshot into the eyepiece circle during its own crush.
+    /// The eye's mode for `exposure.wgsl`: 2 for an optic's own field (the TZF's optic pass, mask
+    /// 1; the binoculars, mask 3), else 1 inside the hull (`interior_light`), else 0 outside.
+    pub(crate) fn eye_mode(&self) -> f32 {
+        let mask = self.optic_mask;
+        if (mask - 1.0).abs() < 0.5 || (mask - 3.0).abs() < 0.5 { 2.0 }
+        else if self.interior_light > 0.5 { 1.0 } else { 0.0 }
+    }
+
     pub fn render_optic_snapshot(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         // The eyepiece composite's frame (optic mask 4) shows this snapshot; its blit draws the
         // reticle with this pass's field.
@@ -12873,7 +12886,10 @@ mod atmosphere_tests {
         assert_eq!(copies.len(), 2, "cone and rod lanes into crush");
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
         assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
-        assert!(eye.contains("if (state[1] < 0.0)"), "a view starts adapted to its first frame");
+        // A view starts adapted to its first frame; an optic's own eye also when it is returned to
+        // (observer::OPTIC_RESNAP_GAP_S), and only then.
+        assert!(eye.contains("if (state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP))"),
+            "a view starts adapted to its first frame");
         // An authored lighting record cannot expose the camera; only the debug gate can fix it.
         let authored = renderer.split("pub fn apply_authored_lighting").nth(1).unwrap()
             .split("pub fn apply_campaign_atmosphere").next().unwrap();

@@ -50,12 +50,12 @@ fn wipe_marks(p: vec2<f32>) -> f32 {
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let aspect = fr.res.x / fr.res.y;
-    // Field coordinates: each eyepiece field has radius 0.45 in the crush's frame; the TZF's two
-    // overlap side by side (crush.wgsl `tzf_field_distance`), the binoculars' sit 0.20 out.
+    // Field coordinates: each eyepiece field has radius 0.45 in the crush's frame; the TZF's one
+    // sits at the centre (crush.wgsl `tzf_field_distance`), the binoculars' two 0.20 out.
     let q = (in.uv - vec2(0.5)) * vec2(aspect, 1.0);
     let r = length(q) / 0.45;
     let binocular = fr.optic.x > 2.5;
-    let eyepiece = select(0.17, 0.20, binocular);
+    let eyepiece = select(0.0, 0.20, binocular);
     // The eye's offset from the instrument's axis (fr.optic_eye): what lies at the glass shifts
     // against the image at infinity, the reticle with it (both in the focal plane).
     let eye = fr.optic_eye.xy * vec2(1.0, -1.0);

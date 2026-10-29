@@ -19,7 +19,8 @@ fn composed() -> String {
         "OBS_ROD_TAU_UP", "OBS_ROD_TAU_DOWN", "OBS_DISPLAY_ADAPTATION", "OBS_DISPLAY_KEY",
         "OBS_ROD_SATURATION_TD", "OBS_FLASH_ABOVE_ADAPTATION", "OBS_FLASH_MEMORY_TAU",
         "OBS_FLASH_MIN_RECOVERY", "OBS_FLASH_MIN_COVERAGE", "OBS_FLASH_ONSET_TAU",
-        "OBS_FLASH_ONSET_RATIO", "OBS_MAX_STEP"];
+        "OBS_FLASH_ONSET_RATIO", "OBS_MAX_STEP", "OBS_INSIDE_RESPONSE", "OBS_INSIDE_REFERENCE_TAU",
+        "OBS_OPTIC_RESNAP_GAP"];
     let block: String = names.iter().map(|n| format!("const {n}: f32 = 1.0;\n")).collect();
     EXPOSURE_WGSL.replacen("// @observer-constants", &block, 1)
 }

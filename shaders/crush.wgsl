@@ -30,12 +30,11 @@ struct Crush {
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
-// The gunner's TZF 9b is binocular: its two eyepiece fields (radius 0.45 of the screen height)
-// drawn side by side, centres 0.34 apart, overlapping into one wide field with a slight waist.
-// A presentation: two eyepieces aimed alike fuse into one circle for a real pair of eyes; the
-// offset widens the picture across the screen (2026-10-28, the owner's request). The distance
-// from the nearer eyepiece's centre; inside the field below 0.45.
-const TZF_EYEPIECE_OFFSET: f32 = 0.17;
+// The gunner's sight is presented as the monocular TZF 9c: one eyepiece field, radius 0.45 of the
+// screen height, at the centre (2026-10-28, the owner's request: "return to monocular sight, this
+// bino thing looks weird"; it had drawn the binocular 9b's two fields side by side). The distance
+// from the eyepiece's centre; inside the field below 0.45.
+const TZF_EYEPIECE_OFFSET: f32 = 0.0;
 fn tzf_field_distance(q: vec2<f32>) -> f32 {
     return min(length(q - vec2(TZF_EYEPIECE_OFFSET, 0.0)), length(q + vec2(TZF_EYEPIECE_OFFSET, 0.0)));
 }
@@ -316,8 +315,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // TZF 9b/9c Strichbild: drawn by blit.wgsl at the output's resolution (`cr.reticle` unused).
 
     // ── Optic masks: the eye pressed to an eyepiece. Black steel outside the aperture; a soft
-    // breath-dark vignette inside so the picture pools at the centre. 1 = the TZF 9b's two
-    // eyepieces (the reticle is drawn within), 2 = driver's visor letterbox, 3 = binoculars
+    // breath-dark vignette inside so the picture pools at the centre. 1 = the TZF's eyepiece
+    // (the reticle is drawn within), 2 = driver's visor letterbox, 3 = binoculars
     // double-circle.
     if (cr.mask > 0.5) {
         let dims = vec2<f32>(textureDimensions(hdr));

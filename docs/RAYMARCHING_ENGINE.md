@@ -1147,11 +1147,11 @@ deg/s RMS raw and 1.1 deg/s as viewed. The real cause is the missing suspension:
 (torsion bars, road-wheel travel, the hull's pitch inertia) would filter the bumps for every view
 and for the gun itself.
 
-**Two eyepieces.** The Tiger's TZF 9b is binocular. The crush draws its two eyepiece fields side
-by side (radius 0.45 of the screen height, centres 0.34 apart, `tzf_field_distance`), one wide
-field with a slight waist, in both backends; the eyepiece composite seats the optic pass in the
-same shape. A presentation: two eyepieces aimed alike fuse into a single circle for a real pair of
-eyes.
+**One eyepiece** (since the evening of 2026-10-28; "return to monocular sight, this bino thing
+looks weird"). The sight is presented as the monocular TZF 9c: one field of radius 0.45 of the
+screen height at the centre (`tzf_field_distance`, `blit.wgsl`, `rm_lens.wgsl`), in both backends;
+the eyepiece composite seats the optic pass in it. The binocular 9b's two side-by-side fields of
+the morning are gone.
 
 **Glass.** The sight is clean (its former specks and two hairline scratches are gone, whatever
 the glass load). On the outer glass (`rm_lens.wgsl`): a ghost, the field reflected between the
@@ -1287,6 +1287,61 @@ Parked at the commander's station (`gfxbench day 240`, act 1, Low): static pass 
 (`captures/skyvis_parked_sheet.png`: before, after, difference x28) differ by 0.07 sRGB codes on
 average, 0.34 % of pixels by more than 8 codes, none by more than 16: the key lattice and the coarse
 slack.
+
+## The eye inside and at the optics, the cabin's salt, the monocular sight (2026-10-28)
+
+Owner feedback from live play: the commander's binoculars showed a blown-out white field with a
+dark orange cabin round it ("adaptation should be really more of an exiting in and out of the tank
+thing, not periscopes and sights ... maybe a very very subtle one for being inside, but this is
+just blown out"); single bright pixels covered a dark cabin's walls and floor ("why do surfaces
+sparkle"); and the two-field sight looked wrong ("return to monocular sight").
+
+`KESSEL_SHOWCASE_SET=optics` reproduces it as played (live frames, the eye adapting on the frames
+it sees, nothing converged; `KESSEL_OPTICS_ACT_WEATHER=1` for the act's own snow): the commander
+buttoned up, then the binoculars raised half a second and four seconds, head out with them, back
+inside, the gunner at the TZF, and two posts at night.
+
+**What was wrong.**
+
+- The binoculars from inside the cupola looked at the vision block's glass, which shows the
+  relayed port: a 240x136 picture of a wide field, magnified tenfold into a featureless white
+  disc. And they ran on the cabin's eye (view 0), which had been adapted to the dark compartment.
+- In single play the TZF's optic pass also ran on view 0 and its interior on view 3: putting the
+  eye to the sight dragged the cabin's eye to the bright field and back again on leaving, over
+  the cone's 4.5 to 6 s time constants (roughly ten seconds of swing each way).
+- The sparkle (`KESSEL_RM_SKIP` isolates it to bit 8192, the open-sky shares and the bounce):
+  the ray queries' open share inside the cupola is two to four rays a pixel a frame, and the
+  screen gather's slices a few samples; near an open hatch or a sunlit pane each pixel is a coin
+  toss for very bright light, and blending each pixel into its own history (15 to 20 %, a cap of
+  eight times its own bounce) kept the lucky ones as single bright pixels. With the act's snow
+  and the hatch open, 2,450 such pixels in one 480x270 cabin frame.
+
+**What changed.**
+
+- **The optics carry their own eye.** The TZF's optic pass and the binoculars from inside the
+  cupola render on `OPTIC_EYE_VIEW` (view 3), and an optic's eye returned to after more than half
+  a second (`observer::OPTIC_RESNAP_GAP_S`) is adapted to its field at once: raising the
+  binoculars or going to the sight does not swing anything. The TZF's interior pass is the cabin's
+  eye (view 0).
+- **The binoculars from inside look past the glass**: the eye moves 0.6 m out along the level gaze
+  (`CUPOLA_BINOCULAR_CLEARANCE_M`), so they see the world at their own magnification. Named
+  approximation: pointed between two blocks, they look past the steel too.
+- **Inside the hull, a very subtle eye** (`observer::inside_meter`, owner-directed): the eye adapts
+  to a quarter of the cabin's log-luminance changes about a reference that follows the meter over
+  20 s. A port ten times brighter than the cabin moves the exposure 1.8 times, not ten; climbing
+  in from daylight the cabin starts dark and the reference carries the eye down over tens of
+  seconds; climbing out, the eye is outside and adapts at its own rates (a dazzled second or two).
+- **The open shares and the bounce blend into the 3 x 3 history of the same surface**, not each
+  pixel's own (a spatio-temporal filter, `rm_shade.wgsl` `shade_history`), and a new bounce may not
+  exceed twice that neighbourhood's: 2,450 single bright pixels became 847, 964 round the TZF 232,
+  the rest the frame's dither grain (`captures/sparkle_fix2_cmp.png`).
+- **The monocular sight** (the previous section's "One eyepiece").
+
+Captures (480x270, High; before = the build before these changes): `captures/optics_before_*`,
+`captures/optics_after2_*`, sheets `captures/optics_sheet_before_after.png` (left before, right
+after: cabin, binoculars at 0.5 and 4 s, head out with them, back inside, TZF at 0.5 and 4 s,
+night) and `captures/optics_sheet_binocular.png`; the sparkle with the act's snow on Low:
+`captures/optics_actwx_*` against `captures/optics_actwx_fix2_*`.
 
 ## The T-34's paint, and every other vehicle's wear (2026-10-28)
 
@@ -1462,8 +1517,8 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 - Without ray queries, screen-space reflections see only what the frame sees; misses fall back to
   the sky hemisphere.
 - The eyepiece glass is a presentation; its dispersion, ghost and wiping marks are authored,
-  and the TZF 9b's two eyepieces are drawn as two overlapping fields (a fused pair of eyes sees
-  one circle).
+  and the sight is drawn as the monocular TZF 9c's one field (the Tiger's early TZF 9b was
+  binocular; owner-directed presentation).
 - Winter whitewash: an authored mask in the mesh frame over the exterior paint swatch, not a
   painted or simulated coat; only on the player's Tiger and only on the raymarch backend.
 - The gunner's view low-passes the hull's pitch and roll (0.25 s): a comfort filter; the bore
