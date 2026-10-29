@@ -12178,6 +12178,8 @@ impl Game {
         let projectile_player_armor=surface_fire::CabinFire::new(&armor_surfaces);
         let projectile_enemy_armor=surface_fire::CabinFire::new(&[(0,&prototypes[0][0]),(1,&prototypes[0][1])]);
         let mut cabin_fire = surface_fire::CabinFire::new(&fire_surfaces);
+        // The traced rooms' cabin voxels (~0.6 s) build on a worker from the same surfaces.
+        let acoustic_voxels = game_acoustics::CabinVoxels::spawn(&fire_surfaces);
         if playtest {
             cabin_fire.enable_residue_cleanup();
         }
@@ -13547,7 +13549,7 @@ impl Game {
             repair_hammer_t: 0.0,
             scheduled: Vec::new(),
             scheduled_audio_audit: ScheduledAudioAudit::default(),
-            acoustics: Default::default(),
+            acoustics: game_acoustics::WorldAcoustics::with_cabin_voxels(acoustic_voxels),
             ambient_t: AMBIENT_EXP_MIN,
             ambient_tick: 0,
             soundscape_combat_t: 0.0,

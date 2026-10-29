@@ -246,7 +246,7 @@ impl<S: AcousticScene + ?Sized> AcousticScene for OverGround<'_, S> {
 /// gradient over the 3×3×3 neighbourhood, not the voxel face, so slanted plates reflect along
 /// their slope. Named limits: features under one cell are merged or lost (they scatter, which
 /// the material's scattering coefficient carries); every wall stands one cell thicker into the air.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VoxelSolid {
     pub min: Vec3,
     pub cell: f32,
