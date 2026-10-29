@@ -62,7 +62,9 @@ fn rim_color(initial_kelvin:f32,age:f32)->vec3<f32> {
         let speed=min(sqrt(2.0*parameters.x/max(parameters.y,0.0001)),sqrt(2.0*9.81*6.096));
         velocity=ray*speed*select(0.4+0.6*q,1.0,index==0u);
         let current_velocity=velocity-vec3(0.0,9.81*t,0.0);axis=current_velocity/max(length(current_velocity),0.000001);
-        width=2.0*pow(3.0*parameters.y/(4.0*3.14159265359*parameters.w*f32(identity.y)),1.0/3.0);
+        // The full count's grains (`identity.z` before the thousandfold quadrature); a view that
+        // draws fewer (`thinned_count`) gives each the optical depth of the grains it stands for.
+        width=2.0*pow(3.0*parameters.y/(4.0*3.14159265359*parameters.w*f32(identity.z*1000u)),1.0/3.0);
         tail=width;page=6u;
     }else if(kind==5u || kind==6u){
         let delay=select(q*select(0.45,direction_life.w,kind==5u),0.0,index==0u);
@@ -123,7 +125,7 @@ fn rim_color(initial_kelvin:f32,age:f32)->vec3<f32> {
     if(kind==7u){
         // Ground records distribute a finite estimated mass over the actual requested grains.
         // This is matte matter, never an unlit incandescent color or duplicated smoke volume.
-        let area=width*width*0.78539816339*pow(weapon_cam.extent.z/clip.w,2.0);
+        let area=width*width*0.78539816339*pow(weapon_cam.extent.z/clip.w,2.0)*f32(identity.z*1000u)/f32(identity.y);
         return WeaponOut(position,center,mix(vec3(0.16,0.115,0.075),vec3(0.65,0.72,0.80),parameters.z),area);
     }
     if(kind==8u){return WeaponOut(position,center,rim_color(parameters.z,t)*weight,0.0);}

@@ -1288,6 +1288,56 @@ Parked at the commander's station (`gfxbench day 240`, act 1, Low): static pass 
 average, 0.34 % of pixels by more than 8 codes, none by more than 16: the key lattice and the coarse
 slack.
 
+## The relays' sparks and grains in combat (2026-10-28)
+
+Round 14's 300 s Low smoke had its worst frames in combat at the loader's station:
+`analytic-thousandfold-sparks` 54.5 ms (a 234 ms frame) and 45.9 ms, against 2.6 ms in an ordinary
+combat second. Both of the relays' one-pixel effect passes are the shader backend's, drawn once
+per relayed port: the weapon sparks and ejecta (`renderer_weapon_particles.rs`) and the fire and
+soot grains (`renderer_fine_vfx.rs`, the `native-pixel-hdr-effects` pass). Their sample caps were
+absolute and sized for a whole frame: 1,536,000 sparks and 8,388,608 grains a view. A port is
+240x136. In one 76.2 mm HE strike 15 m ahead (`KESSEL_BENCH_IMPACT`, below) three ports each drew
+1,536,000 sparks (47 a pixel, half of them ground ejecta) and one drew 3,478,528 grains from
+1,722 overlapping smoke parcels (some 36 deep), and every grain and ejecta pixel runs the full
+medium light: the environment lanes, the sun through the atlas and each point light's cabin
+shadow and weather march. Not the spark count alone, not overdraw from sparks near the eye: the
+caps ignored how few pixels a port has, and the per-pixel cost scales with the lights.
+
+- **A budget per native pixel of the port** (`RaymarchQuality::relay_effect_samples_per_pixel`:
+  Low 8, High 16, Ultra 32; `relay_effect_budget`), for each of the two passes. The shader
+  backend's own main view keeps the absolute caps.
+- **Sparks over budget are thinned, not dropped** (`weapon_particle_math::thinned_counts`): each
+  visible burst draws its share of what the hot rims (never thinned) leave, never fewer than its
+  source count, and the shader weighs each sample by source / drawn, so the shower's light is the
+  same in fewer samples. Ground ejecta keep the full count's grain size and take the optical depth
+  of the grains each sample stands for. Before, a burst over the cap was left out whole.
+- **Grains keep their coverage rule** (at least two samples per covered pixel of a parcel, so no
+  grain is opaque): optional density goes first, then whole far parcels, counted as omitted
+  (`omitted_projected_area_px`). In the strike above the port kept the nearest 108 of 986 parcels;
+  the rest lay behind them.
+
+`gfxbench-drive 330 10 PRESET 137` with `KESSEL_BENCH_IMPACT=15,0,60` (an HE strike every second),
+480x272, commander's station, three ports, idle 4090; "before" is the same build with
+`KESSEL_RELAY_EFFECT_SPP=1000` (the old caps):
+
+| | Low before | Low after | High before | High after |
+| --- | --- | --- | --- | --- |
+| port sparks, worst frame | 16.6 ms | 3.8 ms | 23.9 ms | 8.4 ms |
+| port grains, worst frame | 78.0 ms | 6.6 ms | 69.2 ms | 11.3 ms |
+| frame p99 / mean | 84.1 / 26.5 ms | 32.2 / 24.4 ms | 84.7 / 32.6 ms | 42.9 / 30.8 ms |
+
+Parked at the commander's station (act 1, `gfxbench day 200`, same strikes, Low): grains 21.0 ->
+4.4 ms and sparks 8.0 -> 2.1 ms at worst, frame p99 49.6 -> 28.9 ms. `captures/relayfx_sheet.png`
+(old caps, Low, High, one second after the last strike): on Low the dust and spark spray in the
+vision blocks is sparser and more speckled; High is close to the old picture.
+
+Bench switches: `KESSEL_BENCH_IMPACT=AHEAD_M,RIGHT_M,PERIOD` (gfxbench and gfxbench-drive) fires a
+76.2 mm HE shell (6.2 kg, 680 m/s, 20 deg down) into the ground ahead of the tank every PERIOD
+timed frames: the detonation's blast record and the ground ejecta record, nothing else
+(`Game::debug_ground_strike`). gfxbench prints each pass's worst frame; gfxbench-drive with
+`KESSEL_BENCH_RECEIPTS=1` prints the spark and grain receipts of its worst effects frame.
+`KESSEL_RELAY_EFFECT_SPP` overrides the preset's rate.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
