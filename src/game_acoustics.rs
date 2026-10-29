@@ -64,6 +64,45 @@ impl CabinVoxels {
         Self { frames, triangles, build_ms: start.elapsed().as_secs_f64() * 1e3 }
     }
 
+    /// The same voxels from the meshes `CabinFire::new` is given, built on a worker thread so
+    /// the ~0.6 s never lands in a simulation update. Only vertex positions and indices are
+    /// copied on the caller's thread. The worker keeps exactly the triangles `build` gets back
+    /// from `world_triangles` with identity frames: the non-degenerate ones (as `CabinFire`
+    /// keeps them) whose bounds meet the ±8 m box. The occupancy grid does not depend on their
+    /// order. `None` when the traced rooms are off (`KESSEL_ACOUSTICS=0`) or no thread starts.
+    pub fn spawn(meshes: &[(usize, &crate::gltf_load::CpuMesh)]) -> Option<std::thread::JoinHandle<CabinVoxels>> {
+        if !acoustics_enabled() { return None; }
+        let copies: Vec<(usize, Vec<[f32; 3]>, Vec<u32>)> = meshes.iter()
+            .map(|(frame, mesh)| (*frame, mesh.vertices.iter().map(|v| v.pos).collect(), mesh.indices.clone()))
+            .collect();
+        std::thread::Builder::new().name("acoustic-voxels".into())
+            .spawn(move || Self::from_copies(&copies)).ok()
+    }
+
+    fn from_copies(copies: &[(usize, Vec<[f32; 3]>, Vec<u32>)]) -> Self {
+        let start = std::time::Instant::now();
+        let reach = Vec3::splat(8.0);
+        let mut per_frame: Vec<Vec<[Vec3; 3]>> = vec![Vec::new(); surface_fire::FRAMES];
+        for (frame, positions, indices) in copies {
+            for ids in indices.chunks_exact(3) {
+                let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(positions[ids[i] as usize]));
+                if (b - a).cross(c - a).length_squared() < 1e-16 { continue; }
+                let (lo, hi) = (a.min(b).min(c), a.max(b).max(c));
+                if lo.cmpgt(reach).any() || hi.cmplt(-reach).any() { continue; }
+                per_frame[*frame].push([a, b, c]);
+            }
+        }
+        let mut frames = Vec::new();
+        let mut triangles = 0;
+        for (f, tris) in per_frame.iter().enumerate() {
+            triangles += tris.len();
+            if let Some(solid) = VoxelSolid::from_triangles(tris, CABIN_VOXEL_M) {
+                frames.push((f, solid));
+            }
+        }
+        Self { frames, triangles, build_ms: start.elapsed().as_secs_f64() * 1e3 }
+    }
+
     /// Nearest voxel hit over every frame placed by `models` (scene frame).
     pub fn hit(&self, models: &[Mat4; surface_fire::FRAMES], inverses: &[Mat4; surface_fire::FRAMES],
         origin: Vec3, dir: Vec3, max_distance: f32) -> Option<Hit>
@@ -282,8 +321,10 @@ pub(super) struct FieldKey {
 /// Continuous-sound and event memory for the world foley.
 #[derive(Default)]
 pub(super) struct WorldAcoustics {
-    /// Built on the first trace (`CabinVoxels::build`).
+    /// The cabin's voxels, once the load-time worker has delivered them (`CabinVoxels::spawn`).
     voxels: Option<Rc<CabinVoxels>>,
+    /// The worker building them; traces wait (voices keep the parametric tail) until it is done.
+    pending_voxels: Option<std::thread::JoinHandle<CabinVoxels>>,
     cache: HashMap<FieldKey, Rc<StereoIr>>,
     order: VecDeque<FieldKey>,
     queue: VecDeque<(FieldKey, Vec3, Vec3, Vec3)>,
@@ -502,7 +543,20 @@ impl Game {
         }
         let Some((key, mut job)) = self.acoustics.job.take() else { return };
         if self.acoustics.voxels.is_none() {
-            let voxels = CabinVoxels::build(&self.cabin_fire);
+            let voxels = match self.acoustics.pending_voxels.take() {
+                Some(worker) if !worker.is_finished() => {
+                    // Still building off the simulation thread: hold the job, trace nothing yet.
+                    self.acoustics.pending_voxels = Some(worker);
+                    self.acoustics.job = Some((key, job));
+                    return;
+                }
+                Some(worker) => worker.join().unwrap_or_else(|_| {
+                    eprintln!("[acoustics] the voxel worker failed; building the cabin voxels here");
+                    CabinVoxels::build(&self.cabin_fire)
+                }),
+                // No worker (a world made without one): build here, once.
+                None => CabinVoxels::build(&self.cabin_fire),
+            };
             println!("[acoustics] cabin voxels: {} frames from {} source triangles at {} m in {:.0} ms",
                 voxels.frames.len(), voxels.triangles, CABIN_VOXEL_M, voxels.build_ms);
             self.acoustics.voxels = Some(Rc::new(voxels));
@@ -950,9 +1004,32 @@ fn acoustics_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("KESSEL_ACOUSTICS").as_deref() != Ok("0"))
 }
 
+impl WorldAcoustics {
+    /// World acoustics whose cabin voxels come from `worker` (`CabinVoxels::spawn`).
+    pub(super) fn with_cabin_voxels(worker: Option<std::thread::JoinHandle<CabinVoxels>>) -> Self {
+        Self { pending_voxels: worker, ..Default::default() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The worker's voxels equal the ones built through `CabinFire`'s contact query: two frames
+    /// of boxes (a closed room, a slab), one with a degenerate triangle and one past ±8 m.
+    #[test]
+    fn worker_voxels_equal_the_contact_built_ones() {
+        let mut room = crate::prims::box_mesh(Vec3::new(-1.0, 0.0, -1.5), Vec3::new(1.0, 1.8, 1.5), [90, 90, 90]);
+        room.indices.extend([0, 0, 1]);
+        let slab = crate::prims::box_mesh(Vec3::new(-0.4, 1.0, -0.3), Vec3::new(0.5, 1.1, 0.8), [90, 90, 90]);
+        let far = crate::prims::box_mesh(Vec3::new(20.0, 0.0, 20.0), Vec3::new(21.0, 1.0, 21.0), [90, 90, 90]);
+        let meshes = [(0, &room), (1, &slab), (1, &far)];
+        let built = CabinVoxels::build(&surface_fire::CabinFire::new(&meshes));
+        let spawned = CabinVoxels::spawn(&meshes).expect("a worker").join().expect("the worker's voxels");
+        assert_eq!(built.triangles, spawned.triangles);
+        assert_eq!(built.frames.len(), 2);
+        assert_eq!(built.frames, spawned.frames);
+    }
 
     /// The box grid returns exactly what the linear scan over every box returns: the same
     /// nearest entry distance and normal (ties to the earlier box), for rays from inside and
@@ -1029,6 +1106,13 @@ mod tests {
         let listener = inv.transform_point3(turret.transform_point3(tiger_periscopes::COMMANDER_EYE - Vec3::Y * 0.1));
         let voxels = CabinVoxels::build(&source);
         println!("voxels: {} frames from {} triangles in {:.0} ms", voxels.frames.len(), voxels.triangles, voxels.build_ms);
+        let caller = std::time::Instant::now();
+        let worker = CabinVoxels::spawn(&[(0, &parts[0]), (1, &parts[1]), (2, &parts[2]), (6, &lid)]).expect("a worker");
+        let caller_ms = caller.elapsed().as_secs_f64() * 1e3;
+        let spawned = worker.join().expect("the worker's voxels");
+        println!("worker: {caller_ms:.1} ms on the caller's thread, {:.0} ms on the worker", spawned.build_ms);
+        assert_eq!(spawned.triangles, voxels.triangles);
+        assert!(spawned.frames == voxels.frames, "the worker's voxels differ from the contact-built ones");
         let open_air = |p: Vec3, models: &[Mat4; surface_fire::FRAMES]| {
             let inv = models.map(|m| m.inverse());
             [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z].iter()
