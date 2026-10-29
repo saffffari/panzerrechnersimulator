@@ -1,0 +1,1 @@
+[autopilot-result] {"outcome":"time_limit","play_s":240.9,"progress":0.1131,"reloads":0}
