@@ -799,6 +799,7 @@ impl Game {
             Vec3::new(-dx,1.0,-dz).normalize(),if self.act.season==crate::world::Season::Winter {1.0}else{0.0});
     }
     pub(super) fn drive_weapon_vfx(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_weapon_vfx");
         // A glowing wound follows the struck source frame, including a physically detached
         // turret. Released smoke/fragments retain their independent world-space trajectories.
         let anchors:Vec<_>=self.weapon_vfx.bursts.iter().enumerate().filter_map(|(i,b)|b.and_then(|b|b.anchor.map(|a|(i,a)))).collect();

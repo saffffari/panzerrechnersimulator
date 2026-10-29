@@ -533,6 +533,7 @@ impl Game {
     }
 
     pub(super) fn drive_at_guns(&self, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_at_guns");
         for g in 0..AT_GUNS {
             let [lower, upper] = self.slots.at_gun[g];
             let Some(gun) = self.at_guns[g] else {

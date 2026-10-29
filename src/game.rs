@@ -30102,6 +30102,7 @@ impl Game {
     /// Every sustained FIRE emitter moved to `drive_interior_fire`'s high-resolution cubic soot, so
     /// a burning tank can no longer fall back to a soft analytic blob.
     fn drive_smoke(&mut self, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_smoke");
         const N_PUFFS: usize = crate::renderer::MAX_PUFFS;
         r.clear_smoke(); // zero every slot; the active emitters below re-arm the ones they need
         let mut slot = 0usize;
@@ -30151,6 +30152,7 @@ impl Game {
     }
 
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("update_fx");
         // Persistent casualty physics advances once with the host simulation, never once per split
         // viewport. Every camera therefore sees the same directional throw and final body pose.
         for ragdoll in &mut self.couch_ragdolls {
@@ -30624,6 +30626,7 @@ impl Game {
     }
 
     fn drive_dust_volumes(&self, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_dust_volumes");
         // Use remaining supports nearest-first; fire and weapon smoke retain their existing
         // priority in the bounded shared pool. Actual solid debris remains in its own mesh pool.
         let mut puffs: Vec<_> = self.snow_puffs.iter().enumerate()
@@ -30638,6 +30641,7 @@ impl Game {
     /// Integrate and draw dropped rounds against the actual floor, walls and machinery. Their
     /// finite poses remain authoritative for drawing, pickup and ammunition damage.
     fn drive_loose_shells(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_loose_shells");
         for k in 0..N_LOOSE {
             if self.loose[k].active && self.loose[k].world_space { self.drive_world_round(k, dt, r); }
         }
@@ -30701,6 +30705,7 @@ impl Game {
     /// Exact swept source contacts and deposited foam layers. Airborne grains are world-space;
     /// deposits follow their contacted hull, turret, gun, hatch or physical floor-disc frame.
     fn drive_foam(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_foam");
         let models=self.fire_surface_models();
         self.cabin_fire.advance_foam(dt,&models);
         let points=self.cabin_fire.render_points(&models);
@@ -30716,6 +30721,7 @@ impl Game {
     /// each body once as a cube and at most once as its measured-history trail. The three authored
     /// penetration meshes and retired micro pages are forcibly empty/hidden.
     fn drive_penetration_fx(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_penetration_fx");
         for slot in [
             self.slots.pen_flash,
             self.slots.pen_beam,
@@ -30992,6 +30998,7 @@ impl Game {
     /// window. This lives in the shared simulation pass—not a viewport pass—so four local crew see
     /// the same shower and hear one physical cabin event through their shared speakers/headset.
     fn drive_hot_fragment_audio(&mut self, dt: f32, r: &Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_hot_fragment_audio");
         self.hot_fragment_audio_cooldown =
             (self.hot_fragment_audio_cooldown - dt.max(0.0)).max(0.0);
         self.hot_fragment_whizz_cooldown =
@@ -31082,6 +31089,7 @@ impl Game {
     /// Transport real emitted grains against retained source triangles, then expand only the
     /// connected supported contact film. Every view draws the same moving-frame evidence.
     fn drive_cubic_blood(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_cubic_blood");
         let models = self.fire_surface_models();
         let source = self.cabin_fire.source_contacts(&models);
         self.surface_blood.update(dt, &models, &source);
@@ -31112,6 +31120,7 @@ impl Game {
     /// Persistent cases use the bounded dropped-body solver; held cases use the hand spring.
     /// Brass remains an ordinary lit material, with unchanged scale across extraction/release.
     fn drive_casings(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_casings");
         let seated_case = (matches!(self.breech, Breech::Spent)
             && self.lever_open >= LEVER_OPEN && self.carried_casing.is_none())
             .then(|| self.casings.iter().position(|case| !case.active)).flatten();
@@ -31250,6 +31259,7 @@ impl Game {
     /// Draw the breech + reload rounds (only meaningful buttoned-up, so gate on interior_light).
     /// The ram round slides home as `ram` climbs; the ready rack sits beside the breech.
     fn drive_reload_fx(&mut self, _dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_reload_fx");
         let show = self.interior_light > 0.02 || self.climb.active;
         // The breech / chambered round / ram round / ready rack used to be emissive STAND-IN boxes
         // (the interior before the model existed). The real breech + `Round in the chamber` + the 65
@@ -31326,6 +31336,7 @@ impl Game {
     /// behind the break; at progress 1 it is draped back across the road wheels. The fresh link
     /// waits visibly outboard until the placement click seats it in the gap.
     fn drive_track_repair_fx(&self, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_track_repair_fx");
         let broken_side = if !self.module_ok(ModuleKind::LeftTrack) {
             Some(1.55)
         } else if !self.module_ok(ModuleKind::RightTrack) {
@@ -31375,6 +31386,7 @@ impl Game {
     /// The grains themselves are the visible jet; `drive_foam` batches their flying and deposited
     /// states while `drive_interior_fire` independently scales the flame parcels off `self.fire`.
     fn drive_ext_fx(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_ext_fx");
         let show_interior = self.interior_light > 0.02;
         let grabbing = matches!(self.activity, Some(Activity::Extinguish)) || self.ext_equipped;
 
@@ -31517,6 +31529,7 @@ impl Game {
     /// the pooled thin/fast tracer streaks (muzzle→impact lerp), and the pooled impact spurts (hot
     /// white armour sparks vs softer snow/dirt kicks). Deterministic flicker (hash01, no rand).
     fn drive_mg_fx(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_mg_fx");
         // Muzzle flash: a rapid stroboscopic flicker while rounds are cycling; hashed per round so it
         // jitters like real MG chatter rather than a steady lamp.
         if self.mg_flash_t > 0.0 {
@@ -31616,6 +31629,7 @@ impl Game {
     /// flames/soot plus the nearest burning wrecks and archived hulks. Ten shared dynamic pages keep
     /// the count bounded and make all four couch views see the exact same grains.
     fn drive_interior_fire(&mut self, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_interior_fire");
         self.drive_fire_presentation(r,!self.defer_presentation_rebuild,true);
     }
 

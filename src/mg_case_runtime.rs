@@ -36,6 +36,7 @@ impl Game {
         c.body.angular_velocity=frame.transform_vector3(Vec3::new(5.0,8.0+scatter*3.0,3.0));
     }
     pub(super) fn drive_mg_cases(&mut self,dt:f32,r:&mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("drive_mg_cases");
         let models=self.fire_surface_models();let source=self.cabin_fire.source_contacts(&models);
         let signature=shell_collision::scene_signature(&models);let mut budget=shell_collision::DropBudget::default();
         let mut sounds=Vec::new();
