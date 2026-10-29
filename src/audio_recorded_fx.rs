@@ -78,7 +78,7 @@ impl Fx {
             Fx::ItemEquip => files!("item_equip_01", "item_equip_02", "item_equip_03", "item_equip_04"),
             Fx::TriggerDry => files!("gun_trigger_dry_01"),
             Fx::LugerRack => files!("luger_rack_01"),
-            Fx::BreechExtract => files!("breech_extract_01"),
+            Fx::BreechExtract => files!("breech_extract_01", "breech_extract_02"),
             Fx::BreechRam => files!("breech_ram_01", "breech_ram_02"),
             Fx::BreechClose => files!("breech_close_01", "breech_close_02", "breech_close_03"),
             Fx::ShellPickup => files!("shell_pickup_01", "shell_pickup_02"),
@@ -143,7 +143,7 @@ impl Fx {
         match self {
             Fx::BreechClose => 0.62,
             Fx::BreechRam => 0.85,
-            Fx::BreechExtract => 0.80,
+            Fx::BreechExtract => 0.85,
             _ => 1.0,
         }
     }
@@ -190,6 +190,28 @@ pub(crate) struct Prepared {
     pub variant: usize,
     /// Seconds from the start to the clip's last strong transient (the ram's seating strike).
     pub strike_s: f32,
+    /// Seconds from the start to the clip's loudest 5 ms frame (its main transient).
+    pub loudest_s: f32,
+}
+
+/// A variant handed to the game.
+pub(crate) struct Picked {
+    pub mono: Arc<[f32]>,
+    pub file: &'static str,
+    pub variant: usize,
+    pub strike_s: f32,
+    pub loudest_s: f32,
+}
+
+/// Seconds to the loudest 5 ms frame.
+pub(crate) fn loudest_s(mono: &[f32]) -> f32 {
+    let hop = (0.005 * SR) as usize;
+    let mut best = (0usize, 0.0f32);
+    for (i, c) in mono.chunks(hop).enumerate() {
+        let e = c.iter().map(|x| x * x).sum::<f32>();
+        if e > best.1 { best = (i, e); }
+    }
+    best.0 as f32 * hop as f32 / SR
 }
 
 struct Family {
@@ -247,7 +269,8 @@ impl Family {
             let mono = resample(&trim_head(&mono), fx.pitch());
             if mono.len() < 64 || !mono.iter().all(|v| v.is_finite()) { continue; }
             let strike_s = last_strike_s(&mono);
-            clips.push(Prepared { mono: Arc::from(mono), file: path, variant: i + 1, strike_s });
+            let loudest = loudest_s(&mono);
+            clips.push(Prepared { mono: Arc::from(mono), file: path, variant: i + 1, strike_s, loudest_s: loudest });
         }
         Self { clips, last: Cell::new(None), played: Cell::new(0) }
     }
@@ -307,13 +330,14 @@ impl Audio {
 
     /// The next variant of `fx`, without repeating the last; `None` where not installed or when
     /// this update's voice cap is spent.
-    pub(crate) fn recorded_fx(&self, fx: Fx, seed: u32) -> Option<(Arc<[f32]>, &'static str, usize, f32)> {
+    pub(crate) fn recorded_fx(&self, fx: Fx, seed: u32) -> Option<Picked> {
         let bank = &self.recorded_fx;
         if bank.voices_this_update.get() >= MAX_VOICES_PER_UPDATE {
             bank.capped.set(bank.capped.get().wrapping_add(1));
             return None;
         }
-        let picked = bank.with(fx, |family| family.pick(seed).map(|p| (Arc::clone(&p.mono), p.file, p.variant, p.strike_s)))??;
+        let picked = bank.with(fx, |family| family.pick(seed).map(|p| Picked { mono: Arc::clone(&p.mono), file: p.file,
+            variant: p.variant, strike_s: p.strike_s, loudest_s: p.loudest_s }))??;
         bank.voices_this_update.set(bank.voices_this_update.get() + 1);
         Some(picked)
     }
@@ -327,7 +351,7 @@ impl Audio {
         for (fx, f) in families.iter() {
             out.insert(fx.name(), serde_json::json!({"installed": f.clips.len(), "played": f.played.get(),
                 "files": f.clips.iter().map(|p| serde_json::json!({"file": p.file, "seconds": p.mono.len() as f32 / SR,
-                    "strike_s": p.strike_s})).collect::<Vec<_>>()}));
+                    "strike_s": p.strike_s, "loudest_s": p.loudest_s})).collect::<Vec<_>>()}));
         }
         serde_json::json!({"enabled": self.recorded_fx.enabled, "families": out,
             "capped_requests": self.recorded_fx.capped.get(), "max_voices_per_update": MAX_VOICES_PER_UPDATE})
@@ -376,7 +400,7 @@ mod tests {
 
     #[test]
     fn variants_never_repeat_back_to_back() {
-        let family = Family { clips: (0..3).map(|i| Prepared { mono: Arc::from(vec![0.1; 8]), file: "x", variant: i + 1, strike_s: 0.0 }).collect(),
+        let family = Family { clips: (0..3).map(|i| Prepared { mono: Arc::from(vec![0.1; 8]), file: "x", variant: i + 1, strike_s: 0.0, loudest_s: 0.0 }).collect(),
             last: Cell::new(None), played: Cell::new(0) };
         let mut prev = None;
         for seed in 0..300 { let v = family.pick(seed).unwrap().variant; assert_ne!(Some(v), prev); prev = Some(v); }

@@ -1125,6 +1125,9 @@ impl Game {
             if matches!(code, KeyCode::KeyT) {
                 p.typing = true;
                 p.entry.clear();
+                // The radio's press-to-talk key.
+                let at = self.hands_pos();
+                self.recorded(crate::audio::RecordedFx::SwitchButton, -2.0, at);
                 return true;
             }
             return false;

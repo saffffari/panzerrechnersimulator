@@ -15409,6 +15409,7 @@ impl Game {
                 let site = &runtime.route.sites[next_sheet];
                 runtime.map_sheets += 1;
                 runtime.map_flash_t = 7.5;
+                self.acoustics.sheet_recovered = true;
                 println!(
                     "[campaign] Kartenblatt {}/3 recovered at {}",
                     runtime.map_sheets, site.label
@@ -16233,10 +16234,17 @@ impl Game {
                 owns_fire_authority && lay_ok && ((lmb_edge && !click_consumed) || ai_pulse),
                 self.player_can_fire());
             if trigger_result != cartridge_primer::Pull::Ignored {
-                if let Some(a) = &self.audio {
-                    if trigger_result==cartridge_primer::Pull::Discharge {a.play_control("trigger",0.8);}
+                // The electric trigger and firing mechanism at the gunner's hand: clearly heard
+                // when the gun does not fire (no round, breech open, a dud primer), and 24 dB
+                // under its reference on a shot, where the 88's report masks it.
+                let at = if self.station == Station::Gunner { self.hands_pos() }
+                    else { self.player.turret_model().transform_point3(Vec3::new(0.45, 1.35, 0.55)) };
+                let fired = trigger_result == cartridge_primer::Pull::Discharge;
+                let clicked = self.recorded(crate::audio::RecordedFx::TriggerDry, if fired { -24.0 } else { 0.0 }, at);
+                if !clicked { if let Some(a) = &self.audio {
+                    if fired {a.play_control("trigger",0.8);}
                     else {a.play_failed_trigger(self.listener_headset());}
-                }
+                } }
             }
             if trigger_result == cartridge_primer::Pull::Discharge {
                 self.fire(r);
@@ -16851,7 +16859,13 @@ impl Game {
                         self.lever_open = target;
                         let crossed_open = before < LEVER_OPEN && self.lever_open >= LEVER_OPEN;
                         let crossed_shut = before > LEVER_SHUT && self.lever_open <= LEVER_SHUT;
-                        if crossed_open || crossed_shut {
+                        // The lever pulled and the block closing: one of the three recorded
+                        // closes (never the last one twice); the opening keeps its recording.
+                        let closed_recorded = crossed_shut && {
+                            let at = self.breech_pos();
+                            self.recorded(crate::audio::RecordedFx::BreechClose, 0.0, at)
+                        };
+                        if (crossed_open || crossed_shut) && !closed_recorded {
                             if let Some(a) = &self.audio {
                                 a.play_mechanical(
                                     crate::acoustics::MechanicalParams {
@@ -16892,7 +16906,11 @@ impl Game {
                             .expect("the extraction gate reserved an unused casing body");
                         self.casings[k].carried = true;
                         self.carried_casing = Some(k);
-                        if let Some(a) = &self.audio {
+                        // The case drawn out: its main transient where it clears the breech.
+                        let at = self.breech_pos();
+                        let extracted = self.recorded_aligned(crate::audio::RecordedFx::BreechExtract, 0.0, at,
+                            game_recorded_fx::Align::Loudest { lead_s: 0.05 });
+                        if !extracted { if let Some(a) = &self.audio {
                             a.play_mechanical(
                                 crate::acoustics::MechanicalParams {
                                     cue: crate::acoustics::MechanicalCue::CasingExtract,
@@ -16902,7 +16920,7 @@ impl Game {
                                 },
                                 0.58,
                             );
-                        }
+                        } }
                     }
                     if self.carried_casing.is_some() {
                         self.update_carry(r, dt, CARRY_K_CASE, CARRY_D_CASE);
@@ -16940,6 +16958,14 @@ impl Game {
                                     // manual_ram_step bled a little off; the committed ram outruns it.
                                     self.ram = (self.ram + dt * (1.0 / AUTO_RAM_SECONDS + RAM_DECAY)).min(1.0);
                                     ram_consumed_look = true;
+                                    // The committed ram's end is known: start the recording so its
+                                    // final strike lands as the round seats.
+                                    if !self.acoustics.ram_sound_started {
+                                        let in_s = (1.0 - self.ram).max(0.0) * AUTO_RAM_SECONDS;
+                                        let at = self.breech_pos();
+                                        self.acoustics.ram_sound_started = self.recorded_aligned(crate::audio::RecordedFx::BreechRam, 0.0,
+                                            at, game_recorded_fx::Align::StrikeIn { in_s });
+                                    }
                                 } else {
                                     self.auto_ram = false;
                                 }
@@ -16963,7 +16989,13 @@ impl Game {
                                     self.carry_mesh = None;
                                     self.auto_ram = false;
                                     self.ram_ready = false;
-                                    if let Some(a) = &self.audio {
+                                    // A hand ram's end is not known ahead: the recording's head is cut
+                                    // so its strike lands 30 ms after the seat.
+                                    let started = std::mem::take(&mut self.acoustics.ram_sound_started);
+                                    let at = self.breech_pos();
+                                    let rammed = started || self.recorded_aligned(crate::audio::RecordedFx::BreechRam, 0.0,
+                                        at, game_recorded_fx::Align::StrikeIn { in_s: 0.03 });
+                                    if !rammed { if let Some(a) = &self.audio {
                                         a.play_mechanical(
                                             crate::acoustics::MechanicalParams {
                                                 cue: crate::acoustics::MechanicalCue::ShellRam,
@@ -16973,7 +17005,7 @@ impl Game {
                                             },
                                             0.82,
                                         );
-                                    }
+                                    } }
                                 }
                             }
                         }
@@ -18811,7 +18843,12 @@ impl Game {
                         self.lever_open = 0.0; // …and slams the breech shut
                         self.slot_taken[next_slot] = true; // the auto-crew takes from the rack too
                         self.he_loaded = self.slot_nature_he[next_slot];
-                        if let Some(a) = &self.audio {
+                        // The round rammed home (its strike on the seat), then the lever pull and
+                        // the block closing 0.33 s later [E].
+                        let at = self.breech_pos();
+                        let rammed = self.recorded_aligned(crate::audio::RecordedFx::BreechRam, 0.0, at, game_recorded_fx::Align::StrikeIn { in_s: 0.03 });
+                        let closed = rammed && self.recorded_aligned(crate::audio::RecordedFx::BreechClose, 0.0, at, game_recorded_fx::Align::Delay { s: 0.33 });
+                        if !(rammed && closed) { if let Some(a) = &self.audio {
                             a.play_mechanical(crate::acoustics::MechanicalParams {
                                 cue: crate::acoustics::MechanicalCue::ShellRam,
                                 intensity: 0.88, bearing_deg: 18.0,
@@ -18826,7 +18863,7 @@ impl Game {
                                 },
                                 0.82,
                             );
-                        } // breech CLACK
+                        } } // breech CLACK
                     }
                 } else {
                     self.ram = (self.ram - RAM_DECAY * dt).max(0.0);
@@ -18853,7 +18890,9 @@ impl Game {
         // The solo crew's loader stows the empty upright in the rear rack unless he is rushed,
         // hurt, or the rack is full; then it tumbles as before.
         self.crew_solo_offer_stow(k, position, rotation.normalize());
-        if let Some(a) = &self.audio {
+        let at = self.breech_pos();
+        if self.recorded_aligned(crate::audio::RecordedFx::BreechExtract, 0.0, at, game_recorded_fx::Align::Loudest { lead_s: 0.05 }) {}
+        else if let Some(a) = &self.audio {
             a.play_mechanical(crate::acoustics::MechanicalParams {
                 cue: crate::acoustics::MechanicalCue::CasingExtract,
                 intensity: 0.82, bearing_deg: 62.0, seed: seed ^ 0xCA5E_0002,
@@ -19877,7 +19916,7 @@ impl Game {
         };
         self.select_foot_weapon(next);
         let object = if matches!(next, crate::foot::FootWeapon::Luger) { crate::acoustics::foley::Object::Pistol } else { crate::acoustics::foley::Object::Panzerfaust };
-        self.foley_hands(crate::acoustics::foley::Cue::Handle(object, crate::acoustics::foley::Gesture::Grab));
+        self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemEquip, 0.0, crate::acoustics::foley::Cue::Handle(object, crate::acoustics::foley::Gesture::Grab));
     }
 
     pub fn toggle_dismount(&mut self) {
@@ -20237,7 +20276,7 @@ impl Game {
         self.panzerfaust_claimed = false;
         self.foot.panzerfaust_ready = false;
         self.foot.panzerfaust_spares = 0;
-        self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Panzerfaust, crate::acoustics::foley::Gesture::Stow));
+        self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemEquip, 0.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Panzerfaust, crate::acoustics::foley::Gesture::Stow));
         self.foot.panzerfaust_swap_t = 0.0;
         self.foot.panzerfaust_flash_t = 0.0;
         self.foot.flash_t = 0.0;
@@ -20764,7 +20803,7 @@ impl Game {
             }
             self.held_item = None;
             let at = self.pickups[index].pos;
-            self.foley(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::SetDown), 1.0, 0.0, at);
+            self.recorded_or_foley(crate::audio::RecordedFx::EquipDrop, -6.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::SetDown), 1.0, 0.0, at);
             println!("[absitzen] portable item placed with zero impulse");
             return true;
         }
@@ -20780,7 +20819,7 @@ impl Game {
                 item.fuel_liters(),
                 item.mass_kg()
             );
-            self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::Grab));
+            self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemPickup, 2.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::Grab));
             true
         } else {
             false
@@ -20825,7 +20864,7 @@ impl Game {
             item.put_down();
         }
         let at = self.pickups[index].pos;
-        self.foley(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::SetDown), 0.8, -3.0, at);
+        self.recorded_or_foley(crate::audio::RecordedFx::EquipDrop, -3.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::SetDown), 0.8, -3.0, at);
     }
 
     /// Advance and draw every portable pickup from its one permanent renderer slot. Empty cans have
@@ -20874,7 +20913,9 @@ impl Game {
             r.set_visible(pickup.slot, true);
         }
         for (at, v) in bounces {
-            self.foley(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::Drop), (v / 3.0).clamp(0.3, 3.0),
+            // The drop's level follows the impact speed (20 log10 v/3, as the foley did).
+            self.recorded_or_foley(crate::audio::RecordedFx::EquipDrop, 20.0 * (v / 3.0).max(0.05).log10(),
+                crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::JerryCan, crate::acoustics::foley::Gesture::Drop), (v / 3.0).clamp(0.3, 3.0),
                 20.0 * (v / 3.0).max(0.05).log10(), at);
         }
     }
@@ -21088,8 +21129,8 @@ impl Game {
                             _ => {}
                         }
                     }
-                    if let Some(audio) = &self.audio {
-                        audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(1.0));
+                    if !self.recorded(crate::audio::RecordedFx::ItemPickup, 0.0, self.hands_pos()) {
+                        if let Some(audio) = &self.audio { audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(1.0)); }
                     }
                     println!("[absitzen] searched city shelf — {items:?}");
                 }
@@ -21194,6 +21235,7 @@ impl Game {
         }
 
         // ── Supply scavenging: walk within 1.4 m (planar) of a pickup to collect it.
+        let mut collected_now = 0u32;
         for p in &mut self.pickups {
             if p.portable.is_none() && p.kind!=PickupKind::Cigarettes
                 && !p.collected
@@ -21213,9 +21255,7 @@ impl Game {
                     }
                     _ => {}
                 }
-                if let Some(a) = &self.audio {
-                    a.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(1.0));
-                }
+                collected_now += 1;
                 println!(
                     "[absitzen] picked up {:?} — ammo caches {} exact AP/HE {}/{} med {} cigs {} (hp {:.0})",
                     p.kind,
@@ -21226,6 +21266,12 @@ impl Game {
                     self.foot.supplies.cigarettes,
                     self.foot.hp
                 );
+            }
+        }
+        for _ in 0..collected_now {
+            let at = self.hands_pos();
+            if !self.recorded(crate::audio::RecordedFx::ItemPickup, 0.0, at) {
+                if let Some(a) = &self.audio { a.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(1.0)); }
             }
         }
 
@@ -21251,8 +21297,8 @@ impl Game {
         }
         if recovered > 0 {
             self.foot.ammo += recovered;
-            if let Some(a) = &self.audio {
-                a.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.55));
+            if !self.recorded(crate::audio::RecordedFx::ItemPickup, 0.0, self.hands_pos()) {
+                if let Some(a) = &self.audio { a.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.55)); }
             }
             println!(
                 "[absitzen] recovered {recovered} loose 9 mm round{} (reserve {})",
@@ -21500,6 +21546,12 @@ impl Game {
                     let visual_muzzle = pistol_pos + pistol_rot * Vec3::new(0.0, 0.052_598_275, 0.110);
                     self.fire_luger(r.camera.pos, r.camera.forward(), rt, up, visual_muzzle);
                 }
+                crate::foot::FootWeapon::Luger if self.foot.reload_t <= 0.0 => {
+                    // Dry: an empty magazine or an open toggle. One click per pull.
+                    let at = self.hands_pos();
+                    self.recorded(crate::audio::RecordedFx::TriggerDry, -6.0, at);
+                    self.foot.cooldown = 0.25;
+                }
                 crate::foot::FootWeapon::Panzerfaust
                     if self.foot.panzerfaust_ready
                         && self.foot.panzerfaust_swap_t <= 0.0
@@ -21612,7 +21664,13 @@ impl Game {
             self.hover_label=Some("P08 — MUZZLE OBSTRUCTED");
             return;
         }
-        if !self.foot.discharge_p08() { return; }
+        if !self.foot.discharge_p08() {
+            // The pistol's trigger pulled on an empty chamber.
+            let at = self.hands_pos();
+            self.recorded(crate::audio::RecordedFx::TriggerDry, -6.0, at);
+            self.foot.cooldown = 0.25;
+            return;
+        }
         self.foot.cooldown = 0.25;
         self.foot.flash_t = 0.075;
         self.foot.recoil = 1.0;
@@ -32175,7 +32233,7 @@ impl Game {
         if let Some(Hotspot::PanzerfaustRack(index)) = self.hover { return self.take_panzerfaust(index); }
         if self.ext_equipped {
             self.ext_equipped = false;
-            self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Extinguisher, crate::acoustics::foley::Gesture::Stow));
+            self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemEquip, 0.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Extinguisher, crate::acoustics::foley::Gesture::Stow));
             println!("[panzerrechnersystem] Extinguisher stowed");
             return true;
         }
@@ -32184,7 +32242,7 @@ impl Game {
             && self.carry_mesh.is_none() && self.carried_casing.is_none()
         {
             self.ext_equipped = true;
-            self.foley_hands(crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Extinguisher, crate::acoustics::foley::Gesture::Grab));
+            self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemPickup, 2.0, crate::acoustics::foley::Cue::Handle(crate::acoustics::foley::Object::Extinguisher, crate::acoustics::foley::Gesture::Grab));
             println!("[panzerrechnersystem] Extinguisher equipped — LMB sprays after release; Q/E stows");
             return true;
         }
@@ -32230,7 +32288,10 @@ impl Game {
                     "PzGr 39 (AP)"
                 }
             );
-            if let Some(a) = &self.audio {
+            // The live round drawn out of the breech: its main transient as it clears.
+            let at = self.breech_pos();
+            if self.recorded_aligned(crate::audio::RecordedFx::BreechExtract, 0.0, at, game_recorded_fx::Align::Loudest { lead_s: 0.05 }) {}
+            else if let Some(a) = &self.audio {
                 a.play_mechanical(
                     crate::acoustics::MechanicalParams {
                         cue: crate::acoustics::MechanicalCue::ShellLift,
@@ -32304,7 +32365,10 @@ impl Game {
             }
             _ => return false,
         }
-        if let Some(a) = &self.audio {
+        // A live 88 lifted from the rack or the floor (Echoes misc_1/misc_2, alternating).
+        let at = self.hands_pos();
+        if self.recorded(crate::audio::RecordedFx::ShellPickup, 0.0, at) {}
+        else if let Some(a) = &self.audio {
             a.play_mechanical(
                 crate::acoustics::MechanicalParams {
                     cue: crate::acoustics::MechanicalCue::ShellLift,

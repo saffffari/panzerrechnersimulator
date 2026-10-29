@@ -175,8 +175,12 @@ impl super::Game {
             && self.held_item.is_none()
             && !self.carried_tools();
         if self.map_held != was_held {
-            if let Some(audio) = &self.audio {
-                audio.play_control_at(if self.map_held { "map_open" } else { "map_close" }, 0.48, 345.0);
+            // The sheet unfolded or folded at the hands (the old map clips where not installed).
+            let at = self.hands_pos();
+            if !self.recorded(crate::audio::RecordedFx::PaperPage, if self.map_held { 0.0 } else { -2.0 }, at) {
+                if let Some(audio) = &self.audio {
+                    audio.play_control_at(if self.map_held { "map_open" } else { "map_close" }, 0.48, 345.0);
+                }
             }
         }
         if self.map_held {

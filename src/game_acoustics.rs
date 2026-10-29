@@ -336,6 +336,15 @@ pub(super) struct WorldAcoustics {
     pub parametric_rooms: u32,
     pub foley_events: u32,
     pub recorded_events: u32,
+    /// Recordings timed to start later (`Game::recorded_aligned`, `Align::StrikeIn`).
+    pub(super) pending_recorded: Vec<super::game_recorded_fx::Pending>,
+    /// The ram's recording is already running toward the seat (an auto-ram started it early).
+    pub(super) ram_sound_started: bool,
+    /// The Luger's rack recording covered the toggle's close this reload.
+    pub(super) luger_rack_close: bool,
+    order_up: bool,
+    /// A map sheet was taken from its case this update (the campaign director sets it).
+    pub(super) sheet_recovered: bool,
     loops: Vec<(Cue, crate::audio::VehicleVoice, bool)>,
     active_loops: Vec<Cue>,
     pub seq: u32,
@@ -712,6 +721,7 @@ impl Game {
         if self.audio.is_none() || self.tank_editor_scene.is_some() { return; }
         self.acoustics.convolutions = 0;
         if let Some(audio) = &self.audio { audio.recorded_fx_begin_update(); }
+        self.advance_pending_recorded(dt);
         if !self.acoustics.primed {
             // The edges are changes from the state the game starts in, never from defaults.
             self.acoustics.primed = true;
@@ -861,9 +871,25 @@ impl Game {
         self.acoustics.last_head_out = head_out;
         // Binoculars brought up to the eyes.
         if self.binocular_raise > 0.05 && self.acoustics.last_binocular <= 0.05 {
-            self.foley_hands(Cue::Handle(crate::acoustics::foley::Object::Binoculars, crate::acoustics::foley::Gesture::Grab));
+            self.recorded_or_foley_hands(crate::audio::RecordedFx::ItemEquip, 0.0, Cue::Handle(crate::acoustics::foley::Object::Binoculars, crate::acoustics::foley::Gesture::Grab));
+        }
+        // ...and lowered again (silent before the recordings).
+        if self.binocular_raise < 0.5 && self.acoustics.last_binocular >= 0.5 {
+            let at = self.hands_pos();
+            self.recorded(crate::audio::RecordedFx::ItemEquip, -5.0, at);
         }
         self.acoustics.last_binocular = self.binocular_raise;
+        // The written order held up: the sheet unfolding, once per showing.
+        let order_up = self.mission_order_up();
+        if order_up && !self.acoustics.order_up {
+            let at = self.hands_pos();
+            self.recorded(crate::audio::RecordedFx::PaperPage, 0.0, at);
+        }
+        self.acoustics.order_up = order_up;
+        if std::mem::take(&mut self.acoustics.sheet_recovered) {
+            let at = self.hands_pos();
+            self.recorded(crate::audio::RecordedFx::PaperPage, 2.0, at);
+        }
         // Fuel going into the tank.
         if self.acoustics.pour_s > 0.0 {
             self.acoustics.pour_s -= dt;
