@@ -1,0 +1,594 @@
+[panzerrechnersystem] resources: Override root=C:\shop\panzerrechnersystem assets=C:\shop\panzerrechnersystem\assets cooked_models=0
+[panzerrechnersystem] wgpu instance backends: Backends(VULKAN | METAL | DX12 | BROWSER_WEBGPU)
+[panzerrechnersystem] device capabilities: backend=Vulkan, push_constants=128/256, ray_query=true, ray_vertex_return=true, pipeline_cache=true
+[panzerrechnersystem] exact RT buffers: max_buffer=4096 MiB, max_binding=2047 MiB, storage_buffers/stage=12
+[panzerrechnersystem] HDR frame format: Rgba32Float
+[panzerrechnersystem] game act-manifest: source=C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json schema=kessel.act/v1 act=1 name="Die Stadt" seed=539363625 terrain=C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run-v2\heights.npy dimensions=1025x1025 spacing=4.882812m world=5000.00m terrain_id=fnv1a64:91b78d6bbad1876a source_bytes=4202628 source_hash=fnv1a64:3a9d12d0aaa33e7e
+[panzerrechnersystem] authored terrain: 1025² collision, 1025² render (2097152 triangles, the collision surface)
+[panzerrechnersystem] terrain detail: 4097² at 1.2207 m, lattice 0.0763 m, from C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run-v2\detail/heights.4097.npy (147 ms)
+[panzerrechnersystem] landmark 'canyon_wrecks': manifest blockout (hero assets/hero/act1/canyon_wrecks.glb not installed)
+[panzerrechnersystem] building canyon.factory.b06: terrain under the footprint spans 0.51 m (-13.16..-12.64); the entry floor stands at the centre height -12.64
+[panzerrechnersystem] building canyon.factory.b15: terrain under the footprint spans 1.01 m (-13.45..-12.44); the entry floor stands at the centre height -12.48
+[panzerrechnersystem] building canyon.factory.b24: terrain under the footprint spans 0.39 m (-13.31..-12.92); the entry floor stands at the centre height -13.20
+[panzerrechnersystem] building canyon.factory.frontage.b18.right: terrain under the footprint spans 0.41 m (0.37..0.78); the entry floor stands at the centre height 0.37
+[panzerrechnersystem] building canyon.factory.frontage.b19.left: terrain under the footprint spans 0.51 m (8.64..9.16); the entry floor stands at the centre height 9.16
+[panzerrechnersystem] building canyon.hamlet.b13: terrain under the footprint spans 0.31 m (-21.49..-21.18); the entry floor stands at the centre height -21.49
+[panzerrechnersystem] building canyon.saddle.b10: terrain under the footprint spans 0.39 m (-9.24..-8.85); the entry floor stands at the centre height -8.85
+[panzerrechnersystem] building canyon.settlement.b22: terrain under the footprint spans 0.55 m (-21.56..-21.01); the entry floor stands at the centre height -21.56
+[panzerrechnersystem] building canyon.settlement.frontage.b03.left: terrain under the footprint spans 0.36 m (-16.72..-16.36); the entry floor stands at the centre height -16.36
+[panzerrechnersystem] building canyon.settlement.frontage.b03.right: terrain under the footprint spans 0.35 m (-21.14..-20.79); the entry floor stands at the centre height -21.14
+[panzerrechnersystem] building canyon.strongpoint.b10: terrain under the footprint spans 0.52 m (-8.79..-8.27); the entry floor stands at the centre height -8.27
+[panzerrechnersystem] building canyon.strongpoint.b18: terrain under the footprint spans 2.02 m (16.13..18.15); the entry floor stands at the centre height 18.15
+[panzerrechnersystem] building canyon.strongpoint.b21: terrain under the footprint spans 1.01 m (19.51..20.52); the entry floor stands at the centre height 19.51
+[panzerrechnersystem] building canyon.strongpoint.frontage.b07.right: terrain under the footprint spans 1.54 m (4.39..5.93); the entry floor stands at the centre height 5.93
+[panzerrechnersystem] building canyon.strongpoint.frontage.b10.left: terrain under the footprint spans 0.47 m (-4.87..-4.41); the entry floor stands at the centre height -4.74
+[panzerrechnersystem] cellars: 31 opened and 0 trench(es) dug (5372 m² of terrain cut; terrain redrawn: 2101407 triangles, 1323 coarse cells drawn from the collision grid, 850 source triangles clipped, 769 soil faces)
+[panzerrechnersystem] cellars: 1 sealed: canyon.settlement.b26 (no live stair reaches it)
+[panzerrechnersystem] rubble: 901 mounds of failed modules laid in 471 ms
+[panzerrechnersystem] urban tableaux: SKIPPED a1_cellar_embrasure_two_layers: host urban_intro.c3r2.w01 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_red_cross_cellar: host urban_intro.c2r1.e02 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_chimney_field_dugout: host urban_intro.c0r3.e02 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_tram_on_its_rails: host urban_intro.c2r3.e00 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_white_canopy_canister: host urban_intro.c2r1.e00 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_burned_cellar_household: host urban_intro.c3r2.e05 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_factory_cellar_ward: host urban_intro.c3r3.r00 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_factory_cellar_ward_doctor: host urban_intro.c3r3.w02 is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_gumrak_burning_stores: host urban_intro.gumrak.store is not in this revision's building_instances
+[panzerrechnersystem] urban tableaux: SKIPPED a1_gumrak_burning_stores_house: host urban_intro.gumrak.house is not in this revision's building_instances
+[panzerrechnersystem] rubble layer urban.rubble.layer: top surface generated from its mesh, measured error 0.017 m in the asset frame
+[panzerrechnersystem] building canyon.choke1.lone: 111 compiler placements / 4 rooms / 1 floors at (-749.0,-73.5)
+[panzerrechnersystem] building canyon.choke2.lone: 42 compiler placements / 1 rooms / 1 floors at (299.0,-526.0)
+[panzerrechnersystem] building canyon.factory.b01: 175 compiler placements / 6 rooms / 1 floors at (376.0,301.5)
+[panzerrechnersystem] building canyon.factory.b02: 65 compiler placements / 2 rooms / 1 floors at (272.5,-153.0)
+[panzerrechnersystem] building canyon.factory.b03: 51 compiler placements / 1 rooms / 1 floors at (290.0,-38.0)
+[panzerrechnersystem] building canyon.factory.b05: 51 compiler placements / 1 rooms / 1 floors at (263.5,-94.0)
+[panzerrechnersystem] building canyon.factory.b06: 54 compiler placements / 2 rooms / 1 floors at (380.0,199.5)
+[panzerrechnersystem] building canyon.factory.b07: 112 compiler placements / 6 rooms / 1 floors at (408.5,376.0)
+[panzerrechnersystem] building canyon.factory.b08: 176 compiler placements / 8 rooms / 2 floors at (380.5,-140.5)
+[panzerrechnersystem] building canyon.factory.b09: 547 compiler placements / 32 rooms / 6 floors at (273.0,262.0)
+[panzerrechnersystem] building canyon.factory.b10: 443 compiler placements / 20 rooms / 5 floors at (326.5,444.5)
+[panzerrechnersystem] building canyon.factory.b11: 43 compiler placements / 1 rooms / 1 floors at (316.0,63.0)
+[panzerrechnersystem] building canyon.factory.b12: 110 compiler placements / 8 rooms / 2 floors at (437.0,535.0)
+[panzerrechnersystem] building canyon.factory.b13: 51 compiler placements / 1 rooms / 1 floors at (375.0,-93.5)
+[panzerrechnersystem] building canyon.factory.b14: 34 compiler placements / 1 rooms / 1 floors at (313.0,144.5)
+[panzerrechnersystem] building canyon.factory.b15: 21 compiler placements / 1 rooms / 1 floors at (334.0,395.0)
+[panzerrechnersystem] building canyon.factory.b16: 44 compiler placements / 1 rooms / 1 floors at (245.5,338.5)
+[panzerrechnersystem] building canyon.factory.b17: 51 compiler placements / 1 rooms / 1 floors at (240.5,-124.0)
+[panzerrechnersystem] building canyon.factory.b18: 37 compiler placements / 1 rooms / 1 floors at (270.0,165.5)
+[panzerrechnersystem] building canyon.factory.b21: 172 compiler placements / 8 rooms / 1 floors at (245.0,211.0)
+[panzerrechnersystem] building canyon.factory.b23: 142 compiler placements / 9 rooms / 3 floors at (238.0,100.5)
+[panzerrechnersystem] building canyon.factory.b24: 2 compiler placements / 1 rooms / 1 floors at (371.0,117.5)
+[panzerrechnersystem] building canyon.factory.b26: 39 compiler placements / 1 rooms / 1 floors at (488.5,550.5)
+[panzerrechnersystem] building canyon.factory.b27: 115 compiler placements / 5 rooms / 2 floors at (254.0,106.0)
+[panzerrechnersystem] building canyon.factory.b28: 43 compiler placements / 1 rooms / 1 floors at (322.0,-60.0)
+[panzerrechnersystem] building canyon.factory.b29: 41 compiler placements / 1 rooms / 1 floors at (257.5,44.0)
+[panzerrechnersystem] building canyon.factory.b30: 61 compiler placements / 2 rooms / 1 floors at (311.0,258.5)
+[panzerrechnersystem] building canyon.factory.b32: 2 compiler placements / 1 rooms / 1 floors at (255.0,-9.0)
+[panzerrechnersystem] building canyon.factory.b33: 170 compiler placements / 8 rooms / 1 floors at (276.0,65.5)
+[panzerrechnersystem] building canyon.factory.b34: 168 compiler placements / 7 rooms / 2 floors at (312.5,183.0)
+[panzerrechnersystem] building canyon.factory.b35: 69 compiler placements / 2 rooms / 1 floors at (316.0,291.5)
+[panzerrechnersystem] building canyon.factory.b36: 57 compiler placements / 2 rooms / 1 floors at (251.5,155.5)
+[panzerrechnersystem] building canyon.factory.b37: 36 compiler placements / 1 rooms / 1 floors at (314.0,336.0)
+[panzerrechnersystem] building canyon.factory.b38: 35 compiler placements / 1 rooms / 1 floors at (371.0,34.5)
+[panzerrechnersystem] building canyon.factory.b39: 65 compiler placements / 2 rooms / 1 floors at (359.5,424.0)
+[panzerrechnersystem] building canyon.factory.frontage.b00.left: 9 compiler placements / 1 rooms / 1 floors at (365.5,-15.0)
+[panzerrechnersystem] building canyon.factory.frontage.b00.right: 9 compiler placements / 1 rooms / 1 floors at (329.5,-15.0)
+[panzerrechnersystem] building canyon.factory.frontage.b01.left: 9 compiler placements / 1 rooms / 1 floors at (364.5,13.5)
+[panzerrechnersystem] building canyon.factory.frontage.b01.right: 9 compiler placements / 1 rooms / 1 floors at (327.5,13.5)
+[panzerrechnersystem] building canyon.factory.frontage.b02.right: 115 compiler placements / 4 rooms / 1 floors at (328.5,42.0)
+[panzerrechnersystem] building canyon.factory.frontage.b03.left: 9 compiler placements / 1 rooms / 1 floors at (365.5,71.0)
+[panzerrechnersystem] building canyon.factory.frontage.b04.left: 9 compiler placements / 1 rooms / 1 floors at (364.0,99.5)
+[panzerrechnersystem] building canyon.factory.frontage.b04.right: 9 compiler placements / 1 rooms / 1 floors at (329.0,99.5)
+[panzerrechnersystem] building canyon.factory.frontage.b05.left: 9 compiler placements / 1 rooms / 1 floors at (386.5,128.0)
+[panzerrechnersystem] building canyon.factory.frontage.b05.right: 9 compiler placements / 1 rooms / 1 floors at (328.0,128.0)
+[panzerrechnersystem] building canyon.factory.frontage.b06.left: 9 compiler placements / 1 rooms / 1 floors at (365.5,156.5)
+[panzerrechnersystem] building canyon.factory.frontage.b06.right: 9 compiler placements / 1 rooms / 1 floors at (328.5,156.5)
+[panzerrechnersystem] building canyon.factory.frontage.b07.left: 9 compiler placements / 1 rooms / 1 floors at (364.5,185.0)
+[panzerrechnersystem] building canyon.factory.frontage.b07.right: 9 compiler placements / 1 rooms / 1 floors at (327.5,185.0)
+[panzerrechnersystem] building canyon.factory.frontage.b08.left: 9 compiler placements / 1 rooms / 1 floors at (364.5,213.5)
+[panzerrechnersystem] building canyon.factory.frontage.b08.right: 9 compiler placements / 1 rooms / 1 floors at (329.5,213.5)
+[panzerrechnersystem] building canyon.factory.frontage.b09.left: 9 compiler placements / 1 rooms / 1 floors at (366.0,242.0)
+[panzerrechnersystem] building canyon.factory.frontage.b09.right: 9 compiler placements / 1 rooms / 1 floors at (328.0,242.0)
+[panzerrechnersystem] building canyon.factory.frontage.b10.left: 9 compiler placements / 1 rooms / 1 floors at (366.0,270.5)
+[panzerrechnersystem] building canyon.factory.frontage.b12.left: 9 compiler placements / 1 rooms / 1 floors at (365.0,327.5)
+[panzerrechnersystem] building canyon.factory.frontage.b13.left: 85 compiler placements / 4 rooms / 1 floors at (364.5,344.5)
+[panzerrechnersystem] building canyon.factory.frontage.b14.left: 9 compiler placements / 1 rooms / 1 floors at (381.0,363.5)
+[panzerrechnersystem] building canyon.factory.frontage.b14.right: 9 compiler placements / 1 rooms / 1 floors at (354.0,390.5)
+[panzerrechnersystem] building canyon.factory.frontage.b16.left: 9 compiler placements / 1 rooms / 1 floors at (421.0,404.5)
+[panzerrechnersystem] building canyon.factory.frontage.b16.right: 9 compiler placements / 1 rooms / 1 floors at (395.5,430.0)
+[panzerrechnersystem] building canyon.factory.frontage.b17.right: 9 compiler placements / 1 rooms / 1 floors at (414.5,451.0)
+[panzerrechnersystem] building canyon.factory.frontage.b18.right: 9 compiler placements / 1 rooms / 1 floors at (434.5,471.0)
+[panzerrechnersystem] building canyon.factory.frontage.b19.left: 9 compiler placements / 1 rooms / 1 floors at (482.5,464.0)
+[panzerrechnersystem] building canyon.factory.frontage.b19.right: 9 compiler placements / 1 rooms / 1 floors at (454.5,492.0)
+[panzerrechnersystem] building canyon.hamlet.b01: 9 compiler placements / 1 rooms / 1 floors at (-698.5,83.5)
+[panzerrechnersystem] building canyon.hamlet.b02: 206 compiler placements / 7 rooms / 2 floors at (-694.0,404.0)
+[panzerrechnersystem] building canyon.hamlet.b03: 9 compiler placements / 1 rooms / 1 floors at (-689.0,314.0)
+[panzerrechnersystem] building canyon.hamlet.b04: 9 compiler placements / 1 rooms / 1 floors at (-772.0,71.0)
+[panzerrechnersystem] building canyon.hamlet.b05: 9 compiler placements / 1 rooms / 1 floors at (-702.0,256.0)
+[panzerrechnersystem] building canyon.hamlet.b06: 59 compiler placements / 4 rooms / 2 floors at (-802.0,550.5)
+[panzerrechnersystem] building canyon.hamlet.b07: 9 compiler placements / 1 rooms / 1 floors at (-716.0,299.5)
+[panzerrechnersystem] building canyon.hamlet.b08: 9 compiler placements / 1 rooms / 1 floors at (-714.0,238.0)
+[panzerrechnersystem] building canyon.hamlet.b09: 9 compiler placements / 1 rooms / 1 floors at (-721.0,201.5)
+[panzerrechnersystem] building canyon.hamlet.b10: 9 compiler placements / 1 rooms / 1 floors at (-708.5,16.5)
+[panzerrechnersystem] building canyon.hamlet.b11: 9 compiler placements / 1 rooms / 1 floors at (-772.5,350.0)
+[panzerrechnersystem] building canyon.hamlet.b12: 9 compiler placements / 1 rooms / 1 floors at (-720.0,511.5)
+[panzerrechnersystem] building canyon.hamlet.b13: 192 compiler placements / 12 rooms / 3 floors at (-716.0,334.0)
+[panzerrechnersystem] building canyon.hamlet.b14: 9 compiler placements / 1 rooms / 1 floors at (-710.0,166.5)
+[panzerrechnersystem] building canyon.hamlet.b15: 9 compiler placements / 1 rooms / 1 floors at (-719.5,493.5)
+[panzerrechnersystem] building canyon.hamlet.b16: 9 compiler placements / 1 rooms / 1 floors at (-727.0,559.5)
+[panzerrechnersystem] building canyon.hamlet.b17: 9 compiler placements / 1 rooms / 1 floors at (-769.0,126.5)
+[panzerrechnersystem] building canyon.hamlet.b18: 9 compiler placements / 1 rooms / 1 floors at (-772.5,418.5)
+[panzerrechnersystem] building canyon.hamlet.b19: 9 compiler placements / 1 rooms / 1 floors at (-722.0,471.5)
+[panzerrechnersystem] building canyon.hamlet.b20: 9 compiler placements / 1 rooms / 1 floors at (-800.0,526.5)
+[panzerrechnersystem] building canyon.hamlet.b21: 9 compiler placements / 1 rooms / 1 floors at (-724.0,661.5)
+[panzerrechnersystem] building canyon.hamlet.b22: 9 compiler placements / 1 rooms / 1 floors at (-711.5,218.5)
+[panzerrechnersystem] building canyon.hamlet.b23: 9 compiler placements / 1 rooms / 1 floors at (-782.5,557.5)
+[panzerrechnersystem] building canyon.hamlet.b24: 49 compiler placements / 3 rooms / 1 floors at (-791.0,188.5)
+[panzerrechnersystem] building canyon.hamlet.b25: 9 compiler placements / 1 rooms / 1 floors at (-693.0,208.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b00.left: 9 compiler placements / 1 rooms / 1 floors at (-766.5,459.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b00.right: 9 compiler placements / 1 rooms / 1 floors at (-704.0,459.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b01.left: 9 compiler placements / 1 rooms / 1 floors at (-788.0,429.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b01.right: 215 compiler placements / 16 rooms / 2 floors at (-729.0,429.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b02.left: 9 compiler placements / 1 rooms / 1 floors at (-766.0,398.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b02.right: 130 compiler placements / 6 rooms / 1 floors at (-729.5,398.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b03.left: 9 compiler placements / 1 rooms / 1 floors at (-766.0,368.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b03.right: 9 compiler placements / 1 rooms / 1 floors at (-729.5,368.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b04.left: 125 compiler placements / 4 rooms / 2 floors at (-788.0,338.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b04.right: 9 compiler placements / 1 rooms / 1 floors at (-730.0,338.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b05.left: 9 compiler placements / 1 rooms / 1 floors at (-767.0,307.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b06.left: 9 compiler placements / 1 rooms / 1 floors at (-764.0,277.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b06.right: 123 compiler placements / 6 rooms / 2 floors at (-727.5,277.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b07.left: 9 compiler placements / 1 rooms / 1 floors at (-765.5,247.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b08.left: 9 compiler placements / 1 rooms / 1 floors at (-766.0,217.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b09.left: 165 compiler placements / 8 rooms / 1 floors at (-765.0,186.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b09.right: 9 compiler placements / 1 rooms / 1 floors at (-729.0,186.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b10.left: 9 compiler placements / 1 rooms / 1 floors at (-766.0,156.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b10.right: 9 compiler placements / 1 rooms / 1 floors at (-727.5,156.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b11.left: 137 compiler placements / 6 rooms / 1 floors at (-789.0,126.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b11.right: 9 compiler placements / 1 rooms / 1 floors at (-728.5,126.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b12.left: 9 compiler placements / 1 rooms / 1 floors at (-766.5,95.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b12.right: 174 compiler placements / 12 rooms / 2 floors at (-729.0,95.5)
+[panzerrechnersystem] building canyon.hamlet.frontage.b13.left: 172 compiler placements / 8 rooms / 2 floors at (-789.5,65.0)
+[panzerrechnersystem] building canyon.hamlet.frontage.b13.right: 128 compiler placements / 6 rooms / 1 floors at (-729.0,65.0)
+[panzerrechnersystem] building canyon.saddle.b01: 19 compiler placements / 1 rooms / 1 floors at (350.5,-507.0)
+[panzerrechnersystem] building canyon.saddle.b02: 51 compiler placements / 1 rooms / 1 floors at (281.0,-476.5)
+[panzerrechnersystem] building canyon.saddle.b03: 53 compiler placements / 1 rooms / 1 floors at (276.0,-525.5)
+[panzerrechnersystem] building canyon.saddle.b04: 43 compiler placements / 1 rooms / 1 floors at (290.5,-386.0)
+[panzerrechnersystem] building canyon.saddle.b05: 53 compiler placements / 1 rooms / 1 floors at (306.5,-609.0)
+[panzerrechnersystem] building canyon.saddle.b06: 49 compiler placements / 3 rooms / 1 floors at (244.0,-581.5)
+[panzerrechnersystem] building canyon.saddle.b07: 50 compiler placements / 3 rooms / 1 floors at (207.0,-593.5)
+[panzerrechnersystem] building canyon.saddle.b08: 43 compiler placements / 1 rooms / 1 floors at (277.0,-635.0)
+[panzerrechnersystem] building canyon.saddle.b09: 9 compiler placements / 1 rooms / 1 floors at (235.5,-300.0)
+[panzerrechnersystem] building canyon.saddle.b10: 9 compiler placements / 1 rooms / 1 floors at (285.0,-507.0)
+[panzerrechnersystem] building canyon.saddle.b11: 46 compiler placements / 3 rooms / 2 floors at (295.5,-320.0)
+[panzerrechnersystem] building canyon.saddle.b12: 43 compiler placements / 1 rooms / 1 floors at (270.5,-555.5)
+[panzerrechnersystem] building canyon.saddle.b13: 9 compiler placements / 1 rooms / 1 floors at (269.5,-496.5)
+[panzerrechnersystem] building canyon.saddle.b14: 9 compiler placements / 1 rooms / 1 floors at (350.0,-534.0)
+[panzerrechnersystem] building canyon.settlement.b01: 9 compiler placements / 1 rooms / 1 floors at (-424.0,-316.5)
+[panzerrechnersystem] building canyon.settlement.b02: 9 compiler placements / 1 rooms / 1 floors at (-433.5,-303.5)
+[panzerrechnersystem] building canyon.settlement.b03: 9 compiler placements / 1 rooms / 1 floors at (-515.5,-269.5)
+[panzerrechnersystem] building canyon.settlement.b04: 9 compiler placements / 1 rooms / 1 floors at (-458.5,-332.0)
+[panzerrechnersystem] building canyon.settlement.b05: 9 compiler placements / 1 rooms / 1 floors at (-388.5,-341.0)
+[panzerrechnersystem] building canyon.settlement.b06: 57 compiler placements / 2 rooms / 1 floors at (37.5,-589.5)
+[panzerrechnersystem] building canyon.settlement.b07: 9 compiler placements / 1 rooms / 1 floors at (71.0,-576.5)
+[panzerrechnersystem] building canyon.settlement.b08: 9 compiler placements / 1 rooms / 1 floors at (-486.0,-374.0)
+[panzerrechnersystem] building canyon.settlement.b09: 9 compiler placements / 1 rooms / 1 floors at (-189.0,-500.5)
+[panzerrechnersystem] building canyon.settlement.b10: 128 compiler placements / 6 rooms / 1 floors at (114.0,-568.0)
+[panzerrechnersystem] building canyon.settlement.b11: 9 compiler placements / 1 rooms / 1 floors at (-594.5,-267.5)
+[panzerrechnersystem] building canyon.settlement.b12: 206 compiler placements / 12 rooms / 2 floors at (76.5,-689.0)
+[panzerrechnersystem] building canyon.settlement.b13: 9 compiler placements / 1 rooms / 1 floors at (-529.5,-236.5)
+[panzerrechnersystem] building canyon.settlement.b14: 9 compiler placements / 1 rooms / 1 floors at (76.0,-617.0)
+[panzerrechnersystem] building canyon.settlement.b15: 9 compiler placements / 1 rooms / 1 floors at (-211.5,-462.0)
+[panzerrechnersystem] building canyon.settlement.b16: 36 compiler placements / 2 rooms / 1 floors at (-502.0,-254.5)
+[panzerrechnersystem] building canyon.settlement.b17: 9 compiler placements / 1 rooms / 1 floors at (-550.0,-321.0)
+[panzerrechnersystem] building canyon.settlement.b18: 9 compiler placements / 1 rooms / 1 floors at (-526.5,-356.0)
+[panzerrechnersystem] building canyon.settlement.b19: 37 compiler placements / 2 rooms / 1 floors at (-512.0,-200.0)
+[panzerrechnersystem] building canyon.settlement.b20: 9 compiler placements / 1 rooms / 1 floors at (42.0,-683.5)
+[panzerrechnersystem] building canyon.settlement.b21: 9 compiler placements / 1 rooms / 1 floors at (129.5,-599.0)
+[panzerrechnersystem] building canyon.settlement.b22: 9 compiler placements / 1 rooms / 1 floors at (-475.5,-265.5)
+[panzerrechnersystem] building canyon.settlement.b23: 9 compiler placements / 1 rooms / 1 floors at (141.0,-675.5)
+[panzerrechnersystem] building canyon.settlement.b24: 9 compiler placements / 1 rooms / 1 floors at (124.5,-670.5)
+[panzerrechnersystem] building canyon.settlement.b25: 113 compiler placements / 4 rooms / 1 floors at (-508.5,-219.0)
+[panzerrechnersystem] building canyon.settlement.b26: 133 compiler placements / 5 rooms / 2 floors at (58.0,-605.5)
+[panzerrechnersystem] building canyon.settlement.b26: 1 cellar storey(s) SEALED below the terrain (no terrain opening exists yet); 1 cellar stair(s) carry no one
+[panzerrechnersystem] building canyon.settlement.b27: 9 compiler placements / 1 rooms / 1 floors at (50.5,-668.5)
+[panzerrechnersystem] building canyon.settlement.b28: 9 compiler placements / 1 rooms / 1 floors at (-536.0,-219.5)
+[panzerrechnersystem] building canyon.settlement.b30: 9 compiler placements / 1 rooms / 1 floors at (-487.5,-282.5)
+[panzerrechnersystem] building canyon.settlement.b31: 37 compiler placements / 2 rooms / 1 floors at (-14.5,-609.0)
+[panzerrechnersystem] building canyon.settlement.b32: 45 compiler placements / 3 rooms / 2 floors at (-237.5,-486.0)
+[panzerrechnersystem] building canyon.settlement.b33: 9 compiler placements / 1 rooms / 1 floors at (-68.0,-605.5)
+[panzerrechnersystem] building canyon.settlement.b34: 9 compiler placements / 1 rooms / 1 floors at (-486.5,-250.0)
+[panzerrechnersystem] building canyon.settlement.b35: 220 compiler placements / 9 rooms / 2 floors at (-456.5,-308.0)
+[panzerrechnersystem] building canyon.settlement.b36: 9 compiler placements / 1 rooms / 1 floors at (-575.5,-291.5)
+[panzerrechnersystem] building canyon.settlement.b37: 9 compiler placements / 1 rooms / 1 floors at (-194.0,-471.0)
+[panzerrechnersystem] building canyon.settlement.b38: 9 compiler placements / 1 rooms / 1 floors at (-562.0,-278.0)
+[panzerrechnersystem] building canyon.settlement.b39: 47 compiler placements / 1 rooms / 1 floors at (-237.0,-469.0)
+[panzerrechnersystem] building canyon.settlement.b40: 9 compiler placements / 1 rooms / 1 floors at (84.0,-582.0)
+[panzerrechnersystem] building canyon.settlement.b41: 9 compiler placements / 1 rooms / 1 floors at (-489.5,-300.5)
+[panzerrechnersystem] building canyon.settlement.b42: 9 compiler placements / 1 rooms / 1 floors at (-11.5,-583.5)
+[panzerrechnersystem] building canyon.settlement.b43: 9 compiler placements / 1 rooms / 1 floors at (-510.5,-283.0)
+[panzerrechnersystem] building canyon.settlement.b44: 9 compiler placements / 1 rooms / 1 floors at (2.0,-573.5)
+[panzerrechnersystem] building canyon.settlement.b45: 9 compiler placements / 1 rooms / 1 floors at (-541.0,-342.5)
+[panzerrechnersystem] building canyon.settlement.b46: 47 compiler placements / 3 rooms / 2 floors at (-574.0,-258.5)
+[panzerrechnersystem] building canyon.settlement.b47: 144 compiler placements / 8 rooms / 2 floors at (-216.5,-486.0)
+[panzerrechnersystem] building canyon.settlement.b48: 2 compiler placements / 1 rooms / 1 floors at (71.0,-562.0)
+[panzerrechnersystem] building canyon.settlement.b49: 57 compiler placements / 2 rooms / 1 floors at (135.5,-696.5)
+[panzerrechnersystem] building canyon.settlement.b50: 219 compiler placements / 9 rooms / 2 floors at (11.5,-606.5)
+[panzerrechnersystem] building canyon.settlement.b51: 9 compiler placements / 1 rooms / 1 floors at (-604.5,-282.5)
+[panzerrechnersystem] building canyon.settlement.b52: 215 compiler placements / 18 rooms / 3 floors at (-381.5,-359.0)
+[panzerrechnersystem] building canyon.settlement.b53: 9 compiler placements / 1 rooms / 1 floors at (-442.5,-341.0)
+[panzerrechnersystem] building canyon.settlement.b54: 57 compiler placements / 2 rooms / 1 floors at (95.0,-666.0)
+[panzerrechnersystem] building canyon.settlement.b55: 143 compiler placements / 12 rooms / 3 floors at (134.5,-576.5)
+[panzerrechnersystem] building canyon.settlement.b56: 9 compiler placements / 1 rooms / 1 floors at (96.0,-609.5)
+[panzerrechnersystem] building canyon.settlement.b57: 9 compiler placements / 1 rooms / 1 floors at (-39.0,-610.0)
+[panzerrechnersystem] building canyon.settlement.b58: 139 compiler placements / 5 rooms / 2 floors at (-507.0,-363.0)
+[panzerrechnersystem] building canyon.settlement.b60: 48 compiler placements / 3 rooms / 2 floors at (-528.0,-328.5)
+[panzerrechnersystem] building canyon.settlement.b61: 47 compiler placements / 3 rooms / 2 floors at (-557.0,-348.5)
+[panzerrechnersystem] building canyon.settlement.b62: 9 compiler placements / 1 rooms / 1 floors at (35.5,-617.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b00.left: 9 compiler placements / 1 rooms / 1 floors at (-506.0,-346.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b00.right: 9 compiler placements / 1 rooms / 1 floors at (-478.5,-319.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b02.left: 9 compiler placements / 1 rooms / 1 floors at (-466.5,-386.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b02.right: 9 compiler placements / 1 rooms / 1 floors at (-439.5,-358.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b03.left: 9 compiler placements / 1 rooms / 1 floors at (-446.5,-405.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b03.right: 9 compiler placements / 1 rooms / 1 floors at (-419.5,-378.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b04.left: 9 compiler placements / 1 rooms / 1 floors at (-424.0,-427.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b04.right: 9 compiler placements / 1 rooms / 1 floors at (-402.5,-395.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b05.right: 9 compiler placements / 1 rooms / 1 floors at (-373.5,-401.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b06.left: 9 compiler placements / 1 rooms / 1 floors at (-387.5,-462.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b07.left: 9 compiler placements / 1 rooms / 1 floors at (-378.5,-492.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b09.right: 9 compiler placements / 1 rooms / 1 floors at (-278.5,-471.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b10.right: 9 compiler placements / 1 rooms / 1 floors at (-260.0,-492.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b25.left: 9 compiler placements / 1 rooms / 1 floors at (-22.5,-658.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b26.left: 9 compiler placements / 1 rooms / 1 floors at (5.5,-659.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b27.left: 9 compiler placements / 1 rooms / 1 floors at (33.5,-658.0)
+[panzerrechnersystem] building canyon.settlement.frontage.b30.left: 9 compiler placements / 1 rooms / 1 floors at (117.0,-657.5)
+[panzerrechnersystem] building canyon.settlement.frontage.b30.right: 9 compiler placements / 1 rooms / 1 floors at (117.0,-620.0)
+[panzerrechnersystem] building canyon.strongpoint.b01: 57 compiler placements / 2 rooms / 1 floors at (1353.5,284.5)
+[panzerrechnersystem] building canyon.strongpoint.b02: 9 compiler placements / 1 rooms / 1 floors at (1350.0,258.5)
+[panzerrechnersystem] building canyon.strongpoint.b03: 49 compiler placements / 1 rooms / 1 floors at (1264.0,332.5)
+[panzerrechnersystem] building canyon.strongpoint.b04: 9 compiler placements / 1 rooms / 1 floors at (1118.0,417.5)
+[panzerrechnersystem] building canyon.strongpoint.b05: 128 compiler placements / 4 rooms / 2 floors at (1151.0,359.0)
+[panzerrechnersystem] building canyon.strongpoint.b06: 9 compiler placements / 1 rooms / 1 floors at (1048.0,405.5)
+[panzerrechnersystem] building canyon.strongpoint.b07: 234 compiler placements / 16 rooms / 2 floors at (1080.0,390.0)
+[panzerrechnersystem] building canyon.strongpoint.b08: 57 compiler placements / 2 rooms / 1 floors at (1057.0,434.5)
+[panzerrechnersystem] building canyon.strongpoint.b09: 9 compiler placements / 1 rooms / 1 floors at (1347.5,368.0)
+[panzerrechnersystem] building canyon.strongpoint.b10: 206 compiler placements / 7 rooms / 2 floors at (1325.5,299.5)
+[panzerrechnersystem] building canyon.strongpoint.b11: 159 compiler placements / 12 rooms / 2 floors at (1124.5,375.5)
+[panzerrechnersystem] building canyon.strongpoint.b12: 9 compiler placements / 1 rooms / 1 floors at (1216.0,331.5)
+[panzerrechnersystem] building canyon.strongpoint.b13: 9 compiler placements / 1 rooms / 1 floors at (1361.0,304.0)
+[panzerrechnersystem] building canyon.strongpoint.b14: 35 compiler placements / 1 rooms / 1 floors at (1045.5,385.5)
+[panzerrechnersystem] building canyon.strongpoint.b15: 9 compiler placements / 1 rooms / 1 floors at (1244.0,336.0)
+[panzerrechnersystem] building canyon.strongpoint.b16: 43 compiler placements / 1 rooms / 1 floors at (1146.5,376.0)
+[panzerrechnersystem] building canyon.strongpoint.b17: 9 compiler placements / 1 rooms / 1 floors at (1329.5,371.5)
+[panzerrechnersystem] building canyon.strongpoint.b18: 37 compiler placements / 1 rooms / 1 floors at (1099.5,410.0)
+[panzerrechnersystem] building canyon.strongpoint.b19: 219 compiler placements / 8 rooms / 1 floors at (1180.0,346.0)
+[panzerrechnersystem] building canyon.strongpoint.b20: 86 compiler placements / 4 rooms / 1 floors at (1289.0,328.5)
+[panzerrechnersystem] building canyon.strongpoint.b21: 9 compiler placements / 1 rooms / 1 floors at (1097.5,428.5)
+[panzerrechnersystem] building canyon.strongpoint.b22: 88 compiler placements / 3 rooms / 1 floors at (1292.5,311.5)
+[panzerrechnersystem] building canyon.strongpoint.b23: 9 compiler placements / 1 rooms / 1 floors at (1312.5,380.0)
+[panzerrechnersystem] building canyon.strongpoint.b24: 9 compiler placements / 1 rooms / 1 floors at (1115.5,396.5)
+[panzerrechnersystem] building canyon.strongpoint.b25: 9 compiler placements / 1 rooms / 1 floors at (999.5,601.0)
+[panzerrechnersystem] building canyon.strongpoint.b26: 9 compiler placements / 1 rooms / 1 floors at (1030.0,588.5)
+[panzerrechnersystem] building canyon.strongpoint.b27: 9 compiler placements / 1 rooms / 1 floors at (1344.5,304.0)
+[panzerrechnersystem] building canyon.strongpoint.b28: 9 compiler placements / 1 rooms / 1 floors at (983.5,550.0)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b03.left: 262 compiler placements / 9 rooms / 2 floors at (1080.0,435.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b04.right: 9 compiler placements / 1 rooms / 1 floors at (1142.0,455.0)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b05.left: 9 compiler placements / 1 rooms / 1 floors at (1137.0,408.0)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b05.right: 9 compiler placements / 1 rooms / 1 floors at (1164.0,434.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b06.right: 9 compiler placements / 1 rooms / 1 floors at (1185.0,413.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b07.left: 9 compiler placements / 1 rooms / 1 floors at (1181.0,365.0)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b07.right: 9 compiler placements / 1 rooms / 1 floors at (1206.0,394.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b08.left: 9 compiler placements / 1 rooms / 1 floors at (1221.0,353.0)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b08.right: 9 compiler placements / 1 rooms / 1 floors at (1221.0,391.0)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b09.left: 9 compiler placements / 1 rooms / 1 floors at (1251.0,353.0)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b09.right: 9 compiler placements / 1 rooms / 1 floors at (1251.0,388.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b10.left: 9 compiler placements / 1 rooms / 1 floors at (1271.0,354.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b11.right: 9 compiler placements / 1 rooms / 1 floors at (1329.0,385.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b12.left: 9 compiler placements / 1 rooms / 1 floors at (1328.5,320.5)
+[panzerrechnersystem] building canyon.strongpoint.frontage.b12.right: 9 compiler placements / 1 rooms / 1 floors at (1332.0,357.0)
+[panzerrechnersystem] building render: 20017 instances in 3479 pages over 215 shared prototypes (11148 initially visible) for 249 buildings
+[panzerrechnersystem] destructibles: 55530 standing structures (0 chunk-gridded, 0 chunks)
+[driver-visor] preserved source holder; 966 triangles → 1430; closed Schutzglas 97.3 mm; no hull armor cut
+[panzerrechnersystem] RTT periscopes: 9 screens, 1 tile render(s)/frame, scheduler=visible/stale (override: KESSEL_RTT_UPDATES_PER_FRAME=all|N)
+[panzerrechnersystem] cupola hatch: baked GLB (4833 verts)
+[renderer] internal resolution 640x360 (one-shot runtime profile)
+[renderer] 130 raster-only mesh materials share 7 uploads: 480.7 MiB -> 44.8 MiB texture payload
+[renderer] backend=raymarch (ray queries adapter-dependent)
+[renderer] transport quality full (KESSEL_TRANSPORT_QUALITY); smoke steps [18.0, 22.0, 26.0, 6.0], glass fog steps 12, surface passes [2.0, 2.0, 1.0, 0.0]
+[renderer] loading 664 KiB Vulkan pipeline cache from C:\Users\saffari\.cache\kessel\wgpu\shader-graphics-v1-wgpu_pipeline_cache_vulkan_4318_9860.bin
+[visibility] source geometry shadow maps
+[rt] 1999 scene BLASes built in 35 ms
+[renderer] composing sky shader module
+[renderer] sky module accepted in 12 ms (63 KiB)
+[renderer] compiling sky pipeline
+[renderer] sky pipeline ready in 6 ms
+[renderer] ray query unavailable or disabled; using forward lighting without creating ray-query resources
+[renderer] ambient-only SSAO: on (64 deterministic depth samples)
+[renderer] compiling volume pipeline (17 KiB)
+[renderer] volume pipeline ready in 2 ms
+[renderer] persisted 664 KiB Vulkan pipeline cache to C:\Users\saffari\.cache\kessel\wgpu\shader-graphics-v1-wgpu_pipeline_cache_vulkan_4318_9860.bin
+[raymarch] froxel grid 107x60x48 over 0.25..320 m; cascades 1024/512 px, sky cover 512 px, 1 point-light cubes 128 px, 512 clustered lights, sky cache 384x144 in 16 phases
+[raymarch] explosion volumes: 12 slots
+[renderer] native geometry AA:4xMSAA; linear HDR resolve; conservative nearest depth for media
+[display] dither: screen Bayer4
+[world] immutable manifest page scale: 512 m
+[panzerrechnersystem] act 1 world from C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json: 13608 placements in 1240 pages / 73 packed instance buffers over 73 shared prototypes; culling index 114 occupied 128m cells / 8054 page refs / 0 broad fallbacks; 700 physical structures / 48518 aperture-aware proxies (0 legacy hollow-shell buildings awaiting modular replacement)
+[panzerrechnersystem] urban tableaux: 0 instances, 0 static proxies (over-coverage <= 0.000 m), 0 attachments, 0 lights, 0 smoke, 0 sounds
+[scatter] layers C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run-v2\scatter.v1.json: 200 prototypes in 20 groups, 52 rules, 8784 sources, seed 0x20261027; tiers by mass and size: 4 authored medium/large pieces are crushable (under 0.15 m or 5 kg), 15 woody prototypes crushable at scale 1 (under 400 kg; decided per placement), 4 authored large pieces are cover only (under 400 kg or 0.45 m), heavy static at scale 1: barricade_a_1 621 kg, barricade_b_1 621 kg, barricade_b_3 1145 kg, cement_bags_mp_1_pallet_1 1637 kg, stone_2 23762 kg, stone_3 14096 kg
+[scatter] field: 844771 placed (827698 small / 15107 medium / 1966 large; 1774 bodies, 10108 companions) in 784 cells of 32 m, 2394 ms on 24 threads; cover 1966 large (of 1966) + 3000 medium (of 15107); 1500 pushables (of 2787); 355 loot sockets; rejected slope 13430 class 36106 lane 18561 building 33181 keep 29 overlap 5597 band 446655 map 0
+[scatter] by group: cases_small 208592, rubble 111805, kit 107279, clods 99453, shards 88607, foliage 59898, fragments 50460, snow 41342, rocks 31611, weapons 18210, blood 6210, crates 5116, cases_76 4361, cases_88 4057, cases_45 3107, furniture 2016, bodies_german 1242, drifts 640, bodies_soviet 532, barricade 233
+[scatter] gpu: 843271 instances in 784 cells, 200 prototypes (81627 tris near / 11920 tris mid, 122826 vertices) over pages 63x128 71x256 66x512; 27.0 MB instances, 7.0 MB geometry, 122.6 MB textures, 28.3 MB cull scratch; multi-draw on; Hi-Z 640x360 10 mips
+[panzerrechnersystem] district: 35125 instances in 4733 pages / 302 instance buffers over 302 GPU prototypes; culling index 114 occupied 128m cells / 8054 page refs / 14 broad fallbacks (1805 destructible trees, 6679 lightweight pushables)
+[panzerrechnersystem] Soviet infantry: exact 17-pose shared character active for 60 actors
+[mixed-combat] German original-rig crouch: five fixed-root stages, shared relaxed/aim geometry
+[mixed-combat] soviet_rifle loaded generation 512 from assets/ai/weights_foot_soviet.bin
+[foot-ai] loaded tiger_crew KSL2 generation 512 score 99.666 from assets/ai/weights_foot_tiger.bin
+[foot-ai] loaded soviet_rifle KSL2 generation 512 score 99.683 from assets/ai/weights_foot_soviet.bin
+[panzerrechnersystem] cover: 109274 LOS occluders (0 Act-I city cells + authored dressing/cover)
+[rt] TLAS demand at build: 28385 of 131072 TLAS instances (2129 scene-mesh slots + 26256 live instances; 307510 reserved instance IDs)
+[playtest] act 1 The City at authored spawn (-791, 746); 6 T-34-76s, return fire OFF, tank stations and on-foot interaction
+[canyon] attempt seed 137: start clock 1943-01-20T08:50:00Z (-4.00 h), weather phase 0xe60e8c38
+[canyon] floor: 61975 of 306218 cells clear for a T-34 (319 ms)
+[at-guns] 5 x 45 mm 53-K sited, crews of 4
+[canyon] course fielded: {"defense_centers":[[-642.0,-139.5],[330.0,-577.25],[757.0,685.0]],"deployment":"seeded compact defended areas and patrol platoons","goal":[1699.218994140625,234.375],"goal_radius_m":85.0,"guns":[{"candidates":454,"fighting":100,"gun":{"at":[-732.0,-114.0],"heading_deg":9.165682792663574,"kill_zone_points_seen":60,"kind":"ground","mean_flank_sine":0.10052754729986191,"on":"choke1.ground","range_m":[104.71015167236328,376.5656433105469],"score":18.530858993530273},"guns":[{"at":[-732.0,-114.0],"heading_deg":9.165682792663574,"kill_zone_points_seen":60,"kind":"ground","mean_flank_sine":0.10052754729986191,"on":"choke1.ground","range_m":[104.71015167236328,376.5656433105469],"score":18.530858993530273},{"at":[-552.0,-165.0],"heading_deg":-56.5828971862793,"kill_zone_points_seen":19,"kind":"ground","mean_flank_sine":0.5071412920951843,"on":"choke1.ground","range_m":[133.26271057128906,287.3327941894531],"score":11.976763725280762}],"rejected":{"ground too steep to lay the gun":13,"no approach from behind":53,"no field of fire over the kill zone":166,"no ground for the gun and crew":122},"viable_choices":14,"zone":"choke1"},{"candidates":587,"fighting":110,"gun":{"at":[296.0,-615.5],"heading_deg":-97.3018569946289,"kill_zone_points_seen":31,"kind":"corner","mean_flank_sine":0.13557904958724976,"on":"canyon.saddle.b05","range_m":[104.46785736083984,278.4500427246094],"score":10.26948070526123},"guns":[{"at":[296.0,-615.5],"heading_deg":-97.3018569946289,"kill_zone_points_seen":31,"kind":"corner","mean_flank_sine":0.13557904958724976,"on":"canyon.saddle.b05","range_m":[104.46785736083984,278.4500427246094],"score":10.26948070526123},{"at":[364.0,-539.0],"heading_deg":-114.34288024902344,"kill_zone_points_seen":21,"kind":"ground","mean_flank_sine":0.3707299828529358,"on":"choke2.ground","range_m":[101.03984832763672,359.7740478515625],"score":10.528254508972168}],"rejected":{"ground too steep to lay the gun":4,"no approach from behind":38,"no field of fire over the kill zone":327,"no ground for the gun and crew":108},"viable_choices":7,"zone":"choke2"},{"candidates":296,"fighting":40,"gun":{"at":[757.0,685.0],"heading_deg":137.42953491210938,"kill_zone_points_seen":29,"kind":"ground","mean_flank_sine":0.5348373055458069,"on":"choke3.ground","range_m":[107.09378051757812,224.59129333496094],"score":17.867698669433594},"guns":[{"at":[757.0,685.0],"heading_deg":137.42953491210938,"kill_zone_points_seen":29,"kind":"ground","mean_flank_sine":0.5348373055458069,"on":"choke3.ground","range_m":[107.09378051757812,224.59129333496094],"score":17.867698669433594}],"rejected":{"ground too steep to lay the gun":27,"no approach from behind":20,"no field of fire over the kill zone":123,"no ground for the gun and crew":86},"viable_choices":6,"zone":"choke3"}],"infantry_group_centers":[[-705.0,79.5999984741211],[137.5,-593.0],[989.5,556.0],[-535.5,-242.5],[299.0,-389.8999938964844],[480.5,544.5]],"infantry_groups":[[6,7,8,9,10],[11,32,33,34,35,36],[37,38,39,40,41,42],[43,44,45,46,47],[48,49,50,51,52,53],[54,55,56,57,58,59]],"infantry_positions":[[-705.0,-24.135498046875,79.5999984741211],[-705.0,-24.135427474975586,76.79999542236328],[-702.2000122070312,-24.136428833007812,76.79999542236328],[-699.4000244140625,-24.136428833007812,79.5999984741211],[-705.0,-24.135427474975586,74.0],[137.5,-8.204377174377441,-593.0],[137.5,-8.20426082611084,-595.7999877929688],[134.6999969482422,-8.202201843261719,-593.0],[140.3000030517578,-8.296950340270996,-593.0],[137.5,-8.31466007232666,-590.2000122070312],[134.6999969482422,-8.202201843261719,-595.7999877929688],[989.5,56.48564910888672,556.0],[989.5,56.48564910888672,553.2000122070312],[986.7000122070312,56.48564910888672,556.0],[992.2999877929688,56.330745697021484,556.0],[989.5,56.36452102661133,558.7999877929688],[986.7000122070312,56.48564910888672,553.2000122070312],[-535.5,-18.499401092529297,-242.5],[-535.5,-18.501686096191406,-245.3000030517578],[-538.2999877929688,-18.477344512939453,-242.5],[-532.7000122070312,-18.50212287902832,-242.5],[-535.5,-18.50212287902832,-239.6999969482422],[299.0,-11.329463958740234,-389.8999938964844],[299.0,-11.329463958740234,-387.1000061035156],[301.79998779296875,-11.307596206665039,-389.8999938964844],[296.20001220703125,-11.338434219360352,-392.6999816894531],[301.79998779296875,-11.312143325805664,-387.1000061035156],[301.79998779296875,-11.304262161254883,-392.6999816894531],[480.5,8.605774879455566,544.5],[480.5,8.586528778076172,541.7000122070312],[477.70001220703125,8.439393997192383,544.5],[483.29998779296875,8.605774879455566,544.5],[480.5,8.605774879455566,547.2999877929688],[477.70001220703125,8.398933410644531,541.7000122070312]],"length_m":4925.7158203125,"pacing":{"minimum_reinforcement_lull_s":60.0,"reinforcement_platoon":3},"patrols":[[[1031.135986328125,548.2000122070312],[1132.4599609375,446.8760070800781],[1157.791015625,421.5459899902344],[1183.1190185546875,396.2179870605469],[1207.9100341796875,376.531005859375],[1243.5789794921875,376.093994140625],[1311.4539794921875,353.88299560546875],[1340.6199951171875,341.9169921875],[1340.5579833984375,331.9169921875],[1305.448974609375,345.885986328125],[1278.1419677734375,365.6029968261719],[1243.5789794921875,366.093994140625],[1176.053955078125,389.1400146484375],[1150.719970703125,414.4739990234375],[1125.3890380859375,439.80499267578125]],[[351.67999267578125,25.514999389648438],[351.67999267578125,65.81700134277344],[351.67999267578125,106.11799621582031],[351.67999267578125,146.41900634765625],[351.67999267578125,186.72000122070312],[351.67999267578125,227.02200317382812],[351.67999267578125,267.322998046875],[351.67999267578125,307.6239929199219],[351.72100830078125,346.1940002441406],[373.59100341796875,376.2860107421875],[402.0889892578125,404.7829895019531],[395.0169982910156,411.85400390625],[366.5199890136719,383.35699462890625],[342.3219909667969,349.60699462890625],[341.67999267578125,307.6239929199219],[341.67999267578125,267.322998046875],[341.67999267578125,227.02200317382812],[341.67999267578125,186.72000122070312],[341.67999267578125,146.41900634765625],[341.67999267578125,106.11799621582031],[341.67999267578125,65.81700134277344],[341.67999267578125,25.514999389648438],[341.67999267578125,-14.78600025177002],[351.67999267578125,-14.78600025177002]]],"platoon_tanks":[3,2],"riflemen_posted":34,"rule":"src/canyon.rs, game/canyon_game.rs","seed":137,"start":[-791.0159912109375,745.7830200195312],"t34s":5}
+[mission] "canyon-v2-rearguard" enabled from C:\shop\panzerrechnersystem\assets\worldgen/workshops/gaea-canyon-run-v2\mission.v1.json: 6 beats, first "Read the ground"
+[canyon-director] 3 T-34s enter at [Vec2(-747.07, 94.747), Vec2(-747.07, 58.747), Vec2(-747.07, 22.747002)]; identities 6..9; ordinary patrol, no target fix
+[canyon-director] 3 T-34s enter at [Vec2(-566.827, -229.071), Vec2(-541.371, -254.52663), Vec2(-527.016, -281.0)]; identities 9..12; ordinary patrol, no target fix
+[canyon] opening deployment: 2 of 3 approach platoons fielded
+[mission]     0.0s beat 1 "orders" opens: Read the ground (observe) at (-736, 595) r 260 m, progress 0.030
+[mission]     0.0s Adler: Kiebitz, Adler. Column is through the hamlet. Read the ground, then follow the wrecks north. Out.
+[crew] Driver: forward.
+[panzerrechnersystem] terrain LOD: 12 levels, lattice 0.076 m, range0 10 m, 168 MB resident on the GPU
+[sky-visibility] 66 source tiles x 384px, local +/-4.5 m, coarse +/-10816.0 m: 248 meshes, 4733 instanced batches
+[gfxbench-drive] t=0 s station Commander speed 0.0 m/s at (-791, 746)
+[mission]     2.0s order sheet folded as the crew moved off
+[mission]     4.0s beat 1 "orders" done: progress 0.031, actor (-791, 739)
+[mission]     4.0s Kiebitz: Adler, Kiebitz. Understood. Moving. Out.
+[mission]     4.0s beat 2 "anton" opens: Phase line Anton: the hamlet (reach) at (-747, 297) r 110 m, progress 0.031
+[mission]     4.0s Adler: Kiebitz, Adler. Phase line Anton is the hamlet, 450 metres north. White star marks it. Out.
+[mission]     7.0s white flare at (-747, 297)
+[gfxbench-drive] t=10 s station Commander speed 5.5 m/s at (-791, 712)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=20 s station Commander speed 8.1 m/s at (-790, 644)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Gunner: tank, 1 o'clock, 450.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=30 s station Commander speed 8.4 m/s at (-755, 569)
+[crew] Gunner: tank, 1 o'clock, 400.
+[panzerrechnersystem] SPOTTED by T-34 #6 (platoon 2)
+[panzerrechnersystem] T-34 #6 penetrated by 8.8cm PzGr.39 at 371 m.
+[panzerrechnersystem] T-34 #6 abandoned by its surviving crew.
+[crew] Gunner: tank, 1 o'clock, 500.
+[panzerrechnersystem] platoon 2 -> Searching
+[crew] empties rack probed: 11 of 12 upright stands along the rear wall (row probed at y 2.02)
+[crew]   rack profile y 0.75: rear surface at z -0.72
+[crew]   rack profile y 0.85: rear surface at z -0.95
+[crew]   rack profile y 0.95: rear surface at z -0.97
+[crew]   rack profile y 1.05: rear surface at z -1.18
+[crew]   rack profile y 1.15: rear surface at z -1.18
+[crew]   rack profile y 1.25: rear surface at z -1.16
+[crew]   rack profile y 1.35: rear surface at z -1.18
+[crew]   rack profile y 1.45: rear surface at z -0.98
+[crew]   rack profile y 1.55: rear surface at z -0.98
+[crew]   rack profile y 1.65: rear surface at z -1.01
+[crew]   rack profile y 1.75: rear surface at z -1.02
+[crew]   rack profile y 1.85: rear surface at z -1.19
+[crew]   rack profile y 1.95: rear surface at z -1.19
+[crew]   rack profile y 2.05: rear surface at z -1.19
+[crew]   rack row at probe height 2.02, shelf 1.55..1.95
+[crew]   rack 0: stand at -0.45,1.66,-0.99
+[crew]   rack 1: stand at -0.36,1.66,-1.02
+[crew]   rack 2: stand at -0.28,1.66,-1.05
+[crew]   rack 3: stand at -0.20,1.66,-1.07
+[crew]   rack 4: stand at -0.12,1.66,-1.08
+[crew]   rack 5: stand at -0.04,1.66,-1.08
+[crew]   rack 6: stand at 0.04,1.66,-1.08
+[crew]   rack 7: stand at 0.12,1.66,-1.08
+[crew]   rack 8: stand at 0.20,1.66,-1.07
+[crew]   rack 9: stand at 0.28,1.66,-1.05
+[crew]   rack 10: stand at 0.36,1.68,-1.02
+[crew]   rack 11: wall at 0.38,2.02,-0.92; no surface below
+[crew]   rack row at probe height 1.20, shelf 0.88..1.12
+[crew]   rack 0: surface at y 0.81 is not the recess shelf
+[crew]   rack 1: wall at -0.61,1.20,-1.35; no surface below
+[crew]   rack 2: wall at -0.39,1.20,-1.26; no surface below
+[crew]   rack 3: wall at -0.27,1.20,-1.25; no surface below
+[crew]   rack 4: wall at -0.15,1.20,-1.22; no surface below
+[crew]   rack 5: stand y 0.99, headroom blocked at y 1.43
+[crew]   rack 6: stand y 0.99, headroom blocked at y 1.43
+[crew]   rack 7: stand y 0.99, headroom blocked at y 1.43
+[crew]   rack 8: stand y 0.99, headroom blocked at y 1.43
+[crew]   rack 9: stand y 0.98, headroom blocked at y 1.41
+[crew]   rack 10: stand y 0.98, headroom blocked at y 1.43
+[crew]   rack 11: stand y 0.99, headroom blocked at y 1.43
+[panzerrechnersystem] AUSGERÜSTET: PzGr 39 (AP, grau) — zum Verschluss tragen
+[gfxbench-drive] t=40 s station Loader speed 0.0 m/s at (-748, 545)
+[crew] Gunner: firing.
+[panzerrechnersystem] T-34 #7 penetrated by 8.8cm PzGr.39 at 424 m.
+[crew] Loader: up.
+[gfxbench-drive] t=50 s station Gunner speed 0.0 m/s at (-748, 545)
+[panzerrechnersystem] platoon 2 -> Unaware (lost contact)
+[panzerrechnersystem] Tiger undetected — all threats lost, free to re-stalk.
+[gfxbench-drive] t=60 s station Gunner speed 0.0 m/s at (-748, 545)
+[gfxbench-drive] t=70 s station Gunner speed 0.0 m/s at (-748, 545)
+[gfxbench-drive] t=80 s station Gunner speed 0.0 m/s at (-748, 545)
+[canyon-pilot] reload abandoned at 85.2s (breech Loaded, lever 0.00, 0 slot(s) out of reach); driving on
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=90 s station Commander speed 2.5 m/s at (-747, 539)
+[mission]    97.0s white flare at (-747, 297)
+[gfxbench-drive] t=100 s station Commander speed 5.3 m/s at (-747, 497)
+[crew] Gunner: tank, 12 o'clock, 500.
+[gfxbench-drive] t=110 s station Commander speed 6.1 m/s at (-747, 440)
+[mission]   116.4s beat 2 "anton" done: progress 0.102, actor (-747, 400)
+[mission]   116.4s Adler: Kiebitz at Anton. Two guns on the settlement edge ahead. Smoke marks the lorry they killed at the fork. Out.
+[mission]   116.4s beat 3 "gunline" opens: The gun line at the fork (destroy) at (-560, -200) r 650 m, progress 0.102
+[mission]   116.4s Adler: Kiebitz, Adler. Guns at the settlement, east bank of the fork. Take them from the flank, do not drive the road. Out.
+[mission] platoon 2 alerted -> Searching
+[mission] platoon 3 alerted -> Searching
+[mission]   116.4s smoke column at (-690, -88)
+[mission]   116.4s alert within 700 m of (-560, -200)
+[gfxbench-drive] t=120 s station Commander speed 6.9 m/s at (-747, 375)
+[crew] Gunner: tank, 12 o'clock, 450.
+[crew] Gunner: tank, 12 o'clock, 450.
+[crew] Gunner: tank, 12 o'clock, 400.
+[crew] Gunner: tank, 12 o'clock, 400.
+[crew] Driver: right.
+[crew] Driver: right.
+[gfxbench-drive] t=130 s station Gunner speed 4.4 m/s at (-747, 305)
+[panzerrechnersystem] SPOTTED by T-34 #8 (platoon 2)
+[panzerrechnersystem] platoon 2 -> Engaged
+[panzerrechnersystem] platoon 3 -> Unaware (lost contact)
+[gfxbench-drive] t=140 s station Gunner speed 0.0 m/s at (-747, 301)
+[at-guns] gun 0 wrecked by 8.8cm PzGr.39; surviving crew abandon position
+[absitzen] anti-tank gun ammunition kill — body #12 carries 2 loose rounds
+[absitzen] anti-tank gun ammunition kill — body #13 carries 1 loose round
+[absitzen] anti-tank gun ammunition kill — body #14 carries 2 loose rounds
+[absitzen] anti-tank gun ammunition kill — body #15 carries 1 loose round
+[at-guns] gun 0 ready ammunition detonated
+[mission]   141.5s beat 3 "gunline" done: progress 0.122, actor (-747, 301)
+[mission]   141.5s Kiebitz: Adler, Kiebitz. Gun silenced. Continuing. Out.
+[crew] Gunner: tank, 12 o'clock, 400.
+[panzerrechnersystem] AUSGERÜSTET: PzGr 39 (AP, grau) — zum Verschluss tragen
+[crew] Gunner: tank, 12 o'clock, 400.
+[crew] Gunner: tank, 12 o'clock, 400.
+[crew] Gunner: tank, 12 o'clock, 400.
+[crew] Gunner: tank, 12 o'clock, 400.
+[gfxbench-drive] t=150 s station Gunner speed 0.0 m/s at (-747, 301)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[panzerrechnersystem] platoon 2 -> Unaware (lost contact)
+[panzerrechnersystem] Tiger undetected — all threats lost, free to re-stalk.
+[panzerrechnersystem] SPOTTED by T-34 #11 (platoon 3)
+[crew] Gunner: tank, 12 o'clock, 300.
+[gfxbench-drive] t=160 s station Loader speed 0.0 m/s at (-747, 293)
+[panzerrechnersystem] T-34 #11 penetrated by 8.8cm PzGr.39 at 304 m.
+[panzerrechnersystem] platoon 3 -> Searching
+[panzerrechnersystem] AUSGERÜSTET: PzGr 39 (AP, grau) — zum Verschluss tragen
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=170 s station Commander speed 1.1 m/s at (-747, 292)
+[crew] Gunner: tank, 12 o'clock, 300.
+[crew] Gunner: tank, 12 o'clock, 300.
+[crew] Gunner: tank, 12 o'clock, 300.
+[crew] Gunner: tank, 12 o'clock, 300.
+[panzerrechnersystem] SPOTTED by T-34 #9 (platoon 3)
+[panzerrechnersystem] platoon 3 -> Engaged
+[gfxbench-drive] t=180 s station Gunner speed 2.6 m/s at (-747, 257)
+[crew] Gunner: tank, 12 o'clock, 300.
+[panzerrechnersystem] T-34 #9 penetrated by 8.8cm PzGr.39 at 280 m.
+[panzerrechnersystem] T-34 #9 abandoned by its surviving crew.
+[armor] Tiger HullFront hit by T-34 #9: 76mm BR-350B, 279.7 m, 59.2 deg, penetration 42.0 mm / effective 249.5 mm, Bounce
+[armor] HullFront Dent at [1759, 1167, 3312] mm: radius 91 mm, loss 1 mm, depth 1.2 mm, aperture 0 mm
+[panzerrechnersystem] AUSGERÜSTET: PzGr 39 (AP, grau) — zum Verschluss tragen
+[gfxbench-drive] t=190 s station Loader speed 0.0 m/s at (-747, 256)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=200 s station Commander speed 4.0 m/s at (-747, 237)
+[panzerrechnersystem] platoon 3 -> Unaware (lost contact)
+[panzerrechnersystem] Tiger undetected — all threats lost, free to re-stalk.
+[crew] Driver: forward.
+[gfxbench-drive] t=210 s station Commander speed 5.0 m/s at (-747, 189)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Gunner: tank, 1 o'clock, 50.
+[crew] Gunner: tank, 12 o'clock, 50.
+[crew] Gunner: tank, 12 o'clock, 50.
+[crew] Gunner: tank, 12 o'clock, 50.
+[panzerrechnersystem] SPOTTED by T-34 #8 (platoon 2)
+[crew] Gunner: tank, 12 o'clock, 50.
+[panzerrechnersystem] T-34 #8 penetrated by 8.8cm PzGr.39 at 51 m.
+[panzerrechnersystem] platoon 2 -> Searching
+[panzerrechnersystem] platoon 2 eliminated
+[panzerrechnersystem] Tiger undetected — all threats lost, free to re-stalk.
+[gfxbench-drive] t=220 s station Loader speed 0.0 m/s at (-741, 163)
+[panzerrechnersystem] AUSGERÜSTET: PzGr 39 (AP, grau) — zum Verschluss tragen
+[crew] Driver: left.
+[crew] Driver: left.
+[crew] Driver: forward.
+[crew] Driver: back.
+[gfxbench-drive] t=230 s station Commander speed 1.0 m/s at (-742, 162)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=240 s station Commander speed 4.0 m/s at (-746, 152)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=250 s station Loader speed 0.0 m/s at (-747, 130)
+[panzerrechnersystem] AUSGERÜSTET: PzGr 39 (AP, grau) — zum Verschluss tragen
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=260 s station Commander speed 1.5 m/s at (-748, 128)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: left.
+[crew] Driver: back.
+[crew] Driver: forward.
+[gfxbench-drive] t=270 s station Commander speed 1.2 m/s at (-751, 118)
+[crew] Driver: left.
+[crew] Driver: back.
+[crew] Driver: right.
+[crew] Driver: back.
+[panzerrechnersystem] PANZERKONTAKT — OBB steel-on-steel with target #7
+[crew] Driver: back.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: forward.
+[gfxbench-drive] t=280 s station Commander speed 0.5 m/s at (-746, 127)
+[crew] Driver: forward.
+[crew] Driver: forward.
+[crew] Driver: left.
+[crew] Driver: back.
+[crew] Driver: forward.
+[crew] Gunner: tank, 10 o'clock, 150.
+[crew] Driver: right.
+[gfxbench-drive] t=290 s station Gunner speed 0.0 m/s at (-749, 122)
+[panzerrechnersystem] AUSGERÜSTET: SprGr (HE, gelb) — zum Verschluss tragen
+[gfxbench-drive] 18000 frames @ 640x360 preset Low | fenced wall mean 21.89 ms | p50 22.16 p95 29.67 p99 36.65 max 117.49
+[gfxbench-drive] visibility atlas: 3823 static passes redrew 44400 tiles (11.6 a pass)
+[gfxbench-drive] raster-optic-exterior          mean   2.219 ms/frame | on 16978/18000 frames: p50   2.470 p95   4.155 p99   5.092 max   8.710
+[gfxbench-drive] rm-gbuffer                     mean   1.750 ms/frame | on 18000/18000 frames: p50   1.767 p95   2.696 p99   3.389 max   4.596
+[gfxbench-drive] rm-point-face                  mean   1.196 ms/frame | on 18000/18000 frames: p50   0.903 p95   2.773 p99   3.553 max   4.258
+[gfxbench-drive] rm-shadow-far                  mean   1.003 ms/frame | on 18000/18000 frames: p50   1.011 p95   1.317 p99   1.768 max   2.574
+[gfxbench-drive] rm-shadow-near                 mean   0.568 ms/frame | on 18000/18000 frames: p50   0.460 p95   0.974 p99   1.263 max   1.922
+[gfxbench-drive] rm-sky-cover                   mean   0.488 ms/frame | on 18000/18000 frames: p50   0.487 p95   0.594 p99   0.913 max   1.676
+[gfxbench-drive] rm-shade                       mean   0.449 ms/frame | on 18000/18000 frames: p50   0.423 p95   0.605 p99   0.840 max   0.974
+[gfxbench-drive] sky-visibility-dynamic         mean   0.412 ms/frame | on 16978/18000 frames: p50   0.396 p95   0.666 p99   0.888 max   1.267
+[gfxbench-drive] exposure                       mean   0.387 ms/frame | on 18000/18000 frames: p50   0.307 p95   0.575 p99   0.859 max   1.397
+[gfxbench-drive] rm-sky                         mean   0.262 ms/frame | on 18000/18000 frames: p50   0.242 p95   0.401 p99   0.459 max   1.657
+[gfxbench-drive] raster-optic-current-weather   mean   0.259 ms/frame | on 16978/18000 frames: p50   0.262 p95   0.584 p99   0.995 max   1.433
+[gfxbench-drive] raster-optic-sky               mean   0.247 ms/frame | on 16978/18000 frames: p50   0.182 p95   0.833 p99   1.367 max   4.164
+[gfxbench-drive] scatter-cull                   mean   0.097 ms/frame | on 18000/18000 frames: p50   0.072 p95   0.143 p99   0.350 max   0.989
+[gfxbench-drive] sky-visibility-static          mean   0.092 ms/frame | on  3823/18000 frames: p50   0.121 p95   1.312 p99   1.599 max  15.460
+[gfxbench-drive] rm-volume                      mean   0.041 ms/frame | on 18000/18000 frames: p50   0.029 p95   0.082 p99   0.098 max   1.041
+[gfxbench-drive] rm-glass                       mean   0.039 ms/frame | on 17356/18000 frames: p50   0.047 p95   0.061 p99   0.113 max   0.534
+[gfxbench-drive] scatter-hiz                    mean   0.030 ms/frame | on 18000/18000 frames: p50   0.024 p95   0.045 p99   0.046 max   0.695
+[gfxbench-drive] rm-reflect                     mean   0.025 ms/frame | on 18000/18000 frames: p50   0.026 p95   0.032 p99   0.043 max   0.055
+[gfxbench-drive] rm-integrate                   mean   0.023 ms/frame | on 18000/18000 frames: p50   0.018 p95   0.036 p99   0.037 max   0.775
+[gfxbench-drive] bloom-glare                    mean   0.020 ms/frame | on 18000/18000 frames: p50   0.016 p95   0.032 p99   0.033 max   0.038
+[gfxbench-drive] rm-cloud-shadow                mean   0.018 ms/frame | on 18000/18000 frames: p50   0.014 p95   0.029 p99   0.032 max   0.632
+[gfxbench-drive] bloom-composite                mean   0.014 ms/frame | on 18000/18000 frames: p50   0.011 p95   0.020 p99   0.021 max   0.380
+[gfxbench-drive] bloom-glare-composite          mean   0.012 ms/frame | on 18000/18000 frames: p50   0.010 p95   0.019 p99   0.020 max   0.026
+[gfxbench-drive] bloom-glare-down               mean   0.010 ms/frame | on 18000/18000 frames: p50   0.008 p95   0.016 p99   0.018 max   0.735
+[gfxbench-drive] crush                          mean   0.009 ms/frame | on 18000/18000 frames: p50   0.007 p95   0.015 p99   0.015 max   0.534
+[gfxbench-drive] bloom-bright                   mean   0.008 ms/frame | on 18000/18000 frames: p50   0.006 p95   0.012 p99   0.012 max   0.303
+[gfxbench-drive] rm-points                      mean   0.007 ms/frame | on 18000/18000 frames: p50   0.004 p95   0.010 p99   0.102 max   0.269
+[gfxbench-drive] bloom-blur-h                   mean   0.005 ms/frame | on 18000/18000 frames: p50   0.004 p95   0.008 p99   0.008 max   0.608
+[gfxbench-drive] bloom-blur-v                   mean   0.005 ms/frame | on 18000/18000 frames: p50   0.004 p95   0.008 p99   0.008 max   0.318
+[gfxbench-drive] analytic-thousandfold-sparks   mean   0.004 ms/frame | on   790/18000 frames: p50   0.004 p95   0.564 p99   1.311 max   1.511
+[gfxbench-drive] raymarch-optic-relays          mean   0.003 ms/frame | on 16978/18000 frames: p50   0.003 p95   0.005 p99   0.006 max   0.311
+[gfxbench-drive] rm-lens                        mean   0.003 ms/frame | on  4644/18000 frames: p50   0.012 p95   0.013 p99   0.013 max   0.017
+[gfxbench-drive] native-pixel-hdr-effects       mean   0.001 ms/frame | on    67/18000 frames: p50   0.330 p95   0.751 p99   1.179 max   1.467
