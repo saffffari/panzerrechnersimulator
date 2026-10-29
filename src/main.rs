@@ -11238,8 +11238,13 @@ fn run_asset_trace() -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
-    graphics::set_active_preset(graphics::GraphicsPreset::for_adapter(info.device_type));
-    println!("[asset-trace] adapter {}", info.name);
+    // KESSEL_GRAPHICS_PRESET low|high|ultra traces what that preset loads (launcher -Graphics).
+    let preset = std::env::var("KESSEL_GRAPHICS_PRESET")
+        .ok()
+        .and_then(|value| graphics::GraphicsPreset::parse(&value))
+        .unwrap_or_else(|| graphics::GraphicsPreset::for_adapter(info.device_type));
+    graphics::set_active_preset(preset);
+    println!("[asset-trace] adapter {} preset {} raymarch {}", info.name, preset.label(), graphics::raymarch_backend_enabled());
     let (device, queue) = request_device(&adapter);
     let mut worlds = vec![("garage", world::garage()), ("arena", world::act(0))];
     for act in 1..=world::ACT_COUNT {

@@ -45,6 +45,7 @@ DYNAMIC_DIRS = [
     "assets/ui",
     "assets/pixelated",
     "assets/render",
+    "assets/vfx/explosion_volumes",  # raymarch VDB fireballs (format!("{ATLAS_DIR}/atlas.*"))
 ]
 # Never shipped even when a manifest directory is copied whole: authoring and review by-products.
 EXCLUDE_PARTS = {"_review", "review", "__pycache__", ".git"}

@@ -148,9 +148,20 @@ Crew co-op on one Wi-Fi (every laptop on the same network, marked Private):
   The host's seat is Commander; friends get the next free seat (F6 asks for another). The AI crew
   mans every seat nobody holds and steps aside when a friend takes it.
 
-Laptops: the launcher picks the Low preset (480x272; -Graphics High or Ultra to override) unless an RTX 4080/4090/
-5080/5090 desktop card is present. Integrated graphics (Intel UHD/Iris Xe, Radeon iGPU) are far too
-slow for this game; a laptop needs a discrete GPU. See LAN_WINDOWS.md, "Laptop GPUs".
+Graphics presets (-Graphics Low|High|Ultra). Each changes resolution and sampling only; the world,
+the damage and the crew are the same on every laptop, so mixed presets play together.
+  Low    480x272 grid, smaller fog/shadow/sky budgets, no MSAA. Picked automatically on every GPU
+         except a desktop RTX 4080/4090/5080/5090. Uses the ray-marched renderer when the GPU has
+         ray tracing (RTX 20-50, Radeon RX 6000/7000, Arc A), else the shader renderer.
+  High   480x270 grid, the desktop reference, MSAA 4. Picked automatically on a desktop 4080-5090.
+  Ultra  800x450 grid, denser fog, 4K sun shadows, finer sky. For a 4090/5090.
+  To choose one, run a shortcut from a Command Prompt opened in this folder, e.g.
+     "Host Canyon.cmd" -Graphics High
+     Join.cmd -Graphics Low
+  Integrated graphics (Intel UHD/Iris Xe, Radeon iGPU) are far too slow for this game even on Low;
+  a laptop needs a discrete GPU. See LAN_WINDOWS.md, "Laptop GPUs".
+  Two windows on one PC (test without the network): "Host Canyon.cmd" -Bind 127.0.0.1 -Windowed,
+  then Join.cmd with 127.0.0.1 and -Windowed.
 
 Troubleshooting (LAN_WINDOWS.md has the full list):
   "NO ANSWER FROM ..."      same Wi-Fi? host firewall step 1? guest network / client isolation?
