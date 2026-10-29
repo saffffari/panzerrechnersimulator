@@ -497,7 +497,15 @@ fn add_steel_mode(dst: &mut [f32], mode: SteelMode, amplitude: f32, attack_s: f3
     let attack_frames = (attack_s * sr).max(1.0);
     let release_frames = (0.12 * sr) as usize;
     let release_start = dst.len().saturating_sub(release_frames);
-    for (n, sample) in dst.iter_mut().enumerate() {
+    // The oscillator's amplitude is |amplitude * gain| * radius^n. Stop once it is below 1e-10
+    // (-200 dB): past that the recurrence only computes subnormal floats, which x86 runs ~100x
+    // slower, and a few-tenths-of-a-second mode spent most of a 4 s buffer there (16 modes were
+    // 150 ms on the game thread per strike on the player's hull, 2026-10-28).
+    let start = (amplitude * mode.gain).abs();
+    let audible = if radius < 1.0 && start > 0.0 {
+        (((1.0e-10 / start).ln() / radius.ln()).ceil().max(0.0) as usize).min(dst.len())
+    } else if start > 0.0 { dst.len() } else { 0 };
+    for (n, sample) in dst.iter_mut().enumerate().take(audible) {
         // Recurrence avoids per-sample sin/exp and keeps the one-shot cheap on the audio thread.
         let next_sine = radius * (sine * cos_step + cosine * sin_step);
         cosine = radius * (cosine * cos_step - sine * sin_step);
@@ -1717,6 +1725,7 @@ pub fn synth_damage_impact_with_pressure_delay(
     context: DamageSoundContext,
     air_delay_s: f32,
 ) -> DamageSoundEvent {
+    let _probe = crate::sim_phase::Probe::new("synth_damage_impact_with_pressure_delay");
     let delay = if air_delay_s.is_finite() { air_delay_s.clamp(0.0, 10.0) } else { 0.0 };
     let delay_frames = (delay * SAMPLE_RATE as f32).round() as usize;
     synth_damage_event_components(p, context, false, delay_frames)
@@ -3639,6 +3648,43 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// A steel mode stops computing once its oscillator is below -200 dB (`add_steel_mode`):
+    /// the ring is the full-length recurrence's to within 1e-9 for every staged strike, without
+    /// spending the rest of a 4 s buffer in subnormal arithmetic (150 ms per strike before).
+    #[test]
+    fn steel_modes_stop_below_audibility_without_changing_the_ring() {
+        let sr = SAMPLE_RATE as f32;
+        for sig in [ImpactSignature::DistantFrontalRicochet, ImpactSignature::LongRangeT34Marginal,
+            ImpactSignature::CloseT34SidePenetration, ImpactSignature::HeavyObliquePenetration] {
+            let (p, _) = impact_signature_params(sig, 7);
+            let len = (4.45 * sr) as usize;
+            let mut full = vec![0.0f32; len];
+            for m in steel_modes(p) {
+                let radius = (-6.907_755 / (m.t60_s * sr)).exp();
+                let (sin_step, cos_step) = (TAU * m.hz / sr).sin_cos();
+                let (mut sine, mut cosine) = (0.0f32, 0.2 * m.gain);
+                let attack_frames = (0.002 * sr).max(1.0);
+                let release_frames = (0.12 * sr) as usize;
+                let release_start = len.saturating_sub(release_frames);
+                for (n, sample) in full.iter_mut().enumerate() {
+                    let next_sine = radius * (sine * cos_step + cosine * sin_step);
+                    cosine = radius * (cosine * cos_step - sine * sin_step);
+                    sine = next_sine;
+                    let attack = smoothstep(0.0, attack_frames, n as f32);
+                    let release = 1.0 - smoothstep(release_start as f32, (release_start + release_frames) as f32, n as f32);
+                    *sample += sine * attack * release;
+                }
+            }
+            let mut cut = vec![0.0f32; len];
+            for m in steel_modes(p) {
+                add_steel_mode(&mut cut, m, 0.2, 0.002);
+            }
+            let diff = full.iter().zip(&cut).fold(0.0f32, |d, (a, b)| d.max((a - b).abs()));
+            let peak = full.iter().fold(0.0f32, |d, a| d.max(a.abs()));
+            assert!(diff < 1.0e-9 && peak > 0.01, "{sig:?}: max difference {diff:e}, peak {peak}");
+        }
+    }
+
     use super::*;
 
     #[test]

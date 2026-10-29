@@ -25208,6 +25208,7 @@ impl Game {
     }
 
     fn advance_projectiles(&mut self, dt: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("advance_projectiles");
         if !dt.is_finite() || dt <= 0.0 {
             return;
         }
@@ -25540,6 +25541,7 @@ impl Game {
 
     fn apply_authoritative_he_blast(&mut self, projectile_id: u64, point: Vec3, incoming: Vec3,
         radius: f32, filler_j:f32, burst: crate::sound_propagation::Emission, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("apply_authoritative_he_blast");
         self.infantry_pressure_blast(point, incoming, radius, filler_j, "HE pressure");
         let mut visited_building_modules = std::collections::BTreeSet::new();
         // Damage reaches `radius`, sympathetic dust `2 radius`: nothing farther can respond.
@@ -25601,6 +25603,7 @@ impl Game {
         contact: ProjectileContact,
         r: &mut Renderer,
     ) -> Option<crate::ballistics::ricochet::Response> {
+        let _probe = crate::sim_phase::Probe::new("resolve_authoritative_terminal");
         if armor_scars_review::trace_enabled() {
             println!("[armor-scars] terminal {} {:?} at {:.2?} after {:.1} m", projectile.shell.name,
                 std::mem::discriminant(&contact.kind), contact.pos, projectile.distance_m);
@@ -25837,6 +25840,7 @@ impl Game {
     /// real normal and the shell's real path in that vehicle's frame.
     fn record_vehicle_scar(&mut self, armor: &VehicleArmorContact, event: &crate::ballistics::ImpactEvent,
         travel_world: Vec3, now_s: f32) -> crate::armor_damage::ArmorScar {
+        let _probe = crate::sim_phase::Probe::new("record_vehicle_scar");
         let frame = self.armor_contact_frame(armor);
         let to_local = frame.inverse();
         let normal = to_local.transform_vector3(armor.world_normal).normalize_or_zero();
@@ -25854,6 +25858,7 @@ impl Game {
         impact_pos: Vec3,
         r: &mut Renderer,
     ) {
+        let _probe = crate::sim_phase::Probe::new("resolve_authoritative_vehicle_impact");
         let penetrated = outcome == Outcome::Penetrate;
         let travel_world = projectile.velocity.normalize_or_zero();
         if armor.vehicle != ProjectileVehicle::Player {
@@ -27997,6 +28002,7 @@ impl Game {
         seed: u32,
         ev: crate::ballistics::ImpactEvent,
     ) -> crate::acoustics::DamageSoundContext {
+        let _probe = crate::sim_phase::Probe::new("resolve_player_penetration");
         if !self.player.alive {
             return crate::acoustics::DamageSoundContext::default();
         }
@@ -28593,6 +28599,7 @@ impl Game {
         self.destroy_enemy_damage(idx,false,false);
     }
     fn destroy_enemy_damage(&mut self, idx: usize, ammo_hit:bool, fuel_hit:bool) {
+        let _probe = crate::sim_phase::Probe::new("destroy_enemy_damage");
         if self.enemies.get(idx).is_some_and(|e| e.alive) { self.enemy_ai_stats.knocked_out(idx); }
         // Snapshot the (Copy) death pose before taking any &mut borrow of self.
         let (epos, eparts, ekind, alive, turret_world, gun_world) = {
@@ -29747,6 +29754,7 @@ impl Game {
     /// A non-fatal chip still kicks up a little dust + a few masonry chips so a hit on a still-standing
     /// wall reads. No-op if the index is stale or the piece is already rubble.
     fn damage_structure(&mut self, idx: usize, dmg: f32, r: &mut Renderer) {
+        let _probe = crate::sim_phase::Probe::new("damage_structure");
         if idx >= self.destructibles.len() || !self.destructibles[idx].alive {
             return;
         }

@@ -2,7 +2,37 @@
 //! session-log lines (`KESSEL_SESSION_LOG`) and reported there as `game.sim_phases_ms`. Timing
 //! only: no phase reads it. The phases are the calls a contact-heavy second is suspected to
 //! spend its time in; `cpu_sim_ms` minus their sum is everything else in the update.
+use std::cell::RefCell;
 use std::time::Instant;
+
+thread_local! {
+    /// Inclusive time of probed functions (`Probe`): (label, total ms, worst call ms, calls).
+    static CALLS: RefCell<Vec<(&'static str, f64, f64, u32)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Times the function it is created in, until it drops: `let _probe = Probe::new("name");`.
+/// Inclusive (a probed callee's time is also its caller's); reported as `calls` beside the
+/// segments, for paths that branch too much for checkpoints (the shell-impact chain).
+pub struct Probe(&'static str, Instant);
+
+impl Probe {
+    pub fn new(label: &'static str) -> Self {
+        Self(label, Instant::now())
+    }
+}
+
+impl Drop for Probe {
+    fn drop(&mut self) {
+        let ms = self.1.elapsed().as_secs_f64() * 1000.0;
+        CALLS.with(|calls| {
+            let mut calls = calls.borrow_mut();
+            match calls.iter_mut().find(|(l, ..)| *l == self.0) {
+                Some(e) => { e.1 += ms; e.2 = e.2.max(ms); e.3 += 1; }
+                None => calls.push((self.0, ms, ms, 1)),
+            }
+        });
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -75,6 +105,13 @@ impl SimPhases {
         let seg_max: serde_json::Map<_, _> = self.seg.iter().map(|(l, _, mx)| ((*l).to_string(), serde_json::json!(mx))).collect();
         out.insert("seg".into(), serde_json::Value::Object(seg));
         out.insert("seg_max".into(), serde_json::Value::Object(seg_max));
+        let calls = CALLS.with(|calls| std::mem::take(&mut *calls.borrow_mut()));
+        let per: serde_json::Map<_, _> = calls.iter().map(|(l, ms, ..)| ((*l).to_string(), serde_json::json!(ms / n))).collect();
+        let worst: serde_json::Map<_, _> = calls.iter().map(|(l, _, mx, _)| ((*l).to_string(), serde_json::json!(mx))).collect();
+        let count: serde_json::Map<_, _> = calls.iter().map(|(l, .., c)| ((*l).to_string(), serde_json::json!(c))).collect();
+        out.insert("calls".into(), serde_json::Value::Object(per));
+        out.insert("calls_max".into(), serde_json::Value::Object(worst));
+        out.insert("calls_n".into(), serde_json::Value::Object(count));
         *self = Self::default();
         serde_json::Value::Object(out)
     }
