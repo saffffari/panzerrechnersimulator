@@ -1629,6 +1629,28 @@ history plus 0.02 (`rm_shade.wgsl` `share_clamped`, as the bounce already was): 
 the speckles over its median fell from 526 to 269 at 480x270 and the blobs are gone; the bias on a
 share of 0.3 is under 2 %, and a share that opens rises at least 1.3 times a frame.
 
+**The gunner's fireflies** (the owner's screenshot on main 0d61f09: small white-yellow dots over the
+dark upper cabin round the TZF, "all of those fireflies change frame to frame"). Measured with
+`KESSEL_SHOWCASE_SET=fireflies` (the gunner's eyepiece composite as played, every frame simulated and
+written: overcast noon still and traversing, dusk with the cabin lights on and off), counting cabin
+pixels outside the sight circle that change by more than 12 codes frame to frame at 480x270:
+
+| clip | main 5c72ee0 | this build | this build, share clamp off |
+| --- | --- | --- | --- |
+| noon, still | 56.5 | 25.9 | 172.0 |
+| noon, traversing | 135.6 | 56.3 | 206.6 |
+| dusk, lights on | 105.7 | 25.7 | 26.1 |
+
+The cause was the stochastic open-sky shares (the parent's list: firefly clamping): `KESSEL_RM_SKIP=4`
+(motes) and the medium change nothing, and the share clamp above takes the noon cabin from 172 to 26.
+The dimmer cabin (the TPZ illuminator no longer floods it) raises the exposure, so unclamped the same
+noise would show more, not less. The history already rides the vehicle (`rm_surface_motion`): while
+the turret traverses the cabin pixels stay as steady as at rest. What still changes at rest is the
+left vision block's relayed picture (ports refresh in turn) and the snow inside the sight. Clips:
+`captures/videos/fireflies_noon_still_before_after.mp4`, `fireflies_noon_traverse_before_after.mp4`
+(main left, this build right, 2.5 s each, 3x nearest). A/B without rebuilding:
+`KESSEL_RM_LIVE_SHADERS=1 KESSEL_RM_SHADER_DIR=<a copy of shaders/ with RM_SHARE_CAP raised>`.
+
 Captures (480x270 unless named; before = the merge build 25652ae or the same build without the
 change): the dial `captures/dial_before_after.png` (gunner's composite and commander's post,
 before left), `captures/dial_final_*`; lamps `captures/lamps_before_after.png`,
