@@ -300,6 +300,20 @@ gunner's target under hold fire with no shot. With the gunner dead (staged) the 
 stood on the dial and the turret did not move. Stills: `designate_01_tpz_two_pointers_on` (the
 dial under its lamp, the two pointers together), `designate_02_sights_mid_slew`.
 
+## Verified: brass cost stays flat (2026-10-28, `crew-solo-brass`)
+
+The integrator's 300 s smoke run on main 0d61f09 found `drive_casings` rising round over round, to 26.2 ms in one update after six reloads. The cause was the wake test. It hashed the tank's world pose, so every drive or traverse woke every case on the floor, and each was re-solved every update until the triangle budget ran out. Brass aboard now sleeps in the turret frame. It wakes only when something moves in the vehicle's own frame, or when the floor tilts more than 2 degrees from where it settled. At most three cases are solved per update. The ledger entry "Brass sleep and the solve cap" names the approximations.
+
+`crew-solo-brass captures/crew_solo_brass_20261028` (raymarch, Low) passes all five checks. Cases are released 0.45 m above the basket floor in batches until 1, 8 and then 24 lie aboard. After each batch they settle, the tank drives straight for 3 s, then the turret traverses at 6 deg/s with the gun nodding for 4 s, then they settle again.
+
+| aboard | drive: updates with no solve | traverse: mean / p95 / worst ms |
+|---|---|---|
+| 1 | 155 of 180 | 0.06 / 0.09 / 0.31 |
+| 8 | 180 of 180 | 0.76 / 1.44 / 1.98 |
+| 24 | 180 of 180 | 0.80 / 1.48 / 2.14 |
+
+The lone case was woken by the tank pitching as it pulled away and rolled 1.1 cm. Every case lay on the basket floor after the traverse. `crew-solo-empties` still passes 6/6, so stowing in the rack, the dump question and the hatch toss are unchanged. Still: `brass_01_floor_after_the_traverse`. It shows the cases passing through one another, because case-to-case contact is not modelled; that was already so before this change.
+
 ## Unit tests
 
 `cargo test --release --locked --bin panzerrechnersystem -- first_aid crew_solo singleplayer_crew`

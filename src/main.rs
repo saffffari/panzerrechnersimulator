@@ -16977,6 +16977,10 @@ fn main() -> anyhow::Result<()> {
         let prefix = capture_arg(&args, 2, "crew_solo_designate");
         return crew_solo_capture::run_crew_solo_designate_capture(&prefix);
     }
+    if args.len() >= 2 && args[1] == "crew-solo-brass" {
+        let prefix = capture_arg(&args, 2, "crew_solo_brass");
+        return crew_solo_capture::run_crew_solo_brass_capture(&prefix);
+    }
     if args.len() >= 2 && args[1] == "crew-solo-empties" {
         let prefix = capture_arg(&args, 2, "crew_solo_empties");
         return crew_solo_capture::run_crew_solo_empties_capture(&prefix);
