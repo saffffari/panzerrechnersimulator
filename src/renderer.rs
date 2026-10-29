@@ -6744,6 +6744,11 @@ impl Renderer {
         self.terrain_detail = detail;
     }
 
+    /// The visibility atlas's static passes so far and the tiles they redrew (of 66 each).
+    pub fn sky_visibility_static_redraws(&self) -> (u64, u64) {
+        self.sky_visibility.static_redraws()
+    }
+
     /// The detail terrain LOD's statistics this frame (raymarch backend with a detail surface).
     pub fn terrain_lod_stats(&self) -> Option<crate::terrain_lod::LodStats> {
         self.raymarch.as_ref().and_then(|rm| rm.terrain_stats())

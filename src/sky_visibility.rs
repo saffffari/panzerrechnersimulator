@@ -79,6 +79,62 @@ fn snapped_focus(focus: glam::Vec3, half: f32) -> glam::Vec3 {
     let step = half / 8.0;
     (focus / step).round() * step
 }
+/// The focus keeps its lattice point until it is this fraction of a step away along an axis
+/// (rounding alone moves it at one half). A crewman's eye rocking a few centimetres across a cell
+/// boundary (the hull rocking on its springs, a tank pushing at an obstacle) otherwise redraws
+/// the local groups on every crossing. The footprint's centre is at most 0.75 of a step off the
+/// eye (0.42 m inside, 1.13 m outside) instead of 0.5.
+const FOCUS_HOLD: f32 = 0.75;
+fn held_focus(kept: Option<(glam::Vec3, f32)>, focus: glam::Vec3, half: f32) -> glam::Vec3 {
+    match kept {
+        Some((point, kept_half)) if focus.is_finite() && kept_half == half
+            && (focus - point).abs().max_element() <= FOCUS_HOLD * half / 8.0 => point,
+        _ => snapped_focus(focus, half),
+    }
+}
+
+/// Slack of a fresh coarse fit. The coarse cascade must hold the loaded geometry and the camera's
+/// complete far support (`source_scene_bounds`), which moves with the camera on a 64 m lattice;
+/// fitted exactly, a tank rocking across a lattice line refitted it on every crossing, a 77 ms
+/// redraw of 32 tiles over the whole scene (600 s Low autopilot run, 2026-10-28). The fit is kept
+/// while it still holds the bounds and is no more than two of these looser than an exact fit: the
+/// camera must travel at least 256 m before the next refit (about 440 m along an axis, the
+/// reach being to the support's farthest corner), and a coarse texel is at most
+/// 2 x 512 m / 384 = 2.7 m wider than an exact fit's (about 5 % of a 54 m texel).
+const COARSE_MARGIN_M: f32 = 256.0;
+/// Distance from `focus` to the farthest corner of the box `lo..hi`, plus the 2 m guard.
+fn coarse_reach(focus: glam::Vec3, lo: glam::Vec3, hi: glam::Vec3) -> f32 {
+    (hi - focus).abs().max((lo - focus).abs()).length() + 2.0
+}
+fn coarse_fit(lo: glam::Vec3, hi: glam::Vec3) -> (glam::Vec3, f32) {
+    let focus = ((lo + hi) * 0.5 / 64.0).round() * 64.0;
+    (focus, (coarse_reach(focus, lo, hi) / 64.0).ceil() * 64.0 + COARSE_MARGIN_M)
+}
+fn held_coarse_fit(kept: Option<(glam::Vec3, f32)>, lo: glam::Vec3, hi: glam::Vec3) -> (glam::Vec3, f32) {
+    let fresh = coarse_fit(lo, hi);
+    match kept {
+        Some((focus, half)) if coarse_reach(focus, lo, hi) <= half && half <= fresh.1 + COARSE_MARGIN_M => (focus, half),
+        _ => fresh,
+    }
+}
+
+/// The key light's direction for a tile of footprint `half`, rounded per component on a lattice of
+/// `key_direction_step(half)`. A rotation by q moves a caster at the tile's full depth
+/// (`half + REACH_M` either side of the focus) sideways by q (half + REACH_M); the rounding error is
+/// at most 0.87 q, so the step keeps that under 0.44 of a texel (2 half / TILE) and the tile is
+/// redrawn only when the key has moved by about one texel's angular footprint. The Canyon's
+/// compressed day turns the sky 96 times faster than the Earth (about 6 mrad/s), which a fixed
+/// 0.1 mrad step turned into a redraw of both key tiles every frame, the coarse one over the whole
+/// scene: 2.3 ms a frame in the 600 s Low autopilot run (2026-10-28).
+fn key_direction_step(half: f32) -> f32 {
+    half / (TILE as f32 * (half + REACH_M))
+}
+/// The local key tile's direction is also the uniform's `sun_direction`, which the shaders accept
+/// as the key only within 1.41 mrad (`dot > 0.999999`): its step stays at most 1 mrad (0.87 mrad error).
+const LOCAL_KEY_STEP_MAX: f32 = 1.0e-3;
+fn quantized_key(direction: glam::Vec3, step: f32) -> glam::Vec3 {
+    ((direction.normalize() / step).round() * step).normalize()
+}
 
 fn direction_view_proj(direction: glam::Vec3, focus: glam::Vec3, half: f32) -> glam::Mat4 {
     stable_shadow_view_proj(direction, focus, half, half + REACH_M, TILE)
@@ -120,7 +176,6 @@ impl FrameCameraSupport {
     }
 }
 
-const CACHE_GROUPS: usize = 4;
 /// Vertex-cluster cell of the environment-visibility occluder (see `clustered_occluder`).
 pub(super) const OCCLUDER_CELL_M: f32 = 0.006;
 /// The largest distance a clustered vertex can lie from its source vertex: the cell diagonal.
@@ -171,49 +226,37 @@ fn coarse_tile(tile: usize) -> bool { (32..64).contains(&tile) || tile == 65 }
 fn below_coarse_texel(lo: glam::Vec3, hi: glam::Vec3, global_half: f32) -> bool {
     lo.is_finite() && hi.is_finite() && (hi - lo).max_element() < 2.0 * global_half / TILE as f32
 }
-fn cache_group(tile: usize) -> usize {
-    match tile { 0..=31 => 0, 32..=63 => 1, 64 => 2, 65 => 3,
-        _ => panic!("invalid source-shadow tile") }
-}
-fn group_rect(group: usize) -> [u32; 4] {
-    match group {
-        0 => [0, 0, COLS * TILE, 4 * TILE],
-        1 => [0, 4 * TILE, COLS * TILE, 4 * TILE],
-        2 => [0, 8 * TILE, TILE, TILE],
-        3 => [TILE, 8 * TILE, TILE, TILE],
-        _ => panic!("invalid source-shadow cache group"),
-    }
-}
-
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AtlasWork {
-    rebuild_static: [bool; CACHE_GROUPS],
+    rebuild_static: [bool; TILES],
     compose: bool,
 }
-#[derive(Default)]
+impl Default for AtlasWork {
+    fn default() -> Self { Self { rebuild_static: [false; TILES], compose: false } }
+}
+/// Which tiles of the static atlas to redraw. Every tile is its own cache entry: it is redrawn
+/// when its projection changes, or when a static source that can write one of its depth samples
+/// changed (`StaticScene`, `dirty_tiles`). One local half-metre footprint step therefore redraws
+/// the 33 local tiles and not the world cascade, a key-light step one key tile, and a tree falling
+/// in a forest only the tiles whose samples its old or new place covers.
 struct AtlasCache {
-    static_keys: [Option<u64>; CACHE_GROUPS],
+    footprint_keys: [Option<u64>; TILES],
     dynamic_key: Option<u64>,
     pending: AtlasWork,
 }
+impl Default for AtlasCache {
+    fn default() -> Self { Self { footprint_keys: [None; TILES], dynamic_key: None, pending: AtlasWork::default() } }
+}
 impl AtlasCache {
-    fn observe(&mut self, matrices: &[glam::Mat4; TILES], static_source: u64, dynamic_source: u64) {
-        // Near environment, coarse environment, near sun and coarse sun are independent.
-        // A local half-metre footprint step cannot invalidate the unchanged world cascade.
-        let footprint_keys: [u64; CACHE_GROUPS] = std::array::from_fn(|group| {
+    fn observe(&mut self, matrices: &[glam::Mat4; TILES], static_dirty: &[bool; TILES], dynamic_source: u64) {
+        let footprint_keys: [u64; TILES] = std::array::from_fn(|tile| {
             let mut hash=std::collections::hash_map::DefaultHasher::new();
-            for (tile,matrix) in matrices.iter().enumerate().filter(|(tile,_)|cache_group(*tile)==group) {
-                tile.hash(&mut hash);
-                for value in matrix.to_cols_array() {value.to_bits().hash(&mut hash);}
-            }
+            for value in matrices[tile].to_cols_array() {value.to_bits().hash(&mut hash);}
             hash.finish()
         });
-        for (group,&footprint) in footprint_keys.iter().enumerate() {
-            let mut hash=std::collections::hash_map::DefaultHasher::new();
-            footprint.hash(&mut hash);static_source.hash(&mut hash);
-            let key=hash.finish();
-            if self.static_keys[group].replace(key)!=Some(key) {
-                self.pending.rebuild_static[group]=true;
+        for tile in 0..TILES {
+            if self.footprint_keys[tile].replace(footprint_keys[tile])!=Some(footprint_keys[tile]) || static_dirty[tile] {
+                self.pending.rebuild_static[tile]=true;
                 self.pending.compose=true;
             }
         }
@@ -225,7 +268,114 @@ impl AtlasCache {
     fn take(&mut self) -> AtlasWork {std::mem::take(&mut self.pending)}
 }
 
-fn make_group_clear_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
+/// A tile's projection as rows, for `shadow_has_sample` over many boxes. The tiles are
+/// orthographic (`stable_shadow_view_proj`), so a box's projection is its projected centre plus or
+/// minus |M| times its half extent: the bounds of its eight projected corners, from two products.
+/// The bounds grow by 1e-5 (2e-3 of a texel) so rounding can only add a sample, never lose one.
+#[derive(Clone, Copy)]
+struct TileProjection {
+    matrix: glam::Mat4,
+    rows: [glam::Vec4; 3],
+    abs: [glam::Vec3; 3],
+    affine: bool,
+}
+impl TileProjection {
+    fn new(matrix: glam::Mat4) -> Self {
+        let rows = [matrix.row(0), matrix.row(1), matrix.row(2)];
+        Self { matrix, rows, abs: rows.map(|row| row.truncate().abs()),
+            affine: matrix.row(3) == glam::Vec4::W }
+    }
+    /// `shadow_has_sample(matrix, lo, hi, TILE)`: whether the box can write a depth sample.
+    fn has_sample(&self, lo: glam::Vec3, hi: glam::Vec3) -> bool {
+        if !self.affine { return shadow_has_sample(self.matrix, lo, hi, TILE); }
+        if !lo.is_finite() || !hi.is_finite() { return true; }
+        let (centre, extent) = ((lo + hi) * 0.5, (hi - lo).abs() * 0.5);
+        let p = glam::Vec3::from_array(self.rows.map(|row| row.truncate().dot(centre) + row.w));
+        let r = glam::Vec3::from_array(self.abs.map(|row| row.dot(extent))) + glam::Vec3::splat(1.0e-5);
+        let (mn, mx) = (p - r, p + r);
+        if mx.z < 0.0 || mn.z > 1.0 { return false; }
+        let size = TILE as f32;
+        let a = (mn.truncate() * 0.5 + glam::Vec2::splat(0.5)) * size;
+        let b = (mx.truncate() * 0.5 + glam::Vec2::splat(0.5)) * size;
+        let first = (a - glam::Vec2::splat(0.625)).ceil().max(glam::Vec2::ZERO);
+        let last = (b - glam::Vec2::splat(0.375)).floor().min(glam::Vec2::splat(size - 1.0));
+        first.cmple(last).all()
+    }
+}
+
+/// A retained mesh as last drawn into the static atlas.
+#[derive(Clone, Copy, PartialEq)]
+struct MeshSource {
+    buffers: u64,
+    index_count: u32,
+    pose_revision: u64,
+    model: glam::Mat4,
+    lo: glam::Vec3,
+    hi: glam::Vec3,
+}
+/// A static instanced page as last drawn into the static atlas, with every instance's world box.
+struct BatchSource {
+    prototype: usize,
+    mats: Vec<glam::Mat4>,
+    hidden: InstanceVisibility,
+    boxes: Vec<(glam::Vec3, glam::Vec3)>,
+}
+impl BatchSource {
+    fn live(&self, instance: usize) -> bool {
+        instance < self.mats.len() && !self.hidden.is_hidden(instance as u32)
+    }
+    /// The instances whose box can write a depth sample of `tile`, as runs of instance ordinals.
+    /// A hidden instance's raster matrix is zero and writes nothing.
+    fn ranges(&self, tile: &TileProjection) -> Vec<std::ops::Range<u32>> {
+        let mut ranges: Vec<std::ops::Range<u32>> = Vec::new();
+        for (i, (lo, hi)) in self.boxes.iter().enumerate() {
+            if !self.live(i) || !tile.has_sample(*lo, *hi) { continue; }
+            let i = i as u32;
+            if let Some(last) = ranges.last_mut().filter(|r| r.end == i) { last.end += 1; } else { ranges.push(i..i + 1); }
+        }
+        ranges
+    }
+}
+/// The boxes, old and new places, of every instance whose depth contribution differs between
+/// `old` and `new`: moved, shown, hidden, added or removed (all of them for another prototype).
+fn changed_instances(old: Option<&BatchSource>, new: Option<&BatchSource>, out: &mut Vec<(glam::Vec3, glam::Vec3)>) {
+    let same_prototype = matches!((old, new), (Some(a), Some(b)) if a.prototype == b.prototype);
+    let count = old.map_or(0, |s| s.mats.len()).max(new.map_or(0, |s| s.mats.len()));
+    for i in 0..count {
+        let was = old.filter(|s| s.live(i));
+        let is = new.filter(|s| s.live(i));
+        let same = same_prototype && match (was, is) {
+            (Some(a), Some(b)) => a.mats[i] == b.mats[i],
+            (None, None) => true,
+            _ => false,
+        };
+        if same { continue; }
+        if let Some(s) = was { out.push(s.boxes[i]); }
+        if let Some(s) = is { out.push(s.boxes[i]); }
+    }
+}
+/// More changed boxes than this in one frame redraw every tile rather than test each.
+const MAX_TRACKED_CHANGES: usize = 4096;
+/// The static scene as last drawn: what each frame's static sources are compared with. A change
+/// redraws only the tiles where its old or new box can write a depth sample (`dirty_tiles`); where
+/// it can write none, that tile's depth cannot differ. The comparison replaces a per-frame hash of
+/// every static matrix (35k on Canyon v2), so an unchanged frame costs a slice comparison per page.
+#[derive(Default)]
+struct StaticScene {
+    menu_mode: Option<bool>,
+    meshes: std::collections::HashMap<usize, MeshSource>,
+    batches: std::collections::HashMap<usize, BatchSource>,
+}
+/// Every tile whose depth samples one of the changed boxes can write (all of them for `None`).
+fn dirty_tiles(tiles: &[TileProjection; TILES], changed: Option<&[(glam::Vec3, glam::Vec3)]>) -> [bool; TILES] {
+    match changed {
+        Some(boxes) if boxes.len() <= MAX_TRACKED_CHANGES =>
+            std::array::from_fn(|k| boxes.iter().any(|(lo, hi)| tiles[k].has_sample(*lo, *hi))),
+        _ => [true; TILES],
+    }
+}
+
+fn make_tile_clear_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
         // Scissored depth clear retains untouched atlas tiles. Fullscreen geometry writes exact
         // far depth; no source geometry, bias or sampling law is changed by the cache partition.
         let clear_module=shader(device,"source-shadow-tile-clear",r#"
@@ -272,11 +422,14 @@ pub struct SkyVisibility {
     inst_pipe: wgpu::RenderPipeline,
     clear_pipe: wgpu::RenderPipeline,
     cache: RefCell<AtlasCache>,
+    scene: RefCell<StaticScene>,
     prepared: Cell<Option<Prepared>>,
     coop_focus: Cell<Option<glam::Vec3>>,
     frame_camera_support: FrameCameraSupport,
     directions: [glam::Vec4; DIRECTIONS],
     rebuilds: Cell<u64>,
+    /// Static passes encoded and tiles they redrew (`static_redraws`).
+    static_redraws: Cell<(u64, u64)>,
 }
 
 impl SkyVisibility {
@@ -431,7 +584,7 @@ impl SkyVisibility {
         };
         let pipe = make("sky-visibility", "vs", &[vertex_layout.clone()]);
         let inst_pipe = make("sky-visibility-inst", "vs_inst", &[vertex_layout, instance_layout]);
-        let clear_pipe = make_group_clear_pipeline(device);
+        let clear_pipe = make_tile_clear_pipeline(device);
         Self {
             enabled,
             view,
@@ -447,13 +600,18 @@ impl SkyVisibility {
             inst_pipe,
             clear_pipe,
             cache: RefCell::new(AtlasCache::default()),
+            scene: RefCell::new(StaticScene::default()),
             prepared: Cell::new(None),
             coop_focus: Cell::new(None),
             frame_camera_support: FrameCameraSupport::default(),
             directions: directions(),
             rebuilds: Cell::new(0),
+            static_redraws: Cell::new((0, 0)),
         }
     }
+
+    /// Static atlas passes encoded so far and the tiles they redrew (of 66 each).
+    pub fn static_redraws(&self) -> (u64, u64) { self.static_redraws.get() }
 
     pub fn begin_frame(&self, focus: glam::Vec3, camera: &crate::camera::Camera) {
         self.coop_focus.set(Some(focus));
@@ -519,53 +677,75 @@ impl SkyVisibility {
         hash.finish()
     }
 
-    /// Instanced static scenery inside the footprint.
-    fn static_signature(&self, renderer: &Renderer, prepared: &Prepared) -> u64 {
-        let mut hash = std::collections::hash_map::DefaultHasher::new();
-        renderer.menu_mode.hash(&mut hash);
-        for (i,m) in renderer.shadow_source_meshes().iter().enumerate() {
-            if Self::participates(m) && Self::retains_static_depth(m) {i.hash(&mut hash);m.vbuf.hash(&mut hash);m.pose_revision.hash(&mut hash);m.ibuf.hash(&mut hash);m.index_count.hash(&mut hash);for value in m.model.to_cols_array(){value.to_bits().hash(&mut hash);}}
-        }
-        if renderer.menu_mode {return hash.finish();}
-        let pages = renderer.inst_spatial_index.query(Self::region_query(prepared.global_focus, prepared.global_half));
-        for &index in &pages.batches {
+    /// The static pages drawn into the static atlas: inside the coarse cascade, not moving pools.
+    fn static_batches<'a>(renderer: &'a Renderer, prepared: &Prepared) -> impl Iterator<Item = (usize, &'a InstBatch)> + 'a {
+        let (focus, half) = (prepared.global_focus, prepared.global_half);
+        let pages = (!renderer.menu_mode).then(|| renderer.inst_spatial_index.query(Self::region_query(focus, half)));
+        pages.into_iter().flat_map(|pages| pages.batches.into_iter()).filter_map(move |index| {
             let b = &renderer.inst_batches[index];
-            if !Self::batch_participates(b) || b.moving_rt_pool
-                || !region_contains(prepared.global_focus, prepared.global_half, b.world_min, b.world_max) {
-                continue;
+            (Self::batch_participates(b) && !b.moving_rt_pool
+                && region_contains(focus, half, b.world_min, b.world_max)).then_some((index, b))
+        })
+    }
+
+    /// Compares the static sources with the scene last drawn and records the new one. Returns the
+    /// boxes, old and new places, of every source whose depth contribution changed, or `None`
+    /// when everything is to be redrawn. Geometry buffers are immutable; their identity, the pose
+    /// revision and the transform stand for a retained mesh's triangles, the prototype, matrices
+    /// and hidden bits (a failed building module, revealed rubble) for a page's.
+    fn observe_static_scene(&self, renderer: &Renderer, prepared: &Prepared) -> Option<Vec<(glam::Vec3, glam::Vec3)>> {
+        let mut scene = self.scene.borrow_mut();
+        let mut changed = Vec::new();
+        let redraw_all = scene.menu_mode.replace(renderer.menu_mode) != Some(renderer.menu_mode);
+        if redraw_all { scene.meshes.clear(); scene.batches.clear(); }
+        let mut seen = std::collections::HashSet::new();
+        for (i, m) in renderer.shadow_source_meshes().iter().enumerate() {
+            if !Self::participates(m) || !Self::retains_static_depth(m) { continue; }
+            seen.insert(i);
+            let mut buffers = std::collections::hash_map::DefaultHasher::new();
+            m.vbuf.hash(&mut buffers); m.ibuf.hash(&mut buffers);
+            let now = MeshSource { buffers: buffers.finish(), index_count: m.index_count, pose_revision: m.pose_revision,
+                model: m.model, lo: m.world_min, hi: m.world_max };
+            match scene.meshes.insert(i, now) {
+                Some(old) if old == now => {}
+                old => { changed.extend(old.map(|old| (old.lo, old.hi))); changed.push((now.lo, now.hi)); }
             }
-            index.hash(&mut hash);
-            b.inst_count.hash(&mut hash);
-            b.inst_buffer_id.hash(&mut hash);
-            b.prototype.hash(&mut hash);
-            let prototype = &renderer.inst_prototypes[b.prototype];
-            prototype.vbuf.hash(&mut hash); prototype.ibuf.hash(&mut hash);
-            prototype.index_count.hash(&mut hash);
-            for model in b.cpu_mats.iter().take(b.inst_count as usize) {
-                for f in model.to_cols_array() { f.to_bits().hash(&mut hash); }
-            }
-            // A failed building module or revealed rubble changes the depth without moving a
-            // matrix: per-instance visibility is part of the static scene.
-            b.hidden.hash(&mut hash);
         }
-        hash.finish()
+        scene.meshes.retain(|i, old| seen.contains(i) || { changed.push((old.lo, old.hi)); false });
+        let mut seen = std::collections::HashSet::new();
+        for (index, b) in Self::static_batches(renderer, prepared) {
+            if !seen.insert(index) { continue; }
+            let mats = &b.cpu_mats[..(b.inst_count as usize).min(b.cpu_mats.len())];
+            if scene.batches.get(&index).is_some_and(|old| old.prototype == b.prototype
+                && old.mats.as_slice() == mats && old.hidden == b.hidden) { continue; }
+            let prototype = &renderer.inst_prototypes[b.prototype];
+            let now = BatchSource { prototype: b.prototype, mats: mats.to_vec(), hidden: b.hidden.clone(),
+                boxes: mats.iter().map(|m| transform_aabb(*m, prototype.local_min, prototype.local_max)).collect() };
+            let old = scene.batches.remove(&index);
+            changed_instances(old.as_ref(), Some(&now), &mut changed);
+            scene.batches.insert(index, now);
+        }
+        scene.batches.retain(|i, old| seen.contains(i) || { changed_instances(Some(old), None, &mut changed); false });
+        (!redraw_all).then_some(changed)
     }
 
     pub fn prepare(&self, renderer: &Renderer, queue: &wgpu::Queue) {
         if !self.enabled { return; }
         let half = footprint_half(renderer.interior_light > 0.02 || self.coop_focus.get().is_some());
-        let focus = snapped_focus(self.coop_focus.get().unwrap_or(renderer.camera.pos), half);
+        let kept = self.prepared.get();
+        let focus = held_focus(kept.map(|p| (p.focus, p.half)), self.coop_focus.get().unwrap_or(renderer.camera.pos), half);
         if !focus.is_finite() {
             self.prepared.set(None);
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&<Uniform as bytemuck::Zeroable>::zeroed()));
             return;
         }
         let (lo,hi)=source_scene_bounds(renderer);
-        let global_focus=((lo+hi)*0.5/64.0).round()*64.0;
-        let global_half=(((hi-global_focus).length().max((lo-global_focus).length())+2.0)/64.0).ceil()*64.0;
-        // A direction is quantized below a shadow texel's angular footprint. This prevents an
-        // imperceptible ephemeris change from rebuilding all static source geometry each frame.
-        let sun=((renderer.sun_dir.normalize()*10000.0).round()/10000.0).normalize();
+        let (global_focus,global_half)=held_coarse_fit(kept.map(|p| (p.global_focus, p.global_half)),lo,hi);
+        // Each key tile takes the direction on its own lattice, below its texel's angular
+        // footprint (`key_direction_step`): an ephemeris change the tile cannot resolve does not
+        // redraw it.
+        let sun=quantized_key(renderer.sun_dir,key_direction_step(half).min(LOCAL_KEY_STEP_MAX));
+        let coarse_sun=quantized_key(renderer.sun_dir,key_direction_step(global_half));
         let mut prepared = Prepared { focus, half, matrices: [glam::Mat4::IDENTITY; TILES],global_focus,global_half };
         let mut uniform = Uniform {
             view_proj: [[[0.0; 4]; 4]; TILES],
@@ -582,14 +762,15 @@ impl SkyVisibility {
             uniform.view_proj[k+32]=prepared.matrices[k+32].to_cols_array_2d();
         }
         prepared.matrices[64]=direction_view_proj(sun,focus,half);
-        prepared.matrices[65]=direction_view_proj(sun,global_focus,global_half);
+        prepared.matrices[65]=direction_view_proj(coarse_sun,global_focus,global_half);
         uniform.view_proj[64]=prepared.matrices[64].to_cols_array_2d();
         uniform.view_proj[65]=prepared.matrices[65].to_cols_array_2d();
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.prepared.set(Some(prepared));
-        let static_signature = self.static_signature(renderer, &prepared);
+        let changed = self.observe_static_scene(renderer, &prepared);
+        let static_dirty = dirty_tiles(&prepared.matrices.map(TileProjection::new), changed.as_deref());
         let dynamic_signature = self.dynamic_signature(renderer, &prepared);
-        self.cache.borrow_mut().observe(&prepared.matrices,static_signature,dynamic_signature);
+        self.cache.borrow_mut().observe(&prepared.matrices,&static_dirty,dynamic_signature);
     }
 
     pub fn encode(&self, renderer: &Renderer, encoder: &mut wgpu::CommandEncoder,
@@ -620,11 +801,13 @@ impl SkyVisibility {
                 occlusion_query_set: None,
             });
             work.shadow_passes += 1;
+            let (passes, tiles) = self.static_redraws.get();
+            self.static_redraws.set((passes + 1, tiles + changed.rebuild_static.iter().filter(|&&dirty| dirty).count() as u64));
             if !rebuild_all {
                 pass.set_pipeline(&self.clear_pipe);
-                for (group,&dirty) in changed.rebuild_static.iter().enumerate() {
+                for (tile,&dirty) in changed.rebuild_static.iter().enumerate() {
                     if !dirty {continue;}
-                    let [x,y,width,height]=group_rect(group);
+                    let [x,y,width,height]=tile_rect(tile);
                     pass.set_scissor_rect(x,y,width,height);
                     pass.draw(0..3,0..1);
                 }
@@ -639,7 +822,7 @@ impl SkyVisibility {
                 pass.set_vertex_buffer(0,m.vbuf.slice(..));
                 pass.set_index_buffer(m.shadow_index_buffer().slice(..),wgpu::IndexFormat::Uint32);
                 for (tile,matrix) in prepared.matrices.iter().enumerate() {
-                    if !changed.rebuild_static[cache_group(tile)] {continue;}
+                    if !changed.rebuild_static[tile] {continue;}
                     if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(tile); pass.set_scissor_rect(x,y,w,h); }
                     for range in m.shadow_index_ranges(*matrix,TILE) {
                         pass.draw_indexed(range,0,tile as u32..tile as u32+1);
@@ -649,30 +832,33 @@ impl SkyVisibility {
             }
             pass.set_pipeline(&self.inst_pipe);
             pass.set_bind_group(0, &self.bind, &[]);
-            let pages = renderer.inst_spatial_index.query(Self::region_query(prepared.global_focus, prepared.global_half));
-            for &index in pages.batches.iter().filter(|_| !renderer.menu_mode) {
-                let b = &renderer.inst_batches[index];
-                if !Self::batch_participates(b) || b.moving_rt_pool
-                    || !region_contains(prepared.global_focus, prepared.global_half, b.world_min, b.world_max) {
-                    continue;
-                }
+            let tiles = prepared.matrices.map(TileProjection::new);
+            let scene = self.scene.borrow();
+            for (index, b) in Self::static_batches(renderer, &prepared) {
+                // The scene as observed by `prepare` this frame: the same pages and matrices.
+                let Some(source) = scene.batches.get(&index) else { continue };
                 let p = &renderer.inst_prototypes[b.prototype];
                 pass.set_vertex_buffer(0, p.vbuf.slice(..));
                 pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                 pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                // Instance-rate matrices already occupy the instance index, so each direction
-                // whose view actually contains the batch is its own draw.
+                // Instance-rate matrices already occupy the instance index, so each direction is
+                // its own draw, of only the instances that can write one of its samples: a page
+                // spans hundreds of metres, a coarse texel is 54 m, and most props are a few.
+                // Drawing whole pages made a coarse redraw 70 ms (Canyon v2, Low, 4090).
                 for (k, planes) in planes.iter().enumerate() {
-                    if !changed.rebuild_static[cache_group(k)]
-                        || !aabb_in_frustum(planes, b.world_min, b.world_max) { continue; }
+                    if !changed.rebuild_static[k] || !aabb_in_frustum(planes, b.world_min, b.world_max) { continue; }
+                    let ranges = source.ranges(&tiles[k]);
+                    if ranges.is_empty() { continue; }
                     if tile_scissor_enabled() { let [x,y,w,h]=tile_rect(k); pass.set_scissor_rect(x,y,w,h); }
                     let push = PushData {
                         model: glam::Mat4::IDENTITY.to_cols_array_2d(),
                         params: [k as f32, 0.0, 0.0, 0.0],
                     };
                     pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
-                    pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
-                    work.shadow_instanced_draws += 1;
+                    for range in ranges.into_iter().map(|r| r.start..r.end.min(b.inst_count)).filter(|r| !r.is_empty()) {
+                        pass.draw_indexed(0..p.index_count, 0, range);
+                        work.shadow_instanced_draws += 1;
+                    }
                 }
                 drawn.1 += 1;
             }
@@ -861,18 +1047,21 @@ mod tests {
         assert!(camera_lo.cmpge(lo).all() && camera_hi.cmple(hi).all());
     }
 
+    const CLEAN: [bool; TILES] = [false; TILES];
+    fn tiles_where(f: impl Fn(usize) -> bool) -> [bool; TILES] { std::array::from_fn(f) }
+
     fn settled_cache() -> (AtlasCache, [glam::Mat4; TILES]) {
         let matrices = [glam::Mat4::IDENTITY; TILES];
         let mut cache = AtlasCache::default();
-        cache.observe(&matrices, 10, 20);
-        assert_eq!(cache.take(), AtlasWork { rebuild_static: [true; CACHE_GROUPS], compose: true });
+        cache.observe(&matrices, &CLEAN, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: [true; TILES], compose: true });
         (cache, matrices)
     }
 
     #[test]
     fn unchanged_sources_and_footprints_need_no_atlas_work() {
         let (mut cache, matrices) = settled_cache();
-        cache.observe(&matrices, 10, 20);
+        cache.observe(&matrices, &CLEAN, 20);
         assert_eq!(cache.take(), AtlasWork::default());
     }
 
@@ -880,26 +1069,26 @@ mod tests {
     fn moving_local_footprint_does_not_redraw_the_world_cascade() {
         let (mut cache, mut matrices) = settled_cache();
         for (tile, matrix) in matrices.iter_mut().enumerate() {
-            if matches!(cache_group(tile), 0 | 2) {
+            if !coarse_tile(tile) {
                 *matrix = glam::Mat4::from_translation(glam::Vec3::X * 0.5625);
             }
         }
-        cache.observe(&matrices, 10, 20);
-        assert_eq!(cache.take(), AtlasWork { rebuild_static: [true, false, true, false], compose: true });
-        cache.observe(&matrices, 10, 20);
+        cache.observe(&matrices, &CLEAN, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: tiles_where(|t| !coarse_tile(t)), compose: true });
+        cache.observe(&matrices, &CLEAN, 20);
         assert_eq!(cache.take(), AtlasWork::default());
     }
 
     #[test]
-    fn world_extent_changes_rebuild_both_coarse_groups() {
+    fn world_extent_changes_rebuild_only_the_coarse_tiles() {
         let (mut cache, mut matrices) = settled_cache();
         for (tile, matrix) in matrices.iter_mut().enumerate() {
-            if matches!(cache_group(tile), 1 | 3) {
+            if coarse_tile(tile) {
                 *matrix = glam::Mat4::from_scale(glam::Vec3::splat(0.5));
             }
         }
-        cache.observe(&matrices, 10, 20);
-        assert_eq!(cache.take(), AtlasWork { rebuild_static: [false, true, false, true], compose: true });
+        cache.observe(&matrices, &CLEAN, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: tiles_where(coarse_tile), compose: true });
     }
 
     #[test]
@@ -907,49 +1096,138 @@ mod tests {
         let (mut cache, mut matrices) = settled_cache();
         matrices[64] = glam::Mat4::from_rotation_y(0.001);
         matrices[65] = glam::Mat4::from_rotation_y(0.002);
-        cache.observe(&matrices, 10, 20);
-        assert_eq!(cache.take(), AtlasWork { rebuild_static: [false, false, true, true], compose: true });
+        cache.observe(&matrices, &CLEAN, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: tiles_where(|t| t >= 64), compose: true });
     }
 
     #[test]
-    fn changing_or_removing_static_sources_invalidates_every_group() {
+    fn a_static_change_redraws_exactly_the_tiles_it_can_write() {
         let (mut cache, matrices) = settled_cache();
-        // Signatures include buffer identity, transforms, instance counts and hidden masks.
-        // Both adding a source and returning to its earlier scene signature require a redraw.
-        for source in [11, 10] {
-            cache.observe(&matrices, source, 20);
-            assert_eq!(cache.take(), AtlasWork { rebuild_static: [true; CACHE_GROUPS], compose: true });
-        }
+        let dirty = tiles_where(|t| t == 3 || t == 40);
+        cache.observe(&matrices, &dirty, 20);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: dirty, compose: true });
+        cache.observe(&matrices, &CLEAN, 20);
+        assert_eq!(cache.take(), AtlasWork::default());
     }
 
     #[test]
     fn moving_or_removing_dynamic_sources_recomposes_without_static_redraw() {
         let (mut cache, matrices) = settled_cache();
         for source in [21, 20] {
-            cache.observe(&matrices, 10, source);
-            assert_eq!(cache.take(), AtlasWork { rebuild_static: [false; CACHE_GROUPS], compose: true });
+            cache.observe(&matrices, &CLEAN, source);
+            assert_eq!(cache.take(), AtlasWork { rebuild_static: CLEAN, compose: true });
         }
     }
 
     #[test]
-    fn preparation_preserves_dirty_groups_until_depth_is_encoded() {
+    fn preparation_preserves_dirty_tiles_until_depth_is_encoded() {
         let (mut cache, mut matrices) = settled_cache();
         matrices[0] = glam::Mat4::from_translation(glam::Vec3::X);
-        cache.observe(&matrices, 10, 20);
+        cache.observe(&matrices, &CLEAN, 20);
         matrices[65] = glam::Mat4::from_translation(glam::Vec3::Y);
-        cache.observe(&matrices, 10, 20);
-        cache.observe(&matrices, 10, 21);
-        assert_eq!(cache.take(), AtlasWork { rebuild_static: [true, false, false, true], compose: true });
+        cache.observe(&matrices, &CLEAN, 20);
+        cache.observe(&matrices, &CLEAN, 21);
+        assert_eq!(cache.take(), AtlasWork { rebuild_static: tiles_where(|t| t == 0 || t == 65), compose: true });
+    }
+
+    /// The 66 tile projections of an atlas at `focus` (local) inside a 10.5 km coarse fit.
+    fn atlas_tiles(focus: glam::Vec3) -> [TileProjection; TILES] {
+        let (global_focus, global_half) = (glam::Vec3::new(-768.0, -64.0, 128.0), 10_496.0);
+        let key = glam::Vec3::new(0.31, 0.22, -0.92).normalize();
+        let dirs = directions();
+        std::array::from_fn(|k| TileProjection::new(match k {
+            0..=31 => direction_view_proj(dirs[k].truncate(), focus, INSIDE_HALF_M),
+            32..=63 => direction_view_proj(dirs[k - 32].truncate(), global_focus, global_half),
+            64 => direction_view_proj(key, focus, INSIDE_HALF_M),
+            _ => direction_view_proj(key, global_focus, global_half),
+        }))
+    }
+
+    #[test]
+    fn the_tile_projection_never_loses_a_sample_the_corner_test_finds() {
+        let focus = glam::Vec3::new(-752.0625, -19.6875, 124.875);
+        let tiles = atlas_tiles(focus);
+        let mut seed = 0x2545_f491_u32;
+        let mut next = || { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; seed as f32 / u32::MAX as f32 };
+        let (mut agree, mut extra) = (0u32, 0u32);
+        for _ in 0..4000 {
+            // Boxes from a centimetre to 30 m, from beside the eye to 4 km away.
+            let reach = if next() < 0.5 { 20.0 } else { 4000.0 };
+            let centre = focus + (glam::Vec3::new(next(), next(), next()) * 2.0 - 1.0) * reach;
+            let extent = glam::Vec3::new(next(), next(), next()) * (0.01 + 15.0 * next());
+            for tile in &tiles {
+                let exact = shadow_has_sample(tile.matrix, centre - extent, centre + extent, TILE);
+                let fast = tile.has_sample(centre - extent, centre + extent);
+                assert!(fast || !exact, "a sample the eight corners reach was lost");
+                if fast == exact { agree += 1 } else { extra += 1 }
+            }
+        }
+        // The 1e-5 guard adds a sample in about 0.2 % of tests: an extra draw, never a lost one.
+        assert!(extra * 100 < agree, "{extra} extra of {agree}");
+        assert!(tiles.iter().all(|t| t.affine));
+        assert!(tiles[0].has_sample(glam::Vec3::NAN, glam::Vec3::ONE));
+    }
+
+    #[test]
+    fn a_falling_tree_redraws_the_local_tiles_and_few_or_no_coarse_ones() {
+        let focus = glam::Vec3::new(-752.0625, -19.6875, 124.875);
+        let tiles = atlas_tiles(focus);
+        // A 14 m tree 6 m from the eye, standing and then a third of the way down.
+        let base = focus + glam::Vec3::new(6.0, -2.0, 0.0);
+        let standing = (base - glam::Vec3::new(0.6, 0.0, 0.6), base + glam::Vec3::new(0.6, 14.0, 0.6));
+        let leaning = (base - glam::Vec3::new(0.6, 0.0, 0.6), base + glam::Vec3::new(7.0, 12.1, 0.6));
+        let dirty = dirty_tiles(&tiles, Some(&[standing, leaning]));
+        for k in 0..TILES {
+            assert_eq!(dirty[k], tiles[k].has_sample(standing.0, standing.1) || tiles[k].has_sample(leaning.0, leaning.1));
+        }
+        assert!((0..32).filter(|&k| dirty[k]).count() >= 16, "the tree is in the local footprint");
+        assert!((32..64).filter(|&k| dirty[k]).count() <= 8, "a 54 m coarse texel rarely holds its centre under a tree");
+        // A tree 2 km away redraws no local tile; anything unaccounted for redraws them all.
+        let far = (focus + glam::Vec3::splat(2000.0), focus + glam::Vec3::splat(2000.0) + glam::Vec3::new(1.2, 14.0, 1.2));
+        assert!(dirty_tiles(&tiles, Some(&[far]))[..32].iter().all(|&d| !d));
+        assert_eq!(dirty_tiles(&tiles, None), [true; TILES]);
+        assert_eq!(dirty_tiles(&tiles, Some(&vec![far; MAX_TRACKED_CHANGES + 1])), [true; TILES]);
+    }
+
+    #[test]
+    fn only_changed_instances_report_their_old_and_new_places() {
+        let place = |x: f32| glam::Mat4::from_translation(glam::Vec3::X * x);
+        let source = |prototype: usize, xs: &[f32], hidden: &[u32]| {
+            let mut visibility = InstanceVisibility::default();
+            for &i in hidden { visibility.set(i, true); }
+            BatchSource { prototype, mats: xs.iter().map(|&x| place(x)).collect(), hidden: visibility,
+                boxes: xs.iter().map(|&x| (glam::Vec3::splat(x), glam::Vec3::splat(x + 1.0))).collect() }
+        };
+        let at = |x: f32| (glam::Vec3::splat(x), glam::Vec3::splat(x + 1.0));
+        let old = source(7, &[0.0, 10.0, 20.0], &[]);
+        // Instance 1 moves, instance 2 is hidden (a failed module), instance 3 is added.
+        let new = source(7, &[0.0, 11.0, 20.0, 30.0], &[2]);
+        let mut changed = Vec::new();
+        changed_instances(Some(&old), Some(&new), &mut changed);
+        assert_eq!(changed, vec![at(10.0), at(11.0), at(20.0), at(30.0)]);
+        // Unchanged: nothing. Another prototype or a removed page: every live instance.
+        changed.clear();
+        changed_instances(Some(&new), Some(&source(7, &[0.0, 11.0, 20.0, 30.0], &[2])), &mut changed);
+        assert!(changed.is_empty());
+        changed_instances(Some(&old), Some(&source(8, &[0.0, 10.0, 20.0], &[])), &mut changed);
+        assert_eq!(changed.len(), 6);
+        changed.clear();
+        changed_instances(Some(&new), None, &mut changed);
+        assert_eq!(changed, vec![at(0.0), at(11.0), at(30.0)]);
+        // A page draws only the instances that can write a tile's samples, hidden ones never.
+        let tiles = atlas_tiles(glam::Vec3::new(5.0, 0.0, 0.0));
+        let ranges = new.ranges(&tiles[0]);
+        assert!(ranges.iter().all(|r| !r.contains(&2)));
     }
 
     #[test]
     #[ignore = "requires GPU; verifies exact retained and cleared atlas depth"]
-    fn partial_clear_gpu_preserves_clean_groups_and_clears_selected_group() -> anyhow::Result<()> {
+    fn partial_clear_gpu_preserves_clean_tiles_and_clears_selected_tile() -> anyhow::Result<()> {
         let instance = crate::create_instance();
         let adapter = crate::request_adapter(&instance, None);
         let (device, queue) = crate::request_device(&adapter);
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let clear_pipe = make_group_clear_pipeline(&device);
+        let clear_pipe = make_tile_clear_pipeline(&device);
         let width = COLS * TILE;
         let height = ROWS * TILE;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -965,9 +1243,9 @@ mod tests {
             label: Some("sky-group-clear-readback"), size: (width * height * 4) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
         });
-        for group in 0..CACHE_GROUPS {
+        for tile in [0, 31, 40, 64, 65] {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            let [left, top, group_width, group_height] = group_rect(group);
+            let [left, top, group_width, group_height] = tile_rect(tile);
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("sky-group-clear-test"), color_attachments: &[],
@@ -999,7 +1277,7 @@ mod tests {
                 let selected = x >= left && x < left + group_width && y >= top && y < top + group_height;
                 let expected = if selected { 1.0_f32 } else { 0.25_f32 };
                 assert_eq!(f32::from_le_bytes(bytes.try_into().unwrap()), expected,
-                    "group {group}, depth texel ({x}, {y})");
+                    "tile {tile}, depth texel ({x}, {y})");
             }
             drop(data);
             buffer.unmap();
@@ -1009,31 +1287,19 @@ mod tests {
     }
 
     #[test]
-    fn partial_clear_rectangles_cover_all_66_tiles_without_overlap() {
-        for tile in 0..TILES {
-            let x = (tile as u32 % COLS) * TILE;
-            let y = (tile as u32 / COLS) * TILE;
-            for group in 0..CACHE_GROUPS {
-                let [left, top, width, height] = group_rect(group);
-                assert!(left + width <= COLS * TILE && top + height <= ROWS * TILE);
-                let covered = x >= left && y >= top && x + TILE <= left + width && y + TILE <= top + height;
-                assert_eq!(covered, cache_group(tile) == group, "tile {tile}, group {group}");
-            }
-        }
-    }
-
-    #[test]
     fn coarse_source_cascade_covers_all_scene_and_camera_support_corners() {
         let lo=glam::Vec3::new(-1024.0,-512.0,-2048.0);
         let hi=glam::Vec3::new(3072.0,512.0,2048.0);
-        let focus=((lo+hi)*0.5/64.0).round()*64.0;
-        let half=(((hi-focus).length().max((lo-focus).length())+2.0)/64.0).ceil()*64.0;
-        for d in directions() {let m=direction_view_proj(d.truncate(),focus,half);
+        // A held fit (here one 192 m off the box's centre) must cover the corners as a fresh one.
+        let fresh=coarse_fit(lo,hi);
+        let held=held_coarse_fit(Some((fresh.0+glam::Vec3::new(192.0,-64.0,128.0),fresh.1)),lo,hi);
+        assert_ne!(held.0,fresh.0,"this fixture must exercise a held, off-centre fit");
+        for (focus,half) in [fresh,held] {for d in directions() {let m=direction_view_proj(d.truncate(),focus,half);
             for x in [lo.x,hi.x] {for y in [lo.y,hi.y] {for z in [lo.z,hi.z] {
                 let p=m.project_point3(glam::Vec3::new(x,y,z));
                 assert!(p.x.abs()<1.0 && p.y.abs()<1.0 && p.z>0.0 && p.z<1.0,"{p:?}");
             }}}
-        }
+        }}
         assert_eq!(std::mem::size_of::<Uniform>(),4784);
     }
 
@@ -1086,5 +1352,79 @@ mod tests {
         // Crossing the cell boundary moves the footprint by exactly one step.
         let c = snapped_focus(centre + glam::Vec3::X * (step * 0.6), INSIDE_HALF_M);
         assert!((c.x - a.x - step).abs() < 1e-5);
+    }
+
+    #[test]
+    fn an_eye_rocking_across_a_cell_boundary_keeps_the_footprint() {
+        let step = INSIDE_HALF_M / 8.0;
+        let centre = glam::Vec3::new(18.0, 4.0, 5.0) * step;
+        let mut kept = None;
+        let mut moves = 0;
+        // Four centimetres either side of the boundary between two cells, as in the jammed run.
+        for k in 0..40 {
+            let eye = centre + glam::Vec3::X * (step * 0.5 + if k % 2 == 0 { 0.04 } else { -0.04 });
+            let focus = held_focus(kept.map(|f| (f, INSIDE_HALF_M)), eye, INSIDE_HALF_M);
+            if kept.is_some_and(|f| f != focus) { moves += 1; }
+            kept = Some(focus);
+        }
+        assert_eq!(moves, 0);
+        // Over three quarters of a step away it follows; a footprint size change refits at once.
+        assert_eq!(kept, Some(centre + glam::Vec3::X * step));
+        let far = held_focus(kept.map(|f| (f, INSIDE_HALF_M)), centre - glam::Vec3::X * step * 0.3, INSIDE_HALF_M);
+        assert_eq!(far, centre);
+        let outside = held_focus(kept.map(|f| (f, INSIDE_HALF_M)), centre, OUTSIDE_HALF_M);
+        assert_eq!(outside, snapped_focus(centre, OUTSIDE_HALF_M));
+        assert!(!held_focus(kept.map(|f| (f, INSIDE_HALF_M)), glam::Vec3::NAN, INSIDE_HALF_M).is_finite());
+    }
+
+    #[test]
+    fn the_coarse_fit_holds_until_the_bounds_escape_or_it_grows_loose() {
+        let support = |centre: glam::Vec3| {
+            let reach = glam::Vec3::splat(6000.0);
+            (((centre - reach) / 64.0).floor() * 64.0, ((centre + reach) / 64.0).ceil() * 64.0)
+        };
+        // A camera rocking across a 64 m lattice line of its far support keeps the fit.
+        let rock = |dx: f32| support(glam::Vec3::new(-752.0 + dx, -20.0, 124.0));
+        let (lo, hi) = rock(0.3);
+        let first = held_coarse_fit(None, lo, hi);
+        let (lo_b, hi_b) = rock(-0.3);
+        assert_ne!((lo, hi), (lo_b, hi_b), "this fixture must cross a lattice line");
+        for k in 0..40 {
+            let (lo, hi) = rock(if k % 2 == 0 { -0.3 } else { 0.3 });
+            assert_eq!(held_coarse_fit(Some(first), lo, hi), first);
+        }
+        // Escaping bounds refit, and so does a held fit grown two margins looser than a fresh one.
+        let (lo, hi) = rock(1000.0);
+        let moved = held_coarse_fit(Some(first), lo, hi);
+        assert_ne!(moved, first);
+        assert!(coarse_reach(moved.0, lo, hi) <= moved.1);
+        let (lo, hi) = rock(0.0);
+        let loose = (first.0, first.1 + 3.0 * COARSE_MARGIN_M);
+        assert_eq!(held_coarse_fit(Some(loose), lo, hi), coarse_fit(lo, hi));
+    }
+
+    #[test]
+    fn each_key_tile_moves_only_by_its_own_texel_footprint() {
+        let key = glam::Vec3::new(0.31, 0.22, -0.92).normalize();
+        for (half, cap) in [(INSIDE_HALF_M, LOCAL_KEY_STEP_MAX), (OUTSIDE_HALF_M, LOCAL_KEY_STEP_MAX), (10_496.0, 1.0)] {
+            let q = quantized_key(key, key_direction_step(half).min(cap));
+            // The rounding error moves a caster at the tile's full depth by under half a texel.
+            let shift = q.angle_between(key) * (half + REACH_M);
+            assert!(shift < 0.5 * 2.0 * half / TILE as f32, "{half}: {shift}");
+        }
+        // The local key stays inside the shaders' 1.41 mrad key test.
+        let local = quantized_key(key, key_direction_step(OUTSIDE_HALF_M).min(LOCAL_KEY_STEP_MAX));
+        assert!(local.dot(key) > 0.999999);
+        // The Canyon sky turns about 6.4 mrad a second: a frame's motion (0.11 mrad) no longer
+        // redraws the coarse key tile, as it did on a 0.1 mrad lattice.
+        let coarse = key_direction_step(10_496.0);
+        let mut redraws = 0;
+        let mut last = quantized_key(key, coarse);
+        for frame in 1..=60 {
+            let moved = glam::Quat::from_rotation_y(frame as f32 * 6.4e-3 / 60.0) * key;
+            let q = quantized_key(moved, coarse);
+            if q != last { redraws += 1; last = q; }
+        }
+        assert!(redraws <= 5, "{redraws} redraws in a second");
     }
 }

@@ -45,6 +45,7 @@ mod simulation_uploads;
 mod session_log;
 mod sim_phase;
 mod canyon_autopilot;
+mod drive_bench;
 mod suspension;
 mod vehdyn_trace;
 mod vehicle_spec;
@@ -16757,6 +16758,13 @@ fn main() -> anyhow::Result<()> {
         let frames=args.get(3).and_then(|s|s.parse().ok()).unwrap_or(180);
         let out=args.get(4).map(String::as_str).unwrap_or("artifacts/performance/winter-encounter-20260925/latest.json");
         return winter_bench::run(mode,frames,out);
+    }
+    if args.len() >= 2 && args[1] == "gfxbench-drive" {
+        let preset = args.get(4).map(|value| graphics::GraphicsPreset::parse(value)
+            .ok_or_else(|| anyhow::anyhow!("gfxbench-drive preset must be low, high or ultra (got {value:?})"))).transpose()?;
+        return drive_bench::run(args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30.0), preset,
+            args.get(5).and_then(|s| s.parse().ok()).unwrap_or(137));
     }
     if args.len() >= 2 && args[1] == "gfxbench" {
         if matches!(
