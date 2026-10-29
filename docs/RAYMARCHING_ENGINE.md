@@ -1224,6 +1224,70 @@ than 16 codes: 6.3 % before, 0.2 % after). Mean luminance of the commander's vie
 to 32.1 codes as the sky-lit motes and haze left the cabin. GPU cost of the relays (one raster
 scene per port in view plus the atlas and cubes) is not yet measured; the box was in use.
 
+## The relays' visibility atlas in a moving game (2026-10-28)
+
+The integrator's 600 s Low-preset autopilot run (round 12) still had frames near 300 ms at p99 out
+of contact, with the atlas's static pass (`sky-visibility-static`) at 2.3 ms median and 77 ms at
+p95. The parked gfxbench could not show it. `gfxbench-drive FROM_S RENDER_S [preset] [seed]`
+(`src/drive_bench.rs`) reproduces the run headless: the rule-based Canyon crew (`CanyonPilot`)
+plays Canyon v2 from the seeded deployment, simulates FROM_S seconds unrendered, then renders and
+fences every frame of the next RENDER_S seconds with the GPU pass timestamps, and prints each
+pass's median, p95, p99 and worst with the frames it ran on. Seed 137, from 330 s, follows round
+12's route through its jam (the tank pushing back and forth at about -750, 124).
+
+A re-key log over those 150 s (8,957 static passes in 9,000 frames) named four inputs:
+
+- The key light, on 89 % of them. The Canyon's compressed day (24 h in 900 s of play) turns the sky
+  about 6 mrad a second, 0.11 mrad a frame, and the key tiles' direction was rounded to 0.1 mrad: both
+  key tiles redrew every frame, the coarse one over the whole scene (the 2.3 ms median).
+- The local footprint, on 857: the commander's eye rocking a few centimetres across a 0.56 m cell
+  boundary while the tank pushed at an obstacle redrew the 33 local tiles on every crossing.
+- The coarse fit, 11 times: its extent is the camera's far support on a 64 m lattice, and the
+  jammed tank sat across a lattice line. Each refit redrew 32 tiles over the whole scene (77 ms).
+- A falling tree, 144 frames: `trees.rs` re-poses the tree's page through `set_instanced_mats`
+  every frame of its hinge fall, and the static key hashed every matrix, so each frame of the fall
+  redrew all 66 tiles over the whole scene. Track marks and scatter did not re-key it.
+
+A redraw of the coarse tiles was 73 ms, of which the terrain mesh 3 ms: the rest was the 4,733
+instanced pages drawn whole into each of 32 tiles whose texels are 54 m, where almost every prop
+covers no texel centre. Changes (`src/sky_visibility.rs`):
+
+- **Each key tile on its own lattice** (`key_direction_step`): the direction is rounded per
+  component at half / (384 (half + 10 m)), so the rounding moves a caster at the tile's full depth
+  by under 0.44 of a texel; 1 mrad at most for the local tile, whose direction the shaders accept
+  as the key within 1.41 mrad. The coarse key tile now redraws a few times a second, not every frame.
+- **Held fits.** The local focus keeps its lattice point until the eye is 0.75 of a step away along
+  an axis (was 0.5); the coarse fit carries 256 m of slack and is kept while it holds the scene and
+  the camera's far support and is no more than two slacks looser than an exact fit. Named in the
+  ledger.
+- **Tiles, not groups.** Each of the 66 tiles is its own cache entry. The static scene is compared
+  with the scene last drawn (`StaticScene`: retained meshes by buffers, pose revision and transform;
+  pages by prototype, matrices and hidden bits), and a change redraws only the tiles where its old
+  or new box can write a depth sample (`dirty_tiles`, the conservative `shadow_has_sample` test);
+  where it can write none, that tile's depth cannot differ, so this is exact. A tree falling near
+  the tank redraws local tiles and seldom a coarse one; one 2 km away, at most a coarse tile or two.
+  The comparison replaces the per-frame hash of all 35k static matrices.
+- **Pages draw only the instances that can write a tile's samples** (`BatchSource::ranges`, with
+  `TileProjection`, the same test from the box's centre and half extent through the orthographic
+  tile, never losing a sample the eight-corner test finds). Also exact: an instance whose box holds
+  no texel centre writes nothing.
+
+`gfxbench-drive 330 150 low 137`, 480x272, the same route both times (positions agree at every
+10 s mark), idle 4090:
+
+| | before | after |
+| --- | --- | --- |
+| frame wall mean / p50 | 28.4 / 26.1 ms | 22.4 / 22.0 ms |
+| frame wall p95 / p99 / worst | 31.8 / 130.6 / 779 ms | 25.5 / 33.3 / 141 ms |
+| static pass: frames it ran on | 8,957 of 9,000 | 3,943 of 9,000 (7.1 tiles a pass) |
+| static pass mean / p50 / p99 / worst | 4.11 / 2.47 / 77.5 / 85.7 ms | 0.17 / 0.10 / 3.2 / 16.0 ms |
+
+Parked at the commander's station (`gfxbench day 240`, act 1, Low): static pass 1.76 ms a frame on
+0.8 of frames before, 0.012 ms on 0.1 after; mean frame 23.05 against 20.49 ms. The reference frames
+(`captures/skyvis_parked_sheet.png`: before, after, difference x28) differ by 0.07 sRGB codes on
+average, 0.34 % of pixels by more than 8 codes, none by more than 16: the key lattice and the coarse
+slack.
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
