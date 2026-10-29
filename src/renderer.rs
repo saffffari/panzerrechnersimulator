@@ -466,6 +466,8 @@ fn configured_master_retro() -> f32 {
 /// the crewman's eye.
 /// With the day and night cycle on: five minutes of full day, two and a half each of sunrise
 /// and sunset, five of night. Fifteen minutes in all, ten of them with daylight.
+/// Vehicles other than the player's whose edges and corners the raymarch shade pass wears.
+pub const MAX_WORN_VEHICLES: usize = 16;
 pub const FULL_DAY_S: f64 = 300.0;
 pub const TWILIGHT_S: f64 = 150.0;
 pub const NIGHT_S: f64 = 300.0;
@@ -1517,6 +1519,9 @@ struct MeshGpu {
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
     snow_vehicle: bool,
+    /// Another vehicle's finish (`set_vehicle_finish`; zeros for none): the raymarch G-buffer's
+    /// per-tank paint, whitewash, mud, soot and wear (`rm_gbuffer.wgsl` `vehicle_finish`).
+    vehicle_finish: [f32; 4],
     /// A clear cover over an instrument dial (`mark_instrument_cover`).
     instrument_cover: bool,
     /// The source model's default metal on this mesh is painted steel (`mark_painted_steel`).
@@ -2640,6 +2645,8 @@ pub struct Renderer {
     /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
     /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
     pub whitewash: f32,
+    /// Other vehicles' worn edges and corners this frame (`set_worn_vehicles`).
+    pub(crate) worn_vehicles: Vec<[[f32; 4]; 2]>,
     /// The player's Tiger's exhaust puffs this frame (`exhaust_plume`), drawn by the raymarch
     /// medium (parcel kind 7).
     pub exhaust_puffs: Vec<crate::exhaust_plume::RenderPuff>,
@@ -3589,6 +3596,7 @@ fn make_mesh_gpu(
         emissive_own: false,
         lamp_lens: 0,
         snow_vehicle: false,
+        vehicle_finish: [0.0; 4],
         instrument_cover: false,
         painted_steel: false,
         sky_visibility_excluded: false,
@@ -5977,6 +5985,7 @@ impl Renderer {
             world_snow_load: 0.0,
             wear: [0.0; 4],
             whitewash: 0.0,
+            worn_vehicles: Vec::new(),
             exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
             frame: 0,
@@ -6543,6 +6552,22 @@ impl Renderer {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.emissive_win = true;
         }
+    }
+    /// Mesh `idx`'s bounds in its own frame.
+    pub fn mesh_local_bounds(&self, idx: usize) -> Option<(glam::Vec3, glam::Vec3)> {
+        self.meshes.get(idx).map(|m| (m.local_min, m.local_max))
+    }
+    /// Mesh `idx`'s vehicle finish, packed by `vehicle_finish::pack` (zeros: none). Raymarch backend.
+    pub fn set_vehicle_finish(&mut self, idx: usize, record: [f32; 4]) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.vehicle_finish = record;
+        }
+    }
+    /// The vehicles whose edges and corners the raymarch shade pass wears this frame: per vehicle,
+    /// [centre xyz, reach m] and [mechanical wear, exterior grime, 0, 0]; at most `MAX_WORN_VEHICLES`.
+    pub fn set_worn_vehicles(&mut self, vehicles: &[[[f32; 4]; 2]]) {
+        self.worn_vehicles.clear();
+        self.worn_vehicles.extend_from_slice(&vehicles[..vehicles.len().min(MAX_WORN_VEHICLES)]);
     }
     /// Mesh `idx` is part of the player's vehicle: its lying snow follows `player_snow_load`.
     pub fn mark_snow_vehicle(&mut self, idx: usize) {

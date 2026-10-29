@@ -34,6 +34,10 @@ struct Push {
     extra: vec4<f32>,
     // Armor wounds on this mesh: first record, count, flags (renderer_scars.rs).
     scars: vec4<u32>,
+    // Another vehicle's finish (vehicle_finish.rs `pack`): x seed * 8 + burnt * 4 + part (0 hull,
+    // 1 turret, 2 gun; 0 none), y the vehicle's ground height (world y), z exterior grime, whitewash
+    // and mechanical wear in bytes 0, 1, 2, w the hull's rear plate (local z).
+    vehicle: vec4<f32>,
 };
 var<push_constant> pc: Push;
 @group(0) @binding(3) var<storage, read> scars: array<Scar>;
@@ -277,6 +281,110 @@ fn apply_wear(albedo: vec3<f32>, roughness: f32, world: vec3<f32>, n: vec3<f32>,
     return Worn(a, clamp(r, 0.08, 1.0), metal * (1.0 - spatter));
 }
 
+// ---- Other vehicles' finish (2026-10-28, "the T-34 is too bright ... looks brand new"; vehicle_finish.rs) ----
+// Soviet 4BO protective green as the material finish leaves it (tank::t34_paint_finish: FS 595C 34102,
+// sRGB 86/89/69), and the other FS chips matched to surviving samples, FS 34095 and FS 34096: each
+// tank's factory batch lies between them. Authored masks in the mesh's frame, as the Tiger's wear:
+// not accumulated per face; the loads are per tank (vehicle_finish.rs), the rates estimates.
+const RM_4BO_PAINT: vec3<f32> = vec3<f32>(0.0930, 0.0999, 0.0595);
+const RM_4BO_DARK: vec3<f32> = vec3<f32>(0.0733, 0.0797, 0.0387);
+const RM_4BO_GREY: vec3<f32> = vec3<f32>(0.0859, 0.0872, 0.0604);
+// The track steel finish (tank::t34_paint_finish's "T-34 Truck", the Tiger's TRACK_STEEL).
+const RM_TRACK_STEEL: vec3<f32> = vec3<f32>(0.0423, 0.0423, 0.0395);
+struct VehicleFinish { seed: u32, part: u32, burnt: bool, ground: f32, grime: f32, white: f32, mech: f32, rear: f32 };
+fn vehicle_record() -> VehicleFinish {
+    let code = u32(pc.vehicle.x + 0.5);
+    let loads = u32(pc.vehicle.z + 0.5);
+    return VehicleFinish(code >> 3u, code & 3u, (code & 4u) != 0u, pc.vehicle.y,
+        f32(loads & 255u) / 255.0, f32((loads >> 8u) & 255u) / 255.0, f32((loads >> 16u) & 255u) / 255.0, pc.vehicle.w);
+}
+fn vehicle_finish(albedo_in: vec3<f32>, roughness_in: f32, metallic_in: f32, world: vec3<f32>, n: vec3<f32>, local: vec3<f32>) -> Worn {
+    let v = vehicle_record();
+    var a = albedo_in;
+    var r = roughness_in;
+    var m = metallic_in;
+    // 4BO on the Soviet vehicles; Panzergrau on a friendly Tiger takes the same dirt, not the batch.
+    let soviet = all(abs(a - RM_4BO_PAINT) < vec3(0.004));
+    let painted = soviet || all(abs(a - RM_TIGER_PAINT) < vec3(0.006));
+    let running = all(abs(a - RM_TRACK_STEEL) < vec3(0.004));
+    // A noise frame per tank: the same masks never line up on two tanks.
+    let q = local + vec3(f32(v.seed % 97u) * 3.1, 0.0, f32(v.seed % 89u) * 2.7);
+    let h1 = rm_hash01(v.seed * 747796405u + 1u);
+    let h2 = rm_hash01(v.seed * 2891336453u + 7u);
+    let dy = world.y - v.ground;
+    let up = smoothstep(0.3, 0.8, n.y);
+    let side = 1.0 - smoothstep(0.3, 0.8, abs(n.y));
+    if (soviet) {
+        // The factory batch: between the card's chip and the samples' (4BO was mixed from four
+        // components in the field and at each plant), a little lighter or darker per tank.
+        var paint = mix(mix(RM_4BO_PAINT, RM_4BO_DARK, h1 * 0.8), RM_4BO_GREY, h2 * 0.6) * mix(0.9, 1.08, rm_hash01(v.seed * 1103515245u + 3u));
+        // Brushed-on touch-ups and replaced parts in a slightly different tin.
+        paint *= mix(0.94, 1.06, smoothstep(0.35, 0.65, rm_fbm(q * 0.6, 401u)));
+        // Faded and chalked where sun and weather reach: lighter and greyer on what faces up.
+        paint = mix(paint, vec3(dot(paint, vec3(0.30, 0.59, 0.11))) * 1.25, up * 0.25);
+        a = paint;
+        r = 0.82;
+        // Field whitewash (chalk or lime in water, brushed on and scrubbed off by weather, crew and
+        // brush): patchy, gone low down and on the decks where the crew climb, thin in streaks.
+        if (v.white > 0.0) {
+            let patches = smoothstep(0.38, 0.62, rm_fbm(vec3(q.x * 0.9 + q.y * 0.3, q.y * 1.6, q.z * 0.9), 409u));
+            let thin = smoothstep(0.5, 0.92, rm_noise(vec3(q.x * 20.0 + q.z * 7.0, q.y * 2.5, q.z * 20.0 - q.x * 7.0), 419u)) * 0.45;
+            let scrubbed = smoothstep(1.3, 0.6, dy) * 0.8 + up * smoothstep(0.4, 0.75, rm_fbm(q * 2.7, 421u)) * 0.7;
+            let cover = clamp(patches * (1.0 - thin) - scrubbed + v.white - 0.5, 0.0, 1.0) * v.white;
+            let tone = mix(0.52, 0.70, rm_fbm(q * 0.8, 431u));
+            a = mix(a, vec3(tone, tone, tone * 0.95), cover);
+            r = mix(r, 0.92, cover);
+        }
+    }
+    if (painted || running) {
+        // Chips and scrapes through the paint to steel, older ones rusted (winter wet, no depot):
+        // where the crew climb and stow kit, and at random on the faces.
+        let chip = smoothstep(0.80, 0.86, rm_noise(q * 26.0, 433u)) * smoothstep(0.35, 0.7, rm_fbm(q * 1.9, 439u) + up * 0.2);
+        let worn = chip * v.mech * select(0.4, 1.0, painted);
+        let rust = smoothstep(0.3, 0.8, rm_noise(q * 9.0, 443u));
+        a = mix(a, mix(vec3(0.36, 0.35, 0.33), vec3(0.16, 0.085, 0.045), rust), worn * 0.85);
+        r = mix(r, mix(0.5, 0.85, rust), worn);
+        m = max(m, worn * (1.0 - rust) * 0.6);
+        // Grime: dust on what faces up, dirt run down the sides from every seam and fitting (rain
+        // and melt water), dark film under overhangs.
+        let dust = up * smoothstep(0.35, 0.75, rm_fbm(q * 3.3, 449u)) * v.grime;
+        a = mix(a, vec3(0.20, 0.18, 0.15), dust * 0.5);
+        let streak = side * smoothstep(0.62, 0.92, rm_noise(vec3(q.x * 16.0, q.y * 0.55, q.z * 16.0), 457u))
+            * smoothstep(0.2, 0.6, rm_fbm(q * vec3(1.0, 0.3, 1.0), 461u) + 0.2);
+        a *= 1.0 - 0.38 * streak * (0.4 + 0.6 * v.grime);
+        let under = smoothstep(-0.2, -0.7, n.y);
+        a *= 1.0 - 0.45 * under * v.grime;
+        // Mud and frozen slush thrown up by the tracks: caked on the running gear and the track
+        // guards, spattered up the lower hull, thinning with height.
+        let low = 1.0 - smoothstep(0.35, 1.35, dy);
+        let caked = low * v.grime * smoothstep(0.30, 0.65, rm_fbm(q * vec3(5.0, 3.0, 5.0), 463u) + low * 0.35 + select(0.0, 0.25, running));
+        let slush = smoothstep(0.45, 0.75, rm_noise(q * 4.0, 467u));
+        let mud = mix(vec3(0.085, 0.072, 0.056), vec3(0.42, 0.42, 0.41), slush * 0.6);
+        a = mix(a, mud, caked);
+        r = mix(r, mix(0.95, 0.75, slush), caked);
+        m = m * (1.0 - caked);
+        // Exhaust soot on the hull's rear plate, densest round the pipes (T-34: two on the rear
+        // plate's upper half) and blown up the plate's edge.
+        if (v.part == 0u) {
+            let behind = 1.0 - smoothstep(0.0, 0.45, local.z - v.rear);
+            let height = smoothstep(0.55, 1.0, dy) * (1.0 - smoothstep(1.55, 2.0, dy));
+            let soot = behind * height * smoothstep(0.25, 0.7, rm_fbm(q * vec3(4.0, 2.0, 4.0), 479u) + 0.3);
+            a *= 1.0 - 0.75 * soot;
+            r = mix(r, 0.92, soot);
+        }
+    }
+    // A burnt-out wreck: the paint burnt off to scorched, rusting steel and soot, most where the fire
+    // stood (the engine deck and the fighting compartment above the hull's middle).
+    if (v.burnt && (painted || running)) {
+        let scorch = clamp(smoothstep(0.25, 0.6, rm_fbm(q * 1.4, 487u)) + smoothstep(0.8, 1.6, dy) * 0.5, 0.0, 1.0);
+        let rusty = smoothstep(0.4, 0.7, rm_fbm(q * 3.7, 491u));
+        a = mix(a, mix(vec3(0.035, 0.030, 0.027), vec3(0.13, 0.065, 0.035), rusty), scorch * 0.9);
+        r = mix(r, 0.9, scorch);
+        m = m * (1.0 - scorch);
+    }
+    return Worn(a, clamp(r, 0.08, 1.0), clamp(m, 0.0, 1.0));
+}
+
 struct GOut {
     @location(0) g0: vec4<f32>,
     @location(1) g1: vec4<f32>,
@@ -399,6 +507,12 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
             roughness = dirty.roughness;
             metallic = dirty.metal;
         }
+    }
+    if (kind < 0.5 && pc.extra.y < 0.5 && pc.vehicle.x > 0.5) {
+        let finished = vehicle_finish(albedo, roughness, metallic, in.relative + fr.cam_pos.xyz, n, in.local);
+        albedo = finished.albedo;
+        roughness = finished.roughness;
+        metallic = finished.metal;
     }
     // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
     // kinds 3+ keep their code.

@@ -6,6 +6,8 @@
 
 #[path = "death_replay.rs"]
 mod death_replay;
+#[path = "vehicle_finish.rs"]
+pub(crate) mod vehicle_finish;
 #[path = "interior_impact_camera.rs"]
 mod interior_impact_camera;
 #[path = "live_playtest.rs"]
@@ -8313,6 +8315,8 @@ struct CampaignHulk {
     burning: bool,
     /// The wounds it died with, in hull/turret-local frames (the turret frame is `models[1]`).
     scars: crate::armor_damage::ArmorField,
+    /// The finish seed it fought with (`vehicle_finish`), so the wreck keeps its look.
+    finish_seed: u32,
 }
 
 /// Read-only ground-plane state used by the policy-preserving vehicle safety layer. IDs are stable
@@ -9211,6 +9215,8 @@ pub struct Game {
     snow_cover: crate::snow_cover::SnowCover,
     /// Wear and grime on the player's Tiger (`surface_wear`), for the renderer.
     surface_wear: crate::surface_wear::SurfaceWear,
+    /// Each enemy slot's finish seed (`vehicle_finish`): a new vehicle, a new look.
+    vehicle_finish_seeds: vehicle_finish::Seeds,
     /// Interior walk position (turret-local, on the TURRET FLOOR) while posted INSIDE (Loader).
     walk_pos: Vec3,
     loader_crouch_t: f32, // held Ctrl lowers the actual cabin eye/body
@@ -13451,6 +13457,7 @@ impl Game {
             rounds_spent: 0,
             snow_cover: crate::snow_cover::SnowCover::new(act.season == crate::world::Season::Winter),
             surface_wear: crate::surface_wear::SurfaceWear::default(),
+            vehicle_finish_seeds: vehicle_finish::Seeds::default(),
             loader_crouch_t: 0.0,
             walk_sounds: footsteps::Cadence::default(),
             walk_pos: Vec3::new(-0.60, 0.0, 0.15), // the loader's post, right of the breech (−X)
@@ -15073,6 +15080,7 @@ impl Game {
                 ember: if w.burning { 0.22 } else { 0.0 },
                 burning: w.burning,
                 scars: e.scars.clone(),
+                finish_seed: self.vehicle_finish_seeds.seed(i),
             });
         }
     }
@@ -17770,6 +17778,7 @@ impl Game {
         }
         self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
+        self.drive_vehicle_finishes(r);
         self.drive_portable_items(dt, r);
 
         // Advance wreck fire clocks, tumbling turret-pop physics, and delayed cook-offs.
