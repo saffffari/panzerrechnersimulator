@@ -15,8 +15,9 @@
 // [9] rod neural log10 scot cd/m^2, [10] flash energy td s, [11] seconds since the flash,
 // [12] cone adaptation cd/m^2, [13] rod adaptation scot cd/m^2, [14] mesopic m,
 // [15] metered photopic cd/m^2, [16] metered scotopic, [17] pupil mm, [18] afterimage cd/m^2,
-// [19] bright coverage, [20] bright luminance cd/m^2, [21] arithmetic field onset reference.
-// Lanes 22..31 remain reserved; renderer already allocates 32 lanes.
+// [19] bright coverage, [20] bright luminance cd/m^2, [21] arithmetic field onset reference,
+// [22] inside reference log10 photopic, [23] inside reference log10 scotopic (observer::inside_meter).
+// Lanes 24..31 remain reserved; renderer already allocates 32 lanes.
 @group(0) @binding(1) var<storage, read_write> state: array<f32>;
 
 struct ExposureClock {
@@ -33,7 +34,9 @@ struct ExposureClock {
     // scatter round its image, not as a share of the field average.
     veil_photopic: f32,
     veil_scotopic: f32,
-    _pad2: f32,
+    // 1: the eye is inside the hull (observer::inside_meter); 2: an optic's own eye, adapted at once
+    // to its field when it returns after OBS_OPTIC_RESNAP_GAP.
+    mode: f32,
 };
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
 
@@ -275,10 +278,21 @@ fn cs(@builtin(local_invocation_index) li: u32) {
     let fovea_s = select(gauss_s, s.z / w.z, w.z > 0.5);
     // One shared view adaptation driven by the incident light in the existing spatial windows.
     // No aperture classification, independent port exposure, or scene-dependent luminance floor.
-    let lp = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_p + OBS_GAUSSIAN_WEIGHT * gauss_p
+    let metered_p = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_p + OBS_GAUSSIAN_WEIGHT * gauss_p
         + OBS_FIELD_WEIGHT * field_p + max(clock.veil_photopic, 0.0));
-    let ls = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_s + OBS_GAUSSIAN_WEIGHT * gauss_s
+    let metered_s = clamp_luminance(OBS_FOVEA_WEIGHT * fovea_s + OBS_GAUSSIAN_WEIGHT * gauss_s
         + OBS_FIELD_WEIGHT * field_s + max(clock.veil_scotopic, 0.0));
+    let mode = u32(clock.mode + 0.5);
+    let inside = (mode & 1u) != 0u;
+    let optic = (mode & 2u) != 0u;
+    // Inside the hull (observer::inside_meter): a quarter of the cabin's log changes about the
+    // slow reference. The reference itself follows the meter everywhere.
+    var lp = metered_p;
+    var ls = metered_s;
+    if (inside && state[1] >= 0.0) {
+        lp = clamp_luminance(pow(10.0, state[22] + OBS_INSIDE_RESPONSE * (log10(metered_p) - state[22])));
+        ls = clamp_luminance(pow(10.0, state[23] + OBS_INSIDE_RESPONSE * (log10(metered_s) - state[23])));
+    }
     let field = clamp_luminance(w.w / max(w.x, 1.0));
     let coverage = s.w / max(w.x, 1.0);
     let bright = select(0.0, p.w / max(s.w, 1.0), s.w > 0.0);
@@ -289,8 +303,11 @@ fn cs(@builtin(local_invocation_index) li: u32) {
     state[20] = bright;
 
     // A view's first observed frame: the crewman is already adapted to what he sees, as a real
-    // observer is before the first presented frame. Only this sentinel snaps.
-    if (state[1] < 0.0) {
+    // observer is before the first presented frame. An optic's own eye snaps too when the eye
+    // comes back to it (observer::OPTIC_RESNAP_GAP_S).
+    if (state[1] < 0.0 || (optic && clock.time_s - state[1] > OBS_OPTIC_RESNAP_GAP)) {
+        state[22] = log10(metered_p);
+        state[23] = log10(metered_s);
         let pupil = pupil_diameter(lp, monocular);
         let area = pupil_area(pupil);
         state[4] = pupil;
@@ -310,6 +327,9 @@ fn cs(@builtin(local_invocation_index) li: u32) {
     // Simulated seconds since the last observation, integrated in steps of at most 0.25 s.
     let dt = clamp(clock.time_s - state[1], 0.0, 1.0);
     state[1] = clock.time_s;
+    let follow = 1.0 - exp(-dt / OBS_INSIDE_REFERENCE_TAU);
+    state[22] += (log10(metered_p) - state[22]) * follow;
+    state[23] += (log10(metered_s) - state[23]) * follow;
     if (dt > 0.0) {
         let steps = u32(ceil(dt / OBS_MAX_STEP));
         let h = dt / f32(max(steps, 1u));
