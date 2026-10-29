@@ -432,6 +432,26 @@ to 0.175-0.184 ms and the reflection pass's from 0.012 to 0.016 ms, interleaved 
 each; the frame totals (34-41 ms) are noise. These fullscreen timestamps under-report (the table
 above says so); an idle-GPU rerun, with `KESSEL_RM_RT=0` to price the TLAS rebuild, is owed.
 
+## Ray queries: a static and a per-frame scene (2026-10-28)
+
+Ray queries cost about 3.4 ms of CPU a frame at the commander station without showing in the GPU
+pass list (`gfxbench` now prints it): wgpu 27 handles every instance of a TLAS on every build (a
+registry lookup, a tracker insert and a byte conversion each, about 0.2 us), at record, `finish`
+and `submit`, and the scene's TLAS held ~18k instances, ~16k of them static instanced batches. The
+moving pools' live counts also re-laid out the whole combined TLAS every frame.
+
+The raymarch backend now queries two TLASes (`Renderer::rt_update_split`, `rm_rt.wgsl`): a
+per-frame one with the meshes and the moving pools, and a static one with the other instanced
+batches, rebuilt only when one of them changes (pages added, transforms or visibility set, flags).
+Every query asks both and keeps the nearer hit; instances, masks and custom data are those of the
+combined layout. The physical integrator keeps the one combined TLAS (`rt_on`).
+`KESSEL_RT_SPLIT=0` restores it for A/B (and `bvhview`, which draws one TLAS).
+
+`gfxbench` at 800x450, interleaved runs, idle GPU: commander station 35.0 -> 32.3 ms a frame (the
+TLAS rewrite 1.35 -> 0.26 ms, `finish` 4.97 -> 3.93 ms, `submit` 1.07 -> 0.73 ms); the exterior
+orbit 12.05 -> 9.36 ms. The frames are identical to the bit; without the static TLAS bound, 0.25 %
+of the orbit's pixels change, so its occluders are traced.
+
 ## Surface wear (2026-10-28)
 
 Request: "these surfaces need more damage, like scratches, smudges, and grime, especially inside

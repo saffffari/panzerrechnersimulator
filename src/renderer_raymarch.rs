@@ -726,7 +726,12 @@ impl Backend {
             label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
-            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT)],
+            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT),
+            // The static half of the split scene (`Renderer::rt_split`; the empty TLAS otherwise).
+            wgpu::BindGroupLayoutEntry {
+                binding: 2, visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
+            }],
         }));
         // Per mesh slot: what a ray query does at it (periscope windows pass, mirrors fold).
         let rt_optics_buf = rt_scene.then(|| device.create_buffer(&wgpu::BufferDescriptor {
@@ -1295,7 +1300,7 @@ impl Backend {
         // Ray queries: bind the scene TLAS (rebuilt in place by `rt_update` before this frame's
         // passes), or an empty one until the scene's first exists.
         if self.rt_bgl.is_some() {
-            if r.rt_tlas.is_none() && !self.rt_empty_built {
+            if (r.rt_tlas.is_none() || r.rt_static_tlas.is_none()) && !self.rt_empty_built {
                 let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rm-rt-empty") });
                 enc.build_acceleration_structures(std::iter::empty::<&wgpu::BlasBuildEntry>(), self.rt_empty.iter());
                 queue.submit([enc.finish()]);
@@ -1317,10 +1322,12 @@ impl Backend {
             if let Some(buf) = &self.rt_optics_buf {
                 if !self.rt_optics.is_empty() { queue.write_buffer(buf, 0, bytemuck::cast_slice(&self.rt_optics)); }
             }
-            self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref()).zip(self.rt_bgl.as_ref()).zip(self.rt_optics_buf.as_ref()).map(|((tlas, layout), optics)| {
+            let static_tlas = r.rt_static_tlas.as_ref().filter(|_| r.rt_split).or(self.rt_empty.as_ref());
+            self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref()).zip(static_tlas).zip(self.rt_bgl.as_ref()).zip(self.rt_optics_buf.as_ref()).map(|(((tlas, statics), layout), optics)| {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("rm-rt"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: tlas.as_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: optics.as_entire_binding() }],
+                        wgpu::BindGroupEntry { binding: 1, resource: optics.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: statics.as_binding() }],
                 })
             });
         }
