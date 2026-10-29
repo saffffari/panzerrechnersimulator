@@ -12681,13 +12681,16 @@ impl Game {
         // NOT emissive: the bottle already got the sanctioned signal-red albedo remap at load.
         // The old own-emissive glow stacked on top of that made it the brightest
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
+        // The breech's reload lamps and the sight's paired loading and round lamps are indicator
+        // faces with no bezel (owner feedback 2026-10-28: "whats up with these lights they now have
+        // metal borders?").
         for s in breech_lamp.into_iter().flatten() {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
-            renderer.mark_lamp_lens(s, false);
+            renderer.mark_lamp_face(s);
         }
         for s in sight_lamps.into_iter().flatten() {
             renderer.mark_own_emissive(s);
-            renderer.mark_lamp_lens(s, false);
+            renderer.mark_lamp_face(s);
         }
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
         let authored_grass_mask = manifest.as_ref().and_then(|m|
@@ -12949,7 +12952,8 @@ impl Game {
         renderer.mark_own_emissive(slots.bulb);
         // The cabin's lamps draw as lenses in their housings; the dome lamp behind a wire cage.
         renderer.mark_lamp_lens(slots.bulb, true);
-        for &s in &slots.annun { renderer.mark_lamp_lens(s, false); }
+        // The annunciators are indicator faces, no bezel (owner feedback 2026-10-28).
+        for &s in &slots.annun { renderer.mark_lamp_face(s); }
         renderer.set_visible(slots.bulb, false);
         // The Enigma is an ordinary textured PBR object attached to the hull; it emits no light and
         // joins the same ray scene as the surrounding radio rack. The glasses are camera-local

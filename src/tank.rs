@@ -477,6 +477,37 @@ pub fn build_tiger() -> [CpuMesh; 3] {
     })
 }
 
+/// The wreck library's vehicles (2026-10-28, owner feedback: "these kv1 and t34s and some other
+/// models ... are instantly identifiable because they have this weird highlight effect"). Their
+/// paint materials had roughness 0 (a mirror) and, on the KV-1's body, the Panther's body and
+/// wheels and the Tiger II's camouflage, no base colour at all: glTF's default white. The Soviet
+/// ones take 4BO (`SOVIET_4BO_SRGB`) and track steel as the live T-34; the German ones, whose body
+/// colour was lost, take the Tiger's Panzergrau (RAL 7021, `tiger_paint_finish`), the period's
+/// colour at Stalingrad (Dunkelgelb came in 1943). Other materials keep their source colour.
+pub(crate) fn wreck_library_finish(path: &str) -> Option<crate::gltf_load::MaterialOverrideFn> {
+    match path.rsplit(['/', char::from(92u8)]).next().unwrap_or(path) {
+        "kv1.glb" | "kv1_wreck_detail.glb" | "t34_85.glb" => Some(soviet_wreck_finish),
+        "panther.glb" | "tiger2.glb" => Some(german_wreck_finish),
+        _ => None,
+    }
+}
+fn soviet_wreck_finish(_node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
+    match material {
+        Some("KV-1 Body" | "KV-1 nails" | "T-34 Body" | "T-34 nails") => t34_paint_finish("", Some("T-34 Body")),
+        Some("KV-1 Truck" | "T-34 Truck") => t34_paint_finish("", Some("T-34 Truck")),
+        _ => None,
+    }
+}
+fn german_wreck_finish(_node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
+    let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
+    match material {
+        Some("Material" | "Panther wheel" | "Tiger Camo") => Some(crate::gltf_load::MaterialOverride {
+            swatch: 13, base: [linear(72.0), linear(74.0), linear(78.0), 1.0], metallic: 0.0, roughness: 0.75 }),
+        Some("PantherTruck" | "Tiger Truck") => t34_paint_finish("", Some("T-34 Truck")),
+        _ => None,
+    }
+}
+
 pub fn build_t34() -> [CpuMesh; 3] {
     // `KESSEL_VEHICLE_FINISH=0` keeps the source model's materials (the before, for review).
     let source = std::env::var("KESSEL_VEHICLE_FINISH").as_deref() == Ok("0");

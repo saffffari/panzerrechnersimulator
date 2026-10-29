@@ -952,6 +952,8 @@ fn run_gfxbench(
     let mut times = Vec::with_capacity(frames as usize);
     let mut cpu_ms = [0.0f32; 3];
     let mut worst_pass: std::collections::BTreeMap<String, f64> = Default::default();
+    // `KESSEL_BENCH_RECEIPTS=1`: the spark receipts of the frame whose port sparks cost the most.
+    let mut worst_sparks = (0.0f64, serde_json::Value::Null);
     for i in 0..(frames + WARMUP) {
         if let Some((ahead, right, _)) = bench_impact.filter(|&(_, _, period)| i >= WARMUP && (i - WARMUP) % period == 0) {
             let forward = g.player.forward();
@@ -991,6 +993,10 @@ fn run_gfxbench(
             times.push(frame_ms);
             let mut frame_passes: std::collections::BTreeMap<&str, f64> = Default::default();
             for (label, ms) in &gpu_frame { *frame_passes.entry(label.as_str()).or_default() += ms; }
+            let sparks = frame_passes.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0);
+            if std::env::var_os("KESSEL_BENCH_RECEIPTS").is_some() && sparks > worst_sparks.0 {
+                worst_sparks = (sparks, serde_json::json!({"frame": i, "sparks_ms": sparks, "sparks": r.debug_weapon_particle_receipt()}));
+            }
             for (label, ms) in frame_passes {
                 let worst = worst_pass.entry(label.to_string()).or_default();
                 *worst = worst.max(ms);
@@ -1006,6 +1012,7 @@ fn run_gfxbench(
         let top: Vec<String> = worst.iter().take(4).map(|(label, ms)| format!("{label} {ms:.2} ms")).collect();
         println!("[gfxbench] worst frame per pass: {}", top.join(", "));
     }
+    if !worst_sparks.1.is_null() { println!("[gfxbench] worst sparks frame: {}", worst_sparks.1); }
     let timed = frames.max(1) as f32;
     println!("[gfxbench] cpu: TLAS rewrite {:.2} ms, encoder finish {:.2} ms, submit {:.2} ms (mean per frame)",
         cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
