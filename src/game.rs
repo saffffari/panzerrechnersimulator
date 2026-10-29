@@ -8165,6 +8165,17 @@ const HOT_FRAGMENT_AUDIO_CADENCE: f32 = 0.22;
 const HOT_FRAGMENT_WHIZZ_CADENCE: f32 = 0.12;
 const CARRY_WALK_SLOW: f32 = 0.72; // walk-speed factor while lugging a round
 const N_CASING: usize = N_LOOSE; // one persistent case for every initially represented cartridge
+/// Settled brass aboard wakes when the turret tilts this far from the attitude it settled at
+/// (design value; see docs/PHYSICAL_TRUTH_AUDIT.md, "Brass sleep").
+const BRASS_TILT_WAKE_DEG: f32 = 2.0;
+/// Loose cases solved per update. The rest wait their turn, the longest-waiting first; a case
+/// in flight goes before a settled one that its surroundings disturbed.
+const BRASS_SOLVES_PER_UPDATE: usize = 3;
+/// A case aboard that stays within BRASS_STILL_M of one place in the turret frame, its long axis
+/// within BRASS_STILL_AXIS_RAD, for BRASS_STILL_S of solved time is asleep, however it rocks.
+const BRASS_STILL_M: f32 = 0.01;
+const BRASS_STILL_AXIS_RAD: f32 = 0.10;
+const BRASS_STILL_S: f32 = 1.0;
 const N_LAMP: usize = 4; // interior annunciator lamps (fire / breech / repair / station)
 
 /// The posted crew STATION the one player is manning. Maps 1:1 onto `CrewRole` for the damage gates.
@@ -8277,6 +8288,27 @@ struct Casing {
     stow_s: f32,
     /// Turret-local pose the carry started from.
     stow_from: (Vec3, Quat),
+    /// Asleep aboard: its pose in the turret frame, held exactly while it sleeps.
+    rest_local: Option<(Vec3, Quat)>,
+    /// The turret's up direction (world) when it settled; tilting past BRASS_TILT_WAKE_DEG wakes it.
+    rest_up: Vec3,
+    /// Bumped on a tilt wake, so the solver sees a changed scene for this case alone.
+    tilt_epoch: u32,
+    /// Seconds of simulation this case has waited for a solve slot (capped at 1 s).
+    solve_debt_s: f32,
+    /// Where it has stayed, in the turret frame (place, long axis), and for how long.
+    still_at: (Vec3, Vec3),
+    still_s: f32,
+}
+
+/// What the brass cost on the last update (headless verification and the session log).
+#[derive(Clone, Copy, Default)]
+pub struct BrassCost {
+    pub wanting: usize,
+    pub solved: usize,
+    pub asleep_aboard: usize,
+    pub loose: usize,
+    pub ms: f32,
 }
 
 /// The tank's envelope in hull coordinates. Brass inside it rides with the vehicle.
@@ -9653,6 +9685,7 @@ pub struct Game {
     brass_dt: f32,
     /// Sounds the loose brass may still make this moment (`BRASS_SOUNDS_PER_SECOND`).
     brass_sound_credit: f32,
+    brass_cost: BrassCost,
     /// The listener's ears at the last audio update: position and the way the head faces.
     ear_pos: Vec3,
     ear_forward: Vec3,
@@ -13692,6 +13725,7 @@ impl Game {
             brass_steps: [Mat4::IDENTITY; 2],
             brass_dt: 0.0,
             brass_sound_credit: BRASS_SOUND_BURST,
+            brass_cost: BrassCost::default(),
             ear_pos: Vec3::ZERO,
             ear_forward: Vec3::Z,
             casings: vec![Casing::default(); N_CASING],
@@ -19566,14 +19600,36 @@ impl Game {
     }
 
     fn fire_surface_models(&self) -> [Mat4; surface_fire::FRAMES] {
-        let hull=self.player.hull_model();let turret=self.player.turret_model();
+        self.fire_surface_models_at(self.player.hull_model(), self.player.turret_model(),
+            self.player.gun_model(), self.player.visual_gun_model())
+    }
+
+    fn fire_surface_models_at(&self, hull: Mat4, turret: Mat4, gun: Mat4, visual_gun: Mat4)
+        -> [Mat4; surface_fire::FRAMES] {
         let lids=self.roof_hatches.models(hull,turret);
         let shutters=self.driver_shutters.models(hull);
-        [hull,turret,self.player.visual_gun_model(),lids[0],lids[1],hull,
+        [hull,turret,visual_gun,lids[0],lids[1],hull,
          cupola_hatch_model(turret,self.hatch_t),
-         crate::turret_disc::turret_disc_model(turret),self.player.gun_model(),shutters[0],shutters[1],shutters[2],
-         breech_cover_model(self.player.visual_gun_model(),self.lever_open),
-         gun_lever_model(self.player.visual_gun_model(),self.lever_open), lids[2], lids[3]]
+         crate::turret_disc::turret_disc_model(turret),gun,shutters[0],shutters[1],shutters[2],
+         breech_cover_model(visual_gun,self.lever_open),
+         gun_lever_model(visual_gun,self.lever_open), lids[2], lids[3]]
+    }
+
+    /// The same collision surfaces posed in the vehicle's own frame, from the joint values alone
+    /// (traverse, gun laying and recoil, hatches, shutters, breech lever). It is built from those
+    /// values, not by inverting world matrices, so a tank that only drives gives a bit-identical
+    /// signature and brass settled aboard stays asleep; any articulation changes it.
+    fn brass_vehicle_frame_signature(&self) -> u64 {
+        let p = &self.player;
+        let turret = if p.kind.casemate() { Mat4::IDENTITY } else {
+            Mat4::from_translation(p.parts.turret_pivot) * Mat4::from_rotation_y(p.turret_yaw) };
+        let gun = turret * Mat4::from_translation(p.parts.gun_trunnion) * Mat4::from_rotation_x(-p.gun_pitch);
+        let visual = gun * Mat4::from_translation(Vec3::new(0.0, 0.0, -crate::tank::gun_recoil_distance(p.shot_age)));
+        shell_collision::scene_signature(&self.fire_surface_models_at(Mat4::IDENTITY, turret, gun, visual))
+    }
+
+    pub fn debug_brass_cost(&self) -> BrassCost {
+        self.brass_cost
     }
 
     fn update_fire(&mut self, dt: f32) {
@@ -29675,6 +29731,12 @@ impl Game {
             stow_t: 0.0,
             stow_s: 0.0,
             stow_from: (Vec3::ZERO, Quat::IDENTITY),
+            rest_local: None,
+            rest_up: Vec3::Y,
+            tilt_epoch: 0,
+            solve_debt_s: 0.0,
+            still_at: (Vec3::splat(f32::MAX), Vec3::Z),
+            still_s: 0.0,
         };
         Some(k)
     }
@@ -31125,12 +31187,16 @@ impl Game {
     /// Brass remains an ordinary lit material, with unchanged scale across extraction/release.
     fn drive_casings(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("drive_casings");
+        let started = std::time::Instant::now();
         let seated_case = (matches!(self.breech, Breech::Spent)
             && self.lever_open >= LEVER_OPEN && self.carried_casing.is_none())
             .then(|| self.casings.iter().position(|case| !case.active)).flatten();
         let models = self.fire_surface_models();
         let source = self.cabin_fire.source_contacts(&models);
-        let signature = shell_collision::scene_signature(&models);
+        let world_signature = shell_collision::scene_signature(&models);
+        // Brass aboard is solved in the turret's co-moving frame (below), so it wakes on what
+        // moves in that frame: the articulation, not the vehicle's travel over the ground.
+        let aboard_signature = self.brass_vehicle_frame_signature();
         let mut budget = shell_collision::DropBudget::default();
         let mut contacts = Vec::new();
         // Brass lying in the tank rides with it. Solved as world bodies against a hull that
@@ -31145,9 +31211,15 @@ impl Game {
         self.brass_sound_credit = (self.brass_sound_credit + dt.max(0.0) * BRASS_SOUNDS_PER_SECOND)
             .min(BRASS_SOUND_BURST);
         let turret_inverse = frames[0].inverse();
+        let turret_rotation = frames[0].to_scale_rotation_translation().1;
+        let turret_up = frames[0].transform_vector3(Vec3::Y).normalize_or_zero();
+        let tilt_wake_cos = BRASS_TILT_WAKE_DEG.to_radians().cos();
         let (turret_step, brass_dt) = (self.brass_steps[0], dt);
         let hull_inverse = frames[1].inverse();
         self.drop_physics_frame = self.drop_physics_frame.wrapping_add(1);
+        let mut cost = BrassCost::default();
+        // Pass 1, cheap for every case: carry, hold, and find which cases need the solver.
+        let mut wanting: Vec<(usize, u64, f32)> = Vec::new(); // (case, signature, priority)
         for offset in 0..N_CASING {
             let k = (self.drop_physics_frame + offset) % N_CASING;
             let slot = self.slots.casing[k];
@@ -31177,69 +31249,142 @@ impl Game {
                     let local_pos = from_pos.lerp(center, smooth) + lift;
                     let local_rot = from_rot.slerp(rotation, smooth);
                     c.pos = frames[0].transform_point3(local_pos);
-                    c.rotation = (frames[0].to_scale_rotation_translation().1 * local_rot).normalize();
+                    c.rotation = (turret_rotation * local_rot).normalize();
                     c.vel = Vec3::ZERO;
                     c.angular_vel = Vec3::ZERO;
                     c.aboard = true;
                 }
             } else if !c.outside_rest {
-                let aboard = brass_aboard(hull_inverse, c.pos);
-                if aboard != c.aboard {
-                    // Crossing the envelope changes which frame the velocity is measured in.
-                    let frame_velocity = if brass_dt > 1e-4 {
-                        (turret_step.transform_point3(c.pos) - c.pos) / brass_dt
-                    } else { Vec3::ZERO };
-                    let frame_velocity = if frame_velocity.is_finite() && frame_velocity.length() < 60.0 {
-                        frame_velocity } else { Vec3::ZERO };
-                    if aboard { c.vel -= frame_velocity; } else { c.vel += frame_velocity; }
-                    c.aboard = aboard;
-                }
-                if aboard {
-                    carry_with_frame(turret_step, &mut c.pos, &mut c.rotation, &mut c.vel,
-                        &mut c.angular_vel);
-                }
-                let mut body = shell_collision::Body {
-                    position: c.pos, rotation: c.rotation, velocity: c.vel,
-                    angular_velocity: c.angular_vel,
-                    half: Vec3::new(SPENT_CASE_RADIUS, SPENT_CASE_RADIUS, SPENT_CASE_HALF_LENGTH),
-                    mass: 7.0,
-                };
-                let report = body.advance_dropped(dt, &source, signature, &mut c.drop_rest, &mut budget, 0.30);
-                c.pos = body.position;
-                c.vel = body.velocity;
-                c.rotation = body.rotation;
-                c.angular_vel = body.angular_velocity;
-                if !aboard {
-                    // Clear of the tank: the ground stops it and it stays where it fell.
-                    let ground = self.hf.height_at(c.pos.x, c.pos.z) + SPENT_CASE_RADIUS;
-                    if c.pos.y <= ground {
-                        c.pos.y = ground;
-                        c.vel = Vec3::ZERO;
-                        c.angular_vel = Vec3::ZERO;
-                        c.outside_rest = true;
-                        c.drop_rest.sleeping = true;
+                cost.loose += 1;
+                if c.drop_rest.sleeping && c.aboard {
+                    // Settled aboard: hold its pose in the turret frame exactly. Re-applying the
+                    // frame motion to a world position every update would random-walk it by the
+                    // float error of a position hundreds of metres from the origin.
+                    let (local_pos, local_rot) = *c.rest_local.get_or_insert_with(|| (
+                        turret_inverse.transform_point3(c.pos),
+                        (turret_rotation.conjugate() * c.rotation).normalize()));
+                    c.pos = frames[0].transform_point3(local_pos);
+                    c.rotation = (turret_rotation * local_rot).normalize();
+                    c.vel = Vec3::ZERO;
+                    c.angular_vel = Vec3::ZERO;
+                    cost.asleep_aboard += 1;
+                    if c.rest_up.dot(turret_up) < tilt_wake_cos {
+                        // The floor it lies on has tilted under it: solve it again.
+                        c.tilt_epoch = c.tilt_epoch.wrapping_add(1);
+                        c.rest_up = turret_up;
+                    }
+                } else {
+                    c.rest_local = None;
+                    c.rest_up = turret_up;
+                    let aboard = brass_aboard(hull_inverse, c.pos);
+                    if aboard != c.aboard {
+                        // Crossing the envelope changes which frame the velocity is measured in.
+                        let frame_velocity = if brass_dt > 1e-4 {
+                            (turret_step.transform_point3(c.pos) - c.pos) / brass_dt
+                        } else { Vec3::ZERO };
+                        let frame_velocity = if frame_velocity.is_finite() && frame_velocity.length() < 60.0 {
+                            frame_velocity } else { Vec3::ZERO };
+                        if aboard { c.vel -= frame_velocity; } else { c.vel += frame_velocity; }
+                        c.aboard = aboard;
+                    }
+                    if aboard {
+                        carry_with_frame(turret_step, &mut c.pos, &mut c.rotation, &mut c.vel,
+                            &mut c.angular_vel);
                     }
                 }
-                let place = turret_inverse.transform_point3(c.pos);
-                if cartridge_contact_audible(&report) && c.impact_cooldown <= 0.0
-                    && contact_has_travelled(&report, place, c.sounded_at) {
-                    c.impact_cooldown = 0.120;
-                    c.sounded_at = place;
-                    contacts.push(crate::audio::CartridgeContact {
-                        kind: crate::audio::CartridgeKind::EmptyCase,
-                        normal_speed_mps: report.impact_speed,
-                        tangential_speed_mps: report.tangential_speed,
-                        mass_kg: body.mass,
-                        bearing_deg: bearing_deg_from(r.camera.forward(), report.contact_point - r.camera.pos),
-                        seed: self.kill_tick ^ k as u32 ^ self.drop_physics_frame as u32 ^ 0xCA5E_D203,
-                    });
+                let signature = if c.aboard {
+                    aboard_signature ^ (c.tilt_epoch as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                } else { world_signature };
+                if c.drop_rest.needs_solve(signature) {
+                    let in_flight = if c.drop_rest.sleeping { 0.0 } else { 1.0 };
+                    wanting.push((k, signature, in_flight + c.solve_debt_s));
                 }
             }
             r.set_visible(slot, true);
             r.set_emissive(slot, 0.0);
             r.set_model(slot, Mat4::from_rotation_translation(c.rotation, c.pos));
         }
+        // Pass 2: at most BRASS_SOLVES_PER_UPDATE solves, however many cases lie aboard. The
+        // sort is stable, so equal claims keep the rotating start and every case gets a turn.
+        wanting.sort_by(|a, b| b.2.total_cmp(&a.2));
+        let solving = wanting.len().min(BRASS_SOLVES_PER_UPDATE);
+        cost.wanting = wanting.len();
+        cost.solved = solving;
+        for &(k, _, _) in &wanting[solving..] {
+            let c = &mut self.casings[k];
+            c.solve_debt_s = (c.solve_debt_s + dt.max(0.0)).min(1.0);
+        }
+        for &(k, signature, _) in &wanting[..solving] {
+            let slot = self.slots.casing[k];
+            let c = &mut self.casings[k];
+            let aboard = c.aboard;
+            let step_dt = dt.max(0.0) + c.solve_debt_s;
+            c.solve_debt_s = 0.0;
+            let mut body = shell_collision::Body {
+                position: c.pos, rotation: c.rotation, velocity: c.vel,
+                angular_velocity: c.angular_vel,
+                half: Vec3::new(SPENT_CASE_RADIUS, SPENT_CASE_RADIUS, SPENT_CASE_HALF_LENGTH),
+                mass: 7.0,
+            };
+            let report = body.advance_dropped(step_dt, &source, signature, &mut c.drop_rest, &mut budget, 0.30);
+            c.pos = body.position;
+            c.vel = body.velocity;
+            c.rotation = body.rotation;
+            c.angular_vel = body.angular_velocity;
+            if aboard && !c.drop_rest.sleeping {
+                // Still in the turret frame for long enough: asleep, even if it still rocks.
+                let place = turret_inverse.transform_point3(c.pos);
+                let axis = (turret_rotation.conjugate() * c.rotation) * Vec3::Z;
+                if place.distance(c.still_at.0) < BRASS_STILL_M
+                    && axis.dot(c.still_at.1) > BRASS_STILL_AXIS_RAD.cos() {
+                    c.still_s += step_dt.min(1.0 / 30.0);
+                } else {
+                    c.still_at = (place, axis);
+                    c.still_s = 0.0;
+                }
+                if c.still_s >= BRASS_STILL_S {
+                    c.drop_rest.settle(signature);
+                    c.vel = Vec3::ZERO;
+                    c.angular_vel = Vec3::ZERO;
+                }
+            }
+            if c.drop_rest.sleeping {
+                c.still_s = 0.0;
+                c.still_at.0 = Vec3::splat(f32::MAX);
+            }
+            c.rest_local = (aboard && c.drop_rest.sleeping).then(|| (
+                turret_inverse.transform_point3(c.pos),
+                (turret_rotation.conjugate() * c.rotation).normalize()));
+            if !aboard {
+                // Clear of the tank: the ground stops it and it stays where it fell.
+                let ground = self.hf.height_at(c.pos.x, c.pos.z) + SPENT_CASE_RADIUS;
+                if c.pos.y <= ground {
+                    c.pos.y = ground;
+                    c.vel = Vec3::ZERO;
+                    c.angular_vel = Vec3::ZERO;
+                    c.outside_rest = true;
+                    c.drop_rest.sleeping = true;
+                }
+            }
+            let place = turret_inverse.transform_point3(c.pos);
+            if cartridge_contact_audible(&report) && c.impact_cooldown <= 0.0
+                && contact_has_travelled(&report, place, c.sounded_at) {
+                c.impact_cooldown = 0.120;
+                c.sounded_at = place;
+                contacts.push(crate::audio::CartridgeContact {
+                    kind: crate::audio::CartridgeKind::EmptyCase,
+                    normal_speed_mps: report.impact_speed,
+                    tangential_speed_mps: report.tangential_speed,
+                    mass_kg: body.mass,
+                    bearing_deg: bearing_deg_from(r.camera.forward(), report.contact_point - r.camera.pos),
+                    seed: self.kill_tick ^ k as u32 ^ self.drop_physics_frame as u32 ^ 0xCA5E_D203,
+                });
+            }
+            r.set_model(slot, Mat4::from_rotation_translation(c.rotation, c.pos));
+        }
         self.play_cartridge_contacts(&contacts);
+        cost.ms = started.elapsed().as_secs_f32() * 1000.0;
+        self.brass_cost = cost;
     }
 
     fn play_cartridge_contacts(&mut self, contacts: &[crate::audio::CartridgeContact]) {

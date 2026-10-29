@@ -13,7 +13,7 @@
 use crate::first_aid::{Region, WoundKind};
 use crate::game::{Arc, CrewRole, Game, Station, TankInput};
 use anyhow::Context;
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use serde_json::{json, Value};
 
 const DT: f32 = 1.0 / 60.0;
@@ -1168,6 +1168,210 @@ pub fn run_crew_solo_designate_capture(prefix: &str) -> anyhow::Result<()> {
     println!("[crew-solo-designate] receipt {receipt_path}");
     println!("[crew-solo-designate] {}", if proof.pass { "ALL PASS" } else { "FAILURES" });
     anyhow::ensure!(proof.pass, "crew-solo-designate check failed; see {receipt_path}");
+    Ok(())
+}
+
+/// Per-update brass figures over one phase of the brass check.
+#[derive(Default)]
+struct BrassPhase {
+    updates: usize,
+    zero_solve_updates: usize,
+    max_solved: usize,
+    max_wanting: usize,
+    ms: Vec<f32>,
+}
+
+impl BrassPhase {
+    fn record(&mut self, cost: crate::game::BrassCost) {
+        self.updates += 1;
+        if cost.solved == 0 {
+            self.zero_solve_updates += 1;
+        }
+        self.max_solved = self.max_solved.max(cost.solved);
+        self.max_wanting = self.max_wanting.max(cost.wanting);
+        self.ms.push(cost.ms);
+    }
+
+    fn worst_ms(&self) -> f32 {
+        self.ms.iter().copied().fold(0.0, f32::max)
+    }
+
+    fn p95_ms(&self) -> f32 {
+        let mut v = self.ms.clone();
+        v.sort_by(f32::total_cmp);
+        v.get(((v.len() as f32 * 0.95) as usize).min(v.len().saturating_sub(1))).copied().unwrap_or(0.0)
+    }
+
+    fn mean_ms(&self) -> f32 {
+        if self.ms.is_empty() { 0.0 } else { self.ms.iter().sum::<f32>() / self.ms.len() as f32 }
+    }
+
+    fn json(&self) -> Value {
+        json!({"updates": self.updates, "zero_solve_updates": self.zero_solve_updates,
+            "max_solved": self.max_solved, "max_wanting": self.max_wanting,
+            "mean_ms": self.mean_ms(), "p95_ms": self.p95_ms(), "worst_ms": self.worst_ms()})
+    }
+}
+
+/// Short check that loose brass costs the same however many rounds have been fired
+/// (`crew-solo-brass PREFIX`). Spent cases are dropped on the basket floor in batches (1, then
+/// 8, then 24 aboard); after each batch the cases settle, the tank drives straight (settled
+/// brass must hold its place in the turret frame without a solve), then the turret traverses
+/// and the gun lays (every case is disturbed: the solver cap must hold the cost flat), then
+/// they settle again on the floor and not through it.
+pub fn run_crew_solo_brass_capture(prefix: &str) -> anyhow::Result<()> {
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let info = adapter.get_info();
+    println!("[crew-solo-brass] adapter={} ({:?}, {:?})", info.name, info.device_type, info.backend);
+    let (device, queue) = crate::request_device(&adapter);
+    let map = crate::world::act(0);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
+    g.enable_singleplayer_crew();
+    g.mute_audio();
+    g.set_defer_rtt_to_render(true);
+    g.god = true;
+    g.targets_only = true;
+    g.brawl = false;
+    g.debug_hold_enemy_fire();
+    for i in 0..g.enemies.len() {
+        g.debug_crew_solo_set_enemy_active(i, false);
+    }
+    r.set_weather_override(None);
+    r.overcast = 0.08;
+    r.storm = 0.0;
+    r.fog_density = 0.00035;
+    r.precipitation = 0.0;
+    g.debug_crew_solo_set_fire_at_will(false);
+    let mut proof = Proof { prefix: prefix.to_owned(), device: &device, queue: &queue, checks: Vec::new(), strikes: Vec::new(), stills: Vec::new(), pass: true };
+    let idle = TankInput::default();
+    let forward = TankInput { drive: 1.0, ..TankInput::default() };
+    run_for(&mut g, &mut r, &idle, 1.0);
+
+    let floor = crate::interior_rig::FLOOR_STAND_Y;
+    // Released in the loader's standing space, 0.45 m up, inside the basket and clear of its
+    // rim, so each falls onto the floor (a case started inside a floor fixture is pushed out of
+    // it for many seconds, which says nothing about brass on the floor).
+    let spot = |i: usize| Vec3::new(-0.78 + 0.09 * (i % 6) as f32, floor + 0.45 + 0.05 * (i % 3) as f32,
+        -0.30 + 0.18 * ((i / 6) % 4) as f32);
+    let all_asleep = |g: &Game| { let c = g.debug_brass_cost(); c.loose > 0 && c.asleep_aboard == c.loose };
+    let mut dropped = 0usize;
+    let mut phases = Vec::new();
+    let mut traverse_by_count = Vec::new();
+    let mut cap_held = true;
+    let mut settled_every_time = true;
+    let mut held_while_driving = true;
+    let mut on_the_floor = true;
+    for count in [1usize, 8, 24] {
+        while dropped < count {
+            g.debug_crew_solo_drop_case(spot(dropped));
+            dropped += 1;
+            run_for(&mut g, &mut r, &idle, 0.1);
+        }
+        let settle_s = run_until(&mut g, &mut r, &idle, 30.0, |g| all_asleep(g));
+        let settled = g.debug_brass_cost();
+        let settled_cases = g.debug_brass_cases();
+        // Trace whatever is still awake for two seconds (diagnosis of cases that never settle).
+        let mut awake_trace = Vec::new();
+        if !all_asleep(&g) {
+            for _ in 0..steps(2.0) {
+                g.update(&idle, DT, &mut r);
+                let awake: Vec<Value> = g.debug_brass_cases().as_array().cloned().unwrap_or_default()
+                    .into_iter().filter(|c| c["asleep"] == false).collect();
+                awake_trace.push(json!(awake));
+            }
+        }
+        settled_every_time &= settled.loose == count && settled.asleep_aboard == count;
+
+        // Straight drive: the brass rides the turret frame asleep.
+        let before = g.debug_brass_loose_turret_local();
+        let speed_before = g.player.speed;
+        let mut drive = BrassPhase::default();
+        for _ in 0..steps(3.0) {
+            g.update(&forward, DT, &mut r);
+            drive.record(g.debug_brass_cost());
+        }
+        let after = g.debug_brass_loose_turret_local();
+        let travelled_kmh = g.player.speed * 3.6;
+        let drift_m = before.iter().zip(&after).map(|(a, b)| a.distance(*b)).fold(0.0f32, f32::max);
+        run_for(&mut g, &mut r, &idle, 2.0);
+        run_until(&mut g, &mut r, &idle, 10.0, |g| all_asleep(g));
+
+        // Traverse and lay (fixture: the turret is turned at the 6 deg/s powered rate and the gun
+        // nodded through 3 degrees, by setting the joint values; no target, no gunner order).
+        let mut traverse = BrassPhase::default();
+        let pitch0 = g.player.gun_pitch;
+        for i in 0..steps(4.0) {
+            g.player.turret_yaw += 6.0f32.to_radians() * DT;
+            g.player.gun_pitch = pitch0 + 0.026 * (i as f32 * DT * 1.6).sin();
+            g.update(&idle, DT, &mut r);
+            traverse.record(g.debug_brass_cost());
+        }
+        g.player.gun_pitch = pitch0;
+        let resettle_s = run_until(&mut g, &mut r, &idle, 30.0, |g| all_asleep(g));
+        let resting = g.debug_brass_loose_turret_local();
+        // On the basket floor means at or above it wherever the basket is under the case; one
+        // that rolled past the rim lies lower, in the hull, and must still be aboard.
+        let lowest = resting.iter().filter(|p| Vec2::new(p.x, p.z).length() < 0.85)
+            .map(|p| p.y).fold(f32::INFINITY, f32::min);
+        let resettled = g.debug_brass_cost();
+        let resettled_cases = g.debug_brass_cases();
+        settled_every_time &= resettled.asleep_aboard == resettled.loose && resettled.loose == count;
+        on_the_floor &= lowest > floor - 0.03 && resting.len() == count;
+        cap_held &= drive.max_solved <= 3 && traverse.max_solved <= 3;
+        held_while_driving &= drift_m < 0.02 && drive.zero_solve_updates * 10 >= drive.updates * 8;
+        traverse_by_count.push((count, traverse.mean_ms(), traverse.p95_ms(), traverse.worst_ms()));
+        phases.push(json!({"aboard": count, "settle_s": settle_s, "resettle_s": resettle_s,
+            "speed_kmh_start_end": [speed_before * 3.6, travelled_kmh], "drift_in_turret_frame_m": drift_m,
+            "lowest_case_y_turret_m": lowest, "floor_y_turret_m": floor,
+            "drive": drive.json(), "traverse_and_lay": traverse.json(),
+            "cases_after_settle": settled_cases, "cases_after_traverse": resettled_cases,
+            "awake_trace_after_settle": awake_trace}));
+        println!("[crew-solo-brass] {count} aboard: drive {} / traverse {}", drive.json(), traverse.json());
+    }
+
+    proof.check(
+        "every batch of dropped cases settles and sleeps aboard within 30 s, and again within 30 s of the traverse",
+        settled_every_time,
+        json!({"phases": phases}),
+    );
+    proof.check(
+        "a straight drive leaves settled brass asleep in the turret frame: eight updates in ten with no solve, and no case moved 2 cm (a case does wake and roll when the tank pitches the floor past 2 degrees)",
+        held_while_driving,
+        json!({"drive": phases.iter().map(|p| json!({"aboard": p["aboard"], "drift_m": p["drift_in_turret_frame_m"], "drive": p["drive"]})).collect::<Vec<_>>()}),
+    );
+    proof.check(
+        "no update solves more than three cases, however many lie aboard",
+        cap_held,
+        json!({"solves_per_update_cap": 3}),
+    );
+    let (_, mean8, p95_8, worst8) = traverse_by_count[1];
+    let (_, mean24, p95_24, worst24) = traverse_by_count[2];
+    proof.check(
+        "the cost of disturbing the brass does not grow with the rounds fired: 24 cases aboard cost what 8 did (mean and 95th percentile within 1.5x + 0.5 ms)",
+        mean24 <= mean8 * 1.5 + 0.5 && p95_24 <= p95_8 * 1.5 + 0.5,
+        json!({"traverse_ms_by_count": traverse_by_count.iter().map(|(n, m, p, w)| json!({"aboard": n, "mean_ms": m, "p95_ms": p, "worst_ms": w})).collect::<Vec<_>>(),
+            "worst_8_vs_24": [worst8, worst24]}),
+    );
+    proof.check(
+        "after the traverse every case lies on the basket floor, none fallen through it",
+        on_the_floor,
+        json!({"floor_y_turret_m": floor}),
+    );
+    g.jump_station(Station::Loader);
+    run_for(&mut g, &mut r, &idle, 1.2);
+    g.debug_loader_face_local(Vec3::new(-0.55, floor, 0.0));
+    run_for(&mut g, &mut r, &idle, 0.2);
+    proof.still(&mut r, "brass_01_floor_after_the_traverse")?;
+
+    let receipt_path = format!("{prefix}.json");
+    let receipt = json!({"command": "crew-solo-brass", "adapter": info.name, "pass": proof.pass,
+        "checks": proof.checks, "stills": proof.stills,
+        "fixture": "cases dropped on the basket floor by debug_crew_solo_drop_case (staged clutter, not fired); the traverse and lay set the turret and gun joint values directly at the 6 deg/s powered rate; times are wall-clock milliseconds of drive_casings per update on this machine; the Tiger is invulnerable and the range targets are parked"});
+    std::fs::write(&receipt_path, serde_json::to_string_pretty(&receipt)?).with_context(|| format!("writing {receipt_path}"))?;
+    println!("[crew-solo-brass] receipt {receipt_path}");
+    println!("[crew-solo-brass] {}", if proof.pass { "ALL PASS" } else { "FAILURES" });
+    anyhow::ensure!(proof.pass, "crew-solo-brass check failed; see {receipt_path}");
     Ok(())
 }
 

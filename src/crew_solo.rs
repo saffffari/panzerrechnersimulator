@@ -1645,6 +1645,26 @@ impl Game {
         true
     }
 
+    /// Headless: where each loose case aboard lies, in the turret frame.
+    pub fn debug_brass_loose_turret_local(&self) -> Vec<Vec3> {
+        let inverse = self.player.turret_model().inverse();
+        self.casings.iter()
+            .filter(|c| c.active && !c.carried && c.stowed.is_none() && c.aboard && !c.outside_rest)
+            .map(|c| inverse.transform_point3(c.pos))
+            .collect()
+    }
+
+    /// Headless: every loose case aboard, with its turret-frame place, speed and sleep state.
+    pub fn debug_brass_cases(&self) -> Value {
+        let inverse = self.player.turret_model().inverse();
+        json!(self.casings.iter().enumerate()
+            .filter(|(_, c)| c.active && !c.carried && c.stowed.is_none() && !c.outside_rest)
+            .map(|(k, c)| json!({"case": k, "aboard": c.aboard, "asleep": c.drop_rest.sleeping,
+                "turret_local": inverse.transform_point3(c.pos).to_array(), "speed": c.vel.length(),
+                "spin": c.angular_vel.length(), "debt_s": c.solve_debt_s}))
+            .collect::<Vec<_>>())
+    }
+
     /// Headless: drop a spent case at a turret-local floor spot (clutter for the refusal check).
     pub fn debug_crew_solo_drop_case(&mut self, turret_local: Vec3) -> bool {
         let world = self.player.turret_model().transform_point3(turret_local);

@@ -55,6 +55,23 @@ pub struct DropRest {
     scene_signature: u64,
 }
 
+impl DropRest {
+    /// Whether `advance_dropped` would do any work for this body under `signature`: it is
+    /// awake, or the surfaces it rests on have moved since it settled.
+    pub fn needs_solve(&self, signature: u64) -> bool {
+        !self.sleeping || self.scene_signature != signature
+    }
+
+    /// Put the body to sleep under `signature` now. For a caller that has watched it stay in
+    /// place over a longer window than the per-update quiet test (a case rocking where it rests
+    /// on two surfaces never passes that test).
+    pub fn settle(&mut self, signature: u64) {
+        self.sleeping = true;
+        self.quiet_s = 0.0;
+        self.scene_signature = signature;
+    }
+}
+
 /// Sleeping contacts must wake when the tank, floor, gun, or any hatch moves. Camera movement
 /// and renderer frame counters are deliberately absent: they do not move collision surfaces.
 pub fn scene_signature(models: &[Mat4]) -> u64 {

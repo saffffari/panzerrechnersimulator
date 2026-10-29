@@ -76,7 +76,7 @@ fn smoothstep01(t: f32) -> f32 {
 
 /// Signed local distance behind the in-battery pose. Positive values run toward gun-local -Z;
 /// the tiny negative tail is the recuperator's damped forward overshoot.
-fn gun_recoil_distance(age: f32) -> f32 {
+pub(crate) fn gun_recoil_distance(age: f32) -> f32 {
     if !age.is_finite() || age < 0.0 || age >= GUN_RECOIL_END {
         return 0.0;
     }

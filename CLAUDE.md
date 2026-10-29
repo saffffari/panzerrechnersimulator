@@ -92,6 +92,8 @@ cargo run -- lasttiger                              # headless: the Last Tiger l
 cargo run -- climb                                  # headless: the mount/dismount climb ritual (3 timed moves each way) + jump
 cargo run -- crew-solo-designate prefix             # headless, short: commander's MMB designation -> gunner slews, TPZ second
                                                     #   pointer, refine, mid-slew handover, contact under hold fire; 2 PNGs
+cargo run -- crew-solo-brass prefix                 # headless, short: 1/8/24 spent cases on the basket floor -> sleep through a
+                                                    #   drive, solve cap through a traverse, cost flat with rounds fired; 1 PNG
 cargo run -- crew-solo-empties prefix               # headless, short: empties rack full -> ask, refuse (floor clutter), approve
                                                     #   (side hatch open, cases heaved out), contact shuts the hatch; 2 PNGs
 cargo run -- crew-solo-kia prefix                   # headless, short: solo crew legibility — displaced man stands clear of the
