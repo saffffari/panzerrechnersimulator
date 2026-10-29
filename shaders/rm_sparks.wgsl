@@ -58,17 +58,29 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
     return vec4(vec2(edge.x * 2.0 - 1.0, 1.0 - edge.y * 2.0) * clip.w, clip.z, clip.w);
 }
 
-// Samples drawn along each ricochet spark's path (vs_spark, kind 2).
-const RICOCHET_TRAIL: u32 = 8u;
+// Samples drawn along each spark's path for the streaked kinds (vs_spark: 2, 5, 6).
+const SPARK_TRAIL: u32 = 8u;
 
 @vertex fn vs_spark(@builtin(vertex_index) vertex: u32,
     @location(0) origin_age: vec4<f32>, @location(1) direction_life: vec4<f32>,
     @location(2) normal_offset: vec4<f32>, @location(3) parameters: vec4<f32>, @location(4) identity: vec4<u32>) -> WeaponOut {
     let index = vertex / 6u; let corner = vertex % 6u; if (index >= identity.y) { return weapon_hidden(); }
     let kind = identity.w; var t = origin_age.w; let n = normal_offset.xyz;
-    let seed = identity.x * select(3948571u, 9348571u, kind <= 1u) + index * 977u; let q = weapon_random(seed);
+    // A ricochet's, a pressure vent's and a cook-off's sparks (kinds 2, 5, 6) are the record's
+    // identity.z sparks, each a dotted streak of SPARK_TRAIL samples along its own path over
+    // 14 ms (an eye's exposure) carrying the spark's whole light. The record's other samples (its
+    // SPARK_MULTIPLIER share of each spark, 1000) are not drawn: scattered each in its own
+    // direction they made a continuous sheet, and a shower fanning toward the eye drew as a solid
+    // wedge or cone across the overhead crew_battle (2026-10-29).
+    let streaked = kind == 2u || kind == 5u || kind == 6u;
+    let sample = select(index, index / SPARK_TRAIL, streaked);
+    if (streaked) {
+        if (sample >= identity.z) { return weapon_hidden(); }
+        t = max(t - f32(index % SPARK_TRAIL) * 0.002, 0.0);
+    }
+    let seed = identity.x * select(3948571u, 9348571u, kind <= 1u) + sample * 977u; let q = weapon_random(seed);
     var velocity = vec3(0.0); var axis = vec3(0.0, 0.0, 1.0); var width = 0.0; var tail = 0.0; var page = 2u; var rim_offset = vec3(0.0);
-    var gain = 1.0;
+    var gain = select(1.0, f32(identity.y) / (f32(identity.z) * f32(SPARK_TRAIL)), streaked);
     if (kind == 9u) {
         // Detonation fragment streaks: casing shards and burning residue leaving at 250-1500 m/s
         // (most of them slow), slowing under drag (x = v0 tau (1 - e^(-t/tau))), incandescent
@@ -140,13 +152,13 @@ const RICOCHET_TRAIL: u32 = 8u;
         width = 2.0 * pow(3.0 * parameters.y / (4.0 * 3.14159265359 * parameters.w * f32(identity.y)), 1.0 / 3.0);
         tail = width; page = 6u;
     } else if (kind == 5u || kind == 6u) {
-        let delay = select(q * select(0.45, direction_life.w, kind == 5u), 0.0, index == 0u);
+        let delay = select(q * select(0.45, direction_life.w, kind == 5u), 0.0, sample == 0u);
         t -= delay; let life = select(17.0, 0.65, kind == 5u); if (t < 0.0 || t >= life) { return weapon_hidden(); }
         let spray = weapon_direction(seed + 19u);
         if (kind == 5u) { velocity = normalize(n + spray * 0.11) * (26.0 + 16.0 * q); }
         else {
             let horizontal = vec3(n.x, 0.0, n.z) / max(length(n.xz), 0.000001);
-            velocity = vec3(0.0, 77.3316 * select(0.7 + 0.3 * q, 1.0, index == 0u), 0.0)
+            velocity = vec3(0.0, 77.3316 * select(0.7 + 0.3 * q, 1.0, sample == 0u), 0.0)
                 + horizontal * (6.0 + 12.0 * q) + vec3(spray.x, 0.0, spray.z) * 12.0;
             if (dot(velocity, n) < 0.0) { velocity -= n * dot(velocity, n); }
             let speed_cap = sqrt(max(0.0, 2.0 * parameters.x / max(parameters.y, 0.001)));
@@ -164,22 +176,11 @@ const RICOCHET_TRAIL: u32 = 8u;
         velocity = axis * speed; width = (0.0015 + 0.002 * q) * sqrt(1.0 - t / life); tail = clamp(speed * 0.002, width, 0.04);
         page = select(select(2u, 4u, t < 0.075), 3u, t < 0.02);
     } else if (kind == 2u) {
-        // A ricochet's sparks: the record's identity.z sparks, each a dotted streak of
-        // RICOCHET_TRAIL samples along its own path over 14 ms (an eye's exposure), carrying the
-        // spark's whole light between them. Its other samples (the SPARK_MULTIPLIER share of
-        // each spark, 1000) are not drawn: scattered each in its own direction they made a
-        // continuous sheet, and a shower fanning toward the eye drew a solid wedge across the
-        // overhead crew_battle (2026-10-29).
-        let shard = index / RICOCHET_TRAIL; let trail = index % RICOCHET_TRAIL;
-        if (shard >= identity.z) { return weapon_hidden(); }
-        let sseed = identity.x * 3948571u + shard * 977u; let sq = weapon_random(sseed);
-        t = max(t - f32(trail) * 0.002, 0.0);
-        gain = f32(identity.y) / (f32(identity.z) * f32(RICOCHET_TRAIL));
-        let heavy = parameters.w > 0.5; let life = select(0.24 + 0.40 * sq, 0.55 + 0.85 * sq, heavy); if (t >= life) { return weapon_hidden(); }
-        axis = normalize(direction_life.xyz * 0.75 + weapon_direction(sseed + 19u) * 0.30 + n * 0.25);
+        let heavy = parameters.w > 0.5; let life = select(0.24 + 0.40 * q, 0.55 + 0.85 * q, heavy); if (t >= life) { return weapon_hidden(); }
+        axis = normalize(direction_life.xyz * 0.75 + weapon_direction(seed + 19u) * 0.30 + n * 0.25);
         if (dot(axis, n) < 0.05) { axis = normalize(axis + n * (0.06 - dot(axis, n))); }
-        let speed = select(5.0 + 15.0 * sq, 14.0 + 30.0 * sq, heavy); velocity = axis * speed;
-        width = select(0.003 + 0.005 * sq, 0.008 + 0.010 * sq, heavy) * max(1.0 - t / direction_life.w, 0.15);
+        let speed = select(5.0 + 15.0 * q, 14.0 + 30.0 * q, heavy); velocity = axis * speed;
+        width = select(0.003 + 0.005 * q, 0.008 + 0.010 * q, heavy) * max(1.0 - t / direction_life.w, 0.15);
         tail = clamp(speed * 0.008, 0.025, 0.32); page = select(select(2u, 4u, t < 0.16), 3u, t < 0.055);
     } else {
         // A heavy exterior blast's sparks trail four samples along each path (a dotted
