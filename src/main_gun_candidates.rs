@@ -85,6 +85,31 @@ fn play_candidate(audio: &Audio, voice: MainGunVoice, place: Place, seq: u32) ->
     true
 }
 
+/// The owner's picks as the game plays them: `Inside` buttoned, `Outside` head-out (through the
+/// open-air path) and for an outside observer (the propagation queue's voice, no firer trim).
+fn play_final(audio: &Audio, place: Place, seq: u32) -> bool {
+    let (ear, bearing, reverb) = place_ear(place);
+    match place {
+        Place::Buttoned => {
+            let Some(mono) = audio.main_gun_voice(MainGunVoice::Inside((seq % 2) as u8)) else { return false };
+            let ear = main_gun_presented_ear(ear, true, true);
+            audio.play_world_mono_in_room_peak_capped(&mono, &ear, bearing, crate::audio::Room::Parametric(crate::acoustics::ReverbParams::STEEL_INTERIOR), MAIN_GUN_PEAK_CAP_DBFS);
+            play_recoil(audio, seq, false);
+        }
+        Place::HeadOut => {
+            let Some(mono) = audio.main_gun_voice(MainGunVoice::Outside) else { return false };
+            let ear = main_gun_presented_ear(ear, true, false);
+            audio.play_world_mono_in_room_peak_capped(&mono, &ear, bearing, crate::audio::Room::Parametric(reverb), MAIN_GUN_PEAK_CAP_DBFS);
+            play_recoil(audio, seq, true);
+        }
+        Place::Ext50 => {
+            let Some(mono) = audio.main_gun_voice(MainGunVoice::Outside) else { return false };
+            audio.play_world_mono_in_room(&mono, &ear, bearing, crate::audio::Room::Parametric(reverb));
+        }
+    }
+    true
+}
+
 fn analyse(samples: &[f32]) -> serde_json::Value {
     let mono: Vec<f32> = samples.chunks_exact(2).map(|f| (f[0] + f[1]) * 0.5).collect();
     let hop = SR / 100;
@@ -116,18 +141,24 @@ fn hearing_after(place: Place, shots: usize) -> serde_json::Value {
 
 pub(crate) fn run(outdir: &str) -> anyhow::Result<()> {
     std::fs::create_dir_all(outdir)?;
-    let voices = [None, Some(MainGunVoice::A), Some(MainGunVoice::B), Some(MainGunVoice::C)];
+    // The owner picked (2026-10-29): `final` renders the picks; A/B/C stay available by argument.
+    let all = std::env::args().any(|a| a == "--candidates");
+    let voices: Vec<Option<MainGunVoice>> = if all { vec![None, Some(MainGunVoice::A), Some(MainGunVoice::B), Some(MainGunVoice::C), Some(MainGunVoice::Outside)] }
+        else { vec![None, Some(MainGunVoice::Outside)] };
     let places = [Place::Buttoned, Place::HeadOut, Place::Ext50];
     let mut cases = Vec::new();
     for voice in voices {
         for place in places {
             let audio = Audio::new_capture();
-            let ok = match voice { None => { play_current(&audio, place, 1); true } Some(v) => play_candidate(&audio, v, place, 1) };
+            let ok = match voice { None => { play_current(&audio, place, 1); true }
+                Some(MainGunVoice::Outside) => play_final(&audio, place, 1), Some(v) => play_candidate(&audio, v, place, 1) };
             anyhow::ensure!(ok, "{voice:?} is not installed (assets/sounds/main_gun_candidates under KESSEL_ASSET_ROOT)");
             let mut pcm = Vec::new();
             for _ in 0..(4 * TICKS) { pcm.extend(audio.render_capture_frames(SR / TICKS).ok_or_else(|| anyhow::anyhow!("capture"))?); }
             let limiter = audio.master_telemetry()["deepest_gain_reduction_db"].as_f64().unwrap_or(0.0);
             let name = match voice { None => format!("mg_current_{}", place.label()),
+                Some(MainGunVoice::Outside) => match place { Place::Buttoned => "mg_inside_final_buttoned".to_string(),
+                    Place::HeadOut => "mg_headout_final".to_string(), Place::Ext50 => "mg_ext50_final".to_string() },
                 Some(v) => format!("mg_candidate_{}_{}", v.label(), place.label()) };
             crate::acoustics::write_wav_stereo(format!("{outdir}/{name}.wav"), &pcm, SR as u32)?;
             let mut m = analyse(&pcm);
@@ -139,7 +170,17 @@ pub(crate) fn run(outdir: &str) -> anyhow::Result<()> {
             cases.push(serde_json::json!({"wav": format!("{name}.wav"), "voice": voice.map_or("current", |v| v.label()), "place": place.label(), "measured": m}));
         }
     }
-    let hearing: Vec<_> = places.iter().flat_map(|p| [1, 5].map(|n| { let mut h = hearing_after(*p, n); h["place"] = p.label().into(); h })).collect();
+    let mut hearing: Vec<_> = places.iter().flat_map(|p| [1, 5].map(|n| { let mut h = hearing_after(*p, n); h["place"] = p.label().into(); h })).collect();
+    // A hatch open, head inside (SL §1 row 2): the ears' answer there too.
+    {
+        use crate::sound_levels as L;
+        let ear = prop::at_ear(L::OWN_88_HATCH_OPEN.lpk_db, L::OWN_88_HATCH_OPEN.laf_db, L::OWN_88_HATCH_OPEN.spectrum, L::OWN_88_HATCH_OPEN.a_duration_ms, true);
+        let mut h = crate::hearing::Hearing::default();
+        let dt = 1.0 / TICKS as f32;
+        for _ in 0..5 { h.impulse_with_envelope(crate::hearing::ear_impulses(&ear, 0.0), 0.0, None); for _ in 0..(8 * TICKS) { h.advance(dt, dt, 100.0); } }
+        let shift = h.ears.iter().map(|e| e.temporary_db()).fold(0.0f32, f32::max);
+        hearing.push(serde_json::json!({"place": "hatch_open", "shots": 5, "temporary_shift_db": shift, "tinnitus": h.render().tinnitus.is_some()}));
+    }
     for h in &hearing { println!("[main-gun] ears {} after {} shot(s): shift {:.1} dB, tinnitus {}", h["place"], h["shots"],
         h["temporary_shift_db"].as_f64().unwrap_or(0.0), h["tinnitus"]); }
     let receipt = serde_json::json!({"what": "own 88 voice candidates, live capture graph, CPU only", "cases": cases, "hearing": hearing,

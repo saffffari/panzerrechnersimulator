@@ -333,3 +333,79 @@ Gates: `audio::hit_recordings::tests` (hardness and corner monotonic, the high-p
 and slopes, no variant twice in a row), `game::game_hit_sounds::tests`, the `hit-sounds <outdir>`
 receipt's `checks`, and the `[hit-sound]` line each live event prints. Not perceptually
 auditioned beyond the A/B renders.
+
+
+## 13. Handling, breech, wounds, materials and footsteps from the owner's libraries (`audio::recorded_fx`, 2026-10-28)
+
+Owner-directed: recordings from the owner's licensed Rust & Blood SFX Library v1.1d, Echoes Audio
+Super Kit v2.0.1 and ROT Horror Audio Bundle v1.8 voice the events below. The files are
+owner-private, git-ignored under `assets/sounds` (`LIBRARY_20261028_SOURCES.txt` beside them maps
+each to its source) and never committed. Each family's variants are used without repeating back
+to back; leading silence is trimmed to 2 ms before the onset; the breech parts are resampled once
+for the weight of an 88 mm round and a 400 kg block (close 0.62x, ram and extraction 0.85x [E]).
+Each event plays at its family's 1 m reference level [E] plus its own offset, propagated from
+where it happens through the foley path (distance, the hull between, the headset, bearing, the
+traced room); world objects go through the propagation queue so their travel time stays. At most
+six recorded voices start per simulation update; later requests in the same update are dropped.
+Every site keeps its previous voice where a file is absent (`KESSEL_RECORDED_FX=0` too).
+
+| Event | Recording | Replaces / adds |
+|---|---|---|
+| Equipment picked up (toolbox, Panzerfaust, extinguisher, jerry can, supplies, loot, shelves) | item_pickup | the pickup clip, the grab foley |
+| Equipment dropped or set down (toolbox, jerry can; bounces by impact speed, set-down -6 dB) | firearm_drop 1-5 | the set-down / drop foley |
+| Gear equipped or stowed (weapon switch, Panzerfaust and extinguisher stowed, flashlight, binoculars up and down, Luger drawn and holstered) | item_equip 1-4 | the grab/stow foley; lowering binoculars and the Luger draw were silent |
+| A live 88 lifted from the rack, the floor or by a wreck | Echoes misc_1/misc_2 | the synthesized lift; the wreck pickup was silent |
+| A live round unloaded, a case extracted (hand and crew) | Echoes slide_1 / slide_3_open, main transient at the clearing | the case-extract recording, the synthesized lift |
+| The round rammed | Echoes slide_1_close / slide_2_close, last strike on the seat | the shell-ram recording |
+| Lever pulled, breech closed (hand lever and the crew's close 0.33 s after the ram [E]) | Rust & Blood mag_in 1-3 | the breech-lock recording |
+| Main-gun trigger pulled, no shot (no round, breech open, a staged dud primer) | pistol empty-barrel click at the gunner's hand | the failed-trigger clip; on a shot it plays 24 dB down, under the report |
+| Luger chambered after an empty-gun reload | pistol_racking 1 | the toggle-pull and toggle-close clips; dry pulls now click |
+| First aid: procedure begun / step done / finished or abandoned | inventory_open / medkit_use / inventory_close | the bandage-tear foley; the bag was silent |
+| Map unfolded or folded, order sheet shown or folded, map sheet recovered | note_turn_page | the map clips; the sheet's showing and recovery were silent |
+| Starter button, flashlight switch, intercom order keys, platoon radio key | ROT button_mx 1-4 | the lamp-switch foley; the rest were silent |
+| Tank damage by component (own Tiger): vision blocks and sight glass, running gear, track, ring, mount, MG, visor; radio shorted | glass / metal impact or break; ROT electric shock | added under the strike's own voice, the strongest two, levelled by the deposited energy (0 dB at 50 kJ, +-10 dB [E]) |
+| Modules wrecked by spall | metal break; electric shock for the radio | added, the first two |
+| Crew wounds (one composite per man per strike, two men at most) | fragments: sticky / sharp / sharp heavy / laceration (1 in 3 over 220 J) / critical when fatal; blast: blunt bloody light / moderate / heavy; blast work over 150 J adds the body striking steel | the synthesized body impacts lost under the recorded strike |
+| Bullet wounds (the man on foot, an exposed crewman) | sticky hit, critical when fatal | added |
+| Bodies struck in the world (infantry) | impact_body | added under the infantry's own voice |
+| Small fragments striking steel near the crew | knife_hit_hard_surface 1-3 at the struck place, by the chip's speed | the synthesized steel ding |
+| Trees snapped / felled; wooden and metal scatter shoved or struck; walls struck, ground down, collapsed; a wreck's steel touched by the bow | wood break / impact; metal impact; concrete or wood impact and break by the structure's class; metal impact | the ground-impact and brass-clatter clips; a struck wall was silent; the collapse keeps its blast and adds the break |
+| Footsteps of the player (on foot and in the cabin) and of infantry within 25 m (the three nearest per update; a stride of 0.75 m, 1.1 m running [E]) | Rust & Blood footsteps by surface: snow, dirt (mud and frozen earth), gravel (rubble), grass, concrete (stone floors), wood (timber floors), metal (hull deck and cabin) | the four recorded surfaces and the synthesized ones; ice and glass keep their synthesis; infantry were silent |
+
+**Not hooked, because the event does not exist** (no gameplay was invented):
+- headphones on and off, ammunition crates and wooden bins opening (the crate recordings are
+  installed with nothing to call them), a dome light or panel switch, smoke dischargers;
+- bodies run over, windows and bottles breaking, enemy component damage beyond engine, ammunition
+  and fuel, wooden stowage on the Tiger;
+- what a body struck in the cabin, beyond blast work standing for "thrown against the steel";
+- 12.7-25 mm rounds (DShK, PTRD/PTRS, autocannon): no such projectiles exist, so Echoes hit 1-5
+  are installed for them and unused;
+- a random misfire: only the staged dud primer exists, and it now clicks.
+
+**Skipped as non-diegetic** (CLAUDE.md's first principle and physical truth): new_objective,
+player_level_up, item_craft 1/3 and item_upgrade. plastic_container_open_small was also left out
+(plastic is anachronistic for 1942, and no tin or case opening exists to give it).
+
+Gates: `audio::recorded_fx::tests`, `game::game_hit_sounds::layer_tests`, and the
+`recorded-fx-reel <outdir>` renders (every family once, a hit per component class, a crush through
+mixed debris). `KESSEL_RECORDED_FX_LOG=1` prints a `[recorded-fx]` line per live event. Not
+perceptually auditioned beyond the renders.
+
+## 14. The own 88's voice: diagnosis and candidates (`audio::MainGunVoice`, 2026-10-28)
+
+Measured through the live capture graph (`main-gun-candidates <outdir>`): every shipping shot
+drives the master limiter, 13.4 dB buttoned, 15.2 dB head-out and 7.0 dB for an observer at 50 m.
+The calibrated short-term level puts the recordings' attacks 25-30 dB above it, past full scale,
+so the limiter flattens each shot. Buttoned, the held roar plus the stacked exterior and inside
+recordings keep it within 10 dB of its peak for 0.7 s in a 1.7 s cabin tail. Tinnitus is not
+the cause buttoned (no threshold shift after five shots); head-out one shot arms it (37 dB
+temporary shift, as SL §12 has it behind a muzzle brake).
+
+Candidates A (the owner's recording alone), B (a heavy rifle crack an octave down, the long close
+explosion low-passed at 300 Hz and cut back to a 0.22 s decay, a 34 Hz thump) and C (the Echoes
+rifle crack at 0.45x, the short close explosion at 0.7x, the owner's recording below 160 Hz) are
+each one source voice at the calibrated level: there are no stacked layers to sum. They take an
+owner-directed -4 dB presentation trim for the firer, the hull's airborne insertion loss buttoned
+(the blast is outside the plates), the cabin's or the open ground's room, and their sample peak
+held at -4 dBFS. The limiter takes 0.0 dB on all nine renders. `MAIN_GUN_VOICE` in `game.rs`
+selects the voice and stays `Current` until the owner picks.

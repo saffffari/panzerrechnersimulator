@@ -63,6 +63,8 @@ pub(crate) enum Fx {
     FragmentPing,
     MedkitUse, BagOpen, BagClose, PaperPage, CrateOpen, CrateClose,
     Footstep(StepSurface),
+    /// An electrical component shorted by a hit (the radio).
+    ElectricSpark,
 }
 
 macro_rules! files { ($($f:literal),* $(,)?) => { &[$(concat!("assets/sounds/", $f, ".ogg")),*] } }
@@ -113,6 +115,7 @@ impl Fx {
             Fx::BodyContact(C::Heavy) => files!("body_contact_heavy_01"),
             Fx::FragmentPing => files!("fragment_ping_steel_01", "fragment_ping_steel_02", "fragment_ping_steel_03"),
             Fx::MedkitUse => files!("medkit_use_01"),
+            Fx::ElectricSpark => files!("electric_spark_01"),
             Fx::BagOpen => files!("bag_open_01"),
             Fx::BagClose => files!("bag_close_01"),
             Fx::PaperPage => files!("paper_page_01"),
@@ -173,6 +176,7 @@ impl Fx {
             Fx::BodyContact(_) => 72.0,
             Fx::FragmentPing => 76.0,
             Fx::MedkitUse | Fx::BagOpen | Fx::BagClose => 56.0,
+            Fx::ElectricSpark => 60.0,
             Fx::PaperPage => 48.0,
             Fx::CrateOpen | Fx::CrateClose => 70.0,
             Fx::Footstep(s) => match s {
@@ -268,8 +272,9 @@ impl Family {
                 .and_then(|bytes| Clip::from_encoded_bytes(path, bytes)).map(|clip| clip.world_mono()) else { continue };
             let mono = resample(&trim_head(&mono), fx.pitch());
             if mono.len() < 64 || !mono.iter().all(|v| v.is_finite()) { continue; }
-            let strike_s = last_strike_s(&mono);
             let loudest = loudest_s(&mono);
+            // A clip whose strike builds without a 12 dB step: its loudest frame is the strike.
+            let strike_s = Some(last_strike_s(&mono)).filter(|s| *s > 0.0).unwrap_or(loudest);
             clips.push(Prepared { mono: Arc::from(mono), file: path, variant: i + 1, strike_s, loudest_s: loudest });
         }
         Self { clips, last: Cell::new(None), played: Cell::new(0) }

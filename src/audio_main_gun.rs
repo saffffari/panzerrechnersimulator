@@ -23,11 +23,18 @@ pub(crate) enum MainGunVoice {
     /// Echoes sniper crack 0.45× (weight), the short close explosion at 0.7×, and the owner's
     /// recording below 160 Hz to keep its low identity.
     C,
+    /// OWNER'S PICK, heard inside the hull (buttoned): Rust & Blood heavy sniper fire 1 or 2
+    /// (alternating per shot) at 0.62× for the 88's weight, over a 34 Hz hull thump.
+    Inside(u8),
+    /// OWNER'S PICK, heard in the open (head out, a hatch open, on foot): Rust & Blood sniper
+    /// fire 5 at 0.6×, with heavy fire 1 at 0.55× below 600 Hz under it for body.
+    Outside,
 }
 
 impl MainGunVoice {
     pub(crate) fn label(self) -> &'static str {
-        match self { Self::Current => "current", Self::A => "A", Self::B => "B", Self::C => "C" }
+        match self { Self::Current => "current", Self::A => "A", Self::B => "B", Self::C => "C",
+            Self::Inside(_) => "inside", Self::Outside => "outside" }
     }
 }
 
@@ -105,6 +112,16 @@ impl Audio {
                 let body = decay(normalized(low_pass(&trim_head(&decode("assets/sounds/tank_hit_penetration_01.ogg")?), 300.0), 1.0), 0.22);
                 let sub = thump(34.0, 0.18, 0.9);
                 Some(mix(&[(&crack, 0.75), (&body, 0.9), (&sub, 0.55)]))
+            })(),
+            MainGunVoice::Inside(n) => (|| {
+                let crack = normalized(resample(&trim_head(&decode(&format!("{dir}/crack_heavy_0{}.ogg", 1 + n % 2))?), 0.62), 1.0);
+                let sub = thump(34.0, 0.16, 0.8);
+                Some(mix(&[(&crack, 1.0), (&sub, 0.45)]))
+            })(),
+            MainGunVoice::Outside => (|| {
+                let crack = normalized(resample(&trim_head(&decode(&format!("{dir}/crack_05.ogg"))?), 0.6), 1.0);
+                let body = decay(normalized(low_pass(&resample(&trim_head(&decode(&format!("{dir}/crack_heavy_01.ogg"))?), 0.55), 600.0), 1.0), 0.30);
+                Some(mix(&[(&crack, 1.0), (&body, 0.6)]))
             })(),
             MainGunVoice::C => (|| {
                 let crack = normalized(resample(&trim_head(&decode(&format!("{dir}/crack_echoes_01.ogg"))?), 0.45), 1.0);

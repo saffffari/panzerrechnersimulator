@@ -139,3 +139,13 @@ present	assets/sounds/footstep_wood_17.ogg
 present	assets/sounds/footstep_wood_18.ogg
 present	assets/sounds/footstep_wood_19.ogg
 present	assets/sounds/footstep_wood_20.ogg
+present	assets/sounds/breech_extract_02.ogg
+present	assets/sounds/electric_spark_01.ogg
+present	assets/sounds/main_gun_candidates/crack_01.ogg
+present	assets/sounds/main_gun_candidates/crack_02.ogg
+present	assets/sounds/main_gun_candidates/crack_03.ogg
+present	assets/sounds/main_gun_candidates/crack_04.ogg
+present	assets/sounds/main_gun_candidates/crack_05.ogg
+present	assets/sounds/main_gun_candidates/crack_echoes_01.ogg
+present	assets/sounds/main_gun_candidates/crack_heavy_01.ogg
+present	assets/sounds/main_gun_candidates/crack_heavy_02.ogg

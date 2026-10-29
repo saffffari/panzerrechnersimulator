@@ -1005,7 +1005,7 @@ impl Game {
             self.spawn_blast(muzzle, 2.2, 18.0, 0.16);
             let reports = crate::audio::Sfx::PLAYER_GUNS_EXT;
             let report = reports[self.ally_shot_tick as usize % reports.len()];
-            self.schedule_sound_from(report, muzzle);
+            if !self.schedule_tiger_gun_report(muzzle, None, self.ally_shot_tick) { self.schedule_sound_from(report, muzzle); }
             let p = self.platoon.as_mut().unwrap();
             let w = &mut p.wingmen[index];
             w.ap_rounds = w.ap_rounds.saturating_sub(1);

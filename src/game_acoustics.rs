@@ -343,6 +343,8 @@ pub(super) struct WorldAcoustics {
     /// The Luger's rack recording covered the toggle's close this reload.
     pub(super) luger_rack_close: bool,
     order_up: bool,
+    /// Per soldier: last position and the distance walked since his last step.
+    pub(super) infantry_steps: Vec<(Option<Vec3>, f32)>,
     /// A map sheet was taken from its case this update (the campaign director sets it).
     pub(super) sheet_recovered: bool,
     loops: Vec<(Cue, crate::audio::VehicleVoice, bool)>,
@@ -722,6 +724,9 @@ impl Game {
         self.acoustics.convolutions = 0;
         if let Some(audio) = &self.audio { audio.recorded_fx_begin_update(); }
         self.advance_pending_recorded(dt);
+        if !matches!(self.mode, Mode::Tank) || self.listener_enclosure() != crate::sound_propagation::Enclosure::Buttoned {
+            self.infantry_footsteps(dt);
+        }
         if !self.acoustics.primed {
             // The edges are changes from the state the game starts in, never from defaults.
             self.acoustics.primed = true;
