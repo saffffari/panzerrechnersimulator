@@ -221,3 +221,10 @@ One line per merge: branch @ commit — conflicts — build / tests / smoke — 
   - 4271846, rerun on an idle GPU: wall mean 21.9, p95 29.7, p99 36.7 ms — **the tail was contention, not the lamps**. The one lasting change: **`rm-point-face` mean 1.07→1.20 ms, p95 1.93→2.77, p99 2.18→3.55** (the lit lamp cubes, presumably) — small, noted for the renderer
   - **final tree 2797977**: exit 0; **wall mean 21.3 ms, p50 21.9, p95 27.2, p99 31.3, max 116** — the best headless numbers so far; `analytic-thousandfold-sparks` max **1.24 ms**; `drive_casings` worst 2.7 ms; worst simulation step `tank.enemy_ai_contacts` 28.6 ms at 161 s (pre-existing); hull strike 12.8 ms (`synth_damage_impact_with_pressure_delay` 9.4 ms)
 - local `main` **advanced** to 2797977 (+ this log); **not pushed**
+
+## Round 22 — 2026-10-29 (renderer: no orange cabin flood, no glare discs, spark streaks; **not pushed**)
+
+- raymarching-main-merge @ bf482bf (main 1b8f797 + raymarching 80545c0: the burning cabin stays readable, gun flashes and cook-offs no longer leave glare discs; e916306: ricochet sparks drawn as streaks, not a sheet; 5ac80b7: cook-off and vent sparks as streaks too) — none; LF; no assets — merged in 44ef4dc
+- **Gate for 44ef4dc**: build ok; test build ok; unit tests 2,024 passed / 92 failed / 63 ignored (+2 renderer tests), failure set identical to round 21
+- **Smoke, headless** (`gfxbench-drive 0 300 low 137`, every frame fenced, `artifacts/integration-smoke-20261028/r22/`): exit 0; **wall mean 20.4 ms, p50 21.2, p95 25.9, p99 28.5, max 111** (round 21 final: 21.3 / 21.9 / 27.2 / 31.3 / 116). `analytic-thousandfold-sparks` max 1.22 ms, `native-pixel-hdr-effects` 1.53 ms, `bloom-glare` 0.04 ms — unchanged; `drive_casings` worst 2.1 ms; worst simulation step `tank.enemy_ai_contacts` 28.7 ms at 161 s (pre-existing); hull strike 11.9 ms
+- local `main` **advanced** to 44ef4dc (+ this log); **not pushed**
