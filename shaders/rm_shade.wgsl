@@ -402,8 +402,24 @@ fn fs(in: VsOut) -> ShadeOut {
         // The player's vehicle (pixels within 4.5 m of its compartment's centre that are not the
         // ground; fr.vehicle): paint worn through on its edges, grime gathered in its corners. Edges are the
         // creases between neighbouring pixels' normals; corners are the near-field occlusion.
-        let vehicle = select(0.0, 1.0, !terrain && !grass && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
-        if (vehicle > 0.0 && max(fr.wear.w, max(fr.wear.x, fr.wear.y)) > 0.0) {
+        var vehicle = select(0.0, 1.0, !terrain && !grass && fr.vehicle.w > 0.0 && length(world - fr.vehicle.xyz) < fr.vehicle.w + 1.5);
+        var mech = clamp(fr.wear.w, 0.0, 1.0);
+        var outside_grime = clamp(fr.wear.y, 0.0, 1.0);
+        // Other vehicles (vehicle_finish.rs; Renderer::set_worn_vehicles): the same worn edges and
+        // corners at each one's own loads, for pixels within its reach that are not the ground.
+        if (vehicle == 0.0 && !terrain && !grass) {
+            let count = min(u32(fr.worn_count.x), 16u);
+            for (var k = 0u; k < count; k += 1u) {
+                let centre = fr.worn[2u * k];
+                if (length(world - centre.xyz) < centre.w) {
+                    vehicle = 1.0;
+                    mech = clamp(fr.worn[2u * k + 1u].x, 0.0, 1.0);
+                    outside_grime = clamp(fr.worn[2u * k + 1u].y, 0.0, 1.0);
+                    break;
+                }
+            }
+        }
+        if (vehicle > 0.0 && max(mech, max(fr.wear.x, outside_grime)) > 0.0) {
             let dims = vec2<i32>(fr.res.xy) - vec2(1);
             var crease = 0.0;
             for (var k = 0; k < 4; k += 1) {
@@ -415,13 +431,13 @@ fn fs(in: VsOut) -> ShadeOut {
                     crease = max(crease, 1.0 - dot(n, normalize(nq)));
                 }
             }
-            let worn_edge = smoothstep(0.12, 0.45, crease) * clamp(fr.wear.w, 0.0, 1.0) * (0.55 + 0.45 * still);
+            let worn_edge = smoothstep(0.12, 0.45, crease) * mech * (0.55 + 0.45 * still);
             // Worn through to steel (2026-10-28: bare metal where the paint wears, not pale paint).
             albedo = mix(albedo, vec3(0.50, 0.50, 0.48), worn_edge * 0.85);
             roughness = mix(roughness, 0.45, worn_edge);
             metallic = mix(metallic, 1.0, worn_edge * 0.8);
             let inside = select(0.0, 1.0, rm_cabin_domain(world + n * 0.03) >= 0);
-            let grime = mix(clamp(fr.wear.y, 0.0, 1.0), clamp(fr.wear.x, 0.0, 1.0), inside);
+            let grime = mix(outside_grime, clamp(fr.wear.x, 0.0, 1.0), inside);
             let corner = smoothstep(0.05, 0.6, 1.0 - gather.ao);
             albedo *= 1.0 - 0.6 * corner * grime;
         }

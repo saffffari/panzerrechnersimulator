@@ -1288,6 +1288,77 @@ Parked at the commander's station (`gfxbench day 240`, act 1, Low): static pass 
 average, 0.34 % of pixels by more than 8 codes, none by more than 16: the key lattice and the coarse
 slack.
 
+## The T-34's paint, and every other vehicle's wear (2026-10-28)
+
+Request: the T-34 "is too bright, doesn't read as a real T-34 colour, and looks brand new"; grime,
+wear, mud, whatever makes it battle-hardened. The source model (`assets/tanks/T34-76/baked`) has no
+textures, three flat materials: "T-34 Body" linear (0.157, 0.138, 0.039), a light yellowish olive of
+luminance 0.135; "T-34 Truck" (0.0147, the running gear and dark fittings); "T-34 nails" (0.084,
+bolts and fittings). All three at roughness 0: a near mirror, the sky's reflection on every face,
+which more than anything read as fresh gloss. The Tiger's wear and whitewash reached only the
+player's vehicle.
+
+**The paint.** No instrumental measurement of surviving 4BO is published that I could find. The
+reference is the Federal Standard 595 chip matched to the Soviet colour card, FS 34102 (CIELAB D65
+37 / -5 / 11 in FED-STD-595C as tabulated at people.csail.mit.edu/jaffer/Color/fs595c): sRGB 86/89/69,
+linear reflectance 0.093 / 0.100 / 0.060, luminance 0.095. The chips matched to surviving samples in
+the same table, FS 34095 (33 / -6 / 14) and FS 34096 (35 / -3 / 8), bound each tank's batch. The
+1941 recipe (40-60 % yellow ochre, 15-20 % zinc chromate, 8-13 % ultramarine, 10-20 % white) and the
+field mixing from four components are why it varied. The Aberdeen trials' captured T-34 was
+assigned FS 24052 (25 / -2 / 5), darker still (recipe and Aberdeen: "The Mysteries of Soviet Green,
+part 1", breakthroughassault.co.uk, a modelling reference, not a laboratory one); the card's chip is
+used as the mean.
+`tank::t34_paint_finish` sets the body and its bolts to it at roughness 0.82 (a flat oil paint) and
+the dark parts to the Tiger's track steel; the code-native Soviet rigs (SU-100 fallback, KV-2,
+ISU-152, IS-2, IS-3) take the same two codes.
+
+**Each vehicle's finish** (`vehicle_finish.rs`; `rm_gbuffer.wgsl` `vehicle_finish`): every enemy
+vehicle draws a seed when its slot activates (a wreck archived to the graveyard keeps it), and from
+it its loads: mechanical wear 0.35-0.8, mud and grime 0.45-0.95, and in winter a 40 % chance of the
+remains of a field whitewash at 0.4-0.9 (winter 1942 practice was mixed; the share is an estimate).
+The G-buffer turns them into: the batch's paint between the three chips, a little lighter or darker,
+touch-up patches, faded and chalked on what faces up; the whitewash patchy, scrubbed off low down
+and where the crew climb, thin in brush streaks; chips through paint to steel, older ones rusted;
+dust on the decks, dirt run down the sides from seams, a dark film under overhangs; mud and frozen
+slush caked on the running gear and spattered up the lower hull; exhaust soot on the hull's rear
+plate; and on a burnt-out wreck the paint burnt off to scorched, rusting steel. The shade pass gives
+them the Tiger's worn edges (bare steel at the creases) and corner grime at their own loads
+(`Renderer::set_worn_vehicles`, the nearest 16 within 250 m). The friendly Tigers take the wear,
+mud and grime on their Panzergrau. Each record rides the mesh's push constant (now 128 bytes, the
+device floor).
+
+`KESSEL_SHOWCASE_SET=t34` (three T-34s beside the Tiger at 12, 45 and 160 m, 40 deg field, clear
+sun from behind the observer and a dry overcast; `KESSEL_VEHICLE_FINISH=0` for the source's
+materials): `captures/t34fin2_before_*` and `captures/t34fin2_after_*`, sheets
+`captures/t34fin2_sheet_{near,mid,far}.png` (before left, after right; clear above, overcast below).
+The yellow olive and its sun highlight are gone; the turret reads as a flat 4BO with streaks, the
+running gear carries slush and the lower front a band of mud; the three tanks differ in tone and one
+carries a scrubbed whitewash. The hull's decks are white in both: lying snow (`snow_cover`).
+
+**Image maps: not now.** At the internal grids the game runs (480x270 to 800x450, 40 deg) a pixel
+on a T-34 spans:
+
+| range | 800x450 | 480x270 |
+| --- | --- | --- |
+| 12 m | 1.9 cm (hull 345 px long) | 3.2 cm (207 px) |
+| 45 m | 7.3 cm (92 px) | 12 cm (55 px) |
+| 160 m | 26 cm (26 px) | 43 cm (16 px) |
+
+A texture authored at the detail that would justify one (a 1024 map over the 6.7 m hull, 0.65 cm a
+texel: welds, rivets, painted numbers, per-panel weathering) is minified 11 to 66 times from mid
+range out and averages to the colour the procedural layers already give; the masks above vary at 5
+cm to 1 m, which is what the pixels resolve. Only within about 15 m, where a pixel is under 3 cm, would
+authored detail show. If that range matters later (a wreck the crew walks past, a close kill), the
+cheap step is a world-space hex-tiled detail tile from the owner's PSX library (the pizza kit's metal
+and grime), as the terrain's detail layer does, blended in by distance; the model's UVs (present)
+would allow true maps, at the cost of authoring them per vehicle.
+
+Not done: the instanced scenery wrecks (the wreck library's props) keep their own materials (an
+instance would need its own seed in the instance record); the abandoned Tigers keep the source look
+(the player may take one over); the loads are fixed per vehicle, not accumulated from its driving
+and fighting; chips are a few centimetres, sub-pixel beyond about 15 m; the relayed views and the
+shader backend take the new colour and roughness but not the masks.
+
 ## The relays' sparks and grains in combat (2026-10-28)
 
 Round 14's 300 s Low smoke had its worst frames in combat at the loader's station:
