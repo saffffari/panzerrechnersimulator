@@ -201,6 +201,9 @@ impl Game {
                         seed: projectile.seed,
                     });
                     if let Some(audio)=&self.audio {audio.blend_named_light_armor(&mut sound,bearing);}
+                    // The owner's pick: the recorded strike shaped per hit (`shape_bullet_strike`)
+                    // replaces the synthesized one where installed.
+                    let recorded = self.audio.as_ref().and_then(|a| a.bullet_on_steel(cosine, projectile.seed));
                     if structure_borne {
                         // Structure-borne arrival is effectively immediate inside the struck hull.
                         // SL §5: 120-140 dB per hit beside the plate, from the bullet's energy,
@@ -213,6 +216,16 @@ impl Game {
                             lpk - crate::sound_levels::LPK_MINUS_LAE_REVERBERANT_DB
                                 + crate::sound_levels::LAF_MINUS_LAE_DB,
                             crate::sound_levels::SpectrumClass::ArmourRing, 0.5);
+                        // Inside: close and dry through the hull from the struck plate; head out,
+                        // the open air around the head.
+                        let sound = match (&recorded, self.audio.as_ref()) {
+                            (Some(mono), Some(audio)) => {
+                                let head_out = self.listener_enclosure() == crate::sound_propagation::Enclosure::HeadOut;
+                                let room = if head_out { crate::acoustics::ReverbParams::OPEN_SNOW } else { crate::acoustics::ReverbParams::DIRECT };
+                                audio.render_world_mono_for_ear(mono, &ear, bearing, crate::audio::Room::Parametric(room))
+                            }
+                            _ => sound,
+                        };
                         self.play_stereo_and_hear_at_ear(sound, &ear, bearing,
                             crate::audio::EarBus::World);
                         let peer=self.couch_local_peer;
@@ -224,7 +237,7 @@ impl Game {
                         self.schedule_emission(crate::audio::Sfx::ImpactTank, contact.pos,
                             crate::sound_propagation::Emission::from_level(
                                 &crate::sound_levels::BULLET_ON_STEEL_1M),
-                            None, Some(sound));
+                            None, Some(recorded.map(|m| m.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect()).unwrap_or(sound)));
                     }
                 }
                 // All small-arms profiles are inert against tank armor: no AP resolution, HP chip,
@@ -256,6 +269,7 @@ impl Game {
                         // A bullet into the man on foot: the penetrating wound, critical if it killed.
                         let fx = if self.foot.hp <= 0.0 { crate::audio::RecordedFx::WoundCritical } else { crate::audio::RecordedFx::WoundPenetrating };
                         self.recorded(fx, 0.0, contact.pos);
+                        self.player_body_layer();
                     }
                 }
                 friendly = payload.shot.team == Team::German;

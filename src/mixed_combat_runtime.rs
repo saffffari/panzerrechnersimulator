@@ -875,8 +875,11 @@ impl Game {
             let braked=crate::sound_levels::gun_is_braked(shell.caliber_mm,shell.muzzle_velocity);
             self.schedule_emission(crate::audio::Sfx::EnemyGun,muzzle,
                 crate::sound_propagation::Emission::gun(charge,braked,90.0),Some((direction,braked)),
-                Some(self.recorded_gun_report("t34_gun",muzzle,
-                    crate::acoustics::synth_gun_report(shell.caliber_mm,0.0,0.0,self.ai_tick.wrapping_mul(977)))));
+                Some(self.audio.as_ref().filter(|_| self.enemies[i].kind==crate::tank::EnemyKind::T34)
+                    .and_then(|a| a.recorded_fx(crate::audio::RecordedFx::T34Gun, self.ai_tick.wrapping_mul(977) ^ i as u32))
+                    .map(|p| p.mono.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect::<Vec<f32>>())
+                    .unwrap_or_else(|| self.recorded_gun_report("t34_gun",muzzle,
+                        crate::acoustics::synth_gun_report(shell.caliber_mm,0.0,0.0,self.ai_tick.wrapping_mul(977))))));
         }
         true
     }

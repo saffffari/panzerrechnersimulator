@@ -409,3 +409,59 @@ owner-directed -4 dB presentation trim for the firer, the hull's airborne insert
 (the blast is outside the plates), the cabin's or the open ground's room, and their sample peak
 held at -4 dBFS. The limiter takes 0.0 dB on all nine renders. `MAIN_GUN_VOICE` in `game.rs`
 selects the voice and stays `Current` until the owner picks.
+
+
+**The owner's picks (2026-10-29), Tiger only** (the own gun, wingmen and allied Tigers; every
+enemy gun keeps its voice). Buttoned: `Inside`, Rust & Blood sniper_rifle_heavy_fire 1/2 alternating
+per shot at 0.62x over a 34 Hz thump; a third of the hull's insertion loss as its colour, the
+cabin's room, the calibrated level with no trim, the peak held at -2.5 dBFS: short-term level
+-23.2 dBFS, peak -2.3, limiter 0.0 dB (`mg_inside_final_buttoned.wav`). The recoil and the case
+ejection stay. Head-out, a hatch open, or on foot near the tank: `Outside`, sniper_rifle_fire 5 at
+0.6x with heavy_fire 1 at 0.55x below 600 Hz for body, through the open-air path with the -4 dB
+firer trim (`mg_headout_final.wav`: -21.9 dBFS, limiter 0.0 dB). Observers and wingmen hear
+the same voice through the propagation queue (`mg_ext50_final.wav`); beyond 700 m the owner's
+distant recordings keep the far report. Buttoned or hatch-open, five shots leave no threshold
+shift and no tinnitus; head-out one shot still arms it, as the ear model has it.
+`TIGER_GUN_RECORDED = false` restores the shipping stack.
+
+## 15. The T-34's report (2026-10-29)
+
+T-34s fire with Rust & Blood old_rifle_fire 1-6 (rotated, no repeats) at 0.72x for 76.2 mm
+weight, placed by the gun's propellant charge through the propagation queue: arrival delay, the
+distance law, ISO 9613 air absorption, ground and snow, and buttoned the hull's insertion loss
+and whole-impulse peak loss. In `recorded-fx-reel`: the 2-8 kHz band falls 18 dB more at 800 m
+than at 100 m head-out; buttoned at 100 m the short-term level is 16 dB under head-out and the
+2-8 kHz band 25 dB lower. Other enemy guns keep the owner's T-34 recordings and their
+synthesized reports; the SU-100, KV-2 and IS series would want heavier sources than these rifle
+shots (flagged, not changed). Named limit: buttoned, the A-weighted calibration of a report the
+hull has made almost all sub-bass puts its unweighted peak near -1 dBFS; this is the existing
+pipeline's behaviour for every exterior gun heard through the hull.
+
+## 16. Small arms on the armour (2026-10-29)
+
+Rifle and MG bullets striking the Tiger or any vehicle play one of the Rust & Blood suppressed-SMG
+shots shaped per hit (`shape_bullet_strike`): cut to its transient, pitched +-4 %, high-passed
+from 800 Hz (square) to 3 kHz (grazing), rung by three plate modes (2.9, 4.7, 7.3 kHz), with a
+ricochet whine on some grazing hits and a spall tick on some square ones [E]. This replaces the
+synthesized armour hit and its named light-impact character (both stay as the fallback). Inside
+it plays at the SL section 5 strike level from the struck plate's bearing, dry; head-out in the open air;
+outside through the propagation queue at the bullet-on-steel level. MG bursts are each round's own
+contact, so the variants, pitch and filters differ round to round.
+
+## 17. The player's body, and panning (2026-10-29)
+
+When the player himself is wounded (a bullet on foot, a strike that wounds the local crewman),
+impact_body 1/2 alternate as a low-end layer at his own head under the wound layer; crew wounds
+keep the Melee set alone, and bodies in the world keep impact_body (section 13). Every recording
+here is placed at its source and rendered through the binaural stage by its bearing from the head:
+hull hits from the struck plate, wounds from the wounded man, the breech and the round from the
+breech and the rack slot, switches and kit from the hands, footsteps under each walker, guns from
+their muzzles. Checked in the renders: strikes on the left plate come out 28-49 dB louder in the
+left channel, and with the constant-power presentation pan a dry hit hard left is in the left
+channel only.
+
+## 18. Rounds and cases on the cabin floor (branch no-cabin-rattle, 2026-10-29)
+
+Owner: only a drop sounds. A loose round or case voices exactly its first audible landing after it
+is ejected, released, tossed, heaved out or knocked loose, at the level its impact speed gives;
+later bounces, slides and the hull's rocking are silent.

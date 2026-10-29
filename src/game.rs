@@ -27938,12 +27938,18 @@ impl Game {
         // the near-field report; air absorption, snow and the hull filter it on the way.
         let distance = muzzle.distance(self.threat_center());
         let shell = enemy_shell(kind);
-        let report = self.recorded_gun_report("t34_gun", muzzle, crate::acoustics::synth_gun_report(
+        // A T-34's 76.2 mm: the owner's pick (old rifle shots at 0.55x, rotated); distance, air,
+        // ground, the hull and the arrival delay come from the propagation queue. Other enemy
+        // guns keep their voices.
+        let t34 = (kind == EnemyKind::T34).then(|| self.audio.as_ref()
+            .and_then(|a| a.recorded_fx(crate::audio::RecordedFx::T34Gun, self.ai_tick.wrapping_mul(977) ^ i as u32))
+            .map(|p| p.mono.iter().flat_map(|v| [*v * std::f32::consts::FRAC_1_SQRT_2; 2]).collect::<Vec<f32>>())).flatten();
+        let report = t34.unwrap_or_else(|| self.recorded_gun_report("t34_gun", muzzle, crate::acoustics::synth_gun_report(
             shell.caliber_mm,
             0.0,
             0.0,
             self.ai_tick.wrapping_mul(977),
-        ));
+        )));
         let charge = crate::sound_levels::propellant_charge_kg(shell.caliber_mm, shell.mass_kg,
             shell.muzzle_velocity);
         let braked = crate::sound_levels::gun_is_braked(shell.caliber_mm, shell.muzzle_velocity);
@@ -28459,7 +28465,8 @@ impl Game {
                 if let Some(worst) = events.iter().filter(|e|e.result.outcome!=crew_damage::CrewTissueOutcome::None)
                     .max_by(|a,b|a.result.total_work_j.total_cmp(&b.result.total_work_j)) {
                     let at = parent.transform_point3(worst.wound_local);
-                    self.play_wound_composite(fragment, blast, fatal, at, seed ^ casualty.peer_id as u32);
+                    let player = self.couch_local_peer.is_some_and(|id| id == casualty.peer_id);
+                    self.play_wound_composite(fragment, blast, fatal, at, seed ^ casualty.peer_id as u32, player);
                     wound_sounds += 1;
                 }
             }
@@ -32672,8 +32679,9 @@ impl Game {
             }
             _ => return false,
         }
-        // A live 88 lifted from the rack or the floor (Echoes misc_1/misc_2, alternating).
-        let at = self.hands_pos();
+        // A live 88 lifted from the rack or the floor (Echoes misc_1/misc_2, alternating), from
+        // where the round was (the carry pose starts at its slot or on the floor).
+        let at = self.carry_pos;
         if self.recorded(crate::audio::RecordedFx::ShellPickup, 0.0, at) {}
         else if let Some(a) = &self.audio {
             a.play_mechanical(
