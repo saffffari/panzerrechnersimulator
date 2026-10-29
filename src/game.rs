@@ -47,6 +47,12 @@ mod wreck_salvage;
 mod wreck_turret;
 #[path = "game_acoustics.rs"]
 mod game_acoustics;
+#[path = "game_hit_sounds.rs"]
+mod game_hit_sounds;
+#[path = "game_recorded_fx.rs"]
+mod game_recorded_fx;
+#[path = "hit_sounds_proof.rs"]
+pub(crate) mod hit_sounds_proof;
 #[path = "sound_world_proof.rs"]
 pub(crate) mod sound_world_proof;
 #[cfg(test)]
@@ -23815,7 +23821,11 @@ impl Game {
             .clamp_length_max(0.72);
         self.concussion_t = 0.0;
         self.concussion_dur = 7.5;
-        self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, entry_world);
+        if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::PenetrationHit,
+            entry_world, seed, "debug_own_penetration")
+        {
+            self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, entry_world);
+        }
         let casualty_start = self.couch_casualties.len();
         self.resolve_player_penetration(
             Arc::Side,
@@ -25931,8 +25941,12 @@ impl Game {
                     if was_player && damage.disabled {
                         self.stat_kills_by_player = self.stat_kills_by_player.saturating_add(1);
                     }
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactTank, impact_pos);
-                    self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
+                    if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::PenetrationHit,
+                        impact_pos, projectile.seed, "enemy_penetration")
+                    {
+                        self.schedule_sound_from(crate::audio::Sfx::ImpactTank, impact_pos);
+                        self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
+                    }
                 } else {
                     if matches!(projectile.shooter, ProjectileShooter::Player) && self.enemies[index].alive {
                         println!(
@@ -25943,8 +25957,12 @@ impl Game {
                     }
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
                     let pick = clangs[projectile.seed as usize % clangs.len()];
-                    let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(pick,event.terminal));
-                    self.schedule_emission(pick,impact_pos,sound_emission_for(pick),None,voice);
+                    if !self.schedule_hit_recording(game_hit_sounds::hit_family(&event, false), pick,
+                        impact_pos, projectile.seed, "enemy_nonpenetration")
+                    {
+                        let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(pick,event.terminal));
+                        self.schedule_emission(pick,impact_pos,sound_emission_for(pick),None,voice);
+                    }
                 }
             }
             ProjectileVehicle::Ally(index) => {
@@ -25967,12 +25985,20 @@ impl Game {
                     } else {
                         self.allies[index].tank.hp = (self.allies[index].tank.hp - 30.0).max(1.0);
                     }
-                    self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
+                    if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::PenetrationHit,
+                        impact_pos, projectile.seed, "ally_penetration")
+                    {
+                        self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
+                    }
                 } else {
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
                     let pick = clangs[projectile.seed as usize % clangs.len()];
-                    let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(pick,event.terminal));
-                    self.schedule_emission(pick,impact_pos,sound_emission_for(pick),None,voice);
+                    if !self.schedule_hit_recording(game_hit_sounds::hit_family(&event, false), pick,
+                        impact_pos, projectile.seed, "ally_nonpenetration")
+                    {
+                        let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(pick,event.terminal));
+                        self.schedule_emission(pick,impact_pos,sound_emission_for(pick),None,voice);
+                    }
                 }
             }
             ProjectileVehicle::Player => {
@@ -26073,28 +26099,41 @@ impl Game {
                     // through the ordinary propagation queue. It must not concuss a crewman who is
                     // not aboard, and it is not the listener's own hull ringing.
                     let sfx=crate::audio::Sfx::ImpactTank;
-                    let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(sfx,event.terminal));
-                    self.schedule_emission(sfx,impact_pos,sound_emission_for(sfx),None,voice);
+                    let family = game_hit_sounds::hit_family(&event, penetrated);
+                    let level = if penetrated { crate::audio::Sfx::PenetrationHit } else { sfx };
+                    if !self.schedule_hit_recording(family, level, impact_pos, projectile.seed, "own_tiger_on_foot") {
+                        let voice=self.audio.as_ref().and_then(|audio|audio.named_stopped_armor_world(sfx,event.terminal));
+                        self.schedule_emission(sfx,impact_pos,sound_emission_for(sfx),None,voice);
+                    }
                     return;
-                }
-                let mut sound = crate::acoustics::synth_damage_impact_with_pressure_delay(params, context, air_delay_s);
-                if let Some(audio)=&self.audio {
-                    audio.blend_named_stopped_armor(&mut sound.main,bearing,event.terminal);
                 }
                 // The strike's physical level at the ear (SL §5), placed by the reproduction curve.
                 let internal_burst = penetrated && context.internal_detonation;
-                let ear = self.own_armour_strike_ear_level(&event, penetrated, internal_burst,
-                    station_distance);
-                // The impact bus keeps the first moments of the strike at full level, so its
-                // layers land together before hearing fails; the strike as heard drives the reflex.
-                self.play_stereo_and_hear_at_ear(sound.main, &ear, bearing,
-                    crate::audio::EarBus::Impact);
+                // The owner's recording where installed (`game_hit_sounds`), at that level through
+                // the hull and the cabin's room; otherwise the synthesized steel strike.
+                let recorded = self.play_own_hull_hit_recording(game_hit_sounds::hit_family(&event, penetrated),
+                    projectile.seed, &event, penetrated, internal_burst, station_distance, bearing, impact_pos);
+                let profile_concussion = if recorded {
+                    crate::acoustics::damage_sound_profile(params, context).concussion
+                } else {
+                    let mut sound = crate::acoustics::synth_damage_impact_with_pressure_delay(params, context, air_delay_s);
+                    if let Some(audio)=&self.audio {
+                        audio.blend_named_stopped_armor(&mut sound.main,bearing,event.terminal);
+                    }
+                    let ear = self.own_armour_strike_ear_level(&event, penetrated, internal_burst,
+                        station_distance);
+                    // The impact bus keeps the first moments of the strike at full level, so its
+                    // layers land together before hearing fails; the strike as heard drives the reflex.
+                    self.play_stereo_and_hear_at_ear(sound.main, &ear, bearing,
+                        crate::audio::EarBus::Impact);
+                    sound.profile.concussion
+                };
 
                 // The strike reached the ears above (`hear_own_vehicle_impulse`). What follows is
                 // the eye's disturbance only; hearing is the ear model's.
                 let heavy_bounce = event.shell.caliber_mm >= 100.0 && station_distance < 2.2;
-                let concussion = if sound.profile.concussion.duration_s() > 0.0 {
-                    sound.profile.concussion
+                let concussion = if profile_concussion.duration_s() > 0.0 {
+                    profile_concussion
                 } else if heavy_bounce {
                     let intensity =
                         concussion_severity(event.shell.caliber_mm, false, station_distance);
@@ -28714,7 +28753,11 @@ impl Game {
             // now; its heavy boom + tearing metal arrive delayed by range to the wreck.
             self.spawn_blast(ring, 9.0, 26.0, 0.85);
             self.spawn_debris(ring, 11, 15.0, seed);
-            self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring);
+            if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::TurretPop, ring,
+                seed.wrapping_add(0x7055), "enemy_catastrophic_kill")
+            {
+                self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring);
+            }
             self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring);
             println!(
                 "[panzerrechnersystem] {} #{idx} CATASTROPHIC KILL — ammo rack, turret blown off!",
@@ -28724,7 +28767,11 @@ impl Game {
             let cooks = self.wrecks[idx].cookoff_t;
             self.spawn_blast(center, 6.5, 20.0, 0.7);
             self.spawn_debris(center, 8, 11.0, seed);
-            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, center);
+            if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::KillExplosion, center,
+                seed.wrapping_add(0x4B11), "enemy_kill")
+            {
+                self.schedule_sound_from(crate::audio::Sfx::KillExplosion, center);
+            }
             match cooks {
                 Some(d) => println!(
                     "[panzerrechnersystem] {} #{idx} BURNING wreck — cook-off in {d:.1}s.",

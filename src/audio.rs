@@ -54,6 +54,13 @@ mod ear;
 mod feedback;
 #[path = "audio_owner.rs"]
 mod owner;
+#[path = "audio_hit_recordings.rs"]
+mod hit_recordings;
+#[path = "audio_recorded_fx.rs"]
+mod recorded_fx;
+pub(crate) use recorded_fx::{BodyContact as RecordedBodyContact, Fx as RecordedFx, Material as RecordedMaterial,
+    StepSurface as RecordedStepSurface, MAX_VOICES_PER_UPDATE as RECORDED_FX_VOICES_PER_UPDATE};
+pub(crate) use hit_recordings::{hardness_of as hit_hardness_of, high_pass as hit_high_pass, HitFamily, HitVoice};
 #[path = "audio_named_effects.rs"]
 mod named_effects;
 #[path = "audio_master.rs"]
@@ -1597,6 +1604,10 @@ pub struct Audio {
     feedback_bank: feedback::FeedbackBank,
     /// The owner's own cut field recordings, and the acoustics of where the listener is now.
     owner_bank: owner::OwnerBank,
+    /// The owner's tank-hit recordings (penetration / non-penetration families).
+    hit_bank: hit_recordings::HitBank,
+    /// The owner's other library recordings (equipment, breech, wounds, materials, footsteps...).
+    recorded_fx: recorded_fx::RecordedBank,
     local_acoustics: std::cell::Cell<(crate::acoustics::ReverbParams, bool)>,
     /// The listener's enclosure this frame, for the continuous exterior voices' direction cues.
     listener_enclosure: std::cell::Cell<crate::sound_propagation::Enclosure>,
@@ -1852,6 +1863,8 @@ impl Audio {
 
         let feedback_bank = feedback::FeedbackBank::load();
         let owner_bank = owner::OwnerBank::load();
+        let hit_bank = hit_recordings::HitBank::load();
+        let recorded_fx = recorded_fx::RecordedBank::load();
         let named_effects=named_effects::Bank::load();
         let rifle_recording = feedback_bank.get("rifle_shot");
         let small_arm_reports = small_arms::SourceBank::new_with_pistol(rifle_recording.as_deref(),feedback_bank.get("luger_shot").as_deref());
@@ -1873,6 +1886,8 @@ impl Audio {
             clips,
             feedback_bank,
             owner_bank,
+            hit_bank,
+            recorded_fx,
             local_acoustics: std::cell::Cell::new((crate::acoustics::ReverbParams::STEEL_INTERIOR, true)),
             listener_enclosure: std::cell::Cell::new(crate::sound_propagation::Enclosure::Buttoned),
             local_room: RefCell::new(None),

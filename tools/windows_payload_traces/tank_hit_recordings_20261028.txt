@@ -1,0 +1,13 @@
+present	assets/sounds/tank_hit_penetration_01.ogg
+present	assets/sounds/tank_hit_penetration_02.ogg
+present	assets/sounds/tank_hit_penetration_03.ogg
+present	assets/sounds/tank_hit_penetration_04.ogg
+present	assets/sounds/tank_hit_penetration_05.ogg
+present	assets/sounds/tank_hit_penetration_06.ogg
+present	assets/sounds/tank_hit_penetration_07.ogg
+present	assets/sounds/tank_hit_penetration_08.ogg
+present	assets/sounds/tank_hit_nonpenetration_01.ogg
+present	assets/sounds/tank_hit_nonpenetration_02.ogg
+present	assets/sounds/tank_hit_nonpenetration_03.ogg
+present	assets/sounds/tank_hit_nonpenetration_04.ogg
+present	assets/sounds/tank_hit_nonpenetration_05.ogg

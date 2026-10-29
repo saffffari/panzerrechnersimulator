@@ -291,3 +291,45 @@ deterministic and seed-varied, grounds and bodies in order of brightness and rin
 Minnaert pitches, seamless loops), `audio::foley_play::tests`, and the `sound-world` receipt's
 `checks`. Not perceptually auditioned.
 
+
+## 12. Tank hits from the owner's recordings (`audio::hit_recordings`, 2026-10-28)
+
+Owner-directed: tank hits are voiced by recordings from the owner's licensed Rust & Blood SFX
+Library v1.1d instead of the stock clips and the synthesized steel strike. The files are
+owner-private, git-ignored under `assets/sounds`, and never committed:
+
+| Event | Voice | Replaces |
+|---|---|---|
+| A tank penetrated, knocked out (ammunition or fuel) or blown apart (turret-pop) | one of eight long close explosions, `tank_hit_penetration_01..08.ogg`, never the same one twice in a row | `penetration_hit.ogg` (+ the `ap_hit_tank.ogg` layer on penetrations), the synthesized strike on the own hull, `kill_explosion.ogg`, the `turret_pop` voice |
+| A strike that did not penetrate (bounce, ricochet, shatter, a burst that did not hole the plate) | one of five short close explosions, `tank_hit_nonpenetration_01..05.ogg`, high-passed by the strike's hardness | the `armor_clang` voices, `ap_hit_tank.ogg` on foot, the synthesized steel strike on the own hull |
+
+**Hardness** (`strike_hardness`, 0..1, monotonic in each input) [E]: 0.5 × the round's energy on
+a log scale from 100 kJ (a 37–45 mm round at range) to 8 MJ (a 122 mm round at the muzzle),
+kinetic plus the filler's TNT-equivalent for a burst on the plate; + 0.2 × cos(obliquity); +
+0.3 × penetration / effective thickness (how near it came to going through).
+
+**Corner** (`cutoff_hz`): fourth-order Butterworth high-pass, log-interpolated from 1.5 kHz at
+hardness 0 to 60 Hz at hardness 1 [E]. 60 Hz is the bottom of the 63 Hz octave, the lowest band
+the hull transfer, rooms and reproduction carry: a hard strike keeps everything. 1.5 kHz is the
+top of the 1 kHz octave: a glancing strike hands the plate little normal momentum (∝ m·v·cos θ)
+over a short contact, so what radiates is ring and crack, not body. The A-weighted level the
+filter removes is taken off the strike's calibrated level too (≤ 0 dB), so a light strike is
+quieter as well as thinner. In the `hit-sounds` A/B: a 45 mm round glancing off the Tiger's glacis
+at 60° rates 0.22 (744 Hz), a 76 mm round at 30° stopped 6 mm short 0.73 (141 Hz), an 85 mm
+round square on the glacis 0.87 (90 Hz).
+
+**Placement.** World hits go through the propagation queue at the event's own emission (the
+strike, penetration, kill or ammunition blast levels of §8), so distance, air, ground, a blocked
+ray, the listener's hull and headset, bearing and the traced room apply as to every world source.
+The owner-directed presentation floor for strikes and explosions still applies after that, so at
+range it can lift a light strike back to the floor. A strike on the listener's own Tiger plays at
+its calibrated level at the ear (SL §5, which already falls with the round's energy, obliquity
+and the station's distance) through the headset and the cabin's traced room (the parametric steel
+interior until traced). The airborne plate insertion loss is not applied to it: the struck plate
+is the radiator. Without the files every site keeps its previous voice; `KESSEL_HIT_RECORDINGS=0`
+selects that too.
+
+Gates: `audio::hit_recordings::tests` (hardness and corner monotonic, the high-pass at its corner
+and slopes, no variant twice in a row), `game::game_hit_sounds::tests`, the `hit-sounds <outdir>`
+receipt's `checks`, and the `[hit-sound]` line each live event prints. Not perceptually
+auditioned beyond the A/B renders.

@@ -16982,6 +16982,11 @@ fn main() -> anyhow::Result<()> {
         let prefix = capture_arg(&args, 2, "crew_solo");
         return crew_solo_capture::run_crew_solo_capture(&prefix);
     }
+    if args.len() >= 2 && args[1] == "hit-sounds" {
+        // CPU-only A/B of the tank-hit recordings against the voices they replace.
+        let outdir = args.get(2).map(String::as_str).unwrap_or("captures/hit_sounds");
+        return game::hit_sounds_proof::run(outdir);
+    }
     if args.len() >= 2 && args[1] == "sound-world" {
         // CPU-only proof of the traced rooms and the foley catalogue through the live mixer.
         let outdir = args.get(2).map(String::as_str).unwrap_or("captures/sound_world");

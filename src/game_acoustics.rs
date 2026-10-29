@@ -335,9 +335,10 @@ pub(super) struct WorldAcoustics {
     pub stand_in_rooms: u32,
     pub parametric_rooms: u32,
     pub foley_events: u32,
+    pub recorded_events: u32,
     loops: Vec<(Cue, crate::audio::VehicleVoice, bool)>,
     active_loops: Vec<Cue>,
-    seq: u32,
+    pub seq: u32,
     last_gear: i8,
     last_speed: f32,
     last_airborne: bool,
@@ -584,7 +585,7 @@ impl Game {
 
     /// Path from a foley source to the current ear, and whether the source shares the
     /// listener's compartment.
-    fn foley_path(&self, at: Vec3) -> crate::sound_propagation::Path {
+    pub(super) fn foley_path(&self, at: Vec3) -> crate::sound_propagation::Path {
         use crate::sound_propagation::{Enclosure, Path};
         let listener_inside = self.listener_aboard_inside();
         let source_inside = matches!(self.mode, Mode::Tank) && self.point_in_cabin(at)
@@ -710,6 +711,7 @@ impl Game {
     pub(super) fn update_world_foley(&mut self, dt: f32, r: &Renderer, turret_rate: f32) {
         if self.audio.is_none() || self.tank_editor_scene.is_some() { return; }
         self.acoustics.convolutions = 0;
+        if let Some(audio) = &self.audio { audio.recorded_fx_begin_update(); }
         if !self.acoustics.primed {
             // The edges are changes from the state the game starts in, never from defaults.
             self.acoustics.primed = true;
