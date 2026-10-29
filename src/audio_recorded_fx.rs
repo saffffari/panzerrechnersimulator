@@ -65,6 +65,10 @@ pub(crate) enum Fx {
     Footstep(StepSurface),
     /// An electrical component shorted by a hit (the radio).
     ElectricSpark,
+    /// The T-34 76.2 mm report (Rust & Blood old rifle shots 1-6 at 0.72x).
+    T34Gun,
+    /// Raw sources of a rifle or MG bullet on steel (`shape_bullet_strike`).
+    BulletOnSteel,
 }
 
 macro_rules! files { ($($f:literal),* $(,)?) => { &[$(concat!("assets/sounds/", $f, ".ogg")),*] } }
@@ -116,6 +120,8 @@ impl Fx {
             Fx::FragmentPing => files!("fragment_ping_steel_01", "fragment_ping_steel_02", "fragment_ping_steel_03"),
             Fx::MedkitUse => files!("medkit_use_01"),
             Fx::ElectricSpark => files!("electric_spark_01"),
+            Fx::T34Gun => files!("t34_gun_01", "t34_gun_02", "t34_gun_03", "t34_gun_04", "t34_gun_05", "t34_gun_06"),
+            Fx::BulletOnSteel => files!("bullet_on_steel_01", "bullet_on_steel_02", "bullet_on_steel_03", "bullet_on_steel_04"),
             Fx::BagOpen => files!("bag_open_01"),
             Fx::BagClose => files!("bag_close_01"),
             Fx::PaperPage => files!("paper_page_01"),
@@ -147,6 +153,8 @@ impl Fx {
             Fx::BreechClose => 0.62,
             Fx::BreechRam => 0.85,
             Fx::BreechExtract => 0.85,
+            // A rifle report given a 76.2 mm gun's weight [E].
+            Fx::T34Gun => 0.72,
             _ => 1.0,
         }
     }
@@ -177,6 +185,8 @@ impl Fx {
             Fx::FragmentPing => 76.0,
             Fx::MedkitUse | Fx::BagOpen | Fx::BagClose => 56.0,
             Fx::ElectricSpark => 60.0,
+            // Placed by the gun's charge and the strike laws, not a 1 m reference.
+            Fx::T34Gun | Fx::BulletOnSteel => 100.0,
             Fx::PaperPage => 48.0,
             Fx::CrateOpen | Fx::CrateClose => 70.0,
             Fx::Footstep(s) => match s {
@@ -360,6 +370,67 @@ impl Audio {
         }
         serde_json::json!({"enabled": self.recorded_fx.enabled, "families": out,
             "capped_requests": self.recorded_fx.capped.get(), "max_voices_per_update": MAX_VOICES_PER_UPDATE})
+    }
+}
+
+
+/// A rifle or MG bullet striking armour steel, shaped once per hit from one of the Rust & Blood
+/// suppressed-SMG shots: cut to its transient (2 ms before the loudest frame, 0.22 s kept),
+/// pitched ±4 % by the hit, high-passed at a corner that rises from 800 Hz (square, full) to
+/// 3 kHz (grazing, thin), and rung by three steel plate modes (2.9, 4.7, 7.3 kHz; 30, 22, 15 ms)
+/// [E]; a grazing hit sometimes adds a ricochet whine (3.6 → 1.7 kHz over 0.26 s), a square one
+/// sometimes a spall tick 30 ms after. `cosine` is the incidence cosine (1 = square).
+pub(crate) fn shape_bullet_strike(raw: &[f32], loudest_s: f32, cosine: f32, seed: u32) -> Vec<f32> {
+    let sr = SR;
+    let start = ((loudest_s - 0.002).max(0.0) * sr) as usize;
+    let end = (start + (0.22 * sr) as usize).min(raw.len());
+    if end <= start + 64 { return Vec::new(); }
+    let jitter = 0.96 + 0.08 * ((seed >> 7) % 1000) as f32 / 1000.0;
+    let mut v = resample(&raw[start..end], jitter);
+    let fade = ((0.03 * sr) as usize).min(v.len());
+    let n = v.len();
+    for i in 0..fade { v[n - 1 - i] *= i as f32 / fade as f32; }
+    let c = cosine.clamp(0.0, 1.0);
+    let corner = 800.0 + 2200.0 * (1.0 - c);
+    let mut out = super::hit_recordings::high_pass(&v, corner);
+    let peak = out.iter().fold(0.0f32, |a, b| a.max(b.abs())).max(1e-6);
+    for (hz, tau, g) in [(2900.0f32, 0.030f32, 0.30f32), (4700.0, 0.022, 0.22), (7300.0, 0.015, 0.14)] {
+        let hz = hz * jitter;
+        for (i, x) in out.iter_mut().enumerate() {
+            let t = i as f32 / sr;
+            *x += peak * g * (std::f32::consts::TAU * hz * t).sin() * (-t / tau).exp();
+        }
+    }
+    if c < 0.5 && seed % 3 == 0 {
+        // Ricochet whine: the deflected round's tone falling away.
+        let len = ((0.26 * sr) as usize).min(out.len());
+        let mut phase = 0.0f32;
+        for i in 0..len {
+            let t = i as f32 / sr;
+            let hz = 3600.0 - (3600.0 - 1700.0) * (t / 0.26);
+            phase += std::f32::consts::TAU * hz / sr;
+            out[i] += peak * 0.18 * phase.sin() * (t / 0.01).min(1.0) * (1.0 - t / 0.26);
+        }
+    } else if c > 0.8 && seed % 4 == 0 {
+        // Spall tick: a chip of the bullet's jacket off the plate 30 ms later.
+        let at = (0.03 * sr) as usize;
+        for i in 0..((0.004 * sr) as usize) {
+            if let Some(x) = out.get_mut(at + i) {
+                let t = i as f32 / sr;
+                *x += peak * 0.28 * (std::f32::consts::TAU * 9000.0 * t).sin() * (-t / 0.0015).exp();
+            }
+        }
+    }
+    let p = out.iter().fold(0.0f32, |a, b| a.max(b.abs())).max(1e-6);
+    out.into_iter().map(|x| x * 0.9 / p).collect()
+}
+
+impl Audio {
+    /// One bullet strike on steel (`shape_bullet_strike`), the variant rotated without repeats.
+    pub(crate) fn bullet_on_steel(&self, cosine: f32, seed: u32) -> Option<Vec<f32>> {
+        let p = self.recorded_fx(Fx::BulletOnSteel, seed)?;
+        let v = shape_bullet_strike(&p.mono, p.loudest_s, cosine, seed);
+        (!v.is_empty()).then_some(v)
     }
 }
 

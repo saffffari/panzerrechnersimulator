@@ -155,5 +155,91 @@ pub(crate) fn run(outdir: &str) -> anyhow::Result<()> {
     println!("[recorded-fx-reel] catalogue {} events ({missing} missing), component hits {}, crush {} contacts ({dropped} over the cap)",
         log1.len(), classes.len(), log3.len());
     anyhow::ensure!(missing == 0, "{missing} catalogue families are not installed");
+    enemy_t34_and_small_arms(outdir)?;
+    Ok(())
+}
+
+fn balance_db(pcm: &[f32]) -> f32 {
+    let (mut l, mut r) = (1e-20f64, 1e-20f64);
+    for f in pcm.chunks_exact(2) { l += f64::from(f[0]).powi(2); r += f64::from(f[1]).powi(2); }
+    (10.0 * (l / r).log10()) as f32
+}
+
+fn capture(seconds: f32, mut at_tick: impl FnMut(&Audio, usize)) -> anyhow::Result<Vec<f32>> {
+    let audio = Audio::new_capture();
+    let mut pcm = Vec::new();
+    for tick in 0..(seconds * TICKS as f32) as usize {
+        audio.recorded_fx_begin_update();
+        at_tick(&audio, tick);
+        pcm.extend(audio.render_capture_frames(SR / TICKS).ok_or_else(|| anyhow::anyhow!("capture"))?);
+    }
+    Ok(pcm)
+}
+
+/// The T-34's 76.2 mm at 100/400/800 m, head-out and buttoned (arrival delay, air, ground, hull),
+/// and small-arms strikes on the Tiger's left plate, single and a burst, buttoned and head-out.
+fn enemy_t34_and_small_arms(outdir: &str) -> anyhow::Result<()> {
+    let charge = crate::sound_levels::propellant_charge_kg(76.2, 6.3, 662.0);
+    let mut report = Vec::new();
+    for d in [100.0f32, 400.0, 800.0] {
+        for (label, enclosure) in [("headout", Enclosure::HeadOut), ("buttoned", Enclosure::Buttoned)] {
+            let delay_tick = (d / 331.0 * TICKS as f32) as usize;
+            let mut seed = 3u32;
+            let pcm = capture(d / 331.0 + 3.5, |audio, tick| {
+                if tick != delay_tick { return; }
+                seed += 1;
+                let Some(p) = audio.recorded_fx(Fx::T34Gun, seed) else { return };
+                let path = Path { distance_m: d, atmosphere: Atmosphere::WINTER, occluded: false, enclosure, headset: true };
+                let ear = prop::propagate(&prop::Emission::gun(charge, false, 90.0), &path);
+                audio.play_world_mono_in_room(&p.mono, &ear, 30.0, crate::audio::Room::Parametric(crate::acoustics::ReverbParams::OPEN_SNOW));
+            })?;
+            let name = format!("enemy_t34_{}m_{label}", d as u32);
+            crate::acoustics::write_wav_stereo(format!("{outdir}/{name}.wav"), &pcm, SR as u32)?;
+            let mono: Vec<f32> = pcm.chunks_exact(2).map(|f| (f[0] + f[1]) * 0.5).collect();
+            let e = |v: &[f32]| v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().max(1e-30);
+            let bright = e(&crate::audio::hit_high_pass(&mono, 2000.0)) / e(&mono);
+            println!("[recorded-fx-reel] {name}: LAF {:.1} dBFS, peak {:.1}, share >2 kHz {:.3}, arrives {:.2} s",
+                crate::reproduction::laf_max_dbfs(&pcm), crate::reproduction::peak_dbfs(&pcm), bright, d / 331.0);
+            report.push(serde_json::json!({"wav": format!("{name}.wav"), "laf_max_dbfs": crate::reproduction::laf_max_dbfs(&pcm),
+                "peak_dbfs": crate::reproduction::peak_dbfs(&pcm), "share_above_2khz": bright, "arrival_s": d / 331.0}));
+        }
+    }
+    // Small arms: 7.92 mm, 11.5 g at 760 m/s on the left plate (bearing 270), 1.0 m from the ear.
+    let energy = 0.5 * 0.0115 * 760.0f32 * 760.0;
+    for (label, burst) in [("single", false), ("burst", true)] {
+        for (place, head_out) in [("buttoned", false), ("headout", true)] {
+            let mut seed = 11u32;
+            let mut times: Vec<(usize, f32, f32)> = Vec::new();
+            if burst {
+                let mut t = 0.3f32;
+                for k in 0..14 {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let jitter = ((seed >> 9) % 1000) as f32 / 1000.0;
+                    times.push(((t * TICKS as f32) as usize, 0.3 + 0.7 * jitter, 255.0 + 30.0 * jitter));
+                    t += 0.066 + 0.03 * (jitter - 0.5) + if k == 6 { 0.18 } else { 0.0 };
+                }
+            } else { times.push((18, 0.75, 270.0)); }
+            let mut s2 = 5u32;
+            let pcm = capture(if burst { 2.4 } else { 1.2 }, |audio, tick| {
+                for (_, cosine, bearing) in times.iter().filter(|x| x.0 == tick) {
+                    s2 = s2.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+                    let Some(mono) = audio.bullet_on_steel(*cosine, s2) else { continue };
+                    let lpk = crate::sound_levels::armour_strike_lpk_db(energy, cosine.acos().to_degrees(), 1.0);
+                    let ear = prop::at_ear(lpk, lpk - crate::sound_levels::LPK_MINUS_LAE_REVERBERANT_DB + crate::sound_levels::LAF_MINUS_LAE_DB,
+                        crate::sound_levels::SpectrumClass::ArmourRing, 0.5, true);
+                    let room = if head_out { crate::acoustics::ReverbParams::OPEN_SNOW } else { crate::acoustics::ReverbParams::DIRECT };
+                    let stereo = audio.render_world_mono_for_ear(&mono, &ear, *bearing, crate::audio::Room::Parametric(room));
+                    audio.play_stereo_at_ear(stereo, ear.laf_db, crate::audio::EarBus::World);
+                }
+            })?;
+            let name = format!("small_arms_on_armor_{label}_{place}");
+            crate::acoustics::write_wav_stereo(format!("{outdir}/{name}.wav"), &pcm, SR as u32)?;
+            println!("[recorded-fx-reel] {name}: LAF {:.1} dBFS, peak {:.1}, left over right {:+.1} dB (struck plate on the left)",
+                crate::reproduction::laf_max_dbfs(&pcm), crate::reproduction::peak_dbfs(&pcm), balance_db(&pcm));
+            report.push(serde_json::json!({"wav": format!("{name}.wav"), "left_over_right_db": balance_db(&pcm),
+                "laf_max_dbfs": crate::reproduction::laf_max_dbfs(&pcm)}));
+        }
+    }
+    std::fs::write(format!("{outdir}/enemy_t34_small_arms_receipt.json"), serde_json::to_string_pretty(&report)?)?;
     Ok(())
 }

@@ -174,10 +174,18 @@ impl Game {
         }
     }
 
+    /// The player's own body struck: impact_body 1/2 (alternating) as the low-end layer under the
+    /// wound, at his own head (0.3 m, -10 dB against the near-field gain) [E].
+    pub(super) fn player_body_layer(&mut self) {
+        let at = self.ear_pos - Vec3::Y * 0.25;
+        self.recorded(crate::audio::RecordedFx::MaterialImpact(crate::audio::RecordedMaterial::Body), -10.0, at);
+    }
+
     /// One composite for a crewman's wounds from one strike, at the wound.
-    pub(super) fn play_wound_composite(&mut self, fragment_j: f32, blast_j: f32, fatal: bool, at: Vec3, seed: u32) {
+    pub(super) fn play_wound_composite(&mut self, fragment_j: f32, blast_j: f32, fatal: bool, at: Vec3, seed: u32, player: bool) {
         if fragment_j + blast_j <= 0.0 && !fatal { return; }
         let (wound, offset, contact) = wound_layers(fragment_j, blast_j, fatal, seed);
+        if player { self.player_body_layer(); }
         self.recorded(wound, offset, at);
         if let Some(contact) = contact { self.recorded(contact, -2.0, at + Vec3::Y * 0.1); }
     }

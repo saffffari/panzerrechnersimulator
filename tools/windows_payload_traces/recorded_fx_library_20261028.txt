@@ -149,3 +149,13 @@ present	assets/sounds/main_gun_candidates/crack_05.ogg
 present	assets/sounds/main_gun_candidates/crack_echoes_01.ogg
 present	assets/sounds/main_gun_candidates/crack_heavy_01.ogg
 present	assets/sounds/main_gun_candidates/crack_heavy_02.ogg
+present	assets/sounds/t34_gun_01.ogg
+present	assets/sounds/t34_gun_02.ogg
+present	assets/sounds/t34_gun_03.ogg
+present	assets/sounds/t34_gun_04.ogg
+present	assets/sounds/t34_gun_05.ogg
+present	assets/sounds/t34_gun_06.ogg
+present	assets/sounds/bullet_on_steel_01.ogg
+present	assets/sounds/bullet_on_steel_02.ogg
+present	assets/sounds/bullet_on_steel_03.ogg
+present	assets/sounds/bullet_on_steel_04.ogg
