@@ -168,7 +168,12 @@ const SKIP_RELAYS: u32 = 524288;
 /// Sky cache refresh parameters (rm_sky_cache.wgsl `SkyCacheParams`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct SkyCacheUniform { dims: [f32; 4], window: [f32; 4] }
+struct SkyCacheUniform { dims: [f32; 4], window: [f32; 4], seed: [f32; 4] }
+/// The share of a refreshed sky-cache texel that the new march replaces (rm_sky_cache.wgsl): each
+/// refresh marches the clouds with a new jitter and blends in, so the cache averages a texel's
+/// last few marches (about four, some 64 frames) instead of freezing one march's noise. A sky
+/// jump writes every texel whole.
+const SKY_CACHE_BLEND: f64 = 0.3;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1060,7 +1065,16 @@ impl Backend {
             label: Some("rm-sky-cache"), layout: Some(&sky_cache_pl),
             vertex: wgpu::VertexState { module: &sky_cache_shader, entry_point: Some("vs_cache"), buffers: &[], compilation_options: Default::default() },
             primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState { module: &sky_cache_shader, entry_point: Some("fs_cache"), targets: &[Some(color_target(radiance_format()))], compilation_options: Default::default() }),
+            // Each refresh blends into the texel by the pass's blend constant (`SKY_CACHE_BLEND`;
+            // 1 after a sky jump): constant * new + (1 - constant) * held.
+            fragment: Some(wgpu::FragmentState { module: &sky_cache_shader, entry_point: Some("fs_cache"), targets: &[Some(wgpu::ColorTargetState {
+                format: radiance_format(),
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Constant, dst_factor: wgpu::BlendFactor::OneMinusConstant, operation: wgpu::BlendOperation::Add },
+                    alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Constant, dst_factor: wgpu::BlendFactor::OneMinusConstant, operation: wgpu::BlendOperation::Add },
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })], compilation_options: Default::default() }),
             multiview: None, cache: None,
         });
 
@@ -1454,6 +1468,8 @@ impl Backend {
         queue.write_buffer(&self.sky_cache_buf, 0, bytemuck::bytes_of(&SkyCacheUniform {
             dims: [sky_w, sky_h, 1.0 / sky_w, 1.0 / sky_h],
             window: [SKY_CACHE_ELEVATION_MIN_RAD, SKY_CACHE_ELEVATION_SPAN_RAD, self.sky_phase as f32, self.sky_cache_phases as f32],
+            // The refresh's number: each refresh of a texel marches with a new cloud jitter.
+            seed: [((r.frame as u32 / self.sky_cache_phases) % 4096) as f32, 0.0, 0.0, 0.0],
         }));
         let sample_sky = |dir: glam::DVec3| physical_environment::integrate_environment(&atmosphere, origin, dir, f64::INFINITY, quality).inscattered_radiance;
         let mut zenith = sample_sky(glam::DVec3::Y);
@@ -2583,6 +2599,8 @@ impl Backend {
                 timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("rm-sky")), occlusion_query_set: None,
             });
             pass.set_pipeline(&self.sky_cache_pipe);
+            let blend = if self.sky_phase >= self.sky_cache_phases { 1.0 } else { SKY_CACHE_BLEND };
+            pass.set_blend_constant(wgpu::Color { r: blend, g: blend, b: blend, a: blend });
             pass.set_bind_group(0, &r.camera_bind, &[]);
             pass.set_bind_group(1, &r.physical_environment_bind, &[]);
             pass.set_bind_group(2, &self.sky_cache_bind, &[]);

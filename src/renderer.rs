@@ -1173,7 +1173,7 @@ mod environment_probe;
 #[path = "raster_optics.rs"] mod raster_optics;
 #[path = "raster_ssao.rs"] mod raster_ssao;
 #[path = "renderer_aa.rs"] mod renderer_aa;
-pub use raster_optics::RasterOpticSpec;
+pub use raster_optics::{Eyepiece, RasterOpticSpec};
 #[path = "daylight_sampling.rs"]
 mod daylight_sampling;
 #[path = "protective_glass.rs"]
@@ -1516,8 +1516,8 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
-    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage; 3 an indicator's
-    /// round lens alone, no bezel (`mark_lamp_face`).
+    /// A lamp lens (`mark_lamp_lens`): 0 none, 1 bare, 2 behind a wire cage; 4 an indicator cube,
+    /// uniformly lit, dark glass when off (`mark_indicator_lamp`).
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
     snow_vehicle: bool,
@@ -6623,11 +6623,11 @@ impl Renderer {
             g.instrument_cover = true;
         }
     }
-    /// Mesh `idx` is an indicator lamp: the raymarch G-buffer draws it as the round lens alone, lit or
-    /// dark, the cube's corners cut away and no bezel (`rm_gbuffer.wgsl` `lamp_lens` mode 3).
-    pub fn mark_lamp_face(&mut self, idx: usize) {
+    /// Mesh `idx` is an indicator cube (the cabin's lamps, `lamp_mounts`): lit, every face glows
+    /// uniformly; off (emission 0), it is dark glass in its colour at low albedo (`rm_gbuffer.wgsl`).
+    pub fn mark_indicator_lamp(&mut self, idx: usize) {
         if let Some(g) = self.meshes.get_mut(idx) {
-            g.lamp_lens = 3;
+            g.lamp_lens = 4;
         }
     }
     /// Flag own-colour emissive mesh `idx` as a lamp: the raymarch G-buffer draws each face as a

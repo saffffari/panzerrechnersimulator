@@ -36,7 +36,10 @@ fine-grain and analytic-spark passes do not run and are not prepared.
 2b. **Sky cache** (`rm_sky_cache.wgsl`): the physical atmosphere and cloud march evaluated by
    direction into a 768×288 equirectangular map (azimuth across, elevation -20..90°), one phase
    of a sixteen-phase pattern of 8×8-texel tiles per frame and every texel after a sky jump
-   (time-of-day cut, weather override). A later view of the same displayed frame (the gunner's
+   (time-of-day cut, weather override). A refresh blends into the texel (0.3 of it new, a sky
+   jump writes it whole) and marches the clouds with a new jitter each time, so a texel holds the
+   average of its last few marches (see "The cabin's dial, lamps and speckle, and the sky's
+   bands"). A later view of the same displayed frame (the gunner's
    eyepiece composite, split-screen views 2..N) refreshes nothing. Misses and reflections sample it; the solar and secondary discs are drawn
    analytically from the same transmitted irradiance through the cache's cloud transmittance
    (`rm_sky_discs`), because a disc narrower than a cache texel would smear. `KESSEL_RM_SKY=
@@ -1083,6 +1086,8 @@ of up to 320 large parcels near the eye is unmeasured.
 Request: "the TPZ needle is too wide. Also missing a reflective glass cover detail." The needle's
 source part is a 1 cm bar; it is now drawn 2.5 mm wide in the dial's plane (`TPZ_NEEDLE_WIDTH_SCALE`,
 its 1 cm stand-off from the face unchanged), two to three pixels from the gunner's head at 800x450.
+(That evening: 4.5 mm, `TPZ_NEEDLE_WIDTH_M`; the second glossy lobe removed and the dust thinned;
+the face black enamel. See "The cabin's dial, lamps and speckle, and the sky's bands".)
 The TPZ and the driver's fuel readout already had clear covers through the glass path
 (`driver_panel.rs`, the cover clear of the needle's whole sweep); flagged as instrument covers
 (`Renderer::mark_instrument_cover`), the raymarch glass pass gives them a faint fixed dust (millimetre
@@ -1098,9 +1103,10 @@ Requests: "a small light indicator visible while in gun sights that displays loa
 "another light colour coded for HE and AP rounds in gunner sight view". The Tiger carried no such
 lamps (its loader called "Fertig" or tapped the gunner), so they are a gameplay instrument, named
 in the ledger; `KESSEL_SIGHT_LAMPS=0` leaves them out. Two 1 cm lenses (`interior_rig.rs`
-`SIGHT_LOAD_FIXTURES`, `SIGHT_ROUND_FIXTURES`) sit on a bracket off the sight body, just left of
-the binocular field as the eyepiece composite frames it, and a copy under the commander's front
-vision block. They are real emitters at the cabin lamps' power in the light list (they glow on
+`SIGHT_LOAD_FIXTURES`, `SIGHT_ROUND_FIXTURES`) sit on plinths on the turret wall beside the TPZ,
+left of the sight's field as the eyepiece composite frames it, and a copy on the cupola ring beside
+the commander's front vision block (`lamp_mounts::SIGHT`; until the evening of 2026-10-28 they
+floated at fixed offsets from each crewman's eye). They are real emitters at the cabin lamps' power in the light list (they glow on
 nearby steel at night and wash out by day), driven by the reload machine (`Game::sight_lamp_states`):
 
 - Loading: bright green when the breech is closed, loaded and ready; dim red while the loader
@@ -1531,10 +1537,9 @@ roughness and metallic outliers and for anything that leaves the shading path:
 
 **The lamps.** The bezel was the `lamp_lens` profile's housing: each 1 to 2.4 cm cube face a round
 lens in dark steel. The breech's reload lamps, the sight's loading and round lamps and the
-annunciators are now indicator lamps (`Renderer::mark_lamp_face`, `lamp_lens` mode 3): the G-buffer
-cuts the cube's corners away (`lamp_face_cut`), lit or dark, so each reads as a small round glass
-with its hot core and glint and nothing round it. A first try that lit the whole square face read as
-a dim flat square, the look the lenses had replaced. The dome lamp keeps its caged housing.
+annunciators became indicator lamps (`lamp_lens` mode 3): the G-buffer cut the cube's corners away,
+lit or dark, so each read as a small round glass. Superseded the same evening: every cabin lamp is a
+uniformly lit cube on a plinth (the next section).
 
 Captures (480x270, High; `KESSEL_SHOWCASE_SET=vehicles`, the map's KV-1 wreck between a T-34 and the
 Tiger at 16 and 45 m, clear and dry overcast; before = `KESSEL_GLB_SOURCE_ROUGHNESS=1
@@ -1543,6 +1548,93 @@ KESSEL_VEHICLE_FINISH=0`): `captures/vehicles_before_*`, `captures/vehicles_afte
 `captures/vehicles_kv1_sheet.png`. Lamps: `captures/lamps_crop4.png` (the gunner at the TZF: the
 afternoon's bezels, the evening's eye with bezels, round lenses without), from
 `captures/optics_lamps4_*`.
+
+## The cabin's dial, lamps and speckle, and the sky's bands (2026-10-28, late)
+
+Owner feedback from the integrator's autopilot window (main about 0d61f09), in its order:
+
+**1. "This dial is fucking too bright, it's like the sun inside the tank."** Two round faces were.
+
+- *The TPZ.* Its face (source material "Illuminated Dial", an untextured white at 0.8) sat 5 cm
+  from a hidden point light, the TPZ illuminator in `interior_rig::LAMPS`, at 0.055: 27 times the
+  dome lamp's intensity at a twentieth of its distance, some 12,000 times the dome's light on the
+  face. The probe (`KESSEL_RM_PROBE`) put its lit red at 0.025 with the illuminator's exact colour
+  ratio (1 : 0.34 : 0.035). The illuminator is now a faint backlight: it lights the face about as
+  much as the dome lamp a metre off does (`TPZ_ILLUMINATOR_INTENSITY`). The face is black enamel
+  (sRGB 40, `tank::DIAL_FACE_SRGB`): German instrument dials of the period were black, and the
+  surviving Bovington TPZ keeps its original black paint (tiger1.info, "Traverse clock"); the red
+  needle reads against it. The morning's broad glossy lobe on instrument covers (`rm_glass.wgsl`,
+  roughness 0.3 at the full 4 % Fresnel, added to the glint) doubled the cover's reflection and at
+  its peak outshone an ivory wall; it is gone, and the covers' fixed dust is thinned (specks 0.18 ->
+  0.06, film 3-6 % -> 1-2 %): over the black face the lamp-lit dust read as a pale speckled disc.
+  The illuminator had also flooded the gunner's half of the turret orange; the cabin now takes the
+  dome lamp's and the ports' light.
+- *The gunner's sight seen from the cabin.* The TZF lens is a relayed port: its face showed the
+  sight's field at full radiance from anywhere, a white disc under the commander's cupola. A
+  telescope's field leaves only through its exit pupil: seen from inside the eye box (2 cm of the
+  pupil) the lens is filled; farther off it carries the pupil's share of the lens's area, spread
+  over the lens (`raster_optics::Eyepiece::radiance_scale`; 7 mm pupil, 25 mm eye relief, the
+  58 degree apparent field of a 2.5x, 25 degree sight, estimates); outside the apparent field it is
+  the dark tube. From the commander's seat the disc now carries 3 % of the field.
+
+**2. The TPZ needle**: 2.5 mm was "too thin", the 1 cm source bar "too wide". At the gunner's eye a
+pixel is 2.9 mm at 480x270 and 1.7 mm at 800x450; drawn 4.5 mm (`TPZ_NEEDLE_WIDTH_M`), about one and
+a half and two and a half pixels. `KESSEL_SHOWCASE_SET=dial` draws the gunner's composite at 3.5,
+4.5 and 6 mm (`captures/tpz_needle_widths_480.png`, `_800.png`: left to right).
+
+**3. Lamps hanging in mid-air.** A survey of the source meshes (`lamp_mounts::closest_surface`) put
+the annunciator row 10 to 24 cm from any surface, the gunner's sight lamps 21 cm, the commander's
+13 cm below the cupola: they were placed at fixed offsets from the eye. Every cabin lamp is now a
+uniformly lit cube, no lens profile, bezel or cage, on a squat plinth (1.2 times the lamp's width,
+0.6 of its half size high, dark steel) on a flat face of the tank's own source mesh
+(`lamp_mounts.rs`): the dome lamp under the fan; the four annunciators in a column on the turret
+wall at the loader's side (the front wall before the breech, where their row floated, is a curved
+ring with lips and no room); the gunner's sight lamps on the turret wall beside the TPZ, left of
+the sight's field; the commander's on two facets of the cupola ring beside his front vision block
+(the space under it is open, and the block's sill lies behind its glass); the breech lamps on the
+guard's side plates; and the driver's ignition lamp, an invisible point at twelve times the dome
+lamp's power that washed his post red, is a 1.2 cm cube on his panel at an indicator's power
+(`interior_rig::IGNITION_FIXTURE`). The test `every_cabin_lamp_stands_on_a_plinth_on_one_flat_face`
+checks each footprint against the source GLB. A switch, `Game::set_cabin_lights` (and
+`toggle_cabin_lights`, `cabin_lights_on`), turns them all and the TPZ's illuminator off: each lamp
+stays a visible cube of dark glass in its colour (a twelfth of its lit colour, glossy;
+`Renderer::mark_indicator_lamp`, `lamp_lens` 4) and its light is zero. `KESSEL_SHOWCASE_SET=lamps`
+shows every group close up, on and off, and the gunner's and commander's posts
+(`captures/lamps_close_sheet.png`, `captures/lamps_station_sheet.png`). No key is bound; the switch's sound can drive it.
+No authored lamp exists outside the tank: the Canyon and act manifests carry no lights, the
+buildings' room fixtures are PSX ceiling panels placed at ceiling height, and fires, flares and
+blasts are transient sources.
+
+**4. "The sky has these weird stripes in it."** Not reproduced as stripes in a still. Measured and
+ruled out: the sixteen-phase refresh (a live frame against a full refresh at the same instant, at
+most one code apart at the 99th percentile, `KESSEL_RM_SKY=384,1`), coloured rings round the Sun
+(chroma stretched), and the palette crush on the gradient (one-code steps). What the live Low sky
+did show (`KESSEL_SHOWCASE_SET=sky`, `KESSEL_SKY_CLOCK=1942-12-21T15:30:00Z`) was a fixed blotchy
+band of cloud along the horizon and round the Moon: each cache texel's cloud march (12 steps on
+Low) kept one jitter forever, and the jitter itself was the sine hash `fract(sin(dot(p, k)) *
+43758)`, whose argument reaches 10^5 at cache texels and whose output then falls into bands. The
+jitter is now an integer hash (`sky.wgsl` `cloud_jitter`), each refresh marches with a new one, and
+the pass blends it into the texel (`SKY_CACHE_BLEND` 0.3, a sky jump writes it whole), so the cache
+holds the average of a texel's last few marches at the same cost. Named approximation: a cloud
+feature moving across the sky trails over about a second.
+
+**5. "These weird green splotches keep dotting the surface."** Not the lamps' light outside: the
+shade pass already skips a cabin light for receivers outside the cabin, and the ray queries occlude
+lights without depth faces. They were the shade's open-sky shares (`KESSEL_RM_SKIP=8192` removes
+them): in a nearly closed compartment, the driver's and the radio operator's, a pixel whose one or
+two rays found a gap took the open sky's light at full share, and blended in at 15-20 % and spread
+by the 3 x 3 mean they left soft olive blobs (the ivory paint under a blue sky) that kept appearing
+across the walls and floor. A new share estimate is now clamped to three times the same-surface
+history plus 0.02 (`rm_shade.wgsl` `share_clamped`, as the bounce already was): in the driver's view
+the speckles over its median fell from 526 to 269 at 480x270 and the blobs are gone; the bias on a
+share of 0.3 is under 2 %, and a share that opens rises at least 1.3 times a frame.
+
+Captures (480x270 unless named; before = the merge build 25652ae or the same build without the
+change): the dial `captures/dial_before_after.png` (gunner's composite and commander's post,
+before left), `captures/dial_final_*`; lamps `captures/lamps_before_after.png`,
+`captures/dial_final_commander_lamps.png`, `_loader_annunciators.png`, `_driver_ignition.png`,
+`_commander_lamps_off.png`; sky `captures/sky_night_before_after.png`, `captures/sky_final_*`;
+speckle `captures/green_dots_clamp.png` (driver's post, before left).
 
 ## A/B against the shader backend
 

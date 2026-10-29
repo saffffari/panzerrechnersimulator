@@ -187,22 +187,15 @@ fn cabin_grime(albedo: vec3<f32>, roughness: f32, metallic: f32, world: vec3<f32
 // read as just flat full-bright colour instead of a physical 3D shape emitting light"). The lens
 // carries the face's whole emission (2.67 x its mean profile), so the transported light is
 // unchanged. Returns the emission in rgb; a negative alpha marks bezel and cage (housing steel).
-// `mode` 3 (Renderer::mark_lamp_face): an indicator lamp is the round lens alone, lit or dark, with
-// no bezel: `gbuffer_surface` cuts the cube's corners away (`lamp_face_cut`), so it reads as a
-// small round glass (2026-10-28, "whats up with these lights they now have metal borders?").
-fn lamp_face_uv(local: vec3<f32>) -> vec2<f32> {
+// Since the evening of 2026-10-28 no cabin lamp takes this profile: each is a uniformly lit cube on
+// a plinth (`lamp_mounts.rs`; owner: "a fully lit cube, uniformly emissive, with no border").
+fn lamp_lens(local: vec3<f32>, base: vec3<f32>, mode: u32) -> vec4<f32> {
+    let caged = mode == 2u;
     let a = abs(local);
     var uv = local.xy;
     var h = a.z;
     if (a.x >= a.y && a.x >= a.z) { uv = local.yz; h = a.x; } else if (a.y >= a.z) { uv = local.xz; h = a.y; }
-    return uv / max(h, 1e-5);
-}
-fn lamp_face_cut(local: vec3<f32>) -> bool {
-    return length(lamp_face_uv(local)) >= 0.78;
-}
-fn lamp_lens(local: vec3<f32>, base: vec3<f32>, mode: u32) -> vec4<f32> {
-    let caged = mode == 2u;
-    let uv = lamp_face_uv(local);
+    uv = uv / max(h, 1e-5);
     let rho = length(uv) / 0.78;
     if (rho >= 1.0) { return vec4(0.0, 0.0, 0.0, -1.0); }
     if (caged && (abs(uv.x) < 0.07 || abs(uv.y) < 0.07 || abs(rho - 0.62) < 0.06)) { return vec4(0.0, 0.0, 0.0, -1.0); }
@@ -419,14 +412,14 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     if (dot(n, view) < 0.0) { n = -n; }
     gb_in_cabin = gb_cabin_air(in.relative + fr.cam_pos.xyz + n * 0.03);
     let x = pc.params.x;
-    // An indicator lamp (lamp_lens mode 3) is its round lens alone, lit or shown dark.
-    if (kind > 1.5 && kind < 2.5 && pc.extra.w > 2.5 && lamp_face_cut(in.local)) { discard; }
     var housing = false;
     if (x > 0.0) {
         var glow = vec3(0.0);
         if (kind > 1.5 && kind < 2.5) {
             glow = raw.rgb * x + raw.rgb * max(x - 3.0, 0.0) * 0.15;
-            if (pc.extra.w > 0.5) {
+            // An indicator cube (pc.extra.w 4, Renderer::mark_indicator_lamp) glows uniformly on
+            // every face; the lens profile is the older modes' only.
+            if (pc.extra.w > 0.5 && pc.extra.w < 3.5) {
                 let lens = lamp_lens(in.local, glow, u32(pc.extra.w + 0.5));
                 housing = lens.w < 0.0;
                 glow = select(lens.rgb, vec3(0.0), housing);
@@ -462,6 +455,13 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         albedo = vec3(0.06, 0.058, 0.055);
         roughness = 0.45;
         metallic = 0.8;
+    }
+    if (kind > 1.5 && kind < 2.5 && pc.extra.w > 3.5 && pc.extra.w < 4.5) {
+        // An indicator cube switched off: dark glass in its colour (owner, 2026-10-28: "dark,
+        // unlit glass in its colour tint at low albedo"), a twelfth of the lit colour, glossy.
+        albedo = raw.rgb * 0.08;
+        roughness = 0.15;
+        metallic = 0.0;
     }
     if (kind > 2.5 && kind < 3.5) {
         // The campaign terrain material (snow cover, substrate, detail layers), shared with

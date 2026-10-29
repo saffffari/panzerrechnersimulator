@@ -15,11 +15,12 @@ pub enum Frame {
     Turret,
 }
 
-/// The dome lens is fixed to the underside of the turret-roof extractor fan.
+/// The dome lamp hangs from the underside of the turret-roof extractor fan, on its plinth
+/// (`lamp_mounts::DOME`).
 pub const TURRET_FAN_UNDERSIDE_Y: f32 = 2.2301013; // source Turret_0118, turret-local
 pub const TURRET_DOME_LAMP_HALF_SIZE: f32 = 0.014;
-pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(
-    -0.01264894, TURRET_FAN_UNDERSIDE_Y - TURRET_DOME_LAMP_HALF_SIZE, -0.00222471);
+pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(-0.01264894,
+    TURRET_FAN_UNDERSIDE_Y - TURRET_DOME_LAMP_HALF_SIZE * (1.0 + crate::lamp_mounts::PLINTH_HEIGHT), -0.00222471);
 
 /// Art-calibrated fixture output in the renderer's linear scale, not measured historical watts.
 /// Daylight apertures must establish the daytime cabin's bright end. Apply the same reduction to
@@ -119,23 +120,25 @@ pub const fn cabin_practical_gain(shader_backend: bool) -> f32 {
 /// Keep their authored output explicit; never invent a finite mesh to claim source agreement.
 /// `(frame, pos, linear color, radiant intensity, source radius metres)`.
 pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
-    // TPZ dial illuminator — small warm-orange pool on the dial face (rides the turret)
+    // TPZ dial illuminator, inside the instrument 5 cm from its face (rides the turret): a faint
+    // backlight that lights the face about as much as the dome lamp a metre off does. It was 0.055,
+    // 27 times the dome lamp's intensity at a twentieth of its distance, some 12,000 times the
+    // dome's light on the dial: "this dial is fucking too bright, it's like the sun inside the
+    // tank" (owner, 2026-10-28).
     (
         Frame::Turret,
         Vec3::new(0.841, 1.752, 0.598),
         Vec3::new(1.0, 0.34, 0.035),
-        0.055 * CABIN_PRACTICAL_POWER_SCALE,
+        TPZ_ILLUMINATOR_INTENSITY,
         0.015,
     ),
-    // ignition indicator — tiny red point at the driver's panel
-    (
-        Frame::Hull,
-        Vec3::new(1.136, 1.676, 2.112),
-        Vec3::new(1.0, 0.10, 0.05),
-        0.025 * CABIN_PRACTICAL_POWER_SCALE,
-        0.012,
-    ),
 ];
+/// The dome lamp's intensity times (5 cm / 1.07 m)^2: the dial's illuminator against the dome lamp.
+pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.0000044 * CABIN_PRACTICAL_POWER_SCALE;
+/// The driver's ignition lamp, a finite cube on his panel (`lamp_mounts::IGNITION`), an indicator's
+/// power. Before 2026-10-28 an invisible point at 0.025, twelve times the dome lamp, which washed
+/// the driver's post red.
+pub const IGNITION_FIXTURE: FiniteCubeLamp = FiniteCubeLamp { half_size_m: 0.006, srgb: [235, 40, 30], emission: 1.0 };
 
 #[cfg(test)]
 mod lighting_tests {
@@ -150,7 +153,7 @@ mod lighting_tests {
             assert_eq!(intensity * raster, intensity, "the shader backend adds no gain");
         }
         for fixture in std::iter::once(DOME_FIXTURE)
-            .chain(ANNUNCIATOR_FIXTURES).chain(BREECH_FIXTURES) {
+            .chain(ANNUNCIATOR_FIXTURES).chain(BREECH_FIXTURES).chain([IGNITION_FIXTURE]) {
             for state in [0.0, 0.4, 0.5, 0.6, 1.0, 2.4, 3.5, 4.0, 6.0] {
                 let a = fixture.sample(state * physical);
                 let b = fixture.sample(state * raster);
@@ -165,7 +168,7 @@ mod lighting_tests {
     #[test]
     fn finite_cabin_fixtures_conserve_the_visible_mesh_emission() {
         for fixture in std::iter::once(DOME_FIXTURE)
-            .chain(ANNUNCIATOR_FIXTURES).chain(BREECH_FIXTURES) {
+            .chain(ANNUNCIATOR_FIXTURES).chain(BREECH_FIXTURES).chain([IGNITION_FIXTURE]) {
             let mesh = crate::prims::box_mesh(Vec3::splat(-fixture.half_size_m),
                 Vec3::splat(fixture.half_size_m), fixture.srgb);
             let area: f32 = mesh.indices.chunks_exact(3).map(|tri| {
@@ -665,7 +668,8 @@ mod lamp_mount_tests {
         if !crate::resource::exists(path) {return;}
         let mut parts=crate::gltf_load::load_glb_partitioned_roots(path,&["Turret_0118"]).unwrap();
         let fan=parts.pop().unwrap();
-        assert!((TURRET_DOME_LAMP_POS.y+TURRET_DOME_LAMP_HALF_SIZE-fan.min.y).abs()<1e-5);
+        // The lamp hangs one plinth height below the fan (`lamp_mounts`).
+        assert!((TURRET_DOME_LAMP_POS.y+TURRET_DOME_LAMP_HALF_SIZE*(1.0+crate::lamp_mounts::PLINTH_HEIGHT)-fan.min.y).abs()<1e-5);
         let centre=(fan.min+fan.max)*0.5;
         assert!((centre.x-TURRET_DOME_LAMP_POS.x).abs()<1e-5);
         assert!((centre.z-TURRET_DOME_LAMP_POS.z).abs()<1e-5);
