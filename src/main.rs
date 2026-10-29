@@ -13482,8 +13482,16 @@ impl WindowState {
             self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
         }
         if !self.show_map && self.game.optic_composite_active() {
-            // Gunner ADS: optic pass → snapshot, then the interior pass seats the circle.
-            self.render_optic_composite(&view, None, 0, 3, None);
+            // Gunner ADS: optic pass → snapshot, then the interior pass seats the circle. The optic
+            // has its own eye; the interior is the crewman's cabin eye (view 0).
+            self.render_optic_composite(&view, None, renderer::OPTIC_EYE_VIEW, 0, None);
+        } else if !self.show_map && self.game.commander_binoculars_inside() {
+            // The binoculars from inside the cupola: the optic's own eye, so raising them does not
+            // swing the cabin eye.
+            self.renderer.set_active_view(renderer::OPTIC_EYE_VIEW);
+            self.renderer
+                .render_to_surface(&self.device, &self.queue, &view, self.config.format);
+            self.renderer.set_active_view(0);
         } else {
             self.renderer
                 .render_to_surface(&self.device, &self.queue, &view, self.config.format);

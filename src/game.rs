@@ -609,6 +609,9 @@ fn advance_binocular_raise(current: f32, requested: bool, dt: f32) -> f32 {
     }
 }
 
+/// How far the binoculars' eye moves out along the level gaze from inside the cupola: past the
+/// vision blocks' glass and the cupola's wall (`commander_binoculars_inside`).
+const CUPOLA_BINOCULAR_CLEARANCE_M: f32 = 0.6;
 fn binocular_optics_ready(raise: f32) -> bool {
     raise >= BINOCULAR_OPTICAL_CONTACT
 }
@@ -17289,6 +17292,15 @@ impl Game {
             } else {
                 eye_to
             };
+            if self.commander_binoculars_inside() {
+                // Binoculars from inside the cupola see the world past the vision block's glass at
+                // their own magnification, not the relayed port's small picture magnified (owner
+                // feedback 2026-10-28: a white, featureless field). The eye moves out along the
+                // level gaze, clear of the cupola's wall (named approximation: between blocks it
+                // looks past the steel too).
+                let gaze = r.camera.forward();
+                r.camera.pos += Vec3::new(gaze.x, 0.0, gaze.z).normalize_or_zero() * CUPOLA_BINOCULAR_CLEARANCE_M;
+            }
             if self.switch_t > 0.0 {
                 r.optic_mask = 0.0;
                 r.reticle = false;
@@ -24229,6 +24241,12 @@ impl Game {
     /// cameras share one Renderer but not one physical viewpoint: the gunner's exterior optic must
     /// stay clean while his eyepiece-composite surround, the driver, loader and buttoned commander
     /// retain their physical cabin geometry, gun haze and suspended dust.
+    /// The commander, buttoned up in the cupola, has the binoculars to his eyes.
+    pub fn commander_binoculars_inside(&self) -> bool {
+        self.mode == Mode::Tank && matches!(self.station, Station::Commander) && !self.commander_outside
+            && !self.climb.active && binocular_optics_ready(self.binocular_raise)
+    }
+
     pub fn configure_crew_render_view(
         &self,
         role: crate::lan::LanRole,

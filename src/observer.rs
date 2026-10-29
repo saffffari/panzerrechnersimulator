@@ -116,6 +116,32 @@ pub const FLASH_ONSET_RATIO: f64 = 1.5;
 
 /// Largest step the integrator takes; longer frames are substepped.
 pub const MAX_STEP_S: f64 = 0.25;
+/// Owner-directed (2026-10-28, "adaptation should be really more of an exiting in and out of the
+/// tank thing, not periscopes and sights ... maybe a very very subtle one for being inside"): inside
+/// the hull the eye follows this share of the cabin's log-luminance changes, about a reference that
+/// follows the meter with `INSIDE_REFERENCE_TAU_S`. Looking from a dark corner to a lit port moves
+/// it a quarter as far; climbing in from daylight, the reference carries the dark adaptation over
+/// some tens of seconds; climbing out, the eye is outside and adapts at its own rates.
+pub const INSIDE_RESPONSE: f64 = 0.25;
+pub const INSIDE_REFERENCE_TAU_S: f64 = 20.0;
+/// An optic's own eye (the TZF's field, the binoculars) that has not been looked through for this
+/// long is adapted to its field at once when the eye returns: putting the eye to a sight does not
+/// swing the exposure (owner-directed, 2026-10-28).
+pub const OPTIC_RESNAP_GAP_S: f64 = 0.5;
+
+/// The meter an eye inside the hull adapts to: `INSIDE_RESPONSE` of the metered log luminance
+/// about the reference (photopic, scotopic log10 cd/m^2), the field and flash lanes untouched.
+pub fn inside_meter(meter: Meter, reference_log: [f64; 2]) -> Meter {
+    let damp = |metered: f64, reference: f64| 10f64.powf(reference + INSIDE_RESPONSE * (metered.max(METER_MIN_CD_M2).log10() - reference));
+    Meter { photopic_cd_m2: damp(meter.photopic_cd_m2, reference_log[0]),
+        scotopic_cd_m2: damp(meter.scotopic_cd_m2, reference_log[1]), ..meter }
+}
+/// The inside reference after `dt_s` more of `meter` (log10 photopic, scotopic).
+pub fn inside_reference_step(reference_log: [f64; 2], meter: Meter, dt_s: f64) -> [f64; 2] {
+    let k = 1.0 - (-dt_s.max(0.0) / INSIDE_REFERENCE_TAU_S).exp();
+    [reference_log[0] + (meter.photopic_cd_m2.max(METER_MIN_CD_M2).log10() - reference_log[0]) * k,
+     reference_log[1] + (meter.scotopic_cd_m2.max(METER_MIN_CD_M2).log10() - reference_log[1]) * k]
+}
 
 /// What the meter reports for one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -516,6 +542,9 @@ pub fn wgsl_constants() -> String {
     push("OBS_DISPLAY_ADAPTATION", DISPLAY_ADAPTATION_CD_M2);
     push("OBS_DISPLAY_KEY", DISPLAY_KEY);
     push("OBS_ROD_SATURATION_TD", ROD_SATURATION_SCOT_TD);
+    push("OBS_INSIDE_RESPONSE", INSIDE_RESPONSE);
+    push("OBS_INSIDE_REFERENCE_TAU", INSIDE_REFERENCE_TAU_S);
+    push("OBS_OPTIC_RESNAP_GAP", OPTIC_RESNAP_GAP_S);
     push("OBS_ROD_DISPLAY_GAIN", std::env::var("KESSEL_ROD_DISPLAY_GAIN").ok()
         .and_then(|v| v.parse().ok()).unwrap_or(ROD_DISPLAY_GAIN));
     let range = std::env::var("KESSEL_EYE_RANGE").ok().and_then(|v| {
@@ -965,6 +994,29 @@ mod tests {
         run(&mut eye, Meter { transient_source: true, ..static_port }, 0.2, 1.0 / 120.0);
         assert_eq!(eye.flash_energy_td_s, 0.0);
         assert_eq!(eye.mapping(Viewing::Binocular).afterimage_cd_m2, 0.0);
+    }
+
+    #[test]
+    fn inside_the_hull_the_eye_follows_a_quarter_of_the_cabin_and_the_reference_carries_the_rest() {
+        let cabin = Meter::uniform(0.5, 0.8);
+        let reference = [cabin.photopic_cd_m2.log10(), cabin.scotopic_cd_m2.log10()];
+        // A port ten times brighter than the cabin moves the eye's target 10^0.25 = 1.78 times.
+        let port = Meter::uniform(5.0, 8.0);
+        let damped = inside_meter(port, reference);
+        assert!((damped.photopic_cd_m2 / 0.5 - 10f64.powf(0.25)).abs() < 1e-9);
+        assert_eq!(inside_meter(cabin, reference).photopic_cd_m2, cabin.photopic_cd_m2);
+        // Climbing in from a 5,000 cd/m^2 field: the reference reaches the cabin over tens of seconds.
+        let mut outside = [5000f64.log10(), 7000f64.log10()];
+        for _ in 0..60 { outside = inside_reference_step(outside, cabin, 1.0); }
+        assert!((outside[0] - cabin.photopic_cd_m2.log10()).abs() < 0.2, "{outside:?}");
+        let mut early = [5000f64.log10(), 7000f64.log10()];
+        early = inside_reference_step(early, cabin, 5.0);
+        assert!(early[0] > 2.0, "five seconds in, still adapted well above the cabin: {early:?}");
+        let generated = wgsl_constants();
+        for name in ["OBS_INSIDE_RESPONSE", "OBS_INSIDE_REFERENCE_TAU", "OBS_OPTIC_RESNAP_GAP"] {
+            assert!(generated.contains(name));
+            assert!(include_str!("../shaders/exposure.wgsl").contains(name), "{name} unused by the GPU eye");
+        }
     }
 
     #[test]

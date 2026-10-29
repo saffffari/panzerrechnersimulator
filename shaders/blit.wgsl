@@ -30,8 +30,8 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
     return out;
 }
 
-// The TZF's two eyepiece fields side by side (crush.wgsl `tzf_field_distance`, radius 0.45).
-const TZF_EYEPIECE_OFFSET: f32 = 0.17;
+// The TZF's one eyepiece field at the centre (crush.wgsl `tzf_field_distance`, radius 0.45).
+const TZF_EYEPIECE_OFFSET: f32 = 0.0;
 
 // TZF 9b/9c Strichbild: etched BLACK glass markings in the focal plane (a real optic's reticle
 // is a dark etching, not a glowing overlay). Seven aiming triangles hang point-UP with their tips

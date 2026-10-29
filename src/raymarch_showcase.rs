@@ -84,6 +84,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("ao") { return run_occlusion(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("wear") { return run_wear(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("t34") { return run_t34(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("optics") { return run_optics(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("clouds") { return run_clouds(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("shafts") { return run_shafts(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
@@ -501,6 +502,106 @@ fn run_occlusion(prefix: &str) -> anyhow::Result<()> {
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "ray_queries_off": std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v & 32768 != 0),
         "disclosure": "Staged fixture (banished enemies, held fire). Clear noon, sky clock pinned. Observer and station cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// Play `seconds` as the live loop does: one update and one presented frame per 1/60 s, the eye
+/// adapting on the frames it sees (no convergence), then the next frame captured.
+fn live(g: &mut Game, r: &mut crate::renderer::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+    seconds: f32, input: &TankInput, path: Option<&str>, cw: u32, ch: u32) -> anyhow::Result<()> {
+    let frames = (seconds * 60.0).round().max(1.0) as u32;
+    for frame in 0..frames {
+        g.update(input, 1.0 / 60.0, r);
+        let last = frame + 1 == frames;
+        // As the live loop: the binoculars from inside the cupola on the optic's own eye.
+        let binoculars = g.commander_binoculars_inside();
+        if binoculars { r.set_active_view(crate::renderer::OPTIC_EYE_VIEW); }
+        match (g.station, path.filter(|_| last)) {
+            (Station::Gunner, capture) => eyepiece_frame(g, r, device, queue, capture.map(|p| (p, cw, ch)))?,
+            (_, Some(p)) => r.render_to_png(device, queue, p, cw, ch)?,
+            (_, None) => r.render_offscreen(device, queue),
+        }
+        if binoculars { r.set_active_view(0); }
+    }
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=optics`: the eye at the optics and in the dark, as played (live frames, no
+/// exposure convergence): the commander's post buttoned up, then the binoculars raised half a
+/// second and four seconds; head out with the binoculars; the gunner at the TZF; and the
+/// commander's and loader's posts at night (single bright pixels on dark surfaces).
+fn run_optics(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_commander_cabin.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(std::env::var("KESSEL_GRAPHICS_PRESET").ok()
+        .and_then(|v| graphics::GraphicsPreset::parse(&v)).unwrap_or(graphics::GraphicsPreset::High));
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    let glasses = TankInput { binoculars: true, ..TankInput::default() };
+    // KESSEL_OPTICS_ACT_WEATHER=1 keeps the act's own weather (snow falling) instead of a clear sky.
+    let act_weather = std::env::var("KESSEL_OPTICS_ACT_WEATHER").as_deref() == Ok("1");
+    r.set_weather_override(if act_weather { None } else { Some(0.0) });
+    let clock = |r: &mut crate::renderer::Renderer, utc: &str| -> anyhow::Result<()> {
+        let instant = ephemeris::UtcInstant::parse_iso(utc)?;
+        r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
+        Ok(())
+    };
+    clock(&mut r, "1942-12-21T10:30:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    step(&mut g, &mut r, 30, &idle);
+    let path = |name: &str| format!("{prefix}_{name}.png");
+    let mut shots = Vec::new();
+    let mut shot = |name: &str, note: &str, r: &crate::renderer::Renderer| shots.push(serde_json::json!({
+        "name": name, "path": path(name), "note": note, "clock_utc": r.sky_clock.now().to_iso(), "eye": r.camera.pos.to_array()}));
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    live(&mut g, &mut r, &device, &queue, 4.0, &idle, Some(&path("commander_cabin")), cw, ch)?;
+    shot("commander_cabin", "commander's post, buttoned up, 4 s", &r);
+    live(&mut g, &mut r, &device, &queue, 0.5, &glasses, Some(&path("commander_binocular_05s")), cw, ch)?;
+    shot("commander_binocular_05s", "binoculars raised from inside the cupola, half a second", &r);
+    live(&mut g, &mut r, &device, &queue, 3.5, &glasses, Some(&path("commander_binocular_4s")), cw, ch)?;
+    shot("commander_binocular_4s", "binoculars raised from inside the cupola, four seconds", &r);
+    live(&mut g, &mut r, &device, &queue, 2.0, &idle, None, cw, ch)?;
+    if !g.hatch_open { g.toggle_hatch(); }
+    g.commander_outside = true;
+    live(&mut g, &mut r, &device, &queue, 4.0, &idle, Some(&path("commander_headout")), cw, ch)?;
+    shot("commander_headout", "commander head out, 4 s", &r);
+    live(&mut g, &mut r, &device, &queue, 3.0, &glasses, Some(&path("commander_headout_binocular")), cw, ch)?;
+    shot("commander_headout_binocular", "head out with the binoculars, 3 s", &r);
+    g.commander_outside = false;
+    live(&mut g, &mut r, &device, &queue, 2.0, &idle, Some(&path("commander_back_inside_2s")), cw, ch)?;
+    shot("commander_back_inside_2s", "back inside the cupola, 2 s after head out", &r);
+    g.station = Station::Gunner;
+    live(&mut g, &mut r, &device, &queue, 0.5, &idle, Some(&path("gunner_tzf_05s")), cw, ch)?;
+    shot("gunner_tzf_05s", "the gunner at the TZF, half a second", &r);
+    live(&mut g, &mut r, &device, &queue, 3.5, &idle, Some(&path("gunner_tzf_4s")), cw, ch)?;
+    shot("gunner_tzf_4s", "the gunner at the TZF, four seconds", &r);
+    clock(&mut r, "1942-12-21T19:30:00Z")?;
+    g.station = Station::Commander;
+    if g.hatch_open { g.toggle_hatch(); }
+    live(&mut g, &mut r, &device, &queue, 6.0, &idle, Some(&path("commander_night")), cw, ch)?;
+    shot("commander_night", "commander's post at night, buttoned up, 6 s", &r);
+    g.station = Station::Loader;
+    live(&mut g, &mut r, &device, &queue, 6.0, &idle, Some(&path("loader_night")), cw, ch)?;
+    shot("loader_night", "loader's post at night, 6 s", &r);
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.optics.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "preset": graphics::active_preset().label(),
+        "internal_resolution": [r.iw, r.ih], "output_resolution": [cw, ch], "shots": shots,
+        "disclosure": "Staged fixture (banished enemies, held fire). Clock and weather overridden. Live frames: the eye adapts as in play; nothing converged."
     }))?)?;
     Ok(())
 }
@@ -1140,7 +1241,8 @@ pub(crate) fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, de
     r.begin_coop_shadow_frame(g.player.center());
     r.weather_shelter = 1.0;
     g.configure_crew_render_view(crate::lan::LanRole::Gunner, true, r);
-    r.set_active_view(0);
+    // As the live loop: the optic on its own eye, the interior on the cabin eye (view 0).
+    r.set_active_view(crate::renderer::OPTIC_EYE_VIEW);
     r.render_optic_snapshot(device, queue);
     let (eye, forward, fov) = g.gunner_interior_camera();
     r.camera.pos = eye;
@@ -1151,7 +1253,7 @@ pub(crate) fn eyepiece_frame(g: &mut Game, r: &mut crate::renderer::Renderer, de
     r.reticle = false;
     r.optic_mask = 4.0;
     g.configure_crew_render_view(crate::lan::LanRole::Gunner, false, r);
-    r.set_active_view(3);
+    r.set_active_view(0);
     r.rt_skip = true;
     r.set_coop_shadow_reuse(true);
     let result = match capture {
