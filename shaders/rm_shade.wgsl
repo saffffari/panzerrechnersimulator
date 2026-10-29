@@ -141,6 +141,17 @@ const RM_AO_BLEND: f32 = 0.15;
 // new bounce estimate may not exceed RM_GATHER_CAP times that history's luminance.
 const RM_GATHER_BLEND: f32 = 0.2;
 const RM_GATHER_CAP: f32 = 2.0;
+// Firefly clamp on the open shares too (2026-10-28 evening): a new estimate may not exceed
+// RM_SHARE_CAP times the same-surface history's share plus RM_SHARE_FLOOR. In a nearly closed
+// compartment (the driver's, the radio operator's) a pixel whose one or two rays found a gap to
+// the open sky took sky light at full share; blended in at 15-20 % and spread by the 3 x 3 mean it
+// left soft olive blobs (ivory paint under a blue sky) that kept appearing across the walls and
+// floor ("these weird green splotches keep dotting the surface"). Where the share is genuinely
+// open the history rises to it at least 1.3 times a frame; the clamp biases a share of 0.3 by
+// under 2 % (two rays a frame).
+const RM_SHARE_CAP: f32 = 3.0;
+const RM_SHARE_FLOOR: f32 = 0.02;
+fn share_clamped(fresh: f32, held: f32) -> f32 { return min(fresh, RM_SHARE_CAP * held + RM_SHARE_FLOOR); }
 // Width of the paint worn through along an edge (an estimate), for the worn-edge share of a pixel.
 const RM_WORN_STRIP_M: f32 = 0.012;
 // shares: this texel's (rays open, screen open, contact ao, eye distance); local_*: the same-surface
@@ -196,7 +207,7 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
         if (rm_ray_open(origin, d, RM_AO_RANGE_M)) { open += 1.0; }
     }
     let fresh = open / f32(rays);
-    return select(fresh, mix(history.local_shares.x, fresh, RM_AO_BLEND), history.valid);
+    return select(fresh, mix(history.local_shares.x, share_clamped(fresh, history.local_shares.x), RM_AO_BLEND), history.valid);
 }
 
 // Optical depth through the froxel medium between a surface point and a lamp.
@@ -415,7 +426,7 @@ fn fs(in: VsOut) -> ShadeOut {
         let history = shade_history(world, motion);
         var gather = fresh_gather;
         if (history.valid) {
-            gather.open = mix(history.local_shares.y, fresh_gather.open, RM_GATHER_BLEND);
+            gather.open = mix(history.local_shares.y, share_clamped(fresh_gather.open, history.local_shares.y), RM_GATHER_BLEND);
             gather.ao = mix(history.shares.z, fresh_gather.ao, RM_GATHER_BLEND);
             var irradiance = fresh_gather.irradiance;
             let cap = RM_GATHER_CAP * luminance(history.local_bounce) + 1.0e-7;

@@ -127,6 +127,7 @@ mod grass;
 mod infantry;
 mod infantry_combat;
 mod interior_rig;
+mod lamp_mounts;
 mod lan;
 mod net_ifaces;
 mod lan_crew_proof;

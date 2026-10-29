@@ -8,7 +8,7 @@ use crate::{
     graphics, world,
 };
 use anyhow::Context;
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use std::fs;
 
 const TIGER: Vec2 = Vec2::new(-450.0, -410.0);
@@ -86,6 +86,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("t34") { return run_t34(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("optics") { return run_optics(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("vehicles") { return run_vehicles(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("dial") { return run_dial(prefix); }
+    if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("sky") { return run_sky_live(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("clouds") { return run_clouds(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("shafts") { return run_shafts(prefix); }
     if std::env::var("KESSEL_SHOWCASE_SET").as_deref() == Ok("snow") { return run_snow(prefix); }
@@ -503,6 +505,172 @@ fn run_occlusion(prefix: &str) -> anyhow::Result<()> {
         "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
         "ray_queries_off": std::env::var("KESSEL_RM_SKIP").ok().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v & 32768 != 0),
         "disclosure": "Staged fixture (banished enemies, held fire). Clear noon, sky clock pinned. Observer and station cameras. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=dial`: the cabin's instruments as the crew see them at noon, hatch shut:
+/// the commander's post (the gunner's sight eyepiece below the cupola); the gunner at the sight
+/// (the eyepiece composite, the TPZ beside the circle) with the TPZ needle drawn 3.5, 4.5 and 6 mm
+/// wide; the TPZ from the gunner's head; the composite at night.
+fn run_dial(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_commander.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    rig.clock(&mut r, "1942-12-21T12:00:00Z")?;
+    r.day_night_cycle = false;
+    r.sky_time_scale = 0.0;
+    g.station = Station::Commander;
+    g.commander_outside = false;
+    g.hatch_open = false;
+    rig.station_camera();
+    step(&mut g, &mut r, 60, &idle);
+    rig.still(&mut r, "commander", "the commander's post at noon, hatch shut: the gunner's sight eyepiece below")?;
+    // Each crewman's lamps on their plinths (`lamp_mounts`), from his own eye: the commander's
+    // sight lamps, the loader's annunciators, the driver's ignition lamp; then the commander's
+    // with the cabin lights switched off.
+    let tm = g.player.turret_model();
+    let hm = g.player.hull_model();
+    let at = |frame: Mat4, mount: crate::lamp_mounts::Mount, along: f32| frame.transform_point3(mount.lamp(0.005, along).transform_point3(Vec3::ZERO));
+    let lamps = [
+        (Station::Commander, "commander_lamps", at(tm, crate::lamp_mounts::SIGHT[1][0].0, 0.0), 35.0,
+            "the commander's sight lamps on their plinths, under his front vision block"),
+        (Station::Loader, "loader_annunciators", at(tm, crate::lamp_mounts::ANNUNCIATORS[1].0, 0.04) - tm.transform_vector3(Vec3::Y) * 0.015, 45.0,
+            "the annunciators (fire, breech, repair, station) on the turret wall at the loader's side"),
+        (Station::Driver, "driver_ignition", at(hm, crate::lamp_mounts::IGNITION, 0.0), 45.0,
+            "the driver's ignition lamp on his panel"),
+    ];
+    for (station, name, target, fov, note) in lamps {
+        g.station = station;
+        rig.station_camera();
+        step(&mut g, &mut r, 20, &idle);
+        let eye = r.camera.pos;
+        r.camera.set_forward(target - eye);
+        r.camera.fov_y = (fov as f32).to_radians();
+        r.reticle = false;
+        rig.still(&mut r, name, note)?;
+    }
+    g.station = Station::Commander;
+    g.set_cabin_lights(false);
+    rig.station_camera();
+    step(&mut g, &mut r, 20, &idle);
+    let eye = r.camera.pos;
+    r.camera.set_forward(lamps[0].2 - eye);
+    r.camera.fov_y = 35f32.to_radians();
+    r.reticle = false;
+    rig.still(&mut r, "commander_lamps_off", "the same, the cabin lights switched off: unlit cubes")?;
+    g.set_cabin_lights(true);
+    rig.station_camera();
+    g.station = Station::Gunner;
+    step(&mut g, &mut r, 60, &idle);
+    let (cw, ch) = (rig.cw, rig.ch);
+    for (mm, name) in [(3.5f32, "gunner_needle_3_5mm"), (4.5, "gunner_needle_4_5mm"), (6.0, "gunner_needle_6mm")] {
+        crate::game::debug_set_tpz_needle_width(mm * 0.001);
+        step(&mut g, &mut r, 4, &idle);
+        let path = format!("{prefix}_{name}.png");
+        eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, cw, ch)))?;
+        rig.shots.push(serde_json::json!({ "name": name, "path": path, "needle_width_mm": mm,
+            "note": "the gunner at the sight: the eyepiece composite, the TPZ beside the circle" }));
+    }
+    crate::game::debug_set_tpz_needle_width(0.0);
+    step(&mut g, &mut r, 4, &idle);
+    let (eye, _, _) = g.gunner_interior_camera();
+    let dial = g.player.turret_model().transform_point3(crate::interior_rig::TPZ_NEEDLE_POS);
+    r.camera.pos = eye;
+    r.camera.set_forward(dial - eye);
+    r.camera.fov_y = 40f32.to_radians();
+    r.optic_mask = 0.0;
+    r.reticle = false;
+    rig.still(&mut r, "tpz_close", "the TPZ from the gunner's head by the cabin lamps, the needle at its drawn width")?;
+    rig.clock(&mut r, "1942-12-21T19:00:00Z")?;
+    step(&mut g, &mut r, 40, &idle);
+    let path = format!("{prefix}_gunner_night.png");
+    eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, cw, ch)))?;
+    rig.shots.push(serde_json::json!({ "name": "gunner_night", "path": path, "note": "the gunner at the sight at night, by the cabin lamps" }));
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.dial.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
+        "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies, held fire). Clock pinned at noon, then 19:00. The game's station cameras; one camera aimed at the TPZ from the gunner's eye. No image grading."
+    }))?)?;
+    Ok(())
+}
+
+/// `KESSEL_SHOWCASE_SET=sky`: the sky as played, at the preset `KESSEL_GRAPHICS_PRESET` names (Low,
+/// High or Ultra; High by default): live frames with the sky's clock running at the game's rate,
+/// so the sky cache refreshes phase by phase as it does in play (no history reset, no convergence),
+/// from beside the Tiger: toward the Sun and away from it, at the horizon and 25 degrees up, in
+/// clear sky, dry overcast and the act's own weather.
+fn run_sky_live(prefix: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_act_sun_horizon.png")).exists(),
+        "preserving existing showcase; choose a new prefix");
+    let manifest = crate::canyon::manifest_path();
+    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    let preset = match std::env::var("KESSEL_GRAPHICS_PRESET").as_deref() {
+        Ok("low") => graphics::GraphicsPreset::Low, Ok("ultra") => graphics::GraphicsPreset::Ultra, _ => graphics::GraphicsPreset::High };
+    graphics::set_active_preset(preset);
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3, shots: Vec::new(), observer: None };
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.debug_hold_enemy_fire();
+    g.targets_only = true;
+    g.debug_place_tiger(TIGER, 0.0);
+    let idle = TankInput::default();
+    // `KESSEL_SKY_CLOCK` sets another start (UTC), e.g. dusk or night.
+    let start = std::env::var("KESSEL_SKY_CLOCK").unwrap_or_else(|_| "1942-12-21T10:30:00Z".into());
+    rig.clock(&mut r, &start)?;
+    r.day_night_cycle = true;
+    r.sky_time_scale = 1.0;
+    let eye = g.player.pos + Vec3::Y * 2.2 - g.player.forward() * 6.0;
+    for (wname, weather) in [("act", None), ("overcast", None), ("clear", Some(0.0f32))] {
+        r.set_weather_override(weather);
+        let dry_overcast = wname == "overcast";
+        for (view, toward_sun, up_deg) in [("sun_horizon", true, 4.0f32), ("sun_up", true, 25.0), ("away_horizon", false, 4.0), ("away_up", false, 25.0)] {
+            let sun = r.sun_dir.normalize_or_zero();
+            let flat = Vec3::new(sun.x, 0.0, sun.z).normalize_or_zero() * if toward_sun { 1.0 } else { -1.0 };
+            let dir = (flat * up_deg.to_radians().cos() + Vec3::Y * up_deg.to_radians().sin()).normalize();
+            rig.observe(&mut r, eye, eye + dir * 10.0, 70.0);
+            // Live: every frame simulated, the clock running, the cache refreshed phase by phase.
+            for _ in 0..90 {
+                g.update(&idle, 1.0 / 60.0, &mut r);
+                if dry_overcast { r.overcast = 0.82; r.storm = 0.0; r.fog_density = 0.0009; r.precipitation = 0.0; }
+                rig.view(&mut r, eye, eye + dir * 10.0, 70.0);
+                r.render_offscreen(&device, &queue);
+            }
+            g.update(&idle, 1.0 / 60.0, &mut r);
+            if dry_overcast { r.overcast = 0.82; r.storm = 0.0; r.fog_density = 0.0009; r.precipitation = 0.0; }
+            rig.view(&mut r, eye, eye + dir * 10.0, 70.0);
+            let name = format!("{wname}_{view}");
+            let path = format!("{prefix}_{name}.png");
+            r.render_to_png(&device, &queue, &path, rig.cw, rig.ch)?;
+            rig.shots.push(serde_json::json!({ "name": name, "path": path, "clock_utc": r.sky_clock.now().to_iso(),
+                "overcast": r.overcast, "storm": r.storm, "precipitation": r.precipitation,
+                "raymarch": r.raymarch_stats().map(|s| format!("{s:?}")) }));
+        }
+    }
+    let _ = step;
+    fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "panzer.raymarch-showcase.sky.v1", "manifest": manifest, "adapter": adapter.get_info().name,
+        "preset": format!("{preset:?}"), "renderer": format!("{:?}", graphics::renderer_backend()),
+        "internal_resolution": [r.iw, r.ih], "output_resolution": [rig.cw, rig.ch], "shots": rig.shots,
+        "disclosure": "Staged fixture (banished enemies, held fire). Live frames, the sky clock running at the game's rate from 10:30. Observer camera. No image grading."
     }))?)?;
     Ok(())
 }

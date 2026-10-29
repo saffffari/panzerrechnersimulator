@@ -9,6 +9,7 @@
 struct SkyCacheParams {
     dims: vec4<f32>,      // width, height, 1/width, 1/height
     window: vec4<f32>,    // elevation min rad, elevation span rad, phase (= count: all), phase count
+    seed: vec4<f32>,      // x: the refresh's number (a new cloud jitter each refresh)
 };
 @group(2) @binding(0) var<uniform> sky_cache: SkyCacheParams;
 
@@ -47,7 +48,11 @@ fn fs_cache(in: VsOut) -> @location(0) vec4<f32> {
     clear.cloud_top_lwc_radius_coverage.w = 0.0;
     let transport = physical_environment_transport(clear, cam.cam_pos, direction, PHYSICAL_ENV_INFINITY_M);
     let background = transport.inscattered_radiance;
-    let clouds = march_clouds(cam.cam_pos, direction, vec2<f32>(texel), background);
+    // A new jitter each refresh; the pass blends the texel's marches (renderer_raymarch.rs
+    // `SKY_CACHE_BLEND`), so their noise averages instead of freezing into the cache: one march's
+    // jitter at Low's 12 steps left a fixed blotchy band of cloud along the horizon and round the
+    // Moon (2026-10-28, "the sky has these weird stripes in it").
+    let clouds = march_clouds(cam.cam_pos, direction, vec2<f32>(texel) + vec2(0.0, sky_cache.seed.x * sky_cache.dims.y), background);
     // The stars are drawn per pixel by the shade pass (rm_shade.wgsl rm_pixel_star), one native
     // pixel each; the discs are analytic. The cache holds the sky between them.
     return vec4(background * clouds.transmittance + clouds.radiance, clouds.transmittance);

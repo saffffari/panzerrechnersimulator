@@ -379,6 +379,9 @@ const TIGER_PAINTED_NODES: &[&str] = &[
     "Gun_0001", "Gun_0007", "Gun_0008", "cupola hatch disc.001",
 ];
 
+/// The instrument dials' black enamel face (`tiger_paint_finish`): about 2 % diffuse reflectance.
+pub(crate) const DIAL_FACE_SRGB: [f32; 3] = [40.0, 40.0, 40.0];
+
 pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
     // The cabin is the historical ivory (Elfenbein, RAL 1001, sRGB 205/186/136, a common conversion
     // of the swatch, not a measured surviving interior), the owner's request of 2026-10-28 ("tank
@@ -397,6 +400,21 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
             base: [linear(rgb[0]), linear(rgb[1]), linear(rgb[2]), 1.0],
             metallic,
             roughness,
+        });
+    }
+    // The instrument dials (the TPZ beside the gunner, the driver's gauges; source material
+    // "Illuminated Dial", an untextured white at 0.8): black enamel faces, as German instrument
+    // dials of the period were and as the surviving Bovington TPZ keeps its original black paint
+    // (tiger1.info, "Traverse clock"). The white face, lit head-on by the dome lamp a metre off,
+    // was the brightest surface in the cabin (owner feedback 2026-10-28: "this dial is fucking too
+    // bright, it's like the sun inside the tank"). Named approximation: the face carries no
+    // numerals (the source has no texture); the red needle reads against it.
+    if material == Some("Illuminated Dial") {
+        return Some(crate::gltf_load::MaterialOverride {
+            swatch: 5,
+            base: [linear(DIAL_FACE_SRGB[0]), linear(DIAL_FACE_SRGB[1]), linear(DIAL_FACE_SRGB[2]), 1.0],
+            metallic: 0.0,
+            roughness: 0.45,
         });
     }
     if material != Some("Material.001") { return None; }
@@ -1263,9 +1281,12 @@ mod tests {
         }
         for node in ["Breech", "Gun_0035", "TURRET FLOOR", "Turret_0088", "unknown replacement panel"] {
             assert!(tiger_paint_finish(node, Some("Material.001")).is_none());
-            for material in ["Illuminated Dial", "dial red", "seats_black", "brass", "glass"] {
+            for material in ["dial red", "seats_black", "brass", "glass"] {
                 assert!(tiger_paint_finish(node, Some(material)).is_none());
             }
+            let dial = tiger_paint_finish(node, Some("Illuminated Dial")).unwrap();
+            assert_eq!((dial.swatch, dial.metallic), (5, 0.0), "instrument faces are black enamel");
+            assert!(dial.base[0] < 0.03, "a dial face is not a lamp: {:?}", dial.base);
         }
         let floor = tiger_paint_finish("TURRET FLOOR", Some("Turret Floor")).unwrap();
         assert_eq!(floor.swatch, 2);
@@ -1282,7 +1303,7 @@ mod tests {
             assert_eq!(m.swatch,3,"rough track steel {node}");assert!(m.roughness>=0.9);
         }
         for node in exterior_finishes::PAINTED.iter().chain(exterior_finishes::TRACK_STEEL) {
-            for material in ["Illuminated Dial","glass","brass","seats_black"] {
+            for material in ["glass","brass","seats_black"] {
                 assert!(tiger_paint_finish(node,Some(material)).is_none());
             }
         }
@@ -1340,6 +1361,7 @@ mod tests {
                         2 => [58, 70, 64, 255],
                         3 => [58, 58, 56, 255],
                         4 => [73, 72, 68, 255],
+                        5 => [40, 40, 40, 255],
                         _ => panic!("unreviewed Tiger finish"),
                     };
                     assert_eq!(actual.0, expected, "{part}: selected finish must keep its own swatch");

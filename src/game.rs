@@ -7681,8 +7681,37 @@ const LEVER_OPEN: f32 = 0.8; // open enough to work the breech
 const LEVER_SHUT: f32 = 0.15; // closed enough to fire
 
 /// One state drives both the visible reload lamp and its point light.
-/// The TPZ needle's width in the dial's plane against its source bar (1 cm): 2.5 mm, a needle.
-const TPZ_NEEDLE_WIDTH_SCALE: f32 = 0.25;
+/// The TPZ needle's source bar is 1 cm wide (read as a bar, "too wide"); drawn 2.5 mm it fell
+/// under a pixel at 480x270 from the gunner's seat ("too thin", 2026-10-28). Drawn at
+/// `TPZ_NEEDLE_WIDTH_M` in the dial's plane: about 1.5 pixels at 480x270 and 2.5 at 800x450 from
+/// the gunner's eye.
+const TPZ_NEEDLE_SOURCE_WIDTH_M: f32 = 0.01;
+const TPZ_NEEDLE_WIDTH_M: f32 = 0.0045;
+/// A review override of the needle's width in metres (`raymarch-showcase` `tpz`); 0 = none.
+static TPZ_NEEDLE_WIDTH_REVIEW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub(crate) fn debug_set_tpz_needle_width(width_m: f32) {
+    TPZ_NEEDLE_WIDTH_REVIEW.store(width_m.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+fn tpz_needle_width_scale() -> f32 {
+    let review = f32::from_bits(TPZ_NEEDLE_WIDTH_REVIEW.load(std::sync::atomic::Ordering::Relaxed));
+    (if review > 0.0 { review } else { TPZ_NEEDLE_WIDTH_M }) / TPZ_NEEDLE_SOURCE_WIDTH_M
+}
+
+/// The cabin lamps' plinths (`Slots::lamp_plinths`): dome, four annunciators, two breech lamps,
+/// the sight's loading and round lamps at two stations, the ignition lamp.
+const LAMP_PLINTHS: usize = 12;
+/// The half size of the lamp plinth `i` stands under.
+fn lamp_plinth_half_size(i: usize) -> f32 {
+    use crate::interior_rig as rig;
+    match i {
+        0 => rig::DOME_FIXTURE.half_size_m,
+        1..=4 => rig::ANNUNCIATOR_FIXTURES[i - 1].half_size_m,
+        5 | 6 => rig::BREECH_FIXTURES[0].half_size_m,
+        7 | 9 => rig::SIGHT_LOAD_FIXTURES[0].half_size_m,
+        8 | 10 => rig::SIGHT_ROUND_FIXTURES[0].half_size_m,
+        _ => rig::IGNITION_FIXTURE.half_size_m,
+    }
+}
 
 /// The sight lamps' lenses in slot order: ready, working, armour-piercing, APCR, high explosive.
 fn sight_lamp_fixture(k: usize) -> crate::interior_rig::FiniteCubeLamp {
@@ -7732,7 +7761,6 @@ const TOOLBOX_MESH: Vec3 = Vec3::new(0.02, 0.88, -1.02);
 // Two matching BREECH LAMPS (user design), one on each side of the block.
 // GREEN = loaded & lever shut (ready) / ORANGE = lever open (reloading) / RED = shut on a
 // spent case (or empty) — the reload cycle readable at a glance from anywhere in the turret.
-const BREECH_LAMP_POSITIONS: [Vec3;2] = [Vec3::new(0.20,0.12,-0.92),Vec3::new(-0.20,0.12,-0.92)];
 const RAM_REACH: f32 = 1.55; // m — arm's reach to the authored tray mouth; crosshair gate does precision
 
 fn gun_lever_model(gun_model: Mat4, lever_open: f32) -> Mat4 {
@@ -7821,8 +7849,9 @@ mod breech_geometry_tests {
         }
         for pitch in [-0.14_f32,0.0,0.26] {
             let gun=Mat4::from_rotation_y(0.72)*Mat4::from_rotation_x(pitch);
-            let [a,b]=BREECH_LAMP_POSITIONS.map(|p|gun.transform_point3(p));
-            assert!((a.distance(b)-0.4).abs()<1e-5);
+            // The breech lamps on their plinths, one each side of the guard (`lamp_mounts::BREECH`).
+            let [a,b]=crate::lamp_mounts::BREECH.map(|m|gun.transform_point3(m.lamp(0.01,0.0).transform_point3(Vec3::ZERO)));
+            assert!((a.distance(b)-(0.1804+0.1893+2.0*0.016)).abs()<1e-5);
         }
     }
 
@@ -8642,6 +8671,10 @@ struct Slots {
     annun: [usize; N_LAMP], // interior annunciator lamps (fire/breech/repair/station)
     breech_lamp: [[usize; 3];2], // both sides: [green, amber, red], one active lens each
     sight_lamps: [[usize; 5]; 2], // gunner's sight, commander's cupola: [ready, working, AP, APCR, HE]
+    ignition_lamp: usize,   // the driver's ignition lamp, a finite cube on his panel
+    /// Each cabin lamp's plinth (`lamp_mounts`): dome, the four annunciators, the two breech lamps,
+    /// the sight's loading and round lamps (gunner, commander), the ignition lamp.
+    lamp_plinths: [usize; LAMP_PLINTHS],
     lan_crew: [usize; 5], // seated living body pool (permanent face identity slots)
     commander_crew: [usize; 5], // upright counterpart for each identity taking the cupola
     crew_helmet: [usize; 5], // source CC0 steel helmet, shared geometry/material, head-attached
@@ -9106,6 +9139,9 @@ fn story_sites(act: u8) -> &'static [(crate::campaign::StorySiteId, f32, f32)] {
 
 pub struct Game {
     pub hand_torch_on: bool,
+    /// The cabin lights' switch: off, every cabin lamp is an unlit cube and emits nothing
+    /// (`set_cabin_lights`).
+    cabin_lights: bool,
     pub(crate) cigarettes:crate::cigarette::State,
     personal_primary_guard:bool,
     hand_props:Option<crate::hand_prop_models::HandProps>,
@@ -11588,6 +11624,15 @@ impl Game {
                 Vec3::splat(fixture.half_size_m), fixture.srgb));
             slot
         }));
+        let ignition_lamp = scene.len();
+        let ignition = crate::interior_rig::IGNITION_FIXTURE;
+        scene.push(box_mesh(Vec3::splat(-ignition.half_size_m), Vec3::splat(ignition.half_size_m), ignition.srgb));
+        // Every lamp stands on a squat plinth on a flat face of the tank (`lamp_mounts`).
+        let lamp_plinths: [usize; LAMP_PLINTHS] = std::array::from_fn(|i| {
+            let slot = scene.len();
+            scene.push(crate::lamp_mounts::plinth_mesh(lamp_plinth_half_size(i)));
+            slot
+        });
 
         // Full textured crew bodies live before the legacy FX tail. Each of the five original
         // assignments owns one permanent face identity and both a seated and standing pose slot.
@@ -12082,6 +12127,8 @@ impl Game {
             annun,
             breech_lamp,
             sight_lamps,
+            ignition_lamp,
+            lamp_plinths,
             lan_crew,
             commander_crew,
             crew_helmet,
@@ -12679,17 +12726,15 @@ impl Game {
         // NOT emissive: the bottle already got the sanctioned signal-red albedo remap at load.
         // The old own-emissive glow stacked on top of that made it the brightest
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
-        // The breech's reload lamps and the sight's paired loading and round lamps are indicator
-        // faces with no bezel (owner feedback 2026-10-28: "whats up with these lights they now have
-        // metal borders?").
+        // Every cabin lamp is a uniformly lit cube on its plinth, no bezel, frame or lens profile
+        // (owner feedback 2026-10-28: "a fully lit cube, uniformly emissive, with no border").
         for s in breech_lamp.into_iter().flatten() {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
-            renderer.mark_lamp_face(s);
         }
         for s in sight_lamps.into_iter().flatten() {
             renderer.mark_own_emissive(s);
-            renderer.mark_lamp_face(s);
         }
+        renderer.mark_own_emissive(ignition_lamp);
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
         let authored_grass_mask = manifest.as_ref().and_then(|m|
             m.value()["terrain"]["ground_class"].as_str()).map(str::to_owned);
@@ -12948,10 +12993,6 @@ impl Game {
         // with their authored amber / white-grey instead of the FX orange. The bulb's mesh and
         // transported power are driven together; snow puffs sit idle until a near-miss arms one.
         renderer.mark_own_emissive(slots.bulb);
-        // The cabin's lamps draw as lenses in their housings; the dome lamp behind a wire cage.
-        renderer.mark_lamp_lens(slots.bulb, true);
-        // The annunciators are indicator faces, no bezel (owner feedback 2026-10-28).
-        for &s in &slots.annun { renderer.mark_lamp_face(s); }
         renderer.set_visible(slots.bulb, false);
         // The Enigma is an ordinary textured PBR object attached to the hull; it emits no light and
         // joins the same ray scene as the surrounding radio rack. The glasses are camera-local
@@ -13321,6 +13362,7 @@ impl Game {
         let living_wounds=living_crew_wounds::LivingWounds::allocate(device,queue,&mut renderer);
         let enemy_crew = enemy_crew::Aftermath::allocate(device, queue, &mut renderer);
         let mut game = Game {
+            cabin_lights: true,
             hf,
             player,
             act: act.clone(),
@@ -18843,11 +18885,11 @@ impl Game {
         r.set_emissive(self.slots.turret_disc, 0.0);
         // TPZ needle: 1:1 turret bearing, about the dial-face axis (from the backing's transform).
         let tpz_axis = driver_panel::tpz_axis();
-        // The source needle is a 1 cm bar, which read as a bar at 800x450: it is drawn 2.5 mm
-        // wide in the dial's plane; its stand-off from the face is unchanged (2026-10-28).
+        // The source needle is a 1 cm bar: it is drawn `TPZ_NEEDLE_WIDTH_M` wide in the dial's
+        // plane; its stand-off from the face is unchanged (2026-10-28).
         let width = Vec3::Y.cross(tpz_axis).normalize();
         let thin = glam::Mat3::IDENTITY
-            - glam::Mat3::from_cols(width * width.x, width * width.y, width * width.z) * (1.0 - TPZ_NEEDLE_WIDTH_SCALE);
+            - glam::Mat3::from_cols(width * width.x, width * width.y, width * width.z) * (1.0 - tpz_needle_width_scale());
         r.set_model(
             self.slots.tpz_needle,
             tm * Mat4::from_translation(rig::TPZ_NEEDLE_POS)
@@ -19347,17 +19389,31 @@ impl Game {
         // their reach; the camera/mode cannot add or remove energy.
         {
             use crate::interior_rig::{self as rig, Frame};
-            let practical_gain = rig::cabin_practical_gain(r.shader_backend);
+            use crate::lamp_mounts::{self as mounts, MountFrame};
+            // The cabin lights' switch (`set_cabin_lights`): off, every lamp is an unlit cube and
+            // its light is zero.
+            let power = if self.cabin_lights { 1.0 } else { 0.0 };
+            let practical_gain = rig::cabin_practical_gain(r.shader_backend) * power;
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
+            let gm = self.player.visual_gun_model();
+            let frame_model = |frame| match frame { MountFrame::Hull => hm, MountFrame::Turret => tm, MountFrame::Gun => gm };
+            // Each lamp's plinth rides with its lamp, on the face it stands on (`lamp_mounts`).
+            let plinths = self.slots.lamp_plinths;
+            let plinth = |r: &mut Renderer, i: usize, mount: mounts::Mount, along: f32, visible: bool| {
+                r.set_visible(plinths[i], visible);
+                r.set_emissive(plinths[i], 0.0);
+                r.set_model(plinths[i], frame_model(mount.frame) * mount.plinth(along));
+            };
             // Stable identities: dome, TPZ, ignition, fire/breech/repair/station, ready lamp.
             // Preserve zero-output status slots in this list; source power never selects geometry.
             let mut shadowed_cabin_lights = Vec::with_capacity(8);
             let mut emitting_meshes = Vec::with_capacity(8);
             let dome = Self::drive_finite_lamp(r, self.slots.bulb,
-                tm * Mat4::from_translation(rig::TURRET_DOME_LAMP_POS),
+                tm * mounts::DOME.lamp(rig::DOME_FIXTURE.half_size_m, 0.0),
                 rig::DOME_FIXTURE.sample(rig::dome_lamp_state(self.stealth.t) * practical_gain));
-            lights.push(dome);
+            plinth(r, 0, mounts::DOME, 0.0, true);
+            if dome.radiant_intensity > 0.0 { lights.push(dome); }
             shadowed_cabin_lights.push(dome);
             emitting_meshes.push(Some(self.slots.bulb));
             for &(frame, pos, color, radiant_intensity, source_radius) in rig::LAMPS {
@@ -19369,18 +19425,27 @@ impl Game {
                     color,
                     radiant_intensity: radiant_intensity * practical_gain,
                 };
-                lights.push(light);
+                if light.radiant_intensity > 0.0 { lights.push(light); }
                 shadowed_cabin_lights.push(light);
-                emitting_meshes.push(None); // TPZ/ignition emitting surfaces are not yet registered.
+                emitting_meshes.push(None); // the TPZ's illuminator sits inside the instrument.
             }
+            // The driver's ignition lamp, in the list's ignition place.
+            let ignition = Self::drive_finite_lamp(r, self.slots.ignition_lamp,
+                hm * mounts::IGNITION.lamp(rig::IGNITION_FIXTURE.half_size_m, 0.0),
+                rig::IGNITION_FIXTURE.sample(practical_gain));
+            plinth(r, LAMP_PLINTHS - 1, mounts::IGNITION, 0.0, true);
+            if ignition.radiant_intensity > 0.0 { lights.push(ignition); }
+            shadowed_cabin_lights.push(ignition);
+            emitting_meshes.push(Some(self.slots.ignition_lamp));
 
             // Status colour, pulse and emitting area come from the same finite visible cube.
             // Inverse-square transport has no authored distance cutoff; visibility owns its reach.
             for (i, emissive) in self.annunciator_emissives().into_iter().enumerate() {
-                let local = Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72);
+                let (mount, along) = mounts::ANNUNCIATORS[i];
                 let lamp = Self::drive_finite_lamp(r, self.slots.annun[i],
-                    tm * Mat4::from_translation(local),
+                    tm * mount.lamp(rig::ANNUNCIATOR_FIXTURES[i].half_size_m, along),
                     rig::ANNUNCIATOR_FIXTURES[i].sample(emissive * practical_gain));
+                plinth(r, 1 + i, mount, along, true);
                 shadowed_cabin_lights.push(lamp);
                 emitting_meshes.push(Some(self.slots.annun[i]));
                 if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
@@ -19390,12 +19455,15 @@ impl Game {
             // inverse-square transport. No camera fill or unshadowed interior light.
             let state = self.breech_lamp_state();
             for (side, lamps) in self.slots.breech_lamp.iter().enumerate() {
-                let model=self.player.visual_gun_model()*Mat4::from_translation(BREECH_LAMP_POSITIONS[side]);
+                let mount = mounts::BREECH[side];
+                plinth(r, 5 + side, mount, 0.0, true);
                 for (k,&slot) in lamps.iter().enumerate() {
                     if k==state {
+                        let model = gm * mount.lamp(rig::BREECH_FIXTURES[k].half_size_m, 0.0);
                         let lamp=Self::drive_finite_lamp(r,slot,model,
                             rig::BREECH_FIXTURES[k].sample(practical_gain));
-                        lights.push(lamp); shadowed_cabin_lights.push(lamp);
+                        if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
+                        shadowed_cabin_lights.push(lamp);
                         emitting_meshes.push(Some(slot));
                     } else {
                         r.set_visible(slot,false);r.set_emissive(slot,0.0);
@@ -19406,15 +19474,19 @@ impl Game {
             // other lens shown dark. Real emitters in the light list at lamp power; no shadow cube.
             let (load, round) = self.sight_lamp_states(state);
             for station in 0..2 {
-                let base = self.sight_lamp_frame(station);
+                for (j, &(mount, along)) in mounts::SIGHT[station].iter().enumerate() {
+                    plinth(r, 7 + station * 2 + j, mount, along, sight_lamps_enabled());
+                }
                 for (k, &slot) in self.slots.sight_lamps[station].iter().enumerate() {
-                    // The round lamp sits 3 cm beside the loading lamp.
-                    let model = base * Mat4::from_translation(Vec3::new(if k < 2 { 0.0 } else { 0.03 }, 0.0, 0.0));
+                    // Lenses 0-1 are the loading lamp's, 2-4 the round lamp's.
+                    let (mount, along) = mounts::SIGHT[station][usize::from(k >= 2)];
+                    let model = frame_model(mount.frame) * mount.lamp(sight_lamp_fixture(k).half_size_m, along);
                     let lit = if k < 2 { load == Some(k) } else { round == Some(k - 2) };
                     // The dark lens of each lamp: working (red) and armour-piercing (white) glass.
                     let shown_dark = (k == 1 && load.is_none()) || (k == 2 && round.is_none());
                     if lit {
-                        lights.push(Self::drive_finite_lamp(r, slot, model, sight_lamp_fixture(k).sample(practical_gain)));
+                        let lamp = Self::drive_finite_lamp(r, slot, model, sight_lamp_fixture(k).sample(practical_gain));
+                        if lamp.radiant_intensity > 0.0 { lights.push(lamp); }
                     } else if shown_dark && sight_lamps_enabled() {
                         r.set_visible(slot, true); r.set_emissive(slot, 0.0); r.set_model(slot, model);
                     } else {
@@ -19444,6 +19516,14 @@ impl Game {
     }
 
     pub fn toggle_hand_torch(&mut self) { self.toggle_hand_flashlight(); }
+
+    /// The cabin lights' switch: the dome lamp, the annunciators, the breech, sight and ignition
+    /// lamps and the TPZ's illuminator together. Off, each lamp stays a visible, unlit cube and its
+    /// light is zero. No key is bound; a switch (and its sound) drives this.
+    pub fn set_cabin_lights(&mut self, on: bool) { self.cabin_lights = on; }
+    pub fn cabin_lights_on(&self) -> bool { self.cabin_lights }
+    /// Flip the cabin lights' switch; returns the new state.
+    pub fn toggle_cabin_lights(&mut self) -> bool { self.cabin_lights = !self.cabin_lights; self.cabin_lights }
 
     fn drive_hand_torch(&mut self, r:&mut Renderer) -> Option<PointLight> {
         // A free hand holds it below the eye. Stow for binoculars/sights, carrying ordnance,
@@ -31440,23 +31520,6 @@ impl Game {
     /// Where the sight lamps sit: on a bracket off the sight body beside the gunner's eyepiece,
     /// just left of the binocular field as the eyepiece composite frames it, on the turret-wall
     /// side (the gun's cradle fills the right) (0); and under the commander's front vision block (1).
-    fn sight_lamp_frame(&self, station: usize) -> Mat4 {
-        if station == 0 {
-            let sight = self.sight_model();
-            let (eye, forward, _) = tiger_gunner_sight::interior_camera(sight);
-            let right = forward.cross(sight.transform_vector3(Vec3::Y)).normalize_or_zero();
-            let up = right.cross(forward);
-            Mat4::from_rotation_translation(Quat::from_mat4(&sight).normalize(),
-                eye + forward * 0.30 - right * 0.27 - up * 0.02)
-        } else {
-            let turret = self.player.turret_model();
-            let forward = self.player.turret_forward();
-            let right = forward.cross(turret.transform_vector3(Vec3::Y)).normalize_or_zero();
-            let up = right.cross(forward);
-            Mat4::from_rotation_translation(Quat::from_mat4(&turret).normalize(),
-                self.player.commander_eye() + forward * 0.28 + right * 0.05 - up * 0.12)
-        }
-    }
 
     /// Animate the coaxial / hull MG34 FX: the stroboscopic muzzle-flash flicker at the live port,
     /// the pooled thin/fast tracer streaks (muzzle→impact lerp), and the pooled impact spurts (hot

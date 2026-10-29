@@ -468,6 +468,7 @@ pub fn raster_optic_specs(parts: &[OpticalPart], first_slot: usize) -> anyhow::R
                 entry_corners:corners,entry_outward,
             objective:objective.center(),objective_outward,
             preserve_ray_direction: index < LOADER_INDEX,
+            eyepiece: None,
         })
     }).collect()
 }
