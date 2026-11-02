@@ -94,6 +94,7 @@ mod expedition_medical;
 mod expedition_frontend;
 mod expedition_save_frontend;
 mod expedition_live_review;
+mod expedition_orders_review;
 mod halftrack;
 mod support_camp;
 mod support_camp_capture;
@@ -12083,6 +12084,13 @@ impl WindowState {
     /// The title menu is ordinary desktop UI: release the pointer so the framed window can be
     /// moved, resized, restored, or sent to another monitor. Embodied play owns raw relative mouse
     /// motion, so it captures and hides the pointer again.
+    /// An order was just accepted on the map: stow the map so the written order is held up.
+    fn stow_map_for_order(&mut self) {
+        self.game.set_map_held(false);
+        self.show_map = false;
+        self.set_play_cursor(true);
+    }
+
     fn set_play_cursor(&self, captured: bool) {
         let captured = captured && !self.game.repair_manual.held;
         if captured {
@@ -13360,6 +13368,14 @@ impl WindowState {
                     if let Err(error) = g.begin_expedition_at_camp(&mut r) {
                         eprintln!("[expedition] cannot place fresh commander at camp: {error:#}");
                         return false;
+                    }
+                    // The demo launcher's staged start (--order N [--forward]): the order accepted
+                    // at once, the Tiger on the approach road. Disclosed in the log by the fixture.
+                    if let Some(site) = std::env::var("KESSEL_EXPEDITION_ORDER").ok().and_then(|v| v.parse::<u64>().ok()) {
+                        let forward = std::env::var_os("KESSEL_EXPEDITION_FORWARD").is_some();
+                        if let Err(error) = g.debug_expedition_start_order(site, forward, &mut r) {
+                            eprintln!("[expedition] staged order {site} refused: {error:#}");
+                        }
                     }
                     self.expedition_relief_selected = 0;
                     self.expedition_relief_message.clear();
@@ -15391,7 +15407,12 @@ impl ApplicationHandler for App {
                         KeyCode::PageDown if state.show_map => { state.game.expedition_cycle_order(1); }
                         KeyCode::PageUp if state.show_map => { state.game.expedition_cycle_order(-1); }
                         KeyCode::Enter if state.show_map && state.game.expedition_state().is_some() => {
-                            if let Err(error)=state.game.expedition_accept_order(){eprintln!("[orders] {error:#}");}
+                            match state.game.expedition_accept_order() {
+                                // The map is stowed so the written order is held up and read.
+                                Ok(true) => state.stow_map_for_order(),
+                                Ok(false) => {}
+                                Err(error) => eprintln!("[orders] {error:#}"),
+                            }
                         }
                         KeyCode::PageUp if state.game.repair_manual.held => {
                             state.game.repair_manual.turn(-1);
@@ -15715,8 +15736,13 @@ impl ApplicationHandler for App {
                     return;
                 }
                 // A click folds the held-up mission order (the close mark on its corner; the play
-                if btn.is_pressed() && button == winit::event::MouseButton::Left && state.show_map
-                    && state.game.expedition_map_click(state.map_cursor) { return; }
+                if btn.is_pressed() && button == winit::event::MouseButton::Left && state.show_map {
+                    let was_active = state.game.expedition_order_active();
+                    if state.game.expedition_map_click(state.map_cursor) {
+                        if !was_active && state.game.expedition_order_active() { state.stow_map_for_order(); }
+                        return;
+                    }
+                }
                 // A click folds the held-up mission order (the close mark on its corner; the play
                 // cursor is captured, so the whole click is the mark). It does not also act.
                 if btn.is_pressed() && button == winit::event::MouseButton::Left && !state.show_map
@@ -16834,6 +16860,10 @@ fn main() -> anyhow::Result<()> {
     if early_args.get(1).is_some_and(|arg|arg=="expedition-world-review") {
         let prefix=capture_arg(&early_args,2,"expedition_world_review");
         return game::expedition_world_review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="expedition-orders-review") {
+        let prefix=capture_arg(&early_args,2,"expedition_orders_review");
+        return expedition_orders_review::run(&prefix);
     }
     if early_args.get(1).is_some_and(|arg|arg=="expedition-mission-review") {
         let prefix=capture_arg(&early_args,2,"expedition_mission_review");

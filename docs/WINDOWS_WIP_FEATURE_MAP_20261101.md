@@ -44,7 +44,7 @@ evidence; several have partial code (named in column three).
 | 8 | camp, bodies, locomotion, animation | the weakest area: no locomotion set, no joint limits, no handholds |
 | 9 | fuel, ammunition, stowage, supply missions | fuel cans, ammunition carts started |
 | 10 | 32.768 km streamed theatre, 48 sites, monochrome atlas | 12 km fixed theatre, monochrome map linework started (`map_linework.rs`) |
-| 11 | mission director, frontline, narrative; orders at the radio station | mission sheet (`mission.rs`) exists for the Canyon run; no director |
+| 11 | mission director, frontline, narrative; orders at the radio station | mission sheet (`mission.rs`) exists for the Canyon run; **2026-11-01: every site of The March has an authored three-beat order** (`catalog/expedition_missions.v1.json`, `docs/MISSIONS.md` "The March"); the site templates of this stage's fourth bullet are those twelve sheets; no director beyond the theatre's own order rules |
 
 ## 3. In progress at the cutoff (b58, 31 October 18:13)
 
@@ -82,6 +82,12 @@ The OT-810 is the Czechoslovak post-war Sd.Kfz. 251 derivative; document how it 
 1943 Hanomag (vz. 59 MG to be swapped or hidden). The owner wants: the two roof panel doors as
 working hatches that cargo can be hoisted through, hatches the crew and player operate, and an
 interior to start from, as the fully armoured version (no open-top variant).
+
+- The owner (2026-11-01, after the Canyon playtest): the environment and rubble "looked great";
+  **missions and gameplay on the larger map come before the halftrack**. Done the same day: the
+  twelve authored orders of The March, the map's marks and bearing on the theatre sheet, the
+  order held up on acceptance, the launcher's `--order N --forward` staged start
+  (`tools/launch_demo_20261101.sh --expedition --order 10 --forward`).
 
 ## 6. Proposed overhaul order
 

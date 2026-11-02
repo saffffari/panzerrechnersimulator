@@ -125,6 +125,12 @@ pub enum Completion {
     CampaignObjective(String),
     /// The course run recorded its finish.
     CourseFinished,
+    /// Every guard tank of the sheet's theatre site is dead (the expedition theatre's own record
+    /// of the site's finite garrison; wherever they died).
+    SiteGuardsDown,
+    /// The expedition theatre has credited the sheet's site as secured (its hold clock run out
+    /// with the ground clear, the counterattack beaten, the survivor delivered, the ledger signed).
+    SiteSecured,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -215,6 +221,9 @@ pub struct Beat {
     pub complete: Completion,
     /// The beat also completes once the Tiger has passed this fraction of the course route.
     pub bypass_fraction: Option<f32>,
+    /// The beat also completes once the actor is within this radius of this place (a march beat
+    /// whose turn was never passed is still over when the Tiger stands at the objective).
+    pub bypass_near: Option<(Place, f32)>,
     pub fail: Failure,
     pub open: Vec<Line>,
     pub done: Vec<Line>,
@@ -240,6 +249,10 @@ pub struct Mission {
     /// The crew's own callsign and the net it answers to.
     pub callsign: String,
     pub net: String,
+    /// The expedition theatre site this sheet is the order for (`catalog/expedition_missions.v1.json`).
+    pub site: Option<u64>,
+    /// The small print under the order's title (the unit and the kind of paper).
+    pub heading: Option<String>,
     /// The written order: who you are, the situation, where to and why.
     pub order: Vec<String>,
     pub beats: Vec<Beat>,
@@ -322,6 +335,8 @@ fn beat(value: &serde_json::Value, k: usize) -> anyhow::Result<Beat> {
         "escort" => Completion::Escort,
         "campaign_objective" => Completion::CampaignObjective(text(&c["objective"], &format!("{what}.complete.objective"))?),
         "course_finished" => Completion::CourseFinished,
+        "site_guards_down" => Completion::SiteGuardsDown,
+        "site_secured" => Completion::SiteSecured,
         other => return Err(anyhow!("{what}.complete: unknown kind {other:?}")),
     };
     let fail = match value["fail"]["kind"].as_str() {
@@ -363,12 +378,16 @@ fn beat(value: &serde_json::Value, k: usize) -> anyhow::Result<Beat> {
         consequence: release(&p["consequence"], &format!("{what}.pacing.consequence"))?,
     };
     let bypass_fraction = if value["bypass_fraction"].is_null() { None } else { Some(num(&value["bypass_fraction"], &format!("{what}.bypass_fraction"))?) };
+    let bypass_near = if value["bypass_near"].is_null() { None } else {
+        Some((place(&value["bypass_near"]["at"], &format!("{what}.bypass_near.at"))?,
+            num(&value["bypass_near"]["radius_m"], &format!("{what}.bypass_near.radius_m"))?))
+    };
     Ok(Beat {
         title: text(&value["title"], &format!("{what}.title"))?,
         goal: Goal::parse(value["goal"].as_str().ok_or_else(|| anyhow!("{what}.goal"))?)?,
         at: place(&value["at"], &format!("{what}.at"))?,
         radius_m: num_or(&value["radius_m"], "radius_m", 100.0)?,
-        trigger, complete, bypass_fraction, fail,
+        trigger, complete, bypass_fraction, bypass_near, fail,
         open: lines(&value["lines"]["open"], &format!("{what}.lines.open"))?,
         done: lines(&value["lines"]["done"], &format!("{what}.lines.done"))?,
         bypassed: lines(&value["lines"]["bypassed"], &format!("{what}.lines.bypassed"))?,
@@ -403,6 +422,8 @@ pub fn parse(value: &serde_json::Value, source: &Path) -> anyhow::Result<Mission
         act_id: value["act_id"].as_u64().unwrap_or(1) as u8,
         callsign: value["callsign"].as_str().unwrap_or("Kiebitz").to_owned(),
         net: value["net"].as_str().unwrap_or("Adler").to_owned(),
+        site: value["site"].as_u64(),
+        heading: value["heading"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
         order, beats,
         source: source.to_path_buf(),
     })
@@ -453,6 +474,8 @@ pub struct BeatRun {
     /// Next firing time per cue (mission seconds); `None` once a cue has fired for good.
     pub cue_due: Vec<Option<f32>>,
     pub cue_at: Vec<Vec2>,
+    /// `Beat::bypass_near` resolved on the map.
+    pub bypass_at: Option<Vec2>,
 }
 
 #[derive(Clone, Debug)]
@@ -517,6 +540,10 @@ pub struct Observation {
     pub map_held: bool,
     /// Ground wind (m/s) for the flares and the smoke.
     pub wind: Vec2,
+    /// Expedition theatre: living guard tanks of the sheet's site (`None` without a theatre site).
+    pub site_guards_alive: Option<u32>,
+    /// Expedition theatre: the sheet's site is credited as secured.
+    pub site_secured: bool,
 }
 
 /// What the mission asks the simulation to do.
@@ -550,6 +577,10 @@ pub struct MapGuidance {
 #[derive(Clone, Debug, Default, PartialEq)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Overlay {
+    /// The crew's own callsign (its lines are drawn in the net's second colour).
+    pub callsign: String,
+    /// The small print under the order's title; `None` draws the Kampfgruppe's.
+    pub heading: Option<String>,
     /// The written order while it is held up: title, lines, the first beat's line, alpha.
     pub order: Option<(String, Vec<String>, String, f32)>,
     /// The order folded onto the map: title and lines, drawn while the map is held.
@@ -603,10 +634,14 @@ impl MissionState {
                 let place = match cue { Cue::Flare { at, .. } | Cue::SmokeColumn { at, .. } | Cue::Alert { at, .. } => at };
                 resolve(place).ok_or_else(|| anyhow!("beat {:?}: cue place {:?} not on this map", beat.id, place))
             }).collect::<anyhow::Result<Vec<_>>>()?;
+            let bypass_at = match &beat.bypass_near {
+                Some((place, _)) => Some(resolve(place).ok_or_else(|| anyhow!("beat {:?}: bypass place {:?} not on this map", beat.id, place))?),
+                None => None,
+            };
             beats.push(BeatRun {
                 status: BeatStatus::Pending, bypassed: false, at, started_s: 0.0, ended_s: 0.0, dwell_s: 0.0, nudges: 0,
                 consequence_sent: false, recovered_on_foot: false,
-                cue_due: vec![None; beat.cues.len()], cue_at,
+                cue_due: vec![None; beat.cues.len()], cue_at, bypass_at,
             });
         }
         let fix = resolve(&Place::CourseStart).or_else(|| resolve(&Place::ActSpawn)).unwrap_or(beats[0].at);
@@ -751,10 +786,18 @@ impl MissionState {
             Completion::Escort => obs.live_allies.iter().any(|p| p.distance(run.at) <= beat.radius_m),
             Completion::CampaignObjective(name) => obs.objectives_complete.iter().any(|o| o == name),
             Completion::CourseFinished => obs.course_finished,
+            Completion::SiteGuardsDown => obs.site_guards_alive == Some(0),
+            Completion::SiteSecured => obs.site_secured,
         };
         if met { return true; }
         if let Some(f) = beat.bypass_fraction {
             if obs.route_fraction >= f {
+                self.beats[index].bypassed = true;
+                return true;
+            }
+        }
+        if let (Some((_, radius)), Some(at)) = (&beat.bypass_near, run.bypass_at) {
+            if obs.actor.distance(at) <= *radius {
                 self.beats[index].bypassed = true;
                 return true;
             }
@@ -945,7 +988,7 @@ impl MissionState {
     }
 
     pub fn overlay(&self) -> Overlay {
-        let mut overlay = Overlay::default();
+        let mut overlay = Overlay { callsign: self.mission.callsign.clone(), heading: self.mission.heading.clone(), ..Overlay::default() };
         if let Some(t) = self.order_sheet_s {
             let alpha = ((ORDER_SHEET_MAX_S - t) / 1.5).clamp(0.0, 1.0).min((t / 0.6).clamp(0.0, 1.0));
             let first = self.mission.beats.first().map(|b| format!("1  {}", b.title.to_uppercase())).unwrap_or_default();

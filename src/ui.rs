@@ -2622,7 +2622,7 @@ pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay,
         let ink = [0.16, 0.14, 0.11, 0.95 * a];
         let faded = [0.36, 0.33, 0.27, 0.90 * a];
         r.draw_text_bold(title, 0.5, y + 0.030, 0.022, ink, Align::Center);
-        r.draw_text("Kampfgruppe  ·  Nachhut  ·  schriftlicher Befehl", 0.5, y + 0.062, 0.018, faded, Align::Center);
+        r.draw_text(overlay.heading.as_deref().unwrap_or("Kampfgruppe  ·  Nachhut  ·  schriftlicher Befehl"), 0.5, y + 0.062, 0.018, faded, Align::Center);
         let mut ty = y + 0.108;
         for line in &body {
             if !line.is_empty() { r.draw_text(line, x + 0.03, ty, 0.025, ink, Align::Left); }
@@ -2662,7 +2662,7 @@ pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay,
     for (from, text, alpha) in &overlay.radio {
         let (color, line) = if from.is_empty() {
             ([COL_NOTE[0], COL_NOTE[1], COL_NOTE[2], 0.9 * alpha], text.clone())
-        } else if from.eq_ignore_ascii_case("kiebitz") {
+        } else if from.eq_ignore_ascii_case(&overlay.callsign) {
             ([COL_NET_OWN[0], COL_NET_OWN[1], COL_NET_OWN[2], 0.85 * alpha], format!("{}: {}", from.to_uppercase(), text))
         } else {
             ([COL_NET[0], COL_NET[1], COL_NET[2], 0.95 * alpha], format!("{}: {}", from.to_uppercase(), text))

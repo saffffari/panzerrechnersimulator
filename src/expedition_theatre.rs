@@ -4,6 +4,20 @@ use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 pub const MANIFEST: &str = "assets/worldgen/expedition/the_march_v1/manifest.v1.json";
 pub const SOURCE: &str = include_str!("../catalog/expedition_theatre.v1.json");
+/// The authored order sheets, one `kessel.mission` per site (tools/author_expedition_missions.py).
+pub const MISSIONS: &str = include_str!("../catalog/expedition_missions.v1.json");
+pub const MISSIONS_PATH: &str = "catalog/expedition_missions.v1.json";
+/// Every authored order sheet, parsed.
+pub fn mission_sheets()->Result<Vec<crate::mission::Mission>> {
+ let doc:serde_json::Value=serde_json::from_str(MISSIONS)?;
+ ensure!(doc["schema"].as_str()==Some("kessel.expedition_missions")&&doc["version"].as_u64()==Some(1),"unsupported expedition missions catalog");
+ doc["sheets"].as_array().ok_or_else(||anyhow::anyhow!("sheets must be an array"))?.iter()
+  .map(|v|crate::mission::parse(v,std::path::Path::new(MISSIONS_PATH))).collect()
+}
+/// The authored order for `site`, `None` when the catalog has none for it.
+pub fn mission_sheet(site:u64)->Result<Option<crate::mission::Mission>> {
+ Ok(mission_sheets()?.into_iter().find(|m|m.site==Some(site)))
+}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct Spec { pub schema:String,pub version:u32,pub name:String,pub seed:u64,pub extent_m:f32,pub grid_res:usize,pub camp:[f32;2],pub sites:Vec<Site>,pub roads:Vec<Vec<[f32;2]>>,pub river:River,pub provenance:String }
 #[derive(Clone,Debug,Serialize,Deserialize)]

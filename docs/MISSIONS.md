@@ -141,6 +141,54 @@ route's exit, `Act1ReachWesternExit`). The sheet is enabled at the end of `confi
 the beats read the director's objective credits non-destructively before the front end drains
 them. No radio lines, no cues: marks, the bearing and the order only.
 
+## The March in the same form (1 November 2026)
+
+The expedition theatre (`catalog/expedition_theatre.v1.json`, 12 km, twelve sites) chose its
+orders on the paper map but played each one as a single bare beat ("hold", credited by a campaign
+objective the sheet never observed, finished by the theatre forcing the flag). Since 2026-11-01
+every site has an authored order on the Canyon model: `catalog/expedition_missions.v1.json`,
+written by `tools/author_expedition_missions.py` from the theatre source (re-run it after editing
+either), one `kessel.mission` sheet per site with a `site` field, loaded on acceptance
+(`Game::expedition_accept_order`). The callsigns: the Tiger is `Elster`, the support detail's
+radio is `Stab`. The written order is three lines: who and where (distance and compass point from
+the first camp, the road), what is reported there and what the task is (the theatre's own task
+words), the hold and the stakes. Its small print reads *Unterstützungstrupp · schriftlicher
+Befehl* (the sheet's `heading`).
+
+Three beats per order, and nothing in them spawns, moves or alerts an enemy:
+
+| # | Beat | Goal | Place | Completes | Cues |
+| --- | --- | --- | --- | --- | --- |
+| 1 | The approach | reach | on the road network 700 m short of the site, along the shortest road path from the first camp (a short path puts it at 60 %) | inside 160 m for 1 s, or `bypass_near`: within 350 m of the site itself (the turn never passed, the Tiger at the objective) | none |
+| 2 | Contact: *n* T-34 at the site | destroy | the site | `site_guards_down`: the theatre's record of the site's finite guard tanks, all dead, wherever they fell | rescue sites only: the stranded crewman's white star 3 s after the beat opens, then every 150 s |
+| 3 | Secure / hold / extract / acknowledge | hold (recover for a rescue, reach for the relay) | the site, 100 m | `site_secured`: the theatre's own credit (its hold clock run out with the ground clear, the counterattack beaten, the survivor on a bed, the ledger signed) | none |
+
+The two new completions read the theatre through `Observation::site_guards_alive` and
+`Observation::site_secured` (`Game::expedition_site_observation`); the theatre still closes the
+order itself, and the sheet's last beat closes on the next step with its own words. Each beat
+nudges after 300 s; no beat has a release or a consequence platoon (the theatre's forces are
+finite and authored: a Defence, Bridge or Finale site releases its own counterattack when the
+Tiger stands on the cleared site, which the third beat's open line warns of).
+
+Accepting an order on the map (Enter, or the map's ACCEPT) now stows the map so the written order
+is held up and read; M rereads it on the map, where the order's marks, the position estimate and
+the bearing line are pencilled onto the theatre sheet (`draw_expedition_map`), and the pocket
+compass carries the march bearing. The demo launcher's `--order N` accepts order N at the start;
+`--forward` stands the crewed Tiger on the approach road at the first beat, engine running, facing
+the site, a playtest fixture disclosed in the log (`debug_expedition_start_order`).
+
+The site descriptions in the orders name only what the theatre places: shell carts, fuel cans,
+parts beside the road, the concrete bridges, the dispatch table and its ledger, the stranded
+crewman. The sites have no walls, houses, huts or wrecks yet (the terrain is synthetic and the
+sites are points with guards: `docs/WINDOWS_WIP_FEATURE_MAP_20261101.md`), so the orders do not
+describe any; when the sites are dressed, the prose in `tools/author_expedition_missions.py` and
+the smoke-column cues (a burning wreck at the broken column) follow.
+
+Harness: `expedition-orders-review PREFIX` plays order 10 through on the retained theatre with the
+staged start, the garrison marked dead by fixture and the Tiger stood on the site for the hold,
+checks the beats and the net's lines in order, and writes `PREFIX_{order_at_camp,map_at_camp,order_at_turn,secured}.png`
+and a JSON receipt. CPU: `mission_game::tests::the_march_has_an_authored_order_for_every_site`.
+
 ## Verified by play (27 October 2026, RTX 4090, shader backend)
 
 Unit tests: `cargo test --bin panzerrechnersystem -- mission canyon_director hand_map hand_compass

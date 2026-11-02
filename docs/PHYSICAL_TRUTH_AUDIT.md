@@ -1,8 +1,26 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-01 (the deltaP display look); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The March orders, 2026-11-01 (`catalog/expedition_missions.v1.json`, `docs/MISSIONS.md` "The March")
+
+Authored three-beat orders for the expedition theatre's twelve sites, on the Canyon mission model.
+The beats observe the theatre's own records (`site_guards_down`: the site's finite guard tanks all
+dead; `site_secured`: the theatre's own credit) and say so on the net; no beat releases a platoon,
+alerts an enemy, lights a smoke column or changes a hold, a guard or a counterattack. The one cue
+is the stranded crewman's signal star at the two rescue sites, a modeled emitter of the existing
+flare kind fired at the site. The approach point is derived geometry (700 m short of the site on
+the road network), not a trigger volume: the beat completes by the actor's distance to it, or to
+the site.
+
+Disclosed fixtures, not mechanics: `Game::debug_expedition_start_order(site, forward)` (the demo
+launcher's `--order N --forward`) accepts an order and stands the crewed Tiger on the approach road
+with the engine running, printing `STAGED forward start` to the log; the theatre, its guards and
+its clocks are untouched. `debug_expedition_kill_site_garrison` marks a site's garrison dead for
+the `expedition-orders-review` harness and is named in its receipt. Neither is reachable from the
+shipping menu path.
 
 ## The deltaP display look, 2026-11-01 (`KESSEL_LOOK=deltap`, `docs/DELTAP_LOOK_20261101.md`)
 

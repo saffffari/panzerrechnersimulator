@@ -273,8 +273,62 @@ impl Game {
   let kind=if s.kind==Kind::Finale{DispatchKind::Finale{site:SiteId(s.id)}}else{DispatchKind::Mission{mission:MissionId(s.id),site:SiteId(s.id)}};
   self.expedition_runtime.as_mut().unwrap().state.begin_dispatch(DispatchId(serial),kind)?;
   let t=self.theatre.as_mut().unwrap();t.active=Some(s.id);t.dispatch_serial+=1;t.notice=format!("ORDER {}: {}",s.id,s.task());
-  let sheet=crate::mission::parse(&serde_json::json!({"schema":"kessel.mission","version":1,"act_id":1,"id":format!("expedition-{}",s.id),"title":s.name,"callsign":"Tiger","net":"Support detail","order":[s.task(),"The field is persistent. Recover your people and equipment; supplies must be collected.","Read M for the order and map. X folds the sheet."],"beats":[{"id":"operation","title":s.name,"goal":"hold","at":{"x":s.position[0],"z":s.position[1]},"radius_m":100.,"trigger":{"kind":"start"},"complete":{"kind":"campaign_objective","objective":"ExpeditionPhysicalObjective"},"map":{"mark":"circle","bearing":true},"pacing":{}}]}),std::path::Path::new("catalog/expedition_theatre.v1.json"))?;
+  // The authored order for the site (catalog/expedition_missions.v1.json: approach, contact,
+  // secure, with the net's lines); a site the catalog lacks gets the bare one-beat order.
+  let sheet=match crate::expedition_theatre::mission_sheet(s.id)? {
+   Some(sheet)=>sheet,
+   None=>crate::mission::parse(&serde_json::json!({"schema":"kessel.mission","version":1,"act_id":1,"id":format!("expedition-{}",s.id),"site":s.id,"title":s.name,"callsign":"Elster","net":"Stab","order":[s.task(),"The field is persistent. Recover your people and equipment; supplies must be collected.","Read M for the order and map. X folds the sheet."],"beats":[{"id":"secure","title":s.name,"goal":"hold","at":{"x":s.position[0],"z":s.position[1]},"radius_m":100.,"trigger":{"kind":"start"},"complete":{"kind":"site_secured"},"map":{"mark":"circle","bearing":true},"pacing":{}}]}),std::path::Path::new("catalog/expedition_theatre.v1.json"))?,
+  };
   self.enable_mission(sheet)?;Ok(true)
+ }
+ /// An order is accepted and open.
+ pub fn expedition_order_active(&self)->bool {self.theatre.as_ref().is_some_and(|t|t.active.is_some())}
+ /// What the mission sheet observes of its site (src/mission.rs `Observation`): living guard
+ /// tanks of the site's finite garrison, and whether the theatre has credited the site as secured.
+ pub(super) fn expedition_site_observation(&self,site:u64)->Option<(u32,bool)> {
+  let t=self.theatre.as_ref()?;let p=t.sites.iter().find(|s|s.id==site)?;
+  let alive=p.guards.iter().filter(|i|self.enemies.get(**i).is_some_and(|e|e.alive)&&self.enemy_active.get(**i)==Some(&true)).count() as u32;
+  Some((alive,p.complete))
+ }
+ /// Playtest fixture (tools/launch_demo_20261101.sh --order N [--forward]): accept the order for
+ /// `site` at once and, with `forward`, stand the crewed Tiger on the approach road at the
+ /// order's first beat, engine running, facing the site. Disclosed as staging in the log; nothing
+ /// about the site, its guards or the hold is changed.
+ pub fn debug_expedition_start_order(&mut self,site:u64,forward:bool,r:&mut Renderer)->Result<()> {
+  {
+   let slots=self.expedition_state().context("expedition not enabled")?.preparation_slots;
+   let t=self.theatre.as_mut().context("theatre not enabled")?;
+   let choices=t.choices(slots);
+   t.selected=choices.iter().position(|i|t.spec.sites[*i].id==site).with_context(||format!("order {site} is not on offer"))?;
+  }
+  ensure!(self.expedition_accept_order()?,"order not accepted");
+  if forward {self.debug_expedition_stage_forward(r)?;}
+  Ok(())
+ }
+ /// The staged half of `debug_expedition_start_order`: the crewed Tiger stood at the open
+ /// order's first beat, engine running, facing the order's site.
+ pub fn debug_expedition_stage_forward(&mut self,r:&mut Renderer)->Result<()> {
+  let site=self.theatre.as_ref().and_then(|t|t.active).context("no open order to stage")?;
+  {
+   let (at,site_at)={let m=self.mission.as_ref().context("order has no sheet")?;(m.beats[0].at,m.beats.last().unwrap().at)};
+   let heading=crate::world::heading_of(site_at-at).to_radians();
+   self.mode=Mode::Tank;self.climb=Climb::default();self.commander_outside=false;self.chase_cam=false;self.gunner_optic=false;
+   self.player=Tank::new(at.x,at.y,heading,&self.hf,tank::TIGER_PARTS);
+   self.player.pos.y=self.expedition_vehicle_ground(at.x,at.y);
+   self.engine_on=true;self.engine_crank_t=0.;
+   r.reset_history();
+   println!("[expedition] STAGED forward start: order {site}, Tiger placed at ({:.0}, {:.0}) facing {:.0} deg, engine running",at.x,at.y,heading.to_degrees());
+  }
+  self.sync_expedition_now()
+ }
+ /// Review fixture (disclosed where used): the site's finite garrison marked dead where it
+ /// stands, no shot fired. Returns the guard tank indices and the sentry indices so the receipt
+ /// can name them. Nothing is spawned, moved or revived.
+ pub fn debug_expedition_kill_site_garrison(&mut self,site:u64)->Result<(Vec<usize>,Vec<usize>)> {
+  let p=self.theatre.as_ref().and_then(|t|t.sites.iter().find(|s|s.id==site)).with_context(||format!("no site {site}"))?.clone();
+  for &n in p.guards.iter().chain(&p.counterattack){self.enemies[n].alive=false;self.enemies[n].hp=0.;}
+  for &n in &p.infantry {self.kill_soldier(n,"review fixture");}
+  Ok((p.guards,p.infantry))
  }
  pub fn expedition_withdraw_order(&mut self)->Result<bool>{
   let Some(t)=self.theatre.as_ref().filter(|t|t.active.is_some())else{return Ok(false)};
@@ -442,6 +496,8 @@ impl Game {
   crate::ui::map_linework::draw_buildings(r,&self.buildings,&|p:Vec2|{let q=proj(p.to_array());(q.x,q.y)},&|p:Vec2|(p-center).abs().max_element()<half+30.,(0.245,0.400,0.510,0.360));
   let slots=self.expedition_state().map_or(0,|e|e.preparation_slots);let choices=t.choices(slots);let selected=t.active.and_then(|id|t.spec.sites.iter().position(|s|s.id==id)).or_else(||choices.get(t.selected%choices.len().max(1)).copied());
   for (i,s) in t.spec.sites.iter().enumerate(){let p=proj(s.position);if inside(p){r.draw_text_bold(if t.sites[i].failure.is_some(){"X"}else if t.sites[i].territory==Territory::Contested{"!"}else if t.sites[i].complete{"+"}else if Some(i)==selected{"O"}else{"."},p.x,p.y-0.008,0.016,ink,crate::ui::Align::Center);r.draw_text(&s.id.to_string(),p.x+0.009,p.y,0.010,ink,crate::ui::Align::Left);}}
+  // The open order's pencil: its marks, the position estimate and the bearing line (src/mission.rs).
+  if let Some(guidance)=self.mission_map_guidance(){crate::ui::draw_mission_marks(r,&guidance,&|p:Vec2|{let q=proj(p.to_array());(q.x,q.y)},(0.245,0.400,0.510,0.360));}
   let player=proj([self.map_world_position().x,self.map_world_position().y]);if inside(player){r.draw_text_bold("+",player.x,player.y-0.008,0.018,ink,crate::ui::Align::Center);}
   if let Some(e)=self.expedition_state(){let c=proj([e.camp.position.x as f32,e.camp.position.z as f32]);if inside(c){r.draw_text_bold("C",c.x,c.y-0.008,0.015,ink,crate::ui::Align::Center);}}
   for boundary in t.front_boundaries(){let p=proj(boundary.to_array());if inside(p){r.draw_text_bold("//",p.x,p.y-0.008,0.021,ink,crate::ui::Align::Center);}}

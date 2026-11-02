@@ -1,0 +1,2004 @@
+{
+ "schema": "kessel.expedition_missions",
+ "version": 1,
+ "theatre": "The March",
+ "source": "catalog/expedition_theatre.v1.json",
+ "generator": "tools/author_expedition_missions.py",
+ "provenance": "Fictional compressed theatre. Mission patterns represent recurring operational tasks; these are not reconstructions of named historical battles.",
+ "sheets": [
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-10",
+   "site": 10,
+   "title": "BEFEHL 10: HAGEN AMMUNITION YARD",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 10 (ammunition). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 10: the Hagen ammunition yard, on the camp road east of the detail, 2.1 km north-east of the first camp (2.1 km by road: east along the camp road).",
+    "Reported: one T-34 and sentries; the shell carts stand in the open beside the road. Clear the yard. Secure the shell supply, then load what you can carry.",
+    "Hold 35 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the yard",
+     "goal": "reach",
+     "at": {
+      "x": -4015.8,
+      "z": 2532.9
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": -3400,
+       "z": 2200
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 10: Hagen ammunition yard, 2.1 km north-east, bearing 062. Road: east along the camp road, 2.1 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Yard in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the yard. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "One T-34 at the yard",
+     "goal": "destroy",
+     "at": {
+      "x": -3400,
+      "z": 2200
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the yard: one T-34 and sentries. Take them from the flank, not up the road; do not fire into the carts. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the yard destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Secure the yard",
+     "goal": "hold",
+     "at": {
+      "x": -3400,
+      "z": 2200
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Clear the sentries and hold the yard 35 seconds for the loaders. 88 mm AP and HE on the carts. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Yard secured. Loading. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Yard. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-11",
+   "site": 11,
+   "title": "BEFEHL 11: BIRKEN FUEL STOP",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 11 (fuel). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 11: the Birken fuel stop, south of the Hagen yard on the Birken road, 3.1 km north-east of the first camp (3.4 km by road: south from the Hagen yard along the Birken road).",
+    "Reported: one T-34 and sentries; the fuel cans are stacked beside the road. Clear the depot. Collect its finite fuel cans and refill the Tiger or transport.",
+    "Hold 35 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the depot",
+     "goal": "reach",
+     "at": {
+      "x": -3257.4,
+      "z": 1582.1
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": -3100,
+       "z": 900
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 11: Birken fuel stop, 3.1 km north-east, bearing 043. Road: south from the Hagen yard along the Birken road, 3.4 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Depot in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the depot. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "One T-34 at the depot",
+     "goal": "destroy",
+     "at": {
+      "x": -3100,
+      "z": 900
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the depot: one T-34 and sentries. Take them from the flank; do not fire into the cans, they are ours once it is clear. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the depot destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Secure the depot",
+     "goal": "hold",
+     "at": {
+      "x": -3100,
+      "z": 900
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Clear the sentries and hold the depot 35 seconds. petrol in cans. Refill the Tiger before you leave. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Depot secured. Refuelling. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Depot. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-12",
+   "site": 12,
+   "title": "BEFEHL 12: KESSEL REPAIR WORKS",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 12 (workshop). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 12: the Kessel repair works, east of the Hagen yard on the camp road, 3.8 km east of the first camp (3.9 km by road: east along the camp road past the Hagen yard).",
+    "Reported: two T-34 and sentries; the parts we need are laid out beside the road. Secure the workshop. Inspect and collect its surviving components.",
+    "Hold 50 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the works",
+     "goal": "reach",
+     "at": {
+      "x": -2300.0,
+      "z": 2200.0
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": -1600,
+       "z": 2200
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 12: Kessel repair works, 3.8 km east, bearing 075. Road: east along the camp road past the Hagen yard, 3.9 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Works in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the works. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Two T-34 at the works",
+     "goal": "destroy",
+     "at": {
+      "x": -1600,
+      "z": 2200
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the works: two T-34 and sentries. Take them from the flank; the parts lie beside the road. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the works destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Secure the works",
+     "goal": "hold",
+     "at": {
+      "x": -1600,
+      "z": 2200
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Clear the sentries and hold the works 50 seconds. parts: vision block, track link, work lamp. The detail moves up behind you. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Works secured. Detail moving up. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Works. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-13",
+   "site": 13,
+   "title": "BEFEHL 13: SOUTHERN CROSSING",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 13 (bridge). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 13: the southern crossing of the river, east of the repair works, 5.3 km east of the first camp (5.5 km by road: east along the camp road to the west abutment).",
+    "Reported: two T-34 and sentries; a concrete road bridge; the far bank is theirs. Occupy the crossing and hold it against the approaching counterattack.",
+    "Hold 90 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the crossing",
+     "goal": "reach",
+     "at": {
+      "x": -826.5,
+      "z": 1807.4
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": -200,
+       "z": 1500
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 13: Southern crossing, 5.3 km east, bearing 071. Road: east along the camp road to the west abutment, 5.5 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Crossing in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the crossing. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Two T-34 at the crossing",
+     "goal": "destroy",
+     "at": {
+      "x": -200,
+      "z": 1500
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the crossing: two T-34 and sentries. Take the near-bank guards before you show yourself on the deck. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the crossing destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Hold the crossing",
+     "goal": "hold",
+     "at": {
+      "x": -200,
+      "z": 1500
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Occupy the crossing and hold it 90 seconds. Their armour will come at you from the far bank once you are on it. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Crossing held. Counterattack beaten. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Crossing. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-14",
+   "site": 14,
+   "title": "BEFEHL 14: BROKEN COLUMN",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 14 (rescue). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 14: the broken column, on the far bank south-east of the southern crossing, 6.9 km east of the first camp (7.1 km by road: over the southern crossing and south-east along the road).",
+    "Reported: two T-34 and sentries; one of ours is alive and on foot by the road. Reach the disabled column. Defeat its guards and evacuate the surviving crew.",
+    "Hold 45 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the column",
+     "goal": "reach",
+     "at": {
+      "x": 633.8,
+      "z": 1111.6
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": 1200,
+       "z": 700
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 14: Broken column, 6.9 km east, bearing 069. Road: over the southern crossing and south-east along the road, 7.1 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Column in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the column. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Two T-34 at the column",
+     "goal": "destroy",
+     "at": {
+      "x": 1200,
+      "z": 700
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the column: two T-34 and sentries. Sentries are with the guards. He has a flare pistol and will fire a white star when he hears you. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the column destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [
+      {
+       "kind": "flare",
+       "color": "white",
+       "delay_s": 3.0,
+       "repeat_s": 150.0
+      }
+     ],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Extract him from the column",
+     "goal": "recover",
+     "at": {
+      "x": 1200,
+      "z": 700
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. One of ours is alive on foot by the wrecks. Bring him to the medic; the order stands until he is on a bed. Hold the column 45 seconds. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. He is with the medic. Column secured. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Column. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-15",
+   "site": 15,
+   "title": "BEFEHL 15: OSTFELD VILLAGE",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 15 (assault). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 15: Ostfeld village, north-east of the broken column, 8.3 km east of the first camp (9.1 km by road: north-east along the road from the broken column).",
+    "Reported: three T-34 and sentries; a road junction held in strength. Take the settlement. Clear the defenders and hold the road junction.",
+    "Hold 70 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the village",
+     "goal": "reach",
+     "at": {
+      "x": 2296.6,
+      "z": 1345.1
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": 2900,
+       "z": 1700
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 15: Ostfeld village, 8.3 km east, bearing 080. Road: north-east along the road from the broken column, 9.1 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Village in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the village. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Three T-34 at the village",
+     "goal": "destroy",
+     "at": {
+      "x": 2900,
+      "z": 1700
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the village: three T-34 and sentries. Work the junction from the west; it is covered from three sides. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the village destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Secure the village",
+     "goal": "hold",
+     "at": {
+      "x": 2900,
+      "z": 1700
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Clear the sentries and hold the junction 70 seconds. petrol in cans; parts: gunner sight. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Village held. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Village. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-16",
+   "site": 16,
+   "title": "BEFEHL 16: GRAIN DEPOT",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 16 (ammunition). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 16: the grain depot, south of Ostfeld on the eastern road, 9.4 km north-east of the first camp (12.1 km by road: south along the eastern road from Ostfeld).",
+    "Reported: three T-34 and sentries; the shell carts stand by the road junction, held in strength. Clear the yard. Secure the shell supply, then load what you can carry.",
+    "Hold 55 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the depot",
+     "goal": "reach",
+     "at": {
+      "x": 2633.3,
+      "z": -1013.3
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": 3300,
+       "z": -800
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 16: Grain depot, 9.4 km north-east, bearing 065. Road: south along the eastern road from Ostfeld, 12.1 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Depot in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the depot. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Three T-34 at the depot",
+     "goal": "destroy",
+     "at": {
+      "x": 3300,
+      "z": -800
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the depot: three T-34 and sentries. Take them from the flank, not up the road; do not fire into the carts. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the depot destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Secure the depot",
+     "goal": "hold",
+     "at": {
+      "x": 3300,
+      "z": -800
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Clear the sentries and hold the depot 55 seconds for the loaders. 88 mm AP and HE on the carts. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Depot secured. Loading. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Depot. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-17",
+   "site": 17,
+   "title": "BEFEHL 17: RELAY STATION",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 17 (dispatch). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 17: the relay station, on the far bank south of the broken column, 7.7 km north-east of the first camp (9.5 km by road: south along the road from the broken column).",
+    "Reported: one T-34 and sentries; a dispatch table with its ledger, in the open by the road. Reach the relay station on foot and acknowledge the written order in its dispatch ledger.",
+    "Hold 20 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the relay",
+     "goal": "reach",
+     "at": {
+      "x": 919.9,
+      "z": -910.4
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": 800,
+       "z": -1600
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 17: Relay station, 7.7 km north-east, bearing 052. Road: south along the road from the broken column, 9.5 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Relay in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the relay. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "One T-34 at the relay",
+     "goal": "destroy",
+     "at": {
+      "x": 800,
+      "z": -1600
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the relay: one T-34 and sentries. Take them from the flank; dismount for the ledger only once they are down. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the relay destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Acknowledge the order",
+     "goal": "reach",
+     "at": {
+      "x": 800,
+      "z": -1600
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Dismount at the hut and acknowledge the order in the dispatch ledger, then hold the relay 20 seconds. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Order acknowledged in the ledger. Relay secured. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Relay. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-18",
+   "site": 18,
+   "title": "BEFEHL 18: NORTHERN RELIEF",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 18 (rescue). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 18: the northern relief, far north on the Birken road past Linden junction, 7.7 km north-east of the first camp (8.3 km by road: north along the Birken road through Linden junction).",
+    "Reported: three T-34 and sentries; one of ours is alive and on foot by the road. Reach the disabled column. Defeat its guards and evacuate the surviving crew.",
+    "Hold 75 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the relief",
+     "goal": "reach",
+     "at": {
+      "x": -1906.9,
+      "z": -2930.4
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": -1500,
+       "z": -3500
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 18: Northern relief, 7.7 km north-east, bearing 029. Road: north along the Birken road through Linden junction, 8.3 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Relief in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the relief. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Three T-34 at the relief",
+     "goal": "destroy",
+     "at": {
+      "x": -1500,
+      "z": -3500
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the relief: three T-34 and sentries. Sentries are with the guards. He has a flare pistol and will fire a white star when he hears you. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the relief destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [
+      {
+       "kind": "flare",
+       "color": "white",
+       "delay_s": 3.0,
+       "repeat_s": 150.0
+      }
+     ],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Extract him from the relief",
+     "goal": "recover",
+     "at": {
+      "x": -1500,
+      "z": -3500
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. One of ours is alive on foot by the wrecks. Bring him to the medic; the order stands until he is on a bed. Hold the relief 75 seconds. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. He is with the medic. Relief secured. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Relief. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-19",
+   "site": 19,
+   "title": "BEFEHL 19: LINDEN JUNCTION",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 19 (defence). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 19: Linden junction, north of the Birken fuel stop, 5.1 km north-east of the first camp (5.7 km by road: north along the Birken road from the fuel stop).",
+    "Reported: three T-34 and sentries; a crossroads in open ground; expect a counterattack from the north. Secure the junction and defeat the approaching armoured counterattack.",
+    "Hold 120 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the junction",
+     "goal": "reach",
+     "at": {
+      "x": -3030.4,
+      "z": -700.7
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": -3000,
+       "z": -1400
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 19: Linden junction, 5.1 km north-east, bearing 026. Road: north along the Birken road from the fuel stop, 5.7 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Junction in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the junction. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Three T-34 at the junction",
+     "goal": "destroy",
+     "at": {
+      "x": -3000,
+      "z": -1400
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the junction: three T-34 and sentries. Take the guards at the crossroads first, then face north. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the junction destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Hold the junction",
+     "goal": "hold",
+     "at": {
+      "x": -3000,
+      "z": -1400
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Secure the junction and hold it 120 seconds. Their armour will counterattack from the north once you are on it. petrol in cans; parts: track link. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Junction held. Counterattack beaten. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Junction. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-20",
+   "site": 20,
+   "title": "BEFEHL 20: NORTHERN CROSSING",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 20 (bridge). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 20: the northern crossing of the river, east of Linden junction, 7.5 km north-east of the first camp (9.0 km by road: east along the northern road from Linden junction).",
+    "Reported: three T-34 and sentries; a concrete road bridge; their armour is on the far bank. Occupy the crossing and hold it against the approaching counterattack.",
+    "Hold 100 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the crossing",
+     "goal": "reach",
+     "at": {
+      "x": -734.9,
+      "z": -2300.0
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": -200,
+       "z": -2300
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 20: Northern crossing, 7.5 km north-east, bearing 043. Road: east along the northern road from Linden junction, 9.0 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Crossing in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the crossing. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Three T-34 at the crossing",
+     "goal": "destroy",
+     "at": {
+      "x": -200,
+      "z": -2300
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the crossing: three T-34 and sentries. Take the near-bank guards before you show yourself on the deck. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the crossing destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Hold the crossing",
+     "goal": "hold",
+     "at": {
+      "x": -200,
+      "z": -2300
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Occupy the crossing and hold it 100 seconds. Their armour will come at you from the far bank once you are on it. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Crossing held. Counterattack beaten. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Crossing. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  },
+  {
+   "schema": "kessel.mission",
+   "version": 1,
+   "id": "expedition-21",
+   "site": 21,
+   "title": "BEFEHL 21: LAST CORRIDOR",
+   "heading": "Unterstützungstrupp  ·  schriftlicher Befehl",
+   "act_id": 1,
+   "callsign": "Elster",
+   "net": "Stab",
+   "note": "The March, order 21 (finale). Geography from catalog/expedition_theatre.v1.json: the approach point is 700 m short of the site on the road path from the first camp. The contact and secure beats observe the theatre's own guard, hold and counterattack rules; no beat spawns, moves or alerts an enemy.",
+   "order": [
+    "Elster, Tiger of the support detail. Order 21: the last corridor, far south-east of the relay station, 9.5 km north-east of the first camp (12.1 km by road: south along the road from the relay station).",
+    "Reported: three T-34 and sentries; the blocking force sits across the road out; the column waits on you. Open the last corridor. Break the blocking force, then hold the exit.",
+    "Hold 180 seconds once it is clear. The field is persistent: what you leave stays, what you lose is not replaced."
+   ],
+   "beats": [
+    {
+     "id": "march",
+     "title": "The approach to the corridor",
+     "goal": "reach",
+     "at": {
+      "x": 726.9,
+      "z": -3500.5
+     },
+     "radius_m": 160.0,
+     "trigger": {
+      "kind": "start"
+     },
+     "complete": {
+      "kind": "enter",
+      "dwell_s": 1.0
+     },
+     "bypass_near": {
+      "at": {
+       "x": 700,
+       "z": -4200
+      },
+      "radius_m": 350.0
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Order 21: Last corridor, 9.5 km north-east, bearing 039. Road: south along the road from the relay station, 12.1 km. Report at the turn, 700 metres short. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the turn. Corridor in sight. Out."
+       }
+      ],
+      "bypassed": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. At the corridor. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report your position. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "box",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "contact",
+     "title": "Three T-34 at the corridor",
+     "goal": "destroy",
+     "at": {
+      "x": 700,
+      "z": -4200
+     },
+     "radius_m": 450.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_guards_down"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Reported at the corridor: three T-34 and sentries. The blocking force sits across the road out. Break it from the flank. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Armour at the corridor destroyed. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "cross",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    },
+    {
+     "id": "secure",
+     "title": "Hold the exit",
+     "goal": "hold",
+     "at": {
+      "x": 700,
+      "z": -4200
+     },
+     "radius_m": 100.0,
+     "trigger": {
+      "kind": "previous"
+     },
+     "complete": {
+      "kind": "site_secured"
+     },
+     "lines": {
+      "open": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Break the blocking force and hold the exit 180 seconds. The column follows you out. Out."
+       }
+      ],
+      "done": [
+       {
+        "from": "Elster",
+        "text": "Stab, Elster. Corridor open. Column moving. Out."
+       }
+      ],
+      "nudge": [
+       {
+        "from": "Stab",
+        "text": "Elster, Stab. Corridor. Report. Out."
+       }
+      ]
+     },
+     "map": {
+      "mark": "circle",
+      "bearing": true
+     },
+     "cues": [],
+     "pacing": {
+      "nudge_after_s": 300.0
+     }
+    }
+   ]
+  }
+ ]
+}

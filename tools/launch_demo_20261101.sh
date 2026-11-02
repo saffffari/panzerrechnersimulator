@@ -6,6 +6,9 @@
 #
 #   tools/launch_demo_20261101.sh                 title menu (New Expedition / Resume Expedition / Canyon Run v2 ...)
 #   tools/launch_demo_20261101.sh --expedition    straight into a new expedition: the camp, the Tiger, the halftrack
+#   tools/launch_demo_20261101.sh --expedition --order 10            the order for site 10 accepted at once (M: the map)
+#   tools/launch_demo_20261101.sh --expedition --order 10 --forward  and the crewed Tiger staged on the approach road,
+#                                                 700 m short of the site, engine running (a disclosed playtest fixture)
 #   tools/launch_demo_20261101.sh --canyon        straight into a fresh Canyon v2 winter run (missions + living crew)
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
 #   tools/launch_demo_20261101.sh --res 640x360   render grid (default 480x270; 640x360 is an exact 8x on the 5K panel)
@@ -19,7 +22,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -30,8 +33,10 @@ while (( $# )); do
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
         --seed) SEED=$2; shift ;;
+        --order) ORDER=$2; MODE=expedition; shift ;;
+        --forward) FORWARD=1; MODE=expedition ;;
         --check) CHECK=1 ;;
-        -h|--help) sed -n 2,14p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,19p "$0"; exit 0 ;;
         *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
     shift
@@ -81,13 +86,15 @@ export KESSEL_CANYON_V2=1
 (( WINDOWED )) || export KESSEL_FULLSCREEN=1
 [[ "$MODE" == canyon ]] && export KESSEL_CANYON=1
 [[ "$MODE" == expedition ]] && export KESSEL_EXPEDITION=1
+[[ -n "$ORDER" ]] && export KESSEL_EXPEDITION_ORDER="$ORDER"
+(( FORWARD )) && export KESSEL_EXPEDITION_FORWARD=1
 (( PLATOON )) && export KESSEL_PLATOON=2
 [[ -n "$SEED" ]] && export KESSEL_CANYON_SEED="$SEED"
 [[ -n "$LOOK" ]] && export KESSEL_LOOK="$LOOK"
 
 LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).log"
 {
-    printf '[launcher] %s mode=%s res=%s look=%s windowed=%s platoon=%s\n' "$(date --iso-8601=seconds)" "$MODE" "$RES" "${LOOK:-standard}" "$WINDOWED" "$PLATOON"
+    printf '[launcher] %s mode=%s res=%s look=%s windowed=%s platoon=%s order=%s forward=%s\n' "$(date --iso-8601=seconds)" "$MODE" "$RES" "${LOOK:-standard}" "$WINDOWED" "$PLATOON" "${ORDER:--}" "$FORWARD"
     env | grep '^KESSEL_' | sort
 } > "$LOG"
 ln -sfn "$(basename -- "$LOG")" "$RUNTIME/demo-latest.log"
