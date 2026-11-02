@@ -2490,8 +2490,9 @@ mod tests {
     use super::*;
     use crate::building_blueprint::SemanticId;
 
-    /// The tracked table of generated shapes is exactly what the generator builds from the
-    /// installed meshes today, and it covers every kit asset once.
+    /// Every tracked shape matches the installed mesh and ordered collision solids. Compare
+    /// numeric geometry, not platform-dependent float formatting. The one-micrometre bound
+    /// covers observed Windows/Linux rounding without allowing a changed collision recipe.
     #[test]
     fn generated_shapes_match_the_live_generator() {
         let ids: Vec<&str> = shapes().iter().map(|shape| shape.id).collect();
@@ -2514,12 +2515,24 @@ mod tests {
             eprintln!("skipping the live comparison: Pizza kit assets are not installed");
             return;
         }
-        let live = generated_shapes_source().unwrap();
-        let tracked = std::fs::read_to_string("src/building_kit_shapes.rs").unwrap();
-        assert!(
-            live == tracked,
-            "src/building_kit_shapes.rs is stale: regenerate it with `cargo run -- urban-kit-shapes`"
-        );
+        let close = |id: &str, field: &str, tracked: f32, live: f32| {
+            assert!(tracked.is_finite() && live.is_finite() && (tracked-live).abs() <= 1e-6,
+                "{id} {field}: tracked {tracked:?}, live {live:?}; regenerate urban-kit-shapes");
+        };
+        for shape in shapes() {
+            let mesh = shape_mesh(shape.id).unwrap();
+            let live = proxies(shape.id).unwrap();
+            assert_eq!(shape.solids.len(), live.boxes.len(), "{}: changed collision recipe", shape.id);
+            close(shape.id, "measured error", shape.solid_error_m, live.error_m);
+            for axis in 0..3 {
+                close(shape.id, "minimum", shape.bounds.min[axis], mesh.min[axis]);
+                close(shape.id, "maximum", shape.bounds.max[axis], mesh.max[axis]);
+                for (tracked, (min, max)) in shape.solids.iter().zip(&live.boxes) {
+                    close(shape.id, "solid minimum", tracked.min[axis], min[axis]);
+                    close(shape.id, "solid maximum", tracked.max[axis], max[axis]);
+                }
+            }
+        }
     }
 
     /// Every declared role belongs to a kit asset and lies on its built mesh: floor tops are the

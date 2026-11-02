@@ -10,7 +10,7 @@ const CONTACT: f32 = 0.28;
 const DURATION: f32 = 0.85;
 
 pub(super) struct Source { pub wheel: CpuMesh, pub button: CpuMesh }
-#[derive(Default)]
+#[derive(Clone,Default, serde::Serialize,serde::Deserialize)]
 pub(super) struct Controls { pub steering: f32, press_age: Option<f32>, contact_pending: bool }
 impl Controls {
     pub fn reach(&self) -> f32 {
@@ -59,7 +59,7 @@ impl Controls {
 impl Game {
     pub(super) fn advance_driver_controls(&mut self,dt:f32,input:&TankInput,primary_was_held:bool)->bool {
         if self.mode==Mode::Tank && self.station==Station::Driver && self.switch_t<=0.0
-            && self.player.alive && input.mg_coax && !primary_was_held
+            && self.recoverable_tiger_access_allowed() && input.mg_coax && !primary_was_held
             && self.hover==Some(Hotspot::Ignition) {
             self.driver_controls.request();
         }
@@ -78,7 +78,9 @@ impl Game {
         if ray_aabb_near(eye,direction,BUTTON-Vec3::new(0.027,0.032,0.006),
             BUTTON+Vec3::new(0.027,0.032,0.054),1.0,0.0).is_some() {
             self.hover=Some(Hotspot::Ignition);
-            self.hover_label=Some(if self.engine_on {"STOP ENGINE [LMB]"} else {"START ENGINE [LMB]"});
+            self.hover_label=Some(if !self.player.alive {
+                self.cold_recommission_blocker().unwrap_or("RECOMMISSION - START ENGINE [LMB]")
+            } else if self.engine_on {"STOP ENGINE [LMB]"} else {"START ENGINE [LMB]"});
         }
     }
     pub(super) fn drive_driver_controls(&self,r:&mut Renderer) {
@@ -123,3 +125,7 @@ impl Game {
         }
     }
 }
+
+impl Controls {pub(super) fn validate_world_state(&self)->anyhow::Result<()> {
+    anyhow::ensure!(self.steering.is_finite()&&self.steering.abs()<=0.56&&self.press_age.is_none_or(|t|t.is_finite()&&t>=0.0&&t<=DURATION),"invalid driver control reach");Ok(())
+}}

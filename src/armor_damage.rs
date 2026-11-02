@@ -30,6 +30,7 @@ pub const AMBIENT_K: f32 = 293.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ScarKind {
     Dent = 0,
     Hole = 1,
@@ -54,6 +55,7 @@ impl ScarKind {
 /// What struck the plate, as far as the scar's shape is concerned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ShotClass {
     /// Full-calibre armour-piercing (capped or not).
     Ap = 0,
@@ -93,6 +95,7 @@ impl ShotClass {
 /// One localized wound. Position is millimetres in hull-local or turret-local space (selected by
 /// `facing`); lengths are millimetres unless the name says otherwise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ArmorScar {
     pub facing: Facing,
     pub local_mm: [i16; 3],
@@ -327,6 +330,7 @@ pub fn terminal_geometry(class: ShotClass, caliber_mm: f32, plate_mm: f32, obliq
 }
 
 #[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ArmorField {
     scars: Vec<ArmorScar>,
     /// Simulation time each scar was last struck. Not persisted: a loaded scar is cold. Drives the

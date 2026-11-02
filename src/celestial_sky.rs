@@ -181,6 +181,7 @@ pub fn phase_instant(act_id: u8, phase: ClockPhase) -> UtcInstant {
 
 /// A running act clock: advances with simulated time from an authored or named instant.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SkyClock {
     pub start: UtcInstant,
     pub site: Site,

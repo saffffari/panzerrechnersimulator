@@ -258,15 +258,15 @@ fn fog_to(uv: vec2<f32>, ray: vec3<f32>, distance_m: f32) -> Fog {
         if (ray.y > 0.001) { length_m = min(length_m, max(fr.medium.w - origin.y, 0.0) / ray.y); }
         length_m = min(length_m, 6000.0);
         if (length_m > 0.0 && (fr.medium.x > 0.0 || fr.fog.y > 0.0)) {
-            let albedo = mix(0.70, 0.92, fr.medium.y);
-            let g = mix(0.74, 0.62, fr.medium.y);
             let sky = rm_sky_isotropic();
-            let phase = select(0.0, rm_hg(dot(ray, fr.sun_dir.xyz), g), fr.sun_radiance.w > 0.5);
             let dt = length_m / 6.0;
             for (var i = 0; i < 6; i = i + 1) {
                 let p = origin + ray * ((f32(i) + 0.5) * dt);
                 let sigma = rm_world_density(p);
                 if (sigma <= 0.0) { continue; }
+                let snow = fr.medium.y*theatre_north_weight(p.z,fr.samples.y);
+                let albedo = mix(0.70,0.92,snow);let g = mix(0.74,0.62,snow);
+                let phase = select(0.0,rm_hg(dot(ray,fr.sun_dir.xyz),g),fr.sun_radiance.w>0.5);
                 let t_step = exp(-sigma * dt);
                 let source = sky + fr.sun_radiance.rgb * phase * rm_cloud_shadow(p);
                 radiance += transmittance * albedo * source * (1.0 - t_step);
@@ -501,7 +501,7 @@ fn fs(in: VsOut) -> ShadeOut {
                 // Snow glitter: a random ice facet per 4 cm of surface flashes the beam into the
                 // eye when its half-vector lines up (named approximation: facets are a hash, not
                 // a crystal model; the dither keeps them one-pixel sparks).
-                if (terrain && fr.wind.y < 0.5) {
+                if (terrain && theatre_ground_mood(fr.wind.y,world,fr.samples.y) < 0.5) {
                     // One facet per centimetre: a sparkle stays a point at any distance.
                     let cell = vec3<i32>(floor(world * 100.0));
                     let seed = u32(cell.x * 73856093 ^ cell.y * 19349663 ^ cell.z * 83492791);

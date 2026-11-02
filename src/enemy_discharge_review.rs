@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 const MAX_EVENTS: usize = 128;
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct ReportStamp {
     id: u64,
     fired_at_s: f32,

@@ -10,7 +10,7 @@ const FPS: u32 = 24;
 const SIM_HZ: u32 = 120;
 const INPUTS: &[&str] = &["drive", "steer", "traverse", "elevate", "look_dx", "look_dy",
     "fire", "mg_coax", "coax", "binoculars", "extinguish", "repair", "run", "aim", "fire2",
-    "crouch", "reload", "jump", "ignition", "hatch_toggle"];
+    "crouch", "reload", "jump", "ignition", "hatch_toggle", "fire_order"];
 const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", "station",
     "round", "portable", "throw", "equip", "look_lever", "look_breech", "look_sight", "look_tray", "look_rack",
     "weapon_luger", "weapon_panzerfaust", "sight_zoom", "map_open", "map_close", "incoming_impact", "look_fire", "map_pin",
@@ -251,7 +251,7 @@ fn input(value: &Value) -> TankInput {
         look_dx:f("look_dx"), look_dy:f("look_dy"), fire:b("fire"), mg_coax:b("mg_coax"),
         coax:b("coax"), binoculars:b("binoculars"), extinguish:b("extinguish"), repair:b("repair"),
         run:b("run"), aim:b("aim"), fire2:b("fire2"), crouch:b("crouch"), reload:b("reload"),
-        jump:b("jump"), ignition:b("ignition"), hatch_toggle:b("hatch_toggle"), ..Default::default() }
+        jump:b("jump"), ignition:b("ignition"), hatch_toggle:b("hatch_toggle"), fire_order:b("fire_order"), ..Default::default() }
 }
 
 /// Pure CPU preflight; callers may use this before allocating any renderer or audio bank.
@@ -1177,8 +1177,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         g.player.heading = (yaw as f32).to_radians();
     }
     // Native output preserves one encoded pixel per scene pixel for effects/dither review.
-    anyhow::ensure!(matches!((r.iw,r.ih),(640,360)|(576,324)|(800,450)),
-        "first-person review requires KESSEL_INTERNAL_RES=640x360, 576x324 or 800x450");
+    anyhow::ensure!(matches!((r.iw,r.ih),(640,360)|(576,324)|(800,450)|(1024,576)),
+        "first-person review requires KESSEL_INTERNAL_RES=640x360, 576x324, 800x450 or 1024x576");
     let output_size=if native_output {[r.iw,r.ih]} else {[1920,1080]};
     let output_dimensions=format!("{}x{}",output_size[0],output_size[1]);
     let output_pixels=output_size[0] as usize*output_size[1] as usize;

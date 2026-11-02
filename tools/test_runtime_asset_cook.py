@@ -447,7 +447,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
                     self.assertIn("runtime.non-pizza", entry["required_by"])
                     self.assertEqual(entry["license"], "kessel-provenance-unrecorded")
                     self.assertEqual(entry["source_family"], "kessel-local")
-                    self.assertIn(source, (REPO_ROOT / "src/game.rs").read_text())
+                    self.assertIn(source, (REPO_ROOT / "src/game.rs").read_text(encoding="utf-8"))
                 else:
                     self.assertIn("code.game", entry["required_by"])
                     self.assertEqual(entry["license"], "pizzadoggy-local-purchase")

@@ -283,6 +283,7 @@ pub fn top_at(s: f32, x: f32) -> f32 {
 /// heading `s`, lateral hull offset `x`) is `y0 + slope_s * s + slope_x * x`; `slope_s` is the
 /// tangent of the pitch.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RestPlane {
     pub y0: f32,
     pub slope_s: f32,

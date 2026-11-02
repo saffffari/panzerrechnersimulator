@@ -17,6 +17,7 @@ pub struct RunningGearVoice {pub id:usize,pub motion:Motion,pub load:f32,
     pub ear_laf_dba:f32,pub bearing_deg:f32,pub lowpass_hz:f32}
 
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct MotionSampler {
     previous:Option<([Vec3;14],[f32;14])>,
     pub distance_m:f32,

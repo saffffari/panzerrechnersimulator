@@ -57,6 +57,7 @@ fn enemy_native_he(kind: EnemyKind) -> Option<&'static crate::ballistics::Native
     })
 }
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct TankWeapons {
     heat: f32,
     overheated: bool,
@@ -74,6 +75,7 @@ pub(super) struct TankWeapons {
 /// How close the doctrine walks a soldier to his post before the learned policy holds it.
 const POST_ARRIVE_M: f32 = 0.5;
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct MixedCombatRuntime {
     pub enabled: bool,
     pub actors: Vec<Combatant>,
@@ -685,8 +687,8 @@ impl Game {
         if state.heat <= combat::MG_RESUME {
             state.overheated = false;
         }
-        if matches!(self.mode, Mode::Tank)
-            && self.player.alive
+        if (matches!(self.mode, Mode::Tank)||self.halftrack_occupied())
+            && self.enemy_has_live_threat()
             && self.enemy_mode(i) == AiMode::Track
         {
             return false;

@@ -308,8 +308,8 @@ impl Game {
         const PARTS: [&str; 11] = ["pelvis", "torso", "head", "left upper arm", "left forearm",
             "right upper arm", "right forearm", "left thigh", "left shin", "right thigh", "right shin"];
         let wounds: Vec<&'static str> = self.singleplayer_embodied_role().map(|role| {
-            let identity = singleplayer_crew::casualty_identity(role).identity;
-            let missing = self.living_wounds.missing(identity);
+            let actor_id = self.singleplayer_casualty_identity(role).peer_id;
+            let missing = self.living_wounds.missing(actor_id);
             PARTS.iter().zip(missing).filter(|(_, lost)| *lost).map(|(name, _)| *name).collect()
         }).unwrap_or_default();
         let start_clock = self.scene_environment.lighting.utc
@@ -486,7 +486,7 @@ impl Game {
             OPENING_PLATOON_FRACTIONS.len());
     }
 
-    fn append_canyon_platoon(&mut self, route: Vec<Vec2>, positions: Vec<Vec2>, count: usize, r: &mut Renderer) {
+    pub(super) fn append_canyon_platoon(&mut self, route: Vec<Vec2>, positions: Vec<Vec2>, count: usize, r: &mut Renderer) {
         let heading=(route[1]-route[0]).x.atan2((route[1]-route[0]).y);
         let first=self.winter_encounter.as_mut().unwrap().append_platoon(route.clone(),count);
         assert_eq!(first,self.enemies.len());

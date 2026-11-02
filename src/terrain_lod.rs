@@ -448,7 +448,9 @@ impl TerrainLod {
             if self.upload_page(queue, key, &data, eye) { uploads += 1; }
         }
         // Every half second, bring back evicted pages the camera has returned to.
-        if self.frame % 30 == 0 {
+        // A reconstructed LOD has no resident pages even if the saved physical dirty queue
+        // is empty. Rehydrate on its first frame, without fabricating new terrain events.
+        if self.frame == 1 || self.frame % 30 == 0 {
             let e = Vec2::new(eye.x, eye.z);
             let keys = self.detail.rut_page_keys();
             for key in keys {
@@ -502,7 +504,11 @@ impl TerrainLod {
     }
 
     fn stream_openings(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let Some(openings) = self.detail.take_openings() else { return };
+        let openings = match self.detail.take_openings() {
+            Some(changed) => changed,
+            None if self.frame == 1 => self.detail.openings_snapshot(),
+            None => return,
+        };
         let packed: Vec<[f32; 4]> = openings.iter().map(|o| [o[0], o[1], o[2], o[3]]).collect();
         if (packed.len() * 16) as u64 > self.openings_buf.size() {
             self.openings_buf = storage(device, "terrain-openings", (packed.len().next_power_of_two() * 16) as u64);
@@ -609,5 +615,134 @@ mod tests {
             let back = if exp == 0 { sign * mant * 2f32.powi(-24) } else { sign * (1.0 + mant / 1024.0) * 2f32.powi(exp - 15) };
             assert!((back - v).abs() <= v.abs() * 1e-3 + 1e-6, "{v} -> {back}");
         }
+    }
+}
+
+#[cfg(test)]
+mod cold_restore_gpu_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn detail() -> Shared {
+        Arc::new(terrain_relief::Detail::new(65, 1.0, vec![0.0; 65*65],
+            vec![[terrain_relief::SNOW, 40, 255, 128]; 65*65], Vec2::X,
+            "terrain LOD cold restore fixture".into()).unwrap())
+    }
+
+    // Exercise the actual uploaded opening buffer and count used by terrain fragment programs.
+    // The existing height probe intentionally does not discard openings, so it cannot certify
+    // that their first-frame upload survived a previously consumed `take_openings` flag.
+    fn opening_probe(lod: &TerrainLod, device: &wgpu::Device, queue: &wgpu::Queue,
+        points: &[Vec2]) -> Vec<u32> {
+        use wgpu::util::DeviceExt;
+        let shader = format!("{}\n{}", lod.shader_prelude(), r#"
+@group(1) @binding(0) var<storage, read> opening_points: array<vec2<f32>>;
+@group(1) @binding(1) var<storage, read_write> opening_result: array<u32>;
+@compute @workgroup_size(64)
+fn cs_opening(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x < arrayLength(&opening_points)) {
+        opening_result[id.x] = select(0u, 1u, tr_in_opening(opening_points[id.x]));
+    }
+}"#);
+        let module=device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label:Some("terrain-cold-opening-probe"),source:wgpu::ShaderSource::Wgsl(shader.into())});
+        let empty=device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{label:None,entries:&[]});
+        let entry=|binding,read_only|wgpu::BindGroupLayoutEntry {binding,
+            visibility:wgpu::ShaderStages::COMPUTE,count:None,
+            ty:wgpu::BindingType::Buffer {ty:wgpu::BufferBindingType::Storage{read_only},
+                has_dynamic_offset:false,min_binding_size:None}};
+        let io=device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label:None,entries:&[entry(0,true),entry(1,false)]});
+        let layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label:None,bind_group_layouts:&[&empty,&io,&lod.bgl],push_constant_ranges:&[]});
+        let pipe=device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label:None,layout:Some(&layout),module:&module,entry_point:Some("cs_opening"),
+            compilation_options:Default::default(),cache:None});
+        let data:Vec<_>=points.iter().map(|p|p.to_array()).collect();
+        let input=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label:None,contents:bytemuck::cast_slice(&data),usage:wgpu::BufferUsages::STORAGE});
+        let bytes=points.len() as u64*4;
+        let output=device.create_buffer(&wgpu::BufferDescriptor {label:None,size:bytes,
+            usage:wgpu::BufferUsages::STORAGE|wgpu::BufferUsages::COPY_SRC,mapped_at_creation:false});
+        let readback=device.create_buffer(&wgpu::BufferDescriptor {label:None,size:bytes,
+            usage:wgpu::BufferUsages::MAP_READ|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false});
+        let empty_bind=device.create_bind_group(&wgpu::BindGroupDescriptor{label:None,layout:&empty,entries:&[]});
+        let io_bind=device.create_bind_group(&wgpu::BindGroupDescriptor {label:None,layout:&io,entries:&[
+            wgpu::BindGroupEntry{binding:0,resource:input.as_entire_binding()},
+            wgpu::BindGroupEntry{binding:1,resource:output.as_entire_binding()}]});
+        let mut encoder=device.create_command_encoder(&Default::default());
+        {let mut pass=encoder.begin_compute_pass(&Default::default());pass.set_pipeline(&pipe);
+            pass.set_bind_group(0,&empty_bind,&[]);pass.set_bind_group(1,&io_bind,&[]);
+            pass.set_bind_group(2,&lod.bind,&[]);pass.dispatch_workgroups((points.len() as u32).div_ceil(64),1,1);}
+        encoder.copy_buffer_to_buffer(&output,0,&readback,0,bytes);queue.submit([encoder.finish()]);
+        readback.slice(..).map_async(wgpu::MapMode::Read,|result|result.expect("opening probe map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let mapped=readback.slice(..).get_mapped_range();
+        let result=bytemuck::cast_slice::<u8,u32>(&mapped).to_vec();drop(mapped);readback.unmap();result
+    }
+
+    #[test]
+    #[ignore = "GPU: root runs serially; first-frame cold physical terrain cache reconstruction"]
+    fn cold_detail_restore_rehydrates_consumed_ruts_craters_and_openings_on_first_gpu_frame() {
+        let instance=crate::create_instance();let adapter=crate::request_adapter(&instance,None);
+        let (device,queue)=crate::request_device(&adapter);
+        let live=detail();let pristine=detail();
+        live.crater(Vec3::new(1.0,0.0,2.0),0.698).unwrap();
+        live.stamp_walker(17,Vec3::new(0.0,0.0,8.0));
+        live.stamp_walker(17,Vec3::new(0.8,0.0,8.0));
+        let openings=vec![[-2.0,-2.0,-1.0,-1.0],[3.0,3.0,4.0,4.0]];
+        live.set_openings(openings.clone());
+        let snap=|p:Vec2|((p+live.half)/live.lattice).round()*live.lattice-live.half;
+        let mut points=Vec::new();
+        for center in [Vec2::new(1.0,2.0),Vec2::new(0.8,7.88)] {
+            for j in -6..=6 {for i in -6..=6 {
+                points.push(snap(center+Vec2::new(i as f32,j as f32)*live.lattice));
+            }}
+        }
+        assert!(points[..169].iter().any(|p|pristine.height_at(p.x,p.y)-live.height_at(p.x,p.y)>0.01),
+            "fixture must contain an actual crater, not merely an uploaded empty list");
+        assert!(points[169..].iter().any(|p|live.rut_at(p.x,p.y)>0.001),
+            "fixture must contain an actual boot depression");
+        let opening_points=[Vec2::new(-1.5,-1.5),Vec2::new(3.5,3.5),Vec2::ZERO,
+            Vec2::new(-2.0,-1.5),Vec2::new(4.01,3.5)];
+        let eye=Vec3::new(0.0,2.0,4.0);
+        let views=[Mat4::perspective_rh(60f32.to_radians(),16.0/9.0,0.05,200.0)
+            *Mat4::look_at_rh(eye,Vec3::new(0.0,0.0,8.0),Vec3::Y);SLOTS];
+        let mut active=[false;SLOTS];active[GBUFFER_SLOT]=true;
+        let mut uninterrupted=TerrainLod::new(&device,&queue,live.clone());
+        uninterrupted.prepare(&device,&queue,eye,&views,&active);
+        assert!(live.take_dirty_rut_pages().is_empty());assert!(live.take_openings().is_none());
+        assert!(uninterrupted.stats.rut_uploads>0);assert_eq!(uninterrupted.opening_count,2);
+        assert_eq!(uninterrupted.crater_count,1);
+        let expected=uninterrupted.probe(&device,&queue,&points);
+        let expected_openings=opening_probe(&uninterrupted,&device,&queue,&opening_points);
+        assert_eq!(expected_openings,[1,1,0,0,0]);
+        let saved=live.export_world_state().unwrap();
+        let cold=detail();cold.import_world_state(&saved).unwrap();
+        assert!(cold.take_dirty_rut_pages().is_empty());assert!(cold.take_openings().is_none());
+        let mut restored=TerrainLod::new(&device,&queue,cold.clone());
+        assert!(restored.resident.is_empty());assert_eq!(restored.opening_count,0);
+        restored.prepare(&device,&queue,eye,&views,&active);
+        assert_eq!(restored.frame,1);assert_eq!(restored.opening_count,uninterrupted.opening_count);
+        assert_eq!(restored.crater_count,uninterrupted.crater_count);
+        assert_eq!(restored.resident.keys().collect::<std::collections::BTreeSet<_>>(),
+            uninterrupted.resident.keys().collect::<std::collections::BTreeSet<_>>());
+        assert!(restored.stats.rut_uploads>0,"clean saved pages must upload on the first fresh LOD frame");
+        let actual=restored.probe(&device,&queue,&points);
+        for (i,(&a,&b)) in expected.iter().zip(&actual).enumerate() {
+            assert_eq!(a.to_bits(),b.to_bits(),"GPU source height changed on cold first frame at {:?}",points[i]);
+        }
+        assert_eq!(opening_probe(&restored,&device,&queue,&opening_points),expected_openings);
+        assert_eq!(cold.export_world_state().unwrap().payload,saved.payload,
+            "presentation cache reconstruction must not invent or consume physical events");
+        // Separate from the bit-exact restore gate above: this near-origin fixture also
+        // checks CPU/GPU agreement, including R16 rut quantization. This is a fixture limit,
+        // not a measured global error bound for every terrain coordinate and native grid.
+        let worst=points.iter().zip(&actual).map(|(p,h)| {
+            let error=(cold.height_at(p.x,p.y)-h).abs();
+            assert!(error<=0.0002+cold.rut_at(p.x,p.y).abs()*0.001,"CPU/GPU terrain gap {error} m at {p:?}");error
+        }).fold(0f32,f32::max);
+        eprintln!("terrain cold GPU restore: {} exact height samples, {} opening samples, {} resident pages, max CPU/GPU gap {worst:.7} m",
+            points.len(),opening_points.len(),restored.resident.len());
     }
 }

@@ -35,7 +35,7 @@ struct Smoke {
     atmo_time: f32,         // simulation time — identical for every split view in this frame
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol
     transport_steps: vec4<f32>, // world, cabin, plume, secondary local-medium quadrature
-    weather_motion: vec4<f32>, // shared wind displacement and weather time
+    weather_motion: vec4<f32>, // shared wind displacement; w explicit theatre climate flag
     cabin_medium: CabinMedium,
 };
 
@@ -201,7 +201,7 @@ fn smoke_light(point: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
         let d2=max(dot(delta,delta),max(source.w*source.w,0.0025));
         let visibility=cabin_volume_light_shadow(source.xyz,source.w,point);if(all(visibility<=vec3(0.0))){continue;}
         let direction=delta*inverseSqrt(d2);let range=max(sqrt(d2)-source.w,0.0);
-        let tau=weather_optical_depth(point,direction,range,sm.fog_layer.xy,sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x))
+        let tau=weather_optical_depth(point,direction,range,sm.fog_layer.xy,sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x),sm.weather_motion.w)
             +max(sm.interior,0.0)*0.010*5.2*cabin_path_length(point,direction,range);
         incident += emission.rgb*max(emission.w,0.0)/d2
             *henyey_greenstein(dot(ray,direction),0.42)*visibility*exp(-tau);
@@ -266,7 +266,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         scene_distance=max(length(surface.xyz/surface.w),0.0);
     }
     let fog_distance=min(scene_distance,max(sm.world_max_distance,0.0));
-    let fog_moment=weather_optical_moment(origin,ray,fog_distance,sm.fog_layer.xy,max(sm.fog_density,0.0),sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x));
+    let fog_moment=weather_optical_moment(origin,ray,fog_distance,sm.fog_layer.xy,max(sm.fog_density,0.0),sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x),sm.weather_motion.w);
     let fog_transmittance=exp(-fog_moment.x);
     // The world medium's single-scattering source: its albedo times the physical environment
     // (the probe's directions, phase-weighted) and the key body's beam through its phase,

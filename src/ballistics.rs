@@ -28,6 +28,7 @@ pub mod ricochet;
 
 /// Terminal-effect class of a shell. Drives penetration law, normalization and post-armor behavior.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ShellKind {
     /// Armor-piercing capped, ballistic cap, HE filler + base fuze (PzGr.39). The killer:
     /// penetrates then DETONATES inside.
@@ -154,6 +155,7 @@ pub fn budget_mm(shell: &'static ShellSpec, range_m: f32) -> f32 {
 // ── Armor ─────────────────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ArmorMaterial {
     /// Rolled homogeneous armor — the baseline (quality 1.0).
     Rha,
@@ -179,7 +181,9 @@ impl ArmorMaterial {
 /// One armor plate: thickness, constructive slope (degrees from VERTICAL — 0 = upright wall,
 /// 60 = heavily raked like the T-34 glacis), material.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize)]
 pub struct Plate {
+    #[serde(with = "crate::ballistics::plate_name")]
     pub name: &'static str,
     pub thickness_mm: f32,
     pub slope_deg: f32,
@@ -188,6 +192,7 @@ pub struct Plate {
 
 /// Which face of the vehicle got hit — the game maps its hit geometry (Arc × entry height) here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Facing {
     HullFront,
     HullSide,
@@ -199,6 +204,7 @@ pub enum Facing {
 
 /// A vehicle's armor scheme. Data first-pass from standard references; refined by the research pass.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ArmorScheme {
     TigerI,
     TigerII,
@@ -383,6 +389,7 @@ pub fn effective_thickness(shell: &ShellSpec, plate: &Plate, horiz_obliquity_deg
 /// How the armor answered the shell. One variant per physically distinct outcome — the FX, audio and
 /// damage layers each branch off this.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Terminal {
     /// Stopped armor defeat. A grazing continuation is classified separately after contact.
     Bounce,
@@ -399,7 +406,9 @@ pub enum Terminal {
 /// THE shared impact event: produced once by the ballistic resolution; consumed by visual FX,
 /// parametric audio (acoustics::ImpactParams) and the damage/spall model.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ImpactEvent {
+    #[serde(with = "crate::ballistics::shell_spec_ref")]
     pub shell: &'static ShellSpec,
     pub terminal: Terminal,
     /// Striking velocity (m/s) after flight.
@@ -877,6 +886,7 @@ pub static BR_540: ShellSpec = ShellSpec {
 /// A gun, rather than only caliber or faction, selects its projectile/charge combination.
 /// This renderer-independent identity is shared with the combat trainer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum SovietGun {
     F34,
     D5S85,
@@ -1342,5 +1352,45 @@ mod graze_tests {
         // nothing but the graze.
         let square = resolve(&BR_350B, 443.0, roof, 10.0, 7);
         assert_eq!(square.terminal, Terminal::Penetration);
+    }
+}
+
+pub mod shell_spec_ref {
+    use serde::{Deserialize,Deserializer,Serializer};
+    use crate::ballistics as b;
+    pub fn serialize<S:Serializer>(spec:&&'static b::ShellSpec,s:S)->Result<S::Ok,S::Error> {s.serialize_str(spec.name)}
+    pub fn deserialize<'de,D:Deserializer<'de>>(d:D)->Result<&'static b::ShellSpec,D::Error> {
+        let name=String::deserialize(d)?;
+        [&b::PANZERFAUST_60,&b::PZGR_39,&b::PZGR_40,&b::SPRGR_88,&b::PZGR_39_43,
+            &b::BR_240_M42,&b::BR_240,&b::BR_240P,&b::BR_271_ZIS2,&b::BR_350B,&b::OF_350_F34,
+            &b::BR_354P,&b::BR_365,&b::BR_412,&b::BR_471,&b::OF_530,&b::BR_540].into_iter()
+            .find(|spec|spec.name==name).ok_or_else(||serde::de::Error::custom(format!("unknown shell specification {name}")))
+    }
+}
+
+pub mod plate_name {
+    use serde::{Deserialize,Deserializer,Serializer};
+    use crate::ballistics::{ArmorScheme as A,Facing as F};
+    pub fn serialize<S:Serializer>(name:&&'static str,s:S)->Result<S::Ok,S::Error> {s.serialize_str(name)}
+    pub fn deserialize<'de,D:Deserializer<'de>>(d:D)->Result<&'static str,D::Error> {
+        let name=String::deserialize(d)?;
+        for scheme in [A::TigerI,A::TigerII,A::PantherD,A::PzIII,A::T34_76,A::T34_85,A::Kv1,A::Kv2,A::Is2,A::Is3,A::Su100,A::Isu152] {
+            for facing in [F::HullFront,F::HullSide,F::HullRear,F::TurretFront,F::TurretSide,F::TurretRear] {
+                let candidate=scheme.plate(facing).name;if candidate==name {return Ok(candidate);}
+            }
+        }
+        ["rendered AT-gun steel (RHA surrogate)","Tiger glacis","source roof plate","source belly plate","Tiger lower hull side"]
+            .into_iter().find(|&candidate|candidate==name).ok_or_else(||serde::de::Error::custom(format!("unknown plate label {name}")))
+    }
+}
+
+
+impl<'de> serde::Deserialize<'de> for Plate {
+    fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Saved { name:String, thickness_mm:f32, slope_deg:f32, material:ArmorMaterial }
+        let saved=Saved::deserialize(d)?;
+        let name=plate_name::deserialize(serde::de::value::StringDeserializer::<D::Error>::new(saved.name))?;
+        Ok(Self{name,thickness_mm:saved.thickness_mm,slope_deg:saved.slope_deg,material:saved.material})
     }
 }

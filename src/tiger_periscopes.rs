@@ -57,6 +57,7 @@ pub const CUPOLA_CENTERS: [Vec3; 7] = [
 ];
 
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FocusState {
     pub index: Option<usize>,
     pub phase: f32,
@@ -110,7 +111,7 @@ impl super::Game {
             let eye = renderer.camera.pos;
             let look = renderer.camera.forward();
             let mut candidates:Vec<(usize,Vec3)>=CUPOLA_CENTERS.iter().copied().enumerate()
-                .filter(|_|commander).collect();
+                .filter(|(index,_)|commander&&(self.expedition_runtime.is_none()||self.workshop.state.usable(*index))).collect();
             if loader {
                 candidates.push((LOADER_INDEX,LOADER_ENTRY));
                 if let Some(ports)=side_ports::ports() {for (i,port) in ports.iter().enumerate() {

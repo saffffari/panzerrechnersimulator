@@ -1,5 +1,15 @@
 # Singleplayer crew arm animation
 
+## Current implementation, 2026-10-31
+
+The historical notes below describe the September seated prototype. Ordinary solo play now uses the original weighted standing source for the Loader, a finite cartridge ownership sequence in `crew_loader_work.rs`, and acceleration/recoil response in `crew_balance.rs`. The Loader walks within the existing basket/breech envelope, reaches an existing rack round, carries and rams it, then returns to his periscope. This envelope is not full-body navigation through all source triangles.
+
+Idle pose sampling remains 30 Hz. Changed mechanical contacts and active crew transfers refresh their actual source skin on the simulation step that moves them. The receipt's `hand_error_m` measures against the current mechanism; `pose_target_error_m` separately measures the cached IK target. Earlier zero-error receipts only established the latter and cannot prove continuous grasp. Finger curl, palm orientation, and full swept-body clearance remain incomplete.
+
+The current audit and exact validation status are in [CREW_FOUNDATION_AUDIT_20261031.md](CREW_FOUNDATION_AUDIT_20261031.md).
+
+## Historical seated prototype
+
 The shader Playtest's five singleplayer crew identities use the existing reviewed source character meshes and atlas. One Gunner hand follows the source elevation-wheel grasp under the same rotation used by the mechanical wheel. The Loader's mechanism-following arm prototype is **disabled by default** because its hands miss the actual carried round/case and ram positions. Ordinary player inputs continue to control these mechanisms; this implementation adds no autonomous loading, firing or crew navigation.
 
 `src/crew_arm_animation.rs` skins the original seated vertices with the original source weights. `tools/bake_crew_arm_bindings.py` exports the 39-bone seated bindings from the verified FBX extraction and matches them to the existing GLB's 914 split vertices. Runtime skinning uploads only the bounded crew vertex buffers, at most once per 1/30 second, without changing topology, materials or draw count. Pose-matched arm segments also feed the existing hit volumes and the initial casualty pose.

@@ -24,6 +24,7 @@ const MAGIC: [u8; 4] = *b"KSL1";
 /// A `[OBS] → tanh(HID) → tanh(ACT)` MLP over a flat weight vector (layer-major, weights then
 /// biases). Pure, no-alloc hot path aside from the output array.
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Mlp {
     pub w: Vec<f32>, // len == GENOME
 }

@@ -27,7 +27,8 @@ pub(super) const REPLAN_OFF_M: f32 = 12.0;
 pub(super) const CARROT_M: f32 = 10.0;
 
 #[derive(Clone, Debug)]
-pub(super) struct StreetNav {
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct StreetNav {
     /// World XZ of the grid's minimum corner.
     origin: Vec2,
     cell: f32,
@@ -234,6 +235,7 @@ fn project(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 
 /// One street route a tank is driving, followed by pure pursuit.
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Leg {
     pub goal: Vec2,
     path: Vec<Vec2>,

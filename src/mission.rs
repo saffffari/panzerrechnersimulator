@@ -53,6 +53,7 @@ pub const FLARE_RADIANT_INTENSITY: f32 = 6000.0;
 pub const FLARE_SOURCE_RADIUS_M: f32 = 0.09;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Goal { Reach, Hold, Destroy, Observe, Recover, Escort, SurviveUntil }
 
 impl Goal {
@@ -75,6 +76,7 @@ impl Goal {
 
 /// Where a beat or a cue is. Resolved once against the built map when the mission is enabled.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Place {
     World(Vec2),
     /// A fraction (0..1) along the course route (the Canyon's authored corridor).
@@ -90,6 +92,7 @@ pub enum Place {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Trigger {
     /// With the mission.
     Start,
@@ -102,6 +105,7 @@ pub enum Trigger {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Completion {
     /// Inside the beat's radius for `dwell_s`.
     Enter { dwell_s: f32 },
@@ -124,6 +128,7 @@ pub enum Completion {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Failure {
     None,
     /// The beat stays open this long: it fails forward (the next beat opens).
@@ -133,6 +138,7 @@ pub enum Failure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Line {
     /// Callsign of the speaker; empty for the crew's own written note.
     pub from: String,
@@ -140,9 +146,11 @@ pub struct Line {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum MarkKind { Box, Cross, Pin, Circle }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum FlareColor { White, Red, Green }
 
 impl FlareColor {
@@ -161,6 +169,7 @@ impl FlareColor {
 
 /// An in-world cue a beat emits when it opens (and again on a nudge).
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Cue {
     /// A signal flare fired from `at`, `delay_s` after the beat opens, again every `repeat_s`
     /// (0 = once). The rear party ahead fires it; it is a modeled light and a smoke trail.
@@ -174,12 +183,14 @@ pub enum Cue {
 /// A platoon the director sends. `fraction` is a knot of the course route; `None` lets the
 /// director choose a hidden entry ahead of the Tiger and send the platoon down to it.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Release {
     pub count: usize,
     pub fraction: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Pacing {
     /// Sent when the beat opens.
     pub release: Option<Release>,
@@ -193,6 +204,7 @@ pub struct Pacing {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Beat {
     pub id: String,
     pub title: String,
@@ -217,6 +229,7 @@ pub struct Beat {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Mission {
     pub id: String,
     pub title: String,
@@ -416,9 +429,11 @@ pub fn locate(manifest: Option<&Path>, act_id: u8) -> Option<PathBuf> {
 // ── Runtime ───────────────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum BeatStatus { Pending, Active, Done, Failed }
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct BeatRun {
     pub status: BeatStatus,
     pub at: Vec2,
@@ -434,6 +449,7 @@ pub struct BeatRun {
 }
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Flare {
     pub pos: Vec3,
     pub vel: Vec3,
@@ -453,6 +469,7 @@ impl Flare {
 }
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SmokeColumn {
     pub base: Vec3,
     pub height_m: f32,
@@ -461,6 +478,7 @@ pub struct SmokeColumn {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RadioLine {
     pub from: String,
     pub text: String,
@@ -469,6 +487,7 @@ pub struct RadioLine {
 
 /// What the simulation tells the mission each step (`mission_game.rs` gathers it).
 #[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Observation {
     /// The actor's ground position: the Tiger, or the man when he is on foot.
     pub actor: Vec2,
@@ -495,6 +514,7 @@ pub struct Observation {
 
 /// What the mission asks the simulation to do.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Request {
     Release(Release),
     Alert { at: Vec2, radius_m: f32 },
@@ -507,6 +527,7 @@ pub enum Request {
 
 /// The marks the paper carries for the mission.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct MapGuidance {
     /// (place, kind, beat number, done)
     pub marks: Vec<(Vec2, MarkKind, usize, bool)>,
@@ -520,6 +541,7 @@ pub struct MapGuidance {
 
 /// What the frame shows over the world (display text, outside the pixel crush).
 #[derive(Clone, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Overlay {
     /// The written order while it is held up: title, lines, the first beat's line, alpha.
     pub order: Option<(String, Vec<String>, String, f32)>,
@@ -530,6 +552,7 @@ pub struct Overlay {
 }
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct MissionState {
     pub mission: Mission,
     pub beats: Vec<BeatRun>,

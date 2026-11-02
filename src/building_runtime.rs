@@ -5466,3 +5466,18 @@ impl BuildingRuntime {
 #[cfg(test)]
 #[path = "building_runtime_grammar_tests.rs"]
 mod grammar_tests;
+
+impl BuildingRuntime {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        Ok(crate::capture_world_fields!(self; state, fractional_damage, revision))
+    }
+    pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        let state:BuildingState=fields.take("state")?;
+        let fractional_damage:Vec<f32>=fields.take("fractional_damage")?;
+        let revision=fields.take("revision")?;fields.finish()?;
+        anyhow::ensure!(state.instance_id==self.state.instance_id&&state.instance_seed==self.state.instance_seed,"building source identity mismatch");
+        state.validate_against(&self.blueprint,&self.layout)?;
+        anyhow::ensure!(fractional_damage.len()==self.fractional_damage.len()&&fractional_damage.iter().all(|v|v.is_finite()&&*v>=0.0&&*v<1.0),"invalid exact building fractional damage");
+        self.state=state;self.fractional_damage=fractional_damage;self.revision=revision;Ok(())
+    }
+}

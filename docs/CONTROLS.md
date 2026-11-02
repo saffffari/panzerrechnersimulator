@@ -1,5 +1,77 @@
 # Panzerrechnersystem — Control Scheme
 
+## Solo expedition controls — 30 October 2026
+
+The current solo bindings below supersede the older keyboard descriptions in historical sections.
+LAN/controller bindings remain separate. The gunner starts on **hold fire**; **K** deliberately
+switches the autonomous-gunner experiment on or off. The bottom-of-view status shows that mode
+and the current driver cruise setting.
+
+| Input | Current solo action |
+|---|---|
+| LMB | Interact, pick up, enter, equip or use; fire the main gun while in its sights |
+| X | Put away the topmost held item or exit the current station/view; one layer per press |
+| Q / E | Decrease/increase driver cruise: reverse 3/2/1, stop, forward 1/2/3 |
+| W/S, A/D | Manual drive/steer at control stations; walk in the compartment or on foot |
+| Arrow keys | Coarse traverse/elevation through a capable gunner; direct control at gun sights |
+| Mouse | Fine gun aim only at sights; head/body look elsewhere |
+| V | Indicate an approximate clock-bearing sector; no enemy lock or automatic range measurement |
+| K | Toggle the autonomous-gunner experiment; no commander LMB fire order |
+| M / B | Physical map / repair manual |
+| 1 / 2 | P08 / Panzerfaust on foot; 1 toggles the mounted P08 while aboard |
+| R | Reload personal weapon on foot; throw a carried spent case while aboard |
+| F / T | Handheld light / request ammunition type |
+| Z | Stop the engine or operate its starter from an eligible control station |
+| Escape / Home | Pause / controls reference |
+
+Cruise is a standing speed request, not a throttle percentage. Initial targets are 2/5/8 m/s
+forward and 1/2/3 m/s backward; actual motion still depends on the drivetrain, ground and damage.
+The driver brakes before reversing. W/S at a command station cancels cruise. Walking inside and
+moving between stations preserve the standing drive order; walking sideways cannot steer the hull.
+Losing or incapacitating the driver cancels cruise. The player can still drive from the driver's
+station. A dead gunner disables remote arrows, but the player can take the sights after clearing
+that station. A held map/manual consumes new commands rather than cancelling standing orders.
+
+On foot with empty hands, hold **LMB** on a body to move it; **X** or releasing LMB lets go.
+An incapacitated living crewman can be extracted through a fully open hatch using the same
+interaction. This does not kill or heal him: field bleeding continues. Bring the held patient
+beside a camp stretcher and target that bed with **LMB** to admit him to medical care. Taking
+the patient off the bed interrupts that care. A stabilized living person can later be selected
+for control with their existing injuries and identity intact.
+
+The transport in **Recovery Playtest** and **Expedition** uses **LMB** to board the stopped halftrack
+with empty hands, **W/S** to drive, **A/D** to steer, **Space** to brake and **X** to leave once
+stopped. Its current source model has no modeled cab, so this prototype uses an exterior follow
+camera. Open the rear ramp before loading. Carry a compatible spare to the rear contact and use
+**LMB** to load it; aim at loaded cargo and click to unload. Payload and space are finite. A held
+casualty beside the open ramp loads after a short held **LMB** interaction; their injuries and
+identity persist throughout transport. Do not put patients in an occupied cargo aisle.
+
+Equip the physical field first-aid bag with **LMB**, then click a wounded person. Its prompt asks
+for holding, wrapping with alternating mouse movement, turning, or watching. **X** interrupts and
+puts the bag down. The bag and camp medical tent use separate finite supplies. This uses the
+game's existing treatment model; first aid does not revive a dead crew member.
+
+The portable winch is separate equipment, not an unaided halftrack towing rating. Clear the bed
+and lower it down the rear ramp, push it to a level anchor site, then take its cable to the Tiger's
+actual lower tow mounting. Hold **LMB** at the winch to pull. Fuel, cable length, slope, load and
+obstructions constrain movement. Release the pull before **X** detaches the line for re-rigging.
+
+For physical workshop parts, hold **LMB** on an exposed retainer to release it, release the button,
+then hold again to withdraw the component. Carry a compatible replacement to the empty mounting;
+seat, secure and inspect it as separate steps. **X** puts a held part down on a supported surface.
+Fitting a damaged component does not make it sound. The work lamp has a finite battery.
+
+Use the pause menu's **Save expedition** and **Load expedition** entries for the complete retained
+battlefield. **F5** also saves from the succession/expedition status screens. A failed load preserves
+the current world; a save requires its matching game build and source assets. New Expedition starts
+at camp, while Resume preserves the saved position, people, damage, projectiles and work in progress.
+
+These paragraphs describe registered controls. The review page distinguishes the passed transport,
+winch, optics and save scenarios from boarding, medical transport and heavy overhaul still under
+combined gameplay verification. The older sections below are historical references.
+
+
 Solo Playtest input and physical equipment notes updated 2026-09-09. The shader branch still
 requires combined runtime review; the bindings below describe the implemented public input paths.
 Bounded review scenarios are listed in [SHADER_MECHANIC_REVIEW_FIXTURES.md](SHADER_MECHANIC_REVIEW_FIXTURES.md).
@@ -109,7 +181,7 @@ are visible from the other seats; a fallen body and blood remain in its struck p
 3. **E = interact with physical equipment and the tank's body.** Pick up the looked-at toolbox,
    extinguisher or available Panzerfaust tube, enter a station anchor, work a hatch or mount.
    LMB also operates physical interactables; cartridges specifically use held LMB. Carry the
-   toolbox visibly with the hammer, then press E or Q to put it down nearby. It returns to its
+   toolbox visibly with the hammer, then press X to put it down nearby. It returns to its
    wall mount only when that mount is within reach and under your gaze. A carried Panzerfaust
    returns to its own empty rack slot when you face that slot within reach.
    Open a hatch with **LMB**, then press **Space** at its opening to climb through. This works
@@ -173,11 +245,11 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 |---|---|
 | **W S A D** | drive, from every station (A/D combine with W/S); walks at the Loader / on foot |
 | **mouse** | lay the gun (gunner) / head-look (commander, loader, foot) |
-| **arrows** | fine gun-lay nudge (gunner) / fast scan (commander) |
+| **arrows** | direct gun-lay at sights / coarse orders through a living gunner elsewhere |
 | **MMB** (hold) | coax MG34 |
 | **C** | take out / put away the cigarette pack and cigarette |
-| **E** | the one interaction key: take, stow, hatches and their levers, sights, seats, breech lever, rounds and cases. Press once to take a round or case, again to ram a lined-up round or let go. E on a spot you occupy leaves it. |
-| **LMB** | the trigger: fire, or use the tool in hand (extinguisher, hammer, pistol). It never picks things up. |
+| **Q / E** | lower / raise the living driver's standing cruise speed; seven notches including stop |
+| **LMB** | interact, pick up, equip, enter, or use the held tool; main-gun fire only at the sights |
 | **F** or **L** | take out / put away the hand flashlight |
 | **PageUp / PageDown** | driver: shift up / down by hand |
 | **End** | driver: return the gearbox to automatic selection |
@@ -187,14 +259,14 @@ Hold **Ctrl** to crouch inside or outside; standing resumes only where there is 
 | **Space** (hold 1.5 s) | climb OUT on foot, head in or head out, only with the cupola hatch open; the HUD ring fills while you hold. Nothing opens the hatch for you |
 | **T** | ammunition reminder; actual AP/HE choice is the grey/yellow physical rack round you equip |
 | **LMB with a tool equipped** | use the extinguisher or repair the actual broken component within reach |
-| **E / Q with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
+| **X with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
 | **M** | raise/stow the held paper map; world keeps moving; the compass comes out with the map |
 | **LMB on map** | draw permanent graphite with the pencil; there is no eraser |
 | **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play). Reachable at any moment of play, including with the map held |
 | **K** | solo crew: the gunner's standing order, fire at will / hold fire |
 | **Y / N** | solo crew: yes / no to a crewman's request (the loader asking to dump the empties out of the side hatch) |
-| **MMB** (pad **RB**) at the cupola | solo crew: designate the bearing under the view centre for the gunner (he traverses there and holds); again on the same bearing refines the range |
-| **LMB** buttoned at the cupola, nothing under the crosshair | solo crew: fire command to the gunner |
+| **V**, or **MMB** (pad **RB**) at the cupola | indicate a coarse clock-bearing sector for the gunner; no precise target lock |
+| **X** | stow held item or leave the current station/view; empty-space LMB never commands gunner fire |
 | **E** (hold) on a wounded crewman, a body, or the first-aid box | solo crew: treat him / drag the body off the seat / treat yourself |
 | **LMB** on the driver's seat from the front of the basket floor | solo crew: take the driver's seat (the clamber takes a beat) |
 | **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
@@ -390,7 +462,7 @@ size, and stitch-apron rules.
 - Pick up the physical repair toolbox. The box stays in the left hand and hammer in the right,
   inside or outside. Approach and aim at the actual broken component, then hold LMB to repair.
   At a broken track: grab the loose end, hold LMB and pull down, fit the link, then hammer the pin.
-  Completed work leaves the tools in your hands. E/Q puts them down for later pickup; repair
+  Completed work leaves the tools in your hands. X puts them down for later pickup; repair
   cannot be performed remotely from the kit mount. Specialized repair minigames beyond the
   existing track sequence remain future work.
 - These mechanics have CPU coverage; the combined shader branch still needs visual and live
@@ -430,9 +502,9 @@ size, and stitch-apron rules.
 - **E is a second interact key**: it does whatever the action button would do under the crosshair.
 - **At the cupola, Shift puts the head out and back in, and held Space climbs out.** Both need
   the hatch already open; neither opens it. A tap of Space there does nothing, so a stray press
-  cannot leave the tank. Q still drops back into the turret. X is now the throw key.
+  cannot leave the tank. X drops back into the turret. R throws carried cases; X leaves the station.
 - **The hatch lever's target is the grip and the pivot cylinder it turns**, outlined together.
-- **X throws the spent case in your hands** where you are looking. Through an open hatch it
+- **R throws the spent case in your hands** where you are looking. Through an open hatch it
   leaves the tank and lies on the ground. LMB still just lets go of it.
 - **Interaction hint.** While something is outlined, a small line at the bottom centre of the
   screen, in the outline's colour, names what it is or does and the button for it in parentheses.
@@ -444,7 +516,7 @@ size, and stitch-apron rules.
   the hand. A lit cigarette goes to the mouth by itself when the hands are needed.
 - **Leaving by the cupola needs the cupola view first.** From below, click the cupola to climb
   into its seat; only there does held Space climb out. The hatch lever itself can be worked from
-  below as well as from the seat. Q drops back down.
+  below as well as from the seat. X drops back down.
 - **Day and night.** Every mode now runs a fifteen minute day: five minutes of full day,
   two and a half each of sunrise and sunset, and five of night. The Sun and Moon keep their true positions for the map's date and place; only the
   clock runs fast. `KESSEL_DAY_NIGHT=0` restores the real-time clock.

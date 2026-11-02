@@ -109,6 +109,28 @@ pub struct LocalRubble<'a> {
 }
 
 impl LocalRubble<'_> {
+    /// Conservative bounds of exactly the sources read by `top_at_from`. Collected once for
+    /// many vertex-BVH queries; these boxes only reject impossible contacts, never support one.
+    pub(crate) fn support_bounds(&self, max_base:f32) -> Vec<(Vec2,Vec2,f32)> {
+        let mut result=Vec::new();
+        for &(_,mound) in &self.mounds {
+            if mound.world_min.y <= max_base {
+                result.push((Vec2::new(mound.world_min.x,mound.world_min.z),
+                    Vec2::new(mound.world_max.x,mound.world_max.z),
+                    mound.world_max.y+16.*f32::EPSILON*mound.world_max.y.abs().max(1.)));
+            }
+        }
+        for &(_,layer) in &self.layers {
+            let base=layer.transform.w_axis.y;
+            if base>max_base {continue;}
+            if let Some((lo,hi))=layer.surface.height_range() {
+                let h=base+(layer.transform.y_axis.y*lo).max(layer.transform.y_axis.y*hi);
+                result.push((layer.min,layer.max,h+16.*f32::EPSILON*
+                    (base.abs()+layer.transform.y_axis.y.abs()*(lo.abs()+hi.abs())).max(1.)));
+            }
+        }
+        result
+    }
     pub fn is_empty(&self) -> bool {
         self.mounds.is_empty() && self.layers.is_empty()
     }
@@ -1755,5 +1777,30 @@ mod tests {
         let intact = district();
         intact.export_campaign(1, &mut out);
         assert!(out.buildings.is_empty());
+    }
+}
+
+#[derive(serde::Serialize,serde::Deserialize)]
+pub(crate) struct WorldState {
+    instances:Vec<crate::expedition_world_save::StateFields>,
+    piles:Vec<Vec<crate::building_rubble::WorldMound>>,
+    buried:Vec<Vec<bool>>,
+}
+impl BuildingSet {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<WorldState> {
+        Ok(WorldState{instances:self.instances.iter().map(BuildingRuntime::export_world_state).collect::<anyhow::Result<_>>()?,
+            piles:self.rubble.iter().map(|r|r.pile.export_world_state()).collect(),buried:self.rubble.iter().map(|r|r.buried.clone()).collect()})
+    }
+    pub(crate) fn import_world_state(&mut self,state:WorldState,terrain:&dyn Fn(Vec2)->f32)->anyhow::Result<()> {
+        anyhow::ensure!(state.instances.len()==self.instances.len()&&state.piles.len()==self.rubble.len()&&state.buried.len()==self.rubble.len(),"building world population changed");
+        for (instance,saved) in self.instances.iter_mut().zip(state.instances) {instance.import_world_state(saved)?;}
+        for (i,(pile,buried)) in state.piles.into_iter().zip(state.buried).enumerate() {
+            self.rebuild_rubble(i,terrain);
+            anyhow::ensure!(buried.len()==self.rubble[i].buried.len(),"buried module population changed");
+            self.rubble[i].pile.import_world_state(pile)?;self.rubble[i].buried=buried;
+        }
+        // LAN caches are derived and unused by solo expedition. No mutable world state is reset.
+        self.net_last_revision.fill(u32::MAX);self.net_cache.fill(None);self.net_applied.fill(None);
+        Ok(())
     }
 }

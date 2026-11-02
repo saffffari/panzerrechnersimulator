@@ -19,6 +19,7 @@ const DEFAULT_SEED: u64 = 0x91d0_03bf_661e_a205;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct PixelParticle {
     pub world: [f32; 3],
     pub kind: u32,
@@ -83,6 +84,7 @@ fn dust_position(seed: u64, id: usize, time_s: f32) -> Vec3 {
 /// call starts at the supplied clock under the supplied constant wind; later monotonic calls
 /// integrate wind with trapezoidal time integration. Same-time split views never advance it.
 /// A clock rewind reconstructs the constant-wind initial condition, not a saved wind replay.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct PixelParticleField {
     seed: u64,
     displacement: DVec3,
@@ -148,6 +150,11 @@ impl PixelParticleField {
         dust_amount: f32,
         dust_model: Mat4,
     ) -> &[PixelParticle] {
+        self.update_regional(camera,world_wind,time_s,precipitation,atmo_origin,dust_amount,dust_model,false)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_regional(&mut self,camera:Vec3,world_wind:Vec3,time_s:f32,precipitation:f32,
+        atmo_origin:Vec3,dust_amount:f32,dust_model:Mat4,theatre:bool)->&[PixelParticle] {
         self.advance(time_s, world_wind);
         self.particles.clear();
         self.candidates.clear();
@@ -179,12 +186,13 @@ impl PixelParticleField {
                             let layer=(precipitation-(sample/2) as f32).clamp(0.0,1.0);
                             if layer<=0.0 {continue;}
                             let id = snow_identity(self.seed, cell, sample);
+                            let world = snow_position(self.seed, cell, sample, self.displacement);
+                            let layer=layer*crate::weather_visibility::theatre_north_weight(world.z,theatre);
                             // Two candidates at half occupancy give ~7.2k at full precipitation
                             // inside a 24 m sphere. Lower precipitation thins by stable identity.
                             if unit(id ^ 0xef) >= layer as f64 * 0.5 {
                                 continue;
                             }
-                            let world = snow_position(self.seed, cell, sample, self.displacement);
                             let distance2 = world.distance_squared(camera);
                             if distance2 > SNOW_RADIUS_M.powi(2) || distance2 < 0.01 {
                                 continue;
@@ -349,5 +357,15 @@ mod tests {
         assert!(field
             .update(origin, Vec3::ZERO, 12.0, 0.0, origin, 0.0, model)
             .is_empty());
+    }
+}
+
+#[cfg(test)]mod regional_weather_tests {use super::*;
+    #[test]fn snow_respects_world_belt_and_legacy_sample_identity(){
+        let mut legacy=PixelParticleField::new();let mut regional=PixelParticleField::new();
+        let a=legacy.update(Vec3::ZERO,Vec3::ZERO,0.,1.,Vec3::ZERO,0.,Mat4::IDENTITY).to_vec();
+        let b=regional.update_regional(Vec3::ZERO,Vec3::ZERO,0.,1.,Vec3::ZERO,0.,Mat4::IDENTITY,false).to_vec();assert_eq!(a,b);
+        assert!(regional.update_regional(Vec3::ZERO,Vec3::ZERO,0.,1.,Vec3::ZERO,0.,Mat4::IDENTITY,true).is_empty());
+        assert!(!regional.update_regional(Vec3::new(0.,2.,-3500.),Vec3::ZERO,0.,1.,Vec3::ZERO,0.,Mat4::IDENTITY,true).is_empty());
     }
 }

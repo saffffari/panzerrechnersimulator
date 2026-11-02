@@ -25,6 +25,7 @@ pub const PAT_PRONE: f32 = 0.34;
 pub const PRONE_HOLD_S: f32 = 0.7;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct PlayerBurn {
     /// Flames on the body, 0 (none) to 1.
     pub heat: f32,

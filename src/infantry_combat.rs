@@ -44,6 +44,7 @@ pub const MG_HEAT_GAIN: f32 = 0.28;
 pub const MG_HEAT_LOSS: f32 = 0.45;
 pub const MG_RESUME: f32 = 0.35;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Team {
     German,
     Soviet,
@@ -51,6 +52,7 @@ pub enum Team {
 /// Visual pose capability is part of the shared trainer/runtime physical contract. The selected
 /// Soviet source is absent; its rigid fallback cannot truthfully receive a crouched hitbox.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum PoseSupport {
     StandingOnly,
     InstantCrouch,
@@ -79,6 +81,7 @@ impl Team {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Weapon {
     Rifle,
     P08,
@@ -143,6 +146,7 @@ impl<const N: usize> CoverSet for [Cover; N] {
     }
 }
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Combatant {
     pub id: u32,
     pub team: Team,
@@ -298,6 +302,7 @@ pub fn body_height(crouched: bool) -> f32 {
     }
 }
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Shot {
     pub shooter: u32,
     pub team: Team,

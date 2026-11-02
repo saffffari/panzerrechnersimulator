@@ -103,6 +103,9 @@ fn create_save_directory(path: &Path) -> Result<()> {
     // A file fsync plus the final directory fsync does not persist a newly created directory's
     // own entry in its parent. Sync each level before creating the next. Sync an existing entry
     // too: it may be the directory left by a process interrupted just after mkdir on its last try.
+    // Windows cannot open a directory with File::open. Its save path still syncs the file
+    // before same-directory replacement; directory-entry fsync is the Unix durability step.
+    #[cfg(unix)]
     if let Some(parent) = path.parent() {
         let parent = if parent.as_os_str().is_empty() {
             Path::new(".")
@@ -131,6 +134,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .context("checkpoint needs a file name")?
         .to_string_lossy();
     create_save_directory(parent)?;
+    #[cfg(unix)]
     let directory = File::open(parent).context("open campaign save directory")?;
     let (temp, mut file) = loop {
         let serial = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -152,7 +156,9 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         file.write_all(bytes)
             .context("write temporary checkpoint")?;
         file.sync_all().context("sync temporary checkpoint")?;
+        drop(file);
         fs::rename(&temp, path).context("atomically replace checkpoint")?;
+        #[cfg(unix)]
         directory
             .sync_all()
             .context("checkpoint installed but directory sync failed")?;
@@ -908,13 +914,16 @@ mod tests {
 
     #[test]
     fn state_path_obeys_xdg_without_relative_directory_writes() {
+        let root = if cfg!(windows) { Path::new("C:/") } else { Path::new("/") };
+        let state = root.join("state");
+        let owner = root.join("owner");
         assert_eq!(
-            state_path(Some("/state".into()), None).unwrap(),
-            Path::new("/state/panzerrechnersystem/campaign-checkpoint.v1.json")
+            state_path(Some(state.clone()), None).unwrap(),
+            state.join("panzerrechnersystem/campaign-checkpoint.v1.json")
         );
         assert_eq!(
-            state_path(Some("relative".into()), Some("/owner".into())).unwrap(),
-            Path::new("/owner/.local/state/panzerrechnersystem/campaign-checkpoint.v1.json")
+            state_path(Some("relative".into()), Some(owner.clone())).unwrap(),
+            owner.join(".local/state/panzerrechnersystem/campaign-checkpoint.v1.json")
         );
         assert!(state_path(None, None).is_err());
     }

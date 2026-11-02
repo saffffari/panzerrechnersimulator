@@ -40,6 +40,7 @@ const UNAWARE_OFF: f32 = 0.15;
 /// A discrete loud event (running footfalls, and especially a Luger shot) that soldiers sample.
 /// Lives in the `Game.noise` ring; decays by `ttl`.
 #[derive(Clone, Copy, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct NoiseEvent {
     pub pos: Vec3,
     pub strength: f32, // audible radius in metres
@@ -48,6 +49,7 @@ pub struct NoiseEvent {
 
 /// What a soldier will do this frame, from most to least aware.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Alert {
     Unaware,
     Suspicious,
@@ -164,6 +166,7 @@ pub struct SoldierPolicyStep {
     pub shot: Option<InfantryShot>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Soldier {
     pub pos: Vec3,
     pub yaw: f32,         // forward = (sin, 0, -cos), same convention as the foot player

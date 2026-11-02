@@ -1,7 +1,8 @@
-//! Destructible trees (docs/DESTRUCTION.md §5, slice 2). A falling tree is ONE hinge rotation
-//! about its base pivot — no fracture, no solver. Small firs snap under the tracks or any shell;
+//! Destructible trees (docs/DESTRUCTION.md §5, slice 2). Released trees use actual sampled
+//! source contacts, gravity and rigid-body torque; no fracture or compliant branch solver. Small firs snap under the tracks or any shell;
 //! big pines fall to a shell or a heavy tank's sustained shove (the Tiger pushes them over at a
-//! crawl; lighter vehicles are blocked). A fallen trunk stays down forever as a low obstacle the
+//! crawl; lighter vehicles are blocked). Source-surface terrain contact ends the fall, not a
+//! preset terminal angle. A fallen trunk stays down forever as a low obstacle the
 //! tank simply drives over.
 //!
 //! Trees live in the renderer's INSTANCED path (they arrive by the thousands from worldgen /
@@ -12,19 +13,20 @@
 
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::gltf_load::CpuMesh;
 use crate::renderer::{InstancedPrototype, Renderer};
 
 #[path = "tree_review.rs"]
 mod review;
+#[path = "tree_ground_support.rs"]
+mod ground_support;
 
 /// Trunk contact radius scales with the instance's footprint; height classifies small fir vs
 /// big pine (the crush tiers differ — DESTRUCTION.md §2).
 const BIG_TREE_HEIGHT: f32 = 6.5; // m — world height at or above this = BigTree (tier-3 crush)
 const TRUNK_R: f32 = 0.30; // m — base trunk contact/ray radius at scale 1
-const FALL_END_MIN: f32 = 1.40; // rad — fall comes to rest ~80-86°, hashed per tree
-const FALL_END_VAR: f32 = 0.10;
 const LOS_TARGET_SLOP: f32 = 0.25; // do not self-mask an endpoint touching its own nearby trunk
 
 /// Whether a manifest model is a live standing tree that belongs in trunk collision/destruction.
@@ -54,9 +56,10 @@ pub(crate) fn is_live_tree_asset(path: &str) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum State {
     Standing,
-    /// Falling toward `dir` — `t` runs 0..dur, then the tree is Down.
+    /// Released toward `dir`; elapsed time is a receipt, not a prescribed fall angle.
     Falling {
         t: f32,
         dir: Vec3,
@@ -64,10 +67,11 @@ enum State {
     Down,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct DTree {
     batch: usize, // index into self.batches (NOT the renderer index)
     inst: usize,  // instance index within that batch
-    base: Mat4,   // ORIGINAL authored transform — the hinge composes off this every frame
+    base: Mat4,   // ORIGINAL authored transform; retained source identity for saves
     pos: Vec3,    // base pivot (ground contact — worldgen grounds tree origins)
     height: f32,  // world height (mesh height × instance scale)
     trunk_r: f32,
@@ -81,7 +85,7 @@ struct DTree {
 pub enum TreeEvent {
     /// A tree just snapped/gave way at `pos` (crack + needle/snow puff).
     Snap { pos: Vec3 },
-    /// A falling tree just hit the ground (`pos` = base; the thud).
+    /// A released tree just hit the ground (`pos` is an actual source contact).
     Thud { pos: Vec3 },
 }
 
@@ -98,11 +102,14 @@ pub struct Trees {
     trees: Vec<DTree>,
     /// batches touched this frame (rebuilt once in `update`).
     dirty: Vec<bool>,
-}
-
-fn hash01(n: u32) -> f32 {
-    let h = n.wrapping_mul(2654435761) >> 8;
-    (h & 0xffff) as f32 / 65535.0
+    // Immutable source geometry is rebuilt with each batch, not duplicated in world saves.
+    support: Vec<Arc<ground_support::Source>>,
+    // Separate optional save packet preserves the existing instance/identity record layout.
+    released: std::collections::BTreeMap<usize,ground_support::Released>,
+    // Detail base nodes are immutable; these are its actual ordinary mutation revisions.
+    // Coarse-only editable grids have no revision contract and never reuse this certificate.
+    support_revision: Option<(usize,u64,u64)>,
+    support_openings: Vec<crate::terrain_opening::TerrainOpening>,
 }
 
 /// The trunk's diameter (mesh units) where the bow meets it: the extent of the mesh's section by
@@ -158,6 +165,16 @@ fn page_tree_records(batch: usize, mesh: &CpuMesh, mats: &[Mat4]) -> Vec<DTree> 
             }
         })
         .collect()
+}
+
+/// Existing one-hit/blast felling supplies no transferred momentum. Use an explicit estimate:
+/// five percent of the already modeled failure/bending work remains as release kinetic work.
+/// Source contact initialization checks that against its actual COM-over-root energy barrier.
+fn release_work_per_mass(diameter:f32,height:f32,absorbed_work_j:f32)->f32 {
+    let mass=crate::tank_push::STEM_DENSITY*crate::tank_push::STEM_FORM
+        *std::f32::consts::FRAC_PI_4*diameter.max(0.01).powi(2)*height.max(0.5);
+    let failure=crate::tank_push::standing_tree(diameter,height).work_j;
+    0.05*absorbed_work_j.max(failure)/mass
 }
 
 /// Nearest ray hit against a slice of live tree records. Keeping the geometry here (rather than in
@@ -218,6 +235,10 @@ impl Trees {
             batches: Vec::new(),
             trees: Vec::new(),
             dirty: Vec::new(),
+            support: Vec::new(),
+            released: Default::default(),
+            support_revision: None,
+            support_openings: Vec::new(),
         }
     }
 
@@ -268,6 +289,7 @@ impl Trees {
         self.trees.extend(page_tree_records(bi, mesh, &mats));
         self.batches.push((rbatch, mats));
         self.dirty.push(false);
+        self.support.push(Arc::new(ground_support::Source::new(mesh)));
     }
 
     /// Register all initial spatial pages for one tree prototype as a single packed renderer load
@@ -287,11 +309,13 @@ impl Trees {
         if renderer_batches.len() != pages.len() {
             return false;
         }
+        let support = Arc::new(ground_support::Source::new(mesh));
         for (&rbatch, page) in renderer_batches.iter().zip(pages) {
             let bi = self.batches.len();
             self.trees.extend(page_tree_records(bi, mesh, page));
             self.batches.push((rbatch, page.to_vec()));
             self.dirty.push(false);
+            self.support.push(support.clone());
         }
         true
     }
@@ -394,48 +418,50 @@ impl Trees {
         let d = if d.length_squared() < 0.5 { Vec3::Z } else { d };
         let t = &mut self.trees[idx];
         t.state = State::Falling { t: 0.0, dir: d };
+        self.released.insert(idx,ground_support::Released::new(self.batches[t.batch].1[t.inst],d,0.0));
         events.push(TreeEvent::Snap { pos: t.pos });
         self.dirty[t.batch] = true;
     }
 
     /// Advance falls and rewrite the touched instance buffers (only moving batches pay).
-    pub fn update(&mut self, dt: f32, r: &mut Renderer, events: &mut Vec<TreeEvent>) {
+    pub fn update(&mut self, dt: f32, r: &mut Renderer, terrain: &crate::terrain::Heightfield,
+        events: &mut Vec<TreeEvent>) {
+        let revision=terrain.detail.as_ref().map(|detail|(Arc::as_ptr(detail) as usize,
+            detail.crater_revision(),detail.rut_revision()));
+        let recheck_rest=revision.is_none()||revision!=self.support_revision
+            ||terrain.openings.list()!=self.support_openings.as_slice();
+        if recheck_rest {
+            self.support_revision=revision;
+            self.support_openings=terrain.openings.list().to_vec();
+        }
         for i in 0..self.trees.len() {
+            if self.trees[i].state==State::Down && recheck_rest {
+                let tree=&mut self.trees[i];
+                let motion=self.released.entry(i).or_insert_with(||ground_support::Released::new(
+                    self.batches[tree.batch].1[tree.inst],Vec3::ZERO,1.0));
+                if self.support[tree.batch].advance(motion,0.0,Vec3::ZERO,0.0,|x,z|terrain.height_at(x,z))
+                    .is_some_and(|step|!step.sleeping) {
+                    // No new release kick: gravity and the changed actual support wake it.
+                    tree.state=State::Falling {t:motion.motion.age,dir:Vec3::ZERO};
+                }
+            }
             let State::Falling { t: ft, dir } = self.trees[i].state else {
                 continue;
             };
-            let (dur, end) = {
-                let t = &self.trees[i];
-                (
-                    if t.big { 1.5 } else { 0.9 },
-                    FALL_END_MIN + FALL_END_VAR * hash01(t.seed),
-                )
-            };
-            let nt = ft + dt;
-            let done = nt >= dur;
-            let k = (nt / dur).clamp(0.0, 1.0);
-            // Gravity-flavoured ease-in: slow lean, accelerating collapse.
-            let ang = end * k * k * (2.0 - k);
+            let nt = ft + dt.max(0.0).min(0.05);
             let tree = &mut self.trees[i];
-            tree.state = if done {
-                State::Down
-            } else {
-                State::Falling { t: nt, dir }
-            };
-            if done {
-                events.push(TreeEvent::Thud {
-                    pos: tree.pos + dir * tree.height * 0.6,
-                });
-            }
-            let final_ang = if done { end } else { ang };
-            let (bi, ii, pivot, base) = (tree.batch, tree.inst, tree.pos, tree.base);
-            // Hinge about the horizontal axis through the base: axis = up × fall-dir. Composes
-            // off the ORIGINAL transform every frame — the batch list only holds what's uploaded.
-            let axis = Vec3::Y.cross(dir).normalize_or_zero();
-            let hinge = Mat4::from_translation(pivot)
-                * Mat4::from_quat(Quat::from_axis_angle(axis, final_ang))
-                * Mat4::from_translation(-pivot);
-            self.batches[bi].1[ii] = hinge * base;
+            let release_work=release_work_per_mass(2.0*tree.trunk_r,tree.height,tree.push_work);
+            // Rebuilt explicitly for pre-rigid-motion saves; new saves always carry the full
+            // velocities/rotation/contact age and continue those exact ordinary solver inputs.
+            let motion=self.released.entry(i).or_insert_with(||ground_support::Released::new(
+                self.batches[tree.batch].1[tree.inst],dir,ft));
+            let Some(step)=self.support[tree.batch].advance(motion,dt.max(0.0).min(0.05),dir,release_work,
+                |x,z|terrain.height_at(x,z)) else {continue;};
+            let pose=step.model;
+            tree.state=if step.sleeping {State::Down}else{State::Falling {t:nt,dir}};
+            if let Some((pos,_impact))=step.hit {events.push(TreeEvent::Thud {pos});}
+            let (bi, ii) = (tree.batch, tree.inst);
+            self.batches[bi].1[ii] = pose;
             self.dirty[bi] = true;
         }
         for bi in 0..self.batches.len() {
@@ -641,5 +667,41 @@ mod tests {
             ray_standing_trunks(&trees, Vec3::new(0.0, 6.0, 0.0), Vec3::Z, 30.0).is_none(),
             "a ray above the authored trunk height remains clear"
         );
+    }
+}
+
+impl Trees {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut state=crate::capture_world_fields!(self; batches, trees, dirty);
+        state.put("released_motion_v1",&self.released)?;
+        Ok(state)
+    }
+    pub(crate) fn import_world_state(&mut self,mut state:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        let shape=self.batches.iter().map(|(i,m)|(*i,m.len())).collect::<Vec<_>>();
+        let has_motion=state.keys().any(|key|key=="released_motion_v1");
+        let saved_motion=if has_motion {Some(state.take::<std::collections::BTreeMap<usize,ground_support::Released>>("released_motion_v1")?)}else{None};
+        crate::restore_world_fields!(self,state; batches, trees, dirty);
+        anyhow::ensure!(shape==self.batches.iter().map(|(i,m)|(*i,m.len())).collect::<Vec<_>>(),"source instance layout changed");
+        anyhow::ensure!(self.batches.iter().all(|(_,m)|m.iter().all(|v|v.is_finite())),"nonfinite source instance pose");
+        anyhow::ensure!(self.trees.iter().all(|t|t.batch<self.batches.len()&&t.inst<self.batches[t.batch].1.len()
+            &&t.base.is_finite()&&t.pos.is_finite()&&t.height.is_finite()),"invalid source tree identity");
+        self.released=if let Some(motion)=saved_motion {
+            anyhow::ensure!(motion.iter().all(|(i,m)|*i<self.trees.len()&&self.trees[*i].state!=State::Standing&&m.valid()),"invalid released tree motion");
+            anyhow::ensure!(self.trees.iter().enumerate().all(|(i,t)|!matches!(t.state,State::Falling{..})||motion.contains_key(&i)),"falling tree motion missing");
+            motion
+        }else{
+            // Explicit compatibility migration: old saves had only elapsed scripted hinge time
+            // and the uploaded pose. Retain that visible pose; there was no velocity to restore.
+            self.trees.iter().enumerate().filter_map(|(i,t)|match t.state {
+                State::Falling{t:elapsed,dir}=>Some((i,ground_support::Released::new(self.batches[t.batch].1[t.inst],dir,elapsed))),
+                _=>None,
+            }).collect()
+        };
+        self.support_revision=None;
+        self.support_openings.clear();
+        Ok(())
+    }
+    pub(crate) fn present_world_state(&self,r:&mut Renderer) {
+        for (batch,mats) in &self.batches {r.set_instanced_mats(&self.device,*batch,mats);}
     }
 }

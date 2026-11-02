@@ -375,6 +375,7 @@ fn finite_clamp_or(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 
 /// The sound effects the game can request.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Sfx {
     /// Main gun heard from OUTSIDE (head out of a hatch) — 4 variants, see `PLAYER_GUNS_EXT`.
     PlayerGunExt1,

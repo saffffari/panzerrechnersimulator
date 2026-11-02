@@ -53,6 +53,13 @@ impl Mount {
     pub fn plinth(&self, along: f32) -> Mat4 { self.placed(along, 0.0) }
     /// The lamp cube's model in its frame: centred on top of its plinth.
     pub fn lamp(&self, half: f32, along: f32) -> Mat4 { self.placed(along, half * (PLINTH_HEIGHT + 1.0)) }
+    /// An upright label's frame: +X along the surface, +Y up it, +Z outward. Its origin is
+    /// the existing plinth footprint; labels can attach to an edge without moving the lamp.
+    pub fn label_frame(&self, along: f32) -> Mat4 {
+        let (right, normal, down) = self.basis();
+        Mat4::from_cols(right.extend(0.0), (-down).extend(0.0), normal.extend(0.0),
+            (self.surface + right * along).extend(1.0))
+    }
 }
 
 /// The plinth for a lamp of half size `half`, standing on its origin with +y the face's normal.

@@ -19,6 +19,7 @@ pub const STATE_VERSION: u32 = 1;
 /// A durable authoring/runtime identifier. IDs intentionally exclude array indexes and UUIDs so
 /// saves and editor references survive harmless reordering and recooking.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SemanticId(String);
 
 impl SemanticId {
@@ -1842,6 +1843,7 @@ impl StableHasher {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct CompactDamageState {
     pub layout_hash: u64,
     integrity: Vec<u16>,
@@ -2215,6 +2217,7 @@ impl fmt::Display for StateError {
 impl std::error::Error for StateError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum DoorRuntimeState {
     Open,
     Closed,
@@ -2247,6 +2250,7 @@ impl DoorRuntimeState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ContainerRuntimeState {
     Closed,
     Open,
@@ -2276,12 +2280,14 @@ impl ContainerRuntimeState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ItemStack {
     pub item_id: SemanticId,
     pub count: u16,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ResolvedLoot {
     /// Sorted by item ID and persisted after the first search so later loot-table edits cannot
     /// reroll an existing campaign save.
@@ -2289,6 +2295,7 @@ pub struct ResolvedLoot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct BuildingState {
     pub blueprint_id: SemanticId,
     pub blueprint_revision: u32,

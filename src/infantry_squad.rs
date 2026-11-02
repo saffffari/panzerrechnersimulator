@@ -6,11 +6,13 @@ pub const GARRISON_GROUP_SIZE: usize = 6;
 pub const COHESION_RADIUS_M: f32 = 18.0;
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Squad {
     pub members: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub pos: Vec3,
     pub alive: bool,
@@ -20,6 +22,7 @@ pub struct Member {
 }
 
 #[derive(Clone, Copy, Default, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Order {
     pub regroup: Option<Vec3>,
     pub look: Option<Vec3>,
@@ -94,6 +97,7 @@ pub fn deployment(anchor: Vec2, heading: f32, count: usize, mut clear: impl FnMu
 /// An authored hearing-radius model, using actual discharge time and the atmosphere's sound
 /// speed. It grants attention only; it never creates visual target memory or permission to fire.
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Report {
     origin: Vec3,
     range: f32,
@@ -102,8 +106,10 @@ struct Report {
     delivered: Vec<bool>,
 }
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Attention { area: Vec3, until_s: f32 }
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Hearing {
     reports: std::collections::VecDeque<Report>,
     attention: Vec<Option<Attention>>,
@@ -151,10 +157,12 @@ impl Hearing {
 #[derive(Clone, Copy)]
 pub struct Fighter { pub member:Member, pub ready:bool }
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Maneuver { goal:Vec3, observed_area:Vec3, until_s:f32 }
 #[derive(Clone, Copy, Default)]
 pub struct TacticalOrder { pub goal:Option<Vec3>, pub cover:bool }
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Tactics {
     next_plan_s:f32,
     phase:usize,

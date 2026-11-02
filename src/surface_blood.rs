@@ -36,6 +36,7 @@ impl SourceQuery for super::surface_fire::SourceContacts<'_> {
     }
 }
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Emission {
     pub frame: usize,
     pub owner: u8,
@@ -47,12 +48,14 @@ pub struct Emission {
     pub seed: u32,
 }
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Grain {
     emission: Emission,
     age: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Plane {
     frame: u8,
     normal: [i16; 3],
@@ -94,6 +97,7 @@ impl Plane {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Key {
     plane: Plane,
     u: i32,
@@ -124,21 +128,25 @@ impl Key {
     }
 }
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Candidate {
     key: Key,
     from: Vec3,
 }
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Pool {
     parent: usize,
     credits: u32,
     owners: u8,
+    #[serde(with="crate::expedition_world_save::ordered_set")]
     sources: HashSet<(u32, u32)>, // actor ID and original emitted grain seed
     frontier: VecDeque<Candidate>,
     scheduled: bool,
     cells: usize,
 }
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Deposit {
     pub frame: usize,
     pub point: Vec3,
@@ -146,6 +154,7 @@ pub struct Deposit {
     pub owner_mask: u8,
 }
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Cell {
     contact: Contact,
     pool: usize,
@@ -155,6 +164,7 @@ struct Cell {
 /// A contiguous row of individually supported film cells. Combining adjacent cells cuts RT
 /// instance count without making a large stamp across unhit gaps or erasing the pixel-sized edge.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RenderRun {
     pub frame: usize,
     pub point: Vec3,
@@ -177,6 +187,7 @@ impl RenderRun {
     }
 }
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Diagnostics {
     pub emitted: u64,
     pub measured_contacts: u64,
@@ -190,12 +201,16 @@ pub struct Diagnostics {
 }
 
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SurfaceBlood {
     grains: Vec<Option<Grain>>,
     next_grain: usize,
     cells: Vec<Cell>,
+    #[serde(with="crate::expedition_world_save::ordered_map")]
     lookup: HashMap<Key, usize>,
+    #[serde(with="crate::expedition_world_save::ordered_map")]
     queued: HashMap<Key, usize>,
+    #[serde(with="crate::expedition_world_save::ordered_set")]
     rejected: HashSet<Key>,
     pools: Vec<Pool>,
     scheduled: VecDeque<usize>,

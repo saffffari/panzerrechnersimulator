@@ -1,4 +1,4 @@
-//! Live fuel readout registered to the existing Hull_0240 instrument face above the ignition.
+//! Live fuel/coolant readout registered to Hull_0240 above the ignition.
 //! The digital FUEL/L readout is a requested gameplay presentation, not a historical instrument
 //! reconstruction. Source panel geometry stays intact; the print sits 0.9 mm in front of its face.
 //! A closed clear cover follows these measured corners through the existing glass material path.
@@ -174,7 +174,7 @@ fn tpz_cover_mesh(needle: &CpuMesh) -> anyhow::Result<CpuMesh> {
 }
 const DASH: u8 = 10;
 const BLANK: u8 = 15;
-const GLYPHS: [[u8; 7]; 16] = [
+const GLYPHS: [[u8; 7]; 18] = [
     [14, 17, 19, 21, 25, 17, 14],
     [4, 12, 4, 4, 4, 4, 14],
     [14, 17, 1, 2, 4, 8, 31],
@@ -191,6 +191,8 @@ const GLYPHS: [[u8; 7]; 16] = [
     [31, 16, 16, 30, 16, 16, 31], // E
     [16, 16, 16, 16, 16, 16, 31], // L
     [0; 7],
+    [14,17,16,16,16,17,14], // C
+    [14,17,17,17,17,17,14], // O
 ];
 
 fn fuel_digits(liters: Option<f32>) -> [u8; 3] {
@@ -206,7 +208,7 @@ fn fuel_digits(liters: Option<f32>) -> [u8; 3] {
 }
 
 fn atlas() -> CpuImage {
-    let mut rgba = vec![0; 128 * 8 * 4];
+    let mut rgba = vec![0; 256 * 8 * 4];
     for pixel in rgba.chunks_exact_mut(4) {
         pixel.copy_from_slice(&[5, 8, 7, 255]);
     }
@@ -214,13 +216,13 @@ fn atlas() -> CpuImage {
         for (y, row) in rows.iter().enumerate() {
             for x in 0..5 {
                 if row & (1 << (4 - x)) != 0 {
-                    let offset = (y * 128 + glyph * 8 + x + 1) * 4;
+                    let offset = (y * 256 + glyph * 8 + x + 1) * 4;
                     rgba[offset..offset + 4].copy_from_slice(&[215, 211, 176, 255]);
                 }
             }
         }
     }
-    CpuImage::new(128, 8, rgba)
+    CpuImage::new(256, 8, rgba)
 }
 
 fn face_normal() -> Vec3 {
@@ -284,8 +286,8 @@ fn glyph_quad(out: &mut Vec<Vertex>, rect: [f32; 4], glyph: u8, layer: f32) {
     let [u, v, width, height] = rect;
     let normal = face_normal();
     let tangent = (FACE[1] - FACE[0]).normalize();
-    let left = glyph as f32 / 16.0;
-    let right = (glyph as f32 + 1.0) / 16.0;
+    let left = glyph as f32 / 32.0;
+    let right = (glyph as f32 + 1.0) / 32.0;
     for ((u, v), uv) in [
         ((u, v + height), [left, 1.0]),
         ((u + width, v + height), [right, 1.0]),
@@ -302,9 +304,12 @@ fn glyph_quad(out: &mut Vec<Vertex>, rect: [f32; 4], glyph: u8, layer: f32) {
 }
 
 fn vertices(digits: [u8; 3]) -> Vec<Vertex> {
+    readout_vertices(digits,false)
+}
+fn readout_vertices(digits: [u8;3],coolant:bool)->Vec<Vertex> {
     let mut out = Vec::with_capacity(36);
     glyph_quad(&mut out, [0.0, 0.0, 1.0, 1.0], BLANK, 0.0);
-    for (i, glyph) in [11, 12, 13, 14].into_iter().enumerate() {
+    for (i, glyph) in (if coolant {[16,17,17,14]}else{[11,12,13,14]}).into_iter().enumerate() {
         glyph_quad(
             &mut out,
             [0.12 + i as f32 * 0.19, 0.06, 0.19, 0.38],
@@ -312,7 +317,7 @@ fn vertices(digits: [u8; 3]) -> Vec<Vertex> {
             GLYPH_LIFT_M,
         );
     }
-    for (i, glyph) in digits.into_iter().chain([14]).enumerate() {
+    for (i, glyph) in digits.into_iter().chain([if coolant{16}else{14}]).enumerate() {
         glyph_quad(
             &mut out,
             [0.12 + i as f32 * 0.19, 0.54, 0.19, 0.40],
@@ -327,7 +332,7 @@ pub(super) struct FuelPanel {
     slot: usize,
     cover: usize,
     tpz_cover: Option<usize>,
-    shown: Option<[u8; 3]>,
+    shown: Option<([u8; 3],bool)>,
 }
 
 impl FuelPanel {
@@ -373,6 +378,8 @@ impl FuelPanel {
     pub(super) fn drive(
         &mut self,
         liters: Option<f32>,
+        coolant_c:Option<f32>,
+        simulation_seconds:f32,
         hull: Mat4,
         turret: Mat4,
         renderer: &mut Renderer,
@@ -394,12 +401,13 @@ impl FuelPanel {
             renderer.set_visible(slot, true);
             renderer.set_emissive(slot, 0.0);
         }
-        let digits = fuel_digits(liters);
+        let coolant=coolant_c.is_some_and(|c|c.is_finite()&&(c>=95.||(simulation_seconds.max(0.) as u64/4)%2==1));
+        let digits = fuel_digits(if coolant{coolant_c}else{liters});
         // The mechanical simulation remains authoritative; only 36 UV-bearing vertices change
         // when the whole-litre readout changes. No per-frame texture upload or render target.
-        if self.shown != Some(digits) && renderer.upload_pose_vertices(self.slot, &vertices(digits))
+        if self.shown != Some((digits,coolant)) && renderer.upload_pose_vertices(self.slot, &readout_vertices(digits,coolant))
         {
-            self.shown = Some(digits);
+            self.shown = Some((digits,coolant));
         }
     }
 }

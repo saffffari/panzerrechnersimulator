@@ -85,6 +85,24 @@ mod building_set;
 mod camera;
 mod campaign;
 mod campaign_save;
+mod expedition;
+mod expedition_save;
+mod expedition_world_save;
+mod expedition_theatre;
+mod expedition_proof;
+mod expedition_medical;
+mod expedition_frontend;
+mod expedition_save_frontend;
+mod expedition_live_review;
+mod halftrack;
+mod support_camp;
+mod support_camp_capture;
+mod halftrack_capture;
+mod solo_controls_review;
+mod indicator_pictograms;
+mod vehicle_motion_review;
+mod repair_manual;
+mod repair_manual_capture;
 mod canyon;
 mod canyon_attempt;
 mod mission;
@@ -107,6 +125,7 @@ mod environment_authoring;
 mod ephemeris;
 mod celestial_sky;
 mod observer;
+mod exposure_meter_review;
 mod foot;
 mod first_aid;
 mod crew_solo_capture;
@@ -164,6 +183,9 @@ mod spatial_grid;
 mod street_plan;
 mod tank;
 mod vehicle_ground;
+mod source_point_support;
+mod static_wreck_support;
+mod static_wreck_ownership;
 mod snow_cover;
 mod surface_wear;
 mod exhaust_plume;
@@ -289,6 +311,9 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
             "KESSEL_GPU_PROFILE requires GPU timestamp queries"
         );
         features |= wgpu::Features::TIMESTAMP_QUERY;
+        // Optional native diagnostic stamps retain all existing pass/dispatch boundaries.
+        features |= adapter.features() & (wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
     }
     if pipeline_cache {
         features |= wgpu::Features::PIPELINE_CACHE;
@@ -901,6 +926,11 @@ fn run_gfxbench(
     requested_preset: Option<graphics::GraphicsPreset>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(frames > 0, "gfxbench needs at least one timed frame");
+    let live_frame = std::env::var("KESSEL_BENCH_LIVE_FRAME").as_deref() == Ok("1");
+    let pipelined = std::env::var("KESSEL_BENCH_PIPELINED").as_deref() == Ok("1");
+    anyhow::ensure!(!pipelined || live_frame, "KESSEL_BENCH_PIPELINED requires KESSEL_BENCH_LIVE_FRAME=1");
+    anyhow::ensure!(!pipelined || !gpu_profile::requested(),
+        "pipelined throughput requires KESSEL_GPU_PROFILE unset/0: shared timestamp readback serializes frames");
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
@@ -928,6 +958,10 @@ fn run_gfxbench(
         Game::build_playtest_act(&device, &queue, night, &world::act(act_n))?
     } else { Game::build_act(&device, &queue, night, &world::act(act_n))? };
     if playtest { g.playtest_setup(); }
+    // Optional full live-frame measurement: use the window's solo crew and RTT/shadow
+    // scheduling, and include simulation in a second timer. Keep legacy render-only
+    // benchmark receipts comparable unless the caller explicitly selects this scope.
+    if live_frame { g.enable_singleplayer_crew(); g.set_defer_rtt_to_render(true); }
     let bench_station = std::env::var("KESSEL_BENCH_STATION").ok();
     if let Some(station) = bench_station.as_deref() {
         g.station = match station { "loader" => game::Station::Loader, "commander" => game::Station::Commander,
@@ -951,18 +985,34 @@ fn run_gfxbench(
     const WARMUP: u32 = 60;
     let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut times = Vec::with_capacity(frames as usize);
+    let mut live_times = Vec::with_capacity(frames as usize);
+    let mut simulation_times = Vec::with_capacity(frames as usize);
     let mut cpu_ms = [0.0f32; 3];
     let mut worst_pass: std::collections::BTreeMap<String, f64> = Default::default();
     // `KESSEL_BENCH_RECEIPTS=1`: the spark receipts of the frame whose port sparks cost the most.
     let mut worst_sparks = (0.0f64, serde_json::Value::Null);
+    let mut pending: std::collections::VecDeque<(wgpu::SubmissionIndex,bool)> = Default::default();
+    let mut completed_frames = 0u32;
+    let mut throughput_started = None;
     for i in 0..(frames + WARMUP) {
+        if pipelined && i == WARMUP {
+            // Drain every warmup submission before starting the completed-throughput interval.
+            while let Some((submission, measured)) = pending.pop_front() {
+                device.poll(wgpu::PollType::Wait {submission_index:Some(submission),timeout:None})?;
+                anyhow::ensure!(!measured,"measured frame incorrectly precedes throughput start");
+            }
+            throughput_started = Some(std::time::Instant::now());
+        }
+        let live_started = std::time::Instant::now();
         if let Some((ahead, right, _)) = bench_impact.filter(|&(_, _, period)| i >= WARMUP && (i - WARMUP) % period == 0) {
             let forward = g.player.forward();
             let point = g.player.pos + forward * ahead + Vec3::new(-forward.z, 0.0, forward.x) * right;
             let incoming = (-forward * 20f32.to_radians().cos() - Vec3::Y * 20f32.to_radians().sin()) * 680.0;
             g.debug_ground_strike(point, incoming, 6.2, 76.2, &r);
         }
+        let simulation_started = std::time::Instant::now();
         g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+        let simulation_ms = simulation_started.elapsed().as_secs_f64() * 1000.0;
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
         // exercises city, terrain, tanks and the FX pools from every bearing.
         let a = (i.saturating_sub(WARMUP)) as f32 / frames as f32 * std::f32::consts::TAU;
@@ -978,8 +1028,17 @@ fn run_gfxbench(
         r.weather_shelter = 0.0;
         r.set_interior_atmosphere_enabled(false);
         }
-        r.begin_gpu_profile_frame();
+        if !pipelined { r.begin_gpu_profile_frame(); }
         let t0 = std::time::Instant::now();
+        let saved_far = r.camera.zfar;
+        if live_frame {
+            r.begin_coop_shadow_frame(g.player.center());
+            let shadow_ready = g.refresh_rtt_periscopes(&mut r);
+            r.set_coop_shadow_reuse(shadow_ready);
+            if bench_station.is_some() && g.protected_main_interior_view() {
+                r.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+            }
+        }
         if bench_station.as_deref() == Some("gunner") {
             // The gunner's frame as played at the TZF: the optic pass, then the cabin pass round
             // the eyepiece, which reuses the optic pass's maps.
@@ -987,11 +1046,23 @@ fn run_gfxbench(
         } else {
             r.render_offscreen(&device, &queue);
         }
-        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        if pipelined {
+            // Empty marker follows every view/RTT submission for this same physical frame.
+            pending.push_back((queue.submit([]),i>=WARMUP));
+            if pending.len() >= 2 {
+                let (submission,measured)=pending.pop_front().expect("two pending frame markers");
+                device.poll(wgpu::PollType::Wait {submission_index:Some(submission),timeout:None})?;
+                completed_frames += u32::from(measured);
+            }
+        } else { device.poll(wgpu::PollType::wait_indefinitely()).ok(); }
         let frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        let gpu_frame = r.read_gpu_profile_frame(&device, &queue)?;
-        if i >= WARMUP {
+        let live_ms = live_started.elapsed().as_secs_f64() * 1000.0;
+        if live_frame { r.camera.zfar = saved_far; r.end_coop_shadow_frame(); }
+        let gpu_frame = if pipelined { Vec::new() } else { r.read_gpu_profile_frame(&device, &queue)? };
+        if i >= WARMUP && !pipelined {
             times.push(frame_ms);
+            live_times.push(live_ms);
+            simulation_times.push(simulation_ms);
             let mut frame_passes: std::collections::BTreeMap<&str, f64> = Default::default();
             for (label, ms) in &gpu_frame { *frame_passes.entry(label.as_str()).or_default() += ms; }
             let sparks = frame_passes.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0);
@@ -1006,38 +1077,98 @@ fn run_gfxbench(
             for (sum, ms) in cpu_ms.iter_mut().zip(r.bench_cpu_ms) { *sum += ms; }
         }
     }
-    let _ = gpu_samples.report();
-    if !worst_pass.is_empty() {
-        let mut worst: Vec<_> = worst_pass.into_iter().collect();
-        worst.sort_by(|a, b| b.1.total_cmp(&a.1));
-        let top: Vec<String> = worst.iter().take(4).map(|(label, ms)| format!("{label} {ms:.2} ms")).collect();
-        println!("[gfxbench] worst frame per pass: {}", top.join(", "));
+    if pipelined {
+        let drain_started=std::time::Instant::now();
+        while let Some((submission,measured))=pending.pop_front() {
+            device.poll(wgpu::PollType::Wait {submission_index:Some(submission),timeout:None})?;
+            completed_frames += u32::from(measured);
+        }
+        let final_drain_ms=drain_started.elapsed().as_secs_f64()*1000.0;
+        let elapsed_ms=throughput_started.expect("positive measured frame count").elapsed().as_secs_f64()*1000.0;
+        anyhow::ensure!(completed_frames==frames,"throughput frame accounting mismatch: {completed_frames}/{frames}");
+        let evidence=serde_json::json!({
+            "schema":"kessel.live-frame-throughput.v1","adapter":info.name,
+            "renderer":format!("{:?}",graphics::renderer_backend()),"preset":r.graphics_preset.label(),
+            "internal_resolution":[r.iw,r.ih],"station":bench_station,
+            "timing_mode":"pipelined_2_frames","max_frames_in_flight":2,
+            "completed_frames":completed_frames,"warmup_frames":WARMUP,"warmup_drained":true,
+            "elapsed_ms_including_final_drain":elapsed_ms,"final_drain_ms":final_drain_ms,
+            "completed_frames_per_second":f64::from(completed_frames)*1000.0/elapsed_ms,
+            "mean_completed_frame_interval_ms":elapsed_ms/f64::from(completed_frames),
+            "gpu_timestamp_readback":false,"simulation_step_s":1.0/60.0,
+            "raster_optics":r.raster_optic_work_receipt(),
+            "scope":"Same gfxbench LIVE_FRAME fixture, inputs, views, RTT and shadows with at most two submitted frames; warmup drained before timing, final GPU drain included. Completed headless throughput only, not per-frame/display/input latency or a minimum-FPS guarantee. Excludes desktop presentation, audio-device playback, source build and final reference capture."
+        });
+        println!("[gfxbench-throughput] {}",evidence);
+        std::fs::write(std::path::Path::new(out).with_extension("json"),serde_json::to_vec_pretty(&evidence)?)?;
+    } else {
+        let _ = gpu_samples.report();
+        if !worst_pass.is_empty() {
+            let mut worst: Vec<_> = worst_pass.into_iter().collect();
+            worst.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let top: Vec<String> = worst.iter().take(4).map(|(label, ms)| format!("{label} {ms:.2} ms")).collect();
+            println!("[gfxbench] worst frame per pass: {}", top.join(", "));
+        }
+        if !worst_sparks.1.is_null() { println!("[gfxbench] worst sparks frame: {}", worst_sparks.1); }
+        let timed = frames.max(1) as f32;
+        println!("[gfxbench] cpu: TLAS rewrite {:.2} ms, encoder finish {:.2} ms, submit {:.2} ms (mean per frame)",
+            cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
+        if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
+        if let Some(stats) = r.scatter_stats() { println!("[gfxbench] scatter {stats:?}"); }
+        times.sort_by(f32::total_cmp);
+        let n = times.len();
+        let avg: f32 = times.iter().sum::<f32>() / n as f32;
+        let (blases, tlas_n) = r.rt_stats();
+        let (batches, insts) = r.instanced_stats();
+        println!(
+            "[gfxbench] {} frames @ {}x{} | avg {:.2} ms ({:.2} fps) | p50 {:.2} | p99 {:.2} | min {:.2} max {:.2}",
+            n, r.iw, r.ih, avg, 1000.0 / avg.max(0.001),
+            times[n / 2], times[(n * 99) / 100], times[0], times[n - 1]
+        );
+        println!(
+            "[gfxbench] preset {} | RT {} | legacy proxy lighting {} | {} blas | {} tlas instances | {} inst batches ({} instances) | retro {:.2}",
+            r.graphics_preset.label(),
+            if r.rt_on { "ON" } else if r.rt_scene { "scene TLAS only (raymarch ray queries)" } else { "OFF (KESSEL_NO_RT or no feature)" },
+            if r.portable_ao_enabled { "ON" } else { "OFF" },
+            blases, tlas_n, batches, insts, r.master_retro
+        );
+        if live_frame {
+            live_times.sort_by(f64::total_cmp);
+            simulation_times.sort_by(f64::total_cmp);
+            let total_mean = live_times.iter().sum::<f64>() / n as f64;
+            let simulation_mean = simulation_times.iter().sum::<f64>() / n as f64;
+            let evidence = serde_json::json!({
+                "schema":"kessel.live-frame-benchmark.v1", "adapter":info.name,
+                "renderer":format!("{:?}",graphics::renderer_backend()),
+                "preset":r.graphics_preset.label(), "internal_resolution":[r.iw,r.ih],
+                "frames":n,"warmup_frames":WARMUP,"station":bench_station,
+                "total_mean_ms":total_mean,"total_fps":1000.0/total_mean,
+                "total_p50_ms":live_times[n/2],"total_p99_ms":live_times[n*99/100],
+                "simulation_mean_ms":simulation_mean,"simulation_p99_ms":simulation_times[n*99/100],
+                "render_mean_ms":avg,"render_p99_ms":times[n*99/100],
+                "raster_optics":r.raster_optic_work_receipt(),
+                "scope":"Fenced headless live solo crew frame, simulation plus ordinary RTT/shared shadows and protected interior draw. Excludes desktop presentation, audio-device playback and timestamp readback. Not a prolonged combat minimum-FPS guarantee."
+            });
+            println!("[gfxbench-live] {}",evidence);
+            std::fs::write(std::path::Path::new(out).with_extension("json"),serde_json::to_vec_pretty(&evidence)?)?;
+        }
     }
-    if !worst_sparks.1.is_null() { println!("[gfxbench] worst sparks frame: {}", worst_sparks.1); }
-    let timed = frames.max(1) as f32;
-    println!("[gfxbench] cpu: TLAS rewrite {:.2} ms, encoder finish {:.2} ms, submit {:.2} ms (mean per frame)",
-        cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
-    if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
-    if let Some(stats) = r.scatter_stats() { println!("[gfxbench] scatter {stats:?}"); }
-    times.sort_by(f32::total_cmp);
-    let n = times.len();
-    let avg: f32 = times.iter().sum::<f32>() / n as f32;
-    let (blases, tlas_n) = r.rt_stats();
-    let (batches, insts) = r.instanced_stats();
-    println!(
-        "[gfxbench] {} frames @ {}x{} | avg {:.2} ms ({:.2} fps) | p50 {:.2} | p99 {:.2} | min {:.2} max {:.2}",
-        n, r.iw, r.ih, avg, 1000.0 / avg.max(0.001),
-        times[n / 2], times[(n * 99) / 100], times[0], times[n - 1]
-    );
-    println!(
-        "[gfxbench] preset {} | RT {} | legacy proxy lighting {} | {} blas | {} tlas instances | {} inst batches ({} instances) | retro {:.2}",
-        r.graphics_preset.label(),
-        if r.rt_on { "ON" } else if r.rt_scene { "scene TLAS only (raymarch ray queries)" } else { "OFF (KESSEL_NO_RT or no feature)" },
-        if r.portable_ao_enabled { "ON" } else { "OFF" },
-        blases, tlas_n, batches, insts, r.master_retro
-    );
     let (cw, ch) = (r.iw, r.ih);
-    r.render_to_png(&device, &queue, out, cw, ch)?;
+    let saved_far = r.camera.zfar;
+    if live_frame && bench_station.as_deref() != Some("gunner") {
+        r.begin_coop_shadow_frame(g.player.center());
+        let shadow_ready = g.refresh_rtt_periscopes(&mut r);
+        r.set_coop_shadow_reuse(shadow_ready);
+        if bench_station.is_some() && g.protected_main_interior_view() {
+            r.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+        }
+    }
+    if bench_station.as_deref() == Some("gunner") {
+        raymarch_showcase::eyepiece_frame(&mut g, &mut r, &device, &queue, Some((out,cw,ch)))?;
+    } else {
+        r.render_to_png(&device, &queue, out, cw, ch)?;
+    }
+    if live_frame { r.camera.zfar = saved_far; r.end_coop_shadow_frame(); }
     println!("[gfxbench] reference frame → {out}");
     Ok(())
 }
@@ -2351,6 +2482,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     graphics: graphics::GraphicsPreset::High,
                     resume_available: false,
                     checkpoint_available: false,
+                    expedition_save_available: false,
                     canyon_times: canyon::times_path().ok()
                         .and_then(|path| { let t = canyon::load_times(&path); t.last_s.zip(t.best_s) }),
                 },
@@ -2365,7 +2497,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             ui::draw_black(&mut r);
             let hint = interaction_hint("OPEN CUPOLA HATCH [LMB]", game::InteractKind::Click);
             pixel_font::draw_centered(&mut r, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
-            pixel_font::draw_centered(&mut r, "CASE IN HAND - LMB TO LET GO, X TO THROW 0123456789", 0.5, 0.80, 1, HOVER_OUTLINE_RGBA);
+            pixel_font::draw_centered(&mut r, "CASE IN HAND - LMB TO LET GO, R TO THROW 0123456789", 0.5, 0.80, 1, HOVER_OUTLINE_RGBA);
             pixel_font::draw_centered(&mut r, "YOU ARE ON FIRE - SPACE", 0.5, 0.60, 2, [1.0, 0.55, 0.18, 1.0]);
         }
         "kia-black" | "actcard" | "ending" | "finaldefeat" => ui::draw_black(&mut r),
@@ -2438,6 +2570,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 _g.map_world_position(),
                 None,
             );
+            _g.draw_campaign_building_map(&mut r);
             r.render_held_map_texture(&device, &queue, _g.held_map_slot());
             r.ui_reset();
             return r.render_to_png_hud(&device, &queue, &path, cw, ch);
@@ -5122,14 +5255,19 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
     }
     let before = g.trees.debug_down_count();
     g.debug_fire_laid(&mut r); // fire along the laid gun line — debug_fire would re-aim at a tank
-    for _ in 0..60 {
+    // Released source dynamics choose when the tree is supported and quiet. The former
+    // fixed two-second wait assumed a prescribed hinge duration; it did not prove rest.
+    let mut shot_wait_s=0.0;
+    for _ in 0..900 {
         g.update(&TankInput::default(), dt, &mut r);
+        shot_wait_s+=dt;
+        if g.trees.debug_down_count()>before {break;}
     }
     recon(&mut r, target, g.player.pos);
     r.render_to_png(&device, &queue, &format!("{prefix}_shot_after.png"), cw, ch)?;
     let shot_down = g.trees.debug_down_count() > before;
-    println!("[treefall] shot: felled={shot_down}");
-    anyhow::ensure!(shot_down, "the 88 round did not fell the tree");
+    println!("[treefall] shot: source_settled={shot_down} waited_s={shot_wait_s:.3}");
+    anyhow::ensure!(shot_down, "the shot tree did not reach supported rest within30s");
     println!("[treefall] PASS — fir crushed, pine shoved over, tree shot down");
     Ok(())
 }
@@ -11658,6 +11796,10 @@ struct WindowState {
     campaign: Option<campaign::CampaignRun>,
     campaign_total_kills: u16,
     pending_final_defeat: Option<campaign::FinalDefeatReason>,
+    expedition_relief_selected: usize,
+    expedition_complete_view: bool,
+    expedition_relief_message: String,
+    expedition_io: expedition_save_frontend::SaveSession,
     /// F3 graphics stats overlay (frame pacing + encode cost + RT scene counts), CRT green.
     show_stats: bool,
     /// Rolling frame-to-frame wall times, ms (vsync-paced — gfxbench is the throughput number).
@@ -11709,6 +11851,8 @@ struct WindowState {
     /// A synchronous world build just replaced the Game. The frame clock restarts so the
     /// build's wall time is never replayed as simulated time on the first frame.
     clock_reset: bool,
+    /// Disk/GPU save work resets frame timing without changing held view controls.
+    io_clock_reset: bool,
     /// Opt-in playtest telemetry (`KESSEL_SESSION_LOG`); None in ordinary play.
     session_log: Option<session_log::SessionLog>,
     /// `KESSEL_CANYON_AUTOPILOT=1`: the rule-based crew plays the Canyon run (telemetry runs).
@@ -11824,6 +11968,10 @@ impl WindowState {
             campaign: None,
             campaign_total_kills: 0,
             pending_final_defeat: None,
+            expedition_relief_selected: 0,
+            expedition_complete_view: false,
+            expedition_relief_message: String::new(),
+            expedition_io: expedition_save_frontend::SaveSession::default(),
             show_stats: false,
             ft_hist: Vec::new(),
             ft_last: None,
@@ -11849,6 +11997,7 @@ impl WindowState {
             canyon_finish_times: None,
             canyon_briefed: false,
             clock_reset: false,
+            io_clock_reset: false,
             session_log: session_log::SessionLog::from_env(),
             autopilot: None,
             last_sim_ms: 0.0,
@@ -11931,6 +12080,7 @@ impl WindowState {
     /// moved, resized, restored, or sent to another monitor. Embodied play owns raw relative mouse
     /// motion, so it captures and hides the pointer again.
     fn set_play_cursor(&self, captured: bool) {
+        let captured = captured && !self.game.repair_manual.held;
         if captured {
             let _ = self
                 .window
@@ -11967,12 +12117,24 @@ impl WindowState {
         self.game.set_map_held(false);
         self.pencil_down = false;
         self.pause_menu.show(ui::PausePage::Main);
+        self.pause_menu.expedition = self.play_mode == Some(PlayMode::Expedition);
         self.state = AppState::Paused;
         self.game.set_audio_paused(true);
         self.set_play_cursor(false);
     }
 
     fn resume_play(&mut self) {
+        if self.expedition_finished() {
+            self.state=AppState::Paused;self.pause_menu.show(ui::PausePage::Main);
+            self.expedition_complete_view=false;self.menu.resume_available=false;
+            self.game.set_audio_paused(true);self.set_play_cursor(false);return;
+        }
+        if self.game.expedition_succession_pending() {
+            self.state = AppState::Death { t: 0.0, card: None };
+            self.menu.resume_available = false;
+            self.set_play_cursor(false);
+            return;
+        }
         self.game.set_audio_paused(false);
         self.state = AppState::Playing;
         self.menu.resume_available = false;
@@ -11981,6 +12143,7 @@ impl WindowState {
     }
 
     fn pause_main_menu(&mut self) {
+        if !self.flush_expedition_before_leave() { return; }
         // A title backdrop may retain the old meshes, but the abandoned session has no live
         // audio, network authority or resumable simulation behind that image.
         self.game.set_audio_silenced(true);
@@ -12004,6 +12167,10 @@ impl WindowState {
     }
 
     fn restart_paused_game(&mut self) {
+        if self.game.expedition_state().is_some() {
+            self.pause_menu.message = "THIS TIGER AND ITS LOSSES PERSIST. RESUME OR BEGIN A NEW RUN FROM THE TITLE.".into();
+            return;
+        }
         // Network games do not use the local pause menu. Keep this guard explicit so a future
         // UI route cannot rebuild only one peer while the rest retain the old shared world.
         if self.lan.is_some() {
@@ -12198,6 +12365,7 @@ impl WindowState {
     }
 
     fn pause_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
+        if self.expedition_completion_panel() {self.expedition_completed_key(code);return;}
         if self.pause_menu.page == ui::PausePage::Graphics { self.graphics_key(code); return; }
         use winit::keyboard::KeyCode;
         match code {
@@ -12243,7 +12411,7 @@ impl WindowState {
                     },
                     (ui::PausePage::Settings, 5) if activate => self.pause_menu.show(ui::PausePage::Main),
                     (ui::PausePage::ConfirmExit, 0) if activate => self.pause_menu.show(ui::PausePage::Main),
-                    (ui::PausePage::ConfirmExit, 1) if activate => event_loop.exit(),
+                    (ui::PausePage::ConfirmExit, 1) if activate => { if self.flush_expedition_before_leave() {event_loop.exit();} },
                     _ => {},
                 }
             },
@@ -12252,6 +12420,7 @@ impl WindowState {
     }
 
     fn save_campaign_checkpoint(&mut self) {
+        if self.play_mode == Some(PlayMode::Expedition) { self.save_live_expedition(); return; }
         if self.play_mode == Some(PlayMode::Canyon) {
             self.pause_menu.message = "CANYON RUN HAS NO CHECKPOINTS".into();
             return;
@@ -12277,6 +12446,7 @@ impl WindowState {
     }
 
     fn load_campaign_checkpoint(&mut self) {
+        if matches!(self.state, AppState::Paused) && self.play_mode == Some(PlayMode::Expedition) { self.load_live_expedition(false); return; }
         if self.play_mode == Some(PlayMode::Canyon) {
             self.pause_menu.message = "CANYON RUN HAS NO CHECKPOINTS".into();
             return;
@@ -12881,6 +13051,7 @@ impl WindowState {
     /// Rebuild a fresh game + renderer and enter Playing. Fresh build so a restart after death (or a
     /// new mode) starts clean; the chosen mode + Tag/Nacht are stored (the game reads them later).
     fn start_play(&mut self, mode: PlayMode) {
+        if !self.flush_expedition_before_leave() { return; }
         // The winter launcher's Singleplayer button starts this authored local encounter, with
         // the same crew and retry rules as Playtest. Ordinary campaign launches remain unchanged.
         let mode = if mode == PlayMode::Kampagne && winter_combat_playtest(mode) {
@@ -12919,6 +13090,25 @@ impl WindowState {
         self.map_pins.clear();
         if mode == PlayMode::Canyon {
             self.start_canyon();
+            return;
+        }
+        if mode == PlayMode::Expedition {
+            self.expedition_io = expedition_save_frontend::SaveSession::default();
+            let path = std::path::PathBuf::from(expedition_theatre::MANIFEST);
+            let selected = act_manifest::select_runtime_manifest(Some(path)).and_then(|act| {
+                anyhow::ensure!(act == Some(1), "recovery playtest requires Act One");
+                Ok(())
+            });
+            if let Err(error) = selected {
+                eprintln!("[expedition] cannot load encounter: {error:#}");
+                self.enter_menu(false);
+                self.pause_menu.message = "RECOVERY MAP COULD NOT LOAD".into();
+                return;
+            }
+            if self.build_act_world(1) {
+                self.state = AppState::Playing;
+                self.set_play_cursor(true);
+            }
             return;
         }
         // DEV GARAGE: the default hub — build the gunnery yard and drop straight in.
@@ -13106,7 +13296,9 @@ impl WindowState {
         };
         let build = if let Some(start) = campaign_start.as_ref() {
             Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
-        } else if winter_combat || canyon_course {
+        } else if self.play_mode == Some(PlayMode::Expedition) {
+            Game::build_expedition_act(&self.device, &self.queue, night, &map)
+        } else if winter_combat || canyon_course || self.play_mode == Some(PlayMode::Expedition) {
             Game::build_playtest_act(&self.device, &self.queue, night, &map)
         } else {
             Game::build_act(&self.device, &self.queue, night, &map)
@@ -13144,10 +13336,29 @@ impl WindowState {
                         self.map_pins.retain(|(sheet, _)| *sheet != act);
                     }
                 }
-                // Every singleplayer mode has exactly one crewman aboard. Co-op and LAN crews
-                // bring their own people.
+                // Singleplayer supplies the living crew; co-op and LAN retain their people.
                 if self.lan.is_none() && self.play_mode.is_some_and(|mode| mode != PlayMode::Koop) {
                     g.enable_singleplayer_crew();
+                }
+                if self.play_mode == Some(PlayMode::Expedition) {
+                    let seed = std::env::var("KESSEL_SEED").ok()
+                        .and_then(|value| value.parse::<u64>().ok()).unwrap_or(1944);
+                    let enabled = g.expedition_initial_camp_position()
+                        .and_then(|position| g.enable_expedition(seed, position));
+                    if let Err(error) = enabled {
+                        eprintln!("[expedition] cannot initialize run: {error:#}");
+                        return false;
+                    }
+                    if let Err(error) = g.enable_expedition_theatre(&mut r) {
+                        eprintln!("[expedition] cannot initialize theatre: {error:#}");
+                        return false;
+                    }
+                    if let Err(error) = g.begin_expedition_at_camp(&mut r) {
+                        eprintln!("[expedition] cannot place fresh commander at camp: {error:#}");
+                        return false;
+                    }
+                    self.expedition_relief_selected = 0;
+                    self.expedition_relief_message.clear();
                 }
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
                 g.set_defer_rtt_to_render(true);
@@ -13239,7 +13450,24 @@ impl WindowState {
     /// Apply terminal simulation state after any Playing update, including the live map/controls
     /// overlay branches. Returns true after it has rendered the new terminal state for this frame.
     fn resolve_game_terminal(&mut self) -> bool {
+        if self.expedition_finished() {
+            self.enter_expedition_completed();self.render_expedition_completed();return true;
+        }
+        self.maybe_autosave_expedition();
         self.update_couch_kia_presentation();
+        if self.game.expedition_succession_pending() {
+            self.show_map = false;
+            self.show_controls = false;
+            self.pencil_down = false;
+            self.game.set_repair_manual_held(false);
+            self.game.set_map_held(false);
+            self.expedition_relief_selected = 0;
+            self.expedition_relief_message.clear();
+            self.state = AppState::Death { t: 0.0, card: None };
+            self.set_play_cursor(false);
+            self.render_expedition_relief();
+            return true;
+        }
         if let Some(over_cause) = self.game.game_over() {
             self.show_map = false;
             self.show_controls = false;
@@ -13415,6 +13643,8 @@ impl WindowState {
                 Some(ui::MenuAction::Singleplayer) => self.start_play(PlayMode::Kampagne),
                 Some(ui::MenuAction::Coop) => self.start_play(PlayMode::Koop),
                 Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),
+                Some(ui::MenuAction::Expedition) => self.start_play(PlayMode::Expedition),
+                Some(ui::MenuAction::ResumeExpedition) => self.load_live_expedition(true),
                 Some(ui::MenuAction::Editor) => { self.menu.editor_page = true; self.menu.selected = 0; },
                 Some(ui::MenuAction::LoadCheckpoint) => self.load_campaign_checkpoint(),
                 Some(ui::MenuAction::Canyon) => { self.canyon_v2 = false; self.start_play(PlayMode::Canyon); },
@@ -13427,11 +13657,9 @@ impl WindowState {
                 None => {},
             },
             KeyCode::Escape if self.menu.resume_available => {
-                self.menu.resume_available = false;
-                self.state = AppState::Playing;
-                self.set_play_cursor(true);
+                self.resume_play();
             },
-            KeyCode::Escape => event_loop.exit(),
+            KeyCode::Escape => { if self.flush_expedition_before_leave() {event_loop.exit();} },
             // Developer access and existing co-op are preserved outside the title choices.
             KeyCode::F5 => self.enter_lan_menu(),
             KeyCode::F6 => self.start_play(PlayMode::Garage),
@@ -13458,7 +13686,8 @@ impl WindowState {
         let (route, sheets) = self.game.campaign_map_state()
             .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
         self.renderer.ui_reset();
-        if self.game.draw_canyon_map(&mut self.renderer,&self.pencil_marks,&self.map_pins,self.map_cursor)
+        if self.game.draw_expedition_map(&mut self.renderer)
+            || self.game.draw_canyon_map(&mut self.renderer,&self.pencil_marks,&self.map_pins,self.map_cursor)
             || self.game.draw_winter_map(&mut self.renderer,&self.pencil_marks,&self.map_pins,self.map_cursor) {
             self.renderer.render_held_map_texture(&self.device,&self.queue,self.game.held_map_slot());
             return;
@@ -13466,6 +13695,7 @@ impl WindowState {
         ui::draw_held_map_print(&mut self.renderer, &self.game.act, &self.game.marks,
             &self.pencil_marks, &self.map_pins, route, sheets, self.map_cursor, heading,
             self.pencil_down, self.game.map_world_position(), self.game.mission_map_guidance().as_ref());
+        self.game.draw_campaign_building_map(&mut self.renderer);
         self.renderer.render_held_map_texture(&self.device, &self.queue, self.game.held_map_slot());
     }
 
@@ -13490,6 +13720,7 @@ impl WindowState {
         let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);
         self.renderer.set_coop_shadow_reuse(shadow_ready);
         self.prepare_map_view();
+        self.game.prepare_repair_manual(&mut self.renderer, &self.device, &self.queue);
         let saved_far = self.renderer.camera.zfar;
         if self.game.protected_main_interior_view() {
             self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
@@ -13566,6 +13797,7 @@ impl WindowState {
         // readouts, prompts, loading guide, ammunition tags or map key hints. Only non-verbal
         // cues remain: the interaction dot, the dismount ring and the co-op capture bar.
         self.renderer.ui_reset();
+        self.draw_expedition_save_notice();
         self.draw_compound_hud(0.5); // STÜTZPUNKT capture bar (no-op outside the Koop mission)
         // Platoon radio: the typed line and the wingmen's replies, display-resolution text outside
         // the crush like the menus (the one place play carries words, by the mode's design).
@@ -13669,8 +13901,19 @@ impl WindowState {
             ui::draw_mission_overlay(&mut self.renderer, &overlay, self.show_map);
             if overlay.order.is_some() { self.game.mission_note_order_presented(); }
         }
-        if let Some(label) = self.game.hover_label_text() {
-            let hint = interaction_hint(&label, self.game.interact_kind());
+        let camp_hint = self.game.tiger_refuel_hover(self.renderer.camera.pos, self.renderer.camera.forward())
+            .or_else(|| self.game.field_aid_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
+            .or_else(|| self.game.crew_status_panel_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
+            .or_else(|| self.game.expedition_medical_target(self.renderer.camera.pos, self.renderer.camera.forward())
+            .map(|(_, label)| label.to_owned())
+            .or_else(|| self.game.recovery_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
+            .or_else(|| self.game.expedition_relay_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
+            .or_else(|| self.game.depot_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
+            .or_else(|| self.game.camp_person_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
+            .or_else(|| self.game.halftrack_hover(self.renderer.camera.pos, self.renderer.camera.forward()).map(str::to_owned)));
+        let interaction_label = camp_hint.clone().or_else(|| self.game.hover_label_text()
+            .map(|label| interaction_hint(&label, self.game.interact_kind())));
+        if let Some(hint) = interaction_label {
             pixel_font::draw_centered(&mut self.renderer, &hint, 0.5, 0.94, 1, HOVER_OUTLINE_RGBA);
         }
         // The crew's intercom: one terse line, a few seconds, above the interaction hint
@@ -13679,8 +13922,11 @@ impl WindowState {
             let line = line.to_owned();
             pixel_font::draw_centered(&mut self.renderer, &line, 0.5, 0.865, 1, [0.80, 0.84, 0.70, 0.80]);
         }
+        if let Some(status) = self.game.crew_control_status() {
+            pixel_font::draw_centered(&mut self.renderer, &status, 0.5, 0.905, 1, [0.88, 0.88, 0.88, 0.85]);
+        }
         // A dot where the crosshair rests on something the hands can use.
-        if self.game.hover_label_text().is_some() && !self.game.sidearm_is_drawn() {
+        if (camp_hint.is_some() || self.game.hover_label_text().is_some()) && !self.game.sidearm_is_drawn() {
             self.renderer.draw_text(
                 "·",
                 0.5,
@@ -14194,6 +14440,7 @@ impl WindowState {
     fn render_menu(&mut self) {
         let Some((frame, view)) = self.acquire() else { return; };
         self.menu.checkpoint_available = campaign_save::default_path().is_ok_and(|path| path.is_file());
+        self.menu.expedition_save_available = expedition_world_save::saved_file_available();
         let saved = (self.renderer.camera, self.renderer.optic_mask, self.renderer.reticle,
             self.renderer.interior_light, self.renderer.weather_shelter, self.renderer.crew_ko);
         pose_driver_title(&self.game, &mut self.renderer);
@@ -14203,7 +14450,7 @@ impl WindowState {
         self.renderer.ui_reset();
         ui::draw_menu(&mut self.renderer, &self.menu);
         if !self.pause_menu.message.is_empty() {
-            self.renderer.draw_text(&self.pause_menu.message, 0.50, 0.515, 0.021,
+            self.renderer.draw_text(&self.pause_menu.message, 0.50, 0.39, 0.018,
                 [0.76, 0.70, 0.57, 1.0], ui::Align::Center);
         }
         self.renderer.render_driver_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
@@ -14213,6 +14460,7 @@ impl WindowState {
     }
 
     fn render_pause(&mut self) {
+        if self.expedition_completion_panel() {self.render_expedition_completed();return;}
         let Some((frame, view)) = self.acquire() else { return; };
         if self.pause_menu.page == ui::PausePage::Graphics {
             self.renderer.render_to_surface(&self.device, &self.queue, &view, self.config.format);
@@ -14222,13 +14470,15 @@ impl WindowState {
             frame.present();
             return;
         }
-        let can_save = self.play_mode.is_some_and(playtest_mode::uses_campaign)
-            && self.campaign.as_ref().is_some_and(|run| run.attempt_active());
+        let expedition = self.play_mode == Some(PlayMode::Expedition);
+        self.pause_menu.expedition = expedition;
+        let can_save = expedition || (self.play_mode.is_some_and(playtest_mode::uses_campaign)
+            && self.campaign.as_ref().is_some_and(|run| run.attempt_active()));
         let checkpoint_mode = if self.play_mode == Some(PlayMode::Playtest) {
             PlayMode::Playtest
         } else { PlayMode::Kampagne };
-        let can_load = playtest_mode::checkpoint_path(checkpoint_mode)
-            .is_ok_and(|path| path.is_file());
+        let can_load = if expedition { expedition_world_save::default_path().is_ok_and(|path| path.is_file()) }
+            else { playtest_mode::checkpoint_path(checkpoint_mode).is_ok_and(|path| path.is_file()) };
         let retro = self.renderer.master_retro;
         self.renderer.ui_reset();
         ui::draw_pause_menu(
@@ -14277,6 +14527,10 @@ impl WindowState {
     /// Fade the fatal view and world sound, then hold black under the separately routed score.
     /// Only an unavailable score uses the previous silent casualty replay.
     fn render_death(&mut self, t: f32) {
+        if self.game.expedition_state().is_some() {
+            self.render_expedition_relief();
+            return;
+        }
         let card = match self.state {
             AppState::Death { card, .. } => card,
             _ => None,
@@ -14413,32 +14667,16 @@ fn settle_couch_overlay_owner(state: &mut WindowState, keys: &mut Keys, binocs: 
     *keys = Keys::default();
 }
 
-/// The controller's A / Cross button reaches the exact same physical interaction chain as E.
+/// The controller's A / Cross button shares the physical LMB interaction chain.
 fn controller_interact(state: &mut WindowState, keys: &mut Keys, binocs: &mut bool) {
-    let fwd = state.renderer.camera.forward();
-    let pos = state.renderer.camera.pos;
-    if state.game.interact_world_door(fwd, pos) {
-    } else if state.game.interact_portable_item(fwd, pos) {
-    } else if state.lan.is_some() && state.game.hover_hatch_lever() {
-        keys.lan_hatch_pulse = true;
-    } else if state.game.interact_hatch_lever(fwd, pos) {
-    } else if state.game.interact_equip() {
-    } else if state.game.click_station() {
-    } else if state.game.hover_hatch() {
-        if state.lan.is_some() {
-            keys.lan_hatch_pulse = true;
-        } else {
-            state.game.click_hatch_or_exit();
-        }
-    } else if state.game.click_mount(fwd, pos) {
-        *binocs = false;
-    }
+    if interact_under_crosshair(state,keys,true) { *binocs=false; }
 }
 
 /// Controller B / Circle is the same one-layer-at-a-time embodied back-out as keyboard Q.
 fn controller_back(state: &mut WindowState, binocs: &mut bool) {
     let fwd = state.renderer.camera.forward();
     let g = &mut state.game;
+    if g.release_field_aid() { return; }
     if g.mode == game::Mode::Foot {
         if g.carried_tools() { g.interact_equip(); return; }
         g.throw_portable_item(fwd);
@@ -14685,8 +14923,35 @@ impl WindowState {
 /// carried item, a tool on its bracket, a seat, the tank from outside. Shared by the action
 /// button and by E. `with_pickups` adds the things only E collects (cigarette packs, tools).
 fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_pickups: bool) -> bool {
+    // The transport has its own driving controls; clicking through its cab cannot operate
+    // the Tiger, loot a nearby prop or pick up someone outside the vehicle.
+    if state.game.halftrack_occupied() { return true; }
     let fwd = state.renderer.camera.forward();
     let pos = state.renderer.camera.pos;
+    if state.game.tiger_refuel_interact(pos, fwd) { return true; }
+    if state.game.field_aid_interact(pos, fwd) { return true; }
+    if state.game.workshop_owns_primary(pos,fwd) {return false;}
+    if state.game.crew_status_panel_click(pos, fwd) { return true; }
+    match state.game.recovery_interact(pos, fwd) {Ok(true)=>return true,Err(error)=>{eprintln!("[recovery] {error:#}");return true},Ok(false)=>{}}
+    match state.game.expedition_interact_medical(pos, fwd) {
+        Ok(true) => return true,
+        Ok(false) => {},
+        Err(error) => {
+            eprintln!("[medical] {error:#}");
+            return true;
+        }
+    }
+    // Bed admission precedes dropping a held patient. A visible cab casualty precedes
+    // boarding, so entering cannot implicitly replace or overlap the driver.
+    if state.game.interact_crew_body(fwd, pos) { return true; }
+    match state.game.try_board_halftrack(pos, fwd, &mut state.renderer) {
+        Ok(true) => return true,
+        Ok(false) => {},
+        Err(error) => { eprintln!("[halftrack] {error:#}"); return true; }
+    }
+    if state.game.expedition_relay_interact(pos,fwd) {return true;}
+    if state.game.depot_interact(pos,fwd) {return true;}
+    if state.game.camp_person_interact(pos, fwd) { return true; }
     if state.game.click_articulated_hatch() { return true; }
     if with_pickups && state.game.interact_cigarette_pickup(fwd, pos, &mut state.renderer) { return true; }
     if state.game.interact_world_door(fwd, pos) || state.game.interact_portable_item(fwd, pos) { return true; }
@@ -14727,8 +14992,8 @@ mod interaction_hint_tests {
         assert_eq!(interaction_hint("SEARCH SHELF [R]", K::None), "SEARCH SHELF (R)");
         assert_eq!(interaction_hint("RADIO", K::Click), "RADIO (LMB)");
         assert_eq!(interaction_hint("HATCH EXIT BLOCKED", K::None), "HATCH EXIT BLOCKED");
-        assert_eq!(interaction_hint("CASE IN HAND - LMB TO LET GO, X TO THROW", K::Carrying),
-            "CASE IN HAND - LMB TO LET GO, X TO THROW");
+        assert_eq!(interaction_hint("CASE IN HAND - LMB TO LET GO, R TO THROW", K::Carrying),
+            "CASE IN HAND - LMB TO LET GO, R TO THROW");
     }
 }
 
@@ -14864,8 +15129,10 @@ impl ApplicationHandler for App {
                     self.couch_commander_exit.cancel();
                     state.x_exit_frac = 0.0;
                     state.window.request_redraw();
-                } else {
+                } else if state.flush_expedition_before_leave() {
                     event_loop.exit();
+                } else {
+                    state.window.request_redraw();
                 }
             }
             // Focus lost: release every held key. The release events land in whatever window stole
@@ -15015,6 +15282,9 @@ impl ApplicationHandler for App {
                         }
                         let _ = act;
                     }
+                    AppState::Death { .. } if state.game.expedition_state().is_some() => {
+                        state.expedition_relief_key(code);
+                    }
                     AppState::Death { t, card: Some(card) } if card.is_silent() => {
                         // Space, Enter or Escape puts the card away at once, and pressed again
                         // during the replay shots ends them. The fade and the black are not cut.
@@ -15073,10 +15343,62 @@ impl ApplicationHandler for App {
                             state.show_controls = !state.show_controls;
                             state.set_play_cursor(!state.show_controls);
                         }
+                        KeyCode::KeyX if state.game.halftrack_occupied() && state.couch_keyboard_has_authority() => {
+                            match state.game.try_exit_halftrack(&mut state.renderer) {
+                                Ok(true) => { self.keys = Keys::default(); self.binocs = false; },
+                                Ok(false) => {},
+                                Err(error) => eprintln!("[halftrack] {error:#}"),
+                            }
+                        }
+                        // Raw movement keys still reach the transport's controller. Seat changes,
+                        // weapons and carried objects wait until the soldier has safely exited.
+                        _ if state.game.halftrack_occupied()
+                            && !matches!(code, KeyCode::Escape | KeyCode::F3 | KeyCode::F12) => {}
                         // M pulls out / stows the physical paper map; the war never pauses.
                         KeyCode::KeyM if state.couch_keyboard_has_authority() => {
+                            state.game.set_repair_manual_held(false);
+                            state.set_play_cursor(true);
                             state.show_map = state.game.set_map_held(!state.show_map);
                             state.pencil_down = false;
+                        }
+                        KeyCode::KeyB if state.couch_keyboard_has_authority() => {
+                            let held = state.game.set_repair_manual_held(!state.game.repair_manual.held);
+                            if held { state.show_map = false; self.binocs = false; }
+                            state.set_play_cursor(!held);
+                            self.keys = Keys::default();
+                        }
+                        KeyCode::KeyX if state.game.release_field_aid() => {},
+                        KeyCode::KeyX if state.game.cancel_crew_panel_selection() => {},
+                        KeyCode::KeyX if state.game.recovery_stow_hands() => {},
+                        KeyCode::KeyX if state.game.release_depot_cart() => {},
+                        KeyCode::KeyX if state.game.put_down_workshop_part() => {},
+                        KeyCode::KeyX if state.game.repair_manual.held || state.show_map => {
+                            state.game.set_repair_manual_held(false);
+                            state.game.set_map_held(false);
+                            state.show_map = false;
+                            state.set_play_cursor(true);
+                            self.keys = Keys::default();
+                        }
+                        KeyCode::PageDown if state.game.repair_manual.held => {
+                            state.game.repair_manual.turn(1);
+                        }
+                        KeyCode::PageDown if state.show_map => { state.game.expedition_cycle_order(1); }
+                        KeyCode::PageUp if state.show_map => { state.game.expedition_cycle_order(-1); }
+                        KeyCode::Enter if state.show_map && state.game.expedition_state().is_some() => {
+                            if let Err(error)=state.game.expedition_accept_order(){eprintln!("[orders] {error:#}");}
+                        }
+                        KeyCode::PageUp if state.game.repair_manual.held => {
+                            state.game.repair_manual.turn(-1);
+                        }
+                        KeyCode::Equal | KeyCode::NumpadAdd if state.game.repair_manual.held => {
+                            if let Some(uv) = state.menu_pointer.and_then(|pointer|
+                                repair_manual::book_uv(&state.renderer.camera, pointer, &state.game.repair_manual)) {
+                                state.game.repair_manual.focus(uv);
+                            }
+                            state.game.repair_manual.zoom_by(1.0);
+                        }
+                        KeyCode::Minus | KeyCode::NumpadSubtract if state.game.repair_manual.held => {
+                            state.game.repair_manual.zoom_by(-1.0);
                         }
                         KeyCode::Equal | KeyCode::NumpadAdd if state.show_map && state.couch_keyboard_has_authority() => {
                             state.game.zoom_held_map(1.0);
@@ -15099,7 +15421,10 @@ impl ApplicationHandler for App {
                         // An open overlay consumes game-mutating keys below. The map branch still
                         // advances the sim with neutral input; the controls reference pauses solo.
                         // The stats overlay and screenshot keys never mutate the game.
-                        _ if (state.show_map || state.show_controls)
+                        KeyCode::KeyF | KeyCode::KeyL if (state.show_map || state.game.repair_manual.held) && !state.show_controls => {
+                            if state.game.toggle_hand_flashlight() { self.binocs=false; }
+                        },
+                        _ if (state.show_map || state.show_controls || state.game.repair_manual.held)
                             && !matches!(code, KeyCode::F3 | KeyCode::F12) => {}
                         // Space is routed through TankInput.jump in Game::update for both
                         // native input and mechanic replay (one edge across entry/exit).
@@ -15107,14 +15432,19 @@ impl ApplicationHandler for App {
                         // enforces readiness/ownership and the LAN host applies the same request.
                         // The hatch has no key of its own: E on its lever or lid works it.
                         KeyCode::KeyF | KeyCode::KeyL => { if state.game.toggle_hand_flashlight() {self.binocs=false;} },
-                        KeyCode::KeyV => {
-                            state.game.stow_personal_hand_item();
-                            if state.game.toggle_mounted_sidearm() {self.binocs=false;}
+                        KeyCode::KeyV if state.lan.is_none() => {
+                            state.game.command_gunner_sector(state.renderer.camera.pos, state.renderer.camera.forward());
                         }
-                        // X throws the spent case in the hands, out of a hatch if one is open ahead.
-                        KeyCode::KeyX if state.game.mode == game::Mode::Tank => {
-                            let forward = state.renderer.camera.forward();
-                            state.game.throw_carried_casing(forward);
+                        KeyCode::Digit1 if state.game.mode == game::Mode::Tank => {
+                            state.game.stow_personal_hand_item();
+                            if state.game.toggle_mounted_sidearm() { self.binocs=false; }
+                        }
+                        KeyCode::KeyQ | KeyCode::KeyE if state.lan.is_none() => {
+                            state.game.command_driver_cruise(if code == KeyCode::KeyE { 1 } else { -1 });
+                        }
+                        // A carried spent case can still be thrown deliberately; X belongs to exit.
+                        KeyCode::KeyR if state.game.mode == game::Mode::Tank => {
+                            state.game.throw_carried_casing(state.renderer.camera.forward());
                         }
                         // T — swap the loaded shell nature (PzGr AP ↔ SprGr HE).
                         KeyCode::KeyT if state.game.mode == game::Mode::Tank => {
@@ -15134,38 +15464,37 @@ impl ApplicationHandler for App {
                                 .game
                                 .select_foot_weapon(crate::foot::FootWeapon::Panzerfaust);
                         }
-                        // Q = EXIT the current view/thing (playtest: one universal back-out).
+                        // X = EXIT the current view/thing (playtest: one universal back-out).
                         // Pops ONE layer per press, topmost first: binoculars down → equipped
                         // tool racked → sights/breech stand-up → head back in from the cupola.
                         // (Ctrl freed: on foot it stays crouch; in the tank it does nothing now.)
-                        KeyCode::KeyQ
+                        KeyCode::KeyX
                             if state.game.mode == game::Mode::Foot && !state.game.is_climbing() =>
                         {
-                            let fwd = state.renderer.camera.forward();
-                            // A carried physical item always owns Q. With empty hands it becomes the
-                            // compact weapon-cycle binding; 1/2 remain unambiguous direct selects.
-                            if state.game.stow_personal_hand_item() {}
+                            // X releases one held layer; empty hands do not cycle weapons.
+                            if state.game.release_crew_body() {}
+                            else if state.game.stow_personal_hand_item() {}
                             else if state.game.compass_equipped { state.game.toggle_compass(); }
                             else if state.game.carried_tools() { state.game.interact_equip(); }
-                            else if !state.game.throw_portable_item(fwd) {
-                                state.game.cycle_foot_weapon();
-                            }
+                            else { state.game.put_down_held_portable(); }
                         }
-                        KeyCode::KeyQ
+                        KeyCode::KeyX
                             if state.game.mode == game::Mode::Tank && !state.game.is_climbing() =>
                         {
                             let g = &mut state.game;
                             if self.binocs {
                                 self.binocs = false;
                             } else if g.stow_personal_hand_item() {
-                                // Q lowers the current physical hand item before leaving the post.
+                                // X lowers the current physical hand item before leaving the post.
+                            } else if g.release_hand_load() {
+                                // Put down the player's cartridge/case before leaving the station.
                             } else if g.holster_mounted_sidearm() {
                                 // The pistol is the topmost held item; leave the physical post unchanged.
                             } else if g.compass_equipped { g.toggle_compass(); }
                             else if g.ext_equipped || g.carried_tools() || g.carried_panzerfaust() {
                                 g.interact_equip(); // racks the extinguisher back on the wall
                             } else if matches!(g.station, game::Station::Gunner) {
-                                // Q off the sights: back on your feet in the turret.
+                                // X off the sights: back on your feet in the turret.
                                 g.sights_mag = 0;
                                 g.jump_station(game::Station::Loader);
                             } else if matches!(g.station, game::Station::Driver | game::Station::Radioman) {
@@ -15174,7 +15503,7 @@ impl ApplicationHandler for App {
                                 g.commander_outside = false;
                                 println!("[panzerrechnersystem] view: PERISCOPE (safe)");
                             } else if matches!(g.station, game::Station::Commander) {
-                                // Q again from the buttoned periscope: drop down into the fighting
+                                // X again from the buttoned periscope: drop down into the fighting
                                 // compartment (the interior/loader view) — the clean "leave the
                                 // cupola" the user asked for (LMB-into-the-tank was the only way).
                                 g.jump_station(game::Station::Loader);
@@ -15188,7 +15517,7 @@ impl ApplicationHandler for App {
                             if state.game.toggle_cigarette() {self.binocs=false;}
                             state.game.consume_primary_press();
                         }
-                        KeyCode::KeyB
+                        KeyCode::KeyI
                             if state.game.mode == game::Mode::Foot
                                 || (state.game.mode == game::Mode::Tank
                                     && !matches!(state.game.station, game::Station::Gunner)) =>
@@ -15206,7 +15535,7 @@ impl ApplicationHandler for App {
                         // (The LMB click path does the same — E is the keyboard hand.)
                         // E is a second interact key: whatever the action button would work under
                         // the crosshair. It never takes the player through a hatch (Space does).
-                        KeyCode::KeyE if !state.game.mounted_sidearm_owns_input(self.keys.rmb) => {
+                        KeyCode::KeyE if state.lan.is_some() && !state.game.mounted_sidearm_owns_input(self.keys.rmb) => {
                             if state.game.interact_kind() != game::InteractKind::None
                                 && !state.game.interaction_tool_in_hand() {
                                 // A hovered breech, rack, case or control, or a load in the
@@ -15270,6 +15599,14 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                if matches!(state.state, AppState::Playing) && state.game.repair_manual.held {
+                    let steps = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 50.0,
+                    };
+                    if steps != 0.0 { state.game.repair_manual.turn(if steps < 0.0 { 1 } else { -1 }); }
+                    return;
+                }
                 if matches!(state.state,AppState::Playing) && state.show_map && state.couch_keyboard_has_authority() {
                     let steps=match delta {
                         winit::event::MouseScrollDelta::LineDelta(_,y)=>y,
@@ -15285,7 +15622,9 @@ impl ApplicationHandler for App {
                 );
                 state.menu_pointer = Some(pointer);
                 if matches!(state.state, AppState::Paused) {
-                    if state.pause_menu.page == ui::PausePage::Graphics {
+                    if state.expedition_completion_panel() {
+                        if let Some(row)=state.expedition_completion_row(pointer){state.pause_menu.selected=row;}
+                    } else if state.pause_menu.page == ui::PausePage::Graphics {
                         if let Some(row) = state.graphics_menu.row_at(pointer.x,pointer.y) { state.graphics_menu.selected = row; }
                     } else if let Some(row) = state.pause_menu.row_at(pointer.x, pointer.y) {
                         state.pause_menu.selected = row;
@@ -15332,7 +15671,11 @@ impl ApplicationHandler for App {
                 }
                 if matches!(state.state, AppState::Paused) {
                     if btn.is_pressed() && button == winit::event::MouseButton::Left {
-                        if state.pause_menu.page == ui::PausePage::Graphics {
+                        if state.expedition_completion_panel() {
+                            if let Some(row)=state.menu_pointer.and_then(|p|state.expedition_completion_row(p)) {
+                                state.pause_menu.selected=row;state.expedition_completed_key(winit::keyboard::KeyCode::Enter);
+                            }
+                        } else if state.pause_menu.page == ui::PausePage::Graphics {
                             if let Some(p) = state.menu_pointer {
                                 if let Some(row) = state.graphics_menu.row_at(p.x,p.y) {
                                     state.graphics_menu.selected = row;
@@ -15356,6 +15699,18 @@ impl ApplicationHandler for App {
                 if !matches!(state.state, AppState::Playing) {
                     return;
                 }
+                if state.game.repair_manual.held {
+                    if btn.is_pressed() && button == winit::event::MouseButton::Left {
+                        if let Some(pointer) = state.menu_pointer {
+                            state.game.repair_manual_click(&state.renderer.camera, pointer);
+                        }
+                    }
+                    self.keys = Keys::default();
+                    return;
+                }
+                // A click folds the held-up mission order (the close mark on its corner; the play
+                if btn.is_pressed() && button == winit::event::MouseButton::Left && state.show_map
+                    && state.game.expedition_map_click(state.map_cursor) { return; }
                 // A click folds the held-up mission order (the close mark on its corner; the play
                 // cursor is captured, so the whole click is the mark). It does not also act.
                 if btn.is_pressed() && button == winit::event::MouseButton::Left && !state.show_map
@@ -15413,7 +15768,7 @@ impl ApplicationHandler for App {
                             && !state.game.mounted_sidearm_owns_input(self.keys.rmb)
                             && !state.game.personal_item_blocks_interaction()
                             && !state.game.primary_loader_owns_click()
-                            && interact_under_crosshair(state, &mut self.keys, false) {
+                            && interact_under_crosshair(state, &mut self.keys, true) {
                             state.game.consume_primary_press();
                             self.binocs = false;
                         }
@@ -15467,6 +15822,7 @@ impl ApplicationHandler for App {
                     // A new life or world never starts with the previous one's binoculars raised.
                     self.binocs = false;
                 }
+                if std::mem::take(&mut state.io_clock_reset) { self.last = None; }
                 let now = Instant::now();
                 let dt = frame_dt(self.last.map(|t| (now - t).as_secs_f32()));
                 self.last = Some(now);
@@ -15608,15 +15964,17 @@ impl ApplicationHandler for App {
                         state.x_exit_frac = 0.0;
                     }
                 }
-                let mut input = if controller_only {
+                let mut input = if controller_only || state.game.repair_manual.held {
                     // Meta keys such as Escape may still reach the app shell, but keyboard/mouse
                     // never become a hidden crewman's continuous or embodied simulation input.
                     TankInput::default()
                 } else {
                     self.keys.tank_input()
                 };
-                if !controller_only {
-                    input.mg_coax = interaction_primary(&mut self.interact_latch, self.keys.e, self.keys.lmb, &mut state.game, dt);
+                if !controller_only && !state.game.repair_manual.held {
+                    let legacy_interact_key = state.lan.is_some() && self.keys.e;
+                    input.enter = legacy_interact_key;
+                    input.mg_coax = interaction_primary(&mut self.interact_latch, legacy_interact_key, self.keys.lmb, &mut state.game, dt);
                     input.interaction = !state.game.interaction_tool_in_hand()
                         && (self.interact_latch.held || state.game.interact_kind() != game::InteractKind::None);
                 }
@@ -15790,6 +16148,13 @@ impl ApplicationHandler for App {
                     AppState::RunCard { t } if t >= RUN_CARD_ARM_S && (pad.back_pressed || pad.menu_pressed) => {
                         state.leave_canyon_to_menu();
                     }
+                    AppState::Death { .. } if state.game.expedition_state().is_some() => {
+                        use winit::keyboard::KeyCode;
+                        if pad.dpad_up_pressed { state.expedition_relief_key(KeyCode::ArrowUp); }
+                        if pad.dpad_down_pressed { state.expedition_relief_key(KeyCode::ArrowDown); }
+                        if pad.interact_pressed { state.expedition_relief_key(KeyCode::Enter); }
+                        if pad.back_pressed { state.expedition_relief_key(KeyCode::Escape); }
+                    }
                     AppState::Death { t, card }
                         if card.is_none() && death_may_skip(t) && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
                     {
@@ -15940,7 +16305,7 @@ impl ApplicationHandler for App {
                     AppState::Menu => state.render_menu(),
                     AppState::Paused => state.render_pause(),
                     AppState::LanMenu => state.render_lan_menu(),
-                    AppState::Playing if state.show_map => {
+                    AppState::Playing if state.show_map || state.game.repair_manual.held => {
                         // The paper is held in the world, not a pause screen. Relative mouse motion
                         // or the controller Commander's right stick moves the pencil; the primary
                         // trigger scratches graphite. Both hands are busy, so that crewman sends
@@ -16159,7 +16524,7 @@ impl ApplicationHandler for App {
                             // The canyon's finish presented this frame (src/canyon.rs).
                         } else if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
-                        } else if state.game.act_complete && state.play_mode != Some(PlayMode::Koop)
+                        } else if state.game.act_complete && state.game.expedition_state().is_none() && state.play_mode != Some(PlayMode::Koop)
                         {
                             if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 if let Some(next_state) = state.complete_campaign_act() {
@@ -16212,6 +16577,13 @@ impl ApplicationHandler for App {
                     AppState::RunCard { t } => {
                         state.state = AppState::RunCard { t: t + dt };
                         state.render_run_card(t + dt);
+                    }
+                    AppState::Death { t, card } if state.game.expedition_state().is_some() => {
+                        // Selection pauses by default; an explicit medical-report wait advances
+                        // the retained battle and actual care without rebuilding or healing it.
+                        state.state = AppState::Death { t: t + dt, card };
+                        state.advance_expedition_relief_wait(dt);
+                        state.render_expedition_relief();
                     }
                     AppState::Death { t, card } => {
                         let nt = t + dt;
@@ -16288,7 +16660,8 @@ impl ApplicationHandler for App {
         event: winit::event::DeviceEvent,
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
-            if self.state.as_ref().is_some_and(|state| matches!(state.state, AppState::Playing)) {
+            if self.state.as_ref().is_some_and(|state| matches!(state.state, AppState::Playing)
+                && !state.game.repair_manual.held) {
                 self.keys.mouse_dx += dx as f32;
                 self.keys.mouse_dy += dy as f32;
             }
@@ -16387,8 +16760,8 @@ mod capture_path_tests {
 
     #[test]
     fn bare_capture_names_use_the_flat_capture_folder() {
-        assert_eq!(capture_target("shot.png"), "captures/shot.png");
-        assert_eq!(capture_target("terror-video"), "captures/terror-video");
+        assert_eq!(std::path::PathBuf::from(capture_target("shot.png")), std::path::Path::new("captures").join("shot.png"));
+        assert_eq!(std::path::PathBuf::from(capture_target("terror-video")), std::path::Path::new("captures").join("terror-video"));
     }
 
     #[test]
@@ -16399,6 +16772,124 @@ mod capture_path_tests {
 }
 
 fn main() -> anyhow::Result<()> {
+    let early_args: Vec<String> = std::env::args().collect();
+    if early_args.get(1).is_some_and(|arg| arg == "vehicle-motion-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: vehicle-motion-review <new-prefix> [seconds] [inverted]"))?;
+        let seconds = early_args.get(3).filter(|arg| arg.as_str() != "inverted")
+            .map(|arg| arg.parse::<f32>()).transpose()?.unwrap_or(120.0);
+        return vehicle_motion_review::run(prefix, seconds,
+            early_args.iter().any(|arg| arg == "inverted"));
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "expedition-proof") {
+        let path = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: expedition-proof <new-receipt.json>"))?;
+        return expedition_proof::run(std::path::Path::new(path));
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "halftrack-inspect") {
+        let path = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: halftrack-inspect <new-receipt.json>"))?;
+        return halftrack_capture::inspect(std::path::Path::new(path));
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "halftrack-driving-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: halftrack-driving-review <new-prefix>"))?;
+        return game::halftrack_driving_review::run(prefix, early_args.iter().any(|arg| arg == "--video"));
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="expedition-theatre-review") {
+        let prefix=capture_arg(&early_args,2,"expedition_theatre_review");
+        let seconds=early_args.get(3).map(|s|s.parse::<f32>()).transpose()?.unwrap_or(30.);
+        return game::expedition_theatre_review::run(&prefix,seconds,early_args.iter().any(|arg|arg=="--autonomous-gunner"));
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="recovery-gameplay-review") {
+        let prefix=capture_arg(&early_args,2,"recovery_gameplay_review");
+        return Game::review_recovery_gameplay(&prefix,early_args.iter().any(|arg|arg=="--video"));
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="field-medical-recovery-review") {
+        let prefix=capture_arg(&early_args,2,"field_medical_recovery_review");
+        return Game::run_field_medical_recovery_review(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="passenger-succession-review") {
+        let prefix=capture_arg(&early_args,2,"passenger_succession_review");
+        return game::Game::run_passenger_succession_review(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="exposure-meter-review") {
+        let path=early_args.get(2).ok_or_else(||anyhow::anyhow!("usage: exposure-meter-review <new-json-path>"))?;
+        return exposure_meter_review::run(path);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="tiger-refuel-review") {
+        let prefix=capture_arg(&early_args,2,"tiger_refuel_review");
+        return Game::run_tiger_refuel_review(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="replacement-boarding-review") {
+        let prefix=capture_arg(&early_args,2,"replacement_boarding_review");
+        return Game::run_replacement_boarding_review(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="expedition-world-review") {
+        let prefix=capture_arg(&early_args,2,"expedition_world_review");
+        return game::expedition_world_review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="expedition-mission-review") {
+        let prefix=capture_arg(&early_args,2,"expedition_mission_review");
+        return Game::run_expedition_mission_review(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="workshop-engine-review") {
+        let prefix=capture_arg(&early_args,2,"workshop_engine_review");
+        return game::workshop_runtime::engine::review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="workshop-gameplay-review") {
+        let prefix=capture_arg(&early_args,2,"workshop_gameplay_review");
+        return game::workshop_runtime::review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="cold-recommission-review") {
+        let prefix=capture_arg(&early_args,2,"cold_recommission_review");
+        return game::workshop_runtime::rack::review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "solo-controls-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: solo-controls-review <new-prefix>"))?;
+        return solo_controls_review::run(prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "crew-status-panel-review") {
+        let prefix = capture_arg(&early_args, 2, "crew_status_panel_review");
+        return game::crew_status_panel_review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| matches!(arg.as_str(), "combined-battle-review" | "first-person-battle-review")) {
+        let prefix = capture_arg(&early_args, 2, "combined_battle_review");
+        let seed = early_args.get(3).map(|s|s.parse::<u32>()).transpose()?.unwrap_or(0xC0B131);
+        let seconds = early_args.get(4).map(|s|s.parse::<f32>()).transpose()?.unwrap_or(60.0);
+        let t34 = early_args.get(5).map(String::as_str).unwrap_or("assets/ai/weights_academy.bin");
+        let tiger = early_args.get(6).map(String::as_str).unwrap_or("assets/ai/weights_tiger.bin");
+        return if early_args[1] == "first-person-battle-review" {
+            game::combined_battle_review::run_inside(&prefix, seed, seconds, t34, tiger)
+        } else {
+            game::combined_battle_review::run(&prefix, seed, seconds, t34, tiger)
+        };
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "expedition-live-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: expedition-live-review <new-prefix>"))?;
+        return expedition_live_review::run(prefix, early_args.iter().any(|arg| arg == "--camp"));
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "camp-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: camp-review <new-prefix>"))?;
+        return support_camp_capture::run(prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "expedition-medical-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: expedition-medical-review <new-prefix>"))?;
+        return game::expedition_camp_review::run(prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "halftrack-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: halftrack-review <new-prefix> [--interiors]"))?;
+        return halftrack_capture::run(prefix, early_args.iter().any(|arg| arg == "--interiors"));
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "repair-manual-review") {
+        let prefix = capture_arg(&early_args, 2, "repair_manual_review");
+        return repair_manual_capture::run(&prefix, early_args.iter().any(|arg| matches!(arg.as_str(), "video" | "--video")));
+    }
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).is_some_and(|s| s == "raymarch-interior") {
         return raymarch_showcase::run_interior(&capture_arg(&args, 2, "raymarch_interior"));
@@ -17229,6 +17720,9 @@ fn main() -> anyhow::Result<()> {
         return run_absitzen(outdir);
     }
 
+    // Misspelled headless commands must never silently open a visible test window.
+    anyhow::ensure!(args.get(1).is_none_or(|arg| arg.starts_with("--")),
+        "unknown command {:?}; no window opened", args.get(1));
     let lan_config = lan::LanConfig::from_args(&args).map_err(anyhow::Error::msg)?;
     let event_loop = EventLoop::new()?;
     // Visible rendering requests its next frame explicitly. Wait lets a hidden solo window

@@ -25,6 +25,7 @@ pub(super) struct FirstPerson {
     rigs: [Rig; 2],
     slots: [[usize; 2]; 2],
     last_sample: std::cell::Cell<f32>,
+    last_grips: std::cell::Cell<(usize, [Option<Mat4>; 2])>,
     local_visibility: std::cell::Cell<[[bool; 2]; 2]>,
     desired_hand: std::cell::Cell<Option<(Mat4, Mat4)>>,
     last_error: std::cell::Cell<f32>,
@@ -324,6 +325,32 @@ impl Rig {
 fn index_for(bones: &[Bone], name: &str) -> usize {
     bones.iter().position(|b| b.name == name).unwrap()
 }
+fn first_person_grips_changed(old:[Option<Mat4>;2],new:[Option<Mat4>;2])->bool {
+    old.into_iter().zip(new).any(|(a,b)|match(a,b) {
+        (None,None)=>false,
+        (Some(a),Some(b))=>!a.abs_diff_eq(b,1e-6),
+        _=>true,
+    })
+}
+
+#[cfg(test)]
+mod grip_cadence_tests {
+    use super::*;
+    #[test]
+    fn moving_or_released_first_person_grips_cannot_wait_for_idle_skin_tick() {
+        let old=[Some(Mat4::IDENTITY),None];
+        assert!(!first_person_grips_changed(old,old));
+        assert!(first_person_grips_changed(old,[Some(Mat4::from_translation(Vec3::X*0.001)),None]));
+        assert!(first_person_grips_changed(old,[Some(Mat4::from_rotation_z(0.01)),None]));
+        assert!(first_person_grips_changed(old,[None,None]));
+        // The comparison is source-relative: a rigid world translation of both operator
+        // and mechanism leaves the local grip unchanged, so does not reskin idle hands.
+        let world=Mat4::from_rotation_translation(Quat::from_rotation_y(0.4),Vec3::new(20.,1.,30.));
+        let recovered=world.inverse()*(world*Mat4::IDENTITY);
+        assert!(!first_person_grips_changed(old,[Some(recovered),None]));
+    }
+}
+
 impl FirstPerson {
     pub(super) fn append(scene: &mut Vec<CpuMesh>) -> anyhow::Result<Self> {
         let (seat, seat_mesh) = Rig::load("seated")?;
@@ -360,6 +387,7 @@ impl FirstPerson {
             witness_mask: std::cell::Cell::new(u16::MAX),
             slots,
             last_sample: std::cell::Cell::new(-100.0),
+            last_grips: std::cell::Cell::new((usize::MAX, [None; 2])),
             local_visibility: std::cell::Cell::new([[false; 2]; 2]),
             desired_hand: std::cell::Cell::new(None),
             last_error: std::cell::Cell::new(0.0),
@@ -455,7 +483,7 @@ impl FirstPerson {
             .singleplayer_embodied_role()
             .map(|s| {
                 game.living_wounds
-                    .missing(singleplayer_crew::casualty_identity(s).identity)
+                    .missing(game.singleplayer_casualty_identity(s).peer_id)
             })
             .unwrap_or([false; 11]);
         let bits = missing
@@ -553,10 +581,17 @@ impl FirstPerson {
                 .transform_point3(crate::interior_rig::WHEEL1_POS + Vec3::X * 0.13);
             grips[1] = Some(Mat4::from_translation(p));
         }
-        if r.time - self.last_sample.get() >= INTERVAL || dt == 0.0 {
+        // Tools and cartridges move every simulation step. An idle skin cadence must not
+        // leave the actual hands behind them; compare in the same body's local frame so
+        // rigid vehicle/world motion alone does not request a new skin solve.
+        let local_grips = grips.map(|grip| grip.map(|m| body.inverse() * m));
+        let (old_pose, old_grips) = self.last_grips.get();
+        if r.time - self.last_sample.get() >= INTERVAL || dt == 0.0
+            || old_pose != pose || first_person_grips_changed(old_grips, local_grips) {
             let (vertices, error) = rig.pose(body, grips);
             r.upload_pose_vertices(self.slots[pose][0], &vertices);
             self.last_sample.set(r.time);
+            self.last_grips.set((pose, local_grips));
             self.last_error.set(error);
         }
         r.set_model(self.slots[pose][0], body);
@@ -568,7 +603,7 @@ impl FirstPerson {
         self.local_visibility.set(visible);
     }
     pub(super) fn receipt(&self) -> serde_json::Value {
-        serde_json::json!({"source":"nisu CC0 original red-band LowpolySoldier","available":true,"sample_cap_hz":30,"hand_error_m":self.last_error.get(),"compact_arm_vertices":self.rigs.iter().map(|r|r.arm_map.len()).collect::<Vec<_>>()})
+        serde_json::json!({"source":"nisu CC0 original red-band LowpolySoldier","available":true,"idle_sample_hz":30,"mechanical_grasps":"refresh on changed source-relative grip","hand_error_m":self.last_error.get(),"compact_arm_vertices":self.rigs.iter().map(|r|r.arm_map.len()).collect::<Vec<_>>()})
     }
 }
 #[cfg(test)]
@@ -653,5 +688,21 @@ impl Game {
     /// Review captures: remove the local body from the view entirely.
     pub fn hide_first_person_body(&self, r: &mut Renderer) -> Vec<(usize, bool)> {
         self.first_person.as_ref().map(|arms| arms.hide_all(r)).unwrap_or_default()
+    }
+}
+
+impl FirstPerson {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut f=crate::expedition_world_save::StateFields::default();
+        f.put("last_sample",&self.last_sample.get())?;f.put("desired_hand",&self.desired_hand.get())?;f.put("last_error",&self.last_error.get())?;Ok(f)
+    }
+    pub(crate) fn import_world_state(&self,mut f:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        self.last_sample.set(f.take("last_sample")?);self.desired_hand.set(f.take("desired_hand")?);self.last_error.set(f.take("last_error")?);f.finish()?;
+        self.last_mask.set((usize::MAX,u16::MAX));self.witness_mask.set(u16::MAX);
+        self.last_grips.set((usize::MAX,[None;2]));Ok(())
+    }
+    pub(crate) fn present_world_state(&self,g:&Game,r:&mut Renderer) {
+        let sample=self.last_sample.get();let error=self.last_error.get();
+        self.draw(g,0.,r);self.last_sample.set(sample);self.last_error.set(error);
     }
 }

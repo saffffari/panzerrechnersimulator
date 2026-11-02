@@ -5,6 +5,7 @@ use glam::Quat;
 pub(super) const CAPACITY: usize = 128;
 const COUNT: usize = physics::CREW_BODY_PART_COUNT;
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) enum Phase {
     Seated,
     Waiting,
@@ -14,6 +15,7 @@ pub(super) enum Phase {
     Dead,
 }
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Person {
     tank: usize,
     identity: usize,
@@ -33,6 +35,7 @@ pub(super) struct Person {
     hull: Mat4,
 }
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Aftermath {
     people: Vec<Person>,
     pub(super) parts: [usize; COUNT],

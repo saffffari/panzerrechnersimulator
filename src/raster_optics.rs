@@ -1,12 +1,13 @@
 //! Explicit shader-backend alternative to the ray-traced optical path. Source entrance faces
 //! retain their depth/occlusion and each objective gets a distinct exterior raster view. A pupil
 //! uses the actual observer for source-verified direction-preserving cupola relays. Other ports
-//! retain their centered virtual-pupil approximation. Finite internal aperture rejection,
-//! glass/prism aberration and sub-aperture lateral exit parallax remain raster limitations;
+//! retain their centered virtual-pupil approximation. The gunner lens has an estimated finite
+//! exit pupil; internal prism aperture rejection, glass aberration and objective exit parallax
+//! remain raster limitations;
 //! preserved hoods and roof fixtures still occlude the exterior objective.
 use super::{CameraUniform, RenderWorkStats, Renderer, DEPTH, hdr_format};
 use glam::{Mat4, Vec3};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 #[path = "renderer_visibility_review.rs"]
 mod visibility_review;
@@ -49,7 +50,7 @@ pub struct RasterOpticSpec {
     /// observer pupil, without re-aiming a tilted entrance normal toward the horizon.
     pub preserve_ray_direction: bool,
     /// A telescope's eyepiece (the gunner's sight), not a vision block: its image leaves through a
-    /// small exit pupil (`Eyepiece::radiance_scale`).
+    /// finite exit pupil, admitted per source fragment.
     pub eyepiece: Option<Eyepiece>,
 }
 
@@ -71,27 +72,50 @@ pub struct Eyepiece {
 }
 
 impl Eyepiece {
-    /// The share of the field's radiance the pane shows to an eye at `eye` (world), with the mesh
-    /// at `model`: 1 with the eye in the exit pupil (within `EYE_BOX_M` of it); farther off, the
-    /// exit pupil's share of the lens's area, the spot's light spread over the lens (the mean a few
-    /// pixels of lens resolve; named approximation); 0 outside the apparent field.
+    /// Conservative capture admission only. Per-fragment pupil/field coverage owns radiance;
+    /// never apply the old pupil-area average on top of that geometric mask.
     pub fn radiance_scale(&self, model: Mat4, eye: Vec3) -> f32 {
-        const EYE_BOX_M: f32 = 0.02;
-        let axis = model.transform_vector3(self.axis).normalize_or_zero();
-        let pupil = model.transform_point3(self.center + self.axis.normalize_or_zero() * self.eye_relief_m);
-        let lens = model.transform_point3(self.center);
-        let to_eye = eye - lens;
-        let off_axis = to_eye.normalize_or_zero().dot(axis).clamp(-1.0, 1.0).acos();
-        let in_field = 1.0 - smoothstep(self.half_field_rad - 0.05, self.half_field_rad + 0.05, off_axis);
-        let far = (self.exit_pupil_radius_m / self.lens_radius_m.max(1e-4)).powi(2).min(1.0);
-        let near = 1.0 - smoothstep(EYE_BOX_M, 3.0 * EYE_BOX_M, eye.distance(pupil));
-        (far + (1.0 - far) * near) * in_field
+        let eye=model.inverse().transform_point3(eye)-self.center;
+        let axis=self.axis.normalize_or_zero();let axial=eye.dot(axis);
+        if !(axial>0.0) || !eye.is_finite() {return 0.0;}
+        let lateral=(eye-axis*axial).length();
+        let t=self.eye_relief_m/axial;
+        // Projection of the source lens's enclosing disk onto the exit-pupil plane. This can
+        // conservatively retain extra work for a noncircular source, never remove its rays.
+        let pupil_near=(lateral*t-(1.0-t).abs()*self.lens_radius_m).max(0.0);
+        let field_near=(lateral-self.lens_radius_m).max(0.0);
+        if pupil_near<=self.exit_pupil_radius_m && field_near<=axial*self.half_field_rad.tan() {1.0} else {0.0}
+    }
+
+    /// Independent CPU witness of the ideal exit-pupil and apparent-field model. The source
+    /// entrance tessellation supplies lens coverage; this tests a point on that real surface.
+    #[cfg(test)]
+    fn admits_ray(&self, eye:Vec3, point:Vec3)->bool {
+        let n=self.axis.as_dvec3().normalize();let d=(eye-point).as_dvec3();
+        let axial=d.dot(n);if axial<=0.0 {return false;}
+        if (d-n*axial).length()>axial*f64::from(self.half_field_rad).tan() {return false;}
+        let pupil=self.center.as_dvec3()+n*f64::from(self.eye_relief_m);
+        let crossing=point.as_dvec3()+d*((pupil-point.as_dvec3()).dot(n)/axial);
+        let lateral=crossing-pupil;
+        (lateral-n*lateral.dot(n)).length()<=f64::from(self.exit_pupil_radius_m)
     }
 }
 
-fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+/// Metadata of the image/depth actually encoded into one retained layer. A Low-preset
+/// refresh skip must not reinterpret those texels with this frame's newly requested camera.
+#[derive(Clone, Copy)]
+struct CapturedView {
+    camera: crate::camera::Camera,
+    extent: [u32; 2],
+    frame: u32,
+}
+
+/// Choose capture metadata without committing an image that has only been prepared. The
+/// encoder commits after recording the corresponding color/depth/effects work.
+fn retained_capture(requested: CapturedView, cached: Option<CapturedView>,
+    scheduled: bool, transmitting: bool) -> (CapturedView, bool) {
+    let refresh = transmitting && (scheduled || cached.is_none());
+    if refresh { (requested, true) } else { (cached.unwrap_or(requested), false) }
 }
 
 #[derive(Clone)]
@@ -103,6 +127,109 @@ struct Prepared {
     /// Re-render this port's exterior scene this frame. A pane that is not refreshed is still
     /// drawn from its retained layer (`GraphicsPreset::optic_relays_per_frame`).
     refresh: bool,
+    /// Exact radiance multiplier already used by the entrance shader. A zero-throughput
+    /// eyepiece still draws its opaque black entrance, but needs no exterior image work.
+    radiance_scale: f32,
+    capture_frame: u32,
+}
+
+fn needs_exterior_capture(radiance_scale:f32)->bool {
+    // Do not introduce a brightness threshold: every nonzero contribution retains its full
+    // source sampling and update budget. Unknown/nonfinite values conservatively keep work.
+    radiance_scale!=0.0
+}
+
+fn black_eyepiece_benchmark_gate(live_frame:Option<&str>,render_black:Option<&str>)->bool {
+    live_frame==Some("1") && render_black==Some("1")
+}
+
+fn benchmark_renders_black_eyepieces()->bool {
+    // Same-executable A/B control, deliberately unavailable unless the ordinary live-frame
+    // benchmark was explicitly requested too. It restores work, never changes pane radiance.
+    static ENABLED:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *ENABLED.get_or_init(||black_eyepiece_benchmark_gate(
+        std::env::var("KESSEL_BENCH_LIVE_FRAME").ok().as_deref(),
+        std::env::var("KESSEL_BENCH_RENDER_BLACK_EYEPIECES").ok().as_deref()))
+}
+
+fn prepare_exterior_capture(radiance_scale:f32)->bool {
+    needs_exterior_capture(radiance_scale) || benchmark_renders_black_eyepieces()
+}
+
+fn optic_culling_benchmark_gate(live_frame:Option<&str>,candidate:Option<&str>)->bool {
+    live_frame==Some("1") && candidate==Some("1")
+}
+
+fn benchmark_culls_optic_instances()->bool {
+    // b39's matched pair was slower despite identical images. Retain the experiment only as
+    // an explicit diagnostic; shipping uses the original one-range-per-visible-page draw.
+    static ENABLED:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *ENABLED.get_or_init(||optic_culling_benchmark_gate(
+        std::env::var("KESSEL_BENCH_LIVE_FRAME").ok().as_deref(),
+        std::env::var("KESSEL_BENCH_OPTIC_INSTANCE_CULLING").ok().as_deref()))
+}
+
+pub(super) fn benchmark_culls_optic_terrain()->bool {
+    // One separate, initially opt-in experiment. Do not build its source-range metadata or
+    // change ordinary submission without an explicit live-frame benchmark request.
+    static ENABLED:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *ENABLED.get_or_init(||optic_culling_benchmark_gate(
+        std::env::var("KESSEL_BENCH_LIVE_FRAME").ok().as_deref(),
+        std::env::var("KESSEL_BENCH_OPTIC_TERRAIN_RANGES").ok().as_deref()))
+}
+
+/// A source instance is rejected only when its complete inflated world envelope lies outside
+/// a capture half-space. No projected-size or sample-centre threshold is involved. In particular
+/// the shadow map's single-sample helper is not applicable to these perspective/MSAA captures.
+pub(super) fn optic_instance_intersects(planes:&[glam::Vec4;6],model:Mat4,
+    local_min:Vec3,local_max:Vec3,grass:bool)->bool {
+    if !model.is_finite() || !local_min.is_finite() || !local_max.is_finite()
+        || !local_min.cmple(local_max).all() || planes.iter().any(|p|!p.is_finite()) {return true;}
+    let (lo,hi)=super::dynamic_instanced_bounds(std::slice::from_ref(&model),local_min,local_max,grass);
+    if !lo.is_finite() || !hi.is_finite() {return true;}
+    for plane in planes {
+        let support=Vec3::new(if plane.x>=0.0 {hi.x}else{lo.x},
+            if plane.y>=0.0 {hi.y}else{lo.y},if plane.z>=0.0 {hi.z}else{lo.z}).extend(1.0);
+        // The bound already encloses vertex arithmetic; also retain cancellation uncertainty
+        // in the absolute-world frustum test (the shader projects relative to its objective).
+        let roundoff=plane.abs().dot(support.abs())*(8.0*f32::EPSILON)+f32::MIN_POSITIVE;
+        if plane.dot(support) < -roundoff {return false;}
+    }
+    true
+}
+
+/// Emit original absolute instance ordinals, joining adjacent survivors without compaction.
+/// Splitting a draw changes neither its instance-buffer offset nor its instance_index IDs.
+fn optic_instance_ranges<'a>(models:&'a[Mat4],count:u32,hidden:impl Fn(u32)->bool+'a,
+    local_min:Vec3,local_max:Vec3,grass:bool,planes:&'a[glam::Vec4;6],filter:bool)
+    ->impl Iterator<Item=std::ops::Range<u32>>+'a {
+    let mut next=0;
+    let keep=move|index:u32| !hidden(index) && models.get(index as usize).is_none_or(|&model|
+        optic_instance_intersects(planes,model,local_min,local_max,grass));
+    std::iter::from_fn(move|| {
+        if next>=count {return None;}
+        if !filter {let first=next;next=count;return Some(first..count);}
+        while next<count && !keep(next) {next+=1;}
+        if next>=count {return None;}
+        let first=next;next+=1;
+        while next<count && keep(next) {next+=1;}
+        Some(first..next)
+    })
+}
+
+#[derive(Clone,Default,serde::Serialize)]
+pub(super) struct OpticInstanceWork {
+    candidate_batches:u64,
+    candidate_instances:u64,
+    candidate_triangles:u64,
+    retained_instances:u64,
+    retained_triangles:u64,
+    submitted_ranges:u64,
+    terrain_candidate_meshes:u64,
+    terrain_paged_meshes:u64,
+    terrain_candidate_triangles:u64,
+    terrain_retained_triangles:u64,
+    terrain_submitted_ranges:u64,
 }
 
 #[repr(C)]
@@ -114,9 +241,14 @@ struct PanelUniform {
     eye: [f32; 4],
     source_eye: [f32; 4],
     layer: [u32; 4],
+    // Local coordinates avoid cancellation of millimetre pupil offsets in world coordinates.
+    pupil_eye_field: [f32; 4],
+    pupil_center_radius: [f32; 4],
+    pupil_axis_relief: [f32; 4],
 }
 
 struct Layer {
+    captured: Cell<Option<CapturedView>>,
     color: wgpu::TextureView,
     tracer_color: wgpu::TextureView,
     tracer_bind: wgpu::BindGroup,
@@ -139,6 +271,8 @@ pub(super) struct RasterOptics {
     source_surfaces: Vec<SourceSurface>,
     layers: Vec<Layer>,
     prepared: RefCell<Vec<Prepared>>,
+    /// Actual last-encoded optical instance work, not an estimate from the page count.
+    instance_work:RefCell<Vec<(usize,OpticInstanceWork)>>,
     panel_pipe: wgpu::RenderPipeline,
     /// The raymarch backend's panel: one HDR target, the G-buffer depth read and not written
     /// (later passes sample it), no ambient mask.
@@ -316,7 +450,9 @@ fn capture_camera(
     let bounded_bearing = if forward_part <= 0.0 { OFF_AXIS_ACCEPTANCE.copysign(bearing) }
         else { bearing.clamp(-OFF_AXIS_ACCEPTANCE, OFF_AXIS_ACCEPTANCE) };
     let bounded_elevation = elevation.clamp(OFF_AXIS_ELEVATION.0, OFF_AXIS_ELEVATION.1);
-    let off_axis = side != Vec3::ZERO
+    // A telescope's explicitly bounded pupil/field below owns its finite acceptance. Do not
+    // replace its admitted rays with the vision-block off-axis boundary image.
+    let off_axis = spec.eyepiece.is_none() && side != Vec3::ZERO
         && ((bounded_bearing - bearing).abs() > 1e-4 || (bounded_elevation - elevation).abs() > 1e-4
             || forward_part <= 0.0);
     if off_axis {
@@ -346,6 +482,24 @@ fn capture_camera(
     let area = projected.iter().zip(projected.iter().cycle().skip(1))
         .map(|(a,b)| a.perp_dot(*b)).sum::<f32>().abs() * 0.5;
     (area > 1e-7).then_some((camera, area, source_eye))
+}
+
+/// Only finite eyepieces use this cache guard. A changed admitted view must not depend on
+/// clamping an old smaller capture to its edge. Clipping is against the current main viewport;
+/// testing all remaining source corners conservatively encloses the visible pupil patch.
+fn capture_covers_visible_entrance(spec:&RasterOpticSpec,model:Mat4,
+    viewer:&crate::camera::Camera,source_eye:Vec3,capture:&crate::camera::Camera)->bool {
+    let forward=viewer.forward();let right=viewer.right();let up=right.cross(forward);
+    let tan_y=(viewer.fov_y*0.5).tan();let tan_x=tan_y*viewer.aspect;
+    let mut polygon=spec.entry_corners.iter().map(|&p|model.transform_point3(p)-viewer.pos).collect();
+    for plane in [forward,forward*tan_x+right,forward*tan_x-right,forward*tan_y+up,forward*tan_y-up] {
+        polygon=clip(polygon,plane);
+    }
+    let projection=capture.relative_view_proj()*relay_rotation(spec,model);
+    polygon.iter().all(|&p| {
+        let ray=p+viewer.pos-source_eye;let h=projection*ray.extend(0.0);
+        h.is_finite() && h.w>0.0 && h.x.abs()<=h.w && h.y.abs()<=h.w
+    })
 }
 
 // Two source samples per native aperture pixel. The source camera still uses exactly the same
@@ -499,13 +653,27 @@ impl RasterOptics {
                 };
             let depth_view=view(&depth);
             let weather=weather_layer(device,&depth_view,&weather_layouts,medium);
-            Layer {color:view(&color),tracer_color:view(&tracers),tracer_bind,depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
+            Layer {captured:Cell::new(None),color:view(&color),tracer_color:view(&tracers),tracer_bind,depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
         }).collect();
-        Self {specs:Vec::new(),blocked:Vec::new(),occluded:Vec::new(),source_surfaces:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,relay_pipe,tracer_panel_pipe,weather,width,height,_color:color,_tracers:tracers,_depth:depth}
+        Self {specs:Vec::new(),blocked:Vec::new(),occluded:Vec::new(),source_surfaces:Vec::new(),layers,prepared:RefCell::new(Vec::new()),instance_work:RefCell::new(Vec::new()),panel_pipe,relay_pipe,tracer_panel_pipe,weather,width,height,_color:color,_tracers:tracers,_depth:depth}
     }
 }
 
 impl Renderer {
+    /// Rebind one installed optical station to the actual replacement source lens. Port count
+    /// stays fixed; a removed original must not remain that station's hidden image authority.
+    pub fn replace_raster_optic(&mut self, port:usize, spec:RasterOpticSpec) {
+        let Some(optics)=&mut self.raster_optics else{return;};
+        let Some(old)=optics.specs.get(port) else{return;};
+        if old.mesh==spec.mesh {return;}
+        assert!(spec.mesh<self.meshes.len());
+        let mesh=&self.meshes[spec.mesh];
+        assert!(spec.entry_indices.end<=mesh.index_count);
+        optics.source_surfaces[port]=SourceSurface{glass:mesh.glass,optical_kind:mesh.periscope_kind,
+            own_emission:mesh.emissive_own,window_emission:mesh.emissive_win,emission:mesh.emissive};
+        optics.specs[port]=spec;optics.blocked[port]=false;optics.occluded[port]=false;
+        optics.layers[port].captured.set(None);
+    }
     pub fn register_raster_optic(&mut self, spec: RasterOpticSpec) {
         if let Some(optics) = &mut self.raster_optics {
             assert!(optics.specs.len() < MAX_PORTS, "too many source periscopes");
@@ -537,8 +705,10 @@ impl Renderer {
     /// Skip a port's exterior capture while its entrance face is wholly hidden from the viewer.
     /// The pane itself stays in the scene; nothing that can be seen changes.
     pub fn set_raster_optic_occluded(&mut self, port: usize, occluded: bool) {
-        if let Some(flag) = self.raster_optics.as_mut().and_then(|o| o.occluded.get_mut(port)) {
-            *flag = occluded;
+        let Some(optics)=&mut self.raster_optics else{return;};
+        if let Some(flag)=optics.occluded.get_mut(port) {
+            if *flag!=occluded {optics.layers[port].captured.set(None);}
+            *flag=occluded;
         }
     }
 
@@ -548,6 +718,7 @@ impl Renderer {
         let Some(flag)=optics.blocked.get_mut(port) else{return;};
         if *flag==blocked{return;}
         *flag=blocked;
+        optics.layers[port].captured.set(None);
         let state=optics.source_surfaces[port].response(blocked);
         let mesh=&mut self.meshes[optics.specs[port].mesh];
         // Damage makes the actual closed source block opaque. Merely dropping its optical
@@ -599,7 +770,9 @@ impl Renderer {
             if !mesh.visible || optics.blocked[port] || optics.occluded[port] {return None;}
             capture_camera(spec,mesh.model,&self.camera,optics.width as f32/optics.height as f32)
                 .map(|(camera,area,source_eye)| {
-                    (Prepared {port,camera,source_eye,refresh:true,extent:aperture_extent(spec,mesh.model,&self.camera,
+                    (Prepared {port,camera,source_eye,refresh:true,capture_frame:self.frame,
+                        radiance_scale:spec.eyepiece.map_or(1.0,|e|e.radiance_scale(mesh.model,self.camera.pos)),
+                        extent:aperture_extent(spec,mesh.model,&self.camera,
                         [self.iw,self.ih],[optics.width,optics.height])},area)
                 })
         }).collect();
@@ -610,7 +783,20 @@ impl Renderer {
         let budget=crate::graphics::active_preset().optic_relays_per_frame().max(1);
         let rest=candidates.len().saturating_sub(1);
         for (rank,(view,_)) in candidates.iter_mut().enumerate() {
-            view.refresh=rank==0 || rest<budget || (rank-1+self.frame as usize)%rest<budget-1;
+            let scheduled=rank==0 || rest<budget || (rank-1+self.frame as usize)%rest<budget-1;
+            let requested=CapturedView {camera:view.camera,extent:view.extent,frame:self.frame};
+            let cached=optics.layers[view.port].captured.get();
+            let spec=&optics.specs[view.port];
+            let needs_field=spec.eyepiece.is_some() && cached.is_some_and(|capture|
+                !capture_covers_visible_entrance(spec,self.meshes[spec.mesh].model,
+                    &self.camera,view.source_eye,&capture.camera));
+            let (capture,refresh)=retained_capture(requested,cached,
+                scheduled || needs_field,prepare_exterior_capture(view.radiance_scale));
+            // The source eye and physical entrance still follow the current observer/rig. Only
+            // the projection and texel extent come from the image that is actually retained.
+            // Reuse retains the named temporal/parallax approximation, never a current image.
+            view.camera=capture.camera;view.extent=capture.extent;
+            view.capture_frame=capture.frame;view.refresh=refresh;
         }
         for (view,_) in candidates {
             let layer=&optics.layers[view.port];
@@ -620,14 +806,23 @@ impl Renderer {
             cam.cam_pos=view.camera.pos.to_array();cam.interior_light=0.0;
             cam.snap_res=[view.extent[0] as f32,view.extent[1] as f32];
             queue.write_buffer(&layer.camera_buf,0,bytemuck::bytes_of(&cam));
-            let mesh=&self.meshes[optics.specs[view.port].mesh];
+            let spec=&optics.specs[view.port];
+            let mesh=&self.meshes[spec.mesh];
+            let (pupil_eye_field,pupil_center_radius,pupil_axis_relief)=spec.eyepiece.map_or(
+                ([0.0;4],[0.0;4],[0.0;4]),|pupil| {
+                    let eye=mesh.model.inverse().transform_point3(self.camera.pos);
+                    let axis=pupil.axis.normalize_or_zero();
+                    ([eye.x,eye.y,eye.z,pupil.half_field_rad.tan()],
+                     [pupil.center.x,pupil.center.y,pupil.center.z,pupil.exit_pupil_radius_m],
+                     [axis.x,axis.y,axis.z,pupil.eye_relief_m])
+                });
             let panel=PanelUniform {main_view_proj:camera.view_proj,model:mesh.model.to_cols_array_2d(),
                 source_direction_view_proj:(view.camera.relative_view_proj()
                     *relay_rotation(&optics.specs[view.port],mesh.model)).to_cols_array_2d(),
-                // eye.w: the share of the field's radiance this pane shows (an eyepiece's exit pupil).
-                eye:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,
-                    optics.specs[view.port].eyepiece.map_or(1.0,|e|e.radiance_scale(mesh.model,self.camera.pos))],
-                source_eye:[view.source_eye.x,view.source_eye.y,view.source_eye.z,0.0],layer:[view.port as u32,0,view.extent[0],view.extent[1]]};
+                // eye.w admits a capture; the fragment pupil mask owns spatial throughput.
+                eye:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,view.radiance_scale],
+                source_eye:[view.source_eye.x,view.source_eye.y,view.source_eye.z,0.0],layer:[view.port as u32,0,view.extent[0],view.extent[1]],
+                pupil_eye_field,pupil_center_radius,pupil_axis_relief};
             queue.write_buffer(&layer.panel_buf,0,bytemuck::bytes_of(&panel));
             let smoke=super::SmokeUniform {
                 inv_view_proj:cam.inv_view_proj,cam_pos:cam.cam_pos,fog_density:self.fog_density.max(0.0),
@@ -667,9 +862,12 @@ impl Renderer {
     /// feedback and view-local crew/hands; the preserved armor still occludes the exterior pupil.
     pub(super) fn encode_raster_scene(&self, encoder:&mut wgpu::CommandEncoder,
         camera_bind:&wgpu::BindGroup, view_proj:Mat4, color:&wgpu::TextureView, depth:&wgpu::TextureView,
-        optical_capture:bool, viewport:Option<[u32;2]>, work:&mut RenderWorkStats) {
+        optical_capture:bool, viewport:Option<[u32;2]>, work:&mut RenderWorkStats)->OpticInstanceWork {
         let planes=super::frustum_planes(view_proj);
         let visible=self.inst_spatial_index.query(view_proj);
+        let filter_instances=optical_capture && benchmark_culls_optic_instances();
+        let filter_terrain=optical_capture && benchmark_culls_optic_terrain();
+        let mut instance_work=OpticInstanceWork::default();
         let ao = if optical_capture { None } else { self.raster_ssao.as_ref() };
         let aa=self.geometry_aa.as_ref();
         let coverage=aa.map(|aa|if optical_capture {&aa.optic}else{&aa.main});
@@ -715,7 +913,26 @@ impl Renderer {
             pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT,0,bytemuck::bytes_of(&push));
             pass.set_bind_group(1,m.tex_bind.as_ref(),&[]);pass.set_vertex_buffer(0,m.vbuf.slice(..));
             pass.set_index_buffer(m.ibuf.slice(..),wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..m.index_count,0,0..1);work.scene_mesh_draws+=1;
+            let source_ranges=if filter_terrain && m.track_recv && !m.temporal_dynamic && !m.visibility_deformable {
+                m.shadow_pages.as_ref().and_then(|(_,pages)|pages.source_order_ranges(|lo,hi|
+                    optic_instance_intersects(&planes,m.model,lo,hi,false)))
+            } else {None};
+            if optical_capture && m.track_recv {
+                instance_work.terrain_candidate_meshes+=1;
+                instance_work.terrain_candidate_triangles+=u64::from(m.index_count/3);
+                instance_work.terrain_paged_meshes+=u64::from(source_ranges.is_some());
+            }
+            // Keep the original index buffer, triangle order, winding and multiplicity. The
+            // shadow pages' Morton-ordered buffer is NOT equivalent for color depth ties.
+            let paged=source_ranges.is_some();
+            let ranges=source_ranges.into_iter().flatten().chain((!paged).then_some(0..m.index_count));
+            for range in ranges {
+                if optical_capture && m.track_recv {
+                    instance_work.terrain_retained_triangles+=u64::from((range.end-range.start)/3);
+                    instance_work.terrain_submitted_ranges+=1;
+                }
+                pass.draw_indexed(range,0,0..1);work.scene_mesh_draws+=1;
+            }
         }
         pass.set_pipeline(aa.map_or_else(||ao.map_or(&self.mesh_inst_pipe,|a|&a.mesh_inst),
             |a|if ao.is_some(){&a.ambient_inst}else{&a.mesh_inst}));
@@ -724,11 +941,24 @@ impl Renderer {
             let b=&self.inst_batches[index];
             if b.inst_count==0 {continue;}
             let p=&self.inst_prototypes[b.prototype];
+            if optical_capture {
+                instance_work.candidate_batches+=1;
+                instance_work.candidate_instances+=u64::from(b.inst_count);
+                instance_work.candidate_triangles+=u64::from(b.inst_count)*u64::from(p.index_count/3);
+            }
             let push=super::PushData {model:Mat4::IDENTITY.to_cols_array_2d(),params:[b.emissive,p.metallic_factor,p.roughness_factor,b.flags]};
             pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT,0,bytemuck::bytes_of(&push));
             pass.set_bind_group(1,p.tex_bind.as_ref(),&[]);pass.set_vertex_buffer(0,p.vbuf.slice(..));
             pass.set_vertex_buffer(1,b.inst_buf.slice(b.active_instance_bytes()));pass.set_index_buffer(p.ibuf.slice(..),wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..p.index_count,0,0..b.inst_count);work.scene_instanced_draws+=1;
+            for range in optic_instance_ranges(&b.cpu_mats,b.inst_count,|i|b.is_hidden(i),
+                p.local_min,p.local_max,b.flags>3.5 && b.flags<4.5,&planes,filter_instances) {
+                if optical_capture {
+                    instance_work.retained_instances+=u64::from(range.end-range.start);
+                    instance_work.retained_triangles+=u64::from(range.end-range.start)*u64::from(p.index_count/3);
+                    instance_work.submitted_ranges+=1;
+                }
+                pass.draw_indexed(0..p.index_count,0,range);work.scene_instanced_draws+=1;
+            }
         }
         drop(pass);
         // Sky has no occludable ambient output; keep it out of the surface MRT attachment.
@@ -751,20 +981,24 @@ impl Renderer {
         pass.set_bind_group(0,camera_bind,&[]);pass.set_bind_group(1,&self.physical_environment_bind,&[]);
         pass.draw(0..3,0..1);work.fullscreen_raster_passes+=1;
         drop(pass);
-        if let Some(aa)=aa {aa.resolve(encoder,optical_capture,depth,viewport,work);}
+        if let Some(aa)=aa {aa.resolve(encoder,optical_capture,depth,viewport,work,self.gpu_profile.as_ref());}
         if let Some(ao)=ao { ao.encode(encoder,color,&self.camera,self.interior_light>0.02,work); }
         self.encode_raster_glass(encoder,camera_bind,view_proj,color,depth,optical_capture,viewport,work);
+        instance_work
     }
 
     pub(super) fn encode_raster_optics(&self, encoder:&mut wgpu::CommandEncoder, work:&mut RenderWorkStats) {
         let Some(optics)=&self.raster_optics else {return;};
+        let mut instance_work=optics.instance_work.borrow_mut();instance_work.clear();
         for view in optics.prepared.borrow().iter().filter(|view|view.refresh) {
             let layer=&optics.layers[view.port];
-            self.encode_raster_scene(encoder,&layer.camera_bind,view.camera.view_proj(),&layer.color,&layer.depth,true,Some(view.extent),work);
+            let measured=self.encode_raster_scene(encoder,&layer.camera_bind,view.camera.view_proj(),&layer.color,&layer.depth,true,Some(view.extent),work);
+            instance_work.push((view.port,measured));
             self.encode_raster_optic_weather(encoder,layer,&optics.weather,view.extent,work);
             self.encode_fine_vfx(encoder,view.port,&layer.color,work);
             self.encode_weapon_particles(encoder,view.port,&layer.color,false,false,work);
             if self.has_weapon_tracers(){self.encode_weapon_particles(encoder,view.port,&layer.tracer_color,true,true,work);}
+            layer.captured.set(Some(CapturedView {camera:view.camera,extent:view.extent,frame:view.capture_frame}));
             work.scene_renders+=1;
         }
     }
@@ -772,7 +1006,7 @@ impl Renderer {
     pub(super) fn prepare_fine_vfx_ports(&self,device:&wgpu::Device,queue:&wgpu::Queue,
         frames:&mut std::collections::HashMap<usize,super::renderer_fine_vfx::Frame>) {
         let Some(optics)=&self.raster_optics else{return;};
-        for view in optics.prepared.borrow().iter() {
+        for view in optics.prepared.borrow().iter().filter(|view|prepare_exterior_capture(view.radiance_scale)) {
             let layer=&optics.layers[view.port];
             let prepared=self.prepare_fine_vfx_view(device,queue,&view.camera,view.extent,
                 &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port),
@@ -784,7 +1018,7 @@ impl Renderer {
     pub(super) fn prepare_weapon_particle_ports(&self,device:&wgpu::Device,queue:&wgpu::Queue,
         frames:&mut std::collections::HashMap<usize,super::renderer_weapon_particles::Frame>) {
         let Some(optics)=&self.raster_optics else{return;};
-        for view in optics.prepared.borrow().iter() {
+        for view in optics.prepared.borrow().iter().filter(|view|prepare_exterior_capture(view.radiance_scale)) {
             let layer=&optics.layers[view.port];
             let frame=self.prepare_weapon_particle_view(device,queue,&view.camera,view.extent,
                 &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port),
@@ -890,6 +1124,25 @@ fn read_optic_layer(device:&wgpu::Device, queue:&wgpu::Queue, texture:&wgpu::Tex
 }
 
 impl Renderer {
+    /// CPU-only accounting for the active eye. Skipped exterior work never removes a pane.
+    pub fn raster_optic_work_receipt(&self)->serde_json::Value {
+        let Some(optics)=&self.raster_optics else{return serde_json::json!({"available":false});};
+        let views=optics.prepared.borrow();
+        let instance_work=optics.instance_work.borrow();
+        serde_json::json!({"available":true,"benchmark_renders_black_eyepieces":benchmark_renders_black_eyepieces(),
+            "benchmark_instance_culling":benchmark_culls_optic_instances(),
+            "benchmark_terrain_ranges":benchmark_culls_optic_terrain(),
+            "instance_accounting_scope":"Last encoded optical captures. Instance counters cover source instanced geometry; terrain_* counters cover loose track-receiver meshes. Other loose meshes and separate fine VFX are excluded. Counts are actual submitted source ordinals, not pixel coverage.",
+            "instance_work":instance_work.iter().map(|(port,work)|serde_json::json!({"port":port,"work":work})).collect::<Vec<_>>(),
+            "prepared_entrance_panels":views.len(),
+            "exterior_refreshes":views.iter().filter(|v|v.refresh).count(),
+            "zero_throughput_entrances":views.iter().filter(|v|!needs_exterior_capture(v.radiance_scale)).count(),
+            "ports":views.iter().map(|v|serde_json::json!({"port":v.port,"radiance_scale":v.radiance_scale,
+                "refresh":v.refresh,"native_extent":v.extent,"capture_frame":v.capture_frame,
+                "capture_age_frames":self.frame.wrapping_sub(v.capture_frame),
+                "capture_eye_world_m":v.camera.pos.to_array(),"capture_forward":v.camera.forward().to_array(),
+                "capture_fov_y_deg":v.camera.fov_y.to_degrees()})).collect::<Vec<_>>()})
+    }
     /// Read only the completed selected port targets; never changes a pose or submits a new scene.
     pub fn debug_capture_raster_optics(&self,device:&wgpu::Device,queue:&wgpu::Queue,prefix:&str) -> anyhow::Result<String> {
         let optics=self.raster_optics.as_ref().ok_or_else(||anyhow::anyhow!("raster optics backend is inactive"))?;
@@ -923,6 +1176,7 @@ impl Renderer {
             };
             ports.push(serde_json::json!({"port":view.port,"source_mesh":spec.mesh,"png":png_path,"hdr":raw_path,"depth":depth_path,
                 "active_native_extent":view.extent,"allocated_extent":[optics.width,optics.height],
+                "capture_frame":view.capture_frame,"capture_age_frames":self.frame.wrapping_sub(view.capture_frame),
                 "source_entry_index_range":[spec.entry_indices.start,spec.entry_indices.end],
                 "source_entry_world_m":spec.entry_corners.map(|p|model.transform_point3(p).to_array()),
                 "source_objective_world_m":model.transform_point3(spec.objective).to_array(),
@@ -947,6 +1201,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn retained_optic_capture_keeps_the_encoded_projection_and_texel_extent() {
+        let mut camera=crate::camera::Camera::new(16.0/9.0);
+        camera.pos=Vec3::new(2300.0,17.0,-3000.0);
+        camera.set_forward(Vec3::new(0.2,0.04,-1.0));camera.fov_y=0.8;
+        let encoded=CapturedView {camera,extent:[256,144],frame:9};
+        // A direction has already been rendered at a definite location in the old texture.
+        let direction=(camera.forward()+camera.right()*0.15).normalize();
+        let texture_pixel=|capture:CapturedView| {
+            let clip=capture.camera.relative_view_proj()*direction.extend(0.0);
+            let uv=glam::vec2(clip.x/clip.w*0.5+0.5,0.5-clip.y/clip.w*0.5);
+            uv*glam::Vec2::from_array(capture.extent.map(|x|x as f32))
+        };
+        let expected=texture_pixel(encoded);
+        let mut moved=camera;moved.pos+=Vec3::new(0.4,0.2,0.1);
+        moved.yaw+=0.17;moved.fov_y=0.55;
+        let requested=CapturedView {camera:moved,extent:[320,180],frame:10};
+        assert!(texture_pixel(requested).distance(expected)>10.0,"fixture must expose stale-image reprojection");
+        let (retained,refresh)=retained_capture(requested,Some(encoded),false,true);
+        assert!(!refresh);assert_eq!(retained.frame,9);
+        assert!(texture_pixel(retained).distance(expected)<1e-6,
+            "a skipped view must address the texels with their encoded camera and extent");
+        let (next,refresh)=retained_capture(requested,Some(encoded),true,true);
+        assert!(refresh);assert_eq!(next.extent,[320,180]);assert_eq!(next.frame,10);
+        assert!(texture_pixel(next).distance(texture_pixel(requested))<1e-6);
+    }
+
+    #[test]
+    fn retained_optic_capture_initializes_before_nonzero_use_and_never_commits_in_prepare() {
+        let requested=CapturedView {camera:crate::camera::Camera::new(16.0/9.0),extent:[64,36],frame:20};
+        let cache=Cell::new(None);
+        let (prepared,refresh)=retained_capture(requested,cache.get(),false,true);
+        assert!(refresh,"first visible use cannot sample an uninitialized skipped layer");
+        assert!(cache.get().is_none(),"preparation is not evidence that rendering happened");
+        assert!(retained_capture(requested,cache.get(),false,true).1,
+            "an abandoned prepared frame must remain a required capture");
+        cache.set(Some(prepared));
+        assert!(!retained_capture(requested,cache.get(),false,true).1);
+        cache.set(None); // Replacement, repair or visibility transition invalidates old imagery.
+        assert!(retained_capture(requested,cache.get(),false,true).1);
+        assert!(!retained_capture(requested,None,true,false).1,
+            "an exactly black pane still needs no exterior refresh");
+    }
+
+    #[test]
     fn damaged_optic_becomes_opaque_source_and_repair_restores_transmission() {
         let specs=[front_port()];let source=SourceSurface{glass:true,optical_kind:1,
             own_emission:false,window_emission:true,emission:0.17};
@@ -963,19 +1261,180 @@ mod tests {
         assert!(!transmitting_panel(&specs,&[true],2));
     }
 
-    #[test] fn an_eyepiece_shows_its_field_only_through_the_exit_pupil() {
+    fn witness_eyepiece()->Eyepiece {
+        Eyepiece {center:Vec3::ZERO,axis:Vec3::Z,lens_radius_m:0.02,
+            exit_pupil_radius_m:0.0035,eye_relief_m:0.025,half_field_rad:0.506}
+    }
+    #[test] fn finite_eyepiece_rays_follow_the_moving_exit_pupil_patch() {
+        let e=witness_eyepiece();
+        // At the pupil, every central field ray fits. A displaced eye outside its disk has none.
+        let pupil=Vec3::Z*e.eye_relief_m;
+        assert!(e.admits_ray(pupil,Vec3::new(0.009,0.0,0.0)));
+        assert!(e.admits_ray(pupil+Vec3::X*0.003,Vec3::ZERO));
+        assert!(!e.admits_ray(pupil+Vec3::X*0.004,Vec3::ZERO));
+        assert!(!e.admits_ray(-Vec3::Z*0.025,Vec3::ZERO));
+        assert!(!e.admits_ray(pupil,Vec3::X*0.019),"apparent field remains finite near the lens");
+        // Independently solve the projected circle center/radius at the source plane.
+        let eye=Vec3::new(0.20,0.0,1.0);
+        let fraction=e.eye_relief_m/eye.z;
+        let center=-eye.x*fraction/(1.0-fraction);
+        let radius=e.exit_pupil_radius_m/(1.0-fraction);
+        assert!(e.admits_ray(eye,Vec3::X*center));
+        assert!(e.admits_ray(eye,Vec3::X*(center+radius*0.95)));
+        assert!(!e.admits_ray(eye,Vec3::X*(center+radius*1.05)));
+        assert!(!e.admits_ray(eye,Vec3::ZERO),"off-axis pupil patch must move, not dim the whole lens");
+        let model=Mat4::from_translation(Vec3::new(32.0,2.0,-19.0))*Mat4::from_rotation_y(0.7);
+        assert_eq!(e.radiance_scale(model,model.transform_point3(eye)),1.0,
+            "capture admission cannot dim radiance again after pupil clipping");
+        assert_eq!(e.radiance_scale(Mat4::IDENTITY,Vec3::new(2.0,0.0,0.3)),0.0);
+    }
+    #[test] fn finite_eyepiece_integrated_radiance_matches_projected_pupil_area() {
+        let e=witness_eyepiece();let eye=Vec3::Z;
+        let mut lens=0usize;let mut admitted=0usize;let side=600;
+        for y in 0..side {for x in 0..side {
+            let p=Vec3::new(((x as f32+0.5)/side as f32*2.0-1.0)*e.lens_radius_m,
+                ((y as f32+0.5)/side as f32*2.0-1.0)*e.lens_radius_m,0.0);
+            if p.length_squared()<=e.lens_radius_m.powi(2) {lens+=1;admitted+=usize::from(e.admits_ray(eye,p));}
+        }}
+        let measured=admitted as f32/lens as f32;
+        let projected_radius=e.exit_pupil_radius_m/(1.0-e.eye_relief_m/eye.z);
+        let expected=(projected_radius/e.lens_radius_m).powi(2);
+        assert!((measured-expected).abs()<0.0005,"{measured} vs projected area {expected}");
+        let old_mean=(e.exit_pupil_radius_m/e.lens_radius_m).powi(2);
+        assert!((measured-old_mean).abs()/old_mean<0.08,
+            "far-eye integrated energy remains comparable while the actual bright patch is resolved");
+        assert_eq!(e.radiance_scale(Mat4::IDENTITY,eye),1.0,
+            "applying the area average again would incorrectly square the throughput loss");
+    }
+    #[test] fn finite_eyepiece_capture_contains_every_admitted_sample_and_rejects_old_narrow_view() {
+        let mut spec=front_port();spec.eyepiece=Some(Eyepiece {axis:-Vec3::Z,..witness_eyepiece()});
+        spec.entry_corners=[Vec3::new(-0.02,-0.02,0.0),Vec3::new(0.02,-0.02,0.0),
+            Vec3::new(0.02,0.02,0.0),Vec3::new(-0.02,0.02,0.0)];
+        for distance in [0.025,0.08,0.3,1.0] {
+            let eye=viewer(distance,68.0);
+            let (capture,_,source_eye)=capture_camera(&spec,Mat4::IDENTITY,&eye,16.0/9.0).unwrap();
+            assert!(capture_covers_visible_entrance(&spec,Mat4::IDENTITY,&eye,source_eye,&capture));
+            let project=capture.relative_view_proj()*relay_rotation(&spec,Mat4::IDENTITY);
+            for y in -10..=10 {for x in -10..=10 {
+                let p=Vec3::new(x as f32*0.002,y as f32*0.002,0.0);
+                if p.length_squared()>0.02f32.powi(2) || !spec.eyepiece.unwrap().admits_ray(eye.pos,p) {continue;}
+                let h=project*(p-source_eye).extend(0.0);
+                assert!(h.w>0.0 && h.x.abs()<=h.w && h.y.abs()<=h.w,
+                    "a physically admitted sample cannot be clamped to a capture edge");
+            }}
+            let mut narrow=capture;narrow.fov_y*=0.25;
+            assert!(!capture_covers_visible_entrance(&spec,Mat4::IDENTITY,&eye,source_eye,&narrow));
+        }
+    }
+
+    #[test] fn only_exactly_zero_eyepiece_radiance_skips_exterior_work() {
         let e=Eyepiece {center:Vec3::ZERO,axis:-Vec3::Z,lens_radius_m:0.02,exit_pupil_radius_m:0.0035,
             eye_relief_m:0.025,half_field_rad:0.5};
-        let model=Mat4::from_translation(Vec3::new(1.0,2.0,0.5));
-        let at=|p:Vec3|e.radiance_scale(model,model.transform_point3(p));
-        // The eye at the eyecup sees the whole field.
-        assert!((at(Vec3::new(0.0,0.0,-0.025))-1.0).abs()<1e-6);
-        // From the commander's seat, a metre back and inside the apparent field: the exit pupil's
-        // share of the lens, (3.5 / 20)^2 = 3 %.
-        let far=at(Vec3::new(0.3,0.0,-1.0));
-        assert!((far-0.030625).abs()<1e-4,"{far}");
-        // Beside the sight, outside the apparent field: the dark tube.
-        assert_eq!(at(Vec3::new(1.0,0.0,-0.3)),0.0);
+        let outside=e.radiance_scale(Mat4::IDENTITY,Vec3::new(1.0,0.0,-0.3));
+        let inside=e.radiance_scale(Mat4::IDENTITY,Vec3::new(0.3,0.0,-1.0));
+        assert_eq!(outside,0.0);assert!(!needs_exterior_capture(outside));
+        assert!(inside>0.0);assert!(needs_exterior_capture(inside));
+        assert!(needs_exterior_capture(1.0),"vision blocks retain full refresh");
+        assert!(needs_exterior_capture(f32::from_bits(1)),"no nonzero brightness cutoff");
+        assert!(needs_exterior_capture(f32::NAN),"unknown radiance cannot justify culling");
+        // The source panel remains drawn with its original multiplier; only the unseen
+        // capture is omitted. No alternate color, transparent hole or light is introduced.
+        for sample in [0.0_f32,0.01,1.0,10000.0] {assert_eq!(sample*outside,0.0);}
+    }
+
+    #[test] fn redundant_black_eyepiece_work_requires_both_explicit_benchmark_flags() {
+        assert!(!black_eyepiece_benchmark_gate(None,None),"default is the optimized path");
+        assert!(!black_eyepiece_benchmark_gate(None,Some("1")));
+        assert!(!black_eyepiece_benchmark_gate(Some("1"),None));
+        for other in ["","0","true","yes","2"] {
+            assert!(!black_eyepiece_benchmark_gate(Some(other),Some("1")));
+            assert!(!black_eyepiece_benchmark_gate(Some("1"),Some(other)));
+        }
+        assert!(black_eyepiece_benchmark_gate(Some("1"),Some("1")));
+    }
+
+    #[test] fn optic_culling_candidates_require_both_explicit_benchmark_flags() {
+        assert!(!optic_culling_benchmark_gate(None,None));
+        assert!(!optic_culling_benchmark_gate(None,Some("1")));
+        assert!(!optic_culling_benchmark_gate(Some("1"),None));
+        for other in ["","0","true","yes","2"] {
+            assert!(!optic_culling_benchmark_gate(Some(other),Some("1")));
+            assert!(!optic_culling_benchmark_gate(Some("1"),Some(other)));
+        }
+        assert!(optic_culling_benchmark_gate(Some("1"),Some("1")));
+    }
+
+    fn unit_clip_planes()->[glam::Vec4;6] {
+        [glam::vec4(1.0,0.0,0.0,1.0),glam::vec4(-1.0,0.0,0.0,1.0),
+         glam::vec4(0.0,1.0,0.0,1.0),glam::vec4(0.0,-1.0,0.0,1.0),
+         glam::vec4(0.0,0.0,1.0,0.0),glam::vec4(0.0,0.0,-1.0,1.0)]
+    }
+
+    #[test] fn optic_instance_ranges_preserve_original_ordinals_and_hidden_gaps() {
+        let models=[3.0,0.0,0.2,0.4,-3.0,0.6,0.7].map(|x|Mat4::from_translation(Vec3::new(x,0.0,0.5)));
+        let planes=unit_clip_planes();let lo=Vec3::splat(-0.05);let hi=-lo;
+        let ranges=optic_instance_ranges(&models,7,|i|i==3,lo,hi,false,&planes,true).collect::<Vec<_>>();
+        assert_eq!(ranges,vec![1..3,5..7]);
+        assert_eq!(ranges.into_iter().flatten().collect::<Vec<_>>(),vec![1,2,5,6]);
+        assert_eq!(optic_instance_ranges(&models,7,|i|i==3,lo,hi,false,&planes,false).collect::<Vec<_>>(),vec![0..7],
+            "baseline restores the original draw, including its degenerate hidden matrices");
+        assert!(optic_instance_ranges(&models,0,|_|false,lo,hi,false,&planes,true).next().is_none());
+        assert_eq!(optic_instance_ranges(&[],2,|_|false,lo,hi,false,&planes,true).collect::<Vec<_>>(),vec![0..2],
+            "an unavailable CPU transform cannot justify dropping GPU geometry");
+    }
+
+    #[test] fn optic_instance_culling_keeps_edge_intersections_and_near_plane_crossings() {
+        let planes=unit_clip_planes();let lo=Vec3::splat(-0.05);let hi=-lo;
+        assert!(optic_instance_intersects(&planes,Mat4::from_translation(Vec3::new(1.05,0.0,0.5)),lo,hi,false),
+            "a boundary-touching source must survive even if its centre is outside");
+        assert!(!optic_instance_intersects(&planes,Mat4::from_translation(Vec3::new(1.06,0.0,0.5)),lo,hi,false));
+        assert!(optic_instance_intersects(&planes,Mat4::IDENTITY,Vec3::new(-2.0,-0.1,0.4),Vec3::new(2.0,0.1,0.6),false),
+            "a surface crossing the field survives even when no AABB corner lies inside it");
+        let perspective=super::super::frustum_planes(Mat4::perspective_rh(1.0,1.0,0.1,100.0));
+        assert!(optic_instance_intersects(&perspective,Mat4::from_translation(Vec3::new(0.0,0.0,-0.1)),lo,hi,false));
+        assert!(!optic_instance_intersects(&perspective,Mat4::from_translation(Vec3::new(0.0,0.0,0.5)),lo,hi,false));
+        let mut unknown=Mat4::IDENTITY;unknown.x_axis.x=f32::NAN;
+        assert!(optic_instance_intersects(&planes,unknown,lo,hi,false));
+    }
+
+    #[test] fn optic_instance_culling_keeps_bent_blade_when_only_its_tip_enters_field() {
+        let planes=unit_clip_planes();let lo=Vec3::new(-0.01,0.0,-0.01);let hi=Vec3::new(0.01,0.48,0.01);
+        let mut model=Mat4::from_translation(Vec3::new(1.2,0.0,0.5));model.x_axis.w=-0.4;
+        assert!(!optic_instance_intersects(&planes,model,lo,hi,false),"unbent source is entirely outside");
+        let actual_tip=model.transform_point3(Vec3::new(0.0,0.48,0.0))+Vec3::new(-0.4,0.0,0.0);
+        assert!(actual_tip.x<1.0 && actual_tip.z>0.0 && actual_tip.z<1.0);
+        assert!(optic_instance_intersects(&planes,model,lo,hi,true),"the actual wind-displaced source tip is visible");
+        model.w_axis.x=3.0;
+        assert!(!optic_instance_intersects(&planes,model,lo,hi,true),"moving source bounds are evaluated afresh");
+    }
+
+    #[test] fn optic_instance_culling_retains_transformed_source_points_at_large_world_coordinates() {
+        let eye=Vec3::new(-5250.0,32.0,3200.0);
+        let vp=Mat4::perspective_rh(1.0,16.0/9.0,0.004,6000.0)*Mat4::look_at_rh(eye,eye-Vec3::Z,Vec3::Y);
+        let planes=super::super::frustum_planes(vp);
+        let lo=Vec3::new(-0.2,0.0,-0.1);let hi=Vec3::new(0.2,0.48,0.1);
+        let mut witnessed=0;
+        for index in 0..48 {
+            let phase=index as f32*0.31;
+            let mut model=Mat4::from_scale_rotation_translation(Vec3::new(-1.7,0.4+phase*0.1,0.7),
+                glam::Quat::from_euler(glam::EulerRot::XYZ,phase,phase*0.3,phase*0.2),
+                eye+Vec3::new(phase.sin()*2.7,phase.cos()*0.9,-2.0));
+            model.x_axis.w=phase.sin()*0.4;model.z_axis.w=phase.cos()*0.2;
+            // Independently project actual curved source samples. At least one covered source
+            // point is sufficient evidence that rejecting this complete instance would be wrong.
+            for y in 0..=12 {for corner in 0..4 {
+                let p=Vec3::new(if corner&1==0 {lo.x}else{hi.x},hi.y*y as f32/12.0,
+                    if corner&2==0 {lo.z}else{hi.z});
+                let u=(p.y/0.48).clamp(0.0,1.0);
+                let world=model.transform_point3(p)+Vec3::new(model.x_axis.w,0.0,model.z_axis.w)*u*u;
+                let clip=vp*world.extend(1.0);
+                if clip.w>0.0 && clip.x.abs()<=clip.w && clip.y.abs()<=clip.w && clip.z>=0.0 && clip.z<=clip.w {
+                    witnessed+=1;
+                    assert!(optic_instance_intersects(&planes,model,lo,hi,true),"visible source at {world:?} was culled");
+                }
+            }}
+        }
+        assert!(witnessed>100,"fixture must exercise visible transformed source geometry");
     }
 
     fn front_port() -> RasterOpticSpec {
@@ -1230,7 +1689,12 @@ mod tests {
         wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),wgpu::naga::valid::Capabilities::all())
             .validate(&module).expect("raster optic WGSL validates");
         assert!(!source.contains("rayQuery") && !source.contains("textureSample("));
-        assert_eq!(std::mem::size_of::<PanelUniform>(),240);
+        assert_eq!(std::mem::size_of::<PanelUniform>(),288);
+        let tracer=format!("{}\n{}",source.split("struct PaneOutput").next().unwrap(),
+            include_str!("../shaders/weapon_tracer_panel.wgsl"));
+        let module=wgpu::naga::front::wgsl::parse_str(&tracer).expect("composed tracer pupil WGSL parses");
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),wgpu::naga::valid::Capabilities::all())
+            .validate(&module).expect("composed tracer pupil WGSL validates");
     }
     #[test]
     fn raster_optic_weather_shared_particle_shader_validates_in_hdr() {

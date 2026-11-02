@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3};
 
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Camera {
     pub pos: Vec3,
     pub yaw: f32,   // radians; 0 looks down -Z, +yaw turns toward +X

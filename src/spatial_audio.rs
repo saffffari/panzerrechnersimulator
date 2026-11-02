@@ -258,6 +258,7 @@ pub fn to_json(emitters: &[SoundEmitter]) -> Vec<serde_json::Value> {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct EmitterRuntimeState {
     pub inside: bool,
     pub played_once: bool,

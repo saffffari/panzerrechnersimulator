@@ -107,13 +107,13 @@ impl GeometryAa {
         Self{main,optic,mesh,mesh_inst,ambient_mesh,ambient_inst,sky,resolve_depth}
     }
     pub fn resolve(&self,encoder:&mut wgpu::CommandEncoder,optic:bool,depth:&wgpu::TextureView,
-        viewport:Option<[u32;2]>,work:&mut RenderWorkStats) {
+        viewport:Option<[u32;2]>,work:&mut RenderWorkStats,profile:Option<&crate::gpu_profile::GpuProfile>) {
         let targets=if optic{&self.optic}else{&self.main};
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label:Some("native-aa-depth-resolve"),color_attachments:&[],
             depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:depth,
                 depth_ops:Some(wgpu::Operations{load:wgpu::LoadOp::Clear(1.0),store:wgpu::StoreOp::Store}),stencil_ops:None}),
-            timestamp_writes:None,occlusion_query_set:None,
+            timestamp_writes:profile.and_then(|p|p.render(if optic {"raster-optic-depth-resolve"}else{"raster-main-depth-resolve"})),occlusion_query_set:None,
         });
         if let Some([width,height])=viewport {
             // The opaque/sky passes populated only this top-left native-pixel rectangle.

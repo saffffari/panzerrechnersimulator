@@ -14,6 +14,7 @@ pub const MAX_OPACITY: f32 = 0.08;
 const RECENT_IDS: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Front {
     pub id: u64,
     pub origin: Vec3,
@@ -74,6 +75,7 @@ impl Front {
     }
 }
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Arrival {
     pub id: u64,
     pub at: f32,
@@ -83,6 +85,7 @@ pub struct Arrival {
 }
 
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Fronts {
     events: VecDeque<Front>,
     recent: VecDeque<u64>,

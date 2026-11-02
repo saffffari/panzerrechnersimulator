@@ -703,10 +703,15 @@ pub struct TopSurface {
     nx: usize,
     nz: usize,
     heights: Vec<f32>,
+    height_range: Option<(f32,f32)>,
     pub error_m: f32,
 }
 
 impl TopSurface {
+    /// Range of the retained finite grid nodes. Interpolated queries cannot exceed it.
+    pub(crate) fn height_range(&self) -> Option<(f32, f32)> {
+        self.height_range
+    }
     pub fn from_mesh(mesh: &CpuMesh, cell: f32) -> Option<Self> {
         let (lo, hi) = (Vec2::new(mesh.min.x, mesh.min.z), Vec2::new(mesh.max.x, mesh.max.z));
         let nx = ((hi.x - lo.x) / cell).ceil() as usize + 1;
@@ -732,7 +737,10 @@ impl TopSurface {
                 }
             }
         }
-        let mut surface = Self { origin: lo, cell, nx, nz, heights, error_m: 0.0 };
+        let range=heights.iter().copied().filter(|h|h.is_finite())
+            .fold((f32::INFINITY,f32::NEG_INFINITY),|(lo,hi),h|(lo.min(h),hi.max(h)));
+        let mut surface = Self { origin: lo, cell, nx, nz, heights,
+            height_range:range.0.is_finite().then_some(range), error_m: 0.0 };
         surface.error_m = surface.measure_error(mesh);
         Some(surface)
     }
@@ -975,5 +983,30 @@ mod tests {
         let surface = TopSurface::from_mesh(&mesh, TOP_SURFACE_CELL_M).unwrap();
         println!("burned-floor rubble layer top surface: measured error {:.3} m", surface.error_m);
         assert!(surface.error_m < 0.03, "{}", surface.error_m);
+    }
+}
+
+/// Exact settled placement, separate from immutable source mound heightfields.
+#[derive(serde::Serialize,serde::Deserialize)]
+pub(crate) struct WorldMound {module:usize,transform:Mat4,added_volume:f32,resting_on:Vec<usize>}
+impl RubblePile {
+    pub(crate) fn export_world_state(&self)->Vec<WorldMound> {
+        self.placed().map(|m|WorldMound{module:m.module,transform:m.transform,added_volume:m.added_volume,resting_on:m.resting_on.clone()}).collect()
+    }
+    /// The candidate has rebuilt source shapes after installing exact damage. Keep those immutable
+    /// shapes, but restore the actual historical placement and order; never settle the pile again.
+    pub(crate) fn import_world_state(&mut self,state:Vec<WorldMound>)->anyhow::Result<()> {
+        anyhow::ensure!(state.len()==self.order.len(),"rubble module population changed");
+        let mut order=Vec::with_capacity(state.len());let mut grid=HashMap::new();
+        for saved in state {
+            anyhow::ensure!(!order.contains(&saved.module)&&saved.transform.is_finite()&&saved.transform.determinant().abs()>1e-8,"invalid rubble placement");
+            let old=self.mounds.get(saved.module).and_then(Option::as_ref).ok_or_else(||anyhow::anyhow!("saved mound lacks source module"))?;
+            let mut mound=PlacedMound::new(saved.module,old.shape.clone(),saved.transform,saved.added_volume);
+            anyhow::ensure!(saved.resting_on.iter().all(|&m|m<self.mounds.len()),"invalid rubble support identity");
+            mound.resting_on=saved.resting_on;
+            for cell in Self::cells(mound.world_min,mound.world_max) {grid.entry(cell).or_insert_with(Vec::new).push(saved.module as u32);}
+            order.push(saved.module);self.mounds[saved.module]=Some(mound);
+        }
+        self.order=order;self.grid=grid;Ok(())
     }
 }

@@ -131,29 +131,27 @@ impl Game {
             "scope":"Fictional winter courtyard field exercise; no historical battle reconstruction claim."
         }))
     }
-    /// A local sketch fills the existing physical paper UV region. It reveals no enemy positions
-    /// and carries no words (2026-09-28): four crosses (the start, the house, the wreck, the
-    /// withdrawal point), the house's walls, a north caret and a 50 m bar.
+    /// Monochrome local survey: geometry-derived building outlines, exercise positions, an exact
+    /// player-position aid, a north caret and a 50 m bar. It reveals no enemy positions.
     pub fn draw_winter_map(&self, r: &mut Renderer, pencil: &[(u8,Vec2)], pins: &[(u8,Vec2)],
         cursor: Vec2) -> bool {
         if self.winter_mission.is_none() { return false; }
-        let ink=[0.17,0.16,0.13,1.0]; let faded=[0.38,0.34,0.28,1.0];
-        r.fill_rect(0.17,0.34,0.66,0.59,[0.85,0.81,0.68,1.0]);
+        use crate::ui::map_linework::{self,INK as ink,FADED as faded,PAPER};
+        r.fill_rect(0.17,0.34,0.66,0.59,PAPER);
         r.draw_text("^",0.78,0.445,0.025,ink,Align::Center);
         let project=|p: Vec2| (0.49+(p.x-1880.0)/240.0*0.51,0.64+(p.y-235.0)/240.0*0.40);
         for point in [HOUSE,WRECK,Vec2::new(1850.0,250.0),WITHDRAW] {
             let(x,y)=project(point);
             r.draw_text_bold("+",x,y,0.028,ink,Align::Center);
         }
-        let(x,y)=project(HOUSE);
-        r.fill_rect(x-0.014,y-0.01,0.028,0.004,ink);
-        r.fill_rect(x-0.014,y+0.006,0.028,0.004,ink);
+        map_linework::draw_buildings(r,&self.buildings,&project,&|_|true,(0.17,0.34,0.66,0.59));
+        map_linework::player_marker(r,project(self.map_world_position()),(0.17,0.34,0.66,0.59));
         r.fill_rect(0.205,0.823,50.0/240.0*0.51,0.003,ink);
         for &(_,p) in pencil.iter().filter(|(act,_)| *act == self.act.id) {
             r.fill_rect(0.17+p.x*0.66,0.34+p.y*0.59,0.002,0.002,ink);
         }
         for &(_,p) in pins.iter().filter(|(act,_)| *act == self.act.id) {
-            r.draw_text("x",0.17+p.x*0.66,0.34+p.y*0.59,0.023,[0.58,0.08,0.065,1.0],Align::Center);
+            r.draw_text("x",0.17+p.x*0.66,0.34+p.y*0.59,0.023,ink,Align::Center);
         }
         r.fill_rect(0.17+cursor.x*0.66,0.34+cursor.y*0.59,0.002,0.003,faded);
         true

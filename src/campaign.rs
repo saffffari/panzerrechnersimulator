@@ -305,6 +305,7 @@ impl CampaignKnowledge {
 /// Explicit campaign objectives. The game may reveal none of these as HUD checklist text; they are
 /// director gates, allowing environmental scenes and combat outcomes to matter without waypoints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ObjectiveId {
     // Act 1 — Stalingrad: read the city, choose a corridor, then break a generated cordon.
     Act1ChooseBreakoutRoute,

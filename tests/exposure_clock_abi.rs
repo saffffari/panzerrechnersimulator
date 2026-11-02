@@ -87,7 +87,13 @@ fn the_eye_is_view_local_and_source_admission_adds_no_radiance_resource() {
         .filter_map(|v| v.binding.as_ref().map(|b| (b.group, b.binding, v.name.clone().unwrap())))
         .collect();
     assert_eq!(bound, vec![(0, 0, "hdr".to_string()), (0, 1, "state".to_string()),
-        (0, 2, "clock".to_string())]);
+        (0, 2, "clock".to_string()), (0, 3, "meter_sums".to_string())]);
+    // The additional resource holds the same lane accumulators between two dispatches. It
+    // cannot supply a second image or write transported scene radiance.
+    let scratch=module.global_variables.iter().map(|(_,v)|v)
+        .find(|v|v.name.as_deref()==Some("meter_sums")).unwrap();
+    assert!(matches!(scratch.space,wgpu::naga::AddressSpace::Storage{..}));
+    assert!(matches!(module.types[scratch.ty].inner,wgpu::naga::TypeInner::Array{..}));
     assert!(RENDERER_RS.contains("cpass.set_bind_group(0, &self.exp_binds[self.active_view], &[]);"));
     assert!(RENDERER_RS.contains("monocular: if (self.optic_mask - 1.0).abs() < 0.5 { 1.0 } else { 0.0 },"));
 }

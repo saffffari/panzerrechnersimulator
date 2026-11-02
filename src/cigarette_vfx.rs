@@ -102,12 +102,14 @@ pub fn allocate(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Rende
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum Kind {
     Tip,
     Exhale,
     Ash,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Particle {
     id: u32,
     kind: Kind,
@@ -118,6 +120,7 @@ struct Particle {
     cabin: bool,
 }
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Effects {
     seed: u32,
     sequence: u32,

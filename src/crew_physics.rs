@@ -43,7 +43,7 @@ const MAX_WHOLE_BODY_IMPULSE_NS: f32 = BODY_MASS_KG * 6.0;
 /// Stable anatomical IDs shared by damage, physics and render-slot ownership. Do not reorder:
 /// deterministic captures and the fixed renderer slot arrays use `index()`.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize,serde::Deserialize)]
 pub enum CrewBodyPart {
     Pelvis = 0,
     Torso = 1,
@@ -130,7 +130,7 @@ impl CrewBodyPart {
 /// changing the physics/render architecture. `detached` means this segment's incoming/parent joint
 /// is broken: its own children remain attached and travel with it. A removed part is not simulated
 /// or rendered; a detached but present branch remains physical.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize,serde::Deserialize)]
 pub struct CrewSegment {
     pub part: CrewBodyPart,
     pub pos: Vec3,

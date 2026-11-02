@@ -1,0 +1,324 @@
+{
+  "schema": "kessel.expedition_theatre",
+  "version": 1,
+  "name": "The March",
+  "seed": 1944,
+  "extent_m": 12000,
+  "grid_res": 1025,
+  "camp": [
+    -5250,
+    3200
+  ],
+  "sites": [
+    {
+      "id": 10,
+      "name": "Hagen ammunition yard",
+      "position": [
+        -3400,
+        2200
+      ],
+      "kind": "ammunition",
+      "guards": 1,
+      "hold_s": 35,
+      "rewards": [
+        "ammunition.88_ap",
+        "ammunition.88_he"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "Birken fuel stop",
+      "position": [
+        -3100,
+        900
+      ],
+      "kind": "fuel",
+      "guards": 1,
+      "hold_s": 35,
+      "rewards": [
+        "fuel.petrol"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "Kessel repair works",
+      "position": [
+        -1600,
+        2200
+      ],
+      "kind": "workshop",
+      "guards": 2,
+      "hold_s": 50,
+      "rewards": [
+        "workshop.vision_block",
+        "workshop.track_link",
+        "workshop.work_lamp"
+      ]
+    },
+    {
+      "id": 13,
+      "name": "Southern crossing",
+      "position": [
+        -200,
+        1500
+      ],
+      "kind": "bridge",
+      "guards": 2,
+      "hold_s": 90,
+      "rewards": [
+        "ammunition.88_ap"
+      ]
+    },
+    {
+      "id": 14,
+      "name": "Broken column",
+      "position": [
+        1200,
+        700
+      ],
+      "kind": "rescue",
+      "guards": 2,
+      "hold_s": 45,
+      "rewards": [
+        "rescue.driver"
+      ]
+    },
+    {
+      "id": 15,
+      "name": "Ostfeld village",
+      "position": [
+        2900,
+        1700
+      ],
+      "kind": "assault",
+      "guards": 3,
+      "hold_s": 70,
+      "rewards": [
+        "workshop.gunner_sight",
+        "fuel.petrol"
+      ]
+    },
+    {
+      "id": 16,
+      "name": "Grain depot",
+      "position": [
+        3300,
+        -800
+      ],
+      "kind": "ammunition",
+      "guards": 3,
+      "hold_s": 55,
+      "rewards": [
+        "ammunition.88_ap",
+        "ammunition.88_he"
+      ]
+    },
+    {
+      "id": 17,
+      "name": "Relay station",
+      "position": [
+        800,
+        -1600
+      ],
+      "kind": "dispatch",
+      "guards": 1,
+      "hold_s": 20,
+      "rewards": [
+        "intel.route"
+      ]
+    },
+    {
+      "id": 18,
+      "name": "Northern relief",
+      "position": [
+        -1500,
+        -3500
+      ],
+      "kind": "rescue",
+      "guards": 3,
+      "hold_s": 75,
+      "rewards": [
+        "rescue.loader"
+      ]
+    },
+    {
+      "id": 19,
+      "name": "Linden junction",
+      "position": [
+        -3000,
+        -1400
+      ],
+      "kind": "defence",
+      "guards": 3,
+      "hold_s": 120,
+      "rewards": [
+        "fuel.petrol",
+        "workshop.track_link"
+      ]
+    },
+    {
+      "id": 20,
+      "name": "Northern crossing",
+      "position": [
+        -200,
+        -2300
+      ],
+      "kind": "bridge",
+      "guards": 3,
+      "hold_s": 100,
+      "rewards": [
+        "ammunition.88_ap"
+      ]
+    },
+    {
+      "id": 21,
+      "name": "Last corridor",
+      "position": [
+        700,
+        -4200
+      ],
+      "kind": "finale",
+      "guards": 3,
+      "hold_s": 180,
+      "rewards": []
+    }
+  ],
+  "roads": [
+    [
+      [
+        -5250,
+        3200
+      ],
+      [
+        -3400,
+        2200
+      ],
+      [
+        -1600,
+        2200
+      ],
+      [
+        -220.643,
+        1500
+      ],
+      [
+        99.357,
+        1500
+      ],
+      [
+        1200,
+        700
+      ],
+      [
+        2900,
+        1700
+      ]
+    ],
+    [
+      [
+        -3400,
+        2200
+      ],
+      [
+        -3100,
+        900
+      ],
+      [
+        -3000,
+        -1400
+      ],
+      [
+        -1500,
+        -3500
+      ],
+      [
+        -1600,
+        -2300
+      ]
+    ],
+    [
+      [
+        -3100,
+        900
+      ],
+      [
+        -1600,
+        300
+      ],
+      [
+        -220.643,
+        1500
+      ]
+    ],
+    [
+      [
+        -3000,
+        -1400
+      ],
+      [
+        -1600,
+        -2300
+      ],
+      [
+        -437.429,
+        -2300
+      ],
+      [
+        -117.429,
+        -2300
+      ],
+      [
+        800,
+        -1600
+      ],
+      [
+        3300,
+        -800
+      ]
+    ],
+    [
+      [
+        1200,
+        700
+      ],
+      [
+        800,
+        -1600
+      ],
+      [
+        700,
+        -4200
+      ]
+    ],
+    [
+      [
+        2900,
+        1700
+      ],
+      [
+        4200,
+        500
+      ],
+      [
+        3300,
+        -800
+      ],
+      [
+        700,
+        -4200
+      ]
+    ]
+  ],
+  "river": {
+    "center_x": -200,
+    "meander_m": 140,
+    "wavelength_m": 900,
+    "half_width_m": 20,
+    "bed_depth_m": 4,
+    "crossings_z": [
+      1500,
+      -2300
+    ]
+  },
+  "provenance": "Fictional compressed theatre. Mission patterns represent recurring operational tasks; these are not reconstructions of named historical battles."
+}

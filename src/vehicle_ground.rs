@@ -3,6 +3,55 @@
 //! subsequently uses solid_city's fuller source-profile solve, including floors and rubble.
 use glam::{Mat3, Vec2, Vec3};
 
+#[path = "vehicle_rollover.rs"]
+mod vehicle_rollover;
+pub(crate) use vehicle_rollover::{rolled_support_height, rolled_support_height_for_parts,
+    advance_rolled_hull, advance_rolled_hull_on, advance_rolled_hull_bounded,
+    support_polygon, stable_support, support_pivot};
+
+fn settle_rolled(tank: &mut crate::tank::Tank, dt: f32, height_at: impl Fn(f32,f32)->f32) {
+    settle_rolled_with_parts(tank, dt, !tank.kind.casemate(), height_at);
+}
+
+/// Game advances a dead rolled hull here once per host step (the AI no longer advances it),
+/// passing the actual wreck membership so a detached turret cannot keep the hull suspended.
+pub(crate) fn settle_rolled_with_parts(tank: &mut crate::tank::Tank, dt: f32,
+    turret_attached: bool, height_at: impl Fn(f32,f32)->f32) {
+    advance_rolled_hull_on(tank, dt, turret_attached, height_at);
+}
+
+/// Dead vehicles no longer run their AI step, but gravity and suspension do not cease at death.
+/// Advance this exactly once per host step, then use `settle` only for contact re-projection.
+pub(crate) fn settle_wreck(tank: &mut crate::tank::Tank, dt: f32, turret_attached: bool,
+    height_at: impl Fn(f32,f32)->f32) {
+    if tank.overturned() { settle_rolled_with_parts(tank,dt,turret_attached,height_at); }
+    else { settle_ride(tank,dt,height_at); }
+}
+
+/// Same laws and source points as the ordinary settle functions. The additional callback must
+/// conservatively bound ALL support heights within its closed XZ rectangle. Unknown bounds
+/// return infinity and disable BVH pruning; they never imply an empty region.
+pub(crate) fn settle_wreck_bounded(tank:&mut crate::tank::Tank,dt:f32,turret_attached:bool,
+    height_at:impl Fn(f32,f32)->f32,upper:impl Fn(Vec2,Vec2)->f32) {
+    if tank.overturned() {advance_rolled_hull_bounded(tank,dt,turret_attached,height_at,upper);}
+    else {settle_ride(tank,dt,height_at);}
+}
+pub(crate) fn settle_bounded(tank:&mut crate::tank::Tank,height_at:impl Fn(f32,f32)->f32,
+    upper:impl Fn(Vec2,Vec2)->f32) {
+    if tank.overturned() {advance_rolled_hull_bounded(tank,0.0,!tank.kind.casemate(),height_at,upper);}
+    else {settle(tank,height_at);}
+}
+pub(crate) fn settle_rigid_bounded(tank:&mut crate::tank::Tank,height_at:impl Fn(f32,f32)->f32,
+    upper:impl Fn(Vec2,Vec2)->f32) {
+    if tank.overturned() {advance_rolled_hull_bounded(tank,0.0,!tank.kind.casemate(),height_at,upper);}
+    else {settle_rigid(tank,height_at);}
+}
+pub(crate) fn settle_ride_bounded(tank:&mut crate::tank::Tank,dt:f32,height_at:impl Fn(f32,f32)->f32,
+    upper:impl Fn(Vec2,Vec2)->f32) {
+    if tank.overturned() {advance_rolled_hull_bounded(tank,dt,!tank.kind.casemate(),height_at,upper);}
+    else {settle_ride(tank,dt,height_at);}
+}
+
 /// The winter snowpack under a loaded track. Settled steppe snow of 0.40 m (declared for the
 /// Act-I cauldron in December 1942, not a measured station value) compacts to a quarter of its
 /// depth under any tracked vehicle of the weights fielded here (a Tiger loads its tracks at
@@ -63,6 +112,7 @@ pub(crate) fn solve(center: Vec2, heading: f32, half_extents: Vec2,
 /// The rigid fit, taken as the pose: spawns, placements, and the player's pass before its own
 /// support solve.
 pub(crate) fn settle_rigid(tank: &mut crate::tank::Tank, height_at: impl Fn(f32,f32)->f32) {
+    if tank.overturned() { settle_rolled(tank, 0.0, height_at); return; }
     if let Some(pose) = solve(Vec2::new(tank.pos.x,tank.pos.z),tank.heading,
         tank.parts.hull_half_extents,height_at) {
         tank.pos.y=pose.height;tank.pitch=pose.pitch;tank.roll=pose.roll;
@@ -77,6 +127,7 @@ pub(crate) fn settle_rigid(tank: &mut crate::tank::Tank, height_at: impl Fn(f32,
 /// (the Act-II bridge deck this call is given and the drive's heightfield is not). Otherwise, the
 /// rigid fit as before.
 pub(crate) fn settle(tank: &mut crate::tank::Tank, height_at: impl Fn(f32,f32)->f32) {
+    if tank.overturned() { settle_rolled(tank, 0.0, height_at); return; }
     let xz=Vec2::new(tank.pos.x,tank.pos.z);
     if tank.ride.continues(xz) {
         if let Some(pose)=solve(xz,tank.heading,tank.parts.hull_half_extents,&height_at) {
@@ -97,6 +148,7 @@ pub(crate) fn settle(tank: &mut crate::tank::Tank, height_at: impl Fn(f32,f32)->
 /// wheel envelope over samples 0.1 m apart within its wheel radius on its track line, the end
 /// stations also over the track run-up to the hull's ends (0.2 m apart, `AI_APPROACH_TAN`).
 pub(crate) fn settle_ride(tank: &mut crate::tank::Tank, dt: f32, height_at: impl Fn(f32,f32)->f32) {
+    if tank.overturned() { settle_rolled(tank, dt, height_at); return; }
     use crate::suspension::{station_support, End, Ground, Layout, AI_APPROACH_TAN};
     let xz=Vec2::new(tank.pos.x,tank.pos.z);
     let Some(rigid)=solve(xz,tank.heading,tank.parts.hull_half_extents,&height_at) else { return };
@@ -149,6 +201,13 @@ pub(crate) fn settle_ride(tank: &mut crate::tank::Tank, dt: f32, height_at: impl
     tank.ride.rise_limit(&mut ground,max_rise);
     tank.ride.step(layout,&ground,tank.speed,tank.heading,dt);
     tank.ride.xz=xz;
+    if tank.ride.overturned {
+        tank.pos.y = tank.ride.y;
+        tank.pitch = tank.ride.pitch;
+        tank.roll = tank.ride.roll;
+        settle_rolled(tank, 0.0, height_at);
+        return;
+    }
     if tank.ride.active {
         tank.pos.y=tank.ride.y;tank.pitch=tank.ride.pitch;tank.roll=tank.ride.roll;
     } else {
@@ -159,6 +218,20 @@ pub(crate) fn settle_ride(tank: &mut crate::tank::Tank, dt: f32, height_at: impl
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stationary_dead_vehicle_keeps_falling_when_its_support_is_removed() {
+        let hf=crate::terrain::Heightfield {res:2,spacing:100.0,heights:vec![3.0;4],
+            min_h:3.0,max_h:3.0,openings:Default::default(),detail:None};
+        let mut tank=crate::tank::Tank::new(0.0,0.0,0.0,&hf,crate::tank::T34_PARTS);
+        tank.alive=false;
+        settle_wreck(&mut tank,1.0/60.0,true,|_,_|3.0);
+        let initial=tank.pos.y;
+        let xz=Vec2::new(tank.pos.x,tank.pos.z);
+        for _ in 0..120 {settle_wreck(&mut tank,1.0/60.0,true,|_,_|0.0);}
+        assert!(tank.pos.y<initial-2.0,"a dead stationary hull must follow removed support");
+        assert_eq!(Vec2::new(tank.pos.x,tank.pos.z),xz,"gravity does not grant traction");
+        assert!(!tank.alive,"settling does not recommission a wreck");
+    }
     #[test]
     fn inclined_planes_align_both_tracks_at_any_heading() {
         for gradient in [Vec2::ZERO,Vec2::new(0.25,0.0),Vec2::new(0.0,-0.35),Vec2::new(0.3,-0.2)] {

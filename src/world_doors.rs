@@ -18,6 +18,7 @@ const LEAF_MIN: Vec3 = Vec3::new(-1.0, 0.0, -0.025);
 const LEAF_MAX: Vec3 = Vec3::new(0.0, 2.1, 0.025);
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Frame {
     pub model: Mat4,
     pub width: f32,
@@ -64,6 +65,7 @@ pub fn load_frame(path: &str) -> anyhow::Result<Option<CpuMesh>> {
     }
 }
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Door {
     frame: Frame,
     angle: f32,
@@ -706,5 +708,17 @@ mod tests {
         assert_eq!(remainder.indices.len(), parts[0].indices.len());
         assert!(!parts[1].indices.is_empty());
         assert!(remainder.texture.is_some() && leaf.texture.is_some());
+    }
+}
+
+impl WorldDoors {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        Ok(crate::capture_world_fields!(self; doors))
+    }
+    pub(crate) fn import_world_state(&mut self,state:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        let count=self.doors.len();
+        crate::restore_world_fields!(self,state; doors);
+        anyhow::ensure!(self.doors.len()==count,"world door layout changed");
+        *self.uploaded.borrow_mut()=vec![None;count];Ok(())
     }
 }

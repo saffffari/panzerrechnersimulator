@@ -8,6 +8,7 @@ const SKIN: f32 = 0.001;
 const ROTATION_SURFACE_STEP: f32 = 0.001;
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Body {
     pub position: Vec3,
     pub rotation: Quat,
@@ -49,6 +50,7 @@ impl Default for DropBudget {
 }
 
 #[derive(Clone, Copy, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DropRest {
     pub sleeping: bool,
     quiet_s: f32,

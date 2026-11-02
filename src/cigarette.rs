@@ -52,6 +52,7 @@ pub struct View {
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
 pub enum Action {#[default] None,Draw,Light,Puff,Cough,BurnedOut}
 #[derive(Clone,Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct State {
     slots:u32,reserve:u16,held_burn_s:Option<f64>,lit:bool,equipped:bool,in_mouth:bool,pack_open:bool,
     lighter_raise:f64,lighter_held:bool,flame_s:f64,previous_toke:bool,wait_for_release:bool,

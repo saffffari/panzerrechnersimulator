@@ -48,7 +48,7 @@ impl Game {
     }
 
     pub(super) fn track_repair_target(&self, eye: Vec3, look: Vec3) -> Option<ModuleKind> {
-        if self.mode != Mode::Foot || self.climb.active || !self.player.alive
+        if self.mode != Mode::Foot || self.climb.active || !self.recoverable_tiger_access_allowed()
             || self.player.speed.abs() >= 0.6 { return None; }
         let (kind, _) = self.broken_repair_track()?;
         let point = self.track_repair_point(kind);

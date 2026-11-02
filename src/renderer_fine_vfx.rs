@@ -34,7 +34,7 @@ pub(super) struct Frame {
 }
 pub(super) struct FineVfx {
     layout:wgpu::BindGroupLayout, pipeline:wgpu::RenderPipeline,
-    materials:HashMap<usize,Material>, particle_ids:HashMap<usize,Vec<[u32;4]>>,
+    materials:HashMap<usize,Material>, pub(super) particle_ids:HashMap<usize,Vec<[u32;4]>>,
     frames:HashMap<usize,Frame>,
 }
 

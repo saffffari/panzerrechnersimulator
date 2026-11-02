@@ -54,7 +54,7 @@ impl Game {
             "{} has source inspection only; full crew Play is currently available for Tiger I",
             scene.tank.descriptor().label
         );
-        Self::build_act_with_attempt(device, queue, false, &act(), None, false, Some(scene))
+        Self::build_act_with_attempt(device, queue, false, &act(), None, false, Some(scene), false)
     }
 
     pub fn is_tank_editor_play(&self) -> bool {

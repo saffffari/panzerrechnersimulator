@@ -365,6 +365,7 @@ pub const FACING_EAR_DB: f32 = 4.0;
 
 /// A calibrated emission, resolved from a table entry or computed (gun charge, HE fill, crack).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Emission {
     /// Peak (or LZeq for steady sources) at the reference, dB.
     pub lpk_db: f32,

@@ -3,6 +3,7 @@ use super::*;
 use crew_physics as physics;
 const COUNT: usize = physics::CREW_BODY_PART_COUNT;
 const CAP: usize = 128;
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Body {
     index: usize,
     team: usize,
@@ -11,11 +12,13 @@ struct Body {
     dead: bool,
     bleeding: bool,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Grain {
     pos: Vec3,
     vel: Vec3,
     age: f32,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Casualties {
     bodies: Vec<Body>,
     pools: [[usize; COUNT]; 2],

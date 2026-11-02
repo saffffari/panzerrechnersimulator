@@ -1,6 +1,8 @@
 //! Exact triangle paging for large terrain shadow casters. Reordering an independent index
 //! buffer changes submission only: original vertices, winding, full-detail triangles, primary
-//! raster indices and ray-tracing primitive identities remain untouched.
+//! raster indices and ray-tracing primitive identities remain untouched. A separately gated
+//! optical experiment retains contiguous ORIGINAL index spans; it never uses this reordered
+//! shadow index stream for a color draw where equal-depth source order can matter.
 use super::{aabb_in_frustum, frustum_planes, shadow_has_sample, CpuMesh};
 use glam::{Mat4, Vec3, Vec4};
 use std::ops::Range;
@@ -25,7 +27,56 @@ struct Node {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Pages { nodes: Vec<Node> }
+pub(super) struct Pages { nodes: Vec<Node>, source_order: Option<SourceOrderedPages> }
+
+/// CPU-only bounds over contiguous original triangles. No vertex/index buffer is copied,
+/// reordered or simplified. Built only for the explicit optical terrain benchmark candidate.
+#[derive(Clone,Debug)]
+struct SourceOrderedPages { nodes: Vec<SourceNode> }
+
+#[derive(Clone,Debug)]
+struct SourceNode { bounds: Bounds, indices: Range<u32>, children: Option<[usize;2]> }
+
+impl SourceOrderedPages {
+    fn build(mesh:&CpuMesh)->Option<Self> {
+        const LEAF_TRIANGLES:usize=256;
+        if mesh.indices.is_empty() || mesh.indices.len()%3!=0 || mesh.indices.len()>u32::MAX as usize {return None;}
+        fn append(nodes:&mut Vec<SourceNode>,mesh:&CpuMesh,first:usize,end:usize)->Option<usize> {
+            let at=nodes.len();
+            nodes.push(SourceNode {bounds:Bounds::empty(),indices:(first*3) as u32..(end*3) as u32,children:None});
+            if end-first<=LEAF_TRIANGLES {
+                for &vertex in &mesh.indices[first*3..end*3] {
+                    let point=Vec3::from_array(mesh.vertices.get(vertex as usize)?.pos);
+                    if !point.is_finite() {return None;}
+                    nodes[at].bounds.include(point);
+                }
+            } else {
+                let middle=first+(end-first)/2;
+                let left=append(nodes,mesh,first,middle)?;
+                let right=append(nodes,mesh,middle,end)?;
+                let mut bounds=nodes[left].bounds.clone();bounds.union(&nodes[right].bounds);
+                nodes[at].bounds=bounds;nodes[at].children=Some([left,right]);
+            }
+            Some(at)
+        }
+        let mut nodes=Vec::new();append(&mut nodes,mesh,0,mesh.indices.len()/3)?;
+        Some(Self {nodes})
+    }
+
+    fn ranges(&self,mut intersects:impl FnMut(Vec3,Vec3)->bool)->Vec<Range<u32>> {
+        fn visit(pages:&SourceOrderedPages,index:usize,intersects:&mut impl FnMut(Vec3,Vec3)->bool,
+            out:&mut Vec<Range<u32>>) {
+            let node=&pages.nodes[index];
+            if !intersects(node.bounds.min,node.bounds.max) {return;}
+            if let Some([left,right])=node.children {
+                visit(pages,left,intersects,out);visit(pages,right,intersects,out);
+            } else if let Some(previous)=out.last_mut().filter(|r|r.end==node.indices.start) {
+                previous.end=node.indices.end;
+            } else {out.push(node.indices.clone());}
+        }
+        let mut out=Vec::new();visit(self,0,&mut intersects,&mut out);out
+    }
+}
 
 pub(super) struct Prepared {
     pub indices: Vec<u32>,
@@ -99,7 +150,9 @@ fn build(mesh: &CpuMesh) -> Option<Prepared> {
         Some(index)
     }
     append(&mut nodes, &bounds, &offsets, 0, CELLS)?;
-    Some(Prepared { indices, pages: Pages { nodes } })
+    let source_order=super::raster_optics::benchmark_culls_optic_terrain()
+        .then(||SourceOrderedPages::build(mesh)).flatten();
+    Some(Prepared { indices, pages: Pages { nodes, source_order } })
 }
 
 fn fully_inside(planes: &[Vec4; 6], bounds: &Bounds) -> bool {
@@ -112,6 +165,12 @@ fn fully_inside(planes: &[Vec4; 6], bounds: &Bounds) -> bool {
 }
 
 impl Pages {
+    /// Ranges address the ORIGINAL mesh index buffer, unlike `ranges` below. The caller supplies
+    /// conservative perspective/MSAA frustum admission; the shadow single-sample test is not used.
+    pub fn source_order_ranges(&self,intersects:impl FnMut(Vec3,Vec3)->bool)->Option<Vec<Range<u32>>> {
+        self.source_order.as_ref().map(|pages|pages.ranges(intersects))
+    }
+
     pub fn ranges(&self, matrix: Mat4, size: u32) -> Vec<Range<u32>> {
         if !matrix.is_finite() || size == 0 { return vec![self.nodes[0].indices.clone()]; }
         let planes = frustum_planes(matrix);
@@ -154,6 +213,63 @@ mod tests {
         let min = vertices.iter().map(|v| Vec3::from_array(v.pos)).fold(Vec3::splat(f32::INFINITY), Vec3::min);
         let max = vertices.iter().map(|v| Vec3::from_array(v.pos)).fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
         CpuMesh::basic(vertices, indices, None, min, max)
+    }
+
+    #[test]
+    fn optical_source_ranges_retain_original_order_winding_duplicates_and_crossing_triangles() {
+        let mut mesh=terrain(65);
+        // Identical/reversed overlaps must retain source ordering for Less-depth and alpha.
+        // The long triangle also crosses the field without any of its vertices being inside.
+        let crossing=[0,64*65+64,64];
+        mesh.indices.splice(384..384,crossing.into_iter().chain(crossing).chain([crossing[2],crossing[1],crossing[0]]));
+        let pages=SourceOrderedPages::build(&mesh).unwrap();
+        let full=pages.ranges(|_,_|true);
+        assert_eq!(full,vec![0..mesh.indices.len() as u32]);
+        let original=full.into_iter().flat_map(|r|mesh.indices[r.start as usize..r.end as usize].iter().copied()).collect::<Vec<_>>();
+        assert_eq!(original,mesh.indices,"no sorting/deduplication or triangle reconstruction");
+        let selected=pages.ranges(|lo,hi|lo.x<=1.0 && hi.x>=-1.0 && lo.z<=1.0 && hi.z>=-1.0);
+        assert!(selected.windows(2).all(|r|r[0].end<r[1].start),"ordered disjoint ranges merge adjacent survivors");
+        assert!(selected.iter().all(|r|r.start%3==0 && r.end%3==0));
+        let kept=selected.iter().map(|r|r.end-r.start).sum::<u32>();
+        assert!(kept>0 && kept<mesh.indices.len() as u32,"narrow field actually omits distant source spans");
+        for (ordinal,tri) in mesh.indices.chunks_exact(3).enumerate() {
+            let mut lo=Vec3::splat(f32::INFINITY);let mut hi=Vec3::splat(f32::NEG_INFINITY);
+            for &v in tri {let p=Vec3::from_array(mesh.vertices[v as usize].pos);lo=lo.min(p);hi=hi.max(p);}
+            if lo.x<=1.0 && hi.x>=-1.0 && lo.z<=1.0 && hi.z>=-1.0 {
+                assert!(selected.iter().any(|r|r.contains(&(ordinal as u32*3))),"crossing source triangle {ordinal} omitted");
+            }
+        }
+        for ordinal in [128,129,130] {
+            assert!(selected.iter().any(|r|r.contains(&(ordinal*3))),"duplicate crossing triangle omitted");
+        }
+    }
+
+    #[test]
+    fn optical_source_ranges_keep_actual_projected_samples_after_affine_transform() {
+        let mesh=terrain(65);let pages=SourceOrderedPages::build(&mesh).unwrap();
+        let origin=Vec3::new(-5250.0,32.0,3200.0);
+        let model=Mat4::from_scale_rotation_translation(Vec3::new(-1.2,0.7,1.3),
+            glam::Quat::from_euler(glam::EulerRot::XYZ,0.07,0.37,-0.03),origin);
+        let eye=origin+Vec3::new(0.0,12.0,30.0);
+        let matrix=Mat4::perspective_rh(0.5,16.0/9.0,0.01,1200.0)*Mat4::look_at_rh(eye,origin,Vec3::Y);
+        let planes=super::super::frustum_planes(matrix);
+        let selected=pages.ranges(|lo,hi|super::super::raster_optics::optic_instance_intersects(&planes,model,lo,hi,false));
+        let mut witnesses=0;
+        for (ordinal,tri) in mesh.indices.chunks_exact(3).enumerate() {
+            let points=[0,1,2].map(|i|model.transform_point3(Vec3::from_array(mesh.vertices[tri[i] as usize].pos)));
+            for p in points.into_iter().chain(std::iter::once((points[0]+points[1]+points[2])/3.0)) {
+                let clip=matrix*p.extend(1.0);
+                if clip.w>0.0 && clip.x.abs()<=clip.w && clip.y.abs()<=clip.w && clip.z>=0.0 && clip.z<=clip.w {
+                    witnesses+=1;
+                    assert!(selected.iter().any(|r|r.contains(&(ordinal as u32*3))),"visible source sample omitted at triangle {ordinal}");
+                }
+            }
+        }
+        assert!(witnesses>20);
+        assert!(selected.iter().map(|r|r.end-r.start).sum::<u32>()<mesh.indices.len() as u32);
+        let unknown=[Vec4::splat(f32::NAN);6];
+        assert_eq!(pages.ranges(|lo,hi|super::super::raster_optics::optic_instance_intersects(&unknown,model,lo,hi,false)),
+            vec![0..mesh.indices.len() as u32],"unknown frustum keeps every original triangle");
     }
 
     #[test]

@@ -1,0 +1,42 @@
+{
+  "schema":"kessel.first-person-mechanic.v1",
+  "id":"solo_loader_moving_cartridge_witness_20261031",
+  "title":"One ordinary reload while the living driver accelerates and brakes",
+  "caption":"MOVING HULL / SAME PHYSICAL CARTRIDGE / SOURCE HANDS",
+  "act_id":1,
+  "night":false,
+  "station":"gunner",
+  "seconds":18,
+  "world_manifest":"assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "setup":{"enemy_policy":"hold_fire","playtest":true,"player_xz":[1850,250],"player_heading_deg":180,"singleplayer_crew":true},
+  "crew_witness":{"eye_turret_m":[-0.1,2.23,-0.9],"target_turret_m":[-0.50,1.65,0.15]},
+  "timeline":[
+    {"from_s":0.5,"until_s":0.55,"input":{"mg_coax":true}},
+    {"from_s":4.25,"until_s":6.6,"input":{"drive":0.65}},
+    {"from_s":6.6,"until_s":7.7,"input":{"drive":-0.4}}
+  ],
+  "expect":[
+    {"metric":"main_gun_shots","min_delta":1,"max_delta":1},
+    {"metric":"rack_rounds","min_delta":-1,"max_delta":-1},
+    {"metric":"live_ammunition_count","min_delta":-1,"max_delta":-1},
+    {"metric":"breech_loaded","at_s":5,"equals":false},
+    {"metric":"breech_loaded","at_s":7,"equals":false},
+    {"metric":"speed_m_s","at_s":5,"min_value":0.2},
+    {"metric":"speed_m_s","at_s":6,"min_value":0.6},
+    {"metric":"speed_m_s","at_s":7,"min_value":0.1},
+    {"metric":"speed_m_s","at_s":9,"min_value":-0.05,"max_value":0.05},
+    {"metric":"breech_loaded","equals":true},
+    {"metric":"tank_alive","equals":true}
+  ],
+  "input_audit":"One ordinary gun-sight LMB discharge at 0.5s. Ordinary driver input accelerates at 4.25-6.6s and brakes through opposite drive input at 6.6-7.7s. The b44 stationary baseline records Carry at 5/6s and Ram at 7s; these timings guide the input schedule but do not force a phase, speed, grip, vehicle pose or successful reload. The disclosed turret-local render-only witness changes no live player aim or crew state. Enemy return fire is held for animation diagnosis.",
+  "visual_acceptance":[
+    "Confirm from actual state_samples that both Carry and Ram occur while speed_m_s exceeds 0.1; a successful final reload alone is insufficient. Preserve a failed overlap or stall receipt.",
+    "Inspect the 4.25-8s video interval and stills at 5/6/7s: one existing round must follow common hull motion with the same source identity, current source hand targets and hull-local ownership receipt.",
+    "Compare speed at 6s and 7s to confirm actual braking while reloading; do not infer movement from input commands alone.",
+    "Inspect current mechanism hand_error_m separately from cached pose_target_error_m, keeping one-second sampling limits explicit.",
+    "Reject visible separation, stretched limbs, floor penetration, lost source materials or clipped body/cartridge geometry; this witness does not certify collision safety.",
+    "After the ordinary close phase the loader should return toward his source periscope position. Parked crew must not retain drive-induced motion indefinitely."
+  ],
+  "status":"pending_native_validation_and_live_capture",
+  "limitations":"This witnesses common hull-motion covariance during ordinary loading, not an intentionally forced rejected grip. The isolated rejected-proposal and legacy owner conversion cases belong to CPU regressions. Turret-relative rejection behavior, accessible loader-side racks and the existing basket/breech envelope are unchanged. Whole-body collision, finger grips and swept cartridge contact remain incomplete. State checks alone do not establish visual acceptance."
+}

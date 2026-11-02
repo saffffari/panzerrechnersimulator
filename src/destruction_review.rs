@@ -19,7 +19,7 @@ impl Game {
     }
 
     /// Place the player in front of existing, intact geometry. Ordinary subsequent driving owns
-    /// contact, integrity loss, support propagation and tree hinge motion.
+    /// contact, integrity loss, support propagation and released tree motion.
     pub fn debug_stage_destruction_review(&mut self, kind: &str) -> anyhow::Result<serde_json::Value> {
         anyhow::ensure!(self.standalone_fuel_liters.is_some(), "destruction review requires Playtest");
         anyhow::ensure!(matches!(self.mode, Mode::Tank) && self.player.alive,
@@ -56,7 +56,7 @@ impl Game {
                         if self.trees.ray(eye, direction, 11.0).is_none_or(|(_, hit)| hit != index) { continue; }
                         selected = Some((start, direction, serde_json::json!({"tree_index":index,
                             "pivot_world_m":pivot.to_array(),"height_m":height,"class":"small",
-                            "contact_model":"existing standing-trunk cylinder and authored hinge; no fracture solver"})));
+                            "contact_model":"standing source-section trunk cylinder; released source-sampled terrain dynamics; no fracture solver"})));
                         break 'candidates;
                     }
                 }

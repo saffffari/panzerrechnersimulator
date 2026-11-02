@@ -59,6 +59,7 @@ pub(crate) fn pack(f: Finish, part: u32, burnt: bool, ground_y: f32, rear_z: f32
 
 /// Per enemy slot, the seed of the vehicle now in it: a new one each time the slot activates.
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Seeds {
     seeds: Vec<u32>,
     active: Vec<bool>,

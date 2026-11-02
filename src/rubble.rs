@@ -34,6 +34,7 @@ fn hash01(n: u32) -> f32 {
 }
 
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum ChunkState {
     Hidden,       // set not yet activated — the intact wall still draws
     Solid,        // standing masonry (drawn at its base transform)
@@ -48,6 +49,7 @@ enum ChunkState {
     Frozen, // settled rubble — drawn at its final transform forever
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Chunk {
     slot: usize,  // renderer mesh slot (pre-allocated, hidden at build)
     base: Vec3,   // BUILD-time center — the box mesh's verts are baked here; never changes
@@ -59,6 +61,7 @@ struct Chunk {
     seed: u32,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct WallSet {
     di: usize, // destructible index this set shadows
     intact_slot: usize,
@@ -68,6 +71,7 @@ struct WallSet {
 }
 
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ChunkWalls {
     sets: Vec<WallSet>,
     /// destructible index → set index (sparse; not every destructible is chunkable).

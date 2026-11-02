@@ -13,9 +13,13 @@
 //! that lattice near the camera (`terrain_lod.rs`) and evaluates the same functions in WGSL
 //! (`shaders/rm_terrain.wgsl`, constants from [`wgsl_constants`]).
 use glam::{Mat4, Vec2, Vec3};
+#[path = "terrain_relief_bounds.rs"]
+mod bounds;
+#[path = "terrain_relief_state.rs"]
+mod state;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 pub const SNOW: u8 = 0;
 pub const CRUST: u8 = 1;
@@ -30,7 +34,11 @@ pub const CLASS_NAMES: [&str; CLASSES] = ["snow", "wind_crust", "rock", "frozen_
 /// a 0.3 m tread wall is a dozen facets, not two (at 0.305 m a grazing sun picked out each
 /// triangle of an oblique rut as a staircase).
 pub const LATTICE_DIV: usize = 16;
-/// Relief octave k has wavelength `spacing * 2^k`, k = -3..=3 (0.15-9.77 m). A LOD level L
+/// Physical relief scale, independent of the authored heightfield's sampling resolution.
+/// Preserve the original Canyon surface's metre-scale waves on other native grids too.
+pub const RELIEF_BASE_WAVELENGTH_M: f32 = 1.220_703_1;
+/// Relief octave k has wavelength `RELIEF_BASE_WAVELENGTH_M * 2^k`, k = -3..=3
+/// (0.15-9.77 m). On the original Canyon grid, a LOD level L
 /// (lattice 0.0763 m * 2^L) carries the octaves with at least four of its cells per wavelength,
 /// k >= L - OCTAVE_LEVEL_OFFSET; the finest level (the physics surface) carries k >= -2
 /// (0.31-9.77 m) as geometry, and the 0.15 m octave is a shading normal only.
@@ -146,11 +154,17 @@ impl NodeCache {
         (slot, (tag << 14 | (revision & 0x3fff)) << 32)
     }
     fn get(&self, i: u32, j: u32, revision: u64) -> Option<f32> {
+        // The packed tag has nine high bits per axis plus eight slot bits. Larger source
+        // grids stay exact by bypassing this cache; never truncate into another node's key.
+        if i >= 1 << 17 || j >= 1 << 17 { return None; }
         let (slot, key) = Self::key(i, j, revision);
         let v = self.slots[slot].load(Ordering::Relaxed);
-        (v & !0xffff_ffff == key).then(|| f32::from_bits(v as u32))
+        // The maximum legal tag/revision has the same upper bits as the empty sentinel.
+        // Empty must remain a miss instead of manufacturing a NaN height.
+        (v != u64::MAX && v & !0xffff_ffff == key).then(|| f32::from_bits(v as u32))
     }
     fn put(&self, i: u32, j: u32, revision: u64, h: f32) {
+        if i >= 1 << 17 || j >= 1 << 17 { return; }
         let (slot, key) = Self::key(i, j, revision);
         self.slots[slot].store(key | h.to_bits() as u64, Ordering::Relaxed);
     }
@@ -170,6 +184,8 @@ pub struct Detail {
     rut_revision: AtomicU64,
     footprints: RwLock<HashMap<[u32; 2], crate::renderer::track_ruts::Footprint>>,
     cache: NodeCache,
+    /// Lazy exact-node tiles for repeated physical bounds; never serialized as world state.
+    bounds_cache: Mutex<bounds::Cache>,
     /// Open cellars cut into the ground (min x, min z, max x, max z) and whether the renderer has
     /// seen this set; the terrain draws nothing inside them, physics reads the cellar floor.
     openings: RwLock<(Vec<[f32; 4]>, bool)>,
@@ -205,7 +221,7 @@ pub fn noise(px: f32, pz: f32, seed: u32) -> f32 {
 
 /// One relief octave's pattern for a class, before its amplitude (mirrored in WGSL).
 pub fn pattern(class: usize, k: i32, x: f32, z: f32, wind: Vec2) -> f32 {
-    let wavelength = 1.220_703_1 * (2.0f32).powi(k);
+    let wavelength = RELIEF_BASE_WAVELENGTH_M * (2.0f32).powi(k);
     let seed = 0x51ed_u32 + class as u32 * 977 + (k + 8) as u32 * 131;
     match class as u8 {
         SNOW | CRUST => {
@@ -280,6 +296,7 @@ impl Detail {
             rut_revision: AtomicU64::new(0),
             footprints: RwLock::default(),
             cache: NodeCache::new(),
+            bounds_cache: Mutex::new(bounds::Cache::default()),
             openings: RwLock::new((Vec::new(), true)),
             source,
         })
@@ -313,6 +330,13 @@ impl Detail {
     pub fn surface(&self) -> &[[u8; 4]] { &self.surface }
     pub fn crater_revision(&self) -> u64 { self.crater_revision.load(Ordering::Relaxed) }
     pub fn rut_revision(&self) -> u64 { self.rut_revision.load(Ordering::Relaxed) }
+
+    // Caller owns the event writer lock; even a full u64 wrap cannot alias an old tile key.
+    fn advance_rut_revision(&self) {
+        if self.rut_revision.fetch_add(1, Ordering::Relaxed) == u64::MAX {
+            self.bounds_cache.lock().unwrap().invalidate();
+        }
+    }
 
     fn node(&self, i: usize, j: usize) -> usize {
         j.min(self.res - 1) * self.res + i.min(self.res - 1)
@@ -375,27 +399,38 @@ impl Detail {
     /// Static surface at a point for LOD level `level` (octaves k >= level - 2, the lowest of
     /// them scaled by `1 - morph`), craters included, ruts excluded.
     pub fn static_height(&self, x: f32, z: f32, level: i32, morph: f32) -> f32 {
+        let events = self.events.read().unwrap();
+        self.static_height_locked(x, z, level, morph, &events)
+    }
+
+    fn static_height_locked(&self, x: f32, z: f32, level: i32, morph: f32, events: &Events) -> f32 {
         let attr = self.attr_at(x, z);
         let k_min = (level - OCTAVE_LEVEL_OFFSET).max(-NORMAL_OCTAVES);
         let relief = if k_min < GEOMETRY_OCTAVES {
             relief(x, z, &attr, self.wind, k_min, GEOMETRY_OCTAVES - 1, k_min, 1.0 - morph)
         } else { 0.0 };
-        self.base_at(x, z) + relief + self.crater_at(x, z)
+        self.base_at(x, z) + relief + self.crater_at_locked(x, z, events)
     }
 
-    fn lattice_node_height(&self, i: u32, j: u32) -> f32 {
-        let revision = self.crater_revision();
+    pub(crate) fn lattice_node_height(&self, i: u32, j: u32) -> f32 {
+        let events = self.events.read().unwrap();
+        self.lattice_node_height_locked(i, j, &events, self.crater_revision())
+    }
+
+    // All static-cache publications hold the event reader lock. The crater writer can clear
+    // the compressed-revision cache at wrap without an old reader repopulating stale slots.
+    fn lattice_node_height_locked(&self, i: u32, j: u32, events: &Events, revision: u64) -> f32 {
         let x = i as f32 * self.lattice - self.half;
         let z = j as f32 * self.lattice - self.half;
         let stat = match self.cache.get(i, j, revision) {
             Some(h) => h,
             None => {
-                let h = self.static_height(x, z, 0, 0.0);
+                let h = self.static_height_locked(x, z, 0, 0.0, events);
                 self.cache.put(i, j, revision, h);
                 h
             }
         };
-        stat - self.rut_at(x, z)
+        stat - self.rut_at_locked(x, z, events)
     }
 
     /// The physical surface: the 0.076 m lattice triangles with every geometry octave, crater
@@ -430,6 +465,10 @@ impl Detail {
     /// `tr_rut`).
     pub fn rut_at(&self, x: f32, z: f32) -> f32 {
         let events = self.events.read().unwrap();
+        self.rut_at_locked(x, z, &events)
+    }
+
+    fn rut_at_locked(&self, x: f32, z: f32, events: &Events) -> f32 {
         if events.ruts.is_empty() {
             return 0.0;
         }
@@ -467,9 +506,13 @@ impl Detail {
     }
 
     pub fn crater_at(&self, x: f32, z: f32) -> f32 {
+        let events = self.events.read().unwrap();
+        self.crater_at_locked(x, z, &events)
+    }
+
+    fn crater_at_locked(&self, x: f32, z: f32, events: &Events) -> f32 {
         let p = Vec2::new(x, z);
         let key = (((x + self.half) / CRATER_CELL_M).floor() as i32, ((z + self.half) / CRATER_CELL_M).floor() as i32);
-        let events = self.events.read().unwrap();
         events.crater_grid.get(&key).map_or(0.0, |list| {
             list.iter().map(|&k| events.craters[k as usize].offset_at(p)).sum()
         })
@@ -550,7 +593,7 @@ impl Detail {
             changed |= self.stamp_polygon(&mut events, quad, TRACK_COMPACTION_SHARE, TRACK_SINKAGE_MAX_M, true);
         }
         if changed {
-            self.rut_revision.fetch_add(1, Ordering::Relaxed);
+            self.advance_rut_revision();
         }
     }
 
@@ -570,7 +613,7 @@ impl Detail {
         let (u, v) = (dir * 0.15, Vec2::new(-dir.y, dir.x) * 0.06);
         self.stamp_polygon(&mut events, [c - u - v, c + u - v, c + u + v, c - u + v], BOOT_COMPACTION_SHARE, BOOT_SINKAGE_MAX_M, false);
         events.walkers.insert(id, (p, !left));
-        self.rut_revision.fetch_add(1, Ordering::Relaxed);
+        self.advance_rut_revision();
     }
 
     /// A surface burst of `filler_kg` (TNT equivalent) at `point`: carve its crater.
@@ -595,14 +638,23 @@ impl Detail {
                 events.crater_grid.entry((cx, cz)).or_default().push(index);
             }
         }
+        // Publish the revision before releasing the event writer. All readers see a single
+        // event generation. At the compact static-cache tag wrap, remove every old alias.
+        let revision = self.crater_revision.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        if revision & 0x3fff == 0 {
+            for slot in &self.cache.slots { slot.store(u64::MAX, Ordering::Relaxed); }
+            self.bounds_cache.lock().unwrap().invalidate();
+        }
         drop(events);
-        self.crater_revision.fetch_add(1, Ordering::Relaxed);
         Some(crater)
     }
 
     pub fn set_openings(&self, rects: Vec<[f32; 4]>) {
         *self.openings.write().unwrap() = (rects, false);
     }
+
+    /// Read-only source for rebuilding presentation caches without changing the saved dirty flag.
+    pub(crate) fn openings_snapshot(&self) -> Vec<[f32; 4]> { self.openings.read().unwrap().0.clone() }
 
     /// The opening set if it changed since the last call (the renderer's upload queue).
     pub fn take_openings(&self) -> Option<Vec<[f32; 4]>> {
@@ -615,7 +667,9 @@ impl Detail {
     /// Rut pages changed since the last call (the renderer's upload queue).
     pub fn take_dirty_rut_pages(&self) -> Vec<((i32, i32), Vec<f32>)> {
         let mut events = self.events.write().unwrap();
-        let keys: Vec<_> = events.dirty.drain().collect();
+        let mut keys: Vec<_> = events.dirty.drain().collect();
+        // Upload order must survive a save/rebuild of the HashSet as well as its contents.
+        keys.sort_unstable();
         keys.into_iter().filter_map(|key| events.ruts.get(&key).map(|p| (key, p.to_vec()))).collect()
     }
 
@@ -636,6 +690,7 @@ pub fn wgsl_constants(detail: &Detail) -> String {
     let mut s = String::new();
     s.push_str(&format!("const TR_RES: u32 = {}u;\nconst TR_SPACING: f32 = {:?};\nconst TR_HALF: f32 = {:?};\n",
         detail.res, detail.spacing, detail.half));
+    s.push_str(&format!("const TR_RELIEF_BASE_WAVELENGTH_M: f32 = {RELIEF_BASE_WAVELENGTH_M:?};\n"));
     s.push_str(&format!("const TR_WIND: vec2<f32> = vec2<f32>({:?}, {:?});\n", detail.wind.x, detail.wind.y));
     s.push_str(&format!("const TR_OCTAVE_LEVEL_OFFSET: i32 = {OCTAVE_LEVEL_OFFSET};\n"));
     s.push_str(&format!("const TR_GEOMETRY_OCTAVES: i32 = {GEOMETRY_OCTAVES};\nconst TR_NORMAL_OCTAVES: i32 = {NORMAL_OCTAVES};\n"));
@@ -662,6 +717,27 @@ mod tests {
 
     fn flat(res: usize, class: u8, depth_cm: u8) -> Detail {
         Detail::new(res, 1.25, vec![0.0; res * res], vec![[class, depth_cm, 255, 128]; res * res], Vec2::X, "test".into()).unwrap()
+    }
+
+    #[test]
+    fn physical_relief_wavelength_is_independent_of_native_grid_spacing() {
+        // The 1 m fixture exposed the old shader's spacing-dependent wave scale:
+        // it produced 0.090304695 m here instead of the unchanged physical surface.
+        // Sample the continuous static field, not differently spaced lattice interpolation.
+        for spacing in [0.75, 1.0, RELIEF_BASE_WAVELENGTH_M, 2.5] {
+            let d = Detail::new(65, spacing, vec![0.0; 65 * 65],
+                vec![[SNOW, 40, 255, 128]; 65 * 65], Vec2::X, "wavelength-test".into()).unwrap();
+            assert!((d.static_height(0.625, 1.625, 0, 0.0) - 0.087_637_35).abs() < 1e-7);
+            let constants = wgsl_constants(&d);
+            assert!(constants.contains(&format!(
+                "const TR_RELIEF_BASE_WAVELENGTH_M: f32 = {RELIEF_BASE_WAVELENGTH_M:?};")));
+        }
+        // Both geometry and normal filtering must consume the same generated physical scale.
+        for shader in [include_str!("../shaders/rm_terrain.wgsl"),
+                       include_str!("../shaders/rm_terrain_gbuffer.wgsl")] {
+            assert!(shader.contains("ldexp(TR_RELIEF_BASE_WAVELENGTH_M, k)"));
+            assert!(!shader.contains("ldexp(TR_SPACING, k)"));
+        }
     }
 
     #[test]
@@ -737,6 +813,25 @@ mod tests {
         assert!(before - after > 0.3, "crater depth {}", before - after);
         // The thrown rim stands proud of the ground at the crater's edge.
         assert!(d.crater_at(3.0 + c.radius, 3.0) > 0.02);
+    }
+
+    #[test]
+    fn node_cache_far_indices_never_alias_representable_nodes() {
+        for ((near_i,near_j),(i,j)) in [((0,256),(1 << 17,0)),((0,0),(0,1 << 17)),((0,0),(u32::MAX,u32::MAX))] {
+            // Each pair intentionally shares the old packed key. Separate fixtures avoid
+            // confusing a valid direct-mapped replacement with a forbidden key alias.
+            let cache = NodeCache::new();cache.put(near_i,near_j,0,2.5);
+            assert_eq!(cache.get(i,j,0),None);cache.put(i,j,0,-100.);
+            assert_eq!(cache.get(near_i,near_j,0),Some(2.5));
+        }
+    }
+
+    #[test]
+    fn node_cache_empty_maximum_tag_is_a_miss_not_nan() {
+        let cache=NodeCache::new();let last=(1 << 17)-1;
+        assert_eq!(cache.get(last,last,0x3fff),None);
+        cache.put(last,last,0x3fff,-2.5);
+        assert_eq!(cache.get(last,last,0x3fff),Some(-2.5));
     }
 
     #[test]

@@ -24,6 +24,29 @@ use super::*;
 use crate::building_blueprint::ModuleKind as BuildingModuleKind;
 use crate::tank_support::{self, Line, Refusal, RestPlane, Settled, SupportSample};
 
+fn loaded_support_height(hf:&Heightfield,xz:Vec2,winter:bool,bridge:Option<f32>)->f32 {
+    if let Some(deck)=bridge{return deck;}
+    let height=hf.height_at(xz.x,xz.y);
+    if winter && hf.openings.at(xz.x,xz.y).is_none() {
+        height-crate::vehicle_ground::WINTER_TRACK_SINKAGE_M
+    }else{height}
+}
+
+#[cfg(test)]
+mod bridge_support_regression {
+    use super::*;
+    #[test]
+    fn winter_theatre_bridge_remains_hard_support_while_adjacent_snow_compacts() {
+        let hf=Heightfield{res:2,spacing:1.,heights:vec![3.;4],min_h:3.,max_h:3.,
+            openings:Default::default(),detail:None};
+        let bridge=expedition_theatre_game::Crossing{center:Vec2::ZERO,deck_y:5.,half_length:4.,half_width:2.};
+        assert_eq!(loaded_support_height(&hf,Vec2::ZERO,true,bridge.deck_at(Vec2::ZERO)),5.);
+        let beside=Vec2::new(0.,2.1);
+        assert_eq!(loaded_support_height(&hf,beside,true,bridge.deck_at(beside)),
+            3.-crate::vehicle_ground::WINTER_TRACK_SINKAGE_M);
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     /// Print every obstacle sample (exploration tests).
@@ -237,6 +260,7 @@ pub(super) struct TankSolid {
 /// The player hull's last settle: its pose, the plane its track bottoms lie on as it stands, and
 /// the rest plane its supports gave it (which the pose follows at a limited rate).
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct TankRest {
     pub pose: TankPose,
     pub plane: RestPlane,
@@ -246,6 +270,7 @@ pub(super) struct TankRest {
 /// Where the hull stands: position of the hull origin (ground contact under its centre), heading,
 /// nose-up pitch and left-up roll.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct TankPose {
     pub pos: Vec3,
     pub heading: f32,
@@ -344,20 +369,17 @@ impl Game {
         solids: &[TankSolid],
         rubble: &crate::building_set::LocalRubble<'_>,
     ) -> (f32, u32, Option<tank_support::Obstacle>) {
-        let mut height = if self.campaign_channel {
-            act2_bridge_deck_height(&self.hf, xz).unwrap_or_else(|| self.hf.height_at(xz.x, xz.y))
+        let bridge = if self.campaign_channel {
+            act2_bridge_deck_height(&self.hf, xz)
         } else {
-            self.hf.height_at(xz.x, xz.y)
+            self.expedition_deck_at(xz.x, xz.y)
         };
         // The winter snowpack compacts under the loaded track
         // (`vehicle_ground::WINTER_TRACK_SINKAGE_M`, 0.30 m of 0.40 m settled snow). This changes
         // the physical support pose, so hull, collision, ports and visuals agree. Cellar floors
         // and the authored bridge remain hard supports.
-        if self.act.season == crate::world::Season::Winter
-            && self.hf.openings.at(xz.x,xz.y).is_none()
-            && !(self.campaign_channel && act2_bridge_deck_height(&self.hf,xz).is_some()) {
-            height -= crate::vehicle_ground::WINTER_TRACK_SINKAGE_M;
-        }
+        let mut height = loaded_support_height(&self.hf,xz,
+            self.act.season == crate::world::Season::Winter,bridge);
         let mut source = SOURCE_TERRAIN;
         if let Some(hit) = rubble.top_at_from(xz, ref_y + tank_support::TIGER_STEP_M) {
             if hit.height > height {
@@ -565,6 +587,52 @@ impl Game {
         tank_support::settle(&samples, forward, pose.pitch.cos() * pose.roll.cos(), 0.0)
     }
 
+    /// A rolled Tiger settles about its drawn hull/turret contacts, including bridge, floor
+    /// and rubble supports. This is a bounded inelastic solver, not a full crash simulation.
+    fn settle_overturned_player(&mut self, dt: f32) -> bool {
+        if !self.player.overturned() { return false; }
+        let at = self.player.pos;
+        let solids = self.tank_solids(at);
+        let reach = Vec2::splat(TANK_SOLID_REACH_M);
+        let xz = Vec2::new(at.x, at.z);
+        let rubble = self.buildings.rubble_near(xz - reach, xz + reach);
+        let rubble_bounds = rubble.support_bounds(at.y + tank_support::TIGER_STEP_M);
+        let mut settled = self.player.clone();
+        // The player's turret remains attached in the authoritative player model.
+        crate::vehicle_ground::advance_rolled_hull_bounded(&mut settled, dt, true, |x,z| {
+            self.tank_support_at(Vec2::new(x,z),
+                (at.y, at.y + tank_support::TIGER_STEP_M, true), 3.0, &solids, &rubble).0
+        }, |lo,hi| {
+            let mut bound=bridge_support_upper_bound(&self.hf,self.campaign_channel,
+                self.theatre.as_ref().map(|t|t.crossings.as_slice()),lo,hi,self.hf.height_upper_bound(lo,hi));
+            for solid in &solids {
+                if solid.max.y<=at.y+tank_support::TIGER_STEP_M && solid.min.y<at.y+3.0
+                    && lo.x<=solid.max.x && hi.x>=solid.min.x && lo.y<=solid.max.z && hi.y>=solid.min.z {
+                    bound=bound.max(solid.max.y);
+                }
+            }
+            for &(min,max,height) in &rubble_bounds {
+                if lo.cmple(max).all() && hi.cmpge(min).all(){bound=bound.max(height);}
+            }
+            bound
+        });
+        drop(rubble);
+        self.player.pos = settled.pos;
+        self.player.pitch = settled.pitch;
+        self.player.roll = settled.roll;
+        self.player.speed = settled.speed;
+        self.player.ride = settled.ride;
+        self.tank_fall_vy = self.player.ride.vy;
+        self.tank_rest = None;
+        self.tank_ground.pitch_deg = self.player.pitch.to_degrees();
+        self.tank_ground.roll_deg = self.player.roll.to_degrees();
+        self.tank_ground.above_terrain_m = self.player.pos.y - self.hf.height_at(at.x, at.z);
+        self.tank_ground.falling = self.player.ride.vy < -0.5;
+        self.tank_ground.refused = "overturned";
+        self.tank_ground.carried_by = "overturned source body";
+        true
+    }
+
     /// Settle the player Tiger after its horizontal move from `before`: the rest pose on whatever
     /// its tracks meet, or, where a limit refuses the move, the pose where they meet the obstacle,
     /// which a crushable building module then takes crush damage at. `settle_loads` lets the
@@ -572,6 +640,7 @@ impl Game {
     /// vehicle contact, which has no renderer).
     pub(super) fn settle_player_tank(&mut self, before: TankPose, dt: f32, r: Option<&mut Renderer>) {
         let dt = if dt.is_finite() { dt.clamp(0.0, 0.1) } else { 0.0 };
+        if self.settle_overturned_player(dt) { return; }
         // The move the drive made (horizontal: on a pitched hull it covers `cos pitch` of it).
         let mut after = self.player_pose();
         // A zero-time call settles a contact projection that is already in world XZ.
@@ -668,6 +737,7 @@ impl Game {
         self.player.pos.y = self.player.ride.y;
         self.player.pitch = self.player.ride.pitch;
         self.player.roll = self.player.ride.roll;
+        if self.settle_overturned_player(0.0) { return; }
         let airborne = !placed && self.player.ride.load.iter().all(|&f| f <= 0.0);
         let falling = airborne && self.player.ride.vy < -0.5;
         self.tank_fall_vy = if falling { self.player.ride.vy } else { 0.0 };

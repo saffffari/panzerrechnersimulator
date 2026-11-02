@@ -4,7 +4,7 @@
   "title": "First-person winter Tiger compartment with five occupied crew posts",
   "caption": "CREW COMPARTMENT - STAGED LAN ROSTER - OTHER CREW IDLE",
   "act_id": 1,
-  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
   "night": false,
   "station": "loader",
   "seconds": 15,

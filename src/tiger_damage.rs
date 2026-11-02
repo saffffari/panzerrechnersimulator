@@ -19,6 +19,7 @@ use super::ModuleKind;
 /// The specific failure of a component. It decides what the component can still do and whether
 /// the crewman can put it right in the field ([`Fault::field_repair`]).
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Fault {
     #[default]
     None,
@@ -51,6 +52,7 @@ pub enum Fault {
 
 /// A spare part a repair consumes.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Spare {
     VisionBlock,
     TrackLink,
@@ -58,6 +60,7 @@ pub enum Spare {
 
 /// How the crewman puts a fault right in the field.
 #[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FieldRepair {
     pub seconds: f32,
     /// Done from outside the vehicle rather than from the fighting compartment.
@@ -117,6 +120,7 @@ impl Fault {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Side {
     /// Hull-local +x: the driver's side.
     Left,
@@ -132,6 +136,7 @@ impl Side {
 
 /// Where on the Tiger a strike landed.
 #[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Zone {
     /// Road wheels and the track run along one side; `track` when the strike is on the track
     /// band itself (bottom or top run) rather than on a wheel.
@@ -203,6 +208,11 @@ pub fn zone(hull_local: Vec3, turret_local: Vec3, on_turret_box: bool) -> Zone {
 /// Articulated source frames disambiguate the optic/shutter and gun from nearby armor. Other
 /// zones still require both the exact surface contact and their narrow geometric envelope.
 pub fn source_zone(hull_local:Vec3,turret_local:Vec3,source_frame:usize)->Zone {
+    if (super::workshop_runtime::engine::FIRST_ENGINE_FRAME..super::workshop_runtime::engine::FIRST_ENGINE_FRAME+4).contains(&source_frame) {
+        // A raised engine lid remains hull hardware even above the ordinary roof-height
+        // classifier. It cannot manufacture a cupola, gun-mount or turret-ring failure.
+        return Zone::HullWall;
+    }
     match source_frame {
         8=>Zone::GunnerSight,
         5|9|10|11=>Zone::DriverVisor,
@@ -384,6 +394,7 @@ pub fn effects(zone: Zone, strike: Strike, seed: u32) -> Vec<Effect> {
 
 /// A cupola vision block.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Block {
     #[default]
     Clear,
@@ -395,6 +406,7 @@ pub enum Block {
 
 /// Exterior condition and spare stowage of the player's Tiger.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Exterior {
     /// Road-wheel, swing-arm and torsion-bar condition per side (left, right): 1 intact, 0 at the
     /// worst this model allows — still mobile, as Zabel's Tiger was after two broken torsion bars.
@@ -447,6 +459,12 @@ impl Exterior {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn raised_engine_cover_remains_hull_hardware() {
+        for frame in super::super::workshop_runtime::engine::FIRST_ENGINE_FRAME..super::super::workshop_runtime::engine::FIRST_ENGINE_FRAME+4 {
+            for y in [1.95,2.05,3.20] {assert_eq!(source_zone(Vec3::new(0.0,y,-2.5),Vec3::new(0.0,1.845,1.4),frame),Zone::HullWall);}
+        }
+    }
 
     fn strike(calibre_mm: f32) -> Strike {
         Strike { calibre_mm, energy_kj: if calibre_mm<20.0 {30.0}else{1800.0}, penetrated: false, high_explosive: false }

@@ -219,7 +219,7 @@ impl Game {
             pos: self.enemies[i].center(), heading: self.enemies[i].heading, speed: self.enemies[i].speed })).collect();
         let struck = std::mem::take(&mut self.enemy_struck);
         let observations: Vec<_> = (0..self.enemies.len()).map(|i| {
-            let visible = live(i) && self.player.alive
+            let visible = live(i) && self.enemy_has_live_threat()
                 && self.winter_encounter.as_ref().unwrap().visible(i)
                 && self.stealth.spotted[i] && self.stealth.meters[i] >= 0.9;
             // The platoon's shared knowledge; the encounter lets only a leader act on it.
@@ -234,7 +234,7 @@ impl Game {
                 bore.dot(to.normalize_or_zero()) > GUN_ON_ME_COS
             });
             winter_encounter_ai::Observation {
-                visible: visible.then(|| self.enemy_threat_center(i)), radio_fix, on_foot:self.winter_foot_target(),
+                visible: visible.then(|| self.enemy_threat_center(i)), radio_fix, on_foot:self.winter_foot_target()&&!self.halftrack_occupied(),
                 heading: threat.map(|tank| tank.heading), gun_on_me,
                 struck: struck.get(i).copied().unwrap_or(false),
                 shots: self.enemy_gun_shots.get(i).copied().unwrap_or(0),
@@ -322,7 +322,9 @@ impl Game {
             .all(|offset| self.street_way_clear(from, p + forward * offset));
         let resolved = clip_winter_motion(from, to, clear);
         if resolved.distance_squared(to) > 1e-10 {
-            self.enemies[i].pos = Vec3::new(resolved.x, self.hf.vehicle_height_at(resolved.x,resolved.y),resolved.y);
+            let y = if self.enemies[i].overturned() { requested.y }
+                else { self.hf.vehicle_height_at(resolved.x,resolved.y) };
+            self.enemies[i].pos = Vec3::new(resolved.x, y, resolved.y);
             self.enemies[i].speed = 0.0;
         }
     }

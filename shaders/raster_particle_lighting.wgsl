@@ -47,7 +47,7 @@ fn particle_radiance(point:vec3<f32>,dust:bool)->vec3<f32> {
         let d2=max(dot(delta,delta),max(source.w*source.w,0.0025));
         let visibility=cabin_volume_light_shadow(source.xyz,source.w,point);if(all(visibility<=vec3(0.0))){continue;}
         let direction=delta*inverseSqrt(d2);let range=max(sqrt(d2)-source.w,0.0);
-        let tau=weather_optical_depth(point,direction,range,u.world_medium.yz,u.world_medium.x,u.medium_transport.x,u.medium_transport.yzw,24u)
+        let tau=weather_optical_depth(point,direction,range,u.world_medium.yz,u.world_medium.x,u.medium_transport.x,u.medium_transport.yzw,24u,u.snow_velocity.w)
             +max(u.world_medium.w,0.0)*cabin_path_length(point,direction,range);
         incident+=emission.rgb*max(emission.w,0.0)/d2*particle_phase(dot(view,direction),dust)*visibility*exp(-tau);
     }

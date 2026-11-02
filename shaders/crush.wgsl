@@ -68,10 +68,13 @@ fn camera_white_gain() -> vec3<f32> {
 fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
     let rods = obs_rod_response(scotopic, cr.rod_exposure, cr.rod_inverse_saturation);
+    // The outdoor night-visibility boost is unnecessary in a cabin with practical lamps and
+    // local range compression. Retain normal rod vision without washing out the lamps' colour.
+    let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));
     // The rod term is achromatic in the eye; it is reproduced in the cool mesopic hue
     // (observer::ROD_DISPLAY_HUE, luminance-neutral). Cones keep every source's own colour.
     return radiance * camera_white_gain() * cr.exposure
-        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * OBS_ROD_DISPLAY_GAIN);
+        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * rod_gain);
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright

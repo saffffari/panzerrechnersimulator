@@ -82,7 +82,7 @@ pub const F_DISMOUNTED: u16 = 1 << 9;
 /// K: toggle the living crew's standing order (fire at will / hold fire). A pulse, like the hatch.
 pub const F_FIRE_ORDER: u16 = 1 << 10;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize,serde::Deserialize)]
 #[repr(u8)]
 pub enum LanRole {
     #[default]

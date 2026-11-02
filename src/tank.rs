@@ -11,6 +11,10 @@ use crate::gltf_load::CpuMesh;
 use crate::prims::box_mesh;
 use crate::terrain::Heightfield;
 
+#[path = "vehicle_engagement.rs"]
+mod vehicle_engagement;
+pub(crate) use vehicle_engagement::range_keeping_maneuver;
+
 /// Fallback muzzle-clearance distance for the hitscan near-plane (so a shot never self-hits the
 /// firing tank). Real barrel length lives per-tank in `Parts::gun_len`.
 pub const GUN_LEN: f32 = 3.0;
@@ -104,6 +108,7 @@ pub(crate) fn gun_recoil_distance(age: f32) -> f32 {
 /// harmless default: only `Su100` changes the turret/gun transforms, and the player's kind is never
 /// read by the enemy AI / penetration paths.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum EnemyKind {
     T34,
     Su100,
@@ -210,6 +215,7 @@ pub fn yaw_obb_contact(a: HullFootprint, b: HullFootprint) -> Option<HullContact
 /// Per-tank rig geometry: pivot points and crew-eye offsets, extracted from the Blender bake so the
 /// baked hull/turret/gun GLBs articulate correctly. Tiger and T-34 differ, so this is not global.
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Parts {
     pub turret_pivot: Vec3, // hull-local: turret ring / traverse axis
     pub gun_trunnion: Vec3, // turret-local: gun elevation axis
@@ -410,6 +416,9 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
     // bright, it's like the sun inside the tank"). Named approximation: the face carries no
     // numerals (the source has no texture); the red needle reads against it.
     if material == Some("Illuminated Dial") {
+        // Owner preference (2026-10-30): the TPZ's original pale source face should glow amber
+        // under its modeled backlight. Preserve that material; other gauges retain black enamel.
+        if node == "turret position indicator backing" { return None; }
         return Some(crate::gltf_load::MaterialOverride {
             swatch: 5,
             base: [linear(DIAL_FACE_SRGB[0]), linear(DIAL_FACE_SRGB[1]), linear(DIAL_FACE_SRGB[2]), 1.0],
@@ -845,6 +854,7 @@ pub fn build_is3() -> [CpuMesh; 3] {
 }
 
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Tank {
     pub pos: Vec3, // ground contact
     pub heading: f32,
@@ -925,6 +935,7 @@ impl Tank {
     /// AI lay: slew the turret/gun toward a world target at the tank's own traverse/elevation
     /// rates (no instant snap). Returns true when the gun is laid within firing tolerance.
     pub fn ai_aim(&mut self, target: Vec3, dt: f32) -> bool {
+        if self.overturned() { return false; } // authored AI crew incapacity after inversion
         let hull = self.hull_model();
         // Azimuth follows the actual barrel line; elevation rotates about the trunnion, which
         // can be over a metre above the turret ring. Ring-based pitch aims a KV-2 above infantry.
@@ -969,6 +980,7 @@ impl Tank {
     /// at the AI elevation rate, holding `turret_yaw` welded at 0, and reports laid = the hull is
     /// pointed at the target (within tolerance) AND the gun elevation has settled. Used for `EnemyKind::Su100`.
     pub fn casemate_aim(&mut self, target: Vec3, dt: f32) -> bool {
+        if self.overturned() { return false; }
         self.turret_yaw = 0.0; // welded casemate — never traverses
         let hull = self.hull_model();
         // Elevation is measured about the trunnion; azimuth error is the hull's, closed by steering.
@@ -1009,6 +1021,18 @@ impl Tank {
         self.turret_model().transform_vector3(Vec3::Z).normalize()
     }
 
+    pub(crate) fn overturned(&self) -> bool {
+        self.ride.overturned || self.pitch.cos() * self.roll.cos() <= 0.0
+    }
+
+    /// A spring's most recent contact load is the existing support authority. Before its first
+    /// step, the rigid placement is supported; once all stations hang free, controls cannot
+    /// accelerate or yaw the chassis in the air.
+    fn tracks_carry_load(&self) -> bool {
+        !self.overturned() && (!self.ride.active || self.ride.load.is_empty()
+            || self.ride.load.iter().any(|&load| load > 0.0))
+    }
+
     /// drive/steer/traverse/elevate are command rates in [-1, 1].
     pub fn update(
         &mut self,
@@ -1037,6 +1061,16 @@ impl Tank {
         traction: TrackTraction,
     ) {
         let before = self.pos;
+        if self.overturned() {
+            self.speed = 0.0;
+            self.finish_update(before, traverse, elevate, dt, hf, true);
+            return;
+        }
+        if !self.tracks_carry_load() {
+            self.pos += self.forward() * self.speed * dt.max(0.0);
+            self.finish_update(before, traverse, elevate, dt, hf, true);
+            return;
+        }
         match (traction.left, traction.right) {
             (true, true) => {
                 // Mass and momentum (2026-10-28): the vehicle's own engine, gears, brakes and
@@ -1092,6 +1126,17 @@ impl Tank {
     pub(crate) fn update_player_powertrain(&mut self, state: &mut crate::powertrain::Powertrain,
         controls: crate::powertrain::Controls, traverse:f32, elevate:f32, dt:f32, hf:&Heightfield) {
         let before=self.pos;
+        if self.overturned() {
+            self.speed = 0.0;
+            // The player's source-floor solve runs after drive and owns the falling/contact clock.
+            self.finish_update(before, traverse, elevate, dt, hf, false);
+            return;
+        }
+        if !self.tracks_carry_load() {
+            self.pos += self.forward() * self.speed * dt.max(0.0);
+            self.finish_update(before, traverse, elevate, dt, hf, false);
+            return;
+        }
         let motion=state.advance(dt,self.speed,self.grade_pitch,controls);
         self.speed=motion.speed;
         if controls.left_track != controls.right_track {
@@ -1131,9 +1176,12 @@ impl Tank {
         self.pos.x = gated.x;
         self.pos.z = gated.y;
         if ride {
-            crate::vehicle_ground::settle_ride(self, dt, |x,z|hf.vehicle_height_at(x,z));
+            crate::vehicle_ground::settle_ride_bounded(self, dt, |x,z|hf.vehicle_height_at(x,z),
+                |lo,hi|hf.vehicle_height_upper_bound(lo,hi));
         } else {
-            crate::vehicle_ground::settle_rigid(self, |x,z|hf.vehicle_height_at(x,z));
+            if self.overturned(){crate::vehicle_ground::advance_rolled_hull_bounded(self,0.,!self.kind.casemate(),
+                |x,z|hf.vehicle_height_at(x,z),|lo,hi|hf.vehicle_height_upper_bound(lo,hi));}
+            else {crate::vehicle_ground::settle_rigid(self, |x,z|hf.vehicle_height_at(x,z));}
         }
 
         self.turret_yaw += traverse * TRAVERSE * dt;
@@ -1288,6 +1336,8 @@ mod tests {
             assert_eq!((dial.swatch, dial.metallic), (5, 0.0), "instrument faces are black enamel");
             assert!(dial.base[0] < 0.03, "a dial face is not a lamp: {:?}", dial.base);
         }
+        assert!(tiger_paint_finish("turret position indicator backing", Some("Illuminated Dial")).is_none());
+        assert!(tiger_paint_finish("Hull_0240", Some("Illuminated Dial")).unwrap().base[0] < 0.03);
         let floor = tiger_paint_finish("TURRET FLOOR", Some("Turret Floor")).unwrap();
         assert_eq!(floor.swatch, 2);
     }
@@ -1495,6 +1545,88 @@ mod tests {
         assert!(tank.heading < 0.4, "{}", tank.heading);
         approx(tank.turret_yaw, 0.5 * TRAVERSE * 1.0, 1e-4);
         approx(tank.gun_pitch, (-0.25 * ELEV_RATE * 1.0).max(GUN_MIN), 1e-4);
+    }
+
+    #[test]
+    fn ai_sustained_turn_does_not_overturn_on_level_ground() {
+        let hf = flat();
+        for drive in [0.45, 1.0] {
+            let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, T34_PARTS);
+            for frame in 0..(240 * 60) {
+                tank.update(drive, 1.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+                assert!(tank.pos.is_finite() && tank.pitch.is_finite() && tank.roll.is_finite());
+                assert!(tank.hull_model().transform_vector3(Vec3::Y).y > 0.0,
+                    "drive {drive} frame {frame}: position {:?}, pitch {}, roll {}, speed {}",
+                    tank.pos, tank.pitch, tank.roll, tank.speed);
+            }
+        }
+    }
+
+    #[test]
+    fn an_overturned_tank_cannot_drive_its_roof_through_the_ground() {
+        let hf = flat();
+        let mut tank = Tank::new(12.0, -8.0, 0.4, &hf, T34_PARTS);
+        tank.roll = std::f32::consts::PI;
+        tank.speed = 9.0;
+        let mut unpowered = tank.clone();
+        let old_heading = tank.heading;
+        for _ in 0..30 {
+            tank.update(1.0, 1.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+            unpowered.update(0.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+            assert_eq!(tank.pos, unpowered.pos, "inverted drive may not add powered travel");
+            assert_eq!((tank.pitch, tank.roll), (unpowered.pitch, unpowered.roll));
+            assert_eq!(tank.heading, old_heading);
+            assert_eq!(tank.speed, 0.0);
+            let support = crate::vehicle_ground::rolled_support_height(&tank, |x,z| hf.vehicle_height_at(x,z)).unwrap();
+            assert!(tank.pos.y >= support - 1e-5, "source body below terrain");
+        }
+    }
+
+    #[test]
+    fn airborne_tracks_cannot_add_speed_or_steering() {
+        let hf = flat();
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, T34_PARTS);
+        tank.speed = 4.0;
+        tank.pos.y = 20.0;
+        tank.ride_layout = Some(Box::new(crate::suspension::Layout::for_footprint(
+            &crate::vehicle_spec::T34_76, T34_PARTS.hull_half_extents)));
+        tank.ride.reset(20.0, 0.0, 0.0, Vec2::ZERO, tank.speed, tank.heading);
+        tank.ride.load = vec![0.0; 10];
+        tank.update(1.0, 1.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        assert_eq!(tank.speed, 4.0, "coast with existing momentum");
+        assert_eq!(tank.heading, 0.0, "no airborne steering");
+        assert!(tank.pos.y > 19.0, "airborne contact must not snap down to terrain");
+    }
+
+    #[test]
+    fn sustained_turn_on_slope_keeps_source_body_above_ground_after_any_rollover() {
+        let mut hf = Heightfield { res: 101, spacing: 4.0, heights: vec![0.0; 101 * 101],
+            min_h: -20.0, max_h: 20.0, openings: Default::default(), detail: None };
+        for z in 0..101 { for x in 0..101 { hf.heights[z * 101 + x] = (x as f32 * 4.0 - 200.0) * 0.1; } }
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, T34_PARTS);
+        let mut first_rollover_frame = None;
+        for frame in 0..(120 * 60) {
+            let unpowered = tank.overturned().then(|| {
+                let mut copy = tank.clone();
+                copy.update(0.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+                copy
+            });
+            tank.update(1.0, 1.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+            if let Some(copy) = unpowered {
+                assert_eq!(tank.pos, copy.pos, "gravity, not powered tracks, moves an overturned hull");
+                assert_eq!((tank.pitch, tank.roll), (copy.pitch, copy.roll));
+            }
+            assert!(tank.pos.is_finite());
+            if tank.overturned() {
+                first_rollover_frame.get_or_insert(frame);
+                let support = crate::vehicle_ground::rolled_support_height(&tank, |x,z| hf.vehicle_height_at(x,z)).unwrap();
+                assert!(tank.pos.y >= support - 1e-5, "frame {frame}: buried after rollover");
+                if frame - first_rollover_frame.unwrap() >= 30 { break; }
+            }
+        }
+        // Do not require a rollover: terrain/contact improvements may legitimately prevent one.
+        eprintln!("[vehicle-slope-review] first_rollover_frame={first_rollover_frame:?} final_position={:?} pitch={} roll={}",
+            tank.pos, tank.pitch, tank.roll);
     }
 
     #[test]

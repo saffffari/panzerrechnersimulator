@@ -53,6 +53,7 @@ pub(super) fn fielded(i: usize) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) enum Phase { Patrol, Investigate, Search, Track }
 impl Phase {
     pub fn name(self) -> &'static str {
@@ -63,6 +64,7 @@ impl Phase {
 
 /// Command within the platoon. Only a leader has a radio.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) enum Role {
     /// Carries the transceiver; chooses the platoon's movement and target.
     Leader,
@@ -121,6 +123,7 @@ pub(super) struct Hull {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Crew {
     role: Role,
     waypoint: usize,
@@ -171,6 +174,7 @@ const TURRET_EYE_M: f32 = 2.3;
 const HULL_EYE_M: f32 = 1.1;
 
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Assault {
     active: bool,
     /// The firing position the crew is making for or holding.
@@ -196,6 +200,7 @@ struct Assault {
 
 /// The last report a leader passed on the company net.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Relay {
     fix: Vec3,
     from: usize,
@@ -203,6 +208,7 @@ struct Relay {
     silent_s: f32,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct WinterEncounter {
     /// Each platoon's beat: a closed loop of corners.
     routes: Vec<Vec<Vec2>>,
@@ -241,6 +247,7 @@ const EYE_ABOVE_CENTRE_M: f32 = 1.0;
 
 /// The street district's ground: the measured drivable streets, each tank's current street route,
 /// and each leader's progress on the report it is closing on.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Streets {
     nav: StreetNav,
     legs: Vec<Option<Leg>>,

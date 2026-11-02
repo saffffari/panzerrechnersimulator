@@ -2,14 +2,16 @@
 
 ## First principle — environmental storytelling
 
-**Panzerrechnersystem is an environmental-storytelling game that tells one coherent story
-without a single spoken or written word, exclusively through the environments the player explores.**
+**Panzerrechnersystem tells its story through environments, people, physical objects, and the
+consequences of play. Written orders, radio transcripts, maps, names, and the physical repair
+manual are allowed. Spoken dialogue, voice-over, and spoken narration are excluded.**
 
 Every authored scene must therefore satisfy two non-negotiable rules:
 
-1. The player can understand its human event from space, objects, bodies, damage, absence, weather,
-   sound, and the consequences of action—never an exposition line, collectible diary, subtitle, or
-   readable lore note.
+1. The player should understand a scene's human event from space, objects, bodies, damage, absence,
+   weather, sound, and the consequences of action. Written material may establish objectives,
+   communicate practical information, and give people context; it should support the physical
+   scene rather than replace it with compulsory exposition.
 2. The scene is grounded in a specific real event or a well-attested recurring condition from the
    campaign's history. Record the source provenance in authoring metadata; do not invent atrocities,
    victims, or melodrama merely to make the game darker. The project is an anti-war work about a

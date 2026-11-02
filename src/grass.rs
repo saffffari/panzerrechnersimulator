@@ -166,6 +166,7 @@ impl Mask {
         density
     }
 }
+#[derive(serde::Serialize,serde::Deserialize)]
 struct Root {
     model: Mat4,
     position: Vec3,
@@ -176,6 +177,7 @@ struct Root {
     target_compression: f32,
     direction: Vec2,
 }
+#[derive(serde::Serialize,serde::Deserialize)]
 struct Layer {
     batch: usize,
     capacity: usize,
@@ -1080,5 +1082,17 @@ mod population_tests {
         grass.rebuild(Vec2::splat(20.0), &|_, _| 0.0);
         assert!(grass.layers[0].roots.len() > 8000);
         assert!(grass.layers[2].roots.len() > 1000);
+    }
+}
+
+impl Grass {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut fields=crate::capture_world_fields!(self; layers,mask_requested,winter,focus,seed,contact_revision);
+        fields.put("wind",&crate::expedition_world_save::ordered_map::Ref(&self.wind))?;
+        fields.put("tracks",&self.tracks.export_world_state()?)?;Ok(fields)
+    }
+    pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        self.wind=fields.take("wind")?;self.tracks.import_world_state(fields.take("tracks")?)?;
+        crate::restore_world_fields!(self,fields;layers,mask_requested,winter,focus,seed,contact_revision);Ok(())
     }
 }

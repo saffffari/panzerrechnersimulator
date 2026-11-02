@@ -1,0 +1,54 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "monochrome_map_20261030",
+  "title": "Physical monochrome map: open, mark, zoom, focus and close",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "loader",
+  "seconds": 4,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [1850, 250],
+    "player_heading_deg": 180,
+    "singleplayer_crew": true
+  },
+  "timeline": [
+    {"at_s": 0.25, "action": "map_open"},
+    {"from_s": 0.45, "until_s": 0.75, "input": {"mg_coax": true, "look_dx": 1.5, "look_dy": -0.4}},
+    {"at_s": 0.90, "action": "map_zoom", "steps": 2},
+    {"from_s": 1.20, "until_s": 1.60, "input": {"look_dx": -0.6, "look_dy": 0.8}},
+    {"at_s": 1.75, "action": "map_pin"},
+    {"at_s": 2.40, "action": "map_zoom", "steps": -2},
+    {"at_s": 3.50, "action": "map_close"}
+  ],
+  "expect": [
+    {"metric": "map_open", "at_s": 1, "equals": true},
+    {"metric": "map_held_3d", "at_s": 1, "equals": true},
+    {"metric": "held_map_zoom", "at_s": 1, "min_value": 1.38, "max_value": 1.40},
+    {"metric": "map_pins", "at_s": 2, "equals": 1},
+    {"metric": "held_map_zoom", "at_s": 3, "min_value": 1.0, "max_value": 1.01},
+    {"metric": "map_pencil_points", "min_value": 8},
+    {"metric": "map_pins", "equals": 1},
+    {"metric": "map_open", "equals": false},
+    {"metric": "map_held_3d", "equals": false},
+    {"metric": "main_gun_shots", "max_delta": 0},
+    {"metric": "tank_alive", "equals": true}
+  ],
+  "status": "prepared; capture and visual review pending",
+  "historical_scope": "Current-build input review on the actual selected Act One winter terrain, not a historical event reconstruction. Initial tank position, loader station and held enemy fire are disclosed fixture choices. This is the playtest constructor, not the completed expedition mission loop.",
+  "input_audit": "Reuse mechanic-review: ordinary Game player camera; set_map_held open/close; native wheel/+/- zoom_held_map; shared zoom-scaled pencil cursor and focus; ordinary pin action. The actual renderer prints current world cartography onto the physical folded sheet. No replacement map, camera FOV override, map-sheet award, scripted vehicle movement or annotation overlay is added.",
+  "visual_acceptance": [
+    "Paper is physically lit and occluded, with current monochrome road and actual building-outline print.",
+    "Inspect player marker and map detail; their correctness is not established merely by the input checks.",
+    "Pencil and pin remain registered while physical paper zooms and focus moves.",
+    "The ordinary loader view returns when the map closes."
+  ],
+  "limitations": [
+    "Four-second, 24 fps normal-speed scripted input recording; existing harness advances ordinary simulation/audio at 120 Hz.",
+    "Short open/mark/zoom/focus/close demonstration, not route finding, world traversal or a human usability test.",
+    "Playtest map availability and initial tank position are staged; this does not demonstrate campaign survey discovery or moving-marker accuracy.",
+    "Original gameplay sound is recorded. State checks must not be reported as visual acceptance."
+  ]
+}

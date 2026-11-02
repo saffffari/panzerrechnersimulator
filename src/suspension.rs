@@ -62,6 +62,7 @@ pub const TIGER_STATION_RUNS: [(f32, f32); 2] = [(-1.86, 2.14), (-1.91, 2.10)];
 /// One road-wheel station: hull-local position (x left, s forward), rate, damping coefficient,
 /// static deflection and travel.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Station {
     pub x: f32,
     pub s: f32,
@@ -81,7 +82,9 @@ pub enum End {
 
 /// The suspension of one vehicle as laid out on its drawn hull.
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Layout {
+    #[serde(with = "crate::expedition_world_save::vehicle_spec_ref")]
     pub spec: &'static VehicleSpec,
     /// Left side first (stations rear to front), then the right side.
     pub stations: Vec<Station>,
@@ -223,8 +226,13 @@ pub struct Ground {
 
 /// Integrated hull state and its per-station read-outs.
 #[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Ride {
     pub active: bool,
+    /// The track-supported model crossed onto its side/roof. This is latched until an explicit
+    /// placement resets the ride; ordinary terrain settlement must not silently right the hull.
+    /// `vehicle_ground` then owns bounded inelastic source-body support, not wheel springs.
+    pub overturned: bool,
     /// Height of the hull origin (the track bottoms' plane under the hull centre at static load).
     pub y: f32,
     pub vy: f32,
@@ -295,7 +303,7 @@ impl Ride {
     /// driving the load transfer.
     pub fn step(&mut self, layout: &Layout, ground: &Ground, speed: f32, heading: f32, dt: f32) {
         let n = layout.stations.len();
-        if !self.active || !dt.is_finite() || dt <= 0.0 || ground.wheel.len() != n {
+        if !self.active || self.overturned || !dt.is_finite() || dt <= 0.0 || ground.wheel.len() != n {
             return;
         }
         let mut wrap = heading - self.last_heading;
@@ -388,6 +396,10 @@ impl Ride {
             self.y += self.vy * h;
             self.pitch += self.pitch_rate * h;
             self.roll += self.roll_rate * h;
+            if self.pitch.cos() * self.roll.cos() <= 0.0 {
+                self.overturned = true;
+                break;
+            }
         }
         self.heave_accel = (self.vy - vy0) / dt;
         self.pitch_accel = (self.pitch_rate - wp0) / dt;
@@ -436,6 +448,7 @@ impl Ride {
 /// is reported at about 1.5-3 Hz with heavy damping; 1.8 Hz and 0.5 are taken], travel bounded at
 /// `HEAD_TRAVEL_M` (the neck's comfortable range).
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct HeadSway {
     pub offset: Vec3,
     velocity: Vec3,

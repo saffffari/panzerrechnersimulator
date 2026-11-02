@@ -40,6 +40,12 @@ struct ExposureClock {
 };
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
 
+// The same 256 strided accumulations used by the original single workgroup, distributed
+// across independent workgroups. Each lane's sample order and the final reduction tree stay
+// unchanged. This is scheduling only: no fewer pixels, changed meter or adaptation law.
+struct MeterSum { p: vec4<f32>, s: vec4<f32>, w: vec4<f32> };
+@group(0) @binding(3) var<storage, read_write> meter_sums: array<MeterSum, 256>;
+
 // Per-thread partial sums: linear photopic sums (field, gaussian, fovea, bright luminance),
 // linear scotopic sums (field, gaussian, fovea, bright count), weights (field, gaussian,
 // fovea, arithmetic photopic sum). Spatial integration happens before temporal log adaptation:
@@ -205,8 +211,7 @@ fn write_mapping(monocular: bool) {
     state[18] = flash_afterimage(state[10], state[11]);
 }
 
-@compute @workgroup_size(256)
-fn cs(@builtin(local_invocation_index) li: u32) {
+fn sample_meter(li: u32) -> MeterSum {
     let dim = vec2<f32>(textureDimensions(hdr));
     let grid = vec2<u32>(u32(OBS_GRID_X), u32(OBS_GRID_Y));
     let total = grid.x * grid.y;
@@ -258,9 +263,29 @@ fn cs(@builtin(local_invocation_index) li: u32) {
         }
         i += 256u;
     }
-    partial_p[li] = sp;
-    partial_s[li] = ss;
-    partial_w[li] = sw;
+    return MeterSum(sp, ss, sw);
+}
+
+@compute @workgroup_size(8)
+fn meter(@builtin(global_invocation_id) id: vec3<u32>) {
+    meter_sums[id.x] = sample_meter(id.x);
+}
+
+@compute @workgroup_size(256)
+fn cs(@builtin(local_invocation_index) li: u32) {
+    finish_meter(li, meter_sums[li]);
+}
+
+// Retained solely for matched benchmark/regression comparison with the original scheduling.
+@compute @workgroup_size(256)
+fn cs_serial(@builtin(local_invocation_index) li: u32) {
+    finish_meter(li, sample_meter(li));
+}
+
+fn finish_meter(li: u32, sum: MeterSum) {
+    partial_p[li] = sum.p;
+    partial_s[li] = sum.s;
+    partial_w[li] = sum.w;
     workgroupBarrier();
     var stride = 128u;
     loop {

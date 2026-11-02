@@ -22,6 +22,7 @@ pub(super) enum Align {
 }
 
 /// A recording waiting to start (a strike timed to land later).
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Pending {
     pub wait_s: f32,
     pub mono: std::sync::Arc<[f32]>,

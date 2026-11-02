@@ -55,7 +55,7 @@ fn grain_point(index:u32,seed:u32,soot:bool)->vec3<f32>{
 }
 fn grain_tau(world:vec3<f32>)->f32{
     let delta=world-sm.cam_pos;let distance_m=length(delta);let ray=delta/max(distance_m,0.0001);
-    var tau=weather_optical_depth(sm.cam_pos,ray,distance_m,sm.fog_layer.xy,max(sm.fog_density,0.0),sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x));
+    var tau=weather_optical_depth(sm.cam_pos,ray,distance_m,sm.fog_layer.xy,max(sm.fog_density,0.0),sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x),sm.weather_motion.w);
     for(var i=0;i<12;i+=1){let p=sm.puffs[i];if(p.strength<=0.0 || p.age<0.0 || p.age>=PUFF_LIFE){continue;}
         let s=puff_shape(p);tau+=volume_depth(sm.cam_pos,ray,sphere_interval(sm.cam_pos,ray,s.xyz,s.w),distance_m,i).x;}
     if(sm.breech_gas.strength>0.0 && sm.breech_gas.age<2.2){let s=gas_shape(sm.breech_gas);tau+=volume_depth(sm.cam_pos,ray,sphere_interval(sm.cam_pos,ray,s.xyz,s.w),distance_m,12).x;}

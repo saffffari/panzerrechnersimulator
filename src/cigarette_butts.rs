@@ -12,6 +12,7 @@ const WORLD: u8 = 2;
 const MAX_FLIGHT_S: f32 = 4.0;
 
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Butt {
     pub active: bool,
     flying: bool,

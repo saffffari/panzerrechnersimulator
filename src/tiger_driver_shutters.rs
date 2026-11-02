@@ -18,6 +18,7 @@ pub struct Source {
     pub moving: [CpuMesh; 3],
 }
 #[derive(Default, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Shutters {
     pub open: bool,
     pub phase: f32,

@@ -1,0 +1,1343 @@
+{
+  "schema": "panzer.tiger-engine-service.v1",
+  "asset_root": "assets/tanks/tiger/workshop_engine/",
+  "service_enabled": true,
+  "source_hull": "assets/tanks/tiger/baked/tiger_hull.glb",
+  "source_hull_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+  "source_turret": "assets/tanks/tiger/baked/tiger_turret.glb",
+  "source_turret_sha256": "20f86e9bacd1487869d42b59e40f86e0548af0a3626e57c250272b21f546e195",
+  "coordinate_frame": "Assembly meshes use original hull metres. Service-part meshes use original turret metres. Every GLB node transform is identity. Lid children multiply parent hull pose, lid hinge transform, then child hinge transform. Turret-to-hull is translation(0,.524,.019) times Y-yaw rotation.",
+  "original_source_modified": false,
+  "removed_roots": {
+    "hull": [
+      "Hull_0975",
+      "Hull_0895",
+      "Hull_0896",
+      "Hull_0899",
+      "Hull_0999",
+      "Hull_0930",
+      "Hull_0931",
+      "Hull_0932",
+      "Hull_0933",
+      "Hull_1068"
+    ],
+    "turret": [
+      "Turret_0132",
+      "Turret_0153"
+    ]
+  },
+  "fixed_replacements": [],
+  "assemblies": [
+    {
+      "id": "lid",
+      "role": "lid",
+      "parent_frame": "hull",
+      "parent_assembly": null,
+      "files": [
+        "engine_cover_leaf.glb",
+        "native_hull_0895.glb",
+        "native_hull_0896.glb",
+        "native_hull_0899.glb",
+        "native_hull_0999.glb",
+        "native_hull_0930.glb",
+        "native_hull_0931.glb",
+        "engine_latch_base.glb"
+      ],
+      "source_roots": [
+        "Hull_0975",
+        "Hull_0895",
+        "Hull_0896",
+        "Hull_0899",
+        "Hull_0999",
+        "Hull_0930",
+        "Hull_0931"
+      ],
+      "hinge_hull_m": [
+        0,
+        2.00876401746,
+        -2.62762745377
+      ],
+      "axis_hull": [
+        1,
+        0,
+        0
+      ],
+      "closed_angle_deg": 0,
+      "open_angle_deg": -90,
+      "source_root": "Hull_0895",
+      "source_node": 871,
+      "source_triangle": 1068,
+      "source_contact_hull_m": [
+        -0.5077218509840643,
+        2.0689596444324345,
+        -1.463924626656232
+      ],
+      "source_normal_hull": [
+        0.11196059292844188,
+        0.9937126474142873,
+        0.0
+      ]
+    },
+    {
+      "id": "left_lock",
+      "role": "left_lock",
+      "parent_frame": "hull",
+      "parent_assembly": "lid",
+      "files": [
+        "engine_left_lock.glb"
+      ],
+      "source_roots": [
+        "Hull_0932"
+      ],
+      "hinge_hull_m": [
+        -0.60617610833,
+        2.06130580722,
+        -1.74025518
+      ],
+      "axis_hull": [
+        0,
+        0,
+        1
+      ],
+      "closed_angle_deg": 0,
+      "open_angle_deg": 110,
+      "source_root": "Hull_0932",
+      "source_node": 908,
+      "source_triangle": 185,
+      "source_contact_hull_m": [
+        -0.5516883830229441,
+        2.084657669067383,
+        -1.7312740484873455
+      ],
+      "source_normal_hull": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "original_source_contact_hull_m": [
+        -0.5516883746038607,
+        2.0846576688483083,
+        -1.7311740760743153
+      ],
+      "contact_geometry_note": "Same source triangle index; centroid updated through the measured150micrometre axial fit derivative."
+    },
+    {
+      "id": "right_lock",
+      "role": "right_lock",
+      "parent_frame": "hull",
+      "parent_assembly": "lid",
+      "files": [
+        "engine_right_lock.glb"
+      ],
+      "source_roots": [
+        "Hull_0933"
+      ],
+      "hinge_hull_m": [
+        0.60812212388,
+        2.06130580722,
+        -1.74025518
+      ],
+      "axis_hull": [
+        0,
+        0,
+        1
+      ],
+      "closed_angle_deg": 0,
+      "open_angle_deg": -110,
+      "source_root": "Hull_0933",
+      "source_node": 909,
+      "source_triangle": 186,
+      "source_contact_hull_m": [
+        0.553634375333786,
+        2.084657669067383,
+        -1.7312740484873455
+      ],
+      "source_normal_hull": [
+        -0.0,
+        1.0,
+        0.0
+      ],
+      "original_source_contact_hull_m": [
+        0.5536343776453757,
+        2.0846576688483083,
+        -1.7311740760743153
+      ],
+      "contact_geometry_note": "Same source triangle index; centroid updated through the measured150micrometre axial fit derivative."
+    },
+    {
+      "id": "rear_latch",
+      "role": "rear_latch",
+      "parent_frame": "hull",
+      "parent_assembly": "lid",
+      "files": [
+        "engine_latch_arm.glb"
+      ],
+      "source_roots": [
+        "Hull_1068"
+      ],
+      "hinge_hull_m": [
+        -0.2306,
+        2.034063,
+        -2.4393255
+      ],
+      "axis_hull": [
+        1,
+        0,
+        0
+      ],
+      "closed_angle_deg": 0,
+      "open_angle_deg": 90,
+      "source_root": "Hull_1068",
+      "source_node": 1044,
+      "source_triangle": 343,
+      "source_contact_hull_m": [
+        -0.2297350536960252,
+        2.074338926689118,
+        -2.514452867144238
+      ],
+      "source_normal_hull": [
+        -0.0,
+        0.965925618173637,
+        0.25881982179863494
+      ]
+    }
+  ],
+  "service_parts": [
+    {
+      "id": "carrier_plate",
+      "source_root": "Turret_0132",
+      "source_node": 100,
+      "file": "native_turret_0132.glb",
+      "parent_frame": "turret",
+      "source_triangle": 105,
+      "source_contact_turret_m": [
+        -1.4870829553387732,
+        1.759820272216179,
+        -0.05424328426556713
+      ],
+      "source_normal_turret": [
+        -0.5210907685005244,
+        0.0,
+        0.8535012659530933
+      ],
+      "source_mount_axis_turret": [
+        0.9999648573663572,
+        1.4465746324667726e-19,
+        0.008383557256970412
+      ],
+      "withdrawal_axis_turret": [
+        -0.9999648573663571,
+        -1.4465746324667724e-19,
+        -0.00838355725697041
+      ],
+      "withdrawal_path_turret_m": [
+        [
+          -0.15999437717861717,
+          -2.3145194119468362e-20,
+          -0.001341369161115266
+        ]
+      ],
+      "mass_kg_estimate": 1.2934110490701343,
+      "mass_estimate_basis": "Closed source solid volume multiplied by assumed steel density7850kg/m3; not a historical measured mass.",
+      "required_absent_source_roots": [
+        "Turret_0128",
+        "Turret_0147"
+      ],
+      "identity_retained": true,
+      "source_geometry_modified": false,
+      "withdrawal_validation": "All source-vertex straight translation paths clear against current turret source with both spare shoes0128/0147 absent; full-face admission and ordered removal gameplay still required.",
+      "procedure_scope": "Component-level release and measured withdrawal; no modeled thread-pitch or fastener mechanics claim."
+    },
+    {
+      "id": "lower_retainer",
+      "source_root": "Turret_0153",
+      "source_node": 118,
+      "file": "native_turret_0153.glb",
+      "parent_frame": "turret",
+      "source_triangle": 339,
+      "source_contact_turret_m": [
+        -1.4688391569899295,
+        1.5910556943988372,
+        -0.4032909740382138
+      ],
+      "source_normal_turret": [
+        -0.9261730443036031,
+        0.12214771315725842,
+        -0.3567680313254652
+      ],
+      "source_mount_axis_turret": [
+        0,
+        1,
+        0
+      ],
+      "withdrawal_axis_turret": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "withdrawal_path_turret_m": [
+        [
+          0,
+          0.06,
+          0
+        ],
+        [
+          -0.15,
+          0,
+          0
+        ]
+      ],
+      "mass_kg_estimate": 0.24362270591581414,
+      "mass_estimate_basis": "Closed source solid volume multiplied by assumed steel density7850kg/m3; not a historical measured mass.",
+      "required_absent_source_roots": [
+        "Turret_0147"
+      ],
+      "identity_retained": true,
+      "source_geometry_modified": false,
+      "withdrawal_validation": "All source-vertex straight translation paths clear against current turret source with both spare shoes0128/0147 absent; full-face admission and ordered removal gameplay still required.",
+      "procedure_scope": "Component-level release and measured withdrawal; no modeled thread-pitch or fastener mechanics claim."
+    }
+  ],
+  "files": [
+    {
+      "file": "native_hull_0895.glb",
+      "sha256": "8b0a890ec3d24a1f4aa5d48480e5eec81fdd407c1b9ff5b2b4c72383c5f1120a",
+      "metrics": {
+        "vertices": 1360,
+        "triangles": 2232,
+        "min": [
+          -0.5244445164616707,
+          1.9756822041818225,
+          -1.674091319310719
+        ],
+        "max": [
+          -0.493308681055467,
+          2.069089746647336,
+          -1.3315972385831856
+        ],
+        "area_m2": 0.043817992442468444,
+        "volume_m3": 0.00032726434262305435,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.764951136270004e-06,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0895",
+      "source_node": 871,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "native_hull_0896.glb",
+      "sha256": "303c7afc3b34532136ca9db3a1ba86204a88d22ec2f7394985ab410ea08d748a",
+      "metrics": {
+        "vertices": 1360,
+        "triangles": 2232,
+        "min": [
+          0.4952546164649192,
+          1.9756822041818225,
+          -1.674091319310719
+        ],
+        "max": [
+          0.5263904518711229,
+          2.069089746647336,
+          -1.3315972385831856
+        ],
+        "area_m2": 0.043817988439111055,
+        "volume_m3": 0.00032726431316807406,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.764951136270004e-06,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0896",
+      "source_node": 872,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "native_hull_0899.glb",
+      "sha256": "3eebb03df1d56650c66f7a21a119537bf015bb73a04404b3f99194ac4fb61001",
+      "metrics": {
+        "vertices": 1996,
+        "triangles": 1972,
+        "min": [
+          -0.360981343267639,
+          1.9834661796299429,
+          -1.619603818935957
+        ],
+        "max": [
+          0.3629272195807971,
+          2.0749276984010976,
+          -1.4386268050880062
+        ],
+        "area_m2": 0.39646132965575087,
+        "volume_m3": 0.005658262595031282,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.079464820323364e-06,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0899",
+      "source_node": 875,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "native_hull_0999.glb",
+      "sha256": "c55f4bc99e4f39764bbfa4b829717b9eeeb3e92e51845f29d5dbf701610642cf",
+      "metrics": {
+        "vertices": 2658,
+        "triangles": 3170,
+        "min": [
+          -0.2714657330708832,
+          2.018494002415906,
+          -2.3902160820113068
+        ],
+        "max": [
+          0.2734116765129002,
+          2.131361419355983,
+          -1.845338726797877
+        ],
+        "area_m2": 0.6269285365591983,
+        "volume_m3": 0.01639103504798622,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.6169653453720163e-08,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0999",
+      "source_node": 975,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "native_hull_0930.glb",
+      "sha256": "385748c100c2a1f3bd63c8e85a6fd92264ac6541a5132ad004dfeb1fd27e393c",
+      "metrics": {
+        "vertices": 801,
+        "triangles": 670,
+        "min": [
+          -0.6314740417787874,
+          1.983466289620651,
+          -1.7869589816004918
+        ],
+        "max": [
+          -0.4816327183494309,
+          2.0866038055703484,
+          -1.693551294147369
+        ],
+        "area_m2": 0.056989533290898155,
+        "volume_m3": 0.0004631696071380142,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.0802595460252217e-06,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0930",
+      "source_node": 906,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "native_hull_0931.glb",
+      "sha256": "9fb42e8e2945ed7a44805f72063fbf22cafe2cbd748a6fbdf25068664bcb445a",
+      "metrics": {
+        "vertices": 801,
+        "triangles": 670,
+        "min": [
+          0.483578656965733,
+          1.983466289620651,
+          -1.786959001800824
+        ],
+        "max": [
+          0.6334199441481871,
+          2.0866038055703484,
+          -1.693551314347701
+        ],
+        "area_m2": 0.05698953491697073,
+        "volume_m3": 0.0004631696293427639,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.0802824619864195e-06,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0931",
+      "source_node": 907,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "native_hull_0932.glb",
+      "sha256": "600e4ae70f68240f62b5cf53e7886f9744999fa39ba3b204513fdb879a4a4b79",
+      "metrics": {
+        "vertices": 363,
+        "triangles": 288,
+        "min": [
+          -0.6295085045739484,
+          2.0380319009494485,
+          -1.7616610073520178
+        ],
+        "max": [
+          -0.4427128842294934,
+          2.0846576688483083,
+          -1.7188493560017832
+        ],
+        "area_m2": 0.022213648665109574,
+        "volume_m3": 0.00014221414022850884,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 8.347710201899763e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0932",
+      "source_node": 908,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "native_hull_0933.glb",
+      "sha256": "e9e6f79740d9ace721bb2a80172be680caf025e273ebb2f9f0d777ed2585d3de",
+      "metrics": {
+        "vertices": 385,
+        "triangles": 288,
+        "min": [
+          0.4446589114356101,
+          2.0380319009494485,
+          -1.7616610073520178
+        ],
+        "max": [
+          0.6314544592862603,
+          2.0846576688483083,
+          -1.7188493560017832
+        ],
+        "area_m2": 0.022213643596317056,
+        "volume_m3": 0.00014221410438738393,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 8.34901722101221e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0933",
+      "source_node": 909,
+      "derivative": "none; source transform baked to hull metres"
+    },
+    {
+      "file": "engine_cover_leaf.glb",
+      "sha256": "e9be8c38dee83713ff98ff8675e2a2a9f0ce8731dc3ca11473f2ecdd8b032f9d",
+      "metrics": {
+        "vertices": 17883,
+        "triangles": 6700,
+        "min": [
+          -0.5886622071266174,
+          1.948438286781311,
+          -2.6587631702423096
+        ],
+        "max": [
+          0.5906081199645996,
+          2.0535218715667725,
+          -1.3121376037597656
+        ],
+        "area_m2": 3.434321796781087,
+        "volume_m3": 0.06678179434423256,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 8.58335624798201e-12,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0975",
+      "derivative_receipt": "artifacts/workshop-source-20261030/engine_cover_knuckle_candidate.json"
+    },
+    {
+      "file": "engine_latch_base.glb",
+      "sha256": "00bcfc9138ae5df31e44d43e2a9ef3d42c7b31f454b7394dccaf0d5d2fea1b1e",
+      "metrics": {
+        "vertices": 3985,
+        "triangles": 1556,
+        "min": [
+          -0.2500598430633545,
+          1.983466386795044,
+          -2.462677478790283
+        ],
+        "max": [
+          -0.21114003658294678,
+          2.0531628131866455,
+          -2.415973663330078
+        ],
+        "area_m2": 0.013700311767080406,
+        "volume_m3": 7.711208811235562e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.7536194718559273e-11,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1068",
+      "derivative_receipt": "artifacts/workshop-source-20261030/engine_latch_split_candidate.json"
+    },
+    {
+      "file": "engine_latch_arm.glb",
+      "sha256": "4d200b7fd8a1bd1bcd48780bfecad15ae2a283d1a7b260c442da393fb6d9d9d1",
+      "metrics": {
+        "vertices": 10828,
+        "triangles": 4222,
+        "min": [
+          -0.2500598430633545,
+          2.0102999210357666,
+          -2.656362295150757
+        ],
+        "max": [
+          -0.21114003658294678,
+          2.1269240379333496,
+          -2.415973663330078
+        ],
+        "area_m2": 0.04286990854069666,
+        "volume_m3": 0.0003075096784358348,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.5722889656899497e-10,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1068",
+      "derivative_receipt": "artifacts/workshop-source-20261030/engine_latch_arm_csg_candidate.json",
+      "prior_rejected_deformation_receipt": "artifacts/workshop-source-20261030/latch_head_clearance_candidate.json"
+    },
+    {
+      "file": "engine_left_lock.glb",
+      "sha256": "a617464afa9d5740001af442b1f77f35dc7b57a81e5e5edb065b5f04b05396bb",
+      "metrics": {
+        "vertices": 407,
+        "triangles": 288,
+        "min": [
+          -0.6295084953308105,
+          2.038031816482544,
+          -1.7615110874176025
+        ],
+        "max": [
+          -0.4427128732204437,
+          2.084657669067383,
+          -1.7189992666244507
+        ],
+        "area_m2": 0.022058602051281618,
+        "volume_m3": 0.00014039367535860177,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 7.79127518057976e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0932",
+      "derivative_receipt": "artifacts/workshop-source-20261030/engine_side_lock_axial_candidates.json",
+      "prior_radial_derivative_receipt": "artifacts/workshop-source-20261030/engine_side_lock_candidates.json"
+    },
+    {
+      "file": "engine_right_lock.glb",
+      "sha256": "72ba16335434ddd5b4f26f49e129948f8b0f7e7b19bc9e07c8b836684131c7e1",
+      "metrics": {
+        "vertices": 408,
+        "triangles": 288,
+        "min": [
+          0.44465890526771545,
+          2.038031816482544,
+          -1.7615110874176025
+        ],
+        "max": [
+          0.6314544677734375,
+          2.084657669067383,
+          -1.7189992666244507
+        ],
+        "area_m2": 0.02205859620063682,
+        "volume_m3": 0.00014039363757517912,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 7.791756786446058e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_0933",
+      "derivative_receipt": "artifacts/workshop-source-20261030/engine_side_lock_axial_candidates.json",
+      "prior_radial_derivative_receipt": "artifacts/workshop-source-20261030/engine_side_lock_candidates.json"
+    },
+    {
+      "file": "native_turret_0132.glb",
+      "sha256": "5911a8ac1120392fbce5abf1032ca5ea69794215f9e0cb1e6c9c3bc8032cabde",
+      "metrics": {
+        "vertices": 491,
+        "triangles": 376,
+        "min": [
+          -1.5064147815895694,
+          1.7533336232267231,
+          -0.1417579503316233
+        ],
+        "max": [
+          -1.3815437679673437,
+          1.7727935701950912,
+          -0.032786277964305555
+        ],
+        "area_m2": 0.025577019073725213,
+        "volume_m3": 0.00016476573873504895,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 6.914107825279485e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Turret_0132",
+      "source_node": 100,
+      "parent_frame": "turret",
+      "derivative": "none; source transform baked to turret metres"
+    },
+    {
+      "file": "native_turret_0153.glb",
+      "sha256": "deadfd049f348188fc2333d50854551abc560fe215e8cc609979dfbe8f383f89",
+      "metrics": {
+        "vertices": 1157,
+        "triangles": 1346,
+        "min": [
+          -1.492574788561683,
+          1.5626264756039916,
+          -0.4128288389398449
+        ],
+        "max": [
+          -1.4225201103789118,
+          1.6171141966265736,
+          -0.38558479719404204
+        ],
+        "area_m2": 0.007794401927631377,
+        "volume_m3": 3.103473960711008e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 4.131956952046806e-08,
+        "finite_attributes": true
+      },
+      "source_root": "Turret_0153",
+      "source_node": 118,
+      "parent_frame": "turret",
+      "derivative": "none; source transform baked to turret metres"
+    }
+  ],
+  "unused_source_copies": [
+    "native_hull_0932.glb",
+    "native_hull_0933.glb"
+  ],
+  "prerequisites": [
+    "Engine stopped; vehicle stationary.",
+    "Physically remove and retain right spare shoesTurret_0128(front) andTurret_0147(rear), then carrier plateTurret_0132 and lower wing retainerTurret_0153. Never hide these source roots without equivalent finite native objects.",
+    "Release both side locks and rear latch before raising lid.",
+    "Candidate turret window64-68degrees right: runtime yaw-68 to-64degrees. Test actual source full-face swept admission before allowing motion.",
+    "This source kit requires more removable hardware than the surveyed real-Tiger procedure; keep the discrepancy explicit."
+  ],
+  "sweep_validation": {
+    "method": "CPU source-vertex trajectory rays,1degree rotation intervals; not a full-face or continuous solid sweep.",
+    "side_locks": "All derivative vertices including the full length of the9.40mm-radius moving pins: zero hits over0 to+110 and0 to-110degrees against actual closed hull and fixed side blocks.",
+    "rear_latch": "Active CSG arm: zero full static triangle intersections against source scene/base at0.25degree intervals from0to90degrees. Continuous runtime sweep pending; previous vertex-only result did not establish face clearance.",
+    "combined": "11344 unique vertices of corrected leaf, both handles, attached covers, blocks, preopened locks, new latch base and preopened arm checked at yaw-64,-65,-66,-67,-68degrees. Only16 separating initial fitted-seam contacts under0.3micrometre; no other vertex-path hits. Actual0132/0153/0147 absent;0128 remained present for this lid check.",
+    "service_parts": "0132:190 vertices,160mm opposite source stud axis.0153:675 vertices,60mm up then150mm outboard. Zero vertex-trajectory hits with both shoes0128/0147 absent.",
+    "runtime_full_face_admission_pending": true,
+    "receipts": [
+      "artifacts/workshop-source-20261030/engine_side_lock_motion_probe.json",
+      "artifacts/workshop-source-20261030/latch_head_clearance_motion_probe.json",
+      "artifacts/workshop-source-20261030/lid_service_removed_prerequisites_probe.json",
+      "artifacts/workshop-source-20261030/engine_service_hardware_withdrawal_both_shoes.json",
+      "artifacts/workshop-source-20261030/engine_side_lock_axial_candidates.json",
+      "artifacts/workshop-source-20261030/engine_latch_arm_csg_candidate.json"
+    ],
+    "side_lock_axial_fit": "Both moving wing end faces inset150micrometres; pin sections move inward equally so their axial lengths remain unchanged. Zero full static triangle intersections at0.25degree intervals through110degrees for both sides. Actual continuous runtime sweep pending."
+  },
+  "candidate_turret_yaw_window_deg": [
+    -68,
+    -64
+  ],
+  "authored_changes": {
+    "lid": {
+      "status": "CANDIDATE ONLY; not deployed or path-certified",
+      "source_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+      "source_root": "Hull_0975",
+      "source": {
+        "vertices": 4423,
+        "triangles": 4418,
+        "min": [
+          -0.5886622345229853,
+          1.9484382955149044,
+          -2.6587631074842193
+        ],
+        "max": [
+          0.5906081159682799,
+          2.0535218351589606,
+          -1.3121376190302954
+        ],
+        "area_m2": 3.4350853853152263,
+        "volume_m3": 0.06717370157815977,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.3834650191422225e-09,
+        "finite_attributes": true
+      },
+      "derivative": {
+        "vertices": 17883,
+        "triangles": 6700,
+        "min": [
+          -0.5886622071266174,
+          1.948438286781311,
+          -2.6587631702423096
+        ],
+        "max": [
+          0.5906081199645996,
+          2.0535218715667725,
+          -1.3121376037597656
+        ],
+        "area_m2": 3.434321796781087,
+        "volume_m3": 0.06678179434423256,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 8.58335624798201e-12,
+        "finite_attributes": true
+      },
+      "sha256": "a5fe3174bb9b685d09d8e646be843e5c6396cd82f7467da742ca826d2f2c029a",
+      "journal_radius_m": 0.016,
+      "source_journal_radius_m": 0.0155678724281,
+      "heel_radius_m": 0.0541,
+      "segments": 256,
+      "removed_volume_m3": 0.00039190723392720783,
+      "removed_fraction": 0.00583423608822875
+    },
+    "latch_split": {
+      "source_root": "Hull_1068",
+      "source_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+      "source_metrics": {
+        "vertices": 742,
+        "triangles": 678,
+        "min": [
+          -0.2500598517549051,
+          1.9834663959168495,
+          -2.656362293010602
+        ],
+        "max": [
+          -0.2111400303119737,
+          2.126924096135582,
+          -2.415973706428531
+        ],
+        "area_m2": 0.047390268911903864,
+        "volume_m3": 0.00040789385554080193,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.8398054784606819e-07,
+        "finite_attributes": true
+      },
+      "axis_hull": [
+        1,
+        0,
+        0
+      ],
+      "pivot_hull_m": [
+        -0.2306,
+        2.034063,
+        -2.4393255
+      ],
+      "pedestal_fixed_top_m": 2.0097,
+      "pedestal_arm_bottom_m": 2.0103,
+      "clevis_slot_x_m": [
+        -0.2367,
+        -0.2245
+      ],
+      "clevis_slot_radius_m": 0.035,
+      "journal_base_radius_m": 0.0191,
+      "journal_arm_clearance_radius_m": 0.0197,
+      "files": [
+        {
+          "file": "artifacts\\workshop-source-20261030\\engine_latch_base_candidate.glb",
+          "sha256": "b5b41d75d745e4960f8457f207fe2267de98159c5b1c1dd186816e650bd84626",
+          "metrics": {
+            "vertices": 3985,
+            "triangles": 1556,
+            "min": [
+              -0.2500598430633545,
+              1.983466386795044,
+              -2.462677478790283
+            ],
+            "max": [
+              -0.21114003658294678,
+              2.0531628131866455,
+              -2.415973663330078
+            ],
+            "area_m2": 0.013700311767080406,
+            "volume_m3": 7.711208811235562e-05,
+            "boundary_edges": 0,
+            "nonmanifold_edges": 0,
+            "inconsistent_winding_edges": 0,
+            "collapsed_edges": 0,
+            "degenerate_triangles": 0,
+            "minimum_triangle_area_m2": 1.7536194718559273e-11,
+            "finite_attributes": true
+          }
+        },
+        {
+          "file": "artifacts\\workshop-source-20261030\\engine_latch_arm_candidate.glb",
+          "sha256": "1734fa842b0381a2164b9157cd77dff801f00e269da5eff4ae1d04ea5de3d693",
+          "metrics": {
+            "vertices": 7778,
+            "triangles": 2924,
+            "min": [
+              -0.2500598430633545,
+              2.0102999210357666,
+              -2.656362295150757
+            ],
+            "max": [
+              -0.21114003658294678,
+              2.1269240379333496,
+              -2.415973663330078
+            ],
+            "area_m2": 0.046110575064194505,
+            "volume_m3": 0.0003152924706619565,
+            "boundary_edges": 0,
+            "nonmanifold_edges": 0,
+            "inconsistent_winding_edges": 0,
+            "collapsed_edges": 0,
+            "degenerate_triangles": 0,
+            "minimum_triangle_area_m2": 2.7954456527368166e-09,
+            "finite_attributes": true
+          }
+        }
+      ],
+      "removed_fraction": 0.037973841861269175,
+      "status": "candidate; combined motion probe pending"
+    },
+    "latch_head": {
+      "derivative": "Source-derived moving clevis head radial compression only; topology and source UVs retained",
+      "support_region": {
+        "z_min": -2.4627255,
+        "inner_radius_m": 0.0225
+      },
+      "outer_head_radius_m": 0.0238,
+      "maximum_vertex_displacement_m": 0.011197477362615544,
+      "changed_vertices": 908,
+      "before": {
+        "vertices": 7778,
+        "triangles": 2924,
+        "min": [
+          -0.2500598430633545,
+          2.0102999210357666,
+          -2.656362295150757
+        ],
+        "max": [
+          -0.21114003658294678,
+          2.1269240379333496,
+          -2.415973663330078
+        ],
+        "area_m2": 0.046110575064194505,
+        "volume_m3": 0.0003152924706619565,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.7954456527368166e-09,
+        "finite_attributes": true
+      },
+      "after": {
+        "vertices": 6771,
+        "triangles": 2924,
+        "min": [
+          -0.2500598430633545,
+          2.011448860168457,
+          -2.656362295150757
+        ],
+        "max": [
+          -0.21114003658294678,
+          2.1269240379333496,
+          -2.4167368412017822
+        ],
+        "area_m2": 0.04521041303925559,
+        "volume_m3": 0.00029829881518638184,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.7954456527368166e-09,
+        "finite_attributes": true
+      },
+      "sha256": "7df08ae873415555076bbe371831c52919215a6209d6d448726f95248f46a960"
+    },
+    "latch_final_combined_volume_m3": 0.0003846217665481904,
+    "latch_final_removed_fraction": 0.05705427693132681,
+    "side_locks": [
+      {
+        "name": "engine_left_lock",
+        "root": "Hull_0932",
+        "node": 908,
+        "source_metrics": {
+          "vertices": 363,
+          "triangles": 288,
+          "min": [
+            -0.6295085045739484,
+            2.0380319009494485,
+            -1.7616610073520178
+          ],
+          "max": [
+            -0.4427128842294934,
+            2.0846576688483083,
+            -1.7188493560017832
+          ],
+          "area_m2": 0.022213648665109574,
+          "volume_m3": 0.00014221414022850884,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 8.347710201899763e-07,
+          "finite_attributes": true
+        },
+        "metrics": {
+          "vertices": 407,
+          "triangles": 288,
+          "min": [
+            -0.6295084953308105,
+            2.038031816482544,
+            -1.7616610527038574
+          ],
+          "max": [
+            -0.4427128732204437,
+            2.084657669067383,
+            -1.7188493013381958
+          ],
+          "area_m2": 0.022181470034307767,
+          "volume_m3": 0.00014190893846949607,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 7.79127518057976e-07,
+          "finite_attributes": true
+        },
+        "source_pin_radius_m": 0.00972996,
+        "derivative_pin_radius_m": 0.0094,
+        "bore_apothem_clearance_lower_bound_m": 0.0002465593566810375,
+        "maximum_vertex_displacement_m": 0.0003299616454470439,
+        "removed_volume_m3": 3.052017590127675e-07,
+        "sha256": "c717a68f2f7d0422339012d68af4d3b1bfec107ad31c2fc1baa7daefc6a7a95e"
+      },
+      {
+        "name": "engine_right_lock",
+        "root": "Hull_0933",
+        "node": 909,
+        "source_metrics": {
+          "vertices": 385,
+          "triangles": 288,
+          "min": [
+            0.4446589114356101,
+            2.0380319009494485,
+            -1.7616610073520178
+          ],
+          "max": [
+            0.6314544592862603,
+            2.0846576688483083,
+            -1.7188493560017832
+          ],
+          "area_m2": 0.022213643596317056,
+          "volume_m3": 0.00014221410438738393,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 8.34901722101221e-07,
+          "finite_attributes": true
+        },
+        "metrics": {
+          "vertices": 408,
+          "triangles": 288,
+          "min": [
+            0.44465890526771545,
+            2.038031816482544,
+            -1.7616610527038574
+          ],
+          "max": [
+            0.6314544677734375,
+            2.084657669067383,
+            -1.7188493013381958
+          ],
+          "area_m2": 0.02218146415036268,
+          "volume_m3": 0.00014190890028387715,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 7.791756786446058e-07,
+          "finite_attributes": true
+        },
+        "source_pin_radius_m": 0.00972996,
+        "derivative_pin_radius_m": 0.0094,
+        "bore_apothem_clearance_lower_bound_m": 0.0002465593566810375,
+        "maximum_vertex_displacement_m": 0.0003299608729910537,
+        "removed_volume_m3": 3.0520410350677834e-07,
+        "sha256": "e74ded177e8b74f9efccad747e8153fdb038f415bce6414c4e3e76e25ed0cdd2"
+      }
+    ],
+    "carrier_hardware": "Native geometry preserved. Candidate relief removing38-82percent of carrier plate volume was rejected; physical removal is required.",
+    "side_lock_axial_clearance": [
+      {
+        "name": "left",
+        "file": "engine_left_lock_axial_candidate.glb",
+        "sha256": "a617464afa9d5740001af442b1f77f35dc7b57a81e5e5edb065b5f04b05396bb",
+        "before": {
+          "vertices": 407,
+          "triangles": 288,
+          "min": [
+            -0.6295084953308105,
+            2.038031816482544,
+            -1.7616610527038574
+          ],
+          "max": [
+            -0.4427128732204437,
+            2.084657669067383,
+            -1.7188493013381958
+          ],
+          "area_m2": 0.022181470034307767,
+          "volume_m3": 0.00014190893846949607,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 7.79127518057976e-07,
+          "finite_attributes": true
+        },
+        "after": {
+          "vertices": 407,
+          "triangles": 288,
+          "min": [
+            -0.6295084953308105,
+            2.038031816482544,
+            -1.7615110527038573
+          ],
+          "max": [
+            -0.4427128732204437,
+            2.084657669067383,
+            -1.718999301338196
+          ],
+          "area_m2": 0.022058574491677883,
+          "volume_m3": 0.00014039333661704744,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 7.79127518057976e-07,
+          "finite_attributes": true
+        },
+        "authored_end_clearance_m": 0.00015,
+        "rear_wing_plane_source_m": -1.7538771587468318,
+        "front_wing_plane_source_m": -1.726633201253168,
+        "maximum_vertex_change_m": 0.0001500000000000945,
+        "pin_axial_length_unchanged": true,
+        "removed_volume_m3": 1.5156018524486309e-06,
+        "static_full_face_step_degrees": 0.25,
+        "hits": []
+      },
+      {
+        "name": "right",
+        "file": "engine_right_lock_axial_candidate.glb",
+        "sha256": "72ba16335434ddd5b4f26f49e129948f8b0f7e7b19bc9e07c8b836684131c7e1",
+        "before": {
+          "vertices": 408,
+          "triangles": 288,
+          "min": [
+            0.44465890526771545,
+            2.038031816482544,
+            -1.7616610527038574
+          ],
+          "max": [
+            0.6314544677734375,
+            2.084657669067383,
+            -1.7188493013381958
+          ],
+          "area_m2": 0.02218146415036268,
+          "volume_m3": 0.00014190890028387715,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 7.791756786446058e-07,
+          "finite_attributes": true
+        },
+        "after": {
+          "vertices": 408,
+          "triangles": 288,
+          "min": [
+            0.44465890526771545,
+            2.038031816482544,
+            -1.7615110527038573
+          ],
+          "max": [
+            0.6314544677734375,
+            2.084657669067383,
+            -1.718999301338196
+          ],
+          "area_m2": 0.022058568641040548,
+          "volume_m3": 0.0001403932988337148,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 7.791756786446058e-07,
+          "finite_attributes": true
+        },
+        "authored_end_clearance_m": 0.00015,
+        "rear_wing_plane_source_m": -1.7538771587468318,
+        "front_wing_plane_source_m": -1.726633201253168,
+        "maximum_vertex_change_m": 0.0001500000000000945,
+        "pin_axial_length_unchanged": true,
+        "removed_volume_m3": 1.5156014501623537e-06,
+        "static_full_face_step_degrees": 0.25,
+        "hits": []
+      }
+    ],
+    "latch_head_csg": {
+      "description": "Direct source CSG head envelope and journal/clevis cuts; no nonlinear vertex deformation. Exterior source material preserved outside recorded cuts.",
+      "source_root": "Hull_1068",
+      "source_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+      "fixed_base_changed": false,
+      "source": {
+        "vertices": 742,
+        "triangles": 678,
+        "min": [
+          -0.2500598517549051,
+          1.9834663959168495,
+          -2.656362293010602
+        ],
+        "max": [
+          -0.2111400303119737,
+          2.126924096135582,
+          -2.415973706428531
+        ],
+        "area_m2": 0.047390268911903864,
+        "volume_m3": 0.00040789385554080193,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.8398054784606819e-07,
+        "finite_attributes": true
+      },
+      "prior_arm": {
+        "vertices": 6771,
+        "triangles": 2924,
+        "min": [
+          -0.2500598430633545,
+          2.011448860168457,
+          -2.656362295150757
+        ],
+        "max": [
+          -0.21114003658294678,
+          2.1269240379333496,
+          -2.4167368412017822
+        ],
+        "area_m2": 0.04521041303925559,
+        "volume_m3": 0.00029829881518638184,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.7954456527368166e-09,
+        "finite_attributes": true
+      },
+      "after": {
+        "vertices": 10828,
+        "triangles": 4222,
+        "min": [
+          -0.2500598430633545,
+          2.0102999210357666,
+          -2.656362295150757
+        ],
+        "max": [
+          -0.21114003658294678,
+          2.1269240379333496,
+          -2.415973663330078
+        ],
+        "area_m2": 0.04286990854069666,
+        "volume_m3": 0.0003075096784358348,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.5722889656899497e-10,
+        "finite_attributes": true
+      },
+      "head_outer_radius_m": 0.0238,
+      "head_region_min_z_m": -2.4627255,
+      "bore_radius_m": 0.0197,
+      "base_radius_m": 0.0191,
+      "polygon_apothem_minimum_radial_clearance_m": 0.0005985166262311471,
+      "clevis_x": [
+        -0.2367,
+        -0.2245
+      ],
+      "combined_base_and_arm_volume_m3": 0.0003846217665481904,
+      "combined_removed_fraction": 0.05705427693132681,
+      "sha256": "4d200b7fd8a1bd1bcd48780bfecad15ae2a283d1a7b260c442da393fb6d9d9d1",
+      "static_full_face_step_deg": 0.25,
+      "static_full_face_hits": [],
+      "continuous_sweep_pending": true
+    },
+    "latch_head_status": "Earlier nonlinear radial-head candidate superseded after full-face runtime interference; active moving arm is direct-source CSG with unchanged fixed journal/base."
+  },
+  "limits": [
+    "Source preparation only. No engine exchange, component repair or playable opening claimed. service_enabled remains false pending runtime full-face admission and gameplay proof.",
+    "Main engineHull0971 and its14-source-root assembly remain in original hull; no unverified lift is admitted.",
+    "The original latch was a fused model part; its split journal/clevis and head reshaping are authored reconstructions with measured source-volume changes, not untouched historical geometry.",
+    "The2original native side-lock copies are retained only for provenance; active moving assemblies use the pin-clearance derivatives. Do not render both.",
+    "No new texture images: exact source material dictionaries and source UVs preserved."
+  ]
+}

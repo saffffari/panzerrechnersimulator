@@ -103,6 +103,10 @@ pub const ROD_SATURATION_SCOT_TD: f64 = 1_700.0;
 /// frame (the rod share is zero in photopic light). `Mapping::aces_input` stays the eye model
 /// without it, so the research gates still test the model; only `crush.wgsl` applies it.
 pub const ROD_DISPLAY_GAIN: f64 = 6.0;
+/// A closed cabin already has local range compression and modeled practical lamps. The outdoor
+/// visibility boost drowned their reflected colour in blue-grey. Keep the threshold-matched rod
+/// response indoors; this only changes display reproduction, never scene radiance or adaptation.
+pub const CABIN_ROD_DISPLAY_GAIN: f64 = 1.0;
 /// The display's draw-in of regions far from the adapted level (`crush.wgsl` `eye_range`): beyond
 /// the knee (stops from the display key) a region's distance to the key is scaled by the slope.
 /// Owner-directed presentation of local adaptation (docs/PHYSICAL_TRUTH_AUDIT.md).
@@ -578,6 +582,7 @@ pub fn wgsl_constants() -> String {
     push("OBS_OPTIC_RESNAP_GAP", OPTIC_RESNAP_GAP_S);
     push("OBS_ROD_DISPLAY_GAIN", std::env::var("KESSEL_ROD_DISPLAY_GAIN").ok()
         .and_then(|v| v.parse().ok()).unwrap_or(ROD_DISPLAY_GAIN));
+    push("OBS_CABIN_ROD_DISPLAY_GAIN", CABIN_ROD_DISPLAY_GAIN);
     let range = std::env::var("KESSEL_EYE_RANGE").ok().and_then(|v| {
         let parts: Vec<f64> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
         (parts.len() == 2).then(|| (parts[0], parts[1]))
@@ -703,7 +708,9 @@ mod tests {
         assert!((1.0..=8.0).contains(&ROD_DISPLAY_GAIN));
         let crush = include_str!("../shaders/crush.wgsl");
         assert_eq!(crush.matches("OBS_ROD_DISPLAY_GAIN").count(), 1);
-        assert!(crush.contains("vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * OBS_ROD_DISPLAY_GAIN)"));
+        assert!((1.0..=ROD_DISPLAY_GAIN).contains(&CABIN_ROD_DISPLAY_GAIN));
+        assert!(crush.contains("mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN"));
+        assert!(crush.contains("vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * rod_gain)"));
         assert!(wgsl_constants().contains("const OBS_ROD_DISPLAY_GAIN: f32 = "));
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_GAIN"));
     }

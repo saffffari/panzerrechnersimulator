@@ -3,11 +3,16 @@
 //! A 57-ton Tiger must not treat a bench, barrel, crate, cart, light fence, or telegraph pole as
 //! static world mass.  These objects stay on the renderer's instanced path; this module owns only
 //! their CPU transforms and rewrites a spatial page while one of its objects is moving.  Tall
-//! objects hinge once about their base. Loose objects get a short deterministic ballistic shove,
-//! bounce a bounded number of times, then sleep in their displaced pose. There is deliberately no
-//! general rigid-body solver and no object-object collision.
+//! objects still use the legacy one-shot hinge. Loose objects use their rendered source samples,
+//! estimated uniform-shell mass moments, terrain contact impulses and support-gated sleep.
+//! There is no object-object contact or continuous collision detection; source sampling bounds
+//! are exposed by source_support_report. Existing save layouts remain unchanged.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+
+#[path = "scatter_support.rs"]
+pub(crate) mod scatter_support;
 
 use glam::{Mat4, Quat, Vec2, Vec3};
 
@@ -19,9 +24,9 @@ use crate::worldgen::{ScatterMaterial, ScatterMotion, ScatterProfile};
 const CELL_M: f32 = 24.0;
 const MAX_TANK_CONTACTS: usize = 24;
 const MAX_BLAST_BODIES: usize = 64;
-const GRAVITY: f32 = 9.81;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum State {
     Resting,
     Falling {
@@ -43,6 +48,7 @@ enum State {
 }
 
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Body {
     batch: usize,
     instance: usize,
@@ -91,6 +97,8 @@ pub struct Scatter {
     /// (renderer batch index, mutable page transforms)
     batches: Vec<(usize, Vec<Mat4>)>,
     dirty: Vec<bool>,
+    // Immutable canonical mesh cache, reconstructed by page registration, never serialized.
+    sources: Vec<Option<Arc<scatter_support::Source>>>,
     bodies: Vec<Body>,
     active: Vec<usize>,
     grid: HashMap<(i32, i32), Vec<usize>>,
@@ -184,8 +192,8 @@ fn body_from_model(
         half_extents: half,
         mass_kg: estimated_prop_mass(mesh,model,profile.material),
         contact_radius,
-        // The smallest half-extent approximates the side the object naturally sleeps on. It keeps
-        // a toppled cart or barrel above terrain without pretending to solve its convex hull.
+        // Retained only for existing saved Body layout. Loose support now uses source geometry;
+        // this old min-half-extent quantity no longer grounds a rotating prop.
         floor_clearance: half.min_element().clamp(0.08, 0.70),
         seed,
         state: State::Resting,
@@ -333,6 +341,7 @@ impl Scatter {
             device: device.clone(),
             batches: Vec::new(),
             dirty: Vec::new(),
+            sources: Vec::new(),
             bodies: Vec::new(),
             active: Vec::new(),
             grid: HashMap::new(),
@@ -341,6 +350,13 @@ impl Scatter {
 
     pub fn count(&self) -> usize {
         self.bodies.len()
+    }
+
+    /// Measured largest refinement edge and sample count for source-ground-contact diagnostics.
+    /// The count is per registered page; shared Arc meshes are not duplicated in memory.
+    pub(crate) fn source_support_report(&self)->(f32,usize) {
+        self.sources.iter().flatten().fold((0.0_f32,0),|(gap,count),source|
+            (gap.max(source.gap_bound_m),count+source.sample_count()))
     }
 
     pub fn register_batch(
@@ -379,13 +395,16 @@ impl Scatter {
             return;
         };
         let local_batch = self.batches.len();
+        let source=scatter_support::Source::from_mesh(mesh).map(Arc::new);
         for (instance, &model) in mats.iter().enumerate() {
+            if source.is_none() && profile.motion!=ScatterMotion::Hinge {continue;}
             let index = self.bodies.len();
             let body = body_from_model(local_batch, instance, mesh, model, profile);
             self.grid.entry(body.cell).or_default().push(index);
             self.bodies.push(body);
         }
         self.batches.push((renderer_batch, mats));
+        self.sources.push(source);
         self.dirty.push(false);
     }
 
@@ -404,15 +423,18 @@ impl Scatter {
         if renderer_batches.len() != pages.len() {
             return false;
         }
+        let source=scatter_support::Source::from_mesh(mesh).map(Arc::new);
         for (&renderer_batch, page) in renderer_batches.iter().zip(pages) {
             let local_batch = self.batches.len();
             for (instance, &model) in page.iter().enumerate() {
+                if source.is_none() && profile.motion!=ScatterMotion::Hinge {continue;}
                 let index = self.bodies.len();
                 let body = body_from_model(local_batch, instance, mesh, model, profile);
                 self.grid.entry(body.cell).or_default().push(index);
                 self.bodies.push(body);
             }
             self.batches.push((renderer_batch, page.to_vec()));
+            self.sources.push(source.clone());
             self.dirty.push(false);
         }
         true
@@ -638,6 +660,7 @@ impl Scatter {
         let active = std::mem::take(&mut self.active);
         for index in active {
             let old_cell = self.bodies[index].cell;
+            let source=self.sources[self.bodies[index].batch].as_deref();
             let (pose, keep_active, ground_event) = {
                 let body = &mut self.bodies[index];
                 match body.state {
@@ -676,79 +699,32 @@ impl Scatter {
                         });
                         (pose, !done, event)
                     }
-                    State::Airborne {
-                        mut pos,
-                        mut vel,
-                        mut rotation,
-                        spin_axis,
-                        mut spin_rate,
-                        mut age,
-                        mut bounces,
-                    } => {
-                        age += dt;
-                        vel.y -= GRAVITY * dt;
-                        pos += vel * dt;
-                        let ground = terrain.height_at(pos.x, pos.z) + body.floor_clearance;
-                        let mut event = None;
-                        if pos.y <= ground {
-                            let impact = (-vel.y).max(0.0);
-                            pos.y = ground;
-                            if vel.y < 0.0 {
-                                vel.y = -vel.y * if bounces == 0 { 0.24 } else { 0.10 };
-                                vel.x *= 0.72;
-                                vel.z *= 0.72;
-                                spin_rate *= 0.76;
-                                if impact > 1.2 && bounces < 2 {
-                                    event = Some(ScatterEvent {
-                                        kind: ScatterEventKind::GroundHit,
-                                        material: body.profile.material,
-                                        pos: Vec3::new(pos.x, ground - body.floor_clearance, pos.z),
-                                        strength: (impact / 8.0).clamp(0.18, 0.8),
-                                    });
-                                }
-                                bounces = bounces.saturating_add(1);
-                            }
-                        }
-                        let drag = if body.profile.motion == ScatterMotion::Roll {
-                            1.15
+                    State::Airborne {pos,vel,rotation,spin_axis,spin_rate,age,bounces} => {
+                        let source=source.expect("registered loose scatter source geometry");
+                        let mut motion=scatter_support::Motion {pos,velocity:vel,rotation,
+                            angular_velocity:spin_axis*spin_rate,age,bounces};
+                        let friction=match body.profile.material {
+                            ScatterMaterial::Wood=>0.60,ScatterMaterial::Metal=>0.35,ScatterMaterial::Mixed=>0.50,
+                        }; // dry contact coefficients are engineering estimates, not measured prop data
+                        let drag=if body.profile.motion==ScatterMotion::Roll {1.15}else{2.15};
+                        let result=source.advance(body.rest_pose,body.rest_center,&mut motion,dt,
+                            friction,drag,|x,z|terrain.height_at(x,z));
+                        body.current_pose=result.model;body.center=motion.pos;
+                        let event=result.hit.filter(|(_,impact)|*impact>1.2).map(|(pos,impact)|ScatterEvent {
+                            kind:ScatterEventKind::GroundHit,material:body.profile.material,pos,
+                            strength:(impact/8.0).clamp(0.18,0.8),
+                        });
+                        if result.sleeping {
+                            body.rest_pose=result.model;body.rest_center=motion.pos;
+                            body.base_pivot=Vec3::new(motion.pos.x,terrain.height_at(motion.pos.x,motion.pos.z),motion.pos.z);
+                            body.state=State::Resting;
                         } else {
-                            2.15
-                        };
-                        let damping = (-drag * dt).exp();
-                        vel.x *= damping;
-                        vel.z *= damping;
-                        spin_rate *= (-0.72 * dt).exp();
-                        rotation = Quat::from_axis_angle(spin_axis, spin_rate * dt) * rotation;
-                        let pose = Mat4::from_translation(pos)
-                            * Mat4::from_quat(rotation)
-                            * Mat4::from_translation(-body.rest_center)
-                            * body.rest_pose;
-                        body.current_pose = pose;
-                        body.center = pos;
-                        let grounded = (pos.y - ground).abs() < 0.03;
-                        let sleeping = (age > 0.45
-                            && grounded
-                            && Vec2::new(vel.x, vel.z).length() < 0.28
-                            && vel.y.abs() < 0.32)
-                            || age > 4.5;
-                        if sleeping {
-                            body.rest_pose = pose;
-                            body.rest_center = pos;
-                            body.base_pivot =
-                                Vec3::new(pos.x, terrain.height_at(pos.x, pos.z), pos.z);
-                            body.state = State::Resting;
-                        } else {
-                            body.state = State::Airborne {
-                                pos,
-                                vel,
-                                rotation,
-                                spin_axis,
-                                spin_rate,
-                                age,
-                                bounces,
-                            };
+                            let rate=motion.angular_velocity.length();
+                            body.state=State::Airborne {pos:motion.pos,vel:motion.velocity,rotation:motion.rotation,
+                                spin_axis:if rate>1e-8 {motion.angular_velocity/rate}else{spin_axis},spin_rate:rate,
+                                age:motion.age,bounces:motion.bounces};
                         }
-                        (pose, !sleeping, event)
+                        (result.model,!result.sleeping,event)
                     }
                     State::Resting | State::Down => (body.current_pose, false, None),
                 }
@@ -913,5 +889,26 @@ mod tests {
         assert!(hit.is_some_and(|distance| distance > 4.0 && distance < 5.0));
         // The API returns only an effect distance/index; there is intentionally no penetration
         // cost or terminal-hit type in this subsystem.
+    }
+}
+
+impl Scatter {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut fields=crate::capture_world_fields!(self; batches, dirty, bodies, active);
+        fields.put("grid",&crate::expedition_world_save::ordered_map::Ref(&self.grid))?;Ok(fields)
+    }
+    pub(crate) fn import_world_state(&mut self,mut state:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        let shape=self.batches.iter().map(|(i,m)|(*i,m.len())).collect::<Vec<_>>();
+        self.grid=state.take("grid")?;
+        crate::restore_world_fields!(self,state; batches, dirty, bodies, active);
+        anyhow::ensure!(shape==self.batches.iter().map(|(i,m)|(*i,m.len())).collect::<Vec<_>>(),"source instance layout changed");
+        anyhow::ensure!(self.batches.iter().all(|(_,m)|m.iter().all(|v|v.is_finite())),"nonfinite source instance pose");
+        anyhow::ensure!(self.sources.len()==self.batches.len() && self.bodies.iter().all(|b|
+            b.profile.motion==ScatterMotion::Hinge || self.sources.get(b.batch).is_some_and(|s|s.is_some())),
+            "loose scatter source geometry unavailable");
+        Ok(())
+    }
+    pub(crate) fn present_world_state(&self,r:&mut Renderer) {
+        for (batch,mats) in &self.batches {r.set_instanced_mats(&self.device,*batch,mats);}
     }
 }

@@ -3,6 +3,7 @@
 use super::*;
 
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct CupolaPistol {
     equipped: bool,
     drawn: bool,

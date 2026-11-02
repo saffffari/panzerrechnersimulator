@@ -9,7 +9,7 @@ pub const GRAIN_M: f32 = 0.012;
 pub const EMISSION_RATE: f32 = 4800.0;
 pub const MAX_AIRBORNE: usize = 8192;
 pub const MAX_DEPOSITS: usize = 65536;
-pub const FRAMES: usize = 16; //8: telescope;9/10: shields;11: visor wheel;12/13: breech block/lever
+pub const FRAMES: usize = 80; // 0..15 cabin joints;16..64 workshop banks;65..72 fan rotors;73..76 engine cover.
 /// Maximum retained contact patches, shared with the renderer's global cell budget.
 pub const MAX_PATCHES: usize = 32;
 const SOURCE_STEP_S:f64=1.0/120.0;
@@ -400,6 +400,7 @@ impl Grid {
     }
 }
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Contact {
     pub frame: usize,
     pub point: Vec3,
@@ -412,14 +413,23 @@ pub struct SourceContacts<'a> {
     source: &'a CabinFire,
     models: [Mat4; FRAMES],
     inverse: [Mat4; FRAMES],
+    body_query_frames: [bool; FRAMES],
 }
 impl SourceContacts<'_> {
+    /// Finite-body overlap queries may omit their own moving assembly without changing
+    /// shared collision authority or unrelated segment/support queries on this batch.
+    /// Materialize the small mask once, rather than searching an exclusion list for every
+    /// source triangle's overlap query.
+    pub fn without_body_frames(mut self, excluded: &[usize]) -> Self {
+        for &frame in excluded {if let Some(enabled)=self.body_query_frames.get_mut(frame){*enabled=false;}}
+        self
+    }
     /// Finite-body broad phase over the same retained, articulated source meshes. Returned
     /// triangles are in world space; unlike point-ray probes this keeps thin machinery faces
     /// available when a cartridge's end or flank reaches them before its centre.
     pub fn world_triangles(&self, lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
         let mut triangles = Vec::new();
-        self.collect_world_triangles(lo, hi, &mut triangles, usize::MAX, usize::MAX);
+        self.collect_world_triangles(lo, hi, &mut triangles, usize::MAX, usize::MAX, &[]);
         triangles
     }
 
@@ -427,14 +437,22 @@ impl SourceContacts<'_> {
     /// A false result leaves no partial contact list: the caller must stop that body's step.
     pub fn world_triangles_into(&self, lo: Vec3, hi: Vec3,
         triangles: &mut Vec<[Vec3; 3]>, limit: usize) -> bool {
-        self.collect_world_triangles(lo, hi, triangles, limit, 32_768)
+        self.collect_world_triangles(lo, hi, triangles, limit, 32_768, &[])
+    }
+
+    /// Same source broad phase while one articulated assembly moves. Exclusion names only
+    /// its own moving source frames; fixed contacts and other assemblies remain authoritative.
+    pub fn world_triangles_into_except(&self,lo:Vec3,hi:Vec3,triangles:&mut Vec<[Vec3;3]>,
+        limit:usize,excluded_frames:&[usize])->bool {
+        self.collect_world_triangles(lo,hi,triangles,limit,32_768,excluded_frames)
     }
 
     fn collect_world_triangles(&self, lo: Vec3, hi: Vec3,
-        triangles: &mut Vec<[Vec3; 3]>, limit: usize, mut node_budget: usize) -> bool {
+        triangles: &mut Vec<[Vec3; 3]>, limit: usize, mut node_budget: usize, excluded_frames:&[usize]) -> bool {
         triangles.clear();
         if !lo.is_finite() || !hi.is_finite() || lo.cmpgt(hi).any() { return false; }
         for frame in 0..FRAMES {
+            if !self.source.frame_enabled[frame]||!self.body_query_frames[frame]||excluded_frames.contains(&frame) { continue; }
             let inverse = self.inverse[frame];
             let model = self.models[frame];
             let mut local_lo = Vec3::splat(f32::INFINITY);
@@ -479,7 +497,7 @@ impl SourceContacts<'_> {
     }
     pub fn supports_batch(&self, frame: usize, paths: &[[Vec3; 2]]) -> Vec<bool> {
         paths.iter().map(|p| {
-            if frame >= FRAMES { return false; }
+            if frame >= FRAMES || !self.source.frame_enabled[frame] { return false; }
             let mut intervals = Vec::new();
             self.source.grids[frame].support_intervals(p[0], p[1], &mut intervals);
             intervals.sort_unstable_by(|a,b| a.0.total_cmp(&b.0));
@@ -496,7 +514,8 @@ impl SourceContacts<'_> {
     /// Empty remainder proves area support across UV seams; edge-only tests miss interior holes.
     /// Pathological fragment growth fails closed at a fixed scratch bound.
     pub fn supports_cell(&self, frame: usize, corners: &[Vec3; 4]) -> bool {
-        if frame >= FRAMES || corners.iter().any(|p| !p.is_finite()) { return false; }
+        if frame >= FRAMES || !self.source.frame_enabled[frame]
+            || corners.iter().any(|p| !p.is_finite()) { return false; }
         let origin = corners[0];
         let u = (corners[1] - origin).normalize_or_zero();
         let n = (corners[1] - origin).cross(corners[3] - origin).normalize_or_zero();
@@ -558,12 +577,14 @@ fn split_source_polygon(p: &[glam::Vec2], a: glam::Vec2, b: glam::Vec2)
     (inside,outside)
 }
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Grain {
     position: Vec3,
     velocity: Vec3,
     age: f32,
 }
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Deposit {
     pub frame: usize,
     pub point: Vec3,
@@ -572,6 +593,7 @@ pub struct Deposit {
     expires_at: f64,
 }
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct FoamColumn {
     layers: u8,
     expires_at: f64,
@@ -594,6 +616,7 @@ fn residue_expiry(key: ColumnKey, now: f64) -> f64 {
     (now + RESIDUE_FADE_START_S + f64::from(hash % 60)).ceil().min(now + RESIDUE_LIFETIME_S)
 }
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Patch {
     identity:u32,
     anchor: Option<Contact>,
@@ -624,6 +647,7 @@ pub struct FireSurface {
 
 pub struct CabinFire {
     grids: [Grid; FRAMES],
+    frame_enabled: [bool; FRAMES],
     airborne: Vec<Grain>,
     pub deposits: Vec<Deposit>,
     // Column identity includes the actual contacted frame, 3D surface position and face direction.
@@ -658,6 +682,7 @@ impl CabinFire {
         for grid in &mut grids { grid.body_bvh = TriangleBvh::new(&grid.triangles); }
         Self {
             grids,
+            frame_enabled: [true; FRAMES],
             airborne: Vec::with_capacity(MAX_AIRBORNE),
             deposits: Vec::with_capacity(MAX_DEPOSITS),
             columns: HashMap::new(),
@@ -719,8 +744,12 @@ impl CabinFire {
         )
     }
     fn sweep_inverse(&self, from: Vec3, to: Vec3, inverse: &[Mat4; FRAMES]) -> Option<Contact> {
+        self.sweep_inverse_except(from,to,inverse,&[])
+    }
+    fn sweep_inverse_except(&self, from:Vec3,to:Vec3,inverse:&[Mat4;FRAMES],excluded:&[usize])->Option<Contact> {
         let mut best: Option<Contact> = None;
         for frame in 0..FRAMES {
+            if !self.frame_enabled[frame]||excluded.contains(&frame) { continue; }
             let a = inverse[frame].transform_point3(from);
             let b = inverse[frame].transform_point3(to);
             if let Some((fraction, normal)) = self.grids[frame].sweep(a, b) {
@@ -737,17 +766,31 @@ impl CabinFire {
         best
     }
     pub fn source_contacts(&self, models: &[Mat4; FRAMES]) -> SourceContacts<'_> {
-        SourceContacts { source: self, models: *models, inverse: models.map(|m| m.inverse()) }
+        SourceContacts { source: self, models: *models, inverse: models.map(|m| m.inverse()),body_query_frames:[true;FRAMES] }
+    }
+    /// Preallocated workshop banks have source geometry before any item occupies them. An
+    /// uncommissioned bank must not create invisible contact or cover at the origin.
+    pub fn set_frame_enabled(&mut self, frame: usize, enabled: bool) {
+        if let Some(value) = self.frame_enabled.get_mut(frame) { *value = enabled; }
     }
     pub fn sweep(&self, from: Vec3, to: Vec3, models: &[Mat4; FRAMES]) -> Option<Contact> {
         self.sweep_inverse(from, to, &models.map(|m| m.inverse()))
+    }
+    /// Manipulation reach may exclude only the object already held by that manipulator.
+    /// Every other source still occludes; the shared projectile/fire frame mask is untouched.
+    pub fn sweep_except_frame(&self,from:Vec3,to:Vec3,models:&[Mat4;FRAMES],excluded:Option<usize>)->Option<Contact> {
+        self.sweep_inverse_except(from,to,&models.map(|m|m.inverse()),excluded.as_slice())
+    }
+    /// A held compound component may own several independently posed source frames.
+    pub fn sweep_except_frames(&self,from:Vec3,to:Vec3,models:&[Mat4;FRAMES],excluded:&[usize])->Option<Contact> {
+        self.sweep_inverse_except(from,to,&models.map(|m|m.inverse()),excluded)
     }
     /// Conservative source-bounds clearance, used only to end the launcher's muzzle exemption.
     /// This is not a cavity/armor hit test: outside every real frame bound proves clearance;
     /// concave empty space inside a bound may merely keep the initial exemption a little longer.
     pub fn outside_source_bounds(&self,point:Vec3,models:&[Mat4;FRAMES],margin:f32)->bool {
         point.is_finite() && self.grids.iter().enumerate().all(|(frame,grid)| {
-            grid.bounds.is_none_or(|(lo,hi)| {
+            !self.frame_enabled[frame] || grid.bounds.is_none_or(|(lo,hi)| {
                 let p=models[frame].inverse().transform_point3(point);
                 p.is_finite() && (p.cmplt(lo-Vec3::splat(margin)).any()
                     || p.cmpgt(hi+Vec3::splat(margin)).any())
@@ -771,6 +814,7 @@ impl CabinFire {
                 origin.is_finite()
                     && point.is_finite()
                     && !(0..FRAMES).any(|frame| {
+                        if !self.frame_enabled[frame] { return false; }
                         let from = inverse[frame].transform_point3(origin);
                         let to = inverse[frame].transform_point3(point);
                         self.grids[frame].occluded(from,to)
@@ -988,6 +1032,7 @@ impl CabinFire {
     fn supports_segment(&self, from: Vec3, to: Vec3, inverse: &[Mat4; FRAMES]) -> bool {
         let mut intervals = Vec::new();
         for (frame, transform) in inverse.iter().enumerate() {
+            if !self.frame_enabled[frame] { continue; }
             self.grids[frame].support_intervals(
                 transform.transform_point3(from),
                 transform.transform_point3(to),
@@ -1396,6 +1441,24 @@ mod tests {
         )
     }
     #[test]
+    fn workshop_frame_enable_and_hand_exclusion_preserve_next_source_contact() {
+        let mesh=crate::prims::box_mesh(Vec3::splat(-0.1),Vec3::splat(0.1),[80;3]);
+        let mut source=CabinFire::new(&[(16,&mesh),(1,&mesh)]);
+        let mut models=[Mat4::IDENTITY;FRAMES];
+        models[16]=Mat4::from_translation(Vec3::new(4.0,2.0,1.0));
+        models[1]=Mat4::from_translation(Vec3::new(4.0,2.0,2.0));
+        let from=Vec3::new(4.0,2.0,0.0);let to=Vec3::new(4.0,2.0,3.0);
+        assert_eq!(source.sweep(from,to,&models).unwrap().frame,16);
+        assert_eq!(source.sweep_except_frame(from,to,&models,Some(16)).unwrap().frame,1);
+        assert_eq!(source.sweep(from,to,&models).unwrap().frame,16,"reach exemption must not mutate ballistics");
+        source.set_frame_enabled(16,false);
+        assert_eq!(source.sweep(from,to,&models).unwrap().frame,1);
+        source.set_frame_enabled(16,true);
+        models[16]=Mat4::from_translation(Vec3::new(6.0,2.0,1.0));
+        assert_eq!(source.sweep(from,to,&models).unwrap().frame,1,"removed part must not leave a ghost at its mount");
+        assert_eq!(source.sweep(from+Vec3::X*2.0,to+Vec3::X*2.0,&models).unwrap().frame,16);
+    }
+    #[test]
     fn muzzle_clearance_requires_departure_from_all_articulated_source_bounds() {
         let mesh=plane();let fire=CabinFire::new(&[(0,&mesh),(1,&mesh)]);
         let mut models=[Mat4::IDENTITY;FRAMES];
@@ -1647,10 +1710,25 @@ mod tests {
         assert_eq!(result.len(), 12);
         assert_eq!(result.as_ptr(), allocation);
         assert!(!query.collect_world_triangles(Vec3::splat(-3.0), Vec3::splat(3.0),
-            &mut result, 32, 1));
+            &mut result, 32, 1, &[]));
         assert!(result.is_empty());
         assert!(!query.world_triangles_into(Vec3::splat(f32::NAN), Vec3::ONE, &mut result, 32));
         assert!(result.is_empty());
+    }
+    #[test]
+    fn body_query_exclusion_preserves_other_source_and_shared_collision() {
+        let mesh=plane();let fire=CabinFire::new(&[(0,&mesh),(16,&mesh)]);
+        let mut models=[Mat4::IDENTITY;FRAMES];models[16]=Mat4::from_translation(Vec3::Y*1.0);
+        let lo=Vec3::splat(-3.0);let hi=Vec3::splat(3.0);
+        let full=fire.source_contacts(&models).world_triangles(lo,hi);
+        let isolated=CabinFire::new(&[(0,&mesh)]).source_contacts(&models).world_triangles(lo,hi);
+        let omitted=fire.source_contacts(&models).without_body_frames(&[16,usize::MAX]).world_triangles(lo,hi);
+        assert_eq!(omitted,isolated);assert_eq!(full.len(),isolated.len()*2);
+        assert_eq!(fire.source_contacts(&models).world_triangles(lo,hi),full,
+            "one manipulation query cannot disable collision for another owner");
+        let mut limited=Vec::new();
+        assert!(!fire.source_contacts(&models).without_body_frames(&[16]).world_triangles_into(lo,hi,&mut limited,1));
+        assert!(limited.is_empty(),"filtering retains the original fail-closed contact budget");
     }
     fn patch(f: &mut CabinFire, models: &[Mat4; FRAMES]) {
         f.ensure_anchors(models, [Vec3::new(0.0, 0.1, 0.0); 4]);
@@ -2362,5 +2440,24 @@ mod tests {
             aimed.advance_foam(1.0 / 60.0, &models);
         }
         assert_eq!(aimed.deposits.len(), retained);
+    }
+}
+
+// Exact dynamic fire/foam state. The source contact grids are rebuilt from fingerprinted meshes.
+impl CabinFire {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut fields=crate::capture_world_fields!(self; airborne, deposits, residue_cleanup, foam_clock, foam_accumulator_s, fire_accumulator_s, next_residue_expiry, patches, next_patch_identity, heat_at_ammunition, spread_clock, spread_cursor, plume_cursor, ammo_scan_clock, ammo_exposure, hottest_ammunition, last_ammunition_count);
+        fields.put("frame_enabled",&self.frame_enabled.as_slice())?;
+        fields.put("columns",&crate::expedition_world_save::ordered_map::Ref(&self.columns))?;
+        fields.put("coating_bins",&crate::expedition_world_save::ordered_map::Ref(&self.coating_bins))?;Ok(fields)
+    }
+    pub(crate) fn import_world_state(&mut self,mut state:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        self.frame_enabled=state.take::<Vec<bool>>("frame_enabled")?.try_into().map_err(|_|anyhow::anyhow!("source frame capacity mismatch"))?;
+        self.columns=state.take("columns")?;self.coating_bins=state.take("coating_bins")?;
+        crate::restore_world_fields!(self,state; airborne, deposits, residue_cleanup, foam_clock, foam_accumulator_s, fire_accumulator_s, next_residue_expiry, patches, next_patch_identity, heat_at_ammunition, spread_clock, spread_cursor, plume_cursor, ammo_scan_clock, ammo_exposure, hottest_ammunition, last_ammunition_count);
+        anyhow::ensure!(self.airborne.len()<=MAX_AIRBORNE&&self.deposits.len()<=MAX_DEPOSITS,"fire/foam capacity mismatch");
+        anyhow::ensure!(self.deposits.iter().all(|p|p.frame<FRAMES&&p.point.is_finite()&&p.normal.is_finite()),"invalid foam source contact");
+        anyhow::ensure!(self.patches.iter().all(|p|p.anchor.is_none_or(|a|a.frame<FRAMES&&a.point.is_finite()&&a.normal.is_finite())),"invalid fire source contact");
+        Ok(())
     }
 }

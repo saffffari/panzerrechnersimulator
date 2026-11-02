@@ -1,0 +1,155 @@
+{
+  "status": "Source preparation: axial release candidate is measured; full-face and runtime checks remain pending.",
+  "source_root": "Hull_0671",
+  "source_node": 655,
+  "source_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+  "cad_label": "TG_RM5010-25K74_ROLLAR",
+  "coordinate_frame": "hull metres; identity node transforms",
+  "axis_hull": [
+    0,
+    0,
+    1
+  ],
+  "centerline_xy_hull_m": [
+    0,
+    0.9715509365643697
+  ],
+  "source_joint_bounds_z_m": [
+    -1.3744089304544787,
+    -1.16035
+  ],
+  "neck_boundary_z_m": -1.16035,
+  "authored_joint_gap_m": 0.0005,
+  "source_neck_radius_m": 0.04086580436,
+  "source_fixed_shaft_radius_m": 0.03697382493,
+  "authored_socket_radius_m": 0.0375,
+  "authored_socket_z_m": [
+    -1.18935,
+    -1.1606
+  ],
+  "minimum_radial_clearance_m": 0.0005233513889679117,
+  "source": {
+    "vertices": 4768,
+    "triangles": 4992,
+    "min": [
+      -0.08367760522823176,
+      0.8878733675830404,
+      -1.3744089304544787
+    ],
+    "max": [
+      0.08367760522823176,
+      1.0552285055456991,
+      1.1826227076500118
+    ],
+    "area_m2": 1.0392947304175468,
+    "volume_m3": 0.02070145343251304,
+    "boundary_edges": 0,
+    "nonmanifold_edges": 0,
+    "inconsistent_winding_edges": 0,
+    "collapsed_edges": 0,
+    "degenerate_triangles": 0,
+    "minimum_triangle_area_m2": 1.9018930594608385e-06,
+    "finite_attributes": true
+  },
+  "files": [
+    {
+      "file": "fixed_driveshaft.glb",
+      "sha256": "0ba868710deb7b170306b938125f030fe04edd514c4c7013d93dffde28163609",
+      "metrics": {
+        "vertices": 10625,
+        "triangles": 3832,
+        "min": [
+          -0.08367760479450226,
+          0.8878733515739441,
+          -1.160099983215332
+        ],
+        "max": [
+          0.08367760479450226,
+          1.0552284717559814,
+          1.1826226711273193
+        ],
+        "area_m2": 0.8995338786855712,
+        "volume_m3": 0.018210155954282478,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.3412720933914102e-10,
+        "finite_attributes": true
+      }
+    },
+    {
+      "file": "rear_coupling.glb",
+      "sha256": "e16fc1d6e6b3234223b08e687a553344e54f0ca70df9d9d6f1cd6958ba841134",
+      "metrics": {
+        "vertices": 6005,
+        "triangles": 2236,
+        "min": [
+          -0.08367760479450226,
+          0.8878733515739441,
+          -1.3744089603424072
+        ],
+        "max": [
+          0.08367760479450226,
+          1.0552284717559814,
+          -1.160599946975708
+        ],
+        "area_m2": 0.1547182129653689,
+        "volume_m3": 0.002361990926625059,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.9154476610671054e-09,
+        "finite_attributes": true
+      }
+    }
+  ],
+  "removed_volume_m3": 0.0001293065516055035,
+  "removed_fraction": 0.006246254738926593,
+  "limits": [
+    "Short sleeve socket and fitted joint clearance are authored reconstructions within the actual modeled neck; no historical telescoping-joint claim.",
+    "Joint spider and source exterior retained; no bore through the spider.",
+    "The finite coupling is axially released and remains supported by its sleeve; this interrupts driveline torque while allowing the engine to idle. Complete removal is a separate unvalidated operation.",
+    "Original source remains untouched; visible and collision derivatives must be identical."
+  ],
+  "schema": "panzer.tiger-engine-coupling.v1",
+  "asset_root": "assets/tanks/tiger/workshop_engine_core/",
+  "service_enabled": false,
+  "source_parent_frame": "hull",
+  "removed_roots": [
+    "Hull_0671"
+  ],
+  "fixed_replacement": "fixed_driveshaft.glb",
+  "finite_coupling": {
+    "id": "engine_rear_coupling",
+    "file": "rear_coupling.glb",
+    "source_triangle": 4671,
+    "source_contact_hull_m": [
+      -0.010142912543697888,
+      1.0493905794502325,
+      -1.26512886944181
+    ],
+    "source_normal_hull": [
+      0.0,
+      1.0,
+      -0.0
+    ],
+    "release_delta_hull_m": [
+      0,
+      0,
+      0.02
+    ],
+    "release_state": "Axially released and still supported by fixed shaft sleeve; remains visible and collidable. Do not claim held or wholly removed.",
+    "mass_kg_estimate": 18.54162877400671,
+    "mass_estimate_basis": "Measured solid model volume times assumed steel7850kg/m3, not historical measured mass."
+  },
+  "validation": {
+    "topology": "Both closed, finite, positive volume; no boundary/nonmanifold/winding/collapsed/degenerate defects at1micrometre weld.",
+    "release_vertex_paths": "12mm and20mm positive-Z release: zero vertex-trajectory source hits, all1120 unique coupling vertices; full-face admission pending.",
+    "complete_removal": "Blocked while engine and front bracket remain; no removal path admitted.",
+    "receipt": "artifacts/workshop-source-20261030/rear_coupling_removal_probe.json"
+  }
+}

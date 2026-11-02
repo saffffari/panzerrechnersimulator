@@ -26,6 +26,7 @@ const FLAME_HEIGHT_M: f32 = 0.008;
 const FLAME_RADIUS_M: f32 = 0.001;
 const FLAME_LIGHT_HEIGHT_M: f32 = 0.0035;
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Anchors {
     pub tip: Vec3,
     pub mouth: Vec3,
@@ -874,5 +875,21 @@ mod tests {
         assert_eq!(scene.len(), 30 + BUTT_CAPACITY);
         assert_eq!(props.stock.len(), 20);
         assert!(props.slots().all(|s| s < scene.len()));
+    }
+}
+
+impl HandProps {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        Ok(crate::capture_world_fields!(self; last_length, pack_anchor, pack_model))
+    }
+    pub(crate) fn import_world_state(&mut self,fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        crate::restore_world_fields!(self,fields; last_length, pack_anchor, pack_model);Ok(())
+    }
+}
+
+impl HandProps {
+    pub(crate) fn present_world_state(&mut self,r:&mut Renderer)->Result<()> {
+        clipped_cigarette(&self.source,self.last_length,&mut self.pose);
+        anyhow::ensure!(r.upload_pose_vertices(self.cigarette,&self.pose),"restored cigarette source pose rejected");Ok(())
     }
 }

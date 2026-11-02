@@ -30,6 +30,7 @@ impl crate::infantry_combat::CoverSet for PlayerSightCover<'_> {
 pub(super) mod profiles;
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize)]
 pub(super) struct Payload {
     pub emitted_at_s:f32,
     pub shot: Shot,
@@ -37,6 +38,7 @@ pub(super) struct Payload {
     pub tracer: bool,
     pub round: u32,
     pub mixed: bool,
+    #[serde(with="crate::expedition_world_save::telemetry_label")]
     pub telemetry: Option<&'static str>,
 }
 impl Payload {
@@ -70,6 +72,7 @@ fn exposed_crew_contact(hull:Mat4,bodies:&[CouchCrewBody],start:Vec3,end:Vec3)->
         let mut best=None;
         for body in bodies {
             for volume in body.hit_volumes {
+                if volume.half_extents.max_element()<=0.0 {continue;}
                 if let Some(fraction)=crew_damage::swept_sphere_obb_fraction(a,b,0.0,volume) {
                     consider_projectile_contact(&mut best,Some(ProjectileContact {
                         t_m:start.distance(end)*fraction,pos:start.lerp(end,fraction),
@@ -107,9 +110,19 @@ impl Game {
     }
 
     pub(super) fn small_arm_crew_bodies(&self) -> Vec<CouchCrewBody> {
-        if self.mode!=Mode::Tank || !self.player.alive {return Vec::new();}
         // Armor/source surfaces, not a camera flag, decide whether this body is exposed to a ray.
-        self.physical_crew_bodies(BloodFrame::Hull)
+        let mut bodies=self.physical_crew_bodies(BloodFrame::Hull);
+        for body in &self.couch_ragdolls {
+            if !body.world_space||self.detached_living_crew_role(body.casualty.peer_id).is_none() {continue;}
+            let (scale,segments)=self.physical_crew_segments(body.casualty,BloodFrame::Hull);
+            let mut hit_volumes=crew_hit_volumes_from_segments(&segments,scale);
+            for (volume,segment) in hit_volumes.iter_mut().zip(segments) {
+                if !segment.present {volume.half_extents=Vec3::ZERO;}
+            }
+            bodies.push(CouchCrewBody {casualty:body.casualty,pos:crew_physics::center_of_mass(&segments),
+                hit_volumes});
+        }
+        bodies
     }
 
     pub(super) fn small_arm_exposed_crew_contact(&self,start:Vec3,end:Vec3)->Option<ProjectileContact> {
@@ -157,6 +170,14 @@ impl Game {
 
     pub(super) fn finish_small_arm(&mut self, projectile: &AuthoritativeProjectile,
         contact: ProjectileContact, payload: Payload, camera: &crate::camera::Camera) {
+        let mut contact=contact;
+        if let ProjectileContactKind::FieldPerson(person,part)=contact.kind {
+            let impact=CrewRagdollImpact{hit_part:part,point_world:contact.pos,velocity_world:projectile.velocity,
+                energy_j:0.5*projectile.shell.mass_kg*projectile.velocity.length_squared(),blast_origin_world:contact.pos,
+                explosive_energy_j:0.,behind_armor:0.,blast_proximity_m:0.};
+            match self.retain_struck_field_person(person,impact) {Ok(actor)=>contact.kind=ProjectileContactKind::ExposedCrew(actor,part),
+                Err(error)=>{eprintln!("[field casualty] injury refused: {error:#}");return;}}
+        }
         let hit_player = matches!(contact.kind, ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..));
         self.weapon_vfx.record_small_arm_contact(projectile, contact);
         let hp_before = self.foot.hp;
@@ -206,7 +227,7 @@ impl Game {
                     let recorded = self.audio.as_ref().and_then(|a| a.bullet_on_steel(cosine, projectile.seed));
                     if structure_borne {
                         // Structure-borne arrival is effectively immediate inside the struck hull.
-                        // SL §5: 120-140 dB per hit beside the plate, from the bullet's energy,
+                        // SL Â§5: 120-140 dB per hit beside the plate, from the bullet's energy,
                         // its incidence and the listener's distance from the struck point.
                         let energy = 0.5 * projectile.shell.mass_kg
                             * projectile.velocity.length_squared();
@@ -291,15 +312,35 @@ impl Game {
                     wound_local:inverse.transform_point3(contact.pos),
                     ejection_local:inverse.transform_vector3(projectile.velocity.normalize_or_zero())};
                 if !self.god && result.outcome!=crew_damage::CrewTissueOutcome::None {
+                    let detached=self.couch_ragdolls.iter().any(|b|b.casualty.peer_id==casualty.peer_id&&b.world_space);
+                    // A new injury interrupts the bounded bedside treatment; its exact actor
+                    // returns to field physiology instead of being overwritten by a stale bed copy.
+                    let _=self.expedition_release_medical_actor(casualty.peer_id);
                     if !crew_part_event_is_immediately_fatal(&event) {
-                        if let Some(body)=self.physical_crew_bodies(frame).into_iter().find(|b|b.casualty.peer_id==casualty.peer_id) {
-                            self.living_wounds.detach(&body,&[event],parent,self.player.pos.y+0.5);
-                        }
+                        let (scale,segments)=self.physical_crew_segments(casualty,frame);
+                        let body=CouchCrewBody {casualty,pos:crew_physics::center_of_mass(&segments),
+                            hit_volumes:crew_hit_volumes_from_segments(&segments,scale)};
+                        self.living_wounds.detach(&body,&[event],parent,if detached {
+                            self.hf.height_at(contact.pos.x,contact.pos.z)}else{self.player.pos.y+0.5});
                         self.living_wounds.record(casualty,&[event]);
-                        self.spawn_cubic_blood(casualty,Some(contact.pos),projectile.velocity.normalize_or_zero(),
-                            Vec3::ZERO,1.0,1.0,projectile.seed,0,visual_blood_request(result.blood_cube_count).min(64));
+                        self.crew_solo_record_wounds(casualty,&[event]);
+                        let missing=self.living_wounds.missing(casualty.peer_id);
+                        if let Some(body)=self.couch_ragdolls.iter_mut().find(|b|b.casualty.peer_id==casualty.peer_id) {
+                            apply_crew_pulverization(body,&missing);
+                        }
+                        if !detached {self.spawn_cubic_blood(casualty,Some(contact.pos),projectile.velocity.normalize_or_zero(),
+                            Vec3::ZERO,1.0,1.0,projectile.seed,0,visual_blood_request(result.blood_cube_count).min(64));}
                     }else {
                     let before=self.couch_casualties.len();
+                    // Keep the actual terminal evidence: a nearby bounced shell is not proof of
+                    // what killed this actor, and an immediately fatal hit has no bleeding wound.
+                    self.crew_solo.log.push(serde_json::json!({"t":self.crew_solo.panel_clock_s(),
+                        "event":"fatal_body_contact","route":"small_arm","actor_id":casualty.peer_id,
+                        "projectile_id":projectile.id,"part":format!("{part:?}"),"energy_j":energy,
+                        "shell":projectile.shell.name,"origin_world":projectile.origin.to_array(),
+                        "contact_world":contact.pos.to_array(),"velocity_world":projectile.velocity.to_array(),
+                        "commander_outside":self.commander_outside,"cupola_hatch_fraction":self.hatch_t}));
+                    self.crew_solo_record_kia(casualty);
                     let wiped=self.record_physical_crew_casualties(&[casualty]);
                     if self.couch_casualties.len()>before {
                         damage=100.0;
@@ -312,7 +353,7 @@ impl Game {
                         },projectile.seed);
                         self.recorded(crate::audio::RecordedFx::WoundPenetrating, 0.0, contact.pos);
                     }
-                    if wiped {self.player.alive=false;self.death_cause=Some(DeathCause::CrewLost);}
+                    if wiped {self.lose_controlled_soldier(DeathCause::CrewLost);}
                     self.recompute_hp();
                     }
                 }
@@ -584,5 +625,15 @@ mod tests {
             assert!(bullet.pos.x>0.2 && bullet.pos.x<4.0);
             assert!(bullet.pos.z<shell.muzzle_velocity);
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Payload {
+    fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Saved {emitted_at_s:f32,shot:Shot,damage:f32,tracer:bool,round:u32,mixed:bool,telemetry:Option<String>}
+        let s=Saved::deserialize(d)?;
+        let telemetry=match s.telemetry.as_deref() {None=>None,Some("infantry_rifle")=>Some("infantry_rifle"),Some("tank_coax_mg")=>Some("tank_coax_mg"),Some(_)=>return Err(serde::de::Error::custom("unknown small-arms telemetry source"))};
+        Ok(Self{emitted_at_s:s.emitted_at_s,shot:s.shot,damage:s.damage,tracer:s.tracer,round:s.round,mixed:s.mixed,telemetry})
     }
 }

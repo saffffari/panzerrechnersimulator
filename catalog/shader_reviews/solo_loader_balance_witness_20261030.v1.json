@@ -1,0 +1,35 @@
+{
+  "schema":"kessel.first-person-mechanic.v1",
+  "id":"solo_loader_balance_witness_20261030",
+  "title":"Standing loader uses one physical cartridge; crew reacts to drive and recoil",
+  "caption":"SOURCE CREW / PHYSICAL CARTRIDGE / CHASSIS RESPONSE WITNESS",
+  "act_id":1,
+  "night":false,
+  "station":"gunner",
+  "seconds":18,
+  "world_manifest":"assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "setup":{"enemy_policy":"hold_fire","playtest":true,"player_xz":[1850,250],"player_heading_deg":180,"singleplayer_crew":true},
+  "crew_witness":{"eye_turret_m":[-0.1,2.23,-0.9],"target_turret_m":[-0.50,1.65,0.15]},
+  "timeline":[
+    {"from_s":0.5,"until_s":0.55,"input":{"mg_coax":true}},
+    {"from_s":12.0,"until_s":14.0,"input":{"drive":0.65}},
+    {"from_s":14.0,"until_s":15.0,"input":{"drive":-0.4}}
+  ],
+  "expect":[
+    {"metric":"main_gun_shots","min_delta":1,"max_delta":1},
+    {"metric":"rack_rounds","min_delta":-1,"max_delta":-1},
+    {"metric":"live_ammunition_count","min_delta":-1,"max_delta":-1},
+    {"metric":"breech_loaded","equals":true},
+    {"metric":"tank_alive","equals":true}
+  ],
+  "input_audit":"One ordinary gun-sight LMB discharge, then ordinary driver orders. The camera-only witness changes no crew, cartridge, damage, or vehicle state. Enemy return fire is deliberately held for animation diagnosis.",
+  "visual_acceptance":[
+    "Loader stands and uses actual brass/case hand targets; inspect every phase and recorded hand errors.",
+    "One existing round leaves its source slot and remains a damageable cartridge through hand carry and ramming.",
+    "Anatomical limbs retain source lengths; reject hand misses, floor penetration, source material loss or body clipping.",
+    "After closing the breech the loader returns to the source periscope position.",
+    "Crew balances against drive/brake and discharge; parked bodies do not bob."
+  ],
+  "status":"pending_source_bindings_build_and_gpu_validation",
+  "limitations":"Accessible loader-side racks only; existing basket/breech movement envelope. Whole-body collision, finger grips and swept cartridge contact remain incomplete. State checks alone do not establish visual acceptance."
+}

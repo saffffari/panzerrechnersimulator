@@ -55,6 +55,7 @@ fn crew_requests(frame: CrewFrame) -> u8 {
 }
 
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct HatchEdges(u8);
 
 impl HatchEdges {

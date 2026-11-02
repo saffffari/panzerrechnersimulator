@@ -190,6 +190,7 @@ impl Game {
                 .get(key as usize)
                 .is_some_and(|occluder| occluder.blocks_segment(from, to))
         }) || stealth::los_blocked(&self.occluders[base..], from, to)
+            || self.camp_blocks_sight(from, to)
     }
 
     /// Does a standing destruction record or story cover lie on the sight line `eye → target`
@@ -209,7 +210,7 @@ impl Game {
         }) || self.world_index.story.any_on_segment(eye, target, |key| {
             let (min, max) = self.story_cover[key as usize];
             ray_aabb_near(eye, direction, min, max, distance, near_cull).is_some()
-        })
+        }) || self.camp_blocks_sight(eye + direction * near_cull.min(distance), target)
     }
 }
 

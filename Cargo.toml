@@ -8,7 +8,7 @@ description = "Panzerrechnersystem — a ray-traced-PS1 lone-Tiger escape sim. C
 [dependencies]
 wgpu = "27.0.1"
 winit = "0.30.13"
-glam = { version = "0.30", features = ["bytemuck"] }
+glam = { version = "0.30", features = ["bytemuck", "serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 anyhow = "1"
@@ -17,7 +17,9 @@ gltf = { version = "1.4", features = ["import", "utils", "names"] }
 
 # Worldbuilder (cargo run -- edit): parses manifest.v1.json + the manifest_edits.json
 # overlay. Value-based access only (no derive) — the manifest schema lives in tools/worldgen.
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+serde = { version = "1", features = ["derive", "rc"] }
+bincode = "=1.3.3"
 
 # Front-end text: pure-Rust TrueType rasterizer (no C deps). We bake a glyph coverage atlas from
 # DejaVu Sans (regular + bold) at build time and draw German UI text as textured quads at display

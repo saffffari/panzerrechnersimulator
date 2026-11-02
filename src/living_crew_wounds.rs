@@ -1,13 +1,14 @@
 //! Persistent resolved wounds; never promotes peripheral injury to a casualty.
 use super::*;
 const COUNT: usize = crew_physics::CREW_BODY_PART_COUNT;
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize,serde::Deserialize)]
 pub(super) struct Wound {
     pub casualty: CouchCrewCasualty,
     pub work: [f32; COUNT],
     pub missing: [bool; COUNT],
     pub pulverized: [bool; COUNT],
 }
+#[derive(Clone,serde::Serialize,serde::Deserialize)]
 struct LoosePart {
     part: usize,
     pos: Vec3,
@@ -54,7 +55,7 @@ impl LivingWounds {
         parent: Mat4,
         floor: f32,
     ) {
-        let old = self.missing(body.casualty.identity);
+        let old = self.missing(body.casualty.peer_id);
         for e in events {
             let i = e.result.part.index();
             if !e.result.detach_joint || e.result.hide_mesh_part || old[i] || self.loose.len() >= 55
@@ -122,9 +123,7 @@ impl LivingWounds {
         {
             i
         } else {
-            if self.people.len() >= 5 {
-                return;
-            }
+            // Historical wounds belong to actors, not the five reusable appearance slots.
             self.people.push(Wound {
                 casualty,
                 work: [0.0; COUNT],
@@ -146,10 +145,10 @@ impl LivingWounds {
             }
         }
     }
-    pub fn missing(&self, identity: crate::lan::LanRole) -> [bool; COUNT] {
+    pub fn missing(&self, actor_id: u32) -> [bool; COUNT] {
         self.people
             .iter()
-            .find(|p| p.casualty.identity == identity)
+            .find(|p| p.casualty.peer_id == actor_id)
             .map(|p| std::array::from_fn(|i| p.missing[i] || p.pulverized[i]))
             .unwrap_or([false; COUNT])
     }
@@ -241,7 +240,25 @@ mod tests {
         wounds.record(casualty, &[event]);
         wounds.record(casualty, &[]);
         assert_eq!(wounds.people.len(), 1);
-        assert!(wounds.missing(casualty.identity)[4]);
+        assert!(wounds.missing(casualty.peer_id)[4]);
+    }
+    #[test]
+    fn replacement_does_not_inherit_wounds_from_the_same_appearance() {
+        let old=singleplayer_crew::casualty_identity(CrewRole::Commander);
+        let mut fresh=old;fresh.peer_id+=100;
+        let mut wounds=LivingWounds::default();
+        let result=crew_damage::resolve_crew_damage(crew_damage::CrewDamageInput {
+            part:crew_physics::CrewBodyPart::LeftForearm,fragment_energy_j:200.0,
+            explosive_energy_j:0.0,blast_distance_m:1.0,
+        });
+        let event=CrewPartDamageEvent{result,strongest_contact:None,wound_local:Vec3::ZERO,ejection_local:Vec3::Z};
+        wounds.record(old,&[event]);
+        assert!(wounds.missing(old.peer_id)[4]);
+        assert_eq!(wounds.missing(fresh.peer_id),[false;COUNT]);
+        for id in 0..8 {let mut actor=fresh;actor.peer_id+=id;wounds.record(actor,&[event]);}
+        assert_eq!(wounds.people.len(),9,"records must outlive reuse of the five appearance slots");
+        assert!(wounds.missing(old.peer_id)[4]);
+        assert!(wounds.missing(fresh.peer_id+7)[4]);
     }
     #[test]
     fn lost_arm_masks_only_its_owned_triangles_without_changing_vertices() {
@@ -266,4 +283,17 @@ mod tests {
         assert_eq!(bone_part("R_Knee_N1"), 10);
         assert_eq!(bone_part("LeftUpLeg"), 7);
     }
+}
+
+#[derive(serde::Serialize,serde::Deserialize)]
+pub(super) struct Snapshot {people:Vec<Wound>,loose:Vec<LoosePart>}
+impl Snapshot {pub(super) fn validate(&self)->anyhow::Result<()> {
+    anyhow::ensure!(self.people.len()<=crate::expedition::INITIAL_PERSONNEL&&self.loose.len()<=55,"wound state exceeds retained capacity");
+    let mut ids=std::collections::BTreeSet::new();
+    for w in &self.people {anyhow::ensure!(ids.insert(w.casualty.peer_id)&&w.work.iter().all(|v|v.is_finite()&&*v>=0.0),"invalid anatomical injury state");}
+    for p in &self.loose {anyhow::ensure!(p.part<COUNT&&p.pos.is_finite()&&p.rot.is_finite()&&p.vel.is_finite()&&p.floor.is_finite(),"invalid detached part");}Ok(())
+}}
+impl LivingWounds {
+    pub(super) fn snapshot(&self)->Snapshot {Snapshot{people:self.people.clone(),loose:self.loose.clone()}}
+    pub(super) fn restore(&mut self,s:Snapshot)->anyhow::Result<()> {s.validate()?;self.people=s.people;self.loose=s.loose;self.masks.borrow_mut().clear();Ok(())}
 }

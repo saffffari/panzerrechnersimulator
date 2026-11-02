@@ -324,7 +324,7 @@ pub struct MechanicalParams {
 
 /// Contact surface for an individual hot fragment. These signatures stay broad/noisy and below the
 /// harsh ring band, but a massive breech block, armor wall and thin basket floor remain distinct.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug,serde::Serialize,serde::Deserialize)]
 pub enum FragmentMaterial {
     ArmorPlate,
     BreechBlock,
@@ -332,7 +332,7 @@ pub enum FragmentMaterial {
     BrassCase,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug,serde::Serialize,serde::Deserialize)]
 pub struct FragmentCollisionParams {
     pub speed_mps: f32,
     pub material: FragmentMaterial,

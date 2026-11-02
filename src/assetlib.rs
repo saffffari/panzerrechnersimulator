@@ -1940,7 +1940,7 @@ mod tests {
         assert!(sounds.len() >= 39, "expected the installed sound bank");
         assert!(sounds
             .iter()
-            .all(|entry| entry.path.starts_with("assets/sounds/")));
+            .all(|entry| std::path::Path::new(&entry.path).starts_with("assets/sounds")));
         assert!(
             sounds
                 .iter()

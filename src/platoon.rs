@@ -434,7 +434,7 @@ impl Game {
             return base;
         }
         let from = self.enemies.get(i).map(|e| e.center()).unwrap_or(base);
-        let mut best = (from.distance_squared(base) * if self.player.alive { 1.0 } else { 4.0 }, base);
+        let mut best = (if self.controlled_threat().is_some() {from.distance_squared(base)}else{f32::INFINITY}, base);
         for ally in &self.allies {
             if !ally.tank.alive {
                 continue;

@@ -40,7 +40,7 @@ fn cabin_min(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_min[i].xyz;}
 fn cabin_max(i:u32)->vec3<f32> {return cam.cabin_medium.bounds_max[i].xyz;}
 fn source_background_medium_transmittance(origin:vec3<f32>,direction:vec3<f32>,distance_m:f32)->f32 {
     let depth=weather_and_cabin_optical_depth(origin,direction,distance_m,cam.world_medium.zw,
-        cam.world_medium.x,cam.world_medium.y,cam.medium_transport.yzw,24u,cam.medium_transport.x);
+        cam.world_medium.x,cam.world_medium.y,cam.medium_transport.yzw,24u,cam.transport_passes.w,cam.medium_transport.x);
     return exp(-depth.x-depth.y);
 }
 @group(0) @binding(0) var<uniform> cam: Camera;
@@ -606,8 +606,8 @@ fn shade(in: VsOut) -> SurfaceOutput {
     }
     if (terrain) {
         albedo = terrain_material(textureSampleLevel(albedo_tex, terrain_detail_sampler,
-            in.uv, macro_lod), in.world, geometric_normal.y, cam.atmosphere.z, footprint);
-        roughness = terrain_roughness(cam.atmosphere.z);
+            in.uv, macro_lod), in.world, geometric_normal.y, theatre_ground_mood(cam.atmosphere.z,in.world,cam.transport_passes.w), footprint);
+        roughness = terrain_roughness(theatre_ground_mood(cam.atmosphere.z,in.world,cam.transport_passes.w));
         if (cam.track_half > 1.0) {
             let track = sample_track(in.world.xz);
             albedo *= mix(vec3(1.0), vec3(0.52, 0.54, 0.56), clamp(track * 1.4, 0.0, 1.0));

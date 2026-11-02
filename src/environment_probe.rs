@@ -141,18 +141,24 @@ impl EnvironmentProbe {
         queue.write_buffer(&self.input, 0, bytemuck::bytes_of(&input));
     }
 
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, work: &mut RenderWorkStats) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, work: &mut RenderWorkStats,
+        profile: Option<&crate::gpu_profile::GpuProfile>) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("environment-probe"),
-            timestamp_writes: None,
+            // Aggregate fallback when the backend lacks timestamps inside compute passes.
+            timestamp_writes: profile.filter(|p| !p.has_dispatch_timestamps())
+                .and_then(|p| p.compute("environment-probe-all")),
         });
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_pipeline(&self.directions_pipe);
-        pass.dispatch_workgroups(sky_visibility::DIRECTIONS as u32, 1, 1);
+        if let Some(p) = profile { p.dispatch(&mut pass, "environment-probe-directions", [sky_visibility::DIRECTIONS as u32,1,1]); }
+        else { pass.dispatch_workgroups(sky_visibility::DIRECTIONS as u32, 1, 1); }
         pass.set_pipeline(&self.finish_pipe);
-        pass.dispatch_workgroups(1, 1, 1);
+        if let Some(p) = profile { p.dispatch(&mut pass, "environment-probe-finish", [1,1,1]); }
+        else { pass.dispatch_workgroups(1, 1, 1); }
         pass.set_pipeline(&self.cloud_shadow_pipe);
-        pass.dispatch_workgroups((CLOUD_GRID as u32).div_ceil(8), (CLOUD_GRID as u32).div_ceil(8), 1);
+        if let Some(p) = profile { p.dispatch(&mut pass, "environment-probe-cloud-grid", [(CLOUD_GRID as u32).div_ceil(8),(CLOUD_GRID as u32).div_ceil(8),1]); }
+        else { pass.dispatch_workgroups((CLOUD_GRID as u32).div_ceil(8), (CLOUD_GRID as u32).div_ceil(8), 1); }
         drop(pass);
         encoder.copy_buffer_to_buffer(&self.output, 0, &self.uniform, 0, (PROBE_LANES * 16) as u64);
         work.compute_passes += 3;

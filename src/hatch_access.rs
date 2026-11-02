@@ -15,6 +15,7 @@ impl Game {
             Station::Radioman => crate::lan::LanRole::Radio,
         };
         self.lan_post_mask & (1 << role as u8) == 0
+            && self.crew_solo_station_blocked(Self::access_hatch_station(index)).is_none()
     }
 
     /// Outside, Space is an ordinary jump unless the player aims at a reachable open hatch.
@@ -23,13 +24,13 @@ impl Game {
         // A dismounted man at an untaken spare Tiger climbs it by the existing mount ritual.
         // His own living Tiger's aimed hatch keeps priority; a lost Tiger never blocks this.
         if self.spare_mount_target(r).is_some()
-            && (!self.player.alive || self.space_hatch_target(r).is_none())
+            && (!self.recoverable_tiger_access_allowed() || self.space_hatch_target(r).is_none())
         {
             self.toggle_dismount();
             self.consume_primary_press();
             return true;
         }
-        if self.climb.active || !self.player.alive || self.activity.is_some()
+        if self.climb.active || !self.recoverable_tiger_access_allowed() || self.activity.is_some()
             || self.switch_t > 0.0 || self.carried_casing.is_some()
         { return false; }
         // The commander leaves by HOLDING Space with the lid open (the shell runs the hold and its
@@ -67,7 +68,13 @@ impl Game {
     }
 
     pub(super) fn natural_hatch_station(&self, index: usize) -> Option<Station> {
-        natural_hatch_station(index, self.lan_post_mask)
+        let mut occupied=self.lan_post_mask;
+        for role in CrewRole::ALL {
+            let station=match role {CrewRole::Commander=>Station::Commander,CrewRole::Gunner=>Station::Gunner,
+                CrewRole::Driver=>Station::Driver,CrewRole::Loader=>Station::Loader,CrewRole::Radioman=>Station::Radioman};
+            if self.crew_solo_station_blocked(station).is_some() {occupied|=1<<singleplayer_crew::body_post(role)as u8;}
+        }
+        natural_hatch_station(index, occupied)
     }
 
     fn access_aperture(&self, index: usize) -> Aperture {
@@ -86,7 +93,7 @@ impl Game {
     }
 
     pub(super) fn space_hatch_target(&self, r: &Renderer) -> Option<usize> {
-        if self.climb.active || !self.player.alive || self.activity.is_some()
+        if self.climb.active || !self.recoverable_tiger_access_allowed() || self.activity.is_some()
             || self.switch_t > 0.0
             || self.carried_casing.is_some()
             || self.player.speed.abs() >= 0.6 { return None; }

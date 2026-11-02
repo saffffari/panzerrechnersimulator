@@ -197,6 +197,7 @@ pub fn resolve(path: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
     let resolved = resolver()?.resolve(path.as_ref());
     if let Ok(physical) = &resolved {
         trace(path.as_ref(), physical);
+        record_world_source(path.as_ref(), physical);
     }
     resolved
 }
@@ -475,10 +476,58 @@ mod tests {
     #[test]
     fn absolute_paths_are_preserved_and_relative_escape_is_rejected() {
         let resolver = packaged(HashMap::new());
+        let absolute = std::env::temp_dir().join("custom.glb");
+        assert!(absolute.is_absolute());
         assert_eq!(
-            resolver.resolve(Path::new("/tmp/custom.glb")).unwrap(),
-            PathBuf::from("/tmp/custom.glb")
+            resolver.resolve(&absolute).unwrap(),
+            absolute
         );
         assert!(resolver.resolve(Path::new("../secret")).is_err());
     }
+}
+
+/// Conservative process-wide closure of files resolved by source loaders. Cached models remain
+/// covered across multiple Games. Direct filesystem inputs must call register_world_source.
+#[derive(Clone,Debug)]
+pub struct WorldSource {pub path:String,pub bytes:u64,pub checksum:u64}
+#[derive(Default)]
+struct SourceJournal {files:std::collections::BTreeMap<String,WorldSource>,errors:Vec<String>}
+fn source_journal()->&'static std::sync::Mutex<SourceJournal> {
+    static JOURNAL:OnceLock<std::sync::Mutex<SourceJournal>>=OnceLock::new();
+    JOURNAL.get_or_init(||std::sync::Mutex::new(SourceJournal::default()))
+}
+fn fingerprint_source(logical:&Path,physical:&Path)->anyhow::Result<WorldSource> {
+    use std::io::Read;
+    let mut file=File::open(physical)?;let size=file.metadata()?.len();
+    let mut checksum=0xcbf29ce484222325_u64;let mut bytes=0_u64;let mut buffer=[0_u8;65536];
+    loop {let n=file.read(&mut buffer)?;if n==0 {break;}bytes+=n as u64;
+        for &byte in &buffer[..n] {checksum=(checksum^u64::from(byte)).wrapping_mul(0x100000001b3);}}
+    ensure!(bytes==size,"source changed while loading {}",physical.display());
+    Ok(WorldSource{path:logical.to_string_lossy().replace('\\',"/"),bytes,checksum})
+}
+fn record_world_source(logical:&Path,physical:&Path) {
+    if !physical.is_file(){return;}
+    let Ok(mut journal)=source_journal().lock() else{return;};
+    let key=logical.to_string_lossy().replace('\\',"/");if journal.files.contains_key(&key){return;}
+    match fingerprint_source(logical,physical) {
+        Ok(source)=>{journal.files.insert(key,source);},
+        Err(error)=>journal.errors.push(format!("{key}: {error:#}")),
+    }
+}
+/// Register an already resolved direct input before its bytes are consumed.
+pub fn register_world_source(path:impl AsRef<Path>)->anyhow::Result<()> {
+    let logical=path.as_ref();let physical=resolver()?.resolve(logical)?;
+    ensure!(physical.is_file(),"missing direct world input {}",physical.display());
+    record_world_source(logical,&physical);Ok(())
+}
+pub fn resolved_world_sources()->anyhow::Result<Vec<WorldSource>> {
+    let journal=source_journal().lock().map_err(|_|anyhow!("source fingerprint registry poisoned"))?;
+    ensure!(journal.errors.is_empty(),"source fingerprint failures: {:?}",journal.errors);
+    let sources=journal.files.values().cloned().collect::<Vec<_>>();drop(journal);
+    for source in &sources {
+        let physical=resolver()?.resolve(Path::new(&source.path))?;
+        let now=fingerprint_source(Path::new(&source.path),&physical)?;
+        ensure!(source.bytes==now.bytes&&source.checksum==now.checksum,"loaded source changed: {}",source.path);
+    }
+    Ok(sources)
 }

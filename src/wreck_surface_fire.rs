@@ -10,6 +10,7 @@ pub struct Patch { pub position: Vec3, pub normal: Vec3, pub strength: f32, pub 
 #[derive(Default)]
 pub struct Surface { points: Vec<(Vec3, Vec3)>, edges: Vec<Vec<(usize, f32)>> }
 #[derive(Clone, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Burn { distance: Vec<f32> }
 
 fn key(p: Vec3) -> (i32, i32, i32) {

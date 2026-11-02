@@ -4,12 +4,12 @@
 use glam::{Mat4, Vec3};
 const MAX_SOURCES: usize = 16;
 #[repr(C)]
-#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable,serde::Serialize,serde::Deserialize)]
 struct SourceGpu {
     origin_radius: [f32; 4],
     optical: [f32; 4], // height, source intensity, deterministic phase, reserved
 }
-#[derive(Default)]
+#[derive(Default,serde::Serialize,serde::Deserialize)]
 pub struct Sources { values: Vec<SourceGpu>, pub time: f32 }
 impl Sources {
     pub fn clear(&mut self) { self.values.clear(); }

@@ -84,6 +84,7 @@ const fn fnv1a64(bytes: &[u8]) -> u64 {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum PolicyRole {
     TigerCrew = 1,
     SovietRifle = 2,
@@ -149,6 +150,7 @@ impl GoalKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum WeaponSelection {
     Sidearm,
     Rifle,
@@ -364,6 +366,7 @@ impl FootObservation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FootAction {
     pub forward: f32,
     pub strafe: f32,
@@ -460,6 +463,7 @@ impl ActionAvailability {
 }
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FootPolicy {
     role: PolicyRole,
     weights: Vec<f32>,

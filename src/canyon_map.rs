@@ -1,6 +1,6 @@
-//! The actual Gaea survey drawing, uploaded once and printed onto the folded, normally lit paper.
-//! Runtime checks the measured route against the artwork's provenance so another course never
-//! silently inherits the wrong geography. No enemy or live-player coordinates are printed.
+//! Monochrome line survey on the folded, normally lit paper. The survey's coordinate registration
+//! is retained, but building outlines come from the live building compiler rather than colored
+//! artwork. No enemy locations are invented. The owner's exact player-position aid is explicit.
 use super::*;
 use crate::ui::Align;
 const META: &str = "catalog/maps/canyon_survey_20260930.json";
@@ -27,18 +27,16 @@ pub(super) fn load(
     {
         return Ok(None);
     }
-    let image_path = meta["image"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("canyon survey image missing"))?;
     let bounds: [f32; 4] = serde_json::from_value(meta["bounds_xz"].clone())
         .map_err(|e| anyhow::anyhow!("canyon survey bounds_xz: {e}"))?;
-    let img = image::open(image_path)?.into_rgba8();
+    // Keep the existing image-handle/bounds integration contract. Actual ink is generated from
+    // current geometry below; the original source artwork remains untouched on disk.
     Ok(Some((r.upload_image(
         device,
         queue,
-        img.as_raw(),
-        img.width(),
-        img.height(),
+        &[230,230,230,255],
+        1,
+        1,
     ), bounds)))
 }
 
@@ -70,22 +68,34 @@ impl Game {
         pins: &[(u8, Vec2)],
         cursor: Vec2,
     ) -> bool {
-        let Some((image, bounds)) = self.canyon_paper else {
+        let Some((_, bounds)) = self.canyon_paper else {
             return false;
         };
-        r.draw_image(image, 0.17, 0.34, 0.66, 0.59, [1.0; 4]);
+        use crate::ui::map_linework::{self,INK,PAPER,FADED};
+        let paper=(0.17,0.34,0.66,0.59);
+        let proj = |p: Vec2| {let (u,v)=survey_uv(bounds,p);(paper.0+u*paper.2,paper.1+v*paper.3)};
+        r.fill_rect(paper.0,paper.1,paper.2,paper.3,PAPER);
+        map_linework::draw_buildings(r,&self.buildings,&proj,&|_|true,paper);
+        // This course is a snow corridor. Its prescribed driving route is not a surveyed road,
+        // so it must not masquerade as one on a road-and-building map.
+        r.draw_text("N",0.795,0.43,0.024,INK,Align::Center);
+        r.draw_text("^",0.795,0.455,0.026,INK,Align::Center);
+        if let Some(spec)=&self.canyon_spec {
+            let (x,y)=proj(spec.start);r.draw_text("+",x,y,0.026,FADED,Align::Center);
+            let (x,y)=proj(spec.goal);r.draw_text_bold("X",x,y,0.030,INK,Align::Center);
+        }
         // The mission's marks (src/mission.rs) in the survey's own projection.
         if let Some(guidance) = self.mission_map_guidance() {
-            let proj = |p: Vec2| { let (u, v) = survey_uv(bounds, p); (0.17 + u * 0.66, 0.34 + v * 0.59) };
             crate::ui::draw_mission_marks(r, &guidance, &proj, (0.17, 0.34, 0.66, 0.59));
         }
+        map_linework::player_marker(r,proj(self.map_world_position()),paper);
         for &(_, p) in pencil.iter().filter(|(act, _)| *act == self.act.id) {
             r.fill_rect(
                 0.17 + p.x * 0.66,
                 0.34 + p.y * 0.59,
                 0.0018,
                 0.0024,
-                [0.18, 0.16, 0.13, 0.90],
+                [0.16, 0.16, 0.16, 0.90],
             );
         }
         for &(_, p) in pins.iter().filter(|(act, _)| *act == self.act.id) {
@@ -94,7 +104,7 @@ impl Game {
                 0.17 + p.x * 0.66,
                 0.34 + p.y * 0.59,
                 0.022,
-                [0.58, 0.08, 0.065, 1.0],
+                INK,
                 Align::Center,
             );
         }
@@ -103,8 +113,34 @@ impl Game {
             0.34 + cursor.y * 0.59,
             0.0015,
             0.0025,
-            [0.2, 0.18, 0.14, 0.80],
+            [0.2, 0.2, 0.2, 0.80],
         );
         true
+    }
+
+    /// Add geometry-derived footprints to the generic act survey. Call after its paper/road ink
+    /// and before `render_held_map_texture`; canyon and winter already draw their own outlines.
+    pub fn draw_campaign_building_map(&self,r:&mut Renderer){
+        let half=self.act.half_extent_m.max(1.0);
+        let project=|p:Vec2|(0.17+0.66*(0.50+p.x/half*0.39),0.34+0.59*(0.51+p.y/half*0.38));
+        let visible=|p:Vec2| {
+            let Some((route,sheets))=self.campaign_map_state()else{return true;};
+            let start=Vec2::new(route.start.x as f32,route.start.z as f32);
+            let near=|c:Vec2,x:f32,z:f32|(p.x-c.x).abs()<=half*x&&(p.y-c.y).abs()<=half*z;
+            near(start,0.27,0.28)||route.sites.iter().take(usize::from(sheets.saturating_add(1).min(3)))
+                .any(|site|near(Vec2::new(site.position.x as f32,site.position.z as f32),0.37,0.37))
+        };
+        crate::ui::map_linework::draw_buildings(r,&self.buildings,&project,&visible,(0.17,0.34,0.66,0.59));
+        crate::ui::map_linework::player_marker(r,project(self.map_world_position()),(0.17,0.34,0.66,0.59));
+    }
+}
+
+#[cfg(test)]mod tests{
+    use super::*;
+    #[test]fn measured_survey_projection_keeps_north_up_and_positions_registered(){
+        let bounds=[-1150.,2000.,-920.,1120.];
+        let (u,v)=survey_uv(bounds,Vec2::new(425.,100.));assert!((u-0.5).abs()<1e-6);assert!((v-0.5).abs()<1e-6);
+        assert!(survey_uv(bounds,Vec2::new(425.,0.)).1<v);
+        assert!(survey_uv(bounds,Vec2::new(525.,100.)).0>u);
     }
 }

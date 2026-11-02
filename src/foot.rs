@@ -121,6 +121,7 @@ pub fn standing_headroom(feet: Vec3, current_height: f32, standing_height: f32, 
 
 /// The supply classes a scavenger picks up.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum PickupKind {
     Ammo,
     Fuel,
@@ -131,6 +132,7 @@ pub enum PickupKind {
 
 /// The deliberately tiny dismounted arsenal. Number keys select directly; Q cycles.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum FootWeapon {
     #[default]
     Luger,
@@ -141,6 +143,7 @@ pub enum FootWeapon {
 /// (toolboxes, map cases, ammunition tins) can reuse the same equip/drop/throw machinery without
 /// another one-off inventory boolean.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum PortableKind {
     JerryCan,
 }
@@ -148,6 +151,7 @@ pub enum PortableKind {
 /// What is physically inside a portable prop. Contents, not the mesh slot, decide mass and use; an
 /// emptied can therefore remains the exact same persistent object in the snow.
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum PortableContents {
     FuelLiters(f32),
     Empty,
@@ -163,6 +167,7 @@ const PORTABLE_GRAVITY: f32 = 14.0;
 /// Runtime rigid-body state for a preallocated portable mesh. Position and renderer slot stay on
 /// [`Pickup`], so a campaign loot reseed can move the object without rebuilding the renderer scene.
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct PortableItem {
     pub kind: PortableKind,
     pub contents: PortableContents,
@@ -244,7 +249,7 @@ impl PortableItem {
         let available = self.fuel_liters();
         let transferred = requested_liters.max(0.0).min(available);
         let remaining = available - transferred;
-        self.contents = if remaining > 0.01 {
+        self.contents = if remaining > 0.0 {
             PortableContents::FuelLiters(remaining)
         } else {
             PortableContents::Empty
@@ -297,6 +302,7 @@ impl PortableItem {
 /// Typed supply tally — the scavenging readout (no HUD text renderer exists; a `println!` at the
 /// collect site is the verification surface).
 #[derive(Default, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Supplies {
     /// World ammo-box caches. Each cache is six AP rounds when banked at the Tiger.
     pub ammo: u32,
@@ -343,6 +349,7 @@ impl Supplies {
 
 /// A world-placed collectible. `slot` is its pre-allocated renderer mesh index (the scene is fixed
 /// at `Renderer::new`, so collecting just hides the slot). Positioned once via `set_model`.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Pickup {
     pub pos: Vec3,
     pub slot: usize,
@@ -354,6 +361,7 @@ pub struct Pickup {
 }
 
 /// The dismounted player. Terrain motion is followed by source-surface support and body collision.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FootSoldier {
     pub pos: Vec3, // ground contact (feet)
     pub yaw: f32,

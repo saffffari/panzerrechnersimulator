@@ -48,6 +48,7 @@ pub const SEARCH_TIMEOUT: f32 = 22.0; // s — a Searching platoon hunts this lo
 /// patrol and never lays a gun on the player; a Searching one knows *something* is out here and
 /// sweeps toward a last-known area; an Engaged one has an exact fix and converges + fires.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum AlertState {
     Unaware,    // on patrol — has not knowingly detected the player
     Searching,  // alerted (spotter killed inside 5 s) — hunting a last-known area, position unknown
@@ -57,6 +58,7 @@ pub enum AlertState {
 
 /// One platoon of up to `PLATOON_SIZE` enemies, tracked by their indices into `Game::enemies`.
 /// (Its own index into `Stealth::platoons` is its id, so it isn't stored again here.)
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Platoon {
     pub members: Vec<usize>, // enemy indices belonging to this platoon
     pub state: AlertState,
@@ -69,6 +71,7 @@ pub struct Platoon {
 
 /// The whole stealth state: per-enemy detection meters + spotted flags, the platoons, a scan clock,
 /// and the cached "gone dark" edge for logging. Parallel to `Game::enemies` by index.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Stealth {
     pub meters: Vec<f32>,   // per-enemy detection meter, 0..1
     pub spotted: Vec<bool>, // per-enemy: has this tank individually acquired the player?
@@ -303,6 +306,7 @@ pub fn accrual_rate(cos_angle: f32, dist: f32, radius: f32, move_mult: f32) -> f
 
 /// One world-space axis-aligned cover box. A sightline that passes through it is broken.
 #[derive(Copy, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Occluder {
     pub min: Vec3,
     pub max: Vec3,

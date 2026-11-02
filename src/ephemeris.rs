@@ -35,6 +35,7 @@ pub const EARTH_EQUATORIAL_RADIUS_KM: f64 = 6_378.14;
 
 /// A place on the Earth. Longitude is positive east.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Site {
     pub latitude_deg: f64,
     pub longitude_deg_east: f64,
@@ -50,6 +51,7 @@ pub const HALBE: Site = Site { latitude_deg: 52.11, longitude_deg_east: 13.70, h
 
 /// An instant of Universal Time, as a Julian Day number.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct UtcInstant {
     pub jd: f64,
 }

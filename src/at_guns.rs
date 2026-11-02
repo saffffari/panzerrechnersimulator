@@ -48,6 +48,7 @@ pub(super) const APCR_LOWER_M: f32 = 350.0;
 pub(super) const SECTOR_HALF: f32 = 1.05;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) enum GunState {
     /// Concealed and watching its sector.
     Hidden,
@@ -64,6 +65,7 @@ pub(super) enum GunState {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct AtGun {
     /// Axle centre on the ground.
     pub pos: Vec3,
@@ -124,6 +126,9 @@ impl AtGun {
     /// One frame of the crew's doctrine. `contact` is what the gun commander sees of the Tiger;
     /// `crew` how many of its men are alive. Returns true when the gun fires this frame.
     pub fn step(&mut self, contact: Option<Contact>, crew: usize, dt: f32) -> bool {
+        self.step_against(contact,crew,dt,true)
+    }
+    fn step_against(&mut self,contact:Option<Contact>,crew:usize,dt:f32,vehicle:bool)->bool {
         if self.state == GunState::Wrecked { return false; }
         if crew == 0 {
             self.state = GunState::Silenced;
@@ -147,10 +152,10 @@ impl AtGun {
         };
         self.sight_lost_s = 0.0;
         if self.state == GunState::Down {
-            if self.timer == 0.0 && c.range_m > REMAN_M { self.state = GunState::Hidden; }
+            if self.timer == 0.0 && (!vehicle||c.range_m > REMAN_M) { self.state = GunState::Hidden; }
             return false;
         }
-        if c.range_m < GROUND_M {
+        if vehicle && c.range_m < GROUND_M {
             self.state = GunState::Down;
             self.timer = GROUND_S;
             return false;
@@ -406,20 +411,19 @@ impl Game {
             || self.winter_encounter.as_ref().is_some_and(|e| e.sounds_heard > 0 || e.confirmed_sightings > 0);
         // Base target recognition envelope stays finite; local optical weather supplies contrast.
         let reach = 1000.0;
-        let tiger = self.player.center();
+        let target = self.controlled_threat();
         for g in 0..AT_GUNS {
             self.recrew_at_gun(g);
             let Some(mut gun) = self.at_guns[g] else { continue; };
             let crew = self.at_gun_crew(g);
             let eye = gun.pos + Vec3::Y * 1.1;
-            let range_m = eye.distance(tiger);
-            let contact = self.player.alive.then(|| Contact {
-                range_m,
-                bearing: bearing(gun.pos, tiger),
-                visible: range_m <= reach && self.optical_los_clear(eye, tiger),
+            let contact = target.map(|target| Contact {
+                range_m:eye.distance(target.position),
+                bearing: bearing(gun.pos, target.position),
+                visible: eye.distance(target.position) <= reach && self.optical_los_clear(eye, target.position),
                 alerted: alerted || gun.heard,
             });
-            let fired = gun.step(contact, crew, dt);
+            let fired = gun.step_against(contact, crew, dt,target.is_some_and(|t|t.kind!=recovery_threat::Kind::Foot));
             self.at_guns[g] = Some(gun);
             if fired && self.enemy_return_fire_allowed() {
                 self.at_gun_fire(g, crew);
@@ -442,23 +446,26 @@ impl Game {
 
     fn at_gun_fire(&mut self, g: usize, crew: usize) {
         let Some(mut gun) = self.at_guns[g] else { return; };
+        let Some(target)=self.controlled_threat()else{return;};
         let (muzzle, _) = gun.muzzle();
         let hull = self.player.hull_model();
         let toward_gun = hull.inverse().transform_vector3(gun.pos - self.player.pos);
-        let range_m = muzzle.distance(self.player.center());
-        let (round, aim_local) = choose_shot(toward_gun, range_m, gun.apcr, gun.shots);
+        let range_m = muzzle.distance(target.position);
+        let (round, aim_local) = if target.kind==recovery_threat::Kind::Tiger {choose_shot(toward_gun, range_m, gun.apcr, gun.shots)}
+            else{(Round::Ap,Vec3::ZERO)};
         let shell = match round {
             Round::Ap => &crate::ballistics::BR_240,
             Round::Apcr => { gun.apcr -= 1; &crate::ballistics::BR_240P }
         };
-        // Lead a moving Tiger by the flight time, then allow for drop.
-        let aim = hull.transform_point3(aim_local)
-            + self.player.forward() * self.player.speed * (range_m / shell.muzzle_velocity);
+        // Tiger weak-point selection remains Tiger-specific. Carrier and keeper are aimed at
+        // their real world position, never the abandoned Tiger's local weak-point coordinates.
+        let aim = (if target.kind==recovery_threat::Kind::Tiger{hull.transform_point3(aim_local)}else{target.position})
+            + target.velocity * (range_m / shell.muzzle_velocity);
         let laid = (ballistic_aim_target(muzzle, aim, shell) - muzzle).normalize_or_zero();
         self.ai_tick = self.ai_tick.wrapping_add(1);
         let seed = self.ai_tick ^ (g as u32 + 1).wrapping_mul(0x51ED_270B) ^ gun.shots.rotate_left(9);
         let untrained = self.at_gun_artillerymen(g) == 0;
-        let sigma = dispersion(self.player.speed.abs() / tank::TOP_SPEED, crew, untrained);
+        let sigma = dispersion(target.speed_fraction, crew, untrained);
         let jitter = |salt: u32| tiger_damage::roll(seed, salt) * 2.0 - 1.0;
         let across = laid.cross(Vec3::Y).normalize_or_zero();
         let direction = (laid + across * jitter(1) * sigma + Vec3::Y * jitter(2) * sigma).normalize_or_zero();
@@ -617,6 +624,18 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn foot_recovery_target_does_not_trigger_anti_overrun_vehicle_cover_rule() {
+        let contact=Contact{range_m:60.0,bearing:0.0,visible:true,alerted:true};
+        let mut foot=AtGun::new(Vec3::ZERO,0.0);let mut vehicle=foot;
+        assert!(!foot.step_against(Some(contact),4,0.1,false));
+        assert_eq!(foot.state,GunState::Engaging);
+        assert!(!vehicle.step_against(Some(contact),4,0.1,true));
+        assert_eq!(vehicle.state,GunState::Down);
+        assert!(foot.step_against(Some(contact),4,LAY_S+0.01,false));
+        assert!(!foot.step_against(Some(Contact{visible:false,..contact}),4,AIMED_INTERVAL_S+1.0,false));
+    }
+
 
     fn seen(range_m: f32, bearing: f32, alerted: bool) -> Option<Contact> {
         Some(Contact { range_m, bearing, visible: true, alerted })

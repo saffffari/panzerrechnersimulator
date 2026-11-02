@@ -23,6 +23,7 @@ impl Step {
     }
 }
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Cadence {
     phase: f32,
     ordinal: usize,

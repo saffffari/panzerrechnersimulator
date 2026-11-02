@@ -43,6 +43,7 @@ pub(super) struct CabinVoxels {
     pub frames: Vec<(usize, VoxelSolid)>,
     pub triangles: usize,
     pub build_ms: f64,
+    enabled_frames: std::cell::Cell<[bool; surface_fire::FRAMES]>,
 }
 
 impl CabinVoxels {
@@ -61,7 +62,8 @@ impl CabinVoxels {
                 frames.push((f, solid));
             }
         }
-        Self { frames, triangles, build_ms: start.elapsed().as_secs_f64() * 1e3 }
+        Self { frames, triangles, build_ms: start.elapsed().as_secs_f64() * 1e3,
+            enabled_frames: std::cell::Cell::new([true; surface_fire::FRAMES]) }
     }
 
     /// The same voxels from the meshes `CabinFire::new` is given, built on a worker thread so
@@ -100,7 +102,14 @@ impl CabinVoxels {
                 frames.push((f, solid));
             }
         }
-        Self { frames, triangles, build_ms: start.elapsed().as_secs_f64() * 1e3 }
+        Self { frames, triangles, build_ms: start.elapsed().as_secs_f64() * 1e3,
+            enabled_frames: std::cell::Cell::new([true; surface_fire::FRAMES]) }
+    }
+
+    fn set_workshop_frames(&self, mut enabled: [bool; surface_fire::FRAMES]) {
+        // This interface owns removable banks only. It cannot remove the ordinary cabin.
+        enabled[..16].fill(true);
+        self.enabled_frames.set(enabled);
     }
 
     /// Nearest voxel hit over every frame placed by `models` (scene frame).
@@ -108,7 +117,9 @@ impl CabinVoxels {
         origin: Vec3, dir: Vec3, max_distance: f32) -> Option<Hit>
     {
         let mut best: Option<Hit> = None;
+        let enabled = self.enabled_frames.get();
         for (f, solid) in &self.frames {
+            if !enabled[*f] { continue; }
             let (o, d) = (inverses[*f].transform_point3(origin), inverses[*f].transform_vector3(dir));
             let limit = best.map_or(max_distance, |b| b.distance);
             if let Some((t, n)) = solid.hit(o, d, limit) {
@@ -325,6 +336,8 @@ pub(super) struct WorldAcoustics {
     voxels: Option<Rc<CabinVoxels>>,
     /// The worker building them; traces wait (voices keep the parametric tail) until it is done.
     pending_voxels: Option<std::thread::JoinHandle<CabinVoxels>>,
+    /// Retained while the worker builds, so later delivery cannot reactivate empty banks.
+    workshop_frames: Option<[bool; surface_fire::FRAMES]>,
     cache: HashMap<FieldKey, Rc<StereoIr>>,
     order: VecDeque<FieldKey>,
     queue: VecDeque<(FieldKey, Vec3, Vec3, Vec3)>,
@@ -386,6 +399,16 @@ fn bucket_dir(index: u8, sectors: u8) -> Vec3 {
 }
 
 impl Game {
+    fn build_acoustic_source_voxels(&mut self) -> CabinVoxels {
+        // The normal worker copies every bank's source geometry before enable filtering.
+        // Its synchronous fallback must retain the same potential geometry, otherwise a
+        // later commissioned spare would remain acoustically absent forever.
+        for frame in 16..surface_fire::FRAMES { self.cabin_fire.set_frame_enabled(frame,true); }
+        let voxels=CabinVoxels::build(&self.cabin_fire);
+        self.workshop.sync_frames(&mut self.cabin_fire,&mut self.projectile_player_armor);
+        voxels
+    }
+
     /// Rays per simulation update and per trace, by preset: the presets may change ray counts,
     /// never the scene or the transport law (CLAUDE.md).
     fn acoustic_ray_budget(&self) -> (u32, u32, u32) {
@@ -564,14 +587,14 @@ impl Game {
                 }
                 Some(worker) => worker.join().unwrap_or_else(|_| {
                     eprintln!("[acoustics] the voxel worker failed; building the cabin voxels here");
-                    CabinVoxels::build(&self.cabin_fire)
+                    self.build_acoustic_source_voxels()
                 }),
                 // No worker (a world made without one): build here, once.
-                None => CabinVoxels::build(&self.cabin_fire),
+                None => self.build_acoustic_source_voxels(),
             };
             println!("[acoustics] cabin voxels: {} frames from {} source triangles at {} m in {:.0} ms",
                 voxels.frames.len(), voxels.triangles, CABIN_VOXEL_M, voxels.build_ms);
-            self.acoustics.voxels = Some(Rc::new(voxels));
+            self.acoustics.install_voxels(voxels);
         }
         let done = {
             let (scene, _models) = self.acoustic_scene(key.inside, ear);
@@ -1042,11 +1065,65 @@ impl WorldAcoustics {
     pub(super) fn with_cabin_voxels(worker: Option<std::thread::JoinHandle<CabinVoxels>>) -> Self {
         Self { pending_voxels: worker, ..Default::default() }
     }
+
+    pub(super) fn set_workshop_frames(&mut self, mut enabled: [bool; surface_fire::FRAMES]) {
+        enabled[..16].fill(true);
+        if self.workshop_frames == Some(enabled) { return; }
+        self.workshop_frames = Some(enabled);
+        if let Some(voxels) = &self.voxels { voxels.set_workshop_frames(enabled); }
+        // No reflected field may retain occlusion from a previous bank population.
+        self.cache.clear();
+        self.order.clear();
+        self.job = None;
+    }
+
+    fn install_voxels(&mut self, voxels: CabinVoxels) {
+        if let Some(enabled) = self.workshop_frames { voxels.set_workshop_frames(enabled); }
+        self.voxels = Some(Rc::new(voxels));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workshop_mask_survives_worker_delivery_and_preserves_cabin_frames() {
+        let copies: Vec<_> = [(0,3.0),(16,1.0),(17,2.0)].into_iter().map(|(frame,z)| {
+            let mesh=crate::prims::box_mesh(Vec3::new(-0.4,0.1,z),Vec3::new(0.4,0.9,z+0.2),[80,80,80]);
+            (frame,mesh.vertices.iter().map(|v|v.pos).collect::<Vec<_>>(),mesh.indices)
+        }).collect();
+        let models=[Mat4::IDENTITY;surface_fire::FRAMES];
+        let distance=|voxels:&CabinVoxels| voxels
+            .hit(&models,&models,Vec3::new(0.0,0.5,0.0),Vec3::Z,5.0).unwrap().distance;
+        // Isolate each actual source frame before the worker receives the combined scene.
+        // Voxel rounding/dilation need not hit the exact analytic box face: this test owns
+        // frame admission and delivery, so compare to the same geometry with no other frame.
+        let isolated:Vec<_>=copies.iter().map(|copy| {
+            let voxels=CabinVoxels::from_copies(std::slice::from_ref(copy));
+            assert_eq!(voxels.frames.len(),1);assert_eq!(voxels.frames[0].0,copy.0);
+            distance(&voxels)
+        }).collect();
+        assert!(isolated[1]<isolated[2]&&isolated[2]<isolated[0],"fixture frames must be distinguishable");
+        let worker=std::thread::spawn(move || CabinVoxels::from_copies(&copies));
+        let mut world=WorldAcoustics::with_cabin_voxels(Some(worker));
+        let mut mask=[false;surface_fire::FRAMES];mask[17]=true;
+        world.set_workshop_frames(mask);
+        let voxels=world.pending_voxels.take().unwrap().join().unwrap();
+        world.install_voxels(voxels);
+        let expected=std::array::from_fn(|frame|frame<16||frame==17);
+        assert_eq!(world.workshop_frames,Some(expected));
+        assert_eq!(world.voxels.as_ref().unwrap().enabled_frames.get(),expected);
+        assert_eq!(distance(world.voxels.as_ref().unwrap()),isolated[2],"disabled first spare must not occlude the second");
+        mask[17]=false;world.set_workshop_frames(mask);
+        let expected=std::array::from_fn(|frame|frame<16);
+        assert_eq!(world.voxels.as_ref().unwrap().enabled_frames.get(),expected);
+        assert_eq!(distance(world.voxels.as_ref().unwrap()),isolated[0],"ordinary hull frame must equal the isolated frame-0 fixture even if mask[0] is false");
+        mask[16]=true;world.set_workshop_frames(mask);
+        let expected=std::array::from_fn(|frame|frame<16||frame==16);
+        assert_eq!(world.voxels.as_ref().unwrap().enabled_frames.get(),expected);
+        assert_eq!(distance(world.voxels.as_ref().unwrap()),isolated[1],"commissioned source geometry must immediately occlude");
+    }
 
     /// The worker's voxels equal the ones built through `CabinFire`'s contact query: two frames
     /// of boxes (a closed room, a slab), one with a degenerate triangle and one past ±8 m.
@@ -1195,5 +1272,18 @@ mod tests {
         assert!(open.reflected_db()[6] < closed.reflected_db()[6], "less steel ring with the lid open");
         assert!(closed.reflected_db()[6] > -6.0, "the closed steel cabin is reverberant: {} dB", closed.reflected_db()[6]);
         Ok(())
+    }
+}
+
+impl WorldAcoustics {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut fields=crate::capture_world_fields!(self; traces_done, rays_traced, traced_rooms, stand_in_rooms, parametric_rooms, foley_events, recorded_events, pending_recorded, ram_sound_started, luger_rack_close, order_up, infantry_steps, sheet_recovered, seq, last_gear, last_speed, last_airborne, last_fall_speed, last_station_switch, last_engine_on, last_hatch_open, last_head_out, last_ext, last_snow_load, engine_off_s, timers, hard_contact, primed, convolutions, pour_s, last_binocular, starved, cue_counts);
+        fields.put("workshop_frames",&self.workshop_frames.as_ref().map(|v|v.as_slice()))?;Ok(fields)
+    }
+    pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        self.workshop_frames=fields.take::<Option<Vec<bool>>>("workshop_frames")?.map(|v|v.try_into().map_err(|_|anyhow::anyhow!("acoustic source frame capacity mismatch"))).transpose()?;
+        crate::restore_world_fields!(self,fields; traces_done, rays_traced, traced_rooms, stand_in_rooms, parametric_rooms, foley_events, recorded_events, pending_recorded, ram_sound_started, luger_rack_close, order_up, infantry_steps, sheet_recovered, seq, last_gear, last_speed, last_airborne, last_fall_speed, last_station_switch, last_engine_on, last_hatch_open, last_head_out, last_ext, last_snow_load, engine_off_s, timers, hard_contact, primed, convolutions, pour_s, last_binocular, starved, cue_counts);
+        self.cache.clear();self.order.clear();self.queue.clear();self.job=None;
+        self.loops.clear();self.active_loops.clear();Ok(())
     }
 }

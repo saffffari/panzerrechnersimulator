@@ -86,6 +86,7 @@ fn load_source()->anyhow::Result<Source> {
 }
 
 #[derive(Clone,Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Fleck {origin:Vec3,velocity:Vec3,wind:Vec3,born:f64,life:f32,id:u32}
 impl Fleck {
     fn position(self,time:f64)->Vec3 {
@@ -300,5 +301,14 @@ mod tests {
         assert!(clear.weather_contacts>=20);assert!(clear.weather_marks.iter().any(|x|*x));
         assert_eq!(clear.snow,[0.0;2],"stationary tracks must not invent ground pickup");
         clear.reset();assert_eq!(clear.weather_contacts,0);assert!(clear.weather_marks.iter().all(|x|!*x));
+    }
+}
+
+impl System {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        Ok(crate::capture_world_fields!(self; model, previous, credit, time, snow, emit_credit, sequence, flecks, emitted, weather_credit, weather_sequence, weather_marks, weather_contacts))
+    }
+    pub(crate) fn import_world_state(&mut self,fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        crate::restore_world_fields!(self,fields; model, previous, credit, time, snow, emit_credit, sequence, flecks, emitted, weather_credit, weather_sequence, weather_marks, weather_contacts);Ok(())
     }
 }

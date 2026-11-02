@@ -118,7 +118,7 @@ fn tr_noise(px: f32, pz: f32, seed: u32) -> f32 {
 }
 
 fn tr_pattern(cls: u32, k: i32, x: f32, z: f32) -> f32 {
-    let wavelength = ldexp(TR_SPACING, k);
+    let wavelength = ldexp(TR_RELIEF_BASE_WAVELENGTH_M, k);
     let seed = 0x51edu + cls * 977u + u32(k + 8) * 131u;
     if (cls <= 1u) {
         let u = x * TR_WIND.x + z * TR_WIND.y;

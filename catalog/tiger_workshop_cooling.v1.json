@@ -1,0 +1,1002 @@
+{
+  "schema": "panzer.tiger-workshop-cooling.v1",
+  "source": "assets/tanks/tiger/baked/tiger_hull.glb",
+  "source_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+  "coordinate_frame": "current hull metres; all GLB nodes identity",
+  "authored_change": {
+    "cylinder_sides": 256,
+    "rotor_radial_trim_m": 0.001,
+    "stator_radial_trim_m": 0.0005,
+    "nominal_radial_gap_m": 0.0015,
+    "caps": "CPU exact solid boolean; newly exposed cylindrical facets are authored cut faces",
+    "normalization": "Source coincident position weld at 1 micrometre; surface UVs and corner normals retained by Blender Boolean interpolation"
+  },
+  "material": "Exact source material object preserved. This source has no texture images; source UVs retained.",
+  "original_source_modified": false,
+  "blender_version": "5.1.2",
+  "assemblies": [
+    {
+      "side": "left",
+      "source_root": "Hull_1102",
+      "source_node": 1078,
+      "source_triangles": 6242,
+      "source_metrics": {
+        "vertices": 7441,
+        "triangles": 6242,
+        "min": [
+          -1.6531416893779465,
+          1.6218069061111464,
+          -2.913142745597952
+        ],
+        "max": [
+          -0.6431275543847619,
+          1.9405747794615422,
+          -2.4267620913028622
+        ],
+        "area_m2": 1.496232938167829,
+        "volume_m3": 0.012132759419364958,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 5.384665951675855e-07,
+        "finite_attributes": true
+      },
+      "stator": "left_stator",
+      "rotors": [
+        {
+          "name": "left_rotor_outboard",
+          "center_hull_m": [
+            -1.3952755068031772,
+            1.8157314052040325,
+            -2.6873153179543925
+          ],
+          "axis_hull": [
+            6.461677960922206e-15,
+            0.8751693141580058,
+            -0.483816774777607
+          ],
+          "radius_m": 0.22962693642961743,
+          "rim_fit_max_m": 7.3575443886586545e-06,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627334688104e-07,
+          "rotor_max_radius_m": 0.22862709325051792,
+          "stator_cut_vertex_radius_m": 0.23012693642961743,
+          "radial_gap_lower_bound_m": 0.0014825150440230528,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        },
+        {
+          "name": "left_rotor_inboard",
+          "center_hull_m": [
+            -0.9009934631070292,
+            1.8157314539268499,
+            -2.6873152298203715
+          ],
+          "axis_hull": [
+            6.461677960922206e-15,
+            0.8751693141580058,
+            -0.483816774777607
+          ],
+          "radius_m": 0.2296270158176418,
+          "rim_fit_max_m": 1.6983841417794743e-05,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627334688104e-07,
+          "rotor_max_radius_m": 0.22862718523665104,
+          "stator_cut_vertex_radius_m": 0.2301270158176418,
+          "radial_gap_lower_bound_m": 0.0014825024399365283,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        }
+      ],
+      "grille_roots": [
+        "Hull_1115",
+        "Hull_1125"
+      ],
+      "removed_volume_m3": 0.00014723895611983787,
+      "removed_volume_fraction": 0.012135652824767255,
+      "total_derivative_area_m2": 1.5129600718433287,
+      "extraction": {
+        "proposed_direction_hull": [
+          0,
+          1,
+          0
+        ],
+        "grilles_must_be_removed": [
+          "Hull_1115",
+          "Hull_1125"
+        ],
+        "clearance": "Not certified: static source sweep audit is recorded separately; live source collision must veto extraction.",
+        "vertical_vertex_sweep": {
+          "lift_m": 0.65,
+          "initial_contact_skip_m": 0.002,
+          "source_vertices_tested": 3091,
+          "blocked_vertices": 262,
+          "blockers": [
+            {
+              "source_root": "Hull_1081",
+              "source_triangle": 4413,
+              "moving_vertex_hull_m": [
+                -1.6322317,
+                1.7246072,
+                -2.7153947
+              ],
+              "first_lift_m": 0.022896231118207266
+            },
+            {
+              "source_root": "Hull_1081",
+              "source_triangle": 3822,
+              "moving_vertex_hull_m": [
+                -1.6113802,
+                1.815402,
+                -2.5511574
+              ],
+              "first_lift_m": 0.011636661101894763
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11226,
+              "moving_vertex_hull_m": [
+                -1.5850638,
+                1.8404139,
+                -2.5098336
+              ],
+              "first_lift_m": 0.11386262809365788
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11225,
+              "moving_vertex_hull_m": [
+                -1.567725,
+                1.8460053,
+                -2.4925578
+              ],
+              "first_lift_m": 0.10827122809365775
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11226,
+              "moving_vertex_hull_m": [
+                -1.5674692,
+                1.8950865,
+                -2.5115935
+              ],
+              "first_lift_m": 0.05919002809365792
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11226,
+              "moving_vertex_hull_m": [
+                -1.5585416,
+                1.8385951,
+                -2.515453
+              ],
+              "first_lift_m": 0.11568142809365778
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11225,
+              "moving_vertex_hull_m": [
+                -1.5529816,
+                1.9009198,
+                -2.5010416
+              ],
+              "first_lift_m": 0.05335672809365777
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11226,
+              "moving_vertex_hull_m": [
+                -1.5529816,
+                1.9145444,
+                -2.5085737
+              ],
+              "first_lift_m": 0.03973212809365778
+            }
+          ],
+          "complete_swept_solid_certificate": false,
+          "scope": "Current rigid hull source only; no terrain, turret pose, crew or world fixtures."
+        }
+      },
+      "new_cut_cap_area_m2": 0.20492176819838212,
+      "original_surface_area_removed_m2": 0.18819463452288243,
+      "assembled_bounds_max_difference_m": 6.447612577176187e-08
+    },
+    {
+      "side": "right",
+      "source_root": "Hull_1103",
+      "source_node": 1079,
+      "source_triangles": 6242,
+      "source_metrics": {
+        "vertices": 7476,
+        "triangles": 6242,
+        "min": [
+          0.6431274938537115,
+          1.6218069061111464,
+          -2.913142745597952
+        ],
+        "max": [
+          1.653141628846896,
+          1.9405747794615422,
+          -2.4267620913028622
+        ],
+        "area_m2": 1.4962329415737852,
+        "volume_m3": 0.01213275938784174,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 5.384665951675855e-07,
+        "finite_attributes": true
+      },
+      "stator": "right_stator",
+      "rotors": [
+        {
+          "name": "right_rotor_inboard",
+          "center_hull_m": [
+            0.9009936624627851,
+            1.815731405177066,
+            -2.6873153180031695
+          ],
+          "axis_hull": [
+            -4.823289155813745e-16,
+            0.8751693141580057,
+            -0.4838167747776073
+          ],
+          "radius_m": 0.22962693049573943,
+          "rim_fit_max_m": 7.337793997058695e-06,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627062683463e-07,
+          "rotor_max_radius_m": 0.2286270953883085,
+          "stator_cut_vertex_radius_m": 0.23012693049573943,
+          "radial_gap_lower_bound_m": 0.0014825069728012785,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        },
+        {
+          "name": "right_rotor_outboard",
+          "center_hull_m": [
+            1.3952757081255158,
+            1.815731454416437,
+            -2.6873152289347697
+          ],
+          "axis_hull": [
+            -4.823289155813745e-16,
+            0.8751693141580057,
+            -0.4838167747776073
+          ],
+          "radius_m": 0.2296270223915781,
+          "rim_fit_max_m": 1.7001386924314632e-05,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627062683463e-07,
+          "rotor_max_radius_m": 0.22862720611266343,
+          "stator_cut_vertex_radius_m": 0.2301270223915781,
+          "radial_gap_lower_bound_m": 0.0014824881373654286,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        }
+      ],
+      "grille_roots": [
+        "Hull_1116",
+        "Hull_1126"
+      ],
+      "removed_volume_m3": 0.00014723941666967052,
+      "removed_volume_fraction": 0.012135690815497372,
+      "total_derivative_area_m2": 1.512959993186576,
+      "extraction": {
+        "proposed_direction_hull": [
+          0,
+          1,
+          0
+        ],
+        "grilles_must_be_removed": [
+          "Hull_1116",
+          "Hull_1126"
+        ],
+        "clearance": "Not certified: static source sweep audit is recorded separately; live source collision must veto extraction.",
+        "vertical_vertex_sweep": {
+          "lift_m": 0.65,
+          "initial_contact_skip_m": 0.002,
+          "source_vertices_tested": 3091,
+          "blocked_vertices": 246,
+          "blockers": [
+            {
+              "source_root": "Hull_1082",
+              "source_triangle": 4413,
+              "moving_vertex_hull_m": [
+                0.6640375,
+                1.7246072,
+                -2.7153947
+              ],
+              "first_lift_m": 0.02289623587339551
+            },
+            {
+              "source_root": "Hull_1082",
+              "source_triangle": 3822,
+              "moving_vertex_hull_m": [
+                0.684889,
+                1.815402,
+                -2.5511574
+              ],
+              "first_lift_m": 0.011636661100916879
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11317,
+              "moving_vertex_hull_m": [
+                0.7112054,
+                1.8404139,
+                -2.5098336
+              ],
+              "first_lift_m": 0.11386262809365788
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11318,
+              "moving_vertex_hull_m": [
+                0.7285441,
+                1.8460053,
+                -2.4925578
+              ],
+              "first_lift_m": 0.10827122809365775
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11317,
+              "moving_vertex_hull_m": [
+                0.7287999,
+                1.8950865,
+                -2.5115935
+              ],
+              "first_lift_m": 0.05919002809365792
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11317,
+              "moving_vertex_hull_m": [
+                0.7377276,
+                1.8385951,
+                -2.515453
+              ],
+              "first_lift_m": 0.11568142809365778
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11318,
+              "moving_vertex_hull_m": [
+                0.7432875,
+                1.9009198,
+                -2.5010416
+              ],
+              "first_lift_m": 0.05335672809365777
+            },
+            {
+              "source_root": "Hull_0708",
+              "source_triangle": 11317,
+              "moving_vertex_hull_m": [
+                0.7432875,
+                1.9145444,
+                -2.5085737
+              ],
+              "first_lift_m": 0.03973212809365778
+            }
+          ],
+          "complete_swept_solid_certificate": false,
+          "scope": "Current rigid hull source only; no terrain, turret pose, crew or world fixtures."
+        }
+      },
+      "new_cut_cap_area_m2": 0.20492170225996953,
+      "original_surface_area_removed_m2": 0.18819465064717855,
+      "assembled_bounds_max_difference_m": 6.447612577176187e-08
+    }
+  ],
+  "files": [
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/left_rotor_outboard.glb",
+      "sha256": "225b9ea5eeacdc237c0a55535ad7b5654462a16b0c77dbee67b7b9feac938317",
+      "metrics": {
+        "vertices": 7108,
+        "triangles": 2802,
+        "min": [
+          -1.6191356182098389,
+          1.6513230800628662,
+          -2.881347894668579
+        ],
+        "max": [
+          -1.1714154481887817,
+          1.9206326007843018,
+          -2.4626495838165283
+        ],
+        "area_m2": 0.40316392274336366,
+        "volume_m3": 0.002692727822498376,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 3.1837706617208018e-12,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1102",
+      "derivative": "capped cylindrical intersection",
+      "new_cut_cap_area_m2": 0.006025392987043907
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/left_rotor_inboard.glb",
+      "sha256": "3c2b9a3e4492d66cde51a6e1fdcd35badc1b5aad535b3559675268faf7ff539a",
+      "metrics": {
+        "vertices": 7106,
+        "triangles": 2798,
+        "min": [
+          -1.1248537302017212,
+          1.6513179540634155,
+          -2.881343364715576
+        ],
+        "max": [
+          -0.6771333813667297,
+          1.9206300973892212,
+          -2.4626407623291016
+        ],
+        "area_m2": 0.4031651959639356,
+        "volume_m3": 0.0026925990160491862,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 5.5033449968096645e-12,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1102",
+      "derivative": "capped cylindrical intersection",
+      "new_cut_cap_area_m2": 0.006025421123071839
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/left_stator.glb",
+      "sha256": "c1e294b3f6c47c150e376a52f7849d2555589395347c77ba04868f94aaaa1eb5",
+      "metrics": {
+        "vertices": 9458,
+        "triangles": 4808,
+        "min": [
+          -1.653141736984253,
+          1.6218068599700928,
+          -2.913142681121826
+        ],
+        "max": [
+          -0.6431275606155396,
+          1.9405747652053833,
+          -2.426762104034424
+        ],
+        "area_m2": 0.7066309531360294,
+        "volume_m3": 0.006600193624697557,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.9341907757302862e-13,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1102",
+      "derivative": "two capped cylindrical differences",
+      "new_cut_cap_area_m2": 0.19287095408826638
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/left_cassette_original.glb",
+      "sha256": "6b65d7833a1533af7394d26e6f0aa893764f914c1566a02539cfb0261b572856",
+      "metrics": {
+        "vertices": 7441,
+        "triangles": 6242,
+        "min": [
+          -1.6531416893779465,
+          1.6218069061111464,
+          -2.913142745597952
+        ],
+        "max": [
+          -0.6431275543847619,
+          1.9405747794615422,
+          -2.4267620913028622
+        ],
+        "area_m2": 1.496232938167829,
+        "volume_m3": 0.012132759419364958,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 5.384665951675855e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1102",
+      "derivative": "none; source node transform baked"
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/left_grille_upper.glb",
+      "sha256": "55d6a636d5c6191dedf2bbf3fe10a91e6f95d304c8f7fbc7bf1cba1f74933398",
+      "metrics": {
+        "vertices": 3562,
+        "triangles": 3352,
+        "min": [
+          -1.6969038923767243,
+          1.969844285084264,
+          -3.0285018215647597
+        ],
+        "max": [
+          -0.607149218196767,
+          2.0864788425874963,
+          -2.433332324277899
+        ],
+        "area_m2": 1.7534352595373042,
+        "volume_m3": 0.021691078650543653,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 4.678212449249194e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1115",
+      "derivative": "none; source node transform baked"
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/left_grille_lower.glb",
+      "sha256": "46bd9e85e96de5295e0fb699a93d557171382eda09521fa8d9c40004aff0abd6",
+      "metrics": {
+        "vertices": 1776,
+        "triangles": 1412,
+        "min": [
+          -1.6969038449617528,
+          1.9231404090159003,
+          -3.0220756576773056
+        ],
+        "max": [
+          -0.6071491707817955,
+          1.9854121523221124,
+          -2.5225434673020573
+        ],
+        "area_m2": 1.249794235137903,
+        "volume_m3": 0.010790033181437697,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 5.856881343807859e-06,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1125",
+      "derivative": "none; source node transform baked"
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/right_rotor_inboard.glb",
+      "sha256": "ab04d01c761bb582ce5a3f0afab15f28d8ec321c436011849168b01e5166e2e9",
+      "metrics": {
+        "vertices": 7110,
+        "triangles": 2802,
+        "min": [
+          0.6771336197853088,
+          1.6513230800628662,
+          -2.881347894668579
+        ],
+        "max": [
+          1.1248537302017212,
+          1.9206326007843018,
+          -2.4626495838165283
+        ],
+        "area_m2": 0.4031639100680039,
+        "volume_m3": 0.002692727883646613,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 6.110667527536862e-12,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1103",
+      "derivative": "capped cylindrical intersection",
+      "new_cut_cap_area_m2": 0.0060253788409012545
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/right_rotor_outboard.glb",
+      "sha256": "8fc160ac2ccbefff15ad2d414508664a4408483d9c74b233a7c01c65733cf18f",
+      "metrics": {
+        "vertices": 7104,
+        "triangles": 2798,
+        "min": [
+          1.1714154481887817,
+          1.6513179540634155,
+          -2.881343364715576
+        ],
+        "max": [
+          1.6191357374191284,
+          1.9206300973892212,
+          -2.4626405239105225
+        ],
+        "area_m2": 0.40316519362657577,
+        "volume_m3": 0.002692598327494585,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 6.87805368215777e-12,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1103",
+      "derivative": "capped cylindrical intersection",
+      "new_cut_cap_area_m2": 0.006025372577369891
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/right_stator.glb",
+      "sha256": "3778c9eb774b54334fbd8f85d3e21e510b7d8fa7a1f4960288e0802d9466a4cd",
+      "metrics": {
+        "vertices": 9451,
+        "triangles": 4808,
+        "min": [
+          0.6431275010108948,
+          1.6218068599700928,
+          -2.913142681121826
+        ],
+        "max": [
+          1.6531416177749634,
+          1.9405747652053833,
+          -2.426762104034424
+        ],
+        "area_m2": 0.7066308894919963,
+        "volume_m3": 0.006600193760030871,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.9341907757302862e-13,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1103",
+      "derivative": "two capped cylindrical differences",
+      "new_cut_cap_area_m2": 0.19287095084169836
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/right_cassette_original.glb",
+      "sha256": "574efc972fa3bb084e15a432d70ef588e5286311bd1891e720a60d0b49a32e16",
+      "metrics": {
+        "vertices": 7476,
+        "triangles": 6242,
+        "min": [
+          0.6431274938537115,
+          1.6218069061111464,
+          -2.913142745597952
+        ],
+        "max": [
+          1.653141628846896,
+          1.9405747794615422,
+          -2.4267620913028622
+        ],
+        "area_m2": 1.4962329415737852,
+        "volume_m3": 0.01213275938784174,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 5.384665951675855e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1103",
+      "derivative": "none; source node transform baked"
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/right_grille_upper.glb",
+      "sha256": "cf996af2ee779dfe9f87097296e32043d1319745b77735ea2054916605a88ea2",
+      "metrics": {
+        "vertices": 3531,
+        "triangles": 3338,
+        "min": [
+          0.6071490990124317,
+          1.969844111392149,
+          -3.028501811911383
+        ],
+        "max": [
+          1.696903773192389,
+          2.086556164772645,
+          -2.433332314624522
+        ],
+        "area_m2": 1.7455618187067738,
+        "volume_m3": 0.02160367721286441,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 4.678212449249194e-07,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1116",
+      "derivative": "none; source node transform baked"
+    },
+    {
+      "file": "assets/tanks/tiger/workshop_cooling/right_grille_lower.glb",
+      "sha256": "12328f0f665517c05f3a22ce97eaded1e87a691150bfb85c822b51d91a68accf",
+      "metrics": {
+        "vertices": 1768,
+        "triangles": 1412,
+        "min": [
+          0.6071491598340657,
+          1.9231404090159003,
+          -3.0220756576773056
+        ],
+        "max": [
+          1.696903834014023,
+          1.9854121523221124,
+          -2.5225434673020573
+        ],
+        "area_m2": 1.2497942649813836,
+        "volume_m3": 0.010790035641653553,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 5.856839427122499e-06,
+        "finite_attributes": true
+      },
+      "source_root": "Hull_1126",
+      "derivative": "none; source node transform baked"
+    }
+  ],
+  "limitations": [
+    "No gearbox teeth, gear ratios, bearing internals or historically certified fan speed are reconstructed.",
+    "Separate left/right geometry and identity; no negative-scale substitution.",
+    "Static CPU source derivative validation only; no GPU import or installed gameplay proof."
+  ],
+  "cassettes": [
+    {
+      "side": "left",
+      "source_root": "Hull_1102",
+      "stator_glb": "assets/tanks/tiger/workshop_cooling/left_stator.glb",
+      "rotors": [
+        {
+          "glb": "assets/tanks/tiger/workshop_cooling/left_rotor_outboard.glb",
+          "name": "left_rotor_outboard",
+          "center_hull_m": [
+            -1.3952755068031772,
+            1.8157314052040325,
+            -2.6873153179543925
+          ],
+          "axis_hull": [
+            6.461677960922206e-15,
+            0.8751693141580058,
+            -0.483816774777607
+          ],
+          "radius_m": 0.22962693642961743,
+          "rim_fit_max_m": 7.3575443886586545e-06,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627334688104e-07,
+          "rotor_max_radius_m": 0.22862709325051792,
+          "stator_cut_vertex_radius_m": 0.23012693642961743,
+          "radial_gap_lower_bound_m": 0.0014825150440230528,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        },
+        {
+          "glb": "assets/tanks/tiger/workshop_cooling/left_rotor_inboard.glb",
+          "name": "left_rotor_inboard",
+          "center_hull_m": [
+            -0.9009934631070292,
+            1.8157314539268499,
+            -2.6873152298203715
+          ],
+          "axis_hull": [
+            6.461677960922206e-15,
+            0.8751693141580058,
+            -0.483816774777607
+          ],
+          "radius_m": 0.2296270158176418,
+          "rim_fit_max_m": 1.6983841417794743e-05,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627334688104e-07,
+          "rotor_max_radius_m": 0.22862718523665104,
+          "stator_cut_vertex_radius_m": 0.2301270158176418,
+          "radial_gap_lower_bound_m": 0.0014825024399365283,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        }
+      ],
+      "original_glb": "assets/tanks/tiger/workshop_cooling/left_cassette_original.glb",
+      "retainer_contact_hull_m": [
+        -1.1406956942728737,
+        1.8283202493113133,
+        -2.6645435106913737
+      ],
+      "source_triangle": 1430,
+      "source_normal_hull": [
+        0.0,
+        0.8751723359797121,
+        -0.4838113086067894
+      ],
+      "test_eye_hull_m": [
+        -1.1406956942728737,
+        2.4783202493113135,
+        -2.6645435106913737
+      ],
+      "removed_for_access": [
+        "Hull_1115",
+        "Hull_1125"
+      ],
+      "semantics": "Exposed source service-contact candidate; source label does not certify a particular historical fastener."
+    },
+    {
+      "side": "right",
+      "source_root": "Hull_1103",
+      "stator_glb": "assets/tanks/tiger/workshop_cooling/right_stator.glb",
+      "rotors": [
+        {
+          "glb": "assets/tanks/tiger/workshop_cooling/right_rotor_inboard.glb",
+          "name": "right_rotor_inboard",
+          "center_hull_m": [
+            0.9009936624627851,
+            1.815731405177066,
+            -2.6873153180031695
+          ],
+          "axis_hull": [
+            -4.823289155813745e-16,
+            0.8751693141580057,
+            -0.4838167747776073
+          ],
+          "radius_m": 0.22962693049573943,
+          "rim_fit_max_m": 7.337793997058695e-06,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627062683463e-07,
+          "rotor_max_radius_m": 0.2286270953883085,
+          "stator_cut_vertex_radius_m": 0.23012693049573943,
+          "radial_gap_lower_bound_m": 0.0014825069728012785,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        },
+        {
+          "glb": "assets/tanks/tiger/workshop_cooling/right_rotor_outboard.glb",
+          "name": "right_rotor_outboard",
+          "center_hull_m": [
+            1.3952757081255158,
+            1.815731454416437,
+            -2.6873152289347697
+          ],
+          "axis_hull": [
+            -4.823289155813745e-16,
+            0.8751693141580057,
+            -0.4838167747776073
+          ],
+          "radius_m": 0.2296270223915781,
+          "rim_fit_max_m": 1.7001386924314632e-05,
+          "measured_rim_points": 205,
+          "plane_fit_max_m": 2.9575627062683463e-07,
+          "rotor_max_radius_m": 0.22862720611266343,
+          "stator_cut_vertex_radius_m": 0.2301270223915781,
+          "radial_gap_lower_bound_m": 0.0014824881373654286,
+          "rotation": "hull * translation(center) * rotation(axis,angle) * translation(-center)"
+        }
+      ],
+      "original_glb": "assets/tanks/tiger/workshop_cooling/right_cassette_original.glb",
+      "retainer_contact_hull_m": [
+        1.1555734889587843,
+        1.8283202493113133,
+        -2.6645435106913737
+      ],
+      "source_triangle": 1430,
+      "source_normal_hull": [
+        0.0,
+        0.8751723359797121,
+        -0.4838113086067894
+      ],
+      "test_eye_hull_m": [
+        1.1555734889587843,
+        2.4783202493113135,
+        -2.6645435106913737
+      ],
+      "removed_for_access": [
+        "Hull_1116",
+        "Hull_1126"
+      ],
+      "semantics": "Exposed source service-contact candidate; source label does not certify a particular historical fastener."
+    }
+  ],
+  "grilles": [
+    {
+      "side": "left",
+      "position": "upper",
+      "source_root": "Hull_1115",
+      "glb": "assets/tanks/tiger/workshop_cooling/left_grille_upper.glb",
+      "retainer_contact_hull_m": [
+        -1.1614969586619186,
+        2.0360080032853887,
+        -2.748278855863797
+      ],
+      "source_triangle": 637,
+      "source_normal_hull": [
+        0.0,
+        1.0,
+        -0.0
+      ],
+      "test_eye_hull_m": [
+        -1.1614969586619186,
+        2.6860080032853886,
+        -2.748278855863797
+      ],
+      "removed_for_access": [],
+      "semantics": "Exposed source service-contact candidate; source label does not certify a particular historical fastener."
+    },
+    {
+      "side": "left",
+      "position": "lower",
+      "source_root": "Hull_1125",
+      "glb": "assets/tanks/tiger/workshop_cooling/left_grille_lower.glb",
+      "retainer_contact_hull_m": [
+        -1.1325666394383613,
+        1.9698441077548523,
+        -2.7820090402466726
+      ],
+      "source_triangle": 325,
+      "source_normal_hull": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "test_eye_hull_m": [
+        -1.1325666394383613,
+        2.619844107754852,
+        -2.7820090402466726
+      ],
+      "removed_for_access": [
+        "Hull_1115"
+      ],
+      "semantics": "Exposed source service-contact candidate; source label does not certify a particular historical fastener."
+    },
+    {
+      "side": "right",
+      "position": "upper",
+      "source_root": "Hull_1116",
+      "glb": "assets/tanks/tiger/workshop_cooling/right_grille_upper.glb",
+      "retainer_contact_hull_m": [
+        1.142556165632546,
+        2.0360078295932738,
+        -2.7482788462104204
+      ],
+      "source_triangle": 546,
+      "source_normal_hull": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "test_eye_hull_m": [
+        1.142556165632546,
+        2.6860078295932737,
+        -2.7482788462104204
+      ],
+      "removed_for_access": [],
+      "semantics": "Exposed source service-contact candidate; source label does not certify a particular historical fastener."
+    },
+    {
+      "side": "right",
+      "position": "lower",
+      "source_root": "Hull_1126",
+      "glb": "assets/tanks/tiger/workshop_cooling/right_grille_lower.glb",
+      "retainer_contact_hull_m": [
+        1.1714864499335629,
+        1.9698441077548523,
+        -2.7820090402466726
+      ],
+      "source_triangle": 325,
+      "source_normal_hull": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "test_eye_hull_m": [
+        1.1714864499335629,
+        2.619844107754852,
+        -2.7820090402466726
+      ],
+      "removed_for_access": [
+        "Hull_1116"
+      ],
+      "semantics": "Exposed source service-contact candidate; source label does not certify a particular historical fastener."
+    }
+  ]
+}

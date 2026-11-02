@@ -20,6 +20,9 @@ use crate::graphics::GraphicsPreset;
 use crate::lan::{DiscoveredSession, LanMission, PROTOCOL_VERSION};
 use crate::renderer::Renderer;
 
+#[path = "map_linework.rs"]
+pub(crate) mod map_linework;
+
 // PIXEL FONTS (playtest: humanist strokes turned to mush through the hard-threshold pixelation —
 // pixel fonts are DESIGNED for it). VT323 (OFL): terminal pixel face for body text; Press Start 2P
 // (OFL): chunky arcade face for titles / headers / key labels. Both carry Latin-1 (umlauts, †).
@@ -79,8 +82,10 @@ pub enum PlayMode {
     /// The DEV GARAGE gunnery yard — the default boot scene (world::garage()).
     Garage,
     Kampagne,
-    /// The Act One campaign mission with its one crewman, skipping the intro and tutorial.
+    /// The Act One campaign mission with the full crew, skipping the intro and tutorial.
     Playtest,
+    /// Persistent personnel and recovery prototype; separate from the old campaign saves.
+    Expedition,
     Gefecht,
     /// Two-player local crew co-op on the selected Act One map, split top and bottom.
     /// Device ownership is selected on the crew setup page. The Radio/Bow-MG post is omitted.
@@ -89,7 +94,7 @@ pub enum PlayMode {
     TestAct2,
     /// Direct load of the act-3 map (Halbe) — a map-test entry, no act flow.
     TestAct3,
-    /// The CANYON playtest course (src/canyon.rs): one crewman punches through a defended ravine.
+    /// The CANYON playtest course (src/canyon.rs): a Tiger crew crosses a defended ravine.
     Canyon,
 }
 
@@ -101,12 +106,12 @@ pub const IDX_PLAYTEST: usize = 2;
 pub const IDX_EDITOR: usize = 3;
 pub const IDX_LOAD_CHECKPOINT: usize = 4;
 pub const IDX_CANYON: usize = 5;
-pub const MENU_LABELS: [&str; 9] = [
-    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Platoon", "Graphics",
+pub const MENU_LABELS: [&str; 11] = [
+    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint", "Canyon Run", "Canyon Run v2", "Platoon", "New Expedition", "Resume Expedition", "Graphics",
 ];
 pub const MENU_COUNT: usize = MENU_LABELS.len();
-const MENU_ROW_TOP: f32 = 0.485;
-const MENU_ROW_STEP: f32 = 0.049;
+const MENU_ROW_TOP: f32 = 0.445;
+const MENU_ROW_STEP: f32 = 0.041;
 const MENU_ROW_LEFT: f32 = 0.20;
 const MENU_ROW_RIGHT: f32 = 0.80;
 
@@ -120,12 +125,14 @@ pub enum MenuAction {
     Canyon,
     CanyonV2,
     Platoon,
+    Expedition,
+    ResumeExpedition,
     Graphics,
 }
 
 const MENU_ACTIONS: [MenuAction; MENU_COUNT] = [
     MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Graphics,
+    MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition, MenuAction::Graphics,
 ];
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
@@ -408,6 +415,7 @@ pub struct MenuModel {
     /// instead of discarding campaign state or rebuilding the world.
     pub resume_available: bool,
     pub checkpoint_available: bool,
+    pub expedition_save_available: bool,
     /// The Canyon entry's line: the last and the best run's time (seconds), none before any run.
     pub canyon_times: Option<(f32, f32)>,
 }
@@ -422,6 +430,7 @@ impl Default for MenuModel {
             graphics: GraphicsPreset::High,
             resume_available: false,
             checkpoint_available: false,
+            expedition_save_available: false,
             canyon_times: None,
         }
     }
@@ -460,7 +469,7 @@ mod title_menu_tests {
         assert_eq!(menu.action(), Some(MenuAction::Singleplayer));
         let expected = [
             MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
-            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Graphics,
+            MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon, MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition, MenuAction::Graphics,
         ];
         for (index, action) in expected.into_iter().enumerate() {
             let y = MENU_ROW_TOP + (index as f32 + 0.5) * MENU_ROW_STEP;
@@ -526,6 +535,7 @@ pub struct PauseMenuModel {
     pub page: PausePage,
     pub selected: usize,
     pub message: String,
+    pub expedition: bool,
 }
 
 impl PauseMenuModel {
@@ -587,15 +597,24 @@ mod pause_menu_tests {
 
     #[test]
     fn fixed_profile_removes_only_graphics_routes_and_preserves_setting_actions() {
-        // Eight title rows since the platoon branch added "Platoon"; the fixed profile drops
-        // only Graphics.
-        assert_eq!(title_row_count(true), 8);
-        assert_eq!(title_row_count(false), 9);
-        assert!(!MENU_ACTIONS[..title_row_count(true)].contains(&MenuAction::Graphics));
+        // Both profiles retain distinct new/resume expedition routes and all checkpoint
+        // controls. Only the graphics route disappears from the fixed-profile title.
+        for fixed in [false, true] {
+            let mut expected = vec![MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
+                MenuAction::Editor, MenuAction::LoadCheckpoint, MenuAction::Canyon,
+                MenuAction::CanyonV2, MenuAction::Platoon, MenuAction::Expedition, MenuAction::ResumeExpedition];
+            if !fixed { expected.push(MenuAction::Graphics); }
+            assert_eq!(&MENU_ACTIONS[..title_row_count(fixed)], expected.as_slice());
+            for (row, action) in PauseAction::ALL.into_iter().enumerate() {
+                let routed = pause_action_row(PausePage::Main, row, fixed);
+                assert_eq!(PauseAction::ALL.get(routed), Some(&action));
+            }
+            assert!(PauseAction::ALL.contains(&PauseAction::SaveCheckpoint));
+            assert!(PauseAction::ALL.contains(&PauseAction::LoadCheckpoint));
+        }
         for row in 0..4 {
             assert_eq!(pause_action_row(PausePage::Settings, row, true), row + 2);
             assert_eq!(pause_action_row(PausePage::Settings, row, false), row);
-            assert_eq!(pause_action_row(PausePage::Main, row, true), row);
         }
     }
 
@@ -1545,7 +1564,11 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
     for (i, label) in MENU_LABELS.iter().take(m.row_count()).enumerate() {
         let selected = i == m.selected;
         let text = if selected { format!(">  {label}  <") } else { (*label).to_owned() };
-        let enabled = i != IDX_LOAD_CHECKPOINT || m.checkpoint_available;
+        let enabled = match MENU_ACTIONS[i] {
+            MenuAction::LoadCheckpoint=>m.checkpoint_available,
+            MenuAction::ResumeExpedition=>m.expedition_save_available,
+            _=>true,
+        };
         let top = MENU_ROW_TOP + i as f32 * MENU_ROW_STEP;
         // The two launch actions are visible buttons as well as keyboard/controller rows.
         // Their full rectangles use exactly the same bounds as mouse hit testing above.
@@ -1564,7 +1587,10 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         Some(MenuAction::Graphics) => "RESOLUTION / QUALITY / COLOR / RETRO",
         Some(MenuAction::Singleplayer) => "ONE PLAYER / ACT ONE CAMPAIGN",
         Some(MenuAction::Coop) => "TWO PLAYERS / TOP & BOTTOM / LOCAL CREW CO-OP",
-        Some(MenuAction::Playtest) => "ACT ONE / ONE CREWMAN / SKIP INTRO & TUTORIAL",
+        Some(MenuAction::Playtest) => "ACT ONE / FULL CREW / SKIP INTRO & TUTORIAL",
+        Some(MenuAction::Expedition) => "BEGIN A NEW TIGER EXPEDITION / MANUAL SAVE IS KEPT",
+        Some(MenuAction::ResumeExpedition) if m.expedition_save_available => "RESUME THE LATEST SAVED BATTLEFIELD",
+        Some(MenuAction::ResumeExpedition) => "NO EXPEDITION SAVE FOUND",
         Some(MenuAction::Editor) => "BUILD WORLDS & TANK INTERIORS",
         Some(MenuAction::LoadCheckpoint) if m.checkpoint_available => "CONTINUE YOUR SAVED CAMPAIGN",
         Some(MenuAction::LoadCheckpoint) => "NO CAMPAIGN CHECKPOINT SAVED",
@@ -1618,7 +1644,12 @@ pub fn draw_pause_menu(
                 PauseAction::LoadCheckpoint => can_load,
                 _ => true,
             };
-            (action.label().to_owned(), enabled)
+            let label=if m.expedition {match action {
+                PauseAction::SaveCheckpoint=>"Save expedition",
+                PauseAction::LoadCheckpoint=>"Load manual expedition save",
+                _=>action.label(),
+            }}else{action.label()};
+            (label.to_owned(), enabled)
         }).collect(),
         PausePage::Graphics => Vec::new(),
         PausePage::Settings => vec![
@@ -1654,6 +1685,10 @@ pub fn draw_pause_menu(
         m.message.as_str()
     } else {
         match m.page {
+            PausePage::Main if m.expedition && matches!(m.action(),Some(PauseAction::SaveCheckpoint | PauseAction::LoadCheckpoint)) =>
+                "RETAINS THE ACTUAL BATTLEFIELD / TITLE RESUME ALSO FINDS AUTOSAVES",
+            PausePage::Main if m.expedition && m.action()==Some(PauseAction::RestartGame) =>
+                "THIS TIGER PERSISTS / NEW EXPEDITION IS AVAILABLE FROM THE TITLE",
             PausePage::Main if m.action() == Some(PauseAction::RestartGame) =>
                 "RESTART THIS SESSION FROM ITS ENTRANCE / SAME MODE AND MAP",
             PausePage::Main if m.action() == Some(PauseAction::MainMenu) =>
@@ -1869,22 +1904,21 @@ pub fn draw_lan_menu(
     );
 }
 
-/// Death, the campaign codas and the sector-change card are black and wordless (decided
-/// 2026-09-28). The game tells its story without a single written word; the old death memorial also
-/// named real Panzer aces with an invented death year. Callers own the timing and the sound.
+/// Existing campaign transition cards remain black. Written mission context is allowed, but
+/// these legacy transitions have not been replaced. Callers own the timing and the sound.
 pub fn draw_black(r: &mut Renderer) {
     r.set_ui_bg(BG_BLACK, BG_BLACK);
 }
 
 // ── The Canyon run's two cards (src/canyon.rs): the brief before the first attempt, and the
-// after-action card. Front-end text, outside play; play itself stays wordless. ──────────────────
+// after-action card. ───────────────────────────────────────────────────────────────────────────
 
 const COL_LOSS: [f32; 4] = [0.90, 0.44, 0.30, 1.0];
 
 pub fn draw_run_brief(r: &mut Renderer, brief: &crate::canyon::RunBrief) {
     r.set_ui_bg(BG_BLACK, BG_BLACK);
     r.draw_text_bold("CANYON RUN", 0.5, 0.09, 0.058, COL_TITLE, Align::Center);
-    r.draw_text("ONE TIGER  ·  ONE CREWMAN  ·  ONE LIFE", 0.5, 0.175, 0.026, COL_SUBTITLE, Align::Center);
+    r.draw_text("ONE TIGER  ·  FIVE CREW  ·  ONE ATTEMPT", 0.5, 0.175, 0.026, COL_SUBTITLE, Align::Center);
     let mut y = 0.29;
     for line in brief.lines() {
         r.draw_text(&line, 0.5, y, 0.029, COL_ITEM, Align::Center);
@@ -1983,11 +2017,11 @@ fn map_landmark_label(name: &str) -> &str {
 }
 
 pub fn draw_map(r: &mut Renderer, act: &crate::world::ActMap, marks: &[glam::Vec2]) {
-    // Warm survey-sheet paper, slightly darker at the bottom edge.
-    r.set_ui_bg([0.86, 0.82, 0.69, 1.0], [0.78, 0.73, 0.60, 1.0]);
-    let ink = [0.20, 0.18, 0.15, 1.0];
-    let faded = [0.42, 0.39, 0.33, 1.0];
-    let red = [0.62, 0.10, 0.08, 1.0];
+    // Monochrome survey sheet; its paper and every pigment remain achromatic.
+    r.set_ui_bg([0.790, 0.790, 0.790, 1.000], [0.703, 0.703, 0.703, 1.000]);
+    let ink = [0.177, 0.177, 0.177, 1.000];
+    let faded = [0.380, 0.380, 0.380, 1.000];
+    let red = [0.267, 0.267, 0.267, 1.000];
 
     r.draw_text_bold(
         &format!("MAP — {}", act.name),
@@ -2081,6 +2115,21 @@ fn draw_cartographic_polyline<P, V>(
     }
 }
 
+/// Outlined road/river banks from the authored centreline and nominal width.
+fn draw_cartographic_corridor<P,V>(r:&mut Renderer,points:&[crate::run_route::RoutePoint],
+    width_m:f64,project:&P,visible:&V,ink:[f32;4])
+where P:Fn(f32,f32)->(f32,f32),V:Fn(glam::Vec2)->bool {
+    for pair in points.windows(2){
+        let dx=pair[1].x-pair[0].x;let dz=pair[1].z-pair[0].z;let length=dx.hypot(dz);
+        if length<=1e-6{continue;}
+        for side in [-1.0,1.0]{
+            let offset=(-dz/length*width_m*0.5*side,dx/length*width_m*0.5*side);
+            let bank=[pair[0],pair[1]].map(|p|crate::run_route::RoutePoint::new(p.x+offset.0,p.z+offset.1));
+            draw_cartographic_polyline(r,&bank,project,visible,ink,0.0012,0);
+        }
+    }
+}
+
 /// The same relative mouse/controller paper controls are used by the window and review recorder.
 pub fn update_map_pencil(
     cursor: &mut glam::Vec2,
@@ -2108,7 +2157,7 @@ pub fn toggle_map_pin(pins: &mut Vec<(u8, glam::Vec2)>, sheet: u8, cursor: glam:
 
 /// Queue the survey, saved annotations and cursor for the physical paper's albedo texture.
 /// The renderer consumes this queue before the world pass. No fake hands or compass are drawn.
-/// The sheet carries no words (2026-09-28): marks, symbols and pencil numbers only.
+/// Monochrome ink, surveyed roads and actual building outlines; no terrain color wash.
 pub fn draw_held_map_print(
     r: &mut Renderer,
     act: &crate::world::ActMap,
@@ -2124,18 +2173,18 @@ pub fn draw_held_map_print(
     mission: Option<&crate::mission::MapGuidance>,
 ) {
     let (mx, my, mw, mh) = (0.17f32, 0.34f32, 0.66f32, 0.59f32);
-    let paper = [0.78, 0.73, 0.60, 0.98];
-    let paper_hi = [0.88, 0.84, 0.71, 0.98];
-    let ink = [0.18, 0.16, 0.13, 0.95];
-    let faded = [0.36, 0.33, 0.27, 0.90];
-    let graphite = [0.11, 0.12, 0.12, 0.82];
-    let red = [0.58, 0.08, 0.065, 0.95];
+    let paper = [0.703, 0.703, 0.703, 0.980];
+    let paper_hi = [0.810, 0.810, 0.810, 0.980];
+    let ink = [0.157, 0.157, 0.157, 0.950];
+    let faded = [0.320, 0.320, 0.320, 0.900];
+    let graphite = [0.117, 0.117, 0.117, 0.820];
+    let red = [0.242, 0.242, 0.242, 0.950];
 
     // Pigment only. Fold geometry and ordinary scene lighting make the actual paper edges.
     r.fill_rect(mx, my, mw, mh, paper);
     r.fill_rect(mx + 0.012, my + 0.012, mw - 0.024, 0.012, paper_hi);
-    r.fill_rect(mx + mw * 0.495, my, 0.007, mh, [0.46, 0.42, 0.33, 0.28]);
-    r.fill_rect(mx, my + mh * 0.53, mw, 0.006, [0.47, 0.42, 0.33, 0.22]);
+    r.fill_rect(mx + mw * 0.495, my, 0.007, mh, [0.403, 0.403, 0.403, 0.280]);
+    r.fill_rect(mx, my + mh * 0.53, mw, 0.006, [0.407, 0.407, 0.407, 0.220]);
 
     let half = act.half_extent_m.max(1.0);
     let proj = |wx: f32, wz: f32| -> (f32, f32) {
@@ -2174,14 +2223,14 @@ pub fn draw_held_map_print(
             sy - mh * 0.105,
             mw * 0.21,
             mh * 0.21,
-            [0.84, 0.80, 0.67, 0.90],
+            [0.770, 0.770, 0.770, 0.900],
         );
         r.fill_rect(
             sx - mw * 0.105,
             sy - mh * 0.105,
             mw * 0.21,
             0.003,
-            [0.34, 0.31, 0.25, 0.52],
+            [0.300, 0.300, 0.300, 0.520],
         );
         for (index, site) in route
             .sites
@@ -2199,21 +2248,21 @@ pub fn draw_held_map_print(
                 cy - sh * 0.5 + oy,
                 sw,
                 sh,
-                [0.86, 0.82, 0.69, 0.94],
+                [0.790, 0.790, 0.790, 0.940],
             );
             r.fill_rect(
                 cx - sw * 0.5 + ox,
                 cy - sh * 0.5 + oy,
                 sw,
                 0.0035,
-                [0.31, 0.28, 0.22, 0.50],
+                [0.270, 0.270, 0.270, 0.500],
             );
             r.fill_rect(
                 cx + ox,
                 cy - sh * 0.5 + oy,
                 0.003,
                 sh,
-                [0.42, 0.38, 0.30, 0.26],
+                [0.367, 0.367, 0.367, 0.260],
             );
         }
     }
@@ -2225,66 +2274,30 @@ pub fn draw_held_map_print(
         let cartography = &route.cartography;
         let map_scale = ((mw * 0.39 + mh * 0.38) * 0.5) / half.max(1.0);
 
-        // Water and terrain contours sit below roads, as they would on a field survey sheet.
+        // Surveyed water and roads remain linework; terrain fills and relief shading are omitted.
         for waterway in &cartography.waterways {
-            draw_cartographic_polyline(
+            draw_cartographic_corridor(
                 r,
                 &waterway.points,
+                waterway.width_m,
                 &proj,
                 &is_revealed,
-                [0.29, 0.39, 0.40, 0.72],
-                (waterway.width_m as f32 * map_scale).clamp(0.0030, 0.0070),
-                0,
+                [0.360, 0.360, 0.360, 0.720],
             );
         }
-        for barrier in &cartography.barriers {
-            let color = match barrier.kind {
-                crate::run_route::CartographicBarrierKind::Ridge => [0.43, 0.36, 0.25, 0.58],
-                crate::run_route::CartographicBarrierKind::Hollow => [0.34, 0.38, 0.34, 0.48],
-            };
-            draw_cartographic_polyline(r, &barrier.points, &proj, &is_revealed, color, 0.00145, 3);
-        }
         for road in &cartography.roads {
-            draw_cartographic_polyline(
+            draw_cartographic_corridor(
                 r,
                 &road.points,
+                road.width_m,
                 &proj,
                 &is_revealed,
-                [0.33, 0.29, 0.23, 0.73],
-                (road.width_m as f32 * map_scale).clamp(0.00145, 0.0032),
-                0,
+                [0.283, 0.283, 0.283, 0.730],
             );
         }
 
-        // Landmark refs become restrained building footprints rather than waypoint icons.
-        for landmark in &cartography.landmarks {
-            let point = glam::Vec2::new(landmark.position.x as f32, landmark.position.z as f32);
-            if !is_revealed(point) {
-                continue;
-            }
-            let (x, y) = proj(point.x, point.y);
-            r.fill_rect(
-                x - 0.0060,
-                y - 0.0042,
-                0.0120,
-                0.0084,
-                [0.27, 0.24, 0.20, 0.78],
-            );
-            r.fill_rect(
-                x - 0.0040,
-                y - 0.0060,
-                0.0035,
-                0.0032,
-                [0.32, 0.28, 0.22, 0.70],
-            );
-            r.fill_rect(
-                x + 0.0015,
-                y + 0.0034,
-                0.0050,
-                0.0028,
-                [0.32, 0.28, 0.22, 0.70],
-            );
-        }
+        // Actual footprint outlines are supplied by Game::draw_campaign_building_map.
+        // A landmark reference alone has no footprint and must not invent one.
         // The sole Act-II bridge is a physical crossing drawn across the channel, never an exit.
         for bridge in &cartography.bridges {
             if !is_revealed(glam::Vec2::new(
@@ -2298,7 +2311,7 @@ pub fn draw_held_map_print(
                 &[bridge.deck_start, bridge.deck_end],
                 &proj,
                 &is_revealed,
-                [0.16, 0.15, 0.13, 0.92],
+                [0.147, 0.147, 0.147, 0.920],
                 (bridge.clear_width_m as f32 * map_scale).clamp(0.0024, 0.0040),
                 0,
             );
@@ -2330,14 +2343,14 @@ pub fn draw_held_map_print(
                     y + 0.001,
                     0.0022,
                     0.016,
-                    [0.54, 0.55, 0.53, 0.90],
+                    [0.540, 0.540, 0.540, 0.900],
                 );
                 r.fill_rect(
                     x - 0.0052,
                     y - 0.0042,
                     0.0104,
                     0.0084,
-                    [0.03, 0.03, 0.028, 0.98],
+                    [0.029, 0.029, 0.029, 0.980],
                 );
                 r.draw_text_bold(
                     &(index + 1).to_string(),
@@ -2374,13 +2387,13 @@ pub fn draw_held_map_print(
         }
         if map_sheets >= 3 {
             let (gx, gy) = proj(route.exit.x as f32, route.exit.z as f32);
-            // The extraction point is a physical red pin, not a magic border trigger or waypoint.
+            // The extraction point is a dark pin on the physical paper.
             r.fill_rect(
                 gx - 0.0012,
                 gy + 0.001,
                 0.0024,
                 0.019,
-                [0.63, 0.57, 0.50, 0.95],
+                [0.567, 0.567, 0.567, 0.950],
             );
             r.fill_rect(gx - 0.0062, gy - 0.0050, 0.0124, 0.0100, red);
             r.fill_rect(
@@ -2388,7 +2401,7 @@ pub fn draw_held_map_print(
                 gy - 0.0035,
                 0.0040,
                 0.0020,
-                [0.88, 0.22, 0.16, 0.90],
+                [0.420, 0.420, 0.420, 0.900],
             );
         }
     } else {
@@ -2401,7 +2414,7 @@ pub fn draw_held_map_print(
     }
 
     let (px, py) = proj(player_position.x, player_position.y);
-    r.fill_rect(px-0.004,py-0.006,0.008,0.012,[0.04,0.22,0.25,1.0]);
+    map_linework::player_marker(r,(px,py),(mx,my,mw,mh));
     // The mission's marks (src/mission.rs) in the same plan projection.
     if let Some(guidance) = mission {
         draw_mission_marks(r, guidance, &|p: glam::Vec2| proj(p.x, p.y), (mx, my, mw, mh));
@@ -2427,21 +2440,21 @@ pub fn draw_held_map_print(
             py + 0.001,
             0.0024,
             0.018,
-            [0.58, 0.59, 0.57, 0.94],
+            [0.580, 0.580, 0.580, 0.940],
         );
         r.fill_rect(
             px - 0.0060,
             py - 0.0050,
             0.0120,
             0.0100,
-            [0.025, 0.026, 0.024, 0.98],
+            [0.025, 0.025, 0.025, 0.980],
         );
         r.fill_rect(
             px - 0.0045,
             py - 0.0035,
             0.0040,
             0.0020,
-            [0.20, 0.21, 0.19, 0.82],
+            [0.200, 0.200, 0.200, 0.820],
         );
     }
 
@@ -2478,35 +2491,35 @@ pub fn draw_controls(r: &mut Renderer) {
         r,
         lk,
         0.230,
-        "E / LMB",
+        "LMB",
         "enter looked-at station",
     );
-    row(r, lk, 0.275, "E", "interact / put away tool");
-    row(r, lk, 0.320, "Q", "leave sights / lower tool");
+    row(r, lk, 0.275, "Q / E", "driver cruise down / up");
+    row(r, lk, 0.320, "X", "leave station / lower tool");
     row(r, lk, 0.365, "Space", "climb / enter / leave hatch");
     row(r, lk, 0.405, "H / LS+A", "open / close own hatch");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.490, "W S A D", "drive / walk at own station");
     row(r, lk, 0.535, "LMB / MMB", "action / coax in gunner sight");
-    row(r, lk, 0.580, "RMB / B", "focus or aim / binoculars");
-    row(r, lk, 0.625, "Arrow keys", "gunner: traverse / elevation");
-    row(r, lk, 0.670, "V / F", "turret pistol / held flashlight");
+    row(r, lk, 0.580, "RMB", "focus or aim / sight zoom");
+    row(r, lk, 0.625, "Arrow keys", "order gunner / manual sights");
+    row(r, lk, 0.670, "V / F", "indicate sector / flashlight");
     row(r, lk, 0.715, "Z / Shift", "engine start-stop / foot sprint");
 
     // ── Right column: inside work + system ──
     let (rk, rh) = (0.78, 0.575);
     header(r, rh, 0.17, "LOADER'S HANDS");
-    row(r, rk, 0.230, "LMB hold", "carry round / case");
+    row(r, rk, 0.230, "LMB click", "take round / case");
     row(r, rk, 0.275, "LMB click", "breech lever / equip tool");
     row(r, rk, 0.320, "hold + flick", "mouse / stick to ram round");
-    row(r, rk, 0.365, "release LMB", "drop round / case");
+    row(r, rk, 0.365, "LMB / R", "place load / throw spent case");
     header(r, rh, 0.44, "SYSTEM");
     row(
         r,
         rk,
         0.500,
-        "C / Shift+C",
-        "cigarette / compass",
+        "M / B",
+        "map / repair manual",
     );
     row(r, rk, 0.540, "1 / 2", "P08 / Panzerfaust");
     row(r, rk, 0.580, "R", "reload P08 / fresh tube");
@@ -2521,8 +2534,8 @@ pub fn draw_controls(r: &mut Renderer) {
         r,
         rk,
         0.660,
-        "F6 / B (co-op)",
-        "take vacant station",
+        "K",
+        "autonomous gunner on / off",
     );
     row(
         r,
@@ -2532,7 +2545,7 @@ pub fn draw_controls(r: &mut Renderer) {
         if crate::graphics::fixed_playtest_graphics() { "screenshot / pause" } else { "retro / shot / pause" },
     );
 
-    r.draw_text("C draw pack/cigarette · hold RMB lighter · LMB light/toke · E pick up · M map",0.5,0.755,0.024,COL_ITEM,Align::Center);
+    r.draw_text("C cigarette · RMB lighter · LMB light/toke or pick up · X put away",0.5,0.755,0.024,COL_ITEM,Align::Center);
     r.draw_text_bold(
         "CONTROLLER  Xbox / PlayStation",
         0.5,
@@ -2673,9 +2686,9 @@ pub fn draw_mission_marks(
 ) {
     use crate::mission::MarkKind;
     let aspect = r.ih.max(1) as f32 / r.iw.max(1) as f32;
-    let graphite = [0.07, 0.08, 0.08, 1.0];
-    let red = [0.58, 0.06, 0.05, 1.0];
-    let faded = [0.26, 0.26, 0.24, 0.80];
+    let graphite = [0.077, 0.077, 0.077, 1.000];
+    let red = [0.230, 0.230, 0.230, 1.000];
+    let faded = [0.253, 0.253, 0.253, 0.800];
     let (px, py, pw, ph) = paper;
     let inside = |x: f32, y: f32| x >= px && x <= px + pw && y >= py && y <= py + ph;
     let dot = |r: &mut Renderer, x: f32, y: f32, s: f32, c: [f32; 4]| {
@@ -2697,14 +2710,8 @@ pub fn draw_mission_marks(
         }
     };
 
-    // The dead-reckoned position: a pencil ring the size of the crew's uncertainty.
-    if let Some((estimate, error_m)) = guidance.estimate {
-        let (ex, ey) = proj(estimate);
-        let (fx, _) = proj(estimate + glam::Vec2::new(error_m, 0.0));
-        let radius = ((fx - ex) / aspect).abs().clamp(0.006, 0.08);
-        ring(r, ex, ey, radius, 32, true, graphite);
-        dot(r, ex, ey, 0.006, graphite);
-    }
+    // Exact player position is drawn by the caller. Do not add a second, drifting
+    // dead-reckoning marker beside the owner-requested navigation aid.
     // The bearing: a dashed pencil line to the mark with its three figures.
     if let Some((from, to, bearing)) = guidance.bearing {
         let a = proj(from);
@@ -2736,7 +2743,7 @@ pub fn draw_mission_marks(
                 line(r, (x - d * aspect, y + d), (x + d * aspect, y - d), false, color);
             }
             MarkKind::Pin => {
-                r.fill_rect(x - 0.0012, y + 0.001, 0.0024, 0.019, [0.63, 0.57, 0.50, 0.95]);
+                r.fill_rect(x - 0.0012, y + 0.001, 0.0024, 0.019, [0.567, 0.567, 0.567, 0.950]);
                 r.fill_rect(x - 0.0062, y - 0.0050, 0.0124, 0.0100, color);
             }
             MarkKind::Circle => ring(r, x, y, 0.016, 22, false, color),
@@ -2747,9 +2754,9 @@ pub fn draw_mission_marks(
     if let Some(slip) = &guidance.slip {
         let (sw, sh) = (0.46f32, 0.052f32);
         let (sx, sy) = (px + 0.012, py + 0.012);
-        r.fill_rect(sx + 0.003, sy + 0.004, sw, sh, [0.0, 0.0, 0.0, 0.18]);
-        r.fill_rect(sx, sy, sw, sh, [0.86, 0.82, 0.70, 0.97]);
-        r.fill_rect(sx, sy, sw, 0.003, [0.42, 0.38, 0.30, 0.5]);
-        r.draw_text_bold(slip, sx + 0.012, sy + 0.015, 0.019, [0.12, 0.11, 0.09, 1.0], Align::Left);
+        r.fill_rect(sx + 0.003, sy + 0.004, sw, sh, [0.000, 0.000, 0.000, 0.180]);
+        r.fill_rect(sx, sy, sw, sh, [0.793, 0.793, 0.793, 0.970]);
+        r.fill_rect(sx, sy, sw, 0.003, [0.367, 0.367, 0.367, 0.500]);
+        r.draw_text_bold(slip, sx + 0.012, sy + 0.015, 0.019, [0.107, 0.107, 0.107, 1.000], Align::Left);
     }
 }

@@ -1,0 +1,409 @@
+{
+  "schema": "panzer.tiger-engine-major-service-cassette.v1",
+  "status": "Source-prepared assembly; NOT admitted as a playable removal. Source-supported retainers and a rated lifting fixture are still required.",
+  "service_enabled": false,
+  "asset_root": "assets/tanks/tiger/workshop_engine_core/",
+  "source_hull": "assets/tanks/tiger/baked/tiger_hull.glb",
+  "source_hull_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+  "original_source_modified": false,
+  "coordinate_frame": "Original hull metre coordinates; identity GLB nodes.",
+  "removed_roots": [
+    "Hull_0708",
+    "Hull_1136"
+  ],
+  "fixed_replacement": "fixed_deck_for_hinge_cassette.glb",
+  "finite_cassette": {
+    "id": "engine_hinge_cassette",
+    "files": [
+      "engine_hinge_cassette.glb",
+      "native_hull_1136.glb"
+    ],
+    "retains_existing_lid_assemblies": [
+      "lid",
+      "left_lock",
+      "right_lock",
+      "rear_latch"
+    ],
+    "existing_lid_catalog": "catalog/tiger_engine_service.v1.json",
+    "existing_lid_files": [
+      {
+        "file": "assets/tanks/tiger/workshop_engine/engine_cover_leaf.glb",
+        "assembly": "lid",
+        "sha256": "e9be8c38dee83713ff98ff8675e2a2a9f0ce8731dc3ca11473f2ecdd8b032f9d"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/native_hull_0895.glb",
+        "assembly": "lid",
+        "sha256": "8b0a890ec3d24a1f4aa5d48480e5eec81fdd407c1b9ff5b2b4c72383c5f1120a"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/native_hull_0896.glb",
+        "assembly": "lid",
+        "sha256": "303c7afc3b34532136ca9db3a1ba86204a88d22ec2f7394985ab410ea08d748a"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/native_hull_0899.glb",
+        "assembly": "lid",
+        "sha256": "3eebb03df1d56650c66f7a21a119537bf015bb73a04404b3f99194ac4fb61001"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/native_hull_0999.glb",
+        "assembly": "lid",
+        "sha256": "c55f4bc99e4f39764bbfa4b829717b9eeeb3e92e51845f29d5dbf701610642cf"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/native_hull_0930.glb",
+        "assembly": "lid",
+        "sha256": "385748c100c2a1f3bd63c8e85a6fd92264ac6541a5132ad004dfeb1fd27e393c"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/native_hull_0931.glb",
+        "assembly": "lid",
+        "sha256": "9fb42e8e2945ed7a44805f72063fbf22cafe2cbd748a6fbdf25068664bcb445a"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/engine_latch_base.glb",
+        "assembly": "lid",
+        "sha256": "00bcfc9138ae5df31e44d43e2a9ef3d42c7b31f454b7394dccaf0d5d2fea1b1e"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/engine_left_lock.glb",
+        "assembly": "left_lock",
+        "sha256": "a617464afa9d5740001af442b1f77f35dc7b57a81e5e5edb065b5f04b05396bb"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/engine_right_lock.glb",
+        "assembly": "right_lock",
+        "sha256": "72ba16335434ddd5b4f26f49e129948f8b0f7e7b19bc9e07c8b836684131c7e1"
+      },
+      {
+        "file": "assets/tanks/tiger/workshop_engine/engine_latch_arm.glb",
+        "assembly": "rear_latch",
+        "sha256": "4d200b7fd8a1bd1bcd48780bfecad15ae2a283d1a7b260c442da393fb6d9d9d1"
+      }
+    ],
+    "lid_angle_deg": -100,
+    "child_lock_angles_from_existing_catalog": true,
+    "source_supported_interaction_candidates": [
+      {
+        "file": "engine_hinge_cassette.glb",
+        "triangle": 4907,
+        "point_hull_m": [
+          -0.565,
+          1.95427656,
+          -2.6
+        ],
+        "normal_hull": [
+          0,
+          1,
+          0
+        ]
+      },
+      {
+        "file": "engine_hinge_cassette.glb",
+        "triangle": 2316,
+        "point_hull_m": [
+          0.565,
+          1.95427656,
+          -2.6
+        ],
+        "normal_hull": [
+          0,
+          1,
+          0
+        ]
+      }
+    ],
+    "initial_lift_delta_hull_m": [
+      0,
+      0.25,
+      0
+    ],
+    "mass_kg_estimate_without_lid": 246.04447870455903,
+    "mass_kg_estimate_with_complete_lid": 961.001867812337,
+    "mass_basis": "Closed model solid volumes times assumed steel density7850kg/m3. Conservative game fixture sizing input; not a measured historical assembly mass."
+  },
+  "files": [
+    {
+      "file": "fixed_deck_for_hinge_cassette.glb",
+      "sha256": "faf5b9b0f87090123f67ab4817b8a0562c695131e47af55274bfdb3ff845360b",
+      "metrics": {
+        "vertices": 115277,
+        "triangles": 43108,
+        "min": [
+          -1.735823631286621,
+          1.907572627067566,
+          -3.028501510620117
+        ],
+        "max": [
+          1.7358237504959106,
+          2.0904958248138428,
+          2.428903818130493
+        ],
+        "area_m2": 28.269593551069388,
+        "volume_m3": 0.6301679774206409,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.9820788565994008e-08,
+        "finite_attributes": true
+      }
+    },
+    {
+      "file": "engine_hinge_cassette.glb",
+      "sha256": "e942b4899ea6eae73852def38dc075fc87397f3c01f1c02df6fa486a0bd1cdc9",
+      "metrics": {
+        "vertices": 14116,
+        "triangles": 5408,
+        "min": [
+          -0.5897499918937683,
+          1.915839433670044,
+          -3.028501510620117
+        ],
+        "max": [
+          0.5897499918937683,
+          2.1021716594696045,
+          -2.540250062942505
+        ],
+        "area_m2": 1.3915919881570464,
+        "volume_m3": 0.025112846534314188,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 3.7231359328870894e-08,
+        "finite_attributes": true
+      }
+    },
+    {
+      "file": "engine_core_foot_fit.glb",
+      "sha256": "a390a989865ba117bd66baf807c66fc047d20742bee2fecaa8e0f1708dc457fe",
+      "metrics": {
+        "vertices": 186308,
+        "triangles": 65424,
+        "min": [
+          -0.4864977300167084,
+          0.5862446427345276,
+          -2.6023294925689697
+        ],
+        "max": [
+          0.5613555312156677,
+          1.9173024892807007,
+          -1.3004610538482666
+        ],
+        "area_m2": 9.526011781684455,
+        "volume_m3": 0.6165306043773673,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.227551476607914e-12,
+        "finite_attributes": true
+      }
+    },
+    {
+      "file": "native_hull_1136.glb",
+      "source_root": "Hull_1136",
+      "source_node": 1112,
+      "sha256": "41a2246b9a99d4a6f8bc6fc097245d473eed55b633eb4124e7c3a8db05f0d194",
+      "metrics": {
+        "vertices": 2304,
+        "triangles": 2496,
+        "min": [
+          -0.04670379310846329,
+          2.0437917709350586,
+          -3.0265555381774902
+        ],
+        "max": [
+          0.4359018802642822,
+          2.1751506328582764,
+          -2.627627372741699
+        ],
+        "area_m2": 0.3854457680912399,
+        "volume_m3": 0.006230399160534097,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 2.00117347493034e-06,
+        "finite_attributes": true
+      }
+    }
+  ],
+  "authored_geometry": {
+    "status": "authored source-partition candidate; retained cassette supports/retainers and motion checks pending",
+    "source_root": "Hull_0708",
+    "source_node": 692,
+    "source_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+    "coordinate_frame": "hull metres; identity GLB nodes",
+    "partition_bounds_hull_m": [
+      [
+        -0.59,
+        1.8,
+        -2.8
+      ],
+      [
+        0.59,
+        2.2,
+        -2.54
+      ]
+    ],
+    "rear_support_tongue_bounds_hull_m": [
+      [
+        -0.07,
+        1.8,
+        -3.04
+      ],
+      [
+        0.46,
+        2.2,
+        -2.79
+      ]
+    ],
+    "retained_attached_roots": [
+      "Hull_1136"
+    ],
+    "seam_width_m": 0.0005,
+    "authored_cassette_underside_y_m": 1.9158394,
+    "source_sidewall_support_max_y_m": 1.9158387318,
+    "maximum_underside_relief_m": 0.000482764,
+    "source": {
+      "vertices": 45805,
+      "triangles": 46960,
+      "min": [
+        -1.7358236790097976,
+        1.9075726843670964,
+        -3.0285014861025275
+      ],
+      "max": [
+        1.7358237267566778,
+        2.1021717190879485,
+        2.42890375837419
+      ],
+      "area_m2": 29.424913041331006,
+      "volume_m3": 0.6553965040424795,
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "inconsistent_winding_edges": 0,
+      "collapsed_edges": 0,
+      "degenerate_triangles": 0,
+      "minimum_triangle_area_m2": 4.2097727368803777e-08,
+      "finite_attributes": true
+    },
+    "files": [
+      {
+        "file": "engine_cassette_fixed_deck_candidate.glb",
+        "sha256": "faf5b9b0f87090123f67ab4817b8a0562c695131e47af55274bfdb3ff845360b",
+        "metrics": {
+          "vertices": 115277,
+          "triangles": 43108,
+          "min": [
+            -1.735823631286621,
+            1.907572627067566,
+            -3.028501510620117
+          ],
+          "max": [
+            1.7358237504959106,
+            2.0904958248138428,
+            2.428903818130493
+          ],
+          "area_m2": 28.269593551069388,
+          "volume_m3": 0.6301679774206409,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 1.9820788565994008e-08,
+          "finite_attributes": true
+        }
+      },
+      {
+        "file": "engine_hinge_cassette_candidate.glb",
+        "sha256": "e942b4899ea6eae73852def38dc075fc87397f3c01f1c02df6fa486a0bd1cdc9",
+        "metrics": {
+          "vertices": 14116,
+          "triangles": 5408,
+          "min": [
+            -0.5897499918937683,
+            1.915839433670044,
+            -3.028501510620117
+          ],
+          "max": [
+            0.5897499918937683,
+            2.1021716594696045,
+            -2.540250062942505
+          ],
+          "area_m2": 1.3915919881570464,
+          "volume_m3": 0.025112846534314188,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "inconsistent_winding_edges": 0,
+          "collapsed_edges": 0,
+          "degenerate_triangles": 0,
+          "minimum_triangle_area_m2": 3.7231359328870894e-08,
+          "finite_attributes": true
+        }
+      }
+    ],
+    "removed_volume_m3": 0.00011568008752438352,
+    "removed_fraction": 0.00017650397402313445,
+    "cassette_mass_kg_estimate": 197.13584529436636,
+    "mass_basis": "Source closed solid model volume times assumed steel7850kg/m3, not historical measured mass.",
+    "existing_lid_required_angle_deg": -100,
+    "initial_translation_candidate_hull_m": [
+      0,
+      0.25,
+      0
+    ],
+    "limits": [
+      "Authored major-service seam: not a historical Tiger manufacturing claim.",
+      "Fixed deck and removed cassette together preserve source surface outside the measured assembly seam; visible and collision meshes must match.",
+      "All lid hardware must remain attached to the finite cassette during hoist movement.",
+      "No invisible supports. Source-supported visible retainer/ledge geometry still required."
+    ]
+  },
+  "validation": {
+    "receipt": "artifacts/workshop-source-20261030/engine_cassette_complete_lift_probe.json",
+    "moving_triangles": 31904,
+    "unique_vertices": 15911,
+    "turret_yaw_deg": -66,
+    "lid_angle_deg": -100,
+    "source_parts_removed": [
+      "Turret_0132",
+      "Turret_0153",
+      "Turret_0128",
+      "Turret_0147"
+    ],
+    "vertex_path": "Every unique moving source vertex traced250mm upward. Five separating initial contacts with original rear hull1174; no later hit.",
+    "maximum_departing_initial_contact_m": 1.4691025310421537e-06,
+    "static_full_triangle_intersection_checks_m": [
+      0.001,
+      0.01,
+      0.05,
+      0.1,
+      0.2,
+      0.25
+    ],
+    "static_full_triangle_checks_result": "All zero face intersection pairs. Initial0mm has28 separating source-fitted contact pairs.",
+    "continuous_full_face_sweep": false
+  },
+  "remaining_requirements": [
+    "Visible fixed supports and releasable retainers across authored cassette seam; no invisible attachment authority.",
+    "Source-supported rated lifting eyes or an explicitly authored cradle; existing hand handles are NOT asserted to carry the assembly mass.",
+    "Full continuous swept-face admission including fixture and child hardware.",
+    "Reachable tool approach to the actual driveline coupling; all nine sampled access rays are blocked by engine/filter/front bracket0838.",
+    "Independent whole engine disconnect, support and extraction path; cassette removal alone does not certify it."
+  ],
+  "core_foot_derivative": {
+    "file": "engine_core_foot_fit.glb",
+    "source_root": "Hull_0971",
+    "receipt": "artifacts/workshop-source-20261030/engine_foot_fit_candidate.json",
+    "purpose": "Bounded floor-fit correction only; no complete engine extraction claim."
+  }
+}

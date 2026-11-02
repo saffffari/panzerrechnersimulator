@@ -13,6 +13,8 @@ pub struct GpuProfile {
     resolve: wgpu::Buffer,
     readback: wgpu::Buffer,
     active: Cell<bool>,
+    inside_encoders: bool,
+    inside_passes: bool,
     labels: RefCell<Vec<String>>,
 }
 
@@ -45,6 +47,8 @@ impl GpuProfile {
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             ),
             active: Cell::new(false),
+            inside_encoders: device.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
+            inside_passes: device.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
             labels: RefCell::new(Vec::new()),
         })
     }
@@ -84,6 +88,23 @@ impl GpuProfile {
             beginning_of_pass_write_index: Some(first),
             end_of_pass_write_index: Some(first + 1),
         })
+    }
+
+    /// Diagnostic-only native timestamps: no pass splitting or dispatch reordering.
+    pub fn has_dispatch_timestamps(&self) -> bool { self.inside_passes }
+    pub fn dispatch(&self, pass: &mut wgpu::ComputePass<'_>, label: &str, groups: [u32;3]) {
+        let first = self.inside_passes.then(|| self.allocate(label)).flatten();
+        if let Some(first) = first { pass.write_timestamp(&self.queries, first); }
+        pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
+        if let Some(first) = first { pass.write_timestamp(&self.queries, first + 1); }
+    }
+    pub fn begin_encoder_span(&self, encoder: &mut wgpu::CommandEncoder, label: &str) -> Option<u32> {
+        let first = self.inside_encoders.then(|| self.allocate(label)).flatten()?;
+        encoder.write_timestamp(&self.queries, first);
+        Some(first)
+    }
+    pub fn end_encoder_span(&self, encoder: &mut wgpu::CommandEncoder, first: Option<u32>) {
+        if let Some(first) = first { encoder.write_timestamp(&self.queries, first + 1); }
     }
 
     /// Called after the benchmark's ordinary frame fence/timer, excluding readback overhead.

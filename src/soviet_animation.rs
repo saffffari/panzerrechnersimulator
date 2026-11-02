@@ -30,6 +30,7 @@ pub const FLINCH_HOLD_S: f32 = hold_frames(2);
 /// One of the 17 static, shared runtime meshes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum SovietPose {
     Idle00 = 0,
     Idle01 = 1,
@@ -114,6 +115,7 @@ impl SovietPose {
 /// seventh sequence, which keeps this runtime contract exactly aligned with the source recipe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum SovietSequenceKind {
     Idle = 0,
     Walk = 1,
@@ -280,6 +282,7 @@ impl Default for SovietAnimationInput {
 
 /// Lightweight per-soldier timing state.  Static geometry remains shared through `SovietPose`.
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SovietAnimator {
     soldier_id: u32,
     sequence: SovietSequenceKind,

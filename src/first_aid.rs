@@ -28,7 +28,7 @@ pub const DEGRADE_LOSS: f32 = 0.15;
 pub const AIRWAY_FATAL_S: f32 = 240.0;
 
 /// Where on the body a wound sits. Only what the treatment rules need to distinguish.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Region {
     Head,
     /// Trunk and pelvis: bleeding is partly internal, a dressing helps less and no tourniquet
@@ -64,14 +64,14 @@ impl Region {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WoundKind {
     Bleeding,
     Fracture,
     Burn,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Wound {
     pub kind: WoundKind,
     pub region: Region,
@@ -236,7 +236,7 @@ impl Treatment {
 // ── Procedures ───────────────────────────────────────────────────────────────────────────────
 
 /// One hands-on treatment, done at the man.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Procedure {
     /// Limb arterial bleed: place above the wound, turn the windlass, secure, note the time.
     Tourniquet,
@@ -453,6 +453,50 @@ pub struct ProcedureRun {
     pub skipped_cooling: bool,
 }
 
+/// Exact persistence boundary for a hands-on procedure. This is not a second treatment model:
+/// restoration validates the cursor and cadence before returning the original ProcedureRun.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProcedureRunSnapshot {
+    pub procedure: Procedure,
+    pub wound: Option<usize>,
+    pub improvised: bool,
+    pub step: usize,
+    pub progress: f32,
+    pub count: u8,
+    pub last_stroke_sign: i8,
+    pub since_count_s: f32,
+    pub quality: f32,
+    pub interruptions: u8,
+    pub elapsed_s: f32,
+    pub skipped_cooling: bool,
+}
+
+impl ProcedureRunSnapshot {
+    pub fn restore(&self) -> anyhow::Result<ProcedureRun> {
+        anyhow::ensure!(self.step <= self.procedure.steps(self.improvised).len(), "invalid procedure step");
+        anyhow::ensure!([self.progress, self.since_count_s, self.elapsed_s].iter()
+            .all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0e9), "invalid procedure timer");
+        anyhow::ensure!(self.quality.is_finite() && (0.0..=1.0).contains(&self.quality)
+            && (-1..=1).contains(&self.last_stroke_sign), "invalid procedure quality or cadence");
+        let current = self.procedure.steps(self.improvised).get(self.step);
+        match current.map(|step| step.kind) {
+            Some(StepKind::Hold(seconds) | StepKind::Watch(seconds)) => {
+                anyhow::ensure!(self.progress < seconds && self.count == 0, "invalid procedure hold progress");
+            }
+            Some(StepKind::Wrap(count) | StepKind::Turn(count)) => {
+                anyhow::ensure!(self.count < count && self.progress == 0.0, "invalid procedure repetition count");
+            }
+            _ => anyhow::ensure!(self.progress == 0.0 && self.count == 0, "invalid procedure cursor"),
+        }
+        Ok(ProcedureRun { procedure: self.procedure, wound: self.wound, improvised: self.improvised,
+            step: self.step, progress: self.progress, count: self.count,
+            last_stroke_sign: self.last_stroke_sign, since_count_s: self.since_count_s,
+            quality: self.quality, interruptions: self.interruptions, elapsed_s: self.elapsed_s,
+            skipped_cooling: self.skipped_cooling })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
     Working,
@@ -468,6 +512,13 @@ const CADENCE_MAX_S: f32 = 1.8;
 const STROKE_THRESHOLD: f32 = 18.0;
 
 impl ProcedureRun {
+    pub fn snapshot(&self) -> ProcedureRunSnapshot {
+        ProcedureRunSnapshot { procedure: self.procedure, wound: self.wound, improvised: self.improvised,
+            step: self.step, progress: self.progress, count: self.count,
+            last_stroke_sign: self.last_stroke_sign, since_count_s: self.since_count_s,
+            quality: self.quality, interruptions: self.interruptions, elapsed_s: self.elapsed_s,
+            skipped_cooling: self.skipped_cooling }
+    }
     pub fn new(procedure: Procedure, wound: Option<usize>, improvised: bool) -> Self {
         Self {
             procedure,
@@ -610,7 +661,7 @@ pub enum Refusal {
 
 /// The vehicle's first-aid kit (Kfz-Verbandkasten) and what the crew carries. Counts are the
 /// supply; nothing else.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AidBox {
     pub dressings: u8,
     pub tourniquets: u8,

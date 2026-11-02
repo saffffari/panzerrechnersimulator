@@ -71,9 +71,11 @@ impl FiniteCubeLamp {
 }
 
 pub const DOME_FIXTURE: FiniteCubeLamp = FiniteCubeLamp {
-    // Authored orange practical, shared by the visible lens and transported illumination.
-    // Keep the red-band output; lower the yellow/blue contribution instead of tinting the view.
-    half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 145, 48], emission: 1.75,
+    // Owner-directed warm cabin practical (2026-10-30). The earlier atmosphere depended on
+    // the instrument backlight illuminating the compartment; give that job to the actual dome
+    // fixture. Its visible surface and transported illumination share this authored output.
+    // This is an appearance calibration, not a measurement of a historical bulb's wattage.
+    half_size_m: TURRET_DOME_LAMP_HALF_SIZE, srgb: [255, 145, 48], emission: 42.0,
 };
 pub const ANNUNCIATOR_FIXTURES: [FiniteCubeLamp; 4] = [
     FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 46, 30], emission: 1.0 },
@@ -120,21 +122,23 @@ pub const fn cabin_practical_gain(shader_backend: bool) -> f32 {
 /// Keep their authored output explicit; never invent a finite mesh to claim source agreement.
 /// `(frame, pos, linear color, radiant intensity, source radius metres)`.
 pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
-    // TPZ dial illuminator, inside the instrument 5 cm from its face (rides the turret): a faint
-    // backlight that lights the face about as much as the dome lamp a metre off does. It was 0.055,
-    // 27 times the dome lamp's intensity at a twentieth of its distance, some 12,000 times the
-    // dome's light on the dial: "this dial is fucking too bright, it's like the sun inside the
-    // tank" (owner, 2026-10-28).
+    // TPZ's orange backlight, inside the instrument 5 cm from its face (rides the turret).
+    // Owner-directed 2026-10-31 calibration: slightly dimmer and a deeper, less yellow orange.
+    // The face remains lit by this source, not an emissive material or screen-space overlay.
     (
         Frame::Turret,
         Vec3::new(0.841, 1.752, 0.598),
-        Vec3::new(1.0, 0.34, 0.035),
+        TPZ_ILLUMINATOR_LINEAR_COLOR,
         TPZ_ILLUMINATOR_INTENSITY,
         0.015,
     ),
 ];
-/// The dome lamp's intensity times (5 cm / 1.07 m)^2: the dial's illuminator against the dome lamp.
-pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.0000044 * CABIN_PRACTICAL_POWER_SCALE;
+/// The actual instrument backlight's linear spectrum, shared by both rendering backends.
+/// This changes only the TPZ source, not the independent indicator lamps or exposure.
+pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.31, 0.018);
+/// Ten percent below the 2026-10-30 output, plus the deeper-orange spectrum above.
+/// This is an owner-directed appearance calibration, not measured period photometry.
+pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.0495 * CABIN_PRACTICAL_POWER_SCALE;
 /// The driver's ignition lamp, a finite cube on his panel (`lamp_mounts::IGNITION`), an indicator's
 /// power. Before 2026-10-28 an invisible point at 0.025, twelve times the dome lamp, which washed
 /// the driver's post red.
@@ -207,7 +211,8 @@ mod lighting_tests {
         let low = DOME_FIXTURE.sample(dome_lamp_state(3.0*std::f32::consts::FRAC_PI_2/5.0));
         assert!((low.visible_emissive/high.visible_emissive-0.92).abs()<1e-6);
         assert!((low.radiant_intensity/high.radiant_intensity-0.92).abs()<1e-6);
-        assert!((high.radiant_intensity-0.0000061740).abs()<1e-9);
+        // 42 * 0.003 radiance, six faces of a 28 mm cube, I = L*A/4.
+        assert!((high.radiant_intensity-0.0001481760).abs()<1e-9);
     }
 }
 

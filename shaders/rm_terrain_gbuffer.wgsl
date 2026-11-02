@@ -39,7 +39,7 @@ fn tr_shading_field(p: vec2<f32>, a: TrAttr, level: i32, morph: f32, footprint: 
     let lowest = level - TR_OCTAVE_LEVEL_OFFSET;
     let top = min(lowest, TR_GEOMETRY_OCTAVES - 1);
     for (var k = -TR_NORMAL_OCTAVES; k <= top; k++) {
-        let wavelength = ldexp(TR_SPACING, k);
+        let wavelength = ldexp(TR_RELIEF_BASE_WAVELENGTH_M, k);
         var weight = clamp((wavelength / footprint - 2.0) * 0.5, 0.0, 1.0);
         if (k == lowest) { weight *= morph; }
         if (weight <= 0.0) { continue; }

@@ -54,10 +54,16 @@ impl Game {
             _ => {}
         }
     }
+    fn reading_light_hands_available(&self)->bool {
+        (self.map_held||self.repair_manual.held)&&self.controlled_soldier_alive()
+            &&self.switch_t<=0.0&&!self.climb.active&&self.activity.is_none()
+            &&self.carry_mesh.is_none()&&self.carried_casing.is_none()&&self.held_item.is_none()
+            &&!self.carried_tools()&&!self.panzerfaust_claimed&&!self.ext_equipped
+    }
     pub fn toggle_hand_flashlight(&mut self)->bool {
         if self.hand_torch_on {self.hand_torch_on=false;self.personal_primary_guard=true;
             self.recorded_or_foley_hands(crate::audio::RecordedFx::SwitchButton,0.0,crate::acoustics::foley::Cue::Cabin(crate::acoustics::foley::CabinCue::LampSwitch));return true;}
-        if !self.personal_hands_available() {return false;}
+        if !self.personal_hands_available()&&!self.reading_light_hands_available() {return false;}
         self.cigarettes.stow();self.compass_equipped=false;self.holster_mounted_sidearm();
         if self.mode==Mode::Tank&&self.station==Station::Gunner {self.jump_station(Station::Loader);}
         self.hand_torch_on=true;self.personal_primary_guard=true;self.consume_primary_press();
@@ -78,7 +84,8 @@ impl Game {
         let right=input.aim||input.binoculars;
         if !left {self.personal_primary_guard=false;}
         // Hands needed elsewhere: a lit cigarette goes to the mouth and keeps burning.
-        if self.personal_hand_item_active()&&!self.personal_hands_remain_available() {self.stow_personal_hand_item();}
+        if self.personal_hand_item_active()&&!self.personal_hands_remain_available()
+            &&!(self.hand_torch_on&&self.reading_light_hands_available()) {self.stow_personal_hand_item();}
         let before=self.cigarettes.view();
         if before.pack_open&&left&&!self.cigarette_left_was_down&&!self.personal_primary_guard {
             if let Some(slot)=self.cigarette_pick {

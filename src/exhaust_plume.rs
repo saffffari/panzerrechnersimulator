@@ -34,6 +34,7 @@ const COOL_DOWN_S: f32 = 1800.0;
 const START_RADIUS_M: f32 = 0.15;
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Puff {
     pos: Vec3,
     vel: Vec3,
@@ -52,6 +53,7 @@ struct Puff {
 
 /// One puff as the renderer draws it.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RenderPuff {
     pub pos: Vec3,
     pub radius: f32,
@@ -64,6 +66,7 @@ pub struct RenderPuff {
 }
 
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ExhaustPlume {
     puffs: Vec<Puff>,
     emit: f32,

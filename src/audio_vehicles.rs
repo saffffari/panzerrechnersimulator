@@ -103,6 +103,7 @@ impl Source for PositionedLoop {
 /// Actual elevation motion, sampled after the simulation pose updates. An initial pose and
 /// discontinuous scripted/restore jumps do not sound like a moving handwheel.
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct GunElevationMotion {
     previous_pitch: Option<f32>,
     pub normalized_rate: f32,

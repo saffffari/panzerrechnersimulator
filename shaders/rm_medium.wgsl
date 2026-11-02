@@ -28,6 +28,10 @@ fn rm_fog_bank_density(p: vec3<f32>) -> f32 {
 // World weather: a bounded height layer of blowing snow / aerosol with extinction fr.medium.x,
 // and the fog banks within it.
 fn rm_world_density(p: vec3<f32>) -> f32 {
+    if(fr.samples.y>0.5){
+        if(p.y<fr.medium.z||p.y>fr.medium.w){return 0.0;}
+        return theatre_extinction(fr.medium.x,p,fr.samples.y)*weather_relative_density(p,vec3(fr.samples.z,0.0,fr.samples.w),fr.medium.y,fr.samples.y);
+    }
     let bottom = fr.medium.z;
     let top = fr.medium.w;
     let above = smoothstep(top, top - 0.25 * (top - bottom), p.y);
@@ -168,7 +172,7 @@ fn rm_medium_at(p: vec3<f32>) -> Medium {
     let inside = rm_cabin_domain(p) >= 0;
     var world = 0.0;
     if (!inside) { world = rm_world_density(p); }
-    let snow = fr.medium.y;
+    let snow = fr.medium.y*theatre_north_weight(p.z,fr.samples.y);
     let world_albedo = mix(0.70, 0.92, snow);
     let cabin = rm_cabin_density(p, inside);
     let puff = rm_puff_extinction(p);

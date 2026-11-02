@@ -56,7 +56,7 @@ struct Smoke {
     atmo_time: f32,         // simulation time — identical for every split view in this frame
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol
     transport_steps: vec4<f32>, // world, cabin, plume, secondary local-medium quadrature
-    weather_motion: vec4<f32>, // shared wind displacement and weather time
+    weather_motion: vec4<f32>, // shared wind displacement; w explicit theatre climate flag
     cabin_medium: CabinMedium,
 };
 
@@ -302,7 +302,7 @@ fn world_medium_density(p: vec3<f32>) -> f32 {
     // `fog_density` is authored as sigma_t in inverse metres. The rest of this integrator stores
     // density separately from EXTINCT, hence this conversion keeps Beer-Lambert exactly
     // `exp(-fog_density * distance)` for the homogeneous world aerosol.
-    return sm.fog_density / EXTINCT * weather_relative_density(p,sm.weather_motion.xyz,sm.world_snow_fraction);
+    return theatre_extinction(sm.fog_density,p,sm.weather_motion.w) / EXTINCT * weather_relative_density(p,sm.weather_motion.xyz,sm.world_snow_fraction,sm.weather_motion.w);
 }
 
 fn local_medium_density(p: vec3<f32>) -> f32 {
@@ -338,7 +338,7 @@ fn medium_transmittance(origin: vec3<f32>, direction: vec3<f32>, max_distance: f
     // Homogeneous world extinction is analytic over the complete source segment. Compact local
     // media retain a bounded quadrature because their density varies procedurally.
     var optical_depth = weather_optical_depth(origin,direction,full_travel,sm.fog_layer.xy,
-        sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x));
+        sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x),sm.weather_motion.w);
     let travel = min(full_travel, 12.0);
     let light_steps = max(i32(sm.transport_steps.w), 1);
     for (var i = 0; i < light_steps; i = i + 1) {
@@ -846,7 +846,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         }
         // The uncollided camera term is analytic and independent of stochastic source estimates.
         // Never temporal-filter or truncate this Beer-Lambert opacity with the radiance path.
-        world_a = 1.0 - exp(-weather_optical_depth(ro,rd,world_limit,sm.fog_layer.xy,sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x)));
+        world_a = 1.0 - exp(-weather_optical_depth(ro,rd,world_limit,sm.fog_layer.xy,sm.fog_density,sm.world_snow_fraction,sm.weather_motion.xyz,u32(sm.transport_steps.x),sm.weather_motion.w));
         world_rgb = world_rgb + bounded_world_higher_order_scatter(
             ro,
             rd,

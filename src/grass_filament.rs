@@ -107,7 +107,7 @@ impl TrackMemory {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default,serde::Serialize,serde::Deserialize)]
 pub struct Bend {
     pub displacement: Vec2,
     velocity: Vec2,
@@ -625,5 +625,19 @@ mod shader_contract_tests {
         assert_eq!(block(forward), block(deferred));
         assert!(block(forward).contains("p += local_tip * u * u"));
         assert!(block(forward).contains("n.y -= dot(derivative, n)"));
+    }
+}
+
+impl TrackMemory {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut fields=crate::capture_world_fields!(self;cells,revision);
+        let pages:std::collections::BTreeMap<_,_>=self.pages.iter().map(|(&key,value)|(key,value.as_slice())).collect();
+        fields.put("pages",&pages)?;Ok(fields)
+    }
+    pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        let pages:std::collections::BTreeMap<(i32,i32),Vec<u8>>=fields.take("pages")?;
+        anyhow::ensure!(pages.len()<=TRACK_PAGE_CAPACITY,"grass contact page capacity exceeded");
+        self.pages=pages.into_iter().map(|(key,value)|Ok((key,Box::new(value.try_into().map_err(|_|anyhow::anyhow!("grass contact page size mismatch"))?)))).collect::<anyhow::Result<_>>()?;
+        crate::restore_world_fields!(self,fields;cells,revision);Ok(())
     }
 }

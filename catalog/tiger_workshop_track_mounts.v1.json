@@ -1,0 +1,1146 @@
+{
+  "schema": "panzer.tiger-workshop-track-mounts.v1",
+  "audit": "CPU exact expanded triangle vertices; proper rigid least-squares fit. Source node/mesh IDs are zero-based. Matrix columns are directly suitable for glam::Mat4::from_cols_array_2d. Root geometry must be partitioned out of turret remainder before rendering a removable copy.",
+  "source_turret": "assets/tanks/tiger/baked/tiger_turret.glb",
+  "source_turret_sha256": "20f86e9bacd1487869d42b59e40f86e0548af0a3626e57c250272b21f546e195",
+  "canonical_link": "assets/tanks/tiger/repair_link.glb",
+  "canonical_link_sha256": "ce55948d2a2b89674127ae588df8a929ddff88ee5b88ec539ff43714f28c8f88",
+  "canonical_origin": "Centred repair-link origin; source root label Tiger track shoe Hull_0628",
+  "frame": "Current engine turret local meters, apply player.turret_model afterward; all scales exactly one in fitted transform.",
+  "mounts": [
+    {
+      "mount_id": "tiger.track_carrier.0",
+      "source_root": "Turret_0096",
+      "node_index": 75,
+      "mesh_index": 75,
+      "triangle_count": 5426,
+      "canonical_to_turret_matrix_rows": [
+        [
+          1.412831282781503e-08,
+          0.9800057230269305,
+          0.19896930123630244,
+          1.3425580257902228
+        ],
+        [
+          0.9999999999999997,
+          -1.5329818626987344e-08,
+          4.498168517092498e-09,
+          2.005338834198181
+        ],
+        [
+          7.458394235356983e-09,
+          0.19896930123630244,
+          -0.9800057230269308,
+          0.15978741433015725
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "canonical_to_turret_matrix_cols": [
+        [
+          1.412831282781503e-08,
+          0.9999999999999997,
+          7.458394235356983e-09,
+          0.0
+        ],
+        [
+          0.9800057230269305,
+          -1.5329818626987344e-08,
+          0.19896930123630244,
+          0.0
+        ],
+        [
+          0.19896930123630244,
+          4.498168517092498e-09,
+          -0.9800057230269308,
+          0.0
+        ],
+        [
+          1.3425580257902228,
+          2.005338834198181,
+          0.15978741433015725,
+          1.0
+        ]
+      ],
+      "fit_max_residual_m": 6.445711505932935e-07,
+      "fit_rms_residual_m": 4.735739606062745e-07,
+      "rotation_determinant": 0.9999999999999994,
+      "bounds_min_turret_m": [
+        1.2642699410531009,
+        1.5996002863728336,
+        0.05759928029016237
+      ],
+      "bounds_max_turret_m": [
+        1.3992403565884501,
+        2.4110783568506093,
+        0.26675652087828894
+      ],
+      "neighbors": [
+        {
+          "root": "Turret_0097",
+          "node_index": 76,
+          "mesh_index": 76,
+          "triangle_count": 1364,
+          "role": "upper_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.1998191755762377,
+            2.404072736308258,
+            0.10690826896609451
+          ],
+          "bounds_max_turret_m": [
+            1.4396785573837292,
+            2.4538900983310157,
+            0.21482733128863174
+          ]
+        },
+        {
+          "root": "Turret_0102",
+          "node_index": 79,
+          "mesh_index": 79,
+          "triangle_count": 430,
+          "role": "vertical_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.27009461273218,
+            1.5957083819793638,
+            0.03297532036708617
+          ],
+          "bounds_max_turret_m": [
+            1.3982294424312727,
+            2.3896725654300326,
+            0.12778909765688695
+          ]
+        },
+        {
+          "root": "Turret_0093",
+          "node_index": 73,
+          "mesh_index": 73,
+          "triangle_count": 376,
+          "role": "lower_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.3747636267816574,
+            1.7533336232267231,
+            0.11450866233462875
+          ],
+          "bounds_max_turret_m": [
+            1.5010533441625853,
+            1.7727935701950912,
+            0.22340102647956428
+          ]
+        },
+        {
+          "root": "Turret_0094",
+          "node_index": 74,
+          "mesh_index": 74,
+          "triangle_count": 376,
+          "role": "upper_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.3747638039612866,
+            2.006312424954018,
+            0.11450865585203474
+          ],
+          "bounds_max_turret_m": [
+            1.5010535213422145,
+            2.025772371922386,
+            0.22340101999697026
+          ]
+        }
+      ],
+      "retainer_surface_contact_candidate": {
+        "source_root": "Turret_0097",
+        "triangle_index": 1324,
+        "point_turret_m": [
+          1.4383662262011778,
+          2.425315136782897,
+          0.1776203209702203
+        ],
+        "test_eye_turret_m": [
+          1.9183395802132708,
+          2.5526050160705336,
+          0.23612558628301952
+        ],
+        "test_nearest_whole_turret_hit_m": 0.5000000000000001,
+        "purpose": "Actual upper-retainer triangle centroid with clear 0.5 m exterior test ray through full closed source turret. It is not an identified pin axis or guaranteed player reach; runtime gaze/contact must still validate."
+      }
+    },
+    {
+      "mount_id": "tiger.track_carrier.1",
+      "source_root": "Turret_0128",
+      "node_index": 97,
+      "mesh_index": 97,
+      "triangle_count": 5426,
+      "canonical_to_turret_matrix_rows": [
+        [
+          -8.815016810248897e-09,
+          -0.9856479988970186,
+          -0.1688135725298866,
+          -1.3476636339650025
+        ],
+        [
+          1.0000000000000002,
+          -8.467518928407064e-09,
+          -2.778352345614323e-09,
+          2.0053388339895735
+        ],
+        [
+          1.309045306391677e-09,
+          -0.16881357252988646,
+          0.9856479988970188,
+          -0.07974950054137381
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "canonical_to_turret_matrix_cols": [
+        [
+          -8.815016810248897e-09,
+          1.0000000000000002,
+          1.309045306391677e-09,
+          0.0
+        ],
+        [
+          -0.9856479988970186,
+          -8.467518928407064e-09,
+          -0.16881357252988646,
+          0.0
+        ],
+        [
+          -0.1688135725298866,
+          -2.778352345614323e-09,
+          0.9856479988970188,
+          0.0
+        ],
+        [
+          -1.3476636339650025,
+          2.0053388339895735,
+          -0.07974950054137381,
+          1.0
+        ]
+      ],
+      "fit_max_residual_m": 6.775881788553986e-07,
+      "fit_rms_residual_m": 4.7644051995287265e-07,
+      "rotation_determinant": 1.000000000000001,
+      "bounds_min_turret_m": [
+        -1.4028086736423688,
+        1.5996002863728336,
+        -0.18622043016569023
+      ],
+      "bounds_max_turret_m": [
+        -1.2722283379342798,
+        2.4110783568506093,
+        0.023298264532854773
+      ],
+      "neighbors": [
+        {
+          "root": "Turret_0130",
+          "node_index": 98,
+          "mesh_index": 98,
+          "triangle_count": 1364,
+          "role": "upper_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.4443909548550096,
+            2.404072736308258,
+            -0.13258066866944773
+          ],
+          "bounds_max_turret_m": [
+            -1.206423806338762,
+            2.4538900983310157,
+            -0.031154586461980216
+          ]
+        },
+        {
+          "root": "Turret_0120",
+          "node_index": 90,
+          "mesh_index": 90,
+          "triangle_count": 430,
+          "role": "vertical_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.401110476017493,
+            1.5957083819793638,
+            -0.05155623254592001
+          ],
+          "bounds_max_turret_m": [
+            -1.2756183354762811,
+            2.3896725654300326,
+            0.041901475632471374
+          ]
+        },
+        {
+          "root": "Turret_0132",
+          "node_index": 100,
+          "mesh_index": 100,
+          "triangle_count": 376,
+          "role": "lower_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.5064147815895694,
+            1.7533336232267231,
+            -0.1417579503316233
+          ],
+          "bounds_max_turret_m": [
+            -1.3815437679673437,
+            1.7727935701950912,
+            -0.032786277964305555
+          ]
+        },
+        {
+          "root": "Turret_0131",
+          "node_index": 99,
+          "mesh_index": 99,
+          "triangle_count": 376,
+          "role": "upper_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.5064147042546097,
+            2.006312424954018,
+            -0.14175794727560742
+          ],
+          "bounds_max_turret_m": [
+            -1.381543690632384,
+            2.025772371922386,
+            -0.03278627490828967
+          ]
+        }
+      ],
+      "retainer_surface_contact_candidate": {
+        "source_root": "Turret_0130",
+        "triangle_index": 1324,
+        "point_turret_m": [
+          -1.4439738255025532,
+          2.425315136782897,
+          -0.09463509146837623
+        ],
+        "test_eye_turret_m": [
+          -1.9265426358703222,
+          2.552746963481083,
+          -0.12444235240593539
+        ],
+        "test_nearest_whole_turret_hit_m": 0.5,
+        "purpose": "Actual upper-retainer triangle centroid with clear 0.5 m exterior test ray through full closed source turret. It is not an identified pin axis or guaranteed player reach; runtime gaze/contact must still validate."
+      }
+    },
+    {
+      "mount_id": "tiger.track_carrier.2",
+      "source_root": "Turret_0134",
+      "node_index": 102,
+      "mesh_index": 102,
+      "triangle_count": 5426,
+      "canonical_to_turret_matrix_rows": [
+        [
+          1.640472360322803e-08,
+          0.9998928650540219,
+          0.014637568584263636,
+          1.3479728555728203
+        ],
+        [
+          1.0000000000000004,
+          -1.6450322333741257e-08,
+          2.994785590285935e-09,
+          2.0053388341507548
+        ],
+        [
+          3.235257487275489e-09,
+          0.014637568584263575,
+          -0.9998928650540222,
+          -0.10207131280082866
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "canonical_to_turret_matrix_cols": [
+        [
+          1.640472360322803e-08,
+          1.0000000000000004,
+          3.235257487275489e-09,
+          0.0
+        ],
+        [
+          0.9998928650540219,
+          -1.6450322333741257e-08,
+          0.014637568584263575,
+          0.0
+        ],
+        [
+          0.014637568584263636,
+          2.994785590285935e-09,
+          -0.9998928650540222,
+          0.0
+        ],
+        [
+          1.3479728555728203,
+          2.0053388341507548,
+          -0.10207131280082866,
+          1.0
+        ]
+      ],
+      "fit_max_residual_m": 6.72143450843117e-07,
+      "fit_rms_residual_m": 4.748927964517005e-07,
+      "rotation_determinant": 1.0000000000000004,
+      "bounds_min_turret_m": [
+        1.2805486040104483,
+        1.5996002863728336,
+        -0.20823303032415197
+      ],
+      "bounds_max_turret_m": [
+        1.4136389652137495,
+        2.4110783568506093,
+        0.0035309424947058687
+      ],
+      "neighbors": [
+        {
+          "root": "Turret_0133",
+          "node_index": 101,
+          "mesh_index": 101,
+          "triangle_count": 1364,
+          "role": "upper_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.2017500555224387,
+            2.404072736308258,
+            -0.15967898674568914
+          ],
+          "bounds_max_turret_m": [
+            1.4464498486722164,
+            2.4538900983310157,
+            -0.029843887350295972
+          ]
+        },
+        {
+          "root": "Turret_0138",
+          "node_index": 106,
+          "mesh_index": 106,
+          "triangle_count": 430,
+          "role": "vertical_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.2589516410458828,
+            1.5957083819793638,
+            -0.21680644186960762
+          ],
+          "bounds_max_turret_m": [
+            1.3895193628319475,
+            2.3896725654300326,
+            -0.12095933788708635
+          ]
+        },
+        {
+          "root": "Turret_0135",
+          "node_index": 103,
+          "mesh_index": 103,
+          "triangle_count": 376,
+          "role": "lower_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.3761475372604082,
+            1.7533336232267231,
+            -0.15683635929525508
+          ],
+          "bounds_max_turret_m": [
+            1.5065522929734243,
+            1.7727935701950912,
+            -0.0490298073576696
+          ]
+        },
+        {
+          "root": "Turret_0136",
+          "node_index": 104,
+          "mesh_index": 104,
+          "triangle_count": 376,
+          "role": "upper_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.3761477112949478,
+            2.006312424954018,
+            -0.15683636637527343
+          ],
+          "bounds_max_turret_m": [
+            1.506552467007964,
+            2.025772371922386,
+            -0.049029814437687946
+          ]
+        }
+      ],
+      "retainer_surface_contact_candidate": {
+        "source_root": "Turret_0133",
+        "triangle_index": 1324,
+        "point_turret_m": [
+          1.4454265261245496,
+          2.425315136782897,
+          -0.102231367840299
+        ],
+        "test_eye_turret_m": [
+          1.9276710525483864,
+          2.5527870727051,
+          -0.136744007358235
+        ],
+        "test_nearest_whole_turret_hit_m": 0.49999999999999994,
+        "purpose": "Actual upper-retainer triangle centroid with clear 0.5 m exterior test ray through full closed source turret. It is not an identified pin axis or guaranteed player reach; runtime gaze/contact must still validate."
+      }
+    },
+    {
+      "mount_id": "tiger.track_carrier.3",
+      "source_root": "Turret_0147",
+      "node_index": 112,
+      "mesh_index": 112,
+      "triangle_count": 5426,
+      "canonical_to_turret_matrix_rows": [
+        [
+          -1.0248695527792822e-08,
+          -0.9358463068295079,
+          -0.35240841362483316,
+          -1.3066348204444351
+        ],
+        [
+          1.0000000000000007,
+          -1.4083592654141801e-08,
+          8.318139506575611e-09,
+          2.0053388343159586
+        ],
+        [
+          -1.2747677052369796e-08,
+          -0.3524084136248328,
+          0.935846306829508,
+          -0.34343067432799457
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "canonical_to_turret_matrix_cols": [
+        [
+          -1.0248695527792822e-08,
+          1.0000000000000007,
+          -1.2747677052369796e-08,
+          0.0
+        ],
+        [
+          -0.9358463068295079,
+          -1.4083592654141801e-08,
+          -0.3524084136248328,
+          0.0
+        ],
+        [
+          -0.35240841362483316,
+          8.318139506575611e-09,
+          0.935846306829508,
+          0.0
+        ],
+        [
+          -1.3066348204444351,
+          2.0053388343159586,
+          -0.34343067432799457,
+          1.0
+        ]
+      ],
+      "fit_max_residual_m": 7.228774624316218e-07,
+      "fit_rms_residual_m": 4.846861505189275e-07,
+      "rotation_determinant": 1.0000000000000018,
+      "bounds_min_turret_m": [
+        -1.3747518813169677,
+        1.5996002863728336,
+        -0.4520290946508112
+      ],
+      "bounds_max_turret_m": [
+        -1.2147353637016352,
+        2.4110783568506093,
+        -0.2466979320890914
+      ],
+      "neighbors": [
+        {
+          "root": "Turret_0145",
+          "node_index": 110,
+          "mesh_index": 110,
+          "triangle_count": 1364,
+          "role": "upper_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.4043203542004221,
+            2.404072736308258,
+            -0.40909420305672484
+          ],
+          "bounds_max_turret_m": [
+            -1.1582859501054372,
+            2.4538900983310157,
+            -0.26912693454846703
+          ]
+        },
+        {
+          "root": "Turret_0141",
+          "node_index": 107,
+          "mesh_index": 107,
+          "triangle_count": 430,
+          "role": "vertical_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.3737610568017544,
+            1.5957083819793638,
+            -0.30623104121025335
+          ],
+          "bounds_max_turret_m": [
+            -1.2410460685193812,
+            2.3896725654300326,
+            -0.20973453772489847
+          ]
+        },
+        {
+          "root": "Turret_0149",
+          "node_index": 114,
+          "mesh_index": 114,
+          "triangle_count": 376,
+          "role": "lower_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.4617474986276306,
+            1.7533336232267231,
+            -0.4144054430412325
+          ],
+          "bounds_max_turret_m": [
+            -1.3296645113349541,
+            1.7727935701950912,
+            -0.3075788623560811
+          ]
+        },
+        {
+          "root": "Turret_0150",
+          "node_index": 115,
+          "mesh_index": 115,
+          "triangle_count": 376,
+          "role": "upper_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            -1.46174752755104,
+            2.006312424954018,
+            -0.4144054337294847
+          ],
+          "bounds_max_turret_m": [
+            -1.3296645402583636,
+            2.025772371922386,
+            -0.3075788530443333
+          ]
+        }
+      ],
+      "retainer_surface_contact_candidate": {
+        "source_root": "Turret_0145",
+        "triangle_index": 1324,
+        "point_turret_m": [
+          -1.3983835948844974,
+          2.425315136782897,
+          -0.37628495690887576
+        ],
+        "test_eye_turret_m": [
+          -1.8657220274759843,
+          2.552973022531622,
+          -0.49997106618998166
+        ],
+        "test_nearest_whole_turret_hit_m": 0.5,
+        "purpose": "Actual upper-retainer triangle centroid with clear 0.5 m exterior test ray through full closed source turret. It is not an identified pin axis or guaranteed player reach; runtime gaze/contact must still validate."
+      }
+    },
+    {
+      "mount_id": "tiger.track_carrier.4",
+      "source_root": "Turret_0148",
+      "node_index": 113,
+      "mesh_index": 113,
+      "triangle_count": 5426,
+      "canonical_to_turret_matrix_rows": [
+        [
+          1.7920340419800216e-08,
+          0.9869166918581641,
+          -0.1612310247183733,
+          1.3023020035440296
+        ],
+        [
+          0.9999999999999998,
+          -1.847257565659952e-08,
+          -1.926137674335571e-09,
+          2.0053388339983225
+        ],
+        [
+          -4.879289833230639e-09,
+          -0.16123102471837328,
+          -0.9869166918581646,
+          -0.3593328645256815
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "canonical_to_turret_matrix_cols": [
+        [
+          1.7920340419800216e-08,
+          0.9999999999999998,
+          -4.879289833230639e-09,
+          0.0
+        ],
+        [
+          0.9869166918581641,
+          -1.847257565659952e-08,
+          -0.16123102471837328,
+          0.0
+        ],
+        [
+          -0.1612310247183733,
+          -1.926137674335571e-09,
+          -0.9869166918581646,
+          0.0
+        ],
+        [
+          1.3023020035440296,
+          2.0053388339983225,
+          -0.3593328645256815,
+          1.0
+        ]
+      ],
+      "fit_max_residual_m": 6.868453392093904e-07,
+      "fit_rms_residual_m": 4.817372878517993e-07,
+      "rotation_determinant": 0.9999999999999997,
+      "bounds_min_turret_m": [
+        1.2386603759716763,
+        1.5996002863728336,
+        -0.4668346981305831
+      ],
+      "bounds_max_turret_m": [
+        1.3790224457405316,
+        2.4110783568506093,
+        -0.24575440147737027
+      ],
+      "neighbors": [
+        {
+          "root": "Turret_0146",
+          "node_index": 111,
+          "mesh_index": 111,
+          "triangle_count": 1364,
+          "role": "upper_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.1537263006030685,
+            2.404072736308258,
+            -0.42755756044675763
+          ],
+          "bounds_max_turret_m": [
+            1.400229884602311,
+            2.4538900983310157,
+            -0.2650998139569083
+          ]
+        },
+        {
+          "root": "Turret_0157",
+          "node_index": 120,
+          "mesh_index": 120,
+          "triangle_count": 430,
+          "role": "vertical_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.1948405052517899,
+            1.5957083819793638,
+            -0.4657087088959315
+          ],
+          "bounds_max_turret_m": [
+            1.3299886031025494,
+            2.3896725654300326,
+            -0.36308241925723905
+          ]
+        },
+        {
+          "root": "Turret_0151",
+          "node_index": 116,
+          "mesh_index": 116,
+          "triangle_count": 376,
+          "role": "lower_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.322270428949878,
+            1.7533336232267231,
+            -0.4296319905404289
+          ],
+          "bounds_max_turret_m": [
+            1.4572134418270366,
+            1.7727935701950912,
+            -0.3180434368097167
+          ]
+        },
+        {
+          "root": "Turret_0152",
+          "node_index": 117,
+          "mesh_index": 117,
+          "triangle_count": 376,
+          "role": "upper_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.322270615935338,
+            2.006312424954018,
+            -0.4296320296544991
+          ],
+          "bounds_max_turret_m": [
+            1.4572136288124966,
+            2.025772371922386,
+            -0.3180434759237869
+          ]
+        }
+      ],
+      "retainer_surface_contact_candidate": {
+        "source_root": "Turret_0146",
+        "triangle_index": 1324,
+        "point_turret_m": [
+          1.3982122853580752,
+          2.425315136782897,
+          -0.3766091077944414
+        ],
+        "test_eye_turret_m": [
+          1.864733119756355,
+          2.5531813022130354,
+          -0.5031340255400191
+        ],
+        "test_nearest_whole_turret_hit_m": 0.49999999999999983,
+        "purpose": "Actual upper-retainer triangle centroid with clear 0.5 m exterior test ray through full closed source turret. It is not an identified pin axis or guaranteed player reach; runtime gaze/contact must still validate."
+      }
+    },
+    {
+      "mount_id": "tiger.track_carrier.5",
+      "source_root": "Turret_0198",
+      "node_index": 126,
+      "mesh_index": 126,
+      "triangle_count": 5426,
+      "canonical_to_turret_matrix_rows": [
+        [
+          9.693904612086287e-09,
+          0.9259483083905655,
+          -0.3776502749749436,
+          1.2049890090016888
+        ],
+        [
+          1.0,
+          -1.0814173434922097e-08,
+          -8.459171121057566e-10,
+          2.00533883404408
+        ],
+        [
+          -4.86725109612433e-09,
+          -0.37765027497494363,
+          -0.9259483083905654,
+          -0.6154466098680061
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "canonical_to_turret_matrix_cols": [
+        [
+          9.693904612086287e-09,
+          1.0,
+          -4.86725109612433e-09,
+          0.0
+        ],
+        [
+          0.9259483083905655,
+          -1.0814173434922097e-08,
+          -0.37765027497494363,
+          0.0
+        ],
+        [
+          -0.3776502749749436,
+          -8.459171121057566e-10,
+          -0.9259483083905654,
+          0.0
+        ],
+        [
+          1.2049890090016888,
+          2.00533883404408,
+          -0.6154466098680061,
+          1.0
+        ]
+      ],
+      "fit_max_residual_m": 7.088720120911609e-07,
+      "fit_rms_residual_m": 4.835565797766926e-07,
+      "rotation_determinant": 1.0000000000000004,
+      "bounds_min_turret_m": [
+        1.1447993282296522,
+        1.5996002863728336,
+        -0.7210153454449255
+      ],
+      "bounds_max_turret_m": [
+        1.2941301865329535,
+        2.4110783568506093,
+        -0.4956506649317589
+      ],
+      "neighbors": [
+        {
+          "root": "Turret_0197",
+          "node_index": 125,
+          "mesh_index": 125,
+          "triangle_count": 1364,
+          "role": "upper_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.0601144634582624,
+            2.404072736308258,
+            -0.6941009878747764
+          ],
+          "bounds_max_turret_m": [
+            1.2978061355165096,
+            2.4538900983310157,
+            -0.49747024178236643
+          ]
+        },
+        {
+          "root": "Turret_0202",
+          "node_index": 130,
+          "mesh_index": 130,
+          "triangle_count": 430,
+          "role": "vertical_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.0793956603803565,
+            1.5957083819793638,
+            -0.7199571384932142
+          ],
+          "bounds_max_turret_m": [
+            1.2149470412668677,
+            2.3896725654300326,
+            -0.6030414500152119
+          ]
+        },
+        {
+          "root": "Turret_0200",
+          "node_index": 128,
+          "mesh_index": 128,
+          "triangle_count": 376,
+          "role": "lower_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.213620773619141,
+            1.7533336232267231,
+            -0.7108172071762056
+          ],
+          "bounds_max_turret_m": [
+            1.349936384195189,
+            1.7727935701950912,
+            -0.5874605891349347
+          ]
+        },
+        {
+          "root": "Turret_0201",
+          "node_index": 129,
+          "mesh_index": 129,
+          "triangle_count": 376,
+          "role": "upper_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.213620786693582,
+            2.006312424954018,
+            -0.7108172197565636
+          ],
+          "bounds_max_turret_m": [
+            1.34993639726963,
+            2.025772371922386,
+            -0.5874606017152928
+          ]
+        }
+      ],
+      "retainer_surface_contact_candidate": {
+        "source_root": "Turret_0197",
+        "triangle_index": 1324,
+        "point_turret_m": [
+          1.2946151032195985,
+          2.425315136782897,
+          -0.6537142059637896
+        ],
+        "test_eye_turret_m": [
+          1.7259847579861274,
+          2.5533765984232346,
+          -0.8717061392758872
+        ],
+        "test_nearest_whole_turret_hit_m": 0.5,
+        "purpose": "Actual upper-retainer triangle centroid with clear 0.5 m exterior test ray through full closed source turret. It is not an identified pin axis or guaranteed player reach; runtime gaze/contact must still validate."
+      }
+    },
+    {
+      "mount_id": "tiger.track_carrier.6",
+      "source_root": "Turret_0214",
+      "node_index": 136,
+      "mesh_index": 136,
+      "triangle_count": 5426,
+      "canonical_to_turret_matrix_rows": [
+        [
+          1.2188028504942529e-08,
+          0.8315131195081844,
+          -0.5555051143650865,
+          1.0512216365651537
+        ],
+        [
+          0.9999999999999998,
+          -1.3087120707442103e-08,
+          2.3508615767211606e-09,
+          2.0053388341369915
+        ],
+        [
+          -5.315189928390873e-09,
+          -0.5555051143650865,
+          -0.8315131195081843,
+          -0.8516424349883495
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "canonical_to_turret_matrix_cols": [
+        [
+          1.2188028504942529e-08,
+          0.9999999999999998,
+          -5.315189928390873e-09,
+          0.0
+        ],
+        [
+          0.8315131195081844,
+          -1.3087120707442103e-08,
+          -0.5555051143650865,
+          0.0
+        ],
+        [
+          -0.5555051143650865,
+          2.3508615767211606e-09,
+          -0.8315131195081843,
+          0.0
+        ],
+        [
+          1.0512216365651537,
+          2.0053388341369915,
+          -0.8516424349883495,
+          1.0
+        ]
+      ],
+      "fit_max_residual_m": 7.006846598634645e-07,
+      "fit_rms_residual_m": 4.787617108019921e-07,
+      "rotation_determinant": 0.9999999999999998,
+      "bounds_min_turret_m": [
+        0.9905639484121593,
+        1.5996002863728336,
+        -0.9521807083672229
+      ],
+      "bounds_max_turret_m": [
+        1.1491992415658387,
+        2.4110783568506093,
+        -0.7314156147770063
+      ],
+      "neighbors": [
+        {
+          "root": "Turret_0213",
+          "node_index": 135,
+          "mesh_index": 135,
+          "triangle_count": 1364,
+          "role": "upper_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            0.9158872455147673,
+            2.404072736308258,
+            -0.9362720881150608
+          ],
+          "bounds_max_turret_m": [
+            1.140411360362009,
+            2.4538900983310157,
+            -0.7174411292352261
+          ]
+        },
+        {
+          "root": "Turret_0216",
+          "node_index": 137,
+          "mesh_index": 137,
+          "triangle_count": 430,
+          "role": "vertical_retainer_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            0.914699231874124,
+            1.5957083819793638,
+            -0.9511630998598548
+          ],
+          "bounds_max_turret_m": [
+            1.046058151045088,
+            2.3896725654300326,
+            -0.8234374251946974
+          ]
+        },
+        {
+          "root": "Turret_0218",
+          "node_index": 138,
+          "mesh_index": 138,
+          "triangle_count": 376,
+          "role": "lower_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.0493165859739975,
+            1.7533336232267231,
+            -0.9671682572579812
+          ],
+          "bounds_max_turret_m": [
+            1.1826829310919322,
+            1.7727935701950912,
+            -0.8357106015249656
+          ]
+        },
+        {
+          "root": "Turret_0219",
+          "node_index": 139,
+          "mesh_index": 139,
+          "triangle_count": 376,
+          "role": "upper_outboard_fastener_candidate",
+          "role_confidence": "geometry-inferred; source root is unlabelled",
+          "bounds_min_turret_m": [
+            1.0493165395055541,
+            2.006312424954018,
+            -0.9671682731069495
+          ],
+          "bounds_max_turret_m": [
+            1.182682884623489,
+            2.025772371922386,
+            -0.8357106173739339
+          ]
+        }
+      ],
+      "retainer_surface_contact_candidate": {
+        "source_root": "Turret_0213",
+        "triangle_index": 1324,
+        "point_turret_m": [
+          1.1313636744034075,
+          2.425315136782897,
+          -0.907090528614655
+        ],
+        "test_eye_turret_m": [
+          1.5079692952071788,
+          2.553518275086458,
+          -1.2099637062123487
+        ],
+        "test_nearest_whole_turret_hit_m": 0.5000000000000001,
+        "purpose": "Actual upper-retainer triangle centroid with clear 0.5 m exterior test ray through full closed source turret. It is not an identified pin axis or guaranteed player reach; runtime gaze/contact must still validate."
+      }
+    }
+  ]
+}

@@ -108,7 +108,35 @@ struct Event {
     normal: Vec3,
     /// Ground height under a detonation when the simulation also recorded ground ejecta there.
     ground_y: Option<f32>,
+    /// Material from that same ground-ejecta source, never inferred from the camera's biome.
+    ground_snow: f32,
     born: f32,
+}
+
+/// Source records, never distance to the player's barrel, distinguish detonation and impact.
+/// Muzzle discharges do not produce a BLAST record (`weapon_vfx::gpu_burst_record`); their own
+/// source flash is collected separately. A shell landing under the gun is still a shell burst.
+fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
+    use renderer_weapon_particles::math as wm;
+    let heavy = burst.parameters[3] > 0.5;
+    match burst.meta[3] {
+        wm::BLAST if heavy && burst.parameters[2] > 2.0 => Some(EVENT_DETONATION),
+        wm::ARMOR_IMPACT | wm::RICOCHET if heavy => Some(EVENT_ARMOUR),
+        _ => None,
+    }
+}
+
+/// Shared authored cooling envelope for the same HE detonation, whether the local VDB atlas
+/// is installed or not. This is presentation timing, not a calibrated radiometric source law.
+fn detonation_flash_heat(age_s: f32) -> f32 {
+    if !age_s.is_finite() || age_s < 0.0 { return 0.0; }
+    let heat = (-age_s / 0.06).exp();
+    if heat < 0.01 { 0.0 } else { heat }
+}
+
+fn ground_dust_colour(snow: f32) -> [f32; 3] {
+    Vec3::new(0.35, 0.30, 0.25)
+        .lerp(Vec3::new(1.15, 1.15, 1.20), snow.clamp(0.0, 1.0)).to_array()
 }
 
 #[repr(C)]
@@ -596,9 +624,9 @@ fn rm_source(name: &str) -> String {
 /// A pipeline's WGSL from its parts. `rm_rt_g3.wgsl`: the ray-query module bound at group 3, for
 /// passes whose group 2 is taken (the glass panes' material).
 fn rm_assemble(parts: &[&str]) -> String {
-    radiance_storage(parts.iter().map(|&name| if name == "rm_rt_g3.wgsl" {
+    radiance_storage(format!("{}\n{}",include_str!("../shaders/weather_density.wgsl"),parts.iter().map(|&name| if name == "rm_rt_g3.wgsl" {
         rm_source("rm_rt.wgsl").replace("@group(2)", "@group(3)")
-    } else { rm_source(name) }).collect::<Vec<_>>().join("\n"))
+    } else { rm_source(name) }).collect::<Vec<_>>().join("\n")))
 }
 
 fn rm_shader(device: &wgpu::Device, label: &str, parts: &[&str]) -> wgpu::ShaderModule {
@@ -684,6 +712,41 @@ fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
 }
 
 impl Backend {
+    /// Capture primary albedo without lighting or display exposure, for material diagnostics.
+    pub(super) fn debug_albedo_png(&self, device: &wgpu::Device, queue: &wgpu::Queue,
+        path: &str) -> anyhow::Result<()> {
+        let raw = super::debug_read_rgba_f32(device, queue, &self.g0._tex)?;
+        let encode = |linear: f32| {
+            let v = linear.clamp(0.0, 1.0);
+            let srgb = if v <= 0.0031308 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+            (srgb * 255.0).round() as u8
+        };
+        let rgba = raw.iter().flat_map(|p| [encode(p[0]),encode(p[1]),encode(p[2]),255])
+            .collect::<Vec<_>>();
+        image::save_buffer(path,&rgba,self.iw,self.ih,image::ColorType::Rgba8)?;
+        Ok(())
+    }
+    pub(super) fn debug_surface_samples(&self, device: &wgpu::Device, queue: &wgpu::Queue)
+        -> anyhow::Result<serde_json::Value> {
+        let a = super::debug_read_rgba_f32(device, queue, &self.g0._tex)?;
+        let n = super::debug_read_rgba_f32(device, queue, &self.g1._tex)?;
+        let samples = [(0.35f32, 0.40f32), (0.65, 0.40), (0.50, 0.15)].map(|(x,y)| {
+            let index = (y*self.ih as f32) as usize*self.iw as usize+(x*self.iw as f32) as usize;
+            serde_json::json!({"uv":[x,y],"g0":a[index],"g1":n[index]})
+        });
+        Ok(serde_json::json!(samples))
+    }
+    /// An explicit scene cut must also discard this backend's indirect-light, reflection and
+    /// froxel histories. Resetting only Renderer::views leaves old text and object silhouettes
+    /// feeding the raymarch lighting recurrence after a physical page or held-object change.
+    pub(super) fn reset_history(&mut self) {
+        for view in &mut self.temporal {
+            view.prev_camera = None;
+            view.prev_cabin = None;
+        }
+        self.history_valid = false;
+    }
+
     /// A mesh's snow load for the push constant (`snow_cover`), zero under `KESSEL_RM_SKIP` 16384.
     fn snow_load(&self, load: f32) -> f32 { if self.debug_skip & 16384 != 0 { 0.0 } else { load } }
 
@@ -1211,6 +1274,8 @@ impl Backend {
 
     pub(super) fn terrain_lod(&self) -> Option<&crate::terrain_lod::TerrainLod> { self.terrain.as_ref().map(|t| &t.lod) }
 
+    pub(super) fn invalidate_terrain_detail(&mut self) { self.terrain = None; }
+
     fn make_binds(&self, device: &wgpu::Device, r: &Renderer) -> Binds {
         let frame = self.frame_buf.as_entire_binding();
         let depth = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1309,6 +1374,30 @@ impl Backend {
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
     pub(super) fn shadow_views(&self) -> &[Mat4] { &self.shadow_views[..3] }
 
+    /// Renderer::rt_update calls this only after current TLAS allocation/build recording.
+    /// An empty binding is valid for an actually empty scene, never for a populated scene
+    /// whose allocation merely happens later in the same frame.
+    pub(super) fn bind_scene_ray_queries(&mut self, r: &Renderer, device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder) {
+        if self.rt_bgl.is_none() { return; }
+        let statics = r.rt_static_tlas.as_ref().filter(|_| r.rt_split);
+        if (r.rt_tlas.is_none() || statics.is_none()) && !self.rt_empty_built {
+            encoder.build_acceleration_structures(std::iter::empty::<&wgpu::BlasBuildEntry>(), self.rt_empty.iter());
+            self.rt_empty_built = true;
+        }
+        self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref())
+            .zip(statics.or(self.rt_empty.as_ref())).zip(self.rt_bgl.as_ref())
+            .zip(self.rt_optics_buf.as_ref()).map(|(((tlas, statics), layout), optics)| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("rm-rt"), layout, entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: tlas.as_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: optics.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: statics.as_binding() },
+                    ],
+                })
+            });
+    }
+
     pub(super) fn prepare(&mut self, r: &Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
         let started = std::time::Instant::now();
         if let Some(voxels) = self.explosion_pending.take() {
@@ -1317,15 +1406,9 @@ impl Backend {
                 wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(side * 2), rows_per_image: Some(side) },
                 wgpu::Extent3d { width: side, height: side, depth_or_array_layers: (voxels.len() / (side * side * 2) as usize) as u32 });
         }
-        // Ray queries: bind the scene TLAS (rebuilt in place by `rt_update` before this frame's
-        // passes), or an empty one until the scene's first exists.
+        // Periscope metadata is ready before drawing. Scene TLAS binding must wait until
+        // Renderer::rt_update has allocated this frame's real acceleration structures.
         if self.rt_bgl.is_some() {
-            if (r.rt_tlas.is_none() || r.rt_static_tlas.is_none()) && !self.rt_empty_built {
-                let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rm-rt-empty") });
-                enc.build_acceleration_structures(std::iter::empty::<&wgpu::BlasBuildEntry>(), self.rt_empty.iter());
-                queue.submit([enc.finish()]);
-                self.rt_empty_built = true;
-            }
             // The periscope optics: windows pass a ray, mirrors fold it about their plane.
             self.rt_optics.clear();
             self.rt_optics.resize(r.meshes.len().min(MAX_OPTIC_SLOTS), [0.0; 4]);
@@ -1342,14 +1425,6 @@ impl Backend {
             if let Some(buf) = &self.rt_optics_buf {
                 if !self.rt_optics.is_empty() { queue.write_buffer(buf, 0, bytemuck::cast_slice(&self.rt_optics)); }
             }
-            let static_tlas = r.rt_static_tlas.as_ref().filter(|_| r.rt_split).or(self.rt_empty.as_ref());
-            self.rt_bind = r.rt_tlas.as_ref().or(self.rt_empty.as_ref()).zip(static_tlas).zip(self.rt_bgl.as_ref()).zip(self.rt_optics_buf.as_ref()).map(|(((tlas, statics), layout), optics)| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("rm-rt"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: tlas.as_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: optics.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 2, resource: statics.as_binding() }],
-                })
-            });
         }
         if self.probe_pending.replace(false) {
             if let Some((px, py)) = self.probe {
@@ -1622,7 +1697,7 @@ impl Backend {
             optic_eye: [r.optic_eye[0], r.optic_eye[1], 0.0, 0.0],
             // KESSEL_WHITEWASH=0..1 fixes the winter coat for review.
             livery: [self.whitewash.unwrap_or(r.whitewash).clamp(0.0, 1.0), 0.0, 0.0, 0.0],
-            samples: [self.quality.sample_budget(self.iw, self.ih), 0.0, 0.0, 0.0],
+            samples: [self.quality.sample_budget(self.iw, self.ih), if r.theatre_weather {1.0}else{0.0}, r.weather_offset.x, r.weather_offset.z],
             stars: {
                 let latitude = r.sky_clock.site.latitude_deg.to_radians();
                 let sidereal = (crate::ephemeris::apparent_sidereal_time_deg(r.sky_clock.now())
@@ -1704,16 +1779,14 @@ impl Backend {
             // and inside; a blast fireball is a real flash.
             let (pos, color, intensity) = match kind {
                 k if k == wm::BLAST => {
-                    let heavy = burst.parameters[2] > 2.0 && burst.parameters[3] > 0.5;
-                    let at_muzzle = heavy && r.muzzle_hint.is_some_and(|(m, _)| (origin - m).length() < 2.5);
-                    let flash = if at_muzzle { 3.0 * (1.0 - age / 0.09).max(0.0) }
-                        else if heavy { 2.2 * (1.0 - age / 0.9).max(0.0).powf(2.5) }
+                    let heavy = source_event_kind(burst) == Some(EVENT_DETONATION);
+                    let flash = if heavy { 2.2 * detonation_flash_heat(age) }
                         // A small-arms round's hot impact: its sparks' light, about 5 cd s (an
                         // estimate: a thousandth of the bullet's ~3.5 kJ radiated by incandescent
                         // steel at ~10 lm/W), spread over 40 ms so that each impact reaches two
                         // frames. It held 0.12 for 0.14 s, near 400 cd s (2026-10-28).
                         else { 0.005 * (1.0 - age / 0.04).max(0.0) };
-                    (origin + Vec3::Y * if heavy && !at_muzzle { 1.2 } else if heavy { 0.2 } else { 0.03 }, Vec3::new(1.0, 0.62, 0.22), flash)
+                    (origin + Vec3::Y * if heavy { 1.2 } else { 0.03 }, Vec3::new(1.0, 0.62, 0.22), flash)
                 }
                 k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (3.0 + 12.0 * age).min(60.0), Vec3::new(1.0, 0.55, 0.12), 1.5 * (1.0 - age / 17.0).max(0.0)),
                 k if k == wm::HOT_RIM => (origin + n * 0.05, Vec3::new(1.0, 0.35, 0.08), 0.004 * (-age / 2.5).exp()),
@@ -1993,35 +2066,9 @@ impl Backend {
             if kind == wm::GROUND || count <= 0.0 { continue; }
             let origin = burst.origin();
             let n = Vec3::from_array([burst.normal_offset[0], burst.normal_offset[1], burst.normal_offset[2]]);
-            // A heavy exterior blast away from the gun is a detonation; the same record at the
-            // muzzle is the gun's own report (plume slot 0 marks the muzzle); a light impact
-            // record (small arms, 'Impact' bursts) is only a glow.
-            let heavy = burst.parameters[2] > 2.0 && burst.parameters[3] > 0.5;
-            let at_muzzle = heavy && r.muzzle_hint.is_some_and(|(m, _)| (origin - m).length() < 2.5);
-            if at_muzzle {
-                // Muzzle report: a brief, bright, forward-stretched flash along the bore, no
-                // soot of its own.
-                let life = 0.08;
-                if age < life {
-                    let t = age / life;
-                    let dir = Vec3::from_array([burst.direction_life[0], burst.direction_life[1], burst.direction_life[2]]).normalize_or_zero();
-                    let radius = 0.55 + 0.35 * t;
-                    let length = 2.6 + 1.4 * t;
-                    let heat = (1.0 - t).powf(0.7);
-                    let color = Vec3::new(1.0, 0.78 + 0.2 * heat, 0.35 + 0.6 * heat);
-                    let center = origin + dir * (length * 0.45);
-                    self.parcels.push(Parcel {
-                        a: [center.x, center.y, center.z, length],
-                        b: [color.x, color.y, color.z, PARCEL_FLASH],
-                        c: [4.0 * heat / length, 0.5 / length, burst.meta[0] as f32 * 0.001, radius / length],
-                        d: [dir.x, dir.y, dir.z, 0.0],
-                    });
-                }
-                continue;
-            }
             // A heavy detonation's fireball, soot and dust come from its event (`event_parcels`),
-            // which outlives this record.
-            if kind == wm::BLAST && heavy { continue; }
+            // which outlives this record. Proximity to our muzzle does not change its source.
+            if source_event_kind(burst) == Some(EVENT_DETONATION) { continue; }
             let (center, radius, fade, color) = match kind {
                 // A small-arms hot impact (heavy blasts are events): its sparks' glow, a few
                 // centimetres for the light's 40 ms (it was a 22 cm ball for 0.14 s, 2026-10-28).
@@ -2085,25 +2132,24 @@ impl Backend {
         let now = r.time;
         self.events.retain(|e| now - e.born < EVENT_LIFE_S && now + 0.5 >= e.born);
         if self.debug_skip & 2048 != 0 { self.events.clear(); self.stats.events = 0; return; }
-        let grounds: Vec<Vec3> = r.weapon_particles.bursts.iter()
-            .filter(|b| b.active() && b.meta[3] == wm::GROUND).map(|b| b.origin()).collect();
+        let grounds: Vec<(Vec3, f32)> = r.weapon_particles.bursts.iter()
+            .filter(|b| b.active() && b.meta[3] == wm::GROUND)
+            .map(|b| (b.origin(), b.parameters[2].clamp(0.0, 1.0))).collect();
         for burst in r.weapon_particles.bursts.iter().filter(|b| b.active()) {
-            let kind = burst.meta[3];
-            let heavy = burst.parameters[3] > 0.5;
             let origin = burst.origin();
-            let event_kind = if kind == wm::BLAST && heavy && burst.parameters[2] > 2.0 {
-                if r.muzzle_hint.is_some_and(|(m, _)| (origin - m).length() < 2.5) { EVENT_MUZZLE } else { EVENT_DETONATION }
-            } else if (kind == wm::ARMOR_IMPACT || kind == wm::RICOCHET) && heavy {
-                EVENT_ARMOUR
-            } else { continue };
+            let Some(event_kind) = source_event_kind(burst) else { continue };
             let seed = burst.meta[0];
             if self.events.iter().any(|e| e.seed == seed && e.kind == event_kind) { continue; }
             if self.events.len() >= MAX_EVENTS { break; }
             let dir = Vec3::from_array([burst.direction_life[0], burst.direction_life[1], burst.direction_life[2]]).normalize_or_zero();
             let n = Vec3::from_array([burst.normal_offset[0], burst.normal_offset[1], burst.normal_offset[2]]);
             let normal = if n.length_squared() > 0.5 { n.normalize() } else { Vec3::Y };
-            let ground_y = grounds.iter().find(|p| p.distance(origin) < 2.5).map(|p| p.y);
-            self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, born: now - burst.origin_age[3].max(0.0) });
+            let ground = grounds.iter().filter(|(p, _)| p.distance(origin) < 2.5)
+                .min_by(|(a, _), (b, _)| a.distance_squared(origin).total_cmp(&b.distance_squared(origin)));
+            let ground_y = ground.map(|(p, _)| p.y);
+            let ground_snow = ground.map_or(0.0, |(_, snow)| *snow);
+            self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, ground_snow,
+                born: now - burst.origin_age[3].max(0.0) });
         }
         // The gun's own report: its flash light (tens of W/sr against lamps of 1e-4) appears at
         // the muzzle; the muzzle smoke supports persist without an age and the flash is flame
@@ -2112,7 +2158,8 @@ impl Backend {
             let flashing = r.lights_full.iter().any(|l| l.radiant_intensity > 1.0 && l.pos.distance(muzzle) < 2.5);
             if flashing && !self.events.iter().any(|e| e.kind == EVENT_MUZZLE && (now - e.born).abs() < 0.5) && self.events.len() < MAX_EVENTS {
                 let seed = (r.frame as u32).wrapping_mul(0x2545_F491) ^ 0x4D55_5A5A;
-                self.events.push(Event { kind: EVENT_MUZZLE, seed, origin: muzzle, dir: dir.normalize_or_zero(), normal: Vec3::Y, ground_y: None, born: now });
+                self.events.push(Event { kind: EVENT_MUZZLE, seed, origin: muzzle, dir: dir.normalize_or_zero(),
+                    normal: Vec3::Y, ground_y: None, ground_snow: 0.0, born: now });
             }
         }
         self.stats.events = self.events.len();
@@ -2182,7 +2229,7 @@ impl Backend {
                             let u = (t / 1.3).min(1.0);
                             // A TNT-class fireball shines for tens of milliseconds (the detonation
                             // products' afterburn), then the burst is smoke and earth: 60 ms decay.
-                            let heat = (-t / 0.06).exp();
+                            let heat = detonation_flash_heat(t);
                             let size = 1.2 + 4.0 * u.powf(0.3);
                             // The burst's soot and thrown earth: mean depth 3.5 at 2.5 m, spreading.
                             let tau = 3.5 * (2.5 / size).powi(2) * (1.0 - smooth(0.6, 1.6, t));
@@ -2204,15 +2251,18 @@ impl Backend {
                     }
                     if t < 1.3 && explosion.is_none() {
                         let u = t / 1.3;
-                        let heat = (1.0 - u).powf(1.5);
+                        let heat = detonation_flash_heat(t);
                         for k in 0..3u32 {
                             let a = h(10 + k) * std::f32::consts::TAU;
                             let spread = (0.3 + 1.8 * u) * (0.4 + 0.6 * h(20 + k));
                             let rise = (0.4 + 3.4 * u.powf(0.8)) * (0.8 + 0.4 * h(30 + k));
                             let radius = (0.8 + 4.2 * u.powf(0.3)) * (0.75 + 0.25 * h(40 + k));
                             let center = o + Vec3::new(a.cos() * spread, rise, a.sin() * spread) + wind * (t * 0.3);
-                            let colour = [1.0, 0.55 + 0.4 * heat, 0.12 + 0.6 * heat * heat];
-                            push(center, radius, colour, PARCEL_FIREBALL, 6.0 * heat / radius, 2.5 / radius, h(50 + k) * 100.0, u);
+                            // After the brief flash this is cooled ejecta. Keeping the FIREBALL
+                            // kind after emission dies would still add shader heat distortion.
+                            let kind = if heat > 0.0 { PARCEL_FIREBALL } else { PARCEL_SMOKE };
+                            push(center, radius, [0.4, 0.38, 0.36], kind, 6.0 * heat / radius,
+                                2.5 / radius, h(50 + k) * 100.0, u);
                         }
                     }
                     // Soot: five puffs rising on their own buoyancy and drifting with the wind.
@@ -2231,8 +2281,9 @@ impl Backend {
                         }
                     }
                     if let Some(gy) = e.ground_y {
-                        // The pressure front sweeps a ring of snow off the ground, then the
+                        // The pressure front sweeps source soil/snow off the ground, then the
                         // crater's snow and earth climb in a column and fall back downwind.
+                        let dust_colour = ground_dust_colour(e.ground_snow);
                         if t < 1.6 {
                             let u = t / 1.6;
                             let ring = 2.5 + 14.0 * u.powf(0.6);
@@ -2244,10 +2295,10 @@ impl Backend {
                                 if explosion.is_some() {
                                     // The swept snow as cloud shapes lying on the snow, not balls.
                                     volume(crate::explosion_volumes::Role::Cloud, h(500 + k), h(510 + k) * std::f32::consts::TAU, radius,
-                                        Vec3::new(center.x, gy, center.z), [1.15, 1.15, 1.2], 0.0, density / (0.2 * radius) * 0.35, 0.0);
+                                        Vec3::new(center.x, gy, center.z), dust_colour, 0.0, density / (0.2 * radius) * 0.35, 0.0);
                                     continue;
                                 }
-                                push(center, radius, [1.15, 1.15, 1.2], PARCEL_SMOKE, 0.0, density / radius, h(120 + k) * 100.0, 0.0);
+                                push(center, radius, dust_colour, PARCEL_SMOKE, 0.0, density / radius, h(120 + k) * 100.0, 0.0);
                             }
                         }
                         if t < 7.0 && explosion.is_none() {
@@ -2259,21 +2310,13 @@ impl Backend {
                                 let center = o + Vec3::new(a.cos() * spread, rise, a.sin() * spread) + wind * (t * 0.5);
                                 let radius = (1.5 + 3.5 * u.sqrt()) * (0.7 + 0.4 * h(160 + k));
                                 let density = (1.0 - u).powf(1.2) * 2.5;
-                                let colour = if k % 2 == 0 { [1.1, 1.1, 1.15] } else { [0.35, 0.3, 0.25] };
+                                let colour = if k % 2 == 0 { dust_colour } else { [0.35, 0.3, 0.25] };
                                 push(center, radius, colour, PARCEL_SMOKE, 0.0, density / radius, h(170 + k) * 100.0, 0.0);
                             }
                         }
-                        // Burning residue around the crater, fading over the sequel.
-                        if t > 0.3 && self.embers.len() + 48 < MAX_EMBERS {
-                            let fade = (1.0 - t / EVENT_LIFE_S).max(0.0).powf(1.5);
-                            for k in 0..48u32 {
-                                let a = h(200 + k) * std::f32::consts::TAU;
-                                let d = 1.0 + 8.0 * h(250 + k).sqrt();
-                                let flicker = 0.6 + 0.4 * h(300 + k + ((t * 7.0) as u32 % 5));
-                                let pos = Vec3::new(o.x + a.cos() * d, gy + 0.05, o.z + a.sin() * d);
-                                self.embers.push(Ember { pos: pos.to_array(), packed: pack_ember([1.0, 0.45, 0.1], 2.2 * fade * flicker) });
-                            }
-                        }
+                        // A ground hit is not evidence of burning fuel. Persistent residue is
+                        // drawn only by the source-supported surface-fire simulation; this
+                        // cosmetic event must not plant an unrelated ring of glowing embers.
                     }
                 }
                 EVENT_MUZZLE => {
@@ -2556,7 +2599,7 @@ impl Backend {
             // The relays render only the outside, where the cabin's lamps do not reach: their
             // shadow cubes are not rebuilt for them (another 10 ms a frame while the turret turned).
             r.sky_visibility.encode(r, encoder, &mut work);
-            r.environment_probe.encode(encoder, &mut work);
+            r.environment_probe.encode(encoder, &mut work, r.gpu_profile.as_ref());
             r.encode_raster_optics(encoder, &mut work);
         }
         // 1. Visibility maps from the scene geometry.
@@ -2784,8 +2827,12 @@ impl Backend {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("exposure"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("exposure")),
                 });
-                cpass.set_pipeline(&r.exp_pipe);
                 cpass.set_bind_group(0, &r.exp_binds[r.active_view], &[]);
+                if !r.exp_serial_benchmark {
+                    cpass.set_pipeline(&r.exp_meter_pipe);
+                    cpass.dispatch_workgroups(32, 1, 1);
+                }
+                cpass.set_pipeline(&r.exp_pipe);
                 work.compute_passes += 1;
                 cpass.dispatch_workgroups(1, 1, 1);
             }
@@ -2953,6 +3000,64 @@ mod shader_tests {
         }
         validate("rm-cloud-shadow", &physical_atmosphere_transport_shader_source(
             &format!("{}\n{}", rm_source("sky.wgsl"), rm_source("rm_cloud_shadow.wgsl"))));
+    }
+}
+
+#[cfg(test)]
+mod event_source_tests {
+    use super::*;
+    use renderer_weapon_particles::math as wm;
+
+    fn record(kind: u32, scale: f32, heavy: bool) -> renderer_weapon_particles::Record {
+        renderer_weapon_particles::Record {
+            origin_age: [0.0; 4], direction_life: [0.0, 0.0, 1.0, 6.0],
+            normal_offset: [0.0; 4], parameters: [0.0, 0.0, scale, if heavy { 1.0 } else { 0.0 }],
+            meta: [37, 384_000, 384, kind],
+        }
+    }
+
+    #[test]
+    fn detonation_source_does_not_change_as_it_passes_the_player_muzzle() {
+        let mut blast = record(wm::BLAST, wm::EXTERIOR_RADIUS_MULTIPLIER, true);
+        // The old heuristic changed type within 2.5 m of a muzzle. Test the same source on both
+        // sides of that boundary and at the muzzle itself; no spatial context enters identity.
+        for x in [0.0, 0.01, 2.49, 2.51, 1000.0] {
+            blast.origin_age[0] = x;
+            assert_eq!(source_event_kind(&blast), Some(EVENT_DETONATION));
+        }
+        assert_eq!(source_event_kind(&record(wm::BLAST, 1.0, true)), None);
+        assert_eq!(source_event_kind(&record(wm::BULLET_ARMOR, 1.0, false)), None);
+        assert_eq!(source_event_kind(&record(wm::GROUND, 100.0, true)), None);
+        assert_eq!(source_event_kind(&record(wm::FULL_COOKOFF, 1.0, true)), None);
+        assert_eq!(source_event_kind(&record(wm::ARMOR_IMPACT, 1.0, true)), Some(EVENT_ARMOUR));
+        assert_eq!(source_event_kind(&record(wm::RICOCHET, 1.0, true)), Some(EVENT_ARMOUR));
+    }
+
+    #[test]
+    fn detonation_flash_cools_before_the_sustained_dust_sequel() {
+        assert_eq!(detonation_flash_heat(0.0), 1.0);
+        assert!((detonation_flash_heat(0.06) - (-1.0_f32).exp()).abs() < 1e-6);
+        let mut previous = 1.0;
+        for frame in 0..120 {
+            let heat = detonation_flash_heat(frame as f32 / 120.0);
+            assert!((0.0..=previous).contains(&heat));
+            previous = heat;
+        }
+        assert_eq!(detonation_flash_heat(0.3), 0.0);
+        assert_eq!(detonation_flash_heat(1.3), 0.0);
+        assert_eq!(detonation_flash_heat(-1.0), 0.0);
+        assert_eq!(detonation_flash_heat(f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn ground_dust_uses_recorded_soil_snow_mixture() {
+        assert_eq!(ground_dust_colour(0.0), [0.35, 0.30, 0.25]);
+        assert_eq!(ground_dust_colour(-1.0), ground_dust_colour(0.0));
+        assert_eq!(ground_dust_colour(2.0), ground_dust_colour(1.0));
+        let middle = Vec3::from_array(ground_dust_colour(0.5));
+        let endpoints = (Vec3::from_array(ground_dust_colour(0.0))
+            + Vec3::from_array(ground_dust_colour(1.0))) * 0.5;
+        assert!(middle.distance(endpoints) < 1e-6);
     }
 }
 

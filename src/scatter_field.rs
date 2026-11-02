@@ -9,9 +9,9 @@
 //! the casualty layer's loot sockets. Drawing (GPU culling, LOD, G-buffer and shadow draws) is
 //! `renderer_scatter.rs`. Design, limits and measurements: `docs/SCATTER.md`.
 //!
-//! Named approximations (also in `docs/PHYSICAL_TRUTH_AUDIT.md`): objects rest at their bounding
-//! box's lowest point on the heightfield triangle surface with a per-group sink into the snow, not
-//! a contact solve against their geometry; overlap is avoided only among medium/large pieces and
+//! Named approximations (also in `docs/PHYSICAL_TRUTH_AUDIT.md`): loose rocks use bounded source
+//! face/terrain support admission; other objects retain origin/slope grounding and per-group snow
+//! sink, not a contact solve against their geometry. Overlap is avoided only among medium/large pieces and
 //! bodies within one cell; the direction of flight of a fallen body is the source's authored
 //! direction with jitter, not a ballistic or gait result.
 use std::collections::HashMap;
@@ -21,6 +21,9 @@ use glam::{Mat3, Mat4, Quat, Vec2, Vec3};
 
 use crate::gltf_load::CpuMesh;
 use crate::terrain::Heightfield;
+
+#[path = "source_grounding.rs"]
+pub(crate) mod source_grounding;
 
 /// Placement cell edge: the unit of deterministic generation and of GPU cell culling.
 pub const CELL_M: f32 = 32.0;
@@ -176,6 +179,9 @@ pub struct Prototype {
     pub mass_kg: f32,
     pub authored_tier: Tier,
     pub woody: bool,
+    /// Independent loose rocks only. An eligible source that cannot be validated is rejected.
+    rock_support: Option<source_grounding::SourceSupport>,
+    loose_rock: bool,
 }
 
 struct Group {
@@ -330,6 +336,7 @@ pub struct Stats {
     pub rejected_overlap: usize,
     pub rejected_band: usize,
     pub rejected_map: usize,
+    pub rejected_support: usize,
     pub by_group: Vec<(String, usize)>,
     pub build_ms: f32,
 }
@@ -591,6 +598,8 @@ impl Layers {
                         let pushable = e["pushable"].as_bool().unwrap_or(false)
                             && tier == Tier::Medium
                             && crate::worldgen::manifest_scatter_profile(&asset).is_some();
+                        let loose_rock=source_grounding::is_loose_rock_asset(&asset);
+                        let rock_support=loose_rock.then(||source_grounding::SourceSupport::from_mesh(&mesh)).flatten();
                         prototypes.push(Prototype {
                             path: asset.clone(),
                             mesh,
@@ -609,6 +618,8 @@ impl Layers {
                             mass_kg,
                             authored_tier,
                             woody,
+                            rock_support,
+                            loose_rock,
                         });
                         proto_index.insert(key, prototypes.len() - 1);
                         prototypes.len() - 1
@@ -916,8 +927,11 @@ fn place_one(
     let pick = rng.f() * g.total;
     let proto_index = g.entries.iter().find(|(_, cum)| pick <= *cum).map(|(i, _)| *i).unwrap_or(g.entries[0].0);
     let proto = &layers.prototypes[proto_index];
-    let scale = rng.range(rule.scale[0], rule.scale[1]);
-    let radius = proto.radius * scale;
+    let mut scale = rng.range(rule.scale[0], rule.scale[1]);
+    if proto.loose_rock {scale=f16_to_f32(f32_to_f16(scale));}
+    let radius = if proto.loose_rock {
+        proto.rock_support.as_ref().map_or(proto.radius,|s|s.radius_m)*scale
+    }else{proto.radius*scale};
     // ground
     let (class, snow) = layers.ground.sample(p.x, p.y);
     if (rule.classes >> class) & 1 == 0 || (proto.classes >> class) & 1 == 0 {
@@ -953,7 +967,6 @@ fn place_one(
             out.stats.rejected_overlap += 1;
             return None;
         }
-        blockers.push(Blocker { pos: p, radius: r });
     }
     // orientation
     let yaw = match rule.orient {
@@ -968,7 +981,7 @@ fn place_one(
     };
     let tilt = Quat::from_rotation_arc(Vec3::Y, n);
     let tilt = Quat::IDENTITY.slerp(tilt, proto.conform.clamp(0.0, 1.0));
-    let rot = (tilt * Quat::from_rotation_y(yaw)).normalize();
+    let mut rot = (tilt * Quat::from_rotation_y(yaw)).normalize();
     // contact: the mesh rests on y = 0 in its own frame; the lowest corner of its tilted box meets
     // the ground, then it settles by its sink (deeper in deeper snow).
     let ground = ctx.hf.height_at(p.x, p.y);
@@ -981,17 +994,32 @@ fn place_one(
         0.0
     };
     let y = ground - sink - drop;
-    let pos = Vec3::new(p.x, y, p.y);
+    let mut pos = Vec3::new(p.x, y, p.y);
+    let encode_rotation=|q:Quat| {
+        let enc=|v:f32|((v.clamp(-1.0,1.0)*32767.0).round() as i16) as u16 as u32;
+        [enc(q.x)|(enc(q.y)<<16),enc(q.z)|(enc(q.w)<<16)]
+    };
+    let mut packed_rotation=encode_rotation(rot);
+    if proto.loose_rock {
+        let admitted=proto.rock_support.as_ref().and_then(|source| {
+            let selected=source_grounding::grounded_source_pose(source,rot,scale,p,ctx.hf)?;
+            let q=selected.model.to_scale_rotation_translation().1;
+            let bits=encode_rotation(q);
+            let q=Packed{pos:[0.;3],flags:0,rot:bits,scale_proto:0,cell:0}.quat();
+            source_grounding::grounded_fixed_source_pose(source,q,scale,p,ctx.hf).map(|pose|(pose,q,bits))
+        });
+        let Some((admitted,q,bits))=admitted else {out.stats.rejected_support+=1;return None;};
+        rot=q;pos=admitted.model.w_axis.truncate();packed_rotation=bits;
+    }
+    if heavy {blockers.push(Blocker {pos:p,radius:radius*0.8});}
     // the tier of this placement: the prototype's authored tier bounded by its scaled mass
     let tier = effective_tier_of(proto.authored_tier, proto.mass_kg * scale * scale * scale, proto.height * scale, proto.woody);
     let hash = rng.next_u32();
     let flags = (tier as u32) | ((proto.casualty as u32) << 2) | ((proto.flat as u32) << 3) | ((class as u32 & 7) << 4) | (hash & 0xffff_ff00);
-    let q = rot;
-    let enc = |v: f32| ((v.clamp(-1.0, 1.0) * 32767.0).round() as i16) as u16 as u32;
     let packed = Packed {
         pos: pos.to_array(),
         flags,
-        rot: [enc(q.x) | (enc(q.y) << 16), enc(q.z) | (enc(q.w) << 16)],
+        rot: packed_rotation,
         scale_proto: (proto_index as u32 & 0xffff) | ((f32_to_f16(scale) as u32) << 16),
         cell: cell_id,
     };
@@ -1205,6 +1233,7 @@ impl Layers {
                 stats.rejected_overlap += s.rejected_overlap;
                 stats.rejected_band += s.rejected_band;
                 stats.rejected_map += s.rejected_map;
+                stats.rejected_support += s.rejected_support;
                 for (g, n) in out.group_counts.iter().enumerate() {
                     group_counts[g] += n;
                 }
@@ -1276,11 +1305,11 @@ impl Layers {
         stats.by_group = self.groups.iter().zip(group_counts).map(|(g, n)| (g.name.clone(), n)).collect();
         stats.build_ms = started.elapsed().as_secs_f32() * 1000.0;
         println!(
-            "[scatter] field: {} placed ({} small / {} medium / {} large; {} bodies, {} companions) in {} cells of {CELL_M} m, {:.0} ms on {threads} threads; cover {} large (of {large_total}) + {} medium (of {medium_total}); {} pushables (of {pushable_total}); {} loot sockets; rejected slope {} class {} lane {} building {} keep {} overlap {} band {} map {}",
+            "[scatter] field: {} placed ({} small / {} medium / {} large; {} bodies, {} companions) in {} cells of {CELL_M} m, {:.0} ms on {threads} threads; cover {} large (of {large_total}) + {} medium (of {medium_total}); {} pushables (of {pushable_total}); {} loot sockets; rejected slope {} class {} lane {} building {} keep {} overlap {} band {} map {} source-support {}",
             stats.placed, stats.by_tier[0], stats.by_tier[1], stats.by_tier[2], stats.casualties, stats.companions, stats.cells,
             stats.build_ms, cover_large.len(), cover_medium.len(), pushables.len(), loot.len(),
             stats.rejected_slope, stats.rejected_class, stats.rejected_lane, stats.rejected_building, stats.rejected_keep,
-            stats.rejected_overlap, stats.rejected_band, stats.rejected_map
+            stats.rejected_overlap, stats.rejected_band, stats.rejected_map, stats.rejected_support
         );
         let mut groups: Vec<&(String, usize)> = stats.by_group.iter().collect();
         groups.sort_by(|a, b| b.1.cmp(&a.1));
@@ -1305,6 +1334,76 @@ impl Layers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loose_rock_support_and_cover_use_the_actual_half_decoded_scale() {
+        // Put the authored origin inside the closed source. The old point-at-origin diamond
+        // could rest on a face through that origin, making support Y scale-invariant apart
+        // from numerical allowance. This same diamond has a nonzero support-plane offset.
+        let points = [Vec3::ZERO, Vec3::new(-1.,1.,-1.), Vec3::new(1.,1.,-1.),
+            Vec3::new(1.,1.,1.), Vec3::new(-1.,1.,1.), Vec3::new(0.,2.,0.)].map(|p|p-Vec3::Y);
+        let vertices = points.iter().map(|p| crate::gltf_load::Vertex {
+            pos:p.to_array(), normal:Vec3::Y.to_array(), uv:[0.;2], tangent:[1.,0.,0.,1.],
+        }).collect();
+        let mesh = CpuMesh::basic(vertices,
+            vec![0,2,1,0,3,2,0,4,3,0,1,4,5,1,2,5,2,3,5,3,4,5,4,1],
+            None, Vec3::splat(-1.), Vec3::ONE);
+        let source_support = source_grounding::SourceSupport::from_mesh(&mesh).unwrap();
+        let prototype = Prototype {
+            path:"fixture/stone_1.glb".into(), mesh, tier:Tier::Large, pushable:false,
+            flat:false, casualty:false, sink:0.25, conform:1., classes:u8::MAX,
+            radius:2., height:2., center_xz:Vec2::ZERO, half:Vec3::ONE,
+            center:Vec3::ZERO, mass_kg:2000., authored_tier:Tier::Large, woody:false,
+            rock_support:Some(source_support), loose_rock:true,
+        };
+        let layers = Layers {
+            seed:17, wind:Vec2::X, lane_half:0., prototypes:vec![prototype],
+            groups:vec![Group {name:"test".into(), entries:vec![(0,1.)], total:1.}],
+            rules:vec![], sources:vec![],
+            ground:GroundRaster {res:1, texel:100., class:vec![CLASS_ROCK], snow:vec![255]},
+            keep_clear:vec![], path:"fixture".into(),
+        };
+        let hf = Heightfield {res:65, spacing:0.25, heights:vec![0.;65*65],
+            min_h:0., max_h:0., openings:Default::default(), detail:None};
+        let hash = SpatialHash::new(32.);
+        let ctx = Ctx {layers:&layers, hf:&hf, sources:&hash, roads:&hash, buildings:&[], half_extent:8.};
+        let authored_scale = 1.33713_f32;
+        let packed_scale = f16_to_f32(f32_to_f16(authored_scale));
+        assert_ne!(authored_scale, packed_scale, "fixture must exercise a quantization change");
+        let rule = Rule {kind:0, group:0, density:1.,
+            band:Band::Annulus {r0:[0.,0.], r1:[0.,1.], sector:None},
+            orient:Orient::Along, jitter:0., scale:[authored_scale;2], slope_max:1.,
+            side:None, classes:u8::MAX, companions:vec![], lane_clear:false,
+            min_intensity:0., name:"test".into()};
+        let emitter = Source {kind:0, pos:Vec2::ZERO, heading:0.37, fwd:Vec2::Y,
+            right:Vec2::X, hl:1., hw:1., radius:1., intensity:1., flight:0.,
+            side:String::new(), reach:1.};
+        let mut out = CellOut {placements:vec![], cover_large:vec![], cover_medium:vec![],
+            pushables:vec![], loot:vec![], stats:Stats::default(), group_counts:vec![0]};
+        assert!(place_one(&ctx, &mut out, &mut vec![], &mut Rng::new(&[17]),
+            Vec2::ZERO, 0, &rule, &emitter, 0, false).is_some());
+        let actual = out.placements[0];
+        assert_eq!(actual.scale(), packed_scale);
+        let support = layers.prototypes[0].rock_support.as_ref().unwrap();
+        let readmitted = source_grounding::grounded_fixed_source_pose(support,
+            actual.quat(), actual.scale(), Vec2::ZERO, &hf).unwrap();
+        assert!(actual.model().abs_diff_eq(readmitted.model, 1e-6),
+            "rendered packed pose must be the admitted contact pose");
+        let raw = source_grounding::grounded_fixed_source_pose(support,
+            actual.quat(), authored_scale, Vec2::ZERO, &hf).unwrap();
+        assert!((raw.model.w_axis.y-readmitted.model.w_axis.y).abs()>1e-5,
+            "fixture must detect admitting the unquantized scale by mistake");
+        let model = actual.model();
+        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for i in 0..8 {
+            let p = model.transform_point3(Vec3::new(if i&1==0 {-1.}else{1.},
+                if i&2==0 {-1.}else{1.}, if i&4==0 {-1.}else{1.}));
+            lo=lo.min(p); hi=hi.max(p);
+        }
+        assert!(out.cover_large[0].min.abs_diff_eq(lo,1e-6));
+        assert!(out.cover_large[0].max.abs_diff_eq(hi,1e-6));
+        assert!(points.iter().all(|p|model.transform_point3(*p).y>=0.));
+    }
 
     #[test]
     fn tiers_follow_mass_and_size_not_the_label() {

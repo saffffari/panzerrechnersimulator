@@ -33,6 +33,7 @@ const GLASS_WEATHER_S: f32 = 3600.0;
 pub const WIPED_GLASS: f32 = 0.05;
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SurfaceWear {
     pub mechanical: f32,
     pub interior_grime: f32,

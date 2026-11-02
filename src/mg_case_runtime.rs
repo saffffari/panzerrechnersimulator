@@ -3,6 +3,7 @@
 use super::*;
 pub(super) const CAPACITY:usize=48;
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Case { pub active:bool, pub body:shell_collision::Body,
     pub rest:shell_collision::DropRest, pub cooldown:f32, pub seed:u32,
     /// Which frame the case lies in and rides with: the turret (coaxial gun) or the hull (bow gun).

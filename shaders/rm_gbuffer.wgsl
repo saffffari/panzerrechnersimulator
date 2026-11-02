@@ -475,8 +475,8 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         let footprint = max(length(plane_dx.xz), length(plane_dy.xz));
         let world = in.relative + fr.cam_pos.xyz;
         let source = textureSampleLevel(albedo_tex, terrain_detail_sampler, in.uv, macro_lod);
-        albedo = terrain_material(source, world, normalize(in.normal).y, fr.wind.y, footprint);
-        roughness = terrain_roughness(fr.wind.y);
+        albedo = terrain_material(source, world, normalize(in.normal).y, theatre_ground_mood(fr.wind.y,world,fr.samples.y), footprint);
+        roughness = terrain_roughness(theatre_ground_mood(fr.wind.y,world,fr.samples.y));
         // Tank ruts: where treads have compacted the snow the surface is pressed down. The
         // compacted floor darkens and polishes; the rut's edges shade as a trough through the
         // shading normal from the map's gradient (the terrain triangles do not move: a named

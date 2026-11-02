@@ -52,6 +52,7 @@ fn propellant_offset(axis: Vec3, ray: Vec3, age: f32, radius: f32, spread: f32, 
 /// Artistic energy classes, shared by both factions. Rifle, MG and tank-gun tiers become
 /// differ in size and amber warmth; this is presentation, not historical tracer composition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) enum Weapon { Pistol, Rifle, MachineGun, Cannon(u16), Rocket }
 impl Weapon {
     fn page(self) -> usize {
@@ -77,13 +78,16 @@ impl Weapon {
 }
 
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Flight { from: Vec3, to: Vec3, age: f32, life: f32, weapon: Weapon, armor_normal: Option<Vec3> }
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum BurstKind { Muzzle, Blast, InteriorBlast, PressureVent(Vec3), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet(Vec3), BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
 impl BurstKind {
     fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet(_) | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
 }
 #[derive(Clone,Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct SurfaceAnchor {vehicle:ProjectileVehicle,part:ArmorPart,point:Vec3,normal:Vec3,tangent:Vec3}
 impl SurfaceAnchor {
     fn new(vehicle:ProjectileVehicle,part:ArmorPart,model:Mat4,point:Vec3,normal:Vec3)->Self {
@@ -99,6 +103,7 @@ impl SurfaceAnchor {
     }
 }
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
     seed: u32, kind: BurstKind, weapon: Weapon, born_s:Option<f32>,anchor:Option<SurfaceAnchor> }
 
@@ -119,6 +124,7 @@ fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) 
 /// Read-only history of actual swept substeps. A rendered segment never extends beyond a
 /// resolved contact. Fixed shutter duration is independent of output frame rate.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct BulletSegment { id:u64, start:Vec3, end:Vec3, at:f32, until:f32 }
 impl BulletSegment {
     fn exposed(self,now:f32)->Option<(Vec3,Vec3)> {
@@ -378,7 +384,7 @@ impl Effects {
         let (kind,normal)=match c.kind {
             ProjectileContactKind::Vehicle(a)=>("armor",Some(a.world_normal.to_array())),
             ProjectileContactKind::RangeLimit=>("range_retirement",None),
-            ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..)|ProjectileContactKind::Infantry(_)=>("body",None),
+            ProjectileContactKind::Foot|ProjectileContactKind::ExposedCrew(..)|ProjectileContactKind::FieldPerson(..)|ProjectileContactKind::Infantry(_)=>("body",None),
             _=>("world",None),
         };
         if kind=="armor" {self.small_arms_review.armor_contacts+=1;}
@@ -1473,5 +1479,20 @@ mod tests {
         let (a,b)=segment.exposed_for(1.0/30.0,MAX_BULLET_EXPOSURE_S).unwrap();
         assert_eq!(a,segment.start);assert_eq!(b,segment.end);
         assert!(segment.exposed_for(0.05,MAX_BULLET_EXPOSURE_S).is_none(),"bounded shutter never holds stale rounds indefinitely");
+    }
+}
+
+impl Effects {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut fields=crate::capture_world_fields!(self; next_flight, next_burst, sequence, replaced_bursts, pixel_world_scale, gpu_analytic, bullet_exposure_s, wind, now_s, small_arm_rounds, bullet_segments, bullet_times, last_bullet_contact_s);
+        fields.put("flights",&self.flights.as_slice())?;fields.put("bursts",&self.bursts.as_slice())?;Ok(fields)
+    }
+    pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        self.flights=fields.take::<Vec<Option<Flight>>>("flights")?.try_into().map_err(|_|anyhow::anyhow!("weapon flight capacity mismatch"))?;
+        self.bursts=fields.take::<Vec<Option<Burst>>>("bursts")?.try_into().map_err(|_|anyhow::anyhow!("weapon burst capacity mismatch"))?;
+        crate::restore_world_fields!(self,fields; next_flight, next_burst, sequence, replaced_bursts, pixel_world_scale, gpu_analytic, bullet_exposure_s, wind, now_s, small_arm_rounds, bullet_segments, bullet_times, last_bullet_contact_s);
+        // Render lists are reconstructed from the retained analytical records at saved now_s.
+        self.gpu_tracers.clear();for page in &mut self.mats {page.clear();}for page in &mut self.particle_ids {page.clear();}
+        Ok(())
     }
 }

@@ -280,7 +280,7 @@ pub fn preview_light_score(light: &AuthoredLight, camera_position: Vec3) -> Opti
 /// `twilight` are ignored: an authored record can neither place the Sun nor expose the camera
 /// (the observer adapts to what the scene gives). `tools/apply_ephemeris_lighting_20260929.py`
 /// gives a version-1 workshop its date and time.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LightingTuning {
     pub enabled: bool,
     /// The instant the act clock starts from; `None` keeps the campaign's named time of day.

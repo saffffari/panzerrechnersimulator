@@ -1,0 +1,208 @@
+{
+  "schema": "panzer.tiger-fuel-service.v1",
+  "source": "assets/tanks/tiger/baked/tiger_hull.glb",
+  "source_sha256": "51938f43eb90ba321ff452c2be953d06673f7aab670465835144cf8ce88c9a84",
+  "original_modified": false,
+  "removed_roots": [
+    "Hull_0875",
+    "Hull_0902",
+    "Hull_0708"
+  ],
+  "asset_root": "assets/tanks/tiger/workshop_fuel/",
+  "files": [
+    {
+      "file": "left_outer_plug.glb",
+      "sha256": "727ccdcb193a731cd5cfe83dc001b6c7ac4d7dba160b9854990122cf5d332057",
+      "metrics": {
+        "vertices": 1641,
+        "triangles": 1928,
+        "min": [
+          1.0488957985098182,
+          2.0107100523837858,
+          -1.4464036863788579
+        ],
+        "max": [
+          1.2434812768891845,
+          2.0587655430996676,
+          -1.2518184254809057
+        ],
+        "area_m2": 0.08182021557238651,
+        "volume_m3": 0.0011072999105844047,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 3.505877403766606e-07,
+        "finite_attributes": true
+      }
+    },
+    {
+      "file": "left_inner_cap.glb",
+      "sha256": "757e125642d35563d48999ae5c99139597a64974079b3f24b375c57b59b7c119",
+      "metrics": {
+        "vertices": 1222,
+        "triangles": 436,
+        "min": [
+          1.091700792312622,
+          1.934000015258789,
+          -1.392919659614563
+        ],
+        "max": [
+          1.2045682668685913,
+          1.9528002738952637,
+          -1.2800524234771729
+        ],
+        "area_m2": 0.029672098710533244,
+        "volume_m3": 9.497383818290389e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.1084466677857563e-12,
+        "finite_attributes": true
+      }
+    },
+    {
+      "file": "left_tank_open_neck.glb",
+      "sha256": "aa09d6158480f79a67b67609d3fc399298e5ed60bb1d9873f1ae90e565d1b297",
+      "metrics": {
+        "vertices": 86071,
+        "triangles": 29074,
+        "min": [
+          0.6713667511940002,
+          1.3108649253845215,
+          -1.9292277097702026
+        ],
+        "max": [
+          1.6249022483825684,
+          1.934000015258789,
+          -1.1613397598266602
+        ],
+        "area_m2": 3.823306007342275,
+        "volume_m3": 0.0670153448482307,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 1.0444978215673473e-12,
+        "finite_attributes": true
+      }
+    },
+    {
+      "file": "deck_filler_clearance_v3.glb",
+      "sha256": "ae98b33cda73a504d6ddec6d5d107729c4130c01c7874f7f4d4ee0a4e7b5fd38",
+      "metrics": {
+        "vertices": 131551,
+        "triangles": 49032,
+        "min": [
+          -1.735823631286621,
+          1.907572627067566,
+          -3.028501510620117
+        ],
+        "max": [
+          1.7358237504959106,
+          2.1021716594696045,
+          2.428903818130493
+        ],
+        "area_m2": 29.416969224693933,
+        "volume_m3": 0.6549652200703969,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_winding_edges": 0,
+        "collapsed_edges": 0,
+        "degenerate_triangles": 0,
+        "minimum_triangle_area_m2": 4.208153127734551e-08,
+        "finite_attributes": true
+      }
+    }
+  ],
+  "receiver_center_hull_m": [
+    1.14813453,
+    1.934,
+    -1.33648619
+  ],
+  "receiver_radius_m": 0.045,
+  "receiver_bottom_hull_m": 1.805,
+  "outer_center_hull_m": [
+    1.14618853,
+    2.0340619,
+    -1.34911114
+  ],
+  "inner_center_hull_m": [
+    1.14813453,
+    1.9434,
+    -1.33648619
+  ],
+  "source_deck_metrics": {
+    "vertices": 45805,
+    "triangles": 46960,
+    "min": [
+      -1.7358236790097976,
+      1.9075726843670964,
+      -3.0285014861025275
+    ],
+    "max": [
+      1.7358237267566778,
+      2.1021717190879485,
+      2.42890375837419
+    ],
+    "area_m2": 29.424913041331006,
+    "volume_m3": 0.6553965040424795,
+    "boundary_edges": 0,
+    "nonmanifold_edges": 0,
+    "inconsistent_winding_edges": 0,
+    "collapsed_edges": 0,
+    "degenerate_triangles": 0,
+    "minimum_triangle_area_m2": 4.2097727368803777e-08,
+    "finite_attributes": true
+  },
+  "deck_clearance_removed_m3": 0.0004312839720825856,
+  "outer_bore_radius_m": 0.09825,
+  "lower_throat_radius_m": 0.0703,
+  "source_tank_metrics": {
+    "vertices": 29062,
+    "triangles": 28658,
+    "min": [
+      0.6713667694224625,
+      1.3108648940786338,
+      -1.9292277245230025
+    ],
+    "max": [
+      1.6249022135397695,
+      1.952800289788911,
+      -1.1613397076238243
+    ],
+    "area_m2": 3.796710251286835,
+    "volume_m3": 0.06793058202825991,
+    "boundary_edges": 6,
+    "nonmanifold_edges": 0,
+    "inconsistent_winding_edges": 0,
+    "collapsed_edges": 0,
+    "degenerate_triangles": 0,
+    "minimum_triangle_area_m2": 2.10634497147602e-11,
+    "finite_attributes": true
+  },
+  "removed_well_volume_m3": 0.0008202633418463092,
+  "source_caps": "Outer armored plug is untouched source geometry. Inner cap split at y1.934m from fused source fuel tank.",
+  "authored_changes": "128-sided45mm-radius blind receiving well to y1.805m; underside split closure; cap cleanup tolerance10micrometres, tank0.4micrometres; nine original/boolean seam edges totaling4.671mm closed. No hidden hole or invisible refill target. Exact derivative triangles must be rendered and used for source contacts.",
+  "limits": [
+    "Only vehicle-left filler is serviceable in this slice; right source filler remains unchanged.",
+    "Tank groups are treated as connected with their valves open; no separate fuel valve or reserve selection simulation.",
+    "Existing gameplay capacity540L remains unchanged; February1943 chassis description states534L. No historical capacity recalibration is claimed.",
+    "Receiving well is a source-derived gameplay reconstruction, not a full fuel-tank interior, liquid-volume simulation or measured neck bore.",
+    "Cap removal/return follows a guided physical path; thread pitch, detached-cap free dynamics and seal leakage are not simulated."
+  ],
+  "references": [
+    {
+      "title": "1943 Tiger chassis draft D656/21 printed39-40",
+      "url": "https://bushmakow.com/wp-content/uploads/2024/05/155.-D-656_21-TIGER-compressed_bushmakow.pdf"
+    },
+    {
+      "title": "Original Tiger131 upper fuel tank survey by DavidByrden",
+      "url": "https://tiger1.info/EN/Upper-fuel-tanks.html"
+    }
+  ]
+}

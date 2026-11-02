@@ -4,7 +4,7 @@
 use super::*;
 use std::cell::RefCell;
 
-pub const CABIN_LIGHTS: usize = 9;
+pub const CABIN_LIGHTS: usize = CABIN_LIGHT_REGISTRATIONS;
 pub const WORLD_FIRE_LIGHTS: usize = 8;
 pub const COMBAT_LIGHTS: usize = 8;
 pub const INTERIOR_FIRE_LIGHTS: usize = 8;
@@ -252,11 +252,15 @@ fn casts_for_fixture(mesh: usize, emitting_mesh: Option<usize>) -> bool {
     Some(mesh) != emitting_mesh
 }
 
+fn registered_emitter(lights: &[PointLight], emitters: &[Option<usize>], position: glam::Vec3) -> Option<usize> {
+    let index = lights.iter().position(|lamp| active_fixture(lamp) && lamp.pos.abs_diff_eq(position, 0.0001))?;
+    emitters.get(index).copied().flatten()
+}
+
 impl CabinShadows {
     /// Read-only source endpoint metadata for the explicit CPU lighting diagnostic.
     pub(super) fn emitter_for_source(&self, position: glam::Vec3) -> Option<u32> {
-        let index=self.lights.borrow().iter().position(|r|active_fixture(r) && r.pos.abs_diff_eq(position,0.0001))?;
-        self.emitting_meshes.borrow().get(index).copied().flatten().map(|id|id as u32)
+        registered_emitter(&self.lights.borrow(), &self.emitting_meshes.borrow(), position).map(|id|id as u32)
     }
     pub fn new(
         device: &wgpu::Device,
@@ -428,6 +432,8 @@ impl CabinShadows {
     }
 
     pub fn set_lights(&self, lights: &[PointLight], emitting_meshes: &[Option<usize>]) {
+        assert_eq!(lights.len(), emitting_meshes.len(), "cabin sources and emitting mesh identities must stay paired");
+        assert!(lights.len() <= CABIN_LIGHTS, "cabin source identities exceed their reserved registration window");
         self.set_range(0, CABIN_LIGHTS, lights, emitting_meshes);
     }
 
@@ -602,8 +608,7 @@ impl CabinShadows {
         // The packed emitter table is the sole visibility budget. Every admitted source receives
         // a map, including world/editor/transient emitters that have no named registration.
         for &lamp in renderer.lights.iter().take(MAX_LIGHTS) {
-            let emitter = registered.iter().position(|r|active_fixture(r) && r.pos.abs_diff_eq(lamp.pos,0.0001))
-                .and_then(|i|emitting_meshes.get(i).copied().flatten());
+            let emitter = registered_emitter(&registered, &emitting_meshes, lamp.pos);
             active.push((lamp,emitter));
         }
         let mut uniform = Uniform {
@@ -976,7 +981,7 @@ mod tests {
 
     #[test]
     fn cabin_and_wreck_shadow_slots_share_the_expanded_shader_abi() {
-        assert_eq!(CABIN_LIGHTS, 9);
+        assert_eq!(CABIN_LIGHTS, 22);
         assert_eq!(WORLD_FIRE_LIGHTS, 8);
         assert_eq!(COMBAT_LIGHTS, 8);
         assert_eq!(INTERIOR_FIRE_LIGHTS, 8);
@@ -1034,6 +1039,49 @@ mod tests {
         assert!(emitters[INTERIOR_FIRE_START..TORCH_SLOT].iter().all(Option::is_none));
         assert_eq!(lights[TORCH_SLOT].pos.x,4.0);
         assert_eq!(lights[CABIN_LIGHTS].pos.x,2.0);
+    }
+
+    #[test]
+    fn complete_cabin_registration_retains_last_emitter_and_clears_replaced_lenses() {
+        let light = |x| PointLight { pos:glam::Vec3::new(x, 1.0, 0.0), source_radius:0.01,
+            color:glam::Vec3::ONE, radiant_intensity:0.001 };
+        let mut selected = Vec::new();
+        let mut emitters = Vec::new();
+        // These producers must survive a full cabin refresh, including its final work lamp.
+        for slot in [CABIN_LIGHTS, CABIN_LIGHTS+WORLD_FIRE_LIGHTS, INTERIOR_FIRE_START,
+            TORCH_SLOT, LIGHTER_SLOT, CIGARETTE_SLOT] {
+            set_registration_range(&mut selected, &mut emitters, slot, 1,
+                &[light(100.0+slot as f32)], &[Some(1000+slot)]);
+        }
+        let mut cabin = (0..CABIN_LIGHTS).map(|i|light(i as f32)).collect::<Vec<_>>();
+        let mut lenses = (0..CABIN_LIGHTS).map(|i|Some(200+i)).collect::<Vec<_>>();
+        set_registration_range(&mut selected, &mut emitters, 0, CABIN_LIGHTS, &cabin, &lenses);
+        for (i, lamp) in cabin.iter().enumerate() {
+            let emitter = registered_emitter(&selected, &emitters, lamp.pos);
+            assert_eq!(emitter, Some(200+i), "lost cabin source {i}");
+            assert!(!casts_for_fixture(200+i, emitter));
+            assert!(casts_for_fixture(900+i, emitter), "fixture bracket must still block light");
+        }
+        assert_eq!(registered_emitter(&selected, &emitters, cabin[21].pos), Some(221),
+            "the optional work lamp is the final actual cabin producer");
+        // Change the loading lens at the same source position, darken a round indicator,
+        // and physically remove the work lamp. The previous emitting meshes get no exemption.
+        lenses[9] = Some(700);
+        cabin[10].radiant_intensity = 0.0; lenses[10] = None;
+        cabin[21].radiant_intensity = 0.0; lenses[21] = None;
+        set_registration_range(&mut selected, &mut emitters, 0, CABIN_LIGHTS, &cabin, &lenses);
+        let changed = registered_emitter(&selected, &emitters, cabin[9].pos);
+        assert_eq!(changed, Some(700));
+        assert!(!casts_for_fixture(700, changed));
+        assert!(casts_for_fixture(209, changed), "the old colour lens is not the new emitter");
+        for i in [10,21] {
+            assert_eq!(registered_emitter(&selected, &emitters, cabin[i].pos), None);
+            assert_eq!(emitters[i], None);
+        }
+        for slot in [CABIN_LIGHTS, CABIN_LIGHTS+WORLD_FIRE_LIGHTS, INTERIOR_FIRE_START,
+            TORCH_SLOT, LIGHTER_SLOT, CIGARETTE_SLOT] {
+            assert_eq!(registered_emitter(&selected, &emitters, light(100.0+slot as f32).pos), Some(1000+slot));
+        }
     }
 
     #[test]

@@ -539,7 +539,7 @@ fn world_medium_source_transmittance(
     origin: vec3<f32>, direction: vec3<f32>, max_distance: f32,
 ) -> f32 {
     return exp(-weather_optical_depth(origin,direction,max_distance,cam.world_medium.zw,
-        cam.world_medium.x,cam.world_medium.y,environment.cloud_motion.xyz,24u));
+        cam.world_medium.x,cam.world_medium.y,environment.cloud_motion.xyz,24u,cam.transport_passes.w));
 }
 
 struct WorldMediumSolarSource {

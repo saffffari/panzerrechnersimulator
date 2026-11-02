@@ -7,6 +7,8 @@
 
 #[path="smoke_support.rs"]
 mod smoke_support;
+#[path="renderer_world_state.rs"]
+mod renderer_world_state;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -36,6 +38,8 @@ pub(crate) mod track_ruts;
 
 #[path = "held_map_render.rs"]
 mod held_map_render;
+#[path = "repair_manual_render.rs"]
+mod repair_manual_render;
 
 #[path = "light_history.rs"]
 mod light_history;
@@ -74,8 +78,8 @@ const CAMERA_EXPOSURE_ENV: &str = "KESSEL_CAMERA_EXPOSURE";
 /// Diagnostic A/B only: restore the former ordering (fullscreen sky before opaque draws).
 /// Shipping defaults to depth-gated sky; the transport and its samples are otherwise identical.
 const UNGATED_SKY_ENV: &str = "KESSEL_UNGATED_SKY";
-pub const INTERNAL_RES_PRESETS: [(u32, u32); 13] =
-    [(320, 180), (320, 240), (480, 270), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
+pub const INTERNAL_RES_PRESETS: [(u32, u32); 14] =
+    [(320, 180), (320, 240), (480, 270), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1024, 576), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
 const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
@@ -693,10 +697,14 @@ const MENU_RIGHT_SHIFT: f32 = 3.7; // world metres along the camera's right → 
 /// flashes and fire glow are the working set; cheap at internal resolution.
 pub const N_LIGHTS: usize = 32;
 
+/// Named CPU source identities: nine base fixtures, four sight lamps, eight crew-panel sources
+/// and one optional work lamp. This is not the active packed-light budget or a shader array size.
+pub const CABIN_LIGHT_REGISTRATIONS: usize = 22;
+
 /// A modeled compact spherical emitter. `source_radius` is the physical luminous radius in metres,
 /// used only to regularize the near field of the inverse-square law; it is never an illumination
 /// cutoff. `radiant_intensity` is the source power in the renderer's linear radiometric scale.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct PointLight {
     pub pos: glam::Vec3,
     pub source_radius: f32,
@@ -1107,7 +1115,7 @@ pub const MAX_RT_BOXES: usize = 12;
 /// dir+strength → two 16-byte lanes, no padding). `age` is seconds since the plume was born;
 /// `strength` 0 marks the slot inactive.
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, serde::Serialize, serde::Deserialize)]
 struct PuffGpu {
     pos: [f32; 3],
     age: f32,
@@ -1744,6 +1752,7 @@ const INSTANCE_MAT_BYTES: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
 
 /// One instance of an instanced page: the handle compiled buildings keep per module and rubble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct InstanceRef {
     pub batch: usize,
     pub instance: u32,
@@ -1753,6 +1762,7 @@ pub struct InstanceRef {
 /// of a static instanced page, or nothing (a manifest wall that leaves no heap of its own: its
 /// debris is thrown when it falls).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum SceneRef {
     Mesh(usize),
     Instance(InstanceRef),
@@ -2591,6 +2601,8 @@ pub struct Renderer {
     /// Armor wounds per mesh slot, in that mesh's local frame (`set_mesh_scars`). The raymarch
     /// backend cuts, displaces and shades them (renderer_scars.rs).
     mesh_scars: std::collections::HashMap<usize, Vec<ScarDraw>>,
+    /// Exact immutable-source allocation order, retained for complete-world reconstruction.
+    actor_mesh_clones: Vec<(usize, usize)>,
     raster_optics: Option<raster_optics::RasterOptics>,
     raster_ssao: Option<raster_ssao::RasterSsao>,
     geometry_aa: Option<renderer_aa::GeometryAa>,
@@ -2618,6 +2630,7 @@ pub struct Renderer {
     /// Real seconds the Sun spends at night, in twilight and in full day over the current date.
     day_phase_seconds: Option<[f64; 3]>,
     weather_offset: glam::Vec3,
+    pub(crate) theatre_weather: bool,
     pub weather_override: Option<f32>,
     weather_original: Option<(f32,f32,f32,f32,glam::Vec2)>,
     user_sky_phase: Option<(u8,crate::celestial_sky::SkyClock)>,
@@ -2840,6 +2853,8 @@ pub struct Renderer {
     /// rt_update rebuilds the TLAS.
     combine_rt_bind: Option<wgpu::BindGroup>,
     exp_pipe: wgpu::ComputePipeline,
+    exp_meter_pipe: wgpu::ComputePipeline,
+    exp_serial_benchmark: bool,
     /// Eye adaptation is view-local. Sharing one state made four couch cameras pump one another's
     /// exposure and made the result depend on viewport submission order.
     exp_binds: Vec<wgpu::BindGroup>,
@@ -3014,6 +3029,8 @@ pub struct Renderer {
     // resolution — deliberately OUTSIDE the PS1 crush so the German UI stays crisp. See src/ui.rs. ----
     ui: Ui,
     held_map_surface: Option<held_map_render::MapSurface>,
+    repair_manual_surfaces: Vec<repair_manual_render::PageSurface>,
+    repair_manual_presentation: Option<u64>,
 }
 
 /// Compatibility vertical extent used by game-side FOV math while true optical transport is pending.
@@ -3127,7 +3144,7 @@ fn debug_read_light_target(
     let bytes_per_pixel = match texture.format() {
         wgpu::TextureFormat::Rgba16Float => 8,
         wgpu::TextureFormat::Rgba32Float => 16,
-        wgpu::TextureFormat::R32Uint => 4,
+        wgpu::TextureFormat::R32Uint | wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Rgba8Unorm => 4,
         format => anyhow::bail!("unsupported light diagnostic format: {format:?}"),
     };
     anyhow::ensure!(texture.usage().contains(wgpu::TextureUsages::COPY_SRC),
@@ -4095,7 +4112,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Unorm,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let track_view = track_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -5282,7 +5299,25 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(256 * 3 * 16),
+                    },
+                    count: None,
+                },
             ],
+        });
+        // Scratch is overwritten completely before each view's adaptation dispatch. Views
+        // execute serially in the command stream; only the persistent eye state is per-view.
+        let exp_meter_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("exposure-meter-sums"),
+            size: 256 * 3 * 16,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
         });
         let exp_clock_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("exposure-clock"),
@@ -5331,6 +5366,10 @@ impl Renderer {
                         binding: 2,
                         resource: exp_clock_buf.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: exp_meter_buf.as_entire_binding(),
+                    },
                 ],
             });
             exp_bufs.push(exp_buf);
@@ -5341,11 +5380,21 @@ impl Renderer {
             bind_group_layouts: &[&exp_bgl],
             push_constant_ranges: &[],
         });
+        let exp_serial_benchmark = std::env::var("KESSEL_BENCH_LIVE_FRAME").ok().as_deref() == Some("1")
+            && std::env::var("KESSEL_BENCH_SERIAL_EXPOSURE").ok().as_deref() == Some("1");
+        let exp_meter_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("exposure-meter"),
+            layout: Some(&exp_pl),
+            module: &exp_shader,
+            entry_point: Some("meter"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let exp_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("exposure"),
             layout: Some(&exp_pl),
             module: &exp_shader,
-            entry_point: Some("cs"),
+            entry_point: Some(if exp_serial_benchmark { "cs_serial" } else { "cs" }),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -5924,6 +5973,7 @@ impl Renderer {
             raymarch,
             scatter_field: None,
             mesh_scars: std::collections::HashMap::new(),
+            actor_mesh_clones: Vec::new(),
             raster_optics: shader_backend.then(|| {
                 raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler,
                     &sky_visibility.sampling_bgl, &cabin_shadows.sampling_bgl, &cabin_medium_view)
@@ -5948,6 +5998,7 @@ impl Renderer {
             day_night_cycle: day_night_cycle_enabled(),
             day_phase_seconds: None,
             weather_offset: glam::Vec3::ZERO,
+            theatre_weather: false,
             weather_override: None,
             weather_original: None,
             user_sky_phase: None,
@@ -6127,6 +6178,8 @@ impl Renderer {
             rt_as_bgl,
             combine_rt_bind: None,
             exp_pipe,
+            exp_meter_pipe,
+            exp_serial_benchmark,
             exp_binds,
             exp_bufs,
             exp_clock_buf,
@@ -6188,6 +6241,8 @@ impl Renderer {
             menu_meshes: Vec::new(),
             ui,
             held_map_surface: None,
+            repair_manual_surfaces: Vec::new(),
+            repair_manual_presentation: None,
         }
     }
 
@@ -6224,14 +6279,15 @@ impl Renderer {
         retain!(camera, master_retro, display_tuning, display_dither_pattern, display_grade, transport_quality, exposure_override, fog_density, reticle, optic_blast, observer_flash_source,
             crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
-            sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, weather_override, weather_original,
+            sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, theatre_weather, weather_override, weather_original,
             weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
             optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
-            pressure_fronts, heat_sources, ui, held_map_surface);
+            pressure_fronts, heat_sources, ui, held_map_surface, repair_manual_surfaces,
+            repair_manual_presentation);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
             new.copy_registrations_from(old);
         }
@@ -6317,7 +6373,7 @@ impl Renderer {
     pub(crate) fn weather_visibility(&self)->crate::weather_visibility::WeatherView {
         let profile=world_medium_profile(self.precipitation,self.storm);
         crate::weather_visibility::WeatherView {
-            sigma:self.fog_density.max(0.0),snow_fraction:profile.snow_fraction,
+            sigma:self.fog_density.max(0.0),theatre:self.theatre_weather,snow_fraction:profile.snow_fraction,
             layer:[profile.layer[0],profile.layer[1]],offset:self.weather_offset,
             cabin:self.cabin_medium.clone(),cabin_uniform:self.cabin_medium_uniform,
         }
@@ -6418,6 +6474,44 @@ impl Renderer {
         self.meshes.get(idx).map(|g| (g.visible, g.model))
     }
 
+    /// Current presentation of retained source geometry. Gameplay contact registries use the
+    /// same visibility and rigid instance transform, never a stale intact-module collider.
+    pub fn source_ref_state(&self, handle: SceneRef) -> Option<(bool, glam::Mat4)> {
+        match handle {
+            SceneRef::Mesh(index) => self.debug_mesh_state(index),
+            SceneRef::Instance(handle) => {
+                let batch = self.inst_batches.get(handle.batch)?;
+                if handle.instance >= batch.object_id_capacity {return None;}
+                if handle.instance >= batch.inst_count {return Some((false,glam::Mat4::IDENTITY));}
+                let model = *batch.cpu_mats.get(handle.instance as usize)?;
+                Some((!batch.is_hidden(handle.instance),model))
+            }
+            SceneRef::None => None,
+        }
+    }
+
+    /// A bounded live crew slot may receive a different persistent person. Copy the original
+    /// source atlas/PBR channels from an immutable donor, without changing either mesh's geometry.
+    /// Restricted to raster-only actors; material changes also invalidate retained RT payloads.
+    pub fn copy_actor_source_material(&mut self,destination:usize,source:usize)->bool {
+        let Some(donor)=self.meshes.get(source) else{return false;};
+        let bind=donor.tex_bind.clone();let metal=donor.metallic_factor;let rough=donor.roughness_factor;
+        let channels=donor.rt_source.as_ref().or(donor.visibility_source.as_ref()).map(|m|
+            (m.texture.clone(),m.metallic_roughness_texture.clone(),m.normal_texture.clone()));
+        let Some(target)=self.meshes.get_mut(destination) else{return false;};
+        if !target.raster_only {return false;}
+        if Arc::ptr_eq(&target.tex_bind,&bind)&&target.metallic_factor==metal&&target.roughness_factor==rough {return true;}
+        target.tex_bind=bind;target.metallic_factor=metal;target.roughness_factor=rough;
+        for mesh in [target.visibility_source.as_mut(),target.rt_source.as_mut()].into_iter().flatten() {
+            mesh.metallic_factor=metal;mesh.roughness_factor=rough;
+            if let Some((base,mr,normal))=&channels {
+                mesh.texture=base.clone();mesh.metallic_roughness_texture=mr.clone();mesh.normal_texture=normal.clone();
+            }
+        }
+        if self.rt_on {self.rt_surface_dirty=true;self.combine_rt_bind=None;}
+        true
+    }
+
     pub fn set_model(&mut self, idx: usize, m: glam::Mat4) {
         if let Some(g) = self.meshes.get_mut(idx) {
             g.model = m;
@@ -6512,6 +6606,7 @@ impl Renderer {
         mesh.temporal_dynamic = true;
         let slot = self.meshes.len();
         self.meshes.push(mesh);
+        self.actor_mesh_clones.push((source, slot));
         self.rt_batches_dirty = true;
         if self.rt_on && !self.rt_surface_dirty && self.rt_surface_gpu.is_some()
             && self.rt_scene_surface_ids.len() == slot {
@@ -6780,6 +6875,14 @@ impl Renderer {
     /// Hand the detail ground surface to the raymarch backend's terrain LOD.
     pub fn set_terrain_detail(&mut self, detail: Option<crate::terrain_relief::Shared>) {
         self.terrain_detail = detail;
+        self.invalidate_terrain_detail();
+    }
+
+    /// Rebuild presentation caches from the authoritative detail surface after state restore.
+    /// This does not change its event revisions or mark physical rut pages newly dirty.
+    pub fn invalidate_terrain_detail(&mut self) {
+        if let Some(raymarch) = &mut self.raymarch { raymarch.invalidate_terrain_detail(); }
+        self.reset_history();
     }
 
     /// The visibility atlas's static passes so far and the tiles they redrew (of 66 each).
@@ -7219,6 +7322,25 @@ impl Renderer {
         // moving flag clean until a post-build transform update arrives.
         self.rt_moving_batches_dirty = false;
         Some(batch)
+    }
+
+    /// A rare gameplay event may allocate a bounded page from an already registered source.
+    /// Uses the renderer's owned device; callers must enforce a finite actor/page budget.
+    pub fn add_registered_moving_pool(&mut self,prototype:InstancedPrototype,capacity:usize)->Option<usize> {
+        let device=self.pose_device.clone();
+        self.add_moving_instanced_pool(&device,prototype,capacity)
+    }
+
+    /// Reuse an empty reserved page after a new-run reset changes its source appearance.
+    /// Object IDs remain reserved, but material/BLAS records must be rebuilt for the new source.
+    pub fn rebind_empty_moving_pool(&mut self,batch:usize,prototype:InstancedPrototype)->bool {
+        if self.inst_prototypes.get(prototype).is_none() {return false;}
+        let Some(page)=self.inst_batches.get_mut(batch) else {return false;};
+        if !page.moving_rt_pool || page.inst_count!=0 {return false;}
+        if page.prototype==prototype {return true;}
+        page.prototype=prototype;
+        self.rt_batches_dirty=true;self.rt_static_dirty=true;self.rt_surface_dirty=true;
+        self.combine_rt_bind=None;true
     }
 
     fn reassign_instanced_object_ids(&mut self) {
@@ -7702,7 +7824,7 @@ impl Renderer {
         let mut work = RenderWorkStats::default();
         self.cabin_shadows.encode(self,encoder,&mut work);
         self.sky_visibility.encode(self,encoder,&mut work);
-        self.environment_probe.encode(encoder, &mut work);
+        self.environment_probe.encode(encoder, &mut work, self.gpu_profile.as_ref());
         // Legacy forward consumers still require a depth map. Portable source visibility reads
         // the actual menu triangles, so producing an unused map would duplicate geometry work.
         for near in [false, true] {
@@ -7974,8 +8096,8 @@ impl Renderer {
             let (_, rotation, _) = hull.to_scale_rotation_translation();
             glam::Mat4::from_rotation_translation(rotation, self.atmo_origin)
         });
-        let points = field.update(self.camera.pos,wind,self.time,self.precipitation,
-            self.atmo_origin,dust,dust_model);
+        let points = field.update_regional(self.camera.pos,wind,self.time,self.precipitation,
+            self.atmo_origin,dust,dust_model,self.theatre_weather);
         self.pixel_particle_count.set(points.len() as u32);
         if points.is_empty() { return; }
         queue.write_buffer(&self.pixel_particle_vertices,0,bytemuck::cast_slice(points));
@@ -8007,7 +8129,7 @@ impl Renderer {
             camera:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,
                 if self.shader_backend { self.weather_shelter.clamp(0.0,1.0) } else { 0.0 }],
             viewport:[self.iw as f32,self.ih as f32,0.16,self.lights.len().min(N_LIGHTS) as f32],
-            snow_velocity:[velocity.x,velocity.y,velocity.z,0.0],
+            snow_velocity:[velocity.x,velocity.y,velocity.z,if self.theatre_weather {1.0}else{0.0}],
             sun_direction:[self.sun_dir.x,self.sun_dir.y,self.sun_dir.z,0.0],
             solar_irradiance:[solar.x as f32,solar.y as f32,solar.z as f32,0.0],
             sky_directions,sky_radiances,lights:*lights,
@@ -8108,7 +8230,7 @@ impl Renderer {
             ],
             // Both diffuse and GGX environment paths survive in every budget. Removing the
             // second lane blackens fully metallic Tiger armor while diffuse T-34s remain lit.
-            transport_passes: self.transport_quality.surface_passes(),
+            transport_passes: {let mut p=self.transport_quality.surface_passes();p[3]=if self.theatre_weather {1.0}else{0.0};p},
             cabin_medium:self.cabin_medium_uniform,
             medium_transport:[if self.atmo_enabled {self.atmo_haze*0.010*5.2}else{0.0},self.weather_offset.x,self.weather_offset.y,self.weather_offset.z],
         };
@@ -8244,7 +8366,7 @@ impl Renderer {
             // while allowing real downwelling daylight to reach the battlefield.
             fog_layer: world_medium.layer,
             transport_steps: self.transport_quality.smoke_steps(),
-            weather_motion:[self.weather_offset.x,self.weather_offset.y,self.weather_offset.z,self.time],
+            weather_motion:[self.weather_offset.x,self.weather_offset.y,self.weather_offset.z,if self.theatre_weather {1.0}else{0.0}],
             cabin_medium:self.cabin_medium_uniform,
         };
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
@@ -8517,7 +8639,7 @@ impl Renderer {
             self.sky_visibility.encode(self,encoder,&mut work);
         }
         // Every frame: raster surfaces, raster media and particles read the physical sky from it.
-        self.environment_probe.encode(encoder, &mut work);
+        self.environment_probe.encode(encoder, &mut work, self.gpu_profile.as_ref());
         if self.shader_backend {
             // The raster flakes' light: mean sky radiance, mean ground radiance and the key beam.
             let probe = &self.environment_probe.output;
@@ -8964,8 +9086,12 @@ impl Renderer {
                         .as_ref()
                         .and_then(|profile| profile.compute("exposure")),
                 });
-                cpass.set_pipeline(&self.exp_pipe);
                 cpass.set_bind_group(0, &self.exp_binds[self.active_view], &[]);
+                if !self.exp_serial_benchmark {
+                    cpass.set_pipeline(&self.exp_meter_pipe);
+                    cpass.dispatch_workgroups(32, 1, 1);
+                }
+                cpass.set_pipeline(&self.exp_pipe);
                 work.compute_passes += 1;
                 cpass.dispatch_workgroups(1, 1, 1);
             }
@@ -9814,6 +9940,19 @@ impl Renderer {
     /// Emissive geometry remains geometry: it participates in visibility and can return radiance
     /// when a secondary ray commits to it. Only explicit view-local/transparent paths stay out.
     fn rt_update(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let query = self.gpu_profile.as_ref().and_then(|p|p.begin_encoder_span(encoder,"scene-acceleration-builds"));
+        self.rt_update_scene(device, encoder);
+        // Bind after allocation/build recording: upload_uniforms runs before this function.
+        // Binding there used an empty TLAS on startup, or the retired TLAS after capacity
+        // growth. One false open-sky frame then polluted the indirect-light recurrence.
+        if let Some(mut backend) = self.raymarch.take() {
+            backend.bind_scene_ray_queries(self, device, encoder);
+            self.raymarch = Some(backend);
+        }
+        if let Some(p) = &self.gpu_profile { p.end_encoder_span(encoder, query); }
+    }
+
+    fn rt_update_scene(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         if !self.rt_scene {
             return;
         }
@@ -10051,6 +10190,9 @@ impl Renderer {
     /// Invalidate temporal history (explicit camera cut — view-mode switch, kill-cam, respawn).
     /// Auto-detection in accum_prepare catches most cuts; this is the explicit hook.
     pub fn reset_history(&mut self) {
+        if let Some(raymarch) = &mut self.raymarch {
+            raymarch.reset_history();
+        }
         for v in &mut self.views {
             v.history_valid = false;
             v.volume_history_valid = false;
@@ -10947,6 +11089,31 @@ impl Renderer {
         self.capture_png(device, queue, path, cw, ch, true)
     }
 
+    /// Present an ordinary solo frame offscreen without allocating a readback texture. Long
+    /// headless runs must still execute presentation: track strokes and retained GPU state are
+    /// consumed here exactly as in a window frame, rather than accumulating until a screenshot.
+    pub(crate) fn render_offscreen_frame(&mut self, device:&wgpu::Device, queue:&wgpu::Queue)
+        -> anyhow::Result<()> {
+        if self.replay_exposure_time.is_none() { self.replay_previous_elapsed=None; }
+        self.set_active_view(0);
+        self.frame=self.frame.wrapping_add(1);
+        self.menu_mode=false;
+        self.reset_blit_crop(queue);
+        self.upload_uniforms(device,queue);
+        let mut encoder=device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
+            label:Some("headless-ordinary-frame"),
+        });
+        self.flush_track_stamps(device,&mut encoder);
+        self.rt_update(device,&mut encoder);
+        self.accum_prepare(device,queue);
+        self.render_internal(&mut encoder,true);
+        queue.submit([encoder.finish()]);
+        // Bound submitted work as a window's presentation queue does; do not enqueue an entire
+        // thirty-minute test faster than the device can consume it.
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        Ok(())
+    }
+
     /// Render one frame and return tightly packed RGBA8 pixels. The cinematic recorder streams
     /// these directly into ffmpeg, avoiding thousands of temporary PNGs and their encode/decode
     /// pass. Capture at the internal resolution and let ffmpeg nearest-upscale for an identical
@@ -11561,6 +11728,7 @@ fn terrain_material_shader_source_with_visibility(src: &str, portable: bool) -> 
     .replace("// @sky-visibility-sampling", include_str!("../shaders/sky_visibility_sampling.wgsl"))
     .replace("// @cabin-visibility-sampling", include_str!("../shaders/cabin_visibility.wgsl"))
     .replace("// @weather-density",include_str!("../shaders/weather_volume.wgsl"))
+    .replace("// @weather-field",include_str!("../shaders/weather_density.wgsl"))
     .replace("// @cabin-medium",include_str!("../shaders/cabin_medium.wgsl"))
     .replace("// @scene-visibility-mesh", &visibility(2,9,10))
     .replace("// @scene-visibility-smoke", &visibility(3,3,4))
@@ -12040,7 +12208,7 @@ mod atmosphere_tests {
             "960x",
             "0x0",
             "640x480",
-            "1024x576",
+            "1025x576",
             "3840x2160",
             "potato",
         ] {
@@ -12869,7 +13037,8 @@ mod atmosphere_tests {
         let deferred_only_gate = ["if finish_ldr && self.deferred", "&& self.autoexp"].join(" ");
         assert!(!renderer.contains(&deferred_only_gate));
         assert!(renderer.contains("reset_active_exposure_for_headless_capture"));
-        // (a) The eye reads the HDR and writes only its own state; the renderer copies its
+        // (a) The eye reads the HDR and writes only its own state and temporary meter sums;
+        // no transported radiance is writable. The renderer copies its
         // display lanes into camera-response buffers and nowhere else.
         let eye = include_str!("../shaders/exposure.wgsl");
         let module = wgpu::naga::front::wgsl::parse_str(&observer_shader_source(eye)).unwrap();
@@ -12878,9 +13047,10 @@ mod atmosphere_tests {
         let bindings: Vec<_> = module.global_variables.iter()
             .filter_map(|(_, v)| v.binding.as_ref().map(|b| (b.binding, v.name.clone().unwrap())))
             .collect();
-        assert_eq!(bindings.len(), 3, "{bindings:?}");
+        assert_eq!(bindings, vec![(0,"hdr".into()),(1,"state".into()),
+            (2,"clock".into()),(3,"meter_sums".into())]);
         for (name, space) in module.global_variables.iter().map(|(_, v)| (v.name.clone().unwrap(), v.space)) {
-            if name == "state" {
+            if name == "state" || name == "meter_sums" {
                 assert!(matches!(space, wgpu::naga::AddressSpace::Storage { .. }));
             } else if name == "hdr" {
                 assert_eq!(space, wgpu::naga::AddressSpace::Handle, "the HDR is a sampled texture");
@@ -12915,8 +13085,9 @@ mod atmosphere_tests {
         // The crush applies the eye's two channels and nothing else before ACES.
         let crush = include_str!("../shaders/crush.wgsl");
         assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
-        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure
-        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * OBS_ROD_DISPLAY_GAIN);"));
+        assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
+        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure\n        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * rod_gain);"),
+            "owner-directed cabin reproduction still acts only on the display rod term");
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

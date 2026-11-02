@@ -23,6 +23,7 @@ pub(crate) fn world_medium_profile(precipitation:f32,storm:f32)->WorldMediumProf
 #[derive(Clone)]
 pub(crate) struct WeatherView {
     pub sigma:f32,
+    pub theatre:bool,
     pub snow_fraction:f32,
     pub layer:[f32;2],
     pub offset:Vec3,
@@ -30,7 +31,7 @@ pub(crate) struct WeatherView {
     pub cabin_uniform:Uniform,
 }
 impl Default for WeatherView {
-    fn default()->Self {Self{sigma:0.0,snow_fraction:0.0,layer:[-128.0,256.0],
+    fn default()->Self {Self{sigma:0.0,theatre:false,snow_fraction:0.0,layer:[-128.0,256.0],
         offset:Vec3::ZERO,cabin:None,cabin_uniform:Uniform::default()}}
 }
 fn smoothstep(lo:f32,hi:f32,x:f32)->f32 {let t=((x-lo)/(hi-lo)).clamp(0.0,1.0);t*t*(3.0-2.0*t)}
@@ -55,6 +56,14 @@ pub(crate) fn relative_density(p:Vec3,offset:Vec3,snow:f32)->f32 {
     let eddies=weather_noise(q/Vec3::new(27.0,13.0,27.0)+Vec3::new(19.7,3.1,-6.3));
     mix(1.0,0.22+2.15*smoothstep(0.18,0.82,broad*0.72+eddies*0.28),snow.clamp(0.0,1.0))
 }
+/// Fictional theatre: clear southern belt, transition600–2600m north, then winter.
+/// Sampling uses the point being integrated, never an observer or the wind displacement.
+pub(crate) fn theatre_north_weight(z:f32,theatre:bool)->f32 {
+    if !theatre{return 1.;}smoothstep(600.,2600.,-z)
+}
+pub(crate) fn theatre_extinction(sigma:f32,p:Vec3,theatre:bool)->f32 {
+    if !theatre{return sigma;}mix(0.00012,sigma,theatre_north_weight(p.z,true))
+}
 impl WeatherView {
     pub fn set_cabin_pose(&mut self,hull:Mat4,turret:Mat4) {
         if let Some(cabin)=&self.cabin {self.cabin_uniform=cabin.uniform(hull,turret);}
@@ -67,11 +76,11 @@ impl WeatherView {
         else {let a=(self.layer[0]-origin.y)/ray.y;let b=(self.layer[1]-origin.y)/ray.y;
             begin=a.min(b).max(0.0);end=end.min(a.max(b));}
         if end<=begin || self.sigma<=0.0 {return 0.0;}
-        if self.snow_fraction<=0.0 {return self.sigma*(end-begin);}
+        if self.snow_fraction<=0.0 && !self.theatre {return self.sigma*(end-begin);}
         let mut tau=0.0;
         for i in 0..48 {let a=i as f32/48.0;let b=(i+1) as f32/48.0;
             let lo=begin+(end-begin)*a*a;let hi=begin+(end-begin)*b*b;
-            tau+=self.sigma*relative_density(origin+ray*((lo+hi)*0.5),self.offset,self.snow_fraction)*(hi-lo);}
+            let p=origin+ray*((lo+hi)*0.5);tau+=theatre_extinction(self.sigma,p,self.theatre)*relative_density(p,self.offset,self.snow_fraction*theatre_north_weight(p.z,self.theatre))*(hi-lo);}
         tau
     }
     fn directed_depth(&self,from:Vec3,to:Vec3)->f32 {
@@ -137,8 +146,23 @@ impl WeatherView {
         assert_eq!(WeatherView::default().local_whiteout(Vec3::ZERO),0.0);
         assert_eq!(WeatherView{snow_fraction:0.0,..v}.local_whiteout(Vec3::ZERO),0.0);
     }
+    #[test] fn theatre_weather_is_world_fixed_reciprocal_and_leaves_legacy_unchanged(){
+        let v=WeatherView{sigma:0.09,snow_fraction:0.98,theatre:true,..Default::default()};
+        let south=Vec3::new(2900.,2.,1700.);let north=Vec3::new(-1500.,2.,-3500.);
+        assert!(v.transmittance(south,south+Vec3::X*300.)>0.95);
+        assert!(v.transmittance(north,north+Vec3::X*300.)<0.01);
+        assert_eq!(v.transmittance(south,north),v.transmittance(north,south));
+        assert_eq!(theatre_north_weight(0.,true),0.);assert_eq!(theatre_north_weight(-3500.,true),1.);
+        assert_eq!(theatre_north_weight(9000.,false),1.);
+        assert_eq!(theatre_extinction(0.09,south,false).to_bits(),0.09f32.to_bits());
+        assert_eq!(theatre_extinction(0.09,south,true),0.00012);
+        let shifted=WeatherView{offset:Vec3::new(10000.,0.,10000.),..v.clone()};
+        assert_eq!(shifted.transmittance(south,south+Vec3::X*300.),v.transmittance(south,south+Vec3::X*300.));
+        let shared=include_str!("../shaders/weather_density.wgsl");
+        assert!(shared.contains("smoothstep(600.0,2600.0,-z)"));assert!(shared.contains("mix(0.00012,sigma"));
+    }
     #[test] fn shader_density_constants_remain_shared_contract() {
-        let shader=include_str!("../shaders/weather_volume.wgsl");
+        let shader=include_str!("../shaders/weather_density.wgsl");
         for token in ["1597334677u","3812015801u","2798796415u","2246822519u","3266489917u",
             "vec3(110.0,42.0,110.0)","vec3(27.0,13.0,27.0)","vec3(19.7,3.1,-6.3)",
             "0.22+2.15*smoothstep(0.18,0.82,broad*0.72+eddies*0.28)"] {

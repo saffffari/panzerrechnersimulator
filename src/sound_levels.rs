@@ -70,6 +70,7 @@ impl Provenance {
 /// Coarse spectrum shape. Propagation, the hull and the headset are frequency dependent; the
 /// class supplies the nominal octave-band shape that turns per-band losses into level changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum SpectrumClass {
     /// Large-gun and HE blast: energy below 500 Hz, mostly 30–200 Hz (SL §2, §6).
     LowFrequencyBlast,
@@ -102,6 +103,7 @@ pub enum Reference {
 
 /// How the level falls with distance from the reference (SL §2, §3, §4, §6, §7).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum DistanceLaw {
     /// Heard only at the ear (own gun, hits on own armour, the listener's own weapons).
     AtEar,

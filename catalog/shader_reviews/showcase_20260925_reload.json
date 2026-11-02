@@ -1,7 +1,7 @@
 {
   "schema": "kessel.first-person-mechanic.v1",
   "act_id": 1,
-  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json",
+  "world_manifest": "assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json",
   "night": false,
   "status": "current_build_scripted_pending_validation",
   "setup": {

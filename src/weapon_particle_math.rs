@@ -24,7 +24,7 @@ pub const COOKOFF_VERTICAL_SPEED_MPS:f32=77.331_6;
 /// Eighty bytes per emitter, not one matrix per spark. `meta`: seed, full requested count,
 /// original count, kind. `parameters`: energy, incidence cosine, spatial scale, heavy weapon.
 #[repr(C)]
-#[derive(Clone,Copy,Debug,bytemuck::Pod,bytemuck::Zeroable)]
+#[derive(Clone,Copy,Debug,bytemuck::Pod,bytemuck::Zeroable,serde::Serialize,serde::Deserialize)]
 pub struct Record {
     pub origin_age:[f32;4], pub direction_life:[f32;4], pub normal_offset:[f32;4],
     pub parameters:[f32;4], pub meta:[u32;4],
@@ -57,6 +57,7 @@ impl Record {
 /// The thermal reservoir receives at most1.5% of the actual lost kinetic energy. It never
 /// heats from retained penetrator energy, chemical filler or an arbitrary terminal class.
 #[derive(Clone,Copy,Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RimHeat {pub radius:f32,pub width:f32,pub mass_kg:f32,pub heat_j:f32,pub initial_kelvin:f32}
 pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     if !caliber_mm.is_finite() || !plate_mm.is_finite() || !deposited_j.is_finite()
@@ -83,6 +84,7 @@ pub fn rim_sample(r:Record,index:u32)->Option<Sample> {
     Some(Sample {center,axis:n,width,length:0.0,page:2})
 }
 #[derive(Clone,Copy,Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct GroundBudget {pub residual_j:f32,pub ejecta_j:f32,pub mass_kg:f32,pub density:f32,pub snow:f32,pub base_count:u32}
 pub fn ground_budget(projectile_mass:f32,velocity:Vec3,caliber_mm:f32,snow:f32)->Option<GroundBudget> {
     if !velocity.is_finite() || !projectile_mass.is_finite() || projectile_mass<=0.0 || !caliber_mm.is_finite() || caliber_mm<=0.0{return None;}

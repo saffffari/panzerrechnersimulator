@@ -68,10 +68,13 @@ pub struct Motion { pub distance: f32, pub yaw: f32, pub speed: f32 }
 
 /// Powered shaft attempt on a broken track. Speed is gear-derived, not measured loose-link travel.
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct BrokenTrackDrive { pub belt_speed_mps: f32, pub load: f32 }
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Powertrain {
+    #[serde(with = "crate::expedition_world_save::vehicle_spec_ref")]
     pub spec: &'static VehicleSpec,
     /// Share of the grade a powered climb feels (`CLIMB_GRADE_SHARE` for the player, 1 for AI).
     pub climb_grade_share: f32,
@@ -89,6 +92,11 @@ pub struct Powertrain {
     yaw_rate: f32,
     observed_speed: f32,
     single_track: bool,
+    /// Source-driven engine accessories, in crankshaft watts before transmission efficiency.
+    /// The owner updates this from the previous thermal step (one ordinary frame of coupling lag).
+    /// This is a power demand, never a speed or torque upgrade multiplier.
+    #[serde(default)]
+    accessory_shaft_demand_w: f32,
 }
 
 impl Default for Powertrain {
@@ -96,7 +104,8 @@ impl Default for Powertrain {
         Self { spec:&TIGER_I,climb_grade_share:CLIMB_GRADE_SHARE,
             automatic:true,gear:1,rpm:IDLE_RPM,throttle:0.0,load:0.0,shift_remaining:0.0,
             drive_force_n:0.0,resistance_force_n:0.0,shift_cooldown:0.0,yaw_rate:0.0,
-            observed_speed:0.0,single_track:false,broken_track_drive:[BrokenTrackDrive::default();2] }
+            observed_speed:0.0,single_track:false,broken_track_drive:[BrokenTrackDrive::default();2],
+            accessory_shaft_demand_w:0.0 }
     }
 }
 
@@ -126,6 +135,29 @@ impl Powertrain {
     /// An AI vehicle's drivetrain: its own row, the full grade.
     pub fn for_ai(spec: &'static VehicleSpec) -> Self {
         Self { spec, climb_grade_share:1.0, rpm:spec.idle_rpm, ..Self::default() }
+    }
+
+    /// The finite demand admitted by this engine; invalid inputs clear demand. Power above the
+    /// rating cannot remove more than all available drive. RPM/stall inertia is still estimated.
+    pub fn set_accessory_shaft_demand_w(&mut self, watts:f32) -> f32 {
+        self.accessory_shaft_demand_w=if watts.is_finite() {watts.clamp(0.0,self.spec.engine_w)}else{0.0};
+        self.accessory_shaft_demand_w
+    }
+    pub fn accessory_shaft_demand_w(&self) -> f32 {self.accessory_shaft_demand_w}
+
+    /// Gross crank output estimate, including admitted accessories, from the existing torque
+    /// curve and last integrated load. It is not fuel input or a measured HL230 efficiency map.
+    pub fn gross_shaft_output_estimate_w(&self) -> f32 {
+        if !self.rpm.is_finite() || !self.load.is_finite() {return 0.0;}
+        max_torque(self.spec,self.rpm)*self.rpm.max(self.spec.idle_rpm)
+            *std::f32::consts::TAU/60.0*self.load.clamp(0.0,1.0)
+    }
+
+    fn wheel_force_after_accessories(&self, gear:i8, rpm:f32) -> f32 {
+        if self.accessory_shaft_demand_w==0.0 {return wheel_force(self.spec,gear,rpm);}
+        let omega=rpm.max(self.spec.idle_rpm)*std::f32::consts::TAU/60.0;
+        let torque=(max_torque(self.spec,rpm)-self.accessory_shaft_demand_w/omega).max(0.0);
+        torque*(self.spec.rated_rpm*std::f32::consts::TAU/60.0)*DRIVE_EFFICIENCY/gear_speed(self.spec,gear)
     }
 
     /// An engine speed stated for the Tiger's 3000 rated rpm, on this engine.
@@ -192,7 +224,7 @@ impl Powertrain {
             let after=(belt_speed-coast_loss).max(0.0);
             let next_rpm=after/gear_speed(spec,next)*rated;
             let engaged_rpm=next_rpm.max(spec.idle_rpm+self.rpm_of(CLUTCH_SLIP_RPM)*demand.abs());
-            let available=wheel_force(spec,next,engaged_rpm)*traction*demand.abs();
+            let available=self.wheel_force_after_accessories(next,engaged_rpm)*traction*demand.abs();
             let effective_mass=mass*if self.single_track {3.4}else{1.0};
             let recovered=after+(available-resistance)/effective_mass*belt_scale
                 *(SHIFT_COOLDOWN_SECONDS-SHIFT_SECONDS);
@@ -208,7 +240,7 @@ impl Powertrain {
         } else if magnitude>1 {
             let previous=direction*(magnitude-1);
             let previous_rpm=belt_speed/gear_speed(spec,previous)*rated;
-            let bogging=demand.abs()>0.4 && rpm<self.rpm_of(2450.0) && wheel_force(spec,self.gear,rpm)*traction<resistance*1.05;
+            let bogging=demand.abs()>0.4 && rpm<self.rpm_of(2450.0) && self.wheel_force_after_accessories(self.gear,rpm)*traction<resistance*1.05;
             if (rpm<self.rpm_of(DOWNSHIFT_RPM) || bogging) && previous_rpm<self.rpm_of(2850.0) {self.select(previous);}
         }
     }
@@ -219,6 +251,7 @@ impl Powertrain {
         self.broken_track_drive=[BrokenTrackDrive::default();2];
         if !dt.is_finite() || dt<=0.0 || !speed.is_finite() || !pitch.is_finite() {return Motion {speed,..Motion::default()};}
         let spec=self.spec;
+        self.set_accessory_shaft_demand_w(self.accessory_shaft_demand_w);
         let rated=spec.rated_rpm;
         let mass=self.mass();
         let half_track=spec.steer_half_gauge_m;
@@ -254,15 +287,25 @@ impl Powertrain {
             self.rpm+=(rpm_target.min(self.rpm_of(3600.0))-self.rpm)*response;
             let governor=((self.rpm_of(3150.0)-wheel_rpm)/self.rpm_of(180.0)).clamp(0.0,1.0);
             let mut force=if any && coupled && selected && !opposing {
-                wheel_force(spec,self.gear,self.rpm)*self.throttle*governor*traction*self.gear.signum() as f32
+                self.wheel_force_after_accessories(self.gear,self.rpm)*self.throttle*governor*traction*self.gear.signum() as f32
             }else{0.0};
             // Steering consumes power from the same engine. The resistance coefficient and
             // effective rotational mass are estimates; they do not change the geometric pivot.
-            let yaw_target=if capable && !one {steer*spec.max_yaw_rate*(self.rpm/self.rpm_of(1500.0)).clamp(0.0,1.0)*traction}else{0.0};
+            let engine_power=max_torque(spec,self.rpm)*self.rpm.max(spec.idle_rpm)*std::f32::consts::TAU/60.0;
+            let accessory_power=if controls.engine_running {self.accessory_shaft_demand_w.min(engine_power)}else{0.0};
+            let available_power=(engine_power-accessory_power).max(0.0);
+            let mut yaw_target=if capable && !one {steer*spec.max_yaw_rate*(self.rpm/self.rpm_of(1500.0)).clamp(0.0,1.0)*traction}else{0.0};
+            if self.accessory_shaft_demand_w>0.0 {
+                // Same estimated steering-resistance law as below, solved for affordable yaw.
+                // Existing yaw inertia may coast down above this powered target after a load step.
+                let affordable_yaw=available_power*DRIVE_EFFICIENCY/(mass*G*0.10*half_track);
+                yaw_target=yaw_target.clamp(-affordable_yaw,affordable_yaw);
+            }
             self.yaw_rate+=(yaw_target-self.yaw_rate).clamp(-0.85*h,0.85*h);
             let steering_power=mass*G*0.10*half_track*self.yaw_rate.abs();
-            let engine_power=max_torque(spec,self.rpm)*self.rpm.max(spec.idle_rpm)*std::f32::consts::TAU/60.0;
-            let steering_share=(steering_power/(engine_power*DRIVE_EFFICIENCY).max(1.0)).clamp(0.0,0.8);
+            let steering_share=if self.accessory_shaft_demand_w>0.0 {
+                (steering_power/(available_power*DRIVE_EFFICIENCY).max(1.0)).clamp(0.0,1.0)
+            }else{(steering_power/(engine_power*DRIVE_EFFICIENCY).max(1.0)).clamp(0.0,0.8)};
             force*=1.0-steering_share;
             let normal=mass*G*pitch.cos().max(0.0);
             force=force.clamp(-0.8*normal*traction,0.8*normal*traction);
@@ -307,7 +350,12 @@ impl Powertrain {
             self.drive_force_n=force;
             self.resistance_force_n=grade+direction*resistance;
             self.load=if controls.engine_running {
-                (if coupled && any {self.throttle*governor}else{0.02*self.throttle}+steering_share).clamp(0.0,1.0)
+                if self.accessory_shaft_demand_w>0.0 {
+                    let drive_load=if coupled && any {force.abs()/wheel_force(spec,self.gear,self.rpm).max(1.0)}
+                        else {0.02*self.throttle*available_power/engine_power.max(1.0)};
+                    let steering_shaft=(steering_power/DRIVE_EFFICIENCY).min(available_power);
+                    (drive_load+(accessory_power+steering_shaft)/engine_power.max(1.0)).clamp(0.0,1.0)
+                }else{(if coupled && any {self.throttle*governor}else{0.02*self.throttle}+steering_share).clamp(0.0,1.0)}
             }else{0.0};
             // Gear-derived shaft attempt, distinct from chassis traction and loose-link travel.
             // With both tracks absent, 2% throttle load represents estimated drivetrain/loose
@@ -370,6 +418,48 @@ mod tests {
         let mut distance=0.0;
         for _ in 0..(seconds/dt).round() as usize {let motion=state.advance(dt,*speed,pitch,input);*speed=motion.speed;distance+=motion.distance;}
         distance
+    }
+    #[test]
+    fn accessory_watts_remove_tractive_power_at_the_same_rpm_and_gear() {
+        let mut stock=Powertrain {automatic:false,gear:6,rpm:2300.0,..Powertrain::default()};
+        let speed=gear_speed(stock.gear)*stock.rpm/RATED_RPM;
+        let mut explicit_zero=stock;explicit_zero.set_accessory_shaft_demand_w(0.0);
+        let mut fan=stock;let watts=fan.set_accessory_shaft_demand_w(20_000.0);
+        let a=stock.advance(STEP_SECONDS,speed,0.0,controls(1.0));
+        let z=explicit_zero.advance(STEP_SECONDS,speed,0.0,controls(1.0));
+        let b=fan.advance(STEP_SECONDS,speed,0.0,controls(1.0));
+        assert_eq!((a.distance,a.yaw,a.speed),(z.distance,z.yaw,z.speed));
+        assert_eq!(bincode::serialize(&stock).unwrap(),bincode::serialize(&explicit_zero).unwrap());
+        assert!((stock.drive_force_n-wheel_force(6,stock.rpm)).abs()<0.02,"zero demand retains baseline wheel force");
+        assert_eq!((fan.rpm,fan.gear),(stock.rpm,stock.gear));assert!(b.speed<a.speed);
+        let lost_track_watts=(stock.drive_force_n-fan.drive_force_n)*speed;
+        assert!((lost_track_watts-watts*DRIVE_EFFICIENCY).abs()<watts*0.001,
+            "accessory power must leave crank before gear ratio: {lost_track_watts} W");
+    }
+    #[test]
+    fn accessories_share_the_steering_budget_and_count_in_gross_output() {
+        let mut free=Powertrain::default();let mut exhausted=free;
+        exhausted.set_accessory_shaft_demand_w(TIGER_I.engine_w);
+        let mut input=controls(1.0);input.steer=1.0;
+        let a=free.advance(0.5,0.0,0.0,input);let b=exhausted.advance(0.5,0.0,0.0,input);
+        assert!(a.yaw>0.0&&a.distance>0.0);assert_eq!((b.yaw,b.distance,exhausted.drive_force_n),(0.0,0.0,0.0));
+        let mut idle=Powertrain::default();idle.set_accessory_shaft_demand_w(7_000.0);
+        idle.advance(1.0/60.0,0.0,0.0,controls(0.0));
+        assert!((idle.gross_shaft_output_estimate_w()-7_000.0).abs()<0.01,"idle governor supplies accessory load");
+        let mut off=controls(0.0);off.engine_running=false;idle.advance(1.0/60.0,0.0,0.0,off);
+        assert_eq!(idle.gross_shaft_output_estimate_w(),0.0);
+    }
+    #[test]
+    fn accessory_owner_is_finite_and_survives_typed_save() {
+        let mut p=Powertrain::default();
+        assert_eq!(p.set_accessory_shaft_demand_w(-1.0),0.0);
+        assert_eq!(p.set_accessory_shaft_demand_w(f32::NAN),0.0);
+        assert_eq!(p.set_accessory_shaft_demand_w(f32::INFINITY),0.0);
+        assert_eq!(p.set_accessory_shaft_demand_w(TIGER_I.engine_w*2.0),TIGER_I.engine_w);
+        p.set_accessory_shaft_demand_w(12_345.0);
+        let restored:Powertrain=bincode::deserialize(&bincode::serialize(&p).unwrap()).unwrap();
+        assert_eq!(restored.accessory_shaft_demand_w(),12_345.0);
+        assert_eq!(restored.gross_shaft_output_estimate_w(),p.gross_shaft_output_estimate_w());
     }
     #[test]
     fn broken_shaft_attempt_requires_transmitted_torque_and_never_uses_hull_coasting() {

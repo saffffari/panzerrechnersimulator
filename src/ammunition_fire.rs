@@ -5,6 +5,7 @@ pub const IGNITION_EXPOSURE: f32 = 0.65;
 pub const COOKOFF_SECONDS: f32 = 3.0;
 
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct AmmunitionFire {
     burning_round: Option<u32>,
     remaining: f32,

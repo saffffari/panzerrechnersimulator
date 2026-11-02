@@ -58,6 +58,7 @@ pub fn load_player_tiger() -> anyhow::Result<([CpuMesh; 3], [CpuMesh; 4], CpuMes
 }
 
 #[derive(Clone, Copy, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RoofHatches {
     pub open: [bool; 4],
     pub phase: [f32; 4],

@@ -14,6 +14,7 @@ mod observer;
 fn with_observer(source: &str) -> String {
     source.replacen("// @observer-constants", &observer::wgsl_constants(), 1)
         .replace("// @weather-density",include_str!("../shaders/weather_volume.wgsl"))
+        .replace("// @weather-field",include_str!("../shaders/weather_density.wgsl"))
         .replace("// @cabin-medium",include_str!("../shaders/cabin_medium.wgsl"))
 }
 

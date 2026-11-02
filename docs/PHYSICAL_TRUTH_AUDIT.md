@@ -4,6 +4,195 @@ Updated: 2026-10-28 (tank-hit recordings; library recordings for handling, breec
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
+## Physical terrain wavelength and cold restore, 2026-10-31
+
+Build 48's cold-cache GPU test passed all exact before/after height, opening-mask, resident-page,
+upload and saved-state checks, then failed its separate CPU/GPU agreement gate by 2.667353 mm.
+The cause was an inherited physical mismatch: CPU relief used a fixed 1.2207031 m base wavelength,
+while WGSL used the native heightfield spacing (1 m in this fixture). Independent f32 evaluation
+reproduced 2.667345 mm at `(0.625, 1.625)`, within rounding of the GPU result. That point is away
+from the boot depression; the difference was not caused by R16 rut quantization or save/resume.
+
+The source fix shares `terrain_relief::RELIEF_BASE_WAVELENGTH_M` with generated WGSL constants.
+Both terrain geometry and normal-octave footprint filtering now use the same physical wavelength.
+The documented 0.31–9.77 m geometric relief and existing CPU surface stay unchanged; native grid
+spacing continues to govern heightfield sampling and lattice resolution. The cold-restore test
+retains bit-exact GPU before/after checks and its original, separate 0.2 mm plus 0.1% rut-depth
+fixture tolerance. A CPU regression covers several native spacings and the known failing point.
+**The source correction still awaits the build 49 CPU/GPU rerun.**
+
+Older terrain showcase receipts report a maximum CPU/GPU difference of about 0.250 mm over their
+sampled lattice (`terrain_detail_after.json`, `terrain_ruts_nrm.json`, `terrain_lattice076.json`).
+Those are measurements, not a universal accepted bound; their residual cause has not been
+established here. This change does not silently widen tolerances or claim universal float parity.
+
+
+## Physical workshop source ownership, 2026-10-30 — validation pending
+
+`workshop_runtime` now preallocates 39 source banks: seven existing cupola vision assemblies,
+the existing gunner sight, seven individually partitioned turret spare track shoes, and finite
+replacement pools for these parts and an existing source torch. The seven shoes are removed
+from the live turret by exact triangle-multiset subtraction; a changed source fails startup.
+Removal, carrying, fitting and cargo use the same durable item ID and the same source meshes.
+All 39 source frames follow the visible transforms in cabin contact, fire/foam and acoustic
+queries; empty banks are disabled. The underlying turret retains its real armor triangles.
+The shoe meshes are equipment contacts, not an additional nominal turret-armor layer. There is
+currently **no layered shoe-plus-armor ballistic resistance calculation** and no claimed armor bonus.
+
+The physical procedure groups fasteners into release / withdraw / insert / secure / test.
+Retainer times and four grouped hammer contacts are authored interaction rules, not simulated
+thread pitch, pin friction or torque. The hammer's measured +X head face reaches a confirmed
+retainer triangle; its 80 mm square face and model remain visible. Component insertion follows
+a rigid pose interpolation. This is constrained hand manipulation, not a full swept multi-body
+assembly solver: component-to-cavity collisions throughout the extraction/insertion path still
+need broader validation. Voluntary placement preserves orientation and requires actual source
+support under a nine-point footprint, with a conservative envelope access check. An abandoned
+held part settles to a source support when one is found; this is a placement abstraction, not
+animated rigid-body falling. Failed support admission keeps the old owner's pose instead of
+transferring the item to a successor's camera. Resting parts do not yet slide under acceleration.
+
+Cupola/sight removal disables its optical authority. Replacement changes the actual source
+optic registration and requires securing/testing. Generated optical relays retain the existing
+reconstructed prescription; cross-mount optical quality still requires rendered evidence.
+Direct, confirmed workshop source hits damage that item identity with a binary rule. Existing
+interior fragment damage still uses the older module/compartment proxies and does not trace
+loose-part fragment hits. Proxy backtraces cannot create hull scars on the removable banks.
+Track repair in Expedition must fit an existing physical shoe before the ordinary four pin
+blows can restore mobility; the same item then becomes the installed running-track shoe.
+
+The optional work light uses the existing modeled torch on a source-supported turret bracket.
+Its source lens supplies a finite, geometry-shadowed light. The 18 kJ battery, 3 W drain,
+handling mass, bracket and intensity are authored estimates, not measured period hardware.
+This is a functional visibility upgrade; engine, gearbox, radiator, gun and ammunition upgrades
+are not implemented by this slice. Their source mapping and unresolved causal-system work are
+recorded in `WORKSHOP_SOURCE_REGISTRATION_20261030.md`.
+
+Whole-world owner state includes finite parts, jobs, socket progress, tool clocks/input latches
+and all cached part poses. Restore presentation performs no repair, battery refill or work.
+Gates added: exact source partition/atomic failure; source-supported lamp bracket; frame
+enable/move/self-exclusion contact behavior; binary snapshot identity preservation. Root CPU
+tests and the real-input workshop review are pending; source parsing alone is not gameplay proof.
+
+## Living crew personal-space contact, 2026-10-30
+
+Interior walking now queries the indexed standing/seated crew source meshes. Animated seated
+positions come from the same last pose uploaded by `crew_arm_animation`; target transforms include
+body displacement and the visible wounded slump. Seated wound masks use the renderer's source-weight
+mask function. Cached per-pose triangle BVHs filter candidates before capsule/triangle contact;
+there are no additional authored crew blocking boxes. The local player's identity is excluded.
+The existing floor/breech walk clamp still applies separately.
+
+Named approximation: the player locomotion shape is a vertical capsule, **not exact person-to-person
+skin contact**. Its height is measured from the reviewed standing source; its radius is the maximum
+horizontal distance of the source-classified torso/pelvis vertices. This encloses that sampled
+cross-section but omits the player's arms and leg articulation. Conservative empty space within
+that envelope is bounded by its reported radius; no claim of millimetre-accurate clothing contact
+is made. A 1 mm numerical contact skin is added. The camera's existing 0.50 m crouch compression is
+applied to capsule height. Capsule/triangle distance tests are geometric; continuous contact uses
+at most 24 conservative-advancement iterations and four horizontal slide passes, failing closed
+at the iteration limit. An initially touching player may back away instead of being trapped.
+
+Scope limits: living cloth/body meshes only; separate helmets and retained ragdolls are not added
+as new movement obstacles here. No shoulder-turn, yielding animation or forced displacement of
+another person was introduced. Those need one shared render/damage/contact pose before they can
+be admitted. Source-load failure logs the missing file and disables those contacts instead of
+manufacturing invisible geometry.
+
+Evidence hooks: `Game::crew_personal_space_receipt()` reports candidate triangles, bodies queried,
+query count, measured capsule dimensions, skin and iteration bounds. CPU tests cover thin-surface
+sweeps, diagonal sliding, backing out of overlap, frame partitioning, broadphase preservation and
+empty-space movement. A live interior playtest is still required to assess passage width and
+station access; passing geometry tests alone does not establish that the cramped interior is fun.
+
+## Persistent people and retained bodies, 2026-10-30
+
+The five living appearance slots no longer serve as unique people. Singleplayer binds stable
+expedition PersonIds to monotonically assigned anatomical actor IDs, with a finite 16-actor
+admission limit. Wounds, retired physiology, casualty history, corpse clearance and corpse render
+pages keep the old actor ID when a slot receives a replacement. A fresh replacement cannot inherit
+a predecessor's missing limb or be killed by a delayed contact addressed to that predecessor.
+Existing field-person takeover changes control without replacing or healing the actor. LAN/couch
+retain their existing peer identities and casualty authority.
+
+Solo corpse rendering has sixteen independent actor allocations. Each uses the reviewed relaxed
+source figure's eleven anatomical pages, its own atlas appearance, the existing reviewed bone
+pages and source steel helmet. Prototypes share source geometry/material; bounded one-instance
+pages preserve independent transforms and source IDs. Missing source geometry reports failure;
+this path does not invent a replacement primitive. Legacy fresh-match resets reuse reserved
+pages, rebinding the appearance source when necessary, rather than growing an unbounded pool.
+
+Clearing a seat addresses the historical corpse actor at its physical death post, even after a
+new commander uses that appearance slot. A successor can be admitted on foot while that corpse
+still blocks the seat. Inside clearing remains an assisted translation of the articulated body
+toward the existing compartment resting area. Outside, exact source flesh triangles select the
+body and a line through a real, fully open source aperture admits extraction. The retained body
+moves visibly at 0.35 m/s along a guided extraction path, then detaches into world coordinates.
+The same actor and anatomical records remain. Moving the Tiger afterward does not move a body
+left on the ground. Foot deaths start at the current feet/yaw/crouch transform, not a former seat.
+
+Named limitations: extraction is an assisted whole-ragdoll translation, **not a musculoskeletal
+lifting, fabric collision, or hatch-clearance solver for every limb**. The guided path may clip
+limbs against the hatch; its initial source-ray/open-aperture check proves access, not clearance
+of the entire posed body. On-foot death starts neutral anatomical limbs at the first-person body
+transform, not a copy of the last hand IK pose. Outside settling uses the existing anatomical
+segment bounds, sampled terrain height and bottom support sweeps against Tiger source triangles;
+it does not provide full body-to-body or every-building collision. These are gameplay procedures
+and retained physical state, not claims of an exact casualty-evacuation simulation.
+
+Evidence hooks: `crew_corpse_render_receipt` identifies actor-owned source pages;
+`crew_body_recovery_receipt` lists held and world-space actors and their retained PersonIds.
+CPU tests cover actor binding/history isolation, finite admission, source-aperture crossing and
+preservation of every segment transform through world detachment. Live extraction and repeated
+succession visual checks are required before calling the full loop verified.
+
+Living incapacitated people use that same extraction path without a KIA event: retained
+anatomical actor and first-aid physiology stay alive and continue their ordinary field time course.
+Their standing cabin mesh and station duty are excluded; inside hit queries use their actual
+retained pose and outside small-arms queries use the world pose. A medical bed takes exclusive
+ownership of the existing physiology only after physical admission. Its transform moves the
+whole pose rigidly and zeros motion; it does not rebuild joints or restore tissue. Explicit
+takeover of a capable treated person removes only that person's living detached pose, preserves
+their actor ID and wounds, and leaves every historical dead body untouched. Bed placement has
+a CPU regression for preserved segment distances, absent tissue, identity and zero velocities.
+
+Evacuating a living incumbent now releases their runtime slot for relief without killing or
+discarding them. Their physiological record transfers to actor-owned unbound storage; the
+ordinary field clock advances it once unless the camp owns an admitted bed patient. Returning
+survivors transfer that same record into a vacant controlled slot, reuse the old actor ID, and
+retain lost blood and wounds. Original source appearance is recorded at first admission. Live
+body/driver-arm slots copy its immutable source atlas and PBR channels, and corpse pages select
+its original source prototype, independent of the slot used on return. The common local
+first-person hand rig remains the existing source model. Sixteen unique actors is the finite
+registry limit, rather than five lifetime people. Tests cover archive/restore without healing,
+independent patient and replacement physiology, unique binding and preserved appearance.
+
+This first evacuation slice does not include patient locomotion, full lifting animations,
+detached-world cannon/blast/heat exposure, or free-world blood transport. Detached people are
+excluded from the cabin's fire and blood emitters after extraction; field bleeding still advances.
+Small-arms hits interrupt bedside care before adding their real wounds, preventing a stale
+medical snapshot from undoing the injury. A living settled patient does not receive a fabricated
+corpse gore pool. Those limitations remain explicit until the broader world-person solver exists.
+
+## Camp actor source skinning, 2026-10-30
+
+`camp_people_rig.rs` reads the original Panzertruppe GLB's 39 joints, inverse bind matrices,
+both sets of original joint weights, and node transforms. It verifies the flattened loader order
+against all 914 source positions and retains the 564 indexed triangles, UVs and texture/PBR
+data. Source-world inverse-bind products must be identity within the stated numerical tolerance;
+a different export convention fails admission rather than receiving an invented scale correction.
+Neutral skinning preserves the source rest geometry. Ordinary idle lowers the original T-pose
+arms using two-link IK about authored shoulder/elbow pivots.
+
+Walking is an authored procedural cycle: 0.8 m travel per phase, 60% stance with a commanded
+world-fixed foot at matched root travel, 40% swing with up to 9 cm lift. Pelvis drop makes room
+for existing leg lengths; the IK never stretches them. Original ankle orientation keeps the
+boots level. Salute/work are authored hand targets, not captured performances or guaranteed
+contact with a tool. The caller must use actual travelled distance for phase and publish the
+same posed vertices to both rendering and contact queries. Slope adaptation, planted-foot turn
+compensation, learned locomotion, motion capture and a full human balance/contact solver are
+not implemented by this module. CPU tests check stance algebra and the private source's
+bind/weight/vertex/material/floor contracts; final movement appearance requires visual review.
+
 ## Vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, 2026-10-28 (branch `vehicle-dynamics`, docs/VEHICLE_DYNAMICS.md)
 
 Every tank now has a sourced row (`src/vehicle_spec.rs`: Tiger I, T-34/76, SU-100, KV-2, IS-2,
@@ -1415,7 +1604,8 @@ refinement remain separate acceptance work, as recorded in the hand-prop note.
 | Spark-shower glows (2026-10-28) | The glow a spark shower adds to the air round its emitter is a brief tight bloom: an armour hit's at most 0.5 m for 0.25 s, a pressure vent's 1.2 m for 0.65 s, a full cook-off's at most 2.5 m for 1.2 s (`GLOW_MAX_RADIUS_M`). They had grown to 3 m for 1.6 s and, for a cook-off, to a 60 m sphere rising 120 m for 17 s, each drawn as a soft uniform disc. | `src/renderer_raymarch.rs` (`collect_parcels`) | An authored glow, not a scattering solve; the sparks, their light and the fire carry the shower. |
 | Cabin lamps on plinths (2026-10-28) | Every cabin lamp (dome, annunciators, breech, sight, ignition) is a uniformly lit cube, no lens profile, bezel or cage, on a squat dark-steel plinth (1.2 times its width, 0.6 of its half size high) on a flat face of the tank's source mesh, found by a nearest-surface survey and checked by test; positions moved up to 28 cm from where the lamps floated. `Game::set_cabin_lights` switches them, and the TPZ's illuminator, off: dark glass in each lamp's colour (a twelfth of its lit colour), zero light. | `src/lamp_mounts.rs`, `src/game.rs`, `src/interior_rig.rs` | Owner-directed ("a fully lit cube, uniformly emissive, with no border", "on a small base"). The plinths and their placement are authored, not a period fitting; the annunciators and sight lamps are gameplay instruments. |
 | Instrument dials and the TPZ illuminator (2026-10-28) | The instrument dials (source material "Illuminated Dial") have black enamel faces (sRGB 40), as period German dials and the surviving Bovington TPZ; no numerals (the source has none). The TPZ's illuminator lights its face as much as the dome lamp a metre off does (it was some 12,000 times that). The driver's ignition lamp is a finite cube at an indicator's power (it was an invisible point at twelve times the dome lamp). | `src/tank.rs` (`DIAL_FACE_SRGB`), `src/interior_rig.rs` (`TPZ_ILLUMINATOR_INTENSITY`, `IGNITION_FIXTURE`) | The face colour rests on period practice and one surviving example; the illuminator's power is set relative to the dome lamp, not measured. |
-| A telescope's eyepiece seen from the cabin (2026-10-28) | The gunner's sight lens shows its field fully only to an eye within 2 cm of the exit pupil; farther off it carries the pupil's share of the lens's area spread over the lens; beyond the apparent field it is dark. | `src/raster_optics.rs` (`Eyepiece`), `src/tiger_gunner_sight.rs` (`TZF_EXIT_PUPIL_M` 7 mm, `TZF_EYE_RELIEF_M` 25 mm, `TZF_APPARENT_FIELD_RAD`) | The exit pupil and eye relief are estimates for a 2.5x sight (no TZF figure found); the bright spot the pupil makes is spread over the lens (its mean is right, its shape is not). |
+| A telescope's eyepiece seen from the cabin (revised 2026-10-31) | The gunner's actual planar source lens admits each fragment through a finite exit-pupil disk and apparent-field stop. Moving the eye moves the admitted bright patch; rejected rays leave the source lens opaque and dark. Admitted radiance is not multiplied by the former whole-lens area average. Single-stop pixel coverage integrates a circle against the local pixel footprint, retaining subpixel area; the rare pixel crossing both stop edges uses bounded 8x8 joint quadrature. The separate tracer overlay uses the same pupil. | `src/raster_optics.rs`, `shaders/raster_optics.wgsl`, `shaders/weapon_tracer_panel.wgsl`, `src/tiger_gunner_sight.rs` (`TZF_EXIT_PUPIL_M` 7 mm, `TZF_EYE_RELIEF_M` 25 mm) | Pupil and relief remain explicit estimates, not a recovered TZF prescription. Ideal planar stops do not simulate internal lenses, aberration, a finite human pupil or objective-side exit parallax. Pixel footprints use local derivatives; two-edge coverage is sampled. CPU ray/plane and area witnesses are supplied; new native tests and GPU appearance await parent validation. Other vision blocks retain their separately documented off-axis boundary-image fallback. |
+| Retained optical capture metadata (2026-10-31) | A Low-preset skipped layer keeps the camera, texel extent and frame of the color/depth actually encoded. First nonzero use forces initialization; replacing, blocking/repairing or occluding/revealing the port invalidates that cache. The current physical entrance and eye remain current. A finite gunner pupil refreshes if its current visible rays no longer fit the retained capture. | `src/raster_optics.rs` (`CapturedView`, `retained_capture`, `capture_covers_visible_entrance`) | Reduced cadence still produces temporally old exterior motion and objective-origin parallax until refresh. This fixes stale-image/current-projection misregistration; it does not make cached images current or remove the separate vision-block acceptance approximation. |
 | Sky cache accumulation (2026-10-28) | Each refresh of a sky-cache texel marches the clouds with a new jitter (an integer hash) and is blended in at 0.3; a sky jump writes it whole. | `src/renderer_raymarch.rs` (`SKY_CACHE_BLEND`), `shaders/rm_sky_cache.wgsl`, `shaders/sky.wgsl` (`cloud_jitter`) | A temporal average over a texel's last few refreshes (about 64 frames): a cloud feature moving across the sky trails over about a second. |
 | Open-share firefly clamp (2026-10-28) | A new open-sky share estimate (the ray queries' and the screen gather's) may not exceed three times the same-surface history's share plus 0.02 before it is blended in. | `shaders/rm_shade.wgsl` (`share_clamped`) | Biases a share of 0.3 by under 2 % at two rays a frame; a share that opens suddenly rises at least 1.3 times a frame, so a hatch's light comes up over about a quarter second. |
 | Relayed ports' one-pixel effect budget (2026-10-28) | Each relayed port draws at most `relay_effect_samples_per_pixel` (Low 8, High 16, Ultra 32) weapon-spark samples and as many fire and soot grain samples per native pixel of its view. Over budget a spark burst draws its share of samples, never fewer than its source count, each weighted by source / drawn; ground ejecta keep the full count's grain size and take the represented optical depth; hot rims are never thinned. Grains keep two samples per covered pixel of a parcel and drop whole far parcels, counted. | `src/graphics.rs` (`relay_effect_budget`), `src/weapon_particle_math.rs` (`thinned_counts`), `shaders/weapon_particles.wgsl`, `src/renderer_fine_vfx.rs` | Thinning keeps each burst's emission and optical depth in expectation; the shower is sparser and its per-pixel noise higher (relative noise goes as 1 / sqrt(samples a pixel): a port drew 47 sparks a pixel in one strike before, 8 on Low now). Omitted far parcels are those beyond the budget, usually behind nearer smoke; their projected area is reported. The shader backend's main view keeps its absolute caps. Since the evening each burst first draws at most that rate over the pixels its conservative support covers (`footprint_count`; ground ejecta bounded by their own speed): a distant strike's first frames take a few hundred samples, each standing for more. |
@@ -1443,3 +1633,990 @@ refinement remain separate acceptance work, as recorded in the hand-prop note.
 | Volumetric clouds: heaped density field and a dedicated view march (2026-10-04) | The cloud layer's density is a heaped field (flat bases, footprint tapering with height, two scales of billow), identical in the shader and its CPU twin. In the sky pass the layer is marched on its own: 32 view steps to 32 km, and at each lit sample five steps toward the key body for self-shadowing. Multiple scattering in the cloud is a three-octave series; skylight on the cloud is the clear-sky radiance along the view ray scaled by height; haze before a far cloud is one exponential over 32 km. From below the layer each sample's source is at least the delta-Eddington exit radiance along the ray (2026-10-28), so a deck lit from above is as bright from below as the light it sends to the ground. | `shaders/physical_environment.wgsl` and `src/physical_environment.rs` (`cloud_relative_density`), `shaders/sky.wgsl` (`march_clouds`) | The raster sky only. The ray-traced path and the sky probe still evaluate the same density through the general atmosphere march, so their clouds are the right shape and place but flatly shaded. The multiple-scattering series and the skylight term are approximations, not transport solves. |
 | Cloud shadows on the ground (2026-10-04) | A 48 x 48 grid (250 m cells, 12 km across, snapped to cells) of the cloud layer's Beer-Lambert transmittance toward the key body rides with the sky probe. In the raster mesh shader a receiver's sunlight is the probe's area-mean beam times its own cloud transmittance over the area's mean, capped at 6. | `shaders/environment_probe.wgsl` (`probe_cloud_shadows`), `shaders/stylized_mesh.wgsl` (`cloud_shadow`) | Terrain and meshes only: grass, particles and smoke still take the area-mean beam. 250 m cells soften shadow edges. Flat-layer geometry. |
 | Ray-traced path: one light per pixel, spatial denoiser (2026-10-04) | Local lights are sampled one per pixel per frame in proportion to their unshadowed diffuse contribution and weighted by the inverse probability. Accumulated diffuse light passes a four-pass edge-aware a-trous filter (widths 1, 2, 4, 8) whose tolerance is wide for young history and tight for settled history, when `KESSEL_DIFFUSE_RECONSTRUCTION=1`. | `shaders/combine.wgsl` (`pick_light`), `src/surface_reconstruction.rs`, `shaders/surface_reconstruction.wgsl` | The light sampling is unbiased; the filter is not (it is a display reconstruction, never fed back into history). Vision-port views are not filtered and stay grainy. |
+
+
+### Camp source skin frame correction (2026-10-30)
+
+Camp actors use the original skin bind frame: the source joint-world transforms cancel the inverse binds at rest. The static loader applies the separate mesh-node transform, so camp rig admission reverses that exact per-vertex frame after checking loader order, including normal/tangent conversion. This removes a coordinate-space error that previously combined a shrunken, rotated surface with full-size source bone pivots. The existing ground-contact test tolerance is unchanged. The gait remains authored two-link IK and source-weighted skinning, without terrain-slope foot adaptation; it is not a biomechanical walking simulation.
+
+### Warm cabin restoration and first-frame transport (2026-10-30)
+
+Owner references `rm_ao6_32_commander_noon_shut.png`, `rm_int6_noon_radioman.png` and
+`tpz_needle_widths_480.png` establish warm cabin practicals, bright local indicators and cool exterior
+apertures as the direction. The dome's authored emission changes from 1.75 to 42 with the existing
+0.003 calibration; its visible cube and transported flux still derive from the same source record.
+The TPZ local illuminator is 0.0011 times that calibration (two percent of the former overpowering
+0.055 source). Status-light outputs are unchanged. These are authored output choices, not measured
+historical wattages, and retain the existing finite-cube/isotropic-source approximation above.
+
+The display's sixfold outdoor rod-visibility boost now remains outdoors. Closed cabin views use
+`CABIN_ROD_DISPLAY_GAIN=1` through the existing cabin-view weight, preserving ordinary rod response
+without the extra blue-grey amplification overwhelming practical-light colour. This is explicitly
+display reproduction; no scene radiance, shadow, cone/rod adaptation or exterior-night output changes.
+
+Ray-query bindings are selected after the actual current scene TLAS is allocated/rebuilt, rather
+than during the earlier uniform upload. The former order bound an empty/stale TLAS on startup and
+could seed sky illumination through cabin armour. The physical-book first-page/return-page check
+now measures 0.28347 versus 0.28469 cd/m2 (ratio 1.0043) in `expedition_manual_20261030_v8_tlas.json`,
+against the earlier large discrepancy. This proves initialization consistency, not book readability
+or a complete lighting solution. Subsequent warmth changes require separate visual review.
+
+### Source crew balance and cartridge handling (2026-10-30, awaiting review)
+
+Living solo crew body response uses the existing suspension's acceleration/angular motion and a
+single projectile-momentum impulse per discharge. The muscle spring, travel limits and head
+stabilization are authored approximations, not human-subject calibration. Original source bones,
+weights and fixed-length two-link IK deform rendered geometry, collision contact geometry and the
+existing anatomical volumes together; the volumes remain the prior eleven-part approximation.
+Standing boots retain source ankle support points; loader steps use an authored short gait driven
+by actual travel. This does not simulate foot friction or whole-body contact forces.
+
+The new solo loader work path keeps one physical cartridge mesh and ammunition identity from rack
+to chamber, including vulnerability in his hands and a retained loose body on interruption. It is
+gated by exact source standing bindings. Rack selection is bounded to reachable loader-side storage;
+travel uses the existing conservative floor/breech envelope. Swept shell-versus-cabin collision,
+arbitrary rack access and exact hand/finger contact remain unverified. Idle observation targets the
+source Loader Periscope eyepiece metadata. GPU witnesses and measured grip errors are required before
+claiming the resulting action is correct.
+
+
+### Loader v1 witness and source-contact follow-up (2026-10-30, build17 pending)
+
+The build16 offscreen witness `captures/crew_loader_balance_20261030_v1_manifest.json`
+passed five state assertions: one ordinary shot, one rack cartridge consumed, live ammunition
+delta -1, reloaded breech, and surviving vehicle. Images at 6 and 9 seconds show a standing
+loader moving a real cartridge and returning to his periscope. The camera is crowded by other
+crew, so the clip is not a polished-animation acceptance result. The receipt exposed a real
+9.4 cm miss for both hands at 5 seconds during low-rack carry; extraction, later carry, and
+ram samples had zero reported hand error. Acceleration/braking generated bounded motion
+(about 2.8 cm fore/aft maximum in the one-second samples), settling to near zero at rest.
+
+The next source checkpoint replaces the arbitrary 35 cm crouch cap with the intersection of
+both original arm reach spheres and a vertical pelvis travel bounded by original leg lengths.
+Unreachable rack contacts are rejected, and cartridge movement/completion pauses rather than
+extending arms. Spent-case stow is now owned by the active loader, has the same visible case as
+its hand target, and drops that case when interrupted. An inaccessible rear-shelf path is
+abandoned after six seconds with the case released at its last pose. The original manual/LAN
+stow path remains. Step direction now follows actual travel relative to the body, including
+sideways/backwards travel. Two focused source-rig tests were added; root owns compilation and
+execution. These follow-up changes have only been parsed, not yet GPU-verified.
+
+Remaining limits: authored IK contact points are palms, not articulated fingers. No complete
+whole-body obstacle/cloth/self-collision solver exists. Root travel still uses the existing
+conservative basket/breech envelope, turning in place is not a contact-planned pivot, and
+reach/phase changes need further animation blending. These are exposed limits, not claims of
+photorealistic motion. Current corpse registries have no automatic time/distance disappearance;
+root's current KIA state review passed, but its very dark image does not prove visual corpse
+persistence. Old video observations cannot yet be attributed to a particular failure.
+
+
+Build18 source checkpoint correction: a CPU-only exact-source audit rejected the first
+vertical-only crouch filter because it admitted no normal racks under the old floor envelope.
+That incomplete checkpoint was not accepted as gameplay proof. The corrected solver adds
+bounded forward flex about the original Spine_1 joint (0..0.5 rad) and chooses the matching two
+brass grips, then solves the same original-length arm reach and planted-foot crouch interval.
+The independent numeric audit admits actual source IDs 41, 47, 50, 53 and 62 at zero traverse;
+source50 uses 0.479 m crouch / 0.25 rad waist flex, source53 0.445 m / 0.10 rad. A new actual
+SHELL_SLOTS invariant verifies these five contacts using the source rig. This checkpoint still
+awaits root's compiled tests and GPU witness. Hand reassignment and changing waist targets are
+bounded kinematics; smooth regrasp/finger motion remains unfinished.
+
+
+### Build18 loader v2 GPU witness reviewed (2026-10-30)
+
+Evidence: `captures/crew_loader_balance_20261030_v2_manifest.json` and matching `.mp4`.
+Five outcome checks passed: one shot, rack 64 -> 63, all represented live ammunition
+161 -> 160, loaded breech, living tank. The load cycle completed by the 8-second receipt.
+Case index 0 was explicitly owned for stow at 2 and 3 seconds. The 5-second low-rack carry
+reported 0.3243 m crouch and zero hand error, replacing v1's 9.4 cm hand miss.
+
+Inspected native-video extractions at 2/5/7/9/13 seconds, saved flat as
+`captures/crew_loader_balance_20261030_v2_frame02.png`, `_frame05.png`, `_frame07.png`,
+`_frame09.png` and `_frame13.png`. At 2 seconds both arms accompany the case; at 5 seconds
+the loader crouches toward the low rack, with the hands substantially hidden by foreground
+crew; at 7 seconds both arms extend at the breech; at 9 seconds he stands at his periscope;
+at 13 seconds one arm bends toward a bracing contact. No obvious severe mesh failure was
+visible in these views. The camera does not expose the feet/knees, and foreground body
+overlap prevents a clean whole-body clipping verdict. Stills alone do not establish smooth
+transitions, planted gait, realistic fingers, or believable turning/regrasp.
+
+The receipt contains 16 active loader-hand observations over 10 one-second samples, all
+reported as zero error. This is explicitly NOT a continuous-contact guarantee: the metric
+compares each solved endpoint with its stored pose-time target, while source poses are
+sampled at up to 30 Hz. It does not independently measure every intervening frame against
+the current moving cartridge or test collision with the breech/other crew. Transient lag,
+phase-transition pops, and finger/whole-body interference remain unproven. Build19's focused
+CPU run passed all 13 arm/balance checks, including the three private-source tests explicitly
+enabled with `--include-ignored` (`artifacts/expedition-20261030/focused-tests-19.log`).
+No runtime changes were made during this review.
+
+### Rolled vehicle support and combat targeting review (2026-10-30)
+
+The original overturned-vehicle fallback integrated vertical gravity but froze the rolled angle.
+The 2026-10-31 correction uses deduplicated drawn hull/turret source vertices to form the contact
+polygon and applies gravity about its nearest support edge when the estimated centre of mass is
+outside that polygon. A separated turret is excluded from hull support. Traction remains disabled.
+This is bounded high-friction settling: heading is fixed, contact is inelastic, the existing
+vehicle-spec COM and box inertia are estimates, and the COM estimate does not yet change after
+turret loss. Sliding, full crash dynamics, barrel digging and deformation remain unsolved.
+Angular substeps are at most 1/120 s and 10 mm travel at the farthest source point; new contact is
+bisected 12 times with a 1 mm numerical contact band. Build44 native rollover regressions pass.
+Build46 preserves every source vertex/contact while accelerating the unchanged support query with
+an exact source-point BVH and conservative terrain rectangle bounds. The private Tiger receipt
+uses 1,610,800 hull and 185,854 turret vertices. Flat support query/120Hz step improved from
+27.617/81.123 ms to 0.083/0.169 ms; uneven grid from 26.730/81.260 to 0.173/0.464 ms. Detail plus
+crater initially cost 5.905/12.374 ms (down from 86.045/248.568 ms). Build47's exact terrain-range
+cache reduces the same detail step to 1.679 ms while preserving source equivalence. These are
+native CPU fixtures, not game FPS claims.
+All five BVH regressions and exact maximum/contact identity checks pass; no point decimation.
+Source triangle edges can be as large as 5.449 m, so accelerating the point query does not remove
+its between-vertex terrain-contact limitation. Current source load/BVH preparation is 949 ms.
+Visual validation remains pending. The older witness below validates only the superseded vertical
+contact fallback.
+The source-vertex versus heightfield support test is a discrete contact approximation, not swept
+triangle/terrain collision. The deliberately inverted 20-second witness
+`captures/vehicle_inverted_fix_20261030_b.json` records no horizontal travel, no shots and no source
+support penetration. It does not prove a naturally occurring crash or every terrain case.
+
+Incapacitated/overturned AI cannot lay or fire: this is an explicit crew-control design rule, not a
+claim that inversion mechanically prevents every gun discharge. Approach/hold/reverse combat range
+is authored doctrine. Brawl movement, aiming and visibility now select the same eligible opposing
+vehicle; ordinary detection, gun alignment, ammunition and reload checks still govern shots.
+`captures/vehicle_brawl_fix_20261030_b.json` records three shots and three knockouts over 90 seconds.
+Its video renders one frame per simulated second at 12x playback; it is an outcome/motion witness,
+not real-time pacing evidence. Focused target, range, support and incapacity CPU checks pass in build19.
+
+### Source-grounded rocks, released trees and stationary wrecks (2026-10-31)
+
+Initial independent loose rocks now admit only closed source meshes with a uniform-solid-density
+COM estimate. Candidate source faces supply possible resting orientations. Projected source and
+terrain triangle intersections determine vertical support over whole faces; the source COM must
+be supported by a nonzero-area contact polygon. The near-contact band is 5 mm, with a separately
+computed f32 placement allowance. This is a bounded static placement test, not a settling
+simulation: at most 512 source triangles, 4096 terrain cells and 32768 triangle pairs per candidate,
+four cached source orientations. Unsupported, open, over-budget or opening-crossing candidates
+are rejected. `scatter_field` rechecks the actual packed quaternion/scale before rendering and
+collision receive the same transform. Rooted trees, furniture and rigid authored tableaux are
+excluded from this independent-rock rule. Build44 integrates manifest admission and six native
+source-grounding tests pass, including a 5.25 km translation. Visual validation remains pending;
+no claim that every decorative wreck has been corrected.
+
+The rooted-hinge candidate failed actual Pine validation: its tapered, buried root extended
+6.3 mm beyond the soil intersection, jamming the visible trunk at 5.7 degrees. The replacement
+releases the entire original mesh into the same source-sampled rigid contact solver as loose props.
+It does not delete buried points or add root penetration allowances. Initial source burial is
+projected out and measured (the actual fixture starts 25 mm deep); soil excavation/root deformation
+is NOT modeled. Build47 showed that a constant 0.35 rad/s COM-only kick could be physically arrested by the flat
+base. The replacement release estimate uses 5% of existing failure/bending work per estimated
+stem mass, with a minimum of twice the actual source COM-over-support-edge potential barrier.
+It initializes consistent angular and COM velocity about the actual forward support edge; that
+edge starts at zero velocity instead of being driven into soil. Shot/blast transfer remains an
+explicit estimate because those legacy APIs provide direction without momentum. Subsequent
+position/orientation come from gravity,
+source contact reactions, friction and estimated uniform thin-shell mass/inertia. Whole foliage
+remains rigid/load-bearing; this is not a wood-fracture or compliant-branch simulation.
+
+Source surface samples target 160 mm edges, with refinement enlarged if its 8192-sample budget
+would be exceeded; original triangle vertices remain. Measured maximum spacing is emitted in
+receipts. Integration is at most 1/120 s and 40 mm sampled-point travel; the contact band is 2 mm.
+These are spatial discretization bounds, not a vertical terrain-error bound. Ground peaks between
+samples and object/object contact remain unsolved. Sleep requires low motion, friction feasibility
+and COM inside a genuine support polygon, never elapsed fall time or a terminal angle. Actual
+contact points drive thuds, limited to one sound per 250 ms rather than two impacts for life.
+Settled trees recheck source support after actual detail crater/rut revisions or changed openings;
+coarse-only grids lack an immutable revision contract and are rechecked directly. No hidden
+ground certificate survives world restoration. The original tree record layout remains intact;
+the optional versioned released_motion_v1 packet saves full velocities, rotation and contact age.
+Legacy falling saves retain their uploaded pose and explicitly migrate because they had no saved
+velocity. Build47 passed save continuation and removed-support wake, but flat Pine/toy toppling failed
+until the release correction above. The old 8 cm final-trajectory translation assertion was not
+a physical invariant: the near/far f32 analytic callbacks differ by 48.5 micrometres in height and
+0.001146 in unit normal. New tests separately require bit-identical local motion under identical
+inputs, and clear/stable source support under the actual quantized callbacks. Actual Pine, source
+release kinetic-work/root-velocity and corrected grade tests passed in build48 (six tree tests).
+Actual Pine terminal angles were 1.940, 1.689 and 1.499 radians on -20%, flat and +20% grades;
+all sampled points remained clear and the bodies reached supported rest. The quantized translated
+case finished 34.3 mm apart, while identical local-input motion was bit-identical. This validates
+the stated discrete solver, not continuous triangle/soil contact or full branch mechanics.
+
+Dead upright AI now have a dedicated settle_wreck entry point to advance the existing suspension
+once per host step, preserving damage while allowing a stationary hull to fall after support is
+removed. Ordinary contact re-projection stays separate. Game integration and the native regression
+pass in build44. Loose scatter now uses final rotated source samples and contact torque; fixed
+minimum-box clearance and unconditional 4.5 s sleep were removed. It uses the same stated source
+sampling/mass estimates and support/friction sleep rule. Object/object collision and waking old
+sleeping scatter after changed terrain remain unresolved; tall hinged scatter retains its older
+prescribed hinge. Build48 loose-prop and half-decoded rock-scale regressions pass.
+
+Detached turrets require a stable actual contact polygon before sleeping and recheck support
+each settled tick. Their support-only source cache aligns triangle winding to authored normals;
+unreliable normals fail closed. This fixed build45's inward-wound box top/underside error; five
+build46 turret fixtures pass. The actual T34 still failed 12-second settling, and translated
+trajectories differed 0.628 m: sleep certification alone did not repair its old single-average-point
+response. The build47 correction distributes impulses/friction over actual manifold vertices,
+preserving the 1 mm response and 4 mm rest bands. Exact transformed source bounds skip impossible
+hull sweeps; no proxy provides a contact. Actual turret source has 21,376 samples with 0.1793 m maximum sample edge. Build47 manifold/broadphase
+reduced the actual source step to 3.061 ms and translated drift from 0.628 m to 0.003354 m, but rest still
+failed. A subsequent causal fix removes phantom lift: signed source separation is now offset by
+the existing 2 mm target before clamping, rather than adding 2 mm even to an already-clear point.
+A dynamic plate regression checks that the unchanged 4 mm rest band stays engaged. All nine
+native build48 turret fixtures pass. The actual T34 stabilized with zero terminal velocity/spin;
+1,153 active steps averaged 3.562 ms in the CPU fixture. Near/far final displacement differed
+2.383 mm. No persisted body fields changed. Moving-carrier
+continuous collision and compliant impact remain unsolved. The new manifold/friction/source
+tests and active cost receipt await native validation; no complete six-axis solver claim.
+
+Static decorative wrecks remain a separate unresolved path. The current canyon launcher manifest
+has316 battlefield/canyon wreck placements (232 authored tilts); The March has none. They are not
+the retained Tiger/T34 Gen recipe. Some tableaux deliberately bury/mire or arrange compound pieces.
+Exact source/placement ownership inventory is in
+artifacts/static-wreck-grounding-20261031/manifest_wreck_inventory.json. The generic cached-source equilibrium/admission is now registered in the actual Game manifest
+loop before rendering, walking, salvage and collision consume the shared page transform. Metadata
+ownership identifies264 independent candidates and preserves52 horse/cart/sledge associations;
+explicit mechanical assemblies, burial flags and unrecognized hand edits retain their owner poses.
+Every source vertex and triangle remains. The COM uses an explicitly estimated uniform thin-shell
+area distribution. Orientation search is bounded to12 degrees from the authored pose; build56
+uses96 descent proposals plus two8-proposal authoring neighborhoods (112 total).
+The 5 mm contact band and 10 mm COM inset gate acceptance. Affine terrain receives a conservative
+whole-footprint certificate; rough terrain clips actual low source faces against terrain triangles
+(maximum 250,000 pairs, 65,536 contacts/nodes, 100,000 source triangles). Geometry failures retain and
+report the unresolved original rather than deleting it or claiming it is supported. Optional
+KESSEL_GROUND_SUPPORT_RECEIPT writes a create-new per-index JSON receipt. Build47 ownership and five generic face/support tests passed, but native KV1 admission failed
+because separate pitch/roll coordinate descent stuck on diagonal track supports. The corrected
+search also follows coupled gravity descent about the actual source support edge, without
+changing its caps or contact margins. Build48's eight native source tests passed. The actual
+build49 Canyon receipt admits 124 of 264 independent wrecks, retaining 140 unresolved originals
+(83 Unstable, 35 SearchBudget, 22 UnsupportedAfterClearance) and 109 cart/sledge/horse assembly
+members. Manifest preparation took 46.478 seconds, including all prototype work. The close image
+of source index269 plausibly shows the admitted KV-1 resting on its tracks; index260 in the first
+overview remains unresolved and must not be presented as corrected. Later face-contact refinement
+feeds actual clipped source points back into descent. Build51 diagnoses a separate search/final
+clearance mismatch and reserves the measured allowance in both contact selection and the gravity
+guide. Build52 preserves the converged step across small refinements; its actual map receipt admits
+142 wrecks, retains122 unresolved originals and109 assemblies, and separately preserves43 authored
+embedded rock formations. Preparation took62.953seconds including all prototype work. Index260
+still fails its10mm inset. The build53 test-only full-face scan finds9 certified same-XZ nearby
+orientations out of58 samples; none is downhill from the rejected pose. The lowest certified
+sample raises represented COM by0.19455mm and has224.925mm inset. This supports a tiny initial
+authoring adjustment, not a claim of gravity-driven motion. Pending build54 reserves8 of96 queries
+for8 fixed radius/contact-band-derived neighbors, sharing the250,000 face-pair cap. Full original
+face clearance,10mm inset,5mm band and12-degree original-pose bound remain unchanged. Every source
+vertex's total displacement from the rejected face-fitted pose, including height adjustment, is
+limited to5mm. A resulting receipt explicitly labels `nearby_full_face_certified_authoring_pose`;
+it does not certify neighboring-prop collision or a swept falling/sliding path. Native260 remains
+a required assertion. All14 build54 static tests passed, including native260 at95 queries and
+23,282 face pairs. Actual54 admits143 and retains121 unresolved originals, but loses previously
+safe11962/12521 while gaining260/1248/11689. Both regressions previously needed96 descent queries;
+the88+8 reserve caused that loss. Pending55 explicitly restores96 descent proposals plus8 separate
+authoring proposals (104 total), retaining the250,000 face-pair cap and every geometric gate.
+Receipts split descent/authoring/total counts and expose their limits. Native55 restores both
+96-query placements and11689, but1248 loses its earlier certified neighborhood. Pending56 saves
+the best pose atquery88 while running96 descent only once; if the final eight-neighbor phase fails,
+it re-certifies that saved pose and tries the same eight neighbors. The explicit maximum becomes
+112 proposals, with one separately counted saved-pose face certificate, all within the unchanged
+250,000 face-pair budget. Saved-reference query88 is recorded with any resulting5mm source-movement
+bound. No index-specific transforms or physics thresholds are used. The five known-safe native
+fixtures and both-neighborhood narrow-peak rejection pass in native56:15 focused tests passed,
+0 failed (`foundation_b56_static.log`). Actual57 reports146 admitted,118 unresolved (93Unstable,
+25SearchBudget),109 preserved owners and43 embedded formations. Exact source-identity comparison
+retains all145 prior52/54 admissions with zero losses; owner identity/reason sets and formation
+records are unchanged.1248 uses112 proposals/197,412 pairs at the saved88-query reference;
+11962/12521 retain96-query descent-only results.11794 is one new admission. Observed maxima112
+proposals/250,000 pairs respect the disclosed bounds. The51.678s preparation includes prototype
+work and is not an FPS or isolated solver claim. Comparison receipt:
+`artifacts/expedition-20261030/ground_canyon_b57_admission_comparison.json`.
+This remains partial coverage:118 unresolved original poses are retained, not hidden or certified.
+The source-overturned sledge requires more than 12 degrees and remains an explicit safe
+rejection. These are partial coverage results, not a claim that all decorative wrecks are grounded.
+This handles initial independent placement only, not dynamic settling of decorative wrecks after
+later terrain changes. Editor preview is not yet updated to match this Game admission step.
+
+### Bounded camp dressing and stocked shelves (2026-10-30)
+
+Camp approach dressing uses existing source instances, eight metres of clear vehicle corridor,
+source obstacles and terrain support samples. Disconnected requested endpoints now fall back to a
+reachable endpoint without relaxing those exclusions. The actual camp seed retained 146 objects,
+including 27 pushables, after final world cover insertion (`live-camp-v4.log`). Objects at or below
+25 cm are treated as traversable visual debris. Larger accepted props use the existing source-bounds
+pushable collision, not exact triangle contact; this approximation must not be described as a fully
+physical rubble bed. Only the bounded approach is dressed, and incremental frame cost is unmeasured.
+
+Medical/ammunition case placement measures real shelf decks and source case bottoms rather than
+using guessed heights; the private-source support regression passes. This static fit does not imply
+dynamic stacking. Stock counts remain finite and unchanged. The live medical review passes six
+bedside checks with explicitly staged delivery, not a complete casualty rescue. The medical stock
+view remains dark/noisy and the ammunition doorway is occluded by personnel; visual acceptance of
+all stock, patient poses and complete camp activity remains open.
+
+Source-20 additionally rejects any prop whose entire transformed footprint plus the existing
+0.15 m obstacle clearance lies beyond the covered obstacle query. The new edge regression passes.
+The independent v5 run still retains all 146 pieces/27 pushables and passes all six bedside checks;
+approach/medical/ammunition images are byte-identical to v4. No performance conclusion is implied.
+
+
+### Recovery source checkpoint (2026-10-30; execution pending)
+
+The generic transport now has an authored lower hinge on fourteen retained rear-panel source
+triangles. Render and contact share those faces, but the historical hinge behavior is not sourced.
+Finite workshop items and body identities remain single-owned during timed cargo/lift procedures.
+The handoff documents source-rig passenger routes, bounded collision, exact snapshot ownership,
+and explicit limits. The authored180kg wheeled recovery rig uses disclosed fictional ratings;
+it does not grant the light transport a Tiger tow capacity. No historical winch performance,
+continuous cable dynamics, locked-track recovery, turret hoisting or complete vehicle damage is
+claimed. Current code parses; pending root compile/tests and `recovery-gameplay-review` remain
+required before calling this connected loop verified.
+
+Field and passenger bullet contacts use posed source triangles and skin-weight body ownership.
+Their first injury transfers the same finite person to the existing Casualty/retained-body owner.
+This avoids a second HP pool but currently suspends autonomous duties even after a minor wound.
+Original eleven-segment ragdoll approximations and sampled animation remain; no new medical,
+ballistic or continuous whole-body accuracy is claimed. The transport has no validated armor
+simulation, and field reserves do not yet become separate priority targets for enemy AI.
+
+
+### Build26 follow-up checkpoint: finite refuelling and carrier mobility damage
+
+Source parse reviewed; this follow-up has **not yet been compiled or run**. Root owns the next
+serial build and `recovery-gameplay-review` run. The earlier build26 binary does not contain it.
+
+- Carrier and winch each have a visible authored filler cap with the same geometry used for
+  picking. The carrier cap mounts on an actual outward source cab triangle (local centre near
+  -0.93,1.373,0.66); the winch cap sits on its authored motor housing. These are disclosed
+  prototype additions, not evidence of a historical filler location. Targeting checks the real
+  carrier, kit, Tiger and world surfaces for obstruction.
+- A held existing jerrycan transfers up to0.8L/s with LMB held, capped at40L carrier /5L winch.
+  Releasing LMB, moving aim away, boarding, moving the carrier or an empty can stops transfer.
+  The exact destination fuel and active pour target/timer are binary-saved. The can remains the
+  same Pickup/PortableItem saved by the complete world owner. No camp refill occurs.
+- The can uses an assisted tilted handling pose near the filler. Its spout has not been measured
+  against the source and there is no fluid simulation; do not describe this as a fully rigged
+  hand/spout contact animation. Added CPU conservation/capacity/pause test and live harness
+  carrier/winch fill phases. The harness explicitly stages each destination0.5L below capacity
+  and equips an existing can; it neither duplicates nor refills that can.
+- Fixed an existing finite-resource bug: `PortableItem::drain_fuel_liters` used to discard a
+  positive remainder of0.01L or less. It now retains every positive remainder.
+- Authoritative projectile travel queries actual source carrier faces. Hits on front wheel
+  parts (10kJ) and running gear parts (25kJ) disable motion; an actual front bonnet hit (500kJ,
+  localz>1.2) disables a disclosed **engine-bay proxy**. These are authored gameplay thresholds,
+  not calibrated historical damage or FEA. The source has no internal engine. Recent projectile
+  identity/part masks prevent counting one flight segment repeatedly and are saved exactly.
+- Carrier skin still does not absorb projectile energy or provide calibrated armor. Passengers
+  are not in a magical safe room. Carrier mobility damage currently has no repair operation;
+  no claim that these flags can be reset by refuelling or camp return. Actual source damage
+  does not alter the intact rendered mesh yet.
+
+New focused filter: `carrier_damage_tests`. `halftrack_runtime::recovery::tests` now includes
+metered fuel conservation and pause/capacity checks. Recovery-state validation additionally
+rejects duplicate bays, conflicting people/cargo, nonfinite cable hooks and overfull fuel.
+
+
+Build26 recovery review found the original14-triangle tailgate extraction incorrect: it moved
+only the inner skin, leaving the outer panel and its reinforcing strips blocking the visible
+winch. The corrected bounded source selection moves all78 rear-panel triangles (inner/outer
+skins, top and attached latch/strip geometry); no triangle is deleted. CPU source survey proves
+that the formerly blocked rear-to-winch line clears with this panel open. An ignored private
+source test `complete_source_rear_panel_opens_real_loading_line` asserts the closed/open ray,
+exact78-face admission and total triangle conservation. Runtime visual retry is still required.
+
+
+### Spatial theatre climate checkpoint (source only; next root build pending)
+
+`Renderer::theatre_weather` is an explicit persisted flag set from the actual continuous
+TheatreRuntime. It uses unused existing uniform lanes, so GPU buffer sizes do not change.
+`weather_density.wgsl` is now the one pure field source assembled into both raster optical
+weather and raymarch pipelines. CPU WeatherView uses the corresponding function. Winter weight
+is smoothstep(600,2600,-worldZ): full southern clarity beforeZ=-600, full winter afterZ=-2600.
+Southern aerosol extinction is0.00012/m; northern density retains the existing winter-front
+coefficient and drifting banks. The transition stays fixed on the map while banks advect.
+Raymarch theatre mode bypasses its old globally winter spindrift/fog-bank formulation so its
+field matches the CPU/raster calculation; the old path is unchanged in legacy acts.
+
+Snow particle identities are thinned at each actual particle world position, not at the camera.
+Terrain material mood and terrain snow glitter use the same fixed gradient. Optical sources,
+AI recognition and camera rays all sample the geographical field. Global overhead clouds/sky
+remain shared; this does not claim three independent weather simulations or seasons. Snow
+cover on vehicles, ground friction and physiology have not been expanded into climate models.
+The southern aerosol and transition distances are authored gameplay values, not historical
+weather reconstruction.
+
+Source parsing passed; shader validation and GPU images remain root-owned and pending. New
+CPU filters: `weather_visibility::tests` and `regional_weather_tests`. Root should also run the
+existing raster and raymarch shader-validation suites because shared function signatures changed.
+No Cargo/test/GPU command has been run by this agent.
+
+### Workshop build27 source checkpoint — cooling assets and recovery gates
+
+Build26 `workshop-gameplay-review` passed the actual healthy native optical component path
+(release, withdraw, insert, secure, test) with identity and old/new source-contact checks in
+`captures/workshop_gameplay_20261030_b26a.json`. This is evidence for that bounded path only.
+The new damaged-replacement review uses the current theatre, explicitly stages one finite spare
+and one source-confirmed damage contact, and preserves the discarded damaged original. Its
+build27 runtime result remains pending. Spare vision-block canonical transforms now correctly
+undo the source block0 mount before fitting another mount.
+
+The source owner now uses47 finite banks,24 mounts and72 contact frames. Six original named
+cooling solids are removed by exact triangle multiset: Hull1102/1103 fans and1115/1125/1116/1126
+grilles.12 private derivative GLBs and `catalog/tiger_workshop_cooling.v1.json` document the
+source hash, topology and geometry changes. Original fan blades were fused to the support plate.
+The derivative creates capped blade-tip/frame cuts with a measured minimum radial clearance of
+1.482mm. It does not rotate the support plate. The original files are preserved; each derivative
+is closed, consistently wound, positive-volume, with zero nonmanifold/boundary/degenerate faces.
+These facts do not establish a service extraction path.
+
+**Real obstruction found:** removing both grilles still leaves a straight fan lift intersecting
+source plenums/deck after about12mm. Runtime blocks cassette withdrawal rather than passing the
+component through that geometry. Additional disassembly/path investigation is ongoing. Grille
+and cassette contacts are catalogued exposed source triangle centroids. Removal uses grouped
+retainers and assisted object poses; it is not a bolt/thread or full rigid-body manipulation solver.
+
+Four native rotors and four spare-cassette rotors have their own rendered and collision transforms.
+Uncommissioned banks are absent from collision/acoustics. Native drive ratio1.0 and alternate1.15
+are declared engineering assumptions; the wartime report establishes increased fan RPM, not
+these exact ratios or an identified interchangeable kit. The spare's external casing is the same
+source derivative; no separately modeled internal gearbox teeth are claimed. Fan affinity laws
+produce linear flow and cubic shaft demand. The existing Powertrain deducts that actual demand
+before gearing and from the same steering budget. Zero demand retains previous behavior.
+
+The serializable two-node engine/coolant model conserves stored heat and records ambient loss,
+finite leakage and boiling. Its120kg initial coolant corresponds to a120L approximation; heat
+capacities, pump/radiator conductance, failure exposure and20C ambient are explicit engineering
+estimates, not calibrated Maybach data. Natural radiator cooling is an estimated150W/K and uses
+no fictitious fan motion or shaft power. There is no coolant-pressure, oil, freeze or CFD solver.
+Existing fuel consumption remains independently authored; there is no measured fuel/heat map.
+Powertrain accessory coupling uses the preceding ordinary frame (roughly16ms at60Hz).
+
+**Release gate:** `LIVE_THERMAL_SERVICE_READY` is false in every preset. Rotor rotation is
+kinematic presentation only. Candidate fan loads are evaluated for the diagnostic receipt,
+but both their drivetrain debit and thermal time are gated off together. Coolant loss and
+irreversible overheating do not advance. This prevents a destroyed fan from improving driving
+while its heating consequence is unavailable. A regression compares healthy/damaged fan
+calculations and ten seconds of ordinary driving/steering through this same release boundary.
+A finite coolant refill and recoverable engine service path must be playable before enabling
+these failures. This is explicitly incomplete; a constant current coolant display is not proof
+of live heat simulation. Do not describe a finished physical cooling upgrade or full powertrain
+repair loop. The existing source-supported authored digital fuel face also presents coolant C;
+it is not a claimed historical instrument reconstruction.
+
+Whole-world `workshop.runtime` owner is version2: cooling state/last sample/rotor phases join all
+47 poses, finite parts, partial jobs, tool and input latches. The central required-owner version
+must reject version1 binary layouts. New source tests cover six-root conservation, handed
+replacement compatibility and stock exhaustion; six thermal tests and three accessory-power
+regressions await the root's serialized test run.13 manual spreads cover the implemented optical,
+track, lamp and cargo procedures plus current cooling-access limits. Build27's actual workshop
+review passed51checks, including a damaged optical part retained on the ground and a finite
+replacement fitted through ordinary input. Build29 adds a separate physical lamp installation,
+switch and battery witness; that witness and the new coupled-gate regression remain pending.
+
+### Recovery continuation checkpoint after build27, awaiting build28
+
+Build27 ordinary recovery actions passed the staged review: the full78-triangle rear gate
+opened; winch lowering, real-source cable attachment, casualty loading/unloading, spare cargo,
+finite identity, and same-Tiger remount all passed. The rated winch moved the Tiger0.675m,
+spent5.007mL, and demanded44.93kN against102kN available. This is an interaction/state witness,
+not historical certification. Its sole fuel-test failure was an absent can: isolated scenes
+clear legacy pickup records. Theatre initialization now clones the still-preallocated genuine
+jerry-can mesh, supplies the depot cans and eight finite camp cans, and retains every remaining
+litre in ordinary PortableItem state. Build28 must verify that correction.
+
+New carrier field-service is explicitly a fictional prototype: four visible12kg service packs,
+existing physical toolbox, actual source wheel/running-gear/bonnet picking, and20/40/60-second
+held work. A pack is consumed only on completion; interrupted work remains, and all state is
+saved. The source has no internal engine, so bonnet service must not be called mechanical engine
+disassembly. The current pack moves to a service staging pose by assisted placement; hand carrying,
+fastener animation and pack-specific collision are not yet implemented. No free camp refill.
+
+New replacement boarding keeps the same finite PersonId as a source field body along a bounded
+route. Actual source-support queries plan hull/turret steps; every movement sweeps the source
+body vertices through the Tiger and world. Open-hatch and stationary-Tiger requirements persist.
+Arrival alone binds a new station controller and imports the same person's casualty state.
+Injury during ascent uses the existing retained-field-body owner. New arrivals keep1.05 stature;
+driver/radio roots retain the original ankle anchor rather than shrinking to the old0.80 scale.
+Source idle/seated blends move along the route; hand-over-hand grip animation is NOT authored.
+The route has not yet passed actual-source runtime proof and may correctly stop at a fit conflict.
+Do not call this a complete working boarding loop until that test passes. Multi-person body
+contact along boarding and cancel/re-route UX remain review items. All of these statements are
+source-level checkpoint status; build28 and full-world save roundtrip are pending root.
+
+### Boarding posture checkpoint after build29 (2026-10-30)
+
+The build29 witness stopped at a fixture panic before evaluating any route: clearing the soldier vector invalidated mixed-combat source indices. The review now preserves the entire array, disables mixed combat, and marks those fixture soldiers inactive. This correction is not evidence of boarding success.
+
+`crew_hatch_posture.rs` now crouches at the original leg joints while keeping the base ankle targets, tilts at the source waist, and raises the forearms using the original two-link lengths. The same 914 weighted source vertices drive rendering and the existing vertex-sweep contact admission; the same joint matrices drive field-person injury anatomy. No stature reduction, hatch enlargement or collision bypass was added. Descent is subdivided into 10 cm route samples with seated posture blending. Tuck is persisted in transport.recovery owner v3 and restored at zero time. The new ignored private-source test checks original limb lengths, ankle targets and unchanged UVs. It still needs root execution.
+
+Receipts now include the actual route target, standing/tuck amount, and source-frame/local/world position of a blocked vertex path. Exact 564-triangle continuous deforming-mesh collision is not claimed: admission still samples moving source vertices, with the existing source-derived anatomical bounds for other cabin occupants. Hand-to-rung constraints and reverse/cancel routing are still absent. Runtime fit must be decided by the next actual source witness.
+### Build30 boarding/service result and follow-up
+
+Actual private-source test `hatch_posture_keeps_original_limb_lengths_and_ankle_support` passed, as did four boarding owner/stature/broadphase tests. `replacement_boarding_20261030_b30a.json` shows normal carrier bonnet service passed, preserved partial work across transport owner restore, and consumed exactly one finite pack. It does not show successful replacement boarding: the driver stopped at the actual front hull at local(1.511,1.967,2.497) while crossing diagonally from the lower fender; the loader's rear-deck first step exceeded the existing 1.90m climb reach.
+
+The follow-up routes both roles via the actual front fender, lifts before crossing the front roof, and routes around the raised original loader lid. Aperture centering measures opposite original source surfaces; descent placement centers the actual weighted mesh section through three roof-height planes. These are planned body translations, not expanded holes, scaled people, or contact waivers. The actual source sweep remains the final gate. A downward roof crossing can no longer take the old broad toe-support exemption. Runtime success remains pending the next review.
+
+Camp relocation also now moves the actual loaded patient segments/centers in the same transition, preserves severed world pieces, refreshes cargo and recovery meshes, and defers while a replacement is boarding. Stowed equipment follows the carrier; deployed anchors retain their world coordinates. This fixes the prior one-frame/save discrepancy between relocated transport and retained patient bodies.
+Additional source survey: `boarding_measured_apertures.json` measures the driver opening centre at +15.568 mm X from its interaction anchor. The loader opening is an oval approximately 0.553 m across X and 0.385 m fore/aft at the sampled lower roof planes. The loader now descends facing forward so his shoulders use the wide axis, then turns toward the breech below the roof and lowers his arms at the working post. This uses the original opening; its narrower axis is not expanded. The follow-up remains awaiting actual route verification.
+### Engine access runtime checkpoint after build31
+
+The visible engine leaf, its attached handles/covers, and its three articulated latches now
+register as the same source triangles in rendering, acoustic contact and projectile contact.
+The unchanged two carrier hardware objects are finite workshop banks47/48 (mounts24/25).
+Workshop owner version3 persists their ownership plus leaf/latch fractions and held-action grip;
+source frame capacity is80, with the four cover assemblies at73–76. The original assets remain
+unchanged; catalogued closed-mesh service derivatives retain their measured source changes.
+
+The candidate controller admits rigid rotation using actual source triangles, one-millimetre
+maximum corner substeps and an arc-sagitta envelope. Its SAT contact query is conservative,
+not a continuous exact rigid-body/contact-force solver; finite-axis padding can reject a clear
+path. Arithmetic admission uses a declared38.15micrometre local f32 transform error bound.
+An initially fitted seam may separate only with an analytical outward-motion proof. Closing
+may return only to the catalog's original zero stop with that same proof run in reverse;
+this does not authorize an intermediate collision or over-insertion. Carrier paths use actual
+source triangles and their documented piecewise translations. Hand alignment remains the
+existing assisted component interaction, not a simulated free-body manipulator.
+
+Ordinary turret traverse and gun elevation now test the raised source cover with the same
+relative-motion admission. There is no invented forbidden yaw sector. Dynamic engine cover
+strikes classify as hull hardware even when above roof height. The controller and its review
+are awaiting the root's next build/run; catalog service remains disabled while build31 media
+loads the existing asset package. No cover gameplay success or engine exchange is claimed.
+
+Build31 passed32 focused workshop tests. Build30's actual workshop review now passes the
+lamp installation, source-lens emitter, finite battery drain, physical switch and saved battery
+checks after the ordinary Loader-side approach. These are separate from unreleased fan/engine
+service. The cooling thermal state and its accessory debit remain jointly release-gated;
+destroying a candidate fan cannot grant propulsion.
+
+### Engine access and ammunition service checkpoint after build33
+
+The source service catalog was enabled for the build32 review. That review did **not** pass:
+the first left latch remained at zero despite a valid ordinary held-input grip. The build33
+private-source CPU regression reproduces the same first-step contact and records its exact
+moving and obstacle triangles. Their common axial end plane has no fit clearance. The next
+source correction must change the visible derivative and its identical contact mesh; no
+tangential-contact exemption or hidden collider removal is authorized by this diagnosis.
+Fitted mechanism transforms now originate at the actual local joints, avoiding kilometre-scale
+world-position cancellation. This numerical correction alone did not clear the source test.
+
+Workshop owner version4 adds interrupted four-bank ammunition-stowage inspection to the
+existing finite parts, poses, access fractions and input latches. Actual source tray contacts,
+fresh held input, stationary access and fire-out are required. Inspection certifies the current
+aggregate post-fire ammunition service latch; it does not repair bent trays or replenish any
+round. A new fire or rack failure invalidates prior checks. Live ammunition remains vulnerable
+while that service latch is failed, and new ammunition intake is blocked until it is certified.
+Build33 CPU validation of these new actions is in progress; no ordinary gameplay witness of
+the four-bank inspection or cold recommission is claimed yet.
+
+The unregistered major-service cassette and engine-core derivatives remain preparation work.
+The cassette has a documented visible seam and measured source-volume mass estimate, but its
+retainers, lifting fixture and live finite-hoist ownership are not implemented. A complete engine
+extraction still intersects source attachments. There is no playable engine exchange, damaged
+fuel-system replacement, or general restoration of a destroyed Tiger at this checkpoint.
+
+Build33c subsequently passed the actual source sweep for all three latches. The two side locks
+now have measured150micrometre axial seating clearance, with unchanged pin axial lengths.
+The rear arm was rebuilt with solid Boolean cuts from the preserved nominal clevis: its
+19.7mm journal bore and23.8mm head envelope are real visible faces, not the earlier nonlinear
+vertex deformation that left a crossing cap face. The fixed journal/base is unchanged. The
+package's fifteen hashes/topology checks pass. Full lid opening/closing and ordinary gameplay
+remain separate pending checks; the successful latch test does not certify either one.
+
+Build34 source adds a narrow cold recommission path for the existing recoverable Expedition
+Tiger. A living embodied keeper must use the actual driver's starter, with safe inspected
+stowage, no burning source patches or ignited round, intact Engine/Fuel modules, positive finite
+fuel and shut/secured engine access. The existing1.8second crank is saved normally; readiness
+is checked throughout and only its successful completion releases the machine-disable latch.
+No component fault, casualty, cartridge, litre, scar or fatal record is reset. Failed unrelated
+systems continue to block their own functions. Compilation and the disclosed staged-loss
+review are pending; existing disabled-hull access/damage gates still require separate audit.
+
+Build34 passed the focused cold-start, engine, rack and manual CPU checks, but the first actual
+cold-review rack pose was blocked by the retained turret basket. Build35 changes only those
+disclosed inspection poses to other existing bounded floor positions: the source-confirmed
+reach stays1.17–1.54m, with no distance increase or source deletion. A full-cabin source regression
+now rejects the old poses and checks the new ones; the actual-world witness remains pending.
+New first-hit diagnostics distinguish the eye/target, source-local hit, world hit, normal and
+world obstacle. The first review did confirm that the starter refuses uncertified stowage.
+
+The full lid source sweep also found a fitted front-chamfer edge. Build35 extends the analytic
+departure proof to cardinal support planes of each actual finite obstacle triangle, restricted
+against its verified outward orientation. Every rotating corner must remain beyond that plane
+through the whole trigonometric interval and initially touching corners must depart strictly
+outward. Convexity then covers the complete moving face. This is not an endpoint-only waiver,
+and all other obstacle triangles are still checked. The existing38.15micrometre coordinate
+uncertainty is unchanged. Regression witnesses include the exact failed source pair, deeper or
+incoming contact, returning motion, and a second genuine collision. Independent numerical
+checks found no counterexample in12,000 intervals and1,433 admitted paths; this does not replace
+the pending full-source stroke test. No additional underside mesh cut was made.
+
+Build35 also keeps ordinary projectile and cartridge-fire consequences active for the original
+recoverable Expedition Tiger while its machine-disable latch is set. The exception does not
+apply to other dead vehicles. Catastrophic casualty handling in modes with actual crew actors
+retains the physical blast solver's affected identities instead of also marking every roster
+slot dead, including a keeper outside the tank. Finite live ammunition remains the detonation
+source. These corrections and their regressions await the root's serialized validation.
+
+The root's build35 tests subsequently passed twelve sweep regressions, five cold-start tests,
+five rack tests and five engine-operability tests. Its actual cold review passed fifteen checks,
+including all four ordinary held-input tray contacts and the driver's complete crank restoring
+the same hull, before a separate lazy corpse-pool layout problem stopped save/resume validation.
+That later failure does not certify continuation and is being handled by the crew/save owner.
+Manual hand-service is now a separate helper: the original alive-only actuation block remains
+intact, while the recoverable keeper can manipulate the existing finite rounds, casing and
+breech and collect physical tools. No automatic loading, drive or fire authority is released.
+The repair cue's matching visual-access correction is queued for build36.
+
+Build35's complete lid stroke clears the earlier fitted deck edge but stops at opening step25:
+the front plate meets retained rear-track carrier hardware `Turret_0141`, triangle271. The
+source match is within0.17micrometre. This is a genuine new obstruction, not an initially fitted
+seam. Nearby ordinary turret angles are under examination; no contact exemption or removal is
+granted by this result. Neither the full cover operation nor heavy engine exchange is complete.
+
+
+### Tiger fuel filler — build35 source checkpoint, pending native/live verification
+
+The instant rear-zone fuel refill is removed. `tiger_refuel.rs` uses two retained source cap meshes, real source-contact picking and a finite interrupted0.8L/s can transfer. The original Hull_0875 plug is retained; the fused Hull_0902 inner cap is separated and a visible45mm-radius blind receiving well is cut into its tank. Hull_0708 receives explicit visible deck clearances (upper radius98.25mm; eccentric inner-cap throat radius70.3mm); the original assets remain unchanged. Render/contact use the same admitted closed derivatives, with hashes/topology in `catalog/tiger_fuel_service.v1.json`. This is authored CAD reconstruction, not a claim these bores were historically measured.
+
+Guided translation paths use full-face source sweeps, including both caps and the remaining actual tank/turret, with bounded nonpenetrating fitted contact and100micrometre parked support clearance. Preliminary standalone CPU evidence passes all four complete motions; native Rust/live tests remain pending. Partial cap poses and pour work are retained in game.physical v3, while can contents and tank fuel stay with their existing owners. No separate valves, cap torque, liquid CFD, spilling or fuel leakage are claimed. The historical draft gives534L; this slice retains the existing540L gameplay calibration. See `docs/TIGER_FUEL_SERVICE_20261030.md` for provenance and exact limitations.
+
+Build35 compiled and all five native fuel tests passed. Build36 adds source-frame-to-world picking, translated/yawed source regressions and base-point downward source support for deck cans. The existing prop integrator still is not a general full-shape rigid-body solver; it now uses the actual Tiger triangle support instead of an invisible terrain-only drop through the hull. Live proof remains pending.
+
+### Living recovery threat — build36 source checkpoint
+
+Ordinary enemy stealth, gun lay, winter orders, movement and AT-gun target selection no longer treat a disabled Tiger as the end of a living keeper's exposure. They follow the actual controlled person or occupied carrier source bounds/velocity, while retaining LOS, weather recognition, spotting accumulation and first-shot delays. Carrier detection uses the existing authored vehicle envelope, explicitly not a measured signature; it no longer inherits a crouched foot silhouette or the abandoned Tiger's engine state. AT-gun Tiger weak-point selection applies only to the Tiger; other targets use their real world location and normal AP stock. The AT crew's anti-overrun cover rule is restricted to vehicles. Living seated crew also retain clothing-fire exposure after hull disable. CPU/live verification of these changes is pending.
+
+The carrier's existing projectile source-hit side effect could damage running gear but did not itself consume shell/bullet energy. The crew/transport owner is separately implementing actual source-material projectile contacts; this targeting change does not claim carrier armor resistance is complete.
+
+### 31 October renderer and first-person review
+
+The exact-zero optical-throughput candidate retains the physical entrance and depth occlusion;
+it omits only exterior/effect work whose existing radiance multiplier is exactly zero. Its
+same-build diagnostic baseline requires two explicit benchmark flags. The b37 commander fixture
+contains four nonzero optical entrances, so it demonstrates no work reduction or performance gain;
+its baseline and candidate reference images are pixel-identical. Ultra640 live-frame mean is
+about72ms including simulation, not a30/60FPS acceptance. Ultra1024 is about86ms. A separate
+single-sample diagnostic changes coverage quality and is not the default Ultra result.
+
+Build39 additionally candidates conservative per-instance optical frustum submission using
+source/grass envelopes and original instance ordinals. Main-view geometry, shadows, material,
+sampling and alpha rules are unchanged. Same-build counters, edge/wind/large-coordinate tests
+and matched image checks gate acceptance. See docs/OPTICAL_RENDER_WORK_AUDIT_20261031.md.
+
+The closed-hatch commander look-down extension changes orientation at the same source eye,
+with unchanged near plane and normal source occlusion. It does not claim new neck/body IK or
+a head-volume clearance solver. The capture follows existing cartridge/case hand targets using
+ordinary look input; intervening geometry remains visible. The b38 35-second arena fixture records
+two real discharges and one completed NPC reload, but dark hand contact cannot be visually
+certified. The combined180-second fixture ends in a real armour-versus-riflemen stalemate; it
+is not a last-man-standing success or an independent human playtest. Recordings are offline24FPS,
+not proof of live render speed. No hit, casualty or ammunition outcome is injected after staging.
+
+The two-front/three-rear lamp schematic uses individual actual source-wall facet mounts after
+the common plane failed native contact validation. Painted symbols remain source-projected;
+the assignment loom is visibly raised at the fittings. Source geometry and contact tolerances
+are unchanged. Build39 passed all five native panel tests and the complete headless panel
+review, including physical LMB selection, both wounded pulse phases, and the raised selection
+wire. The root visually inspected the two-front/three-rear source-mounted arrangement. This
+review stages casualty states and does not certify the full walking seat-transfer journey.
+
+The b39 per-instance optical candidate produced a pixel-identical reference but no speedup:
+70.924ms baseline versus72.133ms candidate, including simulation at640x360 Ultra on the4090.
+It is being retained only as an explicitly gated experiment, not a normal-play optimization.
+The b39 first-person recording retains two actual discharges and one completed reload. Its
+improved ordinary look direction exposes the cartridge and arms, but dark clothing/lighting
+still prevent certifying whole-body clearance or detailed hand contact from the footage.
+Near-zero hand endpoint errors are not proof of anatomical motion or collision correctness.
+
+Build40 passed all seven focused native checks for the two explicitly gated culling candidates
+and the expanded cabin-source registration. The terrain experiment retains original index
+order, winding and duplicate triangles; its reference is pixel-identical, but reducing optical
+terrain submission from8.37million to1.50million triangles did not improve this fixture's frame
+time (71.044ms baseline,71.754ms candidate). Both culling experiments remain disabled in normal
+play. The baseline still before/after the registration fix is also pixel-identical; that quiet
+view alone does not demonstrate the corrected installed work lamp under operating conditions.
+
+Printed GPU pass totals omit substantial environment-probe work in the earlier instrumentation.
+The unclassified render-time remainder must not be reported as measured CPU overhead. Build41
+adds diagnostic timestamps without changing work or pass boundaries. Fenced headless latency
+and ordinary overlapping CPU/GPU throughput must also remain separately labeled.
+
+Build42 now supplies the same-fixture two-frame throughput diagnostic with timestamps disabled,
+warmup fully drained and the final GPU wait included. The quiet commander fixture completes
+17.39frames/s at640x360 Ultra and14.52frames/s at1024x576 Ultra. The corresponding fenced640
+result is14.03frames/s, and its reference is pixel-identical to the queued result. This is a
+measurement-method distinction, not a new shipping renderer speedup; neither meets30FPS.
+
+The actual large-map fuel review exposed a world/local round-trip precision loss at the45mm
+receiving neck. The bound now uses the original hull-local first source contact, with no radius,
+reach or source-contact relaxation. Build42 passes both actual-source CPU checks and16of17
+live checks, including finite5L transfer,11-owner cold restore,12 exact continued ticks and
+keeper-death interruption. Final inner-cap closure stalls on a sub-micrometre residual before
+the exact endpoint. Build43 snaps a proposed path position to its directional endpoint only
+inside the existing38.15micrometre source uncertainty, and still checks the full swept motion.
+All three focused native checks pass, including a genuine intervening source obstruction;
+the complete live closing sequence remains pending at this checkpoint.
+
+The subsequent build43 gameplay run passes all19 fuel checks, including both complete cap
+closures. Five stills and the full state receipt remain under captures/tiger_refuel_20261031_b43*.
+The root's visual inspection found the downward diagnostic view exposes the player's own
+head/body and obscures the can/hand presentation. That capture has not been promoted as a
+certified normal first-person showcase; the ordinary view's visibility bracketing needs checking.
+Mechanical completion does not certify whole-body animation or first-person presentation.
+
+
+## Medical transport source correction - 2026-10-31, pending build45 proof
+
+The build43 medical journey remains a failure. Field care, loading and the approximately
+30m drive passed; the patient then jammed against the actual carrier bench/rear gate. The two
+side stretchers exceeded the original 1.0m aisle, and fixed 1.40m body-center placement put
+real flesh below the 1.04m cargo floor. First contact was the original bench at local x=-0.5,
+y=1.4445m, near z=-2.3125m.
+
+The candidate admits one centered 0.55m stretcher resting on that real floor. It measures the
+retained flesh minimum, preserves relative joints, and rejects poses that do not fit the aisle
+or intersect carrier source geometry. The complete original flesh is swept during withdrawal;
+the established supported height and aisle line remain until the entire body clears the actual
+open gate. The visible finite winch is also a body-contact surface and must be deployed and
+moved aside before loading. A clear loading-aisle prompt explains this requirement.
+
+Older saves with side/dual stretcher patients are explicitly rejected. No person is deleted,
+healed or silently repositioned for migration. Empty transports and independent injured seated
+passenger records keep their existing binary format. Four ordinary passenger seats are
+unchanged. Loading retains one actor-owned body and casualty, changing attachment ownership
+only; expedition location now follows its actual intermediate pose rather than the future berth.
+
+Both review harnesses deploy and push aside the same finite winch. The continuous medical
+review checks patient progress separately from helper progress, and requires complete flesh
+clearance before travelling to the tent. Rust parsing passed. New pure/private-source tests and
+a fresh end-to-end GPU journey await parent build45; no completed evacuation is claimed.
+
+Limits: the two-second assisted loading animation still interpolates to a source-clear endpoint
+without a full-path rigid-body sweep. Withdrawal translates the retained articulated pose; it is
+not a two-helper lifting simulation. Field care consumes real finite supplies but has no bandage
+hand animation. The build43 downward diagnostic view shows local chest/shoulders prominently;
+it does not by itself prove a duplicate head, and is not a finished first-person medical showcase.
+No view-only body removal was applied to conceal it.
+
+
+### Build46 candidate — staged patient lift and reusable winch clearance
+
+Build45's continuous medical witness failed before injury at the winch's sideways route; its
+receipt and video remain `captures/foundation_medical_20261031_b45.*`. The revised ordinary
+route walks around the anchored kit, takes its handle, pulls it aft clear of the real gate, then
+rolls it sideways. The kit is never removed or replaced. This route is pending live verification.
+
+The former unchecked two-second loading interpolation is replaced by saved, source-derived
+waypoints: withdraw, raise outside the gate, rotate/center, move inward, lower onto the one
+centered board. Original retained flesh triangles admit the complete route before ownership
+changes; each update checks the proposed interval against current carrier, winch, world and
+Tiger source triangles. Thin intersections use a conservative swept-triangle convex hull with
+an analytic rotation bound; ground remains the heightfield checked at <=2cm/1degree samples.
+No carrier floor is exempted. A blocked step preserves its actor, pose and timer. Helper reach
+is bounded against the actual retained source; this is an assisted rigid-pose animation, not
+a new physically simulated medic/lifting-arm animation. Detached limb behavior remains a
+limitation of the prior retained-body representation. These candidate checks are not yet a
+passed full medical trip.
+
+Transport owner v6 persists the exact waypoints and blocked-load state. Its typed v5 migration
+preserves all existing finite identities/resources, but explicitly rejects a v5 in-progress
+unchecked lift; legacy side/dual stretcher layouts remain explicitly incompatible. No patient
+is deleted, healed, stacked, or silently moved during migration. The passenger exit bridge
+only reports the actual existing passenger pose/readiness; ordinary exit remains authoritative.
+
+New source fixture placement uses the original retained geometry to start above real ground
+and entirely behind the open ramp. This is disclosed initial injury staging, not an escape
+from a failed gameplay collision. Both harnesses retain the actual finite winch in the field.
+
+
+### Build46 native source checks — confirmed, continuous evacuation still pending
+
+The parent-run build46 native suite passed all five pure `loading_sweep` cases, the private
+`centered_stretcher_fits_retained_source_flesh_and_withdraws_past_open_gate` case (including
+full staged loading and rejection of the obstructed old diagonal), and both the forward
+rearward-then-sideward and reverse winch routes against the reviewed original carrier source.
+These are source-fixture admission proofs, not a passed complete medical gameplay journey.
+
+The review now requires the same actor's lift timer/route to have actually finished before
+reporting loaded; attachment ownership alone is insufficient. A paused lift retains its failure
+reason in the report. The staged recovery review derives its already-disclosed helper starting
+cut and aiming point from the original fallen flesh; ordinary source picking and loading still
+decide success. No patient is moved to make the pickup succeed. The continuous medical review
+retains ordinary helper movement after its initial injury fixture.
+
+
+### Exact terrain bounds and lossless physical deformation saves — build48 candidate
+
+Physical upper bounds cache exact lattice values in lazy 8x8 tiles, capped at 4096 tiles. Full
+crater/rut revisions invalidate the cache; inclusive query cells and final 16-epsilon magnitude
+padding are unchanged. Queries retain one event-read generation. The previous compact static
+cache's 16384-crater revision alias is cleared under the event writer lock; indices beyond its
+17-bit-per-axis representation bypass that cache instead of aliasing another node. No terrain
+height, crater shape, rut filter or physical collision tolerance is approximated.
+
+The save audit found that renderer track pixels had been retained but physical Detail crater,
+rut and walker state was absent. `world.environment` v2 now retains typed `terrain.detail` state:
+original crater order/grid, signed rut samples, exact full revisions, dirty page keys, future
+footstep cadence/side, source tread registrations and openings with their upload flag. The
+immutable source grid identity is checked. Imports validate completely before publication and
+clear both CPU caches even when old/new revision numbers are equal. Legacy environment v1 is
+accepted only without Detail; missing physical damage is never reconstructed as fresh terrain.
+
+The nested terrain.detail v2 candidate stores exact u32 float bits: sparse u16-indexed cells when
+smaller, otherwise dense pages. Positive zero alone is implicit; negative zero and negative berms
+remain exact. Dense terrain.detail v1 has an explicit lossless migration. The old 512-page travel
+ceiling is removed; the existing 128MiB encoded owner budget remains authoritative. Dirty upload
+keys are canonicalized so restoring a HashSet cannot change their order. Physical saved dirty
+flags are not fabricated to rebuild renderer caches; the separate LOD invalidation/first-frame
+rehydration path is parent-owned. Native equivalence, cold continuation, malformed payload and
+GPU first-frame restore tests are required; no new performance or full-world pass is claimed here.
+
+
+### Build50 medical evidence and source-swept assisted turning — candidate51
+
+`captures/foundation_medical_20261031_b50.json` confirms the same finite patient completed
+field airway/dressing care, source-swept carrier loading, a 30.5 m fuel-consuming journey,
+and complete withdrawal through the original open gate. Final bed admission failed. The
+patient was still at camp-local approximately (-4.50, 0.407, 0.061), touching the real inner
+X-legs of the spare stretchers, while the helper had already entered the bedside aisle.
+The original drag operation translated a permanently sideways pose: the flesh span across
+that aisle was about 1.07 m, exceeding the roughly 0.91 m gap between those supports.
+Moving the helper farther or widening the bed admission radius would not fix that obstruction.
+
+Candidate51 adds ordinary assisted yaw alignment with the actual hand-pull direction, using
+the least turn whether pulling head-first or feet-first. The authored limit is 30 degrees per
+second. It rotates the existing articulated segments together, preserving height, stature,
+relative joint distances, identity, wounds and saved anatomy. It does not turn an upright body,
+a body with attached severed pieces, or a body still undergoing source-guided carrier/cab
+withdrawal. Every rotation interval is at most 0.5 degrees and is admitted against full original
+flesh triangles, source world/Tiger/carrier/kit solids and an analytic rotational arc bound.
+Terrain height is sampled at no more than 0.25 degrees; this is not a continuous terrain/force
+solver. An obstructed rotation is rejected, without lifting or shrinking the patient.
+
+Pure and private-source regression cases were added for aligned/blocked/turnable poses and
+for the complete original-camp corridor from doorway to bedside. They are awaiting parent-run
+native verification at this checkpoint. The complete clinical admission/finite-medic journey
+has not passed yet. No patient, furniture or collision has been teleported/removed for the review.
+
+
+### Bounded assisted-turn index and exact terrain faces — candidate52
+
+Parent-run native51 passed all four `drag_yaw_` cases, including the complete original crew /
+medical-camp corridor proof. Review then identified two limitations before a live medical rerun:
+a triangle-count cap alone did not bound half-metre spatial-bin insertions for long source faces,
+and terrain vertex probes could miss a narrow peak crossing a flesh face interior.
+
+Candidate52 bounds the turn index to its known COM-local yaw envelope and caps total cell-index
+insertions at 262,144. Full original obstacle triangles are retained; only the lookup domain is
+bounded. Queries leaving that domain fail closed. The turn also includes the exact physical
+coarse/detail terrain lattice triangles, with the same cell diagonal and direct original node
+heights, in the continuous flesh-face sweep. A 4,096-node patch limit bounds this extra work.
+Terrain openings require clipped excavation topology not supplied by this path, so overlapping
+openings explicitly reject the turn; no synthetic floor or ramp is created. Source/index/terrain
+capacity rejections show a specific held-body notice. Existing vertex checks additionally reject
+an already submerged pose; they are no longer the sole terrain-intersection test.
+
+Added regressions cover kilometre-long faces with bounded insertion work, budget and out-of-domain
+rejection, a terrain peak between clear flesh vertices, original detail-node/split correspondence,
+and explicit opening/patch-capacity rejection. The actual camp-corridor test now uses this bounded
+index and the physical ground faces too. These candidate52 additions await parent-run tests; no
+new complete medical pass is claimed here.
+
+
+### Build52 runtime/test mismatch and paced-turn correction — candidate54
+
+Medical52 again stopped at the spare stretcher supports. Its open-ground samples show the
+hand-target/COM position error was usually below 2 cm: the helper's paced walking was slower
+than the assisted pull, so the body continually caught up. Production had incorrectly used
+that near-zero position-servo error as the yaw direction; the 5 cm noise gate consequently
+suppressed turning until furniture stopped translation. The earlier source test instead used
+a unit direction and therefore did not exercise the actual control-input failure.
+
+Candidate54 steers from the actual helper-to-COM horizontal line (normally about 0.75 m),
+while retaining hand-target/COM error for translation. Angular speed, original-source sweeps,
+ground topology, scale, joints and admission limits remain unchanged. The source corridor
+regression now advances an actual helper at 0.2 m/s, keeps the servo lag below 5 cm, and requires
+the complete source body to turn and translate through the furniture. A separate pure test
+reproduces suppressed turning under the old input.
+
+The review now waits for the held body's horizontal hand-target progress before completing
+a dragged waypoint. Vertical support remains governed by source collision, and the final
+medical action retains its actual three-dimensional reach check. The centreline helper point
+accounts for the real trailing hand distance and avoids a former look gesture that would push
+the patient under an active bed before turning. Samples include actual axis, pull line, servo
+error, requested/admitted yaw and rejection; a final retained anatomy/source snapshot is
+written once for exact CPU replay if the scenario fails. These candidate54 corrections await
+native and live verification; the complete medical journey has not yet passed.
+
+### Medical camp aisle correction after live b54 (2026-10-31)
+
+The b54 continuous medical run still failed against a real spare-stretcher stand after the
+retained Driver had aligned with the helper's pull direction. Its complete captured 1,692
+source vertices span camp-local Z -0.5144 to +0.3254 m; the old stand's inner face was near
+Z -0.48 m. This was an asymmetric injured articulation colliding with furniture, not a missing
+yaw request. The earlier relaxed-body fixture did not represent that articulation.
+
+Only the two spare stretcher stations are moved from Z +/-1.20 to +/-1.60 m. Their original
+meshes and stands remain visible and solid. Four physical stretchers and two actual treatment
+beds remain; no source scale, casualty articulation, collision tolerance, bed admission reach,
+person, or supply changes. The original 1.10 m stretcher half-length leaves 0.20 m to the
+canvas, and its X bounds leave 0.183 m to the supply racks. Stand geometry leaves a 1.70 m
+floor-level aisle. The stretcher canvas overhang above that aisle still exists at its real height.
+
+An ignored CPU regression loads the exact b54 failure receipt and complete camp source. It
+requires the original layout to obstruct that injured Driver, then sweeps the same 1,692 flesh
+vertices through the rearranged aisle, bounded yaw turn and actual bedside approach without
+changing height, scale or articulation. A second source test checks furniture bounds, rack
+separation and unchanged capacity. Python source measurements found the actual retained
+horizontal radius is 0.6672 m and maximum local height is 0.5969 m, below the 0.65 m spare
+stretcher canvas. Native tests and a new continuous live replay remain required at this checkpoint;
+the failed b54 receipt and video are preserved.
+
+### Held cartridge common-hull frame correction (2026-10-31; verified through build58)
+
+The loader's last Carry/Ram pose is now stored relative to the actual hull, so shared
+vehicle translation, pitch, roll and post-service contact projection carry the physical
+round, hand targets, ammunition picking/hits and interrupted drop together. Turret-only
+motion does not forcibly carry a rejected round: with a stationary hull, the retained
+world result remains the previous behavior. New crew.runtime4 exports use a hull-local
+matrix; v3 owner migration converts its original world matrix using the exact restored
+saved hull, without ticking the procedure. The whole-world source/build fingerprint
+gate is unchanged; this does not promise arbitrary older-binary save compatibility.
+
+This is a frame-covariance correction, not cartridge contact simulation. AI Carry/Ram
+still checks hand reach/posture without sweeping the cartridge against rack/breech/crew
+source geometry. No change to that path, the conservative basket walking envelope,
+the loose-shell solver or relative turret-motion response is claimed. The rejected
+turret-local candidate remains outside registered source.
+
+Five new tests cover source vertices, actual triangle picking, grip/drop pose, blocked
+Carry/Ram through common hull movement and late chassis projection, frozen-hull turret
+motion, accepted-pose parity and typed v3/v4 Work payloads. Legacy migration includes
+camp-scale coordinates (-5280,31.9,3230), printing maximum source/grip/drop roundtrip
+error; its f32 world matrix is not claimed bit-identical. All five tests passed in native57.
+At the camp-scale coordinates, maximum source/grip error was0.244617mm and drop-source
+error0.244260mm. Version4's zero-time payload bytes remained exact. The full native57 run
+passed2390 tests, with92 ignored and75 filtered; production code was unchanged for release58.
+
+Build56 passed three of the five new tests. The two failures were the test's ray-distance
+comparison at an exact radial facet seam, after the geometry comparisons had passed.
+The recorded near-origin legacy conversion errors were2.861 micrometres for source
+vertices,1.907 micrometres for grips and2.708 micrometres after drop conversion. The
+existing ammunition picker uses strict per-triangle barycentric tests and is not a
+watertight seam intersector. Build57's frame test aims at an actual source-face interior
+with the same distance tolerances, retains the seam measurements as explicit diagnostics,
+and does not claim to have repaired that separate picker limitation.
+
+The full-world witness now adds two bounded branches reached by one ordinary existing-round
+discharge and the real loader procedure. It must observe a held cartridge partway through
+Carry and Ram, preserve its source identity, compare all owners and exact zero-tick world
+pose after cold reconstruction, then compare twelve ordinary120Hz continuation ticks.
+Only initial observer placement aboard is a disclosed fixture; no Work phase, cartridge,
+health or tank pose is injected. Release58 passed both branches: all eleven owner payloads,
+source identity and world pose were exact before any simulation tick, then all eleven owner
+payloads and Work matched after twelve ordinary120Hz continuation ticks. The same run also
+passed the paper/manual, retained frontend candidate and corpse-allocation branches. Evidence:
+`captures/foundation_world_20261031_b58.json` and its Carry/Ram snapshots and restored images.
+
+The preserved build57 failure was a review-input mismatch: its uninterrupted loader branch
+inherited an unmuted manual candidate, while the cold continuation was muted. Only acoustic
+state diverged; exact zero-tick restoration and continued Work had already passed. Release58
+applies and asserts the same existing mute policy on both sides, with both receipt flags true;
+it retains every acoustic owner byte comparison. No production acoustic code or tolerance
+changed. This proves muted owner continuity, not live-audio cache/voice continuity, and does
+not close the separate cartridge source-sweep, seam-picker or moving-loader visual limitations.

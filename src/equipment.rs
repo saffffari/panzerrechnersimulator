@@ -3,6 +3,7 @@ use super::*;
 
 /// One field repair the crewman can do with the toolbox.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) enum RepairJob {
     Module(ModuleKind),
     /// Swap a cracked cupola block for a spare.
@@ -126,6 +127,7 @@ fn carried_hammer_step(remaining_s: f32, trigger: bool, pickup_press: bool,
 
 /// A put-down kit follows the basket when inside; an outside kit remains at its world position.
 #[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct ToolRest {
     pub turret: bool,
     pub model: Mat4,
@@ -262,7 +264,7 @@ impl Game {
     }
 
     fn equipment_hands_free(&self) -> bool {
-        !self.carrying_track_kit && !self.ext_equipped && !self.compass_equipped
+        !self.workshop_held() && !self.carrying_track_kit && !self.ext_equipped && !self.compass_equipped
             && self.carry_mesh.is_none() && self.carried_casing.is_none()
             && self.held_item.is_none() && !self.panzerfaust_claimed
     }
@@ -421,14 +423,16 @@ impl Game {
     pub(super) fn open_repair_jobs(&self) -> Vec<RepairJob> {
         use tiger_damage::Fault;
         let mut jobs: Vec<RepairJob> = self.modules.iter().filter(|m| {
-            !matches!(m.kind, ModuleKind::LeftTrack | ModuleKind::RightTrack) && match m.fault {
+            !matches!(m.kind, ModuleKind::LeftTrack | ModuleKind::RightTrack)
+                && !(self.expedition_runtime.is_some()&&m.kind==ModuleKind::GunnerSight) && match m.fault {
                 Fault::None | Fault::Spall => !m.functional && repair_time(m.kind).is_some(),
                 fault => fault.field_repair().is_some(),
             }
         }).map(|m| RepairJob::Module(m.kind)).collect();
         if self.exterior.spare_blocks > 0 {
             jobs.extend((0..tiger_damage::BLOCKS)
-                .filter(|&i| self.exterior.blocks[i] == tiger_damage::Block::Opaque)
+                .filter(|&i| self.exterior.blocks[i] == tiger_damage::Block::Opaque
+                    &&(self.expedition_runtime.is_none()||i>=7))
                 .map(RepairJob::VisionBlock));
         }
         jobs
@@ -477,7 +481,7 @@ impl Game {
     /// Nearby service-point cue, deliberately wordless: it identifies a place the carried tool
     /// can work, not a remote fault list. Use the same armor visibility and work target as input.
     pub fn draw_repair_cue(&self, r: &mut Renderer) {
-        if !self.carrying_track_kit || !self.player.alive || self.climb.active
+        if !self.carrying_track_kit || !self.recoverable_tiger_access_allowed() || self.climb.active
             || self.switch_t > 0.0 || self.player.speed.abs() >= 0.6 { return; }
         let eye = r.camera.pos;
         let look = r.camera.forward();
@@ -580,6 +584,7 @@ impl Game {
     }
 
     pub(super) fn update_carried_repair(&mut self, trigger: bool, dt: f32, eye: Vec3, look: Vec3) {
+        if self.workshop_tool_active() {self.repair_hammer_t=0.0;return;}
         let track_owns_primary = self.carrying_track_kit && self.track_owns_carried_primary(eye, look);
         let job = if track_owns_primary { None } else { self.physical_repair_target(eye, look) };
         let step = carried_hammer_step(self.repair_hammer_t, trigger, self.primary_pickup_press,
@@ -692,6 +697,7 @@ impl Game {
             r.set_model(self.slots.hammer, Mat4::from_rotation_translation(hammer_rot,
                 eye + f * (0.46 + hand.z) + right * (0.26 + hand.x) + up * (-0.28 + hand.y)
                     - hammer_rot * Vec3::Z * 0.065));
+            if let Some(model)=self.workshop_hammer_model() {r.set_model(self.slots.hammer,model);}
             self.hide_p08(r);
             r.set_visible(self.slots.panzerfaust, false);
             r.set_visible(self.slots.panzerfaust_sight, false);
@@ -1168,9 +1174,13 @@ mod tests {
             .is_none_or(|hit| hit.point.distance(point) <= 0.04);
         let centre = model.transform_point3(mesh.center());
         let centre_ray = (centre - eye).normalize();
-        let centre_t = ray_loader_ammunition_mesh(eye, centre_ray, model, 1.85, mesh).unwrap();
-        eprintln!("toolbox centre={centre:?} surface_dist={centre_t:.4} clear={} blocker={:?}",
-            clear(eye + centre_ray * centre_t), source.sweep(eye, centre, &models));
+        // The actual toolbox AABB includes its handle opening: from this eye its centre
+        // is 1.728 m away but the centre ray's first source face is 1.950 m away, outside
+        // hand reach. This diagnostic cannot require a centre hit; the exposed source
+        // point below must still pass the unchanged reach, steel and nearest-item checks.
+        let centre_t = ray_loader_ammunition_mesh(eye, centre_ray, model, 1.85, mesh);
+        eprintln!("toolbox centre={centre:?} surface_dist={centre_t:?} clear={} blocker={:?}",
+            centre_t.is_some_and(|t|clear(eye + centre_ray * t)), source.sweep(eye, centre, &models));
         let point = visible_equipment_point(mesh, model, eye, 1.85, clear)
             .expect("a real exposed toolbox surface is reachable from the default loader eye");
         eprintln!("visible toolbox source surface={point:?} distance={:.4}", eye.distance(point));

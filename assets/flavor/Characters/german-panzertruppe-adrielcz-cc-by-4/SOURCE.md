@@ -60,3 +60,17 @@ export contains 914 vertices; maximum neutral matching error is 0.0000002433 m. 
 the reviewed meshes, face atlases, topology or materials. Runtime arm IK follows actual cartridge,
 case and elevation-handwheel state at a maximum of 30 Hz; it does not supply gameplay authority or
 claim that the unanimated source contained loading clips.
+
+`animation/standing_arm_bindings.v1.json` provides the same original 39-bone hierarchy and skin
+weights for the unchanged standing bakes. Rebuild it with
+`python tools/bake_standing_crew_bindings.py`. This exporter verifies the authoring master's and
+all five standing GLBs' hashes against `bake.report.json`, evaluates the recorded standing pose,
+then maps split vertices by both position and UV. Coincident seam vertices must have identical
+weights. It does not require or claim to reverify the unavailable original FBX: the verified
+rigged master preserves that source skin. As an independent coordinate check, it first reproduces
+the original FBX-derived seated export, including every joint parent, matrix and vertex weight.
+The 2026-10-30 standing export contains 914 vertices and 39 bones, with maximum position error
+0.000000550 m; seated reconstruction differs by at most 0.000000437 in a matrix element and
+0.0000000115 in a normalized weight. Every standing identity retains identical position, normal,
+UV and triangle-index arrays. Input meshes and materials are never rewritten. This is binding
+metadata only; live standing-loader animation and hand contact still require runtime validation.

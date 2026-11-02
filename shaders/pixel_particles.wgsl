@@ -81,7 +81,7 @@ fn blocked(origin: vec3<f32>, direction: vec3<f32>, distance_m: f32) -> bool {
 }
 fn medium_transmittance(p:vec3<f32>,d:vec3<f32>,distance_m:f32)->f32 {
     let world_tau=weather_optical_depth(p,d,distance_m,u.world_medium.yz,u.world_medium.x,
-        u.medium_transport.x,u.medium_transport.yzw,24u);
+        u.medium_transport.x,u.medium_transport.yzw,24u,u.snow_velocity.w);
     let cabin_tau=u.world_medium.w*cabin_path_length(p,d,distance_m);
     return exp(-world_tau-cabin_tau);
 }

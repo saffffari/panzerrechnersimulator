@@ -11,6 +11,7 @@ pub(super) struct MapSurface {
     view: wgpu::TextureView,
     material: Arc<wgpu::BindGroup>,
     last_ink: Option<u64>,
+    presentation: Option<u64>,
 }
 
 impl MapSurface {
@@ -26,7 +27,8 @@ impl MapSurface {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -72,11 +74,33 @@ impl MapSurface {
             view,
             material,
             last_ink: None,
+            presentation: None,
         }
     }
 }
 
 impl super::Renderer {
+    /// A folded sheet, a new reading distance or a new focus point replaces the printed
+    /// surface correspondence used by indirect-light history. Ordinary camera motion does not.
+    pub fn held_map_presentation(&mut self, presentation: Option<u64>) {
+        let previous = self.held_map_surface.as_ref().and_then(|s| s.presentation);
+        if previous != presentation {
+            self.reset_history();
+            if let Some(surface) = self.held_map_surface.as_mut() {
+                surface.presentation = presentation;
+            }
+        }
+    }
+
+    /// Explicit offscreen diagnostics only; the ordinary frame loop never reads pixels back.
+    pub fn debug_dump_held_map_ink(&self, device: &wgpu::Device, queue: &wgpu::Queue,
+        path: &str) -> anyhow::Result<()> {
+        let surface = self.held_map_surface.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("held map ink has not been rendered"))?;
+        let bytes = super::debug_read_light_target(device, queue, surface.view.texture())?;
+        image::save_buffer(path, &bytes, WIDTH, HEIGHT, image::ColorType::Rgba8)?;
+        Ok(())
+    }
     /// Consume only commands queued by ui::draw_held_map_print, before drawing the scene/HUD.
     /// One 3 MiB target is reused for this renderer's lifetime. Stationary paper and mouse incur
     /// no GPU work; changing pencil strokes, pins, route sheets or the cursor repaints the albedo.
@@ -94,6 +118,10 @@ impl super::Renderer {
             self.held_map_surface = Some(MapSurface::new(self, device, queue));
         }
         let key = self.ui.queued_content_fingerprint();
+        if self.held_map_surface.as_ref().is_some_and(|surface| surface.last_ink != Some(key)) {
+            // Changed cartography is a changed albedo, just like a turned manual page.
+            self.reset_history();
+        }
         let surface = self.held_map_surface.as_mut().unwrap();
         self.meshes[slot].tex_bind = Arc::clone(&surface.material);
         if surface.last_ink == Some(key) {
@@ -112,9 +140,9 @@ impl super::Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.78,
-                            g: 0.73,
-                            b: 0.60,
+                            r: 0.86,
+                            g: 0.86,
+                            b: 0.86,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,

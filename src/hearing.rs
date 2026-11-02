@@ -222,6 +222,7 @@ pub fn reflex_stable_fraction(drive_dba: f32) -> f32 {
 /// listener actually hears, recordings included; without it an impulse's drive is its LAF,
 /// decaying at `REFLEX_IMPULSE_DECAY_DB_PER_S`.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DriveEnvelope {
     pub rel_db: std::sync::Arc<[f32]>,
     pub block_s: f32,
@@ -237,6 +238,7 @@ impl DriveEnvelope {
 
 /// One impulse as it reaches one ear.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct EarImpulse {
     /// Incident peak at the eardrum, after the enclosure, headset and head shadow, dB.
     pub lpk_db: f32,
@@ -271,6 +273,7 @@ fn roll(seed: u32, salt: u32) -> f32 {
 
 /// One ear.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Ear {
     /// Accumulated effective level X of the current episode, dB (−∞ = none).
     x_db: f32,
@@ -444,6 +447,7 @@ fn level_of(power: f64) -> f32 {
 /// the rising integrator; the larger demand, after the dead time, moves the contraction on the
 /// first-order time constant of its class.
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Reflex {
     /// The reflex's clock, s.
     now_s: f64,
@@ -563,6 +567,7 @@ impl Reflex {
 
 /// Both ears and the reflex.
 #[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Hearing {
     pub ears: [Ear; 2],
     reflex: Reflex,

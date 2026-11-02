@@ -60,13 +60,24 @@ impl Footprint {
 
 /// Pages never evict older tracks. At capacity, untouched pages remain uncompressed. This bounded
 /// material history is separate from collision and contains no geometric terrain displacement.
-#[derive(Default)]
+#[derive(Default,serde::Serialize,serde::Deserialize)]
 pub struct Atlas {
+    #[serde(with="crate::expedition_world_save::ordered_map")]
     pages: HashMap<(i32, i32), u32>,
     pub new_pages: Vec<((u32, u32), u32)>,
 }
 
 impl Atlas {
+    pub(crate) fn saved_rows(&self)->u32 {(self.pages.len() as u32).div_ceil(ATLAS_PAGES)*PAGE_RES}
+    pub(crate) fn saved_lookup(&self)->Vec<u32> {
+        let mut out=vec![0; (LOOKUP_RES*LOOKUP_RES) as usize];
+        for (&(x,z),&page) in &self.pages {
+            let bias=LOOKUP_RES as i32/2;
+            if x>=-bias&&x<bias&&z>=-bias&&z<bias {out[((z+bias)*LOOKUP_RES as i32+x+bias) as usize]=page+1;}
+        }
+        out
+    }
+
     fn page(&mut self, key: (i32, i32)) -> Option<u32> {
         let bias = LOOKUP_RES as i32 / 2;
         if key.0 < -bias || key.1 < -bias || key.0 >= bias || key.1 >= bias {

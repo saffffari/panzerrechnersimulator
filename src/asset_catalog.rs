@@ -4,10 +4,11 @@
 mod tests {
     #[test]
     fn python_runtime_asset_cook_suite_is_offline_and_deterministic() {
-        let output = std::process::Command::new("python3")
+        let executable = if cfg!(windows) { "python" } else { "python3" };
+        let output = std::process::Command::new(executable)
             .arg("tools/test_runtime_asset_cook.py")
             .output()
-            .expect("python3 is required by Panzerrechnersystem's existing worldgen toolchain");
+            .expect("Python is required by Panzerrechnersystem's existing worldgen toolchain");
         assert!(
             output.status.success(),
             "runtime asset cook regression suite failed\nstdout:\n{}\nstderr:\n{}",

@@ -17,6 +17,8 @@ use crate::first_aid::{self, AidBox, Casualty, Event as AidEvent, Hands, Procedu
 use std::sync::Mutex;
 use crate::lan::LanRole;
 use serde_json::{json, Value};
+#[path="crew_loader_work.rs"]
+mod loader_work;
 
 /// Seconds the player spends dragging a dead man off his seat.
 pub const CLEAR_BODY_S: f32 = 4.0;
@@ -44,6 +46,49 @@ const DRIVER_REACT_S: f32 = 0.30;
 fn order_intent(order: Vec2) -> (i8, i8) {
     let axis = |v: f32| if v > 0.05 { 1 } else if v < -0.05 { -1 } else { 0 };
     (axis(order.x), axis(order.y))
+}
+
+/// Standing speed request, independent of the player's current station. These are desired
+/// speeds, not throttle settings; the driver's existing pedal controller still obeys the drivetrain.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize,serde::Deserialize)]
+struct DriverCruise {
+    notch: i8,
+    engaged: bool,
+}
+
+impl DriverCruise {
+    fn step(&mut self, delta: i8, driver_available: bool) -> bool {
+        if !driver_available { self.cancel(); return false; }
+        self.engaged = true;
+        self.notch = self.notch.saturating_add(delta.signum()).clamp(-3, 3);
+        true
+    }
+    fn cancel(&mut self) { *self = Self::default(); }
+    fn speed_mps(self) -> f32 {
+        match self.notch { -3 => -3.0, -2 => -2.0, -1 => -1.0,
+            1 => 2.0, 2 => 5.0, 3 => 8.0, _ => 0.0 }
+    }
+
+    fn order(&mut self, incoming: Vec2, takes_orders: bool, previous: Vec2, speed: f32)
+        -> (Vec2, Option<f32>) {
+        if takes_orders && incoming.x.abs() > 0.001 { self.cancel(); }
+        if self.engaged {
+            let spec = &crate::vehicle_spec::TIGER_I;
+            let (throttle, brake) = crate::powertrain::ai_driver(spec, self.speed_mps() / spec.road_speed, speed);
+            (Vec2::new(throttle, if takes_orders { incoming.y } else { 0.0 }), Some(brake))
+        } else if takes_orders {
+            (incoming, None)
+        } else {
+            (Vec2::new(previous.x, 0.0), None)
+        }
+    }
+}
+
+fn coarse_sector_direction(heading: f32, look: Vec3) -> Vec3 {
+    let sector = std::f32::consts::TAU / 12.0;
+    let relative = look.x.atan2(look.z) - heading;
+    let bearing = heading + (relative / sector).round() * sector;
+    Vec3::new(bearing.sin(), 0.0, bearing.cos())
 }
 /// Engagement range the gunner will open fire at on his own (metres).
 const GUNNER_ENGAGE_M: f32 = 1800.0;
@@ -147,12 +192,12 @@ fn role_short(role: CrewRole) -> &'static str {
 }
 
 /// What the crosshair is resting on, among the crew's own bodies and kit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize,serde::Deserialize)]
 pub(super) enum HoverAction {
     /// Work this procedure on this man.
     Treat(CrewRole, Procedure),
     /// Drag this dead man off his station.
-    ClearBody(CrewRole),
+    ClearBody(u32),
     /// Work this procedure on the player himself, at the box.
     SelfAid(Procedure),
 }
@@ -198,15 +243,15 @@ fn offer_label(role: CrewRole, procedure: Procedure, can: Option<bool>) -> &'sta
     let what = procedure.label();
     let text = if role == CrewRole::Commander {
         match can {
-            Some(false) => format!("FIRST-AID BOX - YOU ARE {need} - {what} ON YOURSELF [E]"),
-            Some(true) => format!("FIRST-AID BOX - YOU ARE {need} - IMPROVISED {what} ON YOURSELF [E]"),
+            Some(false) => format!("FIRST-AID BOX - YOU ARE {need} - {what} ON YOURSELF [LMB]"),
+            Some(true) => format!("FIRST-AID BOX - YOU ARE {need} - IMPROVISED {what} ON YOURSELF [LMB]"),
             None => format!("FIRST-AID BOX - YOU ARE {need} - NOTHING LEFT FOR A {what}"),
         }
     } else {
         let who = if role == CrewRole::Radioman { "RADIO OP".to_owned() } else { role_short(role).to_uppercase() };
         match can {
-            Some(false) => format!("{who} - {need} - {what} [E]"),
-            Some(true) => format!("{who} - {need} - IMPROVISED {what} [E]"),
+            Some(false) => format!("{who} - {need} - {what} [LMB]"),
+            Some(true) => format!("{who} - {need} - IMPROVISED {what} [LMB]"),
             None => format!("{who} - {need} - NOTHING LEFT FOR A {what}"),
         }
     };
@@ -215,11 +260,11 @@ fn offer_label(role: CrewRole, procedure: Procedure, can: Option<bool>) -> &'sta
 
 fn clear_label(role: CrewRole) -> &'static str {
     match role {
-        CrewRole::Gunner => "GUNNER'S BODY - DRAG HIM OFF THE SEAT [HOLD E]",
-        CrewRole::Loader => "LOADER'S BODY - DRAG HIM ASIDE [HOLD E]",
-        CrewRole::Driver => "DRIVER'S BODY - DRAG HIM OFF THE SEAT [HOLD E]",
-        CrewRole::Radioman => "RADIO OP'S BODY - DRAG HIM ASIDE [HOLD E]",
-        CrewRole::Commander => "BODY - DRAG HIM ASIDE [HOLD E]",
+        CrewRole::Gunner => "GUNNER'S BODY - DRAG HIM OFF THE SEAT [HOLD LMB]",
+        CrewRole::Loader => "LOADER'S BODY - DRAG HIM ASIDE [HOLD LMB]",
+        CrewRole::Driver => "DRIVER'S BODY - DRAG HIM OFF THE SEAT [HOLD LMB]",
+        CrewRole::Radioman => "RADIO OP'S BODY - DRAG HIM ASIDE [HOLD LMB]",
+        CrewRole::Commander => "BODY - DRAG HIM ASIDE [HOLD LMB]",
     }
 }
 
@@ -236,7 +281,7 @@ fn blocked_label(role: CrewRole) -> &'static str {
 /// The empties rack along the curved rear wall: upright spent cases, filled in order. The slot
 /// poses are probed once from the turret's own interior triangles (the rear wall and the floor
 /// or shelf under it), so a slot exists only where a case can really stand.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize,serde::Deserialize)]
 pub(super) struct EmptiesRack {
     /// Turret-local centre and rotation per slot, once probed; `None` where no stand was found.
     poses: Option<Vec<Option<(Vec3, Quat)>>>,
@@ -273,7 +318,7 @@ impl EmptiesRack {
 }
 
 /// The commander's designation: where he looked when he pressed the middle mouse button.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize,serde::Deserialize)]
 pub(super) struct Designation {
     /// The point under the view centre (world), from the eye ray's first hit.
     pub point: Vec3,
@@ -290,7 +335,7 @@ pub(super) struct Designation {
 }
 
 /// The commander's answer to the loader's request to dump the empties out of the side hatch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize,serde::Deserialize)]
 pub(super) enum DumpPermission {
     NotAsked,
     Asked,
@@ -298,12 +343,14 @@ pub(super) enum DumpPermission {
     Refused,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize,serde::Deserialize)]
 pub(super) struct CrewSolo {
     /// Full-crew solo is on (set by `enable_singleplayer_crew`).
     pub enabled: bool,
     /// One physiological record per `CrewRole::ALL` entry. The commander's is the player's own.
     pub men: Vec<Casualty>,
+    /// Unbound people, living or dead, retain their own physiology after a slot is relieved.
+    retired_men: Vec<(u32, Casualty)>,
     pub aid_box: AidBox,
     /// Standing order: the gunner engages contacts on his own ("Feuer frei").
     pub fire_at_will: bool,
@@ -317,6 +364,9 @@ pub(super) struct CrewSolo {
     driver_order: Vec2,
     driver_cmd: Vec2,
     driver_react_s: f32,
+    driver_cruise: DriverCruise,
+    driver_brake: Option<f32>,
+    remote_lay_override: bool,
     loader_clock: f32,
     prev_breech_loaded: bool,
     /// Crosshair target among the crew this frame.
@@ -329,6 +379,7 @@ pub(super) struct CrewSolo {
     /// The men last called in a triage line, so the call is made once per change.
     triage_called: Vec<CrewRole>,
     /// Every finished or abandoned procedure, for the receipt.
+    #[serde(with="super::crew_world_state::json_values")]
     pub procedures_done: Vec<Value>,
     /// Blood emission clocks, one per man.
     bleed_emit_t: [f32; 5],
@@ -337,6 +388,8 @@ pub(super) struct CrewSolo {
     loader_busy_s: f32,
     /// The loader has a round in his hands at the breech this step (the ram does not slip back).
     pub loader_holding: bool,
+    pub(super) loader_work: loader_work::Work,
+    pub(super) assignment: crew_assignment::Assignment,
     pub dump_permission: DumpPermission,
     ask_clock: f32,
     dump_clock: f32,
@@ -351,6 +404,8 @@ pub(super) struct CrewSolo {
     slewing_to_designation: bool,
     /// A dead man's body has been dragged off his station.
     pub body_cleared: [bool; 5],
+    /// Actor-owned clearance survives replacement of the five current appearance slots.
+    cleared_actors: Vec<u32>,
     intercom: Vec<(String, f32)>,
     prev_fire_order: bool,
     prev_command_lmb: bool,
@@ -358,6 +413,7 @@ pub(super) struct CrewSolo {
     pub shots_by_gunner: u32,
     pub loads_by_loader: u32,
     pub treatments: u32,
+    #[serde(with="super::crew_world_state::json_values")]
     pub log: Vec<Value>,
     time_s: f32,
 }
@@ -367,6 +423,7 @@ impl Default for CrewSolo {
         Self {
             enabled: false,
             men: CrewRole::ALL.iter().map(|_| Casualty::default()).collect(),
+            retired_men: Vec::new(),
             aid_box: AidBox::FULL,
             fire_at_will: true,
             fire_command: false,
@@ -376,6 +433,9 @@ impl Default for CrewSolo {
             driver_order: Vec2::ZERO,
             driver_cmd: Vec2::ZERO,
             driver_react_s: 0.0,
+            driver_cruise: DriverCruise::default(),
+            driver_brake: None,
+            remote_lay_override: false,
             loader_clock: 0.0,
             prev_breech_loaded: true,
             hover: None,
@@ -388,6 +448,8 @@ impl Default for CrewSolo {
             empties_rack: EmptiesRack::default(),
             loader_busy_s: 0.0,
             loader_holding: false,
+            loader_work: loader_work::Work::default(),
+            assignment: crew_assignment::Assignment::default(),
             dump_permission: DumpPermission::NotAsked,
             ask_clock: 0.0,
             dump_clock: 0.0,
@@ -399,6 +461,7 @@ impl Default for CrewSolo {
             prev_designate: false,
             slewing_to_designation: false,
             body_cleared: [false; 5],
+            cleared_actors: Vec::new(),
             intercom: Vec::new(),
             prev_fire_order: false,
             prev_command_lmb: false,
@@ -412,11 +475,62 @@ impl Default for CrewSolo {
 }
 
 impl CrewSolo {
+    pub(super) fn panel_clock_s(&self)->f32 {self.time_s}
+    pub(super) fn pause_assignment_duties(&mut self) {
+        self.gunner_target=None;self.gunner_fire_pulse=false;self.fire_command=false;
+        self.gunner_settle_s=0.0;self.designation=None;self.remote_lay_override=false;
+        self.loader_clock=0.0;self.loader_holding=false;self.stop_operator_hands();
+    }
+    pub(super) fn exchange_assignment_people(&mut self,a:CrewRole,b:CrewRole) {
+        let a=role_index(a);let b=role_index(b);
+        self.men.swap(a,b);self.bleed_emit_t.swap(a,b);self.body_cleared.swap(a,b);
+        self.triage_called.clear();self.pause_assignment_duties();
+        self.loader_work=loader_work::Work::default();
+    }
+    pub(super) fn body_was_cleared(&self, slot: CrewRole) -> bool { self.body_cleared[role_index(slot)] }
+    pub(super) fn actor_body_cleared(&self, actor: u32) -> bool { self.cleared_actors.contains(&actor) }
+    pub(super) fn stop_operator_hands(&mut self) {
+        self.hover=None;self.action=None;self.procedure=None;self.prev_hands_button=false;
+    }
+
+    pub(super) fn replace_man(&mut self, slot: CrewRole, old_actor: u32) {
+        let index=role_index(slot);
+        let previous=std::mem::take(&mut self.men[index]);
+        self.retired_men.push((old_actor,previous));
+        self.bleed_emit_t[index]=0.0; self.body_cleared[index]=false;
+        self.triage_called.retain(|&role|role!=slot);
+        // Hands were addressed to the old person, never to whoever inherits the appearance slot.
+        self.stop_operator_hands();
+        match slot {
+            CrewRole::Driver => {self.driver_order=Vec2::ZERO;self.driver_cmd=Vec2::ZERO;
+                self.driver_cruise.cancel();self.driver_brake=None;self.driver_react_s=0.0;},
+            CrewRole::Gunner => {self.gunner_target=None;self.gunner_fire_pulse=false;
+                self.fire_command=false;self.gunner_settle_s=0.0;self.designation=None;},
+            CrewRole::Loader => {self.loader_clock=0.0;self.loader_busy_s=0.0;self.loader_holding=false;},
+            _ => {}
+        }
+    }
+
+    pub(super) fn archived_man(&self,actor:u32)->Option<&Casualty> {
+        self.retired_men.iter().find(|(id,_)|*id==actor).map(|(_,man)|man)
+    }
+    pub(super) fn archived_man_mut(&mut self,actor:u32)->Option<&mut Casualty> {
+        self.retired_men.iter_mut().find(|(id,_)|*id==actor).map(|(_,man)|man)
+    }
+    pub(super) fn restore_man(&mut self,slot:CrewRole,old_actor:u32,actor:u32)->anyhow::Result<()> {
+        let index=self.retired_men.iter().position(|(id,_)|*id==actor)
+            .ok_or_else(||anyhow::anyhow!("archived actor physiology is absent"))?;
+        let (_,man)=self.retired_men.remove(index);
+        self.replace_man(slot,old_actor);
+        *self.man_mut(slot)=man;
+        Ok(())
+    }
+
     pub(super) fn man(&self, role: CrewRole) -> &Casualty {
         &self.men[role_index(role)]
     }
 
-    fn man_mut(&mut self, role: CrewRole) -> &mut Casualty {
+    pub(super) fn man_mut(&mut self, role: CrewRole) -> &mut Casualty {
         &mut self.men[role_index(role)]
     }
 
@@ -467,7 +581,7 @@ pub(super) fn slump_pose(man: &Casualty) -> Mat4 {
 
 impl Game {
     fn solo_identity(&self) -> Option<CrewRole> {
-        self.singleplayer_crew.map(|state| state.identity)
+        self.singleplayer_crew.as_ref().map(|state| state.identity)
     }
 
     /// Full-crew solo is live: the singleplayer crew is active and the module is enabled.
@@ -523,14 +637,16 @@ impl Game {
 
     /// World point of a living man's torso, where he actually is (his post, or the standby spot).
     pub(super) fn crew_solo_man_point(&self, role: CrewRole) -> Vec3 {
-        let post = if Some(role) == self.solo_identity() { self.solo_player_post() } else { self.crew_solo_post(role) };
-        let mut casualty = singleplayer_crew::casualty_identity(role);
-        casualty.role = post;
-        let torso = crew_live_model(&self.player, post).transform_point3(Vec3::new(0.0, crew_live_torso_y(post), 0.0));
-        match self.crew_solo_standby_offset(casualty) {
-            Some(offset) => torso + self.player.turret_model().transform_vector3(offset),
-            None => torso,
+        let actor=self.singleplayer_casualty_identity(role).peer_id;
+        if let Some(body)=self.couch_ragdolls.iter().find(|b|b.casualty.peer_id==actor) {
+            return body.parent_model(&self.player).transform_point3(body.segments[crew_physics::CrewBodyPart::Torso.index()].pos);
         }
+        let post = if Some(role) == self.solo_identity() { self.solo_player_post() } else { self.crew_solo_post(role) };
+        let mut casualty = self.singleplayer_casualty_identity(role);
+        casualty.role = post;
+        let frame=blood_frame_for_role(post);
+        let (_,segments)=self.physical_crew_segments(casualty,frame);
+        blood_parent_model(&self.player,frame).transform_point3(segments[crew_physics::CrewBodyPart::Torso.index()].pos)
     }
 
     /// Alive and at his own station (not displaced by the player).
@@ -539,12 +655,13 @@ impl Game {
             && Some(role) != self.solo_identity()
             && singleplayer_crew::role_alive(&self.crew, role)
             && !self.crew_solo.man(role).dead
+            && !self.crew_actor_has_retained_body(self.singleplayer_casualty_identity(role).peer_id)
             && self.crew_solo_post(role) == singleplayer_crew::body_post(role)
     }
 
     /// Alive, conscious, fit enough to work, at his own station.
-    fn crew_solo_working(&self, role: CrewRole) -> bool {
-        self.crew_solo_at_own_post(role) && self.crew_solo.man(role).able()
+    pub(in crate::game) fn crew_solo_working(&self, role: CrewRole) -> bool {
+        !self.crew_assignment_role_in_transit(role) && self.crew_solo_at_own_post(role) && self.crew_solo.man(role).able()
     }
 
     /// The crew-side answer to `crew_ok`: the job at `role`'s station has somebody fit doing it,
@@ -583,7 +700,41 @@ impl Game {
     /// The gunner has a target and owns the lay this frame.
     pub(super) fn crew_solo_ai_gunner_laying(&self) -> bool {
         self.crew_solo_ai_gunner_active()
+            && !self.crew_solo.remote_lay_override
             && (self.crew_solo.gunner_target.is_some() || self.crew_solo.slewing_to_designation)
+    }
+
+    /// Remote controls need a conscious man at the gun. Physical sights remain usable by the
+    /// player after that man is lost; this permission never grants a remote trigger.
+    pub(super) fn crew_solo_remote_gun_ready(&self) -> bool {
+        self.crew_solo_active() && self.mode == Mode::Tank && self.station != Station::Gunner
+            && self.player.alive && self.controlled_soldier_alive() && self.crew_solo_working(CrewRole::Gunner)
+            && !self.map_held && !self.repair_manual.held
+    }
+
+    pub fn command_driver_cruise(&mut self, delta: i8) -> bool {
+        let available = self.crew_solo_active() && self.player.alive && self.mode == Mode::Tank
+            && self.controlled_soldier_alive() && self.crew_solo_working(CrewRole::Driver)
+            && !self.map_held && !self.repair_manual.held;
+        if !self.crew_solo.driver_cruise.step(delta, available) { return false; }
+        let notch = self.crew_solo.driver_cruise.notch;
+        self.crew_solo.say(if notch == 0 { "Driver: stop.".to_owned() }
+            else { format!("Driver: cruise {notch:+}.") });
+        true
+    }
+
+    pub fn crew_control_status(&self) -> Option<String> {
+        if !self.crew_solo_active() || self.mode != Mode::Tank { return None; }
+        let cruise = if !self.crew_solo_working(CrewRole::Driver) { "UNAVAILABLE".to_owned() }
+            else if self.crew_solo.driver_cruise.engaged {
+                format!("{:+}", self.crew_solo.driver_cruise.notch)
+            } else { "MANUAL".to_owned() };
+        Some(format!("CRUISE {cruise}  Q/E   GUNNER {}  K",
+            if self.crew_solo.fire_at_will { "AUTO FIRE" } else { "HOLD FIRE" }))
+    }
+
+    pub(super) fn crew_solo_drive_brake(&self) -> Option<f32> {
+        self.crew_solo_active().then_some(self.crew_solo.driver_brake).flatten()
     }
 
     pub(super) fn crew_solo_take_gunner_fire(&mut self) -> bool {
@@ -600,16 +751,10 @@ impl Game {
         if station == Station::Loader {
             return None;
         }
-        let role = singleplayer_crew::role_for_station(station);
-        if Some(role) == self.solo_identity() {
-            return None;
-        }
-        let dead = !singleplayer_crew::role_alive(&self.crew, role) || self.crew_solo.man(role).dead;
-        let body_present = self
-            .couch_ragdolls
-            .iter()
-            .any(|body| body.casualty.identity == singleplayer_crew::body_post(role));
-        (dead && body_present && !self.crew_solo.body_cleared[role_index(role)]).then_some(role)
+        let post=singleplayer_crew::body_post(singleplayer_crew::role_for_station(station));
+        self.couch_ragdolls.iter().find(|body|!body.world_space&&body.casualty.role==post
+            && !self.crew_solo.actor_body_cleared(body.casualty.peer_id))
+            .map(|body|role_of_post(body.casualty.identity))
     }
 
     // ── Decisions, once per simulation step ─────────────────────────────────────────────────
@@ -628,8 +773,16 @@ impl Game {
 
         self.crew_solo_fire_exposure(dt);
         self.crew_solo_time_course(dt);
+        self.advance_crew_assignment(dt);
         self.crew_solo_orders(input);
         self.crew_solo_designate_input(input, eye, look);
+        self.crew_solo.remote_lay_override = self.crew_solo_remote_gun_ready()
+            && (input.traverse.abs() > 0.001 || input.elevate.abs() > 0.001);
+        if self.crew_solo.remote_lay_override {
+            self.crew_solo.designation = None;
+            self.crew_solo.gunner_target = None;
+            self.crew_solo.gunner_fire_pulse = false;
+        }
         self.crew_solo_gunner_think(dt);
         self.crew_solo_driver_think(input, dt);
         self.crew_solo_hands(input, dt);
@@ -645,6 +798,7 @@ impl Game {
             if !singleplayer_crew::role_alive(&self.crew, role) {
                 continue;
             }
+            if self.couch_ragdolls.iter().any(|b|b.casualty.peer_id==self.singleplayer_casualty_identity(role).peer_id&&b.world_space) {continue;}
             let aboard = Some(role) != me || self.mode == Mode::Tank;
             if !aboard {
                 continue;
@@ -667,7 +821,7 @@ impl Game {
     fn crew_solo_time_course(&mut self, dt: f32) {
         let me = self.solo_identity();
         for role in CrewRole::ALL {
-            if !singleplayer_crew::role_alive(&self.crew, role) {
+            if !singleplayer_crew::role_alive(&self.crew, role)||self.expedition_camp_owns_casualty(role) {
                 continue;
             }
             self.crew_solo_bleed_onto_the_station(role, dt);
@@ -693,6 +847,23 @@ impl Game {
                         }
                     }
                 }
+            }
+        }
+        // A relieved patient is no longer one of the five station slots, but is still a
+        // physical person. Only the camp owns an admitted patient's separate time course.
+        for (actor,_) in self.singleplayer_actor_bindings() {
+            if self.singleplayer_slot_for_actor(actor).is_some()||self.expedition_camp_owns_actor(actor) {continue;}
+            let Some(man)=self.singleplayer_actor_casualty_mut(actor) else{continue;};
+            if man.dead {continue;}
+            let died=man.advance(dt).into_iter().any(|event|matches!(event,AidEvent::Died));
+            if died {
+                if let Some(body)=self.couch_ragdolls.iter().find(|b|b.casualty.peer_id==actor) {
+                    let casualty=body.casualty;
+                    if !self.couch_casualties.iter().any(|c|c.peer_id==actor) {
+                        self.couch_casualties.push(casualty);self.couch_last_casualty=Some(casualty);
+                    }
+                }
+                self.crew_solo.log.push(json!({"t":self.crew_solo.time_s,"actor_id":actor,"died":"evacuated patient","cause":"field physiology"}));
             }
         }
         self.crew_solo_triage_call();
@@ -728,6 +899,9 @@ impl Game {
     /// A bleeding man bleeds where he is: grains from the wound run down him onto the seat and
     /// the floor, more the faster he bleeds, through the same surface-blood transport as a hit.
     fn crew_solo_bleed_onto_the_station(&mut self, role: CrewRole, dt: f32) {
+        // The legacy cabin blood transport is tank-local. Do not attach an evacuee's blood
+        // to his empty station; physiology continues in crew_solo_time_course outside.
+        if self.crew_actor_has_retained_body(self.singleplayer_casualty_identity(role).peer_id) {return;}
         let rate = self.crew_solo.man(role).total_bleed_rate_l_per_s();
         if rate <= 1.0e-5 {
             self.crew_solo.bleed_emit_t[role_index(role)] = 0.0;
@@ -744,7 +918,7 @@ impl Game {
             return;
         }
         let post = if Some(role) == self.solo_identity() { self.solo_player_post() } else { self.crew_solo_post(role) };
-        let mut casualty = singleplayer_crew::casualty_identity(role);
+        let mut casualty = self.singleplayer_casualty_identity(role);
         casualty.role = post;
         // The wound's region decides where the grains leave him: a leg bleeds into the lap and
         // the floor, an arm beside him, the trunk and head down the front.
@@ -752,17 +926,14 @@ impl Game {
             .filter(|w| w.bleed_rate_l_per_s() > 0.0)
             .max_by(|a, b| a.bleed_rate_l_per_s().total_cmp(&b.bleed_rate_l_per_s()))
             .map(|w| w.region);
-        let model = crew_live_model(&self.player, post);
+        let model = self.singleplayer_rig_model(casualty);
         let local = match worst {
             Some(Region::Leg) => Vec3::new(0.0, crew_live_torso_y(post) - 0.45, 0.12),
             Some(Region::Arm) => Vec3::new(0.18, crew_live_torso_y(post) - 0.15, 0.0),
             Some(Region::Head) => Vec3::new(0.0, crew_live_torso_y(post) + 0.30, 0.04),
             _ => Vec3::new(0.0, crew_live_torso_y(post), 0.08),
         };
-        let mut point = model.transform_point3(local);
-        if let Some(offset) = self.crew_solo_standby_offset(casualty) {
-            point += self.player.turret_model().transform_vector3(offset);
-        }
+        let point = model.transform_point3(local);
         // Grains per half second: a trickle at a dressed wound, a steady run at a femoral bleed.
         let count = ((rate * 60.0 * 14.0).round() as usize).clamp(4, 48);
         let seed = ((self.crew_solo.time_s * 53.0) as u32) ^ 0xB1EE_D000 ^ (role_index(role) as u32) << 8;
@@ -771,14 +942,16 @@ impl Game {
 
     fn crew_solo_bled_out(&mut self, role: CrewRole) {
         let post = self.crew_solo_post(role);
-        let mut casualty = singleplayer_crew::casualty_identity(role);
+        let mut casualty = self.singleplayer_casualty_identity(role);
         casualty.role = post;
         self.crew_ko_t = CREW_KO_DUR;
         self.crew_ko_world_dir = Vec3::NEG_Y;
         // The last of it: what was still in him runs out as he folds.
         let point = self.crew_solo_man_point(role) - Vec3::Y * 0.2;
         let seed = ((self.crew_solo.time_s * 53.0) as u32) ^ 0xDEAD_B100 ^ role_index(role) as u32;
-        self.spawn_cubic_blood(casualty, Some(point), Vec3::NEG_Y, Vec3::ZERO, 0.6, 0.8, seed, role_index(role), 96);
+        if !self.crew_actor_has_retained_body(casualty.peer_id) {
+            self.spawn_cubic_blood(casualty, Some(point), Vec3::NEG_Y, Vec3::ZERO, 0.6, 0.8, seed, role_index(role), 96);
+        }
         let wiped = self.record_physical_crew_casualties(&[casualty]);
         // A gentle collapse, not a fragment strike: the man folds where he sat.
         let seed = (self.crew_solo.time_s * 97.0) as u32 ^ 0x5EED_B10D ^ role_index(role) as u32;
@@ -794,17 +967,12 @@ impl Game {
         if let Some(person) = self.crew.iter_mut().find(|p| p.role == me) {
             person.ok = false;
         }
-        self.player.alive = false;
-        self.recompute_hp();
-        self.cue_engine_death(0.7);
-        self.death_cause = Some(DeathCause::CrewLost);
-        self.death_replay = None;
+        self.lose_controlled_soldier(DeathCause::CrewLost);
         self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "died": "commander", "cause": "bled out"}));
         println!("[panzerrechnersystem] KILLED — you bled out at the {:?} station", self.station);
     }
 
-    /// The commander's orders: K toggles the standing order; LMB buttoned up at the cupola with
-    /// nothing under the crosshair is the fire command.
+    /// K explicitly enables autonomous gunner fire. Empty-space LMB is never a fire order.
     fn crew_solo_orders(&mut self, input: &TankInput) {
         let toggle = input.fire_order && !self.crew_solo.prev_fire_order;
         self.crew_solo.prev_fire_order = input.fire_order;
@@ -820,33 +988,18 @@ impl Game {
             let at = self.hands_pos();
             self.recorded(crate::audio::RecordedFx::SwitchButton, -4.0, at);
         }
-        let command_press = input.mg_coax && !self.crew_solo.prev_command_lmb;
+        // Empty-space LMB is not a remote main-gun trigger.
         self.crew_solo.prev_command_lmb = input.mg_coax;
-        if command_press
-            && self.player.alive
-            && self.mode == Mode::Tank
-            && self.station == Station::Commander
-            && !self.commander_outside
-            && self.switch_t <= 0.0
-            && self.hover.is_none()
-            && self.hover_station.is_none()
-            && !self.hover_hatch
-            && !self.map_held
-            && !self.compass_equipped
-            && self.crew_solo_ai_gunner_active()
-        {
-            self.crew_solo.fire_command = true;
-            self.crew_solo.say("Commander: fire!");
-            let at = self.hands_pos();
-            self.recorded(crate::audio::RecordedFx::SwitchButton, -4.0, at);
-        }
     }
 
     fn crew_solo_gunner_think(&mut self, dt: f32) {
-        if !self.crew_solo_ai_gunner_active() {
+        if !self.crew_solo_ai_gunner_active() || self.crew_solo.remote_lay_override
+            || (self.crew_solo_active() && !self.crew_solo.fire_at_will
+                && self.crew_solo.designation.is_none() && !self.crew_solo.fire_command) {
             self.crew_solo.gunner_target = None;
             self.crew_solo.gunner_settle_s = 0.0;
             self.crew_solo.gunner_fire_pulse = false;
+            self.crew_solo.slewing_to_designation = false;
             return;
         }
         let perf = self.crew_solo.man(CrewRole::Gunner).performance().max(0.15);
@@ -956,17 +1109,23 @@ impl Game {
     }
 
     fn crew_solo_driver_think(&mut self, input: &TankInput, dt: f32) {
-        let takes_orders = self.mode == Mode::Tank
-            && !matches!(self.station, Station::Loader | Station::Driver)
-            && self.switch_t <= 0.0
-            && self.activity.is_none()
-            && self.player.alive;
-        let order = if takes_orders {
-            Vec2::new(input.drive, input.steer)
-        } else {
-            Vec2::ZERO
-        };
         let working = self.crew_solo_working(CrewRole::Driver);
+        self.crew_solo.driver_brake = None;
+        if self.mode != Mode::Tank || !self.player.alive || !working {
+            self.crew_solo.driver_cruise.cancel();
+            if self.station != Station::Driver {
+                self.crew_solo.driver_brake = Some(crate::powertrain::STOP_PEDAL);
+            }
+            self.crew_driver_follow(Vec2::ZERO, false, dt);
+            return;
+        }
+        let takes_orders = !matches!(self.station, Station::Loader | Station::Driver)
+            && self.switch_t <= 0.0 && self.activity.is_none();
+        // Walking input never touches the standing vehicle order. Deliberate W/S at a
+        // command station cancels cruise; the player can always take the physical levers.
+        let (order, brake) = self.crew_solo.driver_cruise.order(Vec2::new(input.drive, input.steer),
+            takes_orders, self.crew_solo.driver_order, self.player.speed);
+        self.crew_solo.driver_brake = brake;
         self.crew_driver_follow(order, working, dt);
     }
 
@@ -1040,6 +1199,7 @@ impl Game {
         }
         self.crew_solo.prev_breech_loaded = loaded_now;
         self.crew_solo.loader_holding = false;
+        if self.crew_loader_physical_step(dt) {return;}
         if !self.crew_solo_working(CrewRole::Loader) || !self.player.alive || loaded_now {
             self.crew_solo.loader_clock = 0.0;
             return;
@@ -1307,7 +1467,27 @@ impl Game {
         {
             return;
         }
-        self.crew_solo_designate(eye, look);
+        self.command_gunner_sector(eye, look);
+    }
+
+    /// A pointing/clock-bearing order, not a rangefinder or target lock. The destination is
+    /// deliberately coarse and carries no enemy ID; the player finishes the lay at the sight.
+    pub fn command_gunner_sector(&mut self, eye: Vec3, look: Vec3) -> bool {
+        if !self.crew_solo_remote_gun_ready() || !eye.is_finite() || !look.is_finite()
+            || look.x * look.x + look.z * look.z < 0.001 { return false; }
+        let direction = coarse_sector_direction(self.player.heading, look);
+        let point = eye + direction * 300.0;
+        let shell = if self.he_loaded { &crate::ballistics::SPRGR_88 } else { &crate::ballistics::PZGR_39 };
+        let bearing = scripted_gun_lay(&self.player, point, shell).0;
+        self.crew_solo.gunner_target = None;
+        self.crew_solo.fire_command = false;
+        self.crew_solo.remote_lay_override = false;
+        self.crew_solo.designation = Some(Designation {
+            point, bearing, range_m: 300.0, enemy: None, set_t: self.crew_solo.time_s,
+            refinements: 0, on_target_after_s: None, turret_yaw_at_set: self.player.turret_yaw,
+        });
+        self.crew_solo.say("Gunner: traversing to indicated sector.");
+        true
     }
 
     /// Cast from the commander's eye along his look: the first living contact (a sphere round
@@ -1799,7 +1979,7 @@ impl Game {
                     self.recorded(crate::audio::RecordedFx::BagOpen, 0.0, bag);
                 }
             }
-            Some(action @ HoverAction::ClearBody(role)) => {
+            Some(action @ HoverAction::ClearBody(actor_id)) => {
                 if !button {
                     self.crew_solo.action = None;
                     return;
@@ -1816,14 +1996,14 @@ impl Game {
                         let at = self.hands_pos() - Vec3::Y * 0.4;
                         self.foley(crate::acoustics::foley::Cue::Body(crate::acoustics::foley::BodyCue::DragBody), 1.0, 0.0, at);
                     }
-                    self.crew_solo_drag_body(role, dt / remaining);
+                    self.crew_solo_drag_body(actor_id, dt / remaining);
                     return;
                 }
                 self.crew_solo.action = None;
-                self.crew_solo.body_cleared[role_index(role)] = true;
-                self.crew_solo_drag_body(role, 1.0);
-                self.crew_solo.say(format!("{}'s body moved aside.", role_short(role)));
-                self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "body_cleared": role.name()}));
+                self.crew_solo_drag_body(actor_id, 1.0);
+                self.mark_crew_body_cleared(actor_id);
+                self.crew_solo.say("Body moved aside.");
+                self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "body_cleared_actor": actor_id}));
             }
             None => self.crew_solo.action = None,
         }
@@ -1832,6 +2012,15 @@ impl Game {
     /// The player's hands are on a man: the look is his hands now.
     pub(super) fn crew_solo_hands_busy(&self) -> bool {
         self.crew_solo.procedure.is_some()
+    }
+
+    pub(super) fn mark_crew_body_cleared(&mut self, actor_id:u32) {
+        if !self.crew_solo.cleared_actors.contains(&actor_id) {self.crew_solo.cleared_actors.push(actor_id);}
+        for role in CrewRole::ALL {
+            if self.singleplayer_casualty_identity(role).peer_id==actor_id {
+                self.crew_solo.body_cleared[role_index(role)]=true;
+            }
+        }
     }
 
     /// A hit on the tank mid-procedure: the hands jerk, the step is lost.
@@ -1846,16 +2035,15 @@ impl Game {
     /// Drag a settled casualty off his seat toward the rear of the basket floor by `fraction` of
     /// the remaining distance. The articulated body is translated as one (its joints keep their
     /// solved pose); not a contact solve.
-    fn crew_solo_drag_body(&mut self, role: CrewRole, fraction: f32) {
-        let identity = singleplayer_crew::body_post(role);
+    fn crew_solo_drag_body(&mut self, actor_id: u32, fraction: f32) {
         let Some(body) = self
             .couch_ragdolls
             .iter_mut()
-            .find(|body| body.casualty.identity == identity)
+            .find(|body| body.casualty.peer_id == actor_id)
         else {
             return;
         };
-        let frame_model = blood_parent_model(&self.player, body.frame);
+        let frame_model = body.parent_model(&self.player);
         let rest = match body.frame {
             BloodFrame::Turret => Vec3::new(-0.35, crate::interior_rig::FLOOR_STAND_Y + 0.12, -0.62),
             BloodFrame::Hull => Vec3::new(0.0, 0.80, 0.25),
@@ -1883,7 +2071,7 @@ impl Game {
             self.hover_label = run.current().map(|step| step.label);
             return;
         }
-        // Hands already on a body: the drag keeps its target until E is released or the player
+        // Hands already on a body: the drag keeps its target until LMB is released or the player
         // steps away (the body moves as it is dragged; a neighbour must not steal it).
         if let Some((action, _, start)) = self.crew_solo.action {
             if self.mode == Mode::Tank && self.station == Station::Loader && start.distance(self.walk_pos) < 0.08 {
@@ -1891,7 +2079,9 @@ impl Game {
                 self.hover_label = Some(match action {
                     HoverAction::Treat(role, p) => offer_label(role, p, Some(false)),
                     HoverAction::SelfAid(p) => offer_label(CrewRole::Commander, p, Some(false)),
-                    HoverAction::ClearBody(role) => clear_label(role),
+                    HoverAction::ClearBody(actor) => self.couch_ragdolls.iter()
+                        .find(|body|body.casualty.peer_id==actor)
+                        .map_or("MOVE BODY [HOLD LMB]",|body|clear_label(role_of_post(body.casualty.identity))),
                 });
                 return;
             }
@@ -1936,21 +2126,23 @@ impl Game {
             }
             let alive = singleplayer_crew::role_alive(&self.crew, role) && !self.crew_solo.man(role).dead;
             if alive {
+                if self.couch_ragdolls.iter().any(|b|b.casualty.peer_id==self.singleplayer_casualty_identity(role).peer_id&&b.world_space) {continue;}
                 let Some((procedure, _)) = self.crew_solo.man(role).procedure_needed() else { continue; };
                 let post = self.crew_solo_post(role);
                 let torso = self.crew_solo_man_point(role);
                 let can = self.crew_solo.aid_box.can_start(procedure);
                 let reach = if matches!(post, LanRole::Driver | LanRole::Radio) { AID_REACH_HULL_M } else { AID_REACH_M };
                 consider(torso, HoverAction::Treat(role, procedure), offer_label(role, procedure, can), reach);
-            } else if !self.crew_solo.body_cleared[role_index(role)] {
-                let identity = singleplayer_crew::body_post(role);
-                if let Some(body) = self.couch_ragdolls.iter().find(|b| b.casualty.identity == identity) {
-                    let center = blood_parent_model(&self.player, body.frame)
-                        .transform_point3(crew_physics::center_of_mass(&body.segments));
-                    let reach = if body.frame == BloodFrame::Hull { AID_REACH_HULL_M } else { AID_REACH_M };
-                    consider(center, HoverAction::ClearBody(role), clear_label(role), reach);
-                }
             }
+        }
+        // Retired people remain selectable even when the player now uses their appearance slot.
+        for body in &self.couch_ragdolls {
+            if body.world_space||self.crew_solo.actor_body_cleared(body.casualty.peer_id) {continue;}
+            if self.detached_living_crew_role(body.casualty.peer_id).is_some() {continue;}
+            let center=body.parent_model(&self.player)
+                .transform_point3(crew_physics::center_of_mass(&body.segments));
+            let reach=if body.frame==BloodFrame::Hull {AID_REACH_HULL_M}else{AID_REACH_M};
+            consider(center,HoverAction::ClearBody(body.casualty.peer_id),clear_label(role_of_post(body.casualty.identity)),reach);
         }
         if let Some(me) = me {
             if let Some((procedure, _)) = self.crew_solo.man(me).procedure_needed() {
@@ -1998,6 +2190,9 @@ impl Game {
     /// Entering a station in full-crew solo: refused while a dead man fills it; otherwise the
     /// move costs the real clamber between seats.
     pub(super) fn crew_solo_begin_station_move(&mut self, to: Station) -> bool {
+        if self.crew_assignment_role_in_transit(singleplayer_crew::role_for_station(to)) {
+            self.crew_solo.say("Crew changing stations; wait for the aisle to clear.");return false;
+        }
         if !self.crew_solo_active() {
             return true;
         }
@@ -2024,10 +2219,9 @@ impl Game {
         if !self.crew_solo_active() {
             return;
         }
-        let role = role_of_post(casualty.identity);
-        if !singleplayer_crew::role_alive(&self.crew, role) {
-            return;
-        }
+        let bound=self.singleplayer_slot_for_actor(casualty.peer_id);
+        let role = bound.unwrap_or_else(||role_of_post(casualty.identity));
+        if self.singleplayer_actor_casualty(casualty.peer_id).is_none_or(|man|man.dead) {return;}
         let mut worst: Option<Region> = None;
         let mut any = false;
         for event in events {
@@ -2041,7 +2235,7 @@ impl Game {
             };
             any = true;
             worst = Some(region);
-            let man = self.crew_solo.man_mut(role);
+            let man = self.singleplayer_actor_casualty_mut(casualty.peer_id).unwrap();
             man.add_wound(Wound::new(WoundKind::Bleeding, region, severity));
             if fracture {
                 man.add_wound(Wound::new(WoundKind::Fracture, region, 0.6));
@@ -2054,13 +2248,13 @@ impl Game {
             return;
         }
         self.crew_solo_interrupt_hands();
-        let man = self.crew_solo.man(role);
+        let man = self.singleplayer_actor_casualty(casualty.peer_id).unwrap();
         let state = man.state_label();
         let (performance, conscious) = (man.performance(), man.is_conscious());
         let where_ = worst.map_or("", Region::label);
-        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "wounded": role.name(),
+        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "actor_id":casualty.peer_id,"wounded": role.name(),
             "region": where_, "state": state, "performance": performance}));
-        let line = if Some(role) == self.solo_identity() {
+        let line = if bound.is_some()&&bound == self.solo_identity() {
             format!("You: hit, {where_}.")
         } else if !conscious {
             format!("{}: hit — no answer.", role_short(role))
@@ -2077,18 +2271,20 @@ impl Game {
         if !self.crew_solo_active() {
             return;
         }
-        let role = role_of_post(casualty.identity);
+        let bound=self.singleplayer_slot_for_actor(casualty.peer_id);
+        let role = bound.unwrap_or_else(||role_of_post(casualty.identity));
+        if self.singleplayer_actor_casualty(casualty.peer_id).is_none() {return;}
         self.crew_solo_interrupt_hands();
-        if self.crew_solo.procedure.as_ref().is_some_and(|(patient, _, _)| *patient == role) {
+        if self.crew_solo.procedure.as_ref().is_some_and(|(patient, _, _)| Some(*patient) == bound) {
             self.crew_solo.procedure = None;
         }
-        let man = self.crew_solo.man_mut(role);
+        let man = self.singleplayer_actor_casualty_mut(casualty.peer_id).unwrap();
         man.dead = true;
         man.cause = Some("killed");
-        if Some(role) != self.solo_identity() {
+        if bound!=self.solo_identity() {
             self.crew_solo.say(format!("{}: killed.", role_short(role)));
         }
-        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s, "died": role.name(), "cause": "killed"}));
+        self.crew_solo.log.push(json!({"t": self.crew_solo.time_s,"actor_id":casualty.peer_id, "died": role.name(), "cause": "killed"}));
     }
 
     // ── LAN crew co-op: the living crew fills the seats no human holds ─────────────────────
@@ -2242,7 +2438,8 @@ impl Game {
             .map(|&role| {
                 let man = self.crew_solo.man(role);
                 let alive = singleplayer_crew::role_alive(&self.crew, role) && !man.dead;
-                let post = if Some(role) == me {
+                let detached=self.crew_actor_has_retained_body(self.singleplayer_casualty_identity(role).peer_id);
+                let post = if detached {None} else if Some(role) == me {
                     if self.mode == Mode::Tank { Some(self.solo_player_post()) } else { None }
                 } else if alive {
                     Some(self.crew_solo_post(role))
@@ -2251,8 +2448,12 @@ impl Game {
                 };
                 json!({
                     "role": role.name(),
+                    "actor_id": self.singleplayer_actor_id(role),
+                    "person_id": self.singleplayer_person_id(role).map(|id|id.0),
                     "player": Some(role) == me,
                     "alive": alive,
+                    "detached": detached,
+                    "camp_patient":self.expedition_camp_owns_casualty(role),
                     "state": man.state_label(),
                     "performance": man.performance(),
                     "blood_loss": man.blood_loss_fraction(),
@@ -2275,6 +2476,14 @@ impl Game {
             "fire_at_will": self.crew_solo.fire_at_will,
             "gunner_target": self.crew_solo.gunner_target,
             "driver_cmd": [self.crew_solo.driver_cmd.x, self.crew_solo.driver_cmd.y],
+            "cruise_notch": self.crew_solo.driver_cruise.notch,
+            "cruise_engaged": self.crew_solo.driver_cruise.engaged,
+            "driver_brake": self.crew_solo.driver_brake,
+            "retired_actor_records": self.crew_solo.retired_men.len(),
+            "unbound_actor_health":self.crew_solo.retired_men.iter().map(|(actor,man)|json!({
+                "actor_id":actor,"person_id":self.singleplayer_person_for_actor(*actor).map(|p|p.0),
+                "dead":man.dead,"state":man.state_label(),"blood_l":man.blood_l,
+                "camp_patient":self.expedition_camp_owns_actor(*actor)})).collect::<Vec<_>>(),
             "shots_by_gunner": self.crew_solo.shots_by_gunner,
             "loads_by_loader": self.crew_solo.loads_by_loader,
             "treatments": self.crew_solo.treatments,
@@ -2336,9 +2545,9 @@ impl Game {
                 let post = self.crew_solo_post(role);
                 crew_live_model(&self.player, post).transform_point3(Vec3::new(0.0, crew_live_torso_y(post), 0.0))
             } else {
-                let identity = singleplayer_crew::body_post(role);
-                match self.couch_ragdolls.iter().find(|b| b.casualty.identity == identity) {
-                    Some(body) => blood_parent_model(&self.player, body.frame)
+                let actor_id = self.singleplayer_casualty_identity(role).peer_id;
+                match self.couch_ragdolls.iter().find(|b| b.casualty.peer_id == actor_id) {
+                    Some(body) => body.parent_model(&self.player)
                         .transform_point3(crew_physics::center_of_mass(&body.segments)),
                     None => continue,
                 }
@@ -2438,15 +2647,15 @@ impl Game {
         let me = self.solo_identity();
         let men: Vec<Value> = CrewRole::ALL.iter().map(|&role| {
             let alive = singleplayer_crew::role_alive(&self.crew, role) && !self.crew_solo.man(role).dead;
-            let identity = singleplayer_crew::body_post(role);
-            let ragdoll = self.couch_ragdolls.iter().find(|b| b.casualty.identity == identity).map(|body| {
-                let center = blood_parent_model(&self.player, body.frame)
+            let actor_id = self.singleplayer_casualty_identity(role).peer_id;
+            let ragdoll = self.couch_ragdolls.iter().find(|b| b.casualty.peer_id == actor_id).map(|body| {
+                let center = body.parent_model(&self.player)
                     .transform_point3(crew_physics::center_of_mass(&body.segments));
                 json!({"settled": body.settled, "age": body.age, "center": center.to_array(),
                     "frame": format!("{:?}", body.frame), "post_at_death": body.casualty.role.label()})
             });
             let post = if Some(role) == me { self.solo_player_post() } else { self.crew_solo_post(role) };
-            let mut casualty = singleplayer_crew::casualty_identity(role);
+            let mut casualty = self.singleplayer_casualty_identity(role);
             casualty.role = post;
             json!({"role": role.name(), "player": Some(role) == me, "alive": alive,
                 "post": post.label(), "standing_by": alive && self.crew_solo_standby_offset(casualty).is_some(),
@@ -2550,11 +2759,11 @@ impl Game {
         let (target_world, post) = if alive {
             (self.crew_solo_man_point(role), self.crew_solo_post(role))
         } else {
-            let identity = singleplayer_crew::body_post(role);
-            let Some(body) = self.couch_ragdolls.iter().find(|b| b.casualty.identity == identity) else {
+            let actor_id = self.singleplayer_casualty_identity(role).peer_id;
+            let Some(body) = self.couch_ragdolls.iter().find(|b| b.casualty.peer_id == actor_id) else {
                 return false;
             };
-            (blood_parent_model(&self.player, body.frame)
+            (body.parent_model(&self.player)
                 .transform_point3(crew_physics::center_of_mass(&body.segments)), body.casualty.role)
         };
         let local = turret.inverse().transform_point3(target_world);
@@ -2604,7 +2813,7 @@ impl Game {
             return false;
         }
         let post = self.crew_solo_post(role);
-        let mut casualty = singleplayer_crew::casualty_identity(role);
+        let mut casualty = self.singleplayer_casualty_identity(role);
         casualty.role = post;
         let side = self.player.hull_model().transform_vector3(Vec3::new(-0.8, 0.15, -0.5)).normalize_or_zero();
         self.crew_ko_t = CREW_KO_DUR;
@@ -2737,6 +2946,122 @@ fn aid_box_json(aid: &AidBox) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn replacing_one_man_preserves_other_people_and_shared_supplies() {
+        let mut solo=CrewSolo::default();
+        solo.man_mut(CrewRole::Gunner).dead=true;
+        solo.man_mut(CrewRole::Loader).add_wound(Wound::new(WoundKind::Bleeding,Region::Arm,0.4));
+        let loader=solo.man(CrewRole::Loader).clone();
+        let supplies=aid_box_json(&solo.aid_box);
+        solo.body_cleared[role_index(CrewRole::Gunner)]=true;
+        solo.gunner_fire_pulse=true;
+        solo.replace_man(CrewRole::Gunner,123);
+        assert!(!solo.man(CrewRole::Gunner).dead);
+        assert_eq!(solo.man(CrewRole::Loader),&loader);
+        assert_eq!(aid_box_json(&solo.aid_box),supplies);
+        assert_eq!(solo.retired_men[0].0,123);
+        assert!(solo.retired_men[0].1.dead);
+        assert!(!solo.gunner_fire_pulse);
+        assert!(!solo.body_was_cleared(CrewRole::Gunner));
+    }
+
+    #[test]
+    fn a_living_evacuated_patient_keeps_bleeding_independently_of_his_relief() {
+        let mut solo=CrewSolo::default();
+        solo.man_mut(CrewRole::Driver).add_wound(Wound::new(WoundKind::Bleeding,Region::Leg,0.7));
+        let original=solo.man(CrewRole::Driver).clone();
+        solo.replace_man(CrewRole::Driver,123);
+        assert_eq!(solo.archived_man(123),Some(&original));
+        assert!(!solo.archived_man(123).unwrap().dead);
+        assert!(!solo.man(CrewRole::Driver).is_wounded());
+        solo.archived_man_mut(123).unwrap().advance(4.0);
+        let patient=solo.archived_man(123).unwrap().clone();
+        assert!(patient.blood_l<original.blood_l);
+        solo.man_mut(CrewRole::Commander).dead=true;
+        let dead_commander=solo.man(CrewRole::Commander).clone();
+        solo.restore_man(CrewRole::Commander,456,123).unwrap();
+        assert_eq!(solo.man(CrewRole::Commander),&patient);
+        assert_eq!(solo.archived_man(456),Some(&dead_commander));
+        assert!(solo.archived_man(123).is_none(),"restoration transfers ownership rather than cloning health");
+        assert!(!solo.man(CrewRole::Driver).is_wounded(),"old patient's clock cannot wound the relief");
+    }
+
+    #[test]
+    fn failed_actor_restore_cannot_reset_any_live_physiology() {
+        let mut solo=CrewSolo::default();
+        solo.man_mut(CrewRole::Driver).add_wound(Wound::new(WoundKind::Fracture,Region::Arm,0.8));
+        let before=solo.men.clone();
+        assert!(solo.restore_man(CrewRole::Driver,123,999).is_err());
+        assert_eq!(solo.men,before);assert!(solo.retired_men.is_empty());
+    }
+
+    #[test]
+    fn cruise_has_seven_bounded_notches_and_requires_a_driver() {
+        let mut cruise = DriverCruise::default();
+        for _ in 0..12 { assert!(cruise.step(1, true)); }
+        assert_eq!(cruise.notch, 3);
+        for expected in [2, 1, 0, -1, -2, -3] {
+            assert!(cruise.step(-1, true));
+            assert_eq!(cruise.notch, expected);
+        }
+        assert!(cruise.step(-1, true));
+        assert_eq!(cruise.notch, -3);
+        assert!(!cruise.step(1, false));
+        assert_eq!(cruise, DriverCruise::default(), "a lost driver cannot retain a ghost order");
+    }
+
+    #[test]
+    fn cruise_survives_interior_walking_and_manual_drive_cancels_it() {
+        let mut cruise = DriverCruise::default();
+        cruise.step(1, true);
+        cruise.step(1, true);
+        let (order, brake) = cruise.order(Vec2::new(-1.0, 1.0), false, Vec2::new(0.7, 1.0), 1.0);
+        assert_eq!(cruise.notch, 2, "walking backward inside is not reverse gear");
+        assert!(order.x > 0.0);
+        assert_eq!(order.y, 0.0, "walking sideways is not hull steering");
+        assert_eq!(brake, Some(0.0));
+        let (manual, brake) = cruise.order(Vec2::new(-1.0, 0.4), true, order, 1.0);
+        assert!(!cruise.engaged);
+        assert_eq!(manual, Vec2::new(-1.0, 0.4));
+        assert_eq!(brake, None);
+    }
+
+    #[test]
+    fn cruise_stop_and_reverse_use_brakes_before_reverse_throttle() {
+        let mut cruise = DriverCruise::default();
+        cruise.step(1, true);
+        cruise.step(-1, true);
+        let (stop, brake) = cruise.order(Vec2::ZERO, true, Vec2::X, 5.0);
+        assert_eq!(stop.x, 0.0);
+        assert_eq!(brake, Some(crate::powertrain::STOP_PEDAL));
+        cruise.step(-1, true);
+        let (reverse, brake) = cruise.order(Vec2::ZERO, true, Vec2::ZERO, 5.0);
+        assert_eq!(reverse.x, 0.0);
+        assert_eq!(brake, Some(1.0));
+        let (reverse, brake) = cruise.order(Vec2::ZERO, true, Vec2::ZERO, 0.0);
+        assert!(reverse.x < 0.0);
+        assert_eq!(brake, Some(0.0));
+    }
+
+    #[test]
+    fn interior_walk_preserves_forward_order_and_releases_steering() {
+        let (order, _) = DriverCruise::default().order(Vec2::new(-1.0, -1.0), false,
+            Vec2::new(0.7, 0.5), 0.0);
+        assert_eq!(order, Vec2::new(0.7, 0.0));
+    }
+
+    #[test]
+    fn sector_designation_is_a_clock_bearing_not_precise_aim() {
+        for heading in [0.0, 1.0, -2.0] {
+            let a = heading + 0.03;
+            let b = heading + 0.20;
+            let first = coarse_sector_direction(heading, Vec3::new(a.sin(), 0.7, a.cos()));
+            let second = coarse_sector_direction(heading, Vec3::new(b.sin(), -0.4, b.cos()));
+            assert!(first.distance(second) < 1e-5);
+            assert_eq!(first.y, 0.0);
+            assert!((first.length() - 1.0).abs() < 1e-5);
+        }
+    }
 
     #[test]
     fn slump_grows_with_hurt_and_is_identity_for_a_fit_man() {
@@ -2761,12 +3086,12 @@ mod tests {
     fn every_role_has_an_offer_label_for_every_procedure_and_kit_state() {
         for role in CrewRole::ALL {
             for p in Procedure::ALL {
-                assert!(offer_label(role, p, Some(false)).contains("[E]"));
+                assert!(offer_label(role, p, Some(false)).contains("[LMB]"));
                 assert!(offer_label(role, p, Some(true)).contains("IMPROVISED"));
-                assert!(!offer_label(role, p, None).contains("[E]"), "no prompt without kit");
+                assert!(!offer_label(role, p, None).contains("[LMB]"), "no prompt without kit");
                 assert!(std::ptr::eq(offer_label(role, p, Some(false)), offer_label(role, p, Some(false))), "interned once");
             }
-            assert!(clear_label(role).contains("[HOLD E]"));
+            assert!(clear_label(role).contains("[HOLD LMB]"));
             assert!(!blocked_label(role).is_empty());
         }
     }
@@ -2804,5 +3129,23 @@ mod tests {
         for role in CrewRole::ALL {
             assert_eq!(singleplayer_crew::role_for_station(station_for_role(role)), role);
         }
+    }
+}
+
+impl CrewSolo {pub(super) fn validate_world_state(&self)->anyhow::Result<()> {
+    anyhow::ensure!(self.men.len()==5&&self.retired_men.len()<=crate::expedition::INITIAL_PERSONNEL,"invalid crew physiology capacity");
+    for man in self.men.iter().chain(self.retired_men.iter().map(|(_,m)|m)) {crate::expedition_medical::validate_casualty(man)?;}
+    let mut ids=std::collections::BTreeSet::new();
+    anyhow::ensure!(self.retired_men.iter().all(|(id,_)|ids.insert(*id)),"duplicate retired physiology");
+    anyhow::ensure!([self.time_s,self.gunner_settle_s,self.driver_react_s,self.loader_clock,self.ask_clock,self.dump_clock]
+        .iter().all(|v|v.is_finite()&&*v>=0.0)&&self.driver_order.is_finite()&&self.driver_cmd.is_finite()&&self.loader_busy_s.is_finite(),"invalid crew clock/order");
+    anyhow::ensure!((-3..=3).contains(&self.driver_cruise.notch)&&self.bleed_emit_t.iter().all(|t|t.is_finite()&&*t>=0.0),"invalid cruise or blood timer");
+    self.loader_work.validate_world_state()?;self.assignment.validate_world_state()?;Ok(())
+}}
+
+impl CrewSolo {
+    pub(in crate::game) fn register_field_casualty(&mut self,actor:u32,man:Casualty)->anyhow::Result<()> {
+        anyhow::ensure!(self.retired_men.len()<crate::expedition::INITIAL_PERSONNEL&&!self.retired_men.iter().any(|(id,_)|*id==actor),"duplicate field casualty actor");
+        crate::expedition_medical::validate_casualty(&man)?;self.retired_men.push((actor,man));Ok(())
     }
 }

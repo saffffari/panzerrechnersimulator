@@ -20,12 +20,6 @@ fn drain_tank(liters: &mut f32, speed_mps: f32, dt: f32) -> bool {
     *liters > 0.0
 }
 
-fn transfer_from_can(liters: &mut f32, can: &mut PortableItem) -> f32 {
-    let accepted = accepted_portable_fuel_liters(Some(*liters), can.fuel_liters());
-    let drained = can.drain_fuel_liters(accepted);
-    *liters = (*liters + drained).min(TIGER_FUEL_CAPACITY_L);
-    drained
-}
 
 impl Game {
     pub(super) fn seed_playtest_fuel_cans(&mut self) {
@@ -84,31 +78,8 @@ impl Game {
             "fuel_can_count":cans.len(),"fuel_cans":cans})
     }
 
-    pub(super) fn refuel_from_pickup(&mut self, index: usize) -> f32 {
-        let Some(can) = self
-            .pickups
-            .get_mut(index)
-            .and_then(|pickup| pickup.portable.as_mut())
-        else {
-            return 0.0;
-        };
-        let fuel = self
-            .campaign
-            .as_mut()
-            .map(|runtime| &mut runtime.fuel_liters)
-            .or(self.standalone_fuel_liters.as_mut());
-        let Some(fuel) = fuel else {
-            return 0.0;
-        };
-        let drained = transfer_from_can(fuel, can);
-        if let Some(runtime) = &mut self.campaign {
-            runtime.inventory.fuel_liters = runtime.fuel_liters as u16;
-        }
-        drained
-    }
-
     pub(super) fn update_tiger_fuel(&mut self, dt: f32) {
-        if !self.engine_on || !self.player.alive {
+        if !self.engine_running() {
             return;
         }
         let speed = self.player.speed;
@@ -166,10 +137,10 @@ impl Game {
         self.pickups[index].collected = false;
         self.dbg_look_foot_at(can + Vec3::Y * 0.31);
         Ok(
-            serde_json::json!({"fixture":"standalone_rear_service","review_only":true,
+            serde_json::json!({"fixture":"standalone_legacy_can_approach","review_only":true,
             "fuel_before_fixture_l":fuel_before,"fuel_after_fixture_l":400.0,"can_fuel_l":20.0,
             "pickup_index":index,"can_world_m":can.to_array(),"eye_world_m":self.foot.eye().to_array(),
-            "engine_on":false,"expected_interactions":["ordinary E picks up physical can","ordinary E at rear transfers 20 L","ordinary E places empty can"],
+            "engine_on":false,"expected_interactions":["ordinary LMB picks up physical can","place can and open actual left outer and inner filler caps","hold LMB with physical can aimed into open neck","release stops transfer; X places remaining can"],"legacy_rear_refill_disabled":true,
             "interactions_executed_by_fixture":false}),
         )
     }
@@ -197,19 +168,5 @@ mod tests {
         assert!(!drain_tank(&mut standalone, 5.0, 20.0));
         assert_eq!(standalone, 0.0);
         assert_eq!(consumed_liters(5.0, -1.0), 0.0);
-    }
-    #[test]
-    fn partial_refuel_conserves_tank_and_physical_can_contents() {
-        let mut fuel = 535.5;
-        let mut can = PortableItem::full_jerry_can();
-        assert_eq!(transfer_from_can(&mut fuel, &mut can), 4.5);
-        assert_eq!(fuel, TIGER_FUEL_CAPACITY_L);
-        assert_eq!(can.fuel_liters(), 15.5);
-        assert_eq!(transfer_from_can(&mut fuel, &mut can), 0.0);
-        assert_eq!(fuel + can.fuel_liters(), 555.5);
-        fuel = 400.0;
-        assert_eq!(transfer_from_can(&mut fuel, &mut can), 15.5);
-        assert_eq!(can.fuel_liters(), 0.0);
-        assert_eq!(can.contents, crate::foot::PortableContents::Empty);
     }
 }

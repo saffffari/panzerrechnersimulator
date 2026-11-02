@@ -15,6 +15,7 @@ const HOLD_DISTANCE: f32 = 0.185;
 const MAX_ZOOM: f32 = 2.25;
 
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct MapView {
     zoom: f32,
     focus: Vec2,
@@ -23,6 +24,14 @@ impl Default for MapView {
     fn default() -> Self { Self { zoom: 1.0, focus: Vec2::splat(0.5) } }
 }
 impl MapView {
+    fn presentation_key(self) -> u64 {
+        // Keep camera/world motion out of this key: only the physical reading pose changes it.
+        let mut key = 0xcbf29ce484222325_u64;
+        for value in [self.zoom, self.focus.x, self.focus.y] {
+            key = (key ^ u64::from(value.to_bits())).wrapping_mul(0x100000001b3);
+        }
+        key
+    }
     fn zoom_by(&mut self, steps: f32) {
         if steps.is_finite() {
             self.zoom = (self.zoom * 1.18_f32.powf(steps.clamp(-8.0,8.0))).clamp(1.0,MAX_ZOOM);
@@ -115,7 +124,7 @@ pub(super) fn mesh() -> CpuMesh {
     let mut mesh = CpuMesh::basic(
         vertices,
         indices,
-        Some(CpuImage::new(1, 1, vec![210, 199, 169, 255])),
+        Some(CpuImage::new(1, 1, vec![225, 225, 225, 255])),
         Vec3::new(-WIDTH * 0.5, -HEIGHT * 0.5, -THICKNESS),
         Vec3::new(WIDTH * 0.5, HEIGHT * 0.5, 0.004),
     );
@@ -140,6 +149,21 @@ pub(super) fn model(camera: &Camera, view: MapView) -> Mat4 {
     let focus = paper_point(view.focus.x,view.focus.y);
     frame * Mat4::from_rotation_x(-15_f32.to_radians())
         * Mat4::from_translation(-Vec3::new(focus.x,focus.y,0.0)*(view.zoom-1.0).clamp(0.0,1.0))
+}
+
+/// Aim the existing finite flashlight at the selected ink from the printed side of the sheet.
+/// The source body/lens keep their real dimensions; there is no light attached to the camera
+/// or emission on paper. The player must explicitly equip the flashlight.
+pub(super) fn reading_torch_model(camera:&Camera,view:MapView)->Mat4 {
+    let page=model(camera,view);
+    let target=page.transform_point3(paper_point(view.focus.x,view.focus.y));
+    page_torch_model(page,target)
+}
+pub(super) fn page_torch_model(page:Mat4,target:Vec3)->Mat4 {
+    let lens=target+page.transform_vector3(Vec3::new(0.11,0.055,0.06));
+    let direction=(target-lens).normalize();
+    let rotation=glam::Quat::from_rotation_arc(Vec3::Z,direction);
+    Mat4::from_rotation_translation(rotation,lens-direction*0.035)
 }
 
 /// `march_bearing_deg` turns the body (its dial and north mark) to the ordered bearing, as the
@@ -168,7 +192,7 @@ impl super::Game {
     pub fn set_map_held(&mut self, held: bool) -> bool {
         let was_held = self.map_held;
         self.map_held = held
-            && self.player.alive
+            && self.controlled_soldier_alive()
             && !self.climb.active
             && self.carry_mesh.is_none()
             && self.carried_casing.is_none()
@@ -184,6 +208,7 @@ impl super::Game {
             }
         }
         if self.map_held {
+            self.repair_manual.set_held(false);
             self.ext_equipped = false;
             self.ext_want_spray = false;
             self.binocular_raise = 0.0;
@@ -209,8 +234,10 @@ impl super::Game {
     }
 
     pub(super) fn drive_hand_map(&self, renderer: &mut Renderer) {
-        let alive = if self.mode == super::Mode::Foot { self.foot.hp > 0.0 } else { self.player.alive };
+        let alive = self.controlled_soldier_alive();
         renderer.set_visible(self.slots.held_map, self.map_held && alive);
+        renderer.held_map_presentation((self.map_held && alive)
+            .then(|| self.hand_map_view.presentation_key()));
         if !self.map_held {
             return;
         }
@@ -236,6 +263,43 @@ mod scene_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn map_history_tracks_reading_pose_but_not_world_camera_motion() {
+        let view = MapView::default();
+        let initial = view.presentation_key();
+        let mut zoomed = view;
+        zoomed.zoom_by(2.0);
+        assert_ne!(initial, zoomed.presentation_key());
+        let mut moved = zoomed;
+        moved.set_focus(Vec2::new(0.25, 0.8));
+        assert_ne!(zoomed.presentation_key(), moved.presentation_key());
+        let mut camera = Camera::new(16.0 / 9.0);
+        let before = model(&camera, view);
+        camera.pos = Vec3::new(3000.0, 6.0, -2000.0);
+        camera.yaw = 1.0;
+        assert_ne!(before, model(&camera, view));
+        assert_eq!(initial, view.presentation_key());
+    }
+
+    #[test]
+    fn reading_flashlight_is_in_front_of_the_real_paper_and_aims_at_selected_ink() {
+        let mut camera=Camera::new(16.0/9.0);
+        for yaw in [0.,1.4,3.] {for pitch in [-0.6,0.,0.4] {
+            camera.yaw=yaw;camera.pitch=pitch;
+            for zoom in [1.,MAX_ZOOM] {for focus in [Vec2::splat(0.1),Vec2::splat(0.5),Vec2::splat(0.9)] {
+                let view=MapView{zoom,focus};let page=model(&camera,view);
+                let target=page.transform_point3(paper_point(focus.x,focus.y));
+                let torch=reading_torch_model(&camera,view);
+                let lens=torch.transform_point3(Vec3::new(0.,0.,0.035));
+                let normal=page.transform_vector3(Vec3::Z);
+                assert!((lens-target).dot(normal)>0.059);
+                assert!(torch.transform_vector3(Vec3::Z).dot((target-lens).normalize())>0.9999);
+                assert!(torch.to_scale_rotation_translation().0.abs_diff_eq(Vec3::ONE,1e-5));
+                assert!((lens-target).length()>0.12);
+            }}
+        }}
+    }
 
     #[test]
     fn paper_has_folds_thickness_and_registered_front_uvs() {

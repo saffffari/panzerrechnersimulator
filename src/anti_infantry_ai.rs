@@ -133,6 +133,7 @@ pub struct Action {
     pub high_explosive: bool,
 }
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Policy {
     pub weights: Vec<f32>,
 }

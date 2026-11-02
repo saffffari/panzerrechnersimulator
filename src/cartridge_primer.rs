@@ -13,6 +13,7 @@ pub enum Pull {
 }
 
 #[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Primers {
     faults: BTreeMap<u32, u32>, // location -> unsuccessful primer strikes on this cartridge
     pub trigger_pulls: u32,

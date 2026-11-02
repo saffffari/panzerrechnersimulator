@@ -315,6 +315,13 @@ impl SceneEnvironment {
                 let emitter = &mut self.emitters[index];
                 spatial_audio::tick(&emitter.source, &mut emitter.trigger, listener)
             };
+            // Device voices are deliberately not serialized. Resume an already active loop
+            // without clearing one-shot history or replaying an entrance event.
+            let action = match action {
+                EmitterAction::Update { gain } if self.emitters[index].voice.is_none()
+                    && self.emitters[index].trigger.loop_active => EmitterAction::Start {gain,looping:true},
+                other => other,
+            };
             if matches!(action, EmitterAction::Stop) {
                 if self.emitters[index].voice.take().is_some() {
                     active = active.saturating_sub(1);
@@ -453,5 +460,32 @@ mod tests {
             source.take(4).collect::<Vec<_>>(),
             vec![0.25, 0.25, 0.5, 0.5]
         );
+    }
+}
+
+impl SceneEnvironment {
+    pub(crate) fn export_world_state(&self)->anyhow::Result<crate::expedition_world_save::StateFields> {
+        let mut fields=crate::capture_world_fields!(self; lighting);
+        fields.put("emitters",&self.emitters.iter().map(|e|(&e.source.id,e.trigger,e.failed)).collect::<Vec<_>>())?;
+        fields.put("lights",&self.lights.iter().map(|l|(&l.id,l.enabled)).collect::<Vec<_>>())?;
+        Ok(fields)
+    }
+    pub(crate) fn import_world_state(&mut self,mut fields:crate::expedition_world_save::StateFields)->anyhow::Result<()> {
+        let states:Vec<(String,EmitterRuntimeState,bool)>=fields.take("emitters")?;
+        let lights:Vec<(String,bool)>=fields.take("lights")?;
+        anyhow::ensure!(states.len()==self.emitters.len()&&lights.len()==self.lights.len(),"authored source count mismatch");
+        for (emitter,(id,trigger,failed)) in self.emitters.iter_mut().zip(states) {
+            anyhow::ensure!(emitter.source.id==id,"authored emitter identity mismatch");
+            if let Some(voice)=emitter.voice.take() {voice.sink.stop();}
+            emitter.trigger=trigger;emitter.failed=failed;
+        }
+        for (light,(id,enabled)) in self.lights.iter_mut().zip(lights) {
+            anyhow::ensure!(light.id==id,"authored light identity mismatch");light.enabled=enabled;
+        }
+        crate::restore_world_fields!(self,fields; lighting);
+        self.lighting.validate()?;
+        // One-shot trigger history remains authoritative. Device playback sample offsets do
+        // not survive process shutdown; live loops restart without changing trigger history.
+        Ok(())
     }
 }

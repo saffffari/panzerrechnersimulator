@@ -6,6 +6,9 @@
 
 use glam::Vec3;
 
+#[path = "terrain_bounds.rs"]
+mod bounds;
+
 use crate::gltf_load::{CpuMesh, Vertex};
 
 // From assets/terrain/stalingrad_100km_meta.json (image is 3965×3976):

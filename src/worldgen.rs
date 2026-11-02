@@ -23,6 +23,9 @@ use crate::terrain::Heightfield;
 #[path = "manifest_wreck_collision.rs"]
 mod manifest_wreck_collision;
 pub(crate) use manifest_wreck_collision::StaticTankCollider;
+#[path = "camp_dressing.rs"]
+mod camp_dressing;
+pub(crate) use camp_dressing::{generate as generate_camp_dressing, retain_clear as retain_camp_dressing_clear};
 
 // ── Module kit (paths verified on disk; MISSING assets are logged and skipped, never fatal) ──────
 const MP2: &str =
@@ -255,6 +258,7 @@ pub struct GenWorld {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ScatterMotion {
     /// Tall light objects rotate once about their base and stay down.
     Hinge,
@@ -265,6 +269,7 @@ pub enum ScatterMotion {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ScatterMaterial {
     Wood,
     Metal,
@@ -272,6 +277,7 @@ pub enum ScatterMaterial {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ScatterProfile {
     pub motion: ScatterMotion,
     pub material: ScatterMaterial,

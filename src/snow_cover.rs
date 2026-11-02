@@ -37,6 +37,7 @@ pub struct SnowInputs {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SnowCover {
     pub player: f32,
     pub world: f32,

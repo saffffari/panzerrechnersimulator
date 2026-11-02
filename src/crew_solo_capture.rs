@@ -44,6 +44,11 @@ impl Proof<'_> {
 
     fn still(&mut self, r: &mut crate::renderer::Renderer, name: &str) -> anyhow::Result<()> {
         let path = format!("{}_{name}.png", self.prefix);
+        // Simulation-only stepping does not advance the renderer's eye/transport history.
+        // Converge the same physical camera before treating a dark still as visual evidence.
+        r.reset_history();
+        let warmup=crate::converge_headless_screenshot(r,self.device,self.queue,24)?;
+        anyhow::ensure!(warmup.stable,"crew still eye did not converge");
         r.render_to_png(self.device, self.queue, &path, r.iw * 3, r.ih * 3)?;
         println!("[crew-solo] wrote {path}");
         self.stills.push(path);
@@ -700,6 +705,7 @@ pub fn run_crew_solo_kia_capture(prefix: &str) -> anyhow::Result<()> {
     let map = crate::world::act(0);
     let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
     g.enable_singleplayer_crew();
+    g.set_cabin_lights(true); // ordinary lamp switch, disclosed for this body-visibility review
     g.mute_audio();
     g.set_defer_rtt_to_render(true);
     g.god = false;
