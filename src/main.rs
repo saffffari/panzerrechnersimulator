@@ -94,6 +94,8 @@ mod expedition_medical;
 mod expedition_frontend;
 mod expedition_save_frontend;
 mod expedition_live_review;
+mod expedition_orders_review;
+mod expedition_bench;
 mod halftrack;
 mod support_camp;
 mod support_camp_capture;
@@ -103,6 +105,7 @@ mod indicator_pictograms;
 mod vehicle_motion_review;
 mod repair_manual;
 mod repair_manual_capture;
+mod sky_review;
 mod canyon;
 mod canyon_attempt;
 mod mission;
@@ -9201,6 +9204,14 @@ fn mux_duel_soundtrack(picture: &str, soundtrack: &str, output: &str) -> anyhow:
         ])
         .status()?;
     anyhow::ensure!(status.success(), "ffmpeg could not mux the duel soundtrack");
+    // One clip, with its sound (owner, 2026-11-01): the silent picture and the soundtrack wav
+    // are removed once the muxed file exists; a failed mux above leaves them for recovery.
+    if std::fs::metadata(output).is_ok_and(|m| m.len() > 0) {
+        for stale in [picture, soundtrack] {
+            if stale != output { let _ = std::fs::remove_file(stale); }
+        }
+        println!("[capture] {output}: muxed; the silent picture and the soundtrack wav were removed");
+    }
     Ok(())
 }
 
@@ -12084,6 +12095,13 @@ impl WindowState {
     /// The title menu is ordinary desktop UI: release the pointer so the framed window can be
     /// moved, resized, restored, or sent to another monitor. Embodied play owns raw relative mouse
     /// motion, so it captures and hides the pointer again.
+    /// An order was just accepted on the map: stow the map so the written order is held up.
+    fn stow_map_for_order(&mut self) {
+        self.game.set_map_held(false);
+        self.show_map = false;
+        self.set_play_cursor(true);
+    }
+
     fn set_play_cursor(&self, captured: bool) {
         let captured = captured && !self.game.repair_manual.held;
         if captured {
@@ -13362,6 +13380,14 @@ impl WindowState {
                         eprintln!("[expedition] cannot place fresh commander at camp: {error:#}");
                         return false;
                     }
+                    // The demo launcher's staged start (--order N [--forward]): the order accepted
+                    // at once, the Tiger on the approach road. Disclosed in the log by the fixture.
+                    if let Some(site) = std::env::var("KESSEL_EXPEDITION_ORDER").ok().and_then(|v| v.parse::<u64>().ok()) {
+                        let forward = std::env::var_os("KESSEL_EXPEDITION_FORWARD").is_some();
+                        if let Err(error) = g.debug_expedition_start_order(site, forward, &mut r) {
+                            eprintln!("[expedition] staged order {site} refused: {error:#}");
+                        }
+                    }
                     self.expedition_relief_selected = 0;
                     self.expedition_relief_message.clear();
                 }
@@ -13725,7 +13751,12 @@ impl WindowState {
         let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);
         self.renderer.set_coop_shadow_reuse(shadow_ready);
         self.prepare_map_view();
-        self.game.prepare_repair_manual(&mut self.renderer, &self.device, &self.queue);
+        self.game.prepare_repair_manual(&mut self.renderer, &self.device, &self.queue, self.menu_pointer);
+        self.game.prepare_order_receipt(&mut self.renderer, &self.device, &self.queue);
+        // The paper overlays are ink on the internal grid: queued now, flushed over the crushed
+        // frame before the blit (`Renderer::request_pixel_ink`).
+        self.renderer.ui_reset();
+        self.draw_paper_overlays();
         let saved_far = self.renderer.camera.zfar;
         if self.game.protected_main_interior_view() {
             self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
@@ -13741,6 +13772,35 @@ impl WindowState {
             self.renderer
                 .render_to_surface(&self.device, &self.queue, &view, self.config.format);
             self.renderer.set_active_view(0);
+        } else if let Some(loupe) = self.game.repair_manual.loupe.filter(|_| !self.show_map) {
+            // The reader's loupe over the manual: the lens pass looks at the paper from the lens
+            // (its own eye and temporal history, like the optics), then the reading frame seats
+            // that picture in the lens's circle through the crush's mask mode 5.
+            let saved_cam = self.renderer.camera;
+            let saved_mask = self.renderer.optic_mask;
+            let saved_reticle = self.renderer.reticle;
+            self.renderer.set_active_view(renderer::OPTIC_EYE_VIEW);
+            self.renderer.camera.pos = loupe.eye;
+            self.renderer.camera.set_forward(loupe.forward);
+            self.renderer.camera.fov_y = loupe.fov_y;
+            self.renderer.camera.znear = 0.004;
+            self.renderer.reticle = false;
+            self.renderer.optic_mask = 0.0;
+            self.renderer.set_visible(self.game.loupe_slot(), false);
+            self.renderer.render_optic_snapshot(&self.device, &self.queue);
+            self.renderer.set_visible(self.game.loupe_slot(), true);
+            self.renderer.camera = saved_cam;
+            self.renderer.reticle = saved_reticle;
+            self.renderer.set_active_view(0);
+            self.renderer.optic_mask = 5.0;
+            self.renderer.loupe = [loupe.centre_uv.x, loupe.centre_uv.y, loupe.radius_uv, loupe.sample_scale];
+            let was_skip = self.renderer.rt_skip;
+            self.renderer.rt_skip = true; // the lens pass built this frame's TLAS
+            self.renderer
+                .render_to_surface(&self.device, &self.queue, &view, self.config.format);
+            self.renderer.rt_skip = was_skip;
+            self.renderer.optic_mask = saved_mask;
+            self.renderer.loupe = [0.0; 4];
         } else {
             self.renderer
                 .render_to_surface(&self.device, &self.queue, &view, self.config.format);
@@ -13818,6 +13878,11 @@ impl WindowState {
             if self.game.platoon.is_some() && !self.game.platoon_typing() && lines.is_empty() {
                 self.renderer.draw_text("T: FUNK", 0.02, 0.86, 0.016, [0.6, 0.6, 0.58, 0.35], ui::Align::Left);
             }
+        }
+        // The line to the support detail, typed at the teleprinter's keys: the entry only; the
+        // line and the answer print on the strip, not on the frame.
+        if let Some(entry) = self.game.stab_entry() {
+            self.renderer.draw_text(&format!("STAB > {entry}_"), 0.02, 0.86, 0.020, [1.0, 0.82, 0.46, 0.95], ui::Align::Left);
         }
         if self.game.is_tank_editor_play() {
             // Developer workshop only, reached from the editor.
@@ -13906,7 +13971,8 @@ impl WindowState {
             ui::draw_mission_overlay(&mut self.renderer, &overlay, self.show_map);
             if overlay.order.is_some() { self.game.mission_note_order_presented(); }
         }
-        let camp_hint = self.game.tiger_refuel_hover(self.renderer.camera.pos, self.renderer.camera.forward())
+        let camp_hint = self.game.order_printer_hover(self.renderer.camera.pos, self.renderer.camera.forward())
+            .or_else(|| self.game.tiger_refuel_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
             .or_else(|| self.game.field_aid_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
             .or_else(|| self.game.crew_status_panel_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
             .or_else(|| self.game.expedition_medical_target(self.renderer.camera.pos, self.renderer.camera.forward())
@@ -14017,6 +14083,25 @@ impl WindowState {
     /// (spanning the whole window) share one drawing. The phase lines, wave ticker and end banner
     /// were words and are gone (2026-09-28); only the wordless capture bar remains while taking
     /// the courtyard.
+    /// The paper read top-down (2 November 2026): the open manual and the torn-off sheet drawn
+    /// flat at display resolution over the crushed frame from their retained ink, unless
+    /// `KESSEL_MANUAL_3D=1` keeps the physical book and sheet in the scene.
+    fn draw_paper_overlays(&mut self) {
+        if !repair_manual::overlay_mode() || self.show_map {
+            return;
+        }
+        let light = self.game.reading_light();
+        if self.game.repair_manual.held {
+            repair_manual::draw_manual_overlay(&mut self.renderer, &self.game.repair_manual, light);
+        }
+        let rise = self.game.order_sheet_rise();
+        if rise > 0.0 && self.game.order_sheet_in_hand() {
+            if let Some([_, hand]) = self.renderer.order_sheet_images() {
+                renderer::draw_order_sheet_overlay(&mut self.renderer, hand, rise, light);
+            }
+        }
+    }
+
     fn draw_compound_hud(&mut self, cx: f32) {
         let Some(hud) = self.game.compound_hud() else {
             return;
@@ -14933,6 +15018,7 @@ fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_picku
     if state.game.halftrack_occupied() { return true; }
     let fwd = state.renderer.camera.forward();
     let pos = state.renderer.camera.pos;
+    if state.game.order_printer_interact(pos, fwd) { return true; }
     if state.game.tiger_refuel_interact(pos, fwd) { return true; }
     if state.game.field_aid_interact(pos, fwd) { return true; }
     if state.game.workshop_owns_primary(pos,fwd) {return false;}
@@ -15201,9 +15287,13 @@ impl ApplicationHandler for App {
                 native_input_audit::key(&format!("{code:?}"),down);
                 // Platoon radio line open: every key is text (or Enter/Escape/Backspace) until it
                 // closes; the driver's level-triggered keys are released so the hull does not creep.
-                if matches!(state.state, AppState::Playing) && state.game.platoon_typing() {
+                if matches!(state.state, AppState::Playing) && (state.game.platoon_typing() || state.game.stab_typing()) {
                     if down {
-                        state.game.platoon_radio_key(code, text.as_deref());
+                        if state.game.stab_typing() {
+                            state.game.stab_radio_key(code, text.as_deref());
+                        } else {
+                            state.game.platoon_radio_key(code, text.as_deref());
+                        }
                     }
                     self.keys = Keys::default();
                     return;
@@ -15374,6 +15464,8 @@ impl ApplicationHandler for App {
                             state.set_play_cursor(!held);
                             self.keys = Keys::default();
                         }
+                        KeyCode::KeyX if state.game.stow_order_receipt() => {},
+                        KeyCode::KeyO if state.game.hold_up_order_receipt() => {},
                         KeyCode::KeyX if state.game.release_field_aid() => {},
                         KeyCode::KeyX if state.game.cancel_crew_panel_selection() => {},
                         KeyCode::KeyX if state.game.recovery_stow_hands() => {},
@@ -15392,14 +15484,20 @@ impl ApplicationHandler for App {
                         KeyCode::PageDown if state.show_map => { state.game.expedition_cycle_order(1); }
                         KeyCode::PageUp if state.show_map => { state.game.expedition_cycle_order(-1); }
                         KeyCode::Enter if state.show_map && state.game.expedition_state().is_some() => {
-                            if let Err(error)=state.game.expedition_accept_order(){eprintln!("[orders] {error:#}");}
+                            match state.game.expedition_accept_order() {
+                                // The map is stowed so the written order is held up and read.
+                                Ok(true) => state.stow_map_for_order(),
+                                Ok(false) => {}
+                                Err(error) => eprintln!("[orders] {error:#}"),
+                            }
                         }
                         KeyCode::PageUp if state.game.repair_manual.held => {
                             state.game.repair_manual.turn(-1);
                         }
                         KeyCode::Equal | KeyCode::NumpadAdd if state.game.repair_manual.held => {
+                            let grid = (state.renderer.iw, state.renderer.ih);
                             if let Some(uv) = state.menu_pointer.and_then(|pointer|
-                                repair_manual::book_uv(&state.renderer.camera, pointer, &state.game.repair_manual)) {
+                                repair_manual::pointer_uv(&state.renderer.camera, grid, pointer, &state.game.repair_manual)) {
                                 state.game.repair_manual.focus(uv);
                             }
                             state.game.repair_manual.zoom_by(1.0);
@@ -15509,10 +15607,15 @@ impl ApplicationHandler for App {
                             } else if g.commander_outside {
                                 g.commander_outside = false;
                                 println!("[panzerrechnersystem] view: PERISCOPE (safe)");
+                            } else if matches!(g.station, game::Station::Commander) && g.hatch_is_open() {
+                                // X from the buttoned periscope with the lid open: up through it,
+                                // head out (2026-11-01: the owner lost head-out when X became the
+                                // one back-out key; Shift still toggles it, Space descends).
+                                g.toggle_commander_head();
+                                println!("[panzerrechnersystem] view: CUPOLA (head out, exposed)");
                             } else if matches!(g.station, game::Station::Commander) {
-                                // X again from the buttoned periscope: drop down into the fighting
-                                // compartment (the interior/loader view) — the clean "leave the
-                                // cupola" the user asked for (LMB-into-the-tank was the only way).
+                                // X from the buttoned periscope under a shut lid: drop down into the
+                                // fighting compartment (the interior/loader view).
                                 g.jump_station(game::Station::Loader);
                                 println!("[panzerrechnersystem] down into the compartment");
                             }
@@ -15709,15 +15812,21 @@ impl ApplicationHandler for App {
                 if state.game.repair_manual.held {
                     if btn.is_pressed() && button == winit::event::MouseButton::Left {
                         if let Some(pointer) = state.menu_pointer {
-                            state.game.repair_manual_click(&state.renderer.camera, pointer);
+                            let grid = (state.renderer.iw, state.renderer.ih);
+                            state.game.repair_manual_click(&state.renderer.camera, grid, pointer);
                         }
                     }
                     self.keys = Keys::default();
                     return;
                 }
                 // A click folds the held-up mission order (the close mark on its corner; the play
-                if btn.is_pressed() && button == winit::event::MouseButton::Left && state.show_map
-                    && state.game.expedition_map_click(state.map_cursor) { return; }
+                if btn.is_pressed() && button == winit::event::MouseButton::Left && state.show_map {
+                    let was_active = state.game.expedition_order_active();
+                    if state.game.expedition_map_click(state.map_cursor) {
+                        if !was_active && state.game.expedition_order_active() { state.stow_map_for_order(); }
+                        return;
+                    }
+                }
                 // A click folds the held-up mission order (the close mark on its corner; the play
                 // cursor is captured, so the whole click is the mark). It does not also act.
                 if btn.is_pressed() && button == winit::event::MouseButton::Left && !state.show_map
@@ -16739,6 +16848,19 @@ pub(crate) fn capture_target(requested: &str) -> String {
     let has_explicit_parent = path
         .parent()
         .is_some_and(|parent| !parent.as_os_str().is_empty());
+    // One shared folder across worktrees (CLAUDE.md, Linux captures): with KESSEL_CAPTURES_DIR
+    // set, a bare name or a `captures/...` path lands there as `<checkout>-<name>`, so runs from
+    // every checkout sort together and never collide. Absolute and other explicit paths stand.
+    let shared = std::env::var("KESSEL_CAPTURES_DIR").ok().filter(|d| !d.trim().is_empty());
+    let bare = !path.is_absolute() && (!has_explicit_parent || path.starts_with(CAPTURE_DIR));
+    if let (Some(dir), true) = (shared, bare) {
+        let name = path.strip_prefix(CAPTURE_DIR).unwrap_or(path).to_string_lossy().into_owned();
+        let checkout = std::env::current_dir().ok()
+            .and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "checkout".into());
+        let _ = std::fs::create_dir_all(&dir);
+        return std::path::Path::new(&dir).join(format!("{checkout}-{name}")).to_string_lossy().into_owned();
+    }
     let resolved = if path.is_absolute() || has_explicit_parent {
         requested.to_owned()
     } else {
@@ -16836,9 +16958,17 @@ fn main() -> anyhow::Result<()> {
         let prefix=capture_arg(&early_args,2,"expedition_world_review");
         return game::expedition_world_review::run(&prefix);
     }
+    if early_args.get(1).is_some_and(|arg|arg=="expedition-orders-review") {
+        let prefix=capture_arg(&early_args,2,"expedition_orders_review");
+        return expedition_orders_review::run(&prefix);
+    }
     if early_args.get(1).is_some_and(|arg|arg=="expedition-mission-review") {
         let prefix=capture_arg(&early_args,2,"expedition_mission_review");
         return Game::run_expedition_mission_review(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg|arg=="expedition-loop-review") {
+        let prefix=capture_arg(&early_args,2,"expedition_loop_review");
+        return Game::run_expedition_loop_review(&prefix);
     }
     if early_args.get(1).is_some_and(|arg|arg=="workshop-engine-review") {
         let prefix=capture_arg(&early_args,2,"workshop_engine_review");
@@ -16901,6 +17031,14 @@ fn main() -> anyhow::Result<()> {
     if early_args.get(1).is_some_and(|arg| arg == "repair-manual-review") {
         let prefix = capture_arg(&early_args, 2, "repair_manual_review");
         return repair_manual_capture::run(&prefix, early_args.iter().any(|arg| matches!(arg.as_str(), "video" | "--video")));
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "sky-review") {
+        let prefix = capture_arg(&early_args, 2, "sky_review");
+        return sky_review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "manual-overlay-review") {
+        let prefix = capture_arg(&early_args, 2, "manual_overlay_review");
+        return repair_manual_capture::run_overlay(&prefix);
     }
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).is_some_and(|s| s == "fx-review") {
@@ -17313,6 +17451,13 @@ fn main() -> anyhow::Result<()> {
         let frames=args.get(3).and_then(|s|s.parse().ok()).unwrap_or(180);
         let out=args.get(4).map(String::as_str).unwrap_or("artifacts/performance/winter-encounter-20260925/latest.json");
         return winter_bench::run(mode,frames,out);
+    }
+    if args.len() >= 2 && args[1] == "expedition-bench" {
+        let preset = args.get(4).map(|value| graphics::GraphicsPreset::parse(value)
+            .ok_or_else(|| anyhow::anyhow!("expedition-bench preset must be low, high or ultra (got {value:?})"))).transpose()?;
+        return expedition_bench::run(args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30.0), preset,
+            args.get(5).and_then(|s| s.parse().ok()).unwrap_or(10));
     }
     if args.len() >= 2 && args[1] == "gfxbench-drive" {
         let preset = args.get(4).map(|value| graphics::GraphicsPreset::parse(value)

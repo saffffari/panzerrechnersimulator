@@ -1,8 +1,68 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-01 (the deltaP display look; fire, sparks and the effects pass under it); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Expedition frame cost, 2026-11-01 (`expedition-bench`, `artifacts/perf/expedition_*_20261101.log`)
+
+The first expedition playtest at 1024x576 under the deltaP look ran at "3 fps at times". The
+new `expedition-bench FROM_S RENDER_S [preset] [site]` (`KESSEL_BENCH_CLOSE_M` stages the Tiger
+that close to the site, gunner on fire at will) measured a standing frame of 35 ms, of which
+16 ms were the commander's raster optic relays (the relay sky pass alone 10 ms: sky.wgsl's
+per-pixel atmosphere and cloud march for every uncovered aperture pixel of every port, with the
+port buckets grown by the 1024x576 grid), and, once the Tiger was penetrated and the cabin
+burned, a CPU update of 46 ms (p50) and a fenced frame of 226 ms (p50): the interior fire's
+49,152 flame and 24,576 soot grains regenerated every update, and every relayed port walking all
+of them again on the CPU each frame. Changes, none of which alters an emitter, a material, a
+medium or a simulation value:
+
+- Relay sky from the sky cache (`shaders/relay_sky_cached.wgsl`): an optical capture on the
+  raymarch backend samples the frame's equirectangular sky cache by direction instead of
+  marching sky.wgsl again. Same transport, same cloud march, one evaluation per cache texel per
+  refresh phase instead of one per port pixel. Named approximation: the solar and secondary discs
+  are not in the cache (the main frame draws them analytically), so a port looking straight at
+  the Sun shows the cloud-attenuated sky without the disc.
+- Relay extents (`aperture_extent`): the "two source samples per native aperture pixel" rule is
+  taken against a 640x360 frame at most, so the port buckets stop growing with the internal grid.
+  A resolution choice (the ports keep the resolution they had at 640x360), not a transport change.
+- Grain views (`prepare_fine_vfx_view`): a batch whose bounds lie outside a view's frustum is
+  skipped before any per-grain work (the cabin's grains lie behind a port's near plane). No grain
+  that a view could see is dropped; the receipt counts `culled_batches`.
+
+- Fire presentation cadence (`drive_interior_fire`, `FIRE_PRESENTATION_PERIOD` 2): the fire's
+  grains, their wall-clearance sweeps (`clear_source_paths`, 14 ms of the 26 ms) and their upload
+  regenerate every second update, 30 Hz at the 60 Hz step; a skipped update keeps the last grains
+  and the aggregate lights derived from the same cells. The fire's cells, emission and heat are
+  unchanged; only the grains' flicker rate halves. A grain can therefore stand up to one update
+  (17 ms) past a wall it has since drifted into.
+- Playback range: the demo launcher now runs the reference tone curve (`KESSEL_AUDIO_RANGE=
+  reference`, `src/reproduction.rs`): the balanced range's lift of up to 12 dB below 110 dB(A)
+  made distant strikes and MG impacts read as near ones (owner, 2026-11-01). A reproduction
+  choice; physical source levels and the propagation are untouched.
+
+Still open after these: the interior fire presentation's own cost per update (probed as
+`fire_smoke_clearance`, `fire_patch_surfaces`, `fire_world_sources`, `surface_blood_update`), the
+raymarch main view's per-frame grain merge (`collect_parcels`), and the `native-pixel-hdr-effects`
+pass (the effects session's item).
+
+## The March orders, 2026-11-01 (`catalog/expedition_missions.v1.json`, `docs/MISSIONS.md` "The March")
+
+Authored three-beat orders for the expedition theatre's twelve sites, on the Canyon mission model.
+The beats observe the theatre's own records (`site_guards_down`: the site's finite guard tanks all
+dead; `site_secured`: the theatre's own credit) and say so on the net; no beat releases a platoon,
+alerts an enemy, lights a smoke column or changes a hold, a guard or a counterattack. The one cue
+is the stranded crewman's signal star at the two rescue sites, a modeled emitter of the existing
+flare kind fired at the site. The approach point is derived geometry (700 m short of the site on
+the road network), not a trigger volume: the beat completes by the actor's distance to it, or to
+the site.
+
+Disclosed fixtures, not mechanics: `Game::debug_expedition_start_order(site, forward)` (the demo
+launcher's `--order N --forward`) accepts an order and stands the crewed Tiger on the approach road
+with the engine running, printing `STAGED forward start` to the log; the theatre, its guards and
+its clocks are untouched. `debug_expedition_kill_site_garrison` marks a site's garrison dead for
+the `expedition-orders-review` harness and is named in its receipt. Neither is reachable from the
+shipping menu path.
 
 ## The deltaP display look, 2026-11-01 (`KESSEL_LOOK=deltap`, `docs/DELTAP_LOOK_20261101.md`)
 
@@ -16,11 +76,16 @@ simulation value reads it. Named presentation choices while the look is on:
   exhaustive OKLab best pair with the ratio solved in linear light (`deltap-pico8`). Both discard
   tonal precision after the eye and the tonemap; neither adds light. The standard crush's
   far-field dither attenuation does not apply under the look.
-- Glare: deltaP's pyramid bloom (13-tap Jimenez downsample, soft-knee bright pass at 0.55 +- 0.35
-  exposed with a per-texel cap of 1.0, Karis average, 3x3 tent upsample at 0.9 per octave, summed
-  at 0.8 into the HDR frame before the tonemap) replaces the compact halo *and* the CIE veil. The
-  knee, cap and strength are deltaP's authored values, not a measured point-spread function; the
-  veil's omission is a departure from the eye model's intraocular scatter, taken for the look.
+- Glare: deltaP's pyramid bloom (13-tap Jimenez downsample, soft-knee bright pass, Karis
+  average, 3x3 tent upsamples summed into the HDR frame before the tonemap) replaces the compact
+  halo *and* the CIE veil. deltaP's authored values (knee 0.55 +- 0.35 exposed, cap 1.0, 0.9 per
+  octave, strength 0.8) put 3.75 exposed units of halo on every texel at the cap, which turned a
+  fire's 1-3 exposed texels into a wide plateau and flooded the cabin from a vision port
+  (2026-11-01 playtest; the effects session's measurement). Since 2026-11-01 the bright pass
+  starts at 1.0 +- 0.5 exposed, caps at 0.5 per texel, falls at 0.65 per octave and enters at
+  0.4 (about 0.5 exposed units of halo per capped texel). These remain authored values, not a
+  measured point-spread function; the veil's omission is a departure from the eye model's
+  intraocular scatter, taken for the look.
 - Grid: 1024x576 by the demo launcher (5x on the 5120x2880 panel), a resolution preset only.
 
 Gate: `tests/dither_motion.rs` and `tests/display_quantization.rs` validate the complete crush
@@ -229,6 +294,13 @@ enable/move/self-exclusion contact behavior; binary snapshot identity preservati
 tests and the real-input workshop review are pending; source parsing alone is not gameplay proof.
 
 ## Living crew personal-space contact, 2026-10-30
+
+- 2026-11-01: a walker whose locomotion capsule starts more than a touch inside another man's
+  source triangles (deeper than 0.55 of the capsule radius: a seat left straight into the
+  gunner's side) has that step released instead of clamped, so he can walk out; a touching capsule
+  keeps the sweep's back-out rule. Counted in the receipt as `depenetrations`. This is a solver
+  escape for an authored exit position inside a body, not a contact law; the proper fix is an exit
+  position clear of the seated gunner (`place_interior_exit`).
 
 Interior walking now queries the indexed standing/seated crew source meshes. Animated seated
 positions come from the same last pose uploaded by `crew_arm_animation`; target transforms include
@@ -2775,3 +2847,192 @@ applies and asserts the same existing mute policy on both sides, with both recei
 it retains every acoustic owner byte comparison. No production acoustic code or tolerance
 changed. This proves muted owner continuity, not live-audio cache/voice continuity, and does
 not close the separate cartridge source-sweep, seam-picker or moving-loader visual limitations.
+
+### The March as a loop — 2 November 2026
+
+- **Opening stock is authored state, not a model** (`catalog/expedition_theatre.v1.json` `start`,
+  `expedition_theatre::Start`, applied by `Game::stow_main_gun_loadout` at the theatre's first
+  install): 420 L, 24 PzGr, 8 SprGr. The fiction is a Tiger low on ammunition inside the pocket;
+  no standard-issue claim is made and the catalog note says so. The spec refuses a loadout beyond
+  the 64 cradles plus the chamber or fuel beyond the 540 L tank.
+- **The map's range figure** (`standalone_fuel::road_range_km`) is the existing authored campaign
+  drain law evaluated at 20 km/h (13.2 L/km, 32 km from 420 L); it adds no new law and inherits
+  that law's standing limit (a gameplay calibration, not a measured Maybach fuel map). Gate:
+  `standalone_fuel::tests::the_map_range_is_the_drain_law_at_road_speed`.
+- **`expedition-loop-review` fixtures, disclosed in its receipt**: drives are staged along the
+  catalog's road graph with the fuel charged by the drain law (the Tiger is placed, not driven);
+  fights spend two PzGr per enemy tank by flag (no shot is fired; no ballistic claim); carts and
+  cans are taken by flag rather than through the hands; the walk from camp to the Tiger and the
+  remount are staged. The harness answers whether the loop's accounting closes, not whether the
+  route can be driven or the fight won.
+
+### The written order prints — 2 November 2026 (`src/order_printer.rs`, `src/order_receipt_render.rs`)
+
+- **The teleprinter head's place is measured, not guessed.** Its turret-local box
+  (x 0.84..0.99, y 2.06..2.22, z -0.60..-0.38) was chosen on a 5 cm occupancy map of the baked
+  turret's source triangles between the traverse gearbox and flywheel below (source parts
+  Turret_0137/0142, top y 1.99), the roof underside (y 2.30) and the wall (x 1.0 there), beside
+  the commander's post (0.564, floor, -0.423). The hanging strip (76 x 228 mm) ends above the
+  fixture at y 1.83. Gate: `order_printer::tests::the_head_and_strip_stand_clear_of_the_turret`
+  (exact triangle-box test against the bake when the asset root is present). The head itself is
+  a project-authored utility prop (a closed box, a slot plate, four keys), not a specific model.
+- **The reviewed Enigma does not fit the commander's side.** Its transit case is 431 x 544 x
+  290 mm; the only clear volume at the commander's left is about 150 x 160 x 220 mm. The machine
+  therefore stands on the camp's orders table beside a second head (the detail's end of the
+  line), seated on the table's measured top (`camp_table_top`, from the placed part's source
+  triangles; a 0.80 m fallback is named in code); the hull Enigma at the radio station is unchanged.
+- **The paper is a page teleprinter's**: 210 mm wide (the Siemens page printers' roll), torn off
+  at 150 mm, 60 characters a line at ten to the inch inside 20 mm margins; it leaves the slot
+  along the head's top edge and hangs leaning 25 degrees inboard so the commander in the cupola
+  reads its face rather than its edge (the first still of 2 November showed a 76 mm tape hanging
+  straight down, edge-on and illegible). The lean is a design value, not a modelled paper curl.
+- **Print cadence is authored**: four lines a second (`LINE_SECONDS`), faster than a period
+  teleprinter's ten characters a second, chosen so the order is readable in seconds; the sound is
+  the bank's switch recordings at -14 dB per line, not a teleprinter recording.
+- **The ink is albedo**, repainted only when a line is added, under the cabin's and the camp's
+  real light; the strip in hand is a view-local raster-only object like the held map.
+- **The line to Stab is words, not simulation** (`Game::stab_transmit`, `radio_llm::submit_stab`):
+  the model path and the offline responder both receive only the simulation's own context
+  (order, beat, stock, notice, camp, position, clock, weather) and return text that prints on
+  the strip; nothing they say changes the simulation, spawns, supplies or alerts anything.
+  The platoon radio's boundary (`docs/PLATOON_MODE.md`) applies unchanged.
+- **Bridge orders stand on the surveyed deck.** The theatre moves a Bridge site onto the surveyed
+  crossing at install; the authored sheet (written from the catalog) placed its contact, hold
+  and bypass points on the catalog's point, 139 m off the Southern crossing's deck and 77 m off
+  the Northern. `expedition_accept_order` re-seats every beat on the catalog point to the
+  theatre's site position and logs it. Found by `expedition-loop-review` (2 November 2026),
+  which now plays all eight orders through; the receipt is the gate.
+
+### The manual as a Fibel, and the Tiger CAD in the game — 2 November 2026
+
+- **The repair manual's pages are A5 landscape** (`src/repair_manual.rs`: 210 x 148 mm pages,
+  the open book 0.432 m wide, ink at 1536 x 1086), set in the owner's Neue Haas Grotesk
+  (`assets/fonts/NHaasGrotesk-Md/-Blk.otf` under the asset root, loaded at run time into the
+  ink atlas as `ui::FACE_MANUAL`/`FACE_MANUAL_BOLD`; the bundled pixel faces stand in and the
+  log says so when they are absent) with the Tigerfibel's design: letter-spaced capitals
+  titles, a red rule, a red margin label, red lead words, choices as red arrows, the folio at
+  the outer corner. The design is borrowed from D 656/27 (public-domain scans); the words are
+  the game's own diagnosis tree, unchanged in meaning.
+- **The plates are drawings of the owner's kit CAD, not of the vehicle.** `tools/bake_manual_plates.py`
+  scales the 1/35 SolidWorks STEP set by 35 and projects it through FreeCAD TechDraw with hidden
+  lines removed, a red layer for the part a page is about (the Fibel's spot colour), to
+  `assets/manual/plates/<name>.png`; every plate's caption says "1/35 kit CAD, not to scale" and
+  its report names the source. A page whose plate the asset root lacks keeps its schematic.
+- **The Tiger's assemblies as meshes** (`tools/bake_tiger_cad_parts.py`, `_glb.py`):
+  `assets/tanks/tiger/cad/<group>.obj/.glb` in the game's hull frame (the gearbox, steering
+  unit, forward drive, final drives, fuel tanks, radiators, fans, sprockets, idlers, side
+  plates, sponsons, the hull tub and the engine), tessellated at 4 mm deflection and placed by
+  the damage session's measured registration: the game's own Tiger GLBs are this kit CAD at
+  0.038919827 m per kit millimetre with identity rotation and a (0, 0.571, 2.658) m offset,
+  fitted on 446 solid pairs to 0.17 mm RMS, which also means the game's Tiger is 11.2 % larger
+  than the kit's stated 1:35 would make it. They are a kit's shapes: filled solids with no
+  casing thickness, no interior detail, no fasteners the kit omitted; the game may use them as
+  physical parts and the damage solver as component outlines, never as a measured vehicle.
+  Nothing of this is committed; the bake reports carry the provenance.
+- **The loupe is an optic composite, not a texture zoom** (`repair_manual::loupe_view`, crush
+  mask mode 5, `main.rs` lens pass): while the right button is held over the open book, a lens
+  pass renders the paper from the lens itself (its own view and temporal history, like the
+  gunner's eyepiece and the binoculars), looking down the page normal with a field that spans
+  `LOUPE_DIAMETER / LOUPE_POWER` of paper (21 mm across a 64 mm glass, 3x), and the reading
+  frame seats that crushed picture in the circle the lens makes on the screen, resampled once.
+  The lens's diameter, height over the page (55 mm) and power are design values of a hand
+  glass, not an optical model: no refraction, no field curvature, no glass reflections; the
+  ring is the only mesh. The lens view's eye adapts over its first frames as the optics' do.
+
+
+### The manual and the sheet read as overlays — 2 November 2026 (`repair_manual::overlay_mode`)
+
+- **What changed.** At the crush grid the Fibel's body text on the tilted physical page could
+  not be read, so the owner chose a top-down reading: the open book and the torn-off sheet are
+  drawn flat at the display's resolution over the crushed frame (`repair_manual::draw_manual_overlay`,
+  `renderer::draw_order_sheet_overlay`) from the same retained ink the physical pages carry
+  (2048 x 1448 pages, 1024 x 731 sheet, imported into the ink layer's image registry by
+  `ui::Ui::import_image_view`), through the policy play already uses for the HUD's words. The
+  pages are images; the boards, the gutter's shade, the chapter tabs, the turning leaf (its
+  width the cosine of the leaf's angle, its shadow the sine), the ribbon's tail and the torn
+  edges are the ink layer's rectangles.
+- **What is not physical, named.** The overlay is not lit by the scene: no transport reaches it.
+  Its brightness is a scalar from the reading light at hand (`Game::reading_light`: 1.0 with
+  the cabin lamps on or on foot, 0.92 with the hand torch, 0.30 in the dark cabin), not a
+  measured illuminance; the leaf's shade and its shadow on the page are drawn, not cast; the
+  turn is the 2D projection of a hinged leaf, not a lit one. The ink is unchanged and not
+  emissive. The loupe does not apply (nothing to magnify at the display's resolution).
+- **Gate.** `KESSEL_MANUAL_3D=1` keeps the physical book and the sheet in hand in the scene,
+  lit by transport, with the loupe; with it unset (both shipping presets) the overlay is the
+  reading, the 3D parts stay invisible and the camera's field is untouched. Neither preset
+  changes emitters, materials or any law: the choice is presentation. `manual-overlay-review`
+  is the overlay's capture (`captures/<prefix>_overlay_*`), `repair-manual-review` the physical
+  book's; `repair_manual::tests` hold the layout, the tabs and the leaf.
+- **Why it is allowed.** The first principle admits the written manual and the written order;
+  the second forbids faking light in the scene. The overlay fakes nothing in the scene: it is
+  paper held up to the player's eye outside the image, as the map's HUD words already are. The
+  debt is that the paper's brightness does not follow the cabin's real light; that is the
+  scalar above, and the gate keeps the lit book.
+- **Since the same night, on the pixel grid.** The owner found the display-resolution book too
+  fine for the game ("adjust the information and text and font and drawing lines to fit the
+  pixel size, not the other way around"). The overlays are now ink on the internal grid
+  (`Renderer::request_pixel_ink`, flushed over the crushed frame before the blit, so they are
+  upscaled with the frame's own pixels): the page and sheet textures are exactly the internal
+  pixels they cover (`repair_manual::overlay_page_pixels`, `order_receipt_render::sheet_pixels`,
+  nearest-sampled), the type is the 5 x 7 pixel face (`pixel_font::draw_at`, titles two dots),
+  the rules and the schematics' pen one pixel, the plates re-baked for pixel line weights and
+  thresholded to solid pixels (`tools/bake_manual_plates_px.py`, `assets/manual/plates/px<W>/`),
+  the spine two hard lines, the shadows hard offsets, the page 1.25:1 (taller than A5 landscape,
+  the owner's "a bit taller"), zoom two pixels per texel. The rest of this entry stands.
+
+### The sky's month, discs, stars and the eye's night — 2 November 2026 (`docs/SKY_NIGHT_20261102.md`)
+
+- **The Moon's month is ten days** (`celestial_sky::SkyClock::moon_cycle_days`,
+  `KESSEL_MOON_CYCLE_DAYS`; 29.530589 restores the ephemeris exactly): the Moon's geometric
+  position is evaluated at the act clock's start plus the elapsed time scaled so that the
+  elongation from the Sun completes a cycle in ten of the act's days (by the mean motions, 2.9
+  times faster). Its phase, rising, setting, distance and illuminance stay consistent with each
+  other and with the Sun; only the month is shorter, as the day already is (`KESSEL_DAY_CYCLE_SCALE`).
+  A named approximation of the day cycle's kind, tested against the real ephemeris at the real month.
+- **The discs are 1.6 times their angular size** (`celestial_sky::DISC_DISPLAY_SCALE`,
+  `KESSEL_DISC_SCALE`; 1 is the real sky): the irradiance is untouched, so the light on the ground
+  and the disc's total light are unchanged, the disc's radiance falls by the square of the scale
+  and the penumbrae widen with it. A presentation choice.
+- **The stars have the real sky's population** (`physical_environment::STAR_*`): a star in 16 %
+  of the lattice's 55,296 cells, about 8,800 to magnitude 6.5, the count brighter than m rising as
+  10^(0.5 m) (the real slope), each star's irradiance from its magnitude (V = 0 is 3.6e-11
+  W m^-2 nm^-1 at 550 nm), drawn into one internal pixel by the raymarch pass as before. A seeded
+  distribution with the real population, not a surveyed catalogue: the constellations are not the
+  sky's. The CPU reference, the sky shader and the shade pass carry the same constants.
+- **The eye's pigments run at the clock's rate** (`Renderer::pigment_rate`, `observer::Eye::step_at`,
+  `exposure.wgsl` pigment_rate): with the day cycle on, the slow bleaching and regeneration of the
+  cone and rod pigments advance at the sky clock's rate over real time (clamped 1 to 60; 1 with
+  the cycle off), so a night of thirty play minutes is not spent in the cone plateau while rods
+  that need forty real minutes recover: the crewman at midnight is as adapted as a real crewman at
+  midnight. The pupil, the neural gains and the flash memory keep real time. A reproduction
+  choice that changes no light; the baseline showed the fully adapted night blue-grey and the
+  moonlit night bright, so the black the owner saw was the unadapted eye.
+- **The night's hue is deeper outdoors** (`observer::ROD_DISPLAY_HUE`, 0.675/1.022/1.738,
+  luminance-neutral) and **the cabin keeps its hue** (`observer::CABIN_ROD_DISPLAY_HUE`, the former
+  0.80/1.00/1.45; `crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
+  does the rod gain), so the interior's look is untouched; the interior stills' photometry before
+  and after is in the sky note.
+- **The display tonemap is AgX** (`crush.wgsl` `agx`, `tonemap`; `KESSEL_TONEMAP=aces` keeps the
+  former fit): Sobotka's AgX in its minimal form (the inset, a 16.5-stop log2 encoding, the
+  sigmoid, the outset, the 2.2 decode), chosen because bright colours desaturate toward white
+  instead of skewing hue, which is what the owner's "oversaturated, deep fried" sunset was: the
+  ACES fit turning the orange of a three-band sunset yellow. A reproduction transform like the fit
+  it replaces; it changes no light. The CPU reference `observer::aces` stays as the mapping's
+  monotonic reference in the tests.
+- **The aerosol is a winter continental background** (`AtmosphereParameters::default`:
+  Mie scattering 6.0e-5 and extinction 6.667e-5 per metre at sea level over the 1,200 m scale
+  height, optical depth about 0.08 at 550 nm, single-scattering albedo 0.9): AERONET continental
+  winter climatologies run 0.05 to 0.10, and the cauldron's smoke adds; Bruneton's 0.005 was a
+  clear mountain sky, under which the three-band sunset was the saturated orange of a
+  monochromatic transmittance. A sourced estimate, not a measurement of the day.
+- **The pastel palette** (`KESSEL_LOOK=deltap-pastel`, `crush.wgsl` `DP_PASTEL`, mode 4): thirty-two
+  display-sRGB entries authored for the owner's taste (green-blues and teals, creams, two warm
+  dawn tones, snow, steel, fire), dithered by the look's OKLab best-pair search as the PICO-8 mode
+  is. A recording-medium choice in the sense of the look's other modes: it discards tonal
+  precision and never adds light.
+- **Ozone is band-averaged** (`AtmosphereParameters::default`: 1.311e-6, 1.881e-6, 0.228e-6 per
+  metre for the red, green and blue bands): the Chappuis absorption averaged over each band's
+  width in place of Bruneton's point samples at 680, 550 and 440 nm (0.650, 1.881, 0.085 e-6).
+  The point samples absorbed the green band three times more than the red through the long
+  twilight paths and painted the civil twilight magenta; the averages keep it blue-grey. The
+  three-band model's own approximation, stated; the illuminance gates still pass.

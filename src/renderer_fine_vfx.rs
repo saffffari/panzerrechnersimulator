@@ -18,6 +18,8 @@ struct ViewUniform { view_proj:[[f32;4];4], eye:[f32;4], extent:[f32;4] }
 struct Draw { first:u32, parents:u32, grains:u32 }
 #[derive(Default,Clone)]
 struct Receipt {
+    /// Batches skipped whole by the per-view bounds test (no grain of theirs was walked).
+    pub culled_batches:u64,
     extent:[u32;2], parents:u64, rendered_grains:u64, requested_grains:u64,
     required_grains:u64, saturated_parents:u64, density_reduced_parents:u64,
     fire_grains:u64,soot_grains:u64,maximum_density_multiplier:u32,
@@ -266,11 +268,32 @@ impl Renderer {
         let mut receipt=Receipt {extent,..Default::default()};
         let relative_vp=camera.relative_view_proj();
         let planes=frustum_planes(relative_vp);
+        let unit_planes=planes.map(|p|p/p.truncate().length().max(1e-12));
         let mut source_batches:Vec<_>=self.fine_vfx.materials.iter().collect();source_batches.sort_by_key(|(i,_)|**i);
         for (&batch,material) in source_batches {
             let b=&self.inst_batches[batch];let p=&self.inst_prototypes[b.prototype];
             let ids=self.fine_vfx.particle_ids.get(&batch);
-            for (ordinal,model) in b.cpu_mats.iter().take(b.inst_count as usize).enumerate() {
+            let count=b.inst_count as usize;
+            if count==0 {continue;}
+            // A whole batch outside this view's frustum is skipped before any per-grain work: a
+            // relayed port looks outward from the hull, so the cabin's tens of thousands of
+            // interior flame and soot grains lie behind its near plane (2026-11-01 expedition
+            // bench: 180 ms a frame of this walk during a cabin fire, seven ports deep).
+            let mut blo=Vec3::splat(f32::INFINITY);let mut bhi=Vec3::splat(f32::NEG_INFINITY);let mut max_scale2=0.0f32;
+            for model in b.cpu_mats.iter().take(count) {
+                let t=model.w_axis.truncate();blo=blo.min(t);bhi=bhi.max(t);
+                max_scale2=max_scale2.max(model.x_axis.truncate().length_squared()).max(model.y_axis.truncate().length_squared()).max(model.z_axis.truncate().length_squared());
+            }
+            let reach=max_scale2.sqrt()*p.local_min.abs().max(p.local_max.abs()).length();
+            if !blo.is_finite() || !aabb_in_frustum(&planes,blo-Vec3::splat(reach),bhi+Vec3::splat(reach)) {
+                receipt.culled_batches+=1;continue;
+            }
+            for (ordinal,model) in b.cpu_mats.iter().take(count).enumerate() {
+                // A bounding sphere first (six dot products): a grain behind a port's near plane,
+                // which is most of a burning cabin's for every port, never reaches the eight
+                // corner transforms below.
+                let centre=model.w_axis.truncate();
+                if unit_planes.iter().any(|plane|plane.truncate().dot(centre)+plane.w< -reach) {continue;}
                 let mut lo=Vec3::splat(f32::INFINITY);let mut hi=Vec3::splat(f32::NEG_INFINITY);
                 for i in 0..8 {let point=model.transform_point3(Vec3::new(if i&1==0 {p.local_min.x}else{p.local_max.x},if i&2==0 {p.local_min.y}else{p.local_max.y},if i&4==0 {p.local_min.z}else{p.local_max.z}))-camera.pos;lo=lo.min(point);hi=hi.max(point);}
                 if !aabb_in_frustum(&planes,lo,hi){continue;}
@@ -331,6 +354,7 @@ impl Renderer {
     }
     pub(super) fn prepare_fine_vfx(&mut self,device:&wgpu::Device,queue:&wgpu::Queue) {
         if !self.shader_backend {return;}
+        let _probe=crate::sim_phase::Probe::new("render_prepare_fine_vfx");
         let mut frames=std::mem::take(&mut self.fine_vfx.frames);
         for frame in frames.values_mut(){frame.active=false;}
         // The raymarch backend draws its own grains in the main view; only its relayed ports take these.
@@ -356,7 +380,7 @@ impl Renderer {
         let mut views:Vec<_>=self.fine_vfx.frames.iter().filter(|(_,f)|f.active).map(|(&key,frame)| {
             let r=&frame.receipt;
             serde_json::json!({"view":if key==usize::MAX {"main".into()}else{format!("port{key}")},"counts":{
-                "extent":r.extent,"parents":r.parents,"rendered_grains":r.rendered_grains,"requested_grains":r.requested_grains,
+                "extent":r.extent,"culled_batches":r.culled_batches,"parents":r.parents,"rendered_grains":r.rendered_grains,"requested_grains":r.requested_grains,
                 "required_grains":r.required_grains,"fire_grains":r.fire_grains,"soot_grains":r.soot_grains,
                 "maximum_density_multiplier":r.maximum_density_multiplier,"saturated_parents":r.saturated_parents,"density_reduced_parents":r.density_reduced_parents,
                 "omitted_projected_area_px":r.omitted_projected_area_px,"omitted_emission_area_rgb":r.omitted_emission_area_rgb,

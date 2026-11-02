@@ -331,7 +331,7 @@ pub fn run(requested:&str)->Result<()> {
         for _ in 0..36 {candidate_g.update(&TankInput::default(),1./60.,&mut candidate_r);}
         ensure!(candidate_g.repair_manual.turn(1),"manual second turn rejected");
         for _ in 0..12 {candidate_g.update(&TankInput::default(),1./60.,&mut candidate_r);}
-        candidate_g.prepare_repair_manual(&mut candidate_r,&device,&queue);
+        candidate_g.prepare_repair_manual(&mut candidate_r,&device,&queue,None);
         ensure!(candidate_g.repair_manual.spread()>0&&candidate_g.repair_manual.turning(),"manual fixture not a noninitial partial turn");
         candidate_r.debug_dump_manual_ink(&device,&queue,&format!("{prefix}_manual_ink_before.png"))?;
         photograph(&mut candidate_r,&device,&queue,&format!("{prefix}_manual_before.png"))?;

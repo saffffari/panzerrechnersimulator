@@ -15,7 +15,8 @@
 
 use glam::DVec3;
 
-use crate::ephemeris::{CelestialState, Site, UtcInstant, HALBE, ODERBRUCH, STALINGRAD};
+use crate::ephemeris::{CelestialState, Site, UtcInstant, HALBE, ODERBRUCH, STALINGRAD,
+    MOON_MEAN_MOTION_DEG_PER_DAY, SUN_MEAN_MOTION_DEG_PER_DAY, SYNODIC_MONTH_DAYS};
 use crate::renderer::physical_environment::AtmosphereParameters;
 
 /// Altitude above which a body's beam can reach the camera past the horizon dip.
@@ -28,6 +29,28 @@ pub const ATMOSPHERE_SHADOW_ALTITUDE_DEG: f64 = -21.5;
 /// key (Sun above -1 deg; USNO 171, same sky for both bodies).
 #[cfg_attr(not(test), allow(dead_code))]
 pub const MOON_DROPPED_BOUND: f64 = 1.5e-3;
+
+/// The Moon's month in the act's days (the owner, 2 November 2026: "moon should have phases
+/// with 10 days moon phase cycle"). `KESSEL_MOON_CYCLE_DAYS` overrides; the real synodic month,
+/// 29.530589, restores the ephemeris. A named approximation of the day cycle's kind: the Moon
+/// still stands where its orbit puts it, the orbit runs faster.
+pub const MOON_CYCLE_DAYS: f64 = 10.0;
+pub fn moon_cycle_days() -> f64 {
+    static DAYS: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *DAYS.get_or_init(|| std::env::var("KESSEL_MOON_CYCLE_DAYS").ok().and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && (1.0..=1000.0).contains(v)).unwrap_or(MOON_CYCLE_DAYS))
+}
+/// The Sun's and the Moon's discs drawn this much larger than their real angular size (the
+/// owner, 2 November 2026: "moon and sun discs can also be a bit bigger"). The irradiance is
+/// untouched, so the light on the ground and the disc's total light do not change and the
+/// disc's radiance falls by the square of the scale. `KESSEL_DISC_SCALE` overrides; 1 is the
+/// real sky. A presentation choice named in docs/PHYSICAL_TRUTH_AUDIT.md.
+pub const DISC_DISPLAY_SCALE: f64 = 1.6;
+pub fn disc_display_scale() -> f64 {
+    static SCALE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| std::env::var("KESSEL_DISC_SCALE").ok().and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && (0.5..=6.0).contains(v)).unwrap_or(DISC_DISPLAY_SCALE))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Body {
@@ -57,19 +80,28 @@ impl CelestialLighting {
     /// `solar_toa_at_1au` is the extraterrestrial solar spectral irradiance at one astronomical
     /// unit (`AtmosphereParameters::default().solar_irradiance`).
     pub fn at(instant: UtcInstant, site: Site, solar_toa_at_1au: DVec3) -> Self {
-        let state = CelestialState::at(instant, site);
+        Self::from_state(CelestialState::at(instant, site), solar_toa_at_1au)
+    }
+
+    /// The sky of a running act clock: its instant, its place and its Moon's compressed month.
+    pub fn for_clock(clock: &SkyClock, solar_toa_at_1au: DVec3) -> Self {
+        Self::from_state(clock.celestial_state(), solar_toa_at_1au)
+    }
+
+    pub fn from_state(state: CelestialState, solar_toa_at_1au: DVec3) -> Self {
         let au_ratio = crate::ephemeris::AU_KM / state.sun_distance_km;
+        let disc = disc_display_scale();
         let sun = DirectionalSource {
             body: Body::Sun,
             direction: state.sun.engine_direction(),
             irradiance: solar_toa_at_1au * (au_ratio * au_ratio),
-            angular_radius_rad: state.sun_angular_radius_rad(),
+            angular_radius_rad: state.sun_angular_radius_rad() * disc,
         };
         let moon = DirectionalSource {
             body: Body::Moon,
             direction: state.moon.engine_direction(),
             irradiance: state.moon_toa_spectral_irradiance(solar_toa_at_1au),
-            angular_radius_rad: state.moon_angular_radius_rad(),
+            angular_radius_rad: state.moon_angular_radius_rad() * disc,
         };
         let sun_beam = state.sun.altitude_deg > DIRECT_BEAM_ALTITUDE_DEG;
         let moon_beam = state.moon.altitude_deg > DIRECT_BEAM_ALTITUDE_DEG;
@@ -186,11 +218,27 @@ pub struct SkyClock {
     pub start: UtcInstant,
     pub site: Site,
     pub elapsed_s: f64,
+    /// The Moon's month in this clock's days (`moon_cycle_days`); the orbit is run from `start`.
+    #[serde(default = "moon_cycle_days")]
+    pub moon_cycle_days: f64,
 }
 
 impl SkyClock {
     pub fn new(start: UtcInstant, site: Site) -> Self {
-        Self { start, site, elapsed_s: 0.0 }
+        Self { start, site, elapsed_s: 0.0, moon_cycle_days: moon_cycle_days() }
+    }
+
+    /// How much faster than real the Moon's orbit runs so that the elongation from the Sun
+    /// (the phase) completes a cycle in `moon_cycle_days`: by the mean motions, 1 at the real
+    /// synodic month.
+    pub fn moon_rate(&self) -> f64 {
+        let cycle = if self.moon_cycle_days.is_finite() && self.moon_cycle_days > 0.0 { self.moon_cycle_days } else { SYNODIC_MONTH_DAYS };
+        (360.0 / cycle + SUN_MEAN_MOTION_DEG_PER_DAY) / MOON_MEAN_MOTION_DEG_PER_DAY
+    }
+
+    /// The Sun and the Moon now, the Moon's orbit run from the clock's start at its rate.
+    pub fn celestial_state(&self) -> CelestialState {
+        CelestialState::at_with_moon(self.now(), self.site, self.start, self.moon_rate())
     }
 
     pub fn for_act(act_id: u8, phase: ClockPhase) -> Self {
@@ -291,6 +339,52 @@ mod tests {
             assert!(lux > last / 40.0 || last.is_infinite(), "{when}: {lux} lx after {last}: a cliff");
             last = lux;
         }
+    }
+
+    #[test]
+    fn the_moons_month_is_the_clocks_ten_days_and_the_real_month_restores_the_ephemeris() {
+        let start = UtcInstant::parse_iso("1942-12-21T00:00:00Z").unwrap();
+        let mut clock = SkyClock::new(start, STALINGRAD);
+        clock.moon_cycle_days = 10.0;
+        let first = clock.celestial_state();
+        let real = CelestialState::at(start, STALINGRAD);
+        assert!((first.moon_phase.illuminated_fraction - real.moon_phase.illuminated_fraction).abs() < 1e-9,
+            "the clock starts on the real Moon");
+        // Through one cycle the phase waxes and wanes once: the elongation sweeps the circle.
+        let mut fractions = Vec::new();
+        for day in 0..=10 {
+            clock.elapsed_s = day as f64 * 86_400.0;
+            fractions.push(clock.celestial_state().moon_phase.illuminated_fraction);
+        }
+        let (min, max) = fractions.iter().fold((1.0f64, 0.0f64), |(lo, hi), f| (lo.min(*f), hi.max(*f)));
+        assert!(min < 0.08 && max > 0.92, "a whole cycle in ten days: {fractions:?}");
+        clock.elapsed_s = 10.0 * 86_400.0;
+        let after = clock.celestial_state();
+        let wrap = |d: f64| (d + 180.0).rem_euclid(360.0) - 180.0;
+        let drift = wrap((after.moon_phase.elongation_rad - first.moon_phase.elongation_rad).to_degrees());
+        assert!(drift.abs() < 10.0, "the phase returns after one cycle (the true motion varies about the mean): {drift:+.1} deg");
+        // The Moon still rises and sets with its phase: full near sunset, new near the Sun.
+        assert!((after.moon.altitude_deg - first.moon.altitude_deg).abs() < 25.0, "{:?} {:?}", first.moon, after.moon);
+        clock.moon_cycle_days = SYNODIC_MONTH_DAYS;
+        assert!((clock.moon_rate() - 1.0).abs() < 1e-3, "{}", clock.moon_rate());
+        let real_later = CelestialState::at(clock.now(), STALINGRAD);
+        let on_clock = clock.celestial_state();
+        assert!((real_later.moon_phase.illuminated_fraction - on_clock.moon_phase.illuminated_fraction).abs() < 2e-3);
+        assert!((real_later.moon.altitude_deg - on_clock.moon.altitude_deg).abs() < 0.5);
+    }
+
+    #[test]
+    fn the_discs_are_scaled_for_the_display_and_the_light_is_not() {
+        let (_, day) = sky_at("1942-12-21T12:00:00Z", false);
+        let real = day.state.sun_angular_radius_rad();
+        assert!((day.key.angular_radius_rad / real - disc_display_scale()).abs() < 1e-9);
+        assert!((1.0..=2.0).contains(&DISC_DISPLAY_SCALE), "a bit bigger, not a different sky");
+        let (atmosphere, _) = sky_at("1942-12-21T12:00:00Z", false);
+        let au_ratio = crate::ephemeris::AU_KM / day.state.sun_distance_km;
+        assert!((day.key.irradiance - atmosphere.solar_irradiance).length() < 1e-12
+            || (day.key.irradiance - AtmosphereParameters::default().solar_irradiance * (au_ratio * au_ratio)).length() < 1e-12);
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("KESSEL_DISC_SCALE"));
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("KESSEL_MOON_CYCLE_DAYS"));
     }
 
     #[test]

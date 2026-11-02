@@ -11,6 +11,8 @@ mod ammunition;
 mod relay;
 #[path="expedition_mission_review.rs"]
 mod mission_review;
+#[path="expedition_loop_review.rs"]
+mod loop_review;
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub(super) struct Crossing {pub center:Vec2,pub deck_y:f32,pub half_length:f32,pub half_width:f32}
@@ -25,6 +27,21 @@ pub(super) struct SiteProgress {
  pub id:u64,pub guards:Vec<usize>,pub infantry:Vec<usize>,pub counterattack:Vec<usize>,pub held_s:f32,
  pub complete:bool,pub visited:bool,pub counterattack_released:bool,pub relay_delivered:bool,
  pub territory:Territory,pub recapture_s:f32,pub captures:u16,pub failure:Option<String>,
+}
+/// What the expedition has left, as the map states it between orders: the stake of the next one.
+#[derive(Clone,Debug,Serialize)]
+pub struct ExpeditionStock {
+ pub fuel_l:f32,pub range_km:f32,pub ap:u32,pub he:u32,
+ pub aboard:usize,pub camp:usize,pub field:usize,pub dead:usize,
+ pub orders_left:u8,pub orders_done:usize,
+}
+impl ExpeditionStock {
+ pub fn lines(&self)->[String;4] {
+  let men=if self.field>0 {format!("MEN {} ABOARD  {} CAMP  {} FIELD  {} DEAD",self.aboard,self.camp,self.field,self.dead)}
+   else {format!("MEN {} ABOARD  {} CAMP  {} DEAD",self.aboard,self.camp,self.dead)};
+  [format!("FUEL {:.0} L  ~{:.0} KM",self.fuel_l,self.range_km),format!("88 MM  {} AP  {} HE",self.ap,self.he),men,
+   format!("ORDERS {} LEFT  {} DONE",self.orders_left,self.orders_done)]
+ }
 }
 /// Only surviving physical enemies exert pressure. Re-entering a sector does not create a new
 /// garrison, counterattack, cache or crew member. A defending capable person arrests the clock.
@@ -190,6 +207,7 @@ impl TheatreRuntime {
 }
 impl Game {
  pub fn run_expedition_mission_review(prefix:&str)->Result<()>{mission_review::run(prefix)}
+ pub fn run_expedition_loop_review(prefix:&str)->Result<()>{loop_review::run(prefix)}
  pub fn enable_expedition_theatre(&mut self,r:&mut Renderer)->Result<bool>{
   let Some(mut t)=self.theatre.take() else{return Ok(false)};
   if t.initialized {self.theatre=Some(t);return Ok(true)}
@@ -242,6 +260,13 @@ impl Game {
     let id=710000+s.id*10+n as u64;let p=Vec3::new(s.position[0]+8.+n as f32*1.2,self.hf.height_at(s.position[0]+8.,s.position[1]+4.),s.position[1]+4.);
     self.spawn_workshop_reward(crate::expedition::ItemId(id),kind,p)?;t.reward_parts.push(id);
    }}
+   // The authored opening stock (catalog "start"): the fuel in the tank and the exact rounds
+   // stowed, once, when the theatre is first installed. Resume never comes through here.
+   if let Some(start)=t.spec.start.clone() {
+    self.standalone_fuel_liters=Some(start.fuel_l);
+    let rack=self.stow_main_gun_loadout(usize::from(start.rounds_ap),usize::from(start.rounds_he));
+    println!("[expedition] opening stock: {:.0} L fuel, {} PzGr + {} SprGr aboard ({rack} in the cradles)",start.fuel_l,start.rounds_ap,start.rounds_he);
+   }
    t.initialized=true;Ok(())
   })();self.theatre=Some(t);result?;Ok(true)
  }
@@ -273,8 +298,106 @@ impl Game {
   let kind=if s.kind==Kind::Finale{DispatchKind::Finale{site:SiteId(s.id)}}else{DispatchKind::Mission{mission:MissionId(s.id),site:SiteId(s.id)}};
   self.expedition_runtime.as_mut().unwrap().state.begin_dispatch(DispatchId(serial),kind)?;
   let t=self.theatre.as_mut().unwrap();t.active=Some(s.id);t.dispatch_serial+=1;t.notice=format!("ORDER {}: {}",s.id,s.task());
-  let sheet=crate::mission::parse(&serde_json::json!({"schema":"kessel.mission","version":1,"act_id":1,"id":format!("expedition-{}",s.id),"title":s.name,"callsign":"Tiger","net":"Support detail","order":[s.task(),"The field is persistent. Recover your people and equipment; supplies must be collected.","Read M for the order and map. X folds the sheet."],"beats":[{"id":"operation","title":s.name,"goal":"hold","at":{"x":s.position[0],"z":s.position[1]},"radius_m":100.,"trigger":{"kind":"start"},"complete":{"kind":"campaign_objective","objective":"ExpeditionPhysicalObjective"},"map":{"mark":"circle","bearing":true},"pacing":{}}]}),std::path::Path::new("catalog/expedition_theatre.v1.json"))?;
+  // The authored order for the site (catalog/expedition_missions.v1.json: approach, contact,
+  // secure, with the net's lines); a site the catalog lacks gets the bare one-beat order.
+  // The catalog's bridge sites are re-seated on the surveyed deck at install (above); the
+  // authored sheet was written from the catalog, so every beat placed on the catalog's point
+  // moves with the site, or the hold would ask for a place 140 m off the deck.
+  let catalog_site=crate::expedition_theatre::Spec::load()?.sites.iter().find(|c|c.id==s.id).map(|c|Vec2::from_array(c.position));
+  let sheet=match crate::expedition_theatre::mission_sheet(s.id)? {
+   Some(mut sheet)=>{
+    if let Some(from)=catalog_site {
+     let to=Vec2::from_array(s.position);
+     if from.distance(to)>0.5 {
+      for beat in &mut sheet.beats {
+       if let crate::mission::Place::World(p)=&mut beat.at {if p.distance(from)<1.0 {*p=to;}}
+       if let Some((crate::mission::Place::World(p),_))=&mut beat.bypass_near {if p.distance(from)<1.0 {*p=to;}}
+      }
+      println!("[mission] order {} re-seated from the catalog's ({:.0}, {:.0}) to the surveyed site ({:.0}, {:.0})",s.id,from.x,from.y,to.x,to.y);
+     }
+    }
+    sheet
+   },
+   None=>crate::mission::parse(&serde_json::json!({"schema":"kessel.mission","version":1,"act_id":1,"id":format!("expedition-{}",s.id),"site":s.id,"title":s.name,"callsign":"Elster","net":"Stab","order":[s.task(),"The field is persistent. Recover your people and equipment; supplies must be collected.","Read M for the order and map. X folds the sheet."],"beats":[{"id":"secure","title":s.name,"goal":"hold","at":{"x":s.position[0],"z":s.position[1]},"radius_m":100.,"trigger":{"kind":"start"},"complete":{"kind":"site_secured"},"map":{"mark":"circle","bearing":true},"pacing":{}}]}),std::path::Path::new("catalog/expedition_theatre.v1.json"))?,
+  };
   self.enable_mission(sheet)?;Ok(true)
+ }
+ /// An order is accepted and open.
+ pub fn expedition_order_active(&self)->bool {self.theatre.as_ref().is_some_and(|t|t.active.is_some())}
+ /// The expedition's remaining stock, read from the live authorities: the tank, the rack and
+ /// the hands, the coordinator's people, the dispatch budget and the theatre's tally.
+ pub fn expedition_stock(&self)->Option<ExpeditionStock> {
+  let t=self.theatre.as_ref()?;let e=self.expedition_state()?;
+  let fuel_l=self.tank_fuel_liters().unwrap_or(0.);let (ap,he)=self.main_gun_rounds_aboard();
+  let (mut aboard,mut camp,mut field,mut dead)=(0,0,0,0);
+  for p in &e.people {
+   if !p.alive(){dead+=1;continue;}
+   match p.location {
+    crate::expedition::PersonLocation::Seat{vehicle,..}|crate::expedition::PersonLocation::Aboard{vehicle,..} if vehicle==crate::expedition::TIGER_ID=>aboard+=1,
+    crate::expedition::PersonLocation::Camp{..}=>camp+=1,
+    _=>field+=1,
+   }
+  }
+  Some(ExpeditionStock{fuel_l,range_km:super::standalone_fuel::road_range_km(fuel_l),ap,he,aboard,camp,field,dead,orders_left:e.preparation_slots,orders_done:t.completed})
+ }
+ /// What the mission sheet observes of its site (src/mission.rs `Observation`): living guard
+ /// tanks of the site's finite garrison, and whether the theatre has credited the site as secured.
+ pub(super) fn expedition_site_observation(&self,site:u64)->Option<(u32,bool)> {
+  let t=self.theatre.as_ref()?;let p=t.sites.iter().find(|s|s.id==site)?;
+  let alive=p.guards.iter().filter(|i|self.enemies.get(**i).is_some_and(|e|e.alive)&&self.enemy_active.get(**i)==Some(&true)).count() as u32;
+  Some((alive,p.complete))
+ }
+ /// Playtest fixture (tools/launch_demo_20261101.sh --order N [--forward]): accept the order for
+ /// `site` at once and, with `forward`, stand the crewed Tiger on the approach road at the
+ /// order's first beat, engine running, facing the site. Disclosed as staging in the log; nothing
+ /// about the site, its guards or the hold is changed.
+ pub fn debug_expedition_start_order(&mut self,site:u64,forward:bool,r:&mut Renderer)->Result<()> {
+  {
+   let slots=self.expedition_state().context("expedition not enabled")?.preparation_slots;
+   let t=self.theatre.as_mut().context("theatre not enabled")?;
+   let choices=t.choices(slots);
+   t.selected=choices.iter().position(|i|t.spec.sites[*i].id==site).with_context(||format!("order {site} is not on offer"))?;
+  }
+  ensure!(self.expedition_accept_order()?,"order not accepted");
+  if forward {self.debug_expedition_stage_forward(r)?;}
+  Ok(())
+ }
+ /// The staged half of `debug_expedition_start_order`: the crewed Tiger stood at the open
+ /// order's first beat, engine running, facing the order's site.
+ pub fn debug_expedition_stage_forward(&mut self,r:&mut Renderer)->Result<()> {
+  let site=self.theatre.as_ref().and_then(|t|t.active).context("no open order to stage")?;
+  {
+   let (at,site_at)={let m=self.mission.as_ref().context("order has no sheet")?;(m.beats[0].at,m.beats.last().unwrap().at)};
+   let heading=crate::world::heading_of(site_at-at).to_radians();
+   self.mode=Mode::Tank;self.climb=Climb::default();self.commander_outside=false;self.chase_cam=false;self.gunner_optic=false;
+   self.player=Tank::new(at.x,at.y,heading,&self.hf,tank::TIGER_PARTS);
+   self.player.pos.y=self.expedition_vehicle_ground(at.x,at.y);
+   self.engine_on=true;self.engine_crank_t=0.;
+   r.reset_history();
+   println!("[expedition] STAGED forward start: order {site}, Tiger placed at ({:.0}, {:.0}) facing {:.0} deg, engine running",at.x,at.y,heading.to_degrees());
+  }
+  self.sync_expedition_now()
+ }
+ /// Bench fixture (disclosed where used): the staged Tiger moved to `distance` m short of the open
+ /// order's site, facing it, engine running. Nothing about the site changes.
+ pub fn debug_expedition_stage_at_distance(&mut self,distance:f32,r:&mut Renderer)->Result<()> {
+  let site_at=self.mission.as_ref().context("no open order")?.beats.last().unwrap().at;
+  let from=Vec2::new(self.player.pos.x,self.player.pos.z);
+  let dir=(site_at-from).normalize_or_zero();let at=site_at-dir*distance;
+  let heading=crate::world::heading_of(site_at-at).to_radians();
+  self.player=Tank::new(at.x,at.y,heading,&self.hf,tank::TIGER_PARTS);
+  self.player.pos.y=self.expedition_vehicle_ground(at.x,at.y);self.engine_on=true;self.engine_crank_t=0.;
+  r.reset_history();println!("[expedition] STAGED at {distance:.0} m short of the site: ({:.0}, {:.0})",at.x,at.y);
+  self.sync_expedition_now()
+ }
+ /// Review fixture (disclosed where used): the site's finite garrison marked dead where it
+ /// stands, no shot fired. Returns the guard tank indices and the sentry indices so the receipt
+ /// can name them. Nothing is spawned, moved or revived.
+ pub fn debug_expedition_kill_site_garrison(&mut self,site:u64)->Result<(Vec<usize>,Vec<usize>)> {
+  let p=self.theatre.as_ref().and_then(|t|t.sites.iter().find(|s|s.id==site)).with_context(||format!("no site {site}"))?.clone();
+  for &n in p.guards.iter().chain(&p.counterattack){self.enemies[n].alive=false;self.enemies[n].hp=0.;}
+  for &n in &p.infantry {self.kill_soldier(n,"review fixture");}
+  Ok((p.guards,p.infantry))
  }
  pub fn expedition_withdraw_order(&mut self)->Result<bool>{
   let Some(t)=self.theatre.as_ref().filter(|t|t.active.is_some())else{return Ok(false)};
@@ -442,6 +565,8 @@ impl Game {
   crate::ui::map_linework::draw_buildings(r,&self.buildings,&|p:Vec2|{let q=proj(p.to_array());(q.x,q.y)},&|p:Vec2|(p-center).abs().max_element()<half+30.,(0.245,0.400,0.510,0.360));
   let slots=self.expedition_state().map_or(0,|e|e.preparation_slots);let choices=t.choices(slots);let selected=t.active.and_then(|id|t.spec.sites.iter().position(|s|s.id==id)).or_else(||choices.get(t.selected%choices.len().max(1)).copied());
   for (i,s) in t.spec.sites.iter().enumerate(){let p=proj(s.position);if inside(p){r.draw_text_bold(if t.sites[i].failure.is_some(){"X"}else if t.sites[i].territory==Territory::Contested{"!"}else if t.sites[i].complete{"+"}else if Some(i)==selected{"O"}else{"."},p.x,p.y-0.008,0.016,ink,crate::ui::Align::Center);r.draw_text(&s.id.to_string(),p.x+0.009,p.y,0.010,ink,crate::ui::Align::Left);}}
+  // The open order's pencil: its marks, the position estimate and the bearing line (src/mission.rs).
+  if let Some(guidance)=self.mission_map_guidance(){crate::ui::draw_mission_marks(r,&guidance,&|p:Vec2|{let q=proj(p.to_array());(q.x,q.y)},(0.245,0.400,0.510,0.360));}
   let player=proj([self.map_world_position().x,self.map_world_position().y]);if inside(player){r.draw_text_bold("+",player.x,player.y-0.008,0.018,ink,crate::ui::Align::Center);}
   if let Some(e)=self.expedition_state(){let c=proj([e.camp.position.x as f32,e.camp.position.z as f32]);if inside(c){r.draw_text_bold("C",c.x,c.y-0.008,0.015,ink,crate::ui::Align::Center);}}
   for boundary in t.front_boundaries(){let p=proj(boundary.to_array());if inside(p){r.draw_text_bold("//",p.x,p.y-0.008,0.021,ink,crate::ui::Align::Center);}}
@@ -453,6 +578,8 @@ impl Game {
    r.draw_text(&format!("{} TANKS / HOLD {:.0}s / {} ORDERS",s.guards,s.hold_s,slots),0.34,0.813,0.019,ink,crate::ui::Align::Left);
   }
   for (line,text) in crate::ui::wrap_text(&t.notice,52).into_iter().take(2).enumerate(){r.draw_text(&text,0.34,0.838+line as f32*0.017,0.015,ink,crate::ui::Align::Left);}
+  // The stock, pencilled in the sheet's margin: what the next order is played against.
+  if let Some(stock)=self.expedition_stock(){for (n,line) in stock.lines().iter().enumerate(){r.draw_text(line,0.195,0.785+n as f32*0.0175,0.0135,ink,crate::ui::Align::Left);}}
   if t.active.is_some(){r.draw_text("[ WITHDRAW ORDER ]",0.55,0.882,0.023,ink,crate::ui::Align::Center);}
   else {for (x,label) in [(0.35,"<"),(0.53,"[ ACCEPT ]"),(0.73,"[ NEXT ]")]{r.draw_text(label,x,0.882,0.023,ink,crate::ui::Align::Center);}}
   r.draw_text("PgUp/Dn SELECT   M MAP   X FOLD",0.57,0.913,0.016,ink,crate::ui::Align::Center);

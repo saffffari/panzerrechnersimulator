@@ -972,6 +972,8 @@ impl Game {
         println!("[panzerrechnersystem] KILLED — you bled out at the {:?} station", self.station);
     }
 
+    /// Bench fixture: the K order set directly (disclosed where used).
+    pub fn debug_set_fire_at_will(&mut self, on: bool) { self.crew_solo.fire_at_will = on; }
     /// K explicitly enables autonomous gunner fire. Empty-space LMB is never a fire order.
     fn crew_solo_orders(&mut self, input: &TankInput) {
         let toggle = input.fire_order && !self.crew_solo.prev_fire_order;

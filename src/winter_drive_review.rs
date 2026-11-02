@@ -157,6 +157,8 @@ pub fn run(prefix:&str,key:&str,preview:bool)->anyhow::Result<()> {
     let wav=format!("{prefix}_soundtrack.wav");crate::acoustics::write_wav_stereo(&wav,&pcm,crate::acoustics::SAMPLE_RATE)?;
     let video=format!("{prefix}.mp4");ensure!(Command::new("ffmpeg").args(["-v","error","-nostdin","-n","-i",&raw,"-i",&wav,
         "-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","192k","-movflags","+faststart",&video]).status()?.success(),"audio mux failed");
+    // One clip with its sound (owner, 2026-11-01): the silent picture and the wav go once it exists.
+    if std::fs::metadata(&video).is_ok_and(|m|m.len()>0) {let _=std::fs::remove_file(&raw);let _=std::fs::remove_file(&wav);}
     let contact=format!("{prefix}_contact.jpg");ensure!(Command::new("ffmpeg").args(["-v","error","-nostdin","-n","-i",&video,
         "-vf","fps=0.5,scale=800:450:flags=neighbor,tile=2x2","-frames:v","1","-q:v","2",&contact]).status()?.success(),"contact sheet failed");
     let mut checks=vec![json!({"name":"ordinary_player_alive","passed":g.player.alive}),

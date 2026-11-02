@@ -4,6 +4,9 @@
 use super::*;
 
 const SKIN: f32 = 0.001;
+/// Below this fraction of the capsule radius from a body surface the walker is inside the body,
+/// not touching it: the step is released rather than clamped so he can walk out.
+const DEPENETRATION_FRACTION: f32 = 0.55;
 const MAX_ADVANCE: usize = 24;
 const MAX_SLIDES: usize = 4;
 
@@ -66,6 +69,7 @@ pub(super) struct CrewPersonalSpace {
     height:f32,
     pub candidates:usize,
     pub bodies:usize,
+    pub depenetrations:usize,
     pub queries:u64,
 }
 impl CrewPersonalSpace {
@@ -140,6 +144,11 @@ impl CrewPersonalSpace {
             self.bodies+=1;
         }
         self.candidates=triangles.len();
+        // A walker who starts inside another man (a seat left straight into the gunner's side,
+        // 2026-11-01: "stuck after exiting gunner seat in front of the gunner") is not held
+        // there: every contact at the start would block every direction. Deep overlap releases
+        // the step so he can walk out; a merely touching capsule keeps the sweep's back-out rule.
+        if starts_inside(axis,radius,&triangles) {self.depenetrations+=1;return to;}
         let displacement=slide_capsule(axis,radius,delta,&triangles);
         Vec3::new(from.x+displacement.x,to.y,from.z+displacement.z)
     }
@@ -201,6 +210,10 @@ fn sweep_capsule(axis:[Vec3;2],radius:f32,delta:Vec3,t:[Vec3;3])->Option<(f32,Ve
     // Bounded conservative advancement fails closed rather than tunnelling through a limb.
     Some((fraction,last_normal))
 }
+/// The capsule already overlaps a body surface by more than a touch: inside, not against.
+fn starts_inside(axis:[Vec3;2],radius:f32,triangles:&[[Vec3;3]])->bool {
+    triangles.iter().any(|t|capsule_distance(axis,*t).0<radius*DEPENETRATION_FRACTION)
+}
 fn slide_capsule(axis:[Vec3;2],radius:f32,delta:Vec3,triangles:&[[Vec3;3]])->Vec3 {
     let mut moved=Vec3::ZERO;let mut remaining=delta;
     for _ in 0..MAX_SLIDES {
@@ -225,7 +238,7 @@ impl Game {
         let result=contacts.clamp(self,from,to);self.crew_personal_space=contacts;result
     }
     pub fn crew_personal_space_receipt(&self)->serde_json::Value {
-        serde_json::json!({"queries":self.crew_personal_space.queries,"bodies":self.crew_personal_space.bodies,
+        serde_json::json!({"queries":self.crew_personal_space.queries,"bodies":self.crew_personal_space.bodies,"depenetrations":self.crew_personal_space.depenetrations,
             "triangle_candidates":self.crew_personal_space.candidates,"capsule_radius_m":self.crew_personal_space.radius,
             "capsule_height_m":self.crew_personal_space.height,"contact_skin_m":SKIN,
             "max_sweep_iterations":MAX_ADVANCE,"max_slide_iterations":MAX_SLIDES,"living_only":true})
@@ -266,6 +279,16 @@ mod tests {
         assert!(out.iter().any(|t|t[0].x==0.0));
         assert!(out.len()<=8 && out.len()<total/4,"{} of {total} triangles",out.len());
         let result=slide_capsule(axis(-1.0,0.0),0.2,Vec3::X*2.0,&out);assert!(result.x<0.801);
+    }
+    #[test]fn a_walker_placed_inside_a_body_is_released_but_a_touching_one_is_not(){
+        // The wall stands at x = 0. A capsule whose axis sits on it is inside the body; one whose
+        // surface just touches it (axis at radius + skin) is only against it.
+        let inside=axis(0.0,0.0);let touching=axis(0.2+SKIN*2.0,0.0);
+        assert!(starts_inside(inside,0.2,&wall()));
+        assert!(!starts_inside(touching,0.2,&wall()));
+        // Against the wall the sweep still refuses to go through it.
+        let through=slide_capsule(touching,0.2,Vec3::new(-0.3,0.0,0.0),&wall());
+        assert!(through.x> -0.01,"{through}");
     }
     #[test]fn no_contacts_preserve_the_requested_movement(){
         assert_eq!(slide_capsule(axis(0.0,0.0),0.2,Vec3::new(0.2,0.0,-0.3),&[]),Vec3::new(0.2,0.0,-0.3));

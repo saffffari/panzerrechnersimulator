@@ -9,15 +9,21 @@ and the current driver cruise setting.
 
 | Input | Current solo action |
 |---|---|
-| LMB | Interact, pick up, enter, equip or use; fire the main gun while in its sights |
-| X | Put away the topmost held item or exit the current station/view; one layer per press |
+| LMB | Interact, pick up, enter, equip or use; fires the main gun only while in its sights (a click from any other post never fires) |
+| X | Put away the topmost held item or exit the current station/view; one layer per press. At the commander's periscope with the lid open, X puts the head out through the cupola and X again brings it back in; with the lid shut it drops into the compartment |
+| Shift / Space (cupola) | Shift: head out and in through the open cupola lid. Space tap at the buttoned cupola: down into the compartment; Space held with the head out: climb out on foot |
 | Q / E | Decrease/increase driver cruise: reverse 3/2/1, stop, forward 1/2/3 |
 | W/S, A/D | Manual drive/steer at control stations; walk in the compartment or on foot |
 | Arrow keys | Coarse traverse/elevation through a capable gunner; direct control at gun sights |
 | Mouse | Fine gun aim only at sights; head/body look elsewhere |
 | V | Indicate an approximate clock-bearing sector; no enemy lock or automatic range measurement |
 | K | Toggle the autonomous-gunner experiment; no commander LMB fire order |
-| M / I | Physical map / repair manual (B stays the binoculars) |
+| M / I | Physical map / repair manual (B stays the binoculars). The manual opens flat over the view, read top-down on the game's own pixel grid (pixel type, one-pixel rules, pixel plates): click a chapter tab down its fore-edge (BOOK, TRACK, PARTS, CREW, WINCH, FIRE) to turn to that chapter; click the foot corners of a page, PgUp/PgDn or the wheel to turn a leaf; click a red arrow choice to follow the diagnosis; click the running head to mark a page (MARK) or return to the ribbon; +/- zooms to two pixels per texel about the pointer. `KESSEL_MANUAL_3D=1` keeps the physical book in the scene instead, with the loupe (**RMB held** over the page, a hand lens showing the paper three times larger through its own camera) |
+| PgUp / PgDn, Enter (map held) | Expedition orders on the theatre map: previous / next offer, accept. Accepting stows the map; the written order prints on the page teleprinter's 210 mm sheet (the head at the commander's left under the turret roof, or the detail's machine on the camp's orders table when you are on foot there); the sheet comes out leaning toward you. M rereads it on the map with its marks and bearing |
+| E / LMB on the sheet | Tear the printed order off the machine: it rises into view and is read flat on the pixel grid like the manual (free hands, like the map; `KESSEL_MANUAL_3D=1` reads it in hand in the scene) |
+| X (sheet in hand) | Fold the sheet into the pocket (it sinks out of view) |
+| O | Hold the pocketed sheet up again |
+| E / LMB on the head's keys, then type, Enter / Esc | Key a line to the support detail (Stab) at the teleprinter: the line and the detail's answer print on the sheet and hang there until torn off. The answer comes from the radio model (`KESSEL_RADIO_MODEL`, `ANTHROPIC_API_KEY`) or, with no key or network, from the offline responder that reads the same context back |
 | 1 / 2 | P08 / Panzerfaust on foot; 1 toggles the mounted P08 while aboard |
 | R | Reload personal weapon on foot; throw a carried spent case while aboard |
 | F / T | Handheld light / request ammunition type |

@@ -156,6 +156,15 @@ prefixes are routed there automatically. For tools that require an explicit outp
 cannot silently replace another one. Do not mix runtime textures, packaged artwork, build-cache
 previews, or downloaded visual references into this folder.
 
+**Where the owner looks (Linux, 2026-11-01):** one shared folder for every checkout,
+`/home/alex/panzer/captures/`. The engine routes bare capture names and `captures/...` paths there
+when `KESSEL_CAPTURES_DIR` is set (the demo launcher sets it; set it for harness runs too), with
+the checkout's folder name in front of the file name. Stills are 3840-wide JPEGs, nearest-neighbour
+from the frame whatever the internal grid (`KESSEL_CAPTURE_4K_JPG=1`). A clip is saved once, with
+its sound; the silent picture and the soundtrack wav are removed after the mux. `python3
+tools/capture_gallery.py` writes `/home/alex/panzer/captures/index.html`, newest first by day
+across every worktree (`--consolidate` reflink-copies the older worktrees' captures in).
+
 **Where the owner looks (Windows):** every screenshot must end up in
 `C:\shop\panzerrechnersystem\captures\screenshots\` and every video in
 `C:\shop\panzerrechnersystem\captures\videos\` (the main checkout's folders), including work done in

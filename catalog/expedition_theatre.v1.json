@@ -9,6 +9,12 @@
     -5250,
     3200
   ],
+  "start": {
+    "fuel_l": 420,
+    "rounds_ap": 24,
+    "rounds_he": 8,
+    "note": "What the Tiger carries when the expedition opens, an authored state of the fiction (a Tiger low on ammunition inside the pocket), not a standard-issue claim. The hull stowage takes 52 PzGr and 12 SprGr; a full rack would last the whole march. Fuel in litres of the 540 L capacity; the drain is the authored campaign law in src/standalone_fuel.rs."
+  },
   "sites": [
     {
       "id": 10,

@@ -6,6 +6,9 @@
 #
 #   tools/launch_demo_20261101.sh                 title menu (New Expedition / Resume Expedition / Canyon Run v2 ...)
 #   tools/launch_demo_20261101.sh --expedition    straight into a new expedition: the camp, the Tiger, the halftrack
+#   tools/launch_demo_20261101.sh --expedition --order 10            the order for site 10 accepted at once (M: the map)
+#   tools/launch_demo_20261101.sh --expedition --order 10 --forward  and the crewed Tiger staged on the approach road,
+#                                                 700 m short of the site, engine running (a disclosed playtest fixture)
 #   tools/launch_demo_20261101.sh --canyon        straight into a fresh Canyon v2 winter run (missions + living crew)
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
 #   tools/launch_demo_20261101.sh --res 640x360   render grid (default 480x270; 640x360 is an exact 8x on the 5K panel)
@@ -13,13 +16,16 @@
 #                                                 (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered colour, pyramid bloom;
 #                                                 the owner's pick, 2026-11-01); --look deltap-pico8 for the 32-colour frame
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
+#   tools/launch_demo_20261101.sh --day-cycle 6   day/night clock: the 15-minute cycle times this (default 6, a 90-minute cycle)
+#   tools/launch_demo_20261101.sh --audio-range balanced   the playback curve: reference (default; distant sounds fall off as
+#                                                 the physical level does) or balanced (up to +12 dB below 110 dB(A))
 #   tools/launch_demo_20261101.sh --check         validate binary and assets, start nothing
 set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 AUDIO_RANGE=reference
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -30,8 +36,12 @@ while (( $# )); do
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
         --seed) SEED=$2; shift ;;
+        --order) ORDER=$2; MODE=expedition; shift ;;
+        --forward) FORWARD=1; MODE=expedition ;;
+        --day-cycle) DAY_CYCLE=$2; shift ;;
+        --audio-range) AUDIO_RANGE=$2; shift ;;
         --check) CHECK=1 ;;
-        -h|--help) sed -n 2,14p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,22p "$0"; exit 0 ;;
         *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
     shift
@@ -81,13 +91,24 @@ export KESSEL_CANYON_V2=1
 (( WINDOWED )) || export KESSEL_FULLSCREEN=1
 [[ "$MODE" == canyon ]] && export KESSEL_CANYON=1
 [[ "$MODE" == expedition ]] && export KESSEL_EXPEDITION=1
+[[ -n "$ORDER" ]] && export KESSEL_EXPEDITION_ORDER="$ORDER"
+(( FORWARD )) && export KESSEL_EXPEDITION_FORWARD=1
+export KESSEL_DAY_CYCLE_SCALE="$DAY_CYCLE"
+# One shared folder for every still and clip, across worktrees (tools/capture_gallery.py indexes it).
+export KESSEL_CAPTURES_DIR=/home/alex/panzer/captures
+export KESSEL_CAPTURE_4K_JPG=1
+# 2026-11-01 playtest: distant strikes and MG impacts were too loud; the balanced range's lift of
+# quiet sources (up to 12 dB below 110 dB(A), src/reproduction.rs) is off, the reference curve on.
+export KESSEL_AUDIO_RANGE="$AUDIO_RANGE"
+# Every demo run records its simulation phases per second (tools/sim_calls.py, tools/sim_segments.py).
+export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 (( PLATOON )) && export KESSEL_PLATOON=2
 [[ -n "$SEED" ]] && export KESSEL_CANYON_SEED="$SEED"
 [[ -n "$LOOK" ]] && export KESSEL_LOOK="$LOOK"
 
 LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).log"
 {
-    printf '[launcher] %s mode=%s res=%s look=%s windowed=%s platoon=%s\n' "$(date --iso-8601=seconds)" "$MODE" "$RES" "${LOOK:-standard}" "$WINDOWED" "$PLATOON"
+    printf '[launcher] %s mode=%s res=%s look=%s windowed=%s platoon=%s order=%s forward=%s\n' "$(date --iso-8601=seconds)" "$MODE" "$RES" "${LOOK:-standard}" "$WINDOWED" "$PLATOON" "${ORDER:--}" "$FORWARD"
     env | grep '^KESSEL_' | sort
 } > "$LOG"
 ln -sfn "$(basename -- "$LOG")" "$RUNTIME/demo-latest.log"

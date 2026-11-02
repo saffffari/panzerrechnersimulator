@@ -11,7 +11,7 @@ fn all_display_modes_validate_with_the_existing_eye_abi() {
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(),naga::valid::Capabilities::empty()).validate(&module).unwrap();
     let (_,ty)=module.types.iter().find(|(_,t)|t.name.as_deref()==Some("Crush")).unwrap();
     let naga::TypeInner::Struct{members,span}= &ty.inner else{panic!("Crush structure")};
-    assert_eq!(*span,128);
+    assert_eq!(*span,160); // the look lane (128) and the loupe lane (144) appended since
     for (name,offset) in [("exposure",44),("display_grade",64),("dither_right",80),("dither_up",96),("dither_forward",112)] {
         assert_eq!(members.iter().find(|m|m.name.as_deref()==Some(name)).unwrap().offset,offset);
     }

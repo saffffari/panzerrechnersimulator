@@ -126,6 +126,8 @@ mod cigarette_butts;
 mod hand_compass;
 #[path = "hand_map.rs"]
 mod hand_map;
+#[path = "order_printer.rs"]
+pub mod order_printer;
 #[path = "repair_manual_game.rs"]
 mod repair_manual_game;
 #[path = "hatch_control.rs"]
@@ -396,7 +398,7 @@ enum TrackRepairPhase {
 const N_PICKUPS: usize = 14;
 /// Tiger I road-fuel capacity. Campaign fuel is already tracked in litres, so a physical can feeds
 /// the same live meter instead of creating a second abstract "fuel pickup" currency.
-const TIGER_FUEL_CAPACITY_L: f32 = 540.0;
+pub(crate) const TIGER_FUEL_CAPACITY_L: f32 = 540.0;
 const PORTABLE_REACH_M: f32 = 2.2;
 const N_MAP_CASES: usize = crate::run_route::ROUTE_SITE_COUNT;
 
@@ -6028,6 +6030,8 @@ const FIRE_SMOKE_BATCHES: usize = 2; // two soot shades, both sparse screen-door
 const MAX_WORLD_FIRE_SOURCES: usize = 8; // nearest wrecks/hulks; keeps the shared pool bounded
 const FLAME_CUBES_PER_INTERIOR_SPOT: usize = 6144;
 const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
+/// Updates between two regenerations of the fire's grains (`drive_interior_fire`).
+const FIRE_PRESENTATION_PERIOD: u32 = 2;
 // Authored particle radiance calibration, not a temperature or physical fire-power model.
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
@@ -8882,7 +8886,11 @@ struct Slots {
     binocular_prop: usize, // view-local physical field glasses during the lower/raise travel
     hand_compass: [usize; 2], // view-local imported body and magnetic needle
     held_map: usize, // folded physical paper with registered cartography/annotations
+    order_printer_head: usize, // the teleprinter head at the commander's left (src/order_printer.rs)
+    order_strip: usize,        // the strip on the machine, emerging line by line
+    order_receipt: usize,      // the torn-off strip in the reader's hands (view-local)
     repair_manual: [usize; crate::repair_manual::PART_COUNT],
+    loupe: usize, // the reader's glass over the manual (view-local, raster-only)
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
@@ -9552,6 +9560,10 @@ pub struct Game {
     /// Entries are parallel to `slots.tiger_dressing`; failed GLBs never enter either vector.
     tiger_dressing: Vec<crate::tank_dressing::Prop>,
     enigma_dressing: Option<crate::tank_dressing::Prop>,
+    /// The written order's teleprinter and strip (src/order_printer.rs).
+    order_printer: order_printer::Printer,
+    /// The support detail's line, opened on first use (src/radio_llm.rs, `submit_stab`).
+    stab_net: Option<crate::radio_llm::RadioLlm>,
     fx: Fx,
     /// Host-authoritative cannon shells. Stable IDs are never reused during a Game lifetime;
     /// presentation pools may drop/replace a tracer without changing this simulation pool.
@@ -9692,6 +9704,8 @@ pub struct Game {
     /// Live catch-up keeps source/physics clocks current but publishes expensive fire/grass
     /// particle pages once, from the final completed simulation state.
     defer_presentation_rebuild: bool,
+    /// Counts updates for the fire presentation's cadence (`FIRE_PRESENTATION_PERIOD`).
+    fire_presentation_phase: u32,
     cabin_fire: surface_fire::CabinFire,
     projectile_player_armor:surface_fire::CabinFire,
     projectile_enemy_armor:surface_fire::CabinFire,
@@ -11752,8 +11766,16 @@ impl Game {
         scene.extend(hand_compass::load()?);
         let held_map = scene.len();
         scene.push(hand_map::mesh());
+        let order_printer_head = scene.len();
+        scene.push(order_printer::head_mesh());
+        let order_strip = scene.len();
+        scene.push(order_printer::strip_mesh());
+        let order_receipt = scene.len();
+        scene.push(order_printer::strip_mesh());
         let repair_manual = std::array::from_fn(|i| scene.len() + i);
         scene.extend(crate::repair_manual::mesh());
+        let loupe = scene.len();
+        scene.push(crate::repair_manual::loupe_mesh());
 
         // Cupola HATCH lid: the real baked assembly (hinge post + disc + handle) exported from the
         // Blender rig with the mesh origin ON the hinge axis (`cupola hatch pivot`), so rotating
@@ -12439,7 +12461,11 @@ impl Game {
             binocular_prop,
             hand_compass,
             held_map,
+            order_printer_head,
+            order_strip,
+            order_receipt,
             repair_manual,
+            loupe,
             snow,
             hatch,
             tpz_needle,
@@ -13507,6 +13533,12 @@ impl Game {
         renderer.mark_raster_only(slots.held_map);
         renderer.set_emissive(slots.held_map, 0.0);
         renderer.set_visible(slots.held_map, false);
+        renderer.mark_raster_only(slots.order_receipt);
+        renderer.set_visible(slots.order_receipt, false);
+        renderer.set_visible(slots.order_strip, false);
+        renderer.set_emissive(slots.order_printer_head, 0.0);
+        renderer.mark_raster_only(slots.loupe);
+        renderer.set_visible(slots.loupe, false);
         for slot in slots.repair_manual {
             renderer.mark_raster_only(slot);
             renderer.set_emissive(slot, 0.0);
@@ -13973,6 +14005,8 @@ impl Game {
             slots,
             tiger_dressing,
             enigma_dressing,
+            order_printer: Default::default(),
+            stab_net: None,
             fx: Fx::default(),
             projectiles: Vec::with_capacity(256),
             projectile_scratch: Vec::with_capacity(256),
@@ -14087,6 +14121,7 @@ impl Game {
             rtt_last_refresh,
             defer_rtt_to_render: false,
             defer_presentation_rebuild: false,
+            fire_presentation_phase: 0,
             cabin_fire,
             projectile_player_armor,
             projectile_enemy_armor,
@@ -14537,30 +14572,10 @@ impl Game {
 
         // Rebuild the visible rack from typed carried ammunition. APCR currently rides the AP mesh
         // and ballistic family, but remains a distinct persistent count for the future shell model.
-        self.cartridge_primers.clear_inventory();
-        self.slot_taken.fill(true);
         let inv = &start.persistent.inventory;
         let ap_like = usize::from(inv.ap_rounds.saturating_add(inv.apcr_rounds));
         let he = usize::from(inv.he_rounds);
-        let total = (ap_like + he).min(self.slot_taken.len() + 1);
-        let chamber_he = total > 0 && ap_like == 0;
-        self.breech = if total > 0 {
-            Breech::Loaded
-        } else {
-            Breech::Empty
-        };
-        self.he_loaded = chamber_he;
-        let mut rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
-        let mut rack_he = he.saturating_sub(usize::from(chamber_he));
-        for (i, taken) in self.slot_taken.iter_mut().enumerate() {
-            let nature_he = crate::interior_rig::shell_slot_is_he(i);
-            self.slot_nature_he[i] = nature_he;
-            let remaining = if nature_he { &mut rack_he } else { &mut rack_ap };
-            if *remaining > 0 { *taken = false; *remaining -= 1; }
-        }
-        let rack = self.slot_taken.iter().filter(|taken| !**taken).count();
-        self.banked.ap_88mm = rack_ap as u32;
-        self.banked.he_88mm = rack_he as u32;
+        let rack = self.stow_main_gun_loadout(ap_like, he);
         // The firing counter starts at zero for a fresh act. Empty authored cradles are capacity,
         // not historical shots and must never offset the first chambered round.
         self.rounds_spent = 0;
@@ -15827,6 +15842,7 @@ impl Game {
 
     fn update_campaign_director(&mut self, dt: f32, map_interact: bool) {
         self.update_tiger_fuel(dt);
+        self.tick_order_printer(dt);
         let Some(_) = self.campaign else { return };
         // Exploration belongs to the crew, not only the hull.  A dismounted commander can read a
         // story site, scout a route, and prepare Halbe even when the Tiger is immobilised or dry.
@@ -16750,8 +16766,10 @@ impl Game {
             // held from before the lay/travel-lock gates opened must not auto-fire the cannon the
             // instant they do — only a FRESH press taken at the sights fires. (Mirrors the MG's
             // `click_hover` guard below.)
+            // Solo: only a press taken IN the sights fires (2026-11-01 playtest: a click meant
+            // for a control or a crewman fired the gun from the commander's post).
             let main_trigger = gunner_input.is_some_and(|i| i.flag(crate::lan::F_FIRE_MAIN))
-                || (coop.is_none() && input.mg_coax);
+                || (coop.is_none() && input.mg_coax && self.gunner_optic);
             let lmb_edge = main_trigger && !self.prev_lmb;
             // The solo crew's gunner pulls his own trigger once laid and ordered.
             let ai_pulse = (coop.is_none() || self.lan_ai_frame.is_some())
@@ -16790,7 +16808,7 @@ impl Game {
         }
         self.prev_space = input.fire;
         self.prev_lmb = gunner_input.is_some_and(|i| i.flag(crate::lan::F_FIRE_MAIN))
-            || (coop.is_none() && input.mg_coax);
+            || (coop.is_none() && input.mg_coax && self.gunner_optic);
         acting
     }
 
@@ -18512,6 +18530,8 @@ impl Game {
         self.drive_local_binocular_prop(r);
         self.drive_hand_map(r);
         self.repair_manual.tick(dt);
+        // The right button over the open book holds the loupe; the book must be in the hands.
+        self.repair_manual.loupe_wanted = input.aim && self.repair_manual.held && !self.repair_manual.turning();
         self.drive_repair_manual(r);
         self.drive_hand_compass(dt, r);
         self.update_cupola_pistol(&sidearm_input,dt,r);
@@ -19372,6 +19392,7 @@ impl Game {
         r.set_model(self.slots.enigma, enigma_model);
         r.set_visible(self.slots.enigma, self.tank_editor_scene.is_none() || self.enigma_dressing.is_some());
         r.set_emissive(self.slots.enigma, 0.0);
+        self.drive_order_printer(r);
         r.set_model(
             self.slots.turret_disc,
             crate::turret_disc::turret_disc_model(tm),
@@ -22831,6 +22852,42 @@ impl Game {
     pub fn debug_casing_carried(&self) -> bool {
         self.carried_casing.is_some()
     }
+    /// Stow an exact typed loadout: the chamber first (AP when any AP is carried), then the
+    /// hull cradles by their permanent nature, the overflow banked as typed counts. Primers are
+    /// re-issued for the new bodies. Returns the rack count. The campaign start and the
+    /// expedition's authored opening (`expedition_theatre::Start`) both come through here.
+    pub(crate) fn stow_main_gun_loadout(&mut self, ap_like: usize, he: usize) -> usize {
+        self.cartridge_primers.clear_inventory();
+        self.slot_taken.fill(true);
+        let total = (ap_like + he).min(self.slot_taken.len() + 1);
+        let chamber_he = total > 0 && ap_like == 0;
+        self.breech = if total > 0 { Breech::Loaded } else { Breech::Empty };
+        self.he_loaded = chamber_he;
+        let mut rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
+        let mut rack_he = he.saturating_sub(usize::from(chamber_he));
+        for (i, taken) in self.slot_taken.iter_mut().enumerate() {
+            let nature_he = crate::interior_rig::shell_slot_is_he(i);
+            self.slot_nature_he[i] = nature_he;
+            let remaining = if nature_he { &mut rack_he } else { &mut rack_ap };
+            if *remaining > 0 { *taken = false; *remaining -= 1; }
+        }
+        self.banked.ap_88mm = rack_ap as u32;
+        self.banked.he_88mm = rack_he as u32;
+        self.slot_taken.iter().filter(|taken| !**taken).count()
+    }
+
+    /// The 88 mm aboard by nature, (PzGr, SprGr): the chamber, the cradles, the loose rounds
+    /// riding inside, the one in the hands, and the banked overflow. Counts, not positions.
+    pub fn main_gun_rounds_aboard(&self) -> (u32, u32) {
+        let (mut ap, mut he) = (0u32, 0u32);
+        if matches!(self.breech, Breech::Loaded) { if self.he_loaded { he += 1 } else { ap += 1 } }
+        for (taken, nature_he) in self.slot_taken.iter().zip(&self.slot_nature_he) {
+            if !taken { if *nature_he { he += 1 } else { ap += 1 } }
+        }
+        let (loose_ap, loose_he) = unracked_88mm_aboard(&self.loose, self.carry_mesh, &self.slot_nature_he);
+        (ap + u32::from(loose_ap) + self.banked.ap_88mm, he + u32::from(loose_he) + self.banked.he_88mm)
+    }
+
     pub fn debug_rack_left(&self) -> usize {
         self.slot_taken.iter().filter(|t| !**t).count()
     }
@@ -31894,10 +31951,10 @@ impl Game {
     /// connected supported contact film. Every view draws the same moving-frame evidence.
     fn drive_cubic_blood(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("drive_cubic_blood");
-        let models = self.fire_surface_models();
-        let source = self.cabin_fire.source_contacts(&models);
-        self.surface_blood.update(dt, &models, &source);
-        let mut grain_mats = self.surface_blood.wet_models(&models);
+        let models = { let _p = crate::sim_phase::Probe::new("blood_fire_surface_models"); self.fire_surface_models() };
+        let source = { let _p = crate::sim_phase::Probe::new("blood_source_contacts"); self.cabin_fire.source_contacts(&models) };
+        { let _p = crate::sim_phase::Probe::new("surface_blood_update"); self.surface_blood.update(dt, &models, &source); }
+        let mut grain_mats = { let _p = crate::sim_phase::Probe::new("surface_blood_wet_models"); self.surface_blood.wet_models(&models) };
         // Preserve tiny physical droplets but give their raster silhouette a readable minimum.
         // This changes only instance scale, never contact radii, particle count or simulation work.
         for mat in grain_mats.iter_mut().flatten() {
@@ -32505,7 +32562,14 @@ impl Game {
     /// the count bounded and make all four couch views see the exact same grains.
     fn drive_interior_fire(&mut self, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("drive_interior_fire");
-        self.drive_fire_presentation(r,!self.defer_presentation_rebuild,true);
+        // The flame and soot grains are regenerated and uploaded every FIRE_PRESENTATION_PERIOD
+        // updates (30 Hz at the 60 Hz step): the 2026-11-01 expedition bench spent 26 ms of every
+        // update on the cabin fire's 73,728 grains, their wall-clearance sweeps and their upload.
+        // A skipped update keeps the last grains and their aggregate lights in place; the fire's
+        // cells, emission and heat are unchanged, only the flicker rate halves.
+        self.fire_presentation_phase = self.fire_presentation_phase.wrapping_add(1);
+        let particles = !self.defer_presentation_rebuild && self.fire_presentation_phase % FIRE_PRESENTATION_PERIOD == 0;
+        self.drive_fire_presentation(r,particles,true);
     }
 
     /// Source origins/timestamps and ordered smoke supports remain current on every simulation
@@ -32534,10 +32598,10 @@ impl Game {
 
         // Frame-bound contacts own flame placement and suppression. Global geometry and light
         // budgets stay fixed as the fire spreads across more connected surface patches.
-        let models = self.fire_surface_models();
-        let patches: Vec<_> = (0..N_INT_FIRE_SPOTS).filter_map(|k| {
+        let models = { let _p = crate::sim_phase::Probe::new("fire_surface_models"); self.fire_surface_models() };
+        let patches: Vec<_> = { let _p = crate::sim_phase::Probe::new("fire_patch_surfaces"); (0..N_INT_FIRE_SPOTS).filter_map(|k| {
             self.cabin_fire.patch_surface(k, &models).filter(|p| p.intensity > 0.02).map(|p| (k, p))
-        }).collect();
+        }).collect() };
         let per_patch = (MAX_INTERIOR_FLAME_CUBES / patches.len().max(1)).min(FLAME_CUBES_PER_INTERIOR_SPOT);
         let smoke_per_patch = interior_soot_budget(patches.len());
         for (k, patch) in patches {
@@ -32581,7 +32645,7 @@ impl Game {
             let endpoints: Vec<_> = positions.iter().zip(&samples).map(|(&position, sample)| {
                     position + (position - source).normalize_or_zero() * sample.size * 0.87
                 }).collect();
-            let clear = self.cabin_fire.clear_source_paths(source, &endpoints, &models);
+            let clear = { let _p = crate::sim_phase::Probe::new("fire_smoke_clearance"); self.cabin_fire.clear_source_paths(source, &endpoints, &models) };
             for ((sample, position), visible) in samples.iter().zip(positions).zip(clear) {
                 if !visible { continue; }
                 smoke_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
@@ -32593,12 +32657,14 @@ impl Game {
         // Select the nearest sustained exterior emitters deterministically. Current wrecks, dead
         // allies and archived burning hulks all use the same cube field; distant history cannot
         // grow the global upload or its world-space bounds without limit.
+        let _world_probe = crate::sim_phase::Probe::new("fire_world_sources");
         let listener = self.player.center();
         let mut world_sources: Vec<(f32, Vec3, f32, u32)> = Vec::new();
         let mut surface_patches = std::collections::HashMap::new();
         for i in 0..self.wrecks.len() {
             if self.enemy_active[i] && !self.enemies[i].alive && self.wrecks[i].burning {
-                surface_patches.insert(0x7100_0000 ^ i as u32, self.wreck_surface_patches(i));
+                let wreck_patches = { let _p = crate::sim_phase::Probe::new("fire_wreck_patches"); self.wreck_surface_patches(i) };
+                surface_patches.insert(0x7100_0000 ^ i as u32, wreck_patches);
                 let enemy = &self.enemies[i];
                 let pos = surface_patches.get(&(0x7100_0000 ^ i as u32)).and_then(|p|p.first()).map(|p|p.position)
                     .or_else(|| self.wreck_deck_anchors[wreck_kind_index(enemy.kind)]

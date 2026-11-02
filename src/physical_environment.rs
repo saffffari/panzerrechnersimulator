@@ -130,9 +130,22 @@ impl Default for AtmosphereParameters {
             ozone_center_altitude_m: 25_000.0,
             ozone_half_width_m: 15_000.0,
             rayleigh_scattering_m_inv: DVec3::new(5.802e-6, 13.558e-6, 33.100e-6),
-            mie_scattering_m_inv: 3.996e-6,
-            mie_extinction_m_inv: 4.440e-6,
-            ozone_absorption_m_inv: DVec3::new(0.650e-6, 1.881e-6, 0.085e-6),
+            // Aerosol: a winter continental background with the cauldron's smoke, optical depth
+            // about 0.08 at 550 nm over the 1,200 m scale height (AERONET continental winter
+            // climatologies run 0.05 to 0.10; Bruneton's 0.005 is a clear mountain sky). Single
+            // scattering albedo 0.9 as before. The aureole and the whitened horizon it gives are
+            // what a steppe sunset has; without it the three-band sky was pure Rayleigh, and its
+            // sunset the saturated orange of a monochromatic transmittance (2 November 2026).
+            mie_scattering_m_inv: 6.0e-5,
+            mie_extinction_m_inv: 6.667e-5,
+            // Ozone (the Chappuis band, peak near 600 nm) averaged over each band's width
+            // (600-760, 500-600, 400-500 nm) instead of Bruneton's point samples at 680, 550
+            // and 440 nm (0.650, 1.881, 0.085 e-6). The point samples absorbed the green band
+            // three times more than the red through the long twilight paths, which painted the
+            // civil twilight magenta; the band averages (red 2.3, green 3.3, blue 0.4 in units
+            // of the 550 nm cross-section's 3.3) keep the twilight the blue-grey it is. A named
+            // approximation of the three-band model (docs/PHYSICAL_TRUTH_AUDIT.md).
+            ozone_absorption_m_inv: DVec3::new(1.311e-6, 1.881e-6, 0.228e-6),
             mie_asymmetry: 0.80,
             solar_irradiance: DVec3::new(1.474, 1.8504, 1.91198),
             sun_direction: DVec3::new(0.18, 0.24, 0.954).normalize(),
@@ -1254,6 +1267,37 @@ pub fn integrate_environment(
     }
 }
 
+/// The star lattice: `STAR_LATTICE_CELLS` cells along each cube face of the celestial sphere,
+/// a star in `STAR_LATTICE_SHARE` of them (about 8,800 over the sky, the naked-eye count to
+/// magnitude 6.5), its magnitude drawn so that the count brighter than m rises as 10^(0.5 m)
+/// (the real sky's slope: some 15 stars brighter than first magnitude, 500 brighter than
+/// fourth), its irradiance from its magnitude (V = 0 is 3.6e-11 W m^-2 nm^-1 at 550 nm, Vega;
+/// research section 1.4), its colour from blue-white to warm. A seeded distribution with the
+/// real sky's population, not a surveyed catalogue (docs/PHYSICAL_TRUTH_AUDIT.md). The raymarch
+/// shade pass draws each star into one pixel (rm_shade.wgsl `rm_pixel_star`); this reference
+/// and the sky shader draw the same star as a narrow Gaussian where no pixel is known.
+pub const STAR_LATTICE_CELLS: f64 = 96.0;
+pub const STAR_LATTICE_SHARE: f64 = 0.16;
+pub const STAR_MAGNITUDE_BRIGHTEST: f64 = -1.5;
+pub const STAR_MAGNITUDE_FAINTEST: f64 = 6.5;
+pub const STAR_V0_IRRADIANCE: f64 = 3.6e-11;
+/// A star's visual magnitude from its lattice draw `x` in [0, 1): the inverse of N(<m) ∝ 10^(0.5 m).
+pub fn star_magnitude(x: f64) -> f64 {
+    let lo = 10f64.powf(0.5 * STAR_MAGNITUDE_BRIGHTEST);
+    let hi = 10f64.powf(0.5 * STAR_MAGNITUDE_FAINTEST);
+    2.0 * (lo + x.clamp(0.0, 1.0) * (hi - lo)).log10()
+}
+/// A star's irradiance at 550 nm from its magnitude, W m^-2 nm^-1.
+pub fn star_irradiance(magnitude: f64) -> f64 {
+    STAR_V0_IRRADIANCE * 10f64.powf(-0.4 * magnitude)
+}
+/// The star's colour: its three bands relative to 550 nm.
+fn star_tint(h: f64) -> DVec3 {
+    // Essentially white (the owner, 2 November 2026): a faint blue-white to warm-white tint.
+    let tint = DVec3::new(0.93, 0.97, 1.0).lerp(DVec3::new(1.0, 0.97, 0.92), h);
+    tint / tint.y
+}
+
 /// Unattenuated radiance of whichever finite disc (key or secondary) contains `direction`.
 pub fn stellar_radiance(atmosphere:&AtmosphereParameters,direction:DVec3)->DVec3 {
     if atmosphere.star_frame[3]<=0.0 {return DVec3::ZERO;}
@@ -1266,15 +1310,18 @@ pub fn stellar_radiance(atmosphere:&AtmosphereParameters,direction:DVec3)->DVec3
     let (uv,face)=if a.x>=a.y && a.x>=a.z {(glam::DVec2::new(q.z,q.y)/a.x,if q.x>0.0{0}else{1})}
         else if a.y>=a.z {(glam::DVec2::new(q.x,q.z)/a.y,if q.y>0.0{2}else{3})}
         else {(glam::DVec2::new(q.x,q.y)/a.z,if q.z>0.0{4}else{5})};
-    let grid=(uv*0.5+glam::DVec2::splat(0.5))*96.0;let cell=grid.floor();
+    let grid=(uv*0.5+glam::DVec2::splat(0.5))*STAR_LATTICE_CELLS;let cell=grid.floor();
     let h=hash_lattice(cell.x as i32,cell.y as i32,face,0x5354_4152);
-    if h<0.986 {return DVec3::ZERO;}
+    if h<1.0-STAR_LATTICE_SHARE {return DVec3::ZERO;}
     let cx=0.25+0.5*hash_lattice(cell.x as i32,cell.y as i32,face,0x4152_0001);
     let cy=0.25+0.5*hash_lattice(cell.x as i32,cell.y as i32,face,0x4152_0002);
     let radius=(grid-cell-glam::DVec2::new(cx,cy)).length()/0.14;
-    let brightness=(-radius*radius*2.0).exp()*(0.000003+0.000012*((h-0.986)/0.014).powi(4));
-    let color=DVec3::new(0.65,0.80,1.0).lerp(DVec3::new(1.0,0.77,0.55),hash_lattice(cell.x as i32,cell.y as i32,face,0x4152_0003));
-    color*brightness*gain
+    // The star's irradiance spread over its Gaussian (peak times area) within the cell's solid angle.
+    let irradiance=star_irradiance(star_magnitude((h-(1.0-STAR_LATTICE_SHARE))/STAR_LATTICE_SHARE));
+    let cell_sr=(2.0/STAR_LATTICE_CELLS).powi(2)/(1.0+uv.length_squared()).powf(1.5);
+    let peak=irradiance/(std::f64::consts::PI*0.14*0.14*0.5*cell_sr);
+    let brightness=(-radius*radius*2.0).exp()*peak;
+    star_tint(hash_lattice(cell.x as i32,cell.y as i32,face,0x4152_0003))*brightness*gain
 }
 
 fn disc_radiance(atmosphere: &AtmosphereParameters, direction: DVec3) -> DVec3 {
@@ -1699,6 +1746,39 @@ pub fn direction_f32(direction: DVec3) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_star_field_has_the_real_skys_population_and_one_law_in_every_shader() {
+        let cells = STAR_LATTICE_CELLS as i32;
+        let (mut stars, mut bright1, mut bright4) = (0u32, 0u32, 0u32);
+        for face in 0..6 {
+            for y in 0..cells {
+                for x in 0..cells {
+                    let h = hash_lattice(x, y, face, 0x5354_4152);
+                    if h < 1.0 - STAR_LATTICE_SHARE { continue; }
+                    stars += 1;
+                    let m = star_magnitude((h - (1.0 - STAR_LATTICE_SHARE)) / STAR_LATTICE_SHARE);
+                    if m < 1.0 { bright1 += 1; }
+                    if m < 4.0 { bright4 += 1; }
+                }
+            }
+        }
+        assert!((8_000..=9_700).contains(&stars), "{stars} stars (the naked-eye sky has about 9,000)");
+        assert!((5..=40).contains(&bright1), "{bright1} brighter than first magnitude (the sky has about 15)");
+        assert!((350..=700).contains(&bright4), "{bright4} brighter than fourth (the sky has about 500)");
+        assert!((star_irradiance(0.0) - STAR_V0_IRRADIANCE).abs() < 1e-20);
+        assert!((star_magnitude(0.0) - STAR_MAGNITUDE_BRIGHTEST).abs() < 1e-9);
+        assert!((star_magnitude(1.0) - STAR_MAGNITUDE_FAINTEST).abs() < 1e-9);
+        for (shader, prefix) in [(include_str!("../shaders/physical_environment.wgsl"), "PHYSICAL_STAR"),
+            (include_str!("../shaders/rm_shade.wgsl"), "RM_STAR")] {
+            assert!(shader.contains(&format!("const {prefix}_SHARE: f32 = {STAR_LATTICE_SHARE};")), "{prefix} share");
+            assert!(shader.contains(&format!("const {prefix}_V0_IRRADIANCE: f32 = {STAR_V0_IRRADIANCE:e};")), "{prefix} irradiance");
+            assert!(shader.contains(&format!("const {prefix}_MAG_BRIGHTEST: f32 = {STAR_MAGNITUDE_BRIGHTEST};")), "{prefix} brightest");
+            assert!(shader.contains(&format!("const {prefix}_MAG_FAINTEST: f32 = {STAR_MAGNITUDE_FAINTEST};")), "{prefix} faintest");
+            assert!(shader.contains(&format!("const {prefix}_CELLS: f32 = {STAR_LATTICE_CELLS:?};")), "{prefix} cells");
+        }
+        assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("physical_environment::STAR_*"));
+    }
 
     fn finite_nonnegative(v: DVec3) -> bool {
         v.is_finite() && v.min_element() >= 0.0

@@ -37,6 +37,12 @@ struct ExposureClock {
     // 1: the eye is inside the hull (observer::inside_meter); 2: an optic's own eye, adapted at once
     // to its field when it returns after OBS_OPTIC_RESNAP_GAP.
     mode: f32,
+    // The rate of the slow pigment processes over real time: the sky clock's rate with the day
+    // cycle on (Renderer::pigment_rate), 1 otherwise. Named in docs/PHYSICAL_TRUTH_AUDIT.md.
+    pigment_rate: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
 };
 @group(0) @binding(2) var<uniform> clock: ExposureClock;
 
@@ -163,8 +169,9 @@ fn substep(lp: f32, ls: f32, coverage: f32, bright: f32, field: f32, monocular: 
     state[5] = relax(state[5], goal, select(OBS_PUPIL_DILATE_SLOW_TAU, OBS_PUPIL_CONSTRICT_TAU,
         goal < state[5]), dt);
     let area = pupil_area(current_pupil());
-    state[6] = bleach_step(state[6], lp * area, OBS_CONE_REGEN, OBS_CONE_Q, dt);
-    state[7] = bleach_step(state[7], ls * area, OBS_ROD_REGEN, OBS_ROD_Q, dt);
+    let pigment_dt = dt * max(clock.pigment_rate, 1.0);
+    state[6] = bleach_step(state[6], lp * area, OBS_CONE_REGEN, OBS_CONE_Q, pigment_dt);
+    state[7] = bleach_step(state[7], ls * area, OBS_ROD_REGEN, OBS_ROD_Q, pigment_dt);
     let retinal_ratio = log10(area / pupil_area(goal));
     let cone_target = log10(lp) + retinal_ratio;
     let rod_target = log10(ls) + retinal_ratio;

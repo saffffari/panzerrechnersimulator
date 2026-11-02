@@ -113,6 +113,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         format!("{prefix}_albedo_01.png"),
         format!("{prefix}_zoom_left.png"),
         format!("{prefix}_zoom_right.png"),
+        format!("{prefix}_loupe.png"),
         format!("{prefix}_turn_quarter.png"),
         format!("{prefix}_turn_half.png"),
         format!("{prefix}_turn_three_quarters.png"),
@@ -159,7 +160,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
             "manual unavailable during spread review"
         );
         g.update(&TankInput::default(), 0., &mut r);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -182,7 +183,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
     g.repair_manual.zoom_by(8.);
     for (label, x) in [("left", 0.25), ("right", 0.75)] {
         g.repair_manual.focus(glam::Vec2::new(x, 0.45));
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -195,12 +196,50 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         )?;
         receipts.push(json!({"view":format!("zoom_{label}"),"measurement":measured}));
     }
+    // The loupe over the right page: the lens pass from the lens itself (its own view and
+    // history), then the reading frame seats that picture in the lens's circle (mask mode 5),
+    // as the window does each frame while the right button is held.
+    g.repair_manual.restore_state(2, Some(2))?;
+    g.set_repair_manual_held(true);
+    g.repair_manual.loupe_wanted = true;
+    let pointer = glam::Vec2::new(0.33, 0.40);
+    g.prepare_repair_manual(&mut r, &device, &queue, Some(pointer));
+    let loupe = g.repair_manual.loupe.context("the loupe did not stand over the page")?;
+    let saved = (r.camera, r.optic_mask);
+    r.set_active_view(crate::renderer::OPTIC_EYE_VIEW);
+    r.camera.pos = loupe.eye;
+    r.camera.set_forward(loupe.forward);
+    r.camera.fov_y = loupe.fov_y;
+    r.camera.znear = 0.004;
+    r.optic_mask = 0.0;
+    r.set_visible(g.loupe_slot(), false);
+    r.reset_history();
+    // The lens view's eye adapts over its first frames as the optics' do; the window runs the
+    // lens pass every frame, so the still runs it a dozen times before reading the glass.
+    for _ in 0..12 {
+        r.render_optic_snapshot(&device, &queue);
+    }
+    r.set_visible(g.loupe_slot(), true);
+    r.camera = saved.0;
+    r.set_active_view(0);
+    r.optic_mask = 5.0;
+    r.loupe = [loupe.centre_uv.x, loupe.centre_uv.y, loupe.radius_uv, loupe.sample_scale];
+    r.ui_reset();
+    r.reset_history();
+    let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
+    r.render_to_png(&device, &queue, &format!("{prefix}_loupe.png"), 1280, 720)?;
+    r.optic_mask = saved.1;
+    r.loupe = [0.0; 4];
+    g.repair_manual.loupe_wanted = false;
+    receipts.push(json!({"view":"loupe","measurement":measured,"lens":{"eye":loupe.eye.to_array(),
+        "fov_y_deg":loupe.fov_y.to_degrees(),"centre_uv":loupe.centre_uv.to_array(),"radius_uv":loupe.radius_uv,"sample_scale":loupe.sample_scale,
+        "power":crate::repair_manual::LOUPE_POWER,"diameter_m":crate::repair_manual::LOUPE_DIAMETER}}));
     g.repair_manual = crate::repair_manual::ManualState::default();
     g.set_repair_manual_held(true);
     ensure!(g.repair_manual.turn(1), "manual leaf did not start");
     for label in ["quarter", "half", "three_quarters"] {
         g.repair_manual.tick(0.12);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -220,7 +259,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         // changing the paper material. Both cases retain normal measured eye adaptation.
         g.set_cabin_lights(on);
         g.update(&TankInput::default(), 0., &mut r);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -241,7 +280,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         g.repair_manual = crate::repair_manual::ManualState::default();
         g.set_repair_manual_held(true);
         g.update(&TankInput::default(), 0., &mut r);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -254,7 +293,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
                 g.repair_manual.turn(-1);
             }
             g.update(&TankInput::default(), 1. / 24., &mut r);
-            g.prepare_repair_manual(&mut r, &device, &queue);
+            g.prepare_repair_manual(&mut r, &device, &queue, None);
             r.ui_reset();
             clip.frame(&r.render_to_rgba(&device, &queue, r.iw, r.ih)?)?;
         }
@@ -284,5 +323,123 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
     )?;
     ensure!(startup_consistent,"first and revisited page lighting differ by {startup_ratio:.2}x; see {prefix}.json");
     println!("[repair-manual] wrote physical page review {prefix}.json");
+    Ok(())
+}
+
+/// One display-resolution still of the paper overlays over the converged cabin.
+struct OverlayStill<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    prefix: &'a str,
+    size: (u32, u32),
+    receipts: Vec<serde_json::Value>,
+}
+
+impl OverlayStill<'_> {
+    fn take(&mut self, r: &mut crate::renderer::Renderer, g: &mut Game, name: &str, settle_frames: u32) -> anyhow::Result<()> {
+        g.update(&TankInput::default(), 0., r);
+        g.prepare_repair_manual(r, self.device, self.queue, None);
+        g.prepare_order_receipt(r, self.device, self.queue);
+        r.ui_reset();
+        if settle_frames > 0 {
+            let warmup = crate::converge_headless_screenshot(r, self.device, self.queue, settle_frames)?;
+            ensure!(warmup.stable, "overlay review eye did not converge");
+        }
+        // The overlays are queued as the play frame queues them, then composited over the
+        // crushed frame at the display's resolution.
+        r.ui_reset();
+        let light = g.reading_light();
+        if g.repair_manual.held {
+            crate::repair_manual::draw_manual_overlay(r, &g.repair_manual, light);
+        }
+        let rise = g.order_sheet_rise();
+        if rise > 0.0 && g.order_sheet_in_hand() {
+            if let Some([_, hand]) = r.order_sheet_images() {
+                crate::renderer::draw_order_sheet_overlay(r, hand, rise, light);
+            }
+        }
+        let path = format!("{}_overlay_{name}.png", self.prefix);
+        r.render_to_png_hud(self.device, self.queue, &path, self.size.0, self.size.1)?;
+        self.receipts.push(json!({"still": name, "file": path, "spread": g.repair_manual.spread(),
+            "zoom": g.repair_manual.zoom(), "turning": g.repair_manual.turning(), "leaf": g.repair_manual.overlay_leaf(),
+            "reading_light": light, "cabin_lamps_on": g.cabin_lights_on(), "sheet_rise": rise,
+            "layout_px": crate::repair_manual::overlay_layout((r.iw, r.ih), &g.repair_manual).px,
+            "grid": [r.iw, r.ih]}));
+        Ok(())
+    }
+}
+
+/// The top-down overlay book and the torn-off sheet as the player reads them: display-
+/// resolution stills over the loader's lit cabin (the same source Tiger and lamps as `run`),
+/// six spreads, a turn at three stages, close reading, the lamps off and the torch, the sheet
+/// mid-rise and up. `KESSEL_MANUAL_3D` must be unset.
+pub fn run_overlay(prefix: &str) -> anyhow::Result<()> {
+    ensure!(crate::repair_manual::overlay_mode(), "KESSEL_MANUAL_3D=1 keeps the book in the scene; unset it for the overlay review");
+    let prefix = crate::capture_target(prefix);
+    const SPREADS: [u8; 6] = [0, 1, 2, 8, 12, 15];
+    const STILLS: [&str; 8] = ["turn_quarter", "turn_half", "turn_three_quarters", "zoom", "lamps_off", "torch", "sheet_rising", "sheet"];
+    let mut outputs: Vec<String> = SPREADS.iter().map(|s| format!("{prefix}_overlay_spread_{s:02}.png")).collect();
+    outputs.extend(STILLS.iter().map(|n| format!("{prefix}_overlay_{n}.png")));
+    outputs.push(format!("{prefix}_overlay.json"));
+    ensure!(outputs.iter().all(|p| !Path::new(p).exists()), "overlay review prefix already exists; choose a fresh prefix");
+    if let Some(parent) = Path::new(&prefix).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::env::set_var("KESSEL_AUDIO_CAPTURE", "1");
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_tank_editor(&device, &queue, &TankEditorScene::new(TankAssetId::TigerI))?;
+    g.mute_audio();
+    g.set_defer_rtt_to_render(true);
+    g.set_cabin_lights(true);
+    g.jump_station(Station::Loader);
+    for _ in 0..3 {
+        g.update(&TankInput::default(), 1. / 60., &mut r);
+    }
+    ensure!(g.set_repair_manual_held(true), "manual unavailable at source Tiger loader station");
+    // The display: the owner's 3840-wide screen, the internal grid upscaled nearest as in play.
+    let size = (3840u32, 2160u32);
+    let mut cap = OverlayStill { device: &device, queue: &queue, prefix: &prefix, size, receipts: Vec::new() };
+    for (i, spread) in SPREADS.into_iter().enumerate() {
+        g.repair_manual.restore_state(spread, None)?;
+        ensure!(g.set_repair_manual_held(true), "manual unavailable during spread review");
+        cap.take(&mut r, &mut g, &format!("spread_{spread:02}"), if i == 0 { 24 } else { 4 })?;
+    }
+    // A marked spread 2 turned to 3: the leaf at a quarter, a half and three quarters.
+    g.repair_manual.restore_state(2, Some(2))?;
+    ensure!(g.set_repair_manual_held(true) && g.repair_manual.turn(1), "the leaf did not turn");
+    for name in &STILLS[..3] {
+        g.repair_manual.tick(crate::repair_manual::TURN_SECONDS * 0.25);
+        cap.take(&mut r, &mut g, name, 2)?;
+    }
+    g.repair_manual.tick(crate::repair_manual::TURN_SECONDS);
+    ensure!(!g.repair_manual.turning() && g.repair_manual.spread() == 3, "the turn did not land");
+    // Close reading of the left page.
+    g.repair_manual.focus(glam::Vec2::new(0.25, 0.45));
+    g.repair_manual.zoom_by(8.);
+    cap.take(&mut r, &mut g, "zoom", 2)?;
+    g.repair_manual.zoom_by(-8.);
+    // The lamps off, then the torch in hand.
+    g.set_cabin_lights(false);
+    cap.take(&mut r, &mut g, "lamps_off", 24)?;
+    g.toggle_hand_torch();
+    cap.take(&mut r, &mut g, "torch", 24)?;
+    g.toggle_hand_torch();
+    g.set_cabin_lights(true);
+    // The torn-off sheet: printed in full at the turret's machine, torn, mid-rise, then up.
+    ensure!(g.debug_hold_sample_order(), "the sample order did not tear off");
+    g.debug_set_order_sheet_rise(0.5);
+    cap.take(&mut r, &mut g, "sheet_rising", 24)?;
+    g.debug_set_order_sheet_rise(1.0);
+    cap.take(&mut r, &mut g, "sheet", 2)?;
+    let receipt = json!({
+        "schema": "kessel.manual-overlay-review.v1",
+        "display": [size.0, size.1],
+        "stills": cap.receipts,
+        "scope": "The paper overlays over the source Tiger loader station: the open manual and the torn-off sheet drawn flat at the display's resolution from their retained ink, over the ordinary converged cabin (lamps on, off, and the hand torch). The overlays are not lit by the scene; their brightness is the named reading-light scalar. Human readability and a native-input playtest remain required.",
+    });
+    std::fs::write(format!("{prefix}_overlay.json"), serde_json::to_string_pretty(&receipt)?)?;
+    println!("[manual-overlay-review] PASS — {} stills under {prefix}_overlay_*", cap.receipts.len());
     Ok(())
 }

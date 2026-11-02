@@ -68,6 +68,7 @@ impl Game {
             state.mission.source.display(), state.beats.len(), state.mission.beats[0].title);
         self.mission = Some(state);
         self.mission_objectives.clear();
+        self.print_mission_order();
         Ok(())
     }
 
@@ -147,6 +148,7 @@ impl Game {
         let view = r.camera.forward();
         let route_fraction = self.canyon_run.as_ref()
             .map_or(0.0, |run| crate::canyon_director::route_progress(&run.spec.route, tiger));
+        let site = self.mission.as_ref().and_then(|m| m.mission.site).and_then(|id| self.expedition_site_observation(id));
         let specs = crate::campaign::objective_specs(self.act.id).ok();
         let objectives_complete = specs.map(|specs| specs.iter()
             .filter(|spec| self.mission_objectives.iter().any(|(id, n)| *id == spec.id && *n >= spec.target))
@@ -170,6 +172,8 @@ impl Game {
             moved: input.drive.abs() > 0.2 || input.steer.abs() > 0.2,
             map_held: self.map_held,
             wind: r.weather_wind_world * self.weather_wind_scale,
+            site_guards_alive: site.map(|(alive, _)| alive),
+            site_secured: site.is_some_and(|(_, secured)| secured),
         }
     }
 
@@ -367,6 +371,41 @@ mod tests {
     }
 
     #[test]
+    fn the_march_has_an_authored_order_for_every_site() {
+        let spec = crate::expedition_theatre::Spec::load().unwrap();
+        let sheets = crate::expedition_theatre::mission_sheets().unwrap();
+        assert_eq!(sheets.len(), spec.sites.len());
+        let resolve = |place: &Place| match place { Place::World(p) => Some(*p), _ => None };
+        for site in &spec.sites {
+            let sheet = crate::expedition_theatre::mission_sheet(site.id).unwrap()
+                .unwrap_or_else(|| panic!("site {} has no authored order", site.id));
+            assert_eq!(sheet.site, Some(site.id));
+            assert_eq!(sheet.order.len(), 3, "{}: the order is three lines", sheet.id);
+            assert_eq!(sheet.callsign, "Elster");
+            let state = MissionState::new(sheet.clone(), &resolve).unwrap();
+            // Approach, contact, secure: the contact and secure beats sit on the site itself; the
+            // approach lies 300..800 m short of it (a short road path shortens it) and bypasses at it.
+            let ids: Vec<&str> = sheet.beats.iter().map(|b| b.id.as_str()).collect();
+            assert_eq!(ids, ["march", "contact", "secure"], "{}", sheet.id);
+            let here = Vec2::from_array(site.position);
+            let approach = state.beats[0].at.distance(here);
+            assert!((250.0..=800.0).contains(&approach), "{}: approach {approach:.0} m", sheet.id);
+            assert_eq!(sheet.beats[0].bypass_near.as_ref().map(|(_, r)| *r), Some(350.0));
+            assert_eq!(state.beats[0].bypass_at, Some(here));
+            assert!(state.beats[1].at.distance(here) < 1.0 && state.beats[2].at.distance(here) < 1.0);
+            assert_eq!(sheet.beats[1].complete, mission::Completion::SiteGuardsDown);
+            assert_eq!(sheet.beats[2].complete, mission::Completion::SiteSecured);
+            // Nothing in an expedition order spawns or alerts: no releases, no alert cues, no consequences.
+            for b in &sheet.beats {
+                assert!(b.pacing.release.is_none() && b.pacing.consequence.is_none(), "{}", sheet.id);
+                assert!(!b.cues.iter().any(|c| matches!(c, mission::Cue::Alert { .. } | mission::Cue::SmokeColumn { .. })), "{}", sheet.id);
+            }
+            let flares = sheet.beats.iter().flat_map(|b| &b.cues).filter(|c| matches!(c, mission::Cue::Flare { .. })).count();
+            assert_eq!(flares > 0, site.kind == crate::expedition_theatre::Kind::Rescue, "{}: only a stranded crewman signals", sheet.id);
+        }
+    }
+
+    #[test]
     fn the_authored_sheets_parse_and_name_only_places_the_maps_have() {
         for (path, beats) in [("assets/worldgen/workshops/gaea-canyon-run-v2/mission.v1.json", 6), ("assets/worldgen/act1/mission.v1.json", 6)] {
             let sheet = mission::load(std::path::Path::new(path)).unwrap();
@@ -377,7 +416,8 @@ mod tests {
             if path.contains("act1") { assert_eq!(on_air, 0); } else { assert!(on_air >= 10); }
         }
         let canyon = mission::load(std::path::Path::new("assets/worldgen/workshops/gaea-canyon-run-v2/mission.v1.json")).unwrap();
-        let edits: serde_json::Value = serde_json::from_slice(&std::fs::read("assets/worldgen/workshops/gaea-canyon-run-v2/manifest_edits.json").unwrap()).unwrap();
+        // The workshop's edits live in the shared asset tree (a worktree keeps only the tracked sheet).
+        let edits: serde_json::Value = serde_json::from_slice(&crate::resource::read("assets/worldgen/workshops/gaea-canyon-run-v2/manifest_edits.json").unwrap()).unwrap();
         let spec = crate::canyon::from_edits(Some(&edits)).unwrap().unwrap();
         let resolve = |place: &Place| Some(match place {
             Place::World(p) => *p,

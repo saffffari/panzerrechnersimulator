@@ -1048,8 +1048,24 @@ fn physical_airglow_hemispheric_flux(environment: PhysicalEnvironment, altitude_
 }
 
 // Unattenuated radiance of whichever finite disc (key or secondary) contains `direction`.
-// Unresolved, deterministic illustrative stars in a rotating celestial frame. Radiance enters
-// above the atmosphere: the ordinary volumetric cloud/aerosol transmittance occludes it.
+// Unresolved, deterministic stars in a rotating celestial frame with the real sky's population
+// (physical_environment.rs STAR_*: the same lattice, share, magnitude law and irradiance). Radiance
+// enters above the atmosphere: the ordinary volumetric cloud/aerosol transmittance occludes it.
+const PHYSICAL_STAR_CELLS: f32 = 96.0;
+const PHYSICAL_STAR_SHARE: f32 = 0.16;
+const PHYSICAL_STAR_MAG_BRIGHTEST: f32 = -1.5;
+const PHYSICAL_STAR_MAG_FAINTEST: f32 = 6.5;
+const PHYSICAL_STAR_V0_IRRADIANCE: f32 = 3.6e-11;
+fn physical_star_irradiance(x: f32) -> f32 {
+    let lo = pow(10.0, 0.5 * PHYSICAL_STAR_MAG_BRIGHTEST);
+    let hi = pow(10.0, 0.5 * PHYSICAL_STAR_MAG_FAINTEST);
+    let magnitude = 2.0 * log(lo + clamp(x, 0.0, 1.0) * (hi - lo)) / log(10.0);
+    return PHYSICAL_STAR_V0_IRRADIANCE * pow(10.0, -0.4 * magnitude);
+}
+fn physical_star_tint(h: f32) -> vec3<f32> {
+    let tint = mix(vec3(0.93, 0.97, 1.0), vec3(1.0, 0.97, 0.92), h);
+    return tint / tint.y;
+}
 fn physical_stellar_radiance(environment:PhysicalEnvironment,direction:vec3<f32>)->vec3<f32> {
     let frame=environment.star_frame;
     if (frame.w<=0.0) {return vec3(0.0);}
@@ -1062,14 +1078,16 @@ fn physical_stellar_radiance(environment:PhysicalEnvironment,direction:vec3<f32>
     if (a.x>=a.y && a.x>=a.z) {uv=q.zy/a.x;face=select(1,0,q.x>0.0);}
     else if (a.y>=a.z) {uv=q.xz/a.y;face=select(3,2,q.y>0.0);}
     else {uv=q.xy/a.z;face=select(5,4,q.z>0.0);}
-    let grid=(uv*0.5+vec2(0.5))*96.0;let cell=vec3<i32>(vec2<i32>(floor(grid)),face);
+    let grid=(uv*0.5+vec2(0.5))*PHYSICAL_STAR_CELLS;let cell=vec3<i32>(vec2<i32>(floor(grid)),face);
     let h=physical_hash_lattice(cell,0x53544152u);
-    if (h<0.986) {return vec3(0.0);}
+    if (h<1.0-PHYSICAL_STAR_SHARE) {return vec3(0.0);}
     let center=vec2(0.25)+0.5*vec2(physical_hash_lattice(cell,0x41520001u),physical_hash_lattice(cell,0x41520002u));
     let radius=length(fract(grid)-center)/0.14;
-    let brightness=exp(-radius*radius*2.0)*(0.000003+0.000012*pow((h-0.986)/0.014,4.0));
-    let color=mix(vec3(0.65,0.80,1.0),vec3(1.0,0.77,0.55),physical_hash_lattice(cell,0x41520003u));
-    return color*brightness*frame.w;
+    // The star's irradiance spread over its Gaussian (peak times area) within the cell's solid angle.
+    let irradiance=physical_star_irradiance((h-(1.0-PHYSICAL_STAR_SHARE))/PHYSICAL_STAR_SHARE);
+    let cell_sr=(2.0/PHYSICAL_STAR_CELLS)*(2.0/PHYSICAL_STAR_CELLS)/pow(1.0+dot(uv,uv),1.5);
+    let peak=irradiance/(PHYSICAL_ENV_PI*0.14*0.14*0.5*cell_sr);
+    return physical_star_tint(physical_hash_lattice(cell,0x41520003u))*exp(-radius*radius*2.0)*peak*frame.w;
 }
 
 fn physical_disc_radiance(environment: PhysicalEnvironment, direction: vec3<f32>) -> vec3<f32> {

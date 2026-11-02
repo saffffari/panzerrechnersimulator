@@ -764,6 +764,7 @@ impl Renderer {
     }
 
     pub(super) fn prepare_raster_optics(&self, queue: &wgpu::Queue, camera: &CameraUniform) {
+        let _probe=crate::sim_phase::Probe::new("render_prepare_raster_optics");
         let Some(optics) = &self.raster_optics else {return;};
         let mut candidates:Vec<_> = optics.specs.iter().enumerate().filter_map(|(port,spec)| {
             let mesh=&self.meshes[spec.mesh];
@@ -772,8 +773,13 @@ impl Renderer {
                 .map(|(camera,area,source_eye)| {
                     (Prepared {port,camera,source_eye,refresh:true,capture_frame:self.frame,
                         radiance_scale:spec.eyepiece.map_or(1.0,|e|e.radiance_scale(mesh.model,self.camera.pos)),
+                        // The relay's sampling rule is two source samples per native aperture
+                        // pixel of a 640x360 frame at most: the 2026-11-01 expedition bench at
+                        // 1024x576 had the commander's relays at 16 ms a frame (sky 10 ms) once
+                        // every port bucket grew with the grid. Ports keep the resolution they
+                        // had at the 640x360 grid; the frame's own pixels are unchanged.
                         extent:aperture_extent(spec,mesh.model,&self.camera,
-                        [self.iw,self.ih],[optics.width,optics.height])},area)
+                        [self.iw.min(640),self.ih.min(360)],[optics.width,optics.height])},area)
                 })
         }).collect();
         candidates.sort_by(|a,b|b.1.total_cmp(&a.1));
@@ -977,8 +983,17 @@ impl Renderer {
             pass.set_scissor_rect(0,0,width,height);
         }
         // Depth-gated sky renders every uncovered aperture pixel with the same atmosphere as main.
-        pass.set_pipeline(aa.map_or(&self.sky_depth_pipe,|a|&a.sky));
-        pass.set_bind_group(0,camera_bind,&[]);pass.set_bind_group(1,&self.physical_environment_bind,&[]);
+        // An optical capture on the raymarch backend samples the frame's sky cache instead of
+        // marching the atmosphere and clouds again per port pixel (2026-11-01: the commander's
+        // relays spent 10 ms a frame in this pass at 1024x576).
+        let cached=if optical_capture {self.raymarch.as_ref().map(|rm|(
+            if aa.is_some() {rm.relay_sky_cached_aa.as_ref().unwrap_or(&rm.relay_sky_cached)} else {&rm.relay_sky_cached},
+            &rm.relay_cache_bind))} else {None};
+        match cached {
+            Some((pipe,bind))=>{pass.set_pipeline(pipe);pass.set_bind_group(0,camera_bind,&[]);pass.set_bind_group(1,bind,&[]);}
+            None=>{pass.set_pipeline(aa.map_or(&self.sky_depth_pipe,|a|&a.sky));
+                pass.set_bind_group(0,camera_bind,&[]);pass.set_bind_group(1,&self.physical_environment_bind,&[]);}
+        }
         pass.draw(0..3,0..1);work.fullscreen_raster_passes+=1;
         drop(pass);
         if let Some(aa)=aa {aa.resolve(encoder,optical_capture,depth,viewport,work,self.gpu_profile.as_ref());}

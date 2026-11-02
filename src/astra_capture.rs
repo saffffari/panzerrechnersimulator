@@ -212,6 +212,11 @@ fn mux(raw: &str, wav: &str, output: &str) -> anyhow::Result<()> {
         "-shortest", "-movflags", "+faststart", output,
     ]).status()?;
     anyhow::ensure!(status.success(), "failed to mux {output}");
+    // One clip with its sound (owner, 2026-11-01): the silent picture and the wav go once it exists.
+    if std::fs::metadata(output).is_ok_and(|m| m.len() > 0) {
+        if raw != output { let _ = std::fs::remove_file(raw); }
+        let _ = std::fs::remove_file(wav);
+    }
     Ok(())
 }
 
