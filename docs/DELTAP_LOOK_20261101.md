@@ -58,7 +58,9 @@ channel (`observer.rs`), and two observers in one display would be wrong.
   yellow; AgX desaturates bright colours toward white and keeps hue.
 - `KESSEL_LOOK=deltap-pastel` (mode 4, `DP_PASTEL`): a thirty-two colour palette authored for this
   game (green-blues and teals first: "i don't really like these pinks and purples. we want more
-  green blue"), dithered by the same OKLab best-pair search as the PICO-8 mode.
+  green blue"), dithered by the same OKLab best-pair search as the PICO-8 mode. The demo
+  launcher's default look since the same night ("agx is too realistic, we need the pastel and
+  dither"); the palette's short sky ramp rings round a high Sun and is the next thing to lengthen.
 
 ## Physical truth
 
