@@ -2749,6 +2749,11 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   therefore stands on the camp's orders table beside a second head (the detail's end of the
   line), seated on the table's measured top (`camp_table_top`, from the placed part's source
   triangles; a 0.80 m fallback is named in code); the hull Enigma at the radio station is unchanged.
+- **The paper is a page teleprinter's**: 210 mm wide (the Siemens page printers' roll), torn off
+  at 150 mm, 60 characters a line at ten to the inch inside 20 mm margins; it leaves the slot
+  along the head's top edge and hangs leaning 25 degrees inboard so the commander in the cupola
+  reads its face rather than its edge (the first still of 2 November showed a 76 mm tape hanging
+  straight down, edge-on and illegible). The lean is a design value, not a modelled paper curl.
 - **Print cadence is authored**: four lines a second (`LINE_SECONDS`), faster than a period
   teleprinter's ten characters a second, chosen so the order is readable in seconds; the sound is
   the bank's switch recordings at -14 dB per line, not a teleprinter recording.

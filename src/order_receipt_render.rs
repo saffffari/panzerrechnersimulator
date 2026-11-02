@@ -3,11 +3,12 @@
 //! Print is ordinary non-emissive albedo under the cabin's and the camp's real light, never a HUD.
 use std::sync::Arc;
 
-/// The strip's ink is 1:3 like the paper (76 x 228 mm), so glyphs keep their shape.
-pub const RECEIPT_INK_WIDTH: u32 = 384;
-pub const RECEIPT_INK_HEIGHT: u32 = 1152;
-/// Characters per printed line on the 76 mm strip.
-pub const RECEIPT_CHARS_PER_LINE: usize = 24;
+/// The sheet's ink is 1.4:1 like the paper (210 x 150 mm), so glyphs keep their shape.
+pub const RECEIPT_INK_WIDTH: u32 = 1024;
+pub const RECEIPT_INK_HEIGHT: u32 = 731;
+/// Characters per printed line on the 210 mm sheet (a page teleprinter's ten to the inch,
+/// inside 20 mm margins).
+pub const RECEIPT_CHARS_PER_LINE: usize = 60;
 const WIDTH: u32 = RECEIPT_INK_WIDTH;
 const HEIGHT: u32 = RECEIPT_INK_HEIGHT;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -64,25 +65,25 @@ pub fn draw_receipt(r: &mut super::Renderer, ink: &ReceiptInk) {
     let black = [0.10, 0.10, 0.11, 1.0];
     let faded = [0.32, 0.30, 0.27, 1.0];
     r.fill_rect(0.0, 0.0, 1.0, 1.0, paper);
-    // The strip is 1:3; a line is 0.026 of its height (6 mm of paper), the type 0.021 (4.8 mm).
-    let line_h = 0.026;
-    let mut y = 0.018;
+    // A line is 0.042 of the sheet's height (6.3 mm of paper), the type 0.034 (5 mm).
+    let line_h = 0.042;
+    let mut y = 0.030;
     let mut n = 0;
     let row = |r: &mut super::Renderer, text: &str, bold: bool, color: [f32; 4], y: &mut f32| {
         for line in crate::ui::wrap_text(text, RECEIPT_CHARS_PER_LINE) {
-            if bold { r.draw_text_bold(&line, 0.06, *y, 0.019, color, crate::ui::Align::Left); }
-            else { r.draw_text(&line, 0.06, *y, 0.021, color, crate::ui::Align::Left); }
+            if bold { r.draw_text_bold(&line, 0.07, *y, 0.030, color, crate::ui::Align::Left); }
+            else { r.draw_text(&line, 0.07, *y, 0.034, color, crate::ui::Align::Left); }
             *y += line_h;
         }
     };
     if ink.printed > n { row(r, ink.title, true, black, &mut y); }
     n += 1;
     if ink.printed > n {
-        r.fill_rect(0.06, y + 0.002, 0.88, 0.0012, faded);
-        y += 0.008;
-        row(r, ink.heading, false, faded, &mut y);
-        r.fill_rect(0.06, y + 0.004, 0.88, 0.0012, faded);
+        r.fill_rect(0.07, y + 0.004, 0.86, 0.002, faded);
         y += 0.012;
+        row(r, ink.heading, false, faded, &mut y);
+        r.fill_rect(0.07, y + 0.004, 0.86, 0.002, faded);
+        y += 0.016;
     }
     n += 1;
     for line in ink.lines {
@@ -92,7 +93,7 @@ pub fn draw_receipt(r: &mut super::Renderer, ink: &ReceiptInk) {
     }
     if ink.printed > ink.lines.len() + 1 {
         // The machine's end-of-message mark.
-        r.draw_text("+ + +", 0.5, y + 0.006, 0.021, faded, crate::ui::Align::Center);
+        r.draw_text("+ + +", 0.5, y + 0.008, 0.034, faded, crate::ui::Align::Center);
     }
 }
 

@@ -1,32 +1,38 @@
 //! The written order as a physical print, and the commander's line to the support detail. The
-//! detail's teleprinter head sits in the turret at the commander's left, under the roof above
-//! the traverse gearbox, and the detail's own machine (the reviewed Enigma, with a head beside
-//! it) stands on the camp's orders table. An order accepted on the map prints on the strip line
-//! by line, at whichever machine the reader is nearer; the reader tears the strip off (E or the
-//! action button while looking at it), reads it in hand, folds it into a pocket with X and holds
-//! it up again with O. The head's keys (E while looking at them) open a typed line to the detail
-//! ("Stab"): Enter sends it, the line and the detail's answer print on the strip and hang there
-//! until torn off. The flat order slip that used to hang over the world is gone: the paper is
-//! the only sheet.
+//! detail's page teleprinter head sits in the turret at the commander's left, under the roof
+//! above the traverse gearbox, and the detail's own machine (the reviewed Enigma, with a head
+//! beside it) stands on the camp's orders table. An order accepted on the map prints on a
+//! 210 mm sheet line by line (a page teleprinter's paper width, 60 characters a line), at
+//! whichever machine the reader is nearer; the sheet comes out of the slot leaning toward the
+//! reader; he tears it off (E or the action button while looking at it), reads it in hand like
+//! the map, folds it into a pocket with X and holds it up again with O. The head's keys (E
+//! while looking at them) open a typed line to the detail ("Stab"): Enter sends it, the line
+//! and the detail's answer print on the sheet and hang there until torn off. The flat order
+//! slip that used to hang over the world is gone: the paper is the only sheet.
 //!
 //! Geometry (turret-local metres): the head's box was chosen on a 5 cm occupancy map of the
 //! baked turret mesh (2 November 2026): the traverse gearbox and flywheel (source parts
 //! Turret_0137/0142) top out at y 1.99 under it, the roof underside is at y 2.30, the wall is
 //! at x 1.0 at this height, and the commander stands at (0.564, floor, -0.423) with his left
-//! shoulder near x 0.78. The strip hangs 0.22 m from the slot and ends above the fixture at
-//! y 1.83 (Turret_0199). `tests::the_head_and_strip_stand_clear_of_the_turret` checks the
-//! boxes against the source triangles when the asset root is present.
+//! shoulder near x 0.78. The sheet leaves the slot at the head's top inboard edge and hangs
+//! 0.15 m, leaning 25 degrees inboard so its face meets the commander's gaze from the cupola;
+//! it ends at y 1.95, above the fixture at y 1.83 (Turret_0199).
+//! `tests::the_head_and_strip_stand_clear_of_the_turret` checks the boxes against the source
+//! triangles when the asset root is present.
 use super::*;
 use serde::{Deserialize, Serialize};
 
 pub const HEAD_MIN: Vec3 = Vec3::new(0.84, 2.06, -0.60);
 pub const HEAD_MAX: Vec3 = Vec3::new(0.99, 2.22, -0.38);
-/// The paper slot on the head's inboard face, where the strip leaves it.
-pub const SLOT: Vec3 = Vec3::new(0.838, 2.09, -0.49);
-pub const STRIP_WIDTH: f32 = 0.076;
-pub const STRIP_LENGTH: f32 = 0.228;
+/// The paper slot along the head's top inboard edge, where the sheet leaves it.
+pub const SLOT: Vec3 = Vec3::new(0.838, 2.205, -0.49);
+/// The sheet: a page teleprinter's 210 mm paper, torn off at 150 mm.
+pub const STRIP_WIDTH: f32 = 0.210;
+pub const STRIP_LENGTH: f32 = 0.150;
 const STRIP_THICKNESS: f32 = 0.0004;
-/// Ink texture of the strip: the same 1:3 as the paper so the glyphs keep their shape.
+/// How far the hanging sheet leans inboard from the vertical, toward the reader (radians).
+pub const SHEET_LEAN: f32 = 25.0 * std::f32::consts::PI / 180.0;
+/// Ink texture of the sheet: the same 1.4:1 as the paper so the glyphs keep their shape.
 pub const INK_WIDTH: u32 = crate::renderer::RECEIPT_INK_WIDTH;
 pub const INK_HEIGHT: u32 = crate::renderer::RECEIPT_INK_HEIGHT;
 /// Print cadence: an authored line time (a teleprinter printed about ten characters a second;
@@ -34,9 +40,10 @@ pub const INK_HEIGHT: u32 = crate::renderer::RECEIPT_INK_HEIGHT;
 /// lines a second and says so here). Not a measured machine.
 const LINE_SECONDS: f32 = 0.25;
 pub const CHARS_PER_LINE: usize = crate::renderer::RECEIPT_CHARS_PER_LINE;
-pub const MAX_LINES: usize = 34;
+pub const MAX_LINES: usize = 20;
 const REACH_M: f32 = 2.2;
-const HOLD_DISTANCE: f32 = 0.165;
+/// Read in hand at the map's distance: the 210 mm sheet spans two thirds of the frame.
+const HOLD_DISTANCE: f32 = 0.19;
 /// The camp's machine prints when the reader is on foot within this distance of the table.
 const CAMP_PRINT_RADIUS_M: f32 = 40.0;
 const ENTRY_MAX_CHARS: usize = 120;
@@ -226,10 +233,10 @@ pub fn head_mesh() -> CpuMesh {
         out.min = out.min.min(m.min);
         out.max = out.max.max(m.max);
     };
-    // The slot plate stands 2 mm proud of the inboard face around the paper slit.
+    // The slot plate: a lip 4 mm proud of the top inboard edge, the paper slit along it.
     add(&mut out, crate::prims::box_mesh(
-        Vec3::new(HEAD_MIN.x - 0.004, SLOT.y - 0.012, SLOT.z - STRIP_WIDTH * 0.5 - 0.008),
-        Vec3::new(HEAD_MIN.x, SLOT.y + 0.012, SLOT.z + STRIP_WIDTH * 0.5 + 0.008), [38, 38, 36]));
+        Vec3::new(HEAD_MIN.x - 0.006, HEAD_MAX.y - 0.020, HEAD_MIN.z),
+        Vec3::new(HEAD_MIN.x + 0.010, HEAD_MAX.y + 0.004, HEAD_MAX.z), [38, 38, 36]));
     // Four keys below the slot: the commander's line to the detail.
     for n in 0..4 {
         let z = SLOT.z - 0.045 + n as f32 * 0.03;
@@ -267,21 +274,36 @@ pub fn strip_mesh() -> CpuMesh {
     mesh
 }
 
-/// The strip hanging from the slot in the turret: `emerged` of it out, the rest inside the head.
+/// The sheet hanging from the slot in the turret: `emerged` of it out, the rest inside the
+/// head; the hanging part leans `SHEET_LEAN` inboard, its printed face toward the reader.
 pub fn strip_model(turret: Mat4, emerged: f32) -> Mat4 {
+    let out = STRIP_LENGTH * emerged.clamp(0.0, 1.0);
+    // The sheet's own frame: top edge at the origin, hanging -Y, face +Z (toward -X in the
+    // turret after the quarter turn). The unprinted part sits in the slot; the part that is
+    // out leans away from the vertical about the slot's axis.
     turret
-        * Mat4::from_translation(SLOT + Vec3::Y * STRIP_LENGTH * (1.0 - emerged.clamp(0.0, 1.0)))
+        * Mat4::from_translation(SLOT)
         * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
+        * Mat4::from_rotation_x(-SHEET_LEAN)
+        * Mat4::from_translation(Vec3::Y * (STRIP_LENGTH - out))
 }
 
-/// The strip read in hand: held close, a little below the gaze, tilted back like the map.
+/// The axis-aligned box of the hanging sheet in the machine's frame (for the hands and tests).
+pub fn hanging_sheet_box(emerged: f32) -> (Vec3, Vec3) {
+    let out = STRIP_LENGTH * emerged.clamp(0.0, 1.0);
+    let (s, c) = SHEET_LEAN.sin_cos();
+    (Vec3::new(SLOT.x - out * s - 0.004, SLOT.y - out * c, SLOT.z - STRIP_WIDTH * 0.5),
+        Vec3::new(SLOT.x + 0.004, SLOT.y + 0.004, SLOT.z + STRIP_WIDTH * 0.5))
+}
+
+/// The sheet read in hand: held like the map, a little below the gaze, tilted back.
 pub fn held_model(camera: &crate::camera::Camera) -> Mat4 {
     let forward = camera.forward();
     let right = camera.right();
     let up = right.cross(forward).normalize_or_zero();
     let frame = Mat4::from_cols(right.extend(0.0), up.extend(0.0), (-forward).extend(0.0),
-        (camera.pos + forward * HOLD_DISTANCE - right * 0.004 + up * (STRIP_LENGTH * 0.5 - 0.012)).extend(1.0));
-    frame * Mat4::from_rotation_x(-12_f32.to_radians())
+        (camera.pos + forward * HOLD_DISTANCE - right * 0.006 + up * (STRIP_LENGTH * 0.5 - 0.004)).extend(1.0));
+    frame * Mat4::from_rotation_x(-15_f32.to_radians())
 }
 
 fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
@@ -359,9 +381,7 @@ impl Game {
         let d = inv.transform_vector3(dir).normalize_or_zero();
         let mut best: Option<(f32, Pick)> = None;
         if self.order_printer.on_machine() && self.order_printer.at == site {
-            let emerged = self.order_printer.emerged();
-            let min = Vec3::new(SLOT.x - 0.012, SLOT.y - STRIP_LENGTH * emerged, SLOT.z - STRIP_WIDTH * 0.5);
-            let max = Vec3::new(SLOT.x + 0.004, SLOT.y + 0.005, SLOT.z + STRIP_WIDTH * 0.5);
+            let (min, max) = hanging_sheet_box(self.order_printer.emerged());
             if let Some(t) = ray_box(o, d, min, max) { best = Some((t, Pick::Strip)); }
         }
         let keys_min = Vec3::new(HEAD_MIN.x - 0.012, HEAD_MIN.y, HEAD_MIN.z);
@@ -736,15 +756,18 @@ mod tests {
     }
 
     #[test]
-    fn the_strip_emerges_from_the_slot_and_hangs_below_it() {
+    fn the_sheet_leaves_the_slot_leaning_toward_the_reader_and_ends_above_the_fixture() {
         let top = strip_model(Mat4::IDENTITY, 1.0).transform_point3(Vec3::ZERO);
-        assert!((top - SLOT).length() < 1e-5);
+        assert!((top - SLOT).length() < 1e-5, "{top}");
         let bottom = strip_model(Mat4::IDENTITY, 1.0).transform_point3(Vec3::new(0.0, -STRIP_LENGTH, 0.0));
-        assert!((bottom.y - (SLOT.y - STRIP_LENGTH)).abs() < 1e-5 && bottom.y > 1.83, "the strip ends above the fixture at y 1.83");
+        assert!(bottom.y > 1.83 && bottom.y < SLOT.y - STRIP_LENGTH * 0.8, "hangs below the slot, above the fixture: {bottom}");
+        assert!(bottom.x < SLOT.x - 0.04, "the bottom leans inboard toward the commander: {bottom}");
         let face = strip_model(Mat4::IDENTITY, 1.0).transform_vector3(Vec3::Z);
-        assert!(face.x < -0.99, "the printed face looks inboard, toward the commander: {face}");
+        assert!(face.x < -0.85 && face.y > 0.3, "the printed face looks inboard and up, to the cupola: {face}");
+        let (min, max) = hanging_sheet_box(1.0);
+        assert!(min.x <= bottom.x + 1e-4 && max.y >= SLOT.y && min.y <= bottom.y + 1e-4, "the box holds the sheet: {min} {max}");
         let half = strip_model(Mat4::IDENTITY, 0.5).transform_point3(Vec3::new(0.0, -STRIP_LENGTH, 0.0));
-        assert!((half.y - (SLOT.y - STRIP_LENGTH * 0.5)).abs() < 1e-5);
+        assert!((half.y - (SLOT.y - 0.5 * STRIP_LENGTH * SHEET_LEAN.cos())).abs() < 1e-4, "{half}");
     }
 
     #[test]
@@ -763,8 +786,8 @@ mod tests {
             eprintln!("turret bake not present (KESSEL_ASSET_ROOT); clearance not checked here");
             return;
         };
-        let boxes = [("head", HEAD_MIN - Vec3::splat(0.004), HEAD_MAX + Vec3::splat(0.004)),
-            ("strip", Vec3::new(SLOT.x - 0.006, SLOT.y - STRIP_LENGTH, SLOT.z - STRIP_WIDTH * 0.5), Vec3::new(SLOT.x + 0.002, SLOT.y, SLOT.z + STRIP_WIDTH * 0.5))];
+        let (sheet_min, sheet_max) = hanging_sheet_box(1.0);
+        let boxes = [("head", HEAD_MIN - Vec3::splat(0.004), HEAD_MAX + Vec3::new(0.004, 0.008, 0.004)), ("sheet", sheet_min, sheet_max)];
         for (name, min, max) in boxes {
             let hits = turret.indices.chunks(3).filter(|tri| {
                 let p = tri.iter().map(|i| Vec3::from_array(turret.vertices[*i as usize].pos)).collect::<Vec<_>>();

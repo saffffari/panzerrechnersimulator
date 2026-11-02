@@ -173,11 +173,13 @@ finite and authored: a Defence, Bridge or Finale site releases its own counterat
 Tiger stands on the cleared site, which the third beat's open line warns of).
 
 Accepting an order on the map (Enter, or the map's ACCEPT) stows the map and sends the written
-order to the teleprinter (`src/order_printer.rs`, 2 November 2026): the strip comes out of the
-head at the commander's left under the turret roof, or out of the detail's machine on the camp's
-orders table when the reader is on foot within 40 m of it, line by line in the machine's
-capitals (title, small print, the order's paragraphs, the first beat); E or the action button
-tears it off into the hands, X folds it into the pocket, O holds it up again. No flat sheet is
+order to the page teleprinter (`src/order_printer.rs`, 2 November 2026): a 210 x 150 mm sheet
+comes out of the head at the commander's left under the turret roof, or out of the detail's
+machine on the camp's orders table when the reader is on foot within 40 m of it, line by line
+in the machine's capitals at 60 characters a line (title, small print, the order's paragraphs,
+the first beat), leaning 25 degrees toward the reader as it hangs; E or the action button
+tears it off into the hands, where it is read like the map, X folds it into the pocket, O holds
+it up again. No flat sheet is
 drawn over the world any more (`MissionState::order_printed` folds the old sheet at once). M
 still rereads the order on the map, where the order's marks, the position estimate and the
 bearing line are pencilled onto the theatre sheet (`draw_expedition_map`), and the pocket
