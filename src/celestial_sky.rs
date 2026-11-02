@@ -149,6 +149,42 @@ pub enum ClockPhase {
     Day,
     Dusk,
     Night,
+    /// A reading of the crew's own clock, minutes after midnight of the act's date in German
+    /// civil time (`act_clock_offset_hours`): the owner's 07:00 start of 2026-11-02.
+    Clock { minutes: u16 },
+}
+
+/// The crew's clock against Universal Time: MEZ (UT+1) in the Kessel winter, MESZ (UT+2) from
+/// 2 April 1945 for the Oderbruch and Halbe.
+pub fn act_clock_offset_hours(act_id: u8) -> f64 {
+    match act_id { 2 | 3 => 2.0, _ => 1.0 }
+}
+
+/// `KESSEL_SKY_START`: a named phase (`dawn`, `day` or `noon`, `dusk`, `night`) or a clock
+/// reading (`07:00`, `7`, `7am`, `19:30`, `7pm`) on the crew's clock. None for anything else.
+pub fn parse_sky_start(text: &str) -> Option<ClockPhase> {
+    let text = text.trim().to_ascii_lowercase();
+    match text.as_str() {
+        "dawn" => return Some(ClockPhase::Dawn),
+        "day" | "noon" => return Some(ClockPhase::Day),
+        "dusk" => return Some(ClockPhase::Dusk),
+        "night" => return Some(ClockPhase::Night),
+        _ => {}
+    }
+    let (digits, meridiem) = match text.strip_suffix("am").or_else(|| text.strip_suffix("pm")) {
+        Some(rest) => (rest.trim_end(), Some(text.ends_with("pm"))),
+        None => (text.as_str(), None),
+    };
+    let (hours, minutes) = match digits.split_once(':') {
+        Some((h, m)) => (h.parse::<u16>().ok()?, m.parse::<u16>().ok()?),
+        None => (digits.parse::<u16>().ok()?, 0),
+    };
+    if minutes >= 60 { return None; }
+    let hours = match meridiem {
+        Some(pm) => { if hours == 0 || hours > 12 { return None; } (hours % 12) + if pm { 12 } else { 0 } }
+        None => { if hours >= 24 { return None; } hours }
+    };
+    Some(ClockPhase::Clock { minutes: hours * 60 + minutes })
 }
 
 pub fn act_site(act_id: u8) -> Site {
@@ -207,6 +243,7 @@ pub fn phase_instant(act_id: u8, phase: ClockPhase) -> UtcInstant {
         ClockPhase::Dawn => crossing(noon - 12.0 * 60.0, noon),
         ClockPhase::Dusk => crossing(noon + 12.0 * 60.0, noon),
         ClockPhase::Night => return night,
+        ClockPhase::Clock { minutes } => minutes as f64 - act_clock_offset_hours(act_id) * 60.0,
     };
     midnight.plus_seconds(minutes * 60.0)
 }
@@ -385,6 +422,29 @@ mod tests {
             || (day.key.irradiance - AtmosphereParameters::default().solar_irradiance * (au_ratio * au_ratio)).length() < 1e-12);
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("KESSEL_DISC_SCALE"));
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("KESSEL_MOON_CYCLE_DAYS"));
+    }
+
+    #[test]
+    fn a_clock_reading_is_the_crews_german_time_on_the_acts_date() {
+        assert_eq!(parse_sky_start("07:00"), Some(ClockPhase::Clock { minutes: 420 }));
+        assert_eq!(parse_sky_start(" 7am "), Some(ClockPhase::Clock { minutes: 420 }));
+        assert_eq!(parse_sky_start("7"), Some(ClockPhase::Clock { minutes: 420 }));
+        assert_eq!(parse_sky_start("7pm"), Some(ClockPhase::Clock { minutes: 1140 }));
+        assert_eq!(parse_sky_start("19:30"), Some(ClockPhase::Clock { minutes: 1170 }));
+        assert_eq!(parse_sky_start("noon"), Some(ClockPhase::Day));
+        assert_eq!(parse_sky_start("Dusk"), Some(ClockPhase::Dusk));
+        for bad in ["25:00", "7:60", "13pm", "0am", "", "morning"] {
+            assert_eq!(parse_sky_start(bad), None, "{bad:?}");
+        }
+        // 07:00 MEZ on the solstice at Stalingrad: the Sun a few degrees up in the south-east;
+        // 05:30 MEZ is still before sunrise.
+        let seven = CelestialState::at(phase_instant(1, ClockPhase::Clock { minutes: 420 }), STALINGRAD);
+        assert!((5.0..10.0).contains(&seven.sun.altitude_deg), "{:?}", seven.sun);
+        let early = CelestialState::at(phase_instant(1, ClockPhase::Clock { minutes: 330 }), STALINGRAD);
+        assert!(early.sun.altitude_deg < 0.0, "{:?}", early.sun);
+        // The reading is the crew's clock: 07:00 MEZ is 06:00 UT.
+        let instant = phase_instant(1, ClockPhase::Clock { minutes: 420 });
+        assert!((instant.jd - UtcInstant::from_calendar(1942, 12, 21, 6, 0, 0.0).jd).abs() < 1e-9);
     }
 
     #[test]

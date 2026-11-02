@@ -546,15 +546,13 @@ pub const MAX_WORN_VEHICLES: usize = 16;
 pub const FULL_DAY_S: f64 = 300.0;
 pub const TWILIGHT_S: f64 = 150.0;
 pub const NIGHT_S: f64 = 300.0;
-/// `KESSEL_SKY_START=dawn|day|dusk|night`: the phase of the act's day the clock starts in when
-/// no record authors an instant (`Renderer::new`); `day` (local apparent noon) unless set.
+/// `KESSEL_SKY_START=dawn|day|dusk|night|HH:MM`: the phase of the act's day, or the reading of
+/// the crew's clock (`celestial_sky::parse_sky_start`), the clock starts at when no record
+/// authors an instant (`Renderer::new`); `day` (local apparent noon) unless set or unreadable.
 pub fn configured_sky_start_phase() -> crate::celestial_sky::ClockPhase {
-    match std::env::var("KESSEL_SKY_START").ok().as_deref().map(str::trim) {
-        Some(v) if v.eq_ignore_ascii_case("dawn") => crate::celestial_sky::ClockPhase::Dawn,
-        Some(v) if v.eq_ignore_ascii_case("dusk") => crate::celestial_sky::ClockPhase::Dusk,
-        Some(v) if v.eq_ignore_ascii_case("night") => crate::celestial_sky::ClockPhase::Night,
-        _ => crate::celestial_sky::ClockPhase::Day,
-    }
+    std::env::var("KESSEL_SKY_START").ok()
+        .and_then(|v| crate::celestial_sky::parse_sky_start(&v))
+        .unwrap_or(crate::celestial_sky::ClockPhase::Day)
 }
 /// `KESSEL_DAY_CYCLE_SCALE`: the three phase lengths above times this (an expedition of hours
 /// wants a slower clock than the Canyon run's fifteen-minute day; the demo launcher sets 6, a

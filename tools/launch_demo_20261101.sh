@@ -24,8 +24,10 @@
 #                                                 every mode (the default since 2026-11-02); --brain doctrine puts the
 #                                                 winter encounter crews of docs/ENEMY_TANK_AI.md back in charge
 #   tools/launch_demo_20261101.sh --day-cycle 6   day/night clock: the 15-minute cycle times this (default 6, a 90-minute cycle)
-#   tools/launch_demo_20261101.sh --sky-start dawn  where the act clock starts: day (noon, the default since 2026-11-02:
-#                                                 a dawn start played as a black steppe), dawn, dusk, night
+#   tools/launch_demo_20261101.sh --sky-start dawn  where the act clock starts: a reading of the crew's clock (07:00 is
+#                                                 the default, the owner's pick of 2026-11-02 after a dawn start played
+#                                                 as a black steppe and noon ran into dusk too soon; 7am, 19:30 ...)
+#                                                 or dawn, day (noon), dusk, night
 #   tools/launch_demo_20261101.sh --audio-range balanced   the playback curve: reference (default; distant sounds fall off as
 #                                                 the physical level does) or balanced (up to +12 dB below 110 dB(A))
 #   tools/launch_demo_20261101.sh --check         validate binary and assets, start nothing
@@ -34,7 +36,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=dawn AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -52,7 +54,7 @@ while (( $# )); do
         --order) ORDER=$2; MODE=expedition; shift ;;
         --forward) FORWARD=1; MODE=expedition ;;
         --day-cycle) DAY_CYCLE=$2; shift ;;
-        --sky-start) SKY_START=$2; shift ;;   # dawn (default) | day | dusk | night: where the act's clock starts
+        --sky-start) SKY_START=$2; shift ;;   # HH:MM on the crew's clock (07:00 default) | dawn | day | dusk | night
         --audio-range) AUDIO_RANGE=$2; shift ;;
         --check) CHECK=1 ;;
         -h|--help) sed -n 2,22p "$0"; exit 0 ;;
