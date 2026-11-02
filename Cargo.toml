@@ -44,3 +44,17 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# Agents rebuild this one large crate after every edit: incremental release codegen turns a
+# minutes-long full rebuild into tens of seconds for a small change (codegen-units stay at the
+# default 16 so the frontend's serial part is all that is paid). The runtime cost is a few per
+# cent at most; a final build for the owner's playtest uses `--profile ship` (non-incremental,
+# thin LTO) into target/ship/.
+[profile.release]
+incremental = true
+
+[profile.ship]
+inherits = "release"
+incremental = false
+lto = "thin"
+codegen-units = 4
