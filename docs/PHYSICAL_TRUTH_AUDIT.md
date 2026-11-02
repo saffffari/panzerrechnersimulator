@@ -776,7 +776,21 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   round's own straight path reaches crew through the existing anatomical boxes and live cartridges
   through their boxes, with its real mass and speed; injury outcomes and the existing 0.24 J and
   2.8 J rules are unchanged. Fire from a breached fuel tank or engine follows the existing
-  fragment rule.
+  fragment rule, and since 2026-11-02 it catches where the fuel or the engine was opened
+  (`game_fea::fea_seed_fire_at_breach`): the first fuel or engine contact of the penetration, the
+  round's own or a fragment's, swept on along its own path (5 cm before it to 75 cm past it, named)
+  to the first source surface, which becomes the first burning patch. Until then every fuel or
+  engine fire was lit at one standing spot in the turret basket (`INTERIOR_FIRE_SPOTS[0]`), so an
+  engine-bay hit burned in the fighting compartment; that spot now takes a fire only when no
+  surface lies on the breach path (logged). Spread, foam and the ammunition's exposure are the
+  existing surface-fire rules: a fire behind the firewall reaches the fighting compartment's
+  cartridges only where the source surfaces leave a clear line (no conduction or leakage through
+  the firewall, named).
+- **Fire on the crew** (`CabinFire::burning_surface_sees`): a man's burn exposure, the player's and
+  each living crewman's, now needs a burning patch within the cabin's 2.5 m exposure range with a
+  clear source line to his body (the ammunition's visibility rule). The rates are unchanged
+  authored rules (the player's from the fire's strength, the crew's per post). Before 2026-11-02
+  the fire's strength reached every man aboard wherever it burned.
 - **Lodged rounds** (`fea_damage::lodged`): a round stopped in the struck plate is held only when
   its cylindrical body went past its nose taper (an ogive or cap is self-releasing when its
   half-angle exceeds the friction angle); a round stopped inside stays where it stopped. Pull-out
@@ -826,6 +840,14 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   46 µs, p95 0.8 ms. (At 12,000 particles and 8 threads, load ~12: p50 525 ms, p95 1,075 ms.) Rounds that stop very deep
   in the plate (85–92 % of the path) also release a small back-face scab in the lattice; the game
   spawns fragments only for perforations, so these appear only in the cross sections and receipts.
+- **Film section view** (`Renderer::set_film_section`, film and review harnesses only): the
+  meshes of one vehicle are hidden from the camera beyond a plane, in the raymarch G-buffer (and
+  its glass panes and near-wound patches) only. The sun cascades, point-light faces, sky cover,
+  ray queries and every simulation query keep the whole closed vehicle, so the opened view shows
+  the closed tank's own light: a lamp-lit interior is dark beside daylit snow, as it is. It is a
+  view, labelled on every frame, never a change to the scene; play never sets it (the plane is a
+  private renderer field, set only by `set_film_section`, None in both shipping presets; the
+  G-buffer's section bit is zero in shadow passes and without a plane: `section_bit`).
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
   game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
   SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.
@@ -870,7 +892,17 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   bore samples of each point's share of the rim's excess over ambient (5 bits each), scaled by
   the rim's solved cooling, with Planck radiance per pixel (rm_scars.wgsl `scar_local_kelvin`).
   Named: the field's own spreading by conduction after 0.5 s is not followed. Other scars keep
-  the rim estimate over its authored ring. The near-patch renderer still draws a parametric
+  the rim estimate over its authored ring. **Owner-directed departure (2026-11-02, "linear decay
+  20 sec long"):** the drawn glow of every wound now falls linearly from its rim's peak to ambient
+  over 20 s (`renderer_scars::WOUND_GLOW_S`), longer than the solved cooling, which takes the rim
+  below red heat within seconds by conduction into the plate. Only the drawn emission changes; the
+  solved curve stays the record. This is an authored emitter in both shipping presets, against the
+  second principle's rule for new shortcuts, kept at the owner's explicit request;
+  `KESSEL_SCAR_GLOW=solved` draws the solved cooling. Also on the owner's direction the same day:
+  the authored red-brown primer flecks in the stripped band are gone (they read as rust), the
+  authored grain and crater relief are a third of their former strength (the lattice gives the
+  wound's scalars and heat field, not its texture), and the empirical 1/cos(obliquity) elongation
+  is drawn at half its excess (the bore still runs down the shell's path). The near-patch renderer still draws a parametric
   profile from these scalars: the lattice's own displaced surface is not yet drawn. Not yet seen
   on the GPU.
 - **Fragments from the lattice**: the clusters that broke free on the inside of the plate (mass,
@@ -883,8 +915,34 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   without a solve keep the authored population.
 - **Every fragment** (lattice or authored) now flies with quadratic air drag (tumbling cube, mean
   area a quarter of the surface, Cd 1.05, 1.2 kg/m³; named) as well as gravity, and embeds in a
-  cabin collision wall when its normal energy can push its face a quarter of its size into 800 MPa
-  steel (named cavity-work rule): it stays there, settled. Solved bodies cool as lumped cubes
+  surface when its normal energy can push its face a quarter of its size into 800 MPa steel (named
+  cavity-work rule, applied to every surface whatever it is made of): it stays there, settled.
+- **Fragments meet the vehicle's own surfaces** (2026-11-02, `game::FragmentWorld`,
+  `integrate_hot_fragment_traced`): one swept segment per sub-step (at most 0.25 m of flight)
+  against the retained source triangles the cabin's fire, foam and blood use (hull and turret
+  with their interiors, gun, lids, ports, workshop parts; two-sided), posed as drawn that tick. At
+  the first surface a body embeds, bounces (the existing authored restitution and tangential
+  keep: 0.74/0.94 on a face turned up, 0.80/0.95 on one turned down, 0.82/0.96 on a wall) or comes
+  to rest on a face turned up when slower than 0.42 m/s or past its bounce budget; one still
+  moving on a wall or roof eight contacts past its budget is stopped where it is (named: no
+  sliding or resting-contact solver). The rest of a sub-step after a contact is not flown (named:
+  at most 2.1 ms per contact). Each segment's first 0.2 mm is not tested, so a burst born on the
+  struck plate's back face leaves it. A fragment cannot perforate any surface: thin sheet (a fuel
+  tank's wall, a radiator, the firewall) stops it as armour would (named; the layered chain
+  perforates components for the round itself only). A body 12 m from its frame's origin has left
+  the vehicle and is dropped (it meets no ground; named). The damage pass follows the same bodies
+  and meets modules where a body's path, ended at the first surface and carried 3 cm on (named:
+  the drawn face and the voxel envelope differ by up to a cell), enters their CAD-measured
+  component envelope, at the turret's and gun's pose; live cartridges where it crosses their
+  oriented boxes; crew through the anatomical boxes along the same ended path. This replaced the
+  cabin box (z 0.28–2.30 m), the turret cylinder and the breech block, with free flight outside
+  them, and the module spheres (0.40–1.70 m radii round authored stations). Measured
+  (`fea-film` probe, a fresh loaded Tiger with its crew aboard): before, every filled round that
+  perforated into the engine bay (6 of 6, 85–152 mm) sent its fragments through the firewall and
+  detonated the fighting compartment's ammunition, killing the crew; after, the same strikes
+  open the fuel tank or engine behind the firewall and the fire catches there, all five men alive
+  at 20 s. The pass took 60–143 ms for about 520 bodies (debug build), inside the penetration's
+  tick. Solved bodies cool as lumped cubes
   (radiation, Ranz–Marshall convection; at rest by still air and radiation only: conduction into
   the steel a chip lies on or in is not modelled, named, so it cools more slowly than a real
   chip) and take the heat page of their temperature band (1,300 /
@@ -1822,9 +1880,9 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | System | Live truth | Remaining debt / release gate |
 |---|---|---|
 | Exterior cannon flight | Authoritative projectile pool with fixed substeps, `ShellSpec` velocity loss/gravity and swept contacts is being integrated; focused moving-target/range/frame-schedule tests pass. | Unified game tests and a playable delayed-impact capture must pass after renderer integration. No trigger-time outcome or forced landing may remain. |
-| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. Since 2026-11-02 a kinetic round on the player's Tiger is followed layer by layer behind the struck plate through the CAD-measured components (casing, interior, liquids, live rounds, far wall), each with a named law, and lodges where it stops (see "Layered damage model"). | P0: damage forecasts the fragment bodies immediately against frozen targets, while their later visible paths meet moving state. Interior fragment collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. The layered chain's laws behind the plate, the component casings and masses, and the stopped-round depth rule are named reduced models, not validated terminal ballistics. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. |
+| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. Since 2026-11-02 a kinetic round on the player's Tiger is followed layer by layer behind the struck plate through the CAD-measured components (casing, interior, liquids, live rounds, far wall), each with a named law, and lodges where it stops (see "Layered damage model"). | P0: damage forecasts the fragment bodies immediately against frozen targets, while their later visible paths meet moving state. Interior fragments meet the vehicle's own source triangles since 2026-11-02 (no perforation of any surface by a fragment, named; see "Layered damage model"); scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. The layered chain's laws behind the plate, the component casings and masses, and the stopped-round depth rule are named reduced models, not validated terminal ballistics. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. |
 | Vehicle loss | Module/fire states and crew bodies exist. | P0: enemy penetration currently collapses too readily to an instant kill; random turret-pop/cook-off decisions are not derived from ammo/fuel/module energy. Replace with the shared vehicle damage state. |
-| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. Since 2026-11-02 a residual penetrator's own path reaches crew through the same anatomical boxes as fragments, with its real mass and speed. | P0: hot steel fragments still meet cabin proxies rather than the visible triangle interior; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations (the layered damage model did not change them). Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
+| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. Since 2026-11-02 a residual penetrator's own path reaches crew through the same anatomical boxes as fragments, with its real mass and speed. | P0: crew bodies (ragdolls) still meet a proxy floor and compartment bounds rather than the visible interior, so a thrown body can pass through the gun; a body part's tissue is drawn whole or as bare bone, with no graded state; hot steel fragments meet the visible triangle interior since 2026-11-02; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations (the layered damage model did not change them). Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
 | World collision/destruction | Tank/tank separation, trees, destructible structures, rubble and drive-over classes work; since 2026-09-29 the Tiger's contacts go through the push model (tank push row) and the manifest's walls, piers, doorways and sheds are destruction records. | P0: AABBs/yawed footprints, hard-coded infantry cover cylinders and several authored structure shapes are proxies. Replace them with source-derived triangle/convex data; no invisible blocker may contradict the rendered object. |
 | Campaign outcomes | Route, resources, AI navigation/combat and authoritative telemetry run headlessly. | P0: Act-III allied hits/kills and civilian/town loss counters include scripted scalars. Outcomes must come only from simulated entities/events. |
 | First level: campaign Act 1 on the urban district (2026-09-29, `docs/ACT1_FIRST_LEVEL.md`) | Campaign Act 1 plays the urban-intro workshop: the route starts at the district spawn (the level design's entry gate) and leaves by its west exit gate; the district's defenders (the winter session's street encounter: two T-34 platoons on street beats, two 45 mm guns sited by the field-of-fire probe) are fielded at the start and the director raises no route contact until their armour is destroyed or the Tiger has left the district (450 m from the spawn); survivors keep their slots and fight on under the ordinary campaign AI, and route contacts take the free slots. It is a gate on when contacts spawn; no outcome is scripted. | Named limits: (1) the breakout radius is a distance from the spawn, not the district's outline. (2) `campaign-ai-run`, which proves the level headlessly, plays with an omniscient scripted crewman (it knows where unseen crews are; it lays by setting the gunner's desired lay, the turret following at its real traverse rate), and its field track repair takes the kit and is set down at the break instead of walking there; the ritual itself is the player's. (3) `KESSEL_CAMPAIGN_AI_INVINCIBLE=1` is a named debug gate for traversal proofs: it suppresses every mutation of the Tiger by hits. None of these run in play. |

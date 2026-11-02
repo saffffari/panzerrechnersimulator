@@ -144,7 +144,7 @@ fn scar_height(s: Scar, u: f32, v: f32) -> f32 {
     if (kind == SCAR_POCK) { lip_h = 0.35 * d; lip_w = 0.18; }
     // A ragged lip: the displaced metal does not pile evenly round the strike.
     let angle = atan2(v, u / max(s.c.w, 1.0));
-    let rag = 0.75 + 0.5 * scar_noise1(angle * 2.6 + 9.0, scar_seed(s));
+    let rag = 0.875 + 0.25 * scar_noise1(angle * 2.6 + 9.0, scar_seed(s));
     var h = lip_h * rag * exp(-pow((rho - 1.0) / lip_w, 2.0));
     // The floor is torn, not turned: pitted relief and radial streaks thrown out from the
     // strike, a few percent of the depth, fading over the lip.
@@ -152,7 +152,8 @@ fn scar_height(s: Scar, u: f32, v: f32) -> f32 {
         let floor_mask = 1.0 - smoothstep(0.9, 1.15, rho);
         let pits = scar_noise2(u, v, max(s.a.w * 0.06, 0.003), scar_seed(s) ^ 911u) - 0.5;
         let streak = scar_noise1(angle * 23.0, scar_seed(s) ^ 313u) - 0.5;
-        h += (0.10 * pits + 0.07 * streak * smoothstep(0.2, 0.8, rho)) * d * floor_mask;
+        // Authored relief, kept faint on the owner's direction (2026-11-02).
+        h += (0.04 * pits + 0.03 * streak * smoothstep(0.2, 0.8, rho)) * d * floor_mask;
     }
     if (rho < 1.0) {
         if (kind == SCAR_HOLE || kind == SCAR_PATCHED) {
@@ -259,8 +260,10 @@ fn scar_steel(s: Scar, u: f32, v: f32, w: f32, facing_up: f32, bore: bool) -> Sc
     // Struck and torn steel: bright but rough (a crater floor is smeared and pitted, never a
     // mirror), darker grey on the floor where the penetrator's cap and band smeared it.
     let fine = scar_hash(u32(i32(floor(u * 2600.0)) * 19349663) ^ u32(i32(floor(v * 2600.0)) * 83492791) ^ seed);
-    var albedo = mix(vec3(0.40, 0.39, 0.37), vec3(0.56, 0.55, 0.53), smoothstep(0.35, 0.95, rho)) * (0.78 + 0.3 * grain + 0.12 * fine);
-    var roughness = 0.52 + 0.16 * grain;
+    // The grain is authored (the lattice gives the wound's scalars and heat field, not its texture);
+    // kept faint on the owner's direction (2026-11-02).
+    var albedo = mix(vec3(0.40, 0.39, 0.37), vec3(0.56, 0.55, 0.53), smoothstep(0.35, 0.95, rho)) * (0.90 + 0.12 * grain + 0.04 * fine);
+    var roughness = 0.52 + 0.06 * grain;
     if (!bore && rho > 0.95) {
         // Temper colours of the thin oxide film the strike's heat grew, faint over grey steel:
         // straw nearest, brown, then a trace of blue as the peak temperature fell.
@@ -269,17 +272,17 @@ fn scar_steel(s: Scar, u: f32, v: f32, w: f32, facing_up: f32, bore: bool) -> Sc
         tint = mix(tint, vec3(0.34, 0.38, 0.48), smoothstep(0.6, 1.0, x));
         albedo = mix(albedo, tint, 0.35 * (1.0 - smoothstep(0.85, 1.0, x)));
         // Beyond the crater's edge: the stripped band, dark blue-black mill scale (an oxide, so
-        // a dielectric) with red-brown primer flecks where the paint let go unevenly.
+        // a dielectric). The authored red-brown primer flecks read as rust and are gone (owner,
+        // 2026-11-02).
         let scale = smoothstep(1.08, 1.16, rho);
-        let primer = step(0.72, scar_noise2(u, v, 0.006, seed ^ 4441u));
-        let scale_albedo = mix(vec3(0.085, 0.09, 0.10) * (0.8 + 0.5 * grain), vec3(0.32, 0.14, 0.09), primer);
+        let scale_albedo = vec3(0.085, 0.09, 0.10) * (0.9 + 0.2 * grain);
         albedo = mix(albedo, scale_albedo, scale);
         roughness = mix(roughness, 0.78, scale);
     }
     if (bore) {
         // The bore wall: torn, smeared by the passing penetrator, darker than the crater face.
-        albedo = vec3(0.44, 0.42, 0.40) * (0.8 + 0.4 * grain);
-        roughness = 0.38 + 0.2 * grain;
+        albedo = vec3(0.44, 0.42, 0.40) * (0.9 + 0.15 * grain);
+        roughness = 0.38 + 0.08 * grain;
     }
     if (scar_kind(s) == SCAR_POCK) {
         // Lead and gilding-metal smear in a bullet splash.

@@ -1630,6 +1630,9 @@ struct MeshGpu {
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
     snow_vehicle: bool,
+    /// Cut by the film/review section view (`Renderer::set_film_section`): hidden from the camera
+    /// beyond the plane, still whole for shadow maps, ray queries and the simulation.
+    section_cut: bool,
     /// Another vehicle's finish (`set_vehicle_finish`; zeros for none): the raymarch G-buffer's
     /// per-tank paint, whitewash, mud, soot and wear (`rm_gbuffer.wgsl` `vehicle_finish`).
     vehicle_finish: [f32; 4],
@@ -2776,6 +2779,9 @@ pub struct Renderer {
     /// The player's Tiger's winter whitewash, 0 (none) to 1 (a full field coat): the raymarch
     /// G-buffer lays it over the exterior paint (`rm_gbuffer.wgsl` `apply_whitewash`).
     pub whitewash: f32,
+    /// The film/review section plane (world normal xyz into the removed half, offset w), set only
+    /// through `set_film_section`; None in play and in both shipping presets.
+    film_section: Option<[f32; 4]>,
     /// Other vehicles' worn edges and corners this frame (`set_worn_vehicles`).
     pub(crate) worn_vehicles: Vec<[[f32; 4]; 2]>,
     /// The player's Tiger's exhaust puffs this frame (`exhaust_plume`), drawn by the raymarch
@@ -3741,6 +3747,7 @@ fn make_mesh_gpu(
         emissive_own: false,
         lamp_lens: 0,
         snow_vehicle: false,
+        section_cut: false,
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
         painted_steel: false,
@@ -6180,6 +6187,7 @@ impl Renderer {
             world_snow_load: 0.0,
             wear: [0.0; 4],
             whitewash: 0.0,
+            film_section: None,
             worn_vehicles: Vec::new(),
             exhaust_puffs: Vec::new(),
             fog_bank: [0.0; 4],
@@ -6826,6 +6834,29 @@ impl Renderer {
     pub fn set_worn_vehicles(&mut self, vehicles: &[[[f32; 4]; 2]]) {
         self.worn_vehicles.clear();
         self.worn_vehicles.extend_from_slice(&vehicles[..vehicles.len().min(MAX_WORN_VEHICLES)]);
+    }
+    /// Film/review section view: hide `meshes` from the camera wherever a surface lies beyond
+    /// `plane` (world normal xyz pointing into the removed half, offset w: cut where
+    /// dot(p, n) > w). Only the raymarch G-buffer (and its glass and near-wound patches) obeys it:
+    /// the sun cascades, point-light faces, sky cover, ray queries and every simulation query
+    /// keep the whole vehicle, so the opened view shows the closed vehicle's own light. `None`
+    /// clears it. A view for the film harness, never a change to the scene; play never sets it.
+    pub fn set_film_section(&mut self, plane: Option<glam::Vec4>, meshes: &[usize]) {
+        for mesh in &mut self.meshes { mesh.section_cut = false; }
+        self.film_section = plane.filter(|p| p.is_finite() && p.truncate().length() > 0.5).map(|p| p.to_array());
+        if self.film_section.is_some() {
+            for &i in meshes { if let Some(mesh) = self.meshes.get_mut(i) { mesh.section_cut = true; } }
+        }
+    }
+    /// The plane `set_film_section` holds, if any (receipts and tests).
+    pub fn film_section(&self) -> Option<[f32; 4]> { self.film_section }
+    /// Every solid scene mesh whose world bounds lie inside `lo..hi`: the parts of a vehicle
+    /// standing there, for a section view. Crew and other raster-only actors, terrain and glowing
+    /// effect meshes are left out.
+    pub fn solid_meshes_within(&self, lo: glam::Vec3, hi: glam::Vec3) -> Vec<usize> {
+        self.meshes.iter().enumerate().filter(|(_, m)| !m.raster_only && !m.track_recv
+            && !(m.emissive > 0.0 && !m.emissive_own && !m.emissive_win)
+            && m.world_min.cmpge(lo).all() && m.world_max.cmple(hi).all()).map(|(i, _)| i).collect()
     }
     /// Mesh `idx` is part of the player's vehicle: its lying snow follows `player_snow_load`.
     pub fn mark_snow_vehicle(&mut self, idx: usize) {

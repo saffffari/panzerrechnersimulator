@@ -17118,6 +17118,10 @@ fn main() -> anyhow::Result<()> {
         let seeds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
         return game::game_fea_section::bench(seeds, &capture_arg(&args, 3, "artifacts/perf/fea_bench.json"));
     }
+    if args.len() >= 2 && args[1] == "fea-film" {
+        // GPU: video clips of the layered damage model in play (KESSEL_RENDERER=raymarch).
+        return game::game_fea_film::run(&capture_arg(&args, 2, "fea_film"));
+    }
     if args.len() >= 2 && args[1] == "fea-play" {
         // GPU: the layered damage model in play (KESSEL_RENDERER=raymarch): lodged rounds, the
         // loader's hands, the field repair and an interior burst, with stills and a receipt.

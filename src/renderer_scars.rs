@@ -85,6 +85,15 @@ fn sky_along(n: Vec3, zenith: Vec3, horizon: Vec3, ground: Vec3) -> Vec3 {
     if n.y >= 0.0 { horizon.lerp(zenith, n.y) } else { horizon.lerp(ground, -n.y) }
 }
 
+/// How long a wound's drawn glow lasts, linearly from its peak (owner-directed; see `pack_one`).
+pub const WOUND_GLOW_S: f32 = 20.0;
+
+/// `KESSEL_SCAR_GLOW=solved`: draw the wound's solved cooling instead of the owner's linear glow.
+fn solved_glow() -> bool {
+    static SOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SOLVED.get_or_init(|| std::env::var("KESSEL_SCAR_GLOW").is_ok_and(|v| v.trim().eq_ignore_ascii_case("solved")))
+}
+
 /// Planck radiance of the rim at `kelvin`, on the same normalization as rm_sparks.wgsl's
 /// `rim_color` (the incandescent rim grains), so surface and grains agree.
 fn rim_radiance(kelvin: f32) -> Vec3 {
@@ -145,7 +154,9 @@ fn pack_one(r: &Renderer, model: Mat4, draw: &ScarDraw, eye: Vec3, px_per_rad: f
     let t = in_plane.try_normalize().unwrap_or_else(|| normal.any_orthonormal_vector());
     let cosine = scar.obliquity_cos();
     let open = matches!(scar.kind, ScarKind::Hole | ScarKind::Patched);
-    let stretch = (1.0 / cosine).clamp(1.0, if open { 3.0 } else { 2.2 });
+    // The empirical 1/cos(obliquity) elongation, drawn at half its excess on the owner's direction
+    // (2026-11-02: "the crater just a bit less offset"); the bore still runs down the shell's path.
+    let stretch = (1.0 + 0.5 * (1.0 / cosine - 1.0)).clamp(1.0, if open { 3.0 } else { 2.2 });
     let tan_obliquity = if open { ((1.0 - cosine * cosine).max(0.0).sqrt() / cosine).min(2.5) } else { 0.0 };
     let radius = scar.radius_m().max(0.004);
     let depth = scar.depth_m();
@@ -154,9 +165,17 @@ fn pack_one(r: &Renderer, model: Mat4, draw: &ScarDraw, eye: Vec3, px_per_rad: f
     let near = distance < NEAR_PATCH_MAX_M && radius * px_per_rad / distance.max(0.05) >= NEAR_PATCH_MIN_PX
         && frame.near.len() < MAX_NEAR_SCARS && scar.kind != ScarKind::Pock;
     if near { frame.near.push(frame.gpu.len() as u32); }
-    let kelvin = match draw.rim_curve {
+    let solved = match draw.rim_curve {
         Some(curve) => curve.at(age),
         None => renderer_weapon_particles::math::rim_temperature(draw.rim_kelvin, age),
+    };
+    // Owner-directed (2026-11-02, "linear decay 20 sec long"): the drawn glow falls linearly from
+    // the rim's peak to ambient over WOUND_GLOW_S, longer than the solved cooling (conduction into
+    // the plate takes the rim below red heat within seconds). KESSEL_SCAR_GLOW=solved draws the
+    // solved cooling. The solved curve stays the record; this changes only the drawn emission.
+    let peak = draw.rim_curve.map_or(draw.rim_kelvin, |curve| curve.at(0.0));
+    let kelvin = if solved_glow() { solved } else {
+        AMBIENT_K + (peak - AMBIENT_K).max(0.0) * (1.0 - age / WOUND_GLOW_S).max(0.0)
     };
     let rim = rim_radiance(kelvin);
     // The wound's solved surface temperature field, when the lattice solved it: the shader takes

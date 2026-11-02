@@ -11,7 +11,11 @@ use crate::{act_manifest, celestial_sky, ephemeris, graphics, world};
 use anyhow::Context;
 use serde_json::json;
 
-const TIGER_AT: Vec2 = Vec2::new(-450.0, -410.0);
+pub(super) const TIGER_AT: Vec2 = Vec2::new(-450.0, -410.0);
+/// The 76 mm APCR's line for the spall and hands checks (turret frame): in through the right
+/// side's bare plate, a little down, toward the gun.
+pub(super) const SPALL_AIM: Vec3 = Vec3::new(-0.4, 1.6, -0.55);
+pub(super) const SPALL_DIR: Vec3 = Vec3::new(1.0, -0.25, 0.05);
 /// The longest cooling wait before the hands beat gives up (game seconds).
 const COOL_WAIT_MAX_S: f32 = 900.0;
 
@@ -69,7 +73,7 @@ fn step(g: &mut Game, r: &mut Renderer, frames: u32, input: &TankInput) {
     }
 }
 
-fn press() -> TankInput {
+pub(super) fn press() -> TankInput {
     TankInput { mg_coax: true, trigger: true, fire2: true, ..TankInput::default() }
 }
 
@@ -82,41 +86,82 @@ fn lodged_json(round: &game_fea::LodgedRound) -> serde_json::Value {
 }
 
 /// Resting steel the lattice made: (slot, world position, temperature K).
-fn resting_solved(g: &Game) -> Vec<(usize, Vec3, f32)> {
+pub(super) fn resting_solved(g: &Game) -> Vec<(usize, Vec3, f32)> {
     g.hot_fragments.iter().enumerate()
         .filter(|(_, f)| f.active && f.settled && f.temp_k > 0.0)
         .map(|(i, f)| (i, blood_parent_model(&g.player, f.frame).transform_point3(f.pos), f.temp_k))
         .collect()
 }
 
-/// Resting chips the steel holds within the loader's reach, nearest first.
-fn stuck_in_reach(g: &Game) -> Vec<usize> {
+/// Resting chips the steel holds within the loader's reach (the repair jobs' own 1.65 m,
+/// `equipment::repair_in_reach`), nearest first.
+pub(super) fn stuck_in_reach(g: &Game) -> Vec<usize> {
     let eye = g.station_eye(Station::Loader);
     let mut stuck: Vec<(usize, f32)> = resting_solved(g).into_iter()
         .filter(|(i, p, _)| g.hot_fragments[*i].lodged && !game_fea::fragment_pullable(&g.hot_fragments[*i])
-            && p.distance(eye) < 1.6)
+            && p.distance(eye) <= 1.65)
         .map(|(i, p, _)| (i, p.distance(eye))).collect();
     stuck.sort_by(|a, b| a.1.total_cmp(&b.1));
     stuck.into_iter().map(|(i, _)| i).collect()
 }
 
+/// Put the camera's own line (not the station's eye point) on `point`, as a player's mouse does:
+/// turn the head at it, then correct by the camera's offset from the eye, twice. A 5 mm chip's
+/// pick radius is 1.2 cm, a fifth of a degree at arm's length.
+pub(super) fn aim_camera_at(g: &mut Game, r: &mut Renderer, point: Vec3) {
+    g.loader_face_world(point);
+    step(g, r, 12, &TankInput::default());
+    for _ in 0..2 {
+        let eye = g.station_eye(Station::Loader);
+        let wanted = (point - r.camera.pos).normalize_or_zero();
+        g.loader_face_world(eye + wanted * point.distance(eye));
+        step(g, r, 3, &TankInput::default());
+    }
+}
+
+/// Embedded chips the steel holds, wherever they are, nearest the loader's eye first.
+pub(super) fn stuck_anywhere(g: &Game) -> Vec<(usize, Vec3)> {
+    let eye = g.station_eye(Station::Loader);
+    let mut stuck: Vec<(usize, Vec3)> = resting_solved(g).into_iter()
+        .filter(|(i, _, _)| g.hot_fragments[*i].lodged && !game_fea::fragment_pullable(&g.hot_fragments[*i]))
+        .map(|(i, p, _)| (i, p)).collect();
+    stuck.sort_by(|a, b| a.1.distance(eye).total_cmp(&b.1.distance(eye)));
+    stuck
+}
+
+/// The loader steps toward `point` (world) through the ordinary interior walk (the floor and
+/// breech clamp), to stand 0.55 m short of it across the turret floor. Disclosed placement.
+pub(super) fn step_toward(g: &mut Game, point: Vec3) {
+    let local = g.player.turret_model().inverse().transform_point3(point);
+    let xz = Vec2::new(local.x, local.z);
+    let stand = xz * ((xz.length() - 0.55).max(0.0) / xz.length().max(1.0e-3));
+    g.debug_walk_to(Vec3::new(stand.x, 0.0, stand.y));
+}
+
 /// Turn the loader's head onto each candidate chip in reach and take the first one the ordinary
 /// hover offers; returns its slot.
-fn find_pickable(g: &mut Game, r: &mut Renderer, skip: &[usize]) -> Option<usize> {
+pub(super) fn find_pickable(g: &mut Game, r: &mut Renderer, skip: &[usize]) -> Option<usize> {
     let eye = g.station_eye(Station::Loader);
     let mut candidates: Vec<(usize, Vec3, f32)> = resting_solved(g).into_iter()
-        .filter(|(i, p, _)| !skip.contains(i) && p.distance(eye) < 2.3
+        .filter(|(i, _, _)| !skip.contains(i)
             && game_fea::fragment_holdable(&g.hot_fragments[*i]) && game_fea::fragment_pullable(&g.hot_fragments[*i]))
         .collect();
     candidates.sort_by(|a, b| a.1.distance(eye).total_cmp(&b.1.distance(eye)));
-    for (_, p, _) in candidates.into_iter().take(40) {
-        g.loader_face_world(p);
-        // Time for the head to settle on it (it may be turning down from the hatch).
-        step(g, r, 12, &TankInput::default());
-        // Whichever chip the ordinary hover offers on that line (a nearer one may lie on it).
-        if let Some(Hotspot::Fragment(j)) = g.hover {
-            if !skip.contains(&j) && game_fea::fragment_holdable(&g.hot_fragments[j]) && game_fea::fragment_pullable(&g.hot_fragments[j]) {
-                return Some(j);
+    // From where he stands first; then, for each loose chip in the turret, one step toward it
+    // through the ordinary interior walk (disclosed placement) and the eye on it again.
+    for walk in [false, true] {
+        for &(_, p, _) in candidates.iter().take(40) {
+            if walk {
+                step_toward(g, p);
+            } else if p.distance(eye) >= 2.3 {
+                continue;
+            }
+            aim_camera_at(g, r, p);
+            // Whichever chip the ordinary hover offers on that line (a nearer one may lie on it).
+            if let Some(Hotspot::Fragment(j)) = g.hover {
+                if !skip.contains(&j) && game_fea::fragment_holdable(&g.hot_fragments[j]) && game_fea::fragment_pullable(&g.hot_fragments[j]) {
+                    return Some(j);
+                }
             }
         }
     }
@@ -124,7 +169,7 @@ fn find_pickable(g: &mut Game, r: &mut Renderer, skip: &[usize]) -> Option<usize
 }
 
 /// Aim points above the loader's open hatch, nearest the aperture's axis first.
-fn throw_targets(g: &Game) -> Vec<Vec3> {
+pub(super) fn throw_targets(g: &Game) -> Vec<Vec3> {
     let turret = g.player.turret_model();
     let centre = turret.transform_point3(tiger_hatches::APERTURE_CENTERS[1]);
     let up = turret.transform_vector3(Vec3::Y).normalize_or_zero();
@@ -143,7 +188,7 @@ fn throw_targets(g: &Game) -> Vec<Vec3> {
 
 /// Whether the throw R would make now leaves the vehicle: the game's own line, from the hand
 /// along the throw (`fea_release_fragment`).
-fn throw_line_clear(g: &Game, forward: Vec3) -> bool {
+pub(super) fn throw_line_clear(g: &Game, forward: Vec3) -> bool {
     let dir = (g.carry_vel + forward.normalize_or_zero() * 6.0 + Vec3::Y * 0.8).normalize_or_zero();
     g.cabin_fire.sweep(g.carry_pos, g.carry_pos + dir * 3.0, &g.fire_surface_models()).is_none()
 }
@@ -206,8 +251,11 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         rig.still(&g, &mut r, "lodged_front_close", "close: the round's exposed body standing out of its crater", Some(view))?;
     }
 
-    // ── 2. A perforation of the turret rear plate (the armor-scars review's 76 mm APCR): the
-    // lattice's clusters fly into the turret, glow, settle and cool.
+    // ── 2. A perforation of the turret's right side by the armor-scars review's 76 mm APCR, through
+    // bare plate (ray-cast on the drawn turret: the side plate is the first surface on the line):
+    // the lattice's clusters fly into the turret, glow, settle and cool. Until 2026-11-02 this was
+    // the turret rear; under the real interior that strike's chips embed in the back of the
+    // structure in front of the rear plate, out of any hand's reach (the review needs some in it).
     g.mode = Mode::Tank;
     g.station = Station::Loader;
     g.switch_t = 0.0;
@@ -218,10 +266,10 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     g.station = Station::Driver;
     g.switch_t = 0.0;
     step(&mut g, &mut r, 2, &idle);
-    g.debug_launch_round(&crate::ballistics::BR_354P, false, turret.transform_point3(Vec3::new(0.45, 1.85, -1.9)),
-        turret.transform_vector3(Vec3::new(-0.15, -0.30, 1.0)), 200.0, 0x5EA1_0002);
+    g.debug_launch_round(&crate::ballistics::BR_354P, false, turret.transform_point3(SPALL_AIM),
+        turret.transform_vector3(SPALL_DIR.normalize()), 200.0, 0x5EA1_0002);
     step(&mut g, &mut r, 4, &idle);
-    rig.check("the player lives through the turret-rear strike", g.player.alive, format!("alive {}", g.player.alive));
+    rig.check("the player lives through the turret-side strike", g.player.alive, format!("alive {}", g.player.alive));
     g.station = Station::Loader;
     g.switch_t = 0.0;
     let solved: Vec<f32> = g.hot_fragments.iter().filter(|f| f.active && f.temp_k > 0.0).map(|f| f.temp_k).collect();
@@ -235,18 +283,18 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         let turret = g.player.turret_model();
         let centre = turret.transform_point3(hole.local_position());
         let normal = turret.transform_vector3(hole.local_normal()).normalize_or_zero();
-        rig.still(&g, &mut r, "hole_glow", "the turret-rear hole 70 ms after the strike, glowing at its solved local temperature",
+        rig.still(&g, &mut r, "hole_glow", "the turret-side hole 70 ms after the strike, glowing at its solved local temperature",
             Some((centre + normal * 0.85 + Vec3::Y * 0.15, centre, 32.0)))?;
         let at = g.player.turret_model().transform_point3(hole.local_position() - hole.local_normal() * hole.plate_m());
         g.loader_face_world(at);
         step(&mut g, &mut r, 1, &idle);
-        rig.still(&g, &mut r, "spall_hot", "the loader's eye on the turret rear: the solved chips in flight, glowing by temperature", None)?;
+        rig.still(&g, &mut r, "spall_hot", "the loader's eye on the struck side: the solved chips in flight, glowing by temperature", None)?;
         // 0.6 s on, the strike's spark cloud gone: the rim and bore by their own temperature.
         step(&mut g, &mut r, 31, &idle);
         let turret = g.player.turret_model();
         let centre = turret.transform_point3(hole.local_position());
         let normal = turret.transform_vector3(hole.local_normal()).normalize_or_zero();
-        rig.still(&g, &mut r, "hole_glow_0_6s", "the turret-rear hole 0.6 s after the strike, at its solved local temperature",
+        rig.still(&g, &mut r, "hole_glow_0_6s", "the turret-side hole 0.6 s after the strike, at its solved local temperature",
             Some((centre + normal * 0.6 + Vec3::Y * 0.1, centre, 30.0)))?;
     }
     g.debug_extinguish_cabin();
@@ -289,8 +337,19 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
 
     // ── 3. The loader's hands: chips the steel holds are pried out with the toolbox first; then
     // take one, carry it, throw it out of the open hatch; take a second and let it fall.
-    let stuck = stuck_in_reach(&g);
+    let mut stuck = stuck_in_reach(&g);
     receipt.insert("stuck_in_reach".into(), json!(stuck.len()));
+    // Fewer than two within reach of where the loader stands: he steps toward the next one
+    // (the ordinary interior walk; disclosed placement), and it is in reach from there.
+    if stuck.len() < 2 {
+        if let Some(&(next, point)) = stuck_anywhere(&g).iter().find(|(i, _)| !stuck.contains(i)) {
+            step_toward(&mut g, point);
+            step(&mut g, &mut r, 2, &TankInput::default());
+            receipt.insert("loader_stepped_toward_chip".into(), json!({"slot": next,
+                "walk_pos": g.walk_pos.to_array(), "eye_to_chip_m": g.station_eye(Station::Loader).distance(point)}));
+            stuck = stuck_in_reach(&g);
+        }
+    }
     if !stuck.is_empty() {
         g.carrying_track_kit = true; // disclosed: the toolbox put in hand
         let mut freed = Vec::new();
@@ -327,8 +386,30 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             extra += 1.0;
         }
         receipt.insert("freed_cooling_s".into(), json!(extra));
+        // Where the freed chips came to rest (they fall from where the bar drew them out).
+        receipt.insert("freed_rest".into(), json!(freed_slots.iter().map(|&i| {
+            let f = g.hot_fragments[i];
+            json!({"slot": i, "settled": f.settled, "active": f.active, "kelvin": f.temp_k,
+                "hull_m": g.player.hull_model().inverse().transform_point3(blood_parent_model(&g.player, f.frame).transform_point3(f.pos)).to_array(),
+                "from_loader_eye_m": blood_parent_model(&g.player, f.frame).transform_point3(f.pos).distance(g.station_eye(Station::Loader))})
+        }).collect::<Vec<_>>()));
     }
     let first = find_pickable(&mut g, &mut r, &[]);
+    if first.is_none() {
+        // Why not: for each loose cool chip, the camera's aim error, a clear line and the hover.
+        let mut why = Vec::new();
+        let loose: Vec<(usize, Vec3, f32)> = resting_solved(&g).into_iter()
+            .filter(|(i, _, _)| game_fea::fragment_pullable(&g.hot_fragments[*i])).collect();
+        for (i, p, k) in loose {
+            aim_camera_at(&mut g, &mut r, p);
+            let cam = r.camera.pos;
+            let error_deg = r.camera.forward().angle_between((p - cam).normalize_or_zero()).to_degrees();
+            why.push(json!({"slot": i, "kelvin": k, "from_camera_m": cam.distance(p), "aim_error_deg": error_deg,
+                "path_clear": g.equipment_path_clear(cam, p, 0.04), "hover": format!("{:?}", g.hover),
+                "hover_on_exact_line": format!("{:?}", g.fea_fragment_hover(cam, (p - cam).normalize_or_zero()).map(|h| (h.0, h.2)))}));
+        }
+        receipt.insert("no_chip_offered".into(), json!(why));
+    }
     rig.check("the crosshair offers a cool chip", first.is_some(), format!("hover {:?} label {:?}", g.hover, g.hover_label));
     if let Some(i) = first {
         let label = g.hover_label;
@@ -441,7 +522,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     receipt.insert("checks".into(), json!(rig.checks));
     receipt.insert("stills".into(), json!(rig.stills));
     receipt.insert("wall_s".into(), json!(started.elapsed().as_secs_f32()));
-    receipt.insert("disclosed".into(), json!("station and on-foot placement set directly; toolbox put in hand and set down by state; the loader's lid opened by state; the cooling waits run the ordinary update at 30 Hz; god mode for the turret-rear strike (identical shower, no crew or module damage)"));
+    receipt.insert("disclosed".into(), json!("station and on-foot placement set directly; toolbox put in hand and set down by state; the loader's lid opened by state; the cooling waits run the ordinary update at 30 Hz; the player at the driver's station for the turret-side strike"));
     let path = format!("{prefix}_receipt.json");
     std::fs::write(&path, serde_json::to_string_pretty(&serde_json::Value::Object(receipt))?)?;
     println!("[fea-play] {passed}/{} checks passed; receipt {path}", rig.checks.len());

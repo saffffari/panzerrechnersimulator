@@ -227,6 +227,15 @@ struct FrameUniform {
     /// each against the scene and names its face): centre + tint r, the piece's shortest axis
     /// + tint g, its longest half-axis + tint b, its middle half-axis + the shortest half-length.
     apertures: [[[f32; 4]; 4]; MAX_APERTURES],
+    /// The film/review section plane (`Renderer::set_film_section`): world normal xyz into the
+    /// removed half, offset w; zeros when none. Only the G-buffer, glass and patch passes read it.
+    section: [f32; 4],
+}
+
+/// The G-buffer push's section bit (`scars.w` bit 0): set only for a cut mesh, only in the
+/// camera's G-buffer pass and only while a film section plane is held. Shadow maps never get it.
+fn section_bit(film_section: Option<[f32; 4]>, section_cut: bool, shadow: bool) -> u32 {
+    u32::from(film_section.is_some() && section_cut && !shadow)
 }
 
 /// The most panes the frame carries as daylight apertures (rm_common.wgsl `RM_APERTURES`).
@@ -2042,6 +2051,7 @@ impl Backend {
             worn_count: [if self.debug_skip & 65536 != 0 { 0.0 } else { r.worn_vehicles.len() as f32 }, aperture_count as f32, 0.0, 0.0],
             worn: std::array::from_fn(|i| r.worn_vehicles.get(i).copied().unwrap_or([[0.0; 4]; 2])),
             apertures,
+            section: r.film_section().unwrap_or([0.0; 4]),
         };
         queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&frame));
         self.stats.shadowed_lights = self.shadowed.iter().flatten().count();
@@ -2962,7 +2972,11 @@ impl Backend {
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
                 extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
                     if m.painted_steel { 1.0 } else { 0.0 }, m.lamp_lens as f32],
-                scars: range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]),
+                scars: {
+                    let mut scars = range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]);
+                    scars[3] = section_bit(r.film_section(), m.section_cut, shadow);
+                    scars
+                },
                 vehicle: if shadow { [0.0; 4] } else { m.vehicle_finish },
             };
             let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
@@ -3240,6 +3254,11 @@ impl Backend {
             if let Some(rt) = &self.rt_bind { pass.set_bind_group(3, rt, &[]); }
             for &i in &self.panes {
                 let m = &r.meshes[i];
+                // A pane of a sectioned vehicle beyond the film's plane goes with its frame.
+                if let (Some(plane), true) = (r.film_section(), m.section_cut) {
+                    let centre = (m.world_min + m.world_max) * 0.5;
+                    if centre.dot(Vec3::new(plane[0], plane[1], plane[2])) > plane[3] { continue; }
+                }
                 // The slab thickness is the pane's thinnest local extent (port glass ~9 cm,
                 // sight glass millimetres).
                 let thickness = (m.local_max - m.local_min).min_element().clamp(0.003, 0.12);
@@ -3701,5 +3720,35 @@ mod terrain_shader_tests {
                 .validate(&module)
                 .unwrap_or_else(|error| panic!("terrain {label} WGSL validation failed: {error:?}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod film_section_tests {
+    use super::*;
+
+    /// The film section view is the film harness's alone: the G-buffer's section bit is zero in
+    /// every shadow pass and on every frame without a plane, and no play path opens one.
+    #[test]
+    fn the_film_section_is_a_harness_view_never_opened_in_play() {
+        let plane = Some([0.0, 1.0, 0.0, 2.0]);
+        assert_eq!(section_bit(None, true, false), 0);
+        assert_eq!(section_bit(plane, true, true), 0, "the sun cascades and light faces keep the whole vehicle");
+        assert_eq!(section_bit(plane, false, false), 0);
+        assert_eq!(section_bit(plane, true, false), 1);
+        assert!(rm_source("rm_gbuffer.wgsl").contains("(pc.scars.w & 1u) != 0u && rm_beyond_section("));
+        assert!(!rm_source("rm_depth.wgsl").contains("rm_beyond_section"), "shadow maps never cut");
+        let mut openers = Vec::new();
+        let needle = [".set_film_section", "(Some"].concat(); // not this file's own text
+        for entry in std::fs::read_dir("src").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                if text.contains(&needle) {
+                    openers.push(path.file_name().unwrap().to_string_lossy().into_owned());
+                }
+            }
+        }
+        assert_eq!(openers, vec!["game_fea_film.rs".to_string()], "only the film harness opens a section");
     }
 }

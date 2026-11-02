@@ -147,6 +147,8 @@ fn fs_patch(in: PatchOut) -> PatchG {
     let s = scars[in.ids.x];
     let layer = in.ids.y;
     let world = in.relative + fr.cam_pos.xyz;
+    // A near wound on a sectioned vehicle goes with its plate (film/review view only).
+    if (rm_beyond_section(world)) { discard; }
     let view = normalize(in.relative);
     let p = scar_local(s, world);
     var n = normalize(in.normal);

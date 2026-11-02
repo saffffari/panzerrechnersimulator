@@ -46,7 +46,14 @@ struct Frame {
     // + tint g, col2 its longest half-axis + tint b, col3 its middle half-axis + the shortest
     // half-length. The tint is the pane's normal-incidence transmittance.
     apertures: array<mat4x4<f32>, 24>,
+    // The film/review section plane (Renderer::set_film_section): world normal xyz into the
+    // removed half, offset w; zeros when none. Camera passes only (G-buffer, glass, patches).
+    section: vec4<f32>,
 };
+// True where a camera pass must leave `world` out: beyond the film's section plane.
+fn rm_beyond_section(world: vec3<f32>) -> bool {
+    return any(fr.section.xyz != vec3<f32>(0.0)) && dot(world, fr.section.xyz) > fr.section.w;
+}
 const RM_APERTURES: u32 = 24u;
 // cabin_medium.rs `Uniform` (shaders/cabin_medium.wgsl `CabinMedium`): hull, turret, cupola.
 struct RmCabinAir {

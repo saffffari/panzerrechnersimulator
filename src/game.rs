@@ -64,6 +64,8 @@ mod game_fea;
 pub(crate) mod game_fea_section;
 #[path = "game_fea_review.rs"]
 pub(crate) mod game_fea_review;
+#[path = "game_fea_film.rs"]
+pub(crate) mod game_fea_film;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
 #[path = "main_gun_candidates.rs"]
@@ -4412,6 +4414,8 @@ struct FragmentMotionSegment {
     from: Vec3,
     to: Vec3,
     speed_mps: f32,
+    /// The segment ended on a surface of the vehicle (its `to` is the contact point).
+    surface: bool,
 }
 
 fn fragment_inside_compartment(frame: BloodFrame, pos: Vec3, radius: f32) -> bool {
@@ -4486,25 +4490,149 @@ fn hot_fragment_bounce(
     }
 }
 
-/// Advance one hot fragment without retaining its fine swept segments (the live pool path).
+/// The surfaces and components a hot fragment meets this tick. Surfaces: the vehicle's own
+/// retained source triangles as the cabin's fire, foam and blood meet them (hull and turret with
+/// their interiors, gun, lids, ports and workshop parts; two-sided), posed as drawn this tick.
+/// Components: the CAD-measured envelopes the layered chain uses, at the turret's and gun's pose.
+/// Fragment positions stay in their `BloodFrame`. Without surfaces a body flies free (unit tests).
+struct FragmentWorld<'a> {
+    surfaces: Option<surface_fire::SourceContacts<'a>>,
+    /// `BloodFrame` (hull, turret) to world, and back.
+    parent: [Mat4; 2],
+    parent_inverse: [Mat4; 2],
+    /// `BloodFrame` to the hull frame the components are placed in.
+    to_hull: [Mat4; 2],
+    articulation: crate::fea_damage::components::Articulation,
+    /// Whether modules are met at their components (false only in `bare`).
+    components: bool,
+}
+
+fn blood_frame_index(frame: BloodFrame) -> usize {
+    match frame {
+        BloodFrame::Hull => 0,
+        BloodFrame::Turret => 1,
+    }
+}
+
+impl<'a> FragmentWorld<'a> {
+    fn new(source: &'a surface_fire::CabinFire, models: &[Mat4; surface_fire::FRAMES], player: &Tank,
+        articulation: crate::fea_damage::components::Articulation) -> Self {
+        let mut world = Self::free(player, articulation);
+        world.surfaces = Some(source.source_contacts(models));
+        world
+    }
+
+    /// No vehicle at all: identity frames, no surfaces, no components (unit tests of the crew
+    /// anatomy and live-cartridge rules alone).
+    #[cfg(test)]
+    fn bare() -> Self {
+        Self { surfaces: None, parent: [Mat4::IDENTITY; 2], parent_inverse: [Mat4::IDENTITY; 2],
+            to_hull: [Mat4::IDENTITY; 2], articulation: crate::fea_damage::components::Articulation::rest(Vec3::ZERO),
+            components: false }
+    }
+
+    /// No surfaces: fragments fly free; components and frames as `player` stands.
+    fn free(player: &Tank, articulation: crate::fea_damage::components::Articulation) -> Self {
+        let parent = [blood_parent_model(player, BloodFrame::Hull), blood_parent_model(player, BloodFrame::Turret)];
+        let hull_inverse = parent[0].inverse();
+        Self { surfaces: None, parent, parent_inverse: parent.map(|m| m.inverse()),
+            to_hull: parent.map(|m| hull_inverse * m), articulation, components: true }
+    }
+
+    /// The first surface on a fragment's segment (its frame): the fraction along it and that
+    /// surface's normal facing the fragment, in the same frame. The segment's first
+    /// HOT_FRAGMENT_SWEEP_START_M is not tested, so a body born on a face (a burst at the struck
+    /// plate's back face) leaves it.
+    fn first_surface(&self, frame: BloodFrame, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
+        let surfaces = self.surfaces.as_ref()?;
+        let length = from.distance(to);
+        if length <= HOT_FRAGMENT_SWEEP_START_M {
+            return None;
+        }
+        let i = blood_frame_index(frame);
+        let start = from.lerp(to, HOT_FRAGMENT_SWEEP_START_M / length);
+        let contact = surfaces.sweep(self.parent[i].transform_point3(start), self.parent[i].transform_point3(to))?;
+        let normal = self.parent_inverse[i]
+            .transform_vector3(surfaces.model(contact.frame).transform_vector3(contact.normal))
+            .normalize_or_zero();
+        let fraction = (HOT_FRAGMENT_SWEEP_START_M + contact.fraction * (length - HOT_FRAGMENT_SWEEP_START_M)) / length;
+        Some((fraction, normal))
+    }
+
+    /// Every module whose CAD-measured component the segment (fragment frame) enters, with the
+    /// fraction of the segment where it first does, nearest first, one entry per module. A
+    /// segment that ended on a surface is carried `reach` m past it (the drawn face and the voxel
+    /// envelope differ by up to a cell).
+    fn modules_entered(&self, frame: BloodFrame, from: Vec3, to: Vec3, reach: f32) -> Vec<(f32, ModuleKind)> {
+        use crate::fea_damage::components;
+        if !self.components {
+            return Vec::new();
+        }
+        let to_hull = self.to_hull[blood_frame_index(frame)];
+        let a = to_hull.transform_point3(from);
+        let b0 = to_hull.transform_point3(to);
+        let length = a.distance(b0);
+        if length <= 0.0 {
+            return Vec::new();
+        }
+        let b = b0 + (b0 - a) / length * reach.max(0.0);
+        let stretch = a.distance(b) / length;
+        let mut out: Vec<(f32, ModuleKind)> = Vec::new();
+        for env in &components::tiger_components().envelopes {
+            let Some(kind) = game_fea::module_for_system(components::COMPONENT_SPECS[env.spec].system) else { continue };
+            let runs = env.segment_runs(self.articulation.to_component(env, a), self.articulation.to_component(env, b));
+            let Some(&(entry, _)) = runs.first() else { continue };
+            let fraction = entry * stretch;
+            match out.iter_mut().find(|(_, k)| *k == kind) {
+                Some(existing) => existing.0 = existing.0.min(fraction),
+                None => out.push((fraction, kind)),
+            }
+        }
+        out.sort_by(|x, y| x.0.total_cmp(&y.0));
+        out
+    }
+}
+
+/// A fragment's flight between surface tests is at most this long (one swept segment).
+const HOT_FRAGMENT_SWEEP_STEP_M: f32 = 0.25;
+/// Each swept segment's first fifth of a millimetre is not tested (a body born on a face leaves it).
+const HOT_FRAGMENT_SWEEP_START_M: f32 = 2.0e-4;
+/// After a contact a body is set this far off the face beyond its own half size.
+const HOT_FRAGMENT_CONTACT_GAP_M: f32 = 5.0e-4;
+/// Contacts past the bounce budget after which a body still moving on a wall or roof is stopped
+/// where it is (named: no sliding or resting-contact solver).
+const HOT_FRAGMENT_STUCK_AFTER: u8 = 8;
+/// A body this far from its frame's origin has left the vehicle; it meets no ground (named).
+const HOT_FRAGMENT_LEFT_VEHICLE_M: f32 = 12.0;
+/// How far past the face it struck a fragment's segment is carried into a component's envelope.
+const HOT_FRAGMENT_COMPONENT_REACH_M: f32 = 0.03;
+
+/// Advance one hot fragment without retaining its swept segments (the live pool path).
 fn integrate_hot_fragment(
     fragment: &mut HotFragment,
     dt: f32,
     collisions: &mut Vec<HotFragmentCollision>,
     collision_count: &mut usize,
+    world: &FragmentWorld,
 ) {
-    integrate_hot_fragment_traced(fragment, dt, collisions, collision_count, None);
+    integrate_hot_fragment_traced(fragment, dt, collisions, collision_count, None, world);
 }
 
-/// High-speed local cabin collision for one hot fragment. Velocity-scaled swept substeps are also
-/// exposed to the terminal damage solver, so crew/module tests consume the exact same body path that
-/// later drives the visible cube and contact audio.
+/// One hot fragment through the vehicle's own surfaces (`FragmentWorld`): quadratic drag and
+/// gravity, then one swept segment per sub-step (at most HOT_FRAGMENT_SWEEP_STEP_M of flight)
+/// against the posed source triangles. At the first surface the body embeds, bounces or comes to
+/// rest by the existing contact rules, with that surface's own normal; the rest of that sub-step
+/// is not flown (named: at most one sub-step, 2.1 ms at 480 Hz, per contact). The swept segments
+/// are also the terminal damage solver's path, so crew, module and cartridge tests meet the same
+/// body the visible cube shows. This replaced the cabin box, turret cylinder and breech block
+/// proxies and the free flight outside them (2026-11-02).
 fn integrate_hot_fragment_traced(
     fragment: &mut HotFragment,
     dt: f32,
     collisions: &mut Vec<HotFragmentCollision>,
     collision_count: &mut usize,
     mut trace: Option<&mut Vec<FragmentMotionSegment>>,
+    world: &FragmentWorld,
 ) {
     if !fragment.active {
         return;
@@ -4528,8 +4656,8 @@ fn integrate_hot_fragment_traced(
     }
 
     let radius = fragment.size * 0.52;
-    let steps = ((fragment.vel.length() * physics_dt / HOT_FRAGMENT_MAX_STEP_M).ceil() as usize)
-        .clamp(1, 1024);
+    let steps = ((fragment.vel.length() * physics_dt / HOT_FRAGMENT_SWEEP_STEP_M).ceil() as usize)
+        .clamp(1, 64);
     let step_dt = physics_dt / steps as f32;
     for _ in 0..steps {
         let from = fragment.pos;
@@ -4537,173 +4665,45 @@ fn integrate_hot_fragment_traced(
         // Quadratic air drag on the tumbling cube, then gravity (`fea_damage::fragments`).
         fragment.vel = crate::fea_damage::fragments::drag_step(fragment.vel, fragment.size, CABIN_AIR_DENSITY,
             Vec3::new(0.0, -PROJECTILE_GRAVITY_MPS2, 0.0), step_dt);
-        fragment.pos += fragment.vel * step_dt;
         fragment.ang += fragment.spin * step_dt;
-
-        if !fragment.entered_compartment {
-            fragment.entered_compartment =
-                fragment_inside_compartment(fragment.frame, fragment.pos, radius);
-            if !fragment.entered_compartment {
-                if let Some(segments) = trace.as_deref_mut() {
-                    segments.push(FragmentMotionSegment {
-                        from,
-                        to: fragment.pos,
-                        speed_mps: incoming_speed,
-                    });
-                }
-                continue;
-            }
-        }
-
-        match fragment.frame {
-            BloodFrame::Turret => {
-                let floor = crate::interior_rig::FLOOR_STAND_Y + radius;
-                if fragment.pos.y < floor {
-                    fragment.pos =
-                        compartment_proxy_floor_point(fragment.frame, fragment.pos, radius) + Vec3::Y * radius;
-                    if fragment.bounces >= hot_fragment_bounce_budget(fragment.seed)
-                        || fragment.vel.length() < 0.42
-                    {
-                        fragment.vel = Vec3::ZERO;
-                        fragment.spin = Vec3::ZERO;
-                        fragment.settled = true;
+        let to = from + fragment.vel * step_dt;
+        let (end, surface) = match world.first_surface(fragment.frame, from, to) {
+            Some((fraction, normal)) => {
+                let at = from.lerp(to, fraction);
+                fragment.pos = at + normal * (radius + HOT_FRAGMENT_CONTACT_GAP_M);
+                let budget = hot_fragment_bounce_budget(fragment.seed);
+                let floor = normal.y > 0.5;
+                let rests = (floor && (fragment.bounces >= budget || fragment.vel.length() < 0.42))
+                    || fragment.bounces >= budget.saturating_add(HOT_FRAGMENT_STUCK_AFTER);
+                if rests {
+                    fragment.vel = Vec3::ZERO;
+                    fragment.spin = Vec3::ZERO;
+                    fragment.settled = true;
+                } else {
+                    let (restitution, keep) = if floor {
+                        (0.74, 0.94)
+                    } else if normal.y < -0.5 {
+                        (0.80, 0.95)
                     } else {
-                        hot_fragment_bounce(
-                            fragment,
-                            Vec3::Y,
-                            0.74,
-                            0.94,
-                            collisions,
-                            collision_count,
-                        );
-                    }
+                        (0.82, 0.96)
+                    };
+                    hot_fragment_bounce(fragment, normal, restitution, keep, collisions, collision_count);
                 }
-                let ceiling = TURRET_BLOOD_CEILING - radius;
-                if fragment.pos.y > ceiling {
-                    fragment.pos.y = ceiling;
-                    hot_fragment_bounce(
-                        fragment,
-                        Vec3::NEG_Y,
-                        0.80,
-                        0.95,
-                        collisions,
-                        collision_count,
-                    );
-                }
-                let radial = Vec3::new(fragment.pos.x, 0.0, fragment.pos.z);
-                let distance = radial.length();
-                let limit = (TURRET_BLOOD_WALL_R - radius).max(0.05);
-                if distance > limit {
-                    let outward = radial / distance.max(1e-5);
-                    fragment.pos.x = outward.x * limit;
-                    fragment.pos.z = outward.z * limit;
-                    hot_fragment_bounce(
-                        fragment,
-                        -outward,
-                        0.82,
-                        0.96,
-                        collisions,
-                        collision_count,
-                    );
-                }
-                let bmin = crate::interior_rig::BREECH_MIN - Vec3::splat(radius);
-                let bmax = crate::interior_rig::BREECH_MAX + Vec3::splat(radius);
-                if fragment.pos.cmpgt(bmin).all() && fragment.pos.cmplt(bmax).all() {
-                    let faces = [
-                        (fragment.pos.x - bmin.x, Vec3::NEG_X, 0usize),
-                        (bmax.x - fragment.pos.x, Vec3::X, 1usize),
-                        (fragment.pos.y - bmin.y, Vec3::NEG_Y, 2usize),
-                        (bmax.y - fragment.pos.y, Vec3::Y, 3usize),
-                        (fragment.pos.z - bmin.z, Vec3::NEG_Z, 4usize),
-                        (bmax.z - fragment.pos.z, Vec3::Z, 5usize),
-                    ];
-                    let (_, normal, face) = faces
-                        .into_iter()
-                        .min_by(|a, b| a.0.total_cmp(&b.0))
-                        .unwrap();
-                    match face {
-                        0 => fragment.pos.x = bmin.x,
-                        1 => fragment.pos.x = bmax.x,
-                        2 => fragment.pos.y = bmin.y,
-                        3 => fragment.pos.y = bmax.y,
-                        4 => fragment.pos.z = bmin.z,
-                        _ => fragment.pos.z = bmax.z,
-                    }
-                    hot_fragment_bounce(fragment, normal, 0.80, 0.95, collisions, collision_count);
-                }
+                (at, true)
             }
-            BloodFrame::Hull => {
-                let min = HULL_BLOOD_MIN + Vec3::splat(radius);
-                let max = HULL_BLOOD_MAX - Vec3::splat(radius);
-                if fragment.pos.y < min.y {
-                    fragment.pos =
-                        compartment_proxy_floor_point(fragment.frame, fragment.pos, radius) + Vec3::Y * radius;
-                    if fragment.bounces >= hot_fragment_bounce_budget(fragment.seed)
-                        || fragment.vel.length() < 0.42
-                    {
-                        fragment.vel = Vec3::ZERO;
-                        fragment.spin = Vec3::ZERO;
-                        fragment.settled = true;
-                    } else {
-                        hot_fragment_bounce(
-                            fragment,
-                            Vec3::Y,
-                            0.74,
-                            0.94,
-                            collisions,
-                            collision_count,
-                        );
-                    }
-                }
-                if fragment.pos.y > max.y {
-                    fragment.pos.y = max.y;
-                    hot_fragment_bounce(
-                        fragment,
-                        Vec3::NEG_Y,
-                        0.80,
-                        0.95,
-                        collisions,
-                        collision_count,
-                    );
-                }
-                if fragment.pos.x < min.x {
-                    fragment.pos.x = min.x;
-                    hot_fragment_bounce(fragment, Vec3::X, 0.82, 0.96, collisions, collision_count);
-                } else if fragment.pos.x > max.x {
-                    fragment.pos.x = max.x;
-                    hot_fragment_bounce(
-                        fragment,
-                        Vec3::NEG_X,
-                        0.82,
-                        0.96,
-                        collisions,
-                        collision_count,
-                    );
-                }
-                if fragment.pos.z < min.z {
-                    fragment.pos.z = min.z;
-                    hot_fragment_bounce(fragment, Vec3::Z, 0.82, 0.96, collisions, collision_count);
-                } else if fragment.pos.z > max.z {
-                    fragment.pos.z = max.z;
-                    hot_fragment_bounce(
-                        fragment,
-                        Vec3::NEG_Z,
-                        0.82,
-                        0.96,
-                        collisions,
-                        collision_count,
-                    );
-                }
+            None => {
+                fragment.pos = to;
+                (to, false)
             }
-        }
+        };
         if let Some(segments) = trace.as_deref_mut() {
-            segments.push(FragmentMotionSegment {
-                from,
-                to: fragment.pos,
-                speed_mps: incoming_speed,
-            });
+            segments.push(FragmentMotionSegment { from, to: end, speed_mps: incoming_speed, surface });
         }
         if fragment.settled {
+            break;
+        }
+        if fragment.pos.length() > HOT_FRAGMENT_LEFT_VEHICLE_M {
+            fragment.active = false;
             break;
         }
     }
@@ -7123,7 +7123,7 @@ fn resolve_fragment_damage(
     fragments: &[HotFragment],
     solo_body: Option<Vec3>,
     couch_bodies: &[CouchCrewBody],
-    module_centers: &[(ModuleKind, Vec3)],
+    world: &FragmentWorld,
     live_ammunition: &[LiveAmmoRound],
     modules: &mut [Module],
 ) -> (
@@ -7158,6 +7158,7 @@ fn resolve_fragment_damage(
                 &mut collision_scratch,
                 &mut collision_count,
                 Some(&mut segments),
+                world,
             );
             for segment in &segments {
                 let energy = fragment_energy_j(initial.size, segment.speed_mps);
@@ -7250,7 +7251,11 @@ fn resolve_fragment_damage(
                     }
                 }
 
-                for &(kind, center) in module_centers {
+                // Modules are met where the fragment's own path (ended at the first real surface)
+                // enters their CAD-measured component; the rack, where it crosses a live cartridge.
+                let entered = world.modules_entered(fragment.frame, segment.from, segment.to,
+                    if segment.surface { HOT_FRAGMENT_COMPONENT_REACH_M } else { 0.0 });
+                for kind in modules.iter().map(|module| module.kind).collect::<Vec<_>>() {
                     let Some(module) = modules.iter_mut().find(|module| module.kind == kind) else {
                         continue;
                     };
@@ -7284,13 +7289,7 @@ fn resolve_fragment_damage(
                             })
                             .map(|(fraction, round)| (fraction, Some(round.center)))
                     } else {
-                        swept_segment_sphere_fraction(
-                            segment.from,
-                            segment.to,
-                            center,
-                            kind.radius() + initial.size * 0.5,
-                        )
-                        .map(|fraction| (fraction, None))
+                        entered.iter().find(|(_, k)| *k == kind).map(|&(fraction, _)| (fraction, None))
                     };
                     if let Some((fraction, internal_blast_origin_local)) = hit {
                         module.functional = false;
@@ -8447,7 +8446,6 @@ const COOKOFF_VENT_BUILD_S: f32 = 1.4;
 /// Radius of the turret race the gas vents round at the end of the build [E: T-34 1.42 m ring].
 const COOKOFF_RING_RADIUS_M: f32 = 0.71;
 const HOT_FRAGMENT_FIXED_DT: f32 = 1.0 / 480.0;
-const HOT_FRAGMENT_MAX_STEP_M: f32 = 0.018;
 const HOT_FRAGMENT_DAMAGE_MAX_S: f32 = 3.6;
 const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
 // A tail is the body's own motion over about one frame at the slow end of the spall's speeds
@@ -24527,7 +24525,6 @@ impl Game {
         seed: u32,
     ) -> Option<(usize, bool, bool)> {
         let frame = BloodFrame::Turret;
-        let turret = self.player.turret_model();
         let (_, loader_segments) =
             crew_pose_segments_in_frame(&self.player, crate::lan::LanRole::Loader, frame);
         let loader_local = loader_segments[crew_physics::CrewBodyPart::Head.index()].pos;
@@ -24554,25 +24551,15 @@ impl Game {
             body.pos = crew_physics::center_of_mass(&segments);
             body.hit_volumes = crew_hit_volumes_from_segments(&segments, scale);
         }
-        let parent_inverse = turret.inverse();
-        let hull = self.player.hull_model();
-        let module_centers: Vec<(ModuleKind, Vec3)> = self
-            .modules
-            .iter()
-            .map(|module| {
-                (
-                    module.kind,
-                    parent_inverse.transform_point3(hull.transform_point3(module.kind.station())),
-                )
-            })
-            .collect();
         let ammunition = self.live_ammunition_in_frame(frame);
         let mut modules = self.modules.clone();
+        let fragment_world = FragmentWorld::new(&self.cabin_fire, &self.fire_surface_models(), &self.player,
+            self.fea_articulation());
         let (result, mut hits, contacts) = resolve_fragment_damage(
             &fragments,
             None,
             &bodies,
-            &module_centers,
+            &fragment_world,
             &ammunition,
             &mut modules,
         );
@@ -29141,7 +29128,6 @@ impl Game {
             ArmorPart::Hull => BloodFrame::Hull,
             ArmorPart::Turret => BloodFrame::Turret,
         };
-        let hull = self.player.hull_model();
         let parent = blood_parent_model(&self.player, frame);
         let parent_inv = parent.inverse();
         let entry = armor_local_point;
@@ -29165,30 +29151,24 @@ impl Game {
         let body = (!self.couch_crew_active && !self.singleplayer_crew_active
             && matches!(self.mode, Mode::Tank))
             .then(|| parent_inv.transform_point3(self.station_eye(self.station) - Vec3::Y * 0.35));
-        // Stations are measured with the turret forward; turret-mounted parts traverse with it.
-        let turret = self.player.turret_model();
-        let pivot = self.player.parts.turret_pivot;
-        let module_centers: Vec<(ModuleKind, Vec3)> = self
-            .modules
-            .iter()
-            .map(|module| {
-                let world = if module.kind.turret_mounted() {
-                    turret.transform_point3(module.kind.station() - pivot)
-                } else {
-                    hull.transform_point3(module.kind.station())
-                };
-                (module.kind, parent_inv.transform_point3(world))
-            })
-            .collect();
+        // The fragments meet the vehicle's own surfaces, and its modules where their CAD-measured
+        // components stand, at the turret's and gun's present pose.
         let live_ammunition = self.live_ammunition_in_frame(frame);
+        let surface_models = self.fire_surface_models();
+        let articulation = self.fea_articulation();
+        let fragment_world = FragmentWorld::new(&self.cabin_fire, &surface_models, &self.player, articulation);
+        let fragment_pass = std::time::Instant::now();
         let (mut result, couch_hits, mut contacts) = resolve_fragment_damage(
             &fragments,
             body,
             &couch_bodies,
-            &module_centers,
+            &fragment_world,
             &live_ammunition,
             &mut self.modules,
         );
+        println!("[fea] {} fragments followed through the vehicle's own surfaces in {:.0} ms: modules {:?}, ammunition {}, fire {}",
+            fragments.len(), fragment_pass.elapsed().as_secs_f32() * 1000.0,
+            result.hit_modules.iter().map(|k| k.name()).collect::<Vec<_>>(), result.ammo, result.fire);
         // The layered chain: what the residual round itself breaches behind the plate, and its own
         // path through crew and live rounds (`game_fea`).
         self.fea_penetration_consequences(entry_w, shell_dir_w, &ev, armor_part, penetration_id, frame,
@@ -29335,7 +29315,12 @@ impl Game {
             self.fire_active = true;
             self.fire = self.fire.max(0.16);
             self.fire_origin = Some((shooter, entry_w, shell_dir_w));
-            println!("[panzerrechnersystem] FIRE — fuel/engine alight in the hull");
+            // It catches where the fuel or the engine was opened, not at a standing spot.
+            match self.fea_seed_fire_at_breach(parent, &solution.contacts, self.fire) {
+                Some(at) => println!("[panzerrechnersystem] FIRE — fuel/engine alight in the hull at [{:.0}, {:.0}, {:.0}] mm",
+                    at.x * 1000.0, at.y * 1000.0, at.z * 1000.0),
+                None => println!("[panzerrechnersystem] FIRE — fuel/engine alight in the hull (no surface on the breach path: standing first spot)"),
+            }
         }
         // A couch penetration removes only the bodies the cone actually caught. Their authority is
         // gated immediately and their posts read vacant through the public queries. The Tiger dies
@@ -31981,6 +31966,9 @@ impl Game {
             }
         }
         if dt.is_finite() { self.hot_fragment_accumulator_s += dt.max(0.0); }
+        let surface_models = self.fire_surface_models();
+        let articulation = self.fea_articulation();
+        let fragment_world = FragmentWorld::new(&self.cabin_fire, &surface_models, &self.player, articulation);
         while self.hot_fragment_accumulator_s + 1.0e-8 >= HOT_FRAGMENT_FIXED_DT {
             self.hot_fragment_accumulator_s -= HOT_FRAGMENT_FIXED_DT;
             for fragment in &mut self.hot_fragments {
@@ -31989,6 +31977,7 @@ impl Game {
                     HOT_FRAGMENT_FIXED_DT,
                     &mut self.hot_fragment_collisions,
                     &mut self.hot_fragment_collision_count,
+                    &fragment_world,
                 );
             }
         }
@@ -33335,8 +33324,11 @@ impl Game {
         let alive = self.controlled_soldier_alive();
         if !alive || self.god { self.player_burn.extinguish(); return false; }
         let outside = self.mode == Mode::Foot;
-        // The cabin fire reaches the body only inside the hull; head out of the cupola it does not.
-        let exposure = if self.mode == Mode::Tank && !self.commander_outside && self.fire > 0.0 {
+        // The cabin fire reaches the body only inside the hull, head out of the cupola it does not,
+        // and only from a burning surface with a clear line to it (a fire behind the firewall
+        // does not burn the crew in front of it).
+        let exposure = if self.mode == Mode::Tank && !self.commander_outside && self.fire > 0.0
+            && self.cabin_fire.burning_surface_sees(self.ear_pos - Vec3::Y * 0.5, &self.fire_surface_models()) {
             (self.fire / FIRE_MAX).clamp(0.0, 1.0)
         } else { 0.0 };
         let was_burning = self.player_burn.burning();
@@ -34763,7 +34755,7 @@ mod tests {
             vel: Vec3::X * 100.0, size: 0.01, life: 0.01, ..HotFragment::default() };
         let mut modules = default_modules();
         let (result, mut fatal, contacts) = resolve_fragment_damage(&[chip], None,
-            &[body], &[], &[], &mut modules);
+            &[body], &FragmentWorld::bare(), &[], &mut modules);
         assert!(contacts.iter().any(|c| c.body_part == Some(part) && c.energy_j > 28.0));
         assert!(fatal.is_empty(), "the fragment resolver must not mark limb contact as KIA");
         let events = resolve_crew_part_damage_events(casualty, &body, &contacts,
@@ -34777,7 +34769,7 @@ mod tests {
             hit_volumes: hit_volumes.map(|v| crew_damage::CrewHitVolume {
                 center: v.center + Vec3::Z * 8.0, ..v }), ..body };
         let (_, fatal, contacts) = resolve_fragment_damage(&[chip], None,
-            &[missed], &[], &[], &mut modules);
+            &[missed], &FragmentWorld::bare(), &[], &mut modules);
         assert!(fatal.is_empty() && contacts.is_empty(), "moving out of the swept path must avoid damage");
     }
 
@@ -38248,6 +38240,17 @@ mod tests {
 
     #[test]
     fn high_speed_hot_steel_cannot_tunnel_through_breech_and_retires_bounded() {
+        // The block is a source surface in the turret frame (the fragment world's triangles).
+        let hf = crate::terrain::Heightfield { res: 2, spacing: 1000.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0,
+            openings: Default::default(), detail: None };
+        let tank = Tank::new(0.0, 0.0, 0.0, &hf, crate::tank::TIGER_PARTS);
+        let block = crate::prims::box_mesh(crate::interior_rig::BREECH_MIN, crate::interior_rig::BREECH_MAX, [90, 90, 90]);
+        let source = surface_fire::CabinFire::new(&[(1, &block)]);
+        let mut models = [Mat4::IDENTITY; surface_fire::FRAMES];
+        models[0] = tank.hull_model();
+        models[1] = tank.turret_model();
+        let world = FragmentWorld::new(&source, &models, &tank,
+            crate::fea_damage::components::Articulation::rest(tank.parts.turret_pivot));
         let radius = 0.03 * 0.52;
         let mut fragment = HotFragment {
             active: true,
@@ -38270,6 +38273,7 @@ mod tests {
             1.0 / 30.0,
             &mut collisions,
             &mut collision_count,
+            &world,
         );
         assert!(fragment.bounces >= 1, "swept substeps must find the breech");
         assert_eq!(collisions.len(), collision_count);
@@ -38285,6 +38289,7 @@ mod tests {
                 1.0 / 120.0,
                 &mut collisions,
                 &mut collision_count,
+                &world,
             );
         }
         assert!(
