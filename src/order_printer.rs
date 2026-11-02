@@ -281,24 +281,30 @@ pub fn strip_mesh() -> CpuMesh {
 
 /// The sheet hanging from the slot in the turret: `emerged` of it out, the rest inside the
 /// head; the hanging part leans `SHEET_LEAN` inboard, its printed face toward the reader.
-pub fn strip_model(turret: Mat4, emerged: f32) -> Mat4 {
+pub fn strip_model(machine: Mat4, emerged: f32, frame_scale: f32) -> Mat4 {
     let out = STRIP_LENGTH * emerged.clamp(0.0, 1.0);
     // The sheet's own frame: top edge at the origin, hanging -Y, face +Z (toward -X in the
     // turret after the quarter turn). The unprinted part sits in the slot; the part that is
-    // out leans away from the vertical about the slot's axis.
-    turret
+    // out leans away from the vertical about the slot's axis. The paper is real-size: in a
+    // machine frame that is not in metres (the turret's kit frame, `TIGER_FRAME_SCALE`) the
+    // sheet and its travel are entered in the frame's units.
+    machine
         * Mat4::from_translation(SLOT)
         * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
         * Mat4::from_rotation_x(-SHEET_LEAN)
+        * Mat4::from_scale(Vec3::splat(1.0 / frame_scale.max(1e-6)))
         * Mat4::from_translation(Vec3::Y * (STRIP_LENGTH - out))
 }
 
-/// The axis-aligned box of the hanging sheet in the machine's frame (for the hands and tests).
-pub fn hanging_sheet_box(emerged: f32) -> (Vec3, Vec3) {
-    let out = STRIP_LENGTH * emerged.clamp(0.0, 1.0);
+/// The axis-aligned box of the hanging sheet in the machine's frame (for the hands and tests),
+/// the paper's real size in that frame's units.
+pub fn hanging_sheet_box(emerged: f32, frame_scale: f32) -> (Vec3, Vec3) {
+    let q = 1.0 / frame_scale.max(1e-6);
+    let out = STRIP_LENGTH * q * emerged.clamp(0.0, 1.0);
     let (s, c) = SHEET_LEAN.sin_cos();
-    (Vec3::new(SLOT.x - out * s - 0.004, SLOT.y - out * c, SLOT.z - STRIP_WIDTH * 0.5),
-        Vec3::new(SLOT.x + 0.004, SLOT.y + 0.004, SLOT.z + STRIP_WIDTH * 0.5))
+    let (w, m) = (STRIP_WIDTH * q, 0.004 * q);
+    (Vec3::new(SLOT.x - out * s - m, SLOT.y - out * c, SLOT.z - w * 0.5),
+        Vec3::new(SLOT.x + m, SLOT.y + m, SLOT.z + w * 0.5))
 }
 
 /// The sheet read in hand: held like the map, a little below the gaze, tilted back.
@@ -361,6 +367,10 @@ impl Game {
         self.order_printer.begin(&title, &heading, &order, &first, at);
         println!("[order] printing {} lines at the {:?} machine", self.order_printer.machine.lines.len() + 2, at);
     }
+    /// World metres per unit of the machine's frame: the turret's kit frame, or the camp table.
+    fn order_frame_scale(&self, at: Site) -> f32 {
+        match at { Site::Turret => self.player.parts.frame_scale, Site::Camp => 1.0 }
+    }
     /// The frame of the machine the print is at.
     fn order_machine_frame(&self, at: Site) -> Mat4 {
         match at {
@@ -386,7 +396,7 @@ impl Game {
         let d = inv.transform_vector3(dir).normalize_or_zero();
         let mut best: Option<(f32, Pick)> = None;
         if self.order_printer.on_machine() && self.order_printer.at == site {
-            let (min, max) = hanging_sheet_box(self.order_printer.emerged());
+            let (min, max) = hanging_sheet_box(self.order_printer.emerged(), self.order_frame_scale(site));
             if let Some(t) = ray_box(o, d, min, max) { best = Some((t, Pick::Strip)); }
         }
         let keys_min = Vec3::new(HEAD_MIN.x - 0.012, HEAD_MIN.y, HEAD_MIN.z);
@@ -711,7 +721,7 @@ impl Game {
         let on_machine = self.order_printer.on_machine();
         r.set_visible(self.slots.order_strip, on_machine);
         if on_machine {
-            r.set_model(self.slots.order_strip, strip_model(self.order_machine_frame(self.order_printer.at), self.order_printer.emerged()));
+            r.set_model(self.slots.order_strip, strip_model(self.order_machine_frame(self.order_printer.at), self.order_printer.emerged(), self.order_frame_scale(self.order_printer.at)));
             r.set_emissive(self.slots.order_strip, 0.0);
         }
         let held = self.order_printer.held() && self.controlled_soldier_alive();
@@ -802,17 +812,21 @@ mod tests {
 
     #[test]
     fn the_sheet_leaves_the_slot_leaning_toward_the_reader_and_ends_above_the_fixture() {
-        let top = strip_model(Mat4::IDENTITY, 1.0).transform_point3(Vec3::ZERO);
+        let top = strip_model(Mat4::IDENTITY, 1.0, crate::tank::TIGER_FRAME_SCALE).transform_point3(Vec3::ZERO);
         assert!((top - SLOT).length() < 1e-5, "{top}");
-        let bottom = strip_model(Mat4::IDENTITY, 1.0).transform_point3(Vec3::new(0.0, -STRIP_LENGTH, 0.0));
+        let bottom = strip_model(Mat4::IDENTITY, 1.0, crate::tank::TIGER_FRAME_SCALE).transform_point3(Vec3::new(0.0, -STRIP_LENGTH, 0.0));
         assert!(bottom.y > 1.83 && bottom.y < SLOT.y - STRIP_LENGTH * 0.8, "hangs below the slot, above the fixture: {bottom}");
         assert!(bottom.x < SLOT.x - 0.04, "the bottom leans inboard toward the commander: {bottom}");
-        let face = strip_model(Mat4::IDENTITY, 1.0).transform_vector3(Vec3::Z);
+        let face = strip_model(Mat4::IDENTITY, 1.0, crate::tank::TIGER_FRAME_SCALE).transform_vector3(Vec3::Z);
         assert!(face.x < -0.85 && face.y > 0.3, "the printed face looks inboard and up, to the cupola: {face}");
-        let (min, max) = hanging_sheet_box(1.0);
+        let (min, max) = hanging_sheet_box(1.0, crate::tank::TIGER_FRAME_SCALE);
         assert!(min.x <= bottom.x + 1e-4 && max.y >= SLOT.y && min.y <= bottom.y + 1e-4, "the box holds the sheet: {min} {max}");
-        let half = strip_model(Mat4::IDENTITY, 0.5).transform_point3(Vec3::new(0.0, -STRIP_LENGTH, 0.0));
-        assert!((half.y - (SLOT.y - 0.5 * STRIP_LENGTH * SHEET_LEAN.cos())).abs() < 1e-4, "{half}");
+        let half = strip_model(Mat4::IDENTITY, 0.5, crate::tank::TIGER_FRAME_SCALE).transform_point3(Vec3::new(0.0, -STRIP_LENGTH, 0.0));
+        // The travel is the paper's 150 mm, in the turret frame's units.
+        assert!((half.y - (SLOT.y - 0.5 * STRIP_LENGTH / crate::tank::TIGER_FRAME_SCALE * SHEET_LEAN.cos())).abs() < 1e-4, "{half}");
+        // The gate off: the bake's frame is metres and the sheet is its own size in it.
+        let plain = strip_model(Mat4::IDENTITY, 0.5, 1.0).transform_point3(Vec3::new(0.0, -STRIP_LENGTH, 0.0));
+        assert!((plain.y - (SLOT.y - 0.5 * STRIP_LENGTH * SHEET_LEAN.cos())).abs() < 1e-4, "{plain}");
     }
 
     #[test]
@@ -831,7 +845,7 @@ mod tests {
             eprintln!("turret bake not present (KESSEL_ASSET_ROOT); clearance not checked here");
             return;
         };
-        let (sheet_min, sheet_max) = hanging_sheet_box(1.0);
+        let (sheet_min, sheet_max) = hanging_sheet_box(1.0, crate::tank::TIGER_FRAME_SCALE);
         let boxes = [("head", HEAD_MIN - Vec3::splat(0.004), HEAD_MAX + Vec3::new(0.004, 0.008, 0.004)), ("sheet", sheet_min, sheet_max)];
         for (name, min, max) in boxes {
             let hits = turret.indices.chunks(3).filter(|tri| {
