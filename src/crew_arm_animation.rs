@@ -131,7 +131,9 @@ impl Rig {
         Self::load_pose(BINDINGS,CREW_SEATED_GLBS[0])
     }
     fn load_standing()->anyhow::Result<Self> {
-        let data=std::fs::read_to_string("assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/animation/standing_arm_bindings.v1.json")?;
+        // Through the asset root (KESSEL_ASSET_ROOT), like every other source file: a checkout-
+        // relative read found nothing from a worktree and silently dropped the standing bindings.
+        let data=crate::resource::read_to_string("assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/animation/standing_arm_bindings.v1.json")?;
         Self::load_pose(&data,CREW_STANDING_GLBS[0])
     }
     fn load_pose(bindings:&str,path:&str)->anyhow::Result<Self> {
@@ -935,7 +937,7 @@ mod tests {
     }
     #[test]
     fn standing_knees_absorb_motion_without_moving_planted_source_boots() {
-        if !std::path::Path::new("assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/animation/standing_arm_bindings.v1.json").exists(){return;}
+        if !crate::resource::exists("assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/animation/standing_arm_bindings.v1.json"){return;}
         let rig=Rig::load_standing().unwrap();
         for sway in [Vec3::ZERO,Vec3::new(0.05,-0.06,0.04)] {
             let pose=rig.body_pose([None,None],sway,Quat::IDENTITY,true);

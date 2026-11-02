@@ -217,3 +217,110 @@ fn fs_composite_glare(in: VsOut) -> @location(0) vec4<f32> {
     // The veil is already in luminance units of the source; it adds to the frame as is.
     return vec4(textureSample(src, samp, in.uv).rgb, 1.0);
 }
+
+// --- The deltaP pyramid bloom (KESSEL_LOOK; docs/DELTAP_LOOK_20261101.md) --------------------
+// A port of deltaP bloom.wgsl, run by the raymarch chain in place of the compact halo and the
+// veil while the look is on. Veiling glare as a mip pyramid: a 13-tap downsample with a soft-knee
+// bright pass (Jimenez, "Next Generation Post Processing in Call of Duty: Advanced Warfare",
+// 2014; the quadratic knee after Karis) and a Karis average in the first level against one-texel
+// fireflies, five halvings, then 3x3 tent upsamples added back with DP_TAIL per level, so the sum
+// of Gaussians of doubling width approximates the glare point-spread function's sharp core and
+// falling tail (Spencer et al. 1995). The threshold is in exposed units, so "bright" means bright
+// for the eye as it is adapted now; the per-texel cap keeps a flash from becoming a blob. Knee,
+// cap and tail are deltaP's authored values (named in docs/PHYSICAL_TRUTH_AUDIT.md).
+const DP_THRESH: f32 = 0.55;
+const DP_KNEE: f32 = 0.35;
+const DP_CAP: f32 = 1.0;
+const DP_TAIL: f32 = 0.9;
+
+fn dp_tap(uv: vec2<f32>) -> vec3<f32> {
+    return textureSampleLevel(src, samp, uv, 0.0).rgb;
+}
+// Prefilter tap: a non-finite HDR texel would poison every mip it reached (0 x NaN = NaN).
+fn dp_tap0(uv: vec2<f32>) -> vec3<f32> {
+    let c = dp_tap(uv);
+    let bad = any(c != c) || any(abs(c) > vec3(6.0e4));
+    return select(max(c, vec3(0.0)), vec3(0.0), bad);
+}
+fn dp_bright(c: vec3<f32>) -> vec3<f32> {
+    let e = max(camera.exposure, 1e-6);
+    let l = max(max(c.r, c.g), c.b) * e;
+    var soft = clamp(l - DP_THRESH + DP_KNEE, 0.0, 2.0 * DP_KNEE);
+    soft = soft * soft / (4.0 * DP_KNEE + 1e-5);
+    let contrib = min(max(soft, l - DP_THRESH), DP_CAP) / max(l, 1e-5);
+    return c * contrib;
+}
+fn dp_karis(c: vec3<f32>) -> f32 {
+    return 1.0 / (1.0 + dot(c, vec3(0.2126, 0.7152, 0.0722)) * camera.exposure);
+}
+// 13 taps: four overlapping 2x2 boxes and a centre box, 0.5 centre / 0.125 corners.
+fn dp_down13_src(uv: vec2<f32>, ts: vec2<f32>) -> vec3<f32> {
+    let a = dp_tap0(uv + ts * vec2(-2.0, -2.0));
+    let b = dp_tap0(uv + ts * vec2( 0.0, -2.0));
+    let c = dp_tap0(uv + ts * vec2( 2.0, -2.0));
+    let d = dp_tap0(uv + ts * vec2(-2.0,  0.0));
+    let e = dp_tap0(uv);
+    let f = dp_tap0(uv + ts * vec2( 2.0,  0.0));
+    let gg = dp_tap0(uv + ts * vec2(-2.0,  2.0));
+    let h = dp_tap0(uv + ts * vec2( 0.0,  2.0));
+    let i = dp_tap0(uv + ts * vec2( 2.0,  2.0));
+    let j = dp_tap0(uv + ts * vec2(-1.0, -1.0));
+    let k = dp_tap0(uv + ts * vec2( 1.0, -1.0));
+    let l = dp_tap0(uv + ts * vec2(-1.0,  1.0));
+    let m = dp_tap0(uv + ts * vec2( 1.0,  1.0));
+    let g0 = dp_bright((j + k + l + m) * 0.25);
+    let g1 = dp_bright((a + b + d + e) * 0.25);
+    let g2 = dp_bright((b + c + e + f) * 0.25);
+    let g3 = dp_bright((d + e + gg + h) * 0.25);
+    let g4 = dp_bright((e + f + h + i) * 0.25);
+    let w0 = 0.5 * dp_karis(g0);
+    let w1 = 0.125 * dp_karis(g1);
+    let w2 = 0.125 * dp_karis(g2);
+    let w3 = 0.125 * dp_karis(g3);
+    let w4 = 0.125 * dp_karis(g4);
+    return (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / (w0 + w1 + w2 + w3 + w4);
+}
+fn dp_down13(uv: vec2<f32>, ts: vec2<f32>) -> vec3<f32> {
+    let a = dp_tap(uv + ts * vec2(-2.0, -2.0));
+    let b = dp_tap(uv + ts * vec2( 0.0, -2.0));
+    let c = dp_tap(uv + ts * vec2( 2.0, -2.0));
+    let d = dp_tap(uv + ts * vec2(-2.0,  0.0));
+    let e = dp_tap(uv);
+    let f = dp_tap(uv + ts * vec2( 2.0,  0.0));
+    let gg = dp_tap(uv + ts * vec2(-2.0,  2.0));
+    let h = dp_tap(uv + ts * vec2( 0.0,  2.0));
+    let i = dp_tap(uv + ts * vec2( 2.0,  2.0));
+    let j = dp_tap(uv + ts * vec2(-1.0, -1.0));
+    let k = dp_tap(uv + ts * vec2( 1.0, -1.0));
+    let l = dp_tap(uv + ts * vec2(-1.0,  1.0));
+    let m = dp_tap(uv + ts * vec2( 1.0,  1.0));
+    return e * 0.125 + (a + c + gg + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+}
+// pc.texel is 1/source size for every deltaP pass; pc.dir.x carries the composite's strength.
+@fragment
+fn fs_dp_prefilter(in: VsOut) -> @location(0) vec4<f32> {
+    return vec4(dp_down13_src(in.uv, pc.texel), 1.0);
+}
+@fragment
+fn fs_dp_down(in: VsOut) -> @location(0) vec4<f32> {
+    return vec4(dp_down13(in.uv, pc.texel), 1.0);
+}
+// 3x3 tent from the smaller level, added (One + One) onto the next larger one.
+@fragment
+fn fs_dp_up(in: VsOut) -> @location(0) vec4<f32> {
+    let ts = pc.texel;
+    var s = dp_tap(in.uv) * 4.0;
+    s = s + (dp_tap(in.uv + ts * vec2(-1.0, 0.0)) + dp_tap(in.uv + ts * vec2(1.0, 0.0))
+           + dp_tap(in.uv + ts * vec2(0.0, -1.0)) + dp_tap(in.uv + ts * vec2(0.0, 1.0))) * 2.0;
+    s = s + dp_tap(in.uv + ts * vec2(-1.0, -1.0)) + dp_tap(in.uv + ts * vec2(1.0, -1.0))
+          + dp_tap(in.uv + ts * vec2(-1.0, 1.0)) + dp_tap(in.uv + ts * vec2(1.0, 1.0));
+    return vec4(s * (DP_TAIL / 16.0), 1.0);
+}
+// The summed pyramid added uniformly into the HDR frame before the tonemap: the glare is the
+// eye's, and the eye does not know what kind of emitter it is looking at.
+@fragment
+fn fs_dp_composite(in: VsOut) -> @location(0) vec4<f32> {
+    let c = dp_tap(in.uv);
+    let ok = select(c, vec3(0.0), any(c != c));
+    return vec4(ok * pc.dir.x, 1.0);
+}

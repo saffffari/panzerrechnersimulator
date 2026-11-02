@@ -27,6 +27,9 @@ struct Crush {
     dither_right: vec4<f32>, // world basis; w = tan(horizontal half-FOV)
     dither_up: vec4<f32>, // world basis; w = tan(vertical half-FOV)
     dither_forward: vec4<f32>,
+    // The deltaP look (docs/DELTAP_LOOK_20261101.md): x = 0 standard, 1 dithered colour, 2 PICO-8 32,
+    // 3 the tonemapped frame alone; y = the best-pair search's pair-distance penalty. Appended lane.
+    look: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
@@ -190,6 +193,115 @@ fn display_threshold(px:vec2<i32>)->f32 {
     return (BAYER[index]+0.5)/16.0-0.5;
 }
 
+// ── The deltaP look (cr.look.x > 0.5; docs/DELTAP_LOOK_20261101.md) ────────────────────────────
+// A port of the display stage of deltaP's crush.wgsl (the owner's cockpit sim), applied in place
+// of the retro posterize and the LDR dither: deltaP's "dithered colour" (mode 1) or its PICO-8
+// 32-colour best-pair search (mode 2). Both take the eye's tonemapped, display-linear value and
+// return display codes; the attachment's hardware encode is undone first so the written code is
+// exact. Its colour-space rules carry over unchanged: the pair is CHOSEN in OKLab (a perceptual
+// question), the mixing RATIO is solved in linear light (the eye averages photons), and the
+// threshold is indexed by the INTERNAL texel, which keeps the dither locked to the art's grid.
+// The sixteen PICO-8 entries plus the console's "secret" sixteen (pal() indices 128..143), in
+// display sRGB; they are written verbatim, so a mode-2 frame is a genuine PICO-8 frame.
+var<private> DP_PAL: array<vec3<f32>, 32> = array<vec3<f32>, 32>(
+    vec3(0.000, 0.000, 0.000), vec3(0.114, 0.169, 0.325), vec3(0.494, 0.145, 0.325), vec3(0.000, 0.529, 0.318),
+    vec3(0.671, 0.322, 0.212), vec3(0.373, 0.341, 0.310), vec3(0.761, 0.765, 0.780), vec3(1.000, 0.945, 0.910),
+    vec3(1.000, 0.000, 0.302), vec3(1.000, 0.639, 0.000), vec3(1.000, 0.925, 0.153), vec3(0.000, 0.894, 0.212),
+    vec3(0.161, 0.678, 1.000), vec3(0.514, 0.463, 0.612), vec3(1.000, 0.467, 0.659), vec3(1.000, 0.800, 0.667),
+    vec3(0.161, 0.094, 0.078), vec3(0.067, 0.114, 0.208), vec3(0.259, 0.129, 0.212), vec3(0.071, 0.325, 0.349),
+    vec3(0.455, 0.184, 0.161), vec3(0.286, 0.200, 0.231), vec3(0.635, 0.533, 0.475), vec3(0.953, 0.937, 0.490),
+    vec3(0.745, 0.071, 0.314), vec3(1.000, 0.424, 0.141), vec3(0.659, 0.906, 0.180), vec3(0.000, 0.710, 0.263),
+    vec3(0.024, 0.353, 0.710), vec3(0.459, 0.275, 0.396), vec3(1.000, 0.431, 0.349), vec3(1.000, 0.616, 0.506),
+);
+
+// The ordered threshold on the internal texel, 0..1, centred in its bucket so a mid-way colour
+// dithers to a true 50/50 checker. The same rank set as bayer8_rank's display threshold.
+fn dp_threshold(px: vec2<i32>) -> f32 {
+    return (f32(bayer8_rank(px)) + 0.5) / 64.0;
+}
+
+// OKLab (Ottosson): two 3x3 matrices and a cube root; plain Euclidean distance is the metric.
+// The max() guards the cube root of an ACES undershoot, which would otherwise be NaN.
+fn dp_oklab(c: vec3<f32>) -> vec3<f32> {
+    let l = 0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b;
+    let m = 0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b;
+    let s = 0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b;
+    let l_ = pow(max(l, 0.0), 1.0 / 3.0);
+    let m_ = pow(max(m, 0.0), 1.0 / 3.0);
+    let s_ = pow(max(s, 0.0), 1.0 / 3.0);
+    return vec3(
+        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_);
+}
+
+// Mode 1, dithered colour (deltaP's default): no fixed palette. Each channel is quantized to
+// 8 steps with the same ordered threshold, in display space where equal code steps are roughly
+// equal perceived steps, spaced on a further square-root curve so the dark end gets the most
+// steps (deltaP's first step is 0 -> 0.016 in display terms; with even steps every dark blue
+// dithered as black-and-cyan salt). The threshold is the full 64-step value, not snapped to
+// eighths: 64 fill patterns make each pattern jump smaller than the shading's own noise, so a
+// wall's wandering shade dissolves into grain instead of drawing contours.
+fn dp_dithered_colour(lin: vec3<f32>, th: f32) -> vec3<f32> {
+    let levels = 8.0;
+    let c = sqrt(clamp(display_encode(lin), vec3(0.0), vec3(1.0)));
+    let q = floor(c * levels + vec3(th)) / levels;
+    return clamp(q * q, vec3(0.0), vec3(1.0));
+}
+
+// Mode 2, PICO-8 32 by exhaustive best pair: for each of the 528 unordered pairs, solve the
+// optimal mixing ratio in linear light, score the blend's error in OKLab plus a penalty on the
+// pair's own distance (without it black + white is the numerically best mid grey and a buzzing
+// checkerboard to the eye), keep the winner. Greedy nearest-then-partner cannot reach navy +
+// bright blue for a medium blue, whose single nearest entry is lavender; the exhaustive search
+// has no heuristic left to be wrong. The ratio then snaps to eighths with dead zones at both ends
+// (fill patterns, not lone dots over a panel a shade above black).
+fn dp_pico8(lin: vec3<f32>, th: f32) -> vec3<f32> {
+    let lab = dp_oklab(lin);
+    var pl: array<vec3<f32>, 32>;
+    var pk: array<vec3<f32>, 32>;
+    for (var i = 0; i < 32; i = i + 1) {
+        pl[i] = display_decode(DP_PAL[i]);
+        pk[i] = dp_oklab(pl[i]);
+    }
+    var best_i = 0;
+    var best_j = 0;
+    var best_t = 0.0;
+    var best_err = 1.0e9;
+    for (var i = 0; i < 32; i = i + 1) {
+        for (var j = i; j < 32; j = j + 1) {
+            let a = pl[i];
+            let b = pl[j];
+            let axis = b - a;
+            let len2 = dot(axis, axis);
+            var t = 0.0;
+            if (len2 > 1.0e-9) { t = clamp(dot(lin - a, axis) / len2, 0.0, 1.0); }
+            let err = distance(dp_oklab(mix(a, b, t)), lab) + cr.look.y * distance(pk[i], pk[j]);
+            if (err < best_err) {
+                best_err = err;
+                best_i = i;
+                best_j = j;
+                best_t = t;
+            }
+        }
+    }
+    var t = best_t;
+    if (t < 0.09) { t = 0.0; }
+    else if (t > 0.91) { t = 1.0; }
+    else { t = round(t * 8.0) / 8.0; }
+    return select(DP_PAL[best_i], DP_PAL[best_j], th < t);
+}
+
+// The look's quantizer over the eye's tonemapped display-linear value; returns linear light for
+// the sRGB attachment, whose single hardware encode then yields the chosen code exactly.
+fn dp_crush(lin: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
+    let th = dp_threshold(px);
+    var code = display_encode(lin);
+    if (cr.look.x < 1.5) { code = dp_dithered_colour(lin, th); }
+    else if (cr.look.x < 2.5) { code = dp_pico8(lin, th); }
+    return display_decode(code);
+}
+
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -241,6 +353,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let retro = clamp(cr.retro, 0.0, 1.0);
     // The legacy physical clean endpoint (retro == 0, ldr_dither == 0) bypasses every display
     // texture pattern. The shader backend can independently soften native 8-bit LDR rounding.
+    if (cr.look.x > 0.5) {
+        // The deltaP look: its quantizer in place of the retro posterize and the LDR dither.
+        m = dp_crush(m, vec2<i32>(in.pos.xy));
+    } else {
     if (retro > 0.001) {
         let px = vec2<i32>(in.pos.xy);
         // Ordered coverage describes the resolved lighting gradient. Keep its phase fixed on the
@@ -313,6 +429,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                 + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0) / 255.0),
                 vec3(0.0), vec3(1.0)));
         }
+    }
+
     }
 
     // TZF 9b/9c Strichbild: drawn by blit.wgsl at the output's resolution (`cr.reticle` unused).

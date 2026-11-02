@@ -437,6 +437,10 @@ impl FirstPerson {
         r.set_model(self.witness_slot, model);
         r.set_visible(self.witness_slot, true);
     }
+    /// Review harness: the local arm/body page slots (seated, relaxed) and the witness slot.
+    pub(super) fn debug_slots(&self) -> (Vec<usize>, usize) {
+        (self.slots.into_iter().flatten().collect(), self.witness_slot)
+    }
     pub(super) fn hold_pistol(&self, gun: Mat4, magazine: Mat4) {
         self.desired_hand.set(Some((gun, magazine)));
     }

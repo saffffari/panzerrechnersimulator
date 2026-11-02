@@ -1,8 +1,31 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-01 (the deltaP display look); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## The deltaP display look, 2026-11-01 (`KESSEL_LOOK=deltap`, `docs/DELTAP_LOOK_20261101.md`)
+
+A display-stage variant of the raymarch backend ported from deltaP's `crush.wgsl` and
+`bloom.wgsl` (the owner's cockpit sim). It reads `KESSEL_LOOK` in the crush uniform's appended
+`look` lane and in the bloom chain only; no emitter, material, medium, preset budget or
+simulation value reads it. Named presentation choices while the look is on:
+
+- Quantizer: 8 steps per channel on a square-root curve over display gamma with a full-range
+  Bayer-8 threshold on the internal texel (`deltap`), or the PICO-8 32-colour palette by
+  exhaustive OKLab best pair with the ratio solved in linear light (`deltap-pico8`). Both discard
+  tonal precision after the eye and the tonemap; neither adds light. The standard crush's
+  far-field dither attenuation does not apply under the look.
+- Glare: deltaP's pyramid bloom (13-tap Jimenez downsample, soft-knee bright pass at 0.55 +- 0.35
+  exposed with a per-texel cap of 1.0, Karis average, 3x3 tent upsample at 0.9 per octave, summed
+  at 0.8 into the HDR frame before the tonemap) replaces the compact halo *and* the CIE veil. The
+  knee, cap and strength are deltaP's authored values, not a measured point-spread function; the
+  veil's omission is a departure from the eye model's intraocular scatter, taken for the look.
+- Grid: 1024x576 by the demo launcher (5x on the 5120x2880 panel), a resolution preset only.
+
+Gate: `tests/dither_motion.rs` and `tests/display_quantization.rs` validate the complete crush
+shader and the Crush lanes (span 144, `look` at 128, earlier lanes unmoved);
+`src/renderer.rs` unit tests check the uniform's offsets.
 
 ## Physical terrain wavelength and cold restore, 2026-10-31
 

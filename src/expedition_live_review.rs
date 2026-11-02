@@ -90,3 +90,37 @@ pub fn run(requested: &str, installed_camp: bool) -> anyhow::Result<()> {
     ensure!(pass,"live expedition review failed; inspect receipt");
     Ok(())
 }
+
+/// The walker's own body as he sees it at the camp: the fresh expedition's first-person view
+/// looking ahead and straight down, pistol drawn by default. Reproduces the owner's report of
+/// 2026-11-01 (a whole head under the camera, the pistol held the wrong way round).
+pub fn lookdown(requested: &str) -> anyhow::Result<()> {
+    let prefix = crate::capture_target(requested);
+    if let Some(parent) = Path::new(&prefix).parent() { std::fs::create_dir_all(parent)?; }
+    std::env::set_var("KESSEL_AUDIO_CAPTURE", "1");
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    // The theatre the menu's New Expedition loads, resolved through the asset root.
+    let path = std::path::PathBuf::from(crate::expedition_theatre::MANIFEST);
+    crate::act_manifest::select_runtime_manifest(Some(path))?;
+    let (mut renderer, mut game) = Game::build_expedition_act(&device,&queue,false,&crate::world::act(1))?;
+    game.mute_audio();
+    game.enable_singleplayer_crew();
+    let camp = game.expedition_initial_camp_position()?;
+    game.enable_expedition(1944, camp)?;
+    game.begin_expedition_at_camp(&mut renderer)?;
+    for _ in 0..30 { game.update(&TankInput::default(), 1.0/60.0, &mut renderer); }
+    for (name, pitch) in [("ahead", -0.12f32), ("down", -1.45f32)] {
+        game.debug_set_foot_pitch(pitch);
+        for _ in 0..3 { game.update(&TankInput::default(), 1.0/60.0, &mut renderer); }
+        renderer.reset_history();
+        crate::converge_headless_screenshot(&mut renderer, &device, &queue, 24)?;
+        renderer.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), 1280, 720)?;
+        println!("[lookdown] {name} visible near the walker: {}", game.debug_visible_figure_slots(&renderer));
+        let (pos, yaw, pitch_now, on_foot) = game.debug_foot_state();
+        println!("[lookdown] {name}: foot {:?} yaw {yaw:.3} pitch {pitch_now:.3} on_foot {on_foot} camera {:?} forward {:?}",
+            pos.to_array(), renderer.camera.pos.to_array(), renderer.camera.forward().to_array());
+    }
+    Ok(())
+}

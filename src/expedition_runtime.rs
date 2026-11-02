@@ -241,6 +241,38 @@ impl Game {
         self.sync_expedition_now()
     }
 
+    /// Review harness: the walker's look pitch, radians (negative = down).
+    pub fn debug_set_foot_pitch(&mut self, pitch: f32) { self.foot.pitch = pitch; }
+    /// Review harness: where the walker stands, his heading and whether he is on foot.
+    pub fn debug_foot_state(&self) -> (Vec3, f32, f32, bool) {
+        (self.foot.pos, self.foot.yaw, self.foot.pitch, self.mode == Mode::Foot)
+    }
+
+    /// Review harness: every visible mesh slot within 2.5 m of the walker, named where the game
+    /// owns it (local first-person pages, crew figures, helmets, retained bodies, camp people).
+    pub fn debug_visible_figure_slots(&self, r: &Renderer) -> serde_json::Value {
+        let near = r.debug_visible_near(self.foot.pos + Vec3::Y, 2.5);
+        let (fp, witness) = self.first_person.as_ref().map(|f| f.debug_slots()).unwrap_or_default();
+        let s = &self.slots;
+        let name = |i: usize| -> String {
+            if fp.contains(&i) { return "first_person_page".into(); }
+            if i == witness { return "first_person_witness".into(); }
+            for (label, list) in [("lan_crew", s.lan_crew.to_vec()), ("commander_crew", s.commander_crew.to_vec()),
+                ("crew_helmet", s.crew_helmet.to_vec()), ("driver_arms", s.driver_arms.to_vec()),
+                ("couch_dead", s.couch_dead.iter().flatten().copied().collect()),
+                ("couch_bones", s.couch_bones.iter().flatten().copied().collect()),
+                ("couch_gore", s.couch_gore.to_vec()), ("tiger", s.tiger.to_vec())] {
+                if list.contains(&i) { return label.into(); }
+            }
+            if self.camp_people.as_ref().is_some_and(|c| c.slots.contains(&i)) { return "camp_people".into(); }
+            "other".into()
+        };
+        serde_json::json!(near.iter().map(|&i| {
+            let (_, model) = r.debug_mesh_state(i).unwrap();
+            serde_json::json!({"slot": i, "owner": name(i), "origin": model.w_axis.truncate().to_array()})
+        }).collect::<Vec<_>>())
+    }
+
     pub fn expedition_status(&self) -> Option<serde_json::Value> {
         let runtime = self.expedition_runtime.as_ref()?;
         Some(

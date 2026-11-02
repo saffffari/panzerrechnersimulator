@@ -2861,7 +2861,42 @@ impl Backend {
             pass.draw(0..6, self.tracer_range.0..self.tracer_range.0 + self.tracer_range.1);
             work.scene_instanced_draws += 1;
         }
-        if finish_ldr {
+        if finish_ldr && r.look > 0.5 && r.bloom_dp_pipes.is_some() {
+            // The deltaP look (docs/DELTAP_LOOK_20261101.md): deltaP's pyramid bloom in place of the
+            // compact halo and the veil. Prefilter the HDR frame into the half-resolution target,
+            // halve it five times through the glare pyramid, add each level back up with a tent,
+            // then add the sum into the frame before the tonemap. pc.texel is 1/source size.
+            let dp = r.bloom_dp_pipes.as_ref().unwrap();
+            let size = |level: usize| ((r.bw >> (level + 1)).max(1) as f32, (r.bh >> (level + 1)).max(1) as f32);
+            let texel = |w: f32, h: f32| [1.0 / w, 1.0 / h];
+            r.bloom_pass(encoder, "bloom-dp-prefilter", &dp.prefilter, &r.bloom_bind_hdr, &r.bloom_a_view, texel(self.iw as f32, self.ih as f32), [0.0, 0.0], false);
+            r.bloom_pass(encoder, "bloom-dp-down", &dp.down, &r.bloom_bind_a, &r.bloom_levels[0], texel(r.bw as f32, r.bh as f32), [0.0, 0.0], false);
+            for level in 1..r.bloom_levels.len() {
+                let (w, h) = size(level - 1);
+                r.bloom_pass(encoder, "bloom-dp-down", &dp.down, &r.bloom_level_binds[level - 1], &r.bloom_levels[level], texel(w, h), [0.0, 0.0], false);
+            }
+            for level in (1..r.bloom_levels.len()).rev() {
+                let (w, h) = size(level);
+                r.bloom_pass(encoder, "bloom-dp-up", &dp.up, &r.bloom_level_binds[level], &r.bloom_levels[level - 1], texel(w, h), [0.0, 0.0], true);
+            }
+            {
+                let (w, h) = size(0);
+                r.bloom_pass(encoder, "bloom-dp-up", &dp.up, &r.bloom_level_binds[0], &r.bloom_a_view, texel(w, h), [0.0, 0.0], true);
+            }
+            r.bloom_pass(encoder, "bloom-dp-composite", &dp.composite, &r.bloom_bind_a, &r.hdr_view, texel(r.bw as f32, r.bh as f32), [DELTAP_BLOOM, 0.0], true);
+            let passes = 2 * r.bloom_levels.len() as u64 + 2;
+            work.bloom_passes += passes;
+            work.fullscreen_raster_passes += passes + 1;
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("crush"),
+                color_attachments: &[Some(attachment(&r.ldr_view, wgpu::LoadOp::Clear(wgpu::Color::BLACK)))],
+                depth_stencil_attachment: None,
+                timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.render("crush")), occlusion_query_set: None,
+            });
+            pass.set_pipeline(&r.crush_pipe);
+            pass.set_bind_group(0, &r.crush_bind, &[]);
+            pass.draw(0..3, 0..1);
+        } else if finish_ldr {
             work.bloom_passes += 4;
             work.fullscreen_raster_passes += 4;
             let btexel = [1.0 / r.bw as f32, 1.0 / r.bh as f32];

@@ -1142,6 +1142,19 @@ impl Game {
             if new_order {
                 self.crew_solo.driver_react_s = 0.0;
             }
+            // A fit driver given a drive order with the engine off operates the starter himself
+            // (the camp introduction parks the Tiger cold): the same crank the Z key begins, with
+            // its fuel, operability and recommission rules; nothing moves until it catches.
+            if new_order && working && order != Vec2::ZERO && !self.engine_on
+                && self.engine_crank_t <= 0.0 && self.player.alive && self.engine_systems_operable()
+                && self.engine_fuel_available()
+            {
+                self.engine_crank_t = 1.8;
+                if let Some(a) = &self.audio {
+                    a.play_owner_local("engine_start", crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db, 180.0);
+                }
+                self.crew_solo.say("Driver: starting.");
+            }
             if new_order && working && order != Vec2::ZERO {
                 let word = if order.x > 0.0 {
                     "Driver: forward."

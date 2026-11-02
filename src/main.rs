@@ -16870,6 +16870,11 @@ fn main() -> anyhow::Result<()> {
             game::combined_battle_review::run(&prefix, seed, seconds, t34, tiger)
         };
     }
+    if early_args.get(1).is_some_and(|arg| arg == "expedition-lookdown-review") {
+        let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: expedition-lookdown-review <new-prefix>"))?;
+        return expedition_live_review::lookdown(prefix);
+    }
     if early_args.get(1).is_some_and(|arg| arg == "expedition-live-review") {
         let prefix = early_args.get(2).ok_or_else(|| anyhow::anyhow!(
             "usage: expedition-live-review <new-prefix>"))?;

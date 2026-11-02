@@ -81,6 +81,13 @@ const UNGATED_SKY_ENV: &str = "KESSEL_UNGATED_SKY";
 pub const INTERNAL_RES_PRESETS: [(u32, u32); 14] =
     [(320, 180), (320, 240), (480, 270), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1024, 576), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
+/// The deltaP display look (docs/DELTAP_LOOK_20261101.md): `standard`, `deltap` (dithered
+/// colour), `deltap-pico8` (the 32-colour best pair), `deltap-raw` (tonemapped only).
+const LOOK_ENV: &str = "KESSEL_LOOK";
+/// deltaP's pair-distance penalty for the PICO-8 best-pair search (its `--penalty` default).
+const DELTAP_PAIR_PENALTY: f32 = 0.12;
+/// deltaP's bloom strength (`bloom::DEFAULT`): the summed pyramid's share added to the frame.
+pub(crate) const DELTAP_BLOOM: f32 = 0.8;
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
 const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
 const TRANSPORT_QUALITY_ENV: &str = "KESSEL_TRANSPORT_QUALITY";
@@ -438,6 +445,32 @@ fn parse_retro_preset(raw: &str) -> Result<f32, &'static str> {
         "standard" | "default" => Ok(DEFAULT_MASTER_RETRO),
         "strong" | "max" => Ok(1.0),
         _ => Err("allowed presets are clean, light, standard, and strong"),
+    }
+}
+
+fn parse_look(raw: &str) -> Result<f32, &'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "standard" | "off" | "none" => Ok(0.0),
+        "deltap" | "deltap-colour" | "deltap-color" => Ok(1.0),
+        "deltap-pico8" | "deltap-pico-8" | "pico8" => Ok(2.0),
+        "deltap-raw" => Ok(3.0),
+        _ => Err("allowed looks are standard, deltap, deltap-pico8 and deltap-raw"),
+    }
+}
+
+fn configured_look() -> f32 {
+    match std::env::var(LOOK_ENV) {
+        Ok(raw) => match parse_look(&raw) {
+            Ok(value) => {
+                if value > 0.0 { println!("[renderer] look {raw:?} = {value:.0} ({LOOK_ENV})"); }
+                value
+            }
+            Err(reason) => {
+                eprintln!("[renderer] invalid {LOOK_ENV}={raw:?}: {reason}; using standard");
+                0.0
+            }
+        },
+        Err(_) => 0.0,
     }
 }
 
@@ -1040,6 +1073,9 @@ struct CrushUniform {
     dither_right: [f32; 4], // xyz world right, w horizontal tangent of half-FOV
     dither_up: [f32; 4], // xyz world up, w vertical tangent of half-FOV
     dither_forward: [f32; 4],
+    /// The deltaP look (`KESSEL_LOOK`, docs/DELTAP_LOOK_20261101.md): x = mode (0 standard,
+    /// 1 dithered colour, 2 PICO-8 32, 3 tonemapped only), y = best-pair penalty. Appended lane.
+    look: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -2619,6 +2655,8 @@ pub struct Renderer {
     pub shadow_res: u32,
     pub camera: Camera,
     pub master_retro: f32,
+    /// The deltaP display look (`KESSEL_LOOK`): 0 standard, 1..3 the look's modes.
+    pub look: f32,
     pub display_tuning: Option<display_tuning::DisplayTuning>,
     /// User reproduction controls: exposure multiplier, saturation, warmth, gamma.
     pub display_grade: [f32; 4],
@@ -2966,6 +3004,8 @@ pub struct Renderer {
     bloom_levels: Vec<wgpu::TextureView>,
     bloom_level_binds: Vec<wgpu::BindGroup>,
     bloom_glare_bind: Option<wgpu::BindGroup>,
+    /// The deltaP pyramid bloom's pipelines (raster-fed backends; `KESSEL_LOOK`).
+    bloom_dp_pipes: Option<DeltapBloomPipes>,
     bloom_bind_hdr: wgpu::BindGroup, // src = full-res HDR (bright pass)
     bloom_bind_a: wgpu::BindGroup,   // src = bloom_a
     bloom_bind_b: wgpu::BindGroup,   // src = bloom_b
@@ -5563,7 +5603,7 @@ impl Renderer {
         for level in 0..5u32 {
             let (w, h) = ((bw >> (level + 1)).max(1), (bh >> (level + 1)).max(1));
             let view = make_target(device, "bloom-glare-level", w, h, hdr_format(), wgpu::TextureUsages::TEXTURE_BINDING);
-            if level < 4 { bloom_level_binds.push(make_bloom_bind(&view, "bloom-glare-level-bind")); }
+            bloom_level_binds.push(make_bloom_bind(&view, "bloom-glare-level-bind"));
             bloom_levels.push(view);
         }
         let glare_tex = |binding: u32| wgpu::BindGroupLayoutEntry {
@@ -5590,6 +5630,13 @@ impl Renderer {
             push_constant_ranges: &[wgpu::PushConstantRange { stages: wgpu::ShaderStages::FRAGMENT, range: 0..std::mem::size_of::<BloomPush>() as u32 }],
         });
         let bloom_glare_pipe = shader_backend.then(|| bloom_pipe(device, &bloom_shader, &bloom_glare_pl, "fs_glare", None));
+        // The deltaP pyramid bloom (docs/DELTAP_LOOK_20261101.md; raymarch chain under KESSEL_LOOK).
+        let bloom_dp_pipes = shader_backend.then(|| DeltapBloomPipes {
+            prefilter: bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_dp_prefilter", None),
+            down: bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_dp_down", None),
+            up: bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_dp_up", Some(add_blend)),
+            composite: bloom_pipe(device, &bloom_shader, &bloom_pl, "fs_dp_composite", Some(add_blend)),
+        });
 
         // ---------- volumetric smoke ----------
         // binding 0 = scene depth (sampled with textureLoad for occlusion), 1 = SmokeUniform.
@@ -5991,6 +6038,7 @@ impl Renderer {
             shadow_res,
             camera,
             master_retro: configured_master_retro(),
+            look: configured_look(),
             display_tuning: None,
             display_grade: [1.0, 1.0, 0.0, 1.0],
             display_dither_pattern: configured_display_dither(),
@@ -6113,6 +6161,7 @@ impl Renderer {
             bloom_levels,
             bloom_level_binds,
             bloom_glare_bind,
+            bloom_dp_pipes,
             bloom_bind_hdr,
             bloom_bind_a,
             bloom_bind_b,
@@ -6470,6 +6519,12 @@ impl Renderer {
     }
 
     /// Read back a mesh's visibility and model (headless verification of what is drawn).
+    /// Review harness: the visible mesh slots whose model origin lies within `radius` of `point`.
+    pub fn debug_visible_near(&self, point: glam::Vec3, radius: f32) -> Vec<usize> {
+        self.meshes.iter().enumerate()
+            .filter(|(_, m)| m.visible && m.model.w_axis.truncate().distance(point) <= radius)
+            .map(|(i, _)| i).collect()
+    }
     pub fn debug_mesh_state(&self, idx: usize) -> Option<(bool, glam::Mat4)> {
         self.meshes.get(idx).map(|g| (g.visible, g.model))
     }
@@ -8423,6 +8478,7 @@ impl Renderer {
             dither_right: self.camera.right().extend((self.camera.fov_y * 0.5).tan() * self.camera.aspect).to_array(),
             dither_up: self.camera.right().cross(self.camera.forward()).extend((self.camera.fov_y * 0.5).tan()).to_array(),
             dither_forward: self.camera.forward().extend(0.0).to_array(),
+            look: [self.look, DELTAP_PAIR_PENALTY, 0.0, 0.0],
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
@@ -11821,6 +11877,15 @@ fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 
 /// Fullscreen bloom pipeline with a chosen fragment entry point and optional (additive) blend.
 /// Targets the HDR format; a FRAGMENT push-constant range (BloomPush) is supplied by `layout`.
+/// deltaP's pyramid bloom (`stylized_bloom.wgsl` fs_dp_*): prefilter, 13-tap down, tent up
+/// (additive), composite (additive into the HDR frame).
+pub(crate) struct DeltapBloomPipes {
+    pub prefilter: wgpu::RenderPipeline,
+    pub down: wgpu::RenderPipeline,
+    pub up: wgpu::RenderPipeline,
+    pub composite: wgpu::RenderPipeline,
+}
+
 fn bloom_pipe(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
@@ -12297,7 +12362,8 @@ mod atmosphere_tests {
         assert_eq!(ranks.iter().map(|r|(r+0.5)/16.0-0.5).sum::<f32>(),0.0);
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
-        assert_eq!(std::mem::size_of::<CrushUniform>(), 128);
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 144);
+        assert_eq!(std::mem::offset_of!(CrushUniform, look), 128);
         assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
         assert_eq!(std::mem::offset_of!(CrushUniform, concussion), 52);
         assert_eq!(std::mem::offset_of!(CrushUniform, display_grade), 64);
