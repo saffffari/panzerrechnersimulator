@@ -36,7 +36,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;

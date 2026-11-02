@@ -34,6 +34,10 @@ struct Crush {
     // height units, w = the read scale (1 = the lens pass is read texel for texel; more when
     // the lens is small on the screen and the pass could not widen enough). Appended lane.
     loupe: vec4<f32>,
+    // The realism look (mode 6, `KESSEL_LOOK=deltap-real`): x = contrast, the slope in AgX's log
+    // exposure about mid grey (1 = AgX as shipped); y = saturation after the outset (1 = as
+    // shipped); z = dithered steps per channel (8 = deltaP's). Appended lane.
+    real: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
@@ -136,11 +140,23 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
     var v = inset * max(x * 1.3, vec3(1.0e-10));
     v = clamp(log2(v), vec3(min_ev), vec3(max_ev));
     v = (v - min_ev) / (max_ev - min_ev);
+    if (cr.look.x > 5.5) {
+        // The realism look's contrast: a steeper slope through the log-encoded mid grey (0.18 x
+        // the trim), the film-gamma kind of contrast, before the sigmoid keeps its roll-off at both
+        // ends. A reproduction choice: it changes no light.
+        let pivot = (log2(0.18 * 1.3) - min_ev) / (max_ev - min_ev);
+        v = clamp((v - vec3(pivot)) * cr.real.x + vec3(pivot), vec3(0.0), vec3(1.0));
+    }
     let v2 = v * v;
     let v4 = v2 * v2;
     v = 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4 - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v - 0.00232;
     v = outset * clamp(v, vec3(0.0), vec3(1.0));
-    return pow(max(v, vec3(0.0)), vec3(2.2));
+    var out = pow(max(v, vec3(0.0)), vec3(2.2));
+    if (cr.look.x > 5.5) {
+        let luma = dot(out, vec3(0.2126, 0.7152, 0.0722));
+        out = max(mix(vec3(luma), out, cr.real.y), vec3(0.0));
+    }
+    return out;
 }
 
 // The display tonemap: AgX, or the former ACES fit when asked for (KESSEL_TONEMAP=aces).
@@ -346,7 +362,7 @@ fn dp_oklab(c: vec3<f32>) -> vec3<f32> {
 // eighths: 64 fill patterns make each pattern jump smaller than the shading's own noise, so a
 // wall's wandering shade dissolves into grain instead of drawing contours.
 fn dp_dithered_colour(lin: vec3<f32>, th: f32) -> vec3<f32> {
-    let levels = 8.0;
+    let levels = select(8.0, max(cr.real.z, 2.0), cr.look.x > 5.5);
     let c = sqrt(clamp(display_encode(lin), vec3(0.0), vec3(1.0)));
     let q = floor(c * levels + vec3(th)) / levels;
     return clamp(q * q, vec3(0.0), vec3(1.0));
@@ -411,7 +427,7 @@ fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool, smooth_lane: f32) -> vec3<f
 fn dp_crush(lin: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
     let th = dp_threshold(px);
     var code = display_encode(lin);
-    if (cr.look.x < 1.5) { code = dp_dithered_colour(lin, th); }
+    if (cr.look.x < 1.5 || cr.look.x > 5.5) { code = dp_dithered_colour(lin, th); }
     else if (cr.look.x < 2.5) { code = dp_pico8(lin, th); }
     else if (cr.look.x > 4.5) {
         // The tinted look: inside the hull (the buttoned-up view's eye_range_strength) the pastel
