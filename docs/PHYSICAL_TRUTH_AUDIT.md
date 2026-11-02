@@ -413,6 +413,25 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   seconds a petrol fire takes; nothing here is saved (a reload loses a running leak, not the fuel
   it took). `fx-review` part `breach` is the evidence; tests cover Torricelli's rate, a hole
   above the liquid, the drain and the pool's growth.
+- Hot metal cools on its own thermal time (2026-11-02; Alex, playing: "glowing hot metal cools
+  way too rapidly, it should glow for a good 10-20 sec slowly decaying"). The thin-ring rim
+  estimate (`rim_heat`, every strike the lattice does not solve: enemies, ricochets, shatters)
+  heated a 1-6 mm skin with 1.5 % of the lost plate work and cooled it on an authored 2.5 s; the
+  heated zone is now a quarter calibre of worked steel (4-30 mm), 12 % of the lost work (the
+  share calibrated on the lattice's solved rims, 1,350-1,400 K for an 88 on 45 mm, capped at the
+  solidus), and it cools by conduction into the plate on depth²/α with steel's diffusivity
+  1.2e-5 m²/s: 1 s for a bullet's mark, 10 s for a 45 mm hole, 36 s for an 88's. The scar
+  renderer's empirical rims take the same time from the wound's calibre; the lattice's own
+  cooling curves are unchanged. Every authored chip (the burst body's steel, the fragment
+  shower) now leaves the plate at 1,250 K and cools as a lumped body by the solved chips' law
+  (radiation and convection over its mass and surface): a 5 mm chip glows for some 13 s, a
+  1.4 mm splinter a second, instead of fading on an authored life; such chips stay at least 20 s
+  so the cooling is seen, then retire as before (only the solved steel persists). Named: the
+  1,250 K leaving temperature and the 12 % share are estimates bounded by the lattice.
+- The chips' aggregate light follows the Planck visible radiance of their temperature band
+  (2026-11-02): 2.5 % at 1,100 K, 1.3e-4 at 900 K, 4e-7 at 750 K of the 1,300 K band's, so the
+  pages' display scale (lifted and drawn hotter for legibility) no longer lights the cabin's dust
+  orange from a floor of resting dull-red chips.
 - A penetration's trapped interior smoke is a third as dense as its exterior vent (0.55 against
   1.6) and clears in six seconds instead of ten (2026-11-02): at the vent's density the six
   puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten

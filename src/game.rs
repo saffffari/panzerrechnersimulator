@@ -3965,7 +3965,7 @@ fn generate_penetration_fragments(
         // exact sampled diameter remains shared by mass, collision and rendering.
         let size_t = hash01(s ^ 0xE1).powf(2.4);
         let size = profile.min_size_m + (profile.max_size_m - profile.min_size_m) * size_t;
-        let life = profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19));
+        let life = (profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19))).max(AUTHORED_FRAGMENT_LIFE_MIN_S);
         let entered_compartment = fragment_inside_compartment(frame, entry, size * 0.52);
         fragments.push(HotFragment {
             // Ten low bits are enough for the 768-slot population, leaving a stable compound ID
@@ -3993,7 +3993,7 @@ fn generate_penetration_fragments(
             life,
             bounces: 0,
             seed: s,
-            temp_k: 0.0,
+            temp_k: AUTHORED_FRAGMENT_KELVIN,
             lodged: false,
             embed_m: 0.0,
         });
@@ -4263,6 +4263,19 @@ fn hot_fragment_bounce_budget(seed: u32) -> u8 {
 /// orange, red-orange, dull red, and cold steel below 750 K (named bands of the incandescence
 /// colours the pages draw; visible glow begins near the Draper point, 798 K).
 const FEA_HEAT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1300.0, 1100.0, 900.0, 750.0, 0.0];
+/// The light the chips give the compartment follows the Planck visible radiance of their band
+/// (the 550 nm band at the band's lower temperature against 1,300 K: 2.5 % at 1,100 K, 1.3e-4
+/// at 900 K, 4e-7 at 750 K), not the page's display scale: a cabin of resting dull-red chips lit
+/// its own dust orange when the pages were lifted and drawn hotter (2026-11-02).
+const HOT_FRAGMENT_LIGHT_SHARE: [f32; N_HOT_FRAGMENT_BATCHES] = [1.0, 0.025, 1.3e-4, 4.0e-7, 0.0];
+/// An authored (unsolved) chip leaves the plate at this temperature (adiabatic shear and
+/// friction heat; the lattice's solved clusters span 500-1,400 K) and cools as a lumped body
+/// like a solved one (`fea_damage::fragments::cool`), so its glow holds for the seconds to tens
+/// of seconds its mass over its surface gives (a 5 mm chip about 13 s to the Draper point, a
+/// 1.4 mm splinter a second) instead of fading on an authored life (the owner, 2026-11-02).
+const AUTHORED_FRAGMENT_KELVIN: f32 = 1250.0;
+/// An authored chip stays at least this long so its cooling can be seen.
+const AUTHORED_FRAGMENT_LIFE_MIN_S: f32 = 20.0;
 /// The heat pages are drawn this much hotter than their band (white-yellow through red instead
 /// of orange through dull red): the owner's display choice, 2026-11-02; a named approximation.
 const HOT_PAGE_DRAWN_OVER_BAND: f32 = 1.7;
@@ -4325,7 +4338,7 @@ fn hot_fragment_aggregate_light(
     }) {
         let stage = hot_fragment_heat_stage(fragment);
         let area_m2 = 6.0 * fragment.size.max(0.0).powi(2);
-        let emission = radiance[stage] * (area_m2 / 4.0);
+        let emission = radiance[stage] * (area_m2 / 4.0) * HOT_FRAGMENT_LIGHT_SHARE[stage];
         let weight = emission.max_element();
         if weight <= 0.0 {
             continue;
@@ -37809,8 +37822,10 @@ mod tests {
             };
             assert_eq!(hot_fragment_heat_stage(&chip), stage);
             let light = hot_fragment_aggregate_light(&[chip], chip.frame, Mat4::IDENTITY).unwrap();
+            // The source's power is the page's visible emission over the Lambertian face area,
+            // scaled by the band's Planck visible share (`HOT_FRAGMENT_LIGHT_SHARE`).
             let expected = linear * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
-                * (unit_area * chip.size.powi(2) / 4.0);
+                * (unit_area * chip.size.powi(2) / 4.0) * HOT_FRAGMENT_LIGHT_SHARE[stage];
             let actual = light.color * light.radiant_intensity;
             assert!((actual - expected).abs().max_element() < expected.max_element() * 2.0e-6,
                 "stage {stage}: source {actual:?} does not match visible face emission {expected:?}");

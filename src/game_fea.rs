@@ -728,7 +728,7 @@ impl Game {
             if event.shell.kind == crate::ballistics::ShellKind::Heat { 0.0 } else { event.shell.filler_g });
         let penetration_seed = seed ^ penetration_id as u32 ^ (penetration_id >> 32) as u32 ^ 0x5A11_5A11;
         let mut out: Vec<HotFragment> = Vec::new();
-        let make = |index: usize, pos: Vec3, vel: Vec3, size: f32, spin: Vec3, temp_k: f32| {
+        let make = |index: usize, pos: Vec3, vel: Vec3, size: f32, spin: Vec3, temp_k: f32, solved: bool| {
             let s = penetration_seed.wrapping_add((index as u32).wrapping_mul(2_246_822_519));
             HotFragment {
                 id: (penetration_id << 10) | index as u64,
@@ -748,7 +748,7 @@ impl Game {
                 age: 0.0,
                 // A body the lattice solved is steel that stays (it cools to the cold page); the
                 // burst body keeps the authored life of its heat pages.
-                life: if temp_k > 0.0 { f32::MAX } else { profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19)) },
+                life: if solved { f32::MAX } else { (profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19))).max(AUTHORED_FRAGMENT_LIFE_MIN_S) },
                 bounces: 0,
                 seed: s,
                 temp_k,
@@ -773,7 +773,7 @@ impl Game {
             }
             let index = out.len();
             out.push(make(index, to_frame(cluster.centre), dir_to_frame(cluster.velocity), cluster.size_m,
-                dir_to_frame(cluster.angular_velocity), cluster.temperature_k.max(crate::armor_damage::AMBIENT_K + 1.0)));
+                dir_to_frame(cluster.angular_velocity), cluster.temperature_k.max(crate::armor_damage::AMBIENT_K + 1.0), true));
         }
         if solve.chain.burst {
             const STEEL: f32 = 7850.0;
@@ -803,8 +803,9 @@ impl Game {
                     let speed = profile.speed_min + (profile.speed_max - profile.speed_min) * hash01(s ^ 0xD3).sqrt();
                     let spin = Vec3::new(hash01(s ^ 0x44) - 0.5, hash01(s ^ 0x55) - 0.5, hash01(s ^ 0x66) - 0.5) * 40.0;
                     let index = out.len();
-                    // The burst body's temperature is not solved: authored heat pages (temp 0).
-                    out.push(make(index, burst, dir * speed, base * k, spin, 0.0));
+                    // The burst body's temperature is not solved: it leaves at the authored
+                    // chip temperature and cools as a lumped body like the rest.
+                    out.push(make(index, burst, dir * speed, base * k, spin, AUTHORED_FRAGMENT_KELVIN, false));
                 }
             }
         }
@@ -1252,7 +1253,7 @@ pub(super) fn next_fragment_slot(pool: &[HotFragment], cursor: usize, carried: O
     for k in 0..n {
         let slot = (start + k) % n;
         let f = &pool[slot];
-        let persistent = f.active && f.settled && f.temp_k > 0.0;
+        let persistent = f.active && f.settled && f.life == f32::MAX;
         if !persistent && Some(slot) != carried {
             return slot;
         }
