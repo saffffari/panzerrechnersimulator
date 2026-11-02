@@ -34,8 +34,11 @@ not touched. None of them were built.
 
 ## Keep — the shipped look
 
-**Frame.** Raymarch backend. deltaP tinted look at 1024x576, an exact 5x on the 5K panel. AgX
-tonemap. The deltaP pyramid bloom. Fixed Bayer8 on the internal texel. Eye adaptation with the
+**Frame.** Raymarch backend. **Superseded the same evening:** after comparing the FEA film's
+turret-ring clip (standard display, 1280x720) with deltaP refilms of it, the owner chose the
+standard display's colour ("better than our stylized effects on the color as of now"). The launcher
+default is now the standard look at 1280x720 (4x on the panel) with the Canyon document's dither
+profile; deltaP stays selectable with `--look`. AgX tonemap. Eye adaptation with the
 rod channel capped at the display key. Eyepiece lens, optic masks, the etched TZF reticle,
 concussion defocus, the one-pixel hover outline.
 

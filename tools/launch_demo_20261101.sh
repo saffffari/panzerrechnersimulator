@@ -11,10 +11,10 @@
 #                                                 700 m short of the site, engine running (a disclosed playtest fixture)
 #   tools/launch_demo_20261101.sh --canyon        straight into a fresh Canyon v2 winter run (missions + living crew)
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
-#   tools/launch_demo_20261101.sh --res 640x360   render grid (default 480x270; 640x360 is an exact 8x on the 5K panel)
-#   tools/launch_demo_20261101.sh --look standard the old display look at 480x270; the default is the deltaP look
-#                                                 (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered colour, pyramid bloom;
-#                                                 the owner's pick, 2026-11-01); --look deltap-pico8 for the 32-colour frame
+#   tools/launch_demo_20261101.sh --res 640x360   render grid (default 1280x720, an exact 4x on the 5K panel)
+#   tools/launch_demo_20261101.sh --look deltap-tinted  the deltaP look (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered
+#                                                 colour, pyramid bloom); the default is the standard display at 1280x720,
+#                                                 the owner's pick of 2026-11-02 over deltaP's colour
 #   tools/launch_demo_20261101.sh --cabin-look pastel  the pastel palette itself inside the hull under the tinted look
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --canyon --t34s 5 --no-guns
@@ -36,7 +36,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+MODE=menu RES=1280x720 WINDOWED=0 PLATOON=0 LOOK= CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -45,7 +45,7 @@ while (( $# )); do
         --windowed) WINDOWED=1 ;;
         --platoon) PLATOON=1 ;;
         --res) RES=$2; RES_SET=1; shift ;;
-        --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
+        --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;   # standard (default) | deltap-tinted | deltap | pastel ...
         --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
         --seed) SEED=$2; shift ;;
         --t34s) T34S=$2; MODE=canyon; shift ;;
@@ -63,6 +63,9 @@ while (( $# )); do
     shift
 done
 if [[ -n "$LOOK" && $RES_SET == 0 ]]; then RES=1024x576; fi   # deltaP's grid: 5x on the 5120x2880 panel
+# The standard display at 1280x720 (4x on the panel) with the Canyon v2 document's own display profile
+# (ordered dither 0.55, LDR dither 0.65): the owner's pick of 2 November 2026 over deltaP's colour, on
+# the FEA film's turret-ring clip ("better than our stylized effects on the color as of now").
 cd "$ROOT"
 [[ -x "$BINARY" ]] || { printf 'release binary missing: %s (cargo build --release --locked)\n' "$BINARY" >&2; exit 1; }
 for f in assets/tanks/tiger/baked/tiger_hull.glb assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json \
@@ -75,10 +78,10 @@ if (( CHECK )); then exit 0; fi
 
 mkdir -p "$RUNTIME"/{state,cache,config,demo-state} captures
 CONFIG="$RUNTIME/demo-state/graphics${LOOK:+.$LOOK}.v1.json"
-python3 - "$CONFIG" "$RES" "$WINDOWED" <<'PY'
+python3 - "$CONFIG" "$RES" "$WINDOWED" "${LOOK:-standard}" <<'PY'
 import json, sys
 from pathlib import Path
-path, res, windowed = Path(sys.argv[1]), sys.argv[2], sys.argv[3] == '1'
+path, res, windowed, look = Path(sys.argv[1]), sys.argv[2], sys.argv[3] == '1', sys.argv[4]
 w, h = (int(v) for v in res.split('x'))
 if path.exists():
     doc = json.loads(path.read_text())
@@ -92,6 +95,8 @@ else:
            'display': {'width': w, 'height': h, 'palette_levels': 31.0, 'ordered_dither': 1.0,
                        'retro_strength': 1.0, 'ldr_dither': 1.0,
                        'ambient_white_balance': False, 'ambient_white_balance_strength': 1.0}}
+if look == 'standard':
+    doc['display'].update(palette_levels=31.0, ordered_dither=0.55, ldr_dither=0.65, retro_strength=1.0)
 path.write_text(json.dumps(doc, indent=2) + '\n')
 PY
 
