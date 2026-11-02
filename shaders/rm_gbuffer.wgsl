@@ -402,6 +402,8 @@ fn fs(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 }
 
 fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
+    // A sectioned vehicle (film/review view, scars.w bit 24) is opened for the camera only.
+    if (((pc.scars.w >> 24u) & 1u) != 0u && rm_beyond_section(in.relative + fr.cam_pos.xyz)) { discard; }
     let raw = textureSample(albedo_tex, samp, in.uv);
     let kind = pc.params.w;
     if (kind > 3.5 && kind < 4.5 && raw.a < 0.5) { discard; }

@@ -129,6 +129,11 @@ struct FlyingFragment {
 /// prefixed with this checkout's folder name as the capture gallery expects; otherwise as given.
 pub(crate) fn shared_capture_prefix(prefix: &str) -> String {
     let Ok(dir) = std::env::var("KESSEL_CAPTURES_DIR") else { return prefix.to_string() };
+    // `capture_target` (main.rs) already routes bare and `captures/...` names into the shared
+    // folder with the checkout's name in front; such a prefix stands as it is.
+    if std::path::Path::new(prefix).starts_with(&dir) {
+        return prefix.to_string();
+    }
     let stem = std::path::Path::new(prefix).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| "fea".into());
     let worktree = std::env::current_dir().ok().and_then(|d| d.file_name().map(|f| f.to_string_lossy().to_string()))
         .unwrap_or_else(|| "checkout".into());

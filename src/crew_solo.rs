@@ -794,6 +794,7 @@ impl Game {
             return;
         }
         let me = self.solo_identity();
+        let models = self.fire_surface_models();
         for role in CrewRole::ALL {
             if !singleplayer_crew::role_alive(&self.crew, role) {
                 continue;
@@ -801,6 +802,10 @@ impl Game {
             if self.couch_ragdolls.iter().any(|b|b.casualty.peer_id==self.singleplayer_casualty_identity(role).peer_id&&b.world_space) {continue;}
             let aboard = Some(role) != me || self.mode == Mode::Tank;
             if !aboard {
+                continue;
+            }
+            // Only a burning surface with a clear line to the man reaches him (`burning_surface_sees`).
+            if !self.cabin_fire.burning_surface_sees(self.crew_solo_man_point(role), &models) {
                 continue;
             }
             let post = if Some(role) == me {
@@ -2725,7 +2730,7 @@ impl Game {
     /// Walk the interior body to a floor spot in small steps through the ordinary floor/breech
     /// clamp, routing round the breech by the side corridor when the straight line is blocked.
     /// The result is a reachable standing spot, never a teleport through the gun.
-    fn debug_walk_to(&mut self, target: Vec3) {
+    pub(super) fn debug_walk_to(&mut self, target: Vec3) {
         let step_toward = |from: Vec3, to: Vec3| -> Vec3 {
             let mut at = from;
             for _ in 0..80 {

@@ -465,3 +465,51 @@ lists every named approximation of this model.
   face fell outside the cabin proxy boxes (now the CAD firewall); an embedded chip could not be
   freed (now the toolbox job); spall at the loader's station killed the player the review had
   put there (the strike is now taken from the driver's seat).
+
+### Film, and fragments that meet the real interior (landed, 2026-11-02 evening)
+
+- **`fea-film PREFIX`** (`game_fea_film.rs`, GPU, raymarch): video clips of the model in play at
+  1920×1080 and 30 fps. Real-time stretches carry the game's own sound, recorded offline on the
+  simulation clock; slow motion is one 1/480 s fragment step per frame (1/16 speed); time-lapse
+  runs the game faster. `KESSEL_FEA_FILM_CLIPS` picks clips. Twelve clips: the lodged round, the
+  turret rear's chips, the loader's hands, the sledge, a hole cooling, a crew impact, three
+  exterior impacts, the 152 mm burst with every lid shut, the engine bay in section, 85 mm hits on
+  the side plate at 0/30/50/65 degrees, plunging hits on the turret ring, and seven calibres from
+  45 to 152 mm in a row on one side plate (the harness's god flag on for that one: every round,
+  lattice and scar real, no consequence). Strikes after the first eight each take a fresh Tiger
+  (the ordinary match reset). A camera that moves renders sixteen more frames of its pose before a
+  frame is kept. A receipt beside the clips holds each strike's chain, crew and fire outcome.
+  `KESSEL_FEA_FILM_PROBE=1` fires candidate engine-bay lines unfilmed and prints what followed.
+- **Aim points are bare plate.** The owner saw a 76 mm round pass through a spare track shoe on
+  the turret side: the seven shoes are workshop parts outside the shell's armour contact, with no
+  layered shoe-plus-plate resistance (a recorded debt). Ray-casting the drawn meshes then found a
+  9 cm fitting outside both upper hull sides at 1.55 m from z −0.4 to 2.0 (the stowed tow cable
+  or its brackets) that the shell's contact does take, as the 80 mm plate. The film's side shots
+  are aimed at 1.75 m, where the side plate is the first surface; neither fitting is modelled as
+  its own layer yet.
+- **Fragments meet the vehicle's own surfaces.** The interior fragment world was a box for the
+  hull's front compartment, a cylinder for the turret and a block for the breech, with free flight
+  outside them, and modules were spheres round authored stations. A probe on fresh, loaded Tigers
+  showed what that did: every filled round that perforated into the engine bay (6 of 6, 85 to
+  152 mm) sent its burst through the firewall into the fighting compartment's racks, a
+  catastrophic detonation that killed the crew. Now every body is swept against the posed source
+  triangles (one segment per 0.25 m of flight) and bounces, embeds or rests on the surface it
+  meets, with that surface's normal; modules are met where a body's path enters their CAD-measured
+  component; cartridges where it crosses their boxes. The same strikes now open the fuel tank or
+  the engine behind the firewall; the crew live. A fragment cannot perforate any surface (named:
+  the firewall and tank walls stop it as armour would). The turret rear's chips now embed in the
+  first surface behind the plate (24 of 25, about 5 mm deep, 1.64–1.71 m from the loader's eye)
+  instead of bouncing round a cylinder; the review harness now uses the repair jobs' own 1.65 m
+  reach.
+- **The fire catches where the fuel was opened.** A fuel or engine breach lit its fire at one
+  standing spot in the turret basket; it now seeds the first burning patch on the surface the
+  round or fragment opened (logged with its point), and a man's burn exposure needs a burning
+  surface with a clear line to his body. A fire behind the firewall burns there and reaches
+  neither the crew nor the racks until the surfaces give it a line.
+- **Section view for film** (`Renderer::set_film_section`): the camera alone does not see the
+  part of the Tiger beyond a plane (the G-buffer, its panes and near-wound patches); shadows, ray
+  queries and the simulation keep the whole closed tank, so the cut shows the tank's own light.
+  In daylight that is a black hole beside sunlit snow; the engine-bay clip is therefore filmed at
+  18:30 (after dusk at Stalingrad) with the cabin lamps on and the exposure held at five times the
+  eye's metered value on the lamps. Every frame says it is a camera-only section; a test pins that
+  only the film harness opens one.

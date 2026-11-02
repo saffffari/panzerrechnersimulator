@@ -248,6 +248,11 @@ impl FeaRuntime {
     }
 }
 
+/// A breach's fire is sought from this far before the contact (the CAD envelope's face can sit
+/// just inside the drawn part) to this far past it along the contact's own path.
+const BREACH_SEED_BACK_M: f32 = 0.05;
+const BREACH_SEED_REACH_M: f32 = 0.75;
+
 /// The module a component system belongs to, if the game has one for it.
 pub(super) fn module_for_system(system: System) -> Option<ModuleKind> {
     match system {
@@ -387,7 +392,7 @@ pub(super) fn lattice_outcome(solver: &mut lattice::Lattice, origin_hull: Vec3, 
 
 impl Game {
     /// Turret yaw and gun elevation as the component envelopes need them.
-    fn fea_articulation(&self) -> components::Articulation {
+    pub(super) fn fea_articulation(&self) -> components::Articulation {
         let p = &self.player;
         components::Articulation {
             hull_to_turret: (Mat4::from_translation(p.parts.turret_pivot) * Mat4::from_rotation_y(p.turret_yaw)).inverse(),
@@ -637,6 +642,28 @@ impl Game {
 
     pub(super) fn fea_crew_openings(&self, hole_area_m2: f32) -> Vec<compartment::Opening> {
         crew_openings(self.roof_hatches.phase, self.hatch_t, hole_area_m2)
+    }
+
+    /// Light the surface fire where a penetration opened the fuel or the engine: the first such
+    /// contact (the round's own crossing or a fragment's, in the frame `parent` maps to world),
+    /// swept on along its own velocity to the first source surface it reaches. Returns that
+    /// point, hull frame. None leaves the fire to `update_fire`'s standing first spot.
+    pub(super) fn fea_seed_fire_at_breach(&mut self, parent: Mat4, contacts: &[FragmentDamageContact],
+        strength: f32) -> Option<Vec3> {
+        let contact = contacts.iter().find(|c| matches!(c.target,
+            FragmentDamageTarget::Module(ModuleKind::Fuel | ModuleKind::Engine)))?;
+        let dir = contact.local_velocity.normalize_or_zero();
+        if dir == Vec3::ZERO {
+            return None;
+        }
+        let models = self.fire_surface_models();
+        let from = parent.transform_point3(contact.local_point - dir * BREACH_SEED_BACK_M);
+        let to = parent.transform_point3(contact.local_point + dir * BREACH_SEED_REACH_M);
+        let hit = self.cabin_fire.sweep(from, to, &models)?;
+        if !self.cabin_fire.seed_from_segment(from, to, &models, strength) {
+            return None;
+        }
+        Some(self.player.hull_model().inverse().transform_point3(models[hit.frame].transform_point3(hit.point)))
     }
 
     /// A filled round burst at the struck plate's back face. If that point is in the crew
@@ -1178,9 +1205,19 @@ impl Game {
 
     /// The chip is free of the steel: it rests loose where it was, for the hand to take.
     pub(super) fn fea_free_fragment(&mut self, slot: usize) {
+        let Some(frame) = self.hot_fragments.get(slot).map(|f| f.frame) else { return };
+        let eye = blood_parent_model(&self.player, frame).inverse().transform_point3(self.station_eye(self.station));
         if let Some(f) = self.hot_fragments.get_mut(slot) {
+            // The bar draws it out toward the man working it, clear of the face it was in (named:
+            // the extraction direction), and it falls from there under the ordinary collision.
+            let out = (eye - f.pos).normalize_or_zero();
+            f.pos += out * (f.embed_m + f.size);
+            f.prev_pos = f.pos;
             f.lodged = false;
             f.embed_m = 0.0;
+            f.settled = false;
+            f.vel = Vec3::ZERO;
+            f.spin = Vec3::ZERO;
             println!("[fea] a {:.0} g steel fragment pried out of the steel", fragments::cube_mass(f.size) * 1000.0);
         }
     }

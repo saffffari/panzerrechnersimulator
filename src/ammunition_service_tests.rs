@@ -54,12 +54,12 @@ fn failed_rack_does_not_shield_actual_live_cartridges_or_duplicate_detonation() 
         let round = live_round();
         let chip = crossing_fragment();
         let fragments = [chip, HotFragment { id: 92, ..chip }];
-        // The obsolete aggregate centre is deliberately far away: the real cartridge owns contact.
+        // No component stands in the way: the real cartridge owns contact.
         let (result, casualties, contacts) = resolve_fragment_damage(
             &fragments,
             None,
             &[],
-            &[(ModuleKind::AmmoRack, Vec3::splat(50.0))],
+            &FragmentWorld::bare(),
             &[round],
             &mut modules,
         );
@@ -114,7 +114,7 @@ fn failed_rack_without_a_crossed_live_round_cannot_manufacture_ammunition_blast(
             &[chip],
             None,
             &[],
-            &[(ModuleKind::AmmoRack, round.center)],
+            &FragmentWorld::bare(),
             &rounds,
             &mut modules,
         );

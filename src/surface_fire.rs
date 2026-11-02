@@ -27,6 +27,8 @@ const SURFACE_LIFT: f32 = 0.004;
 const FIREBREAK_COVERAGE: f32 = 0.25;
 const AMMO_SCAN_INTERVAL: f32 = 0.10;
 const AMMO_VISIBILITY_BUDGET: usize = 64;
+/// How far a burning patch's heat reaches a cartridge or a man in the cabin (authored range).
+const FIRE_EXPOSURE_RANGE_M: f32 = 2.5;
 const BIN: f32 = 0.20;
 const COATING_BIN: f32 = 0.125;
 const PATCH_RADIUS: f32 = 0.12;
@@ -494,6 +496,15 @@ impl SourceContacts<'_> {
 
     pub fn sweep_batch(&self, paths: &[[Vec3; 2]]) -> Vec<Option<Contact>> {
         paths.iter().map(|p| self.source.sweep_inverse(p[0], p[1], &self.inverse)).collect()
+    }
+    /// The first source surface on one world segment (`CabinFire::sweep` with this batch's
+    /// inverses): a hot fragment's flight between tests.
+    pub fn sweep(&self, from: Vec3, to: Vec3) -> Option<Contact> {
+        self.source.sweep_inverse(from, to, &self.inverse)
+    }
+    /// Source frame `frame`'s pose in this batch (a contact's point and normal are in it).
+    pub fn model(&self, frame: usize) -> Mat4 {
+        self.models[frame]
     }
     pub fn supports_batch(&self, frame: usize, paths: &[[Vec3; 2]]) -> Vec<bool> {
         paths.iter().map(|p| {
@@ -997,6 +1008,16 @@ impl CabinFire {
             }
         })
     }
+    /// Whether a burning patch within the cabin exposure range has a clear source line to `point`
+    /// (world): the ammunition's visibility rule (`scan_ammunition`) for a man's body. A fire
+    /// behind the firewall does not reach a crewman in front of it.
+    pub fn burning_surface_sees(&self, point: Vec3, models: &[Mat4; FRAMES]) -> bool {
+        let inverse = models.map(|m| m.inverse());
+        (0..MAX_PATCHES)
+            .filter_map(|k| self.patch_surface(k, models))
+            .filter(|s| s.intensity > 0.0 && s.position.distance_squared(point) <= FIRE_EXPOSURE_RANGE_M * FIRE_EXPOSURE_RANGE_M)
+            .any(|s| self.sweep_inverse(s.position, point, &inverse).is_none())
+    }
     pub fn patch_world(&self, k: usize, models: &[Mat4; FRAMES]) -> Option<(Vec3, f32)> {
         self.patch_surface(k, models)
             .map(|surface| (surface.position, surface.intensity))
@@ -1252,7 +1273,7 @@ impl CabinFire {
                 }
                 let distance2 = surface.position.distance_squared(*round);
                 // Finite cabin exposure range; strong nearby visible fire is dangerous in seconds.
-                if distance2 <= 2.5 * 2.5 {
+                if distance2 <= FIRE_EXPOSURE_RANGE_M * FIRE_EXPOSURE_RANGE_M {
                     let exposure = (surface.intensity * 1.35 / (1.0 + distance2 * 2.0)).min(1.4);
                     candidates.push((exposure, index, surface.position));
                 }
