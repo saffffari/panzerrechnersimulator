@@ -13390,6 +13390,8 @@ impl WindowState {
         let winter_combat = self.campaign.is_none()
             && self.play_mode.is_some_and(winter_combat_playtest);
         let canyon_course = self.campaign.is_none() && self.play_mode == Some(PlayMode::Canyon);
+        // A course with the expedition camp and half-track (`canyon_course.camp`).
+        let course_camp = canyon_course && canyon::selected_course_wants_camp();
         let campaign_start = if !winter_combat
             && self.play_mode.is_some_and(playtest_mode::uses_campaign) {
             match self
@@ -13409,7 +13411,7 @@ impl WindowState {
         };
         let build = if let Some(start) = campaign_start.as_ref() {
             Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
-        } else if self.play_mode == Some(PlayMode::Expedition) {
+        } else if self.play_mode == Some(PlayMode::Expedition) || course_camp {
             Game::build_expedition_act(&self.device, &self.queue, night, &map)
         } else if winter_combat || canyon_course || self.play_mode == Some(PlayMode::Expedition) {
             Game::build_playtest_act(&self.device, &self.queue, night, &map)
@@ -13426,6 +13428,18 @@ impl WindowState {
                         eprintln!("[canyon] cannot field the course: {error:#}");
                         return false;
                     }
+                }
+                if course_camp {
+                    let seed = std::env::var("KESSEL_SEED").ok()
+                        .and_then(|value| value.parse::<u64>().ok()).unwrap_or(1944);
+                    let enabled = g.expedition_initial_camp_position()
+                        .and_then(|position| g.enable_expedition(seed, position))
+                        .and_then(|()| g.begin_expedition_at_camp(&mut r));
+                    if let Err(error) = enabled {
+                        eprintln!("[canyon] cannot set up the course's camp: {error:#}");
+                        return false;
+                    }
+                    println!("[canyon] the course's camp and half-track are installed; the commander starts at the camp");
                 }
                 if let Some(start) = campaign_start.as_ref() {
                     if let Err(error) = g.configure_campaign(&start, &mut r) {

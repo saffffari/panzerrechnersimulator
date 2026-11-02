@@ -115,6 +115,12 @@ pub enum Completion {
     DestroyNear { count: u32, radius_m: f32, guns: bool },
     /// `seconds` accumulated inside the radius (leaving pauses the clock).
     Hold { seconds: f32 },
+    /// `seconds` accumulated inside the radius while no living enemy tank is within
+    /// `contest_radius_m` of the place: a contested position is not taken (an enemy inside the
+    /// contest radius pauses the clock; leaving the radius pauses it too).
+    Capture { seconds: f32, contest_radius_m: f32 },
+    /// Every enemy tank fielded so far is dead, and at least one was fielded.
+    DestroyAll,
     /// Alive `seconds` after the beat opened.
     Survive { seconds: f32 },
     /// On foot inside the radius, then mounted again.
@@ -330,6 +336,11 @@ fn beat(value: &serde_json::Value, k: usize) -> anyhow::Result<Beat> {
             guns: c["guns"].as_bool().unwrap_or(false),
         },
         "hold" => Completion::Hold { seconds: num(&c["seconds"], &format!("{what}.complete.seconds"))? },
+        "capture" => Completion::Capture {
+            seconds: num(&c["seconds"], &format!("{what}.complete.seconds"))?,
+            contest_radius_m: num_or(&c["contest_radius_m"], "contest_radius_m", 150.0)?,
+        },
+        "destroy_all" => Completion::DestroyAll,
         "survive" => Completion::Survive { seconds: num(&c["seconds"], &format!("{what}.complete.seconds"))? },
         "recover" => Completion::Recover,
         "escort" => Completion::Escort,
@@ -528,6 +539,8 @@ pub struct Observation {
     pub view_forward: Vec2,
     pub route_fraction: f32,
     pub dead_tanks: Vec<Vec2>,
+    /// Living enemy tanks fielded in the world.
+    pub live_tanks: Vec<Vec2>,
     pub silenced_guns: Vec<Vec2>,
     pub live_allies: Vec<Vec2>,
     pub allies_total: usize,
@@ -778,6 +791,12 @@ impl MissionState {
                 if inside { run.dwell_s += dt; }
                 run.dwell_s >= *seconds
             }
+            Completion::Capture { seconds, contest_radius_m } => {
+                let contested = obs.live_tanks.iter().any(|p| p.distance(run.at) <= *contest_radius_m);
+                if inside && !contested { run.dwell_s += dt; }
+                run.dwell_s >= *seconds
+            }
+            Completion::DestroyAll => obs.live_tanks.is_empty() && !obs.dead_tanks.is_empty(),
             Completion::Survive { seconds } => obs.alive && self.elapsed_s - run.started_s >= *seconds,
             Completion::Recover => {
                 if inside && obs.on_foot { run.recovered_on_foot = true; }
@@ -1238,6 +1257,37 @@ mod tests {
         assert!(s.order_up(), "a driver already rolling still sees it");
         s.step(0.1, &o);
         assert!(!s.order_up());
+    }
+
+    fn bridge_sheet() -> serde_json::Value {
+        serde_json::json!({
+            "schema": SCHEMA, "version": 1, "id": "b", "title": "Bridge", "act_id": 1,
+            "callsign": "Kiebitz", "net": "Adler", "order": ["Take the bridge and hold it."],
+            "beats": [
+                {"id": "take", "title": "Take the bridge", "goal": "hold", "at": {"x": 0.0, "z": 0.0}, "radius_m": 40.0,
+                 "complete": {"kind": "capture", "seconds": 2.0, "contest_radius_m": 150.0}},
+                {"id": "all", "title": "Destroy them", "goal": "destroy", "at": {"x": 0.0, "z": 0.0},
+                 "complete": {"kind": "destroy_all"}}
+            ]
+        })
+    }
+
+    #[test]
+    fn a_contested_bridge_is_not_taken_and_the_mission_ends_when_every_tank_is_dead() {
+        let mut s = MissionState::new(parse(&bridge_sheet(), Path::new("b.json")).unwrap(), &resolve).unwrap();
+        let mut o = obs(Vec2::ZERO, 0.5);
+        o.live_tanks = vec![Vec2::new(100.0, 0.0)];
+        for _ in 0..50 { s.step(0.1, &o); }
+        assert_eq!(s.beats[0].status, BeatStatus::Active, "a T-34 100 m off contests the bridge");
+        o.live_tanks = vec![Vec2::new(400.0, 0.0)];
+        for _ in 0..25 { s.step(0.1, &o); }
+        assert_eq!(s.beats[0].status, BeatStatus::Done, "uncontested for 2 s: taken");
+        s.step(0.1, &o);
+        assert!(!s.finished, "a living tank anywhere keeps the last beat open");
+        o.live_tanks.clear();
+        o.dead_tanks = vec![Vec2::new(400.0, 0.0)];
+        for _ in 0..3 { s.step(0.1, &o); }
+        assert!(s.finished, "every fielded tank dead");
     }
 
     #[test]

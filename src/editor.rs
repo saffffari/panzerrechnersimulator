@@ -453,6 +453,9 @@ struct EditorWorld {
     /// Initial orbit point. Campaign acts focus their Spawn; the generated yard focuses its
     /// geometric center so the first frame actually contains asset rows.
     editor_focus: Vec3,
+    /// The map's own home view (`manifest_edits.json` `"editor_home": {"eye": [x,y,z], "target":
+    /// [x,y,z]}`), the Home view button's and the first frame's camera when present.
+    home_view: Option<(Vec3, Vec3)>,
     /// The asset yard is generated from the live library index instead of a campaign manifest.
     /// It is intentionally read-only: placements describe the catalog itself, not authored map
     /// changes that should be diffed back into `manifest_edits.json`.
@@ -820,6 +823,7 @@ impl EditorWorld {
             texture: Some(terrain.texture.to_string_lossy().into_owned()),
             spawn,
             editor_focus: spawn + Vec3::Y * 2.0,
+            home_view: None,
             is_asset_yard: false,
         };
         w.apply_edits(manifest.edits())?;
@@ -830,6 +834,13 @@ impl EditorWorld {
             .map(|marker| marker.pos)
             .ok_or_else(|| anyhow::anyhow!("effective manifest has no Spawn marker"))?;
         w.editor_focus = w.spawn + Vec3::Y * 2.0;
+        w.home_view = manifest.edits().and_then(|e| e.get("editor_home")).and_then(|h| {
+            let v = |k: &str| h[k].as_array().filter(|a| a.len() == 3).and_then(|a| {
+                let p: Vec<f32> = a.iter().filter_map(|x| x.as_f64().map(|x| x as f32)).collect();
+                (p.len() == 3 && p.iter().all(|x| x.is_finite())).then(|| Vec3::new(p[0], p[1], p[2]))
+            });
+            Some((v("eye")?, v("target")?)).filter(|(eye, target)| eye.distance(*target) > 0.1)
+        });
         Ok(w)
     }
 
@@ -914,6 +925,7 @@ impl EditorWorld {
             texture: Some("assets/terrain/act2/act2_window_tci.png".to_owned()),
             spawn: yard.spawn_position,
             editor_focus: yard.camera_target,
+            home_view: None,
             is_asset_yard: true,
         })
     }
@@ -949,7 +961,7 @@ impl EditorWorld {
             procedural_layers: Vec::new(), surface_zones: Vec::new(), scene_recipes: Vec::new(),
             infrastructure_runs: Vec::new(), heights: vec![0.0; 17 * 17], res: 17, spacing: 4.0,
             terrain_hash: 0, terrain_source: PathBuf::from("generated:isolated-tank-floor"),
-            texture: None, spawn: Vec3::ZERO, editor_focus: Vec3::new(0.0, 1.5, 0.0),
+            texture: None, spawn: Vec3::ZERO, editor_focus: Vec3::new(0.0, 1.5, 0.0), home_view: None,
             is_asset_yard: false,
         })
     }
@@ -2661,6 +2673,8 @@ struct EditorState {
     /// Camera embodiment is separate from transform-tool state: F toggles Orbit/Walk while F8
     /// enters or leaves the live Tiger without disabling selection and placement tools.
     view_mode: crate::editor_navigation::EditorViewMode,
+    /// The Haze button: the preview drawn without fog until pressed again (never saved).
+    haze_off: bool,
     orbit_camera: crate::editor_navigation::OrbitCameraState,
     walk_camera: crate::editor_navigation::GroundedWalkState,
     tiger_seat: crate::editor_navigation::EditorSeat,
@@ -2835,20 +2849,23 @@ const SCENE_CORE_SLOT: usize = 3; // cyan square = samples carried by the captur
 const SCENE_APRON_SLOT: usize = 4; // amber square = outer edge of the procedural stitch band
 const TIGER_SLOTS: [usize; 3] = [5, 6, 7]; // articulated editor-preview hull / turret / gun
 
-const EDITOR_TOOLBAR_LABELS: [&str; 8] = ["Orbit", "Walk", "Inside", "Assets", "Lighting", "Save", "Play", "Home view"];
+const EDITOR_TOOLBAR_LABELS: [&str; 9] = ["Orbit", "Walk", "Inside", "Assets", "Lighting", "Save", "Play", "Home view", "Haze"];
+const EDITOR_TOOLBAR_STEP: f32 = 0.109;
+const EDITOR_TOOLBAR_WIDTH: f32 = 0.102;
 fn editor_toolbar_hit(cursor: [f32; 2]) -> Option<usize> {
     if !(0.88..=0.93).contains(&cursor[1]) { return None; }
-    (0..8).find(|i| {
-        let x = 0.01 + *i as f32 * 0.123;
-        (x..=x + 0.115).contains(&cursor[0])
+    (0..EDITOR_TOOLBAR_LABELS.len()).find(|i| {
+        let x = 0.01 + *i as f32 * EDITOR_TOOLBAR_STEP;
+        (x..=x + EDITOR_TOOLBAR_WIDTH).contains(&cursor[0])
     })
 }
-fn draw_editor_toolbar(renderer: &mut Renderer, walkthrough: bool) {
+fn draw_editor_toolbar(renderer: &mut Renderer, walkthrough: bool, haze_off: bool) {
     for (i, label) in EDITOR_TOOLBAR_LABELS.iter().enumerate() {
-        let x = 0.01 + i as f32 * 0.123;
-        renderer.fill_rect(x, 0.88, 0.115, 0.05, if i == 6 { [0.14, 0.28, 0.19, 0.94] } else { [0.055, 0.065, 0.075, 0.94] });
-        renderer.draw_text(if i == 6 && walkthrough { "Stop" } else { label },
-            x + 0.0575, 0.892, 0.025, [0.94, 0.93, 0.85, 1.0], Align::Center);
+        let x = 0.01 + i as f32 * EDITOR_TOOLBAR_STEP;
+        let fill = if i == 6 || (i == 8 && haze_off) { [0.14, 0.28, 0.19, 0.94] } else { [0.055, 0.065, 0.075, 0.94] };
+        renderer.fill_rect(x, 0.88, EDITOR_TOOLBAR_WIDTH, 0.05, fill);
+        let text = match i { 6 if walkthrough => "Stop", 8 if haze_off => "Haze off", _ => label };
+        renderer.draw_text(text, x + EDITOR_TOOLBAR_WIDTH * 0.5, 0.892, 0.025, [0.94, 0.93, 0.85, 1.0], Align::Center);
     }
 }
 
@@ -3141,6 +3158,7 @@ impl EditorState {
             tiger,
             drive_hf,
             view_mode: crate::editor_navigation::EditorViewMode::Orbit,
+            haze_off: false,
             orbit_camera,
             walk_camera,
             tiger_seat: initial_seat,
@@ -3636,6 +3654,14 @@ impl EditorState {
             5 if !self.walkthrough => { if let Err(error) = self.save_document() { self.status = format!("Save failed: {error:#}"); } },
             6 => { if let Err(error) = self.play_document() { self.status = format!("Play failed: {error:#}"); } },
             7 => { self.orbit_camera = initial_editor_orbit(&self.world); self.view_mode = EditorViewMode::Orbit; self.walkthrough = false; },
+            8 => {
+                // A look without the haze for a moment: the preview only, never the document.
+                self.haze_off = !self.haze_off;
+                if !self.haze_off {
+                    if self.world.lighting.enabled { self.apply_lighting_preview(); } else { self.restore_campaign_lighting_preview(); }
+                }
+                self.status = if self.haze_off { "Haze off (preview only; the map keeps its fog)".into() } else { "Haze back on".into() };
+            },
             _ => {}
         }
         self.sync_editor_pointer(keys);
@@ -5601,6 +5627,30 @@ impl EditorState {
     /// Looking through a port/hatch still targets the world, as do story silhouettes and every
     /// editor-native tool. The same embodied seat camera can therefore author both spaces without
     /// an easy-to-forget global target toggle.
+    /// Space: orbit about the selection (placements, else a marker, light or sound), or, with
+    /// nothing selected, about the most recently dropped placement.
+    fn focus_selection(&mut self) {
+        let live = |i: &usize| self.world.placements.get(*i).filter(|p| !p.deleted).map(|p| p.pos);
+        let picked: Vec<Vec3> = self.sel.iter().filter_map(live).collect();
+        let target = if !picked.is_empty() {
+            Some(picked.iter().copied().sum::<Vec3>() / picked.len() as f32)
+        } else if let Some(m) = self.sel_marker.and_then(|i| self.world.markers.get(i)) {
+            Some(m.pos)
+        } else if let Some(l) = self.sel_light.and_then(|i| self.world.authored_lights.get(i)) {
+            Some(l.position)
+        } else {
+            (self.world.base_count..self.world.placements.len()).rev().find_map(|i| live(&i))
+        };
+        let Some(target) = target else {
+            self.status = "Nothing selected or dropped to focus on".into();
+            return;
+        };
+        let spread = picked.iter().map(|p| p.distance(target)).fold(0.0f32, f32::max);
+        self.orbit_camera.pivot = target + Vec3::Y * 1.0;
+        self.orbit_camera.set_distance((spread * 2.5 + 14.0).clamp(6.0, 400.0));
+        self.status = format!("Focus ({:.0}, {:.0}, {:.0})", target.x, target.y, target.z);
+    }
+
     fn place_library_asset_for_view(&mut self, lib_idx: usize) {
         if self.walkthrough { return; }
         if self.world.garage.is_some() && self.browser.lib.get(lib_idx).is_some_and(|entry|
@@ -6167,7 +6217,9 @@ impl EditorState {
         match self.view_mode {
             EditorViewMode::Orbit => {
                 if camera_mouse {
-                    if keys.shift {
+                    // Middle drag pans, right drag orbits (and Shift with any drag pans).
+                    let middle = keys.look_buttons & 1 != 0;
+                    if keys.shift || middle {
                         let scale = self.orbit_camera.distance * 0.0025;
                         self.orbit_camera
                             .pan(Vec2::new(-keys.dx * scale, keys.dy * scale));
@@ -6193,7 +6245,7 @@ impl EditorState {
                 if keys.a {
                     pan -= right;
                 }
-                if keys.e || keys.space {
+                if keys.e {
                     pan += Vec3::Y;
                 }
                 if keys.q || keys.ctrl {
@@ -6746,6 +6798,7 @@ impl EditorState {
         }));
         let target = frame.as_ref().map(|frame| &frame.texture).or(review_target.as_ref()).unwrap();
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        if self.haze_off { self.renderer.fog_density = 0.0; }
         self.renderer
             .render_to_surface(&self.device, &self.queue, &view, self.config.format);
 
@@ -6925,7 +6978,7 @@ impl EditorState {
             Align::Left,
         );
         if !self.browser.open {
-            draw_editor_toolbar(&mut self.renderer, self.walkthrough);
+            draw_editor_toolbar(&mut self.renderer, self.walkthrough, self.haze_off);
         }
         if !self.status.is_empty() {
             self.renderer
@@ -7511,7 +7564,12 @@ impl ApplicationHandler for EditorApp {
                     KeyCode::ArrowRight => self.keys.arrow_right = down,
                     KeyCode::ArrowUp => self.keys.arrow_up = down,
                     KeyCode::ArrowDown => self.keys.arrow_down = down,
-                    KeyCode::Space => self.keys.space = down,
+                    KeyCode::Space => {
+                        self.keys.space = down;
+                        if pressed && st.view_mode == crate::editor_navigation::EditorViewMode::Orbit {
+                            st.focus_selection();
+                        }
+                    }
                     KeyCode::ControlLeft | KeyCode::ControlRight => self.keys.ctrl = down,
                     KeyCode::ShiftLeft | KeyCode::ShiftRight => self.keys.shift = down,
                     _ => {}
@@ -8065,6 +8123,7 @@ impl ApplicationHandler for EditorApp {
                         }
                     }
                     KeyCode::KeyV => {
+                        let placed_before = st.world.placements.len();
                         if let Some(lib_idx) = st.browser.selected {
                             st.place_library_asset_for_view(lib_idx);
                         } else if st
@@ -8098,6 +8157,16 @@ impl ApplicationHandler for EditorApp {
                             }
                         } else {
                             st.status = "palette asset has no mesh".into();
+                        }
+                        // Shift+V: the new object gets a random turn about the vertical axis
+                        // (the project's counter-seeded hash, not an RNG).
+                        if self.keys.shift && st.world.placements.len() > placed_before {
+                            let n = st.world.placements.len() as u32;
+                            let h = n.wrapping_mul(2654435761) ^ (st.renderer.time.to_bits()).wrapping_mul(40503);
+                            let h = (h ^ (h >> 15)).wrapping_mul(2246822519);
+                            let last = st.world.placements.len() - 1;
+                            st.world.placements[last].rot_deg = (h >> 8) as f32 / (1u32 << 24) as f32 * 360.0;
+                            st.refresh_asset(st.world.placements[last].asset);
                         }
                     }
                     KeyCode::F5 | KeyCode::F6 | KeyCode::F7 | KeyCode::F10
@@ -8302,19 +8371,20 @@ fn initial_editor_orbit(world: &EditorWorld) -> crate::editor_navigation::OrbitC
         world.editor_focus,
         if world.is_asset_yard { 135.0 } else if world.garage.is_some() { 10.0 } else { 22.0 },
     );
-    // A project launcher can open an authored composition without changing the game's spawn.
+    // A project launcher can open an authored composition without changing the game's spawn;
+    // else the map's own home view.
     if world.garage.is_none() && !world.is_asset_yard {
-        if let Ok(value) = std::env::var("KESSEL_EDITOR_START_VIEW") {
+        let launcher = std::env::var("KESSEL_EDITOR_START_VIEW").ok().and_then(|value| {
             let values: Vec<f32> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
-            if values.len() == 6 && values.iter().all(|v| v.is_finite()) {
-                let eye=Vec3::new(values[0],values[1],values[2]);
-                let target=Vec3::new(values[3],values[4],values[5]);
-                if eye.distance(target)>0.1 {
-                    let mut camera=crate::camera::Camera::new(16.0/9.0);
-                    camera.set_forward(target-eye);
-                    orbit.pivot=target;orbit.set_distance(eye.distance(target));
-                    orbit.yaw=camera.yaw;orbit.pitch=camera.pitch;
-                }
+            (values.len() == 6 && values.iter().all(|v| v.is_finite()))
+                .then(|| (Vec3::new(values[0],values[1],values[2]), Vec3::new(values[3],values[4],values[5])))
+        });
+        if let Some((eye, target)) = launcher.or(world.home_view) {
+            if eye.distance(target)>0.1 {
+                let mut camera=crate::camera::Camera::new(16.0/9.0);
+                camera.set_forward(target-eye);
+                orbit.pivot=target;orbit.set_distance(eye.distance(target));
+                orbit.yaw=camera.yaw;orbit.pitch=camera.pitch;
             }
         }
     }
@@ -8401,7 +8471,7 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
             return r.render_to_png_hud(&device, &queue, out, w, h);
         }
         r.ui_reset();
-        draw_editor_toolbar(&mut r, false);
+        draw_editor_toolbar(&mut r, false, false);
         r.draw_text_bold(world.garage.as_ref().map(|g| g.tank.descriptor().label).unwrap_or("ACT WORLD EDITOR"),
             0.02, 0.025, 0.035, [0.94, 0.93, 0.85, 1.0], Align::Left);
         return r.render_to_png_hud(&device, &queue, out, w, h);

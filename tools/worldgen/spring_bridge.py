@@ -257,6 +257,86 @@ def ground_paint(colour, grass, d_tex, streets, rects, axis_tex):
         grass[sl] *= 0.2
 
 
+def carry_editor_work(path, edits):
+    """Keep what the world editor saved across a regeneration: every key this script does not
+    write, and the objects and markers added in the editor. Changes to generated objects are by
+    index into the old generation and cannot be carried; they are reported, not applied."""
+    if not path.exists():
+        return {}
+    old = json.loads(path.read_text())
+    kept = {k: v for k, v in old.items() if k not in edits and k not in ('base_placements', 'base_markers', 'ops')}
+    edits.update(kept)
+    ops = old.get('ops', [])
+    adds = [op for op in ops if op.get('op') in ('add', 'marker_add')]
+    lost = [op for op in ops if op.get('op') not in ('add', 'marker_add')]
+    edits['ops'] = adds
+    report = dict(keys=sorted(kept), added=len(adds), not_carried=len(lost))
+    print('[spring-bridge] editor work carried:', json.dumps(report))
+    if lost:
+        (path.parent/'editor_ops_not_carried.json').write_text(json.dumps(lost, indent=1))
+    return report
+
+
+def line(text, sender='Adler'):
+    return [dict({'from': sender, 'text': text})]
+
+
+def mission_sheet(cx, cz, route):
+    """The order: take the bridge, hold it through two counterattacks, destroy every tank."""
+    seg = np.hypot(*np.diff(route, axis=0).T)
+    along = np.concatenate([[0.0], np.cumsum(seg)])
+    def frac(x, z):
+        return round(float(along[int(np.argmin(np.hypot(route[:, 0]-x, route[:, 1]-z)))]/along[-1]), 4)
+    first, second = frac(cx+900, cz), frac(cx+1400, cz)
+    p = lambda x, z: {'x': cc.r3(x), 'z': cc.r3(z)}
+    return {
+        'schema': 'kessel.mission', 'version': 1, 'id': 'spring-bridge', 'act_id': 1,
+        'title': 'BEFEHL: BRUECKE NEHMEN UND HALTEN', 'callsign': 'Kiebitz', 'net': 'Adler',
+        'note': ('Spring bridge test map (tools/worldgen/spring_bridge.py). Places are the map\'s own geometry: the '
+                 'town\'s west edge, its west-bank streets, the bridge deck, the east road the counterattacks come down. '
+                 'The garrison is the street platoons, one loop on each bank; the counterattacks are platoons released '
+                 'on the east road when the bridge is taken. A generated test map, not a recorded engagement.'),
+        'order': ['Panzer 231. Crew: you alone, the camp and the half-track behind you on the west road.',
+                  'The road bridge in the town is intact. Soviet tanks hold both banks of the town.',
+                  'Take the bridge and hold it. Expect armour from the east once you are on it. Destroy every tank.'],
+        'beats': [
+            {'id': 'edge', 'title': 'The town\'s west edge', 'goal': 'reach', 'at': p(cx-TOWN_HALF_X, cz), 'radius_m': 120.0,
+             'complete': {'kind': 'enter', 'dwell_s': 1.0},
+             'lines': {'open': line('Kiebitz, Adler. The town is 300 metres east. Bridge in its centre. Out.'),
+                       'done': line('Kiebitz at the edge. Tanks in the streets on this bank. Out.')},
+             'map': {'mark': 'box', 'bearing': True}},
+            {'id': 'west_bank', 'title': 'Clear the west bank', 'goal': 'destroy', 'at': p(cx-110, cz), 'radius_m': 200.0,
+             'complete': {'kind': 'destroy_near', 'count': 2, 'radius_m': 320.0},
+             'cues': [{'kind': 'alert', 'radius_m': 420.0}],
+             'lines': {'open': line('Kiebitz, Adler. Clear the streets to the river. Out.'),
+                       'done': line('West bank clear. The bridge. Out.')},
+             'map': {'mark': 'cross', 'bearing': True}},
+            {'id': 'bridge', 'title': 'Take the bridge', 'goal': 'hold', 'at': p(cx, cz), 'radius_m': 30.0,
+             'complete': {'kind': 'capture', 'seconds': 20.0, 'contest_radius_m': 200.0},
+             'cues': [{'kind': 'alert', 'at': p(cx+150, cz), 'radius_m': 500.0}],
+             'lines': {'open': line('Kiebitz, Adler. On the bridge. Nothing of theirs within 200 metres while you hold it. Out.'),
+                       'done': line('Bridge taken. Armour on the east road. Hold. Out.')},
+             'map': {'mark': 'circle', 'bearing': True}},
+            {'id': 'first_counterattack', 'title': 'Hold: the first counterattack', 'goal': 'hold', 'at': p(cx, cz), 'radius_m': 120.0,
+             'complete': {'kind': 'capture', 'seconds': 60.0, 'contest_radius_m': 250.0},
+             'pacing': {'release': {'count': 3, 'fraction': first}},
+             'lines': {'open': line('Kiebitz, Adler. Three tanks coming down the east road. Hold the bridge. Out.'),
+                       'done': line('First attack beaten off. More behind it. Out.')},
+             'map': {'mark': 'circle', 'bearing': True}},
+            {'id': 'second_counterattack', 'title': 'Hold: the second counterattack', 'goal': 'hold', 'at': p(cx, cz), 'radius_m': 120.0,
+             'complete': {'kind': 'capture', 'seconds': 60.0, 'contest_radius_m': 250.0},
+             'pacing': {'release': {'count': 3, 'fraction': second}},
+             'lines': {'open': line('Kiebitz, Adler. Second attack, three tanks, east road. Out.'),
+                       'done': line('Second attack beaten off. Out.')},
+             'map': {'mark': 'circle', 'bearing': True}},
+            {'id': 'all_tanks', 'title': 'Destroy every tank', 'goal': 'destroy', 'at': p(cx, cz), 'radius_m': 120.0,
+             'complete': {'kind': 'destroy_all'},
+             'lines': {'open': line('Kiebitz, Adler. Tanks still in the town. Destroy them. Out.'),
+                       'done': line('Kiebitz, Adler. No more armour. The bridge is ours. Out.')},
+             'map': {'mark': 'cross', 'bearing': False}},
+        ]}
+
+
 def build(dest=DEST, plan=None):
     rng = np.random.default_rng(SEED)
     H0, ravine, _ = sp.heights(rng)
@@ -399,8 +479,14 @@ def build(dest=DEST, plan=None):
     gl = course['goal']
     mid = [cx, cz]
     manifest['overview'] = dict(pos=[cc.r3(cx+520), 420.0, cc.r3(cz+620)], target=[cx, cc.r3(deck_y), cz])
+    # The editor's Home view: standing on the middle of the deck, looking east over the river.
+    edits['editor_home'] = dict(eye=[cx, cc.r3(deck_y+1.8), cz], target=[cc.r3(cx+30.0), cc.r3(deck_y+0.8), cz])
     edits['base_placements'] = len(manifest['placements'])
     course.update(variant='spring-bridge', tool='tools/worldgen/spring_bridge.py')
+    # The run ends with the mission (every tank dead), not in a goal disc; the only enemies are
+    # the town's platoons and the mission's counterattacks (src/canyon.rs CourseSpec).
+    course.update(finish='mission', director=False, opening_platoons=False, headline='The bridge is held',
+                  camp=True)   # the expedition camp and half-track, sited from the start
     course['provenance'] = dict(
         terrain='Generated spring steppe with a river valley cut through it; not a survey of real ground.',
         buildings=cc.PROVENANCE['buildings']+' A river town on both banks: brick houses near the bridge, timber houses and workshops further out.',
@@ -411,9 +497,11 @@ def build(dest=DEST, plan=None):
         schema='kessel.environment-authoring', utc='1943-05-12T07:20:00Z', version=2)
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
+    carried = carry_editor_work(dest/'manifest_edits.json', edits)
     (dest/'manifest.v1.json').write_text(cc.dumps(manifest, indent=None))
     (dest/'manifest_edits.json').write_text(cc.dumps(edits))
     np.save(dest/'heights.npy', H.astype(np.float32))
+    (dest/'mission.v1.json').write_text(cc.dumps(mission_sheet(cx, cz, route)))
     report = dict(schema='panzer.spring-bridge', version=VERSION, seed=SEED, bridge=dict(x=cx, z=cz, deck_y=deck_y),
         town_buildings=len(town_buildings), outlying_buildings=len(kept), grammar_buildings_cleared=dropped_buildings,
         placements_cleared=before-len(placed), wood_trees=trees, start=course['start'], goal=gl,

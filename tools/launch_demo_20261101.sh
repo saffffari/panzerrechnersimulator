@@ -10,6 +10,8 @@
 #   tools/launch_demo_20261101.sh --expedition --order 10 --forward  and the crewed Tiger staged on the approach road,
 #                                                 700 m short of the site, engine running (a disclosed playtest fixture)
 #   tools/launch_demo_20261101.sh --canyon        straight into a fresh Canyon v2 winter run (missions + living crew)
+#   tools/launch_demo_20261101.sh --bridge        the spring bridge test map: take the town's bridge, hold it through two
+#                                                 counterattacks, destroy every tank; camp and half-track west of the town
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
 #   tools/launch_demo_20261101.sh --res 640x360   render grid (default 1280x720, an exact 4x on the 5K panel)
 #   tools/launch_demo_20261101.sh --look deltap-tinted  the deltaP look (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered
@@ -36,10 +38,11 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=1280x720 WINDOWED=0 PLATOON=0 LOOK= CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+COURSE= MODE=menu RES=1280x720 WINDOWED=0 PLATOON=0 LOOK= CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
+        --bridge) MODE=canyon; COURSE=spring-bridge-v1 ;;
         --expedition) MODE=expedition ;;
         --menu) MODE=menu ;;
         --windowed) WINDOWED=1 ;;
@@ -57,7 +60,7 @@ while (( $# )); do
         --sky-start) SKY_START=$2; shift ;;   # HH:MM on the crew's clock (07:00 default) | dawn | day | dusk | night
         --audio-range) AUDIO_RANGE=$2; shift ;;
         --check) CHECK=1 ;;
-        -h|--help) sed -n 2,22p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,40p "$0" | grep "^#"; exit 0 ;;
         *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
     shift
@@ -104,7 +107,7 @@ PY
 for v in $(env | grep -o '^KESSEL_[A-Z0-9_]*'); do unset "$v"; done
 export XDG_STATE_HOME="$RUNTIME/state" XDG_CACHE_HOME="$RUNTIME/cache" XDG_CONFIG_HOME="$RUNTIME/config"
 export KESSEL_ASSET_ROOT="$ASSET_ROOT"
-export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json"
+export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/${COURSE:-gaea-canyon-run-v2}/manifest.v1.json"
 export KESSEL_RENDERER=raymarch KESSEL_GRAPHICS_PRESET=high KESSEL_INTERNAL_RES="$RES"
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4 KESSEL_SOURCE_VISIBILITY=maps
 export KESSEL_GRAPHICS_CONFIG="$CONFIG" KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_TRANSPORT_QUALITY=full

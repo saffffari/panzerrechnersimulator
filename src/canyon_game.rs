@@ -343,6 +343,7 @@ impl Game {
             .unwrap_or_else(|| "-".into());
         Some(RunReport {
             outcome,
+            completed_headline: run.spec.headline,
             elapsed_s: run.elapsed_s,
             progress,
             distance_m: progress * run.spec.length_m,
@@ -366,9 +367,11 @@ impl Game {
     /// Advance the run and request reinforcements without altering any combatant's laws.
     pub(super) fn update_canyon_run(&mut self, dt: f32, r: &mut Renderer) {
         if self.canyon_run.is_none() { return; }
-        if !std::mem::replace(&mut self.canyon_opening_fielded, true) {
+        if !std::mem::replace(&mut self.canyon_opening_fielded, true)
+            && self.canyon_run.as_ref().is_some_and(|run| run.spec.opening_platoons) {
             self.field_canyon_opening_platoons(r);
         }
+        let mission_done = self.mission_finished();
         let alive = self.player.alive && self.game_over().is_none();
         let at = Vec2::new(self.player.pos.x, self.player.pos.z);
         let damage = self.modules.iter().filter(|m| !m.functional).count() as u32
@@ -390,6 +393,13 @@ impl Game {
             self.set_playtest_return_fire(false);
             return;
         }
+        // A take-and-hold course ends when its mission sheet is done (`"finish": "mission"`).
+        if run.spec.finish_by_mission && mission_done && alive && run.finished_s.is_none() {
+            run.finished_s = Some(run.elapsed_s);
+            println!("[canyon] the mission was completed in {:.1} s", run.elapsed_s);
+            self.set_playtest_return_fire(false);
+            return;
+        }
         let s = crate::canyon_director::Situation {
             progress: crate::canyon_director::route_progress(&run.spec.route,at), live, engaged,
             kills, shots: self.gun_shots,
@@ -398,7 +408,8 @@ impl Game {
             damage, critical, alive: alive && !run.failed,
             finished: run.finished_s.is_some(),
         };
-        let request = run.director.as_mut().and_then(|d| d.step(dt,s))
+        let director_on = run.spec.director;
+        let request = run.director.as_mut().filter(|_| director_on).and_then(|d| d.step(dt,s))
             .filter(|&count| cap_room.is_none_or(|room| count <= room));
         if let Some(count) = request {
             if let Some((route, positions)) = self.canyon_reinforcement_entry(count,r.camera.pos) {
