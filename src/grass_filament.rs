@@ -29,6 +29,8 @@ pub struct TrackMemory {
     pages: HashMap<(i32, i32), Box<[u8; 1024]>>,
     cells: usize,
     pub revision: u64,
+    /// Pages changed since the GPU meadow last took them (`take_dirty`); not saved.
+    dirty: Vec<(i32, i32)>,
 }
 
 impl TrackMemory {
@@ -94,6 +96,9 @@ impl TrackMemory {
                     }
                     page[index] = encoded_heading;
                     changed = true;
+                    if !self.dirty.contains(&key) {
+                        self.dirty.push(key);
+                    }
                 }
             }
         }
@@ -104,6 +109,19 @@ impl TrackMemory {
 
     pub fn cell_count(&self) -> usize {
         self.cells
+    }
+
+    /// The pages changed since the last call with their cells (heading code or 255), for the GPU
+    /// meadow's mirror (`meadow::TrackMirror`).
+    pub fn take_dirty(&mut self) -> Vec<((i32, i32), [u8; 1024])> {
+        std::mem::take(&mut self.dirty).into_iter()
+            .filter_map(|key| self.pages.get(&key).map(|cells| (key, **cells)))
+            .collect()
+    }
+
+    /// Mark every page changed (a mirror built after tracks already exist).
+    pub fn mark_all_dirty(&mut self) {
+        self.dirty = self.pages.keys().copied().collect();
     }
 }
 

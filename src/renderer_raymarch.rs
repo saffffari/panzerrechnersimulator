@@ -61,7 +61,9 @@ pub const MAX_SCENE_LIGHTS: usize = 448;
 const TRACER_INTENSITY: f32 = 0.0035;
 /// Lights the backend synthesizes from ballistic bursts and tracer heads.
 const MAX_EFFECT_LIGHTS: usize = 64;
-const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS;
+/// Firefly lanterns lit as point lights per frame, nearest first (a cost bound, named).
+const FIREFLY_LIGHTS: usize = 32;
+const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS + FIREFLY_LIGHTS;
 const MAX_LIGHT_CELL_ITEMS: usize = 1 << 17;
 const MAX_EMBERS: usize = 1 << 18;
 const EMBER_REACH_M: f32 = 90.0;
@@ -767,6 +769,16 @@ const MEDIUM: &str = include_str!("../shaders/rm_medium.wgsl");
 /// Shader sources are compiled in; `KESSEL_RM_LIVE_SHADERS=1` reads `shaders/rm_*.wgsl` from the
 /// asset root at pipeline creation instead, so a look change needs no rebuild.
 fn rm_source(name: &str) -> String {
+    let text = rm_source_text(name);
+    if name == "rm_points.wgsl" {
+        // The firefly lantern's display-equivalent lanes (meadow_fauna::firefly_lanes).
+        let c = crate::meadow_fauna::firefly_lanes().0;
+        return format!("const RM_FIREFLY_LANES: vec3<f32> = vec3({:?}, {:?}, {:?});\n{text}", c[0], c[1], c[2]);
+    }
+    text
+}
+
+fn rm_source_text(name: &str) -> String {
     let compiled = match name {
         "rm_common.wgsl" => COMMON,
         "rm_visibility.wgsl" => VISIBILITY,
@@ -900,6 +912,9 @@ fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
     let q = |v: f32, bits: u32| ((v.clamp(0.0, 1.0) * ((1 << bits) - 1) as f32).round() as u32).min((1 << bits) - 1);
     2 | ((intensity.clamp(0.0, 2.0) * 128.0).round() as u32).min(255) << 8 | q(color[0], 5) << 16 | q(color[1], 6) << 21 | q(color[2], 5) << 27
 }
+/// A firefly lantern: kind 3, its lane intensity as an f32 whose four lowest mantissa bits hold
+/// the kind (a relative error under 2e-6).
+fn pack_firefly(intensity: f32) -> u32 { (intensity.max(0.0).to_bits() & !0xF) | 3 }
 /// A fixed point inside the unit cube for ember `k` of the grain with identity `seed`.
 fn ember_offset(seed: u32, k: u32) -> Vec3 {
     let h = |salt: u32| {
@@ -1653,6 +1668,15 @@ impl Backend {
     /// Per-frame CPU side: camera/history state, source radiance, shadow views, lights, medium
     /// parcels, embers, ballistic records. Runs from `Renderer::upload_uniforms`.
     pub(super) fn shadow_views(&self) -> &[Mat4] { &self.shadow_views[..3] }
+    /// Metres per texel of the far cascade, the near cascade and the sky-cover map (their
+    /// orthographic half extent read off the view matrix's first row, over their resolution).
+    pub(super) fn shadow_texels(&self) -> [f32; 3] {
+        let res = [self.quality.shadow_far_res as f32, self.quality.shadow_near_res as f32, SKY_COVER_RES as f32];
+        std::array::from_fn(|i| {
+            let row = self.shadow_views[i].row(0).truncate().length();
+            if row > 0.0 { 2.0 / (row * res[i]) } else { 0.0 }
+        })
+    }
 
     /// Renderer::rt_update calls this only after current TLAS allocation/build recording.
     /// An empty binding is valid for an actually empty scene, never for a populated scene
@@ -2219,6 +2243,17 @@ impl Backend {
             let color = Vec3::new(1.0, 0.705, 0.348);
             self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.003], b: [color.x, color.y, color.z, TRACER_INTENSITY], c: [range_of(color, TRACER_INTENSITY), -1.0, 2.0, 0.0] });
         }
+        // Firefly lanterns light the grass as point sources (kind 3): the nearest
+        // FIREFLY_LIGHTS lit this frame, a 4 mm source, through the shared range cut-off.
+        if self.debug_skip & 8 == 0 && !r.fireflies.is_empty() {
+            let (lanes, _, _) = crate::meadow_fauna::firefly_lanes();
+            let color = Vec3::from_array(lanes);
+            let mut near: Vec<&[f32; 4]> = r.fireflies.iter().filter(|f| f[3] > 0.0).collect();
+            near.sort_by(|a, b| (Vec3::new(a[0], a[1], a[2]) - eye).length_squared().total_cmp(&(Vec3::new(b[0], b[1], b[2]) - eye).length_squared()));
+            for f in near.into_iter().take(FIREFLY_LIGHTS) {
+                self.lights.push(GpuLight { a: [f[0], f[1], f[2], 0.004], b: [color.x, color.y, color.z, f[3]], c: [range_of(color, f[3]), -1.0, 3.0, 0.0] });
+            }
+        }
         // KESSEL_RM_LIGHTS_DEBUG=1 prints the frame's lights relative to the eye (how the cabin
         // lamp's leak onto the barrel was found, 2026-10-28).
         if std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() {
@@ -2231,7 +2266,9 @@ impl Backend {
         let mut ranked: Vec<(f32, usize)> = self.lights.iter().enumerate().filter_map(|(i, l)| {
             let d2 = (Vec3::from_array([l.a[0], l.a[1], l.a[2]]) - eye).length_squared();
             let power = l.b[3] * l.b[..3].iter().cloned().fold(0.0, f32::max);
-            (d2 < 45.0 * 45.0 && power > 0.0).then(|| (power / (d2 + 0.25), i))
+            // Firefly lanterns (kind 3) take no shadow cube: six scene depth faces for a source of
+            // micro-candela (named in the ledger).
+            (d2 < 45.0 * 45.0 && power > 0.0 && l.c[2] != 3.0).then(|| (power / (d2 + 0.25), i))
         }).collect();
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
         self.shadowed = [None; POINT_SHADOWS];
@@ -2484,6 +2521,16 @@ impl Backend {
             }
         }
         build_csr(&self.pairs, &mut self.cell_start, &mut self.cell_items);
+        // Firefly lanterns (meadow_fauna.rs): one-pixel emitters through the froxel medium like
+        // the embers, each carrying its own radiant intensity (kind 3, rm_points.wgsl).
+        if self.debug_skip & 2 == 0 {
+            for f in &r.fireflies {
+                if self.embers.len() >= MAX_EMBERS { break; }
+                let p = Vec3::new(f[0], f[1], f[2]);
+                if !p.is_finite() || !(f[3] > 0.0) || (p - eye).length() > VOL_FAR_M { continue; }
+                self.embers.push(Ember { pos: p.to_array(), packed: pack_firefly(f[3]) });
+            }
+        }
         self.stats.parcels = self.parcels.len();
         self.stats.cell_items = self.cell_items.len();
         self.stats.embers = self.embers.len();
@@ -3039,6 +3086,8 @@ impl Backend {
         self.draw_scene(r, &mut pass, self.shadow_views[index], index as f32, true, &self.depth_pipe, &self.depth_inst_pipe, work);
         // The strewn field's large tier casts into the cascades and the sky cover (views 0..3).
         if index < 3 { if let Some(sf) = &r.scatter_field { sf.draw(&mut pass, index, work); } }
+        // The spring meadow's blades cast into the near cascade and the sky cover.
+        if index == 1 || index == 2 { if let Some(m) = &r.meadow { m.draw(&mut pass, index, work); } }
     }
 
     /// A post pass over the lit HDR frame: copy it into `scratch`, then write the result back.
@@ -3113,6 +3162,7 @@ impl Backend {
             pass.set_bind_group(2, &r.track_bind, &[]);
             self.draw_scene(r, &mut pass, r.camera.view_proj(), 0.0, false, &self.gbuffer_pipe, &self.gbuffer_inst_pipe, &mut work);
             if let Some(sf) = &r.scatter_field { sf.draw(&mut pass, 3, &mut work); }
+            if let Some(m) = &r.meadow { m.draw(&mut pass, 3, &mut work); }
             // Near armor wounds: dense displaced patches where the vehicle mesh was cut for them.
             if self.scar_near_count > 0 {
                 pass.set_pipeline(&self.scar_patch_pipe);
