@@ -65,7 +65,7 @@ channel (`observer.rs`), and two observers in one display would be wrong.
   two: "i like the stylized color look of the pastel version but the agx realism also is nice,
   these pastel tones are too stylized, somewhere in the middle, less pink and purple"): the
   dithered-colour mode with each pixel's OKLab hue and chroma pulled toward the nearest pastel
-  entry's by `KESSEL_PALETTE_PULL` (0.5 unless set), lightness kept: continuous tones in the
+  entry's by `KESSEL_PALETTE_PULL` (0.7 unless set, after the 0.5 stills still read mauve at dusk), lightness kept: continuous tones in the
   palette's colour family, magentas and purples sliding to its teals, greys and creams.
 - `KESSEL_PALETTE_SMOOTH=0..1` (the look lane's w in the palette modes): 0 keeps deltaP's flat bands between palette
   entries (the pair penalty, the ratio's dead zones and eighths); 1 dithers across them (a tenth

@@ -98,10 +98,10 @@ fn configured_palette_smooth() -> f32 {
         .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.0)
 }
 /// `KESSEL_PALETTE_PULL=0..1`: in the tinted look (mode 5) how far each pixel's hue and chroma
-/// are pulled toward the nearest pastel entry's (`crush.wgsl` `dp_tinted`); 0.5 unless set.
+/// are pulled toward the nearest pastel entry's (`crush.wgsl` `dp_tinted`); 0.7 unless set.
 fn configured_palette_pull() -> f32 {
     std::env::var("KESSEL_PALETTE_PULL").ok().and_then(|v| v.trim().parse::<f32>().ok())
-        .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.5)
+        .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.7)
 }
 /// deltaP's bloom strength (`bloom::DEFAULT`): the summed pyramid's share added to the frame.
 // 2026-11-01 playtest: at deltaP's 0.8 with its 0.55 knee and 1.0 cap a vision port's daylight
