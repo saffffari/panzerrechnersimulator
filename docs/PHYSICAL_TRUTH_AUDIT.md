@@ -180,6 +180,13 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   outer sixth and the top fifth); the yellow-white core and amber body are unchanged. Still an
   authored radiance calibration, not a soot temperature model (the owner, 2026-11-02: the fire
   "too yellow"; the embers inherit the pages, so the fire's outer points go deep red with it).
+- The fire's light as points (`renderer_raymarch.rs` `FIRE_EMBER_SHARE` 0.8, `EMBERS_PER_GRAIN`
+  12): a flame grain within 90 m draws 80 % of its authored emission as twelve one-pixel embers
+  scattered through its cube and 20 % as its merged volumetric parcel (was half and half with
+  six embers). The parcels, merged per 4 px volume cell, drew as cell-sized glowing blobs over
+  the embers under the AgX and pastel looks (the owner: "diffuse glowing cubes"); the extinction
+  and scattering of the parcels are unchanged, so the fire's haze and its light on the scene
+  stay, and the total emission is the same authored calibration redistributed.
 - Strike smoke in the raymarch backend (`renderer_raymarch.rs` `event_parcels`): a detonation's
   five soot puffs used to appear 1.5 m above the burst and spread about it, so a shell on a plate
   made a cloud in the air beside the hull (the owner: "exploding out of thin air"). They now leave

@@ -67,7 +67,13 @@ const EMBER_REACH_M: f32 = 90.0;
 /// each carrying its share of the grain's intensity. The owner's 2026-11-01 note on the dusk
 /// wreck: "tons of these sharp smaller ones instead of a bunch of clusters that look like
 /// isolated fires"; one ember per grain drew the fire as a few hundred points.
-const EMBERS_PER_GRAIN: usize = 6;
+const EMBERS_PER_GRAIN: usize = 12;
+/// The share of a flame grain's authored emission drawn as its embers (sharp one-pixel points);
+/// the merged volumetric parcel keeps the rest. At 0.5 the two halves are the 2026-11-01 split
+/// (six embers at the grain's intensity, the parcel at 0.6 x coverage / radius); at 0.8 the fire
+/// reads as points with a faint body behind them (the owner, 2026-11-02: the parcels, merged
+/// per 4 px volume cell, drew as "diffuse glowing cubes" over the embers).
+const FIRE_EMBER_SHARE: f32 = 0.8;
 const SKY_COVER_RES: u32 = 512;
 const SKY_COVER_HALF_M: f32 = 48.0;
 const POINT_SHADOWS: usize = 2;
@@ -2014,7 +2020,7 @@ impl Backend {
             cell_kinds.push((batch_index as u32, kind, color, b.emissive));
             let ember = kind == PARCEL_FIRE;
             // The grain's intensity shared over its embers: the same light, as more, sharper points.
-            let packed = pack_ember(color, b.emissive * 6.0 / EMBERS_PER_GRAIN as f32);
+            let packed = pack_ember(color, b.emissive * 6.0 * (2.0 * FIRE_EMBER_SHARE) / EMBERS_PER_GRAIN as f32);
             let ids = r.fine_vfx.particle_ids.get(&batch_index);
             for (i, mat) in b.cpu_mats.iter().take(b.inst_count as usize).enumerate() {
                 if b.is_hidden(i as u32) { continue; }
@@ -2062,7 +2068,7 @@ impl Backend {
             // fraction of the cross-section they cover, so emission per metre is that over the
             // cell's diameter (the tongue shaping in rm_volume.wgsl redistributes, not adds).
             let (mut emission, mut extinction) = match kind {
-                k if k == PARCEL_FIRE => (emissive * coverage * 0.6 / radius, 0.6 * coverage / radius),
+                k if k == PARCEL_FIRE => (emissive * coverage * 0.6 * (2.0 * (1.0 - FIRE_EMBER_SHARE)) / radius, 0.6 * coverage / radius),
                 k if k == PARCEL_SOOT => (0.0, 4.0 * coverage / radius),
                 _ => (0.0, 1.0 * coverage / radius),
             };
