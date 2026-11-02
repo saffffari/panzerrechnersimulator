@@ -2594,9 +2594,24 @@ impl Backend {
         let stages = if shadow { wgpu::ShaderStages::VERTEX } else { wgpu::ShaderStages::VERTEX_FRAGMENT };
         pass.set_pipeline(inst_pipe);
         let mut grass_bound = false;
+        // KESSEL_RM_LIGHTS_DEBUG=1: the glowing instanced batches every half second, with the
+        // largest instance's extent and the nearest instance's distance (how the cabin's spall
+        // tails were traced, 2026-11-02).
+        let debug_glow = !shadow && !self.relays(r) && r.frame % 30 == 0 && std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok();
+        let glow_eye = r.camera.pos;
         for &batch in &visible.batches {
             let b = &r.inst_batches[batch];
             if b.inst_count == 0 { continue; }
+            if debug_glow && b.emissive > 0.0 {
+                let (mut longest, mut widest, mut nearest) = (0.0f32, 0.0f32, f32::INFINITY);
+                for m in b.cpu_mats.iter().take(b.inst_count as usize) {
+                    let (sx, sy, sz) = (m.x_axis.length(), m.y_axis.length(), m.z_axis.length());
+                    longest = longest.max(sx.max(sy).max(sz)); widest = widest.max(sx.min(sy).min(sz));
+                    nearest = nearest.min((m.w_axis.truncate() - glow_eye).length());
+                }
+                println!("[rm-glow] frame {} batch {batch} flags {:.1} emissive {:.2} count {} longest {:.3} m thickest {:.4} m nearest {:.2} m",
+                    r.frame, b.flags, b.emissive, b.inst_count, longest, widest, nearest);
+            }
             let flags = b.flags;
             // Smoke cubes, flame and soot grains are media here; glass sheen panes are open.
             if flags < -0.5 || (flags > 4.5 && flags < 6.5) || flags > 7.5 { continue; }
