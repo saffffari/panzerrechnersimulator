@@ -367,6 +367,8 @@ fn dp_oklab(c: vec3<f32>) -> vec3<f32> {
 // even count, so zero chroma is a level and a grey stays exactly grey). Fine steps of brightness,
 // coarse steps of colour: per-channel RGB steps break a grey into coloured speckle wherever its
 // channels round differently. A recording-medium choice; it adds no light.
+fn dp_chroma_compand(c: f32) -> f32 { return sign(c) * sqrt(abs(c) * 2.0); }
+fn dp_chroma_expand(c: f32) -> f32 { return sign(c) * c * c * 0.5; }
 fn dp_luma_chroma(lin: vec3<f32>, th: f32) -> vec3<f32> {
     let e = clamp(display_encode(lin), vec3(0.0), vec3(1.0));
     let y = dot(e, vec3(0.25, 0.5, 0.25));
@@ -376,11 +378,14 @@ fn dp_luma_chroma(lin: vec3<f32>, th: f32) -> vec3<f32> {
     let cs = max(2.0 * round(-cr.real.w * 0.5), 2.0);
     let yq0 = floor(sqrt(y) * ys + th) / ys;
     let yq = yq0 * yq0;
-    // A second threshold for the chroma: the same Bayer cell, half a step on, so the chroma's
-    // pattern does not sit on the luma's.
-    let th2 = fract(th + 0.5);
-    let coq = floor((co + 0.5) * cs + th2) / cs - 0.5;
-    let cgq = floor((cg + 0.5) * cs + th2) / cs - 0.5;
+    // The chroma is NOT dithered: dithering the colour axes is what scatters orange, green and
+    // violet dots over a faintly tinted grey. Each axis is rounded to its nearest level, the
+    // levels spaced on a signed square root so most of them sit near grey (the snow, the road,
+    // the stone), and only the brightness carries the dither (the bridge map's matrix, 2 November
+    // 2026). The chroma range is +-0.5.
+    let half = cs * 0.5;
+    let coq = dp_chroma_expand(round(dp_chroma_compand(co) * half) / half);
+    let cgq = dp_chroma_expand(round(dp_chroma_compand(cg) * half) / half);
     let rgb = vec3(yq + coq - cgq, yq + cgq, yq - coq - cgq);
     return clamp(rgb, vec3(0.0), vec3(1.0));
 }
