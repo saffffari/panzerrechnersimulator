@@ -88,7 +88,22 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   a percent of the vertex work. The ground's ejecta keep their quadrature (`GROUND_MULTIPLIER`
   1000: a mass distributed over grains, not sparks) and the hot rim its ring. The 14 ms streak is
   an exposure-length presentation of the spark's path, not a measured trail; the pass is now
-  `analytic-streaked-sparks` (was `analytic-thousandfold-sparks`).
+  `analytic-streaked-sparks` (was `analytic-thousandfold-sparks`). Later the same day: 24 samples
+  along the 14 ms path (eight drew as bars of bloomed dots: each dot held an eighth of a spark's
+  light against a blue-hour exposure), the port shader caps a sample's projected area at 6 px as
+  the main view's does, and a streaked spark's colour is `spark_glow`: the three Planck-band
+  ratios at the spark's temperature, cooling from its own start (2100-3400 K by kind, hash and
+  the ricochet's retained energy; a blast's hottest) to 1100 K over its burn, on the palette's
+  authored display scale (5.3 at 1500 K to 9.9 from 2800 K). The temperatures are authored
+  incandescent-steel ranges, not measurements; the magnitude is not Planck's (which would rise a
+  hundredfold over that range). The small-arms tracer strip and head light are the 3400 K
+  white-yellow of a burning magnesium and strontium nitrate composition (bands 1, 0.705, 0.348;
+  before 1, 0.462, 0.030) with the intensity rescaled (0.00165 to 0.001167) so the pellet's
+  photopic estimate stays about 61 cd. `KESSEL_RM_LIGHTS_DEBUG=1` also prints which lights hold
+  the two point-shadow cubes: on the strike fixture the burst at 6 m and either the second burst
+  or the burning wreck 41 m off hold them, so one or two lights (the weaker burst, or the wreck's
+  0.13 W/sr when two bursts outrank it) pass through the struck hull unshadowed. Kill at 1024x576
+  after all of it: sparks 0.14 / 0.14 / 0.15 ms, rm-points 0.03, port grains unchanged.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
   takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on

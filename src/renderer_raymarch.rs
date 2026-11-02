@@ -50,11 +50,12 @@ const MAX_CELL_ITEMS: usize = 1 << 18;
 /// Scene lights the renderer keeps from the game (`Renderer::set_lights`) for clustering.
 pub const MAX_SCENE_LIGHTS: usize = 448;
 /// A small-arms tracer pellet's intensity, renderer units (its colour's photopic weight is
-/// 36 982 lx per unit, so this is about 60 cd): an estimate from the trace requirement, a 7.62 mm
+/// 52 285 lx per unit at the 3400 K white-yellow of a burning magnesium and strontium nitrate
+/// composition, Planck bands (1, 0.705, 0.348), so this is about 61 cd): an estimate from the trace requirement, a 7.62 mm
 /// trace seen by day to about 850 yd (780 m; ARDEC/Orbital ATK, NDIA 2018), against a point-source
 /// threshold of 1e-4 lx (Venus by day): 1e-4 x 780^2 = 61 cd. It lights the scene from the head
 /// (`collect_lights`) and sets the drawn strip's radiance (`rm_sparks.wgsl` RM_TRACER_INTENSITY).
-const TRACER_INTENSITY: f32 = 0.00165;
+const TRACER_INTENSITY: f32 = 0.001167;
 /// Lights the backend synthesizes from ballistic bursts and tracer heads.
 const MAX_EFFECT_LIGHTS: usize = 64;
 const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS;
@@ -1849,7 +1850,7 @@ impl Backend {
         self.point_veil = [0.0; 2];
         {
             let forward = r.camera.forward().normalize_or_zero();
-            let tint = [1.0f64, 0.4621, 0.0296];
+            let tint = [1.0f64, 0.705, 0.348];
             let lux = |w: [f64; 3]| (tint[0] * w[0] + tint[1] * w[1] + tint[2] * w[2]) as f32 * TRACER_INTENSITY;
             let (per_p, per_s) = (lux(crate::observer::PHOTOPIC_WEIGHTS), lux(crate::observer::SCOTOPIC_WEIGHTS));
             let half_v = 0.5 * r.camera.fov_y;
@@ -1884,7 +1885,7 @@ impl Backend {
             }
         }
         for head in heads.into_iter().take(8) {
-            let color = Vec3::new(1.0, 0.4621, 0.0296);
+            let color = Vec3::new(1.0, 0.705, 0.348);
             self.lights.push(GpuLight { a: [head.x, head.y, head.z, 0.003], b: [color.x, color.y, color.z, TRACER_INTENSITY], c: [range_of(color, TRACER_INTENSITY), -1.0, 2.0, 0.0] });
         }
         // KESSEL_RM_LIGHTS_DEBUG=1 prints the frame's lights relative to the eye (how the cabin
@@ -1906,6 +1907,11 @@ impl Backend {
         for (slot, &(_, index)) in ranked.iter().take(self.quality.point_shadows.min(POINT_SHADOWS)).enumerate() {
             self.shadowed[slot] = Some(index);
             self.lights[index].c[1] = slot as f32;
+            if std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() {
+                let l = &self.lights[index];
+                println!("[rm-shadow] cube {slot} -> light {index} kind {} I {:.3e} at {:.1} m; {} lights ranked, {} unshadowed",
+                    l.c[2], l.b[3], (Vec3::from_array([l.a[0], l.a[1], l.a[2]]) - eye).length(), ranked.len(), ranked.len().saturating_sub(POINT_SHADOWS));
+            }
         }
         // Bin.
         self.light_pairs.clear();

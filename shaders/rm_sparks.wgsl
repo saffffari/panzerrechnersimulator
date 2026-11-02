@@ -40,6 +40,17 @@ fn weapon_palette(page: u32) -> vec3<f32> {
     if (page == 4u) { return vec3(1.0, 0.5906, 0.0482) * 4.38; }
     return vec3(1.0, 0.2874, 0.0116) * 5.30;
 }
+// An incandescent spark's colour: the three Planck-band ratios at its temperature (red = 1), on
+// the palette's authored display scale (dull orange 5.3 at 1500 K to 9.9 at 2800 K and above).
+// `glow` is (initial kelvin, fraction of life); a spark cools from its own initial temperature
+// to a dull 1100 K by the end of its burn. Not calibrated steel emissivity (2026-11-02).
+fn spark_glow(glow: vec2<f32>) -> vec3<f32> {
+    let kelvin = mix(glow.x, 1100.0, pow(clamp(glow.y, 0.0, 1.0), 0.7));
+    let wavelengths = vec3(650.0, 550.0, 450.0);
+    let reference = exp(14387769.0 / (650.0 * kelvin)) - 1.0;
+    let chroma = pow(vec3(650.0) / wavelengths, vec3(5.0)) * reference / (exp(vec3(14387769.0) / (wavelengths * kelvin)) - vec3(1.0));
+    return chroma * mix(5.3, 9.9, clamp((kelvin - 1500.0) / 1300.0, 0.0, 1.0));
+}
 fn rim_color(initial_kelvin: f32, age: f32) -> vec3<f32> {
     let kelvin = 293.0 + max(initial_kelvin - 293.0, 0.0) * exp(-max(age, 0.0) / 2.5);
     if (kelvin < 700.0) { return vec3(0.0); }
@@ -85,7 +96,7 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
 }
 
 // Samples drawn along each spark's path for the streaked kinds (vs_spark: 2, 5, 6).
-const SPARK_TRAIL: u32 = 8u;
+const SPARK_TRAIL: u32 = 24u;
 
 @vertex fn vs_spark(@builtin(vertex_index) vertex: u32,
     @location(0) origin_age: vec4<f32>, @location(1) direction_life: vec4<f32>,
@@ -103,11 +114,13 @@ const SPARK_TRAIL: u32 = 8u;
     let sample = select(index, index / SPARK_TRAIL, streaked);
     if (streaked) {
         if (sample >= identity.z) { return weapon_hidden(); }
-        t = max(t - f32(index % SPARK_TRAIL) * 0.002, 0.0);
+        t = max(t - f32(index % SPARK_TRAIL) * (0.014 / f32(SPARK_TRAIL)), 0.0);
     }
     let seed = identity.x * select(3948571u, 9348571u, kind <= 1u) + sample * 977u; let q = weapon_random(seed);
     var velocity = vec3(0.0); var axis = vec3(0.0, 0.0, 1.0); var width = 0.0; var tail = 0.0; var page = 2u; var rim_offset = vec3(0.0);
     var gain = select(1.0, f32(identity.y) / (f32(identity.z) * f32(SPARK_TRAIL)), streaked);
+    // (initial kelvin, fraction of life) of a streaked spark, for `spark_glow`.
+    var glow = vec2(2300.0, 0.0);
     // The strike kinds place their sample themselves (a bounce is not a parabola).
     var arc_center = vec3(0.0); var arc_set = false;
     if (kind == 9u) {
@@ -197,6 +210,7 @@ const SPARK_TRAIL: u32 = 8u;
         width = select((0.007 + 0.006 * q) * exp(-t / 8.0), (0.008 + 0.006 * q) * sqrt(1.0 - t / life), kind == 5u);
         tail = clamp(length(velocity - vec3(0.0, 9.81 * t, 0.0)) * 0.002, width, 0.15);
         page = select(2u, 4u, t < 0.15);
+        glow = vec2(2300.0 + 600.0 * weapon_random(seed + 37u), t / life);
     } else if (kind == 3u) {
         // Incandescent dust off a perforated or bounced plate: the solver's energy and
         // incidence; each spark's size sets how long it burns; this burst's share tilts the fan a
@@ -217,6 +231,7 @@ const SPARK_TRAIL: u32 = 8u;
         width = (0.0015 + 0.002 * size) * sqrt(1.0 - t / life);
         tail = select(clamp(speed * 0.002, width, 0.04), width, arc.resting);
         page = select(select(2u, 4u, t < 0.4 * life), 3u, t < 0.1 * life);
+        glow = vec2(2200.0 + 900.0 * weapon_random(seed + 37u), t / life);
     } else if (kind == 2u) {
         // The fan off a glancing plate: along the outgoing ray, lifting off the plate more and
         // spreading wider the steeper the ricochet, a slow-heavy speed law scaled by the round's
@@ -241,6 +256,7 @@ const SPARK_TRAIL: u32 = 8u;
         tail = select(clamp(length(arc.velocity) * 0.008, 0.025, 0.32), width, arc.resting);
         let white = 0.8 + 0.4 * hot;
         page = select(select(2u, 4u, t < 0.18 * life * white), 3u, t < 0.05 * life * white);
+        glow = vec2((2100.0 + 900.0 * weapon_random(seed + 37u)) * (0.85 + 0.15 * hot), t / life);
     } else {
         // A heavy exterior blast's sparks trail four samples along each path (a dotted
         // radial streak) instead of filling a dome with points; light impacts are unchanged.
@@ -269,6 +285,7 @@ const SPARK_TRAIL: u32 = 8u;
         let current = velocity - vec3(0.0, 9.81 * t, 0.0); axis = normalize(current);
         width = (0.006 + 0.012 * size) * sqrt(1.0 - t / life); tail = min(length(current) * 0.008, 0.32);
         page = select(select(2u, 4u, t < 0.35 * life), 3u, t < 0.08 * life);
+        glow = vec2(2200.0 + 1200.0 * weapon_random(seed + 37u) * select(0.75, 1.0, kind == 0u), t / life);
     }
     var center = select(origin_age.xyz + velocity * t - vec3(0.0, 4.905 * t * t, 0.0), origin_age.xyz + rim_offset, kind == 8u);
     if (arc_set) { center = arc_center; }
@@ -290,12 +307,12 @@ const SPARK_TRAIL: u32 = 8u;
         return WeaponOut(position, center, mix(vec3(0.16, 0.115, 0.075), vec3(0.65, 0.72, 0.80), parameters.z), area);
     }
     if (kind == 8u) { return WeaponOut(position, center, rim_color(parameters.z, t) * weight, 0.0); }
-    return WeaponOut(position, center, weapon_palette(page) * weight * gain, 0.0);
+    return WeaponOut(position, center, select(weapon_palette(page), spark_glow(glow), streaked) * weight * gain, 0.0);
 }
 
 // A small-arms tracer pellet's intensity, renderer units (`TRACER_INTENSITY` in
 // renderer_raymarch.rs, about 60 cd; its head lights the scene with the same value).
-const RM_TRACER_INTENSITY: f32 = 0.00165;
+const RM_TRACER_INTENSITY: f32 = 0.001167;
 
 // The eyepiece's barrel distortion (rm_lens.wgsl: the frame at q shows the scene at q (1 + k r^2),
 // r = |q| / 0.45) applied to a clip position drawn after the lens pass: the point where the scene
@@ -332,7 +349,7 @@ fn eyepiece_clip(c: vec4<f32>) -> vec4<f32> {
     // near tracer some ten thousand times too bright, its glare a broad band across the view).
     let focal = 0.5 * fr.res.y / tan(0.5 * fr.optic.y);
     let per_pixel = RM_TRACER_INTENSITY * focal * focal / max(length(delta), 1.0);
-    let tint = vec3(1.0, 0.4621, 0.0296);
+    let tint = vec3(1.0, 0.705, 0.348);
     if (dot(delta, delta) <= 0.00000001) {
         let w = max(0.5 * (a.w + b.w), 0.05);
         return WeaponOut(pixel_quad((wa + wb) * 0.5, vertex), (wa + wb) * 0.5, tint * per_pixel / (w * w), 0.0);

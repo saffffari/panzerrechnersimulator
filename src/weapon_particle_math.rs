@@ -4,7 +4,7 @@ use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 /// Samples a record carries per spark. Both spark shaders draw each spark as a dotted streak of
 /// SPARK_TRAIL samples along its path over 14 ms, so a record carries exactly that many: the
 /// thousandfold quadrature of 2026-10 drew as sheets and cones (2026-11-02).
-pub const SPARK_MULTIPLIER:u32=8;
+pub const SPARK_MULTIPLIER:u32=24;
 /// Ground ejecta grains a record carries per source grain: a quadrature of an estimated mass.
 pub const GROUND_MULTIPLIER:u32=1000;
 pub const EXTERIOR_VOLUME_MULTIPLIER:f32=100.0;
@@ -357,7 +357,7 @@ mod tests {
     }
     #[test] fn burst_volume_count_and_upload_are_bounded_independently() {
         assert!((EXTERIOR_RADIUS_MULTIPLIER.powi(3)-EXTERIOR_VOLUME_MULTIPLIER).abs()<0.0001);
-        assert_eq!(384*SPARK_MULTIPLIER,3072);assert_eq!(std::mem::size_of::<Record>(),80);
+        assert_eq!(384*SPARK_MULTIPLIER,9216);assert_eq!(std::mem::size_of::<Record>(),80);
         assert_eq!(MAX_BURSTS*std::mem::size_of::<Record>(),3840);
         // Every burst's streak samples fit the view cap together; the cap bounds the ground's grains.
         let mut available=MAX_SPARKS_PER_VIEW;let mut emitted=0;
