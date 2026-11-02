@@ -565,7 +565,11 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   half the machine's threads (at most 6) beside the game, and the solver's barrier backs off from
   spinning to yielding to 50 µs sleeps, so a descheduled worker is not kept off the cores (both
   named tuning; results are bit-identical whatever the thread count). Not yet re-measured under
-  contention. A perforation still holds its tick for its whole solve (about 0.2–0.45 s).
+  contention. A perforation still holds its tick for its whole solve (about 0.2–0.45 s). Workers
+  are now capped at one per 384 particles (was 1,024, which held a 6,000-particle solve to five):
+  a 4,851-particle reference solve took 834 ms on 1 worker, 233 ms on 4 and 194 ms on 12
+  (`lattice::diagnostics::thread_scaling`, debug build, machine lightly loaded); about a sixth of
+  each step is serial (bond breaking and barriers).
   Ricochets, shatters, HE and HEAT keep their existing scars. Other vehicles keep the empirical
   scar rules. The sub-calibre core of an APCR round goes into the plate; its carrier is not modelled.
 - **Scars from the lattice** (`ArmorField::record_measured`): aperture, back-face tear, petals,
@@ -613,7 +617,11 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   lodged-round friction rule on the cavity-work depth). It rides the same light spring as a spent
   case; releasing the button lets it fall under the ordinary fragment collision; R throws it at
   6 m/s (named). A throw whose line from the hand meets no source surface within 3 m goes out
-  through an open aperture and leaves the simulation (named: steel outside is not kept). The
+  through an open aperture and leaves the simulation (named: steel outside is not kept). A chip
+  the steel holds beyond one man's pull is freed with the toolbox (a field repair job: the bar,
+  3 s named tuning, or counted sledge blows) and then rests loose for the hand. In the GPU review
+  most solved chips embedded about their own size (5 mm) in the turret floor and needed the bar.
+  The
   chip in hand is saved with its pool slot; fragments are saved with their solved temperature
   and embedding (`combat.projectiles` owner version 2).
 - **Compartment pressure** (`fea_damage::compartment`, `game_fea::fea_compartment_burst`):

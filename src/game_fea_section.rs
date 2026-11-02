@@ -63,6 +63,8 @@ pub(crate) fn cases() -> Vec<SectionCase> {
             shell: &b::BR_412, range_m: 500.0, aim: Vec3::new(0.3, 2.3, 0.6), dir: Vec3::new(0.0, -0.02, -1.0) },
         SectionCase { name: "side_ammo_76apcr", title: "76 mm BR-354P APCR, 200 m, left sponson at the ammunition",
             shell: &b::BR_354P, range_m: 200.0, aim: Vec3::new(1.35, 1.66, 0.61), dir: Vec3::new(-1.0, -0.03, 0.0) },
+        SectionCase { name: "side_crew_152aphe", title: "152 mm BR-540 APHE (660 g), 500 m, left sponson into the fighting compartment",
+            shell: &b::BR_540, range_m: 500.0, aim: Vec3::new(1.35, 1.66, 0.61), dir: Vec3::new(-1.0, -0.03, 0.0) },
         SectionCase { name: "side_14mm_ptrd", title: "14.5 mm B-32 (PTRD-41), 100 m, upper hull side",
             shell: &B32_PTRD, range_m: 100.0, aim: Vec3::new(1.5, 1.6, 0.4), dir: Vec3::new(-1.0, -0.02, 0.0) },
         SectionCase { name: "glacis_ricochet_76", title: "76 mm BR-350B APBC, 300 m, grazing the glacis (ricochet)",

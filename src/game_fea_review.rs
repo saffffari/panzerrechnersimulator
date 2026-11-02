@@ -23,6 +23,9 @@ struct Rig<'a> {
     ch: u32,
     stills: Vec<serde_json::Value>,
     checks: Vec<serde_json::Value>,
+    /// Exterior stills are taken at this sky clock (the long cooling waits would carry the day
+    /// into night).
+    clock: ephemeris::UtcInstant,
 }
 
 impl Rig<'_> {
@@ -37,6 +40,7 @@ impl Rig<'_> {
         view: Option<(Vec3, Vec3, f32)>) -> anyhow::Result<()> {
         g.drive_armor_scars(r);
         if let Some((eye, at, fov)) = view {
+            r.set_sky_clock(celestial_sky::SkyClock::new(self.clock, r.sky_clock.site));
             r.camera.pos = eye;
             r.camera.set_forward(at - eye);
             r.camera.fov_y = fov.to_radians();
@@ -85,6 +89,17 @@ fn resting_solved(g: &Game) -> Vec<(usize, Vec3, f32)> {
         .collect()
 }
 
+/// Resting chips the steel holds within the loader's reach, nearest first.
+fn stuck_in_reach(g: &Game) -> Vec<usize> {
+    let eye = g.station_eye(Station::Loader);
+    let mut stuck: Vec<(usize, f32)> = resting_solved(g).into_iter()
+        .filter(|(i, p, _)| g.hot_fragments[*i].lodged && !game_fea::fragment_pullable(&g.hot_fragments[*i])
+            && p.distance(eye) < 1.6)
+        .map(|(i, p, _)| (i, p.distance(eye))).collect();
+    stuck.sort_by(|a, b| a.1.total_cmp(&b.1));
+    stuck.into_iter().map(|(i, _)| i).collect()
+}
+
 /// Turn the loader's head onto each candidate chip in reach and take the first one the ordinary
 /// hover offers; returns its slot.
 fn find_pickable(g: &mut Game, r: &mut Renderer, skip: &[usize]) -> Option<usize> {
@@ -94,17 +109,49 @@ fn find_pickable(g: &mut Game, r: &mut Renderer, skip: &[usize]) -> Option<usize
             && game_fea::fragment_holdable(&g.hot_fragments[*i]) && game_fea::fragment_pullable(&g.hot_fragments[*i]))
         .collect();
     candidates.sort_by(|a, b| a.1.distance(eye).total_cmp(&b.1.distance(eye)));
-    for (i, p, _) in candidates.into_iter().take(40) {
+    for (_, p, _) in candidates.into_iter().take(40) {
         g.loader_face_world(p);
-        step(g, r, 2, &TankInput::default());
-        if g.hover == Some(Hotspot::Fragment(i)) {
-            return Some(i);
+        // Time for the head to settle on it (it may be turning down from the hatch).
+        step(g, r, 12, &TankInput::default());
+        // Whichever chip the ordinary hover offers on that line (a nearer one may lie on it).
+        if let Some(Hotspot::Fragment(j)) = g.hover {
+            if !skip.contains(&j) && game_fea::fragment_holdable(&g.hot_fragments[j]) && game_fea::fragment_pullable(&g.hot_fragments[j]) {
+                return Some(j);
+            }
         }
     }
     None
 }
 
+/// Aim points above the loader's open hatch, nearest the aperture's axis first.
+fn throw_targets(g: &Game) -> Vec<Vec3> {
+    let turret = g.player.turret_model();
+    let centre = turret.transform_point3(tiger_hatches::APERTURE_CENTERS[1]);
+    let up = turret.transform_vector3(Vec3::Y).normalize_or_zero();
+    let mut targets: Vec<(f32, Vec3)> = Vec::new();
+    for height in [0.4f32, 0.8, 1.5, 3.0] {
+        for dx in [-0.15f32, -0.08, 0.0, 0.08, 0.15] {
+            for dz in [-0.15f32, -0.08, 0.0, 0.08, 0.15] {
+                let target = centre + up * height + turret.transform_vector3(Vec3::new(dx, 0.0, dz));
+                targets.push((dx.abs() + dz.abs() + height * 0.01, target));
+            }
+        }
+    }
+    targets.sort_by(|a, b| a.0.total_cmp(&b.0));
+    targets.into_iter().map(|t| t.1).collect()
+}
+
+/// Whether the throw R would make now leaves the vehicle: the game's own line, from the hand
+/// along the throw (`fea_release_fragment`).
+fn throw_line_clear(g: &Game, forward: Vec3) -> bool {
+    let dir = (g.carry_vel + forward.normalize_or_zero() * 6.0 + Vec3::Y * 0.8).normalize_or_zero();
+    g.cabin_fire.sweep(g.carry_pos, g.carry_pos + dir * 3.0, &g.fire_surface_models()).is_none()
+}
+
 pub fn run(prefix: &str) -> anyhow::Result<()> {
+    // Into the owner's shared captures folder when KESSEL_CAPTURES_DIR is set (worktree-prefixed).
+    let prefix_owned = super::game_fea_section::shared_capture_prefix(prefix);
+    let prefix = prefix_owned.as_str();
     anyhow::ensure!(graphics::raymarch_backend_enabled(), "fea-play requires KESSEL_RENDERER=raymarch");
     anyhow::ensure!(!std::path::Path::new(&format!("{prefix}_receipt.json")).exists(),
         "preserving an existing review; choose a new prefix");
@@ -116,8 +163,9 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
     let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let instant = ephemeris::UtcInstant::parse_iso("1942-12-21T10:30:00Z")?;
     let mut rig = Rig { device: &device, queue: &queue, prefix: prefix.to_owned(), cw: r.iw * 3, ch: r.ih * 3,
-        stills: Vec::new(), checks: Vec::new() };
+        stills: Vec::new(), checks: Vec::new(), clock: instant };
     let idle = TankInput::default();
     g.mute_audio();
     g.debug_banish_enemies();
@@ -127,7 +175,6 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     g.debug_place_tiger(TIGER_AT, 0.0);
     g.debug_empty_ammunition();
     r.set_weather_override(Some(0.0));
-    let instant = ephemeris::UtcInstant::parse_iso("1942-12-21T10:30:00Z")?;
     r.set_sky_clock(celestial_sky::SkyClock::new(instant, r.sky_clock.site));
     step(&mut g, &mut r, 60, &idle);
     let mut receipt = serde_json::Map::new();
@@ -165,9 +212,18 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     g.station = Station::Loader;
     g.switch_t = 0.0;
     let turret = g.player.turret_model();
+    // Disclosed: the player sits at the driver's station for this strike and is moved to the
+    // loader's afterwards. At the loader's station the spall killed the player in an earlier run,
+    // and a dead Tiger takes no further hits; the solo crew's own loader stays where he is.
+    g.station = Station::Driver;
+    g.switch_t = 0.0;
+    step(&mut g, &mut r, 2, &idle);
     g.debug_launch_round(&crate::ballistics::BR_354P, false, turret.transform_point3(Vec3::new(0.45, 1.85, -1.9)),
         turret.transform_vector3(Vec3::new(-0.15, -0.30, 1.0)), 200.0, 0x5EA1_0002);
     step(&mut g, &mut r, 4, &idle);
+    rig.check("the player lives through the turret-rear strike", g.player.alive, format!("alive {}", g.player.alive));
+    g.station = Station::Loader;
+    g.switch_t = 0.0;
     let solved: Vec<f32> = g.hot_fragments.iter().filter(|f| f.active && f.temp_k > 0.0).map(|f| f.temp_k).collect();
     rig.check("the perforation's fragments are the lattice's solved bodies", !solved.is_empty(),
         format!("{} solved bodies, hottest {:.0} K", solved.len(), solved.iter().cloned().fold(0.0, f32::max)));
@@ -185,6 +241,13 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         g.loader_face_world(at);
         step(&mut g, &mut r, 1, &idle);
         rig.still(&g, &mut r, "spall_hot", "the loader's eye on the turret rear: the solved chips in flight, glowing by temperature", None)?;
+        // 0.6 s on, the strike's spark cloud gone: the rim and bore by their own temperature.
+        step(&mut g, &mut r, 31, &idle);
+        let turret = g.player.turret_model();
+        let centre = turret.transform_point3(hole.local_position());
+        let normal = turret.transform_vector3(hole.local_normal()).normalize_or_zero();
+        rig.still(&g, &mut r, "hole_glow_0_6s", "the turret-rear hole 0.6 s after the strike, at its solved local temperature",
+            Some((centre + normal * 0.6 + Vec3::Y * 0.1, centre, 30.0)))?;
     }
     g.debug_extinguish_cabin();
     // Wait for the chips to come to rest and cool to a gloved hand's limit (343 K).
@@ -224,8 +287,47 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         rig.still(&g, &mut r, "spall_cold", "the chips cold on the floor (the non-emitting steel page)", None)?;
     }
 
-    // ── 3. The loader's hands: take a chip, carry it, throw it out of the open hatch; take a
-    // second and let it fall.
+    // ── 3. The loader's hands: chips the steel holds are pried out with the toolbox first; then
+    // take one, carry it, throw it out of the open hatch; take a second and let it fall.
+    let stuck = stuck_in_reach(&g);
+    receipt.insert("stuck_in_reach".into(), json!(stuck.len()));
+    if !stuck.is_empty() {
+        g.carrying_track_kit = true; // disclosed: the toolbox put in hand
+        let mut freed = Vec::new();
+        for &i in stuck.iter().take(2) {
+            let Some(point) = g.fea_fragment_point(i) else { continue };
+            let seconds = g.fea_fragment_job_seconds(i);
+            let mut held = 0.0f32;
+            let mut prompt = None;
+            while held < seconds + 1.0 && g.hot_fragments[i].lodged {
+                g.loader_face_world(point);
+                g.update(&press(), 1.0 / 60.0, &mut r);
+                prompt = prompt.or(g.hover_label);
+                held += 1.0 / 60.0;
+                if freed.is_empty() && (held - 1.0).abs() < 0.5 / 60.0 {
+                    rig.still(&g, &mut r, "chip_pry", "the toolbox's bar on a chip the floor holds", None)?;
+                }
+            }
+            freed.push(json!({"slot": i, "freed": !g.hot_fragments[i].lodged, "held_s": held, "job_s": seconds,
+                "prompt": prompt, "removal": format!("{:?}", game_fea::fragment_extraction(&g.hot_fragments[i]).removal)}));
+            step(&mut g, &mut r, 2, &TankInput::default());
+        }
+        let freed_ok = freed.iter().all(|f| f["freed"] == true);
+        rig.check("the toolbox pries stuck chips loose", freed_ok, format!("{freed:?}"));
+        receipt.insert("pried".into(), json!(freed));
+        g.carrying_track_kit = false; // disclosed: set down by state
+        step(&mut g, &mut r, 2, &TankInput::default());
+        // The freed chips cool on to a gloved hand's limit (the ordinary update at 30 Hz).
+        let freed_slots: Vec<usize> = stuck.iter().take(2).copied().collect();
+        let mut extra = 0.0f32;
+        while extra < 300.0 && freed_slots.iter().any(|&i| !game_fea::fragment_holdable(&g.hot_fragments[i])) {
+            for _ in 0..30 {
+                g.update(&TankInput::default(), 1.0 / 30.0, &mut r);
+            }
+            extra += 1.0;
+        }
+        receipt.insert("freed_cooling_s".into(), json!(extra));
+    }
     let first = find_pickable(&mut g, &mut r, &[]);
     rig.check("the crosshair offers a cool chip", first.is_some(), format!("hover {:?} label {:?}", g.hover, g.hover_label));
     if let Some(i) = first {
@@ -238,15 +340,26 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         // Disclosed: the loader's lid opened by state (its ordinary swing), then the eye up through it.
         g.roof_hatches.open[1] = true;
         step(&mut g, &mut r, 90, &press());
-        let aperture = g.player.turret_model().transform_point3(tiger_hatches::APERTURE_CENTERS[1] + Vec3::Y * 0.9);
-        g.loader_face_world(aperture);
-        step(&mut g, &mut r, 12, &press());
+        // The eye up through the hatch: the first aim whose actual throw line (from where the
+        // hand holds the chip) leaves the vehicle.
+        let mut tried = 0;
+        for target in throw_targets(&g) {
+            tried += 1;
+            g.loader_face_world(target);
+            step(&mut g, &mut r, 25, &press());
+            if throw_line_clear(&g, r.camera.forward()) {
+                break;
+            }
+        }
+        receipt.insert("throw_aims_tried".into(), json!(tried));
+        rig.still(&g, &mut r, "chip_throw_aim", "the chip in hand under the open loader's hatch, about to be thrown out", None)?;
         let thrown = g.throw_carried_casing(r.camera.forward());
         let left = !g.hot_fragments[i].active;
         rig.check("R throws it out through the open hatch", thrown && left,
             format!("throw accepted {thrown}, chip still simulated {}", g.hot_fragments[i].active));
         step(&mut g, &mut r, 5, &idle);
-        let second = find_pickable(&mut g, &mut r, &[i]);
+        // Any chip the hand can take now, the first one too if it fell back inside.
+        let second = find_pickable(&mut g, &mut r, &[]);
         if let Some(j) = second {
             step(&mut g, &mut r, 1, &press());
             let held = g.fea.carried_fragment == Some(j);
@@ -267,6 +380,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     if let Some(round) = &lodged {
         let job = game_fea::penetrator_body(round.shell);
         let point = g.fea_lodged_point(round.id).context("lodged point")?;
+        let close_view = lodged_view(&g, round, 0.75, -0.35, 0.18);
         let model = g.player.hull_model();
         let local = model.inverse().transform_point3(point);
         let mut stand = model.transform_point3(Vec3::new(local.x - 0.25, 0.0, local.z + 1.15));
@@ -295,24 +409,22 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             format!("{:?} job of {seconds:.1} s, held {held_s:.1} s, prompt {prompt:?}, body {:.0} mm long",
                 round.extraction.removal, job.length_m * 1000.0));
         step(&mut g, &mut r, 2, &idle);
-        let view = lodged_view(&g, round, 0.75, -0.35, 0.18);
-        let view = (view.0, model.transform_point3(local), view.2);
-        rig.still(&g, &mut r, "lodged_removed", "the crater after the round came out", Some(view))?;
+        rig.still(&g, &mut r, "lodged_removed", "the crater after the round came out", Some(close_view))?;
         g.carrying_track_kit = false;
         g.mode = Mode::Tank;
         g.station = Station::Loader;
         g.switch_t = 0.0;
     }
 
-    // ── 5. A 152 mm BR-540 (660 g filler) through the hull side forward of the firewall, every
-    // lid closed: the compartment's pressure against the latches.
+    // ── 5. A 152 mm BR-540 (660 g filler) through the turret side, every lid closed: the
+    // compartment's pressure against the latches.
     g.roof_hatches.open = [false; 4];
     g.hatch_open = false;
     step(&mut g, &mut r, 120, &idle);
     let receipts_before = g.fea.receipts.len();
-    let hull = g.player.hull_model();
-    g.debug_launch_round(&crate::ballistics::BR_540, false, hull.transform_point3(Vec3::new(1.5, 1.55, 0.6)),
-        hull.transform_vector3(Vec3::new(-1.0, -0.04, 0.0)), 500.0, 0x5EA1_0003);
+    let turret = g.player.turret_model();
+    g.debug_launch_round(&crate::ballistics::BR_540, false, turret.transform_point3(Vec3::new(0.0, 2.05, 0.0)),
+        turret.transform_vector3(Vec3::new(-1.0, -0.03, 0.0)), 500.0, 0x5EA1_0003);
     step(&mut g, &mut r, 6, &idle);
     let compartment = g.fea.receipts.iter().skip(receipts_before).filter_map(|c| c.compartment.clone()).last();
     let lids = (g.roof_hatches.open, g.hatch_open);
@@ -329,7 +441,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     receipt.insert("checks".into(), json!(rig.checks));
     receipt.insert("stills".into(), json!(rig.stills));
     receipt.insert("wall_s".into(), json!(started.elapsed().as_secs_f32()));
-    receipt.insert("disclosed".into(), json!("station and on-foot placement set directly; toolbox put in hand; the loader's lid opened by state; the cooling wait runs the ordinary update at 30 Hz"));
+    receipt.insert("disclosed".into(), json!("station and on-foot placement set directly; toolbox put in hand and set down by state; the loader's lid opened by state; the cooling waits run the ordinary update at 30 Hz; god mode for the turret-rear strike (identical shower, no crew or module damage)"));
     let path = format!("{prefix}_receipt.json");
     std::fs::write(&path, serde_json::to_string_pretty(&serde_json::Value::Object(receipt))?)?;
     println!("[fea-play] {passed}/{} checks passed; receipt {path}", rig.checks.len());

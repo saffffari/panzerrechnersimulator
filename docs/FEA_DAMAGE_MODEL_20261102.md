@@ -437,4 +437,20 @@ lists every named approximation of this model.
   at the local temperature, scaled by the rim's solved cooling. Measured on the reference cases:
   rings at the bore edge 800–910 K, bore wall up to 1,130 K, falling outward. Not yet seen on the
   GPU.
-- Not verified on the GPU yet: queued under the shared GPU lock.
+- **GPU review** (`fea-play`, five runs 2026-11-02; stills and receipts
+  `fea-damage-fea_play*_20261102_*` in the owner's captures folder). Verified in the game: a
+  45 mm AP round lodged 63 mm deep in the lower front plate, drawn standing out of its crater;
+  its plate solve committed at 0.25 s and raised the grip from 14.9 kN (estimate) to 84.9 kN
+  (Blows(10)); the sledge worked it out on foot in 4.8 s and left the crater. A 76 mm APCR
+  through the turret rear gave 27 solved chips (hottest 1,030 K); 21 rested and cooled to the
+  hand's limit in about 5 minutes; most had embedded 5 mm in the floor, so the toolbox's bar
+  pried two loose (3 s each); the hand took one and threw it out of the open loader's hatch. A
+  152 mm BR-540 through the turret side with every lid closed peaked at 95 kPa (2.38 MJ into the
+  air after 0.38 MJ of body fragments) and threw the driver's, radio operator's and escape lids
+  open; the loader's lid and the cupola held. Seen but not judged from the stills: the fresh
+  hole's own glow is swamped by the strike's spark-shower glow at 70 ms; a 5 mm chip in hand is a
+  few pixels.
+- The review found and fixed: resting chips had stopped cooling; a burst at the plate's back
+  face fell outside the cabin proxy boxes (now the CAD firewall); an embedded chip could not be
+  freed (now the toolbox job); spall at the loader's station killed the player the review had
+  put there (the strike is now taken from the driver's seat).

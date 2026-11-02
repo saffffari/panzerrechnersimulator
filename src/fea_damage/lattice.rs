@@ -487,7 +487,7 @@ impl Lattice {
         if self.done || max_steps == 0 {
             return self.done;
         }
-        let threads = self.threads.clamp(1, (self.n / 1024).max(1));
+        let threads = self.threads.clamp(1, (self.n / MIN_PARTICLES_PER_WORKER).max(1));
         let view = View::of(self);
         let consts = Consts::of(self);
         let barrier = SpinBarrier::new(threads);
@@ -757,6 +757,9 @@ impl Consts {
 
 /// A sense-reversing spin barrier (the passes are microseconds long; a parking barrier would
 /// cost more than the work). Spins briefly, then yields.
+/// Fewest particles a worker takes (smaller ranges cost more in barriers than they save).
+const MIN_PARTICLES_PER_WORKER: usize = 384;
+
 /// Barrier back-off: spins, then yields, then sleeps of this many microseconds (named tuning;
 /// none of it changes a result: every phase still waits for every worker).
 const BARRIER_SPINS: u32 = 2000;
@@ -1957,6 +1960,24 @@ mod look {
 /// Diagnostics (ignored): energy closure by term and through time, time-step sensitivity.
 mod diagnostics {
     use super::*;
+
+    /// Wall time of one reference solve at several worker counts (the cap is n / 1024).
+    #[test]
+    #[ignore]
+    fn thread_scaling() {
+        let imp = PlateImpact { material: MaterialId::RolledArmour, thickness_m: 0.080, obliquity_rad: 0.05,
+            projectile: ProjectileShape { mass_kg: 1.43, radius_m: 0.0225, nose_m: 0.054 }, v_in: 760.0,
+            motion: Motion::Perforate { v_out: 300.0 }, seed: 7 };
+        for threads in [1usize, 2, 3, 5, 8, 12] {
+            let mut l = Lattice::new(imp);
+            l.set_threads(threads);
+            let t0 = std::time::Instant::now();
+            l.solve();
+            let wall = t0.elapsed().as_secs_f64() * 1000.0;
+            println!("threads {threads:2} (used {}): n {} steps {} wall {wall:.0} ms, {:.1} us/step",
+                threads.clamp(1, (l.n / MIN_PARTICLES_PER_WORKER).max(1)), l.n, l.step, wall * 1000.0 / l.step as f64);
+        }
+    }
     #[test]
     #[ignore]
     fn time_step_stability_scan() {

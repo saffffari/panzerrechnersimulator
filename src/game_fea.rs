@@ -864,7 +864,7 @@ impl Game {
             let label = if !fragment_holdable(f) {
                 "STEEL FRAGMENT - TOO HOT TO HOLD"
             } else if !fragment_pullable(f) {
-                "STEEL FRAGMENT - STUCK FAST IN THE STEEL"
+                "STEEL FRAGMENT - STUCK FAST: PRY IT OUT WITH THE TOOLBOX"
             } else {
                 "PICK UP STEEL FRAGMENT [LMB]"
             };
@@ -1138,6 +1138,45 @@ impl Game {
         }
     }
 
+    /// Embedded steel fragments the toolbox can free (those one man's pull cannot, short of a
+    /// workshop): the bar or the sledge, by the lodged-round extraction rule on the chip.
+    pub(super) fn fea_fragment_jobs(&self) -> Vec<super::equipment::RepairJob> {
+        self.hot_fragments.iter().enumerate()
+            .filter(|(_, f)| f.active && f.settled && f.lodged && !fragment_pullable(f)
+                && !matches!(fragment_extraction(f).removal, lodged::Removal::Workshop))
+            .map(|(i, _)| super::equipment::RepairJob::Fragment(i)).collect()
+    }
+
+    pub(super) fn fea_fragment_point(&self, slot: usize) -> Option<Vec3> {
+        let f = self.hot_fragments.get(slot).filter(|f| f.active && f.lodged)?;
+        Some(blood_parent_model(&self.player, f.frame).transform_point3(f.pos))
+    }
+
+    pub(super) fn fea_fragment_job_seconds(&self, slot: usize) -> f32 {
+        match self.hot_fragments.get(slot).map(fragment_extraction).map(|e| e.removal) {
+            Some(lodged::Removal::Bar) => FRAGMENT_PRY_S,
+            Some(lodged::Removal::Blows(n)) => n as f32 * SLEDGE_SWING_S,
+            Some(lodged::Removal::Hand) => 0.0,
+            _ => f32::INFINITY,
+        }
+    }
+
+    pub(super) fn fea_fragment_job_prompt(&self, slot: usize) -> &'static str {
+        match self.hot_fragments.get(slot).map(fragment_extraction).map(|e| e.removal) {
+            Some(lodged::Removal::Blows(_)) => "KNOCK THE STEEL FRAGMENT LOOSE WITH THE SLEDGE [HOLD LMB]",
+            _ => "PRY THE STEEL FRAGMENT OUT WITH THE BAR [HOLD LMB]",
+        }
+    }
+
+    /// The chip is free of the steel: it rests loose where it was, for the hand to take.
+    pub(super) fn fea_free_fragment(&mut self, slot: usize) {
+        if let Some(f) = self.hot_fragments.get_mut(slot) {
+            f.lodged = false;
+            f.embed_m = 0.0;
+            println!("[fea] a {:.0} g steel fragment pried out of the steel", fragments::cube_mass(f.size) * 1000.0);
+        }
+    }
+
     /// The round is out: it leaves the simulation (named: a removed round is not kept as a loose
     /// object).
     pub(super) fn fea_remove_lodged(&mut self, id: u64) {
@@ -1241,12 +1280,17 @@ pub(super) fn fragment_holdable(f: &HotFragment) -> bool {
 
 /// A fragment embedded in a wall comes out by hand only when one man's pull beats its grip.
 pub(super) fn fragment_pullable(f: &HotFragment) -> bool {
-    if !f.lodged {
-        return true;
-    }
-    let e = lodged::extraction(lodged::estimated_grip_pa(CABIN_WALL_FLOW_STRESS_PA), f.size, f.embed_m, true);
-    matches!(e.removal, lodged::Removal::Hand)
+    !f.lodged || matches!(fragment_extraction(f).removal, lodged::Removal::Hand)
 }
+
+/// The lodged-round rule on an embedded chip: Coulomb friction on the named residual grip of
+/// the cabin wall's steel over its embedded depth.
+pub(super) fn fragment_extraction(f: &HotFragment) -> lodged::Extraction {
+    lodged::extraction(lodged::estimated_grip_pa(CABIN_WALL_FLOW_STRESS_PA), f.size, f.embed_m, true)
+}
+
+/// Time to pry a chip out with the toolbox's bar (named tuning, like the other field repairs).
+const FRAGMENT_PRY_S: f32 = 3.0;
 
 #[cfg(test)]
 mod compartment_tests {
