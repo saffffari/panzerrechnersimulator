@@ -16792,6 +16792,19 @@ pub(crate) fn capture_target(requested: &str) -> String {
     let has_explicit_parent = path
         .parent()
         .is_some_and(|parent| !parent.as_os_str().is_empty());
+    // One shared folder across worktrees (CLAUDE.md, Linux captures): with KESSEL_CAPTURES_DIR
+    // set, a bare name or a `captures/...` path lands there as `<checkout>-<name>`, so runs from
+    // every checkout sort together and never collide. Absolute and other explicit paths stand.
+    let shared = std::env::var("KESSEL_CAPTURES_DIR").ok().filter(|d| !d.trim().is_empty());
+    let bare = !path.is_absolute() && (!has_explicit_parent || path.starts_with(CAPTURE_DIR));
+    if let (Some(dir), true) = (shared, bare) {
+        let name = path.strip_prefix(CAPTURE_DIR).unwrap_or(path).to_string_lossy().into_owned();
+        let checkout = std::env::current_dir().ok()
+            .and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "checkout".into());
+        let _ = std::fs::create_dir_all(&dir);
+        return std::path::Path::new(&dir).join(format!("{checkout}-{name}")).to_string_lossy().into_owned();
+    }
     let resolved = if path.is_absolute() || has_explicit_parent {
         requested.to_owned()
     } else {

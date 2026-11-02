@@ -227,9 +227,14 @@ pub fn run(requested:&str)->Result<()> {
    entry["notice"]=json!(g.theatre.as_ref().unwrap().notice);
    let after=g.expedition_stock().unwrap();
    entry["stock_after"]=serde_json::to_value(&after)?;entry["outcome"]=json!(if secured{"secured"}else{"not secured"});
-   check(&mut checks,&format!("order {n} ({}) is secured and closes on its own",s.name),secured&&closed,json!({"notice":g.theatre.as_ref().unwrap().notice,"beats":[beat_status(&g,0),beat_status(&g,1),beat_status(&g,2)]}));
+   check(&mut checks,&format!("order {n} ({}) is secured and closes on its own",s.name),secured&&closed,json!({"notice":g.theatre.as_ref().unwrap().notice,"beats":[beat_status(&g,0),beat_status(&g,1),beat_status(&g,2)],"site_position":site_spec(&g,site).position,"tiger":[tiger_xz(&g).x,tiger_xz(&g).y]}));
    println!("[loop-review] after order {n}: {}",after.lines().join(" | "));
    orders.push(entry);
+   if !closed {
+    // A failed order is withdrawn so the rest of the loop still plays (the opportunity is spent).
+    g.expedition_withdraw_order()?;
+    println!("[loop-review] order {n} withdrawn after the failed hold; the loop goes on");
+   }
    g.expedition_state().unwrap().validate()?;g.theatre.as_ref().unwrap().validate(g.enemies.len())?;
    if g.expedition_state().unwrap().status!=crate::expedition::RunStatus::Ongoing {break;}
    ensure!(n<16,"the loop did not end");

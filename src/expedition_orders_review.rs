@@ -16,7 +16,9 @@ const SITE: u64 = 10;
 const CW: u32 = 1280;
 const CH: u32 = 720;
 
-fn still(device: &wgpu::Device, queue: &wgpu::Queue, g: &Game, r: &mut Renderer, path: &str) -> anyhow::Result<()> {
+fn still(device: &wgpu::Device, queue: &wgpu::Queue, g: &mut Game, r: &mut Renderer, path: &str) -> anyhow::Result<()> {
+    // The strips' ink is painted by the window's frame; a headless still paints it here.
+    g.prepare_order_receipt(r, device, queue);
     r.reset_history();
     crate::converge_headless_screenshot(r, device, queue, 16)?;
     r.ui_reset();
@@ -78,7 +80,7 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
     ensure!(g.debug_tear_order_strip(), "the strip could not be torn off");
     step(&mut g, &mut r, 0.3);
     check("the torn-off strip is read in hand", g.order_receipt_held(), json!({"print": format!("{:?}", g.order_print_phase())}));
-    still(&device, &queue, &g, &mut r, &format!("{prefix}_order_at_camp.png"))?;
+    still(&device, &queue, &mut g, &mut r, &format!("{prefix}_order_at_camp.png"))?;
     ensure!(g.stow_order_receipt(), "X did not pocket the strip");
 
     // The held map at camp: the order's marks (the turn, the yard) and the bearing to the yard.
@@ -91,7 +93,7 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
     check("the map carries the open march beat's mark and a bearing to the turn",
         guidance.marks.len() == 1 && guidance.bearing.is_some() && guidance.slip.as_deref() == Some("1  THE APPROACH TO THE YARD"),
         json!({"marks": guidance.marks.len(), "bearing": guidance.bearing.map(|(_, _, deg)| deg), "slip": guidance.slip}));
-    still(&device, &queue, &g, &mut r, &format!("{prefix}_map_at_camp.png"))?;
+    still(&device, &queue, &mut g, &mut r, &format!("{prefix}_map_at_camp.png"))?;
     g.set_map_held(false);
 
     // The launcher's staged start: the crewed Tiger at the turn, engine on.
@@ -111,7 +113,7 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
     check("at the turn the map marks the turn as passed and bears on the yard",
         guidance.marks.len() == 2 && guidance.marks[0].3 && guidance.bearing.is_some_and(|(_, to, _)| to.distance(site) < 1.0),
         json!({"marks": guidance.marks.len(), "bearing": guidance.bearing.map(|(_, _, deg)| deg), "slip": guidance.slip}));
-    still(&device, &queue, &g, &mut r, &format!("{prefix}_order_at_turn.png"))?;
+    still(&device, &queue, &mut g, &mut r, &format!("{prefix}_order_at_turn.png"))?;
     // The machine at the commander's left: a line keyed to the detail prints on the strip
     // (offline responder unless a key is set), the head turned to it for the still.
     let keyed = g.stab_transmit("Stab, Elster. What is my fuel and ammunition? Over.").is_some();
@@ -121,7 +123,7 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
         json!({"print": format!("{:?}", g.order_print_phase())}));
     g.debug_look_at_order_machine();
     step(&mut g, &mut r, 0.2);
-    still(&device, &queue, &g, &mut r, &format!("{prefix}_machine.png"))?;
+    still(&device, &queue, &mut g, &mut r, &format!("{prefix}_machine.png"))?;
 
     // Fixture: the yard's finite garrison marked dead (no shot fired here), the Tiger stood on
     // the yard for the theatre's own hold clock.
@@ -140,7 +142,7 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
         secured && beat_status(&g, 2) == "Done" && report["finished"] == true && radio(&g).iter().any(|l| l.contains("Yard secured. Loading"))
             && !g.expedition_order_active(),
         json!({"theatre_notice": theatre["notice"], "finished": report["finished"], "radio": radio(&g)}));
-    still(&device, &queue, &g, &mut r, &format!("{prefix}_secured.png"))?;
+    still(&device, &queue, &mut g, &mut r, &format!("{prefix}_secured.png"))?;
     g.expedition_state().unwrap().validate()?;
     check("coordinator and theatre validate after the order", true, json!({"dispatches": g.expedition_state().unwrap().dispatches.len()}));
 

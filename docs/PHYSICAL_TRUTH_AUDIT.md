@@ -2759,4 +2759,10 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   (order, beat, stock, notice, camp, position, clock, weather) and return text that prints on
   the strip; nothing they say changes the simulation, spawns, supplies or alerts anything.
   The platoon radio's boundary (`docs/PLATOON_MODE.md`) applies unchanged.
+- **Bridge orders stand on the surveyed deck.** The theatre moves a Bridge site onto the surveyed
+  crossing at install; the authored sheet (written from the catalog) placed its contact, hold
+  and bypass points on the catalog's point, 139 m off the Southern crossing's deck and 77 m off
+  the Northern. `expedition_accept_order` re-seats every beat on the catalog point to the
+  theatre's site position and logs it. Found by `expedition-loop-review` (2 November 2026),
+  which now plays all eight orders through; the receipt is the gate.
 

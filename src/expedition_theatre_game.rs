@@ -300,8 +300,24 @@ impl Game {
   let t=self.theatre.as_mut().unwrap();t.active=Some(s.id);t.dispatch_serial+=1;t.notice=format!("ORDER {}: {}",s.id,s.task());
   // The authored order for the site (catalog/expedition_missions.v1.json: approach, contact,
   // secure, with the net's lines); a site the catalog lacks gets the bare one-beat order.
+  // The catalog's bridge sites are re-seated on the surveyed deck at install (above); the
+  // authored sheet was written from the catalog, so every beat placed on the catalog's point
+  // moves with the site, or the hold would ask for a place 140 m off the deck.
+  let catalog_site=crate::expedition_theatre::Spec::load()?.sites.iter().find(|c|c.id==s.id).map(|c|Vec2::from_array(c.position));
   let sheet=match crate::expedition_theatre::mission_sheet(s.id)? {
-   Some(sheet)=>sheet,
+   Some(mut sheet)=>{
+    if let Some(from)=catalog_site {
+     let to=Vec2::from_array(s.position);
+     if from.distance(to)>0.5 {
+      for beat in &mut sheet.beats {
+       if let crate::mission::Place::World(p)=&mut beat.at {if p.distance(from)<1.0 {*p=to;}}
+       if let Some((crate::mission::Place::World(p),_))=&mut beat.bypass_near {if p.distance(from)<1.0 {*p=to;}}
+      }
+      println!("[mission] order {} re-seated from the catalog's ({:.0}, {:.0}) to the surveyed site ({:.0}, {:.0})",s.id,from.x,from.y,to.x,to.y);
+     }
+    }
+    sheet
+   },
    None=>crate::mission::parse(&serde_json::json!({"schema":"kessel.mission","version":1,"act_id":1,"id":format!("expedition-{}",s.id),"site":s.id,"title":s.name,"callsign":"Elster","net":"Stab","order":[s.task(),"The field is persistent. Recover your people and equipment; supplies must be collected.","Read M for the order and map. X folds the sheet."],"beats":[{"id":"secure","title":s.name,"goal":"hold","at":{"x":s.position[0],"z":s.position[1]},"radius_m":100.,"trigger":{"kind":"start"},"complete":{"kind":"site_secured"},"map":{"mark":"circle","bearing":true},"pacing":{}}]}),std::path::Path::new("catalog/expedition_theatre.v1.json"))?,
   };
   self.enable_mission(sheet)?;Ok(true)

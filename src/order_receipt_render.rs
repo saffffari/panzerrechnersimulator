@@ -7,7 +7,7 @@ use std::sync::Arc;
 pub const RECEIPT_INK_WIDTH: u32 = 384;
 pub const RECEIPT_INK_HEIGHT: u32 = 1152;
 /// Characters per printed line on the 76 mm strip.
-pub const RECEIPT_CHARS_PER_LINE: usize = 28;
+pub const RECEIPT_CHARS_PER_LINE: usize = 24;
 const WIDTH: u32 = RECEIPT_INK_WIDTH;
 const HEIGHT: u32 = RECEIPT_INK_HEIGHT;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -64,14 +64,14 @@ pub fn draw_receipt(r: &mut super::Renderer, ink: &ReceiptInk) {
     let black = [0.10, 0.10, 0.11, 1.0];
     let faded = [0.32, 0.30, 0.27, 1.0];
     r.fill_rect(0.0, 0.0, 1.0, 1.0, paper);
-    // The strip is 1:3; lines are 0.021 of its height (24 mm of print per 1.15 m of texture).
-    let line_h = 0.021;
+    // The strip is 1:3; a line is 0.026 of its height (6 mm of paper), the type 0.021 (4.8 mm).
+    let line_h = 0.026;
     let mut y = 0.018;
     let mut n = 0;
     let row = |r: &mut super::Renderer, text: &str, bold: bool, color: [f32; 4], y: &mut f32| {
         for line in crate::ui::wrap_text(text, RECEIPT_CHARS_PER_LINE) {
-            if bold { r.draw_text_bold(&line, 0.06, *y, 0.0165, color, crate::ui::Align::Left); }
-            else { r.draw_text(&line, 0.06, *y, 0.0165, color, crate::ui::Align::Left); }
+            if bold { r.draw_text_bold(&line, 0.06, *y, 0.019, color, crate::ui::Align::Left); }
+            else { r.draw_text(&line, 0.06, *y, 0.021, color, crate::ui::Align::Left); }
             *y += line_h;
         }
     };
@@ -92,7 +92,7 @@ pub fn draw_receipt(r: &mut super::Renderer, ink: &ReceiptInk) {
     }
     if ink.printed > ink.lines.len() + 1 {
         // The machine's end-of-message mark.
-        r.draw_text("+ + +", 0.5, y + 0.006, 0.0165, faded, crate::ui::Align::Center);
+        r.draw_text("+ + +", 0.5, y + 0.006, 0.021, faded, crate::ui::Align::Center);
     }
 }
 

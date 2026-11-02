@@ -234,8 +234,16 @@ on the theatre's own clock; the site's carts and cans are taken by flag; the cam
 at order 3 (`KESSEL_LOOP_DEATH_AT`) the controlled man is a staged casualty, the camp's reserve
 relieves him through the real departure (one opportunity spent at 70 m out of camp), remounts and
 finishes the retained order; the finale at zero opportunities resolves the run. The receipt
-(`PREFIX.json`) carries the stock after every order. It needs the GPU for the Game build and has
-not been run yet.
+(`PREFIX.json`) carries the stock after every order. Run on 2 November 2026
+(`captures/demo-20261101-loop_review_20261102b.json`): eight orders in the map's own order
+(Hagen, Birken, the works with the staged death and relief, Linden, the Southern crossing, the
+broken column, the Northern crossing, the last corridor), every one secured and closed, the
+finale at zero opportunities resolving the run; 420 L fell to 220 L over 37 km of road with two
+fuel sites taken, 24 PzGr to 8 with 40 cart rounds loaded, one man dead, Victory. The first run
+failed at the Southern crossing: the authored sheets place a bridge order at the catalog's site
+point while the theatre re-seats bridge sites on the surveyed deck (139 m apart), so the hold
+asked for a place off the bridge; `expedition_accept_order` now re-seats the sheet's beats on
+the theatre's site position, and the harness withdraws a failed order and goes on.
 
 ## Verified by play (27 October 2026, RTX 4090, shader backend)
 

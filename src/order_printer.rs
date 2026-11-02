@@ -34,7 +34,7 @@ pub const INK_HEIGHT: u32 = crate::renderer::RECEIPT_INK_HEIGHT;
 /// lines a second and says so here). Not a measured machine.
 const LINE_SECONDS: f32 = 0.25;
 pub const CHARS_PER_LINE: usize = crate::renderer::RECEIPT_CHARS_PER_LINE;
-pub const MAX_LINES: usize = 40;
+pub const MAX_LINES: usize = 34;
 const REACH_M: f32 = 2.2;
 const HOLD_DISTANCE: f32 = 0.165;
 /// The camp's machine prints when the reader is on foot within this distance of the table.
@@ -476,11 +476,15 @@ impl Game {
     /// Harness fixture (disclosed where used): the commander's head turned to the machine at
     /// his left so a still shows the head and the strip.
     pub fn debug_look_at_order_machine(&mut self) {
+        // The commander's gaze is an offset from the turret's forward (as the loader's helper
+        // solves it): yaw and pitch of the slot from the eye, less the turret's own.
         let eye = self.station_eye(Station::Commander);
         let target = self.player.turret_model().transform_point3(SLOT);
-        let d = (target - eye).normalize_or_zero();
-        self.head_yaw = d.x.atan2(-d.z);
-        self.head_pitch = d.y.asin();
+        let to = (target - eye).normalize_or_zero();
+        let tf = self.player.turret_forward();
+        let wrap = |a: f32| (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        self.head_yaw = wrap(to.x.atan2(-to.z) - tf.x.atan2(-tf.z));
+        self.head_pitch = (to.y.clamp(-0.999, 0.999).asin() - tf.y.clamp(-0.999, 0.999).asin()).clamp(-1.2, 1.0);
         println!("[order] STAGED look at the machine: yaw {:.2} pitch {:.2}", self.head_yaw, self.head_pitch);
     }
     /// Harness fixture (disclosed where used): the print finished at once and the strip torn
