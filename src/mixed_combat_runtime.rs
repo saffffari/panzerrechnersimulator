@@ -666,6 +666,10 @@ impl Game {
             }
         }
     }
+    /// The weapon state a tank enters the act with (the pool's own loadout at build).
+    pub(super) fn fresh_tank_weapons() -> TankWeapons {
+        TankWeapons { he_ammo: 8, mg_ammo: 300, ..Default::default() }
+    }
     /// Select a seen German foot target without replacing the KSL1 tank-vs-tank policy. Armored
     /// combat retains priority when the tank is already tracking the living mounted Tiger.
     pub(super) fn mixed_tank_engagement(&mut self, i: usize, dt: f32) -> bool {
@@ -674,6 +678,7 @@ impl Game {
             || self.enemies[i].kind.casemate()
             || !self.enemy_active.get(i).copied().unwrap_or(false)
             || self.brawl
+            || self.mixed_combat.tank_weapons.len() <= i
         {
             return false;
         }

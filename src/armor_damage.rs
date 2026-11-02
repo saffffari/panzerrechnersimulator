@@ -28,6 +28,104 @@ pub const PACKED_SCAR_BYTES: usize = 32;
 /// Ambient plate temperature (K) of a cold scar.
 pub const AMBIENT_K: f32 = 293.0;
 
+/// Sample times (s after the strike) of a solved rim cooling curve.
+pub const RIM_CURVE_TIMES: [f32; 10] = [0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+
+/// A rim's temperature at `RIM_CURVE_TIMES`, solved by the voxel lattice (`fea_damage::lattice::
+/// Lattice::rim_cooling_and_surface`) for one strike, with the wound's exposed surface
+/// temperature field at `RIM_SURFACE_SAMPLE`. Runtime only, like the strike time: a loaded scar is
+/// cold.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RimCurve {
+    pub kelvin: [f32; 10],
+    /// Width (m) of the struck face's rings round the shot's axis.
+    pub ring_m: f32,
+    /// Mean surface temperature (K) of each face ring and each quarter of the bore's depth; NaN
+    /// where no surface lies.
+    pub face_k: [f32; RIM_FACE_RINGS],
+    pub bore_k: [f32; RIM_BORE_BANDS],
+}
+
+/// `RIM_CURVE_TIMES` index of the surface temperature field (0.5 s after the strike).
+pub const RIM_SURFACE_SAMPLE: usize = 2;
+pub const RIM_FACE_RINGS: usize = 16;
+pub const RIM_BORE_BANDS: usize = 4;
+/// The scar renderer's face samples: evenly from the wound's centre to its near-patch edge
+/// (1.3 wound radii, rm_scars.wgsl `SCAR_PATCH_RHO`), and its bore samples evenly through the
+/// plate's depth.
+pub const HEAT_FACE_SAMPLES: usize = 6;
+pub const HEAT_BORE_SAMPLES: usize = 4;
+pub const HEAT_FACE_RHO: f32 = 1.3;
+
+impl RimCurve {
+    /// A curve with no surface field (the renderer then keeps the rim's authored glow shape).
+    pub fn rim_only(kelvin: [f32; 10]) -> Self {
+        Self { kelvin, ring_m: 0.0, face_k: [f32::NAN; RIM_FACE_RINGS], bore_k: [f32::NAN; RIM_BORE_BANDS] }
+    }
+
+    /// The local excess temperature over the rim's at `RIM_SURFACE_SAMPLE`, 0..1, at the
+    /// renderer's face samples for a wound of radius `radius_m` and at its bore samples. The
+    /// renderer scales it by the rim's solved cooling: named, the field's own spreading by
+    /// conduction after 0.5 s is not followed. None without a solved field.
+    pub fn heat_shape(&self, radius_m: f32) -> Option<([f32; HEAT_FACE_SAMPLES], [f32; HEAT_BORE_SAMPLES])> {
+        let reference = self.kelvin[RIM_SURFACE_SAMPLE] - AMBIENT_K;
+        if !(reference > 1.0) || !(self.ring_m > 0.0) || self.face_k.iter().all(|t| !t.is_finite()) {
+            return None;
+        }
+        let excess = |t: f32| ((t - AMBIENT_K) / reference).clamp(0.0, 1.0);
+        let face = std::array::from_fn(|k| {
+            let r = radius_m * HEAT_FACE_RHO * k as f32 / (HEAT_FACE_SAMPLES - 1) as f32;
+            excess(sample_bins(&self.face_k, r / self.ring_m - 0.5))
+        });
+        let bore = std::array::from_fn(|k| {
+            let x = k as f32 / (HEAT_BORE_SAMPLES - 1) as f32 * RIM_BORE_BANDS as f32 - 0.5;
+            let t = sample_bins(&self.bore_k, x);
+            if t.is_finite() { excess(t) } else { 0.0 }
+        });
+        Some((face, bore))
+    }
+}
+
+/// Linear interpolation of `bins` at fractional index `x` (bin centres at integers), over the
+/// bins that hold a value; clamped to the first and last such bin; NaN when none does.
+fn sample_bins(bins: &[f32], x: f32) -> f32 {
+    let valid: Vec<(f32, f32)> = bins.iter().enumerate().filter(|(_, t)| t.is_finite()).map(|(i, t)| (i as f32, *t)).collect();
+    let (Some(first), Some(last)) = (valid.first(), valid.last()) else { return f32::NAN };
+    if x <= first.0 {
+        return first.1;
+    }
+    if x >= last.0 {
+        return last.1;
+    }
+    let upper = valid.iter().position(|(i, _)| *i >= x).unwrap_or(valid.len() - 1);
+    let (a, b) = (valid[upper.saturating_sub(1)], valid[upper]);
+    if b.0 <= a.0 { b.1 } else { a.1 + (b.1 - a.1) * (x - a.0) / (b.0 - a.0) }
+}
+
+impl RimCurve {
+    /// Temperature `age` seconds after the strike: linear between samples, then the last segment's
+    /// logarithmic decay toward ambient.
+    pub fn at(&self, age: f32) -> f32 {
+        let t = &RIM_CURVE_TIMES;
+        let k = &self.kelvin;
+        if !(age > 0.0) {
+            return k[0];
+        }
+        for i in 1..t.len() {
+            if age <= t[i] {
+                let f = (age - t[i - 1]) / (t[i] - t[i - 1]);
+                return k[i - 1] + (k[i] - k[i - 1]) * f;
+            }
+        }
+        let (a, b) = (k[t.len() - 2] - AMBIENT_K, k[t.len() - 1] - AMBIENT_K);
+        if a <= 0.0 || b <= 0.0 {
+            return AMBIENT_K.max(k[t.len() - 1].min(AMBIENT_K));
+        }
+        let rate = (a / b).ln() / (t[t.len() - 1] - t[t.len() - 2]);
+        AMBIENT_K + b * (-(rate.max(0.0)) * (age - t[t.len() - 1])).exp()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -284,6 +382,21 @@ pub fn facing_axis(facing: Facing, local: Vec3) -> Vec3 {
     }
 }
 
+/// Terminal geometry measured by the voxel lattice for one strike (millimetres, kelvin), the input
+/// of `ArmorField::record_measured`. Plain data so this module needs nothing from the solver.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MeasuredScar {
+    pub perforated: bool,
+    pub aperture_mm: f32,
+    pub back_radius_mm: f32,
+    pub petals: u8,
+    pub petal_mm: f32,
+    pub plug: bool,
+    pub cavity_mm: f32,
+    pub worked_radius_mm: f32,
+    pub rim_kelvin: f32,
+}
+
 /// Terminal geometry derived from the ballistic outcome. Empirical rules, named in
 /// docs/PHYSICAL_TRUTH_AUDIT.md ("Armor scar terminal geometry"):
 /// * A full-calibre AP hole is ~1.05 calibres across the shot and 1/cos(obliquity) along it.
@@ -339,6 +452,9 @@ pub struct ArmorField {
     /// Initial rim temperature (K) of each fresh strike, from the shared thin heated-rim estimate
     /// (`renderer_weapon_particles::math::rim_heat`); 293 for a cold or loaded scar.
     rim_k: Vec<f32>,
+    /// The lattice's solved cooling curve of each fresh strike's rim, where one was solved.
+    #[serde(skip)]
+    rim_curve: Vec<Option<RimCurve>>,
     /// Bumped on every change, so renderers can skip re-uploading an unchanged field.
     revision: u32,
 }
@@ -356,7 +472,8 @@ impl ArmorField {
         scars.truncate(MAX_ARMOR_SCARS);
         let struck_s = vec![f32::NEG_INFINITY; scars.len()];
         let rim_k = vec![AMBIENT_K; scars.len()];
-        Self { scars, struck_s, rim_k, revision: 1 }
+        let rim_curve = vec![None; scars.len()];
+        Self { scars, struck_s, rim_k, rim_curve, revision: 1 }
     }
 
     pub fn scars(&self) -> &[ArmorScar] {
@@ -371,6 +488,11 @@ impl ArmorField {
     /// Initial rim temperature of scar `index`'s latest strike (K).
     pub fn rim_kelvin(&self, index: usize) -> f32 {
         self.rim_k.get(index).copied().unwrap_or(AMBIENT_K)
+    }
+
+    /// The solved cooling curve of scar `index`'s latest strike, if the lattice solved it.
+    pub fn rim_curve(&self, index: usize) -> Option<RimCurve> {
+        self.rim_curve.get(index).copied().flatten()
     }
 
     pub fn revision(&self) -> u32 {
@@ -483,6 +605,75 @@ impl ArmorField {
         self.insert(scar, now_s, rim_k)
     }
 
+    /// Record a kinetic strike whose terminal geometry the voxel lattice measured
+    /// (`fea_damage::lattice`): aperture, back-face tear, petals, plug, crater depth, worked radius
+    /// and rim temperature come from the solved plate instead of `terminal_geometry` and the
+    /// empirical crater rule. A hole keeps the existing resistance rule (94 % of the plate) and
+    /// entrance funnel; a dent's resistance loss is its measured cavity, so the crater the eye sees
+    /// is still the plate the next round meets.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_measured(&mut self, facing: Facing, local_hit: Vec3, local_normal: Vec3, local_dir: Vec3,
+        event: &ImpactEvent, now_s: f32, measured: &MeasuredScar, rim_curve: Option<RimCurve>) -> ArmorScar {
+        let normal = local_normal.try_normalize().unwrap_or_else(|| facing_axis(facing, local_hit));
+        let dir = local_dir.try_normalize().unwrap_or(-normal);
+        let class = ShotClass::of(event.shell.kind, event.shell.caliber_mm);
+        let hole = measured.perforated;
+        let plate_mm = event.plate.thickness_mm;
+        let calibre_m = event.shell.caliber_mm * 0.001;
+        let radius_m = (measured.worked_radius_mm * 0.001).max(0.5 * calibre_m).min(0.40);
+        let (kind, loss_mm, depth_m) = if hole {
+            (ScarKind::Hole, plate_mm * 0.94, plate_mm * 0.001 * 0.25)
+        } else {
+            let cavity = measured.cavity_mm.clamp(0.5, plate_mm * 0.98);
+            (ScarKind::Dent, cavity, cavity * 0.001)
+        };
+        let scar = ArmorScar {
+            facing,
+            local_mm: quantize_mm(local_hit),
+            radius_mm: (radius_m * 1000.0).round() as u16,
+            loss_mm: loss_mm.round().clamp(1.0, u16::MAX as f32) as u16,
+            kind,
+            class,
+            normal: quantize_dir(normal),
+            dir: quantize_dir(dir),
+            depth_dmm: (depth_m * 10_000.0).round().clamp(1.0, u16::MAX as f32) as u16,
+            plate_mm: plate_mm.round().clamp(1.0, u16::MAX as f32) as u16,
+            aperture_mm: if hole { measured.aperture_mm.round().max(4.0) as u16 } else { 0 },
+            back_radius_mm: if hole { measured.back_radius_mm.round().max(measured.aperture_mm * 1.15) as u16 } else { 0 },
+            petals: if hole { measured.petals } else { 0 },
+            petal_mm: if hole { measured.petal_mm.round().min(255.0) as u8 } else { 0 },
+            plug: hole && measured.plug,
+        };
+        let recorded = self.insert(scar, now_s, measured.rim_kelvin.max(AMBIENT_K));
+        if let Some(index) = self.scars.iter().position(|s| *s == recorded) {
+            self.rim_curve.resize(self.scars.len(), None);
+            self.rim_curve[index] = rim_curve;
+        }
+        recorded
+    }
+
+    /// Apply a measurement solved after the strike was first recorded (a deferred plate solve) to
+    /// the dent at `facing`/`local_mm`, if it is still its own record. Depth, resistance loss and
+    /// radius never shrink (a later strike may have deepened the wound meanwhile); the rim takes the
+    /// solved temperature and cooling. Returns whether a record was updated.
+    pub fn apply_measured(&mut self, facing: Facing, local_mm: [i16; 3], measured: &MeasuredScar,
+        rim_curve: Option<RimCurve>) -> bool {
+        let Some(index) = self.scars.iter().position(|s| s.facing == facing && s.local_mm == local_mm && s.kind == ScarKind::Dent)
+        else { return false };
+        let scar = &mut self.scars[index];
+        let cavity = measured.cavity_mm.clamp(0.5, scar.plate_mm as f32 * 0.98);
+        scar.loss_mm = scar.loss_mm.max(cavity.round() as u16);
+        scar.depth_dmm = scar.depth_dmm.max((cavity * 10.0).round() as u16);
+        let radius = (measured.worked_radius_mm.round() as u16).max(scar.radius_mm / 2);
+        scar.radius_mm = scar.radius_mm.max(radius);
+        self.rim_k.resize(self.scars.len(), AMBIENT_K);
+        self.rim_curve.resize(self.scars.len(), None);
+        self.rim_k[index] = measured.rim_kelvin.max(AMBIENT_K);
+        self.rim_curve[index] = rim_curve;
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
     /// A rifle-calibre bullet (or a fragment) on armor: a splash crater and stripped paint with no
     /// resistance change. `energy_j` is the strike's kinetic energy.
     #[allow(clippy::too_many_arguments)]
@@ -518,6 +709,7 @@ impl ArmorField {
         self.revision = self.revision.wrapping_add(1);
         self.struck_s.resize(self.scars.len(), f32::NEG_INFINITY);
         self.rim_k.resize(self.scars.len(), AMBIENT_K);
+        self.rim_curve.resize(self.scars.len(), None);
         let local_hit = scar.local_position();
         let radius_m = scar.radius_m();
         if scar.kind != ScarKind::Pock {
@@ -546,6 +738,7 @@ impl ArmorField {
                 }
                 self.struck_s[index] = now_s;
                 self.rim_k[index] = rim_k;
+                self.rim_curve[index] = None;
                 return *existing;
             }
             // A crater swallows the pocks under it.
@@ -557,6 +750,7 @@ impl ArmorField {
                     self.scars.remove(index);
                     self.struck_s.remove(index);
                     self.rim_k.remove(index);
+                    self.rim_curve.remove(index);
                 } else {
                     index += 1;
                 }
@@ -578,10 +772,12 @@ impl ArmorField {
             self.scars.remove(evict);
             self.struck_s.remove(evict);
             self.rim_k.remove(evict);
+            self.rim_curve.remove(evict);
         }
         self.scars.push(scar);
         self.struck_s.push(now_s);
         self.rim_k.push(rim_k);
+        self.rim_curve.push(None);
         scar
     }
 
@@ -652,6 +848,7 @@ impl ArmorField {
         self.scars.truncate(total);
         self.struck_s.truncate(total);
         self.rim_k.truncate(total);
+        self.rim_curve.truncate(total);
         for (offset, scar) in window.iter().enumerate() {
             let index = start + offset;
             if index >= total {
@@ -669,6 +866,7 @@ impl ArmorField {
                 self.scars.push(*scar);
                 self.struck_s.push(f32::NEG_INFINITY);
                 self.rim_k.push(AMBIENT_K);
+                self.rim_curve.push(None);
             }
             changed = true;
         }
@@ -862,6 +1060,46 @@ mod tests {
     }
 
     #[test]
+    fn measured_geometry_replaces_the_empirical_rule_and_keeps_the_resistance_semantics() {
+        let mut field = ArmorField::default();
+        let ev = event(Terminal::Penetration);
+        let measured = MeasuredScar { perforated: true, aperture_mm: 41.0, back_radius_mm: 70.0, petals: 3,
+            petal_mm: 55.0, plug: false, cavity_mm: 0.0, worked_radius_mm: 120.0, rim_kelvin: 1150.0 };
+        let hole = field.record_measured(Facing::HullSide, Vec3::new(1.5, 1.2, 0.0), Vec3::X, -Vec3::X, &ev, 1.0, &measured, Some(RimCurve::rim_only([1150.0, 1000.0, 900.0, 800.0, 650.0, 500.0, 400.0, 340.0, 310.0, 300.0])));
+        assert_eq!(hole.kind, ScarKind::Hole);
+        assert_eq!((hole.aperture_mm, hole.back_radius_mm, hole.petals, hole.petal_mm), (41, 70, 3, 55));
+        assert_eq!(hole.loss_mm, (ev.plate.thickness_mm * 0.94).round() as u16);
+        assert!((field.rim_kelvin(0) - 1150.0).abs() < 1e-3);
+        let curve = field.rim_curve(0).expect("solved curve kept with its scar");
+        assert!((curve.at(0.0) - 1150.0).abs() < 1e-3 && (curve.at(0.375) - 950.0).abs() < 1e-2);
+        assert!(curve.at(200.0) < curve.at(64.0) && curve.at(200.0) >= AMBIENT_K);
+        let mut field = ArmorField::default();
+        let dent = MeasuredScar { perforated: false, cavity_mm: 52.0, worked_radius_mm: 70.0, rim_kelvin: 880.0, ..measured };
+        let scar = field.record_measured(Facing::HullFront, Vec3::new(0.0, 1.2, 3.0), Vec3::Z, -Vec3::Z,
+            &event(Terminal::Bounce), 1.0, &dent, None);
+        assert_eq!(scar.kind, ScarKind::Dent);
+        assert_eq!(scar.loss_mm, 52);
+        assert_eq!(scar.depth_dmm, 520);
+        let base = Plate { name: "test", thickness_mm: 100.0, slope_deg: 0.0, material: crate::ballistics::ArmorMaterial::Rha };
+        assert!(field.plate_at(base, Facing::HullFront, Vec3::new(0.0, 1.2, 3.0)).thickness_mm < 50.0);
+    }
+
+    #[test]
+    fn a_deferred_measurement_updates_its_own_dent_only() {
+        let mut field = ArmorField::default();
+        let scar = field.record_at(Facing::HullFront, Vec3::new(0.2, 1.4, 3.0), Vec3::Z, -Vec3::Z,
+            &event(Terminal::Bounce), 1.0);
+        let revision = field.revision();
+        let measured = MeasuredScar { cavity_mm: 61.0, worked_radius_mm: 140.0, rim_kelvin: 1000.0, ..Default::default() };
+        assert!(field.apply_measured(Facing::HullFront, scar.local_mm, &measured, None));
+        let after = field.scars()[0];
+        assert_eq!(after.loss_mm, 61.max(scar.loss_mm));
+        assert!(after.radius_mm >= scar.radius_mm && field.revision() != revision);
+        assert!(!field.apply_measured(Facing::HullSide, scar.local_mm, &measured, None));
+        assert!(!field.apply_measured(Facing::HullFront, [0, 0, 0], &measured, None));
+    }
+
+    #[test]
     fn pack_round_trip_and_v1_upgrade() {
         let mut field = ArmorField::default();
         field.record_at(Facing::TurretFront, Vec3::new(0.1, 0.4, 1.2), Vec3::Z, -Vec3::Z,
@@ -892,4 +1130,30 @@ mod tests {
         }
         assert_eq!(client, host);
     }
+
+#[cfg(test)]
+mod heat_shape_tests {
+    use super::*;
+
+    #[test]
+    fn the_surface_field_becomes_the_renderers_shape_round_the_rim() {
+        let mut curve = RimCurve::rim_only([1100.0, 1000.0, 900.0, 800.0, 650.0, 500.0, 400.0, 340.0, 310.0, 300.0]);
+        assert!(curve.heat_shape(0.05).is_none(), "no field, no shape");
+        curve.ring_m = 0.005;
+        // Hot inside 10 mm, falling to ambient by 35 mm; a bore hot at the face, cooler deeper.
+        for (i, t) in curve.face_k.iter_mut().enumerate() {
+            let r = (i as f32 + 0.5) * 0.005;
+            *t = if r < 0.01 { 900.0 } else { (900.0 - (r - 0.01) / 0.025 * 607.0).max(AMBIENT_K) };
+        }
+        curve.face_k[3] = f32::NAN; // an empty ring is bridged
+        curve.bore_k = [880.0, 700.0, 600.0, f32::NAN];
+        let (face, bore) = curve.heat_shape(0.03).unwrap();
+        assert!((face[0] - 1.0).abs() < 1e-6, "{face:?}");
+        assert!(face.windows(2).all(|w| w[1] <= w[0] + 1e-6), "falls outward: {face:?}");
+        assert!(face[HEAT_FACE_SAMPLES - 1] < 0.05, "ambient at the patch edge: {face:?}");
+        assert!(bore[0] > bore[2] && bore[3] > 0.0, "{bore:?}");
+        assert!(face.iter().chain(bore.iter()).all(|v| (0.0..=1.0).contains(v)));
+    }
+}
+
 }

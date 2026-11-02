@@ -1,8 +1,36 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Tiger visual size: an open debt, 2026-11-02 (the owner's decision pending)
+
+The player's hero Tiger is drawn 1.112 times the real vehicle's size in every dimension (hull
+7.13 m long against the real 6.32 m; 1.37 times the volume). It is the owner's RM-5010 kit CAD at
+one uniform scale (0.038919827 m per kit mm against the kit's 1:35, 0.035 m): registering 446 CAD
+solids to the game meshes needs no rotation and one uniform scale, with 0.17 mm RMS residual
+(`docs/research/TIGER_CAD_COMPONENTS_20261102.md`). Nothing is rescaled until the owner decides.
+
+- **Drawn at 1.112:** the hero mesh and its hatches, the interior rig and stations, the crew fit
+  and crew hit volumes, the cabin collision proxies and eye points, the CAD component envelopes
+  as registered (`catalog/tiger_cad_component_voxels.v1.json`), the engine bay's firewall plane
+  used to place bursts (z = -1.15 m), and every distance between plates and components along a
+  shot line. A crewman therefore has 11 % more room, and a fragment crosses 11 % more cabin, than
+  in the real tank.
+- **True size:** armour thicknesses and classes (the armour scheme), every ballistic resolution,
+  the voxel lattice's plate thickness and every solve's dimensions (a test pins the lattice to the
+  scheme's millimetres), calibres, rounds and their drawn bodies, fragment sizes and masses,
+  wound sizes, casing thicknesses, the crew compartments' 10 m³ of free air.
+- **Compensated in the physics:** along a shot line the layered chain meets each homogenised
+  interior at its density divided by 1.112 and each liquid, vapour or air layer over its length
+  divided by 1.112, so the mass a round meets is the real component's; the burst model loads and
+  vents the hatches at their real areas (the drawn apertures divided by 1.112; a lid's real area
+  is 0.81 of the drawn one).
+- **Visible consequences:** a wound is drawn at true size on a plate drawn 11 % large, and a
+  lodged round's exposed length is true against a plate that looks 11 % thicker.
+- **Not compensated:** distances inside the cabin (fragment flight, crew reach, the penetrator's
+  path to crew hit volumes) are the drawn ones.
 
 ## Expedition frame cost, 2026-11-01 (`expedition-bench`, `artifacts/perf/expedition_*_20261101.log`)
 
@@ -729,6 +757,201 @@ Gates: `crew-solo PREFIX` (eight stills and a JSON receipt, PASS/FAIL per check,
 on failure) and the unit tests `first_aid`, `crew_solo`, `singleplayer_crew`.
 
 
+## Layered damage model ("FEA damage"), 2026-11-02 (branch `claude/fea-damage-20261102`, `docs/FEA_DAMAGE_MODEL_20261102.md`)
+
+What the code computes for a kinetic round striking the player's Tiger, and what it approximates.
+The struck plate's outcome (perforated or not, residual speed) is still the calibrated
+`ImpactEvent` from `ballistics.rs`; no law below changes it, and the calibration tests pass unchanged.
+
+- **Geometry source.** The Tiger's internal components come from the owner's RM-5010 kit CAD,
+  registered to the game hull on 446 solid↔mesh pairs (RMS 0.17 mm;
+  `docs/research/TIGER_CAD_COMPONENTS_20261102.md`) and voxelised at 20 mm
+  (`catalog/tiger_cad_component_voxels.v1.json`, `tools/tiger_cad_voxelize.py`): a voxel boundary
+  lies within 17.3 mm of the true surface; voxel volumes are 0.94–1.06 of the exact solids.
+  Surface normals for casing obliquity are occupancy-gradient staircase normals.
+- **Inherited scale** (the "Tiger visual size" entry above): the game's Tiger is drawn 1.112
+  times real. Not rescaled here. Interiors divide their density by 1.112 and fluid and air layers
+  their length, so the mass met along a straight path is the real component's; plate and casing
+  thicknesses are the armour scheme's and the authored true millimetres; the lattice's plate is
+  the scheme's (a test pins it).
+- **Casings and contents are authored estimates** (`fea_damage::components`): the kit CAD is solid
+  plastic. Engine HL 210 P45 with an aluminium-alloy crankcase (12 mm, 1,050 kg estimate), gearbox
+  and steering unit cast housings (12 mm, 700/600 kg), final drives (20 mm, 350 kg), sheet-steel
+  fuel tanks holding the live fuel fraction of 534 l (the kit models two of the four tanks),
+  radiators, fans, radio (identification inferred), MGs, breech and cradle, sight, traverse drive.
+  Ammunition bins are their covers; the rounds stay the game's live-cartridge boxes.
+- **Layered chain** (`fea_damage::chain`, wired in `game_fea.rs`): behind the struck plate each
+  layer has a named law: further armour by the project's own DeMarre/Lambert–Jonas law (0.92);
+  casings and solid parts as RHA-equivalent thickness (areal density × a named material resistance
+  factor) under the same slope law, with the Recht–Ipson plug momentum share; homogenised
+  interiors the same against their areal density without a plug; liquids and gas by
+  hydrodynamic drag (Cd 0.5, named). A round stopped in the struck plate is taken to reach the
+  depth where its calibrated capability is spent, spent uniformly along its path: a reduced rule,
+  not validated against depth-of-penetration data. The projectile is rigid and keeps its mass (no
+  erosion, no APCR carrier stripping, no yaw). A filled round that perforated bursts at the plate's
+  back face as before (no fuze-delay model). The far wall is the first source surface met coming
+  back along the line from outside, classified by the existing plate classes. Interior bulkheads
+  that are not catalog components are not layers.
+- **Consequences.** A casing the round perforated knocks its system's module out (fault `Spall`);
+  a casing struck but not perforated leaves it working (recorded in the receipt). Radiators, fans,
+  air filters and seats are recorded only (no live cooling circuit or seat state). The residual
+  round's own straight path reaches crew through the existing anatomical boxes and live cartridges
+  through their boxes, with its real mass and speed; injury outcomes and the existing 0.24 J and
+  2.8 J rules are unchanged. Fire from a breached fuel tank or engine follows the existing
+  fragment rule.
+- **Lodged rounds** (`fea_damage::lodged`): a round stopped in the struck plate is held only when
+  its cylindrical body went past its nose taper (an ogive or cap is self-releasing when its
+  half-angle exceeds the friction angle); a round stopped inside stays where it stopped. Pull-out
+  force is Coulomb friction (0.3, named) on a residual grip pressure: until the lattice supplies its
+  final contact forces, 5 % of the struck material's yield (named). Removal by one man's pull
+  (400 N), the toolbox bar (×10), sledge blows (160 J at 50 %), or the workshop. A stopped round's
+  lattice solve replaces the 5 % rule with its own contact grip when it commits.
+- **Lodged rounds in play** (`game_fea::drive_lodged_rounds`, `equipment::RepairJob::LodgedRound`):
+  each lodged round is drawn in an exact physical instance pool (casts, in the ray tracing scene),
+  one prototype per kinetic specification, following its hull or turret. The drawn body is the
+  chain's penetrator: the solve's diameter and ellipsoidal nose, with a cylinder that holds the
+  round's mass as solid steel (named: no cavity, filler, cap, windshield or driving band; bare
+  steel, the paint not modelled). An APCR round is its core alone, drawn 3 core diameters long
+  (named, unsourced: its mass is mostly the carrier, which is not modelled; length enters neither
+  the chain nor the solve). At most 6 rounds of one specification are drawn (named bound; further
+  ones stay in the state and stay removable; logged). With the toolbox in hand a crewman works a
+  field-removable round out where the tools reach it with a clear path (outside the plate for a
+  round the struck plate holds): a hand pull takes 4 s and the bar 15 s (named tuning, like the
+  other field repairs); sledge removal takes the counted blows at one per swing of the carried
+  hammer. A round needing the workshop cannot be removed in the field. A removed round leaves the
+  simulation (not kept as a loose object). A filled round that lodged unexploded is treated as
+  inert: its fuze state is not modelled. Lodged rounds and deferred plate solves are saved
+  (`vehicles.tanks` owner version 2; a pending solve is re-run from its saved problem on load and
+  gives the identical answer). A round held by a part that elevates with the gun (breech,
+  cradle, sight) moves with the gun. A remount into a spare Tiger leaves the lost hull's lodged
+  rounds and fragments behind. LAN clients do not see lodged rounds (host state only), and the
+  campaign checkpoint between acts does not carry them (named).
+- **Voxel lattice plate solver** (`fea_damage::lattice`): an ordinary state-based peridynamic solid
+  (linear peridynamic solid, 18-neighbour cubic lattice; not a finite-element method) with elastic
+  bulk response, von Mises deviatoric plasticity by Mitchell's return mapping, linear hardening,
+  logarithmic rate dependence lagged one step, linear thermal softening, bond failure at a ±8 %
+  scattered critical plastic strain or by cumulative tensile spall damage of the Tuler–Butcher form
+  (threshold 2 GPa, 1 µs scale, both named estimates: tension must last to open a spall), and
+  compressive contact between broken original neighbours only. The projectile is rigid with an
+  ellipsoidal nose; its motion is prescribed from the calibrated speed loss, starting clear of the
+  plate. Yield and deviatoric stiffness are exact for an interior family in coordinate-plane shear
+  and plane deviatoric strain; free surfaces keep their yield strain by weighted-volume scaling.
+  Outer cells are clamped behind a damping ramp (the rest of the plate). Friction (0.1) softens to
+  zero at melting. Measured: energy closes to 0.2–0.7 % on the reference cases (work in = kinetic
+  + elastic + contact + plastic + friction + damping + fracture release); mass is exact; a
+  budget-sliced solve and any thread count reproduce the reference bit for bit; the lattice
+  absorbs 0.25–0.8 of the kinetic energy the calibrated law removes (reported, not forced). The
+  fracture pattern (petal count, bulge) is deterministic per impact state but not converged in the
+  time step. Cost on this i9 at the 6,000-particle cap, time step 0.4 of a cell's P-wave transit,
+  12 threads (`fea-bench 5`, 65 impacts of the cross-section set, machine shared with other work at
+  load ~18): lattice p50 215 ms, p95 447 ms, max 498 ms, energy closure within 1.8 %; chain p50
+  46 µs, p95 0.8 ms. (At 12,000 particles and 8 threads, load ~12: p50 525 ms, p95 1,075 ms.) Rounds that stop very deep
+  in the plate (85–92 % of the path) also release a small back-face scab in the lattice; the game
+  spawns fragments only for perforations, so these appear only in the cross sections and receipts.
+- **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
+  game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
+  SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.
+  Section-view simplifications (named, not used by the game): fragments fly with drag until the
+  first source triangle they enter (no bounce or embedding drawn; surfaces they leave are passed,
+  since the struck plate's own source triangles are not perforated); all 64 hull cradles hold a
+  round; fuel 80 %; turret forward, gun level. The 14.5 mm B-32 case round is a case-set projectile
+  (no anti-tank rifle fires in the game yet) with estimated data.
+- **Lattice in play** (`game_fea::fea_solve_impact`): every kinetic strike on the player's Tiger
+  that perforates or stops in the plate is solved. A perforation is solved inside its tick before
+  its scar, consequences and fragments are resolved (the tick waits and logs the wall time). A round
+  the plate stopped changes only its scar and grip: its solve runs on a worker thread and commits a
+  fixed 0.25 s of game time later (`FEA_STOP_COMMIT_S`, named), the update waiting for it if it is
+  late (logged), so the switch happens at the same simulation moment on every machine; until then
+  the scar shows the empirical geometry, and both the renderer and the next round's resistance see
+  the change together. No consumer sees a half-solved plate, nothing is skipped, and both presets
+  get the same result. Measured in the owner's demo (2026-11-02, Canyon run, this branch): three
+  stopped 45 mm rounds solved on the worker in 139, 120 and 3,595 ms; the slow one, with the
+  machine busy with other work, held the update 2.9 s at its commit. A deferred solve now runs on
+  half the machine's threads (at most 6) beside the game, and the solver's barrier backs off from
+  spinning to yielding to 50 µs sleeps, so a descheduled worker is not kept off the cores (both
+  named tuning; results are bit-identical whatever the thread count). Not yet re-measured under
+  contention. A perforation still holds its tick for its whole solve (about 0.2–0.45 s). Workers
+  are now capped at one per 384 particles (was 1,024, which held a 6,000-particle solve to five):
+  a 4,851-particle reference solve took 834 ms on 1 worker, 233 ms on 4 and 194 ms on 12
+  (`lattice::diagnostics::thread_scaling`, debug build, machine lightly loaded); about a sixth of
+  each step is serial (bond breaking and barriers).
+  Ricochets, shatters, HE and HEAT keep their existing scars. Other vehicles keep the empirical
+  scar rules. The sub-calibre core of an APCR round goes into the plate; its carrier is not modelled.
+- **Scars from the lattice** (`ArmorField::record_measured`): aperture, back-face tear, petals,
+  plug, cavity depth (a dent's resistance loss), worked radius and rim temperature are measured;
+  a hole keeps the 94 % resistance rule and entrance funnel. The rim's cooling is the lattice's own
+  (conduction through intact face bonds, radiation and 10 W/m² K natural convection from real
+  surfaces only: broken bonds, the struck face, a back face the lattice reaches; the patch
+  boundary adiabatic, named) as a ten-sample curve over 64 s, replacing the authored 2.5 s
+  exponential for those scars (runtime only; a loaded scar is cold). The rim is the hottest
+  surface particle still attached to the plate (bodies that broke free are the fragments). Such a
+  wound glows at its local temperature: the lattice's surface field 0.5 s after the strike (struck
+  face in rings of one cell round the shot's axis, bore wall in quarters of the depth; each ring
+  the temperature whose red Planck radiance is its particles' mean, equal exposed area per
+  particle named; the clamped edge and its damping ramp left out) is drawn as six face and four
+  bore samples of each point's share of the rim's excess over ambient (5 bits each), scaled by
+  the rim's solved cooling, with Planck radiance per pixel (rm_scars.wgsl `scar_local_kelvin`).
+  Named: the field's own spreading by conduction after 0.5 s is not followed. Other scars keep
+  the rim estimate over its authored ring. The near-patch renderer still draws a parametric
+  profile from these scalars: the lattice's own displaced surface is not yet drawn. Not yet seen
+  on the GPU.
+- **Fragments from the lattice**: the clusters that broke free on the inside of the plate (mass,
+  centre, velocity, spin and temperature as solved) are the penetration's fragment population;
+  exterior ejecta are left to the cosmetic impact sparks. Material finer than a lattice cell is not
+  resolved, so a penetration now yields tens of resolved chips rather than hundreds of authored
+  ones. A filled round that burst adds its body's steel (mass minus filler) partitioned into the
+  existing authored size shape and speeds, scaled to the exact mass (no fragmentation law); its
+  temperature is not solved and keeps the authored heat pages. HE, HEAT and harness penetrations
+  without a solve keep the authored population.
+- **Every fragment** (lattice or authored) now flies with quadratic air drag (tumbling cube, mean
+  area a quarter of the surface, Cd 1.05, 1.2 kg/m³; named) as well as gravity, and embeds in a
+  cabin collision wall when its normal energy can push its face a quarter of its size into 800 MPa
+  steel (named cavity-work rule): it stays there, settled. Solved bodies cool as lumped cubes
+  (radiation, Ranz–Marshall convection; at rest by still air and radiation only: conduction into
+  the steel a chip lies on or in is not modelled, named, so it cools more slowly than a real
+  chip) and take the heat page of their temperature band (1,300 /
+  1,100 / 900 / 750 K bounds, named; visible glow begins near the Draper point, 798 K); below
+  750 K they draw on a cold, oxidised-steel page that emits nothing. A body the lattice solved is
+  steel that stays: it never retires, and the fragment ring passes over resting solved steel, so
+  only a pool full of it (768 bodies, named bound) gives up its oldest. The authored population
+  still retires with its body's life. Resting steel draws in the fragment pages, which are
+  raster-only: a cold chip casts no shadow in the ray tracing tier (named).
+- **Steel in hand** (`game_fea::fea_grab_fragment`): at the loader's station a resting fragment
+  under the crosshair within 2.2 m can be taken with the left button when it is no hotter than
+  343 K (a gloved hand, named) and, if embedded, when one man's 400 N pull beats its grip (the
+  lodged-round friction rule on the cavity-work depth). It rides the same light spring as a spent
+  case; releasing the button lets it fall under the ordinary fragment collision; R throws it at
+  6 m/s (named). A throw whose line from the hand meets no source surface within 3 m goes out
+  through an open aperture and leaves the simulation (named: steel outside is not kept). A chip
+  the steel holds beyond one man's pull is freed with the toolbox (a field repair job: the bar,
+  3 s named tuning, or counted sledge blows) and then rests loose for the hand. In the GPU review
+  most solved chips embedded about their own size (5 mm) in the turret floor and needed the bar.
+  The
+  chip in hand is saved with its pool slot; fragments are saved with their solved temperature
+  and embedding (`combat.projectiles` owner version 2).
+- **Compartment pressure** (`fea_damage::compartment`, `game_fea::fea_compartment_burst`):
+  quasi-static ideal-gas pressure from the filler's TNT-equivalent energy less the kinetic energy
+  its own body's fragments carry, over a named 10 m³ of free air, vented through open apertures by
+  isentropic orifice flow (Cd 0.6), hatches forced past a named 20 kN latch. Tested against the
+  closed forms. In play: when a filled round bursts at the struck plate's back face inside the
+  crew compartments' air (the turret, or the hull forward of the engine bay's firewall at
+  z = -1.15 m, placed from the CAD envelopes between the fuel tanks and the sponson ammunition
+  bins; sponsons included, machinery volume not subtracted: named), the openings are the four
+  roof and escape lids and the cupola at their
+  source apertures brought to real size (a lid counts open past half its travel, named) and the
+  solved entry hole
+  (its measured bore radii; the calibre's without a solve); a lid whose latch the pressure beats
+  is opened in the game and then swings at its ordinary rate (named). A burst outside the crew
+  compartments (the engine bay) gets no pressure history (named). Without a lattice solve the
+  authored shower is not a partition of the round's body and nothing is taken from the filler for
+  it (named). No shock or reflected-pressure history; the pressure acts on hatches only (crew
+  injury stays with the existing crew model) and is not drawn. A 76 mm BR-350B's 65 g gives
+  about 11 kPa, far below a latch (about 112 kPa on a driver's lid of 0.178 m² real area); a
+  152 mm BR-540's 660 g gives 95 kPa, 17 kN on that lid, and every lid holds; a 152 mm OF-530's
+  5.9 kg would throw every closed lid. (Until 2026-11-02 the lids were loaded at their drawn,
+  1.24-times area, and the BR-540 threw three of them open in the GPU review.) The cross
+  sections use the same rule with every lid closed.
+
 ## Armor scars, 2026-10-27 (branch `armor-scars`, `docs/ARMOR_SCARS.md`)
 
 Permanent dents, holes, pocks and patches on every vehicle, one record per wound read by
@@ -768,7 +991,9 @@ code computes and what it approximates:
   surface of the same vehicle; no bounce or tumble.
 - Rim glow: Planck radiance at the cooling rim temperature of the shared thin-ring heat estimate
   (`rim_heat`, 1.5 % of lost kinetic energy, 2.5 s time constant) over the crater floor, a hole's
-  edge ring (0.2 calibre) and the bore wall.
+  edge ring (0.2 calibre) and the bore wall. (2026-11-02: a wound on the player's Tiger that the
+  voxel lattice solved glows at its own solved local temperature instead; see the layered damage
+  model section.)
 - Weathering: rust bloom (first order, 6 h), cavity grime (1 h), snow fill of sky-facing
   cavities at 4e-5 m/s at full precipitation (spindrift packing included). A loaded scar counts
   as a day old. Authored rates, not a corrosion or drift model.
@@ -1619,9 +1844,9 @@ looks at it is a reproduction transform, named as such, like the audio chain's t
 | System | Live truth | Remaining debt / release gate |
 |---|---|---|
 | Exterior cannon flight | Authoritative projectile pool with fixed substeps, `ShellSpec` velocity loss/gravity and swept contacts is being integrated; focused moving-target/range/frame-schedule tests pass. | Unified game tests and a playable delayed-impact capture must pass after renderer integration. No trigger-time outcome or forced landing may remain. |
-| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. | P0: damage forecasts those bodies immediately against frozen targets, while their later visible paths meet moving state. Interior collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. No new fracture solver is claimed. |
+| Armor / terminal ballistics | Armor tables, obliquity, range-dependent penetration and persistent scars exist. A penetration generates one stable-ID fragment population shared by the damage forecast, visible chips and contact audio; entry is no longer clamped to the cabin proxy. Since 2026-11-02 a kinetic round on the player's Tiger is followed layer by layer behind the struck plate through the CAD-measured components (casing, interior, liquids, live rounds, far wall), each with a named law, and lodges where it stops (see "Layered damage model"). | P0: damage forecasts the fragment bodies immediately against frozen targets, while their later visible paths meet moving state. Interior fragment collision still uses authored cabin/breech proxies, with free travel before entering them; scars weaken resistance; on the raymarch backend they are drawn as cut and displaced geometry (see "Armor scars, 2026-10-27") but the retained collision triangles are not perforated. The layered chain's laws behind the plate, the component casings and masses, and the stopped-round depth rule are named reduced models, not validated terminal ballistics. See `ARMOR_FRAGMENT_DEVELOPMENT_20260929.md` for the online-contact and shared-geometry migration gates. |
 | Vehicle loss | Module/fire states and crew bodies exist. | P0: enemy penetration currently collapses too readily to an instant kill; random turret-pop/cook-off decisions are not derived from ammo/fuel/module energy. Replace with the shared vehicle damage state. |
-| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. | P0: hot steel fragments still meet cabin proxies rather than the visible triangle interior; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations. Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
+| Crew / gore | Four co-op roles, persistent bodies/ragdolls, independent blood grains and persistent source-surface film exist. Live blood transport/deposition uses retained source triangles (`surface_blood`); the current presentation multiplier is 8 with an 8,192-grain pool. Since 2026-11-02 a residual penetrator's own path reaches crew through the same anatomical boxes as fragments, with its real mass and speed. | P0: hot steel fragments still meet cabin proxies rather than the visible triangle interior; grain/film pools can saturate; the instant 0.24 J crew-lethality rule and unconsumed energy through tissue remain authored approximations (the layered damage model did not change them). Blood density is not calibrated fluid volume or extra wound energy. Do not carry the former blood-proxy statement forward as current. |
 | World collision/destruction | Tank/tank separation, trees, destructible structures, rubble and drive-over classes work; since 2026-09-29 the Tiger's contacts go through the push model (tank push row) and the manifest's walls, piers, doorways and sheds are destruction records. | P0: AABBs/yawed footprints, hard-coded infantry cover cylinders and several authored structure shapes are proxies. Replace them with source-derived triangle/convex data; no invisible blocker may contradict the rendered object. |
 | Campaign outcomes | Route, resources, AI navigation/combat and authoritative telemetry run headlessly. | P0: Act-III allied hits/kills and civilian/town loss counters include scripted scalars. Outcomes must come only from simulated entities/events. |
 | First level: campaign Act 1 on the urban district (2026-09-29, `docs/ACT1_FIRST_LEVEL.md`) | Campaign Act 1 plays the urban-intro workshop: the route starts at the district spawn (the level design's entry gate) and leaves by its west exit gate; the district's defenders (the winter session's street encounter: two T-34 platoons on street beats, two 45 mm guns sited by the field-of-fire probe) are fielded at the start and the director raises no route contact until their armour is destroyed or the Tiger has left the district (450 m from the spawn); survivors keep their slots and fight on under the ordinary campaign AI, and route contacts take the free slots. It is a gate on when contacts spawn; no outcome is scripted. | Named limits: (1) the breakout radius is a distance from the spawn, not the district's outline. (2) `campaign-ai-run`, which proves the level headlessly, plays with an omniscient scripted crewman (it knows where unseen crews are; it lays by setting the gunner's desired lay, the turret following at its real traverse rate), and its field track repair takes the kit and is set down at the break instead of walking there; the ritual itself is the player's. (3) `KESSEL_CAMPAIGN_AI_INVINCIBLE=1` is a named debug gate for traversal proofs: it suppresses every mutation of the Tiger by hits. None of these run in play. |

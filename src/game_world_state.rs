@@ -129,12 +129,15 @@ impl Game {
         let bodies=self.wrecks.iter().map(|w|w.t_body.as_ref().map(wreck_turret::Body::export_world_state).transpose()).collect::<Result<Vec<_>>>()?;
         fields.put("detached_turret_bodies",&bodies)?;
         fields.put("track_snow",&self.track_snow.export_world_state()?)?;
-        OwnerBlock::encode("vehicles.tanks",1,&fields)
+        // Version 2: the layered damage model's rounds held by the steel and deferred plate solves.
+        fields.put("fea_damage",&self.fea.export_world_state())?;
+        OwnerBlock::encode("vehicles.tanks",2,&fields)
     }
     pub(super) fn import_tanks_world(&mut self,block:&OwnerBlock)->Result<()> {
-        let mut fields:StateFields=block.decode("vehicles.tanks",1)?;
+        let mut fields:StateFields=block.decode("vehicles.tanks",2)?;
         let bodies:Vec<Option<StateFields>>=fields.take("detached_turret_bodies")?;
         self.track_snow.import_world_state(fields.take("track_snow")?)?;
+        self.fea.import_world_state(fields.take("fea_damage")?)?;
         let enemy_count=self.slots.t34.len();self.restore_tanks(fields)?;
         ensure!(self.enemies.len()==enemy_count&&self.wrecks.len()==enemy_count&&bodies.len()==enemy_count,"vehicle/source slot count mismatch");
         for (index,body) in bodies.into_iter().enumerate() {
@@ -155,10 +158,11 @@ impl Game {
     pub(super) fn export_projectiles_world(&self)->Result<OwnerBlock> {
         let mut fields=self.capture_projectiles()?;fields.put("hot_fragments",&self.hot_fragments.as_slice())?;
         fields.put("weapon_vfx",&self.weapon_vfx.export_world_state()?)?;
-        OwnerBlock::encode("combat.projectiles",1,&fields)
+        // Version 2: fragments carry a solved temperature and embedding (layered damage model).
+        OwnerBlock::encode("combat.projectiles",2,&fields)
     }
     pub(super) fn import_projectiles_world(&mut self,block:&OwnerBlock)->Result<()> {
-        let mut fields:StateFields=block.decode("combat.projectiles",1)?;
+        let mut fields:StateFields=block.decode("combat.projectiles",2)?;
         self.weapon_vfx.import_world_state(fields.take("weapon_vfx")?)?;
         self.hot_fragments=fields.take::<Vec<HotFragment>>("hot_fragments")?.try_into().map_err(|_|anyhow::anyhow!("fragment capacity mismatch"))?;
         self.restore_projectiles(fields)?;

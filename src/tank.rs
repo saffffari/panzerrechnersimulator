@@ -70,7 +70,7 @@ const GUN_RECOIL_SLAM_END: f32 = 0.055;
 const GUN_RECOIL_HOLD_END: f32 = 0.095;
 const GUN_RECOIL_RETURN_END: f32 = 0.620;
 pub(crate) const GUN_RECOIL_END: f32 = 0.760;
-const GUN_RECOIL_TRAVEL: f32 = 0.320;
+pub(crate) const GUN_RECOIL_TRAVEL: f32 = 0.320;
 const GUN_RECOIL_SETTLE: f32 = 0.015;
 
 fn smoothstep01(t: f32) -> f32 {
@@ -938,6 +938,10 @@ pub struct Tank {
     /// Seconds since the most recent discharge while the visual recoil cycle is active. It is kept
     /// separate from `reload`: the latter is the authoritative return-to-battery firing lock.
     pub(crate) shot_age: f32,
+    /// A sheared mount (tiger_damage::Fault::MountSheared) holds the gun at full recoil until
+    /// the crew jacks it back into battery: the presentation pose shows it, the ballistic
+    /// `gun_model` never moves (the gun cannot fire in that state anyway).
+    pub gun_held_in_recoil: bool,
     pub alive: bool,
     pub hp: f32,
     pub parts: Parts,
@@ -986,6 +990,7 @@ impl Tank {
             gun_pitch: 0.0,
             reload: 0.0,
             shot_age: GUN_RECOIL_END,
+            gun_held_in_recoil: false,
             alive: true,
             hp: MAX_HP,
             parts,
@@ -1321,9 +1326,10 @@ impl Tank {
     /// Render transform for the recoiling gun group. The ballistic muzzle deliberately continues
     /// to use `gun_model()`, so a fired shell never inherits a presentation-only barrel offset.
     pub fn visual_gun_model(&self) -> Mat4 {
-        // The recoil is a real distance, entered in the gun frame's units.
-        self.gun_model()
-            * Mat4::from_translation(Vec3::new(0.0, 0.0, -self.parts.local(gun_recoil_distance(self.shot_age))))
+        // The recoil is a real distance, entered in the gun frame's units; a sheared mount holds
+        // the gun at full travel (tiger_damage::Fault::MountSheared) until the bolts are fitted.
+        let back = if self.gun_held_in_recoil { GUN_RECOIL_TRAVEL } else { gun_recoil_distance(self.shot_age) };
+        self.gun_model() * Mat4::from_translation(Vec3::new(0.0, 0.0, -self.parts.local(back)))
     }
 
     /// (muzzle world position, gun forward direction).
@@ -1964,6 +1970,24 @@ mod tests {
         tank.present_fired();
         assert_eq!(tank.reload, 4.25);
         assert_eq!(tank.shot_age(), Some(0.0));
+    }
+
+    #[test]
+    fn a_sheared_mount_holds_the_barrel_at_full_recoil_and_never_moves_the_laid_gun() {
+        let mut tank = Tank::new(12.0, -7.0, 0.43, &flat(), TIGER_PARTS);
+        tank.turret_yaw = 0.4;
+        tank.gun_pitch = 0.08;
+        let laid = tank.gun_model();
+        let muzzle = tank.muzzle();
+        assert!(tank.shot_age().is_none());
+        approx(tank.visual_gun_model().transform_point3(Vec3::ZERO).distance(laid.transform_point3(Vec3::ZERO)), 0.0, 1e-5);
+        tank.gun_held_in_recoil = true;
+        let offset = tank.visual_gun_model().transform_point3(Vec3::ZERO) - laid.transform_point3(Vec3::ZERO);
+        approx(offset.length(), GUN_RECOIL_TRAVEL, 1e-5);
+        approx(offset.dot(laid.transform_vector3(Vec3::Z).normalize()), -GUN_RECOIL_TRAVEL, 1e-5);
+        assert!(tank.muzzle().0.distance(muzzle.0) < 1e-5 && tank.muzzle().1.distance(muzzle.1) < 1e-5);
+        tank.gun_held_in_recoil = false; // the mount bolts fitted: back in battery
+        approx(tank.visual_gun_model().transform_point3(Vec3::ZERO).distance(laid.transform_point3(Vec3::ZERO)), 0.0, 1e-5);
     }
 
     #[test]

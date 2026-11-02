@@ -536,6 +536,10 @@ impl RasterOptics {
     pub(super) fn copy_registrations_from(&mut self, other: &Self) {
         self.specs.clone_from(&other.specs);
         self.blocked.clone_from(&other.blocked);
+        // The occlusion flags travel with the registrations too: a display resize that carried
+        // the specs without them left `prepare_raster_optics` indexing an empty list on its
+        // first frame (2026-11-02, the Canyon act's resize to 480x270).
+        self.occluded.clone_from(&other.occluded);
         self.source_surfaces.clone_from(&other.source_surfaces);
     }
 

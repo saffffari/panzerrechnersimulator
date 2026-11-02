@@ -103,6 +103,12 @@ impl Game {
         }
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.winter_encounter = Some(encounter);
+        // The T-34 brain (Game::install_t34_brain): the evolved policy unless
+        // KESSEL_T34_BRAIN=doctrine; a refused brain is reported and the doctrine drives.
+        if let Err(error) = self.install_t34_brain("playtest") {
+            eprintln!("[playtest] T-34 brain refused ({error:#}): the winter encounter doctrine drives");
+            self.enemy_policy_over_orders = false;
+        }
         placed.iter().filter(|&&active| active).count()
     }
 

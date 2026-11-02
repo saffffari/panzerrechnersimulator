@@ -24,6 +24,12 @@ const ROUTE_LEGS_SEARCHED: usize = 5;
 const ENTRY_CANDIDATES_PER_REQUEST: usize = 6;
 /// No opening platoon starts closer to the Tiger than this.
 const OPENING_PLATOON_MIN_M: f32 = 450.0;
+/// `KESSEL_CANYON_T34S=N`: a playtest cap on the T-34s fielded over the whole run (the two
+/// authored platoons are five; the opening approach platoons and the director's reinforcements
+/// enter only while the total stays within it). Unset: the ordinary run.
+fn canyon_t34_cap() -> Option<usize> {
+    std::env::var("KESSEL_CANYON_T34S").ok().and_then(|v| v.trim().parse().ok())
+}
 
 impl Game {
     /// Field the course on a freshly built course workshop: the Tiger at the start, the platoons,
@@ -157,7 +163,11 @@ impl Game {
                 "gun": selected.first(), "guns": selected,
             }));
         }
-        let sites: Vec<(Vec2, f32)> = guns.iter().map(|(_, gun)| (gun.at, gun.heading)).collect();
+        // Playtest knob: KESSEL_CANYON_GUNS=0 sites no 45 mm guns and no gun crews (those
+        // riflemen take posts in the ruins with the rest); the tanks are the whole defence.
+        let guns_off = std::env::var("KESSEL_CANYON_GUNS").is_ok_and(|v| v.trim() == "0");
+        if guns_off { println!("[canyon] 45 mm guns off (KESSEL_CANYON_GUNS=0): no guns and no gun crews sited"); }
+        let sites: Vec<(Vec2, f32)> = if guns_off { Vec::new() } else { guns.iter().map(|(_, gun)| (gun.at, gun.heading)).collect() };
         self.field_at_guns(&sites);
         // Riflemen not riding with platoon A's tanks or serving a gun take the course's posts in the
         // ruins; platoon B's tanks patrol the factory arena without riders.
@@ -248,6 +258,22 @@ impl Game {
         run.seed = seed;
         run.director = Some(crate::canyon_director::Director::new(seed, fielded));
         self.canyon_run = Some(run);
+        // The T-34 brain (Game::install_t34_brain): the evolved policy unless
+        // KESSEL_T34_BRAIN=doctrine asks for the winter encounter's orders. Logged either way.
+        self.install_t34_brain("canyon")?;
+        if let Some(cap) = canyon_t34_cap() {
+            // The plan's two platoons sit deep in the corridor, so a capped playtest would meet
+            // nobody for kilometres: they are benched, and the cap enters as the opening
+            // deployment at the first-encounter knot instead (`field_canyon_opening_platoons`).
+            for i in 0..self.enemies.len().min(winter_encounter_ai::SLOTS) {
+                if !self.enemy_active[i] { continue; }
+                self.enemy_active[i] = false;
+                self.enemies[i].alive = false;
+                self.enemies[i].pos = Vec3::new(-3000.0 - i as f32 * 10.0, 0.0, -3000.0);
+            }
+            if let Some(d) = self.canyon_run.as_mut().and_then(|run| run.director.as_mut()) { d.total_spawned = 0; }
+            println!("[canyon] T-34 cap {cap} (KESSEL_CANYON_T34S): the plan's {fielded} deep tanks are benched; {cap} T-34s enter as the opening deployment at the first-encounter knot, and no reinforcements follow");
+        }
         // The course's mission sheet (docs/MISSIONS.md): orders, beats, cues. Without one the
         // run plays as before; a broken sheet is reported and the run plays on.
         match self.enable_mission_from_sheet() {
@@ -355,6 +381,8 @@ impl Game {
             + self.at_guns.iter().flatten().filter(|g|matches!(g.state,
                 at_guns::GunState::Engaging | at_guns::GunState::ShiftingTrails)).count();
         let kills = self.enemies.iter().enumerate().filter(|(i,e)| !e.alive && self.enemy_active[*i]).count() as u32;
+        // The run's total so far (dead tanks included) against the playtest cap.
+        let cap_room = canyon_t34_cap().map(|cap| cap.saturating_sub(self.enemy_active.iter().filter(|a| **a).count()));
         let Some(run) = self.canyon_run.as_mut() else { return; };
         if !alive { run.failed = true; }
         if run.step(dt, (alive && self.mode == Mode::Tank).then_some(at)) {
@@ -370,7 +398,8 @@ impl Game {
             damage, critical, alive: alive && !run.failed,
             finished: run.finished_s.is_some(),
         };
-        let request = run.director.as_mut().and_then(|d| d.step(dt,s));
+        let request = run.director.as_mut().and_then(|d| d.step(dt,s))
+            .filter(|&count| cap_room.is_none_or(|room| count <= room));
         if let Some(count) = request {
             if let Some((route, positions)) = self.canyon_reinforcement_entry(count,r.camera.pos) {
                 self.append_canyon_platoon(route,positions,count,r);
@@ -462,6 +491,37 @@ impl Game {
             .and_then(|run| Some((run.director.as_ref()?.seed, run.spec.route.len()))) else { return; };
         let tiger = Vec2::new(self.player.pos.x,self.player.pos.z);
         let mut fielded = 0usize;
+        if let Some(cap) = canyon_t34_cap() {
+            // The capped playtest: every tank at the first encounter, a platoon at a time, each
+            // further platoon searched from a few knots on (the siting refuses a column within
+            // 18 m of a tank already fielded, so they never stack).
+            let jitter = (crate::canyon::mix(seed ^ 0x6f70656e) % 61) as f32 / 1000.0 - 0.03;
+            let first = (((OPENING_PLATOON_FRACTIONS[0] + jitter).clamp(0.05, 0.95)) * knots as f32) as usize;
+            let active = |game: &Self| game.enemy_active.iter().filter(|a| **a).count();
+            let mut offset = 0usize;
+            while active(self) < cap && offset <= 64 {
+                let count = (cap - active(self)).min(stealth::PLATOON_SIZE);
+                let centre = first + offset;
+                let site = (0..12).flat_map(|step| [centre + step * 4, centre.saturating_sub(step * 4)])
+                    .filter(|&j| j >= 60 && j + 12 < knots)
+                    .find_map(|j| {
+                        let run = self.canyon_run.as_ref()?;
+                        if run.spec.route[j].distance(tiger) < OPENING_PLATOON_MIN_M { return None; }
+                        self.canyon_platoon_site(j, count, None)
+                    });
+                if let Some((route, positions)) = site {
+                    self.append_canyon_platoon(route, positions, count, r);
+                    if let Some(d) = self.canyon_run.as_mut().and_then(|run| run.director.as_mut()) {
+                        d.total_spawned += count as u32;
+                    }
+                    fielded += 1;
+                }
+                offset += 16;
+            }
+            println!("[canyon] opening deployment (cap {cap}): {fielded} platoons, {} T-34s at the first-encounter knot {first}",
+                active(self));
+            return;
+        }
         for (slot, fraction) in OPENING_PLATOON_FRACTIONS.iter().enumerate() {
             // A seeded shift of up to +/-3 percent of the route, then the nearest workable knot.
             let jitter = (crate::canyon::mix(seed ^ 0x6f70656e ^ slot as u64) % 61) as f32 / 1000.0 - 0.03;
@@ -497,6 +557,10 @@ impl Game {
             self.enemies.push(tank);
             self.enemy_active.push(k<count); self.enemy_skill.push(38); self.enemy_concealed.push(false);
             self.enemy_gun_shots.push(0); self.enemy_mg_cd.push(0.0); self.wrecks.push(Wreck::default());
+            // The mixed-combat weapon state (coax, HE against men) is sized to the act's pool at
+            // build; a tank that enters later needs its own, or any brain that reaches
+            // `mixed_tank_engagement` for it indexes past the end.
+            self.mixed_combat.tank_weapons.push(Self::fresh_tank_weapons());
             for rigs in [&mut self.slots.t34,&mut self.slots.su100,&mut self.slots.kv2,
                 &mut self.slots.isu152,&mut self.slots.is2,&mut self.slots.is3] {
                 let source=rigs[0];

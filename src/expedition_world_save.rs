@@ -56,9 +56,9 @@ static SERIAL:AtomicU64=AtomicU64::new(1);
 /// Changing an owner's layout requires changing its version. Missing blocks never mean fresh
 /// default simulation state. An unsupported inactive feature is represented explicitly as None.
 pub const REQUIRED_OWNERS:&[(&str,u32)]=&[
-    ("game.physical",3),("vehicles.tanks",1),("crew.runtime",4),
+    ("game.physical",3),("vehicles.tanks",2),("crew.runtime",4),
     ("transport.recovery",6),("workshop.runtime",4),("world.progression",3),
-    ("world.environment",2),("combat.projectiles",1),("combat.infantry",1),
+    ("world.environment",2),("combat.projectiles",2),("combat.infantry",1),
     ("expedition.runtime",2),("personal.runtime",1),
 ];
 
