@@ -6,9 +6,16 @@ still open.
 
 ## Cause
 
-On Canyon v2 every T-34 is driven by the winter encounter (`src/winter_encounter_ai.rs`), not by
-the swarm manoeuvres in `Game::enemy_maneuver` or the evolved policy: `enable_canyon_course_seeded`
-builds a `WinterEncounter::in_streets`, and `enemy_ai` hands every slot with a winter order to it.
+**Since 2026-11-02 the evolved arena policy drives the T-34s by default wherever an encounter is
+fielded** (`Game::install_t34_brain`: `KESSEL_T34_BRAIN`, `evolved` unless set to `doctrine`), the
+owner's pick after a Canyon 1v5 in which the evolved crews moved, held and missed like crews. The
+winter encounter below still ticks its perception; its orders are applied only under
+`KESSEL_T34_BRAIN=doctrine`. The rest of this section describes that doctrine.
+
+Under the doctrine, on Canyon v2 every T-34 is driven by the winter encounter
+(`src/winter_encounter_ai.rs`), not by the swarm manoeuvres in `Game::enemy_maneuver` or the
+evolved policy: `enable_canyon_course_seeded` builds a `WinterEncounter::in_streets`, and `enemy_ai`
+hands every slot with a winter order to it.
 That encounter was written for the courtyard stealth scene against a **man on foot**, and its
 contact rules were applied unchanged to the Tiger:
 
@@ -30,8 +37,9 @@ contact rules were applied unchanged to the Tiger:
 Static obstacles were a secondary cause: on seed 137 two wingmen of platoon A were pinned for
 240 s and 124 s (they drove 43 m and 76 m all run) following their leader; elsewhere stuck time
 was small. The opening rigs are not benched: all eleven tanks of a run are fielded and
-patrol. The evolved policy only drives the AI lab (`train`, `ai-gauntlet`, the showreels); the
-windowed Gefecht arena ran the scripted swarm.
+patrol. At that time the evolved policy only drove the AI lab (`train`, `ai-gauntlet`, the
+showreels) and the windowed Gefecht arena ran the scripted swarm; since 2026-11-02 it is the
+default brain in every mode (`KESSEL_T34_BRAIN`).
 
 ## What the crews do now
 
@@ -186,9 +194,10 @@ path"). List: `artifacts/t34-ai-20261028/full_tests.txt`.
 - **No smoke.** T-34-76s of the period carried no smoke dischargers; MDSh smoke canisters were
   fitted to some tanks. Not modelled; concealment comes from the terrain, buildings, wrecks and
   the storm (the sight probes and the existing weather visibility).
-- **The learned policy is not used on the Canyon.** It was evolved on open ground with a
-  14-input view and drives into walls; a close-combat hand-off (open ground, under 150 m, in
-  sight) is possible but untested.
+- **The learned policy is the default brain on the Canyon and in the streets since 2026-11-02**
+  (`KESSEL_T34_BRAIN=doctrine` restores the orders above). It was evolved on open ground with a
+  14-input view and can drive into walls; `Game::enemy_maneuver`'s avoidance and the stuck
+  recovery are what keep it moving there, and `canyon-ai-run`'s `stuck_tank_s` is the measure.
 - **Turret faces** are not in the armour solution (hull faces only), and the solution ignores
   scars and the solver's per-shot variation.
 - **Reinforcement platoons** are only reached by the radio relay of a living leader; a wiped

@@ -16,6 +16,12 @@
 #                                                 (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered colour, pyramid bloom;
 #                                                 the owner's pick, 2026-11-01); --look deltap-pico8 for the 32-colour frame
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
+#   tools/launch_demo_20261101.sh --canyon --t34s 5 --no-guns
+#                                                 a 1v5: five T-34s at the first-encounter knot (the deep platoons benched,
+#                                                 no approach platoons, no reinforcements), no 45 mm guns or gun crews
+#                                                 (KESSEL_CANYON_GUNS=0). The crews fight by the evolved arena policy in
+#                                                 every mode (the default since 2026-11-02); --brain doctrine puts the
+#                                                 winter encounter crews of docs/ENEMY_TANK_AI.md back in charge
 #   tools/launch_demo_20261101.sh --day-cycle 6   day/night clock: the 15-minute cycle times this (default 6, a 90-minute cycle)
 #   tools/launch_demo_20261101.sh --audio-range balanced   the playback curve: reference (default; distant sounds fall off as
 #                                                 the physical level does) or balanced (up to +12 dB below 110 dB(A))
@@ -25,7 +31,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 AUDIO_RANGE=reference
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -36,6 +42,9 @@ while (( $# )); do
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
         --seed) SEED=$2; shift ;;
+        --t34s) T34S=$2; MODE=canyon; shift ;;
+        --brain) BRAIN=$2; MODE=canyon; shift ;;
+        --no-guns) GUNS=0; MODE=canyon ;;
         --order) ORDER=$2; MODE=expedition; shift ;;
         --forward) FORWARD=1; MODE=expedition ;;
         --day-cycle) DAY_CYCLE=$2; shift ;;
@@ -104,6 +113,9 @@ export KESSEL_AUDIO_RANGE="$AUDIO_RANGE"
 export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 (( PLATOON )) && export KESSEL_PLATOON=2
 [[ -n "$SEED" ]] && export KESSEL_CANYON_SEED="$SEED"
+[[ -n "$T34S" ]] && export KESSEL_CANYON_T34S="$T34S"
+[[ -n "$BRAIN" ]] && export KESSEL_T34_BRAIN="$BRAIN"
+[[ -n "$GUNS" ]] && export KESSEL_CANYON_GUNS="$GUNS"
 [[ -n "$LOOK" ]] && export KESSEL_LOOK="$LOOK"
 
 LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).log"

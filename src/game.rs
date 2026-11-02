@@ -9824,6 +9824,12 @@ pub struct Game {
     pub night: bool, // day/night detection scaling; the menu's Tag/Nacht will feed this
     stealth: stealth::Stealth, // per-enemy detection meters + the platoon alert state machine
     winter_encounter: Option<winter_encounter_ai::WinterEncounter>,
+    /// The installed `enemy_policy` proposes every T-34's maneuver and fire hold in place of the
+    /// winter encounter's orders (`install_t34_brain`: `KESSEL_T34_BRAIN`, evolved unless set to
+    /// `doctrine`). False where no encounter is fielded or the doctrine was asked for; the
+    /// encounter still ticks its perception either way. Gun lay, reload and ballistics are the
+    /// same under either brain.
+    pub enemy_policy_over_orders: bool,
     /// World-space cover boxes that BREAK a T-34's sightline to the player: the city buildings, the
     /// ruined-town wall/barricade dressing, the scattered battlefield cover, and the hull of every
     /// tank already killed (appended in `destroy_enemy`). Built once at scene-build time and read by
@@ -14206,6 +14212,7 @@ impl Game {
             night, // Tag/Nacht from the title menu: feeds stealth's reduced night detection + the look
             stealth,
             winter_encounter: None,
+            enemy_policy_over_orders: false,
             world_index: std::sync::Arc::new(world_index::WorldIndex::build(
                 &destructibles,
                 &occluders,
@@ -27788,6 +27795,30 @@ impl Game {
     /// its penetrable sides — so movement, not raw damage, is what makes the fight lethal.
     /// Deliberately gentler than the player (longer reload, dispersion). Uncoordinated for now —
     /// bounding overwatch / role assignment is the NEXT step.
+    /// The brain the T-34 crews fight by wherever a winter encounter is fielded (the Canyon, the
+    /// live playtest's streets, the expedition): `KESSEL_T34_BRAIN`, `evolved` unless set. The
+    /// evolved arena policy (`ARENA_T34_POLICY`) proposes every tank's maneuver and fire hold and
+    /// the doctrine's orders are not applied (`enemy_ai`); `doctrine` keeps the winter encounter's
+    /// orders (docs/ENEMY_TANK_AI.md). The owner's pick after the 2026-11-02 Canyon 1v5: the
+    /// evolved crews moved, held and missed like crews. Perception, gun lay, reload and ballistics
+    /// are the same under either brain. Logged either way.
+    pub(crate) fn install_t34_brain(&mut self, scope: &str) -> anyhow::Result<()> {
+        let brain = std::env::var("KESSEL_T34_BRAIN").unwrap_or_else(|_| "evolved".into());
+        match brain.trim() {
+            "evolved" => {
+                self.enemy_policy = Some(crate::ai::Mlp::load(ARENA_T34_POLICY)?);
+                self.enemy_policy_over_orders = true;
+                println!("[{scope}] T-34 brain: the evolved policy {ARENA_T34_POLICY} drives maneuver and fire hold; the doctrine's orders are not applied (KESSEL_T34_BRAIN=doctrine for the winter encounter's orders)");
+            }
+            "doctrine" => {
+                self.enemy_policy_over_orders = false;
+                println!("[{scope}] T-34 brain: the winter encounter doctrine (KESSEL_T34_BRAIN=doctrine)");
+            }
+            other => anyhow::bail!("KESSEL_T34_BRAIN must be evolved or doctrine, not {other:?}"),
+        }
+        Ok(())
+    }
+
     fn enemy_ai(&mut self, dt: f32) {
         self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
         // Garage and Playtest practice have stationary targets. Skip detection and all AI orders,
@@ -27838,7 +27869,10 @@ impl Game {
                 if let Some(age) = self.enemy_track_age.get_mut(i) { *age = 0.0; }
                 continue;
             }
-            let winter = winter_orders.get(i).copied().flatten();
+            // The evolved brain, the default (`install_t34_brain`), takes the doctrine's place: the
+            // encounter still ticks its perception, but its orders are not applied.
+            let evolved_drives = self.enemy_policy_over_orders && self.enemy_policy.is_some();
+            let winter = winter_orders.get(i).copied().flatten().filter(|_| !evolved_drives);
             if winter.is_none() && self.enemy_return_fire_allowed() && self.mixed_tank_engagement(i, dt) {
                 continue;
             }
