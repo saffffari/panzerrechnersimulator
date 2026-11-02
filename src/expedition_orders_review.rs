@@ -70,11 +70,16 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
     let site = Vec2::from_array(spec.sites.iter().find(|s| s.id == SITE).unwrap().position);
     let hold_s = spec.sites.iter().find(|s| s.id == SITE).unwrap().hold_s;
     step(&mut g, &mut r, 0.3);
-    check("the order is accepted at camp and its sheet held up, the march beat open on the net",
-        g.mission_order_up() && g.expedition_order_active() && beat_status(&g, 0) == "Active"
+    check("the order is accepted at camp and prints on the strip, the march beat open on the net",
+        g.order_strip_active() && !g.mission_order_up() && g.expedition_order_active() && beat_status(&g, 0) == "Active"
             && radio(&g).first().is_some_and(|l| l.starts_with("Stab: Elster, Stab. Order 10")),
-        json!({"radio": radio(&g), "camp": [camp.x, camp.z]}));
+        json!({"radio": radio(&g), "camp": [camp.x, camp.z], "print": format!("{:?}", g.order_print_phase())}));
+    // Fixture: the print finished and the strip torn off into the hands for the still.
+    ensure!(g.debug_tear_order_strip(), "the strip could not be torn off");
+    step(&mut g, &mut r, 0.3);
+    check("the torn-off strip is read in hand", g.order_receipt_held(), json!({"print": format!("{:?}", g.order_print_phase())}));
     still(&device, &queue, &g, &mut r, &format!("{prefix}_order_at_camp.png"))?;
+    ensure!(g.stow_order_receipt(), "X did not pocket the strip");
 
     // The held map at camp: the order's marks (the turn, the yard) and the bearing to the yard.
     g.set_map_held(true);

@@ -958,6 +958,13 @@ impl MissionState {
 
     /// The order sheet is held up over the world.
     pub fn order_up(&self) -> bool { self.order_sheet_s.is_some() }
+    /// The written order went to the teleprinter (src/order_printer.rs): no sheet is held up
+    /// over the world, and M rereads it on the map as a folded order does.
+    pub fn order_printed(&mut self) {
+        if self.order_sheet_s.take().is_some() {
+            self.log.push(format!("[mission] {:>7.1}s order sheet printed on the strip", self.elapsed_s));
+        }
+    }
 
     /// The front end presented the held-up sheet on a frame (arms the key dismiss).
     pub fn note_order_presented(&mut self) {

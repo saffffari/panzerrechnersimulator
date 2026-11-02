@@ -68,6 +68,7 @@ impl Game {
             state.mission.source.display(), state.beats.len(), state.mission.beats[0].title);
         self.mission = Some(state);
         self.mission_objectives.clear();
+        self.print_mission_order();
         Ok(())
     }
 

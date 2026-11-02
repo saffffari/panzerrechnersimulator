@@ -13750,6 +13750,7 @@ impl WindowState {
         self.renderer.set_coop_shadow_reuse(shadow_ready);
         self.prepare_map_view();
         self.game.prepare_repair_manual(&mut self.renderer, &self.device, &self.queue);
+        self.game.prepare_order_receipt(&mut self.renderer, &self.device, &self.queue);
         let saved_far = self.renderer.camera.zfar;
         if self.game.protected_main_interior_view() {
             self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
@@ -13930,7 +13931,8 @@ impl WindowState {
             ui::draw_mission_overlay(&mut self.renderer, &overlay, self.show_map);
             if overlay.order.is_some() { self.game.mission_note_order_presented(); }
         }
-        let camp_hint = self.game.tiger_refuel_hover(self.renderer.camera.pos, self.renderer.camera.forward())
+        let camp_hint = self.game.order_printer_hover(self.renderer.camera.pos, self.renderer.camera.forward())
+            .or_else(|| self.game.tiger_refuel_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
             .or_else(|| self.game.field_aid_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
             .or_else(|| self.game.crew_status_panel_hover(self.renderer.camera.pos, self.renderer.camera.forward()))
             .or_else(|| self.game.expedition_medical_target(self.renderer.camera.pos, self.renderer.camera.forward())
@@ -14957,6 +14959,7 @@ fn interact_under_crosshair(state: &mut WindowState, keys: &mut Keys, with_picku
     if state.game.halftrack_occupied() { return true; }
     let fwd = state.renderer.camera.forward();
     let pos = state.renderer.camera.pos;
+    if state.game.order_printer_interact(pos, fwd) { return true; }
     if state.game.tiger_refuel_interact(pos, fwd) { return true; }
     if state.game.field_aid_interact(pos, fwd) { return true; }
     if state.game.workshop_owns_primary(pos,fwd) {return false;}
@@ -15398,6 +15401,8 @@ impl ApplicationHandler for App {
                             state.set_play_cursor(!held);
                             self.keys = Keys::default();
                         }
+                        KeyCode::KeyX if state.game.stow_order_receipt() => {},
+                        KeyCode::KeyO if state.game.hold_up_order_receipt() => {},
                         KeyCode::KeyX if state.game.release_field_aid() => {},
                         KeyCode::KeyX if state.game.cancel_crew_panel_selection() => {},
                         KeyCode::KeyX if state.game.recovery_stow_hands() => {},

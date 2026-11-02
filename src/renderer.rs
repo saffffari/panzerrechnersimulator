@@ -38,6 +38,9 @@ pub(crate) mod track_ruts;
 
 #[path = "held_map_render.rs"]
 mod held_map_render;
+#[path = "order_receipt_render.rs"]
+mod order_receipt_render;
+pub use order_receipt_render::{ReceiptInk, RECEIPT_CHARS_PER_LINE, RECEIPT_INK_HEIGHT, RECEIPT_INK_WIDTH};
 #[path = "repair_manual_render.rs"]
 mod repair_manual_render;
 
@@ -3082,6 +3085,7 @@ pub struct Renderer {
     // resolution — deliberately OUTSIDE the PS1 crush so the German UI stays crisp. See src/ui.rs. ----
     ui: Ui,
     held_map_surface: Option<held_map_render::MapSurface>,
+    order_receipt_surface: Option<order_receipt_render::ReceiptSurface>,
     repair_manual_surfaces: Vec<repair_manual_render::PageSurface>,
     repair_manual_presentation: Option<u64>,
 }
@@ -6303,6 +6307,7 @@ impl Renderer {
             menu_meshes: Vec::new(),
             ui,
             held_map_surface: None,
+            order_receipt_surface: None,
             repair_manual_surfaces: Vec::new(),
             repair_manual_presentation: None,
         }
@@ -6348,7 +6353,7 @@ impl Renderer {
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
-            pressure_fronts, heat_sources, ui, held_map_surface, repair_manual_surfaces,
+            pressure_fronts, heat_sources, ui, held_map_surface, order_receipt_surface, repair_manual_surfaces,
             repair_manual_presentation);
         if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
             new.copy_registrations_from(old);

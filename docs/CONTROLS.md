@@ -19,7 +19,10 @@ and the current driver cruise setting.
 | V | Indicate an approximate clock-bearing sector; no enemy lock or automatic range measurement |
 | K | Toggle the autonomous-gunner experiment; no commander LMB fire order |
 | M / I | Physical map / repair manual (B stays the binoculars) |
-| PgUp / PgDn, Enter (map held) | Expedition orders on the theatre map: previous / next offer, accept. Accepting stows the map so the written order is held up (X or a move folds it; M rereads it on the map with its marks and bearing) |
+| PgUp / PgDn, Enter (map held) | Expedition orders on the theatre map: previous / next offer, accept. Accepting stows the map; the written order prints on the teleprinter strip (the head at the commander's left under the turret roof, or the detail's machine on the camp's orders table when you are on foot there). M rereads it on the map with its marks and bearing |
+| E / LMB on the strip | Tear the printed order off the machine and read it in hand (free hands, like the map) |
+| X (strip in hand) | Fold the strip into the pocket |
+| O | Hold the pocketed strip up again |
 | 1 / 2 | P08 / Panzerfaust on foot; 1 toggles the mounted P08 while aboard |
 | R | Reload personal weapon on foot; throw a carried spent case while aboard |
 | F / T | Handheld light / request ammunition type |

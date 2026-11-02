@@ -78,7 +78,9 @@ already take any key or Enter.
 
 ## Guidance the player sees
 
-- **The order sheet.** At the start the typed Befehl is held up over the world: the title, the
+- **The order sheet.** Since 2 November 2026 the Befehl is a printed strip torn off the
+  teleprinter (The March section below; the same machine serves the Canyon run's order from the
+  turret). Before that, at the start the typed Befehl was held up over the world: the title, the
   three lines, the first beat, a close mark in its corner and the fold keys in small print.
   Enter, Space, E, a left click (the play cursor is captured, so the whole click is the close
   mark) or the pad's A or B folds it at once, and that press does nothing else (no shot, no
@@ -170,9 +172,15 @@ nudges after 300 s; no beat has a release or a consequence platoon (the theatre'
 finite and authored: a Defence, Bridge or Finale site releases its own counterattack when the
 Tiger stands on the cleared site, which the third beat's open line warns of).
 
-Accepting an order on the map (Enter, or the map's ACCEPT) now stows the map so the written order
-is held up and read; M rereads it on the map, where the order's marks, the position estimate and
-the bearing line are pencilled onto the theatre sheet (`draw_expedition_map`), and the pocket
+Accepting an order on the map (Enter, or the map's ACCEPT) stows the map and sends the written
+order to the teleprinter (`src/order_printer.rs`, 2 November 2026): the strip comes out of the
+head at the commander's left under the turret roof, or out of the detail's machine on the camp's
+orders table when the reader is on foot within 40 m of it, line by line in the machine's
+capitals (title, small print, the order's paragraphs, the first beat); E or the action button
+tears it off into the hands, X folds it into the pocket, O holds it up again. No flat sheet is
+drawn over the world any more (`MissionState::order_printed` folds the old sheet at once). M
+still rereads the order on the map, where the order's marks, the position estimate and the
+bearing line are pencilled onto the theatre sheet (`draw_expedition_map`), and the pocket
 compass carries the march bearing. The demo launcher's `--order N` accepts order N at the start;
 `--forward` stands the crewed Tiger on the approach road at the first beat, engine running, facing
 the site, a playtest fixture disclosed in the log (`debug_expedition_start_order`).

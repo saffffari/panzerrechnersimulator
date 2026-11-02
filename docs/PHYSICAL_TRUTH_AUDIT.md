@@ -2734,3 +2734,24 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   remount are staged. The harness answers whether the loop's accounting closes, not whether the
   route can be driven or the fight won.
 
+### The written order prints — 2 November 2026 (`src/order_printer.rs`, `src/order_receipt_render.rs`)
+
+- **The teleprinter head's place is measured, not guessed.** Its turret-local box
+  (x 0.84..0.99, y 2.06..2.22, z -0.60..-0.38) was chosen on a 5 cm occupancy map of the baked
+  turret's source triangles between the traverse gearbox and flywheel below (source parts
+  Turret_0137/0142, top y 1.99), the roof underside (y 2.30) and the wall (x 1.0 there), beside
+  the commander's post (0.564, floor, -0.423). The hanging strip (76 x 228 mm) ends above the
+  fixture at y 1.83. Gate: `order_printer::tests::the_head_and_strip_stand_clear_of_the_turret`
+  (exact triangle-box test against the bake when the asset root is present). The head itself is
+  a project-authored utility prop (a closed box, a slot plate, four keys), not a specific model.
+- **The reviewed Enigma does not fit the commander's side.** Its transit case is 431 x 544 x
+  290 mm; the only clear volume at the commander's left is about 150 x 160 x 220 mm. The machine
+  therefore stands on the camp's orders table beside a second head (the detail's end of the
+  line), seated on the table's measured top (`camp_table_top`, from the placed part's source
+  triangles; a 0.80 m fallback is named in code); the hull Enigma at the radio station is unchanged.
+- **Print cadence is authored**: four lines a second (`LINE_SECONDS`), faster than a period
+  teleprinter's ten characters a second, chosen so the order is readable in seconds; the sound is
+  the bank's switch recordings at -14 dB per line, not a teleprinter recording.
+- **The ink is albedo**, repainted only when a line is added, under the cabin's and the camp's
+  real light; the strip in hand is a view-local raster-only object like the held map.
+

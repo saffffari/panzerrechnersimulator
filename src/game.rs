@@ -126,6 +126,8 @@ mod cigarette_butts;
 mod hand_compass;
 #[path = "hand_map.rs"]
 mod hand_map;
+#[path = "order_printer.rs"]
+mod order_printer;
 #[path = "repair_manual_game.rs"]
 mod repair_manual_game;
 #[path = "hatch_control.rs"]
@@ -8880,6 +8882,9 @@ struct Slots {
     binocular_prop: usize, // view-local physical field glasses during the lower/raise travel
     hand_compass: [usize; 2], // view-local imported body and magnetic needle
     held_map: usize, // folded physical paper with registered cartography/annotations
+    order_printer_head: usize, // the teleprinter head at the commander's left (src/order_printer.rs)
+    order_strip: usize,        // the strip on the machine, emerging line by line
+    order_receipt: usize,      // the torn-off strip in the reader's hands (view-local)
     repair_manual: [usize; crate::repair_manual::PART_COUNT],
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
@@ -9550,6 +9555,8 @@ pub struct Game {
     /// Entries are parallel to `slots.tiger_dressing`; failed GLBs never enter either vector.
     tiger_dressing: Vec<crate::tank_dressing::Prop>,
     enigma_dressing: Option<crate::tank_dressing::Prop>,
+    /// The written order's teleprinter and strip (src/order_printer.rs).
+    order_printer: order_printer::Printer,
     fx: Fx,
     /// Host-authoritative cannon shells. Stable IDs are never reused during a Game lifetime;
     /// presentation pools may drop/replace a tracer without changing this simulation pool.
@@ -11752,6 +11759,12 @@ impl Game {
         scene.extend(hand_compass::load()?);
         let held_map = scene.len();
         scene.push(hand_map::mesh());
+        let order_printer_head = scene.len();
+        scene.push(order_printer::head_mesh());
+        let order_strip = scene.len();
+        scene.push(order_printer::strip_mesh());
+        let order_receipt = scene.len();
+        scene.push(order_printer::strip_mesh());
         let repair_manual = std::array::from_fn(|i| scene.len() + i);
         scene.extend(crate::repair_manual::mesh());
 
@@ -12439,6 +12452,9 @@ impl Game {
             binocular_prop,
             hand_compass,
             held_map,
+            order_printer_head,
+            order_strip,
+            order_receipt,
             repair_manual,
             snow,
             hatch,
@@ -13507,6 +13523,10 @@ impl Game {
         renderer.mark_raster_only(slots.held_map);
         renderer.set_emissive(slots.held_map, 0.0);
         renderer.set_visible(slots.held_map, false);
+        renderer.mark_raster_only(slots.order_receipt);
+        renderer.set_visible(slots.order_receipt, false);
+        renderer.set_visible(slots.order_strip, false);
+        renderer.set_emissive(slots.order_printer_head, 0.0);
         for slot in slots.repair_manual {
             renderer.mark_raster_only(slot);
             renderer.set_emissive(slot, 0.0);
@@ -13973,6 +13993,7 @@ impl Game {
             slots,
             tiger_dressing,
             enigma_dressing,
+            order_printer: Default::default(),
             fx: Fx::default(),
             projectiles: Vec::with_capacity(256),
             projectile_scratch: Vec::with_capacity(256),
@@ -15808,6 +15829,7 @@ impl Game {
 
     fn update_campaign_director(&mut self, dt: f32, map_interact: bool) {
         self.update_tiger_fuel(dt);
+        self.tick_order_printer(dt);
         let Some(_) = self.campaign else { return };
         // Exploration belongs to the crew, not only the hull.  A dismounted commander can read a
         // story site, scout a route, and prepare Halbe even when the Tiger is immobilised or dry.
@@ -19355,6 +19377,7 @@ impl Game {
         r.set_model(self.slots.enigma, enigma_model);
         r.set_visible(self.slots.enigma, self.tank_editor_scene.is_none() || self.enigma_dressing.is_some());
         r.set_emissive(self.slots.enigma, 0.0);
+        self.drive_order_printer(r);
         r.set_model(
             self.slots.turret_disc,
             crate::turret_disc::turret_disc_model(tm),
