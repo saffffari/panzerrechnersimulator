@@ -150,13 +150,13 @@ fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
 /// Shared authored cooling envelope for the same HE detonation, whether the local VDB atlas
 /// is installed or not. This is presentation timing, not a calibrated radiometric source law.
 /// The detonation's own light over its age: the flash (60 ms decay) and, under it, the
-/// afterburn of the products mixing with the air, a tail at a third of the flash fading over
+/// afterburn of the products mixing with the air, a tail at a fifth of the flash fading over
 /// about a second and a half (0.45 s time constant), so the burst glows on in its own smoke
 /// instead of snuffing out at a tenth of a second (the owner, 2026-11-02). Authored timing for
 /// an 88 mm-class HE round, not a calibrated afterburn law.
 fn detonation_flash_heat(age_s: f32) -> f32 {
     if !age_s.is_finite() || age_s < 0.0 { return 0.0; }
-    let heat = (-age_s / 0.06).exp().max(0.35 * (-age_s / 0.45).exp());
+    let heat = (-age_s / 0.06).exp().max(0.2 * (-age_s / 0.45).exp());
     if heat < 0.01 { 0.0 } else { heat }
 }
 
@@ -2379,7 +2379,10 @@ impl Backend {
                             // while it burns the lobe is denser (the products) and glows.
                             let density = (1.0 - u).powf(1.3) * 0.7 + 1.8 * heat;
                             let kind = if heat > 0.0 { PARCEL_FIREBALL } else { PARCEL_SMOKE };
-                            push(center, radius, [0.4, 0.38, 0.36], kind, 6.0 * heat / radius, density / radius, h(90 + k) * 100.0, u);
+                            // The fireball parcel's age lane is its cooling (1 - heat): the shader
+                            // colours a young parcel white-hot and an old one orange-red and breaks
+                            // its shell up, so the afterburn glows dull in the smoke, not white.
+                            push(center, radius, [0.4, 0.38, 0.36], kind, 6.0 * heat / radius, density / radius, h(90 + k) * 100.0, (1.0 - heat).clamp(0.0, 1.0));
                         }
                     }
                     if let Some(gy) = e.ground_y {
@@ -3221,7 +3224,7 @@ mod event_source_tests {
             previous = heat;
         }
         // The afterburn tail: still glowing at a third of a second, out by two.
-        assert!(detonation_flash_heat(0.3) > 0.15 && detonation_flash_heat(0.3) < 0.2);
+        assert!(detonation_flash_heat(0.3) > 0.08 && detonation_flash_heat(0.3) < 0.13);
         assert!(detonation_flash_heat(1.3) > 0.0);
         assert_eq!(detonation_flash_heat(2.0), 0.0);
         assert_eq!(detonation_flash_heat(-1.0), 0.0);
