@@ -303,7 +303,9 @@ const SPARK_TRAIL: u32 = 1u;
     // passing the eye does not become a bloom blob.
     // A streaked spark covers its cross-section only: its tail is the support test's, not a smear
     // of its light into the pixel (which made every spark a bloom blob).
-    let projected_area = min(select(width * (width + tail), width * width, streaked) * pow(focal / clip.w, 2.0), select(6.0, 3.0, kind >= 9u));
+    // A hot-rim grain (kind 8) is one of 512 on a ring a few pixels across: capped at a pixel so the
+    // ring stays a ring (the plate's own rim draws the surface; these are its incandescent dust).
+    let projected_area = min(select(width * (width + tail), width * width, streaked) * pow(focal / clip.w, 2.0), select(select(6.0, 3.0, kind >= 9u), 1.0, kind == 8u));
     let weight = projected_area * f32(identity.z) / f32(identity.y);
     let position = pixel_quad(center, corner);
     if (kind == 7u) {

@@ -213,13 +213,19 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   blast sparks keep the charge's speed law (10-38 m/s x charge) instead of 4.6x it: the exterior
   volume multiplier remains the raster path's flash presentation only. The detonation event is
   now by charge (above a quarter of an 88 mm HE round's), not by that multiplier. Authored
-  expansion and rise rates for an 88 mm-class burst, not detonation-products gas dynamics.
-- Hot rim bound (`weapon_particle_math::rim_heat`, `RIM_KELVIN_MAX` 1600 K, was 2000 K): the
+  expansion and rise rates for an 88 mm-class burst, not detonation-products gas dynamics; the
+  lobes leave the plate at 3 m within a quarter second and lift at once, so the plate and its
+  rim are clear of the cloud by about half a second (the first cut sat on the plate for a second
+  and hid the ring).
+- Hot rim bound (`weapon_particle_math::rim_heat`, `RIM_KELVIN_MAX` 1800 K, was 2000 K): the
   rim's thermal reservoir still takes at most 1.5 % of the lost kinetic energy, but the rim that
-  stays on the plate is held below steel's 1800 K solidus, since hotter steel is molten and leaves
-  with the perforation spray. A full 88 mm perforation sat on the old cap and drew as a
-  white-yellow blob under the day's bloom; at 1600 K it is a bright orange ring, a sixteenth of
-  the radiance at 650 nm. The 1.5 % share and the rim's geometry remain estimates.
+  stays on the plate is held at steel's solidus, since hotter steel is molten and leaves with
+  the perforation spray. The ring itself is drawn by the plate (`renderer_scars`, the scar's
+  `rim_kelvin` from the same estimate, cooling over 2.5 s); the white-yellow blob a full 88 mm
+  perforation drew was the rim's 512 incandescent grains piling their light onto a few pixels,
+  so a rim grain's projected area is capped at one pixel in both spark shaders (the other kinds
+  keep 6 px). A first cut held the bound at 1600 K and dimmed the ring the owner wants kept.
+  The 1.5 % share and the rim's geometry remain estimates.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
   takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on

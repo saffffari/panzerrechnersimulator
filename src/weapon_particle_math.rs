@@ -92,14 +92,15 @@ pub fn strike_arc(origin:Vec3,velocity:Vec3,t:f32,ground:Option<f32>,q:f32)->(Ve
 /// Explicit thin heated-rim estimate, not a constitutive perforation or melting solver.
 /// The thermal reservoir receives at most1.5% of the actual lost kinetic energy. It never
 /// heats from retained penetrator energy, chemical filler or an arbitrary terminal class.
-/// The rim that stays on the plate is bounded at `RIM_KELVIN_MAX`, below steel's 1800 K
-/// solidus: hotter steel is molten and leaves with the perforation spray, it does not glow on
-/// the plate. A full 88 mm perforation reached the former 2000 K cap and drew as a white-yellow
-/// blob under the bloom (the owner, 2026-11-02); 1600 K is bright orange.
+/// The rim that stays on the plate is bounded at `RIM_KELVIN_MAX`, steel's solidus: hotter steel
+/// is molten and leaves with the perforation spray, it does not glow on the plate. The former
+/// 2000 K cap was above it. The ring the plate draws (`renderer_scars` rim) at this bound cools
+/// through orange over its 2.5 s; the blob a full 88 mm perforation drew was the rim's own 512
+/// incandescent grains piling onto a few pixels, bounded in the spark shaders instead.
 #[derive(Clone,Copy,Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct RimHeat {pub radius:f32,pub width:f32,pub mass_kg:f32,pub heat_j:f32,pub initial_kelvin:f32}
-pub const RIM_KELVIN_MAX:f32=1600.0;
+pub const RIM_KELVIN_MAX:f32=1800.0;
 pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     if !caliber_mm.is_finite() || !plate_mm.is_finite() || !deposited_j.is_finite()
         || caliber_mm<=0.0 || plate_mm<=0.0 || deposited_j<=0.0 {return None;}

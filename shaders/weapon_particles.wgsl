@@ -207,7 +207,7 @@ const GROUND_QUADRATURE:u32=1000u;
     // Density is quadrature, not1000x power. The geometric source support remains millimetres;
     // a native pixel integrates its apparent area. No per-view point-light power changes.
     // Capped as in rm_sparks.wgsl: a spark passing the eye is not a bloom blob.
-    let projected_area=min(select(width*(width+tail),width*width,streaked)*pow(weapon_cam.extent.z/clip.w,2.0),6.0);
+    let projected_area=min(select(width*(width+tail),width*width,streaked)*pow(weapon_cam.extent.z/clip.w,2.0),select(6.0,1.0,kind==8u));
     let weight=projected_area*f32(identity.z)/f32(identity.y);
     let position=vec4(vec2(edge.x*2.0-1.0,1.0-edge.y*2.0)*clip.w,clip.z,clip.w);
     if(kind==7u){

@@ -2361,9 +2361,13 @@ impl Backend {
                             // Sized for an 88 mm-class burst: a fireball of about 1.5 m, a cloud
                             // some 5 m across at a second and 8 m at five (the first cut was twice
                             // that: a 10 m cloud by half a second).
-                            let out = (1.8 * (1.0 - (-t / 0.25).exp())) * (0.5 + 0.9 * h(85 + k));
+                            // The products leave the plate fast (the reflected shock drives them
+                            // off it): 3 m out within a quarter second and lifting at once, so the
+                            // plate and its glowing rim are clear of the cloud by about half a
+                            // second (the owner, 2026-11-02: the ring must stay in view).
+                            let out = (3.0 * (1.0 - (-t / 0.15).exp())) * (0.5 + 0.9 * h(85 + k));
                             let spread = (1.0 * (1.0 - (-t / 0.3).exp()) + 3.0 * u.sqrt()) * (0.4 + 0.6 * h(80 + k));
-                            let rise = (7.0 * u.powf(1.1)) * (0.7 + 0.6 * rb);
+                            let rise = (7.0 * u.powf(1.1)) * (0.7 + 0.6 * rb) + 1.5 * (1.0 - (-t / 0.3).exp());
                             let radius = (0.25 + 1.0 * (1.0 - (-t / 0.12).exp()) + 2.0 * u.sqrt()) * (0.6 + 0.6 * rb);
                             let center = o + n * out + Vec3::Y * rise + (t1 * a.cos() + t2 * a.sin()) * spread + wind * (t * 0.8);
                             // Dark grey, not black: the burst's smoke is soot mixed with lifted earth;
