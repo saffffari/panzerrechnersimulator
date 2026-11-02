@@ -2862,7 +2862,8 @@ fn editor_tank_parts(world: &EditorWorld, meshes: &[CpuMesh; 3]) -> crate::tank:
             let center = (mesh.min + mesh.max) * 0.5;
             crate::tank::Parts { turret_pivot: Vec3::ZERO, gun_trunnion: Vec3::ZERO, gun_len: 0.0,
                 commander_eye: Vec3::new(center.x, mesh.max.y + 0.25, center.z), center_h: center.y,
-                hull_half_extents: Vec2::new(mesh.min.x.abs().max(mesh.max.x.abs()), mesh.min.z.abs().max(mesh.max.z.abs())) }
+                hull_half_extents: Vec2::new(mesh.min.x.abs().max(mesh.max.x.abs()), mesh.min.z.abs().max(mesh.max.z.abs())),
+                frame_scale: 1.0 }
         }
     }
 }

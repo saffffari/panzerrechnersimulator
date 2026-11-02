@@ -3036,3 +3036,22 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   The point samples absorbed the green band three times more than the red through the long
   twilight paths and painted the civil twilight magenta; the averages keep it blue-grey. The
   three-band model's own approximation, stated; the illuminance gates still pass.
+
+### The Tiger at the real vehicle's size — 2 November 2026 (`docs/TIGER_SCALE_20261102.md`)
+
+- **The bake was 1.112 times the kit's 1:35** (the damage session's registration: the GLBs are the
+  owner's RM-5010 kit CAD at 38.919815 per kit millimetre), so the Tiger stood 11 % larger than
+  the real vehicle. `tank::Parts::frame_scale` (35 / 38.919815 for the Tiger, 1 for the enemies)
+  is applied once at the end of `Tank::hull_model`, about the ground contact; the turret and gun
+  compose on it, so the bake and everything authored in its frames come to the real size, and
+  the registration's 0.17 mm RMS is the geometry's own error. `center_h` and `hull_half_extents`
+  are now world metres. The printed sheet keeps its paper size in the scaled frame.
+- **Gate**: `KESSEL_TIGER_TRUE_SCALE=1` turns the frame scale on (`tank::tiger_true_scale_enabled`,
+  `Parts::resolved` in `Tank::new`); off, the bake keeps its 1.112 size as before, in both
+  shipping presets, until the second stage lands. Named debt behind the gate: the real-size meshes
+  and human offsets aboard (the crew's bodies and eye heights, the rounds in the cradles and in
+  hand, the hands' reaches, handholds, personal space) are composed through the scaled frame and
+  so stand about 10 % small until each carries its inverse scale or is re-entered in frame units
+  (`Parts::local`); the crew harnesses before and after measure it (the same 15 of 20 crew-solo
+  checks and all five climb checks pass with the gate on). The camp table's head stays at the
+  kit's size while the turret's is at the real size.

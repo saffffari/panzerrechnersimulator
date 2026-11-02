@@ -224,9 +224,52 @@ pub struct Parts {
     // view rotates with BOTH hull steering and turret traverse (not hull-only).
     pub commander_eye: Vec3,
     pub center_h: f32, // hull-local Y of the hit-test centre
-    /// Collision-only local XZ footprint half-extents (half-width including tracks, half-length).
-    /// This does not scale or otherwise alter the authored render/ballistic model.
+    /// Collision-only XZ footprint half-extents in WORLD metres (half-width including tracks,
+    /// half-length). This does not scale or otherwise alter the authored render/ballistic model.
     pub hull_half_extents: Vec2,
+    /// World metres per unit of the hull, turret and gun frames (`hull_model` scales by it): 1
+    /// for the enemies' bakes, `TIGER_FRAME_SCALE` for the Tiger, whose bake and every constant
+    /// authored in its frames are the owner's 1/35 kit CAD at 38.92 per kit millimetre.
+    #[serde(default = "unit_frame_scale")]
+    pub frame_scale: f32,
+}
+
+fn unit_frame_scale() -> f32 { 1.0 }
+
+/// The Tiger's bake (`assets/tanks/tiger/baked/`) is the owner's Rye Field RM-5010 1/35 kit CAD
+/// tessellated at 38.919815 per kit millimetre (the node scale in the GLBs; the damage session's
+/// registration, 2 November 2026), 1.112 times the kit's 1:35, so the hull stood 7.13 m long
+/// against the real 6.32 m. The frames stay in those units (every authored constant, the
+/// interior rig, the cradles, the head box) and `Parts::frame_scale` brings them to the real
+/// vehicle's size in the world: 35 / 38.919815. Human and real-size things placed in those frames
+/// are entered in frame units through `TIGER_PARTS.local()`.
+pub const TIGER_FRAME_SCALE: f32 = 35.0 / 38.919_815;
+
+/// `KESSEL_TIGER_TRUE_SCALE=1` turns the frame scale on. Off (the bake's 1.112 size, as before)
+/// until the second stage has every real-size mesh and human offset aboard carrying its own
+/// inverse scale (docs/TIGER_SCALE_20261102.md): with the frame scaled and those not yet re-entered,
+/// the crew, the rounds in the cradles and the hands stand a tenth small aboard. A debug gate
+/// of the physical-truth kind; the audit names it.
+pub fn tiger_true_scale_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KESSEL_TIGER_TRUE_SCALE").is_some_and(|v| v == "1"))
+}
+
+impl Parts {
+    /// A real-size length expressed in this rig's frame units (a 1.29 m eye height in the Tiger's
+    /// frame is 1.29 / frame_scale).
+    pub fn local(&self, metres: f32) -> f32 { metres / self.frame_scale }
+
+    /// The rig as the gate resolves it: the frame scale, or the bake's own size with the world
+    /// metres taken back to the frame's (`Tank::new` applies it).
+    pub fn resolved(self) -> Self {
+        if self.frame_scale != 1.0 && !tiger_true_scale_enabled() {
+            Self { frame_scale: 1.0, center_h: self.center_h / self.frame_scale,
+                hull_half_extents: self.hull_half_extents / self.frame_scale, ..self }
+        } else {
+            self
+        }
+    }
 }
 
 /// Tiger: exact values from the baked model (turret_pivot / gun_pivot / POV cameras, engine frame).
@@ -235,8 +278,10 @@ pub const TIGER_PARTS: Parts = Parts {
     gun_trunnion: Vec3::new(0.004, 1.845, 1.040), // gun_pivot − turret_pivot
     gun_len: 4.79,
     commander_eye: Vec3::new(0.560, 2.414, -0.485), // POV_CMD_CLOSED − turret_pivot
-    center_h: 1.5,
-    hull_half_extents: Vec2::new(2.060_804_5, 3.563_222),
+    // World metres: the frame's 1.5 and (2.06, 3.56) at the real vehicle's size.
+    center_h: 1.5 * TIGER_FRAME_SCALE,
+    hull_half_extents: Vec2::new(2.060_804_5 * TIGER_FRAME_SCALE, 3.563_222 * TIGER_FRAME_SCALE),
+    frame_scale: TIGER_FRAME_SCALE,
 };
 
 /// Source-registered telescope exit immediately beyond the front mantlet bore, in gun frame.
@@ -260,6 +305,7 @@ pub const T34_PARTS: Parts = Parts {
     commander_eye: Vec3::new(0.0, 0.62, -0.35), // turret-local: under the roof hatch, aft of the ring
     center_h: 1.4,
     hull_half_extents: Vec2::new(1.785_375, 3.531_021_5),
+    frame_scale: 1.0,
 };
 
 /// SU-100: measured engine-space pivots from the bake (`su100_cameras.json`). A CASEMATE tank
@@ -272,6 +318,7 @@ pub const SU100_PARTS: Parts = Parts {
     commander_eye: Vec3::new(0.78, 2.30, -0.28),
     center_h: 1.40,
     hull_half_extents: Vec2::new(1.55, 3.20),
+    frame_scale: 1.0,
 };
 
 pub const KV2_PARTS: Parts = Parts {
@@ -281,6 +328,7 @@ pub const KV2_PARTS: Parts = Parts {
     commander_eye: Vec3::new(0.62, 1.62, -0.48),
     center_h: 1.65,
     hull_half_extents: Vec2::new(1.92, 3.35),
+    frame_scale: 1.0,
 };
 
 pub const ISU152_PARTS: Parts = Parts {
@@ -290,6 +338,7 @@ pub const ISU152_PARTS: Parts = Parts {
     commander_eye: Vec3::new(0.72, 2.30, -0.35),
     center_h: 1.45,
     hull_half_extents: Vec2::new(1.86, 3.45),
+    frame_scale: 1.0,
 };
 
 pub const IS2_PARTS: Parts = Parts {
@@ -299,6 +348,7 @@ pub const IS2_PARTS: Parts = Parts {
     commander_eye: Vec3::new(0.55, 0.92, -0.42),
     center_h: 1.45,
     hull_half_extents: Vec2::new(1.87, 3.45),
+    frame_scale: 1.0,
 };
 
 pub const IS3_PARTS: Parts = Parts {
@@ -308,6 +358,7 @@ pub const IS3_PARTS: Parts = Parts {
     commander_eye: Vec3::new(0.54, 0.72, -0.48),
     center_h: 1.35,
     hull_half_extents: Vec2::new(1.92, 3.52),
+    frame_scale: 1.0,
 };
 
 pub fn parts_for(kind: EnemyKind) -> Parts {
@@ -907,6 +958,7 @@ pub const MAX_HP: f32 = 100.0;
 
 impl Tank {
     pub fn new(x: f32, z: f32, heading: f32, hf: &Heightfield, parts: Parts) -> Self {
+        let parts = parts.resolved();
         let mut tank = Self {
             pos: Vec3::new(x, hf.height_at(x, z), z),
             heading,
@@ -1219,11 +1271,16 @@ impl Tank {
 
     pub fn hull_model(&self) -> Mat4 {
         let level = Mat4::from_translation(self.pos) * Mat4::from_rotation_y(self.heading);
-        if self.pitch == 0.0 && self.roll == 0.0 {
-            return level;
-        }
-        // Nose-up pitch turns +Z toward +Y (a rotation of -pitch about +X); left-up roll lifts +X.
-        level * Mat4::from_rotation_x(-self.pitch) * Mat4::from_rotation_z(self.roll)
+        let posed = if self.pitch == 0.0 && self.roll == 0.0 {
+            level
+        } else {
+            // Nose-up pitch turns +Z toward +Y (a rotation of -pitch about +X); left-up roll lifts +X.
+            level * Mat4::from_rotation_x(-self.pitch) * Mat4::from_rotation_z(self.roll)
+        };
+        // The frame's units to world metres (the Tiger's kit-CAD frame, `TIGER_FRAME_SCALE`),
+        // about the hull origin at the ground contact, so the turret, the gun and everything
+        // authored in the frames scale with the bake.
+        if self.parts.frame_scale == 1.0 { posed } else { posed * Mat4::from_scale(Vec3::splat(self.parts.frame_scale)) }
     }
     pub fn turret_model(&self) -> Mat4 {
         if self.kind.casemate() {
@@ -1247,8 +1304,9 @@ impl Tank {
     /// Render transform for the recoiling gun group. The ballistic muzzle deliberately continues
     /// to use `gun_model()`, so a fired shell never inherits a presentation-only barrel offset.
     pub fn visual_gun_model(&self) -> Mat4 {
+        // The recoil is a real distance, entered in the gun frame's units.
         self.gun_model()
-            * Mat4::from_translation(Vec3::new(0.0, 0.0, -gun_recoil_distance(self.shot_age)))
+            * Mat4::from_translation(Vec3::new(0.0, 0.0, -self.parts.local(gun_recoil_distance(self.shot_age))))
     }
 
     /// (muzzle world position, gun forward direction).
@@ -1829,7 +1887,7 @@ mod tests {
         assert_eq!(tiger.kind, EnemyKind::T34, "documents the legacy default");
         assert_eq!(
             tiger.hull_footprint().half_extents,
-            TIGER_PARTS.hull_half_extents
+            TIGER_PARTS.resolved().hull_half_extents
         );
         assert_eq!(
             t34.hull_footprint().half_extents,
