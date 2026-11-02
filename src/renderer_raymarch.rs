@@ -61,6 +61,12 @@ const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS;
 const MAX_LIGHT_CELL_ITEMS: usize = 1 << 17;
 const MAX_EMBERS: usize = 1 << 18;
 const EMBER_REACH_M: f32 = 90.0;
+/// Embers drawn per flame grain: the grain's cube is hot gas, drawn as this many one-pixel
+/// incandescent points scattered through its own volume (a fixed hash of the grain's identity),
+/// each carrying its share of the grain's intensity. The owner's 2026-11-01 note on the dusk
+/// wreck: "tons of these sharp smaller ones instead of a bunch of clusters that look like
+/// isolated fires"; one ember per grain drew the fire as a few hundred points.
+const EMBERS_PER_GRAIN: usize = 6;
 const SKY_COVER_RES: u32 = 512;
 const SKY_COVER_HALF_M: f32 = 48.0;
 const POINT_SHADOWS: usize = 2;
@@ -708,9 +714,21 @@ fn build_csr(pairs: &[(u32, u32)], start: &mut [u32], items: &mut Vec<u32>) {
     }
 }
 
+/// Intensity in 1/128 steps up to 2 (rm_points.wgsl reads the same scale): a grain's share over
+/// `EMBERS_PER_GRAIN` embers is well under 2, and the dimmest flame stage (0.025 x 6 / 6 = 0.025)
+/// needs the finer step; the former 1/32 step over 0..8 rounded it by a quarter.
 fn pack_ember(color: [f32; 3], intensity: f32) -> u32 {
     let q = |v: f32, bits: u32| ((v.clamp(0.0, 1.0) * ((1 << bits) - 1) as f32).round() as u32).min((1 << bits) - 1);
-    2 | ((intensity.clamp(0.0, 8.0) * 32.0).round() as u32).min(255) << 8 | q(color[0], 5) << 16 | q(color[1], 6) << 21 | q(color[2], 5) << 27
+    2 | ((intensity.clamp(0.0, 2.0) * 128.0).round() as u32).min(255) << 8 | q(color[0], 5) << 16 | q(color[1], 6) << 21 | q(color[2], 5) << 27
+}
+/// A fixed point inside the unit cube for ember `k` of the grain with identity `seed`.
+fn ember_offset(seed: u32, k: u32) -> Vec3 {
+    let h = |salt: u32| {
+        let mut x = seed.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503)).wrapping_add(salt.wrapping_mul(97));
+        x ^= x >> 15; x = x.wrapping_mul(0x2c1b3c6d); x ^= x >> 12; x = x.wrapping_mul(0x297a2d39); x ^= x >> 15;
+        (x >> 8) as f32 / 16777216.0 - 0.5
+    };
+    Vec3::new(h(1), h(2), h(3))
 }
 
 impl Backend {
@@ -1942,7 +1960,9 @@ impl Backend {
             let color = r.fine_vfx.material_color(batch_index).unwrap_or([0.5, 0.5, 0.5]);
             cell_kinds.push((batch_index as u32, kind, color, b.emissive));
             let ember = kind == PARCEL_FIRE;
-            let packed = pack_ember(color, b.emissive * 6.0);
+            // The grain's intensity shared over its embers: the same light, as more, sharper points.
+            let packed = pack_ember(color, b.emissive * 6.0 / EMBERS_PER_GRAIN as f32);
+            let ids = r.fine_vfx.particle_ids.get(&batch_index);
             for (i, mat) in b.cpu_mats.iter().take(b.inst_count as usize).enumerate() {
                 if b.is_hidden(i as u32) { continue; }
                 let c = mat.w_axis.truncate();
@@ -1950,8 +1970,12 @@ impl Backend {
                 let size = (mat.x_axis.length() + mat.y_axis.length() + mat.z_axis.length()) / 3.0;
                 let d = (c - eye).length();
                 if d > VOL_FAR_M + size { continue; }
-                if ember && d < EMBER_REACH_M && self.embers.len() < MAX_EMBERS {
-                    self.embers.push(Ember { pos: c.to_array(), packed });
+                if ember && d < EMBER_REACH_M && self.embers.len() + EMBERS_PER_GRAIN <= MAX_EMBERS {
+                    let seed = ids.and_then(|ids| ids.get(i)).map_or(i as u32, |id| id[0] ^ id[1].rotate_left(9) ^ id[2].rotate_left(18) ^ id[3].rotate_left(27));
+                    for k in 0..EMBERS_PER_GRAIN as u32 {
+                        let p = mat.transform_point3(ember_offset(seed, k));
+                        self.embers.push(Ember { pos: p.to_array(), packed });
+                    }
                 }
                 // Merge cell: a few grains deep, scaled with distance so far fires stay compact.
                 let cs = (size * 2.5).clamp(0.08, 0.45) * (1.0 + d / 50.0).min(4.0);

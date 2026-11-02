@@ -52,6 +52,15 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   view's own fire is the raymarch backend's parcels and embers and is untouched.
   The grain sampler's radical inverses are per-base functions (bit reversal for base 2), the same
   sequence a few floating-point ulps off; no sample identity changes.
+- Embers (the main view's own fire, `renderer_raymarch.rs` `collect_parcels`, `rm_points.wgsl`):
+  each flame grain within 90 m is drawn as `EMBERS_PER_GRAIN` (6) one-pixel incandescent points
+  scattered through the grain's own cube by a fixed hash of its identity, each carrying a sixth
+  of the grain's intensity (packed in 1/128 steps up to 2, the former 1/32 over 0..8 rounded the
+  dimmest stage by a quarter). The same light as the one ember per grain before, as more, sharper
+  points (the owner, 2026-11-01, on the dusk wreck: "tons of these sharp smaller ones instead of
+  a bunch of clusters that look like isolated fires"). The merged volumetric parcels are
+  unchanged; the ember is still the quadrature of a hot-gas cube as 1 cm grains, not a measured
+  soot-particle distribution.
 - Strike sparks (`RICOCHET`, `BULLET_ARMOR`, `BLAST`, `ARMOR_IMPACT`; `weapon_particle_math.rs`
   is the reference, `rm_sparks.wgsl` and `weapon_particles.wgsl` follow it): a ricochet's fan
   follows the outgoing ray, lifting off the plate and spreading with the ray's elevation; its

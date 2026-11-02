@@ -86,8 +86,10 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     // The Tiger's heading convention is the game's; the gun is laid on the point regardless.
     g.debug_place_tiger(from, heading);
     g.debug_set_he_loaded(he);
+    // The hull settles on its springs after the placement; the lay is taken on the settled hull.
+    step(g, r, 60, idle);
     g.debug_lay_gun_at(aim);
-    step(g, r, 40, idle);
+    step(g, r, 6, idle);
     g.debug_fire_laid(r);
     let (muzzle, _) = g.player.muzzle();
     let flight = (muzzle.distance(aim) / if he { 790.0 } else { 770.0 } * 60.0).round() as u32;
