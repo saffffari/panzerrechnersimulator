@@ -111,7 +111,7 @@ pub fn lookdown(requested: &str) -> anyhow::Result<()> {
     game.enable_expedition(1944, camp)?;
     game.begin_expedition_at_camp(&mut renderer)?;
     for _ in 0..30 { game.update(&TankInput::default(), 1.0/60.0, &mut renderer); }
-    for (name, pitch) in [("ahead", -0.12f32), ("down", -1.45f32)] {
+    for (name, pitch) in [("ahead", -0.12f32), ("mid", -0.75f32), ("down", -1.45f32)] {
         game.debug_set_foot_pitch(pitch);
         for _ in 0..3 { game.update(&TankInput::default(), 1.0/60.0, &mut renderer); }
         renderer.reset_history();

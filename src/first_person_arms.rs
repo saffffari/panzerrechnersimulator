@@ -4,6 +4,9 @@ use super::*;
 use crate::gltf_load::Vertex;
 const ROOT: &str = "assets/flavor/Characters/german-ww2-soldier-cc0";
 const INTERVAL: f32 = 1.0 / 30.0;
+/// On foot the source body stands this far behind the eye (metres), so the eye is ahead of the
+/// collar and a downward look meets the chest, not the neck opening.
+const FOOT_BODY_SETBACK: f32 = 0.20;
 struct Bone {
     name: String,
     parent: Option<usize>,
@@ -543,9 +546,14 @@ impl FirstPerson {
             r.camera.pos - Vec3::Y * crate::foot::EYE
         } else if game.mode == Mode::Foot {
             // A crouching eye drops below the standing source shoulders; lower the same body
-            // with it instead of leaving the camera inside the torso.
+            // with it instead of leaving the camera inside the torso. The body also stands
+            // FOOT_BODY_SETBACK behind the eye: with the feet under the camera the eye sat
+            // straight above the open neck of the head-excluded source, and looking down showed
+            // the neck stump and the hollow inside of the uniform instead of a chest and legs
+            // (owner's report, 2026-11-01; `expedition-lookdown-review`).
             game.foot.pos
                 - Vec3::Y * (crate::foot::EYE - crate::foot::EYE_CROUCH) * game.foot.crouch_t
+                - rotation * Vec3::Z * FOOT_BODY_SETBACK
         } else {
             let physical_eye = if game.switch_t > 0.0 {
                 r.camera.pos
