@@ -78,8 +78,11 @@ impl RiverRuntime {
                     indices.extend([a, a + 2, a + 1, a + 1, a + 2, a + 3]);
                 }
             }
-            let mut water = CpuMesh::basic(vertices, indices, Some(crate::prims::solid_color(WATER_RGB)), lo, hi);
-            water.roughness_factor = WATER_ROUGHNESS;
+            // A map may give its own water colour and finish (`river.color`, `river.roughness`).
+            let rgb = river["color"].as_array().filter(|a| a.len() == 3)
+                .map(|a| [0, 1, 2].map(|i| a[i].as_u64().unwrap_or(0).min(255) as u8)).unwrap_or(WATER_RGB);
+            let mut water = CpuMesh::basic(vertices, indices, Some(crate::prims::solid_color(rgb)), lo, hi);
+            water.roughness_factor = river["roughness"].as_f64().map_or(WATER_ROUGHNESS, |r| (r as f32).clamp(0.02, 1.0));
             water_mesh = Some(scene.len());
             scene.push(water);
         }
@@ -92,20 +95,24 @@ impl RiverRuntime {
                 half_length: number(c, "half_length")?, half_width: number(c, "half_width")? };
             ensure!(b.half_width >= 4.0 && b.half_length > 30.0, "unsafe bridge dimensions");
             let bed_y = number(c, "bed_y").unwrap_or(b.deck_y - 8.0);
+            let thickness = number(c, "deck_thickness_m").unwrap_or(DECK_THICKNESS_M);
+            // Piers: the crossing's own list of [x offset, foot y], else two in the stream.
+            let piers: Vec<(f32, f32)> = match c["piers"].as_array() {
+                Some(list) => list.iter().filter_map(|p| Some((p[0].as_f64()? as f32, p[1].as_f64()? as f32))).collect(),
+                None if water_half > 0.0 => vec![(-water_half / 3.0, bed_y), (water_half / 3.0, bed_y)],
+                None => Vec::new(),
+            };
             let mut part = |lo: Vec3, hi: Vec3, color| {
                 crossing_meshes.push(scene.len());
                 scene.push(crate::prims::box_mesh(lo, hi, color));
                 occluders.push(stealth::Occluder { min: lo, max: hi });
             };
             // The deck first: walk surfaces read the first crossing mesh of each bridge as its deck.
-            part(Vec3::new(x - b.half_length, b.deck_y - DECK_THICKNESS_M, z - b.half_width),
+            part(Vec3::new(x - b.half_length, b.deck_y - thickness, z - b.half_width),
                 Vec3::new(x + b.half_length, b.deck_y, z + b.half_width), [113, 113, 103]);
-            // Two piers in the stream, a third of the water's width either side of the centre.
-            if water_half > 0.0 {
-                for px in [-water_half / 3.0, water_half / 3.0] {
-                    part(Vec3::new(x + px - PIER_HALF_M, bed_y, z - b.half_width),
-                        Vec3::new(x + px + PIER_HALF_M, b.deck_y - DECK_THICKNESS_M, z + b.half_width), [101, 101, 92]);
-                }
+            for (px, foot) in &piers {
+                part(Vec3::new(x + px - PIER_HALF_M, *foot, z - b.half_width),
+                    Vec3::new(x + px + PIER_HALF_M, b.deck_y - thickness, z + b.half_width), [101, 101, 92]);
             }
             for side in [-1.0f32, 1.0] {
                 let rz = z + side * (b.half_width - 0.12);

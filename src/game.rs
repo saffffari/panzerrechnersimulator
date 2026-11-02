@@ -269,6 +269,13 @@ mod halftrack_runtime;
 mod expedition_theatre_game;
 #[path = "river_crossings.rs"]
 mod river_crossings;
+/// The water and bridge meshes a manifest declares (`river_crossings`), for the world editor.
+pub fn declared_river_meshes(m: &crate::act_manifest::ActManifest) -> anyhow::Result<Vec<CpuMesh>> {
+    let mut scene = Vec::new();
+    let mut occluders = Vec::new();
+    river_crossings::RiverRuntime::install(&mut scene, &mut occluders, m)?;
+    Ok(scene)
+}
 #[path = "expedition_theatre_review.rs"]
 pub mod expedition_theatre_review;
 #[path = "expedition_world_review.rs"]

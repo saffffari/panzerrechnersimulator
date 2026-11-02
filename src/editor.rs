@@ -514,7 +514,13 @@ struct EditorAtmosphere {
 
 impl EditorAtmosphere {
     fn from_manifest(manifest: &crate::act_manifest::ActManifest) -> Self {
-        Self::from_identity(manifest.act_id, manifest.seed)
+        let mut atmosphere = Self::from_identity(manifest.act_id, manifest.seed);
+        // A map states its own season, as the game reads it (`Game::build`): a spring course in
+        // the winter act's slot has no snowfall.
+        if manifest.value()["terrain"]["grass_season"].as_str() == Some("spring") {
+            atmosphere.season = crate::world::Season::Spring;
+        }
+        atmosphere
     }
 
     fn from_identity(act_id: u8, seed: u32) -> Self {
@@ -2675,6 +2681,8 @@ struct EditorState {
     view_mode: crate::editor_navigation::EditorViewMode,
     /// The Haze button: the preview drawn without fog until pressed again (never saved).
     haze_off: bool,
+    /// The Render panel is open (`RENDER_ROWS`).
+    render_panel: bool,
     orbit_camera: crate::editor_navigation::OrbitCameraState,
     walk_camera: crate::editor_navigation::GroundedWalkState,
     tiger_seat: crate::editor_navigation::EditorSeat,
@@ -2849,9 +2857,24 @@ const SCENE_CORE_SLOT: usize = 3; // cyan square = samples carried by the captur
 const SCENE_APRON_SLOT: usize = 4; // amber square = outer edge of the procedural stitch band
 const TIGER_SLOTS: [usize; 3] = [5, 6, 7]; // articulated editor-preview hull / turret / gun
 
-const EDITOR_TOOLBAR_LABELS: [&str; 9] = ["Orbit", "Walk", "Inside", "Assets", "Lighting", "Save", "Play", "Home view", "Haze"];
-const EDITOR_TOOLBAR_STEP: f32 = 0.109;
-const EDITOR_TOOLBAR_WIDTH: f32 = 0.102;
+const EDITOR_TOOLBAR_LABELS: [&str; 10] = ["Orbit", "Walk", "Inside", "Assets", "Lighting", "Save", "Play", "Home view", "Haze", "Render"];
+const EDITOR_TOOLBAR_STEP: f32 = 0.098;
+const EDITOR_TOOLBAR_WIDTH: f32 = 0.092;
+
+/// The Render panel: the display's reproduction settings, adjustable live in the editor. The
+/// look, grade, dither and retro are the preview's own (not saved); fog, cloud and the sun's
+/// time are the map's authored lighting and are saved with F5.
+const RENDER_ROWS: [&str; 10] = ["Look", "Exposure", "Saturation", "Warmth", "Gamma", "Dither pattern",
+    "Retro strength", "Fog (map)", "Cloud cover (map)", "Sun time (map)"];
+const RENDER_LOOKS: [(f32, &str); 7] = [(0.0, "standard"), (6.0, "deltaP real"), (1.0, "deltaP"), (5.0, "deltaP tinted"),
+    (4.0, "pastel"), (2.0, "PICO-8"), (3.0, "deltaP raw")];
+const RENDER_PANEL: [f32; 4] = [0.70, 0.30, 0.29, 0.042];   // x, y top, width, row height
+fn render_panel_hit(cursor: [f32; 2]) -> Option<(usize, f32)> {
+    let [x, y, w, h] = RENDER_PANEL;
+    if cursor[0] < x || cursor[0] > x + w || cursor[1] < y { return None; }
+    let row = ((cursor[1] - y) / h) as usize;
+    (row < RENDER_ROWS.len()).then(|| (row, if cursor[0] < x + w * 0.5 { -1.0 } else { 1.0 }))
+}
 fn editor_toolbar_hit(cursor: [f32; 2]) -> Option<usize> {
     if !(0.88..=0.93).contains(&cursor[1]) { return None; }
     (0..EDITOR_TOOLBAR_LABELS.len()).find(|i| {
@@ -2901,6 +2924,27 @@ fn load_editor_asset(path: &str) -> anyhow::Result<CpuMesh> {
 /// Build a renderer for the world: terrain + selection marker as scene meshes, every manifest GLB
 /// as one immutable prototype, and its placements as bounded pages. Empty assets retain a prototype
 /// but need no dummy renderer batch; the first editor placement appends a live page slot.
+fn editor_buildings(device: &wgpu::Device, queue: &wgpu::Queue, r: &mut Renderer, world: &EditorWorld)
+    -> anyhow::Result<usize> {
+    let manifest = crate::act_manifest::ActManifest::load(&world.manifest_path)?;
+    let placements = manifest.building_placements();
+    if placements.is_empty() { return Ok(0); }
+    let hf = world.heightfield();
+    let mut runtimes = Vec::with_capacity(placements.len());
+    for placement in placements {
+        let blueprint = crate::building_runtime::blueprint_for_placement(
+            placement, crate::building_runtime::BlueprintSource::Grammar)?;
+        runtimes.push(crate::building_runtime::BuildingRuntime::from_placement(
+            blueprint, placement, hf.height_at(placement.x, placement.z))?);
+    }
+    let mut set = crate::building_set::BuildingSet::new(runtimes)?;
+    set.init_rubble(&|xz: Vec2| hf.height_at(xz.x, xz.y));
+    let mut cache = crate::building_runtime::KitMeshCache::default();
+    let plan = crate::building_render::plan(&set, &mut cache)?;
+    crate::building_render::register(r, device, queue, &plan)?;
+    Ok(placements.len())
+}
+
 fn build_world_renderer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -3053,6 +3097,24 @@ fn build_world_renderer(
         }
         *mb = idx;
     }
+    // A declared river and its bridges (`river_crossings`), as the game installs them.
+    if world.garage.is_none() && !world.is_asset_yard {
+        match crate::act_manifest::ActManifest::load(&world.manifest_path)
+            .and_then(|m| crate::game::declared_river_meshes(&m)) {
+            Ok(meshes) => for mesh in meshes { r.add_instanced(device, queue, &mesh, &[Mat4::IDENTITY]); },
+            Err(error) => eprintln!("[edit] river not drawn: {error:#}"),
+        }
+    }
+    // The revision's building records, drawn as the game draws them (grammar blueprints on the
+    // terrain, their conditions' rubble), so a town can be judged while it is edited. Cellars are
+    // not cut in the editor's terrain.
+    if world.garage.is_none() && !world.is_asset_yard {
+        match editor_buildings(device, queue, &mut r, world) {
+            Ok(0) => {}
+            Ok(n) => println!("[edit] {n} building records drawn from the grammar"),
+            Err(error) => eprintln!("[edit] building records not drawn: {error:#}"),
+        }
+    }
     let (prototypes, buffers, batches, insts) = r.instanced_paging_stats();
     let (spatial_cells, spatial_refs, spatial_fallbacks) = r.instanced_spatial_stats();
     println!(
@@ -3159,6 +3221,7 @@ impl EditorState {
             drive_hf,
             view_mode: crate::editor_navigation::EditorViewMode::Orbit,
             haze_off: false,
+            render_panel: false,
             orbit_camera,
             walk_camera,
             tiger_seat: initial_seat,
@@ -3662,6 +3725,7 @@ impl EditorState {
                 }
                 self.status = if self.haze_off { "Haze off (preview only; the map keeps its fog)".into() } else { "Haze back on".into() };
             },
+            9 => { self.render_panel = !self.render_panel; },
             _ => {}
         }
         self.sync_editor_pointer(keys);
@@ -5627,6 +5691,63 @@ impl EditorState {
     /// Looking through a port/hatch still targets the world, as do story silhouettes and every
     /// editor-native tool. The same embodied seat camera can therefore author both spaces without
     /// an easy-to-forget global target toggle.
+    fn render_row_value(&self, row: usize) -> String {
+        let r = &self.renderer;
+        let l = &self.world.lighting;
+        match row {
+            0 => RENDER_LOOKS.iter().find(|(v, _)| (*v - r.look).abs() < 0.1).map_or("?".into(), |(_, n)| (*n).into()),
+            1 => format!("{:+.2} EV", r.display_grade[0].max(1e-4).log2()),
+            2 => format!("{:.2}", r.display_grade[1]),
+            3 => format!("{:+.2}", r.display_grade[2]),
+            4 => format!("{:.2}", r.display_grade[3]),
+            5 => ["screen Bayer4", "blue noise", "sphere Bayer8", "screen Bayer8"][(r.display_dither_pattern.round() as usize).min(3)].into(),
+            6 => format!("{:.1}", r.master_retro),
+            7 => format!("{:.4}", l.fog_density),
+            8 => format!("{:.2}", l.overcast),
+            _ => l.utc.unwrap_or(r.sky_clock.now()).to_iso(),
+        }
+    }
+
+    /// One step of a Render panel row, down (-1) or up (+1).
+    fn adjust_render(&mut self, row: usize, dir: f32) {
+        let r = &mut self.renderer;
+        match row {
+            0 => {
+                let i = RENDER_LOOKS.iter().position(|(v, _)| (*v - r.look).abs() < 0.1).unwrap_or(0) as i32;
+                r.look = RENDER_LOOKS[(i + dir as i32).rem_euclid(RENDER_LOOKS.len() as i32) as usize].0;
+            }
+            1 => r.display_grade[0] = (r.display_grade[0] * 2f32.powf(0.25 * dir)).clamp(1.0 / 16.0, 16.0),
+            2 => r.display_grade[1] = (r.display_grade[1] + 0.05 * dir).clamp(0.0, 2.0),
+            3 => r.display_grade[2] = (r.display_grade[2] + 0.05 * dir).clamp(-1.0, 1.0),
+            4 => r.display_grade[3] = (r.display_grade[3] + 0.05 * dir).clamp(0.5, 2.0),
+            5 => r.display_dither_pattern = (r.display_dither_pattern + dir).rem_euclid(4.0),
+            6 => r.master_retro = (r.master_retro + 0.1 * dir).clamp(0.0, 1.0),
+            7 | 8 => {
+                if !self.world.lighting.enabled { self.select_environment_lighting(); }
+                let l = &mut self.world.lighting;
+                if row == 7 { l.fog_density = (l.fog_density * 1.25f32.powf(dir) + if dir > 0.0 { 0.0001 } else { 0.0 }).clamp(0.0, 0.25); }
+                else { l.overcast = (l.overcast + 0.05 * dir).clamp(0.0, 1.0); }
+                self.apply_lighting_preview();
+                self.dirty = true;
+            }
+            _ => { self.shift_environment_clock(1800.0 * dir as f64); }
+        }
+        self.status = format!("{}: {}", RENDER_ROWS[row], self.render_row_value(row));
+    }
+
+    fn draw_render_panel(&mut self) {
+        let [x, y, w, h] = RENDER_PANEL;
+        self.renderer.fill_rect(x - 0.005, y - 0.05, w + 0.01, h * RENDER_ROWS.len() as f32 + 0.058, [0.04, 0.05, 0.06, 0.92]);
+        self.renderer.draw_text("RENDER   left half  -    right half  +", x + w * 0.5, y - 0.04, 0.02, [0.8, 0.8, 0.72, 1.0], Align::Center);
+        for (row, label) in RENDER_ROWS.iter().enumerate() {
+            let value = self.render_row_value(row);
+            let ry = y + row as f32 * h;
+            self.renderer.fill_rect(x, ry + 0.003, w, h - 0.006, [0.08, 0.10, 0.12, 0.95]);
+            self.renderer.draw_text(label, x + 0.01, ry + 0.01, 0.021, [0.94, 0.93, 0.85, 1.0], Align::Left);
+            self.renderer.draw_text(&value, x + w - 0.01, ry + 0.01, 0.021, [0.98, 0.84, 0.52, 1.0], Align::Right);
+        }
+    }
+
     /// Space: orbit about the selection (placements, else a marker, light or sound), or, with
     /// nothing selected, about the most recently dropped placement.
     fn focus_selection(&mut self) {
@@ -6979,6 +7100,7 @@ impl EditorState {
         );
         if !self.browser.open {
             draw_editor_toolbar(&mut self.renderer, self.walkthrough, self.haze_off);
+            if self.render_panel { self.draw_render_panel(); }
         }
         if !self.status.is_empty() {
             self.renderer
@@ -7280,6 +7402,12 @@ impl ApplicationHandler for EditorApp {
                             if let Some(index) = editor_toolbar_hit(st.cursor) {
                                 st.toolbar_action(index, &mut self.keys);
                                 return;
+                            }
+                            if st.render_panel {
+                                if let Some((row, dir)) = render_panel_hit(st.cursor) {
+                                    st.adjust_render(row, dir);
+                                    return;
+                                }
                             }
                         }
                         if st.walkthrough { return; }
@@ -8392,6 +8520,12 @@ fn initial_editor_orbit(world: &EditorWorld) -> crate::editor_navigation::OrbitC
 }
 
 pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
+    // The editor previews with the game's renderer: the raymarch backend integrates the media
+    // through its froxel grid, where the old physical backend's sampled fog shows as blocky noise
+    // at a low internal grid. KESSEL_RENDERER still chooses another backend explicitly.
+    if std::env::var_os("KESSEL_RENDERER").is_none() {
+        std::env::set_var("KESSEL_RENDERER", "raymarch");
+    }
     let garage_id = crate::tank_editor_scene::TankAssetId::parse_arg(arg).ok();
     let asset_yard = matches!(
         arg.to_ascii_lowercase().as_str(),

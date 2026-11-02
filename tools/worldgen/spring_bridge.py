@@ -370,13 +370,13 @@ def build(dest=DEST, plan=None):
     kept = [b for b in edits['building_instances']
             if not in_town(b['x'], b['z'], 40.0) and not in_river(b['x'], b['z'], 60.0)]
     dropped_buildings = len(edits['building_instances'])-len(kept)
+    # Streets first (flat across their width), then the houses' pads over them.
+    for x0, x1, z0, z1 in streets:
+        pad(H, axis, (x0, x1, z0, z1), 3.0) if (x1-x0) < 20 or (z1-z0) < 20 else None
     for b in kept:
         pad(H, axis, cc.footprint(b['x'], b['z'], b['width_m'], b['depth_m'], b['yaw_deg']))
     for r in town_rects:
         pad(H, axis, r, 4.0)
-    # Streets are flat across their width (the floodplain already is, nearly).
-    for x0, x1, z0, z1 in streets:
-        pad(H, axis, (x0, x1, z0, z1), 3.0) if (x1-x0) < 20 or (z1-z0) < 20 else None
     grade_bridge(H, axis, cx, cz, deck_y)
     # Re-cut the channel after the pads so no pad bridges the water.
     X, Z = np.meshgrid(axis, axis)
@@ -408,10 +408,16 @@ def build(dest=DEST, plan=None):
     street = edits['street_encounter']
     # The town's two platoons drive the street rectangles, one on each bank.
     def loop(sgn):
+        # The rectangle of streets round the inner blocks, a knot every 15 m (each knot must
+        # project onto ground measured clear for a T-34, src/canyon_game.rs).
         quay = cx+sgn*(RIVER_HALF_W+BANK_RUN+9.0)
         back = cx+sgn*190.0
-        return [[cc.r3(quay), cc.r3(cz-135)], [cc.r3(quay), cc.r3(cz+135)], [cc.r3(back), cc.r3(cz+135)],
-                [cc.r3(back), cc.r3(cz-135)]]
+        corners = [(quay, cz-135), (quay, cz+135), (back, cz+135), (back, cz-135)]
+        pts = []
+        for (ax, az), (bx, bz) in zip(corners, corners[1:]+corners[:1]):
+            n = max(int(math.hypot(bx-ax, bz-az)/15.0), 1)
+            pts += [[cc.r3(ax+(bx-ax)*k/n), cc.r3(az+(bz-az)*k/n)] for k in range(n)]
+        return pts
     street['beats'] = [dict(platoon='A', points=loop(-1)), dict(platoon='B', points=loop(1))]
     # Gun sites inside the town or the river are withdrawn; the zones' candidates are reindexed.
     remap, sites = {}, []
@@ -430,6 +436,10 @@ def build(dest=DEST, plan=None):
         on_bridge = abs(a[0]-cx) < BRIDGE_HALF_L+20 or abs(b[0]-cx) < BRIDGE_HALF_L+20
         cors.append(dict(a=[cc.r3(v) for v in a], b=[cc.r3(v) for v in b], width_m=2*BRIDGE_HALF_W if on_bridge else 40.0))
     street['ways']['corridors'] = cors
+    xs = [v for c in cors for v in (c['a'][0], c['b'][0])]
+    zs = [v for c in cors for v in (c['a'][1], c['b'][1])]
+    street['ways']['district'] = [cc.r3(min(xs)-260.0), cc.r3(max(xs)+260.0),
+                                  cc.r3(min(min(zs), cz-TOWN_HALF_Z)-60.0), cc.r3(max(max(zs), cz+TOWN_HALF_Z)+60.0)]
     sx, sz = course['start']['x'], course['start']['z']
     street['ways']['rects'] = [[cc.r3(sx-40), cc.r3(sx+40), cc.r3(sz-40), cc.r3(sz+40)]]
     # Riflemen in the town: posts at the corners of the brick houses near the bridge.
