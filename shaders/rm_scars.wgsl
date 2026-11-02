@@ -14,10 +14,11 @@ struct Scar {
     c: vec4<f32>, // t xyz, stretch (1/cos obliquity, clamped)
     d: vec4<f32>, // aperture radius across the shot, plate thickness T, back-face scab radius, petal length (m)
     e: vec4<f32>, // bits(kind | near<<4 | class<<8 | petals<<12 | plug<<16 | interior<<17), seed bits, age s, tan(obliquity)
-    f: vec4<f32>, // rim emission rgb (renderer radiance scale), fresh-heat fraction 0..1
+    f: vec4<f32>, // rim emission rgb (renderer radiance scale), rim temperature now (K)
     g: vec4<f32>, // plug rest centre xyz, plug present 0/1
     h: vec4<f32>, // plug rest outward normal xyz (the face it lies on), weather fill depth (m)
-    i: vec4<f32>, // bits: 16 sector extents of the real surface, 4 bits each in tenths of R
+    i: vec4<f32>, // bits: 16 sector extents of the real surface (4 bits each in tenths of R, x and y);
+                  // z, w: the solved surface temperature shape (face, bore; `scar_local_kelvin`)
 };
 
 const SCAR_DENT: u32 = 0u;
@@ -206,6 +207,46 @@ fn scar_reach(s: Scar) -> f32 {
 
 struct ScarMat { albedo: vec3<f32>, roughness: f32, metallic: f32, emission: vec3<f32>, cover: f32 };
 
+const SCAR_AMBIENT_K: f32 = 293.0;
+/// Bit 31 of `i.w`: the lattice solved this wound's surface temperature field.
+const SCAR_HEAT_SHAPE_PRESENT: u32 = 0x80000000u;
+
+/// Planck radiance of steel at `kelvin`, on the renderer's scale: the same normalization as
+/// renderer_scars.rs `rim_radiance` and rm_sparks.wgsl's rim grains (zero below 700 K).
+fn scar_planck(kelvin: f32) -> vec3<f32> {
+    if (kelvin < 700.0) { return vec3(0.0); }
+    let c2 = 14387769.0; // nm K
+    let reference = exp(c2 / (650.0 * 1800.0)) - 1.0;
+    let lambda = vec3(650.0, 550.0, 450.0);
+    let ratio = vec3(650.0) / lambda;
+    return ratio * ratio * ratio * ratio * ratio * reference / (exp(vec3(c2) / (lambda * kelvin)) - vec3(1.0)) * 4.725;
+}
+
+/// Evenly spaced 0..1 samples, 5 bits each from bit 0, at position `x` in 0..1 (linear).
+fn scar_shape_sample(bits: u32, count: u32, x: f32) -> f32 {
+    let f = clamp(x, 0.0, 1.0) * f32(count - 1u);
+    let i = min(u32(floor(f)), count - 2u);
+    let a = f32((bits >> (5u * i)) & 31u) / 31.0;
+    let b = f32((bits >> (5u * (i + 1u))) & 31u) / 31.0;
+    return mix(a, b, f - f32(i));
+}
+
+/// The wound's local surface temperature (K) where the lattice solved its field: the rim's
+/// temperature now (`f.w`, the solved cooling curve) times the field's local share of the rim's
+/// excess over ambient at 0.5 s (six face samples from the centre to SCAR_PATCH_RHO, four bore
+/// samples through the plate's depth; armor_damage::RimCurve::heat_shape). Negative: no field.
+fn scar_local_kelvin(s: Scar, rho: f32, w: f32, bore: bool) -> f32 {
+    let bore_bits = bitcast<u32>(s.i.w);
+    if ((bore_bits & SCAR_HEAT_SHAPE_PRESENT) == 0u) { return -1.0; }
+    var shape: f32;
+    if (bore) {
+        shape = scar_shape_sample(bore_bits, 4u, -w / max(s.d.y, 1e-4));
+    } else {
+        shape = scar_shape_sample(bitcast<u32>(s.i.z), 6u, rho / SCAR_PATCH_RHO);
+    }
+    return SCAR_AMBIENT_K + max(s.f.w - SCAR_AMBIENT_K, 0.0) * shape;
+}
+
 // Material of the wound's own steel at plate (u, v, w): the sheared crater, the heat-tinted ring,
 // the stripped band and the bore. `facing_up` is the world up-component of the wounded surface
 // normal there (snow settles only in what faces the sky).
@@ -275,6 +316,12 @@ fn scar_steel(s: Scar, u: f32, v: f32, w: f32, facing_up: f32, bore: bool) -> Sc
         glow_shape = 1.0 - smoothstep(scar_aperture_rho(s), scar_aperture_rho(s) + ring, rho);
     }
     mat.emission = s.f.rgb * glow_shape * (1.0 - mat.cover);
+    // A wound the lattice solved glows at its own local temperature instead of the rim's
+    // temperature over an authored shape.
+    let local = scar_local_kelvin(s, rho, w, bore);
+    if (local > 0.0) {
+        mat.emission = scar_planck(local) * (1.0 - mat.cover);
+    }
     return mat;
 }
 

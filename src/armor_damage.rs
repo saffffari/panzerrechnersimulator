@@ -32,10 +32,74 @@ pub const AMBIENT_K: f32 = 293.0;
 pub const RIM_CURVE_TIMES: [f32; 10] = [0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
 
 /// A rim's temperature at `RIM_CURVE_TIMES`, solved by the voxel lattice (`fea_damage::lattice::
-/// Lattice::rim_cooling`) for one strike. Runtime only, like the strike time: a loaded scar is cold.
+/// Lattice::rim_cooling_and_surface`) for one strike, with the wound's exposed surface
+/// temperature field at `RIM_SURFACE_SAMPLE`. Runtime only, like the strike time: a loaded scar is
+/// cold.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RimCurve {
     pub kelvin: [f32; 10],
+    /// Width (m) of the struck face's rings round the shot's axis.
+    pub ring_m: f32,
+    /// Mean surface temperature (K) of each face ring and each quarter of the bore's depth; NaN
+    /// where no surface lies.
+    pub face_k: [f32; RIM_FACE_RINGS],
+    pub bore_k: [f32; RIM_BORE_BANDS],
+}
+
+/// `RIM_CURVE_TIMES` index of the surface temperature field (0.5 s after the strike).
+pub const RIM_SURFACE_SAMPLE: usize = 2;
+pub const RIM_FACE_RINGS: usize = 16;
+pub const RIM_BORE_BANDS: usize = 4;
+/// The scar renderer's face samples: evenly from the wound's centre to its near-patch edge
+/// (1.3 wound radii, rm_scars.wgsl `SCAR_PATCH_RHO`), and its bore samples evenly through the
+/// plate's depth.
+pub const HEAT_FACE_SAMPLES: usize = 6;
+pub const HEAT_BORE_SAMPLES: usize = 4;
+pub const HEAT_FACE_RHO: f32 = 1.3;
+
+impl RimCurve {
+    /// A curve with no surface field (the renderer then keeps the rim's authored glow shape).
+    pub fn rim_only(kelvin: [f32; 10]) -> Self {
+        Self { kelvin, ring_m: 0.0, face_k: [f32::NAN; RIM_FACE_RINGS], bore_k: [f32::NAN; RIM_BORE_BANDS] }
+    }
+
+    /// The local excess temperature over the rim's at `RIM_SURFACE_SAMPLE`, 0..1, at the
+    /// renderer's face samples for a wound of radius `radius_m` and at its bore samples. The
+    /// renderer scales it by the rim's solved cooling: named, the field's own spreading by
+    /// conduction after 0.5 s is not followed. None without a solved field.
+    pub fn heat_shape(&self, radius_m: f32) -> Option<([f32; HEAT_FACE_SAMPLES], [f32; HEAT_BORE_SAMPLES])> {
+        let reference = self.kelvin[RIM_SURFACE_SAMPLE] - AMBIENT_K;
+        if !(reference > 1.0) || !(self.ring_m > 0.0) || self.face_k.iter().all(|t| !t.is_finite()) {
+            return None;
+        }
+        let excess = |t: f32| ((t - AMBIENT_K) / reference).clamp(0.0, 1.0);
+        let face = std::array::from_fn(|k| {
+            let r = radius_m * HEAT_FACE_RHO * k as f32 / (HEAT_FACE_SAMPLES - 1) as f32;
+            excess(sample_bins(&self.face_k, r / self.ring_m - 0.5))
+        });
+        let bore = std::array::from_fn(|k| {
+            let x = k as f32 / (HEAT_BORE_SAMPLES - 1) as f32 * RIM_BORE_BANDS as f32 - 0.5;
+            let t = sample_bins(&self.bore_k, x);
+            if t.is_finite() { excess(t) } else { 0.0 }
+        });
+        Some((face, bore))
+    }
+}
+
+/// Linear interpolation of `bins` at fractional index `x` (bin centres at integers), over the
+/// bins that hold a value; clamped to the first and last such bin; NaN when none does.
+fn sample_bins(bins: &[f32], x: f32) -> f32 {
+    let valid: Vec<(f32, f32)> = bins.iter().enumerate().filter(|(_, t)| t.is_finite()).map(|(i, t)| (i as f32, *t)).collect();
+    let (Some(first), Some(last)) = (valid.first(), valid.last()) else { return f32::NAN };
+    if x <= first.0 {
+        return first.1;
+    }
+    if x >= last.0 {
+        return last.1;
+    }
+    let upper = valid.iter().position(|(i, _)| *i >= x).unwrap_or(valid.len() - 1);
+    let (a, b) = (valid[upper.saturating_sub(1)], valid[upper]);
+    if b.0 <= a.0 { b.1 } else { a.1 + (b.1 - a.1) * (x - a.0) / (b.0 - a.0) }
 }
 
 impl RimCurve {
@@ -1001,7 +1065,7 @@ mod tests {
         let ev = event(Terminal::Penetration);
         let measured = MeasuredScar { perforated: true, aperture_mm: 41.0, back_radius_mm: 70.0, petals: 3,
             petal_mm: 55.0, plug: false, cavity_mm: 0.0, worked_radius_mm: 120.0, rim_kelvin: 1150.0 };
-        let hole = field.record_measured(Facing::HullSide, Vec3::new(1.5, 1.2, 0.0), Vec3::X, -Vec3::X, &ev, 1.0, &measured, Some(RimCurve { kelvin: [1150.0, 1000.0, 900.0, 800.0, 650.0, 500.0, 400.0, 340.0, 310.0, 300.0] }));
+        let hole = field.record_measured(Facing::HullSide, Vec3::new(1.5, 1.2, 0.0), Vec3::X, -Vec3::X, &ev, 1.0, &measured, Some(RimCurve::rim_only([1150.0, 1000.0, 900.0, 800.0, 650.0, 500.0, 400.0, 340.0, 310.0, 300.0])));
         assert_eq!(hole.kind, ScarKind::Hole);
         assert_eq!((hole.aperture_mm, hole.back_radius_mm, hole.petals, hole.petal_mm), (41, 70, 3, 55));
         assert_eq!(hole.loss_mm, (ev.plate.thickness_mm * 0.94).round() as u16);
@@ -1066,4 +1130,30 @@ mod tests {
         }
         assert_eq!(client, host);
     }
+
+#[cfg(test)]
+mod heat_shape_tests {
+    use super::*;
+
+    #[test]
+    fn the_surface_field_becomes_the_renderers_shape_round_the_rim() {
+        let mut curve = RimCurve::rim_only([1100.0, 1000.0, 900.0, 800.0, 650.0, 500.0, 400.0, 340.0, 310.0, 300.0]);
+        assert!(curve.heat_shape(0.05).is_none(), "no field, no shape");
+        curve.ring_m = 0.005;
+        // Hot inside 10 mm, falling to ambient by 35 mm; a bore hot at the face, cooler deeper.
+        for (i, t) in curve.face_k.iter_mut().enumerate() {
+            let r = (i as f32 + 0.5) * 0.005;
+            *t = if r < 0.01 { 900.0 } else { (900.0 - (r - 0.01) / 0.025 * 607.0).max(AMBIENT_K) };
+        }
+        curve.face_k[3] = f32::NAN; // an empty ring is bridged
+        curve.bore_k = [880.0, 700.0, 600.0, f32::NAN];
+        let (face, bore) = curve.heat_shape(0.03).unwrap();
+        assert!((face[0] - 1.0).abs() < 1e-6, "{face:?}");
+        assert!(face.windows(2).all(|w| w[1] <= w[0] + 1e-6), "falls outward: {face:?}");
+        assert!(face[HEAT_FACE_SAMPLES - 1] < 0.05, "ambient at the patch edge: {face:?}");
+        assert!(bore[0] > bore[2] && bore[3] > 0.0, "{bore:?}");
+        assert!(face.iter().chain(bore.iter()).all(|v| (0.0..=1.0).contains(v)));
+    }
+}
+
 }

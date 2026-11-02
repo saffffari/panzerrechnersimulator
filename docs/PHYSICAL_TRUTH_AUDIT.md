@@ -571,11 +571,21 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
 - **Scars from the lattice** (`ArmorField::record_measured`): aperture, back-face tear, petals,
   plug, cavity depth (a dent's resistance loss), worked radius and rim temperature are measured;
   a hole keeps the 94 % resistance rule and entrance funnel. The rim's cooling is the lattice's own
-  (conduction through intact face bonds, radiation, 10 W/m² K natural convection; the patch
+  (conduction through intact face bonds, radiation and 10 W/m² K natural convection from real
+  surfaces only: broken bonds, the struck face, a back face the lattice reaches; the patch
   boundary adiabatic, named) as a ten-sample curve over 64 s, replacing the authored 2.5 s
-  exponential for those scars (runtime only; a loaded scar is cold). The near-patch renderer still
-  draws a parametric profile from these scalars: the lattice's own displaced surface is not yet
-  drawn.
+  exponential for those scars (runtime only; a loaded scar is cold). The rim is the hottest
+  surface particle still attached to the plate (bodies that broke free are the fragments). Such a
+  wound glows at its local temperature: the lattice's surface field 0.5 s after the strike (struck
+  face in rings of one cell round the shot's axis, bore wall in quarters of the depth; each ring
+  the temperature whose red Planck radiance is its particles' mean, equal exposed area per
+  particle named; the clamped edge and its damping ramp left out) is drawn as six face and four
+  bore samples of each point's share of the rim's excess over ambient (5 bits each), scaled by
+  the rim's solved cooling, with Planck radiance per pixel (rm_scars.wgsl `scar_local_kelvin`).
+  Named: the field's own spreading by conduction after 0.5 s is not followed. Other scars keep
+  the rim estimate over its authored ring. The near-patch renderer still draws a parametric
+  profile from these scalars: the lattice's own displaced surface is not yet drawn. Not yet seen
+  on the GPU.
 - **Fragments from the lattice**: the clusters that broke free on the inside of the plate (mass,
   centre, velocity, spin and temperature as solved) are the penetration's fragment population;
   exterior ejecta are left to the cosmetic impact sparks. Material finer than a lattice cell is not
@@ -664,7 +674,9 @@ code computes and what it approximates:
   surface of the same vehicle; no bounce or tumble.
 - Rim glow: Planck radiance at the cooling rim temperature of the shared thin-ring heat estimate
   (`rim_heat`, 1.5 % of lost kinetic energy, 2.5 s time constant) over the crater floor, a hole's
-  edge ring (0.2 calibre) and the bore wall.
+  edge ring (0.2 calibre) and the bore wall. (2026-11-02: a wound on the player's Tiger that the
+  voxel lattice solved glows at its own solved local temperature instead; see the layered damage
+  model section.)
 - Weathering: rust bloom (first order, 6 h), cavity grime (1 h), snow fill of sky-facing
   cavities at 4e-5 m/s at full precipitation (spindrift packing included). A loaded scar counts
   as a day old. Authored rates, not a corrosion or drift model.

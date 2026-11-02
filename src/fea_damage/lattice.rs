@@ -1366,6 +1366,25 @@ mod tests {
     }
 
     #[test]
+    fn the_surface_field_is_hottest_at_the_wound() {
+        let mut l = coarse(small_impact(true, 9));
+        l.solve();
+        let times = crate::armor_damage::RIM_CURVE_TIMES;
+        let (curve, surface) = l.rim_cooling_and_surface(&times, crate::armor_damage::RIM_SURFACE_SAMPLE);
+        let rim = curve[crate::armor_damage::RIM_SURFACE_SAMPLE];
+        let face: Vec<f32> = surface.face_k.iter().copied().filter(|t| t.is_finite()).collect();
+        assert!(face.len() >= 4, "{surface:?}");
+        // Every ring and band lies between ambient and the rim's maximum.
+        for t in face.iter().chain(surface.bore_k.iter().filter(|t| t.is_finite())) {
+            assert!(*t >= AMBIENT_K - 1e-3 && *t <= rim + 1e-3, "{t} against rim {rim}: {surface:?}");
+        }
+        // The worked steel near the bore is hotter than the face far out.
+        let hottest = face.iter().cloned().fold(0.0, f32::max);
+        assert!(hottest > face[face.len() - 1] + 1.0, "{surface:?}");
+        assert!(surface.bore_k.iter().any(|t| t.is_finite()), "a perforation has a bore wall: {surface:?}");
+    }
+
+    #[test]
     fn thread_count_does_not_change_the_result() {
         let mut a = coarse(small_impact(true, 5));
         let mut b = coarse(small_impact(true, 5));
@@ -1422,6 +1441,28 @@ impl Cluster {
         } else {
             self.centre.z >= thickness_m - 0.5 * cell_m
         }
+    }
+}
+
+/// Rings of the struck face's temperature field (`SurfaceHeat`).
+pub const FACE_RINGS: usize = 16;
+/// Depth bands of the bore wall's temperature field.
+pub const BORE_BANDS: usize = 4;
+
+/// The wound's exposed surface temperature at one moment of its cooling: the struck face in rings
+/// `ring_m` wide round the shot's axis (the along-shot axis divided by the obliquity stretch, as
+/// the scar renderer measures it), and the bore wall in quarters of the plate's depth. NaN where
+/// no exposed particle lies.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct SurfaceHeat {
+    pub ring_m: f32,
+    pub face_k: [f32; FACE_RINGS],
+    pub bore_k: [f32; BORE_BANDS],
+}
+
+impl SurfaceHeat {
+    pub fn empty(ring_m: f32) -> Self {
+        Self { ring_m, face_k: [f32::NAN; FACE_RINGS], bore_k: [f32::NAN; BORE_BANDS] }
     }
 }
 
@@ -1708,6 +1749,12 @@ impl Lattice {
     /// The patch's own boundary is adiabatic (named: the rest of the plate is not a heat sink here,
     /// so late temperatures run slightly high).
     pub fn rim_cooling(&self, times: &[f32]) -> Vec<f32> {
+        self.rim_cooling_and_surface(times, 0).0
+    }
+
+    /// `rim_cooling`, and the exposed surface's temperature field at `times[shape_at]`
+    /// (`SurfaceHeat`).
+    pub fn rim_cooling_and_surface(&self, times: &[f32], shape_at: usize) -> (Vec<f32>, SurfaceHeat) {
         const FACE_SLOTS: [usize; 6] = [0, 1, 2, BONDS, BONDS + 1, BONDS + 2];
         const NATURAL_CONVECTION: f32 = 10.0;
         let m = self.material;
@@ -1718,17 +1765,15 @@ impl Lattice {
         let a = self.impact.projectile.radius_m + 3.0 * h;
         let tip = self.dir * self.tip_s;
         // Particles near the bore whose temperature counts as the rim, and every particle's exposed
-        // face count.
-        let mut exposed = vec![0u8; self.n];
+        // face count (real surfaces only: a broken bond, the struck face, a real back face; the
+        // lattice's lateral edge and a stop's rigid backing are the rest of the plate).
+        let exposed = self.real_exposed_faces();
+        // Bodies that broke free leave the wound (they are the fragments): not its rim or surface.
+        let (ids, plate) = self.connectivity();
+        let attached: Vec<bool> = ids.iter().map(|&id| id == plate).collect();
         let mut rim: Vec<usize> = Vec::new();
         for p in 0..self.n {
-            let mut faces = 0u8;
-            for &s in &FACE_SLOTS {
-                if self.slot_state(p, s) != 1 {
-                    faces += 1;
-                }
-            }
-            exposed[p] = faces;
+            let faces = if attached[p] { exposed[p] } else { 0 };
             let rel = self.position(p) - tip;
             let along = rel.dot(self.dir);
             let radial = (rel - self.dir * along).length();
@@ -1740,9 +1785,10 @@ impl Lattice {
         let mut next = temp.clone();
         let rim_now = |temp: &[f32]| rim.iter().map(|&p| temp[p]).fold(AMBIENT_K, f32::max);
         let mut out = Vec::with_capacity(times.len());
+        let mut surface = SurfaceHeat::empty(h);
         let mut t = 0.0f32;
         let dt_stable = 0.15 * h * h / alpha;
-        for &target in times {
+        for (index, &target) in times.iter().enumerate() {
             while t < target - 1e-6 {
                 let dt = dt_stable.min(0.05 * (t + 0.5)).min(target - t);
                 for p in 0..self.n {
@@ -1765,8 +1811,84 @@ impl Lattice {
                 t += dt;
             }
             out.push(rim_now(&temp));
+            if index == shape_at {
+                surface = self.surface_heat(&temp, &exposed, &attached);
+            }
         }
-        out
+        (out, surface)
+    }
+
+    /// Each particle's count of faces (of its six face neighbours) that are real surface: a
+    /// neighbour bond broken, the struck face, or the back face when the lattice reaches it.
+    fn real_exposed_faces(&self) -> Vec<u8> {
+        const FACE_SLOTS: [usize; 6] = [0, 1, 2, BONDS, BONDS + 1, BONDS + 2];
+        let layer = self.dims[0] * self.dims[1];
+        let nz = self.dims[2];
+        let back_real = !(matches!(self.impact.motion, Motion::Stop { .. })
+            && (nz as f32) * self.h < self.impact.thickness_m - 0.5 * self.h);
+        (0..self.n).map(|p| {
+            let k = p / layer;
+            FACE_SLOTS.iter().filter(|&&s| {
+                if self.valid[p] >> s & 1 == 1 {
+                    self.slot_state(p, s) != 1
+                } else {
+                    let o = slot_offset(s);
+                    (o[2] < 0 && k == 0) || (o[2] > 0 && k == nz - 1 && back_real)
+                }
+            }).count() as u8
+        }).collect()
+    }
+
+    /// The exposed particles' glow temperature: on the struck face (rest depth within the crater,
+    /// or two cells), in rings of one cell round the shot's axis with the along-shot axis divided
+    /// by the obliquity stretch; and, for a perforation, on the bore wall (within two cells of
+    /// the bore) in quarters of the plate's depth. A ring's value is the temperature whose red
+    /// (650 nm) Planck radiance is the mean of its particles' (a ring glows as its hot cells do;
+    /// the mean temperature would not). Named: equal exposed area per particle.
+    fn surface_heat(&self, temp: &[f32], exposed: &[u8], attached: &[bool]) -> SurfaceHeat {
+        let h = self.h;
+        let cos = self.dir.z.clamp(0.1, 1.0);
+        let stretch = 1.0 / cos;
+        let tan = (1.0 - cos * cos).max(0.0).sqrt() / cos;
+        let face_depth = match self.impact.motion {
+            Motion::Stop { depth_m } => (depth_m * cos).max(2.0 * h),
+            Motion::Perforate { .. } => 2.0 * h,
+        };
+        let bore_r = self.impact.projectile.radius_m + 2.0 * h;
+        let perforated = matches!(self.impact.motion, Motion::Perforate { .. });
+        // Red Planck radiance in units of 1/(exp(c2/(λT)) - 1), and its inverse.
+        const C_RED_K: f64 = 14_387_769.0 / 650.0;
+        let radiance = |t: f32| 1.0 / ((C_RED_K / (t.max(1.0) as f64)).exp() - 1.0);
+        let mut face = [(0.0f64, 0u32); FACE_RINGS];
+        let mut bore = [(0.0f64, 0u32); BORE_BANDS];
+        for p in 0..self.n {
+            // The clamped edge and its damping ramp stand for the rest of the plate, not the wound.
+            if exposed[p] == 0 || !attached[p] || self.fixed[p] || self.damping[p] > 0.0 {
+                continue;
+            }
+            let rest = self.rest_position(p);
+            let pos = self.position(p);
+            if rest.z <= face_depth {
+                let r = ((pos.x / stretch).powi(2) + pos.y * pos.y).sqrt();
+                let ring = (r / h) as usize;
+                if ring < FACE_RINGS {
+                    face[ring].0 += radiance(temp[p]);
+                    face[ring].1 += 1;
+                }
+            } else if perforated {
+                let centre = pos.z * tan;
+                let radial = ((pos.x - centre).powi(2) + pos.y * pos.y).sqrt();
+                if radial <= bore_r {
+                    let band = ((pos.z / self.impact.thickness_m) * BORE_BANDS as f32).clamp(0.0, BORE_BANDS as f32 - 1.0) as usize;
+                    bore[band].0 += radiance(temp[p]);
+                    bore[band].1 += 1;
+                }
+            }
+        }
+        let mean = |(sum, n): (f64, u32)| if n > 0 && sum > 0.0 {
+            (C_RED_K / (1.0 + n as f64 / sum).ln()) as f32
+        } else if n > 0 { AMBIENT_K } else { f32::NAN };
+        SurfaceHeat { ring_m: h, face_k: face.map(mean), bore_k: bore.map(mean) }
     }
 
     /// Fraction of particle `p`'s family bonds that are broken.
@@ -1820,6 +1942,12 @@ mod look {
             println!("   clusters {} (plug {:?}), largest {:.3} kg, fragment mass {:.3} kg",
                 clusters.len(), clusters.iter().find(|c| c.plug).map(|c| c.mass_kg),
                 clusters.iter().map(|c| c.mass_kg).fold(0.0, f32::max), clusters.iter().map(|c| c.mass_kg).sum::<f32>());
+            let (curve, surface) = l.rim_cooling_and_surface(&crate::armor_damage::RIM_CURVE_TIMES,
+                crate::armor_damage::RIM_SURFACE_SAMPLE);
+            let k = |v: &[f32]| v.iter().map(|t| if t.is_finite() { format!("{t:.0}") } else { "-".into() }).collect::<Vec<_>>().join(" ");
+            println!("   rim curve {:?}", curve.iter().map(|t| t.round()).collect::<Vec<_>>());
+            println!("   surface at 0.5 s: rings of {:.1} mm: {}; bore quarters: {}", surface.ring_m * 1000.0,
+                k(&surface.face_k), k(&surface.bore_k));
             crate::fea_damage::section::lattice_png(&l, &std::path::Path::new(&dir).join(format!("lattice_{name}.png")), 6).unwrap();
         }
     }

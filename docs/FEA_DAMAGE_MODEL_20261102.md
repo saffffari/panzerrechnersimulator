@@ -428,4 +428,13 @@ lists every named approximation of this model.
   through the mantlet) with every lid holding; the 57 mm burst at the fuel tank and the 76 mm
   burst through the engine deck are in the engine bay and get no crew pressure. The frames' pressure
   line now counts from the burst (it had shown the peak before the strike).
+- **Glowing metal at its local temperature.** The lattice now records the wound's exposed surface
+  temperature field 0.5 s after the strike (struck face in rings of one cell, bore wall in depth
+  quarters; each ring the temperature whose red Planck radiance is its particles' mean, because a
+  ring glows as its hot cells do). Detached bodies, the clamped edge and its damping ramp, and the
+  lattice's lateral grid edge are not wound surface. The scar renderer draws six face and four
+  bore samples of each point's share of the rim's excess and evaluates Planck radiance per pixel
+  at the local temperature, scaled by the rim's solved cooling. Measured on the reference cases:
+  rings at the bore edge 800–910 K, bore wall up to 1,130 K, falling outward. Not yet seen on the
+  GPU.
 - Not verified on the GPU yet: queued under the shared GPU lock.

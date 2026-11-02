@@ -361,7 +361,8 @@ pub(super) fn lattice_outcome(solver: &mut lattice::Lattice, origin_hull: Vec3, 
         worked_radius_mm: geometry.worked_radius_mm,
         rim_kelvin: geometry.rim_kelvin,
     };
-    let samples = solver.rim_cooling(&crate::armor_damage::RIM_CURVE_TIMES);
+    let (samples, surface) = solver.rim_cooling_and_surface(&crate::armor_damage::RIM_CURVE_TIMES,
+        crate::armor_damage::RIM_SURFACE_SAMPLE);
     let mut kelvin = [crate::armor_damage::AMBIENT_K; 10];
     for (k, v) in kelvin.iter_mut().zip(samples) {
         *k = v;
@@ -379,7 +380,8 @@ pub(super) fn lattice_outcome(solver: &mut lattice::Lattice, origin_hull: Vec3, 
         wall_ms,
         ledger,
         grip_normal_n: solver.body_grip_normal_n(),
-        rim_curve: crate::armor_damage::RimCurve { kelvin },
+        rim_curve: crate::armor_damage::RimCurve { kelvin, ring_m: surface.ring_m, face_k: surface.face_k,
+            bore_k: surface.bore_k },
     }
 }
 

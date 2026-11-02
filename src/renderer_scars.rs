@@ -159,7 +159,12 @@ fn pack_one(r: &Renderer, model: Mat4, draw: &ScarDraw, eye: Vec3, px_per_rad: f
         None => renderer_weapon_particles::math::rim_temperature(draw.rim_kelvin, age),
     };
     let rim = rim_radiance(kelvin);
-    let heat = ((kelvin - AMBIENT_K) / 1000.0).clamp(0.0, 1.0);
+    // The wound's solved surface temperature field, when the lattice solved it: the shader takes
+    // each point's temperature from it and the rim's temperature now (rm_scars.wgsl).
+    let (face_bits, bore_bits) = match draw.rim_curve.and_then(|curve| curve.heat_shape(radius)) {
+        Some((face, bore)) => (pack_shape(&face), pack_shape(&bore) | HEAT_SHAPE_PRESENT),
+        None => (0, 0),
+    };
     // Snow drifts into a sky-facing cavity while it snows; a loaded scar is a day old.
     let fill = if winter && depth > 0.0 {
         (SNOW_FILL_M_PER_S * precipitation.max(0.05) * age).min(depth * 0.9)
@@ -177,11 +182,21 @@ fn pack_one(r: &Renderer, model: Mat4, draw: &ScarDraw, eye: Vec3, px_per_rad: f
         c: [t.x, t.y, t.z, stretch],
         d: [scar.aperture_m(), scar.plate_m().max(0.004), scar.back_radius_mm as f32 * 0.001, scar.petal_mm as f32 * 0.001],
         e: [f32::from_bits(bits), f32::from_bits(seed), age, tan_obliquity],
-        f: [rim.x, rim.y, rim.z, heat],
+        f: [rim.x, rim.y, rim.z, kelvin],
         g: [plug_pos.x, plug_pos.y, plug_pos.z, plug_ok],
         h: [plug_normal.x, plug_normal.y, plug_normal.z, fill],
-        i: [f32::from_bits(pack_extent(&draw.extent[..8])), f32::from_bits(pack_extent(&draw.extent[8..])), 0.0, 0.0],
+        i: [f32::from_bits(pack_extent(&draw.extent[..8])), f32::from_bits(pack_extent(&draw.extent[8..])),
+            f32::from_bits(face_bits), f32::from_bits(bore_bits)],
     }
+}
+
+/// Bit 31 of the bore word: a solved surface temperature field is present.
+const HEAT_SHAPE_PRESENT: u32 = 1 << 31;
+
+/// Up to six 0..1 samples, 5 bits each from bit 0 (rm_scars.wgsl `scar_shape_sample`).
+fn pack_shape(samples: &[f32]) -> u32 {
+    samples.iter().take(6).enumerate()
+        .fold(0, |bits, (i, v)| bits | (((v.clamp(0.0, 1.0) * 31.0).round() as u32) << (5 * i)))
 }
 
 fn pack_extent(sectors: &[u8]) -> u32 {
