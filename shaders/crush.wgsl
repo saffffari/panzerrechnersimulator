@@ -17,7 +17,7 @@ struct Crush {
     menu_mode: f32, // 1 = main-menu turntable pass: keep pure black truly black (kill grain on near-black)
     ldr_dither: f32, // fixed native-LDR quantization coverage; shader backend only
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
-    cabin_look: f32, // 1 = inside the hull the tinted look quantizes to the pastel palette (KESSEL_CABIN_LOOK=pastel)
+    cabin_look: f32, // 1 + KESSEL_PALETTE_SMOOTH = inside the hull the tinted look quantizes to the pastel palette (KESSEL_CABIN_LOOK=pastel); 0 = off
     exposure: f32,  // the eye's chromatic cone channel per unit radiance
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
@@ -360,14 +360,15 @@ fn dp_dithered_colour(lin: vec3<f32>, th: f32) -> vec3<f32> {
 // has no heuristic left to be wrong. The ratio then snaps to eighths with dead zones at both ends
 // (fill patterns, not lone dots over a panel a shade above black).
 fn dp_pico8(lin: vec3<f32>, th: f32) -> vec3<f32> {
-    return dp_palette(lin, th, false);
+    return dp_palette(lin, th, false, cr.look.w);
 }
-fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool) -> vec3<f32> {
+fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool, smooth_lane: f32) -> vec3<f32> {
     let lab = dp_oklab(lin);
-    // KESSEL_PALETTE_SMOOTH (cr.look.w): 0 holds deltaP's flat bands between entries (the pair
-    // penalty, the ratio's dead zones and its eighths), 1 dithers across them (a tenth of the
-    // penalty, narrow dead zones, sixteenths).
-    let smoothing = clamp(cr.look.w, 0.0, 1.0);
+    // KESSEL_PALETTE_SMOOTH (cr.look.w for the palette looks; carried in cr.cabin_look under the
+    // tinted look, whose look.w is the outdoor pull): 0 holds deltaP's flat bands between entries
+    // (the pair penalty, the ratio's dead zones and its eighths), 1 dithers across them (a tenth
+    // of the penalty, narrow dead zones, sixteenths).
+    let smoothing = clamp(smooth_lane, 0.0, 1.0);
     var pl: array<vec3<f32>, 32>;
     var pk: array<vec3<f32>, 32>;
     for (var i = 0; i < 32; i = i + 1) {
@@ -416,10 +417,10 @@ fn dp_crush(lin: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
         // The tinted look: inside the hull (the buttoned-up view's eye_range_strength) the pastel
         // palette itself when asked (the owner, 2 November 2026, on a cabin still under the
         // palette: "a fantastic shot"), else the plain dithered colour; outdoors the pulled tones.
-        if (cr.cabin_look > 0.5 && cr.eye_range_strength > 0.5) { code = dp_palette(lin, th, true); }
+        if (cr.cabin_look > 0.5 && cr.eye_range_strength > 0.5) { code = dp_palette(lin, th, true, cr.cabin_look - 1.0); }
         else { code = dp_tinted(lin, th); }
     }
-    else if (cr.look.x > 3.5) { code = dp_palette(lin, th, true); }
+    else if (cr.look.x > 3.5) { code = dp_palette(lin, th, true, cr.look.w); }
     return display_decode(code);
 }
 

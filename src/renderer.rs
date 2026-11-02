@@ -8623,7 +8623,8 @@ impl Renderer {
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
-            cabin_look: if configured_cabin_pastel() { 1.0 } else { 0.0 },
+            // The pastel cabin's own smoothing rides here: under the tinted look, look.w is the pull.
+            cabin_look: if configured_cabin_pastel() { 1.0 + configured_palette_smooth() } else { 0.0 },
             exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
