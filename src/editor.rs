@@ -8829,9 +8829,13 @@ mod tests {
     #[test]
     fn tracked_campaign_manifests_compile_losslessly_into_bounded_pages() {
         for (act_id, expected_prototypes, expected_pages, expected_instances) in [
-            (1, 50, 580, 13_014),
-            (2, 54, 1_938, 21_867),
-            (3, 51, 1_336, 37_685),
+            // Updated when the warscape layer landed: the acts gained authored war material
+            // (corpse poses, wrecks, obstacles, burned-village and supply-column props), so both
+            // the prototype count and the placement count rose. The invariants that matter are
+            // asserted separately below: no placement is lost, and the acts stay spatially paged.
+            (1, 83, 1_656, 18_076),
+            (2, 84, 3_208, 27_181),
+            (3, 81, 2_362, 42_684),
         ] {
             let path = crate::act_manifest::path_for_act(act_id);
             let raw = std::fs::read_to_string(&path).expect("tracked manifest is readable");

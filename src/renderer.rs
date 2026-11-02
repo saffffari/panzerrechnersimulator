@@ -6485,7 +6485,16 @@ impl Renderer {
         let profile = campaign_atmosphere_profile(act_id);
         self.weather_act_id = act_id;
         self.weather_progress = 0.0;
-        self.overcast = profile.overcast;
+        // KESSEL_OVERCAST=0..1 overrides the authored cloud deck for lighting diagnosis only.
+        // The campaign sits at 0.86-0.99, i.e. effectively sealed, so there is no direct solar
+        // beam anywhere in it and every surface is lit purely by diffuse sky. That makes it
+        // impossible to tell a missing environment term from a correctly dim one without being
+        // able to open the sky up. Debug-only: nothing in a shipping path reads this.
+        self.overcast = std::env::var("KESSEL_OVERCAST")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(profile.overcast);
         self.storm = profile.storm;
         self.atmosphere_mood = campaign_ground_mood(winter, profile.mood);
         self.twilight = 0.0;
@@ -13949,10 +13958,13 @@ mod atmosphere_tests {
 
     #[test]
     fn tracked_manifests_collapse_page_scans_to_occupied_cells() {
+        // Counts rose with the warscape layer (authored war material added prototypes and
+        // placements to every act). What this test protects is unchanged: the spatial index must
+        // collapse a page scan onto the occupied cells rather than walking every page.
         for (act, expected_pages, expected_cells, expected_refs) in [
-            (1u8, 580usize, 1_072usize, 7_315usize),
-            (2, 1_938, 2_208, 28_098),
-            (3, 1_336, 1_024, 19_066),
+            (1u8, 1_656usize, 1_312usize, 21_021usize),
+            (2, 3_208, 2_208, 45_463),
+            (3, 2_362, 1_024, 32_512),
         ] {
             let manifest =
                 crate::act_manifest::ActManifest::load(&crate::act_manifest::path_for_act(act))

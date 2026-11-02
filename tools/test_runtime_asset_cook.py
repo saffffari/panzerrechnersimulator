@@ -154,15 +154,18 @@ def tree_contents(root: Path) -> dict[str, bytes]:
 class RuntimeAssetCookTests(unittest.TestCase):
     def test_live_catalog_locks_the_complete_audited_model_closure(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
-        self.assertEqual(len(catalog["assets"]), 179)
+        # 179 -> 209 as the warscape layer added 30 project-authored GLBs (24 Eastern-Front
+        # props + 6 corpse poses). They are generated in-repository by checked-in scripts and
+        # carry the `kessel-authored` license, so the redistributable closure is unaffected.
+        self.assertEqual(len(catalog["assets"]), 209)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 56,
-                "campaign_manifest_unique_glbs": 66,
-                "non_pizza_glbs": 39,
+                "campaign_manifest_unique_glbs": 96,
+                "non_pizza_glbs": 69,
                 "pizza_glbs": 140,
-                "total_glbs": 179,
+                "total_glbs": 209,
             },
         )
         redistributable = [
@@ -197,7 +200,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
             "GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 179)
+        self.assertEqual(len(records), 209)
         self.assertTrue(all(record["dependencies"] == [] for record in records))
         blockers = [
             entry
@@ -218,7 +221,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES, expected_denied)
         self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & catalog_sources, set())
         self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(selected), set())
-        self.assertEqual(counts["campaign_manifest_unique_glbs"], 66)
+        self.assertEqual(counts["campaign_manifest_unique_glbs"], 96)
 
         authored = set()
         for act_id in (1, 2, 3):

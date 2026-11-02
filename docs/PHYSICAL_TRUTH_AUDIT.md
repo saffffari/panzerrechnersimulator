@@ -2127,6 +2127,50 @@ postprocessing darkness adjustment accompanies this pass. Evidence, errors and p
 `CABIN_ATMOSPHERE_20260929.md`; gates: finite-source energy tests, cabin projection/exclusion
 tests, full composed raster shader validation, and identical-input player-view films.
 
+## Open finding — the player Tiger returns far less radiance than its albedo implies
+
+Recorded 2026-09-15 with measurements so this can be picked up without re-deriving it.
+
+Measured on the September raster backend; not yet re-measured on the raymarch backend, whose
+material atlas (`gltf_material_channels.rs`) encodes the same factors on its own path.
+
+Measured on the act-I chase camera (`cargo run -- ride`), sampling the hull region against the
+snow in the same frame:
+
+| Surface | Mean display luminance | Fraction at exactly 0.0 |
+|---|---|---|
+| Snow (terrain) | 0.689 | 0.0% |
+| Tiger hull | 0.036 | 92.9% |
+
+A dielectric at the hull's authored albedo (0.092 linear) under the irradiance that puts snow at
+0.689 should land near 0.075. Exactly-zero across 93% of a lit surface is not a dark material, it
+is an absent term.
+
+What has been ruled out:
+
+- **Albedo.** The loader was double-applying the sRGB transfer to every `baseColorFactor`-only
+  material, so the hull's authored 0.092 reached the shader as 0.0074. That is fixed
+  (`gltf_load::linear_to_srgb_u8`, with round-trip tests) and the tint now resolves to the correct
+  86/255 sRGB byte. The render did not measurably change.
+- **Metallic.** The bake omits `metallicFactor`, which defaults to 1.0 per spec, but the loader
+  already discards factor scalars when there is no metallic-roughness texture and substitutes a
+  fully rough dielectric. The surface is not being shaded as metal.
+- **Missing sky term in general.** Textured world geometry lights correctly in the same frame: in
+  `captures/crushchk_before.png` the PSX brick wall a few metres from the Tiger is legibly lit and
+  textured while the Tiger beside it is near-black under identical illumination.
+- **Overcast.** `KESSEL_OVERCAST` (debug-only override, added for this) opens the cloud deck to a
+  clear sky with a full direct solar beam. The hull moves only from 92.9% to 90.3% at zero. It is
+  receiving neither the sun nor the sky.
+
+Remaining suspects, in the order worth checking: per-view self-visibility instance/ray masking of
+the player's own vehicle leaking into its shading rather than only its camera visibility (the
+first-person design means this surface is normally never seen, so such a bug would hide); and the
+3.3M-vertex full-interior hull mesh interacting with the exact-hit reconstruction differently from
+ordinary props.
+
+This matters beyond the chase camera: the same masking would affect what the Tiger contributes to
+reflections and to the light leaving it onto the snow around it.
+
 ## Mandatory gates
 
 1. `cargo fmt --all -- --check`, release compilation, full tests and `git diff --check`.
