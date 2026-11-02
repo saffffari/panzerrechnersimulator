@@ -73,10 +73,15 @@ tests kept and the layout test rewritten for the columns. The bake tools: plates
 (`tools/bake_manual_plates.py`, engine and base-unit views, red highlights, an exploded drive
 train) and the CAD assemblies as meshes (`tools/bake_tiger_cad_parts.py`, `_glb.py`).
 
-Open: the loupe (designed above as a second camera through the optic composite; not built,
-the 2.6x reading zoom stands in); the first plates were too thin on the page (TechDraw's 0.7
-pen; the bake now sets 2.6) and the base-unit plates are still baking; no plate yet for the
-track link and pin, the winch rigging or the medical pages (the CAD has no such parts; those
-stay schematic or need drawing by hand); the kit CAD's offset into the game hull is not
-measured, so no CAD part is registered as a service part yet.
+The loupe is built (`repair_manual::loupe_view`, crush mask mode 5): RMB held over the open
+book brings a 64 mm glass to the pointer, dragged on its own plane 55 mm over the paper, and
+the lens pass shows the paper three times larger through its own camera; the review's
+`_loupe` still is its gate, with the lens view adapting over a dozen frames first.
+
+Open: the first plates were too thin on the page (TechDraw's 0.7 pen; the bake now sets 2.6)
+and are being re-baked; the whole base unit from the side projected to one unusable path, so
+the running-gear plate is drawn from its own solids; no plate yet for the track link and pin,
+the winch rigging or the medical pages (the CAD has no such parts; those stay schematic or
+need drawing by hand); the kit CAD's offset into the game hull is not measured, so no CAD
+part is registered as a service part yet.
 

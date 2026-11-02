@@ -113,6 +113,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         format!("{prefix}_albedo_01.png"),
         format!("{prefix}_zoom_left.png"),
         format!("{prefix}_zoom_right.png"),
+        format!("{prefix}_loupe.png"),
         format!("{prefix}_turn_quarter.png"),
         format!("{prefix}_turn_half.png"),
         format!("{prefix}_turn_three_quarters.png"),
@@ -159,7 +160,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
             "manual unavailable during spread review"
         );
         g.update(&TankInput::default(), 0., &mut r);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -182,7 +183,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
     g.repair_manual.zoom_by(8.);
     for (label, x) in [("left", 0.25), ("right", 0.75)] {
         g.repair_manual.focus(glam::Vec2::new(x, 0.45));
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -195,12 +196,50 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         )?;
         receipts.push(json!({"view":format!("zoom_{label}"),"measurement":measured}));
     }
+    // The loupe over the right page: the lens pass from the lens itself (its own view and
+    // history), then the reading frame seats that picture in the lens's circle (mask mode 5),
+    // as the window does each frame while the right button is held.
+    g.repair_manual.restore_state(2, Some(2))?;
+    g.set_repair_manual_held(true);
+    g.repair_manual.loupe_wanted = true;
+    let pointer = glam::Vec2::new(0.33, 0.40);
+    g.prepare_repair_manual(&mut r, &device, &queue, Some(pointer));
+    let loupe = g.repair_manual.loupe.context("the loupe did not stand over the page")?;
+    let saved = (r.camera, r.optic_mask);
+    r.set_active_view(crate::renderer::OPTIC_EYE_VIEW);
+    r.camera.pos = loupe.eye;
+    r.camera.set_forward(loupe.forward);
+    r.camera.fov_y = loupe.fov_y;
+    r.camera.znear = 0.004;
+    r.optic_mask = 0.0;
+    r.set_visible(g.loupe_slot(), false);
+    r.reset_history();
+    // The lens view's eye adapts over its first frames as the optics' do; the window runs the
+    // lens pass every frame, so the still runs it a dozen times before reading the glass.
+    for _ in 0..12 {
+        r.render_optic_snapshot(&device, &queue);
+    }
+    r.set_visible(g.loupe_slot(), true);
+    r.camera = saved.0;
+    r.set_active_view(0);
+    r.optic_mask = 5.0;
+    r.loupe = [loupe.centre_uv.x, loupe.centre_uv.y, loupe.radius_uv, loupe.sample_scale];
+    r.ui_reset();
+    r.reset_history();
+    let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
+    r.render_to_png(&device, &queue, &format!("{prefix}_loupe.png"), 1280, 720)?;
+    r.optic_mask = saved.1;
+    r.loupe = [0.0; 4];
+    g.repair_manual.loupe_wanted = false;
+    receipts.push(json!({"view":"loupe","measurement":measured,"lens":{"eye":loupe.eye.to_array(),
+        "fov_y_deg":loupe.fov_y.to_degrees(),"centre_uv":loupe.centre_uv.to_array(),"radius_uv":loupe.radius_uv,"sample_scale":loupe.sample_scale,
+        "power":crate::repair_manual::LOUPE_POWER,"diameter_m":crate::repair_manual::LOUPE_DIAMETER}}));
     g.repair_manual = crate::repair_manual::ManualState::default();
     g.set_repair_manual_held(true);
     ensure!(g.repair_manual.turn(1), "manual leaf did not start");
     for label in ["quarter", "half", "three_quarters"] {
         g.repair_manual.tick(0.12);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -220,7 +259,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         // changing the paper material. Both cases retain normal measured eye adaptation.
         g.set_cabin_lights(on);
         g.update(&TankInput::default(), 0., &mut r);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         let measured = settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -241,7 +280,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
         g.repair_manual = crate::repair_manual::ManualState::default();
         g.set_repair_manual_held(true);
         g.update(&TankInput::default(), 0., &mut r);
-        g.prepare_repair_manual(&mut r, &device, &queue);
+        g.prepare_repair_manual(&mut r, &device, &queue, None);
         r.ui_reset();
         r.reset_history();
         settle(&mut r, &device, &queue, g.cabin_lights_on())?;
@@ -254,7 +293,7 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
                 g.repair_manual.turn(-1);
             }
             g.update(&TankInput::default(), 1. / 24., &mut r);
-            g.prepare_repair_manual(&mut r, &device, &queue);
+            g.prepare_repair_manual(&mut r, &device, &queue, None);
             r.ui_reset();
             clip.frame(&r.render_to_rgba(&device, &queue, r.iw, r.ih)?)?;
         }

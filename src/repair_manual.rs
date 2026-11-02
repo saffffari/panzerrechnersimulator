@@ -60,6 +60,113 @@ pub struct ManualState {
     plates: std::collections::HashMap<&'static str, (u32, f32)>,
     #[serde(skip)]
     plates_loaded: bool,
+    /// The right button held over the open book: the loupe is in the hand.
+    #[serde(skip)]
+    pub loupe_wanted: bool,
+    /// Where the loupe stands this frame, when it does (set by `prepare_repair_manual`).
+    #[serde(skip)]
+    pub loupe: Option<LoupeView>,
+}
+
+/// A reading glass over the page: a ring of `LOUPE_DIAMETER` held `LOUPE_HEIGHT` above the
+/// paper under the pointer, and the camera that looks through it (the lens pass of the crush's
+/// mask mode 5): at the lens, down the page normal, with a field such that the
+/// `LOUPE_DIAMETER / LOUPE_POWER` of paper under the glass spans the lens's own circle on the
+/// screen at the frame's pixel density, so the composite reads the pass texel for texel and
+/// the glass shows the paper `LOUPE_POWER` times larger than the eye sees it beside the glass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoupeView {
+    pub eye: Vec3,
+    pub forward: Vec3,
+    /// The lens pass's vertical field (wide: the patch under the glass fills only the circle).
+    pub fov_y: f32,
+    /// The lens on the screen: centre uv and radius in height units.
+    pub centre_uv: Vec2,
+    pub radius_uv: f32,
+    /// How much of the pass the circle reads per screen unit: 1 when the field could be made
+    /// wide enough, more when the lens is small on the screen (the field is capped at 120 deg).
+    pub sample_scale: f32,
+    pub lens_model: Mat4,
+}
+const LOUPE_PASS_MAX_FOV: f32 = 120.0 * std::f32::consts::PI / 180.0;
+pub const LOUPE_DIAMETER: f32 = 0.064;
+pub const LOUPE_HEIGHT: f32 = 0.055;
+pub const LOUPE_POWER: f32 = 3.0;
+
+/// The lens over the page under `pointer`, and the camera through it, or none when the
+/// pointer is off the book.
+pub fn loupe_view(camera: &Camera, pointer: Vec2, state: &ManualState) -> Option<LoupeView> {
+    if !state.held || state.turning() || !pointer.is_finite() {
+        return None;
+    }
+    let base = models(camera, state)[0];
+    // The lens is dragged, so the pointer's ray meets the lens's own plane, LOUPE_HEIGHT over
+    // the open spread; the paper under the lens is straight below it along the page normal.
+    let inv = camera.view_proj().inverse();
+    let unproject = |z: f32| {
+        let p = inv * glam::Vec4::new(pointer.x * 2. - 1., 1. - pointer.y * 2., z, 1.);
+        p.truncate() / p.w
+    };
+    let (start, end) = (unproject(0.), unproject(1.));
+    let inverse_base = base.inverse();
+    let local_start = inverse_base.transform_point3(start);
+    let direction = inverse_base.transform_vector3(end - start);
+    if direction.z.abs() < 1e-6 {
+        return None;
+    }
+    let t = (PAGE_Z + LOUPE_HEIGHT - local_start.z) / direction.z;
+    if t < 0. || !t.is_finite() {
+        return None;
+    }
+    let lens_local = local_start + direction * t;
+    let uv = Vec2::new(lens_local.x / (PAGE_WIDTH * 2.) + 0.5, 0.5 - lens_local.y / PAGE_HEIGHT);
+    if uv.min_element() < 0. || uv.max_element() > 1. {
+        return None;
+    }
+    let eye = base.transform_point3(lens_local);
+    let normal = base.transform_vector3(Vec3::Z).normalize_or_zero();
+    // The lens on the screen: its centre projected, its radius from its distance to the eye.
+    let clip = camera.view_proj() * eye.extend(1.0);
+    if clip.w <= 1e-4 {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    let centre_uv = Vec2::new(0.5 + ndc.x * 0.5, 0.5 - ndc.y * 0.5);
+    let distance = (eye - camera.pos).dot(camera.forward()).max(0.02);
+    let radius_uv = ((LOUPE_DIAMETER * 0.5 / distance) / (2.0 * (camera.fov_y * 0.5).tan())).max(1e-3);
+    // The paper under the glass: a patch LOUPE_DIAMETER / LOUPE_POWER across, LOUPE_HEIGHT away.
+    // It must fill 2 * radius_uv of the pass's frame height, so the pass is read texel for
+    // texel; a lens small on the screen would need a field beyond 120 degrees, and is then read
+    // at a scale instead.
+    let tan_half_patch = (LOUPE_DIAMETER / LOUPE_POWER * 0.5) / LOUPE_HEIGHT;
+    let wanted_tan_half = tan_half_patch / (2.0 * radius_uv);
+    let tan_half = wanted_tan_half.min((LOUPE_PASS_MAX_FOV * 0.5).tan());
+    let fov_y = 2.0 * tan_half.atan();
+    let sample_scale = wanted_tan_half / tan_half;
+    let lens_model = Mat4::from_translation(eye) * Mat4::from_cols(base.x_axis, base.y_axis, base.z_axis, glam::Vec4::W);
+    Some(LoupeView { eye, forward: -normal, fov_y, centre_uv, radius_uv, sample_scale, lens_model })
+}
+
+/// The glass: a ring of 32 segments round the lens, its handle toward the reader's right hand.
+/// Authored at real scale; the lens itself is the crush's composite, not a mesh.
+pub fn loupe_mesh() -> CpuMesh {
+    let (mut v, mut i) = (Vec::new(), Vec::new());
+    let ring = LOUPE_DIAMETER * 0.5;
+    let tube = 0.0035;
+    for n in 0..32 {
+        let a0 = n as f32 * std::f32::consts::TAU / 32.;
+        let a1 = (n + 1) as f32 * std::f32::consts::TAU / 32.;
+        let (c0, c1) = (Vec3::new(a0.cos(), a0.sin(), 0.) * ring, Vec3::new(a1.cos(), a1.sin(), 0.) * ring);
+        let out0 = Vec3::new(a0.cos(), a0.sin(), 0.) * tube;
+        let out1 = Vec3::new(a1.cos(), a1.sin(), 0.) * tube;
+        let up = Vec3::Z * tube;
+        quad(&mut v, &mut i, [c0 - out0 - up, c1 - out1 - up, c1 + out1 - up, c0 + out0 - up], [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]);
+        quad(&mut v, &mut i, [c0 + out0 + up, c1 + out1 + up, c1 - out1 + up, c0 - out0 + up], [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]);
+        quad(&mut v, &mut i, [c0 + out0 - up, c1 + out1 - up, c1 + out1 + up, c0 + out0 + up], [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]);
+        quad(&mut v, &mut i, [c0 - out0 + up, c1 - out1 + up, c1 - out1 - up, c0 - out0 - up], [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]);
+    }
+    solid_box(&mut v, &mut i, Vec3::new(ring - 0.002, -0.006, -0.004), Vec3::new(ring + 0.075, 0.006, 0.004));
+    build(v, i, [46, 42, 36, 255])
 }
 
 impl Default for ManualState {
@@ -73,6 +180,8 @@ impl Default for ManualState {
             focus: Vec2::splat(0.5),
             plates: std::collections::HashMap::new(),
             plates_loaded: false,
+            loupe_wanted: false,
+            loupe: None,
         }
     }
 }
@@ -874,6 +983,32 @@ pub fn draw_page(r: &mut Renderer, page: u8, state: &ManualState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_loupe_stands_over_the_pointed_page_point_and_shows_it_three_times_larger() {
+        let mut book = ManualState::default();
+        book.held = true;
+        let mut camera = Camera::new(16. / 9.);
+        camera.pos = Vec3::new(0., 1.5, 0.);
+        camera.set_forward(Vec3::Z);
+        let pointer = Vec2::new(0.42, 0.52);
+        let view = loupe_view(&camera, pointer, &book).expect("the pointer is on the book");
+        let base = models(&camera, &book)[0];
+        let normal = base.transform_vector3(Vec3::Z).normalize();
+        assert!((view.forward + normal).length() < 1e-4, "looks down the page normal");
+        let under = base.inverse().transform_point3(view.eye - normal * LOUPE_HEIGHT);
+        assert!((under.z - PAGE_Z).abs() < 1e-4 && under.x.abs() < PAGE_WIDTH && under.y.abs() < PAGE_HEIGHT * 0.5,
+            "the paper under the lens is on the open spread, LOUPE_HEIGHT below it: {under}");
+        // The paper the circle shows: the pass's frame height in paper, times the circle's share
+        // of it, times the read scale: a third of the lens's diameter, however the pass was set.
+        let frame_across = 2. * LOUPE_HEIGHT * (view.fov_y * 0.5).tan();
+        let paper_across = frame_across * 2. * view.radius_uv * view.sample_scale;
+        assert!((paper_across - LOUPE_DIAMETER / LOUPE_POWER).abs() < 1e-4, "the glass shows a third of its diameter of paper: {paper_across}");
+        assert!(view.sample_scale >= 1.0 && view.fov_y <= LOUPE_PASS_MAX_FOV + 1e-6, "{} {}", view.sample_scale, view.fov_y);
+        assert!((view.centre_uv - pointer).length() < 0.005, "the lens sits under the pointer: {} vs {pointer}", view.centre_uv);
+        assert!(view.radius_uv > 0.03 && view.radius_uv < 0.25, "a hand lens on the screen: {}", view.radius_uv);
+        assert!(loupe_view(&camera, Vec2::new(0.02, 0.02), &book).is_none(), "off the book there is no lens");
+    }
 
     #[test]
     fn diagnosis_choices_and_repair_sequence_are_reachable_without_vehicle_state() {

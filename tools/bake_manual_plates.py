@@ -33,7 +33,8 @@ CAD_ROOT = os.environ.get("CAD_ROOT", "/windows/shop/ts_assets/_archive/_extract
                           "panzer-vi-tiger-1-35-1.snapshot.2/panzer-vi-tiger-1-35-1.snapshot.2")
 ASSET_ROOT = os.environ.get("KESSEL_ASSET_ROOT", ".")
 OUT_DIR = os.path.join(ASSET_ROOT, "assets", "manual", "plates")
-SCALE = 35.0
+# The game's Tiger is this kit CAD at 38.92x (measured registration, 2 November 2026), not 35x.
+SCALE = 38.919827
 ENGINE = "TG_RM5010-0B29_EngineSystem.STEP"
 BASE_UNIT = "TG_RM5010-0B16_Base Unit.STEP"
 
@@ -50,7 +51,10 @@ PLATES = {
     # 0 hull tub; 152 engine; 132/133 fuel tanks; 130/131/147/148 radiators, 136/137 fans;
     # 68 gearbox, 69 steering unit, 70 forward drive, 72/73 final drives; 22/23 sprockets,
     # 26/27 idlers; 20/21 side plates; 169/170 sponsons.
-    "running_gear_side": (BASE_UNIT, (1, 0, 0), (0, 0, -1), None, [], None, 0),
+    # The whole base unit from the side projects to one unusable 90,000-unit path (TechDraw's
+    # hidden-line pass over 190 solids including the hull's long faces); the running gear is drawn
+    # from its own solids: side plates, sprockets, idlers, sponsons and the suspension candidates.
+    "running_gear_side": (BASE_UNIT, (1, 0, 0), (0, 0, -1), [20, 21, 22, 23, 26, 27, 169, 170, 94, 95, 104, 105, 106, 107, 112, 113, 114, 115], [], None, 0),
     "drivetrain_iso": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23, 132, 133, 130, 131, 136, 137], [], None, 0),
     "transmission_red": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23, 132, 133, 130, 131, 136, 137], [1, 2, 3, 4, 5], None, 0),
     "fuel_red": (BASE_UNIT, (1, -1, 1), (1, 0, -1), [152, 68, 69, 70, 72, 73, 22, 23, 132, 133, 130, 131, 136, 137], [8, 9], None, 0),

@@ -2,6 +2,10 @@
 use super::*;
 
 impl Game {
+    /// The lens mesh's slot, for the front end's lens pass (hidden from its own picture).
+    pub fn loupe_slot(&self) -> usize {
+        self.slots.loupe
+    }
     pub fn set_repair_manual_held(&mut self, held: bool) -> bool {
         let eligible = self.controlled_soldier_alive() && !self.climb.active
             && self.carry_mesh.is_none() && self.carried_casing.is_none()
@@ -33,10 +37,21 @@ impl Game {
     }
 
     pub fn prepare_repair_manual(&mut self, renderer: &mut Renderer,
-        device: &wgpu::Device, queue: &wgpu::Queue) {
+        device: &wgpu::Device, queue: &wgpu::Queue, pointer: Option<Vec2>) {
         self.drive_repair_manual(renderer);
         if self.repair_manual.held {
             self.repair_manual.load_plates(renderer, device, queue);
+        }
+        // The loupe: over the page under the pointer while the right button is held.
+        self.repair_manual.loupe = pointer.filter(|_| self.repair_manual.loupe_wanted && self.repair_manual.held)
+            .and_then(|p| crate::repair_manual::loupe_view(&renderer.camera, p, &self.repair_manual));
+        match self.repair_manual.loupe {
+            Some(view) => {
+                renderer.set_model(self.slots.loupe, view.lens_model);
+                renderer.set_visible(self.slots.loupe, true);
+                renderer.set_emissive(self.slots.loupe, 0.0);
+            }
+            None => renderer.set_visible(self.slots.loupe, false),
         }
         renderer.render_repair_manual_pages(device, queue, self.slots.repair_manual, &self.repair_manual);
     }

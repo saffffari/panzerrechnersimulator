@@ -1092,6 +1092,9 @@ struct CrushUniform {
     /// The deltaP look (`KESSEL_LOOK`, docs/DELTAP_LOOK_20261101.md): x = mode (0 standard,
     /// 1 dithered colour, 2 PICO-8 32, 3 tonemapped only), y = best-pair penalty. Appended lane.
     look: [f32; 4],
+    /// The reader's loupe (mask mode 5, `crush.wgsl`): xy the lens centre in screen uv, z its
+    /// radius in height units, w 1 while a lens pass sits in `optic_tex`. Appended lane.
+    loupe: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -2782,6 +2785,8 @@ pub struct Renderer {
     pub interior_haze: f32,
     /// Optic mask over the crushed frame: 0 none, 1 TZF circle, 2 visor letterbox, 3 binoculars.
     pub optic_mask: f32,
+    /// The loupe's circle for mask mode 5: centre uv, radius (height units), 1 when armed.
+    pub loupe: [f32; 4],
     /// Positioned point lights this frame (game.rs sets them; capped at N_LIGHTS in the shader).
     lights: Vec<PointLight>,
     /// Point lights offered for the latest frame (all of them, before the `N_LIGHTS` budget).
@@ -6099,6 +6104,7 @@ impl Renderer {
             interior_light: 0.0,
             interior_haze: 0.0,
             optic_mask: 0.0,
+            loupe: [0.0; 4],
             lights: Vec::new(),
             lights_offered: 0,
             lights_full: Vec::new(),
@@ -6348,7 +6354,7 @@ impl Renderer {
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
             sky_clock, celestial, authored_clock_start, sky_time_scale, user_sky_phase, weather_offset, theatre_weather, weather_override, weather_original,
             weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
-            optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
+            optic_mask, loupe, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, track_lookup, track_atlas, track_footprints, terrain_detail, smoke_puffs, breech_gas,
@@ -8499,6 +8505,7 @@ impl Renderer {
             dither_up: self.camera.right().cross(self.camera.forward()).extend((self.camera.fov_y * 0.5).tan()).to_array(),
             dither_forward: self.camera.forward().extend(0.0).to_array(),
             look: [self.look, DELTAP_PAIR_PENALTY, 0.0, 0.0],
+            loupe: self.loupe,
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {

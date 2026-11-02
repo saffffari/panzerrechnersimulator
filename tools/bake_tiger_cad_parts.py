@@ -3,8 +3,12 @@
 
 The Base Unit STEP (``TG_RM5010-0B16_Base Unit.STEP``, 190 solids) holds the hull, running gear,
 engine, transmission, fuel tanks and cooling; the groups below were measured on 2 November 2026
-(kit millimetres, z along the hull with the rear negative, y up). Each group is scaled by 35 to
-metres, tessellated by FreeCAD's MeshPart and written as Wavefront OBJ under the asset root
+(kit millimetres, z along the hull with the rear negative, y up). Each group is registered to the
+game's hull frame by the measured transform of the damage session's registration pass
+(``assets/fea/tiger_cad/registration.json`` in the fea-damage worktree, 2 November 2026: the
+game's Tiger GLBs are this kit CAD at 0.038919827 m per kit millimetre, identity rotation,
+translation (0, 0.570671, 2.657689) m; the game's Tiger is 11.2 % larger than the kit's stated
+1:35), tessellated by FreeCAD's MeshPart and written as Wavefront OBJ under the asset root
 (``assets/tanks/tiger/cad/<group>.obj``, not committed) with a JSON report of solids, bounds
 and triangle count; ``tools/bake_tiger_cad_parts_glb.py`` turns them into runtime GLBs with
 Blender. These are the repair manual's and the repair gameplay's physical parts and the damage
@@ -27,7 +31,9 @@ CAD_ROOT = os.environ.get("CAD_ROOT", "/windows/shop/ts_assets/_archive/_extract
 ASSET_ROOT = os.environ.get("KESSEL_ASSET_ROOT", ".")
 OUT_DIR = os.path.join(ASSET_ROOT, "assets", "tanks", "tiger", "cad")
 BASE_UNIT = os.path.join(CAD_ROOT, "TG_RM5010-0B16_Base Unit.STEP")
-SCALE_TO_METRES = 35.0 * 0.001
+# The measured registration kit mm -> game hull metres (see the module doc).
+SCALE_TO_METRES = 0.038919827
+HULL_OFFSET_M = (0.0, 0.570671, 2.657689)
 
 GROUPS = {
     "hull_tub": [0],
@@ -53,11 +59,13 @@ shape = Part.Shape()
 shape.read(BASE_UNIT)
 m = FreeCAD.Matrix()
 m.scale(SCALE_TO_METRES, SCALE_TO_METRES, SCALE_TO_METRES)
+m.move(FreeCAD.Vector(*HULL_OFFSET_M))
 shape = shape.transformGeometry(m)
 solids = list(shape.Solids)
 os.makedirs(OUT_DIR, exist_ok=True)
-report = {"schema": "kessel.tiger-cad-parts.v1", "source": BASE_UNIT, "solids_in_source": len(solids),
-          "scale": "1/35 kit CAD x 35, millimetres to metres", "read_seconds": round(time.time() - t0, 1), "groups": {}}
+report = {"schema": "kessel.tiger-cad-parts.v2", "source": BASE_UNIT, "solids_in_source": len(solids),
+          "frame": "game hull-local metres (y up, +z forward): kit mm x 0.038919827 + (0, 0.570671, 2.657689), the damage session's measured registration of 2 November 2026; the game's Tiger is 1.112 x the kit's 1:35",
+          "read_seconds": round(time.time() - t0, 1), "groups": {}}
 for name, indices in GROUPS.items():
     t1 = time.time()
     compound = Part.makeCompound([solids[i] for i in indices if i < len(solids)])

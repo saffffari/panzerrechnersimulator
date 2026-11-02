@@ -18,7 +18,7 @@ and the current driver cruise setting.
 | Mouse | Fine gun aim only at sights; head/body look elsewhere |
 | V | Indicate an approximate clock-bearing sector; no enemy lock or automatic range measurement |
 | K | Toggle the autonomous-gunner experiment; no commander LMB fire order |
-| M / I | Physical map / repair manual (B stays the binoculars) |
+| M / I | Physical map / repair manual (B stays the binoculars). The manual is a Fibel: landscape pages, +/- zoom; **RMB held** over the open book brings the loupe to the pointer, a hand lens showing the paper three times larger through its own camera |
 | PgUp / PgDn, Enter (map held) | Expedition orders on the theatre map: previous / next offer, accept. Accepting stows the map; the written order prints on the page teleprinter's 210 mm sheet (the head at the commander's left under the turret roof, or the detail's machine on the camp's orders table when you are on foot there); the sheet comes out leaning toward you. M rereads it on the map with its marks and bearing |
 | E / LMB on the sheet | Tear the printed order off the machine and read it in hand (free hands, like the map) |
 | X (sheet in hand) | Fold the sheet into the pocket |

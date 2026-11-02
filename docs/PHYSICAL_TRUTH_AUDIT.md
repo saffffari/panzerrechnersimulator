@@ -2787,11 +2787,23 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   `assets/manual/plates/<name>.png`; every plate's caption says "1/35 kit CAD, not to scale" and
   its report names the source. A page whose plate the asset root lacks keeps its schematic.
 - **The Tiger's assemblies as meshes** (`tools/bake_tiger_cad_parts.py`, `_glb.py`):
-  `assets/tanks/tiger/cad/<group>.obj/.glb` in metres (hull tub 3.05 x 1.31 x 5.80 m, engine
-  0.94 x 1.20 x 1.17 m, the gearbox, steering unit, forward drive, final drives, fuel tanks,
-  radiators, fans, sprockets, idlers, side plates, sponsons), tessellated at 4 mm deflection.
-  They are a kit's shapes at 35x: filled solids with no casing thickness, no interior detail,
-  no fasteners the kit omitted; the game may use them as physical parts and the damage solver
-  as component outlines, never as a measured vehicle. Nothing of this is committed; the bake
-  reports carry the provenance.
+  `assets/tanks/tiger/cad/<group>.obj/.glb` in the game's hull frame (the gearbox, steering
+  unit, forward drive, final drives, fuel tanks, radiators, fans, sprockets, idlers, side
+  plates, sponsons, the hull tub and the engine), tessellated at 4 mm deflection and placed by
+  the damage session's measured registration: the game's own Tiger GLBs are this kit CAD at
+  0.038919827 m per kit millimetre with identity rotation and a (0, 0.571, 2.658) m offset,
+  fitted on 446 solid pairs to 0.17 mm RMS, which also means the game's Tiger is 11.2 % larger
+  than the kit's stated 1:35 would make it. They are a kit's shapes: filled solids with no
+  casing thickness, no interior detail, no fasteners the kit omitted; the game may use them as
+  physical parts and the damage solver as component outlines, never as a measured vehicle.
+  Nothing of this is committed; the bake reports carry the provenance.
+- **The loupe is an optic composite, not a texture zoom** (`repair_manual::loupe_view`, crush
+  mask mode 5, `main.rs` lens pass): while the right button is held over the open book, a lens
+  pass renders the paper from the lens itself (its own view and temporal history, like the
+  gunner's eyepiece and the binoculars), looking down the page normal with a field that spans
+  `LOUPE_DIAMETER / LOUPE_POWER` of paper (21 mm across a 64 mm glass, 3x), and the reading
+  frame seats that crushed picture in the circle the lens makes on the screen, resampled once.
+  The lens's diameter, height over the page (55 mm) and power are design values of a hand
+  glass, not an optical model: no refraction, no field curvature, no glass reflections; the
+  ring is the only mesh. The lens view's eye adapts over its first frames as the optics' do.
 

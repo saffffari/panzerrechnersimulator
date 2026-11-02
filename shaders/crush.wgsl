@@ -30,6 +30,10 @@ struct Crush {
     // The deltaP look (docs/DELTAP_LOOK_20261101.md): x = 0 standard, 1 dithered colour, 2 PICO-8 32,
     // 3 the tonemapped frame alone; y = the best-pair search's pair-distance penalty. Appended lane.
     look: vec4<f32>,
+    // The reader's loupe (mask mode 5): xy = the lens centre in screen uv, z = its radius in
+    // height units, w = the read scale (1 = the lens pass is read texel for texel; more when
+    // the lens is small on the screen and the pass could not widen enough). Appended lane.
+    loupe: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 
@@ -456,6 +460,24 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
             let d = min(l, r);
             m *= 1.0 - 0.42 * smoothstep(0.34, 0.47, d);
             m *= max(1.0 - smoothstep(0.49, 0.515, l), 1.0 - smoothstep(0.49, 0.515, r));
+        } else if (cr.mask > 4.5) {
+            // THE LOUPE (mask 5): the previous pass looked at the page through the lens from the
+            // lens itself, with a field chosen so the paper under the glass fills the lens's own
+            // circle at this frame's pixel density; its crushed frame is read texel for texel
+            // (scale w, 1 unless the lens is small on the screen) into the circle the lens makes
+            // here. A thin dark rim seats the glass. This is an image through a second camera,
+            // like the eyepiece composite, not a zoom of the page's texture.
+            let aspect = dims.x / max(dims.y, 1.0);
+            let qc = vec2((cr.loupe.x - 0.5) * aspect, cr.loupe.y - 0.5);
+            let d = length(q - qc);
+            let r = max(cr.loupe.z, 1e-4);
+            let k = cr.loupe.w;
+            if (d < r && k > 0.0) {
+                let s = vec2(0.5 + (q.x - qc.x) * k / aspect, 0.5 + (q.y - qc.y) * k);
+                m = textureSampleLevel(optic_tex, samp, s, 0.0).rgb;
+            }
+            let ring = smoothstep(r * 0.94, r * 0.99, d) * (1.0 - smoothstep(r * 1.03, r * 1.10, d));
+            m = mix(m, vec3(0.05, 0.045, 0.04), ring * 0.9);
         } else {
             // EYEPIECE COMPOSITE (mask 4): this frame is the TURRET INTERIOR seen from the
             // gunner's head at the TZF; the previous pass's crushed optic frame drops into the

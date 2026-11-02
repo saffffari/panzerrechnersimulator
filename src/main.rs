@@ -13749,7 +13749,7 @@ impl WindowState {
         let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);
         self.renderer.set_coop_shadow_reuse(shadow_ready);
         self.prepare_map_view();
-        self.game.prepare_repair_manual(&mut self.renderer, &self.device, &self.queue);
+        self.game.prepare_repair_manual(&mut self.renderer, &self.device, &self.queue, self.menu_pointer);
         self.game.prepare_order_receipt(&mut self.renderer, &self.device, &self.queue);
         let saved_far = self.renderer.camera.zfar;
         if self.game.protected_main_interior_view() {
@@ -13766,6 +13766,35 @@ impl WindowState {
             self.renderer
                 .render_to_surface(&self.device, &self.queue, &view, self.config.format);
             self.renderer.set_active_view(0);
+        } else if let Some(loupe) = self.game.repair_manual.loupe.filter(|_| !self.show_map) {
+            // The reader's loupe over the manual: the lens pass looks at the paper from the lens
+            // (its own eye and temporal history, like the optics), then the reading frame seats
+            // that picture in the lens's circle through the crush's mask mode 5.
+            let saved_cam = self.renderer.camera;
+            let saved_mask = self.renderer.optic_mask;
+            let saved_reticle = self.renderer.reticle;
+            self.renderer.set_active_view(renderer::OPTIC_EYE_VIEW);
+            self.renderer.camera.pos = loupe.eye;
+            self.renderer.camera.set_forward(loupe.forward);
+            self.renderer.camera.fov_y = loupe.fov_y;
+            self.renderer.camera.znear = 0.004;
+            self.renderer.reticle = false;
+            self.renderer.optic_mask = 0.0;
+            self.renderer.set_visible(self.game.loupe_slot(), false);
+            self.renderer.render_optic_snapshot(&self.device, &self.queue);
+            self.renderer.set_visible(self.game.loupe_slot(), true);
+            self.renderer.camera = saved_cam;
+            self.renderer.reticle = saved_reticle;
+            self.renderer.set_active_view(0);
+            self.renderer.optic_mask = 5.0;
+            self.renderer.loupe = [loupe.centre_uv.x, loupe.centre_uv.y, loupe.radius_uv, loupe.sample_scale];
+            let was_skip = self.renderer.rt_skip;
+            self.renderer.rt_skip = true; // the lens pass built this frame's TLAS
+            self.renderer
+                .render_to_surface(&self.device, &self.queue, &view, self.config.format);
+            self.renderer.rt_skip = was_skip;
+            self.renderer.optic_mask = saved_mask;
+            self.renderer.loupe = [0.0; 4];
         } else {
             self.renderer
                 .render_to_surface(&self.device, &self.queue, &view, self.config.format);

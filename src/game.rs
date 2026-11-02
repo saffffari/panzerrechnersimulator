@@ -8886,6 +8886,7 @@ struct Slots {
     order_strip: usize,        // the strip on the machine, emerging line by line
     order_receipt: usize,      // the torn-off strip in the reader's hands (view-local)
     repair_manual: [usize; crate::repair_manual::PART_COUNT],
+    loupe: usize, // the reader's glass over the manual (view-local, raster-only)
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
@@ -11769,6 +11770,8 @@ impl Game {
         scene.push(order_printer::strip_mesh());
         let repair_manual = std::array::from_fn(|i| scene.len() + i);
         scene.extend(crate::repair_manual::mesh());
+        let loupe = scene.len();
+        scene.push(crate::repair_manual::loupe_mesh());
 
         // Cupola HATCH lid: the real baked assembly (hinge post + disc + handle) exported from the
         // Blender rig with the mesh origin ON the hinge axis (`cupola hatch pivot`), so rotating
@@ -12458,6 +12461,7 @@ impl Game {
             order_strip,
             order_receipt,
             repair_manual,
+            loupe,
             snow,
             hatch,
             tpz_needle,
@@ -13529,6 +13533,8 @@ impl Game {
         renderer.set_visible(slots.order_receipt, false);
         renderer.set_visible(slots.order_strip, false);
         renderer.set_emissive(slots.order_printer_head, 0.0);
+        renderer.mark_raster_only(slots.loupe);
+        renderer.set_visible(slots.loupe, false);
         for slot in slots.repair_manual {
             renderer.mark_raster_only(slot);
             renderer.set_emissive(slot, 0.0);
@@ -18520,6 +18526,8 @@ impl Game {
         self.drive_local_binocular_prop(r);
         self.drive_hand_map(r);
         self.repair_manual.tick(dt);
+        // The right button over the open book holds the loupe; the book must be in the hands.
+        self.repair_manual.loupe_wanted = input.aim && self.repair_manual.held && !self.repair_manual.turning();
         self.drive_repair_manual(r);
         self.drive_hand_compass(dt, r);
         self.update_cupola_pistol(&sidearm_input,dt,r);
