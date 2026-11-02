@@ -331,7 +331,6 @@ struct OverlayStill<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     prefix: &'a str,
-    aspect: f32,
     size: (u32, u32),
     receipts: Vec<serde_json::Value>,
 }
@@ -351,12 +350,12 @@ impl OverlayStill<'_> {
         r.ui_reset();
         let light = g.reading_light();
         if g.repair_manual.held {
-            crate::repair_manual::draw_manual_overlay(r, &g.repair_manual, self.aspect, light);
+            crate::repair_manual::draw_manual_overlay(r, &g.repair_manual, light);
         }
         let rise = g.order_sheet_rise();
         if rise > 0.0 && g.order_sheet_in_hand() {
             if let Some([_, hand]) = r.order_sheet_images() {
-                crate::renderer::draw_order_sheet_overlay(r, hand, rise, light, self.aspect);
+                crate::renderer::draw_order_sheet_overlay(r, hand, rise, light);
             }
         }
         let path = format!("{}_overlay_{name}.png", self.prefix);
@@ -364,7 +363,8 @@ impl OverlayStill<'_> {
         self.receipts.push(json!({"still": name, "file": path, "spread": g.repair_manual.spread(),
             "zoom": g.repair_manual.zoom(), "turning": g.repair_manual.turning(), "leaf": g.repair_manual.overlay_leaf(),
             "reading_light": light, "cabin_lamps_on": g.cabin_lights_on(), "sheet_rise": rise,
-            "layout": crate::repair_manual::overlay_layout(self.aspect, &g.repair_manual).spread}));
+            "layout_px": crate::repair_manual::overlay_layout((r.iw, r.ih), &g.repair_manual).px,
+            "grid": [r.iw, r.ih]}));
         Ok(())
     }
 }
@@ -398,8 +398,9 @@ pub fn run_overlay(prefix: &str) -> anyhow::Result<()> {
         g.update(&TankInput::default(), 1. / 60., &mut r);
     }
     ensure!(g.set_repair_manual_held(true), "manual unavailable at source Tiger loader station");
-    let size = (1920u32, 1080u32);
-    let mut cap = OverlayStill { device: &device, queue: &queue, prefix: &prefix, aspect: size.0 as f32 / size.1 as f32, size, receipts: Vec::new() };
+    // The display: the owner's 3840-wide screen, the internal grid upscaled nearest as in play.
+    let size = (3840u32, 2160u32);
+    let mut cap = OverlayStill { device: &device, queue: &queue, prefix: &prefix, size, receipts: Vec::new() };
     for (i, spread) in SPREADS.into_iter().enumerate() {
         g.repair_manual.restore_state(spread, None)?;
         ensure!(g.set_repair_manual_held(true), "manual unavailable during spread review");

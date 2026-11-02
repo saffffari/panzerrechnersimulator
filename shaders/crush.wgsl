@@ -78,10 +78,12 @@ fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     // The outdoor night-visibility boost is unnecessary in a cabin with practical lamps and
     // local range compression. Retain normal rod vision without washing out the lamps' colour.
     let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));
-    // The rod term is achromatic in the eye; it is reproduced in the cool mesopic hue
-    // (observer::ROD_DISPLAY_HUE, luminance-neutral). Cones keep every source's own colour.
-    return radiance * camera_white_gain() * cr.exposure
-        + vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B) * (rods * rod_gain);
+    // The rod term is achromatic in the eye; it is reproduced in the cool mesopic hue,
+    // luminance-neutral: the deep blue of the night outdoors (observer::ROD_DISPLAY_HUE), the
+    // cabin's own hue inside the hull (observer::CABIN_ROD_DISPLAY_HUE, unchanged since
+    // 2026-10-04, so the cabin keeps its look). Cones keep every source's own colour.
+    let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));
+    return radiance * camera_white_gain() * cr.exposure + rod_hue * (rods * rod_gain);
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright
@@ -107,6 +109,39 @@ fn eye_range(x: vec3<f32>) -> vec3<f32> {
     let beyond = max(abs(stops) - EYE_RANGE_KNEE_STOPS, 0.0);
     let drawn_in = sign(stops) * (min(abs(stops), EYE_RANGE_KNEE_STOPS) + beyond * slope);
     return positive * (OBS_DISPLAY_KEY * exp2(drawn_in) / peak);
+}
+
+// AgX (Sobotka; the Blender 4 / Wrensch minimal form): the inset to a wider working space, a
+// log2 encoding over 16.5 stops, the sigmoid, the outset, the 2.2 decode to linear light. Bright
+// colours desaturate toward white instead of skewing hue (the ACES fit turns orange yellow and
+// red orange, which made the sunset "oversaturated, deep fried": the owner, 2 November 2026).
+// The shipping tonemap; KESSEL_TONEMAP=aces keeps the former fit (cr.look.z). A reproduction
+// transform like the fit it replaces: it changes no light.
+fn agx(x: vec3<f32>) -> vec3<f32> {
+    let inset = mat3x3<f32>(
+        vec3(0.842479062253094, 0.0784335999999992, 0.0792237451477643),
+        vec3(0.0423282422610123, 0.878468636469772, 0.0791661274605434),
+        vec3(0.0423756549057051, 0.0784336, 0.879142973793104));
+    let outset = mat3x3<f32>(
+        vec3(1.19687900512017, -0.0980208811401368, -0.0990297440797205),
+        vec3(-0.0528968517574562, 1.15190312990417, -0.0989611768448433),
+        vec3(-0.0529716355144438, -0.0980434501171241, 1.15107367264116));
+    let min_ev = -12.47393;
+    let max_ev = 4.026069;
+    var v = inset * max(x, vec3(1.0e-10));
+    v = clamp(log2(v), vec3(min_ev), vec3(max_ev));
+    v = (v - min_ev) / (max_ev - min_ev);
+    let v2 = v * v;
+    let v4 = v2 * v2;
+    v = 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4 - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v - 0.00232;
+    v = outset * clamp(v, vec3(0.0), vec3(1.0));
+    return pow(max(v, vec3(0.0)), vec3(2.2));
+}
+
+// The display tonemap: AgX, or the former ACES fit when asked for (KESSEL_TONEMAP=aces).
+fn tonemap(x: vec3<f32>) -> vec3<f32> {
+    if (cr.look.z > 0.5) { return aces(x); }
+    return agx(x);
 }
 
 // ACES-ish filmic tonemap: real toe/shoulder for dynamic range. Deep shadows, snow highlights that
@@ -218,6 +253,24 @@ var<private> DP_PAL: array<vec3<f32>, 32> = array<vec3<f32>, 32>(
     vec3(0.024, 0.353, 0.710), vec3(0.459, 0.275, 0.396), vec3(1.000, 0.431, 0.349), vec3(1.000, 0.616, 0.506),
 );
 
+// Mode 4, the pastel palette (the owner, 2 November 2026: "we need a good color palette. pastel
+// tones. painterly." and "i don't really like these pinks and purples. we want more green blue"):
+// thirty-two display-sRGB entries authored for this game's scenes, the night's teal blues, the
+// twilight's teals and sages, creams and two warm dawn tones, the day's grey-blues, the snow's
+// whites and shadow greys, earth and steel, lamp and fire warmth, the winter greens; dithered
+// by the same OKLab best-pair search as the PICO-8 mode. A recording-medium choice like the other
+// two: it discards tonal precision and never adds light.
+var<private> DP_PASTEL: array<vec3<f32>, 32> = array<vec3<f32>, 32>(
+    vec3(0.039, 0.063, 0.086), vec3(0.063, 0.133, 0.169), vec3(0.094, 0.212, 0.263), vec3(0.137, 0.290, 0.341),
+    vec3(0.184, 0.376, 0.439), vec3(0.239, 0.431, 0.451), vec3(0.345, 0.525, 0.541), vec3(0.478, 0.639, 0.624),
+    vec3(0.639, 0.757, 0.722), vec3(0.784, 0.847, 0.812), vec3(0.847, 0.784, 0.659), vec3(0.910, 0.851, 0.722),
+    vec3(0.941, 0.902, 0.800), vec3(0.902, 0.725, 0.541), vec3(0.788, 0.561, 0.416), vec3(0.525, 0.659, 0.722),
+    vec3(0.663, 0.769, 0.812), vec3(0.812, 0.867, 0.890), vec3(0.933, 0.949, 0.941), vec3(0.725, 0.776, 0.776),
+    vec3(0.549, 0.608, 0.627), vec3(0.373, 0.435, 0.459), vec3(0.141, 0.157, 0.153), vec3(0.227, 0.247, 0.235),
+    vec3(0.353, 0.369, 0.341), vec3(0.482, 0.490, 0.447), vec3(0.722, 0.361, 0.235), vec3(0.878, 0.604, 0.322),
+    vec3(0.949, 0.824, 0.494), vec3(0.439, 0.165, 0.141), vec3(0.247, 0.353, 0.275), vec3(0.416, 0.541, 0.384),
+);
+
 // The ordered threshold on the internal texel, 0..1, centred in its bucket so a mid-way colour
 // dithers to a true 50/50 checker. The same rank set as bayer8_rank's display threshold.
 fn dp_threshold(px: vec2<i32>) -> f32 {
@@ -261,11 +314,14 @@ fn dp_dithered_colour(lin: vec3<f32>, th: f32) -> vec3<f32> {
 // has no heuristic left to be wrong. The ratio then snaps to eighths with dead zones at both ends
 // (fill patterns, not lone dots over a panel a shade above black).
 fn dp_pico8(lin: vec3<f32>, th: f32) -> vec3<f32> {
+    return dp_palette(lin, th, false);
+}
+fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool) -> vec3<f32> {
     let lab = dp_oklab(lin);
     var pl: array<vec3<f32>, 32>;
     var pk: array<vec3<f32>, 32>;
     for (var i = 0; i < 32; i = i + 1) {
-        pl[i] = display_decode(DP_PAL[i]);
+        pl[i] = display_decode(select(DP_PAL[i], DP_PASTEL[i], pastel));
         pk[i] = dp_oklab(pl[i]);
     }
     var best_i = 0;
@@ -293,7 +349,8 @@ fn dp_pico8(lin: vec3<f32>, th: f32) -> vec3<f32> {
     if (t < 0.09) { t = 0.0; }
     else if (t > 0.91) { t = 1.0; }
     else { t = round(t * 8.0) / 8.0; }
-    return select(DP_PAL[best_i], DP_PAL[best_j], th < t);
+    let i = select(best_i, best_j, th < t);
+    return select(DP_PAL[i], DP_PASTEL[i], pastel);
 }
 
 // The look's quantizer over the eye's tonemapped display-linear value; returns linear light for
@@ -303,6 +360,7 @@ fn dp_crush(lin: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
     var code = display_encode(lin);
     if (cr.look.x < 1.5) { code = dp_dithered_colour(lin, th); }
     else if (cr.look.x < 2.5) { code = dp_pico8(lin, th); }
+    else if (cr.look.x > 3.5) { code = dp_palette(lin, th, true); }
     return display_decode(code);
 }
 
@@ -346,7 +404,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // Explicit user camera/display reproduction. Identity by default; black stays black.
     c *= cr.display_grade.x * vec3(1.0 + 0.2 * cr.display_grade.z, 1.0, 1.0 - 0.2 * cr.display_grade.z);
     c = eye_range(c);
-    var m = aces(c); // filmic tonemap (the only one — blit is a pass-through)
+    var m = tonemap(c); // the display tonemap (the only one — blit is a pass-through)
     let display_luma = dot(m, vec3(0.2126, 0.7152, 0.0722));
     m = clamp(mix(vec3(display_luma), m, cr.display_grade.y), vec3(0.0), vec3(1.0));
     m = pow(m, vec3(1.0 / cr.display_grade.w));

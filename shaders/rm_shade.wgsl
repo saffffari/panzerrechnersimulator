@@ -296,6 +296,18 @@ fn rm_star_lattice(cell: vec3<i32>, seed: u32) -> f32 {
     h = rm_star_hash(h ^ bitcast<u32>(cell.z) * 0x85ebca6bu);
     return f32(rm_star_hash(h) >> 8u) * (1.0 / 16777216.0);
 }
+// The same lattice, share, magnitude law and irradiance as physical_environment.rs STAR_*.
+const RM_STAR_CELLS: f32 = 96.0;
+const RM_STAR_SHARE: f32 = 0.16;
+const RM_STAR_MAG_BRIGHTEST: f32 = -1.5;
+const RM_STAR_MAG_FAINTEST: f32 = 6.5;
+const RM_STAR_V0_IRRADIANCE: f32 = 3.6e-11;
+fn rm_star_irradiance(x: f32) -> f32 {
+    let lo = pow(10.0, 0.5 * RM_STAR_MAG_BRIGHTEST);
+    let hi = pow(10.0, 0.5 * RM_STAR_MAG_FAINTEST);
+    let magnitude = 2.0 * log(lo + clamp(x, 0.0, 1.0) * (hi - lo)) / log(10.0);
+    return RM_STAR_V0_IRRADIANCE * pow(10.0, -0.4 * magnitude);
+}
 fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
     let frame = fr.stars;
     if (frame.w <= 0.0 || dir.y <= 0.0) { return vec3(0.0); }
@@ -313,7 +325,7 @@ fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
     if (a.x >= a.y && a.x >= a.z) { uv = q.zy / a.x; face = select(1, 0, q.x > 0.0); }
     else if (a.y >= a.z) { uv = q.xz / a.y; face = select(3, 2, q.y > 0.0); }
     else { uv = q.xy / a.z; face = select(5, 4, q.z > 0.0); }
-    let grid = (uv * 0.5 + vec2(0.5)) * 96.0;
+    let grid = (uv * 0.5 + vec2(0.5)) * RM_STAR_CELLS;
     let home = vec2<i32>(floor(grid));
     var radiance = vec3(0.0);
     let t = tan(0.5 * fr.optic.y);
@@ -323,9 +335,9 @@ fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
             let cell = vec3<i32>(home + vec2(dx, dy), face);
             if (any(cell.xy < vec2(0)) || any(cell.xy > vec2(95))) { continue; }
             let h = rm_star_lattice(cell, 0x53544152u);
-            if (h < 0.986) { continue; }
+            if (h < 1.0 - RM_STAR_SHARE) { continue; }
             let centre = vec2(0.25) + 0.5 * vec2(rm_star_lattice(cell, 0x41520001u), rm_star_lattice(cell, 0x41520002u));
-            let suv = (vec2<f32>(cell.xy) + centre) / 96.0 * 2.0 - vec2(1.0);
+            let suv = (vec2<f32>(cell.xy) + centre) / RM_STAR_CELLS * 2.0 - vec2(1.0);
             // Back to the celestial direction on this face (the inverse of the face pick above),
             // then to the world.
             var c = vec3(0.0);
@@ -344,12 +356,10 @@ fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
             let ndc = clip.xy / clip.w;
             let at = vec2<i32>(floor(vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * fr.res.xy));
             if (any(at != pixel)) { continue; }
-            // The lattice star's flux: its Gaussian's peak times its area, over the cell's solid angle.
-            let x = (h - 0.986) / 0.014;
-            let peak = 0.000003 + 0.000012 * x * x * x * x;
-            let cell_sr = (2.0 / 96.0) * (2.0 / 96.0) / pow(1.0 + dot(suv, suv), 1.5);
-            let irradiance = peak * (RM_PI * 0.14 * 0.14 * 0.5) * cell_sr * frame.w;
-            let tint = mix(vec3(0.65, 0.80, 1.0), vec3(1.0, 0.77, 0.55), rm_star_lattice(cell, 0x41520003u));
+            // The star's irradiance from its magnitude; its whole flux lands in this one pixel.
+            let irradiance = rm_star_irradiance((h - (1.0 - RM_STAR_SHARE)) / RM_STAR_SHARE) * frame.w;
+            var tint = mix(vec3(0.93, 0.97, 1.0), vec3(1.0, 0.97, 0.92), rm_star_lattice(cell, 0x41520003u));
+            tint = tint / tint.y;
             let pixel_sr = pow(2.0 * t / fr.res.y, 2.0) * pow(max(dot(w, forward), 0.05), 3.0);
             let elevation = degrees(asin(clamp(w.y, 0.0, 1.0)));
             let airmass = 1.0 / (w.y + 0.50572 * pow(elevation + 6.07995, -1.6364));

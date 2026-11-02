@@ -1012,18 +1012,30 @@ impl Ui {
         (self.images.len() - 1) as u32
     }
 
-    /// Retain a live texture view with the ordinary linear-clamp image sampler: the top-down
-    /// paper overlays draw the retained page and sheet ink this way at display resolution.
+    /// Retain a live texture view sampled nearest: the top-down paper overlays draw the retained
+    /// page and sheet ink this way, one texel per pixel of the internal grid (two at zoom).
     pub fn import_image_view(&mut self, device: &wgpu::Device, view: &wgpu::TextureView) -> u32 {
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("paper-image-bind"), layout: &self.img_bgl,
+        self.import_nearest_image_view(device, view)
+    }
+
+    /// As `upload_image`, sampled nearest (the pixel book's plates).
+    pub fn upload_image_nearest(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, rgba: &[u8], w: u32, h: u32) -> u32 {
+        let handle = self.upload_image(device, queue, rgba, w, h);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("paper-image-nearest"),
+            mag_filter: wgpu::FilterMode::Nearest, min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest, ..Default::default()
+        });
+        let tex = self.images[handle as usize]._tex.as_ref().expect("an uploaded image holds its texture");
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.images[handle as usize].bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("paper-image-nearest-bind"), layout: &self.img_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.img_sampler) },
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
             ],
         });
-        self.images.push(ImageTex { bind, _tex: None, _imported_view: Some(view.clone()) });
-        (self.images.len() - 1) as u32
+        handle
     }
 
     /// Queue an image quad. `x,y,w,h` are normalized [0,1] with the origin top-left; `color` tints

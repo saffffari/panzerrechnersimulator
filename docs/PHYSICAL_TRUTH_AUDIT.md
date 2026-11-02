@@ -2836,3 +2836,71 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   paper held up to the player's eye outside the image, as the map's HUD words already are. The
   debt is that the paper's brightness does not follow the cabin's real light; that is the
   scalar above, and the gate keeps the lit book.
+- **Since the same night, on the pixel grid.** The owner found the display-resolution book too
+  fine for the game ("adjust the information and text and font and drawing lines to fit the
+  pixel size, not the other way around"). The overlays are now ink on the internal grid
+  (`Renderer::request_pixel_ink`, flushed over the crushed frame before the blit, so they are
+  upscaled with the frame's own pixels): the page and sheet textures are exactly the internal
+  pixels they cover (`repair_manual::overlay_page_pixels`, `order_receipt_render::sheet_pixels`,
+  nearest-sampled), the type is the 5 x 7 pixel face (`pixel_font::draw_at`, titles two dots),
+  the rules and the schematics' pen one pixel, the plates re-baked for pixel line weights and
+  thresholded to solid pixels (`tools/bake_manual_plates_px.py`, `assets/manual/plates/px<W>/`),
+  the spine two hard lines, the shadows hard offsets, the page 1.25:1 (taller than A5 landscape,
+  the owner's "a bit taller"), zoom two pixels per texel. The rest of this entry stands.
+
+### The sky's month, discs, stars and the eye's night — 2 November 2026 (`docs/SKY_NIGHT_20261102.md`)
+
+- **The Moon's month is ten days** (`celestial_sky::SkyClock::moon_cycle_days`,
+  `KESSEL_MOON_CYCLE_DAYS`; 29.530589 restores the ephemeris exactly): the Moon's geometric
+  position is evaluated at the act clock's start plus the elapsed time scaled so that the
+  elongation from the Sun completes a cycle in ten of the act's days (by the mean motions, 2.9
+  times faster). Its phase, rising, setting, distance and illuminance stay consistent with each
+  other and with the Sun; only the month is shorter, as the day already is (`KESSEL_DAY_CYCLE_SCALE`).
+  A named approximation of the day cycle's kind, tested against the real ephemeris at the real month.
+- **The discs are 1.6 times their angular size** (`celestial_sky::DISC_DISPLAY_SCALE`,
+  `KESSEL_DISC_SCALE`; 1 is the real sky): the irradiance is untouched, so the light on the ground
+  and the disc's total light are unchanged, the disc's radiance falls by the square of the scale
+  and the penumbrae widen with it. A presentation choice.
+- **The stars have the real sky's population** (`physical_environment::STAR_*`): a star in 16 %
+  of the lattice's 55,296 cells, about 8,800 to magnitude 6.5, the count brighter than m rising as
+  10^(0.5 m) (the real slope), each star's irradiance from its magnitude (V = 0 is 3.6e-11
+  W m^-2 nm^-1 at 550 nm), drawn into one internal pixel by the raymarch pass as before. A seeded
+  distribution with the real population, not a surveyed catalogue: the constellations are not the
+  sky's. The CPU reference, the sky shader and the shade pass carry the same constants.
+- **The eye's pigments run at the clock's rate** (`Renderer::pigment_rate`, `observer::Eye::step_at`,
+  `exposure.wgsl` pigment_rate): with the day cycle on, the slow bleaching and regeneration of the
+  cone and rod pigments advance at the sky clock's rate over real time (clamped 1 to 60; 1 with
+  the cycle off), so a night of thirty play minutes is not spent in the cone plateau while rods
+  that need forty real minutes recover: the crewman at midnight is as adapted as a real crewman at
+  midnight. The pupil, the neural gains and the flash memory keep real time. A reproduction
+  choice that changes no light; the baseline showed the fully adapted night blue-grey and the
+  moonlit night bright, so the black the owner saw was the unadapted eye.
+- **The night's hue is deeper outdoors** (`observer::ROD_DISPLAY_HUE`, 0.675/1.022/1.738,
+  luminance-neutral) and **the cabin keeps its hue** (`observer::CABIN_ROD_DISPLAY_HUE`, the former
+  0.80/1.00/1.45; `crush.wgsl` mixes the two by the buttoned-up view's eye_range_strength as it
+  does the rod gain), so the interior's look is untouched; the interior stills' photometry before
+  and after is in the sky note.
+- **The display tonemap is AgX** (`crush.wgsl` `agx`, `tonemap`; `KESSEL_TONEMAP=aces` keeps the
+  former fit): Sobotka's AgX in its minimal form (the inset, a 16.5-stop log2 encoding, the
+  sigmoid, the outset, the 2.2 decode), chosen because bright colours desaturate toward white
+  instead of skewing hue, which is what the owner's "oversaturated, deep fried" sunset was: the
+  ACES fit turning the orange of a three-band sunset yellow. A reproduction transform like the fit
+  it replaces; it changes no light. The CPU reference `observer::aces` stays as the mapping's
+  monotonic reference in the tests.
+- **The aerosol is a winter continental background** (`AtmosphereParameters::default`:
+  Mie scattering 6.0e-5 and extinction 6.667e-5 per metre at sea level over the 1,200 m scale
+  height, optical depth about 0.08 at 550 nm, single-scattering albedo 0.9): AERONET continental
+  winter climatologies run 0.05 to 0.10, and the cauldron's smoke adds; Bruneton's 0.005 was a
+  clear mountain sky, under which the three-band sunset was the saturated orange of a
+  monochromatic transmittance. A sourced estimate, not a measurement of the day.
+- **The pastel palette** (`KESSEL_LOOK=deltap-pastel`, `crush.wgsl` `DP_PASTEL`, mode 4): thirty-two
+  display-sRGB entries authored for the owner's taste (green-blues and teals, creams, two warm
+  dawn tones, snow, steel, fire), dithered by the look's OKLab best-pair search as the PICO-8 mode
+  is. A recording-medium choice in the sense of the look's other modes: it discards tonal
+  precision and never adds light.
+- **Ozone is band-averaged** (`AtmosphereParameters::default`: 1.311e-6, 1.881e-6, 0.228e-6 per
+  metre for the red, green and blue bands): the Chappuis absorption averaged over each band's
+  width in place of Bruneton's point samples at 680, 550 and 440 nm (0.650, 1.881, 0.085 e-6).
+  The point samples absorbed the green band three times more than the red through the long
+  twilight paths and painted the civil twilight magenta; the averages keep it blue-grey. The
+  three-band model's own approximation, stated; the illuminance gates still pass.

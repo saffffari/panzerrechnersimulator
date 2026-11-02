@@ -13752,6 +13752,10 @@ impl WindowState {
         self.prepare_map_view();
         self.game.prepare_repair_manual(&mut self.renderer, &self.device, &self.queue, self.menu_pointer);
         self.game.prepare_order_receipt(&mut self.renderer, &self.device, &self.queue);
+        // The paper overlays are ink on the internal grid: queued now, flushed over the crushed
+        // frame before the blit (`Renderer::request_pixel_ink`).
+        self.renderer.ui_reset();
+        self.draw_paper_overlays();
         let saved_far = self.renderer.camera.zfar;
         if self.game.protected_main_interior_view() {
             self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
@@ -13859,7 +13863,6 @@ impl WindowState {
         self.renderer.ui_reset();
         self.draw_expedition_save_notice();
         self.draw_compound_hud(0.5); // STÜTZPUNKT capture bar (no-op outside the Koop mission)
-        self.draw_paper_overlays();
         // Platoon radio: the typed line and the wingmen's replies, display-resolution text outside
         // the crush like the menus (the one place play carries words, by the mode's design).
         {
@@ -14086,15 +14089,14 @@ impl WindowState {
         if !repair_manual::overlay_mode() || self.show_map {
             return;
         }
-        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
         let light = self.game.reading_light();
         if self.game.repair_manual.held {
-            repair_manual::draw_manual_overlay(&mut self.renderer, &self.game.repair_manual, aspect, light);
+            repair_manual::draw_manual_overlay(&mut self.renderer, &self.game.repair_manual, light);
         }
         let rise = self.game.order_sheet_rise();
         if rise > 0.0 && self.game.order_sheet_in_hand() {
             if let Some([_, hand]) = self.renderer.order_sheet_images() {
-                renderer::draw_order_sheet_overlay(&mut self.renderer, hand, rise, light, aspect);
+                renderer::draw_order_sheet_overlay(&mut self.renderer, hand, rise, light);
             }
         }
     }
@@ -15492,9 +15494,9 @@ impl ApplicationHandler for App {
                             state.game.repair_manual.turn(-1);
                         }
                         KeyCode::Equal | KeyCode::NumpadAdd if state.game.repair_manual.held => {
-                            let aspect = state.config.width as f32 / state.config.height.max(1) as f32;
+                            let grid = (state.renderer.iw, state.renderer.ih);
                             if let Some(uv) = state.menu_pointer.and_then(|pointer|
-                                repair_manual::pointer_uv(&state.renderer.camera, aspect, pointer, &state.game.repair_manual)) {
+                                repair_manual::pointer_uv(&state.renderer.camera, grid, pointer, &state.game.repair_manual)) {
                                 state.game.repair_manual.focus(uv);
                             }
                             state.game.repair_manual.zoom_by(1.0);
@@ -15809,8 +15811,8 @@ impl ApplicationHandler for App {
                 if state.game.repair_manual.held {
                     if btn.is_pressed() && button == winit::event::MouseButton::Left {
                         if let Some(pointer) = state.menu_pointer {
-                            let aspect = state.config.width as f32 / state.config.height.max(1) as f32;
-                            state.game.repair_manual_click(&state.renderer.camera, aspect, pointer);
+                            let grid = (state.renderer.iw, state.renderer.ih);
+                            state.game.repair_manual_click(&state.renderer.camera, grid, pointer);
                         }
                     }
                     self.keys = Keys::default();

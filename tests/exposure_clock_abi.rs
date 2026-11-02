@@ -1,6 +1,7 @@
 //! Regression for the eye's clock uniform ABI and its meter contract.
 //!
-//! The source-qualified flash lane expands the clock to eight scalar lanes. Explicit scalar
+//! The source-qualified flash lane expanded the clock to eight scalar lanes; the eye's pigment
+//! rate (2 November 2026) to twelve (48 bytes, the uniform's 16-byte stride). Explicit scalar
 //! padding avoids the implicit vec3 alignment which previously mismatched host uploads.
 
 const EXPOSURE_WGSL: &str = include_str!("../shaders/exposure.wgsl");
@@ -26,7 +27,7 @@ fn composed() -> String {
 }
 
 #[test]
-fn exposure_clock_shader_span_matches_the_32_byte_host_upload() {
+fn exposure_clock_shader_span_matches_the_48_byte_host_upload() {
     let source = composed();
     let module = wgpu::naga::front::wgsl::parse_str(&source)
         .unwrap_or_else(|error| panic!("exposure WGSL parse failed: {error}"));
@@ -49,15 +50,15 @@ fn exposure_clock_shader_span_matches_the_32_byte_host_upload() {
         ref other => panic!("ExposureClock must remain a struct, got {other:?}"),
     };
     assert_eq!(
-        span, 32,
-        "shader clock must match the eight-float Rust upload"
+        span, 48,
+        "shader clock must match the twelve-float Rust upload"
     );
 
     let compact: String = RENDERER_RS.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(compact.contains(
         "constEXPOSURE_CLOCK_UNIFORM_BYTES:u64=std::mem::size_of::<ExposureClockUniform>()asu64;"
     ));
-    assert!(compact.contains("const_:[();32]=[();EXPOSURE_CLOCK_UNIFORM_BYTESasusize];"));
+    assert!(compact.contains("const_:[();48]=[();EXPOSURE_CLOCK_UNIFORM_BYTESasusize];"));
     assert!(
         compact.contains("min_binding_size:wgpu::BufferSize::new(EXPOSURE_CLOCK_UNIFORM_BYTES)")
     );

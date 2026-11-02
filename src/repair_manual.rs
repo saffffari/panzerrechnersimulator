@@ -34,9 +34,19 @@ pub const RED: [f32; 4] = [0.78, 0.17, 0.10, 1.];
 pub const PAPER: [f32; 4] = [0.90, 0.87, 0.76, 1.];
 const FADED: [f32; 4] = [0.40, 0.37, 0.32, 1.];
 const PRINT_STROKE: f32 = 0.0022;
+thread_local! {
+    /// The schematics' pen for the page being painted: the print stroke on the 2048-wide page,
+    /// one pixel on the pixel book's page (`draw_page_pixel`).
+    static STROKE: std::cell::Cell<f32> = const { std::cell::Cell::new(PRINT_STROKE) };
+}
+fn stroke() -> f32 {
+    STROKE.with(|s| s.get())
+}
 /// The plates the pages name, baked from the owner's Tiger CAD by tools/bake_manual_plates.py
 /// into `assets/manual/plates/<name>.png` under the asset root (not committed).
 pub const PLATE_NAMES: [&str; 7] = ["engine_iso", "engine_fan_drive_red", "drivetrain_iso", "transmission_red", "fuel_red", "running_gear_side", "drivetrain_exploded"];
+/// The widths the pixel plates are baked at (`tools/bake_manual_plates_px.py`).
+pub const PLATE_PIXEL_WIDTHS: [u32; 6] = [96, 128, 160, 192, 224, 256];
 
 /// The top-down reading overlay (2 November 2026, the owner's pick over the physical book at
 /// the crush resolution): the open book drawn flat at display resolution over the crushed
@@ -49,48 +59,70 @@ pub fn overlay_mode() -> bool {
 }
 /// The chapter tabs down the fore-edge: the label and the spread each opens.
 pub const CHAPTER_TABS: [(&str, u8); 6] = [("BOOK", 0), ("TRACK", 1), ("PARTS", 8), ("CREW", 12), ("WINCH", 14), ("FIRE", 15)];
-/// The open spread spans this much of the frame's width at zoom 1, or at most this much of
-/// its height on a tall display.
-const OVERLAY_SPREAD_WIDTH: f32 = 0.80;
-const OVERLAY_MAX_HEIGHT: f32 = 0.84;
-const PAGE_ASPECT: f32 = PAGE_WIDTH / PAGE_HEIGHT;
+/// The pixel book: the open spread spans this share of the internal grid's width at zoom 1 and
+/// at most this share of its height; the page is this much wider than tall (the owner, 2
+/// November 2026: "a bit taller", less empty paper than the A5 landscape's 1.42).
+pub const OVERLAY_SPREAD_SHARE: f32 = 0.80;
+pub const OVERLAY_MAX_HEIGHT_SHARE: f32 = 0.86;
+pub const PIXEL_PAGE_ASPECT: f32 = 1.25;
 
-/// Where the overlay book lies on the display (normalized, origin top-left; `aspect` is the
-/// display's width over height).
+/// The page texture of the pixel book: exactly the internal pixels one page covers at zoom 1.
+pub fn overlay_page_pixels(grid: (u32, u32)) -> (u32, u32) {
+    let (iw, ih) = (grid.0.max(64) as f32, grid.1.max(64) as f32);
+    let mut pw = (OVERLAY_SPREAD_SHARE * iw * 0.5).round();
+    let mut ph = (pw / PIXEL_PAGE_ASPECT).round();
+    if ph > (OVERLAY_MAX_HEIGHT_SHARE * ih).floor() {
+        ph = (OVERLAY_MAX_HEIGHT_SHARE * ih).floor();
+        pw = (ph * PIXEL_PAGE_ASPECT).round();
+    }
+    (pw.max(64.0) as u32, ph.max(48.0) as u32)
+}
+
+/// Where the overlay book lies: in internal pixels (`px`, origin top-left) and the same as
+/// normalized rectangles of the frame (the display's pointer is normalized the same way, the
+/// blit keeping the whole grid).
 #[derive(Clone, Copy, Debug)]
 pub struct OverlayLayout {
-    /// The spread, both pages: x, y, w, h.
+    /// The spread, both pages, in internal pixels: x, y, w, h.
+    pub px: [i32; 4],
+    /// The pixel unit of the trim: 1 on a 360-line grid, 2 on 576.
+    pub unit: i32,
+    /// The zoom level drawn: 1, or 2 pixels per texel.
+    pub zoom: i32,
+    /// The spread, normalized: x, y, w, h.
     pub spread: [f32; 4],
     pub page_w: f32,
     pub page_h: f32,
-    /// One tab per chapter, x, y, w, h, down the right fore-edge.
+    /// One tab per chapter, normalized x, y, w, h, down the right fore-edge.
     pub tabs: [[f32; 4]; CHAPTER_TABS.len()],
+    /// The same tabs in internal pixels.
+    pub tabs_px: [[i32; 4]; CHAPTER_TABS.len()],
 }
 
-pub fn overlay_layout(aspect: f32, state: &ManualState) -> OverlayLayout {
-    let aspect = if aspect.is_finite() && aspect > 0.1 { aspect } else { 16.0 / 9.0 };
-    // Two landscape pages side by side, fitted to the width, else to the height.
-    let mut w1 = OVERLAY_SPREAD_WIDTH;
-    let mut h1 = w1 * aspect / (2.0 * PAGE_ASPECT);
-    if h1 > OVERLAY_MAX_HEIGHT {
-        h1 = OVERLAY_MAX_HEIGHT;
-        w1 = h1 * 2.0 * PAGE_ASPECT / aspect;
-    }
+pub fn overlay_layout(grid: (u32, u32), state: &ManualState) -> OverlayLayout {
+    let (iw, ih) = (grid.0.max(64) as i32, grid.1.max(64) as i32);
+    let (pw, ph) = overlay_page_pixels(grid);
+    let (pw, ph) = (pw as i32, ph as i32);
+    let zoom = if state.zoom >= 1.5 { 2 } else { 1 };
+    let (w, h) = (2 * pw * zoom, ph * zoom);
     // Zoom about the focus: the focused point of the spread stays where it was at zoom 1.
-    let (x1, y1) = (0.5 - w1 * 0.5, 0.5 - h1 * 0.5);
-    let z = state.zoom.clamp(1.0, MAX_ZOOM);
-    let (w, h) = (w1 * z, h1 * z);
-    let x = x1 + state.focus.x * w1 * (1.0 - z);
-    let y = y1 + state.focus.y * h1 * (1.0 - z);
-    let (page_w, page_h) = (w * 0.5, h);
-    let tab_w = 0.17 * page_h / aspect;
-    let tab_h = 0.105 * page_h;
-    let gap = 0.03 * page_h;
-    let mut tabs = [[0.0; 4]; CHAPTER_TABS.len()];
-    for (i, tab) in tabs.iter_mut().enumerate() {
-        *tab = [x + w, y + 0.09 * page_h + i as f32 * (tab_h + gap), tab_w, tab_h];
+    let (x1, y1) = ((iw - 2 * pw) / 2, (ih - ph) / 2);
+    let x = x1 + (state.focus.x * (2 * pw) as f32 * (1 - zoom) as f32).round() as i32;
+    let y = y1 + (state.focus.y * ph as f32 * (1 - zoom) as f32).round() as i32;
+    let unit = ((ih as f32 / 360.0).round() as i32).max(1);
+    let (tw, th, gap) = (46 * unit, 14 * unit, 3 * unit);
+    // The book and its tabs are centred together, so the tabs stay on the frame.
+    let x = x - (tw + 6 * unit) / 2;
+    let mut tabs_px = [[0; 4]; CHAPTER_TABS.len()];
+    for (i, tab) in tabs_px.iter_mut().enumerate() {
+        *tab = [x + w, y + 10 * unit + i as i32 * (th + gap), tw, th];
     }
-    OverlayLayout { spread: [x, y, w, h], page_w, page_h, tabs }
+    let norm = |r: [i32; 4]| [r[0] as f32 / iw as f32, r[1] as f32 / ih as f32, r[2] as f32 / iw as f32, r[3] as f32 / ih as f32];
+    let spread = norm([x, y, w, h]);
+    OverlayLayout {
+        px: [x, y, w, h], unit, zoom, spread, page_w: spread[2] * 0.5, page_h: spread[3],
+        tabs: tabs_px.map(norm), tabs_px,
+    }
 }
 
 /// What a pointer on the overlay meets.
@@ -102,34 +134,34 @@ pub enum OverlayHit {
     Tab(u8),
 }
 
-pub fn overlay_hit(aspect: f32, state: &ManualState, pointer: Vec2) -> Option<OverlayHit> {
+pub fn overlay_hit(grid: (u32, u32), state: &ManualState, pointer: Vec2) -> Option<OverlayHit> {
     if !state.held || !pointer.is_finite() {
         return None;
     }
-    let lay = overlay_layout(aspect, state);
+    let lay = overlay_layout(grid, state);
     for ((_, target), [tx, ty, tw, th]) in CHAPTER_TABS.iter().zip(lay.tabs) {
         if pointer.x >= tx && pointer.x <= tx + tw && pointer.y >= ty && pointer.y <= ty + th {
             return Some(OverlayHit::Tab(*target));
         }
     }
-    overlay_uv(aspect, state, pointer).map(OverlayHit::Page)
+    overlay_uv(grid, state, pointer).map(OverlayHit::Page)
 }
 
 /// The spread uv under a display pointer, when it is on the pages.
-pub fn overlay_uv(aspect: f32, state: &ManualState, pointer: Vec2) -> Option<Vec2> {
+pub fn overlay_uv(grid: (u32, u32), state: &ManualState, pointer: Vec2) -> Option<Vec2> {
     if !state.held || !pointer.is_finite() {
         return None;
     }
-    let [x, y, w, h] = overlay_layout(aspect, state).spread;
+    let [x, y, w, h] = overlay_layout(grid, state).spread;
     let uv = Vec2::new((pointer.x - x) / w, (pointer.y - y) / h);
     (uv.min_element() >= 0.0 && uv.max_element() <= 1.0).then_some(uv)
 }
 
 /// The page point under the pointer in whichever presentation is live: the overlay's pages or
 /// the physical book's (`book_uv`).
-pub fn pointer_uv(camera: &Camera, aspect: f32, pointer: Vec2, state: &ManualState) -> Option<Vec2> {
+pub fn pointer_uv(camera: &Camera, grid: (u32, u32), pointer: Vec2, state: &ManualState) -> Option<Vec2> {
     if overlay_mode() {
-        overlay_uv(aspect, state, pointer)
+        overlay_uv(grid, state, pointer)
     } else {
         book_uv(camera, pointer, state)
     }
@@ -140,64 +172,71 @@ pub fn chapter_of(spread: u8) -> usize {
     CHAPTER_TABS.iter().rposition(|(_, first)| *first <= spread).unwrap_or(0)
 }
 
-/// Draw the open book flat over the frame from its retained page ink: the boards, the pages,
-/// the gutter's shade, the turning leaf, the ribbon and the chapter tabs. `light` scales the
+/// Draw the open book flat over the crushed frame on its own pixel grid: the boards two units
+/// wide, the pages one texel per pixel (two at zoom), hard spine lines, a hard offset shadow,
+/// the turning leaf, the ribbon and the chapter tabs in the pixel face. `light` scales the
 /// paper: the overlay is not lit by the scene, so this is a named reading-light scalar
-/// (docs/PHYSICAL_TRUTH_AUDIT.md).
-pub fn draw_manual_overlay(r: &mut Renderer, state: &ManualState, aspect: f32, light: f32) {
-    use crate::ui::FACE_MANUAL_BOLD;
+/// (docs/PHYSICAL_TRUTH_AUDIT.md). The ink is flushed before the blit (`request_pixel_ink`).
+pub fn draw_manual_overlay(r: &mut Renderer, state: &ManualState, light: f32) {
     let Some(images) = r.manual_page_images() else { return };
     if !state.held {
         return;
     }
+    let grid = (r.iw, r.ih);
+    let (iw, ih) = (grid.0.max(64) as f32, grid.1.max(64) as f32);
     let light = light.clamp(0.0, 1.0);
     let lit = |c: [f32; 3], a: f32| [c[0] * light, c[1] * light, c[2] * light, a];
-    let aspect = if aspect.is_finite() && aspect > 0.1 { aspect } else { 16.0 / 9.0 };
-    let lay = overlay_layout(aspect, state);
-    let [x, y, w, h] = lay.spread;
-    let (pw, ph) = (lay.page_w, lay.page_h);
-    // The boards overhang the pages by 4 mm of the 148 mm page; the book's shadow on the desk.
-    let ov = 0.027 * ph;
-    r.fill_rect(x - ov / aspect + 0.012, y - ov + 0.018, w + 2.0 * ov / aspect, h + 2.0 * ov, [0.0, 0.0, 0.0, 0.42]);
-    r.fill_rect(x - ov / aspect, y - ov, w + 2.0 * ov / aspect, h + 2.0 * ov, lit([0.17, 0.20, 0.15], 1.0));
-    r.draw_image(images[0], x, y, pw, ph, lit([1.0, 1.0, 1.0], 1.0));
-    r.draw_image(images[1], x + pw, y, pw, ph, lit([1.0, 1.0, 1.0], 1.0));
-    // The gutter: the pages curve into the spine, so they shade toward it.
-    let bands = 7;
-    for k in 0..bands {
-        let sw = 0.012 * pw;
-        let a = 0.26 * (1.0 - k as f32 / bands as f32);
-        r.fill_rect(x + pw - sw * (k + 1) as f32, y, sw, ph, [0.0, 0.0, 0.0, a]);
-        r.fill_rect(x + pw + sw * k as f32, y, sw, ph, [0.0, 0.0, 0.0, a]);
-    }
+    let lay = overlay_layout(grid, state);
+    let [x, y, w, h] = lay.px;
+    let u = lay.unit;
+    let pw = w / 2;
+    let rect = |r: &mut Renderer, x: i32, y: i32, w: i32, h: i32, c: [f32; 4]| {
+        r.fill_rect(x as f32 / iw, y as f32 / ih, w as f32 / iw, h as f32 / ih, c);
+    };
+    let image = |r: &mut Renderer, handle: u32, x: i32, y: i32, w: i32, h: i32, c: [f32; 4]| {
+        r.draw_image(handle, x as f32 / iw, y as f32 / ih, w as f32 / iw, h as f32 / ih, c);
+    };
+    let board = [0.17, 0.20, 0.15];
+    // The hard shadow on the desk, the boards two units round the pages.
+    rect(r, x - 2 * u + 3 * u, y - 2 * u + 3 * u, w + 4 * u, h + 4 * u, [0.0, 0.0, 0.0, 0.5]);
+    rect(r, x - 2 * u, y - 2 * u, w + 4 * u, h + 4 * u, lit(board, 1.0));
+    image(r, images[0], x, y, pw, h, lit([1.0, 1.0, 1.0], 1.0));
+    image(r, images[1], x + pw, y, pw, h, lit([1.0, 1.0, 1.0], 1.0));
+    // The spine: two hard lines, no gradient.
+    rect(r, x + pw - u, y, 2 * u, h, [0.0, 0.0, 0.0, 0.45]);
+    rect(r, x + pw - 3 * u, y, 2 * u, h, [0.0, 0.0, 0.0, 0.14]);
+    rect(r, x + pw + u, y, 2 * u, h, [0.0, 0.0, 0.0, 0.14]);
     if let Some((over_right, width)) = state.overlay_leaf() {
-        // The leaf hinged at the spine: its width is the cosine of its angle, its shadow the sine.
-        let lw = pw * width;
+        // The leaf hinged at the spine: its width the cosine of its angle, a hard shadow beside
+        // its free edge as wide as the sine.
+        let lw = (pw as f32 * width).round() as i32;
         let s = (1.0 - width * width).max(0.0).sqrt();
+        let sh = (pw as f32 * 0.06 * s).round() as i32;
         let shade = 0.55 + 0.45 * width;
-        let sh = pw * 0.07 * s;
         if over_right {
-            r.fill_rect(x + pw + lw, y, sh, ph, [0.0, 0.0, 0.0, 0.35 * s]);
-            r.draw_image(images[2], x + pw, y, lw.max(1e-4), ph, lit([shade, shade, shade], 1.0));
+            rect(r, x + pw + lw, y, sh, h, [0.0, 0.0, 0.0, 0.4]);
+            image(r, images[2], x + pw, y, lw.max(1), h, lit([shade, shade, shade], 1.0));
         } else {
-            r.fill_rect(x + pw - lw - sh, y, sh, ph, [0.0, 0.0, 0.0, 0.35 * s]);
-            r.draw_image(images[3], x + pw - lw, y, lw.max(1e-4), ph, lit([shade, shade, shade], 1.0));
+            rect(r, x + pw - lw - sh, y, sh, h, [0.0, 0.0, 0.0, 0.4]);
+            image(r, images[3], x + pw - lw, y, lw.max(1), h, lit([shade, shade, shade], 1.0));
         }
     }
     if state.bookmark == Some(state.spread) {
         // The ribbon's tail out of the foot of the marked spread.
-        r.fill_rect(x + pw * 0.5 - 0.006 * pw, y + ph * 0.92, 0.012 * pw, ph * 0.17, lit([RED[0], RED[1], RED[2]], 1.0));
+        rect(r, x + pw / 2 - 2 * u, y + h - 6 * u, 4 * u, 22 * u, lit([RED[0], RED[1], RED[2]], 1.0));
     }
     let chapter = chapter_of(state.spread);
-    for (i, ((label, _), [tx, ty, tw, th])) in CHAPTER_TABS.iter().zip(lay.tabs).enumerate() {
+    for (i, ((label, _), [tx, ty, tw, th])) in CHAPTER_TABS.iter().zip(lay.tabs_px).enumerate() {
         let active = i == chapter;
-        let tw = if active { tw * 1.18 } else { tw };
-        r.fill_rect(tx + 0.004, ty + 0.006, tw, th, [0.0, 0.0, 0.0, 0.30]);
-        r.fill_rect(tx, ty, tw, th, lit(if active { [0.90, 0.87, 0.76] } else { [0.78, 0.74, 0.62] }, 1.0));
-        r.fill_rect(tx, ty, 0.004 * pw, th, [0.0, 0.0, 0.0, 0.18]);
+        let tw = if active { tw + 6 * u } else { tw };
+        rect(r, tx + 2 * u, ty + 2 * u, tw, th, [0.0, 0.0, 0.0, 0.4]);
+        rect(r, tx, ty, tw, th, lit(if active { [0.90, 0.87, 0.76] } else { [0.78, 0.74, 0.62] }, 1.0));
+        rect(r, tx, ty, u, th, [0.0, 0.0, 0.0, 0.2]);
         let ink = if active { RED } else { INK };
-        r.draw_text_face(label, tx + tw * 0.5, ty + th * 0.30, th * 0.40, lit([ink[0], ink[1], ink[2]], 1.0), Align::Center, FACE_MANUAL_BOLD);
+        let label_w = crate::pixel_font::width_px(label, u as u32) as i32;
+        crate::pixel_font::draw_at(r, label, tx + (tw - label_w) / 2, ty + (th - 7 * u) / 2, u as u32, lit([ink[0], ink[1], ink[2]], 1.0), grid);
     }
+    r.request_pixel_ink();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -217,9 +256,12 @@ pub struct ManualState {
     turn: Option<PageTurn>,
     zoom: f32,
     focus: Vec2,
-    /// The plates found under the asset root: name -> (image handle, width / height).
+    /// The plates found under the asset root: name -> (image handle, width, height in texels).
     #[serde(skip)]
-    plates: std::collections::HashMap<&'static str, (u32, f32)>,
+    plates: std::collections::HashMap<&'static str, (u32, u32, u32)>,
+    /// The pixel bake's width the plates were loaded at (0: the 1600-wide print plates).
+    #[serde(skip)]
+    plates_px: u32,
     #[serde(skip)]
     plates_loaded: bool,
     /// The right button held over the open book: the loupe is in the hand.
@@ -342,6 +384,7 @@ impl Default for ManualState {
             focus: Vec2::splat(0.5),
             plates: std::collections::HashMap::new(),
             plates_loaded: false,
+            plates_px: 0,
             loupe_wanted: false,
             loupe: None,
         }
@@ -350,30 +393,36 @@ impl Default for ManualState {
 
 impl ManualState {
     /// Load the plates once, when the book is first opened: a missing plate leaves its page on
-    /// the schematic and is named in the log; a present plate is uploaded as an ink image.
-    pub fn load_plates(&mut self, renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.plates_loaded {
+    /// the schematic and is named in the log; a present plate is uploaded as an ink image. With
+    /// `pixel_width` the pixel bakes (`tools/bake_manual_plates_px.py`, the widest at most that
+    /// wide) are loaded, nearest-sampled; without, the 1600-wide print plates.
+    pub fn load_plates(&mut self, renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue, pixel_width: Option<u32>) {
+        let px = pixel_width.map(|w| PLATE_PIXEL_WIDTHS.iter().copied().filter(|&p| p <= w).max().unwrap_or(PLATE_PIXEL_WIDTHS[0])).unwrap_or(0);
+        if self.plates_loaded && self.plates_px == px {
             return;
         }
         self.plates_loaded = true;
+        self.plates_px = px;
+        self.plates.clear();
         let mut found = Vec::new();
         for name in PLATE_NAMES {
-            let path = format!("assets/manual/plates/{name}.png");
+            let path = if px > 0 { format!("assets/manual/plates/px{px}/{name}.png") } else { format!("assets/manual/plates/{name}.png") };
             let Ok(bytes) = crate::resource::read(&path) else { continue };
             match image::load_from_memory(&bytes) {
                 Ok(img) => {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    let handle = renderer.upload_image(device, queue, rgba.as_raw(), w, h);
-                    self.plates.insert(name, (handle, w as f32 / h.max(1) as f32));
+                    let handle = if px > 0 { renderer.upload_image_nearest(device, queue, rgba.as_raw(), w, h) } else { renderer.upload_image(device, queue, rgba.as_raw(), w, h) };
+                    self.plates.insert(name, (handle, w, h));
                     found.push(name);
                 }
                 Err(error) => eprintln!("[manual] plate {path} unreadable: {error}"),
             }
         }
-        println!("[manual] plates: {} of {} present ({})", found.len(), PLATE_NAMES.len(), found.join(", "));
+        println!("[manual] plates{}: {} of {} present ({})", if px > 0 { format!(" at {px} px") } else { String::new() }, found.len(), PLATE_NAMES.len(), found.join(", "));
     }
-    pub fn plate(&self, name: &str) -> Option<(u32, f32)> {
+    /// A plate's image handle and its size in texels.
+    pub fn plate(&self, name: &str) -> Option<(u32, u32, u32)> {
         self.plates.get(name).copied()
     }
     pub fn spread(&self) -> u8 {
@@ -949,10 +998,10 @@ fn line(r: &mut Renderer, a: Vec2, b: Vec2, width: f32, color: [f32; 4]) {
     }
 }
 fn outline(r: &mut Renderer, x: f32, y: f32, w: f32, h: f32, c: [f32; 4]) {
-    r.fill_rect(x, y, w, PRINT_STROKE, c);
-    r.fill_rect(x, y + h, w, PRINT_STROKE, c);
-    r.fill_rect(x, y, PRINT_STROKE, h, c);
-    r.fill_rect(x + w, y, PRINT_STROKE, h, c);
+    r.fill_rect(x, y, w, stroke(), c);
+    r.fill_rect(x, y + h, w, stroke(), c);
+    r.fill_rect(x, y, stroke(), h, c);
+    r.fill_rect(x + w, y, stroke(), h, c);
 }
 fn circle(r: &mut Renderer, c: Vec2, radius: f32, color: [f32; 4]) {
     for n in 0..36 {
@@ -961,7 +1010,7 @@ fn circle(r: &mut Renderer, c: Vec2, radius: f32, color: [f32; 4]) {
             r,
             p(n as f32 * std::f32::consts::TAU / 36.),
             p((n + 1) as f32 * std::f32::consts::TAU / 36.),
-            PRINT_STROKE,
+            stroke(),
             color,
         );
     }
@@ -988,7 +1037,7 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
                     r,
                     Vec2::new(0.48, 0.58),
                     Vec2::new(0.48, 0.62),
-                    PRINT_STROKE,
+                    stroke(),
                     ink,
                 );
             }
@@ -1005,7 +1054,7 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
                 r,
                 Vec2::new(0.12, 0.625),
                 Vec2::new(0.88, 0.625),
-                PRINT_STROKE,
+                stroke(),
                 ink,
             );
             if matches!(kind, Drawing::Pin) {
@@ -1014,7 +1063,7 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
                     r,
                     Vec2::new(0.65, 0.57),
                     Vec2::new(0.70, 0.55),
-                    PRINT_STROKE,
+                    stroke(),
                     ink,
                 );
                 r.draw_text("PIN", 0.85, 0.54, 0.027, ink, Align::Center);
@@ -1031,14 +1080,14 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
                 r,
                 Vec2::new(0.32, 0.69),
                 Vec2::new(0.41, 0.69),
-                PRINT_STROKE,
+                stroke(),
                 ink,
             );
             line(
                 r,
                 Vec2::new(0.61, 0.69),
                 Vec2::new(0.70, 0.69),
-                PRINT_STROKE,
+                stroke(),
                 ink,
             );
         }
@@ -1050,7 +1099,7 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
                 r,
                 Vec2::new(0.52, 0.73),
                 Vec2::new(0.84, 0.73),
-                PRINT_STROKE,
+                stroke(),
                 ink,
             );
             for n in 0..3 {
@@ -1064,15 +1113,15 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
             line(r,Vec2::new(0.27,0.675),Vec2::new(0.60,0.675),0.009,ink);
             line(r,Vec2::new(0.60,0.675),Vec2::new(0.79,0.65),0.005,ink);
             line(r,Vec2::new(0.60,0.675),Vec2::new(0.79,0.70),0.005,ink);
-            for x in [0.15,0.85] {line(r,Vec2::new(x,0.725),Vec2::new(x,0.755),PRINT_STROKE,ink);}
+            for x in [0.15,0.85] {line(r,Vec2::new(x,0.725),Vec2::new(x,0.755),stroke(),ink);}
             r.draw_text("SAME PERSON / CONTINUING CARE",0.5,0.58,0.023,ink,Align::Center);
         }
         Drawing::Winch => {
             outline(r,0.12,0.66,0.15,0.08,ink);
             circle(r,Vec2::new(0.195,0.69),0.025,ink);
             outline(r,0.63,0.65,0.22,0.09,ink);
-            line(r,Vec2::new(0.27,0.685),Vec2::new(0.63,0.685),PRINT_STROKE,ink);
-            line(r,Vec2::new(0.27,0.71),Vec2::new(0.63,0.71),PRINT_STROKE,ink);
+            line(r,Vec2::new(0.27,0.685),Vec2::new(0.63,0.685),stroke(),ink);
+            line(r,Vec2::new(0.27,0.71),Vec2::new(0.63,0.71),stroke(),ink);
             line(r,Vec2::new(0.14,0.74),Vec2::new(0.09,0.76),0.006,ink);
             r.draw_text("ANCHOR / CABLE / TOW POINT",0.5,0.58,0.024,ink,Align::Center);
         }
@@ -1087,11 +1136,88 @@ fn diagram(r: &mut Renderer, kind: Drawing) {
     }
 }
 
+/// The page set for the pixel grid (the overlay book): the page texture is exactly the internal
+/// pixels the page covers, the type the 5 x 7 pixel face at one dot per pixel (the title two),
+/// the rules one pixel, the plates the pixel bakes drawn one texel per pixel, the schematics at
+/// a one-pixel pen. The choice rows keep the bands `click` reads.
+pub fn draw_page_pixel(r: &mut Renderer, page: u8, state: &ManualState, size: (u32, u32)) {
+    use crate::pixel_font::{draw_at, width_px};
+    let (pw, ph) = (size.0.max(64), size.1.max(48));
+    let (fw, fh) = (pw as f32, ph as f32);
+    let (ink, red, paper, faded) = (INK, RED, PAPER, FADED);
+    let right_hand = page % 2 == 1;
+    STROKE.with(|s| s.set(1.0 / fh));
+    r.fill_rect(0., 0., 1., 1., paper);
+    let p = page_definition(page);
+    let m: i32 = 8;
+    let (pwi, phi) = (pw as i32, ph as i32);
+    // The running head: the three controls, small and red.
+    draw_at(r, "INDEX", m, 3, 1, red, size);
+    let mark = if state.bookmark == Some(state.spread) { "MARKED" } else { "MARK" };
+    draw_at(r, mark, (pwi - width_px(mark, 1) as i32) / 2, 3, 1, red, size);
+    draw_at(r, "RIBBON", pwi - m - width_px("RIBBON", 1) as i32, 3, 1, red, size);
+    // The title in two-dot capitals, a red rule, the chapter in red.
+    draw_at(r, p.title, m, 13, 2, ink, size);
+    r.fill_rect(m as f32 / fw, 30.0 / fh, (pwi - 2 * m) as f32 / fw, 1.0 / fh, red);
+    draw_at(r, p.margin, m, 34, 1, red, size);
+    // The plate at the right when the asset root has it; the text in the column beside it.
+    let plate = p.plate.and_then(|name| state.plate(name)).filter(|(_, w, _)| (*w as i32) < pwi - 3 * m - 60);
+    let plate_w = plate.map_or(0, |(_, w, _)| w as i32);
+    let column = if plate.is_some() { pwi - 3 * m - plate_w } else { pwi - 2 * m };
+    let wrap = (column / 6).max(10) as usize;
+    let mut y = 46;
+    for (lead, text) in p.text {
+        if !lead.is_empty() {
+            draw_at(r, lead, m, y, 1, red, size);
+            y += 9;
+        }
+        for line in crate::ui::wrap_text(text, wrap) {
+            draw_at(r, &line, m, y, 1, ink, size);
+            y += 9;
+        }
+        y += 4;
+    }
+    let caption_y = |r: &mut Renderer, text: &str, cx: i32, y: i32| {
+        let w = width_px(text, 1) as i32;
+        draw_at(r, text, (cx - w / 2).clamp(m, pwi - m - w), y, 1, faded, size);
+    };
+    match plate {
+        Some((handle, w, h)) => {
+            let (w, h) = (w as i32, h as i32);
+            let x = pwi - m - w;
+            r.draw_image(handle, x as f32 / fw, 46.0 / fh, w as f32 / fw, h as f32 / fh, [1., 1., 1., 1.]);
+            caption_y(r, "1/35 KIT CAD", x + w / 2, 46 + h + 3);
+        }
+        None if y < (0.52 * fh) as i32 => {
+            // The schematic under the text at a one-pixel pen, when the text leaves it room.
+            diagram(r, p.drawing);
+            caption_y(r, "SCHEMATIC", pwi / 2, (0.785 * fh) as i32);
+        }
+        None => {}
+    }
+    // The diagnosis choices at the foot: the rows `click` reads (y 0.81 + n * 0.065, 0.052 tall).
+    for (index, choice) in p.choices.iter().enumerate() {
+        let y = ((0.81 + index as f32 * 0.065) * fh).round() as i32;
+        draw_at(r, ">", m, y + 3, 1, red, size);
+        draw_at(r, choice.label.trim_end_matches(['>', ' ']), m + 9, y + 3, 1, ink, size);
+        r.fill_rect(m as f32 / fw, (y + 13) as f32 / fh, 0.42, 1.0 / fh, faded);
+    }
+    // The folio at the outer corner; the turn marks at the foot where `click` turns the leaf.
+    let folio = (page + 1).to_string();
+    let fy = phi - 10;
+    let fx = if right_hand { pwi - m - width_px(&folio, 1) as i32 } else { m };
+    draw_at(r, &folio, fx, fy, 1, ink, size);
+    draw_at(r, "< PREV", (0.14 * fw) as i32, fy, 1, faded, size);
+    draw_at(r, "NEXT >", (0.86 * fw) as i32 - width_px("NEXT >", 1) as i32, fy, 1, faded, size);
+    STROKE.with(|s| s.set(PRINT_STROKE));
+}
+
 /// Queue print for one page's albedo. The renderer consumes it before any screen HUD.
 pub fn draw_page(r: &mut Renderer, page: u8, state: &ManualState) {
     use crate::ui::{FACE_MANUAL, FACE_MANUAL_BOLD};
     let (ink, red, paper, faded) = (INK, RED, PAPER, FADED);
     let right_hand = page % 2 == 1;
+    STROKE.with(|s| s.set(PRINT_STROKE));
     r.fill_rect(0., 0., 1., 1., paper);
     // The running head: the book's three controls, small and red, as the Fibel sets its folios.
     r.draw_text_face("INDEX", 0.05, 0.026, 0.015, red, Align::Left, FACE_MANUAL);
@@ -1128,8 +1254,9 @@ pub fn draw_page(r: &mut Renderer, page: u8, state: &ManualState) {
         }
     }
     match plate {
-        Some((handle, aspect)) => {
+        Some((handle, tw, th)) => {
             // The plate fills the right half, its proportions kept (the page is 1.414:1).
+            let aspect = tw as f32 / th.max(1) as f32;
             let w = 0.45;
             let h = (w * 1.414 / aspect).min(0.60);
             r.draw_image(handle, 0.51, 0.165, w, h, [1., 1., 1., 1.]);
@@ -1186,46 +1313,51 @@ mod tests {
     }
 
     #[test]
-    fn the_overlay_book_fits_the_frame_and_keeps_its_page_proportions() {
+    fn the_overlay_book_fits_the_grid_one_texel_per_pixel_and_keeps_its_page_proportions() {
         let mut book = ManualState::default();
         book.held = true;
-        for aspect in [16.0 / 9.0, 4.0 / 3.0, 21.0 / 9.0] {
-            let lay = overlay_layout(aspect, &book);
-            let [x, y, w, h] = lay.spread;
-            assert!(x >= 0.0 && y >= 0.0 && x + w <= 1.0 + 1e-5 && y + h <= 1.0 + 1e-5, "{aspect}: {:?}", lay.spread);
-            let page_aspect = lay.page_w * aspect / lay.page_h;
-            assert!((page_aspect - PAGE_ASPECT).abs() < 1e-4, "{aspect}: page aspect {page_aspect}");
-            assert!(w >= 0.5, "{aspect}: the spread spans the frame ({w})");
-            for [tx, ty, tw, th] in lay.tabs {
-                assert!(tx >= x + w - 1e-6 && tx + tw <= 1.0 + 0.05 && ty >= y && ty + th <= y + h, "tabs down the fore-edge");
+        for grid in [(1024u32, 576u32), (640, 360), (1280, 800), (1024, 432)] {
+            let lay = overlay_layout(grid, &book);
+            let [x, y, w, h] = lay.px;
+            let (pw, ph) = overlay_page_pixels(grid);
+            assert_eq!((w, h), (2 * pw as i32, ph as i32), "{grid:?}: one texel per pixel at zoom 1");
+            assert!(x >= 0 && y >= 0 && x + w <= grid.0 as i32 && y + h <= grid.1 as i32, "{grid:?}: {:?}", lay.px);
+            let page_aspect = pw as f32 / ph as f32;
+            assert!((page_aspect - PIXEL_PAGE_ASPECT).abs() < 0.02, "{grid:?}: page aspect {page_aspect}");
+            assert!(w as f32 >= 0.6 * grid.0 as f32, "{grid:?}: the spread spans the frame ({w})");
+            for [tx, ty, tw, th] in lay.tabs_px {
+                assert!(tx == x + w && ty >= y && ty + th <= y + h && tw > 0, "tabs down the fore-edge");
+                assert!(tx + tw + 6 * lay.unit <= grid.0 as i32, "{grid:?}: the tabs stay on the frame");
             }
+            assert_eq!(lay.unit, ((grid.1 as f32 / 360.0).round() as i32).max(1));
         }
-        // Zoom about the pointed point: it stays under the pointer.
-        let aspect = 16.0 / 9.0;
+        // Zoom about the pointed point: it stays under the pointer, two pixels per texel.
+        let grid = (1024, 576);
         let focus = Vec2::new(0.25, 0.45);
-        let at1 = overlay_layout(aspect, &book).spread;
+        let at1 = overlay_layout(grid, &book).spread;
         let p1 = Vec2::new(at1[0] + focus.x * at1[2], at1[1] + focus.y * at1[3]);
         book.focus(focus);
         book.zoom_by(4.0);
-        let at2 = overlay_layout(aspect, &book).spread;
+        let lay2 = overlay_layout(grid, &book);
+        let at2 = lay2.spread;
         let p2 = Vec2::new(at2[0] + focus.x * at2[2], at2[1] + focus.y * at2[3]);
-        assert!(p1.distance(p2) < 1e-4 && at2[2] > at1[2] * 1.5, "{p1} {p2} {at1:?} {at2:?}");
+        assert!(p1.distance(p2) < 1.5 / 576.0 && lay2.zoom == 2 && lay2.px[2] == 2 * overlay_layout(grid, &ManualState::default()).px[2], "{p1} {p2} {at1:?} {at2:?}");
     }
 
     #[test]
     fn tabs_open_their_chapters_and_the_leaf_narrows_to_the_spine() {
         let mut book = ManualState::default();
         book.held = true;
-        let aspect = 16.0 / 9.0;
-        let lay = overlay_layout(aspect, &book);
+        let grid = (1024, 576);
+        let lay = overlay_layout(grid, &book);
         let [tx, ty, tw, th] = lay.tabs[1];
-        assert_eq!(overlay_hit(aspect, &book, Vec2::new(tx + tw * 0.5, ty + th * 0.5)), Some(OverlayHit::Tab(1)));
+        assert_eq!(overlay_hit(grid, &book, Vec2::new(tx + tw * 0.5, ty + th * 0.5)), Some(OverlayHit::Tab(1)));
         let [x, y, w, h] = lay.spread;
-        match overlay_hit(aspect, &book, Vec2::new(x + w * 0.75, y + h * 0.5)) {
+        match overlay_hit(grid, &book, Vec2::new(x + w * 0.75, y + h * 0.5)) {
             Some(OverlayHit::Page(uv)) => assert!((uv - Vec2::new(0.75, 0.5)).length() < 1e-5, "{uv}"),
             other => panic!("{other:?}"),
         }
-        assert_eq!(overlay_hit(aspect, &book, Vec2::new(0.01, 0.01)), None);
+        assert_eq!(overlay_hit(grid, &book, Vec2::new(0.01, 0.01)), None);
         assert_eq!((chapter_of(8), chapter_of(13), chapter_of(15)), (2, 3, 5));
         assert!(book.open_spread(8));
         // The leaf starts over the right page a page wide, is edge-on at the spine midway,

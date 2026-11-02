@@ -110,3 +110,24 @@ over the crushed page (a perspective-warped quad, lit by the crushed frame's own
 depth-tested), the policy the HUD's words already use. It costs a second pass and a depth read,
 and it keeps the page tilted and small in the hands. The flat overlay reads better and is
 cheaper; the composite stays an option if the owner wants the page back in the hands.
+
+## The pixel book (2 November 2026, later that night)
+
+The owner on the display-resolution book: "too high res relative to game, the cover border is
+too thick; try it overlay but at game pixel res; adjust the information and text and font and
+drawing lines and line weights and sizes to fit the pixel size, not the other way around; a bit
+taller, we've got a lot of empty space; the shadow in the middle spine isn't working, too curved
+in a pixel world; the book should still read very much pixel style."
+
+So the book is now ink on the internal grid: `Renderer::request_pixel_ink` flushes the queued
+overlay over the crushed frame before the blit, and the frame's nearest upscale carries it. The
+page texture is exactly the internal pixels the page covers at zoom 1 (`overlay_page_pixels`:
+440 x 352 on the 1024 x 576 grid, pages 1.25:1), nearest-sampled; `draw_page_pixel` sets the page
+in the 5 x 7 pixel face (`pixel_font::draw_at`: the running head, leads, body and choices one dot
+per pixel, the title two), a one-pixel red rule, the plates from `tools/bake_manual_plates_px.py`
+(the works-drawing SVGs re-rasterised at 96 to 256 px with the pen widened to 1.4 px and
+thresholded to solid pixels, the widest that fits two fifths of the page) drawn one texel per
+pixel, the schematics at a one-pixel pen under the text when it leaves room; the boards two units
+wide, the spine two hard lines, a hard offset shadow, pixel tabs; the torn-off sheet the same way
+(`draw_receipt_pixel`, `sheet_pixels`, pixel teeth). Zoom is two pixels per texel about the pointer.
+`manual-overlay-review` renders the stills at 3840 x 2160 from the 1024 x 576 grid.

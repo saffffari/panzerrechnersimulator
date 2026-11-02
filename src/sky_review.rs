@@ -27,11 +27,14 @@ fn instant_at_sun_altitude(midnight: UtcInstant, site: Site, altitude_deg: f64, 
     };
     let noon = (0..24 * 60).map(|m| m as f64)
         .max_by(|a, b| altitude(*a).total_cmp(&altitude(*b))).unwrap_or(720.0);
-    let (mut lo, mut hi) = if rising { (noon - 12.0 * 60.0, noon) } else { (noon + 12.0 * 60.0, noon) };
+    // Bisection between the dark end and noon (rising) or noon and the dark end (setting): the
+    // bracket keeps `lo` on the dark side and `hi` on the bright side.
+    let (mut dark, mut bright) = if rising { (noon - 12.0 * 60.0, noon) } else { (noon + 12.0 * 60.0, noon) };
     for _ in 0..48 {
-        let mid = 0.5 * (lo + hi);
-        if (altitude(mid) > altitude_deg) == rising { hi = mid } else { lo = mid }
+        let mid = 0.5 * (dark + bright);
+        if altitude(mid) > altitude_deg { bright = mid } else { dark = mid }
     }
+    let (lo, hi) = (dark, bright);
     midnight.plus_seconds(0.5 * (lo + hi) * 60.0)
 }
 
@@ -69,16 +72,25 @@ struct Still<'a> {
 
 impl Still<'_> {
     fn take(&mut self, r: &mut Renderer, name: &str, note: &str) -> anyhow::Result<()> {
+        // KESSEL_SKY_REVIEW_STILLS=a,b,c takes only the named stills.
+        if let Ok(list) = std::env::var("KESSEL_SKY_REVIEW_STILLS") {
+            if !list.split(',').any(|n| n.trim() == name) { return Ok(()); }
+        }
         r.reset_history();
         let warmup = crate::converge_headless_screenshot(r, self.device, self.queue, 24)?;
         ensure!(warmup.stable, "{name}: the eye did not converge");
         let path = format!("{}_sky_{name}.png", self.prefix);
         r.render_to_png(self.device, self.queue, &path, r.iw * 3, r.ih * 3)?;
         let photometry = r.debug_frame_photometry(self.device, self.queue)?;
-        let shown = image::open(crate::capture_target(&path))?.to_rgba8();
+        // The renderer routes the still (a 3840-wide JPEG under KESSEL_CAPTURE_4K_JPG=1).
+        let written = {
+            let routed = crate::capture_target(&path);
+            if Path::new(&routed).exists() { routed } else { routed.replace(".png", ".jpg") }
+        };
+        let shown = image::open(&written).with_context(|| format!("the still {written} was not written"))?.to_rgba8();
         let state = r.celestial().state;
         let receipt = json!({
-            "still": name, "note": note, "file": path,
+            "still": name, "note": note, "file": written,
             "instant": state.instant.to_iso(),
             "sun_altitude_deg": state.sun.altitude_deg, "moon_altitude_deg": state.moon.altitude_deg,
             "moon_illuminated_fraction": state.moon_phase.illuminated_fraction, "moon_waxing": state.moon_phase.waxing,

@@ -30,11 +30,11 @@ impl Game {
     }
 
     /// A click on the open book: a chapter tab or a point of the pages on the overlay, or the
-    /// physical page under the pointer. `aspect` is the display's width over height.
-    pub fn repair_manual_click(&mut self, camera: &crate::camera::Camera, aspect: f32, pointer: Vec2) -> bool {
+    /// physical page under the pointer. `grid` is the internal pixel grid the overlay is drawn on.
+    pub fn repair_manual_click(&mut self, camera: &crate::camera::Camera, grid: (u32, u32), pointer: Vec2) -> bool {
         use crate::repair_manual::{book_uv, overlay_hit, overlay_mode, OverlayHit};
         let changed = if overlay_mode() {
-            match overlay_hit(aspect, &self.repair_manual, pointer) {
+            match overlay_hit(grid, &self.repair_manual, pointer) {
                 Some(OverlayHit::Tab(spread)) => self.repair_manual.open_spread(spread),
                 Some(OverlayHit::Page(uv)) => self.repair_manual.click(uv),
                 None => false,
@@ -66,7 +66,10 @@ impl Game {
         device: &wgpu::Device, queue: &wgpu::Queue, pointer: Option<Vec2>) {
         self.drive_repair_manual(renderer);
         if self.repair_manual.held {
-            self.repair_manual.load_plates(renderer, device, queue);
+            // The pixel book's plates: the widest bake that fits two fifths of the page.
+            let pixel_width = crate::repair_manual::overlay_mode()
+                .then(|| (crate::repair_manual::overlay_page_pixels((renderer.iw, renderer.ih)).0 as f32 * 0.40) as u32);
+            self.repair_manual.load_plates(renderer, device, queue, pixel_width);
         }
         // The loupe: over the physical page under the pointer while the right button is held.
         self.repair_manual.loupe = pointer

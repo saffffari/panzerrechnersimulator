@@ -26,15 +26,24 @@ pub(super) struct ReceiptSurface {
     view: wgpu::TextureView,
     material: Arc<wgpu::BindGroup>,
     last_ink: Option<u64>,
-    /// The same ink in the display-resolution image registry, for the top-down overlay.
+    /// The same ink in the image registry (nearest-sampled), for the top-down overlay.
     ui_handle: u32,
+    /// The texture's size: the print sheet, or the pixel sheet in internal pixels.
+    size: (u32, u32),
+}
+
+/// The pixel sheet: this share of the internal grid's width, 1.4:1 like the paper.
+pub const SHEET_OVERLAY_SHARE: f32 = 0.46;
+pub fn sheet_pixels(grid: (u32, u32)) -> (u32, u32) {
+    let w = (SHEET_OVERLAY_SHARE * grid.0.max(64) as f32).round().max(64.0);
+    (w as u32, (w / 1.4).round().max(48.0) as u32)
 }
 
 impl ReceiptSurface {
-    fn new(renderer: &mut super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue, label: &str) -> Self {
+    fn new(renderer: &mut super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue, label: &str, size: (u32, u32)) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
-            size: wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -56,42 +65,87 @@ impl ReceiptSurface {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&renderer.sampler) },
             ],
         }));
-        Self { view, material, last_ink: None, ui_handle }
+        Self { view, material, last_ink: None, ui_handle, size }
     }
 }
 
-/// The torn-off sheet read top-down: this much of the frame's height.
-const SHEET_OVERLAY_HEIGHT: f32 = 0.64;
+/// The teleprinter's print on the pixel sheet: the 5 x 7 pixel face, the title two dots, one-
+/// pixel rules, the lines re-wrapped to the sheet's width. Only `printed` lines carry ink.
+pub fn draw_receipt_pixel(r: &mut super::Renderer, ink: &ReceiptInk, size: (u32, u32)) {
+    use crate::pixel_font::{draw_at, width_px};
+    let (fw, fh) = (size.0.max(64) as f32, size.1.max(48) as f32);
+    let paper = [0.89, 0.87, 0.80, 1.0];
+    let black = [0.10, 0.10, 0.11, 1.0];
+    let faded = [0.32, 0.30, 0.27, 1.0];
+    r.fill_rect(0.0, 0.0, 1.0, 1.0, paper);
+    let m: i32 = 10;
+    let wrap = (((size.0 as i32 - 2 * m) / 6).max(10) as usize).min(RECEIPT_CHARS_PER_LINE);
+    let rule = |r: &mut super::Renderer, y: i32| r.fill_rect(m as f32 / fw, y as f32 / fh, (size.0 as i32 - 2 * m) as f32 / fw, 1.0 / fh, faded);
+    let mut y = 8;
+    let mut n = 0;
+    if ink.printed > n {
+        draw_at(r, ink.title, m, y, 2, black, size);
+        y += 18;
+    }
+    n += 1;
+    if ink.printed > n {
+        rule(r, y);
+        y += 4;
+        for line in crate::ui::wrap_text(ink.heading, wrap) { draw_at(r, &line, m, y, 1, faded, size); y += 9; }
+        rule(r, y + 1);
+        y += 6;
+    }
+    n += 1;
+    for line in ink.lines {
+        if ink.printed <= n { break; }
+        if line.is_empty() { y += 4; } else {
+            for part in crate::ui::wrap_text(line, wrap) { draw_at(r, &part, m, y, 1, black, size); y += 9; }
+        }
+        n += 1;
+    }
+    if ink.printed > ink.lines.len() + 1 {
+        let mark = "+ + +";
+        draw_at(r, mark, (size.0 as i32 - width_px(mark, 1) as i32) / 2, y + 4, 1, faded, size);
+    }
+}
 
-/// The torn-off sheet read top-down: its retained ink drawn flat at display resolution, risen
-/// from the foot of the frame by `rise` (0 to 1), its two torn edges ragged, the paper scaled
-/// by the reading light at hand (the overlay is not lit by the scene; a named scalar,
-/// docs/PHYSICAL_TRUTH_AUDIT.md). `aspect` is the display's width over height.
-pub fn draw_order_sheet_overlay(r: &mut super::Renderer, handle: u32, rise: f32, light: f32, aspect: f32) {
-    let aspect = if aspect.is_finite() && aspect > 0.1 { aspect } else { 16.0 / 9.0 };
+/// The torn-off sheet read top-down on the pixel grid: its retained ink one texel per pixel,
+/// risen from the foot of the frame by `rise` (0 to 1), a hard offset shadow, its two torn
+/// edges as pixel teeth, the paper scaled by the reading light at hand (the overlay is not lit
+/// by the scene; a named scalar, docs/PHYSICAL_TRUTH_AUDIT.md).
+pub fn draw_order_sheet_overlay(r: &mut super::Renderer, handle: u32, rise: f32, light: f32) {
+    let grid = (r.iw, r.ih);
+    let (iw, ih) = (grid.0.max(64) as f32, grid.1.max(64) as f32);
     let light = light.clamp(0.0, 1.0);
-    let h = SHEET_OVERLAY_HEIGHT;
-    let w = h * (RECEIPT_INK_WIDTH as f32 / RECEIPT_INK_HEIGHT as f32) / aspect;
+    let (w, h) = sheet_pixels(grid);
+    let (w, h) = (w as i32, h as i32);
+    let u = ((ih / 360.0).round() as i32).max(1);
     let p = rise.clamp(0.0, 1.0);
     let ease = p * p * (3.0 - 2.0 * p);
-    let x = 0.5 - w * 0.5;
-    let y = 0.17 + (1.0 - ease) * 0.95;
+    let x = (grid.0 as i32 - w) / 2;
+    let y = (0.15 * ih + (1.0 - ease) * ih).round() as i32;
     let paper = [0.89 * light, 0.87 * light, 0.80 * light, 1.0];
-    r.fill_rect(x + 0.008, y + 0.012, w, h, [0.0, 0.0, 0.0, 0.38]);
-    r.ui_set_frame(x, y, w, h);
-    r.draw_image(handle, 0.0, 0.0, 1.0, 1.0, [light, light, light, 1.0]);
+    let rect = |r: &mut super::Renderer, x: i32, y: i32, w: i32, h: i32, c: [f32; 4]| {
+        r.fill_rect(x as f32 / iw, y as f32 / ih, w as f32 / iw, h as f32 / ih, c);
+    };
+    rect(r, x + 3 * u, y + 3 * u, w, h, [0.0, 0.0, 0.0, 0.5]);
+    r.draw_image(handle, x as f32 / iw, y as f32 / ih, w as f32 / iw, h as f32 / ih, [light, light, light, 1.0]);
     // The torn edges: teeth of paper past the top and the foot of the print (the roll was torn
     // at the slot both times), their heights from the project's counter-seeded hash.
-    let teeth = 36u32;
     let hash = |n: u32| ((n.wrapping_mul(2654435761) >> 8) & 0xff) as f32 / 255.0;
-    let tw = 1.0 / teeth as f32;
-    for k in 0..teeth {
-        let top = 0.004 + 0.012 * hash(k + 11);
-        let foot = 0.004 + 0.015 * hash(k + 97);
-        r.fill_rect(k as f32 * tw, -top, tw * 1.02, top + 0.002, paper);
-        r.fill_rect(k as f32 * tw, 0.998, tw * 1.02, foot + 0.002, paper);
+    let tooth = 3 * u;
+    let mut k = 0u32;
+    let mut tx = x;
+    while tx < x + w {
+        let tw = tooth.min(x + w - tx);
+        let top = u * (1 + (hash(k + 11) * 2.0) as i32);
+        let foot = u * (1 + (hash(k + 97) * 2.0) as i32);
+        rect(r, tx, y - top, tw, top, paper);
+        rect(r, tx, y + h, tw, foot, paper);
+        tx += tooth;
+        k += 1;
     }
-    r.ui_clear_frame();
+    r.request_pixel_ink();
 }
 
 /// The teleprinter's print: capitals, a rule under the title, a rule between the small print
@@ -146,15 +200,21 @@ impl super::Renderer {
     /// line repaints one 1.7 MB target once.
     pub fn render_order_strip_ink(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slots: [usize; 2], inks: [Option<ReceiptInk>; 2]) {
         assert!(slots.iter().all(|&slot| slot < self.meshes.len()), "order strip slots must belong to this scene");
+        // The pixel sheet is exactly the internal pixels it covers; the print sheet 1024 wide.
+        let pixel = crate::repair_manual::overlay_mode();
+        let size = if pixel { sheet_pixels((self.iw, self.ih)) } else { (WIDTH, HEIGHT) };
+        if self.order_receipt_surfaces.first().is_some_and(|s| s.size != size) {
+            self.order_receipt_surfaces.clear();
+        }
         while self.order_receipt_surfaces.len() < 2 {
             let label = if self.order_receipt_surfaces.is_empty() { "order-strip-ink-machine" } else { "order-strip-ink-hand" };
-            let surface = ReceiptSurface::new(self, device, queue, label);
+            let surface = ReceiptSurface::new(self, device, queue, label, size);
             self.order_receipt_surfaces.push(surface);
         }
         for (index, ink) in inks.iter().enumerate() {
             let Some(ink) = ink else { continue };
             self.ui_reset();
-            draw_receipt(self, ink);
+            if pixel { draw_receipt_pixel(self, ink, size); } else { draw_receipt(self, ink); }
             let key = self.ui.queued_content_fingerprint();
             let changed = self.order_receipt_surfaces[index].last_ink != Some(key);
             if changed {
@@ -182,7 +242,7 @@ impl super::Renderer {
                     occlusion_query_set: None,
                 });
             }
-            self.ui.render_over(device, &mut encoder, &surface.view, FORMAT, WIDTH, HEIGHT);
+            self.ui.render_over(device, &mut encoder, &surface.view, FORMAT, size.0, size.1);
             queue.submit(Some(encoder.finish()));
             surface.last_ink = Some(key);
         }

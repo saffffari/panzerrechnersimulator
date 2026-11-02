@@ -118,6 +118,24 @@ pub fn dot_pixels(internal_height: u32) -> u32 {
     ((internal_height as f32 / 450.0).round() as u32).max(1)
 }
 
+/// Width in pixels of `text` at `scale` dots per font dot.
+pub fn width_px(text: &str, scale: u32) -> u32 {
+    width_dots(text) * scale.max(1)
+}
+
+/// Draw `text` with its top-left at a pixel of a `target` of so many pixels (a page texture, the
+/// internal frame), `scale` pixels per font dot, no shadow: the pixel book's type. Glyphs are the
+/// 5 x 7 capitals; lower case is drawn as capitals.
+pub fn draw_at(r: &mut Renderer, text: &str, left_px: i32, top_px: i32, scale: u32, color: [f32; 4], target: (u32, u32)) {
+    let (tw, th) = (target.0.max(1) as f32, target.1.max(1) as f32);
+    let dot = scale.max(1) as f32;
+    let upper = text.to_uppercase();
+    for (col, row, len) in runs(&upper) {
+        r.fill_rect((left_px as f32 + col as f32 * dot) / tw, (top_px as f32 + row as f32 * dot) / th,
+            len as f32 * dot / tw, dot / th, color);
+    }
+}
+
 /// Draw `text` centred on `center_x` with its top at `top_y` (both 0..1 of the frame), on the
 /// internal pixel grid, with a one-dot dark shadow so it reads over snow and over steel.
 pub fn draw_centered(r: &mut Renderer, text: &str, center_x: f32, top_y: f32, scale: u32, color: [f32; 4]) {
