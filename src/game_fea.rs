@@ -610,7 +610,7 @@ impl Game {
         // Without a lattice solve the hole is the calibre's (named).
         let hole = hole_area_m2.unwrap_or(std::f32::consts::PI * radius * radius);
         let compartment = if chain_result.burst {
-            self.fea_compartment_burst(&line, &chain_result, event, hole, burst_fragment_kinetic_j)
+            self.fea_compartment_burst(&line, &chain_result, event, part, hole, burst_fragment_kinetic_j)
         } else { None };
         println!("[fea] {}: {}", shell.name, chain_result.summary());
         if !knocked_out.is_empty() || !struck_not_breached.is_empty() {
@@ -626,20 +626,17 @@ impl Game {
     }
 
     /// A filled round burst at the struck plate's back face. If that point is in the crew
-    /// compartments' air, the burst's energy less what its own fragments carry away raises their
-    /// pressure (`compartment::burst`), the openings vent it, and a closed lid whose latch the
-    /// pressure beats is thrown open. A burst elsewhere (engine bay, stowage) is given no pressure
-    /// history (named). The lid then swings at its ordinary rate (named).
+    /// compartments' air (`in_crew_air`), the burst's energy less what its own fragments carry
+    /// away raises their pressure (`compartment::burst`), the openings vent it, and a closed lid
+    /// whose latch the pressure beats is thrown open. A burst in the engine bay is given no
+    /// pressure history (named). The lid then swings at its ordinary rate (named).
     fn fea_compartment_burst(&mut self, line: &chain::ShotLine, result: &chain::ChainResult,
-        event: &crate::ballistics::ImpactEvent, hole_area_m2: f32, burst_fragment_kinetic_j: Option<f32>)
-        -> Option<CompartmentReceipt> {
+        event: &crate::ballistics::ImpactEvent, part: ArmorPart, hole_area_m2: f32,
+        burst_fragment_kinetic_j: Option<f32>) -> Option<CompartmentReceipt> {
         let plate = result.crossings.first()?;
         let burst_hull = line.entry + line.dir * plate.layer.s1;
-        let turret_local = self.player.turret_model().inverse()
-            .transform_point3(self.player.hull_model().transform_point3(burst_hull));
-        if !fragment_inside_compartment(BloodFrame::Hull, burst_hull, 0.0)
-            && !fragment_inside_compartment(BloodFrame::Turret, turret_local, 0.0) {
-            println!("[fea] the {} burst outside the crew compartments: no compartment pressure (named)", event.shell.name);
+        if !in_crew_air(part, burst_hull) {
+            println!("[fea] the {} burst in the engine bay: no crew compartment pressure (named)", event.shell.name);
             return None;
         }
         let openings = self.fea_crew_openings(hole_area_m2);
@@ -1138,6 +1135,18 @@ impl Game {
 pub(super) const CUPOLA_APERTURE_RADIUS_M: f32 = 0.25;
 const CUPOLA_OPENING: usize = 4;
 
+/// Hull-frame z of the engine bay's firewall (game scale): the CAD envelopes put the fuel
+/// tanks' forward ends at -1.14 m and the sponson ammunition bins' aft ends at -1.16 m (named,
+/// within one 20 mm voxel).
+pub(super) const FIREWALL_Z_M: f32 = -1.15;
+
+/// Whether a point behind the struck plate is in the crew compartments' air: anything in the
+/// turret (open to the fighting compartment) or forward of the firewall in the hull (the
+/// driving and fighting compartments, sponsons included, machinery not subtracted: named).
+pub(super) fn in_crew_air(part: ArmorPart, point_hull: Vec3) -> bool {
+    part == ArmorPart::Turret || point_hull.z > FIREWALL_Z_M
+}
+
 /// The open area of a solved hole: the measured bore radii across and along the shot.
 pub(super) fn hole_area_m2(g: &lattice::MeasuredGeometry) -> f32 {
     std::f32::consts::PI * (g.aperture_mm * 1e-3) * (g.aperture_along_mm.max(g.aperture_mm) * 1e-3)
@@ -1204,7 +1213,7 @@ fn ray_sphere(origin: Vec3, dir: Vec3, centre: Vec3, radius: f32) -> Option<f32>
 
 /// A fragment can be held when it is no hotter than a gloved hand tolerates (`LodgedFragment::
 /// HOLDABLE_K`); an authored chip with no solved temperature while it is on a glowing page.
-fn fragment_holdable(f: &HotFragment) -> bool {
+pub(super) fn fragment_holdable(f: &HotFragment) -> bool {
     if f.temp_k > 0.0 {
         f.temp_k <= fragments::LodgedFragment::HOLDABLE_K
     } else {
@@ -1213,7 +1222,7 @@ fn fragment_holdable(f: &HotFragment) -> bool {
 }
 
 /// A fragment embedded in a wall comes out by hand only when one man's pull beats its grip.
-fn fragment_pullable(f: &HotFragment) -> bool {
+pub(super) fn fragment_pullable(f: &HotFragment) -> bool {
     if !f.lodged {
         return true;
     }
@@ -1249,6 +1258,27 @@ mod compartment_tests {
         assert!(!names.contains(&"loader's hatch"));
         // Open lids vent it: the pressure falls well below the peak within the sampled 0.2 s.
         assert!(large.samples.last().unwrap().1 < 0.2 * large.peak_gauge_pa);
+    }
+
+    #[test]
+    fn the_firewall_splits_crew_air_from_the_engine_bay() {
+        let set = crate::fea_damage::components::tiger_components();
+        let z_range = |id: &str| {
+            let e = set.envelopes.iter().find(|e| components::COMPONENT_SPECS[e.spec].id == id).expect(id);
+            let (min, max) = e.bounds();
+            (min.z, max.z)
+        };
+        // The firewall lies between the engine bay's machinery and the crew's ammunition.
+        for id in ["engine_block", "fuel_tank_left", "fuel_tank_right", "radiator_left", "cooling_fans_right"] {
+            assert!(z_range(id).1 <= FIREWALL_Z_M + 0.02, "{id} reaches past the firewall: {:?}", z_range(id));
+        }
+        for id in ["ammo_sponson_left_rear", "ammo_sponson_right_rear", "gearbox", "radio", "driver_seat"] {
+            assert!(z_range(id).0 >= FIREWALL_Z_M - 0.02, "{id} is behind the firewall: {:?}", z_range(id));
+        }
+        assert!(in_crew_air(ArmorPart::Hull, Vec3::new(1.6, 1.4, 0.3)), "a sponson in the fighting compartment");
+        assert!(in_crew_air(ArmorPart::Hull, Vec3::new(-0.4, 1.6, 2.4)), "behind the front plate");
+        assert!(!in_crew_air(ArmorPart::Hull, Vec3::new(0.9, 1.5, -1.8)), "the fuel tank's side");
+        assert!(in_crew_air(ArmorPart::Turret, Vec3::new(0.0, 2.0, -2.5)), "the turret is open to the hull");
     }
 
     #[test]

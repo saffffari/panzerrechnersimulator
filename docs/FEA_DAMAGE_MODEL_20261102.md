@@ -410,5 +410,14 @@ lists every named approximation of this model.
 - Tests: hand rules, the pool rule, the pick ray, the save codec round trip with a re-run deferred
   solve, broken-record refusal, the drawn body's mass and diameter, the mesh's closed outward
   volume, spec coverage, hatch thresholds at the game's apertures, the burst body's energy.
-- Not verified on the GPU yet: the drawn rounds, the cold page, the hand carry and throw, a blown
-  lid. Queued under the shared GPU lock.
+- Resting chips keep cooling (they had stopped at rest): by still air and radiation only, so a
+  chip on steel cools more slowly than a real one (conduction into the steel not modelled).
+- The crew compartments' air for a burst is the turret, or the hull forward of the engine bay's
+  firewall (z = -1.15 m, from the CAD envelopes); the playable-cabin proxy boxes stop short of
+  the armour and would have missed bursts at the plate's back face.
+- `fea-play PREFIX` (GPU, raymarch): the armor-scars scene; a 45 mm AP round lodged in the lower
+  front plate, a 76 mm APCR perforation of the turret rear with its solved chips cooling to the
+  hand's limit, the loader taking, throwing and dropping chips, the field repair working the
+  lodged round out on foot, and a 152 mm BR-540 burst forward of the firewall against closed
+  lids; stills and a receipt with PASS/FAIL checks.
+- Not verified on the GPU yet: queued under the shared GPU lock.

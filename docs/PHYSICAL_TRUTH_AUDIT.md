@@ -579,7 +579,9 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   area a quarter of the surface, Cd 1.05, 1.2 kg/m³; named) as well as gravity, and embeds in a
   cabin collision wall when its normal energy can push its face a quarter of its size into 800 MPa
   steel (named cavity-work rule): it stays there, settled. Solved bodies cool as lumped cubes
-  (radiation, Ranz–Marshall convection) and take the heat page of their temperature band (1,300 /
+  (radiation, Ranz–Marshall convection; at rest by still air and radiation only: conduction into
+  the steel a chip lies on or in is not modelled, named, so it cools more slowly than a real
+  chip) and take the heat page of their temperature band (1,300 /
   1,100 / 900 / 750 K bounds, named; visible glow begins near the Draper point, 798 K); below
   750 K they draw on a cold, oxidised-steel page that emits nothing. A body the lattice solved is
   steel that stays: it never retires, and the fragment ring passes over resting solved steel, so
@@ -600,11 +602,14 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   its own body's fragments carry, over a named 10 m³ of free air, vented through open apertures by
   isentropic orifice flow (Cd 0.6), hatches forced past a named 20 kN latch. Tested against the
   closed forms. In play: when a filled round bursts at the struck plate's back face inside the
-  crew compartments' air, the openings are the four roof and escape lids and the cupola at their
+  crew compartments' air (the turret, or the hull forward of the engine bay's firewall at
+  z = -1.15 m, placed from the CAD envelopes between the fuel tanks and the sponson ammunition
+  bins; sponsons included, machinery volume not subtracted: named), the openings are the four
+  roof and escape lids and the cupola at their
   source apertures (a lid counts open past half its travel, named) and the solved entry hole
   (its measured bore radii; the calibre's without a solve); a lid whose latch the pressure beats
   is opened in the game and then swings at its ordinary rate (named). A burst outside the crew
-  compartments (engine bay, stowage) gets no pressure history (named). Without a lattice solve the
+  compartments (the engine bay) gets no pressure history (named). Without a lattice solve the
   authored shower is not a partition of the round's body and nothing is taken from the filler for
   it (named). No shock or reflected-pressure history; the pressure acts on hatches only (crew
   injury stays with the existing crew model) and is not drawn. A 76 mm BR-350B's 65 g gives

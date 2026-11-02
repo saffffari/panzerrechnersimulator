@@ -17018,6 +17018,11 @@ fn main() -> anyhow::Result<()> {
         let seeds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
         return game::game_fea_section::bench(seeds, &capture_arg(&args, 3, "artifacts/perf/fea_bench.json"));
     }
+    if args.len() >= 2 && args[1] == "fea-play" {
+        // GPU: the layered damage model in play (KESSEL_RENDERER=raymarch): lodged rounds, the
+        // loader's hands, the field repair and an interior burst, with stills and a receipt.
+        return game::game_fea_review::run(&capture_arg(&args, 2, "fea_play"));
+    }
     if args.len() >= 2 && args[1] == "fea-cross-section" {
         // CPU only: the layered damage model's slow-motion cross sections (no wgpu device).
         return game::game_fea_section::run(&capture_arg(&args, 2, "captures/fea_cross_section"),

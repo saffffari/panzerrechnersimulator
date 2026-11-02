@@ -62,6 +62,8 @@ mod game_hit_sounds;
 mod game_fea;
 #[path = "game_fea_section.rs"]
 pub(crate) mod game_fea_section;
+#[path = "game_fea_review.rs"]
+pub(crate) mod game_fea_review;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
 #[path = "main_gun_candidates.rs"]
@@ -4506,15 +4508,19 @@ fn integrate_hot_fragment_traced(
         fragment.active = false;
         return;
     }
+    if fragment.temp_k > 0.0 {
+        // Flying or at rest, a solved body keeps cooling. At rest it cools by still air and
+        // radiation only: conduction into the steel it lies on or in is not modelled (named; it
+        // cools more slowly than a real chip).
+        let speed = if fragment.settled { 0.0 } else { fragment.vel.length() };
+        fragment.temp_k = crate::fea_damage::fragments::cool(fragment.temp_k, fragment.size,
+            speed, crate::armor_damage::AMBIENT_K, physics_dt);
+    }
     if fragment.settled {
         return;
     }
 
     let radius = fragment.size * 0.52;
-    if fragment.temp_k > 0.0 {
-        fragment.temp_k = crate::fea_damage::fragments::cool(fragment.temp_k, fragment.size,
-            fragment.vel.length(), crate::armor_damage::AMBIENT_K, physics_dt);
-    }
     let steps = ((fragment.vel.length() * physics_dt / HOT_FRAGMENT_MAX_STEP_M).ceil() as usize)
         .clamp(1, 1024);
     let step_dt = physics_dt / steps as f32;

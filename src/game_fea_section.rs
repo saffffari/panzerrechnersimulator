@@ -319,9 +319,12 @@ fn run_case(rig: &Rig, case: &SectionCase, out_prefix: &str) -> anyhow::Result<s
         // round's motion, not the filler).
         let hole_area = outcome.as_ref().map_or(0.0, |o| super::game_fea::hole_area_m2(&o.geometry));
         let openings = super::game_fea::crew_openings([0.0; 4], 0.0, hole_area);
-        pressure = Some(compartment::burst(event.shell.filler_g * 0.001, compartment::TNT_J_PER_KG, body_ke,
-            compartment::TIGER_CREW_AIR_M3, crate::armor_damage::AMBIENT_K, &openings,
-            compartment::GAME_DT_S, compartment::GAME_DURATION_S));
+        // A burst in the engine bay gets no crew compartment pressure (the game's rule).
+        if super::game_fea::in_crew_air(armor.part, burst_point) {
+            pressure = Some(compartment::burst(event.shell.filler_g * 0.001, compartment::TNT_J_PER_KG, body_ke,
+                compartment::TIGER_CREW_AIR_M3, crate::armor_damage::AMBIENT_K, &openings,
+                compartment::GAME_DT_S, compartment::GAME_DURATION_S));
+        }
     }
     // Frame times: every 25 µs through the round's passage and the lattice, then the fragments.
     let solve_end = lattice_frames.last().map_or(0.0, |f| f.t).max(timeline.get(1).map_or(0.0, |p| p.0));
