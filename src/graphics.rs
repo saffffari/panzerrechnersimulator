@@ -85,6 +85,11 @@ pub struct RaymarchQuality {
     /// One-pixel effect samples (weapon sparks and ejecta, fire and soot grains) per native pixel
     /// of a relayed port's view, the most each of its two effect passes draws (`relay_effect_budget`).
     pub relay_effect_samples_per_pixel: f32,
+    /// Fire and soot grain samples per native pixel of a relayed port's view
+    /// (`relay_grain_budget`): a port's native extent is already twice its displayed span, and a
+    /// flame parcel covers thousands of a port's pixels, so the spark rate drew 3.7 million grains
+    /// into the gunner's sight pane for one burning wreck (44 ms, 2026-11-01).
+    pub relay_grain_samples_per_pixel: f32,
 }
 
 impl RaymarchQuality {
@@ -99,6 +104,15 @@ impl RaymarchQuality {
         static OVERRIDE: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
         let rate = OVERRIDE.get_or_init(|| std::env::var("KESSEL_RELAY_EFFECT_SPP").ok().and_then(|v| v.parse().ok()))
             .unwrap_or(self.relay_effect_samples_per_pixel);
+        (rate.max(1.0) as f64 * extent[0] as f64 * extent[1] as f64) as u64
+    }
+
+    /// The fire and soot grain samples a relayed port of `extent` native pixels may draw.
+    /// `KESSEL_RELAY_GRAIN_SPP` overrides the preset's rate for A/B.
+    pub fn relay_grain_budget(&self, extent: [u32; 2]) -> u64 {
+        static OVERRIDE: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+        let rate = OVERRIDE.get_or_init(|| std::env::var("KESSEL_RELAY_GRAIN_SPP").ok().and_then(|v| v.parse().ok()))
+            .unwrap_or(self.relay_grain_samples_per_pixel);
         (rate.max(1.0) as f64 * extent[0] as f64 * extent[1] as f64) as u64
     }
 }
@@ -186,6 +200,7 @@ impl GraphicsPreset {
                 sky_cache_width: 384, cloud_view_steps: 12, cloud_light_steps: 3,
                 budget_pixels: 115_200.0, max_samples: 2.0,
                 relay_effect_samples_per_pixel: 8.0,
+                relay_grain_samples_per_pixel: 1.0,
             },
             Self::High => RaymarchQuality {
                 vol_divisor: 4, vol_min: [160, 90], vol_slices: 96,
@@ -194,6 +209,7 @@ impl GraphicsPreset {
                 sky_cache_width: 768, cloud_view_steps: 20, cloud_light_steps: 4,
                 budget_pixels: 360_000.0, max_samples: 3.0,
                 relay_effect_samples_per_pixel: 16.0,
+                relay_grain_samples_per_pixel: 2.0,
             },
             Self::Ultra => RaymarchQuality {
                 vol_divisor: 3, vol_min: [160, 90], vol_slices: 128,
@@ -202,6 +218,7 @@ impl GraphicsPreset {
                 sky_cache_width: 1024, cloud_view_steps: 32, cloud_light_steps: 5,
                 budget_pixels: 720_000.0, max_samples: 3.0,
                 relay_effect_samples_per_pixel: 32.0,
+                relay_grain_samples_per_pixel: 4.0,
             },
         }
     }
@@ -315,7 +332,12 @@ mod tests {
             assert!(a.sky_cache_width < b.sky_cache_width && a.cloud_view_steps < b.cloud_view_steps);
             assert!(a.point_shadows <= b.point_shadows && b.point_shadows <= 2);
             assert!(a.relay_effect_samples_per_pixel < b.relay_effect_samples_per_pixel);
+            assert!(a.relay_grain_samples_per_pixel < b.relay_grain_samples_per_pixel);
+            assert!(b.relay_grain_samples_per_pixel <= b.relay_effect_samples_per_pixel / 4.0);
         }
+        // The gunner's sight pane (640x360) on High draws at most 460,800 grains a frame: at the
+        // spark rate it drew 3.7 million for one burning wreck (44 ms, 2026-11-01).
+        assert_eq!(high.relay_grain_budget([640, 360]), 460_800);
         // A 240x136 relayed port on Low draws at most 261,120 effect samples a pass (it drew
         // 1.5 million sparks and 3.5 million grains in one HE strike before, 2026-10-28).
         assert_eq!(low.relay_effect_budget([240, 136]), 261_120);

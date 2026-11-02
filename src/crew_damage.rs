@@ -320,6 +320,12 @@ pub fn resolve_crew_damage(input: CrewDamageInput) -> CrewDamageResult {
         CrewTissueOutcome::Injury
     };
 
+    // KESSEL_RM_LIGHTS_DEBUG=1: each resolved contact's outcome and its blood request (how a
+    // "wounded, bleeding" hit with no blood in view was traced, 2026-11-02).
+    if std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() {
+        println!("[crew-damage] {:?}: {:?}, fragment {:.0} J, blast {:.0} J, blood cubes {}",
+            input.part, outcome, fragment_work_j, blast_work_j, blood_cube_count(outcome, total_work_j, resistance));
+    }
     CrewDamageResult {
         part: input.part,
         outcome,

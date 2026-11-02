@@ -424,6 +424,14 @@ impl Soldier {
         )
     }
 
+    /// A blast's front reaching a man in the open: he ducks for `seconds` (the shared flinch
+    /// pose and the motor lock) and knows where it came from.
+    pub fn startle(&mut self, seconds: f32, from: Vec3) {
+        if !self.alive || !(seconds > 0.0) { return; }
+        self.flinch_t = self.flinch_t.max(seconds);
+        self.raise_alarm(from);
+    }
+
     /// Externally forced awareness (alarm cascade from a neighbour or a gunshot).
     pub fn raise_alarm(&mut self, at: Vec3) {
         self.detect = self.detect.max(0.75);

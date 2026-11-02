@@ -186,8 +186,10 @@ impl Game {
         let mut friendly = false;
         match contact.kind {
             ProjectileContactKind::Vehicle(armor) => {
+                self.weapon_vfx.set_ground_hint(Some(self.hf.height_at(contact.pos.x, contact.pos.z)));
                 self.weapon_vfx.bullet_armor_sparks(projectile.id, contact.pos, projectile.velocity,
                     armor.world_normal, projectile.shell.mass_kg, weapon);
+                self.weapon_vfx.set_ground_hint(None);
                 let on_own_armor = armor.vehicle == ProjectileVehicle::Player;
                 let structure_borne = on_own_armor && self.mode == Mode::Tank;
                 // Every resolved metal contact emits once. Misses and range retirement do not.
@@ -372,8 +374,10 @@ impl Game {
             ProjectileContactKind::RangeLimit => {} // Retirement never invents an impact in air.
             // A gun shield or any other steel of an anti-tank gun: sparks, as on tank armour.
             ProjectileContactKind::AtGun(hit) if hit.steel => {
+                self.weapon_vfx.set_ground_hint(Some(self.hf.height_at(contact.pos.x, contact.pos.z)));
                 self.weapon_vfx.bullet_armor_sparks(projectile.id, contact.pos, projectile.velocity,
                     hit.normal, projectile.shell.mass_kg, weapon);
+                self.weapon_vfx.set_ground_hint(None);
                 self.schedule_emission(crate::audio::Sfx::ArmorClang1, contact.pos,
                     crate::sound_propagation::Emission::from_level(&crate::sound_levels::BULLET_ON_STEEL_1M),
                     None, None);

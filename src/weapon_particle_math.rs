@@ -1,7 +1,12 @@
 //! Cosmetic ballistic burst records. No collision, damage, source-light or ammunition state.
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
-pub const SPARK_MULTIPLIER:u32=1000;
+/// Samples a record carries per spark. Both spark shaders draw each spark as a dotted streak of
+/// SPARK_TRAIL samples along its path over 14 ms, so a record carries exactly that many: the
+/// thousandfold quadrature of 2026-10 drew as sheets and cones (2026-11-02).
+pub const SPARK_MULTIPLIER:u32=1;
+/// Ground ejecta grains a record carries per source grain: a quadrature of an estimated mass.
+pub const GROUND_MULTIPLIER:u32=1000;
 pub const EXTERIOR_VOLUME_MULTIPLIER:f32=100.0;
 pub const EXTERIOR_RADIUS_MULTIPLIER:f32=4.641_589;
 pub const MAX_SPARKS_PER_VIEW:u32=1_536_000;
@@ -36,7 +41,7 @@ impl Record {
     }
     pub fn origin(self)->Vec3 {Vec3::from_array(self.origin_age[..3].try_into().unwrap())}
     pub fn active(self)->bool {
-        let max_life=match self.meta[3] { HOT_RIM=>6.0,GROUND=>3.0,PRESSURE_VENT=>self.direction_life[3]+0.65,FULL_COOKOFF=>18.0,BULLET_ARMOR=>0.30,RICOCHET=>if self.parameters[3]>0.5 {1.40}else{0.64},_=>1.85};
+        let max_life=match self.meta[3] { HOT_RIM=>6.0,GROUND=>3.0,PRESSURE_VENT=>self.direction_life[3]+0.65,FULL_COOKOFF=>18.0,BULLET_ARMOR=>0.45,RICOCHET=>if strike_flags(self.parameters[3]).0 {1.85}else{0.85},_=>2.85};
         self.origin_age[3]>=0.0 && self.origin_age[3]<max_life && self.meta[1]>0
     }
     pub fn support_radius(self)->f32 {
@@ -45,29 +50,66 @@ impl Record {
         // Conservative analytic ballistic bound, including the retained physical streak support.
         // Ground ejecta leave at most at their own speed (`sample`'s `max_speed`, under 11 m/s for
         // the 6.1 m apex), not the sparks' 44 m/s: a quarter of the radius, a sixteenth of the area.
+        // The strike kinds' fastest spark is their speed law's top at the hottest energy scale and
+        // the widest per-burst share (`sample`); a bounce never carries a spark beyond its arc.
         let speed=match self.meta[3] {
             FULL_COOKOFF=>110.0,
             GROUND=>(2.0*self.parameters[0]/self.parameters[1].max(0.0001)).sqrt().min((2.0*9.81*GROUND_APEX_TARGET_M).sqrt()),
-            _=>44.0*self.parameters[2].max(1.0),
+            RICOCHET=>76.0,
+            BULLET_ARMOR=>52.0,
+            _=>60.0*self.parameters[2].max(1.0),
         };
         0.5+speed*t+4.905*t*t
     }
 }
+/// The strike records' (kinds `RICOCHET`, `BULLET_ARMOR`) `parameters.w`: the heavy-weapon flag
+/// plus 2 when `parameters.z` carries the ground height under the strike. Returns (heavy, ground
+/// known).
+pub fn strike_flags(w:f32)->(bool,bool) {
+    let known=w>=2.0;(w-if known {2.0}else{0.0}>0.5,known)
+}
+/// A per-burst share in 0..1 from the burst's seed and a salt: what one strike does that the
+/// next does not (its fan's width, its speed share, its spread of leaving times), fixed for the
+/// burst's whole life.
+pub fn burst_share(seed:u32,salt:u32)->f32 {random(seed.wrapping_mul(7919).wrapping_add(salt))}
+/// A spark's position and velocity `t` seconds after leaving `origin` at `velocity` under
+/// gravity, bouncing once off the ground plane at height `ground` when it is known (a fifth to
+/// two fifths of the vertical speed kept, `q` choosing, and just over half of the tangential), then
+/// lying on it. Returns (centre, velocity now, resting).
+pub fn strike_arc(origin:Vec3,velocity:Vec3,t:f32,ground:Option<f32>,q:f32)->(Vec3,Vec3,bool) {
+    let fall=|v:Vec3,t:f32|(v*t-Vec3::Y*(4.905*t*t),v-Vec3::Y*(9.81*t));
+    let Some(ground)=ground else {let (d,v)=fall(velocity,t);return (origin+d,v,false);};
+    let drop=(origin.y-ground).max(0.0);
+    let contact_t=(velocity.y+(velocity.y*velocity.y+19.62*drop).sqrt())/9.81;
+    if t<=contact_t {let (d,v)=fall(velocity,t);return (origin+d,v,false);}
+    let (d,v)=fall(velocity,contact_t);
+    let contact=Vec3::new(origin.x+d.x,ground,origin.z+d.z);
+    let rebound=Vec3::new(v.x*0.55,-v.y*(0.2+0.2*q.clamp(0.0,1.0)),v.z*0.55);
+    let t2=t-contact_t;let rest_t=2.0*rebound.y/9.81;
+    if t2<=rest_t {let (d,v)=fall(rebound,t2);return (contact+d,v,false);}
+    let (d,_)=fall(rebound,rest_t);(contact+d,Vec3::ZERO,true)
+}
 /// Explicit thin heated-rim estimate, not a constitutive perforation or melting solver.
 /// The thermal reservoir receives at most1.5% of the actual lost kinetic energy. It never
 /// heats from retained penetrator energy, chemical filler or an arbitrary terminal class.
+/// The rim that stays on the plate is bounded at `RIM_KELVIN_MAX`, steel's solidus: hotter steel
+/// is molten and leaves with the perforation spray, it does not glow on the plate. The former
+/// 2000 K cap was above it. The ring the plate draws (`renderer_scars` rim) at this bound cools
+/// through orange over its 2.5 s; the blob a full 88 mm perforation drew was the rim's own 512
+/// incandescent grains piling onto a few pixels, bounded in the spark shaders instead.
 #[derive(Clone,Copy,Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct RimHeat {pub radius:f32,pub width:f32,pub mass_kg:f32,pub heat_j:f32,pub initial_kelvin:f32}
+pub const RIM_KELVIN_MAX:f32=1800.0;
 pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     if !caliber_mm.is_finite() || !plate_mm.is_finite() || !deposited_j.is_finite()
         || caliber_mm<=0.0 || plate_mm<=0.0 || deposited_j<=0.0 {return None;}
     let radius=caliber_mm*0.0005;
-    let width=(caliber_mm*0.00010).clamp(0.002,0.025);
+    let width=(caliber_mm*0.00018).clamp(0.003,0.03);
     let area=std::f32::consts::PI*((radius+width).powi(2)-radius.powi(2));
     let depth=(plate_mm*0.00003).clamp(0.001,0.006);
     let mass_kg=area*depth*7850.0;
-    let heat_j=(deposited_j*0.015).min(mass_kg*500.0*(2000.0-293.0));
+    let heat_j=(deposited_j*0.015).min(mass_kg*500.0*(RIM_KELVIN_MAX-293.0));
     Some(RimHeat {radius,width,mass_kg,heat_j,initial_kelvin:293.0+heat_j/(mass_kg*500.0)})
 }
 pub fn rim_temperature(initial:f32,age:f32)->f32 {293.0+(initial-293.0).max(0.0)*(-age.max(0.0)/2.5).exp()}
@@ -188,31 +230,75 @@ pub fn sample(r:Record,index:u32)->Option<Sample> {
         length=((velocity-Vec3::Y*9.81*t).length()*0.002).clamp(width,0.15);
         page=if t<0.15 {4}else{2};
     }else if kind==BULLET_ARMOR {
-        let life=0.08+0.22*q;if t>=life{return None;}
+        // Incandescent dust off a perforated or bounced plate: its energy and incidence are the
+        // solver's (`parameters`); each spark's size sets how long it burns, this burst's share
+        // tilts the fan a few degrees and spreads the leaving times over a few milliseconds.
+        let (_,known)=strike_flags(r.parameters[3]);let ground=known.then_some(r.parameters[2]);
+        let b1=burst_share(r.meta[0],1);let b2=burst_share(r.meta[0],2);
+        t-=random(seed.wrapping_add(23))*(0.004+0.008*b1);if t<0.0{return None;}
+        let size=random(seed.wrapping_add(29));
+        let life=(0.08+0.22*q)*(0.7+0.6*size);if t>=life{return None;}
         let spray=direction(seed.wrapping_add(19));let out=spray-n*(2.0*spray.dot(n).min(0.0));
-        let cosine=r.parameters[1];axis=(d*(1.0-cosine)*0.8+out*0.55+n*0.25).normalize_or_zero();
-        let speed=(r.parameters[0]/3200.0).sqrt().min(2.0)*(4.0+18.0*q)*(0.4+0.6*cosine.sqrt());
-        velocity=axis*speed;width=(0.0015+0.002*q)*(1.0-t/life).sqrt();length=(speed*0.002).clamp(width,0.04);
-        page=if t<0.02 {3}else if t<0.075 {4}else{2};
+        let cosine=r.parameters[1];
+        let tilt=direction(r.meta[0].wrapping_mul(31).wrapping_add(7))*0.14;
+        let ray=(d*(1.0-cosine)*0.8+out*0.55+n*0.25+tilt).normalize_or_zero();
+        let speed=(r.parameters[0]/3200.0).sqrt().min(2.0)*(4.0+18.0*q.powf(1.4))*(0.4+0.6*cosine.sqrt())*(0.9+0.2*b2);
+        let (center,current,resting)=strike_arc(r.origin(),ray*speed,t,ground,random(seed.wrapping_add(31)));
+        axis=if resting {Vec3::new(ray.x,0.0,ray.z).normalize_or_zero()}else{current.normalize_or_zero()};
+        width=(0.0015+0.002*size)*(1.0-t/life).sqrt();
+        length=if resting {width}else{(speed*0.002).clamp(width,0.04)};
+        page=if t<0.1*life {3}else if t<0.4*life {4}else{2};
+        return finish_strike(r,center,axis,width,length,page);
     }else if kind==RICOCHET {
-        let heavy=r.parameters[3]>0.5;let life=if heavy {0.55+0.85*q}else{0.24+0.40*q};if t>=life{return None;}
-        let mut ray=(d*0.75+direction(seed.wrapping_add(19))*0.30+n*0.25).normalize_or_zero();
+        // The fan off a glancing plate: along the outgoing ray, lifting off the plate more and
+        // spreading wider the steeper the ricochet (`cosine`: the outgoing ray's elevation off
+        // the plate), a slow-heavy speed law scaled by the round's retained energy, each spark
+        // burning for a time set by its size, this burst's share setting its fan width, its speed
+        // share and the spread of leaving times, and the sparks bouncing off the ground once.
+        let (heavy,known)=strike_flags(r.parameters[3]);let ground=known.then_some(r.parameters[2]);
+        let b1=burst_share(r.meta[0],1);let b2=burst_share(r.meta[0],2);let b3=burst_share(r.meta[0],3);
+        let cosine=d.dot(n).clamp(0.0,1.0);
+        let energy=r.parameters[0];
+        let hot=if energy>0.0 {(energy/if heavy {1.8e6}else{2500.0}).sqrt().clamp(0.75,1.35)}else{1.0};
+        t-=random(seed.wrapping_add(23))*if heavy {0.012+0.020*b1}else{0.006+0.010*b1};if t<0.0{return None;}
+        let size=random(seed.wrapping_add(29));
+        let life=(if heavy {0.45+0.9*q}else{0.2+0.4*q})*(0.7+0.6*size);if t>=life{return None;}
+        let spread=(0.18+0.32*cosine)*(0.85+0.3*b2);
+        let mut ray=(d*(0.55+0.3*(1.0-cosine))+n*(0.12+0.45*cosine)+direction(seed.wrapping_add(19))*spread).normalize_or_zero();
         if ray.dot(n)<0.05 {ray=(ray+n*(0.06-ray.dot(n))).normalize_or_zero();}
-        axis=ray;let speed=if heavy {14.0+30.0*q}else{5.0+15.0*q};velocity=axis*speed;
-        width=(if heavy {0.008+0.010*q}else{0.003+0.005*q})*(1.0-t/r.direction_life[3]).max(0.15);
-        length=(speed*0.008).clamp(0.025,0.32);page=if t<0.055 {3}else if t<0.16 {4}else{2};
+        let speed=(if heavy {12.0+34.0*q.powf(1.5)}else{4.0+16.0*q.powf(1.5)})*hot*(0.9+0.2*b3);
+        let (center,current,resting)=strike_arc(r.origin(),ray*speed,t,ground,random(seed.wrapping_add(31)));
+        axis=if resting {Vec3::new(ray.x,0.0,ray.z).normalize_or_zero()}else{current.normalize_or_zero()};
+        width=(if heavy {0.006+0.012*size}else{0.0025+0.005*size})*(1.0-t/life).max(0.15);
+        length=if resting {width}else{(current.length()*0.008).clamp(0.025,0.32)};
+        let white=0.8+0.4*hot;
+        page=if t<0.05*life*white {3}else if t<0.18*life*white {4}else{2};
+        return finish_strike(r,center,axis,width,length,page);
     }else {
-        let life=0.45+1.4*q;if t>=life{return None;}
-        let mut ray=direction(seed.wrapping_add(17));ray.y=ray.y.abs()*0.75+0.15;
+        // A blast's or a square armour strike's shower: the hemisphere's lift and narrowing, the
+        // speed share, the lifetimes and the spread of leaving times are this burst's own; a
+        // blast's `parameters.x` is its charge against an 88 mm HE round's.
+        let b1=burst_share(r.meta[0],1);let b2=burst_share(r.meta[0],2);let b3=burst_share(r.meta[0],3);
+        let b4=burst_share(r.meta[0],4);let b5=burst_share(r.meta[0],5);
+        let charge=if kind==BLAST && r.parameters[0]>0.0 {r.parameters[0].sqrt().clamp(0.7,1.3)}else{1.0};
+        t-=random(seed.wrapping_add(23))*(0.01+0.03*b1);if t<0.0{return None;}
+        let size=random(seed.wrapping_add(29));
+        let life=(0.45+1.4*q)*(0.8+0.4*b2)*(0.75+0.5*size);if t>=life{return None;}
+        let mut ray=direction(seed.wrapping_add(17));ray.y=ray.y.abs()*(0.6+0.3*b3)+(0.08+0.2*b4);
         if kind==ARMOR_IMPACT {ray=Quat::from_rotation_arc(Vec3::Y,n)*ray;}
-        velocity=ray.normalize()*(10.0+28.0*q)*r.parameters[2];
+        velocity=ray.normalize()*(10.0+28.0*q.powf(1.3))*r.parameters[2]*charge*(0.9+0.2*b5);
         let current=velocity-Vec3::Y*9.81*t;axis=current.normalize_or_zero();
-        width=(0.006+0.012*q)*(1.0-t/life).sqrt();length=(current.length()*0.008).min(0.32);
-        page=if t<0.12 {3}else if t<0.55 {4}else{2};
+        width=(0.006+0.012*size)*(1.0-t/life).sqrt();length=(current.length()*0.008).min(0.32);
+        page=if t<0.08*life {3}else if t<0.35*life {4}else{2};
     }
     velocity.y-=4.905*t;
     let center=r.origin()+velocity*t;
-    if kind!=BLAST {
+    finish_strike(r,center,axis,width,length,page)
+}
+/// The source-plane gate every non-blast sample passes: its whole streak lies on the air side.
+fn finish_strike(r:Record,center:Vec3,axis:Vec3,width:f32,length:f32,page:u32)->Option<Sample> {
+    if r.meta[3]!=BLAST {
+        let n=Vec3::from_array(r.normal_offset[..3].try_into().unwrap());
         let rotation=Quat::from_rotation_arc(Vec3::Z,axis);
         let support=(rotation.conjugate()*n).abs().dot(Vec3::new(width,width,length))*0.5;
         if (center-r.origin()).dot(n)+r.normal_offset[3]<support {return None;}
@@ -244,6 +330,10 @@ mod tests {
         assert!((heat.mass_kg*500.0*(heat.initial_kelvin-293.0)-heat.heat_j).abs()<0.01);
         assert!(rim_heat(88.0,90.0,0.0).is_none());
         let cold=rim_heat(88.0,90.0,10.0).unwrap();assert!(cold.initial_kelvin<300.0);
+        assert!(heat.initial_kelvin<=RIM_KELVIN_MAX+0.01,"{}",heat.initial_kelvin);
+        // A full 88 mm perforation of a 45 mm plate (some 3.3 MJ lost) sits on the bound.
+        let full=rim_heat(88.0,45.0,3_300_000.0).unwrap();
+        assert!((full.initial_kelvin-RIM_KELVIN_MAX).abs()<0.5,"{}",full.initial_kelvin);
         for hz in [30,60,144] {
             let time=(0..hz*2).fold(0.0_f64,|t,_|t+1.0/hz as f64) as f32;
             assert!((rim_temperature(heat.initial_kelvin,time)-rim_temperature(heat.initial_kelvin,2.0)).abs()<0.001);
@@ -277,11 +367,13 @@ mod tests {
     }
     #[test] fn burst_volume_count_and_upload_are_bounded_independently() {
         assert!((EXTERIOR_RADIUS_MULTIPLIER.powi(3)-EXTERIOR_VOLUME_MULTIPLIER).abs()<0.0001);
-        assert_eq!(384*SPARK_MULTIPLIER,384000);assert_eq!(std::mem::size_of::<Record>(),80);
+        assert_eq!(384*SPARK_MULTIPLIER,384);assert_eq!(std::mem::size_of::<Record>(),80);
         assert_eq!(MAX_BURSTS*std::mem::size_of::<Record>(),3840);
+        // Every burst's streak samples fit the view cap together; the cap bounds the ground's grains.
         let mut available=MAX_SPARKS_PER_VIEW;let mut emitted=0;
         for _ in 0..MAX_BURSTS {let n=384*SPARK_MULTIPLIER;if n<=available {available-=n;emitted+=n;}}
-        assert_eq!(emitted,MAX_SPARKS_PER_VIEW);
+        assert_eq!(emitted,MAX_BURSTS as u32*384*SPARK_MULTIPLIER);
+        assert!(384*GROUND_MULTIPLIER*4<=MAX_SPARKS_PER_VIEW);
         // Independent samples divide the old total weight; multiplying count cannot multiply power.
         for area in [0.001_f64,1.0,37.0] {assert!((area/1000.0*1000.0-area).abs()<1e-10);}
     }
@@ -294,7 +386,7 @@ mod tests {
         let far=footprint_count(blast,600.0,angle,rate,extent);
         assert!((384..1000).contains(&far), "{far}");
         // Near, it covers the port: the view's rate over every pixel, then the view budget.
-        assert_eq!(footprint_count(blast,15.0,angle,rate,extent),(240*136*8).min(384_000));
+        assert_eq!(footprint_count(blast,15.0,angle,rate,extent),(240*136*8).min(384*SPARK_MULTIPLIER));
         let rim=Record {meta:[1,RIM_SAMPLES,RIM_SAMPLES,HOT_RIM],..blast};
         assert_eq!(footprint_count(rim,600.0,angle,rate,extent),RIM_SAMPLES);
     }
@@ -302,7 +394,7 @@ mod tests {
         // A 76.2 mm HE strike's ejecta: fast enough to hit the 6.1 m apex cap (10.9 m/s).
         for t in [0.02f32,0.3,1.0,2.5] {
             let ground=Record {origin_age:[3.0,1.0,-2.0,t],direction_life:[0.3,-0.34,0.89,3.0],normal_offset:[0.0,1.0,0.0,0.0],
-                parameters:[40_000.0,40.0,1.0,220.0],meta:[11,384*SPARK_MULTIPLIER,384,GROUND]};
+                parameters:[40_000.0,40.0,1.0,220.0],meta:[11,384*GROUND_MULTIPLIER,384,GROUND]};
             let support=ground.support_radius();
             assert!(support<0.5+11.0*t+4.905*t*t, "{support} at {t} s");
             let origin=ground.origin();
@@ -315,15 +407,19 @@ mod tests {
     }
     #[test] fn a_view_over_budget_thins_every_burst_and_keeps_its_light() {
         let burst=|kind:u32,source:u32|Record {origin_age:[0.0;4],direction_life:[0.0,0.0,1.0,1.85],normal_offset:[0.0,1.0,0.0,0.0],
-            parameters:[0.0;4],meta:[7,source*SPARK_MULTIPLIER,source,kind]};
+            parameters:[0.0;4],meta:[7,source*if kind==GROUND {GROUND_MULTIPLIER} else {SPARK_MULTIPLIER},source,kind]};
         // An HE strike seen by a 240x136 port at 8 samples a pixel: blast sparks and ground ejecta.
         let (blast,ground,rim)=(burst(BLAST,384),burst(GROUND,384),Record {meta:[9,RIM_SAMPLES,RIM_SAMPLES,HOT_RIM],..burst(HOT_RIM,1)});
         let budget=240*136*8;
         let drawn=thinned_counts(&[blast,ground,rim],budget);
         let total=drawn.iter().map(|&n|u64::from(n)).sum::<u64>();
-        assert!(total<=budget && total+2>=budget,"{total} of {budget}");
+        // A burst at its floor (one sample a spark) may carry the total past the budget by its
+        // own source count; everything else shares what is left.
+        assert!(total<=budget+u64::from(blast.meta[2]) && total+2>=budget,"{total} of {budget}");
         assert_eq!(drawn[2],RIM_SAMPLES,"a hot rim is never thinned");
-        for (r,&n) in [blast,ground].iter().zip(&drawn) {
+        // A spark burst carries one sample a spark and cannot thin below its source count.
+        assert_eq!(drawn[0],blast.meta[1]);
+        for (r,&n) in [ground].iter().zip(&drawn[1..]) {
             assert!(n>=r.meta[2] && n<r.meta[1]);
             // Each sample is weighed by source / drawn: the burst's emission is the same.
             let total=n as f64*(r.meta[2] as f64/n as f64);
@@ -332,9 +428,13 @@ mod tests {
         // Under budget nothing changes; a starved view still asks for every burst's source samples.
         assert_eq!(thinned_counts(&[blast,ground],u64::MAX),vec![blast.meta[1],ground.meta[1]]);
         assert_eq!(thinned_counts(&[blast,ground],100),vec![384,384]);
-        // The shader takes the full count as identity.z * 1000 (ground grain size, optical depth).
-        assert_eq!(SPARK_MULTIPLIER,1000);
-        assert!(include_str!("../shaders/weapon_particles.wgsl").contains("f32(identity.z*1000u)/f32(identity.y)"));
+        // Both shaders draw a spark as SPARK_TRAIL samples, the record's SPARK_MULTIPLIER; the port
+        // shader takes the ground's full count as identity.z * GROUND_QUADRATURE (grain size, depth).
+        assert!(include_str!("../shaders/rm_sparks.wgsl").contains(&format!("const SPARK_TRAIL: u32 = {SPARK_MULTIPLIER}u;")));
+        let ports=include_str!("../shaders/weapon_particles.wgsl");
+        assert!(ports.contains(&format!("const SPARK_TRAIL:u32={SPARK_MULTIPLIER}u;")));
+        assert!(ports.contains(&format!("const GROUND_QUADRATURE:u32={GROUND_MULTIPLIER}u;")));
+        assert!(ports.contains("f32(identity.z*GROUND_QUADRATURE)/f32(identity.y)"));
     }
     #[test] fn analytic_sparks_keep_complete_support_on_rotated_source_plane() {
         for n in [Vec3::X,Vec3::NEG_Z,Vec3::new(0.3,0.8,-0.4).normalize()] {
@@ -354,6 +454,55 @@ mod tests {
             }
         }
     }
+    #[test] fn strike_sparks_bounce_once_off_a_known_ground_and_come_to_rest_on_it() {
+        let origin=Vec3::new(2.0,1.2,-3.0);let velocity=Vec3::new(9.0,4.0,-2.0);
+        // Unknown ground: the plain parabola.
+        let (free,v,resting)=strike_arc(origin,velocity,0.6,None,0.5);
+        assert!((free-(origin+velocity*0.6-Vec3::Y*(4.905*0.36))).length()<1e-5 && !resting);
+        assert!((v.y-(4.0-9.81*0.6)).abs()<1e-5);
+        let ground=0.0;let mut lowest=f32::INFINITY;let mut bounced=false;let mut rested=false;let mut last_x=origin.x;
+        for i in 0..400 {
+            let t=i as f32*0.01;
+            let (c,v,resting)=strike_arc(origin,velocity,t,Some(ground),0.5);
+            assert!(c.y>=ground-1e-4,"below ground at {t} s: {c:?}");
+            assert!(c.x>=last_x-1e-5,"never travels backwards");last_x=c.x;
+            lowest=lowest.min(c.y);
+            if !resting && t>0.9 && v.y>0.0 {bounced=true;}
+            if resting {rested=true;assert_eq!(v,Vec3::ZERO);assert!((c.y-ground).abs()<1e-5);}
+        }
+        assert!(lowest<=ground+1e-4 && bounced && rested);
+        // A strike record with the ground known under it keeps every sample above that ground.
+        let n=Vec3::new(0.0,0.3,-1.0).normalize();let reflected=Vec3::new(0.0,0.6,-0.8).normalize();
+        for age in [0.3,0.8,1.3,1.7] {
+            let r=Record {origin_age:[10.0,1.1,-20.0,age],direction_life:reflected.extend(1.4).to_array(),
+                normal_offset:n.extend(0.008).to_array(),parameters:[1.5e6,0.0,0.0,3.0],meta:[17,384000,384,RICOCHET]};
+            assert!((strike_flags(3.0))==(true,true));
+            let mut seen=0;
+            for i in (0..384000).step_by(997) {if let Some(s)=sample(r,i) {seen+=1;assert!(s.center.y>=-1e-4,"{age} s: {:?}",s.center);}}
+            if age<1.0 {assert!(seen>50);}
+        }
+        assert_eq!(strike_flags(1.0),(true,false));assert_eq!(strike_flags(2.0),(false,true));assert_eq!(strike_flags(0.0),(false,false));
+    }
+    #[test] fn two_strikes_of_the_same_kind_differ_by_their_event_and_their_seed() {
+        let n=Vec3::Z;let origin=[0.0,1.0,0.0,0.3];
+        let record=|seed:u32,out:Vec3,energy:f32|Record {origin_age:origin,direction_life:out.extend(1.4).to_array(),
+            normal_offset:n.extend(0.008).to_array(),parameters:[energy,0.0,0.0,1.0],meta:[seed,384000,384,RICOCHET]};
+        let mean=|r:Record|{let mut sum=Vec3::ZERO;let mut speed=0.0;let mut count=0;
+            for i in (0..384000).step_by(1009) {if let Some(s)=sample(r,i) {sum+=s.center-r.origin();speed+=s.length;count+=1;}}
+            (sum/count.max(1) as f32,speed/count.max(1) as f32,count)};
+        // A grazing ricochet fans along the plate; a steep one lifts off it and spreads wider.
+        let grazing=mean(record(5,Vec3::new(0.0,0.98,0.2).normalize(),1.5e6));
+        let steep=mean(record(5,Vec3::new(0.0,0.5,0.87).normalize(),1.5e6));
+        assert!(grazing.0.z<steep.0.z*0.6,"grazing {grazing:?} steep {steep:?}");
+        // The same strike with another seed: a different fan width and speed share, same kind.
+        let other=mean(record(6,Vec3::new(0.0,0.98,0.2).normalize(),1.5e6));
+        assert!((grazing.1-other.1).abs()>1e-4 || (grazing.0-other.0).length()>1e-3);
+        // A weaker round's sparks are slower (its retained energy scales the speed law).
+        let weak=mean(record(5,Vec3::new(0.0,0.98,0.2).normalize(),2.0e5));
+        assert!(weak.1<grazing.1);
+        // The burst's shares are its own and fixed: the same seed and salt always agree.
+        assert_eq!(burst_share(5,1),burst_share(5,1));assert_ne!(burst_share(5,1),burst_share(5,2));
+    }
     #[test] fn full_cookoff_plume_has_requested_ballistic_apex_without_turret_mutation() {
         let time=COOKOFF_VERTICAL_SPEED_MPS/9.81;
         let r=Record {origin_age:[0.0,3.0,0.0,time],direction_life:[0.0,1.0,0.0,18.0],
@@ -370,7 +519,7 @@ mod tests {
         for snow in [0.0,1.0] {for speed in [5.0,20.0,300.0,820.0] {
             let b=ground_budget(0.0096,Vec3::NEG_Y*speed,7.62,snow).unwrap_or_else(||panic!("budget"));
             let r=Record {origin_age:[0.0,0.01,0.0,0.0],direction_life:[0.0,-1.0,0.0,3.0],normal_offset:[0.0,1.0,0.0,0.01],
-                parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[7,b.base_count*1000,b.base_count,GROUND]};
+                parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[7,b.base_count*GROUND_MULTIPLIER,b.base_count,GROUND]};
             let max_speed=(2.0*b.ejecta_j/b.mass_kg).sqrt().min((2.0*9.81*GROUND_APEX_TARGET_M).sqrt());
             let mut apex=r;apex.origin_age[3]=max_speed/9.81;
             if let Some(s)=sample(apex,0){assert!(s.center.y<=0.01+GROUND_APEX_TARGET_M+0.001);}
@@ -379,7 +528,7 @@ mod tests {
         }}
         let b=ground_budget(0.0096,Vec3::new(700.0,-5.0,0.0),7.62,0.0).unwrap();
         let r=Record {origin_age:[0.0,0.01,0.0,0.05],direction_life:[1.0,-0.007,0.0,3.0],normal_offset:[0.0,1.0,0.0,0.01],
-            parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[1,b.base_count*1000,b.base_count,GROUND]};
+            parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[1,b.base_count*GROUND_MULTIPLIER,b.base_count,GROUND]};
         let mean=(1..1000).filter_map(|i|sample(r,i)).map(|s|s.center.x).sum::<f32>();
         assert!(mean>100.0,"grazing impact retains forward ejecta bias");
         assert!(ground_budget(0.0,Vec3::X,7.62,0.0).is_none());

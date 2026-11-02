@@ -99,6 +99,10 @@ fn surface_samples(triangles: &[([Vec3; 3], f32)]) -> (Vec<Vec3>, f32) {
 }
 
 impl Source {
+    /// The turret's highest point (turret frame): the roof, where its hatches are.
+    pub fn turret_top_y(&self) -> f32 {
+        self.turret_points.iter().map(|p| p.y).fold(0.0f32, f32::max)
+    }
     pub fn new(meshes: &[CpuMesh; 3], armor: ArmorScheme) -> Self {
         let turret = source_triangles(&meshes[1], armor, false);
         let gun = source_triangles(&meshes[2], armor, true);

@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches; fire, sparks, strike smoke and the effects pass under the deltaP look); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -119,6 +119,260 @@ simulation value reads it. Named presentation choices while the look is on:
 Gate: `tests/dither_motion.rs` and `tests/display_quantization.rs` validate the complete crush
 shader and the Crush lanes (span 144, `look` at 128, earlier lanes unmoved);
 `src/renderer.rs` unit tests check the uniform's offsets.
+
+## Fire, sparks and the effects pass under the deltaP look, 2026-11-01 (branch `fx-fire-sparks`)
+
+The owner's Canyon playtest under the look (2026-11-01) found the fire glowing over too wide a
+radius, armour and blast sparks reading as one effect stacked on itself, and a T-34 kill dropping
+the frame rate. Receipts: `captures/fx_before2_20261101_deltap_*` / `fx_after_20261101_deltap_*`,
+`fx_strikes_20261102_deltap_*` and `fx_kill_20261102_deltap.json` (the `fx-review` harness, `src/fx_review.rs`: the burning wreck at dusk and night, three strikes on
+its hull from the real projectile path, the gunner's frame across a catastrophic kill with
+`KESSEL_GPU_PROFILE=1`).
+
+- The fire's glow is the pyramid bloom, not the grains: embers and fire parcels are already one
+  frame pixel / one froxel in size at 1024x576. Measured against the standard look on the same
+  frame and handed to the main worktree, which owns the bloom constants (the deltaP section above).
+- Relayed ports' fire and soot grains: a port's native extent is twice its displayed span and a
+  flame parcel covers thousands of a port's pixels, so the spark budget (16 a pixel on High) let
+  the gunner's sight pane draw 3.7 million grains for one burning wreck (44 ms worst frame,
+  `native-pixel-hdr-effects`). Ports now take `relay_grain_samples_per_pixel` (Low 1, High 2,
+  Ultra 4) and no optional quadrature density; over budget every parcel is thinned towards one
+  sample per covered pixel, and in a port on to one sample per eight covered pixels (a sample's
+  weight at most 8: the sight pane magnifies a fire whose thousand parcels overlap every pixel,
+  and at weight 1 whole omission dropped 1,297 of 1,654 parcels), before any whole far parcel is
+  omitted and counted. Each parcel's emission and optical depth hold in expectation; the port's
+  fire is a sparser, brighter speckle (per-pixel noise rises as 1 / sqrt(samples)); the main
+  view's own fire is the raymarch backend's parcels and embers and is untouched.
+  Measured on the 120-frame kill at 1280x720 (`fx_kill_20261102_deltap.json`, RTX 4090, the GPU
+  otherwise idle): `native-pixel-hdr-effects` p50 0.43 / p95 3.6 / max 5.5 ms (before: 3.3 /
+  29.2 / 43.8); on the worst frame the sight pane draws 460,800 of 7.75 million requested grains
+  for 1,398 parcels at a weight of at most 7.98, none omitted; the sparks pass p50 1.3 / p95 2.2
+  / max 3.3 ms; `rm-points` 0.72 ms with the six embers a grain (10,044 embers that frame).
+  The grain sampler's radical inverses are per-base functions (bit reversal for base 2), the same
+  sequence a few floating-point ulps off; no sample identity changes.
+- Embers (the main view's own fire, `renderer_raymarch.rs` `collect_parcels`, `rm_points.wgsl`):
+  each flame grain within 90 m is drawn as `EMBERS_PER_GRAIN` (6) one-pixel incandescent points
+  scattered through the grain's own cube by a fixed hash of its identity, each carrying a sixth
+  of the grain's intensity (packed in 1/128 steps up to 2, the former 1/32 over 0..8 rounded the
+  dimmest stage by a quarter). The same light as the one ember per grain before, as more, sharper
+  points (the owner, 2026-11-01, on the dusk wreck: "tons of these sharp smaller ones instead of
+  a bunch of clusters that look like isolated fires"). The merged volumetric parcels are
+  unchanged; the ember is still the quadrature of a hot-gas cube as 1 cm grains, not a measured
+  soot-particle distribution.
+- Strike sparks (`RICOCHET`, `BULLET_ARMOR`, `BLAST`, `ARMOR_IMPACT`; `weapon_particle_math.rs`
+  is the reference, `rm_sparks.wgsl` and `weapon_particles.wgsl` follow it): a ricochet's fan
+  follows the outgoing ray, lifting off the plate and spreading with the ray's elevation; its
+  speed law is slow-heavy (`q^1.5`) and scaled by the round's retained kinetic energy (the
+  solver's `residual_v`); each spark burns for a time set by its size and cools through white and
+  yellow as a fraction of that time, hotter strikes whiter longer; the sparks leave over a few
+  milliseconds; they bounce once off the terrain under the strike (a fifth to two fifths of the
+  vertical speed, just over half of the tangential) and lie on it. A blast's sparks scale with
+  its charge. Each burst's fan width, speed share, lift and spread of leaving times are its own
+  (a hash of the burst's seed), so two strikes of one kind no longer coincide. Authored: the
+  speed laws, the restitution, the size-to-lifetime coupling and the cooling fractions are set by
+  eye against the previous presentation, not fragmentation or thermal measurements; the bounce
+  plane is the terrain height under the strike, not the hull or any object.
+- Spark samples (2026-11-02): a record carries `SPARK_MULTIPLIER` = 8 samples a spark instead of
+  the thousandfold quadrature, and both spark shaders draw every spark kind (blast, plate strike,
+  ricochet, bullet, pressure vent, cook-off) as the 2026-10-29 dotted streak: the spark's path
+  sampled 8 times over 14 ms, its whole light shared among the samples. The thousandfold split
+  drew a blast's and a plate strike's 384,000 dim points as a sheet or a cone (the owner's
+  "clusters" on the 2026-11-01 stills); the same 384 sparks now read as streaks, at an eighth of
+  a percent of the vertex work. The ground's ejecta keep their quadrature (`GROUND_MULTIPLIER`
+  1000: a mass distributed over grains, not sparks) and the hot rim its ring. The 14 ms streak is
+  an exposure-length presentation of the spark's path, not a measured trail; the pass is now
+  `analytic-streaked-sparks` (was `analytic-thousandfold-sparks`). Later the same day the streak
+  itself was withdrawn: eight samples along the 14 ms path drew as bars of bloomed dots and 24 as
+  solid lines (the owner: "thick laser beams"). A spark is now one sample where it is at the
+  frame's instant, as every other body in this renderer (nothing is motion-blurred), covering
+  its cross-section only; its tail is the support test's, no longer a smear of its light into
+  the pixel. `SPARK_MULTIPLIER` and both shaders' `SPARK_TRAIL` are 1 and the `streaked`
+  machinery stays at that length. The port shader caps a sample's projected area at 6 px as the
+  main view's does, and a spark's colour is `spark_glow`: the three Planck-band
+  ratios at the spark's temperature, cooling from its own start (2100-3400 K by kind, hash and
+  the ricochet's retained energy; a blast's hottest) to 1100 K over its burn, on the palette's
+  authored display scale (5.3 at 1500 K to 9.9 from 2800 K). The temperatures are authored
+  incandescent-steel ranges, not measurements; the magnitude is not Planck's (which would rise a
+  hundredfold over that range). The small-arms tracer strip and head light are the 3400 K
+  white-yellow of a burning magnesium and strontium nitrate composition (bands 1, 0.705, 0.348;
+  before 1, 0.462, 0.030) with the intensity rescaled (0.00165 to 0.001167) so the pellet's
+  photopic estimate stays about 61 cd. `KESSEL_RM_LIGHTS_DEBUG=1` also prints which lights hold
+  the two point-shadow cubes: on the strike fixture the burst at 6 m and either the second burst
+  or the burning wreck 41 m off hold them, so one or two lights (the weaker burst, or the wreck's
+  0.13 W/sr when two bursts outrank it) pass through the struck hull unshadowed. Kill at 1024x576
+  after all of it: sparks 0.14 / 0.14 / 0.15 ms, rm-points 0.03, port grains unchanged.
+- Exterior flame pages (`game.rs` `FIRE_FLAME_COLORS`, the second row; `exterior_flame_parcel_sample`
+  stage regions): the base and the tongues' tips and outer sheath are the deep red of cooling
+  soot ([168,52,9] and [148,28,6] sRGB, from the 2026-10-01 ambers [187,87,18] and [192,88,18])
+  and the sheath takes the outer quarter of the spread and the top third of the rise (was the
+  outer sixth and the top fifth); the yellow-white core and amber body are unchanged. Still an
+  authored radiance calibration, not a soot temperature model (the owner, 2026-11-02: the fire
+  "too yellow"; the embers inherit the pages, so the fire's outer points go deep red with it).
+- The fire's light as points (`renderer_raymarch.rs` `FIRE_EMBER_SHARE` 0.8, `EMBERS_PER_GRAIN`
+  12): a flame grain within 90 m draws 80 % of its authored emission as twelve one-pixel embers
+  scattered through its cube and 20 % as its merged volumetric parcel (was half and half with
+  six embers). The parcels, merged per 4 px volume cell, drew as cell-sized glowing blobs over
+  the embers under the AgX and pastel looks (the owner: "diffuse glowing cubes"); the extinction
+  and scattering of the parcels are unchanged, so the fire's haze and its light on the scene
+  stay, and the total emission is the same authored calibration redistributed.
+- Strike smoke in the raymarch backend (`renderer_raymarch.rs` `event_parcels`): a detonation's
+  five soot puffs used to appear 1.5 m above the burst and spread about it, so a shell on a plate
+  made a cloud in the air beside the hull (the owner: "exploding out of thin air"). They now leave
+  the struck surface along its normal (a plate's, or up off the ground), born at the surface the
+  size of the burst, slowing as they mix (2.6 m x (1 - e^(-t / 0.7 s))) and rising on their
+  buoyancy from zero. A heavy round through the plate is its own event (`EVENT_PENETRATION`,
+  from the perforation's `BULLET_ARMOR` dust record or an `ARMOR_IMPACT`, flagged heavy; a heavy
+  ricochet stays `EVENT_ARMOUR`; before this no tank-round perforation made any event, so the
+  molten spray only ever followed ricochets) and vents through the hole: six
+  puffs born at the hole 0.45 s apart over 2.3 s, about the hole's size, leaving along the
+  normal (1.6 m x (1 - e^(-age / 0.6 s))) and rising, fading over 6 s. Both are authored plumes
+  on the event's origin and normal, not a vented-gas or detonation-products model; the hole's
+  glow is the existing hot rim. Inside the hull the same event fills the compartment: six puffs
+  born over the first second inward along the normal, trapped (no buoyant rise), spreading
+  slowly and thinning over ten seconds; an authored stand-in for the round's smoke, the spall's
+  dust and the burning paint behind the plate, not a vented-gas model. The `fx-review` part
+  `cabin_hit` (an observer inside behind the radio operator, the crew-solo fixture's wounding
+  lane through the hull side) is its evidence. The spall bodies' trails (`HOT_FRAGMENT_TAIL_MAX_LENGTH`
+  0.04 m, was 0.145 m) are capped at about one frame of the slow end of their motion: on the
+  fixture every trail sat on the old cap a hand's breadth from the eye and drew as rods
+  spanning the compartment for a second; a trail is still a bounded suffix of the body's own
+  measured history, never a beam.
+- The detonation cloud of a shell on a plate (`event_parcels`, `EVENT_DETONATION`; `blast()` now
+  carries the struck surface's normal in the burst's direction lane and the event takes it):
+  against a plate or wall (normal below 0.7 up) the baked ground-burst volumes are not drawn;
+  the white-hot core grows out of the contact along the normal (0.3 m + 30 m/s x t for 45 ms)
+  and five lobes born at the contact expand along the normal (2.2 m, 1 - e^(-t / 0.25 s)) and
+  sideways within tenths of a second, then rise on their buoyancy for 14 s. Each lobe is fire
+  while the products afterburn and the same soot after, so the fire and the smoke are one body
+  born together with the fire dying first. Before, the core stood 0.6 m above the contact and
+  three lobes were born 0.8 m above it at 2.7 m radius (the owner: the explosion "appearing
+  outside of where it physically should be", a gap between the fire and the smoke). The GPU
+  blast sparks keep the charge's speed law (10-38 m/s x charge) instead of 4.6x it: the exterior
+  volume multiplier remains the raster path's flash presentation only. The detonation event is
+  now by charge (above a quarter of an 88 mm HE round's), not by that multiplier. Authored
+  expansion and rise rates for an 88 mm-class burst, not detonation-products gas dynamics; the
+  lobes leave the plate at 3 m within a quarter second and lift at once, so the plate and its
+  rim are clear of the cloud by about half a second (the first cut sat on the plate for a second
+  and hid the ring). The burst's own light (`detonation_flash_heat`) is the 60 ms flash with,
+  under it, an afterburn tail at a fifth of the flash fading over about a second and a half
+  (0.45 s), so the cloud glows on in its own smoke rather than snuffing out at a tenth of a
+  second; the burst's synthesized light follows the same envelope, and the fireball parcels'
+  colour cools with it (white-hot at the flash, orange-red in the tail; a first cut at a third
+  of the flash with the colour held hot drew a white ball for a second). Authored timing.
+- Hot rim bound (`weapon_particle_math::rim_heat`, `RIM_KELVIN_MAX` 1800 K, was 2000 K): the
+  rim's thermal reservoir still takes at most 1.5 % of the lost kinetic energy, but the rim that
+  stays on the plate is held at steel's solidus, since hotter steel is molten and leaves with
+  the perforation spray. The ring itself is drawn by the plate (`renderer_scars`, the scar's
+  `rim_kelvin` from the same estimate, cooling over 2.5 s); the white-yellow blob a full 88 mm
+  perforation drew was the rim's 512 incandescent grains piling their light onto a few pixels,
+  so a rim grain's projected area is capped at one pixel in both spark shaders (the other kinds
+  keep 6 px). A first cut held the bound at 1600 K and dimmed the ring the owner wants kept.
+  The 1.5 % share and the rim's geometry remain estimates.
+- The ammunition burnout before a turret goes (`game.rs` `drive_cookoff_build`,
+  `COOKOFF_VENT_BUILD_S` 1.4 s): a catastrophic kill no longer launches the turret on the next
+  step. The stowage burns first: for 1.4 s the compartment's pressure climbs and its gas and
+  flame leave through every real opening, the terminal breach and each open hole in the hull
+  and turret plates (a closed hatch is not invented as an opening), as pressure-vent bursts
+  whose cadence quickens with the pressure (every 0.35 s at first, every 0.08 s at the end),
+  and in the last fifth of a second from the turret race all round (eight points on a 0.71 m
+  ring, outward and up) as it begins to lift; then the launch is armed and the existing ring
+  plume follows the body. Since the same day's later change the build vents through ONE
+  opening, the turret roof where the hatch is (the commander's eye sits under it; the roof
+  height is the turret source's highest point), a jet re-issued every 0.3 s whose strength
+  rises with the build (the breach, the open holes and the ring no longer vent; the owner
+  asked for the one flame jet up through the roof). In the raymarch backend a heavy pressure
+  vent is an event (`EVENT_VENT`): a six-parcel flame jet along the opening's normal, one to
+  four metres long with the strength, fire while the gas burns and cooling along the jet and
+  with age on the shared Planck law (`incandescence`), its smoke drifting off for four seconds,
+  a torch light of about 0.3 W/sr at the jet, and 48 sparks (192 before) from the spark pass.
+  The build time, the cadence, the jet's geometry and its lengths are authored estimates of a
+  stowage's deflagration before the ring vents, not a gas-dynamics model; `fx-review` part
+  `burnout` (a primed catastrophic kill from an observer 14 m off, five seconds) is the
+  evidence.
+- The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
+  the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
+  takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
+  21 December 1942, the sun about 5 deg under). In film mode the fenced wall time includes the
+  frame's readback and PNG write and is not a frame-rate figure; the pass timestamps are.
+- Every lamp is occluded by every object in the air as on the surfaces (2026-11-02). The
+  froxel pass (`rm_volume.wgsl`) gave a lamp without a shadow cube (all but the two strongest
+  within 45 m: every fire, flash, torch and tracer head) no visibility test at all, only the
+  medium's extinction, so a burning tank's fire lit the snow haze under its own belly and the
+  air behind its hull through the plates. With ray queries the pass now binds the live scene
+  (both TLASes) and asks one any-hit shadow ray per froxel cell and lamp toward the source,
+  stopped short of the fixture, exactly the surface pass's rule. That exemption was four
+  times the lamp's source radius, meant for a lamp in its housing; a fire's source radius is
+  the whole flame, so the ray stopped four to eight metres short of a fire and nothing within
+  that of a burning tank was shadowed at all: it is now within 0.15-0.3 m in both passes. A
+  wreck's one fire light also stands in the flames' crown (the upper third of its cells'
+  heights) instead of at the mean of cells spread over the deck and sides, which lay inside
+  the hull and lit the snow under the belly. Without ray queries (the
+  portable preset, `KESSEL_RM_RT=0`) the air stays unshadowed for those lamps: the named gap of
+  that preset, not of the hero one. Cost is a ray per lit cell per lamp in the cell's bin;
+  measured in the `fx-review` receipts (`rm-volume`).
+- A burning wreck's flame and soot grains are regenerated every update (2026-11-02): the
+  2026-11-01 half-rate (`FIRE_PRESENTATION_PERIOD` 2) was taken for the cabin fire's 73,728
+  grains and applied to the wreck fire too, which then flickered at 30 Hz against the sparks'
+  and embers' 60. The period now applies only while the cabin burns; a wreck fire alone is a
+  few thousand grains.
+- The exterior fire pages are the Planck law at the soot's temperatures (base 1500 K, body
+  1750 K, core 2100 K, tips 1350 K; `incandescence::planck_srgb8`), the same band ratios
+  `spark_glow` and `rim_color` compute in the spark shaders, so the fire, the embers, the vent
+  jet, the detonation's parcels, the sparks and the hot rims glow on one law (the owner,
+  2026-11-02: one visual language, and the fire into the deep red). Not calibrated soot
+  emissivity; the display scale per page is unchanged. Twenty embers per grain (twelve before)
+  carrying 0.6 of the grain's light (0.8), so the sharp points read as a continuous burning
+  surface over the deck with the tongues' volume behind them.
+- A wreck's smoke leaves from the flame's crown (2026-11-02): each soot lobe's root is the
+  mean of this frame's upper third of flame cells, not a patch on the hull, so the smoke rises
+  from where the tongues end (it rose beside them). A stove's or a non-particle frame's smoke
+  keeps the patch root.
+- Glowing metal on every heavy plate strike (2026-11-02): the hot rim (`rim_heat`, the plate's
+  own steel at the strike heated by the round's lost work, 1.5 % of it, capped at the solidus)
+  was drawn for perforations only; a shattered round's crater and a ricochet's gouge now draw
+  the same annulus (named approximation: a gouge is drawn as the annulus a hole's rim is), and
+  the annulus is 1.8 x wider (0.18 mm per shell millimetre, 3-30 mm). The owner: more glowing
+  metal on the impacts.
+- The tracer pellet's intensity is 180 cd (61 cd before): the 61 was a lower bound from the
+  trace's required visibility, and the AgX display desaturates the hotter pellet toward white
+  as a 3400 K source of that intensity should look; its chroma is unchanged.
+- The airborne front of every surface burst reaches everything at the speed of sound
+  (2026-11-02; `pressure_front`, `Game::emit_blast_front`, `deliver_pressure_fronts`). Before,
+  only an HE burst and an inner-surface penetration emitted a front, received by the eye alone
+  (a kick of an authored 0.18 m over distance squared). Now the first blast of a kill, the
+  stowage's detonation at the turret's launch, a wreck's cook-off, the 88's and the enemy
+  guns' muzzle blasts and the HE burst each leave one front, carrying the source's TNT
+  equivalent (the sound levels' own: 0.71 kg, 3.67 kg, 0.71 kg, 0.36 kg per kg of
+  propellant, the HE fill's equivalent), followed to where its incident overpressure falls
+  under 0.2 kPa (at most 240 m). Every receiver's response is computed from that charge at its
+  own distance and delivered at its own arrival, d / c, the same range and speed the report's
+  scheduler uses, so the boom and the front arrive together: the eye's kick (a quarter metre
+  at 20 kPa scaling with the root of the Kingery-Bulmash overpressure below it, decaying as the
+  existing armour-hit kick; a presentation of the startle and the chest thump, the head's
+  physical displacement being negligible, and never through the player's intact hull or for
+  the own gun), the standing men (a flinch of 0.3 s at 140 dB peak to 1.2 s at 170 dB, nothing
+  under 130; a presentation of a startle, since the drag impulse on a man at these distances
+  is millimetres per second), the grass (each wind cell's blade spring takes the tip velocity
+  the dynamic-pressure impulse gives a 5 mm, 0.7 g/m leaf at Cd 1.2: flattened within 15 m of
+  3.67 kg, a whip at 40 m, a tremor at 100 m; the spring's displacement is now bounded at 0.85
+  of the blade) and the standing trees (the crown's drag impulse on a cone a third as wide as
+  tall at Cd 0.6 against 0.3 of the stem's mass, a damped spring at 5/height Hz with damping
+  ratio 0.15, the pose a rotation about the base; centimetres at 15 m from 3.67 kg, as a 10 m
+  pine should). The dynamic pressure is the weak-shock ½ρu² with u = Δp/(ρc), which overstates
+  a front above ~50 kPa by up to a third: those distances are inside the burst's damage radius,
+  where `blast` snaps the trees and resolves the men anatomically. Named approximations: a
+  grass cell (8 m) receives its impulse at its centre's arrival; the muzzle blast is treated as
+  a surface burst of its charge's equivalent (the directivity of the real muzzle blast is in the
+  sound, not the front); the refractive cap is unchanged (a representative subframe radius,
+  not a gas solver). `fx-review` part `shockwave` (a primed catastrophic kill 33 m from an
+  observer in the open with three riflemen between; the receipt records the fronts, the
+  arrivals, the kick, the men startled, the blade and crown impulses) is the evidence, with
+  `pressure_front` tests of the charge's overpressure, impulse, reach and arrival windows.
+
+Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
+whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never
+below ground, rest on it; two strikes differ by event and by seed; support bounds hold),
+`src/weapon_vfx.rs` tests, and the shader validation tests of both spark shaders.
 
 ## Physical terrain wavelength and cold restore, 2026-10-31
 
@@ -1928,7 +2182,7 @@ refinement remain separate acceptance work, as recorded in the hand-prop note.
 | Retained optical capture metadata (2026-10-31) | A Low-preset skipped layer keeps the camera, texel extent and frame of the color/depth actually encoded. First nonzero use forces initialization; replacing, blocking/repairing or occluding/revealing the port invalidates that cache. The current physical entrance and eye remain current. A finite gunner pupil refreshes if its current visible rays no longer fit the retained capture. | `src/raster_optics.rs` (`CapturedView`, `retained_capture`, `capture_covers_visible_entrance`) | Reduced cadence still produces temporally old exterior motion and objective-origin parallax until refresh. This fixes stale-image/current-projection misregistration; it does not make cached images current or remove the separate vision-block acceptance approximation. |
 | Sky cache accumulation (2026-10-28) | Each refresh of a sky-cache texel marches the clouds with a new jitter (an integer hash) and is blended in at 0.3; a sky jump writes it whole. | `src/renderer_raymarch.rs` (`SKY_CACHE_BLEND`), `shaders/rm_sky_cache.wgsl`, `shaders/sky.wgsl` (`cloud_jitter`) | A temporal average over a texel's last few refreshes (about 64 frames): a cloud feature moving across the sky trails over about a second. |
 | Open-share firefly clamp (2026-10-28) | A new open-sky share estimate (the ray queries' and the screen gather's) may not exceed three times the same-surface history's share plus 0.02 before it is blended in. | `shaders/rm_shade.wgsl` (`share_clamped`) | Biases a share of 0.3 by under 2 % at two rays a frame; a share that opens suddenly rises at least 1.3 times a frame, so a hatch's light comes up over about a quarter second. |
-| Relayed ports' one-pixel effect budget (2026-10-28) | Each relayed port draws at most `relay_effect_samples_per_pixel` (Low 8, High 16, Ultra 32) weapon-spark samples and as many fire and soot grain samples per native pixel of its view. Over budget a spark burst draws its share of samples, never fewer than its source count, each weighted by source / drawn; ground ejecta keep the full count's grain size and take the represented optical depth; hot rims are never thinned. Grains keep two samples per covered pixel of a parcel and drop whole far parcels, counted. | `src/graphics.rs` (`relay_effect_budget`), `src/weapon_particle_math.rs` (`thinned_counts`), `shaders/weapon_particles.wgsl`, `src/renderer_fine_vfx.rs` | Thinning keeps each burst's emission and optical depth in expectation; the shower is sparser and its per-pixel noise higher (relative noise goes as 1 / sqrt(samples a pixel): a port drew 47 sparks a pixel in one strike before, 8 on Low now). Omitted far parcels are those beyond the budget, usually behind nearer smoke; their projected area is reported. The shader backend's main view keeps its absolute caps. Since the evening each burst first draws at most that rate over the pixels its conservative support covers (`footprint_count`; ground ejecta bounded by their own speed): a distant strike's first frames take a few hundred samples, each standing for more. |
+| Relayed ports' one-pixel effect budget (2026-10-28) | Each relayed port draws at most `relay_effect_samples_per_pixel` (Low 8, High 16, Ultra 32) weapon-spark samples and as many fire and soot grain samples per native pixel of its view. Over budget a spark burst draws its share of samples, never fewer than its source count, each weighted by source / drawn; ground ejecta keep the full count's grain size and take the represented optical depth; hot rims are never thinned. Grains keep two samples per covered pixel of a parcel and drop whole far parcels, counted. Since 2026-11-01 a port's grains take their own rate (`relay_grain_samples_per_pixel`, Low 1, High 2, Ultra 4) without optional density, and over budget every parcel is thinned towards one sample per covered pixel (one per eight in a port) before any whole parcel is omitted (the 2026-11-01 section above). | `src/graphics.rs` (`relay_effect_budget`), `src/weapon_particle_math.rs` (`thinned_counts`), `shaders/weapon_particles.wgsl`, `src/renderer_fine_vfx.rs` | Thinning keeps each burst's emission and optical depth in expectation; the shower is sparser and its per-pixel noise higher (relative noise goes as 1 / sqrt(samples a pixel): a port drew 47 sparks a pixel in one strike before, 8 on Low now). Omitted far parcels are those beyond the budget, usually behind nearer smoke; their projected area is reported. The shader backend's main view keeps its absolute caps. Since the evening each burst first draws at most that rate over the pixels its conservative support covers (`footprint_count`; ground ejecta bounded by their own speed): a distant strike's first frames take a few hundred samples, each standing for more. |
 | Clustered occluder in the environment-visibility atlas | A rigid mesh of 160,000 indices or more (the Tiger hull and turret) is drawn into the per-frame dynamic layer of the environment-visibility atlas from a vertex-clustered copy generated from its own source triangles at load: 6 mm cells, the first source vertex in a cell stands for the cell, collapsed triangles dropped. The rendered mesh, collision, sun shadows and lamp shadows still use the source triangles. | `src/sky_visibility.rs` (`clustered_occluder`), `src/renderer.rs` | No vertex moves more than 10.4 mm, under half of the fine cascade's 23 mm texel. Used only when clustering at least halves the triangle count. |
 
 ## Owner-directed gameplay departures

@@ -13,6 +13,95 @@ pub const MAX_FRONTS: usize = 4;
 pub const MAX_OPACITY: f32 = 0.08;
 const RECENT_IDS: usize = 64;
 
+/// The winter acts' air at −20 °C and 101.3 kPa.
+pub const AIR_DENSITY_KG_M3: f32 = 1.39;
+/// The front is followed to where its overpressure falls under this (140 dB peak), below which
+/// no modeled receiver responds; `reach_m` caps it at 240 m.
+pub const REACH_FLOOR_KPA: f32 = 0.2;
+pub const REACH_MAX_M: f32 = 240.0;
+
+/// Incident peak overpressure (kPa) of a surface burst of `tnt_kg` at `distance_m`: the
+/// Kingery-Bulmash fit the report levels use (`sound_levels::kingery_bulmash_kpa`).
+pub fn overpressure_kpa(tnt_kg: f32, distance_m: f32) -> f32 {
+    let w = tnt_kg.max(1.0e-6);
+    crate::sound_levels::kingery_bulmash_kpa(distance_m.max(0.05) / w.cbrt())
+}
+/// Positive-phase duration (s): the report's A-duration law.
+pub fn positive_phase_s(tnt_kg: f32, distance_m: f32) -> f32 {
+    crate::sound_levels::blast_a_duration_ms(tnt_kg, distance_m) * 0.001
+}
+/// Peak particle velocity (m/s) behind the front, the weak-shock relation u = Δp / (ρ c). It
+/// overstates a strong front (above ~50 kPa) by up to a third; those distances lie inside the
+/// burst's damage radius, where the receivers are broken rather than bent.
+pub fn particle_velocity_m_s(overpressure_kpa: f32) -> f32 {
+    overpressure_kpa * 1000.0 / (AIR_DENSITY_KG_M3 * speed_of_sound_m_s())
+}
+/// The dynamic-pressure impulse (Pa s) a thin object standing in the flow takes over the
+/// positive phase: ½ ρ u² over a triangular phase. This is what bends grass and crowns; the
+/// side-on overpressure loads a small object only for its clearing time, microseconds.
+pub fn drag_impulse_pa_s(tnt_kg: f32, distance_m: f32) -> f32 {
+    let u = particle_velocity_m_s(overpressure_kpa(tnt_kg, distance_m));
+    0.5 * (0.5 * AIR_DENSITY_KG_M3 * u * u) * positive_phase_s(tnt_kg, distance_m)
+}
+/// The radius the front is followed to (`REACH_FLOOR_KPA`, at most `REACH_MAX_M`).
+pub fn reach_m(tnt_kg: f32) -> f32 {
+    if overpressure_kpa(tnt_kg, REACH_MAX_M) >= REACH_FLOOR_KPA { return REACH_MAX_M; }
+    let (mut lo, mut hi) = (0.5f32, REACH_MAX_M);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if overpressure_kpa(tnt_kg, mid) >= REACH_FLOOR_KPA { lo = mid; } else { hi = mid; }
+    }
+    0.5 * (lo + hi)
+}
+/// A dry grass blade in the flow: a flat leaf 5 mm wide at 0.7 g per metre, drag coefficient
+/// 1.2, a cantilever whose tip takes the impulse. Returns the tip's velocity (m/s).
+pub const BLADE_WIDTH_M: f32 = 0.005;
+pub const BLADE_MASS_KG_PER_M: f32 = 0.0007;
+pub const BLADE_DRAG: f32 = 1.2;
+pub fn blade_tip_velocity_m_s(tnt_kg: f32, distance_m: f32) -> f32 {
+    drag_impulse_pa_s(tnt_kg, distance_m) * BLADE_WIDTH_M * BLADE_DRAG / BLADE_MASS_KG_PER_M
+}
+/// A standing conifer in the flow: a crown a sixth of the square of its height (a cone a third
+/// as wide as tall) at a porous drag of 0.6; the stem 500 kg/m³ over 0.4 of a cylinder of the
+/// trunk's radius (taper and crown), of which 0.3 moves with the first mode. The crown's
+/// velocity (m/s) after the impulse.
+pub fn crown_tip_velocity_m_s(tnt_kg: f32, distance_m: f32, height_m: f32, trunk_r_m: f32) -> f32 {
+    let area = height_m * height_m / 6.0;
+    let mass = 500.0 * std::f32::consts::PI * trunk_r_m * trunk_r_m * height_m * 0.4;
+    drag_impulse_pa_s(tnt_kg, distance_m) * area * 0.6 / (0.3 * mass).max(2.0)
+}
+/// A conifer's first sway frequency (Hz): 5 / height, the measured band (a 5 m pine near 1 Hz,
+/// a 20 m one near a quarter).
+pub fn tree_sway_hz(height_m: f32) -> f32 { 5.0 / height_m.max(2.0) }
+/// A man in the open ducks at the report: nothing under 130 dB peak (a distant boom), a 0.3 s
+/// start at 140 dB, a full 1.2 s cover at 170 dB. Presentation of a startle through the
+/// soldier's flinch, not a body displacement: the drag impulse on a standing man at these
+/// distances is millimetres per second.
+pub fn startle_s(tnt_kg: f32, distance_m: f32) -> f32 {
+    let db = crate::sound_levels::blast_peak_db(tnt_kg, distance_m);
+    ((db - 130.0) / 40.0).clamp(0.0, 1.0) * 1.2
+}
+/// The exposed viewer's response to the front at the eye, in the armour-hit kick's units
+/// (metres of eye displacement decaying over ~0.13 s): a quarter metre at 20 kPa, the front
+/// that puts a standing man down, scaling with the square root of the overpressure below it.
+/// Presentation of the startle and the chest thump; the head's physical displacement is
+/// negligible.
+pub fn eye_kick_m(overpressure_kpa: f32) -> f32 {
+    0.25 * (overpressure_kpa / 20.0).clamp(0.0, 1.0).sqrt()
+}
+/// The blade-tip velocity impulse (m/s, world xz) the fronts give the grass at `point` with
+/// an arrival in (t0, t1]: radial from each source.
+pub fn blade_gust(fronts: &[Front], point: Vec3, t0: f32, t1: f32) -> glam::Vec2 {
+    let mut gust = glam::Vec2::ZERO;
+    for front in fronts {
+        let Some(arrival) = front.arrival_at(point) else { continue };
+        if arrival.at <= t0 || arrival.at > t1 { continue; }
+        let radial = glam::Vec2::new(arrival.direction.x, arrival.direction.z).normalize_or_zero();
+        gust += radial * blade_tip_velocity_m_s(front.tnt_kg, point.distance(front.origin));
+    }
+    gust
+}
+
 #[derive(Clone, Copy, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Front {
@@ -24,6 +113,9 @@ pub struct Front {
     pub max_radius: f32,
     /// -1 = sphere; 0 = inward hemisphere from an actual radiating surface.
     pub cap_cosine: f32,
+    /// The source's TNT equivalent (kg): the overpressure, impulse and reach at every receiver.
+    #[serde(default)]
+    pub tnt_kg: f32,
 }
 impl Front {
     pub fn arrival_at(&self, listener: Vec3) -> Option<Arrival> {
@@ -114,6 +206,13 @@ impl Fronts {
     pub fn clear(&mut self) {
         self.events.clear();
         self.recent.clear();
+    }
+    /// The fronts still travelling at `now` (within their reach, a tenth of a second's grace):
+    /// what the men, the trees and the grass are swept against each update.
+    pub fn active(&self, now: f32) -> Vec<Front> {
+        self.events.iter().copied()
+            .filter(|f| f.tnt_kg > 0.0 && now - f.emitted_at <= f.max_radius / speed_of_sound_m_s() + 0.1)
+            .collect()
     }
     fn samples(&self, now: f32, shutter_s: f32, listener: Vec3) -> [FrontGpu; MAX_FRONTS] {
         let mut samples = [FrontGpu::default(); MAX_FRONTS];
@@ -400,7 +499,42 @@ mod tests {
             strength: 1.0,
             max_radius: 80.0,
             cap_cosine: 0.0,
+            tnt_kg: 0.71,
         }
+    }
+    #[test]
+    fn the_charge_sets_overpressure_impulse_and_reach() {
+        // 3.67 kg (a turret thrown): grass flattened at 15 m, a whip at 40 m, a tremor at 100 m.
+        assert!(blade_tip_velocity_m_s(3.67, 15.0) > 5.0);
+        let forty = blade_tip_velocity_m_s(3.67, 40.0);
+        assert!(forty > 1.0 && forty < 5.0, "{forty}");
+        assert!(blade_tip_velocity_m_s(3.67, 100.0) < 1.0);
+        // A 10 m pine 15 m from it sways centimetres, not metres.
+        let crown = crown_tip_velocity_m_s(3.67, 15.0, 10.0, 0.15);
+        assert!(crown > 0.1 && crown < 3.0, "{crown}");
+        // The reach follows the charge: a ground strike's grams stop within forty metres.
+        assert!(reach_m(0.002) < 40.0);
+        let kill = reach_m(0.71);
+        assert!(kill > 150.0 && kill <= REACH_MAX_M, "{kill}");
+        assert_eq!(reach_m(3.67), REACH_MAX_M);
+        // Men duck at a near burst and ignore a distant small one.
+        assert!(startle_s(3.67, 30.0) > 1.0);
+        assert_eq!(startle_s(0.002, 100.0), 0.0);
+        assert!(eye_kick_m(20.0) == 0.25 && eye_kick_m(5.0) < 0.13 && eye_kick_m(0.0) == 0.0);
+    }
+    #[test]
+    fn sweeps_take_only_the_window_of_arrival() {
+        let f = Front { origin: Vec3::ZERO, direction: Vec3::Y, cap_cosine: -1.0, max_radius: 240.0, tnt_kg: 3.67, ..front(3) };
+        let c = speed_of_sound_m_s();
+        let point = Vec3::new(30.0, 0.0, 0.0);
+        let at = 2.0 + 30.0 / c;
+        assert_eq!(blade_gust(&[f], point, at + 0.001, at + 0.02), glam::Vec2::ZERO);
+        let gust = blade_gust(&[f], point, at - 0.02, at + 0.001);
+        assert!(gust.x > 1.0 && gust.y.abs() < 1e-4, "{gust}");
+        let mut fs = Fronts::default();
+        fs.emit(f, Vec3::Z * 500.0);
+        assert_eq!(fs.active(2.5).len(), 1);
+        assert!(fs.active(2.0 + 240.0 / c + 0.2).is_empty());
     }
     #[test]
     fn arrival_uses_real_distance_and_rejects_backside_or_out_of_range() {

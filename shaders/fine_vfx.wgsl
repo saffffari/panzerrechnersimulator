@@ -7,18 +7,31 @@ struct GrainOut {
     @location(1) @interpolate(flat) emission:vec4<f32>,
     @location(2) @interpolate(flat) weight:f32,
 };
-fn grain_radical(mut_value:u32,base:u32)->f32 {
-    var value=mut_value; var inverse=1.0/f32(base); var result=0.0;
+// Van der Corput radical inverses in bases 2, 3 and 5, one per base so each division is by a
+// literal (the compiler turns it into a multiply and a shift); a runtime base cost a true integer
+// division per digit, six vertices a grain, 3.7 million grains in one sight pane (2026-11-01).
+// Base 2 is the bit reversal itself.
+fn grain_radical2(value:u32)->f32 { return f32(reverseBits(value))*2.3283064365386963e-10; }
+fn grain_radical3(mut_value:u32)->f32 {
+    var value=mut_value; var inverse=1.0/3.0; var result=0.0;
     for(var digit=0u;digit<20u;digit+=1u){
-        result+=f32(value%base)*inverse;value/=base;inverse/=f32(base);
+        result+=f32(value%3u)*inverse;value/=3u;inverse/=3.0;
+        if(value==0u){break;}
+    }
+    return result;
+}
+fn grain_radical5(mut_value:u32)->f32 {
+    var value=mut_value; var inverse=1.0/5.0; var result=0.0;
+    for(var digit=0u;digit<14u;digit+=1u){
+        result+=f32(value%5u)*inverse;value/=5u;inverse/=5.0;
         if(value==0u){break;}
     }
     return result;
 }
 fn grain_point(index:u32,seed:u32,soot:bool)->vec3<f32>{
     // Prefix identity depends only on parent seed and sample index, never frame or sample count.
-    let phase=vec3(grain_radical(seed+1u,2u),grain_radical(seed+1u,3u),grain_radical(seed+1u,5u));
-    let q=fract(vec3(grain_radical(index+1u,2u),grain_radical(index+1u,3u),grain_radical(index+1u,5u))+phase);
+    let phase=vec3(grain_radical2(seed+1u),grain_radical3(seed+1u),grain_radical5(seed+1u));
+    let q=fract(vec3(grain_radical2(index+1u),grain_radical3(index+1u),grain_radical5(index+1u))+phase);
     if(!soot){return q-vec3(0.5);}
     // The source lobe's actual 12 vertices / 20 triangles define tetrahedra about its origin.
     let phi=(1.0+sqrt(5.0))*0.5;

@@ -40,6 +40,17 @@ fn weapon_palette(page: u32) -> vec3<f32> {
     if (page == 4u) { return vec3(1.0, 0.5906, 0.0482) * 4.38; }
     return vec3(1.0, 0.2874, 0.0116) * 5.30;
 }
+// An incandescent spark's colour: the three Planck-band ratios at its temperature (red = 1), on
+// the palette's authored display scale (dull orange 5.3 at 1500 K to 9.9 at 2800 K and above).
+// `glow` is (initial kelvin, fraction of life); a spark cools from its own initial temperature
+// to a dull 1100 K by the end of its burn. Not calibrated steel emissivity (2026-11-02).
+fn spark_glow(glow: vec2<f32>) -> vec3<f32> {
+    let kelvin = mix(glow.x, 1100.0, pow(clamp(glow.y, 0.0, 1.0), 0.7));
+    let wavelengths = vec3(650.0, 550.0, 450.0);
+    let reference = exp(14387769.0 / (650.0 * kelvin)) - 1.0;
+    let chroma = pow(vec3(650.0) / wavelengths, vec3(5.0)) * reference / (exp(vec3(14387769.0) / (wavelengths * kelvin)) - vec3(1.0));
+    return chroma * mix(5.3, 9.9, clamp((kelvin - 1500.0) / 1300.0, 0.0, 1.0));
+}
 fn rim_color(initial_kelvin: f32, age: f32) -> vec3<f32> {
     let kelvin = 293.0 + max(initial_kelvin - 293.0, 0.0) * exp(-max(age, 0.0) / 2.5);
     if (kelvin < 700.0) { return vec3(0.0); }
@@ -47,6 +58,32 @@ fn rim_color(initial_kelvin: f32, age: f32) -> vec3<f32> {
     let reference = exp(14387769.0 / (650.0 * 1800.0)) - 1.0;
     return pow(vec3(650.0) / wavelengths, vec3(5.0)) * reference
         / (exp(vec3(14387769.0) / (wavelengths * kelvin)) - vec3(1.0)) * 4.725;
+}
+
+// The strike kinds' shared pieces (weapon_particle_math.rs `strike_flags`, `burst_share`,
+// `strike_arc`, the CPU reference): the record's heavy flag and whether `parameters.z` carries
+// the ground height; a per-burst share in 0..1 that is the burst's own for its whole life; and
+// the arc of a spark under gravity with one bounce off the known ground, then rest on it.
+fn spark_strike_flags(w: f32) -> vec2<bool> {
+    let known = w >= 2.0;
+    return vec2(w - select(0.0, 2.0, known) > 0.5, known);
+}
+fn spark_burst_share(seed: u32, salt: u32) -> f32 { return weapon_random(seed * 7919u + salt); }
+struct SparkArc { center: vec3<f32>, velocity: vec3<f32>, resting: bool };
+fn spark_strike_arc(origin: vec3<f32>, velocity: vec3<f32>, t: f32, ground: f32, known: bool, q: f32) -> SparkArc {
+    let g = vec3(0.0, 9.81, 0.0);
+    if (!known) { return SparkArc(origin + velocity * t - g * (0.5 * t * t), velocity - g * t, false); }
+    let drop = max(origin.y - ground, 0.0);
+    let contact_t = (velocity.y + sqrt(velocity.y * velocity.y + 19.62 * drop)) / 9.81;
+    if (t <= contact_t) { return SparkArc(origin + velocity * t - g * (0.5 * t * t), velocity - g * t, false); }
+    let d = velocity * contact_t - g * (0.5 * contact_t * contact_t);
+    let v = velocity - g * contact_t;
+    let contact = vec3(origin.x + d.x, ground, origin.z + d.z);
+    let rebound = vec3(v.x * 0.55, -v.y * (0.2 + 0.2 * clamp(q, 0.0, 1.0)), v.z * 0.55);
+    let t2 = t - contact_t;
+    let rest_t = 2.0 * rebound.y / 9.81;
+    if (t2 <= rest_t) { return SparkArc(contact + rebound * t2 - g * (0.5 * t2 * t2), rebound - g * t2, false); }
+    return SparkArc(contact + rebound * rest_t - g * (0.5 * rest_t * rest_t), vec3(0.0), true);
 }
 fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
     let clip = fr.view_proj * vec4(center - fr.cam_pos.xyz, 1.0);
@@ -59,28 +96,35 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
 }
 
 // Samples drawn along each spark's path for the streaked kinds (vs_spark: 2, 5, 6).
-const SPARK_TRAIL: u32 = 8u;
+// One sample a spark: the spark where it is at the frame's instant, as every other body in this
+// renderer (no motion blur anywhere); 8 and 24 samples along its path drew as bars (2026-11-02).
+const SPARK_TRAIL: u32 = 1u;
 
 @vertex fn vs_spark(@builtin(vertex_index) vertex: u32,
     @location(0) origin_age: vec4<f32>, @location(1) direction_life: vec4<f32>,
     @location(2) normal_offset: vec4<f32>, @location(3) parameters: vec4<f32>, @location(4) identity: vec4<u32>) -> WeaponOut {
     let index = vertex / 6u; let corner = vertex % 6u; if (index >= identity.y) { return weapon_hidden(); }
     let kind = identity.w; var t = origin_age.w; let n = normal_offset.xyz;
-    // A ricochet's, a pressure vent's and a cook-off's sparks (kinds 2, 5, 6) are the record's
-    // identity.z sparks, each a dotted streak of SPARK_TRAIL samples along its own path over
-    // 14 ms (an eye's exposure) carrying the spark's whole light. The record's other samples (its
-    // SPARK_MULTIPLIER share of each spark, 1000) are not drawn: scattered each in its own
-    // direction they made a continuous sheet, and a shower fanning toward the eye drew as a solid
-    // wedge or cone across the overhead crew_battle (2026-10-29).
-    let streaked = kind == 2u || kind == 5u || kind == 6u;
+    // The spark kinds (a blast's, a plate strike's, a ricochet's, a bullet's, a pressure vent's
+    // and a cook-off's: 0-3, 5, 6) are the record's identity.z sparks, each a dotted streak of
+    // SPARK_TRAIL samples along its own path over 14 ms (an eye's exposure) carrying the spark's
+    // whole light; a record carries SPARK_MULTIPLIER (= SPARK_TRAIL) samples a spark. Scattered
+    // each in its own direction, a thousandfold quadrature made a continuous sheet, and a shower
+    // fanning toward the eye drew as a solid wedge or cone (2026-10-29 for kinds 2, 5, 6; the
+    // blast and plate-strike kinds followed on 2026-11-02, the owner's "clusters" on the fx stills).
+    let streaked = kind <= 3u || kind == 5u || kind == 6u;
     let sample = select(index, index / SPARK_TRAIL, streaked);
     if (streaked) {
         if (sample >= identity.z) { return weapon_hidden(); }
-        t = max(t - f32(index % SPARK_TRAIL) * 0.002, 0.0);
+        t = max(t - f32(index % SPARK_TRAIL) * (0.014 / f32(SPARK_TRAIL)), 0.0);
     }
     let seed = identity.x * select(3948571u, 9348571u, kind <= 1u) + sample * 977u; let q = weapon_random(seed);
     var velocity = vec3(0.0); var axis = vec3(0.0, 0.0, 1.0); var width = 0.0; var tail = 0.0; var page = 2u; var rim_offset = vec3(0.0);
     var gain = select(1.0, f32(identity.y) / (f32(identity.z) * f32(SPARK_TRAIL)), streaked);
+    // (initial kelvin, fraction of life) of a streaked spark, for `spark_glow`.
+    var glow = vec2(2300.0, 0.0);
+    // The strike kinds place their sample themselves (a bounce is not a parabola).
+    var arc_center = vec3(0.0); var arc_set = false;
     if (kind == 9u) {
         // Detonation fragment streaks: casing shards and burning residue leaving at 250-1500 m/s
         // (most of them slow), slowing under drag (x = v0 tau (1 - e^(-t/tau))), incandescent
@@ -168,20 +212,53 @@ const SPARK_TRAIL: u32 = 8u;
         width = select((0.007 + 0.006 * q) * exp(-t / 8.0), (0.008 + 0.006 * q) * sqrt(1.0 - t / life), kind == 5u);
         tail = clamp(length(velocity - vec3(0.0, 9.81 * t, 0.0)) * 0.002, width, 0.15);
         page = select(2u, 4u, t < 0.15);
+        glow = vec2(2300.0 + 600.0 * weapon_random(seed + 37u), t / life);
     } else if (kind == 3u) {
-        let life = 0.08 + 0.22 * q; if (t >= life) { return weapon_hidden(); }
+        // Incandescent dust off a perforated or bounced plate: the solver's energy and
+        // incidence; each spark's size sets how long it burns; this burst's share tilts the fan a
+        // few degrees and spreads the leaving times over a few milliseconds.
+        let flags = spark_strike_flags(parameters.w);
+        let b1 = spark_burst_share(identity.x, 1u); let b2 = spark_burst_share(identity.x, 2u);
+        t -= weapon_random(seed + 23u) * (0.004 + 0.008 * b1); if (t < 0.0) { return weapon_hidden(); }
+        let size = weapon_random(seed + 29u);
+        let life = (0.08 + 0.22 * q) * (0.7 + 0.6 * size); if (t >= life) { return weapon_hidden(); }
         let spray = weapon_direction(seed + 19u); let outward = spray - n * (2.0 * min(dot(spray, n), 0.0));
-        let cosine = parameters.y; axis = normalize(direction_life.xyz * (1.0 - cosine) * 0.8 + outward * 0.55 + n * 0.25);
-        let speed = min(sqrt(parameters.x / 3200.0), 2.0) * (4.0 + 18.0 * q) * (0.4 + 0.6 * sqrt(cosine));
-        velocity = axis * speed; width = (0.0015 + 0.002 * q) * sqrt(1.0 - t / life); tail = clamp(speed * 0.002, width, 0.04);
-        page = select(select(2u, 4u, t < 0.075), 3u, t < 0.02);
+        let cosine = parameters.y;
+        let tilt = weapon_direction(identity.x * 31u + 7u) * 0.14;
+        let ray = normalize(direction_life.xyz * (1.0 - cosine) * 0.8 + outward * 0.55 + n * 0.25 + tilt);
+        let speed = min(sqrt(parameters.x / 3200.0), 2.0) * (4.0 + 18.0 * pow(q, 1.4)) * (0.4 + 0.6 * sqrt(cosine)) * (0.9 + 0.2 * b2);
+        let arc = spark_strike_arc(origin_age.xyz, ray * speed, t, parameters.z, flags.y, weapon_random(seed + 31u));
+        arc_center = arc.center; arc_set = true; velocity = ray * speed;
+        axis = select(normalize(arc.velocity), normalize(vec3(ray.x, 0.0, ray.z)), arc.resting);
+        width = (0.0015 + 0.002 * size) * sqrt(1.0 - t / life);
+        tail = select(clamp(speed * 0.002, width, 0.04), width, arc.resting);
+        page = select(select(2u, 4u, t < 0.4 * life), 3u, t < 0.1 * life);
+        glow = vec2(2200.0 + 900.0 * weapon_random(seed + 37u), t / life);
     } else if (kind == 2u) {
-        let heavy = parameters.w > 0.5; let life = select(0.24 + 0.40 * q, 0.55 + 0.85 * q, heavy); if (t >= life) { return weapon_hidden(); }
-        axis = normalize(direction_life.xyz * 0.75 + weapon_direction(seed + 19u) * 0.30 + n * 0.25);
-        if (dot(axis, n) < 0.05) { axis = normalize(axis + n * (0.06 - dot(axis, n))); }
-        let speed = select(5.0 + 15.0 * q, 14.0 + 30.0 * q, heavy); velocity = axis * speed;
-        width = select(0.003 + 0.005 * q, 0.008 + 0.010 * q, heavy) * max(1.0 - t / direction_life.w, 0.15);
-        tail = clamp(speed * 0.008, 0.025, 0.32); page = select(select(2u, 4u, t < 0.16), 3u, t < 0.055);
+        // The fan off a glancing plate: along the outgoing ray, lifting off the plate more and
+        // spreading wider the steeper the ricochet, a slow-heavy speed law scaled by the round's
+        // retained energy, each spark burning for a time set by its size, this burst's share
+        // setting its fan width, its speed share and the spread of leaving times, and the sparks
+        // bouncing off the ground once (weapon_particle_math.rs is the reference).
+        let flags = spark_strike_flags(parameters.w); let heavy = flags.x;
+        let b1 = spark_burst_share(identity.x, 1u); let b2 = spark_burst_share(identity.x, 2u); let b3 = spark_burst_share(identity.x, 3u);
+        let cosine = clamp(dot(direction_life.xyz, n), 0.0, 1.0);
+        let hot = select(1.0, clamp(sqrt(parameters.x / select(2500.0, 1.8e6, heavy)), 0.75, 1.35), parameters.x > 0.0);
+        t -= weapon_random(seed + 23u) * select(0.006 + 0.010 * b1, 0.012 + 0.020 * b1, heavy); if (t < 0.0) { return weapon_hidden(); }
+        let size = weapon_random(seed + 29u);
+        let life = select(0.2 + 0.4 * q, 0.45 + 0.9 * q, heavy) * (0.7 + 0.6 * size); if (t >= life) { return weapon_hidden(); }
+        let spread = (0.18 + 0.32 * cosine) * (0.85 + 0.3 * b2);
+        var ray = normalize(direction_life.xyz * (0.55 + 0.3 * (1.0 - cosine)) + n * (0.12 + 0.45 * cosine) + weapon_direction(seed + 19u) * spread);
+        if (dot(ray, n) < 0.05) { ray = normalize(ray + n * (0.06 - dot(ray, n))); }
+        let speed = select(4.0 + 16.0 * pow(q, 1.5), 12.0 + 34.0 * pow(q, 1.5), heavy) * hot * (0.9 + 0.2 * b3);
+        let arc = spark_strike_arc(origin_age.xyz, ray * speed, t, parameters.z, flags.y, weapon_random(seed + 31u));
+        arc_center = arc.center; arc_set = true; velocity = ray * speed;
+        axis = select(normalize(arc.velocity), normalize(vec3(ray.x, 0.0, ray.z)), arc.resting);
+        width = select(0.0025 + 0.005 * size, 0.006 + 0.012 * size, heavy) * max(1.0 - t / life, 0.15);
+        tail = select(clamp(length(arc.velocity) * 0.008, 0.025, 0.32), width, arc.resting);
+        let white = 0.8 + 0.4 * hot;
+        page = select(select(2u, 4u, t < 0.18 * life * white), 3u, t < 0.05 * life * white);
+        glow = vec2((2100.0 + 900.0 * weapon_random(seed + 37u)) * (0.85 + 0.15 * hot), t / life);
     } else {
         // A heavy exterior blast's sparks trail four samples along each path (a dotted
         // radial streak) instead of filling a dome with points; light impacts are unchanged.
@@ -195,15 +272,25 @@ const SPARK_TRAIL: u32 = 8u;
             t = max(t - f32(trail) * 0.0025, 0.0);
             gain = 0.55 * (1.0 - 0.12 * f32(trail));
         }
-        let life = 0.45 + 1.4 * sq; if (t >= life) { return weapon_hidden(); }
-        var ray = weapon_direction(sseed + 17u); ray.y = abs(ray.y) * 0.75 + 0.15;
+        // The hemisphere's lift and narrowing, the speed share, the lifetimes and the spread of
+        // leaving times are this burst's own; a blast's parameters.x is its charge against an
+        // 88 mm HE round's (the reference is weapon_particle_math.rs).
+        let b1 = spark_burst_share(identity.x, 1u); let b2 = spark_burst_share(identity.x, 2u); let b3 = spark_burst_share(identity.x, 3u);
+        let b4 = spark_burst_share(identity.x, 4u); let b5 = spark_burst_share(identity.x, 5u);
+        let charge = select(1.0, clamp(sqrt(parameters.x), 0.7, 1.3), kind == 0u && parameters.x > 0.0);
+        t -= weapon_random(sseed + 23u) * (0.01 + 0.03 * b1); if (t < 0.0) { return weapon_hidden(); }
+        let size = weapon_random(sseed + 29u);
+        let life = (0.45 + 1.4 * sq) * (0.8 + 0.4 * b2) * (0.75 + 0.5 * size); if (t >= life) { return weapon_hidden(); }
+        var ray = weapon_direction(sseed + 17u); ray.y = abs(ray.y) * (0.6 + 0.3 * b3) + (0.08 + 0.2 * b4);
         if (kind == 1u) { ray = weapon_rotate(vec3(0.0, 1.0, 0.0), n, ray); }
-        velocity = normalize(ray) * (10.0 + 28.0 * sq) * parameters.z;
+        velocity = normalize(ray) * (10.0 + 28.0 * pow(sq, 1.3)) * parameters.z * charge * (0.9 + 0.2 * b5);
         let current = velocity - vec3(0.0, 9.81 * t, 0.0); axis = normalize(current);
-        width = (0.006 + 0.012 * sq) * sqrt(1.0 - t / life); tail = min(length(current) * 0.008, 0.32);
-        page = select(select(2u, 4u, t < 0.55), 3u, t < 0.12);
+        width = (0.006 + 0.012 * size) * sqrt(1.0 - t / life); tail = min(length(current) * 0.008, 0.32);
+        page = select(select(2u, 4u, t < 0.35 * life), 3u, t < 0.08 * life);
+        glow = vec2(2200.0 + 1200.0 * weapon_random(seed + 37u) * select(0.75, 1.0, kind == 0u), t / life);
     }
-    let center = select(origin_age.xyz + velocity * t - vec3(0.0, 4.905 * t * t, 0.0), origin_age.xyz + rim_offset, kind == 8u);
+    var center = select(origin_age.xyz + velocity * t - vec3(0.0, 4.905 * t * t, 0.0), origin_age.xyz + rim_offset, kind == 8u);
+    if (arc_set) { center = arc_center; }
     if (kind != 0u && kind < 9u) {
         let local_normal = weapon_rotate(axis, vec3(0.0, 0.0, 1.0), n);
         let support = dot(abs(local_normal), vec3(width, width, tail)) * 0.5;
@@ -214,7 +301,11 @@ const SPARK_TRAIL: u32 = 8u;
     let focal = fr.view_proj[1][1] * fr.res.y * 0.5;
     // A streak drawn as one native pixel carries its whole projected area; cap it so a shard
     // passing the eye does not become a bloom blob.
-    let projected_area = min(width * (width + tail) * pow(focal / clip.w, 2.0), select(6.0, 3.0, kind >= 9u));
+    // A streaked spark covers its cross-section only: its tail is the support test's, not a smear
+    // of its light into the pixel (which made every spark a bloom blob).
+    // A hot-rim grain (kind 8) is one of 512 on a ring a few pixels across: capped at a pixel so the
+    // ring stays a ring (the plate's own rim draws the surface; these are its incandescent dust).
+    let projected_area = min(select(width * (width + tail), width * width, streaked) * pow(focal / clip.w, 2.0), select(select(6.0, 3.0, kind >= 9u), 1.0, kind == 8u));
     let weight = projected_area * f32(identity.z) / f32(identity.y);
     let position = pixel_quad(center, corner);
     if (kind == 7u) {
@@ -222,12 +313,12 @@ const SPARK_TRAIL: u32 = 8u;
         return WeaponOut(position, center, mix(vec3(0.16, 0.115, 0.075), vec3(0.65, 0.72, 0.80), parameters.z), area);
     }
     if (kind == 8u) { return WeaponOut(position, center, rim_color(parameters.z, t) * weight, 0.0); }
-    return WeaponOut(position, center, weapon_palette(page) * weight * gain, 0.0);
+    return WeaponOut(position, center, select(weapon_palette(page), spark_glow(glow), streaked) * weight * gain, 0.0);
 }
 
 // A small-arms tracer pellet's intensity, renderer units (`TRACER_INTENSITY` in
 // renderer_raymarch.rs, about 60 cd; its head lights the scene with the same value).
-const RM_TRACER_INTENSITY: f32 = 0.00165;
+const RM_TRACER_INTENSITY: f32 = 0.0035;
 
 // The eyepiece's barrel distortion (rm_lens.wgsl: the frame at q shows the scene at q (1 + k r^2),
 // r = |q| / 0.45) applied to a clip position drawn after the lens pass: the point where the scene
@@ -264,7 +355,7 @@ fn eyepiece_clip(c: vec4<f32>) -> vec4<f32> {
     // near tracer some ten thousand times too bright, its glare a broad band across the view).
     let focal = 0.5 * fr.res.y / tan(0.5 * fr.optic.y);
     let per_pixel = RM_TRACER_INTENSITY * focal * focal / max(length(delta), 1.0);
-    let tint = vec3(1.0, 0.4621, 0.0296);
+    let tint = vec3(1.0, 0.705, 0.348);
     if (dot(delta, delta) <= 0.00000001) {
         let w = max(0.5 * (a.w + b.w), 0.05);
         return WeaponOut(pixel_quad((wa + wb) * 0.5, vertex), (wa + wb) * 0.5, tint * per_pixel / (w * w), 0.0);
