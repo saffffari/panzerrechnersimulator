@@ -26341,7 +26341,8 @@ impl Game {
         if let Some((armor,event)) = vehicle_event {
             self.present_source_armor_impact(projectile,contact,armor,event,ricochet.map(|r|r.velocity));
         } else if projectile.shell.kind == crate::ballistics::ShellKind::He {
-            self.weapon_vfx.blast(contact.pos - travel_direction * 0.08,
+            // A world burst: the ground's up (the contact carries no wall normal yet).
+            self.weapon_vfx.blast(contact.pos - travel_direction * 0.08, Vec3::Y,
                 (projectile.shell.caliber_mm * 0.038).clamp(1.2, 5.5));
         } else if !matches!(contact.kind,ProjectileContactKind::Terrain) || !r.analytic_weapon_particles_active() {
             self.weapon_vfx.impact(contact.pos - travel_direction * 0.08, travel_direction,
@@ -29595,7 +29596,7 @@ impl Game {
 
     /// Claim the next pooled fireball slot (round-robin) and arm it.
     fn spawn_blast(&mut self, pos: Vec3, scale: f32, hot: f32, dur: f32) {
-        self.weapon_vfx.blast(pos, scale * 0.65);
+        self.weapon_vfx.blast(pos, Vec3::Y, scale * 0.65);
         self.spawn_blast_light(pos, scale, hot, dur);
     }
 

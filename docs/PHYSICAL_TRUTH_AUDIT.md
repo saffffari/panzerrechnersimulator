@@ -128,6 +128,26 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   normal (1.6 m x (1 - e^(-age / 0.6 s))) and rising, fading over 6 s. Both are authored plumes
   on the event's origin and normal, not a vented-gas or detonation-products model; the hole's
   glow is the existing hot rim.
+- The detonation cloud of a shell on a plate (`event_parcels`, `EVENT_DETONATION`; `blast()` now
+  carries the struck surface's normal in the burst's direction lane and the event takes it):
+  against a plate or wall (normal below 0.7 up) the baked ground-burst volumes are not drawn;
+  the white-hot core grows out of the contact along the normal (0.3 m + 30 m/s x t for 45 ms)
+  and five lobes born at the contact expand along the normal (2.2 m, 1 - e^(-t / 0.25 s)) and
+  sideways within tenths of a second, then rise on their buoyancy for 14 s. Each lobe is fire
+  while the products afterburn and the same soot after, so the fire and the smoke are one body
+  born together with the fire dying first. Before, the core stood 0.6 m above the contact and
+  three lobes were born 0.8 m above it at 2.7 m radius (the owner: the explosion "appearing
+  outside of where it physically should be", a gap between the fire and the smoke). The GPU
+  blast sparks keep the charge's speed law (10-38 m/s x charge) instead of 4.6x it: the exterior
+  volume multiplier remains the raster path's flash presentation only. The detonation event is
+  now by charge (above a quarter of an 88 mm HE round's), not by that multiplier. Authored
+  expansion and rise rates for an 88 mm-class burst, not detonation-products gas dynamics.
+- Hot rim bound (`weapon_particle_math::rim_heat`, `RIM_KELVIN_MAX` 1600 K, was 2000 K): the
+  rim's thermal reservoir still takes at most 1.5 % of the lost kinetic energy, but the rim that
+  stays on the plate is held below steel's 1800 K solidus, since hotter steel is molten and leaves
+  with the perforation spray. A full 88 mm perforation sat on the old cap and drew as a
+  white-yellow blob under the day's bloom; at 1600 K it is a bright orange ring, a sixteenth of
+  the radiance at 650 nm. The 1.5 % share and the rim's geometry remain estimates.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
   takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on

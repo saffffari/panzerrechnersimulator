@@ -230,8 +230,10 @@ impl Effects {
         let life = match weapon { Weapon::Pistol => 0.65, Weapon::Rifle | Weapon::MachineGun => 0.95, _ => 3.4 };
         self.burst(pos, dir, weapon.muzzle_size(), life, BurstKind::Muzzle, weapon);
     }
-    pub(super) fn blast(&mut self, pos: Vec3, radius: f32) {
-        self.burst(pos, Vec3::Y, radius, 6.0, BurstKind::Blast, Weapon::Cannon(88));
+    /// `normal`: the struck surface's outward normal (a plate's, or up off the ground); the
+    /// raymarch backend's detonation cloud leaves the surface along it.
+    pub(super) fn blast(&mut self, pos: Vec3, normal: Vec3, radius: f32) {
+        self.burst(pos, normal.normalize_or_zero(), radius, 6.0, BurstKind::Blast, Weapon::Cannon(88));
     }
     /// Cabin fragmentation already comes from the authoritative solver. Keep the same ignition
     /// flash and smoke without adding uncollided exterior ejecta through the compartment.
@@ -313,7 +315,7 @@ impl Effects {
             || event.terminal==Terminal::Penetration && matches!(event.shell.kind,
                 crate::ballistics::ShellKind::He|crate::ballistics::ShellKind::Heat));
         if exterior_detonation {
-            self.blast(point+normal*0.08,(event.shell.filler_g/1000.0).cbrt()*3.0);
+            self.blast(point+normal*0.08,normal,(event.shell.filler_g/1000.0).cbrt()*3.0);
             self.stamp_newest(at,None);
         }
         match event.terminal {
@@ -718,7 +720,10 @@ fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
     let (kind,count,normal,offset,energy,cosine,scale)=match b.kind {
         // A blast's `parameters.x` is its charge against an 88 mm HE round's (radius 2.9 for
         // 0.9 kg of filler, `armor_terminal`), which scales its sparks' speed law.
-        BurstKind::Blast=>(gpu_weapon::BLAST,BLAST_SPARKS,Vec3::ZERO,0.0,b.radius/2.9,0.0,gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER),
+        // The sparks' speed law is the charge's; the exterior volume multiplier is the raster
+        // path's flash presentation (`draw_burst`), not a 4.6x on burning residue (2026-11-02:
+        // blast sparks at 46-175 m/s were gone from the plate within a frame).
+        BurstKind::Blast=>(gpu_weapon::BLAST,BLAST_SPARKS,b.dir,0.0,b.radius/2.9,0.0,1.0),
         BurstKind::Impact=>(gpu_weapon::BLAST,IMPACT_SPARKS,Vec3::ZERO,0.0,0.0,0.0,1.0),
         BurstKind::ArmorImpact(n)=>(gpu_weapon::ARMOR_IMPACT,IMPACT_SPARKS,n,ARMOR_FLASH_OFFSET_M,0.0,0.0,1.0),
         BurstKind::Ricochet{normal,energy_j}=>(gpu_weapon::RICOCHET,if heavy {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS},normal,ARMOR_RICOCHET_OFFSET_M,energy_j.max(0.0),0.0,1.0),
@@ -830,7 +835,7 @@ impl Game {
         let dx=(self.hf.height_at(p.x+h,p.z)-self.hf.height_at(p.x-h,p.z))/(2.0*h);
         let dz=(self.hf.height_at(p.x,p.z+h)-self.hf.height_at(p.x,p.z-h))/(2.0*h);
         self.weapon_vfx.gpu_analytic=r.analytic_weapon_particles_active();
-        self.weapon_vfx.blast(p-velocity.normalize_or_zero()*0.08,(caliber_mm*0.038).clamp(1.2,5.5));
+        self.weapon_vfx.blast(p-velocity.normalize_or_zero()*0.08, Vec3::Y,(caliber_mm*0.038).clamp(1.2,5.5));
         self.weapon_vfx.ground_impact(0,self.enemy_report_audit.clock_s,p,velocity,mass_kg,caliber_mm,
             Vec3::new(-dx,1.0,-dz).normalize(),if self.act.season==crate::world::Season::Winter {1.0}else{0.0});
     }
@@ -1115,7 +1120,7 @@ mod tests {
 
     #[test]
     fn weapon_parcels_follow_the_same_live_weather_wind_as_the_volume() {
-        let make=|wind| {let mut e=Effects::default();e.wind=wind;e.blast(Vec3::ZERO,1.0);
+        let make=|wind| {let mut e=Effects::default();e.wind=wind;e.blast(Vec3::ZERO, Vec3::Y,1.0);
             e.prepare(0.10,Vec3::Z*2.0);fine_snapshot(&e)};
         let calm=make(Vec2::ZERO);let windy=make(Vec2::new(12.0,-5.0));
         let mut tested=0;
@@ -1132,7 +1137,7 @@ mod tests {
     #[test]
     fn cosmetic_identity_survives_motion_and_cooling_into_another_material_page() {
         let mut effects=Effects::default();
-        effects.blast(Vec3::ZERO,1.0);
+        effects.blast(Vec3::ZERO, Vec3::Y,1.0);
         effects.prepare(0.03,Vec3::Z*2.0);
         let first=fine_snapshot(&effects);
         effects.prepare(0.10,Vec3::Z*2.0);
@@ -1223,7 +1228,7 @@ mod tests {
     fn explosion_smoke_follows_world_wind_and_outlives_flash() {
         let mut still=Effects::default();let mut windy=Effects::default();windy.wind=Vec2::new(12.0,-5.0);
         let origin=Vec3::new(1880.0,6.0,165.0);
-        still.blast(origin,3.0);windy.blast(origin,3.0);
+        still.blast(origin, Vec3::Y,3.0);windy.blast(origin, Vec3::Y,3.0);
         for _ in 0..40 {still.prepare(0.1,origin);windy.prepare(0.1,origin);}
         assert!(windy.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)));
         assert!(windy.mats[6..].iter().all(Vec::is_empty), "smoke must not submit opaque matter meshes");
@@ -1236,7 +1241,7 @@ mod tests {
             let mut interior = Effects::default();
             let mut exterior = Effects::default();
             interior.interior_blast(Vec3::ZERO, radius);
-            exterior.blast(Vec3::ZERO, radius);
+            exterior.blast(Vec3::ZERO, Vec3::Y, radius);
             interior.prepare(0.10, Vec3::ZERO);
             exterior.prepare(0.10, Vec3::ZERO);
             let flash: Vec<_> = interior.mats[..6].iter().flatten().copied().collect();
@@ -1429,7 +1434,7 @@ mod tests {
         let mut fx = Effects::default();
         for _ in 0..2000 {
             fx.small_arm(Vec3::ZERO, Vec3::Z * 500.0, Weapon::MachineGun);
-            fx.blast(Vec3::X * 3.0, 7.0);
+            fx.blast(Vec3::X * 3.0, Vec3::Y, 7.0);
         }
         let capacities: Vec<_> = fx.mats.iter().map(Vec::capacity).collect();
         for _ in 0..420 {
@@ -1443,7 +1448,7 @@ mod tests {
     }
     #[test]
     fn explosions_expand_as_many_small_grains_then_cool_into_nonemissive_smoke() {
-        let mut fx = Effects::default(); fx.blast(Vec3::ZERO, 5.0);
+        let mut fx = Effects::default(); fx.blast(Vec3::ZERO, Vec3::Y, 5.0);
         fx.prepare(0.10, Vec3::ZERO);
         assert!(fx.mats[..6].iter().map(Vec::len).sum::<usize>() > 20);
         assert!(fx.mats.iter().flatten().all(|m| m.to_scale_rotation_translation().0.max_element() < 1.3));
@@ -1470,7 +1475,7 @@ mod tests {
         assert!(red_bias.iter().all(|bias|*bias<1.6), "hot effects stay amber rather than saturated red");
         let mut fx = Effects::default();
         fx.small_arm(Vec3::NAN, Vec3::ZERO, Weapon::Pistol);
-        fx.blast(Vec3::ZERO, f32::NAN);
+        fx.blast(Vec3::ZERO, Vec3::Y, f32::NAN);
         fx.prepare(f32::NAN, Vec3::ZERO);
         assert!(fx.mats.iter().all(Vec::is_empty));
     }

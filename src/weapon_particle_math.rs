@@ -92,9 +92,14 @@ pub fn strike_arc(origin:Vec3,velocity:Vec3,t:f32,ground:Option<f32>,q:f32)->(Ve
 /// Explicit thin heated-rim estimate, not a constitutive perforation or melting solver.
 /// The thermal reservoir receives at most1.5% of the actual lost kinetic energy. It never
 /// heats from retained penetrator energy, chemical filler or an arbitrary terminal class.
+/// The rim that stays on the plate is bounded at `RIM_KELVIN_MAX`, below steel's 1800 K
+/// solidus: hotter steel is molten and leaves with the perforation spray, it does not glow on
+/// the plate. A full 88 mm perforation reached the former 2000 K cap and drew as a white-yellow
+/// blob under the bloom (the owner, 2026-11-02); 1600 K is bright orange.
 #[derive(Clone,Copy,Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct RimHeat {pub radius:f32,pub width:f32,pub mass_kg:f32,pub heat_j:f32,pub initial_kelvin:f32}
+pub const RIM_KELVIN_MAX:f32=1600.0;
 pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     if !caliber_mm.is_finite() || !plate_mm.is_finite() || !deposited_j.is_finite()
         || caliber_mm<=0.0 || plate_mm<=0.0 || deposited_j<=0.0 {return None;}
@@ -103,7 +108,7 @@ pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     let area=std::f32::consts::PI*((radius+width).powi(2)-radius.powi(2));
     let depth=(plate_mm*0.00003).clamp(0.001,0.006);
     let mass_kg=area*depth*7850.0;
-    let heat_j=(deposited_j*0.015).min(mass_kg*500.0*(2000.0-293.0));
+    let heat_j=(deposited_j*0.015).min(mass_kg*500.0*(RIM_KELVIN_MAX-293.0));
     Some(RimHeat {radius,width,mass_kg,heat_j,initial_kelvin:293.0+heat_j/(mass_kg*500.0)})
 }
 pub fn rim_temperature(initial:f32,age:f32)->f32 {293.0+(initial-293.0).max(0.0)*(-age.max(0.0)/2.5).exp()}
@@ -324,6 +329,10 @@ mod tests {
         assert!((heat.mass_kg*500.0*(heat.initial_kelvin-293.0)-heat.heat_j).abs()<0.01);
         assert!(rim_heat(88.0,90.0,0.0).is_none());
         let cold=rim_heat(88.0,90.0,10.0).unwrap();assert!(cold.initial_kelvin<300.0);
+        assert!(heat.initial_kelvin<=RIM_KELVIN_MAX+0.01,"{}",heat.initial_kelvin);
+        // A full 88 mm perforation of a 45 mm plate (some 3.3 MJ lost) sits on the bound.
+        let full=rim_heat(88.0,45.0,3_300_000.0).unwrap();
+        assert!((full.initial_kelvin-RIM_KELVIN_MAX).abs()<0.5,"{}",full.initial_kelvin);
         for hz in [30,60,144] {
             let time=(0..hz*2).fold(0.0_f64,|t,_|t+1.0/hz as f64) as f32;
             assert!((rim_temperature(heat.initial_kelvin,time)-rim_temperature(heat.initial_kelvin,2.0)).abs()<0.001);

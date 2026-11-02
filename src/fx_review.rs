@@ -180,7 +180,7 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     Ok(())
 }
 
-/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,kill` selects the parts (all by default);
+/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,kill` selects the parts (all by default);
 /// `KESSEL_FX_REVIEW_CLOCK` the strike and kill clock, `KESSEL_FX_REVIEW_FILM=1` the clips.
 fn part(name: &str) -> bool {
     match std::env::var("KESSEL_FX_REVIEW_PARTS") {
@@ -283,6 +283,54 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         step(&mut g, &mut r, 30, &idle);
         stills.still(&mut r, "cabin_night", "commander's post at night: dome and dial lamps, their glare")?;
         g.station = Station::Gunner;
+    }
+    // Part 4: rounds on the player's Tiger from a live T-34 through the normal return-fire path
+    // (`debug_enemy_fire_at_player`), the observer outside: one square on the left flank from
+    // 60 m abeam, one on the glacis from 70 m ahead. Film mode films each; otherwise two stills.
+    if part("tiger") {
+        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        g.debug_place_tiger(TIGER, 0.0);
+        step(&mut g, &mut r, 60, &idle);
+        let forward = g.player.forward();
+        let right = Vec3::new(-forward.z, 0.0, forward.x);
+        let centre = g.player.center();
+        let shots = [
+            ("tiger_flank", centre - right * 60.0, centre - right * 9.0 - forward * 7.0 + Vec3::Y * 2.0,
+                "76 mm from a T-34 60 m abeam, square on the Tiger's left flank"),
+            ("tiger_glacis", centre + forward * 70.0 + right * 12.0, centre + forward * 9.0 - right * 7.0 + Vec3::Y * 2.2,
+                "76 mm from a T-34 70 m ahead and a little right, on the glacis"),
+        ];
+        for (name, from, eye, note) in shots {
+            let heading = (centre.x - from.x).atan2(centre.z - from.z);
+            let live = g.debug_stage_live_t34(from.x, from.z, heading).context("fixture needs a live T-34")?;
+            g.debug_hold_enemy_fire();
+            step(&mut g, &mut r, 30, &idle);
+            g.enemies[live].reload = 0.0;
+            anyhow::ensure!(g.debug_enemy_fire_at_player(live), "the T-34 did not fire");
+            g.debug_hold_enemy_fire();
+            let flight = (from.distance(centre) / 660.0 * 60.0).round() as u32;
+            if let Some(mut film) = Film::start(&stills.prefix, name)? {
+                observe(&mut r, eye, centre, 50.0);
+                r.reset_history();
+                for frame in 0..flight + 4 + 90 {
+                    step(&mut g, &mut r, 1, &idle);
+                    observe(&mut r, eye, centre, 50.0);
+                    let path = film.frame();
+                    r.render_to_png(&device, &queue, &path, r.iw, r.ih)?;
+                    if frame + 1 == flight + 4 { stills.frame_still(&mut r, &film, &format!("{name}_070ms"), &format!("{note}; +0.07 s"))?; }
+                    if frame + 1 == flight + 15 { stills.frame_still(&mut r, &film, &format!("{name}_250ms"), &format!("{note}; +0.25 s"))?; }
+                }
+                film.finish()?;
+            } else {
+                step(&mut g, &mut r, flight + 4, &idle);
+                observe(&mut r, eye, centre, 50.0);
+                stills.still(&mut r, &format!("{name}_070ms"), &format!("{note}; +0.07 s"))?;
+                step(&mut g, &mut r, 11, &idle);
+                observe(&mut r, eye, centre, 50.0);
+                stills.still(&mut r, &format!("{name}_250ms"), &format!("{note}; +0.25 s"))?;
+            }
+            step(&mut g, &mut r, 90, &idle);
+        }
     }
     if !part("kill") {
         fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({

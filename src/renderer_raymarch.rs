@@ -131,7 +131,8 @@ fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
     let heavy = if matches!(burst.meta[3], wm::RICOCHET | wm::BULLET_ARMOR) { wm::strike_flags(burst.parameters[3]).0 }
         else { burst.parameters[3] > 0.5 };
     match burst.meta[3] {
-        wm::BLAST if heavy && burst.parameters[2] > 2.0 => Some(EVENT_DETONATION),
+        // A blast's parameters.x is its charge against an 88 mm HE round's.
+        wm::BLAST if heavy && burst.parameters[0] > 0.25 => Some(EVENT_DETONATION),
         // A tank round's perforation presents as BULLET_ARMOR (its incandescent dust) with the
         // plate's normal; ARMOR_IMPACT is the small-arms plate strike's kind.
         wm::BULLET_ARMOR | wm::ARMOR_IMPACT if heavy => Some(EVENT_PENETRATION),
@@ -2246,13 +2247,16 @@ impl Backend {
             };
             match e.kind {
                 EVENT_DETONATION => {
-                    // Detonation products: a white-hot core for the first frames, then a cluster
-                    // of three turbulent lobes rising and parting as they cool.
+                    // Detonation products: a white-hot core for the first frames growing out of
+                    // the contact along the struck surface's normal, then the cloud below.
+                    // A burst against a plate (or a wall) is not the ground-burst shapes of the
+                    // baked volumes: it takes the parcel cloud, which leaves the surface.
+                    let plate = e.normal.y < 0.7;
                     if t < 0.045 {
-                        let core = 1.0 + 30.0 * t;
-                        push(o + Vec3::Y * 0.6, core, [1.0, 0.97, 0.9], PARCEL_FIREBALL, 30.0 / core, 3.0 / core, h(1) * 100.0, 0.0);
+                        let core = 0.3 + 24.0 * t;
+                        push(o + e.normal * (0.45 * core), core, [1.0, 0.97, 0.9], PARCEL_FIREBALL, 30.0 / core, 3.0 / core, h(1) * 100.0, 0.0);
                     }
-                    if explosion.is_some() {
+                    if explosion.is_some() && !plate {
                         // The baked volumes (explosion_volumes.rs): a fresh ground burst for the
                         // fire and the ejecta, cross-fading from 0.6 s into a developed cloud of
                         // soot and lifted earth that rises and drifts until 14 s. Their sizes,
@@ -2289,29 +2293,17 @@ impl Backend {
                                 [0.24, 0.22, 0.20], 6.0 / size, per_m(tau, size), ember);
                         }
                     }
-                    if t < 1.3 && explosion.is_none() {
-                        let u = t / 1.3;
+                    // The products' cloud, when the baked volumes are not drawn or the burst is on a
+                    // plate: five lobes born at the contact, expanding along the normal and sideways
+                    // within tenths of a second (2.2 m out, 1 - e^(-t / 0.25 s)), then rising on their
+                    // buoyancy and drifting with the wind for 14 s. Each lobe is fire while the
+                    // products afterburn (`detonation_flash_heat`, tens of milliseconds) and the same
+                    // soot after: fire and smoke are one body born together, the fire dying first
+                    // (the owner, 2026-11-02: no gap between the flash and the smoke, nothing
+                    // appearing away from the plate).
+                    if t < 14.0 && (explosion.is_none() || plate) {
+                        let u = (t / 13.9).min(1.0);
                         let heat = detonation_flash_heat(t);
-                        for k in 0..3u32 {
-                            let a = h(10 + k) * std::f32::consts::TAU;
-                            let spread = (0.3 + 1.8 * u) * (0.4 + 0.6 * h(20 + k));
-                            let rise = (0.4 + 3.4 * u.powf(0.8)) * (0.8 + 0.4 * h(30 + k));
-                            let radius = (0.8 + 4.2 * u.powf(0.3)) * (0.75 + 0.25 * h(40 + k));
-                            let center = o + Vec3::new(a.cos() * spread, rise, a.sin() * spread) + wind * (t * 0.3);
-                            // After the brief flash this is cooled ejecta. Keeping the FIREBALL
-                            // kind after emission dies would still add shader heat distortion.
-                            let kind = if heat > 0.0 { PARCEL_FIREBALL } else { PARCEL_SMOKE };
-                            push(center, radius, [0.4, 0.38, 0.36], kind, 6.0 * heat / radius,
-                                2.5 / radius, h(50 + k) * 100.0, u);
-                        }
-                    }
-                    // Soot: five puffs leaving the struck surface along its normal (a plate's, or
-                    // up off the ground), slowing as they mix, then rising on their own buoyancy
-                    // and drifting with the wind. They are born at the surface the size of the
-                    // burst, so the cloud grows out of the strike, not in the air above it (the
-                    // owner, 2026-11-02: smoke "exploding out of thin air").
-                    if t > 0.1 && t < 14.0 && explosion.is_none() {
-                        let u = (t - 0.1) / 13.9;
                         let n = e.normal;
                         let side = if n.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
                         let t1 = n.cross(side).normalize_or_zero();
@@ -2319,14 +2311,19 @@ impl Backend {
                         for k in 0..5u32 {
                             let a = h(60 + k) * std::f32::consts::TAU;
                             let rb = h(70 + k);
-                            let out = (2.6 * (1.0 - (-t / 0.7).exp())) * (0.5 + 0.9 * h(85 + k));
-                            let rise = (7.5 * u.powf(1.1)) * (0.7 + 0.6 * rb);
-                            let spread = (0.3 + 4.5 * u.sqrt()) * (0.4 + 0.6 * h(80 + k));
+                            // Sized for an 88 mm-class burst: a fireball of about 1.5 m, a cloud
+                            // some 5 m across at a second and 8 m at five (the first cut was twice
+                            // that: a 10 m cloud by half a second).
+                            let out = (1.8 * (1.0 - (-t / 0.25).exp())) * (0.5 + 0.9 * h(85 + k));
+                            let spread = (1.0 * (1.0 - (-t / 0.3).exp()) + 3.0 * u.sqrt()) * (0.4 + 0.6 * h(80 + k));
+                            let rise = (7.0 * u.powf(1.1)) * (0.7 + 0.6 * rb);
+                            let radius = (0.25 + 1.0 * (1.0 - (-t / 0.12).exp()) + 2.0 * u.sqrt()) * (0.6 + 0.6 * rb);
                             let center = o + n * out + Vec3::Y * rise + (t1 * a.cos() + t2 * a.sin()) * spread + wind * (t * 0.8);
-                            let radius = (0.6 + 3.5 * u.sqrt()) * (0.6 + 0.6 * rb);
-                            let density = (1.0 - u).powf(1.3) * 0.7;
-                            // Dark grey, not black: the burst's smoke is soot mixed with lifted earth.
-                            push(center, radius, [0.4, 0.38, 0.36], PARCEL_SMOKE, 0.0, density / radius, h(90 + k) * 100.0, 0.0);
+                            // Dark grey, not black: the burst's smoke is soot mixed with lifted earth;
+                            // while it burns the lobe is denser (the products) and glows.
+                            let density = (1.0 - u).powf(1.3) * 0.7 + 1.8 * heat;
+                            let kind = if heat > 0.0 { PARCEL_FIREBALL } else { PARCEL_SMOKE };
+                            push(center, radius, [0.4, 0.38, 0.36], kind, 6.0 * heat / radius, density / radius, h(90 + k) * 100.0, u);
                         }
                     }
                     if let Some(gy) = e.ground_y {
@@ -2378,19 +2375,25 @@ impl Backend {
                     let side = if n.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
                     let t1 = n.cross(side).normalize_or_zero();
                     let t2 = n.cross(t1);
-                    for k in 0..6u32 {
-                        let born = 0.05 + 0.45 * k as f32;
+                    // Dense: the first puffs at a mean optical depth of about three across the
+                    // puff (0.5 gave a 20 % dimming lost in the day's dither), thinning as the
+                    // venting slackens over six seconds. A puff is born no smaller than 0.45 m:
+                    // the froxel grid's depth slices are half a metre at 7 m, and a quarter-metre
+                    // puff fell between their centres and never drew (2026-11-02). Born every
+                    // quarter second so the stream from the hole is continuous.
+                    for k in 0..24u32 {
+                        let born = 0.05 + 0.25 * k as f32;
                         let age = t - born;
                         if age <= 0.0 || age > 6.0 { continue; }
                         let a = h(130 + k) * std::f32::consts::TAU;
                         let out = (1.6 * (1.0 - (-age / 0.6).exp())) * (0.6 + 0.8 * h(140 + k));
-                        let rise = 0.9 * age * age.min(2.5);
+                        let rise = 0.6 * age * age.min(3.0);
                         let spread = (0.05 + 0.35 * age) * (0.5 + h(150 + k));
                         let center = o + n * out + Vec3::Y * rise + (t1 * a.cos() + t2 * a.sin()) * spread + wind * (age * 0.6);
-                        let radius = 0.25 + 0.45 * age;
-                        let density = (1.0 - age / 6.0).powi(2) * 0.5 * (1.0 - 0.12 * k as f32);
+                        let radius = 0.45 + 0.45 * age;
+                        let density = (1.0 - age / 6.0).powi(2) * 2.4 * (1.0 - k as f32 / 28.0);
                         if debug_event { println!("[rm-event]   vent puff {k} age {age:.2} center {:?} radius {radius:.2} extinction {:.2}", center.to_array(), density / radius); }
-                        push(center, radius, [0.30, 0.29, 0.28], PARCEL_SMOKE, 0.0, density / radius, h(160 + k) * 100.0, 0.0);
+                        push(center, radius, [0.22, 0.21, 0.20], PARCEL_SMOKE, 0.0, density / radius, h(160 + k) * 100.0, 0.0);
                     }
                 }
                 EVENT_MUZZLE => {
@@ -3127,14 +3130,17 @@ mod event_source_tests {
 
     #[test]
     fn detonation_source_does_not_change_as_it_passes_the_player_muzzle() {
-        let mut blast = record(wm::BLAST, wm::EXTERIOR_RADIUS_MULTIPLIER, true);
+        let mut blast = record(wm::BLAST, 1.0, true);
+        blast.parameters[0] = 1.0; // an 88 mm HE round's charge
         // The old heuristic changed type within 2.5 m of a muzzle. Test the same source on both
         // sides of that boundary and at the muzzle itself; no spatial context enters identity.
         for x in [0.0, 0.01, 2.49, 2.51, 1000.0] {
             blast.origin_age[0] = x;
             assert_eq!(source_event_kind(&blast), Some(EVENT_DETONATION));
         }
-        assert_eq!(source_event_kind(&record(wm::BLAST, 1.0, true)), None);
+        let mut small = record(wm::BLAST, 1.0, true);
+        small.parameters[0] = 0.1;
+        assert_eq!(source_event_kind(&small), None, "a small charge is no detonation event");
         assert_eq!(source_event_kind(&record(wm::BULLET_ARMOR, 1.0, false)), None);
         assert_eq!(source_event_kind(&record(wm::GROUND, 100.0, true)), None);
         assert_eq!(source_event_kind(&record(wm::FULL_COOKOFF, 1.0, true)), None);
