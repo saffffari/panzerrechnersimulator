@@ -234,6 +234,10 @@ pub(super) const MAX_APERTURES: usize = 24;
 /// `KESSEL_RM_SKIP` bit: no daylight through the panes (the apertures' term in rm_shade.wgsl and
 /// rm_volume.wgsl), for the A/B.
 const SKIP_APERTURES: u32 = 2097152;
+/// Frames between measures of the apertures (rm_aperture.wgsl): about 200 ray queries per pane
+/// on one thread each cost 1.07 ms a frame measured every frame (gfxbench, 2 November 2026); the
+/// panes' openness changes only as the turret traverses against the hull.
+const APERTURE_MEASURE_PERIOD: u32 = 8;
 
 /// The smallest pane taken as an aperture (m^2 of its face): a port's glass block is about
 /// 117 cm^2, a cupola block's window 65 cm^2 and more; a stray sliver of a bake is not a pane.
@@ -551,6 +555,10 @@ pub(super) struct Backend {
     aperture_bind: wgpu::BindGroup,
     aperture_pipe: Option<wgpu::ComputePipeline>,
     aperture_count: u32,
+    /// The frame the apertures were last measured on, and how many there were: the measure
+    /// reruns every `APERTURE_MEASURE_PERIOD` frames or when the count changes (the panes ride
+    /// rigid parts; a turret's traverse moves a port against the hull slowly).
+    aperture_measured: Cell<Option<(u32, u32)>>,
     rt_empty: Option<wgpu::Tlas>,
     rt_empty_built: bool,
     /// Per mesh slot: x y z a mirror's world normal, w the optic (0 none, 1 window, 2 mirror).
@@ -1450,7 +1458,7 @@ impl Backend {
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
-            aperture_measure_buf, aperture_bind, aperture_pipe, aperture_count: 0,
+            aperture_measure_buf, aperture_bind, aperture_pipe, aperture_count: 0, aperture_measured: Cell::new(None),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
@@ -3128,7 +3136,9 @@ impl Backend {
         // 3c. The apertures: each pane's open share and acceptance measured against the scene.
         if let (Some(pipe), Some(rt)) = (&self.aperture_pipe, &self.rt_bind) {
             // KESSEL_RM_APERTURE_UNMEASURED=1 keeps the open-and-unrestricted default record (review).
-            if self.aperture_count > 0 && std::env::var("KESSEL_RM_APERTURE_UNMEASURED").as_deref() != Ok("1") {
+            let due = self.aperture_measured.get().map_or(true, |(frame, count)| count != self.aperture_count || r.frame.saturating_sub(frame) >= APERTURE_MEASURE_PERIOD);
+            if self.aperture_count > 0 && due && std::env::var("KESSEL_RM_APERTURE_UNMEASURED").as_deref() != Ok("1") {
+                self.aperture_measured.set(Some((r.frame, self.aperture_count)));
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("rm-aperture"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("rm-aperture")),
                 });

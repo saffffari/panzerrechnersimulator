@@ -11766,6 +11766,44 @@ mod local_presentation_tests {
     }
 }
 
+/// The run's frame pacing as the log tells it (`WindowState::ft_run`).
+#[derive(Default)]
+struct FrameRun {
+    started: Option<std::time::Instant>,
+    frames: u64,
+    slow_frames: u64,
+    worst_ms: f32,
+    worst_at_s: f32,
+    last_report_s: f32,
+}
+impl FrameRun {
+    const SLOW_FRAME_MS: f32 = 33.4;
+    fn record(&mut self, ms: f32, recent: &[f32], now: std::time::Instant) {
+        let started = *self.started.get_or_insert(now);
+        let at = (now - started).as_secs_f32();
+        self.frames += 1;
+        if ms > Self::SLOW_FRAME_MS { self.slow_frames += 1; }
+        if ms > self.worst_ms { self.worst_ms = ms; self.worst_at_s = at; }
+        if recent.len() >= 60 && at - self.last_report_s >= 5.0 {
+            let mean = recent.iter().sum::<f32>() / recent.len() as f32;
+            if mean > Self::SLOW_FRAME_MS {
+                let worst = recent.iter().cloned().fold(0.0f32, f32::max);
+                println!("[frames] slow: the last {} frames averaged {mean:.1} ms ({:.0} fps), worst {worst:.1} ms, {at:.0} s into the run; {} of {} frames over {} ms so far",
+                    recent.len(), 1000.0 / mean, self.slow_frames, self.frames, Self::SLOW_FRAME_MS);
+                self.last_report_s = at;
+            }
+        }
+    }
+}
+impl Drop for FrameRun {
+    fn drop(&mut self) {
+        if self.frames == 0 { return; }
+        let seconds = self.started.map_or(0.0, |s| s.elapsed().as_secs_f32());
+        println!("[frames] run: {} frames in {seconds:.0} s ({:.0} fps mean), {} over {} ms, worst {:.1} ms at {:.0} s",
+            self.frames, self.frames as f32 / seconds.max(1e-3), self.slow_frames, Self::SLOW_FRAME_MS, self.worst_ms, self.worst_at_s);
+    }
+}
+
 struct WindowState {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -11819,6 +11857,11 @@ struct WindowState {
     /// Rolling frame-to-frame wall times, ms (vsync-paced — gfxbench is the throughput number).
     ft_hist: Vec<f32>,
     ft_last: Option<std::time::Instant>,
+    /// The run's frame pacing for the log (2 November 2026, "fps tanks when i hit first t34 and
+    /// never recovers"): the run's start, frames counted, frames over 33 ms, the worst, and the
+    /// last `[frames]` report's time. A report goes to the log when the last three seconds
+    /// averaged under 30 fps (at most one every five seconds) and a summary at exit.
+    ft_run: FrameRun,
     /// CPU cost of the last render_to_surface call (encode + submit), ms.
     encode_ms: f32,
     /// Space-hold exit progress 0..1 (fed per frame by the App input loop; draws the HUD ring).
@@ -11989,6 +12032,7 @@ impl WindowState {
             show_stats: false,
             ft_hist: Vec::new(),
             ft_last: None,
+            ft_run: FrameRun::default(),
             encode_ms: 0.0,
             x_exit_frac: 0.0,
             lan: None,
@@ -13738,10 +13782,12 @@ impl WindowState {
         };
         let now = std::time::Instant::now();
         if let Some(last) = self.ft_last {
-            self.ft_hist.push((now - last).as_secs_f32() * 1000.0);
+            let ms = (now - last).as_secs_f32() * 1000.0;
+            self.ft_hist.push(ms);
             if self.ft_hist.len() > 180 {
                 self.ft_hist.remove(0);
             }
+            self.ft_run.record(ms, &self.ft_hist, now);
         }
         self.ft_last = Some(now);
         let gpu_sampling = self.session_log.as_ref().is_some_and(|log| log.gpu_due());

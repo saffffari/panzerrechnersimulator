@@ -3451,7 +3451,13 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   ray queries the record is open and unrestricted on the piece's shortest axis and no fitting
   shadows the pane (the raymarch backend's portable fallback). The key beam through a slot is
   unchanged: the shadow cascades'. Gate for the A/B: `KESSEL_RM_SKIP=2097152` leaves the term
-  out; `KESSEL_RM_PROBE` prints the measure (`[rm-aperture]`).
+  out; `KESSEL_RM_PROBE` prints the measure (`[rm-aperture]`). Cost: the measure's ~200 ray
+  queries per pane run on one thread each and cost 1.07 ms a frame every frame (gfxbench, the
+  merged line of 2 November 2026, the largest single pass); it now runs every eighth frame or
+  when the pane count changes (`APERTURE_MEASURE_PERIOD`): the panes ride rigid parts and a
+  turret's traverse moves a port against the hull slowly, so a record at most eight frames old
+  is the same measure. A sampling cadence, not a transport change; open: the pass could use a
+  workgroup per pane.
 - **What the measure says of the Tiger** (`KESSEL_RM_PROBE`, act 1): each turret side port reads
   20 % open with half-angles 23.5 x 1.6 degrees (a 1.2 cm slot through 22 cm of housing: the
   bake, confirmed by a CPU ray test), so a wall opposite takes sky only in a band under 6 cm
