@@ -881,6 +881,11 @@ struct Wreck {
     cook_flash: f32, // brief fire-intensity spike right after a cook-off, decays to 0
     pressure_vent_started: bool,
     catastrophe_plume_started: bool,
+    /// The ammunition's burn before the turret goes: seconds left of the pressure building in
+    /// the compartment, during which the gas and flame jet from every real opening
+    /// (`drive_cookoff_build`); at zero the launch is armed.
+    vent_build_s: f32,
+    vent_last_tick: u32,
 }
 
 impl Wreck {
@@ -8354,6 +8359,11 @@ const HULL_BLOOD_MAX: Vec3 = Vec3::new(1.24, HULL_BLOOD_CEILING, 2.30);
 pub(crate) const N_HOT_FRAGMENTS: usize = 768;
 const N_HOT_FRAGMENT_BATCHES: usize = 4;
 const HOT_FRAGMENT_STAGE_CAPACITY: usize = N_HOT_FRAGMENTS;
+/// The stowage's burn before a turret goes (`drive_cookoff_build`): an authored estimate of how
+/// long a full stowage deflagrates before the ring vents [E].
+const COOKOFF_VENT_BUILD_S: f32 = 1.4;
+/// Radius of the turret race the gas vents round at the end of the build [E: T-34 1.42 m ring].
+const COOKOFF_RING_RADIUS_M: f32 = 0.71;
 const HOT_FRAGMENT_FIXED_DT: f32 = 1.0 / 480.0;
 const HOT_FRAGMENT_MAX_STEP_M: f32 = 0.018;
 const HOT_FRAGMENT_DAMAGE_MAX_S: f32 = 3.6;
@@ -29497,9 +29507,11 @@ impl Game {
                 w.t_pos = ring;
                 w.t_initial = turret_world;
                 w.t_gun_local = turret_world.inverse() * gun_world;
-                // Defer to the next host step so the terminal event can attach its actual
-                // penetration severity, contact point and normal before calculating the impulse.
-                w.t_launch_pending = true;
+                // The stowage burns first: the pressure builds for `COOKOFF_VENT_BUILD_S`, the
+                // gas and flame jetting from the breach and every open hole, and only then is
+                // the launch armed (`drive_cookoff_build` sets `t_launch_pending`); the terminal
+                // event has long attached its contact point and normal by then.
+                w.vent_build_s = COOKOFF_VENT_BUILD_S;
                 // A turret-popped tank has already vented its ammunition — no secondary cook-off.
                 w.cookoff_t = None;
             } else {
@@ -30995,8 +31007,65 @@ impl Game {
         self.mission_smoke(r);
     }
 
+    /// The ammunition burnout before a turret goes (the owner, 2026-11-02: "a jet of flames
+    /// shoots out of the top hatch as the pressure builds and leaks out of the openings before
+    /// the whole turret blows"). While the stowage deflagrates the compartment's pressure
+    /// climbs, and its gas and flame leave through every real opening: the terminal breach and
+    /// each open hole in the plates, hull and turret (a closed hatch is not invented as an
+    /// opening), as pressure-vent bursts whose cadence quickens with the pressure (one every
+    /// 0.35 s at first, every 0.08 s at the end), and in the last fifth of a second from the
+    /// turret ring all round as the race begins to lift. Then the launch is armed. The build-up
+    /// time is an authored estimate of a stowage's deflagration before the ring vents
+    /// (`wreck_turret` takes a fifth of it as the launch's gas).
+    fn drive_cookoff_build(&mut self, dt: f32) {
+        for i in 0..self.wrecks.len() {
+            let (build, fire_t, started) = {
+                let w = &self.wrecks[i];
+                if w.kind != WreckKind::TurretPop || w.vent_build_s <= 0.0 { continue; }
+                (w.vent_build_s, w.fire_t, w.vent_last_tick)
+            };
+            let progress = (1.0 - build / COOKOFF_VENT_BUILD_S).clamp(0.0, 1.0);
+            let interval = 0.35 - 0.27 * progress;
+            let tick = (fire_t / interval) as u32;
+            let mut jets: Vec<(Vec3, Vec3)> = Vec::new();
+            if tick != started {
+                let e = &self.enemies[i];
+                let (hull, turret) = (e.hull_model(), e.turret_model());
+                if let Some((point, normal)) = self.wrecks[i].t_impact.filter(|(_, n)| n.length_squared() > 0.5) {
+                    jets.push((point, normal.normalize()));
+                }
+                for scar in e.scars.scars().iter().filter(|s| s.is_open()) {
+                    let frame = if scar.is_turret() { turret } else { hull };
+                    let point = frame.transform_point3(scar.local_position());
+                    let normal = frame.transform_vector3(scar.local_normal()).normalize_or_zero();
+                    if normal.length_squared() > 0.5 && !jets.iter().any(|(p, _)| p.distance(point) < 0.2) {
+                        jets.push((point, normal));
+                    }
+                }
+                if build < 0.2 {
+                    // The race lifting: the gas round the whole ring, outward and up.
+                    let ring = self.wrecks[i].t_initial;
+                    let centre = ring.transform_point3(Vec3::ZERO);
+                    let up = ring.transform_vector3(Vec3::Y).normalize_or_zero();
+                    let radius = COOKOFF_RING_RADIUS_M;
+                    for k in 0..8 {
+                        let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                        let out = ring.transform_vector3(Vec3::new(a.cos(), 0.0, a.sin())).normalize_or_zero();
+                        jets.push((centre + out * radius, (out * 0.8 + up * 0.6).normalize_or_zero()));
+                    }
+                }
+            }
+            for (point, normal) in jets { self.weapon_vfx.pressure_vent(point, normal); }
+            let w = &mut self.wrecks[i];
+            if tick != started { w.vent_last_tick = tick; }
+            w.vent_build_s -= dt.max(0.0);
+            if w.vent_build_s <= 0.0 { w.t_launch_pending = true; }
+        }
+    }
+
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("update_fx");
+        self.drive_cookoff_build(dt);
         self.hide_claimed_field_people(r);
         // Persistent casualty physics advances once with the host simulation, never once per split
         // viewport. Every camera therefore sees the same directional throw and final body pose.

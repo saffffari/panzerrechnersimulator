@@ -180,7 +180,7 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     Ok(())
 }
 
-/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,kill` selects the parts (all by default);
+/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,burnout,kill` selects the parts (all by default);
 /// `KESSEL_FX_REVIEW_CLOCK` the strike and kill clock, `KESSEL_FX_REVIEW_FILM=1` the clips.
 fn part(name: &str) -> bool {
     match std::env::var("KESSEL_FX_REVIEW_PARTS") {
@@ -397,6 +397,51 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             stills.still(&mut r, "cabin_hit_10f", "the same, +10 frames")?;
         }
         stills.shots.push(serde_json::json!({"name": "cabin_hit_strike", "strike": strike}));
+    }
+    // Part 6 (`burnout`): a live T-34 killed through its ammunition with the catastrophic roll
+    // primed, from an observer 14 m off: the stowage's burn jetting from the breach and the
+    // holes, the ring venting, the turret going, the plume. Film mode films five seconds.
+    if part("burnout") {
+        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        g.debug_place_tiger(tiger, 0.0);
+        let forward = g.player.forward();
+        let right = Vec3::new(-forward.z, 0.0, forward.x);
+        let target_pos = g.player.pos + forward * 30.0 + right * 7.0;
+        let live = g.debug_stage_live_t34(target_pos.x, target_pos.z, 1.2).context("fixture needs a live T-34")?;
+        g.debug_hold_enemy_fire();
+        step(&mut g, &mut r, 60, &idle);
+        anyhow::ensure!(g.debug_prime_enemy_turret_pop(live), "the catastrophic roll could not be primed");
+        let centre = g.enemies[live].center();
+        let eye = centre + Vec3::new(-9.0, 2.5, -10.0);
+        let kill_frame = 12u32;
+        if let Some(mut film) = Film::start(&stills.prefix, "burnout")? {
+            observe(&mut r, eye, centre + Vec3::Y * 0.8, 50.0);
+            r.reset_history();
+            for frame in 0..300 {
+                if frame == kill_frame {
+                    let ring = g.enemies[live].center() + Vec3::Y * 0.9;
+                    anyhow::ensure!(g.debug_catastrophic_kill(live, ring - forward * 1.2, -forward), "the kill did not take");
+                }
+                step(&mut g, &mut r, 1, &idle);
+                observe(&mut r, eye, centre + Vec3::Y * 0.8, 50.0);
+                let path = film.frame();
+                r.render_to_png(&device, &queue, &path, r.iw, r.ih)?;
+                for (at, name, note) in [(30u32, "burnout_05s", "half a second: the breach jetting"), (78, "burnout_13s", "1.3 s: the ring venting"), (120, "burnout_20s", "two seconds: the turret up"), (240, "burnout_40s", "four seconds: the plume")] {
+                    if frame == kill_frame + at { stills.frame_still(&mut r, &film, name, note)?; }
+                }
+            }
+            film.finish()?;
+        } else {
+            step(&mut g, &mut r, kill_frame, &idle);
+            let ring = g.enemies[live].center() + Vec3::Y * 0.9;
+            anyhow::ensure!(g.debug_catastrophic_kill(live, ring - forward * 1.2, -forward), "the kill did not take");
+            for (at, name, note) in [(30u32, "burnout_05s", "half a second: the breach jetting"), (48, "burnout_13s", "1.3 s: the ring venting"), (42, "burnout_20s", "two seconds: the turret up"), (120, "burnout_40s", "four seconds: the plume")] {
+                step(&mut g, &mut r, at, &idle);
+                observe(&mut r, eye, centre + Vec3::Y * 0.8, 50.0);
+                stills.still(&mut r, name, note)?;
+            }
+        }
+        stills.shots.push(serde_json::json!({"name": "burnout_wreck", "turret_pop_position": g.debug_enemy_turret_pop_position(live).map(|p| p.to_array())}));
     }
     if !part("kill") {
         fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({

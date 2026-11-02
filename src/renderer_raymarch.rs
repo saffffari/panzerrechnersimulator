@@ -102,6 +102,8 @@ const EVENT_MUZZLE: u32 = 1;
 const EVENT_ARMOUR: u32 = 2;
 /// A heavy round through the plate: the hole vents the compartment's smoke along its normal.
 const EVENT_PENETRATION: u32 = 3;
+/// A pressure vent: the ammunition's gas and flame jetting from a real opening before the turret goes.
+const EVENT_VENT: u32 = 4;
 /// Spark record kinds the backend adds to the simulation's (weapon_particle_math.rs ends at 8).
 const SPARK_FRAGMENT_STREAKS: u32 = 9;
 const SPARK_BURNING_FRAGMENTS: u32 = 10;
@@ -143,6 +145,7 @@ fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
         // plate's normal; ARMOR_IMPACT is the small-arms plate strike's kind.
         wm::BULLET_ARMOR | wm::ARMOR_IMPACT if heavy => Some(EVENT_PENETRATION),
         wm::RICOCHET if heavy => Some(EVENT_ARMOUR),
+        wm::PRESSURE_VENT if heavy => Some(EVENT_VENT),
         _ => None,
     }
 }
@@ -1868,6 +1871,8 @@ impl Backend {
                 }
                 k if k == wm::FULL_COOKOFF => (origin + Vec3::Y * (3.0 + 12.0 * age).min(60.0), Vec3::new(1.0, 0.55, 0.12), 1.5 * (1.0 - age / 17.0).max(0.0)),
                 k if k == wm::HOT_RIM => (origin + n * 0.05, Vec3::new(1.0, 0.35, 0.08), 0.004 * (-age / 2.5).exp()),
+                // A burning vent jet: a torch of propellant gas, some 0.3 W/sr fading over its 0.65 s.
+                k if k == wm::PRESSURE_VENT => (origin + n * 0.6, Vec3::new(1.0, 0.6, 0.25), 0.3 * (1.0 - age / 0.65).max(0.0)),
                 _ => (origin + n * 0.3, Vec3::new(1.0, 0.42, 0.10), 0.02 * (count / 4000.0).min(4.0).sqrt() * (1.0 - age / 1.2).max(0.0)),
             };
             if intensity <= 0.0 { continue; }
@@ -2471,6 +2476,28 @@ impl Backend {
                         let radius = (0.3 + 0.25 * age.min(4.0)) * (0.8 + 0.4 * h(210 + k));
                         let density = (1.0 - age / 10.0).powi(2) * 1.6 * (1.0 - 0.08 * k as f32);
                         push(center, radius, [0.26, 0.25, 0.24], PARCEL_SMOKE, 0.0, density / radius, h(220 + k) * 100.0, 0.0);
+                    }
+                }
+                EVENT_VENT => {
+                    // The jet: four parcels along the opening's normal lengthening over the vent's
+                    // 0.7 s, fire while the gas burns (cooling along the jet and with age), then
+                    // its smoke drifting off. Authored jet geometry on the burst's real opening.
+                    if t < 0.7 {
+                        let n = e.normal;
+                        let u = t / 0.7;
+                        for k in 0..4u32 {
+                            let along = 0.15 + 0.4 * k as f32 + 1.4 * u;
+                            let radius = (0.1 + 0.08 * k as f32 + 0.25 * u) * (0.8 + 0.4 * h(230 + k));
+                            let center = o + n * along + wind * (t * 0.5) + Vec3::Y * (0.4 * u * u);
+                            let heat = (1.0 - u) * (1.0 - 0.18 * k as f32);
+                            push(center, radius, [0.9, 0.6, 0.3], PARCEL_FIREBALL, 4.0 * heat / radius, (0.6 + 1.2 * u) / radius, h(240 + k) * 100.0, u);
+                        }
+                    }
+                    if t > 0.3 && t < 4.0 {
+                        let u = (t - 0.3) / 3.7;
+                        let center = o + e.normal * (1.2 + 1.5 * u) + Vec3::Y * (1.5 * u) + wind * (t * 0.7);
+                        let radius = 0.5 + 1.2 * u;
+                        push(center, radius, [0.3, 0.28, 0.26], PARCEL_SMOKE, 0.0, (1.0 - u) * 0.9 / radius, h(250) * 100.0, 0.0);
                     }
                 }
                 EVENT_MUZZLE => {

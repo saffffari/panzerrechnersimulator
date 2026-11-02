@@ -240,6 +240,21 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   so a rim grain's projected area is capped at one pixel in both spark shaders (the other kinds
   keep 6 px). A first cut held the bound at 1600 K and dimmed the ring the owner wants kept.
   The 1.5 % share and the rim's geometry remain estimates.
+- The ammunition burnout before a turret goes (`game.rs` `drive_cookoff_build`,
+  `COOKOFF_VENT_BUILD_S` 1.4 s): a catastrophic kill no longer launches the turret on the next
+  step. The stowage burns first: for 1.4 s the compartment's pressure climbs and its gas and
+  flame leave through every real opening, the terminal breach and each open hole in the hull
+  and turret plates (a closed hatch is not invented as an opening), as pressure-vent bursts
+  whose cadence quickens with the pressure (every 0.35 s at first, every 0.08 s at the end),
+  and in the last fifth of a second from the turret race all round (eight points on a 0.71 m
+  ring, outward and up) as it begins to lift; then the launch is armed and the existing ring
+  plume follows the body. In the raymarch backend a heavy pressure vent is an event
+  (`EVENT_VENT`): a four-parcel jet along the opening's normal lengthening over 0.7 s, fire
+  while the gas burns and cooling along the jet, its smoke drifting off for four seconds, and a
+  torch light of about 0.3 W/sr at the jet. The build time, the cadence, the ring radius and
+  the jet's geometry are authored estimates of a stowage's deflagration before the ring vents,
+  not a gas-dynamics model; `fx-review` part `burnout` (a primed catastrophic kill from an
+  observer 14 m off, five seconds) is the evidence.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
   takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
