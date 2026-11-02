@@ -253,7 +253,7 @@ impl Effects {
             "projectile_mass_kg":mass,"caliber_mm":caliber_mm,"residual_energy_j":budget.residual_j,
             "ejecta_energy_cap_j":budget.ejecta_j,"estimated_ejecta_mass_kg":budget.mass_kg,
             "estimated_material_density_kg_m3":budget.density,"snow_fraction":budget.snow,
-            "requested_grains":budget.base_count*gpu_weapon::SPARK_MULTIPLIER,"height_cap_m":gpu_weapon::GROUND_APEX_TARGET_M}));
+            "requested_grains":budget.base_count*gpu_weapon::GROUND_MULTIPLIER,"height_cap_m":gpu_weapon::GROUND_APEX_TARGET_M}));
     }
     pub(super) fn pressure_vent(&mut self,point:Vec3,normal:Vec3) {
         if !point.is_finite() || !normal.is_finite() || normal.length_squared()<0.5{return;}
@@ -735,7 +735,7 @@ fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
         BurstKind::Ground{normal,budget}=>{
             let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(b.life).to_array(),
                 normal_offset:normal.extend(0.01).to_array(),parameters:[budget.ejecta_j,budget.mass_kg,budget.snow,budget.density],
-                meta:[b.seed,budget.base_count*gpu_weapon::SPARK_MULTIPLIER,budget.base_count,gpu_weapon::GROUND]};
+                meta:[b.seed,budget.base_count*gpu_weapon::GROUND_MULTIPLIER,budget.base_count,gpu_weapon::GROUND]};
             return r.active().then_some(r);
         },
         BurstKind::PressureVent(n)=>(gpu_weapon::PRESSURE_VENT,192,n,ARMOR_FLASH_OFFSET_M,0.0,0.0,1.0),
@@ -1481,7 +1481,7 @@ mod tests {
         fx.prepare(0.025,Vec3::new(2.0,1.0,-3.0));
         assert!(fx.mats.iter().all(Vec::is_empty));
         let records=fx.gpu_bursts();assert_eq!(records.len(),1);
-        assert_eq!(records[0].meta[1],records[0].meta[2]*1000);
+        assert_eq!(records[0].meta[1],records[0].meta[2]*gpu_weapon::SPARK_MULTIPLIER);
         fx.record_bullet_segment(10,true,Vec3::Z,Vec3::Z*4.0,0.020,0.025,1.0,4.0);
         fx.draw_bullet_segments(Vec3::ZERO);
         assert_eq!(fx.gpu_tracers.len(),1);assert!(fx.mats[TRACER_BASE..].iter().all(Vec::is_empty));

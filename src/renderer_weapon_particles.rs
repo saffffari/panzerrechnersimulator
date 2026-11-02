@@ -138,7 +138,7 @@ impl Renderer {
         tracers:bool,clear:bool,work:&mut RenderWorkStats) {
         let Some(frame)=self.weapon_particles.frames.get(&key) else{return;};
         if !frame.active || (!clear && if tracers {frame.tracers==0}else{frame.draws.is_empty()}){return;}
-        let label=if tracers {"native-one-pixel-tracers-no-bloom"}else{"analytic-thousandfold-sparks"};
+        let label=if tracers {"native-one-pixel-tracers-no-bloom"}else{"analytic-streaked-sparks"};
         let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {label:Some(label),
             color_attachments:&[Some(attachment(color,if clear {wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)}else{wgpu::LoadOp::Load}))],
             depth_stencil_attachment:None,timestamp_writes:self.gpu_profile.as_ref().and_then(|p|p.render(label)),occlusion_query_set:None});

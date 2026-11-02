@@ -1066,7 +1066,7 @@ fn run_gfxbench(
             simulation_times.push(simulation_ms);
             let mut frame_passes: std::collections::BTreeMap<&str, f64> = Default::default();
             for (label, ms) in &gpu_frame { *frame_passes.entry(label.as_str()).or_default() += ms; }
-            let sparks = frame_passes.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0);
+            let sparks = frame_passes.get("analytic-streaked-sparks").copied().unwrap_or(0.0);
             if std::env::var_os("KESSEL_BENCH_RECEIPTS").is_some() && sparks > worst_sparks.0 {
                 worst_sparks = (sparks, serde_json::json!({"frame": i, "sparks_ms": sparks, "sparks": r.debug_weapon_particle_receipt()}));
             }

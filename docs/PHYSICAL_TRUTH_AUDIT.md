@@ -79,6 +79,21 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   speed laws, the restitution, the size-to-lifetime coupling and the cooling fractions are set by
   eye against the previous presentation, not fragmentation or thermal measurements; the bounce
   plane is the terrain height under the strike, not the hull or any object.
+- Spark samples (2026-11-02): a record carries `SPARK_MULTIPLIER` = 8 samples a spark instead of
+  the thousandfold quadrature, and both spark shaders draw every spark kind (blast, plate strike,
+  ricochet, bullet, pressure vent, cook-off) as the 2026-10-29 dotted streak: the spark's path
+  sampled 8 times over 14 ms, its whole light shared among the samples. The thousandfold split
+  drew a blast's and a plate strike's 384,000 dim points as a sheet or a cone (the owner's
+  "clusters" on the 2026-11-01 stills); the same 384 sparks now read as streaks, at an eighth of
+  a percent of the vertex work. The ground's ejecta keep their quadrature (`GROUND_MULTIPLIER`
+  1000: a mass distributed over grains, not sparks) and the hot rim its ring. The 14 ms streak is
+  an exposure-length presentation of the spark's path, not a measured trail; the pass is now
+  `analytic-streaked-sparks` (was `analytic-thousandfold-sparks`).
+- The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
+  the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
+  takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
+  21 December 1942, the sun about 5 deg under). In film mode the fenced wall time includes the
+  frame's readback and PNG write and is not a frame-rate figure; the pass timestamps are.
 
 Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
 whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never

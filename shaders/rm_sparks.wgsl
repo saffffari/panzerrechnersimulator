@@ -92,13 +92,14 @@ const SPARK_TRAIL: u32 = 8u;
     @location(2) normal_offset: vec4<f32>, @location(3) parameters: vec4<f32>, @location(4) identity: vec4<u32>) -> WeaponOut {
     let index = vertex / 6u; let corner = vertex % 6u; if (index >= identity.y) { return weapon_hidden(); }
     let kind = identity.w; var t = origin_age.w; let n = normal_offset.xyz;
-    // A ricochet's, a pressure vent's and a cook-off's sparks (kinds 2, 5, 6) are the record's
-    // identity.z sparks, each a dotted streak of SPARK_TRAIL samples along its own path over
-    // 14 ms (an eye's exposure) carrying the spark's whole light. The record's other samples (its
-    // SPARK_MULTIPLIER share of each spark, 1000) are not drawn: scattered each in its own
-    // direction they made a continuous sheet, and a shower fanning toward the eye drew as a solid
-    // wedge or cone across the overhead crew_battle (2026-10-29).
-    let streaked = kind == 2u || kind == 5u || kind == 6u;
+    // The spark kinds (a blast's, a plate strike's, a ricochet's, a bullet's, a pressure vent's
+    // and a cook-off's: 0-3, 5, 6) are the record's identity.z sparks, each a dotted streak of
+    // SPARK_TRAIL samples along its own path over 14 ms (an eye's exposure) carrying the spark's
+    // whole light; a record carries SPARK_MULTIPLIER (= SPARK_TRAIL) samples a spark. Scattered
+    // each in its own direction, a thousandfold quadrature made a continuous sheet, and a shower
+    // fanning toward the eye drew as a solid wedge or cone (2026-10-29 for kinds 2, 5, 6; the
+    // blast and plate-strike kinds followed on 2026-11-02, the owner's "clusters" on the fx stills).
+    let streaked = kind <= 3u || kind == 5u || kind == 6u;
     let sample = select(index, index / SPARK_TRAIL, streaked);
     if (streaked) {
         if (sample >= identity.z) { return weapon_hidden(); }

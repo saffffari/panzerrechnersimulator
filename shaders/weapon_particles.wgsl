@@ -63,12 +63,24 @@ fn spark_strike_arc(origin: vec3<f32>, velocity: vec3<f32>, t: f32, ground: f32,
     if (t2 <= rest_t) { return SparkArc(contact + rebound * t2 - g * (0.5 * t2 * t2), rebound - g * t2, false); }
     return SparkArc(contact + rebound * rest_t - g * (0.5 * rest_t * rest_t), vec3(0.0), true);
 }
+// Samples drawn along each spark's path for the spark kinds (0-3, 5, 6); the record carries
+// SPARK_MULTIPLIER (= SPARK_TRAIL) samples a spark (rm_sparks.wgsl is the main view's twin).
+const SPARK_TRAIL:u32=8u;
+// Ground ejecta grains a record carries per source grain (`GROUND_MULTIPLIER`): a quadrature of
+// an estimated mass, not sparks.
+const GROUND_QUADRATURE:u32=1000u;
 @vertex fn vs_spark(@builtin(vertex_index) vertex:u32,
     @location(0) origin_age:vec4<f32>,@location(1) direction_life:vec4<f32>,
     @location(2) normal_offset:vec4<f32>,@location(3) parameters:vec4<f32>,@location(4) identity:vec4<u32>)->WeaponOut {
     let index=vertex/6u;let corner=vertex%6u;if(index>=identity.y){return weapon_hidden();}
     let kind=identity.w;var t=origin_age.w;let n=normal_offset.xyz;
-    let seed=identity.x*select(3948571u,9348571u,kind<=1u)+index*977u;let q=weapon_random(seed);
+    // Each spark as a dotted streak of SPARK_TRAIL samples over 14 ms, its whole light shared
+    // among them; the ground's and the rim's samples stay quadrature.
+    let streaked=kind<=3u || kind==5u || kind==6u;
+    let sample=select(index,index/SPARK_TRAIL,streaked);
+    if(streaked){if(sample>=identity.z){return weapon_hidden();}t=max(t-f32(index%SPARK_TRAIL)*0.002,0.0);}
+    let gain=select(1.0,f32(identity.y)/(f32(identity.z)*f32(SPARK_TRAIL)),streaked);
+    let seed=identity.x*select(3948571u,9348571u,kind<=1u)+sample*977u;let q=weapon_random(seed);
     var velocity=vec3(0.0);var axis=vec3(0.0,0.0,1.0);var width=0.0;var tail=0.0;var page=2u;var rim_offset=vec3(0.0);
     var arc_center=vec3(0.0);var arc_set=false;
     if(kind==8u){
@@ -90,16 +102,16 @@ fn spark_strike_arc(origin: vec3<f32>, velocity: vec3<f32>, t: f32, ground: f32,
         let current_velocity=velocity-vec3(0.0,9.81*t,0.0);axis=current_velocity/max(length(current_velocity),0.000001);
         // The full count's grains (`identity.z` before the thousandfold quadrature); a view that
         // draws fewer (`thinned_count`) gives each the optical depth of the grains it stands for.
-        width=2.0*pow(3.0*parameters.y/(4.0*3.14159265359*parameters.w*f32(identity.z*1000u)),1.0/3.0);
+        width=2.0*pow(3.0*parameters.y/(4.0*3.14159265359*parameters.w*f32(identity.z*GROUND_QUADRATURE)),1.0/3.0);
         tail=width;page=6u;
     }else if(kind==5u || kind==6u){
-        let delay=select(q*select(0.45,direction_life.w,kind==5u),0.0,index==0u);
+        let delay=select(q*select(0.45,direction_life.w,kind==5u),0.0,sample==0u);
         t-=delay;let life=select(17.0,0.65,kind==5u);if(t<0.0 || t>=life){return weapon_hidden();}
         let spray=weapon_direction(seed+19u);
         if(kind==5u){velocity=normalize(n+spray*0.11)*(26.0+16.0*q);}
         else{
             let horizontal=vec3(n.x,0.0,n.z)/max(length(n.xz),0.000001);
-            velocity=vec3(0.0,77.3316*select(0.7+0.3*q,1.0,index==0u),0.0)
+            velocity=vec3(0.0,77.3316*select(0.7+0.3*q,1.0,sample==0u),0.0)
                 +horizontal*(6.0+12.0*q)+vec3(spray.x,0.0,spray.z)*12.0;
             if(dot(velocity,n)<0.0){velocity-=n*dot(velocity,n);}
             let speed_cap=sqrt(max(0.0,2.0*parameters.x/max(parameters.y,0.001)));
@@ -186,11 +198,11 @@ fn spark_strike_arc(origin: vec3<f32>, velocity: vec3<f32>, t: f32, ground: f32,
     if(kind==7u){
         // Ground records distribute a finite estimated mass over the actual requested grains.
         // This is matte matter, never an unlit incandescent color or duplicated smoke volume.
-        let area=width*width*0.78539816339*pow(weapon_cam.extent.z/clip.w,2.0)*f32(identity.z*1000u)/f32(identity.y);
+        let area=width*width*0.78539816339*pow(weapon_cam.extent.z/clip.w,2.0)*f32(identity.z*GROUND_QUADRATURE)/f32(identity.y);
         return WeaponOut(position,center,mix(vec3(0.16,0.115,0.075),vec3(0.65,0.72,0.80),parameters.z),area);
     }
     if(kind==8u){return WeaponOut(position,center,rim_color(parameters.z,t)*weight,0.0);}
-    return WeaponOut(position,center,weapon_palette(page)*weight,0.0);
+    return WeaponOut(position,center,weapon_palette(page)*weight*gain,0.0);
 }
 @vertex fn vs_tracer(@builtin(vertex_index) vertex:u32,
     @location(0) start:vec4<f32>,@location(1) end:vec4<f32>,

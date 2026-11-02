@@ -1,7 +1,12 @@
 //! Cosmetic ballistic burst records. No collision, damage, source-light or ammunition state.
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
-pub const SPARK_MULTIPLIER:u32=1000;
+/// Samples a record carries per spark. Both spark shaders draw each spark as a dotted streak of
+/// SPARK_TRAIL samples along its path over 14 ms, so a record carries exactly that many: the
+/// thousandfold quadrature of 2026-10 drew as sheets and cones (2026-11-02).
+pub const SPARK_MULTIPLIER:u32=8;
+/// Ground ejecta grains a record carries per source grain: a quadrature of an estimated mass.
+pub const GROUND_MULTIPLIER:u32=1000;
 pub const EXTERIOR_VOLUME_MULTIPLIER:f32=100.0;
 pub const EXTERIOR_RADIUS_MULTIPLIER:f32=4.641_589;
 pub const MAX_SPARKS_PER_VIEW:u32=1_536_000;
@@ -352,11 +357,13 @@ mod tests {
     }
     #[test] fn burst_volume_count_and_upload_are_bounded_independently() {
         assert!((EXTERIOR_RADIUS_MULTIPLIER.powi(3)-EXTERIOR_VOLUME_MULTIPLIER).abs()<0.0001);
-        assert_eq!(384*SPARK_MULTIPLIER,384000);assert_eq!(std::mem::size_of::<Record>(),80);
+        assert_eq!(384*SPARK_MULTIPLIER,3072);assert_eq!(std::mem::size_of::<Record>(),80);
         assert_eq!(MAX_BURSTS*std::mem::size_of::<Record>(),3840);
+        // Every burst's streak samples fit the view cap together; the cap bounds the ground's grains.
         let mut available=MAX_SPARKS_PER_VIEW;let mut emitted=0;
         for _ in 0..MAX_BURSTS {let n=384*SPARK_MULTIPLIER;if n<=available {available-=n;emitted+=n;}}
-        assert_eq!(emitted,MAX_SPARKS_PER_VIEW);
+        assert_eq!(emitted,MAX_BURSTS as u32*384*SPARK_MULTIPLIER);
+        assert!(384*GROUND_MULTIPLIER*4<=MAX_SPARKS_PER_VIEW);
         // Independent samples divide the old total weight; multiplying count cannot multiply power.
         for area in [0.001_f64,1.0,37.0] {assert!((area/1000.0*1000.0-area).abs()<1e-10);}
     }
@@ -369,7 +376,7 @@ mod tests {
         let far=footprint_count(blast,600.0,angle,rate,extent);
         assert!((384..1000).contains(&far), "{far}");
         // Near, it covers the port: the view's rate over every pixel, then the view budget.
-        assert_eq!(footprint_count(blast,15.0,angle,rate,extent),(240*136*8).min(384_000));
+        assert_eq!(footprint_count(blast,15.0,angle,rate,extent),(240*136*8).min(384*SPARK_MULTIPLIER));
         let rim=Record {meta:[1,RIM_SAMPLES,RIM_SAMPLES,HOT_RIM],..blast};
         assert_eq!(footprint_count(rim,600.0,angle,rate,extent),RIM_SAMPLES);
     }
@@ -377,7 +384,7 @@ mod tests {
         // A 76.2 mm HE strike's ejecta: fast enough to hit the 6.1 m apex cap (10.9 m/s).
         for t in [0.02f32,0.3,1.0,2.5] {
             let ground=Record {origin_age:[3.0,1.0,-2.0,t],direction_life:[0.3,-0.34,0.89,3.0],normal_offset:[0.0,1.0,0.0,0.0],
-                parameters:[40_000.0,40.0,1.0,220.0],meta:[11,384*SPARK_MULTIPLIER,384,GROUND]};
+                parameters:[40_000.0,40.0,1.0,220.0],meta:[11,384*GROUND_MULTIPLIER,384,GROUND]};
             let support=ground.support_radius();
             assert!(support<0.5+11.0*t+4.905*t*t, "{support} at {t} s");
             let origin=ground.origin();
@@ -390,7 +397,7 @@ mod tests {
     }
     #[test] fn a_view_over_budget_thins_every_burst_and_keeps_its_light() {
         let burst=|kind:u32,source:u32|Record {origin_age:[0.0;4],direction_life:[0.0,0.0,1.0,1.85],normal_offset:[0.0,1.0,0.0,0.0],
-            parameters:[0.0;4],meta:[7,source*SPARK_MULTIPLIER,source,kind]};
+            parameters:[0.0;4],meta:[7,source*if kind==GROUND {GROUND_MULTIPLIER} else {SPARK_MULTIPLIER},source,kind]};
         // An HE strike seen by a 240x136 port at 8 samples a pixel: blast sparks and ground ejecta.
         let (blast,ground,rim)=(burst(BLAST,384),burst(GROUND,384),Record {meta:[9,RIM_SAMPLES,RIM_SAMPLES,HOT_RIM],..burst(HOT_RIM,1)});
         let budget=240*136*8;
@@ -407,9 +414,13 @@ mod tests {
         // Under budget nothing changes; a starved view still asks for every burst's source samples.
         assert_eq!(thinned_counts(&[blast,ground],u64::MAX),vec![blast.meta[1],ground.meta[1]]);
         assert_eq!(thinned_counts(&[blast,ground],100),vec![384,384]);
-        // The shader takes the full count as identity.z * 1000 (ground grain size, optical depth).
-        assert_eq!(SPARK_MULTIPLIER,1000);
-        assert!(include_str!("../shaders/weapon_particles.wgsl").contains("f32(identity.z*1000u)/f32(identity.y)"));
+        // Both shaders draw a spark as SPARK_TRAIL samples, the record's SPARK_MULTIPLIER; the port
+        // shader takes the ground's full count as identity.z * GROUND_QUADRATURE (grain size, depth).
+        assert!(include_str!("../shaders/rm_sparks.wgsl").contains(&format!("const SPARK_TRAIL: u32 = {SPARK_MULTIPLIER}u;")));
+        let ports=include_str!("../shaders/weapon_particles.wgsl");
+        assert!(ports.contains(&format!("const SPARK_TRAIL:u32={SPARK_MULTIPLIER}u;")));
+        assert!(ports.contains(&format!("const GROUND_QUADRATURE:u32={GROUND_MULTIPLIER}u;")));
+        assert!(ports.contains("f32(identity.z*GROUND_QUADRATURE)/f32(identity.y)"));
     }
     #[test] fn analytic_sparks_keep_complete_support_on_rotated_source_plane() {
         for n in [Vec3::X,Vec3::NEG_Z,Vec3::new(0.3,0.8,-0.4).normalize()] {
@@ -494,7 +505,7 @@ mod tests {
         for snow in [0.0,1.0] {for speed in [5.0,20.0,300.0,820.0] {
             let b=ground_budget(0.0096,Vec3::NEG_Y*speed,7.62,snow).unwrap_or_else(||panic!("budget"));
             let r=Record {origin_age:[0.0,0.01,0.0,0.0],direction_life:[0.0,-1.0,0.0,3.0],normal_offset:[0.0,1.0,0.0,0.01],
-                parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[7,b.base_count*1000,b.base_count,GROUND]};
+                parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[7,b.base_count*GROUND_MULTIPLIER,b.base_count,GROUND]};
             let max_speed=(2.0*b.ejecta_j/b.mass_kg).sqrt().min((2.0*9.81*GROUND_APEX_TARGET_M).sqrt());
             let mut apex=r;apex.origin_age[3]=max_speed/9.81;
             if let Some(s)=sample(apex,0){assert!(s.center.y<=0.01+GROUND_APEX_TARGET_M+0.001);}
@@ -503,7 +514,7 @@ mod tests {
         }}
         let b=ground_budget(0.0096,Vec3::new(700.0,-5.0,0.0),7.62,0.0).unwrap();
         let r=Record {origin_age:[0.0,0.01,0.0,0.05],direction_life:[1.0,-0.007,0.0,3.0],normal_offset:[0.0,1.0,0.0,0.01],
-            parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[1,b.base_count*1000,b.base_count,GROUND]};
+            parameters:[b.ejecta_j,b.mass_kg,b.snow,b.density],meta:[1,b.base_count*GROUND_MULTIPLIER,b.base_count,GROUND]};
         let mean=(1..1000).filter_map(|i|sample(r,i)).map(|s|s.center.x).sum::<f32>();
         assert!(mean>100.0,"grazing impact retains forward ejecta bias");
         assert!(ground_budget(0.0,Vec3::X,7.62,0.0).is_none());

@@ -38,6 +38,53 @@ fn clock(r: &mut crate::renderer::Renderer, utc: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC ISO>` sets the strike and kill parts' clock (the
+/// fire part keeps its dusk and night pair). Stalingrad, 21 December 1942: `dusk` is the sun 3 deg
+/// up (12:40 UTC, as the fire part), `blue` the blue hour with the sun about 5 deg under (13:40
+/// UTC), `night` the moonlit night of the other parts (19:30 UTC).
+fn part_clock(default: &str) -> String {
+    match std::env::var("KESSEL_FX_REVIEW_CLOCK").ok().as_deref() {
+        Some("dusk") => "1942-12-21T12:40:00Z".to_owned(),
+        Some("blue") => "1942-12-21T13:40:00Z".to_owned(),
+        Some("night") => "1942-12-21T19:30:00Z".to_owned(),
+        Some(iso) => iso.to_owned(),
+        None => default.to_owned(),
+    }
+}
+
+/// `KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of the kill, as rendered, to a 60 fps
+/// H.264 clip beside the stills (`<prefix>_<name>.mp4`); the frames are staged in the system temp
+/// directory and removed after the encode. In film mode the stills are frames of the clip (no
+/// history reset, no convergence pass), so the fire's history runs on as in play.
+struct Film { dir: std::path::PathBuf, frames: u32, out: String }
+
+impl Film {
+    fn start(prefix: &str, name: &str) -> anyhow::Result<Option<Film>> {
+        if std::env::var("KESSEL_FX_REVIEW_FILM").as_deref() != Ok("1") { return Ok(None); }
+        let dir = std::env::temp_dir().join(format!("fx_review_{}_{name}", std::process::id()));
+        fs::create_dir_all(&dir)?;
+        Ok(Some(Film { dir, frames: 0, out: format!("{prefix}_{name}.mp4") }))
+    }
+    /// The path of the next frame; `still` names a still to copy this frame to as well.
+    fn frame(&mut self) -> String {
+        let path = self.dir.join(format!("{:05}.png", self.frames));
+        self.frames += 1;
+        path.to_string_lossy().into_owned()
+    }
+    fn last_frame(&self) -> std::path::PathBuf { self.dir.join(format!("{:05}.png", self.frames.saturating_sub(1))) }
+    fn finish(self) -> anyhow::Result<String> {
+        let status = std::process::Command::new("ffmpeg").args([
+            "-v", "error", "-nostdin", "-y", "-framerate", "60",
+            "-i", &format!("{}/%05d.png", self.dir.display()),
+            "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", &self.out,
+        ]).status().context("ffmpeg")?;
+        anyhow::ensure!(status.success(), "ffmpeg failed encoding {}", self.out);
+        let _ = fs::remove_dir_all(&self.dir);
+        println!("[fx-review] {} ({} frames at 60 fps)", self.out, self.frames);
+        Ok(self.out)
+    }
+}
+
 fn observe(r: &mut crate::renderer::Renderer, eye: Vec3, target: Vec3, fov_deg: f32) {
     r.camera.pos = eye;
     r.camera.set_forward(target - eye);
@@ -74,6 +121,19 @@ impl Stills<'_> {
         println!("[fx-review] {path}");
         Ok(())
     }
+    /// A still that is a frame of a clip: the file copied, the receipt row as for `still`.
+    fn frame_still(&mut self, r: &mut crate::renderer::Renderer, film: &Film, name: &str, note: &str) -> anyhow::Result<()> {
+        let path = format!("{}_{name}.png", self.prefix);
+        fs::copy(film.last_frame(), &path)?;
+        let stats = r.raymarch_stats().map(|s| format!("{s:?}"));
+        self.shots.push(serde_json::json!({
+            "name": name, "path": path, "note": format!("{note}; frame {} of {}", film.frames - 1, film.out),
+            "eye": r.camera.pos.to_array(), "clock_utc": r.sky_clock.now().to_iso(),
+            "raymarch": stats, "sparks": r.debug_weapon_particle_receipt(),
+        }));
+        println!("[fx-review] {path}");
+        Ok(())
+    }
 }
 
 /// One strike on the wreck: the Tiger parked at `from` (map), the gun laid on `aim`, the round
@@ -93,6 +153,22 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     g.debug_fire_laid(r);
     let (muzzle, _) = g.player.muzzle();
     let flight = (muzzle.distance(aim) / if he { 790.0 } else { 770.0 } * 60.0).round() as u32;
+    if let Some(mut film) = Film::start(&stills.prefix, name)? {
+        // From the discharge to a second and a half after the strike, every frame from `eye`.
+        observe(r, eye, look, 55.0);
+        r.reset_history();
+        for frame in 0..flight + 4 + 90 {
+            step(g, r, 1, idle);
+            observe(r, eye, look, 55.0);
+            let path = film.frame();
+            r.render_to_png(stills.device, stills.queue, &path, r.iw, r.ih)?;
+            if frame + 1 == flight + 4 { stills.frame_still(r, &film, &format!("{name}_070ms"), &format!("{note}; +0.07 s"))?; }
+            if frame + 1 == flight + 15 { stills.frame_still(r, &film, &format!("{name}_250ms"), &format!("{note}; +0.25 s"))?; }
+        }
+        film.finish()?;
+        step(g, r, 60, idle);
+        return Ok(());
+    }
     step(g, r, flight + 4, idle);
     observe(r, eye, look, 55.0);
     stills.still(r, &format!("{name}_070ms"), &format!("{note}; +0.07 s"))?;
@@ -104,7 +180,8 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     Ok(())
 }
 
-/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,kill` selects the parts (all by default).
+/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,kill` selects the parts (all by default);
+/// `KESSEL_FX_REVIEW_CLOCK` the strike and kill clock, `KESSEL_FX_REVIEW_FILM=1` the clips.
 fn part(name: &str) -> bool {
     match std::env::var("KESSEL_FX_REVIEW_PARTS") {
         Ok(list) => list.split(',').any(|p| p.trim() == name),
@@ -175,7 +252,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // camera looking away from the fire, so the sparks carry the frame. The hull faces +x
     // (heading 0); its left flank is -z.
     if part("strikes") {
-        clock(&mut r, "1942-12-21T19:30:00Z")?;
+        clock(&mut r, &part_clock("1942-12-21T19:30:00Z"))?;
         let cold = g.debug_stage_cold_wreck(WRECK.x + 45.0, WRECK.y, 0.0).context("fixture needs a third T-34")?;
         step(&mut g, &mut r, 30, &idle);
         let origin = g.enemies[cold].pos;
@@ -213,7 +290,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
 
     // Part 3: the gunner's frame, the Tiger facing the burning wreck 22 m off so the periscopes
     // and the TZF hold its fire grains, across a catastrophic kill 30 m ahead and right of it.
-    clock(&mut r, "1942-12-21T12:40:00Z")?;
+    clock(&mut r, &part_clock("1942-12-21T12:40:00Z"))?;
     let heading = (WRECK - TIGER).to_angle();
     g.debug_place_tiger(TIGER, std::f32::consts::FRAC_PI_2 - heading);
     let forward = g.player.forward();
@@ -233,6 +310,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     let kill_frame = 12u32;
     let mut captured = false;
     let _ = &mut captured;
+    let mut film = Film::start(prefix, "kill_eyepiece")?;
     for frame in 0..frames {
         if frame == kill_frame {
             let ring = g.enemies[live].center() + Vec3::Y * 0.9;
@@ -246,7 +324,15 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         let capture = if frame == kill_frame + 2 { Some(format!("{prefix}_blast_eyepiece_2f.png")) }
             else if frame == kill_frame + 10 { Some(format!("{prefix}_blast_eyepiece_10f.png")) } else { None };
         let (iw, ih) = (r.iw, r.ih);
-        if let Some(path) = capture.as_deref() {
+        if let Some(film) = film.as_mut() {
+            let path = film.frame();
+            crate::raymarch_showcase::eyepiece_frame(&mut g, &mut r, &device, &queue, Some((&path, iw, ih)))?;
+            if let Some(still) = capture.as_deref() {
+                fs::copy(&path, still)?;
+                captured = true;
+                println!("[fx-review] {still} (frame {} of the clip)", film.frames - 1);
+            }
+        } else if let Some(path) = capture.as_deref() {
             crate::raymarch_showcase::eyepiece_frame(&mut g, &mut r, &device, &queue, Some((path, iw, ih)))?;
             captured = true;
             println!("[fx-review] {path}");
@@ -257,17 +343,18 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         walls.push(t0.elapsed().as_secs_f64() * 1000.0);
         let mut this: std::collections::BTreeMap<String, f64> = Default::default();
         for (label, ms) in r.read_gpu_profile_frame(&device, &queue)? { *this.entry(label).or_default() += ms; }
-        let effects = this.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0)
+        let effects = this.get("analytic-streaked-sparks").copied().unwrap_or(0.0)
             + this.get("native-pixel-hdr-effects").copied().unwrap_or(0.0)
             + this.get("rm-points").copied().unwrap_or(0.0);
         if effects > worst.0 {
             worst = (effects, serde_json::json!({"frame": frame, "frames_after_kill": frame as i64 - kill_frame as i64,
-                "sparks_ms": this.get("analytic-thousandfold-sparks"), "grains_ms": this.get("native-pixel-hdr-effects"),
+                "sparks_ms": this.get("analytic-streaked-sparks"), "grains_ms": this.get("native-pixel-hdr-effects"),
                 "points_ms": this.get("rm-points"), "sparks": r.debug_weapon_particle_receipt(), "grains": r.debug_fine_vfx_receipt(),
                 "raymarch": r.raymarch_stats().map(|s| format!("{s:?}"))}));
         }
         for (label, ms) in this { passes.entry(label).or_default().push(ms); }
     }
+    let clip = match film { Some(film) => Some(film.finish()?), None => None };
     let stats = |v: &mut Vec<f64>| {
         v.sort_by(f64::total_cmp);
         let at = |q: f64| v[((v.len() - 1) as f64 * q).round() as usize];
@@ -293,7 +380,8 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         "schema": "panzer.fx-review.v1", "manifest": manifest, "adapter": adapter.get_info().name,
         "renderer": format!("{:?}", graphics::renderer_backend()), "internal_resolution": [r.iw, r.ih],
         "look": std::env::var("KESSEL_LOOK").ok(), "stills": stills.shots,
-        "kill_profile": {"frames": frames, "kill_frame": kill_frame, "wall_ms": {"p50": p50, "p95": p95, "max": max},
+        "kill_profile": {"frames": frames, "kill_frame": kill_frame, "clip": clip, "clock_utc": r.sky_clock.now().to_iso(),
+            "wall_ms": {"p50": p50, "p95": p95, "max": max},
             "passes": pass_rows, "worst_effects_frame": worst.1},
         "disclosure": "Staged fixtures (banished enemies, held fire, one burning T-34 at ignition load 0.75, one live T-34 killed by the debug hook through the real kill route, scripted gun lays). Weather and clock overridden. Observer cameras for parts 1 and 2; the gunner's own frame for part 3. No image grading."
     }))?)?;
