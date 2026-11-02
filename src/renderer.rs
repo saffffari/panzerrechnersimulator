@@ -97,6 +97,12 @@ fn configured_palette_smooth() -> f32 {
     std::env::var("KESSEL_PALETTE_SMOOTH").ok().and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.0)
 }
+/// `KESSEL_PALETTE_PULL=0..1`: in the tinted look (mode 5) how far each pixel's hue and chroma
+/// are pulled toward the nearest pastel entry's (`crush.wgsl` `dp_tinted`); 0.5 unless set.
+fn configured_palette_pull() -> f32 {
+    std::env::var("KESSEL_PALETTE_PULL").ok().and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.5)
+}
 /// deltaP's bloom strength (`bloom::DEFAULT`): the summed pyramid's share added to the frame.
 // 2026-11-01 playtest: at deltaP's 0.8 with its 0.55 knee and 1.0 cap a vision port's daylight
 // flooded the cabin and every lamp read as a wide blur ("super blurry", "can't see anything in
@@ -470,7 +476,8 @@ fn parse_look(raw: &str) -> Result<f32, &'static str> {
         "deltap-pico8" | "deltap-pico-8" | "pico8" => Ok(2.0),
         "deltap-raw" => Ok(3.0),
         "deltap-pastel" | "pastel" => Ok(4.0),
-        _ => Err("allowed looks are standard, deltap, deltap-pico8, deltap-raw and deltap-pastel"),
+        "deltap-tinted" | "tinted" => Ok(5.0),
+        _ => Err("allowed looks are standard, deltap, deltap-pico8, deltap-raw, deltap-pastel and deltap-tinted"),
     }
 }
 
@@ -2701,7 +2708,8 @@ pub struct Renderer {
     pub look: f32,
     /// The display tonemap: 0 AgX, 1 the ACES fit (`KESSEL_TONEMAP`).
     tonemap: f32,
-    /// The palette modes' smoothness, 0 to 1 (`KESSEL_PALETTE_SMOOTH`).
+    /// The look lane's w: the palette modes' smoothness (`KESSEL_PALETTE_SMOOTH`), or in the
+    /// tinted mode the pull toward the palette (`KESSEL_PALETTE_PULL`).
     palette_smooth: f32,
     pub display_tuning: Option<display_tuning::DisplayTuning>,
     /// User reproduction controls: exposure multiplier, saturation, warmth, gamma.
@@ -6095,7 +6103,7 @@ impl Renderer {
             master_retro: configured_master_retro(),
             look: configured_look(),
             tonemap: configured_tonemap(),
-            palette_smooth: configured_palette_smooth(),
+            palette_smooth: if configured_look() > 4.5 { configured_palette_pull() } else { configured_palette_smooth() },
             display_tuning: None,
             display_grade: [1.0, 1.0, 0.0, 1.0],
             display_dither_pattern: configured_display_dither(),

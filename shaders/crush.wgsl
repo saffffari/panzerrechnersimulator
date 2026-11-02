@@ -128,7 +128,9 @@ fn agx(x: vec3<f32>) -> vec3<f32> {
         vec3(-0.0529716355144438, -0.0980434501171241, 1.15107367264116));
     let min_ev = -12.47393;
     let max_ev = 4.026069;
-    var v = inset * max(x, vec3(1.0e-10));
+    // The exposure trim that puts the eye's key where the former fit put it (0.18 scene to
+    // about 0.27 display-linear; AgX alone lands it at 0.21), so midday is as bright as before.
+    var v = inset * max(x * 1.3, vec3(1.0e-10));
     v = clamp(log2(v), vec3(min_ev), vec3(max_ev));
     v = (v - min_ev) / (max_ev - min_ev);
     let v2 = v * v;
@@ -255,21 +257,57 @@ var<private> DP_PAL: array<vec3<f32>, 32> = array<vec3<f32>, 32>(
 
 // Mode 4, the pastel palette (the owner, 2 November 2026: "we need a good color palette. pastel
 // tones. painterly." and "i don't really like these pinks and purples. we want more green blue"):
-// thirty-two display-sRGB entries authored for this game's scenes, the night's teal blues, the
-// twilight's teals and sages, creams and two warm dawn tones, the day's grey-blues, the snow's
-// whites and shadow greys, earth and steel, lamp and fire warmth, the winter greens; dithered
+// thirty-two display-sRGB entries authored for this game's scenes: the night's blues, the
+// twilight's steel blues ("mornings and dusk should be more blue"), creams and two warm dawn
+// tones, the day's clear blues and whites ("midday should be more white and brighter, less
+// green"), the snow's whites and shadow greys, earth and steel, lamp and fire warmth, the winter
+// greens; dithered
 // by the same OKLab best-pair search as the PICO-8 mode. A recording-medium choice like the other
 // two: it discards tonal precision and never adds light.
 var<private> DP_PASTEL: array<vec3<f32>, 32> = array<vec3<f32>, 32>(
     vec3(0.039, 0.063, 0.086), vec3(0.063, 0.133, 0.169), vec3(0.094, 0.212, 0.263), vec3(0.137, 0.290, 0.341),
-    vec3(0.184, 0.376, 0.439), vec3(0.239, 0.431, 0.451), vec3(0.345, 0.525, 0.541), vec3(0.478, 0.639, 0.624),
-    vec3(0.639, 0.757, 0.722), vec3(0.784, 0.847, 0.812), vec3(0.847, 0.784, 0.659), vec3(0.910, 0.851, 0.722),
-    vec3(0.941, 0.902, 0.800), vec3(0.902, 0.725, 0.541), vec3(0.788, 0.561, 0.416), vec3(0.525, 0.659, 0.722),
-    vec3(0.663, 0.769, 0.812), vec3(0.812, 0.867, 0.890), vec3(0.933, 0.949, 0.941), vec3(0.725, 0.776, 0.776),
-    vec3(0.549, 0.608, 0.627), vec3(0.373, 0.435, 0.459), vec3(0.141, 0.157, 0.153), vec3(0.227, 0.247, 0.235),
+    vec3(0.184, 0.373, 0.471), vec3(0.247, 0.416, 0.541), vec3(0.353, 0.522, 0.639), vec3(0.498, 0.639, 0.753),
+    vec3(0.655, 0.753, 0.839), vec3(0.788, 0.843, 0.902), vec3(0.847, 0.784, 0.659), vec3(0.910, 0.851, 0.722),
+    vec3(0.941, 0.902, 0.800), vec3(0.902, 0.725, 0.541), vec3(0.788, 0.561, 0.416), vec3(0.561, 0.706, 0.839),
+    vec3(0.710, 0.804, 0.902), vec3(0.863, 0.910, 0.949), vec3(0.965, 0.973, 0.980), vec3(0.725, 0.776, 0.800),
+    vec3(0.549, 0.608, 0.639), vec3(0.373, 0.435, 0.471), vec3(0.141, 0.157, 0.153), vec3(0.227, 0.247, 0.235),
     vec3(0.353, 0.369, 0.341), vec3(0.482, 0.490, 0.447), vec3(0.722, 0.361, 0.235), vec3(0.878, 0.604, 0.322),
     vec3(0.949, 0.824, 0.494), vec3(0.439, 0.165, 0.141), vec3(0.247, 0.353, 0.275), vec3(0.416, 0.541, 0.384),
 );
+
+// OKLab back to linear light (Ottosson's inverse).
+fn dp_oklab_to_linear(lab: vec3<f32>) -> vec3<f32> {
+    let l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+    let m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+    let s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+    let l = l_ * l_ * l_;
+    let m = m_ * m_ * m_;
+    let s = s_ * s_ * s_;
+    return vec3(
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+}
+
+// Mode 5, tinted colour (the owner, 2 November 2026: "somewhere in the middle" between the
+// AgX realism and the pastel palette, "less pink and purple"): the continuous dithered-colour
+// mode, with each pixel's OKLab hue and chroma pulled toward the nearest pastel entry's by
+// cr.look.w (KESSEL_PALETTE_PULL), its lightness kept. The palette's colour family on the
+// tonemap's tonal range, no posterizing: magentas and purples, which the palette does not
+// have, slide toward its teals, greys and creams. A reproduction choice like the look's other
+// modes; it changes no light.
+fn dp_tinted(lin: vec3<f32>, th: f32) -> vec3<f32> {
+    let lab = dp_oklab(lin);
+    var best = dp_oklab(display_decode(DP_PASTEL[0]));
+    var best_d = distance(best, lab);
+    for (var i = 1; i < 32; i = i + 1) {
+        let pk = dp_oklab(display_decode(DP_PASTEL[i]));
+        let d = distance(pk, lab);
+        if (d < best_d) { best_d = d; best = pk; }
+    }
+    let pulled = vec3(lab.x, mix(lab.yz, best.yz, clamp(cr.look.w, 0.0, 1.0)));
+    return dp_dithered_colour(max(dp_oklab_to_linear(pulled), vec3(0.0)), th);
+}
 
 // The ordered threshold on the internal texel, 0..1, centred in its bucket so a mid-way colour
 // dithers to a true 50/50 checker. The same rank set as bayer8_rank's display threshold.
@@ -366,6 +404,7 @@ fn dp_crush(lin: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
     var code = display_encode(lin);
     if (cr.look.x < 1.5) { code = dp_dithered_colour(lin, th); }
     else if (cr.look.x < 2.5) { code = dp_pico8(lin, th); }
+    else if (cr.look.x > 4.5) { code = dp_tinted(lin, th); }
     else if (cr.look.x > 3.5) { code = dp_palette(lin, th, true); }
     return display_decode(code);
 }
