@@ -131,7 +131,8 @@ def lay_streets(cx, cz, centre_x, variant):
     for s in (-1, 1):
         sq = np.array([cx+s*(reach+SQUARE_R), cz])
         far = np.array([cx+s*700.0, cz+s*35.0])
-        add(np.vstack([[cx+s*BRIDGE_HALF_L, cz], sq]), 6.0, 'main', 'cobble')
+        a = np.array([cx+s*(RIVER_HALF_W+BANK_RUN), cz])
+        add(a+(sq-a)*np.linspace(0, 1, int(np.linalg.norm(sq-a)/4.0)+2)[:, None], 6.0, 'main', 'cobble')
         add(bezier(sq, sq+np.array([s*160.0, -s*30.0]), far), 6.0, 'main', 'cobble')
     # Quays along each bank, north and south of the bridge's abutment.
     zs = np.arange(cz-320.0, cz+321.0, 6.0)
@@ -480,6 +481,14 @@ def ground_paint(colour, grass, axis_tex, streets, rects, squares, centre_tex, c
     """Streets (cobbles in the centre, dirt lanes), squares, yards; the river and its banks."""
     d_tex = axis_tex[None, :]-centre_tex[:, None]
     ad = np.abs(d_tex)
+    # Inside the town the strip fields give way to gardens and meadow between the houses.
+    rr = np.hypot(axis_tex[None, :]-cx, axis_tex[:, None]-cz)
+    town = np.clip((560.0-rr)/90.0, 0, 1)
+    town = (town*town*(3-2*town))[..., None]
+    mottle = (0.5+0.5*np.sin(axis_tex[None, :]*0.21)*np.cos(axis_tex[:, None]*0.17)).astype(np.float32)[..., None]
+    garden = np.array([0.24, 0.36, 0.12], dtype=np.float32)*(0.85+0.3*mottle)
+    colour[:] = colour*(1-town)+garden*town
+    grass[:] = np.maximum(grass, 0.75*town[..., 0])
     water = ad < RIVER_HALF_W
     bank = (ad >= RIVER_HALF_W) & (ad < RIVER_HALF_W+BANK_RUN+2.0)
     colour[water] = [0.10, 0.12, 0.11]

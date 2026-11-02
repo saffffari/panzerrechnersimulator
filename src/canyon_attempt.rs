@@ -270,6 +270,57 @@ pub(crate) fn build_course(seed: u64) -> anyhow::Result<(wgpu::Device, wgpu::Que
     Ok((device, queue, r, g, manifest))
 }
 
+/// `bridge-check PREFIX SEED`: a map's declared crossing carries the Tiger. The Tiger is set down
+/// (disclosed) at points along the crossing's axis from 200 m short of it to 200 m past and left to
+/// settle; then it is set down 200 m short and driven at full throttle along the axis. Prints the
+/// supported height against the deck and the ground. Passes when every point on the deck settles
+/// within 0.25 m of the deck and the drive reaches the far bank.
+pub fn bridge_check(prefix: &str, seed: u64) -> anyhow::Result<()> {
+    let (_device, _queue, mut r, mut g, manifest) = build_course(seed)?;
+    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+    let c = value["crossings"].get(0).ok_or_else(|| anyhow::anyhow!("the map declares no crossing"))?;
+    let (cx, cz) = (c["center"][0].as_f64().unwrap_or(0.0) as f32, c["center"][1].as_f64().unwrap_or(0.0) as f32);
+    let deck = c["deck_y"].as_f64().unwrap_or(0.0) as f32;
+    let half = c["half_length"].as_f64().unwrap_or(0.0) as f32;
+    let east = std::f32::consts::FRAC_PI_2;
+    let dt = 1.0 / 60.0;
+    let mut rows = Vec::new();
+    let mut worst_on_deck = 0.0f32;
+    for k in 0..=40 {
+        let x = cx - 200.0 + k as f32 * 10.0;
+        g.debug_place_tiger(Vec2::new(x, cz), east);
+        for _ in 0..90 { g.update(&TankInput::default(), dt, &mut r); }
+        let y = g.player.pos.y;
+        let ground = g.hf.height_at(x, cz);
+        let on_deck = (x - cx).abs() <= half;
+        if on_deck { worst_on_deck = worst_on_deck.max((y - deck).abs()); }
+        println!("[bridge-check] x {:+7.1} settled y {:+7.2}  ground {:+7.2}  {}", x - cx, y, ground,
+            if on_deck { format!("deck {deck:+.2}") } else { String::new() });
+        rows.push(serde_json::json!({"dx": x - cx, "y": y, "ground": ground, "on_deck": on_deck}));
+    }
+    g.debug_place_tiger(Vec2::new(cx - 200.0, cz), east);
+    let drive = TankInput { drive: 1.0, ..TankInput::default() };
+    let mut track = Vec::new();
+    for step in 0..(90.0 / dt) as usize {
+        g.update(&drive, dt, &mut r);
+        if step % 60 == 0 {
+            let p = g.player.pos;
+            println!("[bridge-check] drive t {:>3.0}s x {:+7.1} y {:+7.2} speed {:.1}", step as f32 * dt, p.x - cx, p.y, g.player.speed);
+            track.push(serde_json::json!({"t": step as f32 * dt, "dx": p.x - cx, "y": p.y, "z": p.z}));
+        }
+        if g.player.pos.x > cx + 200.0 { break; }
+    }
+    let crossed = g.player.pos.x > cx + half;
+    let receipt = serde_json::json!({"schema": "panzer.bridge-check.v1", "manifest": manifest, "deck_y": deck,
+        "half_length": half, "settled": rows, "worst_on_deck_m": worst_on_deck, "drive": track, "crossed": crossed,
+        "staging": "debug_place_tiger on the crossing's axis; the drive is the ordinary input at full throttle"});
+    std::fs::write(format!("{prefix}_result.json"), serde_json::to_vec_pretty(&receipt)?)?;
+    anyhow::ensure!(worst_on_deck <= 0.25, "FAIL: a point on the deck settled {worst_on_deck:.2} m off the deck");
+    anyhow::ensure!(crossed, "FAIL: the driven Tiger did not reach the far bank");
+    println!("PASS: the deck carries the Tiger (worst {worst_on_deck:.2} m) and it drove across");
+    Ok(())
+}
+
 /// The point `back_m` metres before the goal along the authored route, and the heading of travel there.
 fn route_point_before_goal(route: &[Vec2], back_m: f32) -> (Vec2, f32) {
     let mut idx = route.len() - 1;
