@@ -1,8 +1,36 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the Tiger's 1.112 visual-size debt named, and the damage physics held to true size; the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
+
+## Tiger visual size: an open debt, 2026-11-02 (the owner's decision pending)
+
+The player's hero Tiger is drawn 1.112 times the real vehicle's size in every dimension (hull
+7.13 m long against the real 6.32 m; 1.37 times the volume). It is the owner's RM-5010 kit CAD at
+one uniform scale (0.038919827 m per kit mm against the kit's 1:35, 0.035 m): registering 446 CAD
+solids to the game meshes needs no rotation and one uniform scale, with 0.17 mm RMS residual
+(`docs/research/TIGER_CAD_COMPONENTS_20261102.md`). Nothing is rescaled until the owner decides.
+
+- **Drawn at 1.112:** the hero mesh and its hatches, the interior rig and stations, the crew fit
+  and crew hit volumes, the cabin collision proxies and eye points, the CAD component envelopes
+  as registered (`catalog/tiger_cad_component_voxels.v1.json`), the engine bay's firewall plane
+  used to place bursts (z = -1.15 m), and every distance between plates and components along a
+  shot line. A crewman therefore has 11 % more room, and a fragment crosses 11 % more cabin, than
+  in the real tank.
+- **True size:** armour thicknesses and classes (the armour scheme), every ballistic resolution,
+  the voxel lattice's plate thickness and every solve's dimensions (a test pins the lattice to the
+  scheme's millimetres), calibres, rounds and their drawn bodies, fragment sizes and masses,
+  wound sizes, casing thicknesses, the crew compartments' 10 m³ of free air.
+- **Compensated in the physics:** along a shot line the layered chain meets each homogenised
+  interior at its density divided by 1.112 and each liquid, vapour or air layer over its length
+  divided by 1.112, so the mass a round meets is the real component's; the burst model loads and
+  vents the hatches at their real areas (the drawn apertures divided by 1.112; a lid's real area
+  is 0.81 of the drawn one).
+- **Visible consequences:** a wound is drawn at true size on a plate drawn 11 % large, and a
+  lodged round's exposed length is true against a plate that looks 11 % thicker.
+- **Not compensated:** distances inside the cabin (fragment flight, crew reach, the penetrator's
+  path to crew hit volumes) are the drawn ones.
 
 ## Expedition frame cost, 2026-11-01 (`expedition-bench`, `artifacts/perf/expedition_*_20261101.log`)
 
@@ -465,10 +493,11 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   (`catalog/tiger_cad_component_voxels.v1.json`, `tools/tiger_cad_voxelize.py`): a voxel boundary
   lies within 17.3 mm of the true surface; voxel volumes are 0.94–1.06 of the exact solids.
   Surface normals for casing obliquity are occupancy-gradient staircase normals.
-- **Inherited scale.** The baked game Tiger is the kit at 1.112 × 1:35: about 11 % larger than the
-  real vehicle (hull 7.13 m against 6.32 m). Not rescaled here. Component interiors divide their
-  density by 1.112 so that the mass met along a straight path equals the real component's; plate
-  and casing thicknesses are real.
+- **Inherited scale** (the "Tiger visual size" entry above): the game's Tiger is drawn 1.112
+  times real. Not rescaled here. Interiors divide their density by 1.112 and fluid and air layers
+  their length, so the mass met along a straight path is the real component's; plate and casing
+  thicknesses are the armour scheme's and the authored true millimetres; the lattice's plate is
+  the scheme's (a test pins it).
 - **Casings and contents are authored estimates** (`fea_damage::components`): the kit CAD is solid
   plastic. Engine HL 210 P45 with an aluminium-alloy crankcase (12 mm, 1,050 kg estimate), gearbox
   and steering unit cast housings (12 mm, 700/600 kg), final drives (20 mm, 350 kg), sheet-steel
@@ -633,15 +662,19 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   z = -1.15 m, placed from the CAD envelopes between the fuel tanks and the sponson ammunition
   bins; sponsons included, machinery volume not subtracted: named), the openings are the four
   roof and escape lids and the cupola at their
-  source apertures (a lid counts open past half its travel, named) and the solved entry hole
+  source apertures brought to real size (a lid counts open past half its travel, named) and the
+  solved entry hole
   (its measured bore radii; the calibre's without a solve); a lid whose latch the pressure beats
   is opened in the game and then swings at its ordinary rate (named). A burst outside the crew
   compartments (the engine bay) gets no pressure history (named). Without a lattice solve the
   authored shower is not a partition of the round's body and nothing is taken from the filler for
   it (named). No shock or reflected-pressure history; the pressure acts on hatches only (crew
   injury stays with the existing crew model) and is not drawn. A 76 mm BR-350B's 65 g gives
-  about 11 kPa, far below a latch (about 90 kPa on a 0.22 m² lid); a 152 mm OF-530's 5.9 kg
-  throws every closed lid. The cross sections use the same rule with every lid closed.
+  about 11 kPa, far below a latch (about 112 kPa on a driver's lid of 0.178 m² real area); a
+  152 mm BR-540's 660 g gives 95 kPa, 17 kN on that lid, and every lid holds; a 152 mm OF-530's
+  5.9 kg would throw every closed lid. (Until 2026-11-02 the lids were loaded at their drawn,
+  1.24-times area, and the BR-540 threw three of them open in the GPU review.) The cross
+  sections use the same rule with every lid closed.
 
 ## Armor scars, 2026-10-27 (branch `armor-scars`, `docs/ARMOR_SCARS.md`)
 

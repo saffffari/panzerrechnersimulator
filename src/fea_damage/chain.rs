@@ -24,6 +24,7 @@ use glam::Vec3;
 use serde::Serialize;
 
 use super::components::{self, ComponentSet, Interior, VoxelEnvelope, COMPONENT_SPECS};
+use super::components::GAME_OVER_REAL_LENGTH;
 use super::materials::{self, MaterialId};
 use crate::ballistics::{ImpactEvent, ShellKind, ShellSpec, Terminal};
 
@@ -300,21 +301,25 @@ pub fn run(event: &ImpactEvent, layers: &[Layer], air_density: f32) -> ChainResu
             }
             LayerKind::Liquid { material, .. } => {
                 crossing.law = "hydrodynamic drag";
-                let vo = drag_speed(v, material.get().density, path, m, d);
+                // Layer paths are measured on the game's Tiger, drawn 1.112 times real size; the
+                // fluid a round meets is the real tank's (the interiors' density rule, applied
+                // to the path instead).
+                let real_path = path / GAME_OVER_REAL_LENGTH;
+                let vo = drag_speed(v, material.get().density, real_path, m, d);
                 if vo < LIQUID_STOP_MPS {
                     // Distance to slow to the stop speed under the same exponential law.
                     let area = std::f32::consts::FRAC_PI_4 * d * d;
                     let k = material.get().density * LIQUID_DRAG_CD * area / (2.0 * m);
-                    let depth = ((v / LIQUID_STOP_MPS).ln() / k).clamp(0.0, path);
+                    let depth = ((v / LIQUID_STOP_MPS).ln() / k).clamp(0.0, real_path);
                     crossing.v_out = 0.0;
-                    crossing.fate = Fate::Stopped { depth_m: depth };
+                    crossing.fate = Fate::Stopped { depth_m: depth * GAME_OVER_REAL_LENGTH };
                 } else {
                     crossing.v_out = vo;
                 }
             }
             LayerKind::Vapour { .. } | LayerKind::Air => {
                 crossing.law = "aerodynamic drag";
-                crossing.v_out = drag_speed(v, air_density, path, m, d);
+                crossing.v_out = drag_speed(v, air_density, path / GAME_OVER_REAL_LENGTH, m, d);
             }
         }
         crossing.energy_j = (ke(crossing.v_in) - ke(crossing.v_out)).max(0.0);
@@ -579,6 +584,29 @@ mod tests {
             fuel_fill: 0.8,
             gravity_hull: Vec3::NEG_Y,
             live_rounds: &[],
+        }
+    }
+
+    /// A fuel tank drawn on the 1.112-times hull slows a round as the real tank's fuel does, and a
+    /// round it stops stops at the matching place in the drawn tank.
+    #[test]
+    fn fluid_on_the_oversize_hull_is_met_at_real_length() {
+        let event = ballistics::resolve(&ballistics::BR_354P, 200.0, tiger_plate("hull side", 80.0), 0.0, 3);
+        let real = 0.4f32;
+        let game = real * GAME_OVER_REAL_LENGTH;
+        let layers = [
+            Layer { kind: LayerKind::StruckPlate, s0: 0.0, s1: 0.08, cos_obliquity: 1.0, normal: Vec3::X },
+            Layer { kind: LayerKind::Liquid { component: 0, material: MaterialId::Petrol }, s0: 0.08, s1: 0.08 + game,
+                cos_obliquity: 1.0, normal: Vec3::ZERO },
+        ];
+        let result = run(&event, &layers, 1.2);
+        let fluid = &result.crossings[1];
+        let expected = drag_speed(fluid.v_in, MaterialId::Petrol.get().density, real, event.shell.mass_kg,
+            event.shell.caliber_mm * 0.001);
+        if let Fate::Stopped { depth_m } = fluid.fate {
+            assert!(depth_m <= game + 1e-6, "{depth_m} within the drawn tank {game}");
+        } else {
+            assert!((fluid.v_out - expected).abs() < 1e-3, "{} vs {expected}", fluid.v_out);
         }
     }
 

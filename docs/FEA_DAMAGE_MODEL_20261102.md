@@ -437,9 +437,10 @@ lists every named approximation of this model.
   at the local temperature, scaled by the rim's solved cooling. Measured on the reference cases:
   rings at the bore edge 800–910 K, bore wall up to 1,130 K, falling outward. Not yet seen on the
   GPU.
-- **GPU review** (`fea-play`, 2026-11-02; the final run passes 12 of 12 checks: stills and receipt
-  `fea-damage-fea_play6_20261102_*` in the owner's captures folder; runs 2–5 there are the
-  debugging runs that found the problems below). Verified in the game: a
+- **GPU review** (`fea-play`, 2026-11-02; runs 6 and 7 pass 12 of 12 checks: stills and receipts
+  `fea-damage-fea_play6_20261102_*` (lids loaded at their drawn area) and
+  `fea-damage-fea_play7_20261102_*` (at their real area, current) in the owner's captures folder;
+  runs 1–5 are the debugging runs that found the problems below). Verified in the game: a
   45 mm AP round lodged 63 mm deep in the lower front plate, drawn standing out of its crater;
   its plate solve committed at 0.25 s and raised the grip from 14.9 kN (estimate) to 84.9 kN
   (Blows(10)); the sledge worked it out on foot in 4.8 s and left the crater. A 76 mm APCR
@@ -447,11 +448,19 @@ lists every named approximation of this model.
   hand's limit in about 5 minutes; most had embedded 5 mm in the floor, so the toolbox's bar
   pried two loose (3 s each); the hand took one and threw it out of the open loader's hatch. A
   152 mm BR-540 through the turret side with every lid closed peaked at 95 kPa (2.38 MJ into the
-  air after 0.38 MJ of body fragments) and threw the driver's, radio operator's and escape lids
-  open; the loader's lid and the cupola held, and the second freed chip, let go, fell and came to
-  rest inside. Seen in the stills: at 0.6 s the fresh hole's bore glows orange and its scorched
+  air after 0.38 MJ of body fragments) and, at the lids' drawn areas, threw the driver's, radio
+  operator's and escape lids open; the loader's lid and the cupola held (run 7, at real lid areas:
+  every lid held). The second freed chip, let go, fell and came to rest inside. Seen in the stills: at 0.6 s the fresh hole's bore glows orange and its scorched
   face around it does not (the solved field); at 70 ms the strike's own spark-shower glow swamps
   it; a 5 mm chip in hand is a few pixels.
+- **True scale in the physics** (after the owner's question about the Tiger's size): the game's
+  Tiger is drawn 1.112 times real, and three inputs had taken the drawn size. The lattice did not
+  (its plate is the armour scheme's millimetres; a test now pins it). The chain's fuel, vapour and
+  air layers now count their length divided by 1.112, as interiors count their density; the burst
+  model now loads and vents the hatches at their real areas (0.81 of the drawn). At real area the
+  152 mm BR-540's 95 kPa puts 17 kN on a driver's lid, under the named 20 kN latch, so every lid
+  now holds; only a far larger charge throws one. The debt itself is named in the ledger's
+  "Tiger visual size" entry.
 - The review found and fixed: resting chips had stopped cooling; a burst at the plate's back
   face fell outside the cabin proxy boxes (now the CAD firewall); an embedded chip could not be
   freed (now the toolbox job); spall at the loader's station killed the player the review had

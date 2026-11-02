@@ -1210,11 +1210,16 @@ pub(super) fn hole_area_m2(g: &lattice::MeasuredGeometry) -> f32 {
 }
 
 /// The crew compartments' openings: the four roof and escape lids (`tiger_hatches` order) and the
-/// cupola, at their source apertures, then the shot's own entry hole. A lid counts open past half
-/// its travel (named); the compartments' other small leaks are not modelled.
+/// cupola, at their source apertures brought to real size (the game's Tiger is drawn 1.112 times
+/// real; a lid's area loads its latch at real size), then the shot's own entry hole (solved at
+/// real size). A lid counts open past half its travel (named); the compartments' other small
+/// leaks are not modelled.
 pub(super) fn crew_openings(lid_phase: [f32; 4], cupola_phase: f32, hole_area_m2: f32) -> Vec<compartment::Opening> {
     const NAMES: [&str; 4] = ["driver's hatch", "loader's hatch", "radio operator's hatch", "turret escape hatch"];
-    let disc = |r: f32| std::f32::consts::PI * r * r;
+    let disc = |r: f32| {
+        let real = r / crate::fea_damage::components::GAME_OVER_REAL_LENGTH;
+        std::f32::consts::PI * real * real
+    };
     let mut openings: Vec<compartment::Opening> = (0..4).map(|i| compartment::Opening { name: NAMES[i],
         area_m2: disc(tiger_hatches::APERTURE_RADII[i]), open: lid_phase[i] > 0.5, hatch: true }).collect();
     openings.push(compartment::Opening { name: "commander's cupola", area_m2: disc(CUPOLA_APERTURE_RADIUS_M),
@@ -1291,6 +1296,33 @@ pub(super) fn fragment_extraction(f: &HotFragment) -> lodged::Extraction {
 
 /// Time to pry a chip out with the toolbox's bar (named tuning, like the other field repairs).
 const FRAGMENT_PRY_S: f32 = 3.0;
+
+#[cfg(test)]
+mod true_scale_tests {
+    use super::*;
+
+    /// The plate the lattice solves is the armour scheme's, in true millimetres: the hero mesh's
+    /// 1.112 visual scale (docs/PHYSICAL_TRUTH_AUDIT.md, "Visual-size debt") never reaches it.
+    #[test]
+    fn the_lattice_takes_the_schemes_true_thickness_not_the_meshs() {
+        use crate::ballistics::{ArmorScheme, Facing};
+        let mut solved = 0;
+        for (facing, shell, range) in [(Facing::HullFront, &crate::ballistics::BR_365, 300.0f32),
+            (Facing::HullSide, &crate::ballistics::BR_354P, 200.0), (Facing::TurretSide, &crate::ballistics::BR_240_M42, 100.0)] {
+            let plate = ArmorScheme::TigerI.plate(facing);
+            let event = crate::ballistics::resolve(shell, range, plate, 0.0, 7);
+            let cos = event.impact_angle_deg.to_radians().cos().clamp(0.05, 1.0);
+            let path = event.plate.thickness_mm * 0.001 / cos;
+            let line = chain::ShotLine { entry: Vec3::ZERO, dir: Vec3::NEG_Z, plate_path_m: path, far_wall: None, max_s: 12.0 };
+            let layers = [chain::Layer { kind: chain::LayerKind::StruckPlate, s0: 0.0, s1: path, cos_obliquity: cos, normal: Vec3::Z }];
+            let result = chain::run(&event, &layers, 1.2);
+            let Some((impact, _)) = lattice_problem(&event, &line, &result, Vec3::Z, 1) else { continue };
+            assert_eq!(impact.thickness_m, plate.thickness_mm * 0.001, "{facing:?}: {} mm", plate.thickness_mm);
+            solved += 1;
+        }
+        assert!(solved >= 2, "the cases must reach the lattice ({solved})");
+    }
+}
 
 #[cfg(test)]
 mod compartment_tests {
