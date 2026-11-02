@@ -437,8 +437,9 @@ lists every named approximation of this model.
   at the local temperature, scaled by the rim's solved cooling. Measured on the reference cases:
   rings at the bore edge 800–910 K, bore wall up to 1,130 K, falling outward. Not yet seen on the
   GPU.
-- **GPU review** (`fea-play`, five runs 2026-11-02; stills and receipts
-  `fea-damage-fea_play*_20261102_*` in the owner's captures folder). Verified in the game: a
+- **GPU review** (`fea-play`, 2026-11-02; the final run passes 12 of 12 checks: stills and receipt
+  `fea-damage-fea_play6_20261102_*` in the owner's captures folder; runs 2–5 there are the
+  debugging runs that found the problems below). Verified in the game: a
   45 mm AP round lodged 63 mm deep in the lower front plate, drawn standing out of its crater;
   its plate solve committed at 0.25 s and raised the grip from 14.9 kN (estimate) to 84.9 kN
   (Blows(10)); the sledge worked it out on foot in 4.8 s and left the crater. A 76 mm APCR
@@ -447,9 +448,10 @@ lists every named approximation of this model.
   pried two loose (3 s each); the hand took one and threw it out of the open loader's hatch. A
   152 mm BR-540 through the turret side with every lid closed peaked at 95 kPa (2.38 MJ into the
   air after 0.38 MJ of body fragments) and threw the driver's, radio operator's and escape lids
-  open; the loader's lid and the cupola held. Seen but not judged from the stills: the fresh
-  hole's own glow is swamped by the strike's spark-shower glow at 70 ms; a 5 mm chip in hand is a
-  few pixels.
+  open; the loader's lid and the cupola held, and the second freed chip, let go, fell and came to
+  rest inside. Seen in the stills: at 0.6 s the fresh hole's bore glows orange and its scorched
+  face around it does not (the solved field); at 70 ms the strike's own spark-shower glow swamps
+  it; a 5 mm chip in hand is a few pixels.
 - The review found and fixed: resting chips had stopped cooling; a burst at the plate's back
   face fell outside the cabin proxy boxes (now the CAD firewall); an embedded chip could not be
   freed (now the toolbox job); spall at the loader's station killed the player the review had
