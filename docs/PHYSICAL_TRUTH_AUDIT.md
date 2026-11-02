@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-02 (the layered damage model: CAD-measured components, the layered chain, lodged rounds, the voxel lattice solver); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-02 (the layered damage model: CAD-measured components, the layered chain, lodged rounds drawn, saved and removable, the voxel lattice solver, persistent steel fragments taken in hand, compartment pressure on the hatches); 2026-11-01 (the deltaP display look; The March orders and the staged start fixture); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -499,8 +499,25 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   half-angle exceeds the friction angle); a round stopped inside stays where it stopped. Pull-out
   force is Coulomb friction (0.3, named) on a residual grip pressure: until the lattice supplies its
   final contact forces, 5 % of the struck material's yield (named). Removal by one man's pull
-  (400 N), the toolbox bar (×10), sledge blows (160 J at 50 %), or the workshop. Lodged rounds are
-  state and receipts only so far: not drawn, not saved, not yet removable in play.
+  (400 N), the toolbox bar (×10), sledge blows (160 J at 50 %), or the workshop. A stopped round's
+  lattice solve replaces the 5 % rule with its own contact grip when it commits.
+- **Lodged rounds in play** (`game_fea::drive_lodged_rounds`, `equipment::RepairJob::LodgedRound`):
+  each lodged round is drawn in an exact physical instance pool (casts, in the ray tracing scene),
+  one prototype per kinetic specification, following its hull or turret. The drawn body is the
+  chain's penetrator: the solve's diameter and ellipsoidal nose, with a cylinder that holds the
+  round's mass as solid steel (named: no cavity, filler, cap, windshield or driving band; bare
+  steel, the paint not modelled). An APCR round is its core alone, drawn 3 core diameters long
+  (named, unsourced: its mass is mostly the carrier, which is not modelled; length enters neither
+  the chain nor the solve). At most 6 rounds of one specification are drawn (named bound; further
+  ones stay in the state and stay removable; logged). With the toolbox in hand a crewman works a
+  field-removable round out where the tools reach it with a clear path (outside the plate for a
+  round the struck plate holds): a hand pull takes 4 s and the bar 15 s (named tuning, like the
+  other field repairs); sledge removal takes the counted blows at one per swing of the carried
+  hammer. A round needing the workshop cannot be removed in the field. A removed round leaves the
+  simulation (not kept as a loose object). A filled round that lodged unexploded is treated as
+  inert: its fuze state is not modelled. Lodged rounds and deferred plate solves are saved
+  (`vehicles.tanks` owner version 2; a pending solve is re-run from its saved problem on load and
+  gives the identical answer). LAN clients do not see lodged rounds (host state only).
 - **Voxel lattice plate solver** (`fea_damage::lattice`): an ordinary state-based peridynamic solid
   (linear peridynamic solid, 18-neighbour cubic lattice; not a finite-element method) with elastic
   bulk response, von Mises deviatoric plasticity by Mitchell's return mapping, linear hardening,
@@ -563,13 +580,36 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   cabin collision wall when its normal energy can push its face a quarter of its size into 800 MPa
   steel (named cavity-work rule): it stays there, settled. Solved bodies cool as lumped cubes
   (radiation, Ranz–Marshall convection) and take the heat page of their temperature band (1,300 /
-  1,100 / 900 K bounds, named); below visible glow they still use the dull-red page until a
-  cold-steel page exists. Lodged and settled steel still retires with its body's life: no
-  persistent residue, no grab-and-toss yet.
-- **Compartment pressure** (`fea_damage::compartment`): quasi-static ideal-gas pressure from the
-  filler's energy less its fragments' kinetic energy over a named 10 m³ of free air, vented through
-  open apertures by isentropic orifice flow (Cd 0.6), hatches forced past a named 20 kN latch.
-  Tested against the closed forms; not yet applied to the game's hatches or drawn.
+  1,100 / 900 / 750 K bounds, named; visible glow begins near the Draper point, 798 K); below
+  750 K they draw on a cold, oxidised-steel page that emits nothing. A body the lattice solved is
+  steel that stays: it never retires, and the fragment ring passes over resting solved steel, so
+  only a pool full of it (768 bodies, named bound) gives up its oldest. The authored population
+  still retires with its body's life. Resting steel draws in the fragment pages, which are
+  raster-only: a cold chip casts no shadow in the ray tracing tier (named).
+- **Steel in hand** (`game_fea::fea_grab_fragment`): at the loader's station a resting fragment
+  under the crosshair within 2.2 m can be taken with the left button when it is no hotter than
+  343 K (a gloved hand, named) and, if embedded, when one man's 400 N pull beats its grip (the
+  lodged-round friction rule on the cavity-work depth). It rides the same light spring as a spent
+  case; releasing the button lets it fall under the ordinary fragment collision; R throws it at
+  6 m/s (named). A throw whose line from the hand meets no source surface within 3 m goes out
+  through an open aperture and leaves the simulation (named: steel outside is not kept). The
+  chip in hand is saved with its pool slot; fragments are saved with their solved temperature
+  and embedding (`combat.projectiles` owner version 2).
+- **Compartment pressure** (`fea_damage::compartment`, `game_fea::fea_compartment_burst`):
+  quasi-static ideal-gas pressure from the filler's TNT-equivalent energy less the kinetic energy
+  its own body's fragments carry, over a named 10 m³ of free air, vented through open apertures by
+  isentropic orifice flow (Cd 0.6), hatches forced past a named 20 kN latch. Tested against the
+  closed forms. In play: when a filled round bursts at the struck plate's back face inside the
+  crew compartments' air, the openings are the four roof and escape lids and the cupola at their
+  source apertures (a lid counts open past half its travel, named) and the solved entry hole
+  (its measured bore radii; the calibre's without a solve); a lid whose latch the pressure beats
+  is opened in the game and then swings at its ordinary rate (named). A burst outside the crew
+  compartments (engine bay, stowage) gets no pressure history (named). Without a lattice solve the
+  authored shower is not a partition of the round's body and nothing is taken from the filler for
+  it (named). No shock or reflected-pressure history; the pressure acts on hatches only (crew
+  injury stays with the existing crew model) and is not drawn. A 76 mm BR-350B's 65 g gives
+  about 11 kPa, far below a latch (about 90 kPa on a 0.22 m² lid); a 152 mm OF-530's 5.9 kg
+  throws every closed lid. The cross sections use the same rule with every lid closed.
 
 ## Armor scars, 2026-10-27 (branch `armor-scars`, `docs/ARMOR_SCARS.md`)
 

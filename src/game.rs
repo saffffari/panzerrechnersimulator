@@ -1485,12 +1485,13 @@ struct HotFragment {
     bounces: u8,
     seed: u32,
     /// Solved temperature (K) of a body the voxel lattice produced (`game_fea`); 0 for the
-    /// authored population, whose heat pages follow its normalized age.
-    #[serde(default)]
+    /// authored population, whose heat pages follow its normalized age. (These three fields
+    /// changed the `combat.projectiles` save layout: owner version 2.)
     temp_k: f32,
     /// Embedded in the steel it struck (`fea_damage::fragments::embed_depth`): at rest, held.
-    #[serde(default)]
     lodged: bool,
+    /// How far it went into that steel, m.
+    embed_m: f32,
 }
 
 /// One real cube-to-cabin contact from the latest simulation frame. Audio consumes this bounded,
@@ -3983,6 +3984,7 @@ fn generate_penetration_fragments(
             seed: s,
             temp_k: 0.0,
             lodged: false,
+            embed_m: 0.0,
         });
     }
     fragments
@@ -4247,9 +4249,9 @@ fn hot_fragment_bounce_budget(seed: u32) -> u8 {
 }
 
 /// Lower temperature bound (K) of each heat page for bodies with a solved temperature: amber,
-/// orange, red-orange, dull red (named bands of the incandescence colours the pages draw; the dull
-/// red page also holds steel below visible glow until a cold-steel page exists).
-const FEA_HEAT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1300.0, 1100.0, 900.0, 0.0];
+/// orange, red-orange, dull red, and cold steel below 750 K (named bands of the incandescence
+/// colours the pages draw; visible glow begins near the Draper point, 798 K).
+const FEA_HEAT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1300.0, 1100.0, 900.0, 750.0, 0.0];
 /// Air density in the fighting compartment for fragment drag (named: 20 C, sea level).
 const CABIN_AIR_DENSITY: f32 = 1.2;
 /// Flow stress of the steel the cabin collision walls stand for (armour), for embedding (named).
@@ -4439,6 +4441,7 @@ fn hot_fragment_bounce(
         fragment.spin = Vec3::ZERO;
         fragment.settled = true;
         fragment.lodged = true;
+        fragment.embed_m = depth;
         fragment.prev_pos = fragment.pos;
         fragment.bounces = fragment.bounces.saturating_add(1);
         *collision_count = collision_count.saturating_add(1);
@@ -7746,6 +7749,7 @@ enum Hotspot {
     SpentCasing,       // the hot case sitting in the spent breech — hold LMB to pull it free
     FloorShell(usize), // a dropped round rolling on the basket floor — pick it back up
     FloorCasing(usize), // dropped brass uses the same held grip and release as a fresh case
+    Fragment(usize),    // a resting steel chip (hot-fragment pool slot): held LMB picks it up
     Extinguisher,      // click equips, subsequent held press sprays
     RepairKit,         // click equips the persistent tool kit
     PanzerfaustRack(usize), // the exact full-size tube under the crosshair
@@ -8401,7 +8405,7 @@ const HULL_BLOOD_MAX: Vec3 = Vec3::new(1.24, HULL_BLOOD_CEILING, 2.30);
 // Every incandescent grain is one collision-bearing terminal-ballistics body. The former 160-body
 // macro shower plus 768 visual-only sparks is replaced by one bounded 768-body authority pool.
 pub(crate) const N_HOT_FRAGMENTS: usize = 768;
-const N_HOT_FRAGMENT_BATCHES: usize = 4;
+const N_HOT_FRAGMENT_BATCHES: usize = 5;
 const HOT_FRAGMENT_STAGE_CAPACITY: usize = N_HOT_FRAGMENTS;
 const HOT_FRAGMENT_FIXED_DT: f32 = 1.0 / 480.0;
 const HOT_FRAGMENT_MAX_STEP_M: f32 = 0.018;
@@ -8417,8 +8421,10 @@ const HOT_FRAGMENT_STAGE_COLOR: [Vec3; N_HOT_FRAGMENT_BATCHES] = [
     Vec3::new(1.0, 182.0 / 255.0, 28.0 / 255.0),
     Vec3::new(225.0 / 255.0, 94.0 / 255.0, 9.0 / 255.0),
     Vec3::new(104.0 / 255.0, 14.0 / 255.0, 3.0 / 255.0),
+    // Cold, oxidised steel: a body the lattice solved, below visible glow. No emission.
+    Vec3::new(70.0 / 255.0, 68.0 / 255.0, 64.0 / 255.0),
 ];
-const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.05, 0.18];
+const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.05, 0.18, 0.0];
 // These pre-allocated scene slots are retained only to avoid re-indexing the large fixed scene while
 // the renderer agent admits dynamic physical grains into the TLAS. They are submitted empty forever.
 const N_MICRO_SPARK_BATCHES: usize = 3;
@@ -13384,7 +13390,7 @@ impl Game {
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
         // carries the effect after the flash. Every page reserves the bounded pool because an
         // impact frame may legitimately put every chip in the same heat stage.
-        let hot_steel = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3]];
+        let hot_steel = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3], [70, 68, 64]];
         let hot_emissive = HOT_FRAGMENT_STAGE_EMISSIVE;
         slots.hot_fragment_batch = std::array::from_fn(|i| {
             let batch = renderer
@@ -13402,7 +13408,7 @@ impl Game {
         // A second bounded page set draws one narrow, velocity-aligned tail for each flying head.
         // It reuses a plain unit box rather than crossed fins/billboards, so two luminous axes can
         // never be baked into one fragment. Slower and settled chips submit no tail transform.
-        let tail_emissive = [2.10, 1.78, 0.86, 0.12];
+        let tail_emissive = [2.10, 1.78, 0.86, 0.12, 0.0];
         slots.hot_fragment_tail_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -13416,6 +13422,8 @@ impl Game {
             assert!(renderer.set_dynamic_instanced_emissive(batch, tail_emissive[i]));
             batch
         });
+        // Rounds held by the Tiger's steel: exact physical pools, one per kinetic specification.
+        let fea_lodged_draw = game_fea::allocate_lodged_round_pools(device, queue, &mut renderer);
         // Retired fixed-scene slots. Scene indices stay stable during the renderer transaction, but
         // `drive_penetration_fx` submits empty arrays and these meshes never become visible.
         let retired_micro = [[1, 1, 1], [1, 1, 1], [1, 1, 1]];
@@ -14048,7 +14056,7 @@ impl Game {
             ai_tick: 0,
             armor_tick: 0,
             armor_scars: crate::armor_damage::ArmorField::default(),
-            fea: game_fea::FeaRuntime::default(),
+            fea: game_fea::FeaRuntime::with_draw_pools(fea_lodged_draw),
             armor_net_cursor: std::cell::Cell::new(0),
             scar_geometry_cache: Default::default(),
             armor_clock_s: 0.0,
@@ -17748,7 +17756,8 @@ impl Game {
                 // surface so a rear rack row cannot steal a shell in front of it. A loaded chamber
                 // does not make the separate physical racks untouchable; seating still requires an
                 // empty, open breech and the deliberate held forward ram.
-                if self.carry_mesh.is_none() && self.carried_casing.is_none() && !self.ext_equipped {
+                if self.carry_mesh.is_none() && self.carried_casing.is_none() && !self.ext_equipped
+                    && self.fea.carried_fragment.is_none() {
                     let mut nearest = if self.hover == Some(Hotspot::SpentCasing) {
                         eye.distance(spent_case_grip(self.player.visual_gun_model(), self.casing_pull))
                     } else { f32::INFINITY };
@@ -17787,11 +17796,21 @@ impl Game {
                             }
                         }
                     }
+                    // Steel fragments at rest: on the floor, against a wall, or stuck in it.
+                    if let Some((i, distance, label)) = self.fea_fragment_hover(eye, look) {
+                        if distance < nearest {
+                            self.hover = Some(Hotspot::Fragment(i));
+                            self.hover_label = Some(label);
+                        }
+                    }
                 }
                 // Hands full: the prompt describes the action actually bound to the held item.
                 if self.ext_equipped {
                     self.hover = None;
                     self.hover_label = Some("EXTINGUISHER - HOLD LMB TO SPRAY; X TO STOW");
+                } else if self.fea.carried_fragment.is_some() {
+                    self.hover = None;
+                    self.hover_label = Some("STEEL FRAGMENT IN HAND - LMB TO LET GO, R TO THROW");
                 } else if self.carried_casing.is_some() {
                     self.hover = None;
                     self.hover_label = Some("CASE IN HAND - LMB TO LET GO, R TO THROW");
@@ -21135,6 +21154,9 @@ impl Game {
                     }
                     Hotspot::Ignition => slots.push(self.slots.driver_controls[1]),
                     Hotspot::DriverVisor => slots.push(self.slots.driver_visor_moving[2]),
+                    // Fragments draw in shared heat-page batches with no mesh slot of their own:
+                    // the prompt names the chip under the crosshair instead of an outline.
+                    Hotspot::Fragment(_) => {}
                 }
             } else if let Some(station) = self.hover_station {
                 match station {
@@ -23648,6 +23670,8 @@ impl Game {
         self.exterior = tiger_damage::Exterior::default();
         self.last_exterior_strike = None;
         self.armor_scars = crate::armor_damage::ArmorField::default();
+        // A fresh Tiger: no rounds in its steel, no plate solves pending, no chip in hand.
+        self.fea.reset();
         self.death_cause = None;
         self.last_fatal = None;
         self.fire = 0.0;
@@ -28856,7 +28880,9 @@ impl Game {
         self.armor_tick = self.armor_tick.wrapping_add(1);
         // The voxel lattice's clusters (and a burst round's body) when it solved this strike;
         // otherwise the authored population.
-        let fragments = self.fea_penetration_fragments(penetration_id, frame, &ev, seed)
+        let fea_fragments = self.fea_penetration_fragments(penetration_id, frame, &ev, seed);
+        let burst_fragment_kinetic_j = fea_fragments.as_deref().map(game_fea::burst_body_kinetic_j);
+        let fragments = fea_fragments
             .unwrap_or_else(|| generate_penetration_fragments(penetration_id, frame, entry, axis, ev, seed));
         // God mode preserves the physically truthful shower but suppresses every target mutation.
         if self.god {
@@ -28895,7 +28921,7 @@ impl Game {
         // The layered chain: what the residual round itself breaches behind the plate, and its own
         // path through crew and live rounds (`game_fea`).
         self.fea_penetration_consequences(entry_w, shell_dir_w, &ev, armor_part, penetration_id, frame,
-            body, &couch_bodies, &live_ammunition, &mut result, &mut contacts);
+            body, &couch_bodies, &live_ammunition, burst_fragment_kinetic_j, &mut result, &mut contacts);
         let solution = PenetrationSolution {
             penetration_id,
             frame,
@@ -29778,8 +29804,9 @@ impl Game {
         self.hot_fragment_whizz_cooldown = 0.0;
         self.hot_fragment_audio_whizzes_remaining = HOT_FRAGMENT_AUDIO_WHIZZ_BUDGET;
         for initial in fragments.iter().take(N_HOT_FRAGMENTS) {
-            let slot = self.next_hot_fragment % N_HOT_FRAGMENTS;
-            self.next_hot_fragment = (self.next_hot_fragment + 1) % N_HOT_FRAGMENTS;
+            let slot = game_fea::next_fragment_slot(&self.hot_fragments, self.next_hot_fragment,
+                self.fea.carried_fragment);
+            self.next_hot_fragment = (slot + 1) % N_HOT_FRAGMENTS;
             self.hot_fragments[slot] = *initial;
         }
     }
@@ -30537,12 +30564,16 @@ impl Game {
             return false;
         }
         if self.carry_mesh.is_some() { return self.drop_carried_round(false); }
+        if self.fea.carried_fragment.is_some() { return self.fea_release_fragment(None); }
         self.release_carried_casing()
     }
 
     /// R with a spent case in the hands: heave it where the player is looking. Through an open
     /// hatch it leaves the tank and lies on the ground; against steel it comes back.
     pub fn throw_carried_casing(&mut self, forward: Vec3) -> bool {
+        if self.fea.carried_fragment.is_some() {
+            return self.fea_release_fragment(Some(forward));
+        }
         let Some(k) = self.carried_casing else { return false; };
         if !forward.is_finite() || !self.release_carried_casing() { return false; }
         let case = &mut self.casings[k];
@@ -31492,6 +31523,7 @@ impl Game {
         self.drive_track_repair_fx(r);
         self.drive_at_guns(r);
         self.drive_carried_tools(dt, r);
+        self.drive_lodged_rounds(r);
 
         // Transient weapon volumes join the sustained smoke supports above.
         r.muzzle_hint = Some(self.player.muzzle());
@@ -32998,7 +33030,8 @@ impl Game {
     /// carried, a single press for things that are clicked.
     pub fn interact_kind(&self) -> InteractKind {
         if !self.recoverable_tiger_access_allowed() || self.mode != Mode::Tank { return InteractKind::None; }
-        if self.carry_mesh.is_some() || self.carried_casing.is_some() || self.casing_pull > 0.0 {
+        if self.carry_mesh.is_some() || self.carried_casing.is_some() || self.casing_pull > 0.0
+            || self.fea.carried_fragment.is_some() {
             return InteractKind::Carrying;
         }
         // A crewman, his body, or the first-aid box under the crosshair: E (or LMB) held works.
@@ -33007,7 +33040,7 @@ impl Game {
         }
         match self.hover {
             Some(Hotspot::RackSlot(_) | Hotspot::LoadedRound | Hotspot::SpentCasing
-                | Hotspot::FloorShell(_) | Hotspot::FloorCasing(_)) => InteractKind::Holdable,
+                | Hotspot::FloorShell(_) | Hotspot::FloorCasing(_) | Hotspot::Fragment(_)) => InteractKind::Holdable,
             Some(_) => InteractKind::Click,
             None => InteractKind::None,
         }
@@ -33120,6 +33153,7 @@ impl Game {
         if !matches!(self.mode, Mode::Tank)
             || !matches!(self.station, Station::Loader)
             || self.carried_casing.is_some()
+            || self.fea.carried_fragment.is_some()
             || self.ext_equipped
         {
             return false;
@@ -33128,6 +33162,9 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         match self.hover {
+            Some(Hotspot::Fragment(i)) => {
+                return self.fea_grab_fragment(i);
+            }
             Some(Hotspot::FloorCasing(i)) if self.casings[i].active && !self.casings[i].carried => {
                 let casing = self.casings[i].clone();
                 self.set_carry_pose(casing.pos, casing.rotation, casing.vel, casing.angular_vel);
@@ -37315,7 +37352,13 @@ mod tests {
         // sRGB-as-linear error or a return of the former *42 conversion fails the regression.
         let visible_colors = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3]];
         let heat_ages = [0.0, 0.04, 0.30, 0.80];
-        for stage in 0..N_HOT_FRAGMENT_BATCHES {
+        // The fifth page is cold, solved steel: it emits nothing and lights nothing.
+        assert_eq!(HOT_FRAGMENT_STAGE_EMISSIVE[N_HOT_FRAGMENT_BATCHES - 1], 0.0);
+        let cold = HotFragment { active: true, settled: true, frame: BloodFrame::Turret, size: 0.006,
+            life: f32::MAX, temp_k: 400.0, seed: 3, ..HotFragment::default() };
+        assert_eq!(hot_fragment_heat_stage(&cold), N_HOT_FRAGMENT_BATCHES - 1);
+        assert!(hot_fragment_aggregate_light(&[cold], cold.frame, Mat4::IDENTITY).is_none());
+        for stage in 0..visible_colors.len() {
             let mesh = hot_fragment_mesh(visible_colors[stage]);
             let texture = mesh.texture.as_ref().unwrap();
             let linear = Vec3::new(

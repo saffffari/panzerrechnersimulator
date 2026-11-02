@@ -22,7 +22,7 @@
 //! * Material finer than one cell is not resolved.
 
 use glam::Vec3;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::materials::{self, Material, MaterialId, AMBIENT_K, TAYLOR_QUINNEY};
 
@@ -74,7 +74,7 @@ const OFFSETS: [[i32; 3]; 9] = [
 const BONDS: usize = 9;
 const SLOTS: usize = 18;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ProjectileShape {
     pub mass_kg: f32,
     /// Radius of the body that goes into the plate (a sub-calibre core's for APCR), m.
@@ -83,7 +83,7 @@ pub struct ProjectileShape {
     pub nose_m: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Motion {
     /// Through the plate, leaving at `v_out`.
     Perforate { v_out: f32 },
@@ -91,7 +91,7 @@ pub enum Motion {
     Stop { depth_m: f32 },
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PlateImpact {
     pub material: MaterialId,
     pub thickness_m: f32,

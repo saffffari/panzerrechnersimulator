@@ -8,6 +8,8 @@ pub(super) enum RepairJob {
     Module(ModuleKind),
     /// Swap a cracked cupola block for a spare.
     VisionBlock(usize),
+    /// Work a round held by the steel out of it (`game_fea::LodgedRound` id).
+    LodgedRound(u64),
 }
 
 /// The track ritual owns the input first. A cue's readiness and progress must belong to the
@@ -441,6 +443,7 @@ impl Game {
     fn job_seconds(&self, job: RepairJob) -> f32 {
         use tiger_damage::Fault;
         match job {
+            RepairJob::LodgedRound(id) => self.fea_lodged_job_seconds(id),
             RepairJob::Module(kind) => match self.module_fault(kind) {
                 Fault::None | Fault::Spall => repair_time(kind).unwrap_or(f32::INFINITY),
                 fault => fault.field_repair().map_or(f32::INFINITY, |r| r.seconds),
@@ -453,6 +456,7 @@ impl Game {
     fn job_prompt(&self, job: RepairJob) -> &'static str {
         use tiger_damage::Fault;
         match job {
+            RepairJob::LodgedRound(id) => self.fea_lodged_job_prompt(id),
             RepairJob::VisionBlock(_) => "SWAP IN A SPARE VISION BLOCK [HOLD LMB]",
             RepairJob::Module(kind) => match self.module_fault(kind) {
                 Fault::RecoilLeak => "TOP UP THE RECOIL BRAKE [HOLD LMB]",
@@ -470,7 +474,8 @@ impl Game {
     /// between the crewman and the part rules it out, so outside jobs are done from outside.
     pub(super) fn physical_repair_target(&self, eye: Vec3, look: Vec3) -> Option<RepairJob> {
         if !self.carrying_track_kit { return None; }
-        self.open_repair_jobs().into_iter().filter_map(|job| {
+        // Rounds held by the steel are field work too, but not faults: they stay off the lamp.
+        self.open_repair_jobs().into_iter().chain(self.fea_lodged_jobs()).filter_map(|job| {
             let point = self.repair_point(job)?;
             (repair_in_reach(eye, look, point, 0.22)
                 && self.equipment_path_clear(eye, point, 0.28))
@@ -485,7 +490,7 @@ impl Game {
             || self.switch_t > 0.0 || self.player.speed.abs() >= 0.6 { return; }
         let eye = r.camera.pos;
         let look = r.camera.forward();
-        let mut points: Vec<Vec3> = self.open_repair_jobs().into_iter()
+        let mut points: Vec<Vec3> = self.open_repair_jobs().into_iter().chain(self.fea_lodged_jobs())
             .filter_map(|job| self.repair_point(job)).collect();
         if self.mode == Mode::Foot {
             if let Some((kind,_)) = self.broken_repair_track() { points.push(self.track_repair_point(kind)); }
@@ -546,6 +551,7 @@ impl Game {
         use ModuleKind::*;
         let turret = self.player.turret_model();
         Some(match job {
+            RepairJob::LodgedRound(id) => self.fea_lodged_point(id)?,
             RepairJob::VisionBlock(block) => {
                 // The block's inner end, toward the commander's eye.
                 let centre = tiger_periscopes::CUPOLA_CENTERS[block];
@@ -622,6 +628,7 @@ impl Game {
 
     fn finish_repair(&mut self, job: RepairJob) {
         match job {
+            RepairJob::LodgedRound(id) => self.fea_remove_lodged(id),
             RepairJob::VisionBlock(block) => {
                 self.exterior.blocks[block] = tiger_damage::Block::Clear;
                 self.exterior.spare_blocks = self.exterior.spare_blocks.saturating_sub(1);

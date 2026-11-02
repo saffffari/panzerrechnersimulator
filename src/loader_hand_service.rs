@@ -88,6 +88,12 @@ impl Game {
                 self.update_carry(r, dt, CARRY_K_CASE, CARRY_D_CASE);
                 if !input.mg_coax { self.release_carried_casing(); }
             }
+            // A steel fragment in the hand rides the same light spring as an empty case.
+            if self.fea.carried_fragment.is_some() {
+                self.update_carry(r, dt, CARRY_K_CASE, CARRY_D_CASE);
+                self.fea_follow_carried_fragment();
+                if !input.mg_coax { self.fea_release_fragment(None); }
+            }
 
             if self.carried_casing.is_none() {
                 // A fresh held press picks the exact hovered rack/floor/chamber round.
@@ -175,9 +181,10 @@ impl Game {
         } else if self.station == Station::Commander && self.grab {
             self.update_carry(r, dt, CARRY_K_ROUND, CARRY_D_ROUND);
             if !input.mg_coax { self.drop_carried_round(true); }
-        } else if self.grab || self.carried_casing.is_some() {
+        } else if self.grab || self.carried_casing.is_some() || self.fea.carried_fragment.is_some() {
             // Left the station with full hands: the round/case drops where you stood.
             self.release_carried_casing();
+            self.fea_release_fragment(None);
             if self.grab {
                 self.drop_carried_round(false);
             }

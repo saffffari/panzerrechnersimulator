@@ -314,16 +314,14 @@ fn run_case(rig: &Rig, case: &SectionCase, out_prefix: &str) -> anyhow::Result<s
         }
         fragment_mass += body_mass;
         fragment_ke += body_ke;
-        let hole_area = outcome.as_ref().map_or(0.0, |o| std::f32::consts::PI * (o.geometry.aperture_mm * 0.001).powi(2));
-        let openings = [
-            compartment::Opening { name: "the hole", area_m2: hole_area, open: true, hatch: false },
-            compartment::Opening { name: "commander's cupola hatch", area_m2: 0.20, open: false, hatch: true },
-            compartment::Opening { name: "loader's hatch", area_m2: 0.25, open: false, hatch: true },
-            compartment::Opening { name: "driver's hatch", area_m2: 0.18, open: false, hatch: true },
-            compartment::Opening { name: "radio operator's hatch", area_m2: 0.18, open: false, hatch: true },
-        ];
-        pressure = Some(compartment::burst(event.shell.filler_g * 0.001, 4.184e6, fragment_ke - fragment_mass * 0.0,
-            compartment::TIGER_CREW_AIR_M3, crate::armor_damage::AMBIENT_K, &openings, 1.0e-4, 0.25));
+        // The game's rule (`game_fea`): every lid closed, the solved hole open; the filler's energy
+        // less what the round's own body carries away (the plate's clusters took theirs from the
+        // round's motion, not the filler).
+        let hole_area = outcome.as_ref().map_or(0.0, |o| super::game_fea::hole_area_m2(&o.geometry));
+        let openings = super::game_fea::crew_openings([0.0; 4], 0.0, hole_area);
+        pressure = Some(compartment::burst(event.shell.filler_g * 0.001, compartment::TNT_J_PER_KG, body_ke,
+            compartment::TIGER_CREW_AIR_M3, crate::armor_damage::AMBIENT_K, &openings,
+            compartment::GAME_DT_S, compartment::GAME_DURATION_S));
     }
     // Frame times: every 25 µs through the round's passage and the lattice, then the fragments.
     let solve_end = lattice_frames.last().map_or(0.0, |f| f.t).max(timeline.get(1).map_or(0.0, |p| p.0));

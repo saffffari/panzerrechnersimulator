@@ -373,3 +373,42 @@ lists every named approximation of this model.
   if late, so the result lands at the same simulation moment on every machine.
 - Re-run cross sections at these constants: `fea-damage-fea_xsec_6k_20261102_*` in the owner's
   captures folder (the 12,000-particle run was removed).
+
+### Stage 3 in play (landed): steel in hand, lodged rounds drawn and removable, pressure on the hatches
+
+- **Fragments that stay.** A body the lattice solved never retires: it cools through the heat
+  pages to a fifth, cold oxidised-steel page (below 750 K, no emission) and rests where it
+  stopped, on the floor or embedded in a wall (the embedding depth is kept). The fragment ring
+  passes over resting solved steel and the chip in hand; only a pool full of resting steel gives
+  up its oldest. The authored population still retires with its life.
+- **Taking it in hand.** At the loader's station the crosshair picks a resting fragment within
+  2.2 m (a ray against a sphere of the chip's size, at least 12 mm). The prompt says whether it is
+  too hot (above 343 K) or stuck fast (an embedded chip whose grip beats one man's 400 N pull,
+  by the lodged-round friction rule on its cavity-work depth). Held left button takes it; it
+  rides the spent case's light spring; releasing lets it fall under the ordinary fragment
+  collision; R throws it at 6 m/s. A throw whose line meets no source surface within 3 m goes out
+  through an open aperture and leaves the simulation.
+- **Lodged rounds drawn.** One exact physical pool per kinetic specification (13), so a lodged
+  round casts and occludes in the ray tracing tier, posed with its hull or turret each frame. The
+  body is the chain's penetrator: the solve's diameter and nose, a solid-steel cylinder holding
+  the round's mass (2.6–3.2 calibres long for the full-calibre rounds); an APCR core is drawn
+  three core diameters long (named: the carrier, most of its mass, is not modelled). Six per
+  specification are drawn at most (named).
+- **Lodged rounds removed.** A new field repair job, worked with the toolbox in hand at the
+  middle of the round's exposed length with a clear path: a hand pull 4 s, the bar 15 s (named
+  tuning), sledge blows one per hammer swing for the counted blows. Workshop rounds stay. The
+  repair lamp ignores lodged rounds (they are not faults).
+- **Compartment pressure on the hatches.** A filled round that bursts behind the struck plate
+  inside the crew compartments' air raises their quasi-static pressure; the four lids and the
+  cupola at their source apertures and the solved entry hole vent it; a closed lid whose 20 kN
+  latch the pressure beats is opened. A 76 mm APHE's 65 g gives about 11 kPa (no lid moves); a
+  152 mm HE's 5.9 kg throws every closed lid.
+- **Saves.** `vehicles.tanks` is owner version 2 (lodged rounds; deferred plate solves, which are
+  re-run from their saved problems on load and give the identical answer; the chip in hand) and
+  `combat.projectiles` version 2 (fragments carry their solved temperature and embedding). Saves
+  were already refused across simulation code changes (build fingerprint), so no migration.
+- Tests: hand rules, the pool rule, the pick ray, the save codec round trip with a re-run deferred
+  solve, broken-record refusal, the drawn body's mass and diameter, the mesh's closed outward
+  volume, spec coverage, hatch thresholds at the game's apertures, the burst body's energy.
+- Not verified on the GPU yet: the drawn rounds, the cold page, the hand carry and throw, a blown
+  lid. Queued under the shared GPU lock.

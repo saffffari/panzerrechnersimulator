@@ -23,6 +23,11 @@ pub const DISCHARGE: f32 = 0.6;
 pub const TIGER_CREW_AIR_M3: f32 = 10.0;
 /// Force a closed, latched hatch holds before it is blown open, N (named estimate).
 pub const HATCH_LATCH_N: f32 = 20_000.0;
+/// TNT's conventional energy equivalent, J/kg (the game's filler equivalence).
+pub const TNT_J_PER_KG: f32 = 4.184e6;
+/// Sampling of the game's compartment history: 0.1 ms steps over 0.2 s (named).
+pub const GAME_DT_S: f32 = 1.0e-4;
+pub const GAME_DURATION_S: f32 = 0.2;
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct Opening {

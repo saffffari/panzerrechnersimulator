@@ -10,7 +10,7 @@
 //! injury outcomes stay with the existing crew model.
 use super::*;
 use crate::fea_damage::components::{self, Side, System};
-use crate::fea_damage::{chain, lattice, lodged};
+use crate::fea_damage::{chain, compartment, fragments, lattice, lodged};
 
 /// Contact identity of the residual penetrator in fragment contact records. Fragments use
 /// `penetration_id << 10 | index`; the penetrator sets the top bit.
@@ -49,6 +49,18 @@ pub(super) struct FeaChainReceipt {
     pub(super) result: chain::ChainResult,
     pub(super) knocked_out: Vec<ModuleKind>,
     pub(super) struck_not_breached: Vec<String>,
+    /// The crew compartment's air after a burst inside it.
+    pub(super) compartment: Option<CompartmentReceipt>,
+}
+
+/// What a burst inside the crew compartments did to their air and hatches.
+#[derive(Clone, Debug, serde::Serialize)]
+pub(super) struct CompartmentReceipt {
+    pub(super) peak_gauge_pa: f32,
+    pub(super) energy_into_air_j: f32,
+    pub(super) fragment_kinetic_j: f32,
+    pub(super) vent_area_m2: f32,
+    pub(super) hatches_blown: Vec<(&'static str, f32)>,
 }
 
 /// The voxel lattice's solve of one strike on the player's Tiger, in the hull frame.
@@ -91,6 +103,30 @@ pub(super) struct ImpactSolve {
     pub(super) lattice: Option<LatticeOutcome>,
 }
 
+/// One plate problem for the lattice and the hull-frame placement of its answer.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub(super) struct PlateJob {
+    pub(super) impact: lattice::PlateImpact,
+    pub(super) origin: Vec3,
+    pub(super) axes: [Vec3; 3],
+}
+
+impl PlateJob {
+    /// Solve on a worker thread. The solve is bit-exact whatever the thread count or slicing
+    /// (`lattice` tests), so a job re-run after a load gives the same answer.
+    pub(super) fn spawn(self) -> std::thread::JoinHandle<LatticeOutcome> {
+        std::thread::spawn(move || self.solve())
+    }
+
+    pub(super) fn solve(self) -> LatticeOutcome {
+        let started = std::time::Instant::now();
+        let mut solver = lattice::Lattice::new(self.impact);
+        solver.solve();
+        let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
+        lattice_outcome(&mut solver, self.origin, self.axes, wall_ms)
+    }
+}
+
 /// A plate solve of a round the plate stopped, running on a worker thread. It commits at a fixed
 /// game time after the strike (`FEA_STOP_COMMIT_S`), deterministically; if it is not finished by
 /// then, that update waits for it (logged).
@@ -101,7 +137,30 @@ pub(super) struct PendingPlate {
     pub(super) facing: crate::ballistics::Facing,
     pub(super) local_mm: [i16; 3],
     pub(super) lodged_id: Option<u64>,
+    pub(super) job: PlateJob,
     pub(super) handle: std::thread::JoinHandle<LatticeOutcome>,
+}
+
+/// A deferred plate solve as the world save keeps it: its problem, re-solved on load.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(super) struct PendingPlateSaved {
+    commit_at_s: f32,
+    struck_at_s: f32,
+    facing: crate::ballistics::Facing,
+    local_mm: [i16; 3],
+    lodged_id: Option<u64>,
+    job: PlateJob,
+}
+
+/// The damage model's simulation state in the world save (owner `vehicles.tanks`): rounds held by
+/// the steel, deferred plate solves, the chip in a crewman's hand. Chain receipts are a diagnostic
+/// log, not simulation state, and are not kept.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub(super) struct FeaSaved {
+    lodged: Vec<LodgedRound>,
+    pending: Vec<PendingPlateSaved>,
+    carried_fragment: Option<usize>,
+    next_id: u64,
 }
 
 /// Game time between a stopped round's strike and the commit of its plate solve (named: long
@@ -115,12 +174,61 @@ pub(super) struct FeaRuntime {
     pub(super) receipts: Vec<FeaChainReceipt>,
     pub(super) current: Option<ImpactSolve>,
     /// A stopped round's solve started this strike, waiting to be queued with its scar.
-    pub(super) started: Option<std::thread::JoinHandle<LatticeOutcome>>,
+    pub(super) started: Option<(PlateJob, std::thread::JoinHandle<LatticeOutcome>)>,
     pub(super) pending: Vec<PendingPlate>,
+    /// The hot-fragment pool slot of a steel chip in the crewman's hand.
+    pub(super) carried_fragment: Option<usize>,
     next_id: u64,
+    /// One fixed physical instance pool per `LODGED_SPECS` entry (allocated at build; empty when
+    /// the game has no renderer pools, e.g. CPU tools).
+    lodged_draw: Vec<usize>,
+    /// Lodged rounds over a pool's capacity, already reported.
+    lodged_overflow_logged: bool,
 }
 
 impl FeaRuntime {
+    pub(super) fn with_draw_pools(lodged_draw: Vec<usize>) -> Self {
+        Self { lodged_draw, ..Self::default() }
+    }
+
+    /// A fresh Tiger: no rounds in its steel, no plate solves pending, no chip in hand. The draw
+    /// pools stay allocated.
+    pub(super) fn reset(&mut self) {
+        let lodged_draw = std::mem::take(&mut self.lodged_draw);
+        *self = Self::with_draw_pools(lodged_draw);
+    }
+
+    pub(super) fn export_world_state(&self) -> FeaSaved {
+        FeaSaved {
+            lodged: self.lodged.clone(),
+            pending: self.pending.iter().map(|p| PendingPlateSaved { commit_at_s: p.commit_at_s,
+                struck_at_s: p.struck_at_s, facing: p.facing, local_mm: p.local_mm, lodged_id: p.lodged_id,
+                job: p.job }).collect(),
+            carried_fragment: self.carried_fragment,
+            next_id: self.next_id,
+        }
+    }
+
+    /// Restore a saved state into a candidate game. Deferred solves start again from their saved
+    /// problems and commit at their saved times.
+    pub(super) fn import_world_state(&mut self, saved: FeaSaved) -> anyhow::Result<()> {
+        anyhow::ensure!(saved.carried_fragment.is_none_or(|i| i < N_HOT_FRAGMENTS), "carried fragment slot out of range");
+        anyhow::ensure!(saved.lodged.iter().all(|r| r.id < saved.next_id && r.tip_local.is_finite()
+            && r.dir_local.is_finite() && r.depth_m.is_finite()), "invalid lodged round");
+        anyhow::ensure!(saved.pending.iter().all(|p| p.commit_at_s.is_finite() && p.job.origin.is_finite()
+            && p.lodged_id.is_none_or(|id| saved.lodged.iter().any(|r| r.id == id))), "invalid deferred plate solve");
+        self.lodged = saved.lodged;
+        self.pending = saved.pending.into_iter().map(|p| PendingPlate { commit_at_s: p.commit_at_s,
+            struck_at_s: p.struck_at_s, facing: p.facing, local_mm: p.local_mm, lodged_id: p.lodged_id,
+            job: p.job, handle: p.job.spawn() }).collect();
+        self.carried_fragment = saved.carried_fragment;
+        self.next_id = saved.next_id;
+        self.receipts.clear();
+        self.current = None;
+        self.started = None;
+        Ok(())
+    }
+
     /// Receipts kept for diagnostics (oldest dropped first; lodged rounds are never dropped).
     pub(super) const MAX_RECEIPTS: usize = 32;
     fn push_receipt(&mut self, receipt: FeaChainReceipt) {
@@ -209,7 +317,7 @@ pub(super) fn lattice_problem(event: &crate::ballistics::ImpactEvent, line: &cha
     let shell = event.shell;
     let calibre = shell.caliber_mm * 0.001;
     // A sub-calibre core goes into the plate; the carrier is not modelled (named).
-    let body_d = if shell.kind == crate::ballistics::ShellKind::Apcr { 0.37 * calibre } else { calibre };
+    let body_d = if shell.kind == crate::ballistics::ShellKind::Apcr { APCR_CORE_FRACTION * calibre } else { calibre };
     let material = match event.plate.material {
         crate::ballistics::ArmorMaterial::Cast => crate::fea_damage::materials::MaterialId::CastArmour,
         _ => crate::fea_damage::materials::MaterialId::RolledArmour,
@@ -368,19 +476,20 @@ impl Game {
             .map(|(l, r)| (l, r, None))) else { return };
         let lodged_id = self.fea_record_lodged(&line, &result, event, armor.part, now_s, grip);
         // Queue this strike's deferred plate solve with the scar it will refine.
-        if let Some(handle) = self.fea.started.take() {
+        if let Some((job, handle)) = self.fea.started.take() {
             self.fea.pending.push(PendingPlate {
                 commit_at_s: now_s + FEA_STOP_COMMIT_S,
                 struck_at_s: now_s,
                 facing: armor.facing,
                 local_mm: crate::armor_damage::quantize_mm(armor.local_point),
                 lodged_id,
+                job,
                 handle,
             });
         }
         self.fea.push_receipt(FeaChainReceipt { shell: event.shell.name, terminal: event.terminal,
             entry_hull: line.entry, dir_hull: line.dir, far_wall_mm: line.far_wall.map(|w| w.plate_mm),
-            result, knocked_out: Vec::new(), struck_not_breached: Vec::new() });
+            result, knocked_out: Vec::new(), struck_not_breached: Vec::new(), compartment: None });
     }
 
     /// The layered consequences of a perforation: the systems the residual round breached, and its
@@ -389,7 +498,10 @@ impl Game {
     pub(super) fn fea_penetration_consequences(&mut self, impact_world: Vec3, dir_world: Vec3,
         event: &crate::ballistics::ImpactEvent, part: ArmorPart, penetration_id: u64, frame: BloodFrame,
         solo_body: Option<Vec3>, couch_bodies: &[CouchCrewBody], live_ammunition: &[LiveAmmoRound],
+        burst_fragment_kinetic_j: Option<f32>,
         result: &mut SpallResult, contacts: &mut Vec<FragmentDamageContact>) {
+        let hole_area_m2 = self.fea.current.as_ref().filter(|s| s.projectile_id == penetration_id)
+            .and_then(|s| s.lattice.as_ref()).map(|l| hole_area_m2(&l.geometry));
         let current = self.fea.current.as_ref().filter(|s| s.projectile_id == penetration_id)
             .map(|s| (s.line, s.chain.clone(), s.lattice.as_ref().map(|l| l.grip_normal_n)));
         let Some((line, chain_result, grip)) = current.or_else(|| self.fea_run_chain(impact_world, dir_world, event)
@@ -495,13 +607,62 @@ impl Game {
         }
         let now = self.armor_clock_s;
         self.fea_record_lodged(&line, &chain_result, event, part, now, grip);
+        // Without a lattice solve the hole is the calibre's (named).
+        let hole = hole_area_m2.unwrap_or(std::f32::consts::PI * radius * radius);
+        let compartment = if chain_result.burst {
+            self.fea_compartment_burst(&line, &chain_result, event, hole, burst_fragment_kinetic_j)
+        } else { None };
         println!("[fea] {}: {}", shell.name, chain_result.summary());
         if !knocked_out.is_empty() || !struck_not_breached.is_empty() {
             println!("[fea]   breached {:?}; struck, not breached {:?}", knocked_out, struck_not_breached);
         }
         self.fea.push_receipt(FeaChainReceipt { shell: shell.name, terminal: event.terminal, entry_hull: line.entry,
             dir_hull: line.dir, far_wall_mm: line.far_wall.map(|w| w.plate_mm), result: chain_result,
-            knocked_out, struck_not_breached });
+            knocked_out, struck_not_breached, compartment });
+    }
+
+    pub(super) fn fea_crew_openings(&self, hole_area_m2: f32) -> Vec<compartment::Opening> {
+        crew_openings(self.roof_hatches.phase, self.hatch_t, hole_area_m2)
+    }
+
+    /// A filled round burst at the struck plate's back face. If that point is in the crew
+    /// compartments' air, the burst's energy less what its own fragments carry away raises their
+    /// pressure (`compartment::burst`), the openings vent it, and a closed lid whose latch the
+    /// pressure beats is thrown open. A burst elsewhere (engine bay, stowage) is given no pressure
+    /// history (named). The lid then swings at its ordinary rate (named).
+    fn fea_compartment_burst(&mut self, line: &chain::ShotLine, result: &chain::ChainResult,
+        event: &crate::ballistics::ImpactEvent, hole_area_m2: f32, burst_fragment_kinetic_j: Option<f32>)
+        -> Option<CompartmentReceipt> {
+        let plate = result.crossings.first()?;
+        let burst_hull = line.entry + line.dir * plate.layer.s1;
+        let turret_local = self.player.turret_model().inverse()
+            .transform_point3(self.player.hull_model().transform_point3(burst_hull));
+        if !fragment_inside_compartment(BloodFrame::Hull, burst_hull, 0.0)
+            && !fragment_inside_compartment(BloodFrame::Turret, turret_local, 0.0) {
+            println!("[fea] the {} burst outside the crew compartments: no compartment pressure (named)", event.shell.name);
+            return None;
+        }
+        let openings = self.fea_crew_openings(hole_area_m2);
+        // The authored shower (no lattice) is not a partition of the round's body: nothing is
+        // taken from the filler for it (named).
+        let fragment_kinetic_j = burst_fragment_kinetic_j.unwrap_or(0.0);
+        let history = compartment::burst(event.shell.filler_g * 0.001, compartment::TNT_J_PER_KG, fragment_kinetic_j,
+            compartment::TIGER_CREW_AIR_M3, crate::fea_damage::materials::AMBIENT_K, &openings,
+            compartment::GAME_DT_S, compartment::GAME_DURATION_S);
+        for (name, t) in &history.hatches_blown {
+            match openings.iter().position(|o| o.name == *name) {
+                Some(i) if i < 4 => self.roof_hatches.open[i] = true,
+                Some(CUPOLA_OPENING) => self.hatch_open = true,
+                _ => {}
+            }
+            println!("[fea] the burst threw the {name} open at {:.1} ms", t * 1000.0);
+        }
+        let vent_area_m2 = openings.iter().filter(|o| o.open).map(|o| o.area_m2).sum();
+        println!("[fea] {} burst in the crew compartments: {:.0} kJ into {:.0} m3 of air, peak {:.1} kPa, venting through {:.3} m2",
+            event.shell.name, history.energy_into_air_j / 1000.0, compartment::TIGER_CREW_AIR_M3,
+            history.peak_gauge_pa / 1000.0, vent_area_m2);
+        Some(CompartmentReceipt { peak_gauge_pa: history.peak_gauge_pa, energy_into_air_j: history.energy_into_air_j,
+            fragment_kinetic_j, vent_area_m2, hatches_blown: history.hatches_blown })
     }
 
     /// Solve one kinetic strike on the player's Tiger: the chain, then the voxel lattice of the
@@ -517,29 +678,17 @@ impl Game {
         let problem = lattice_problem(event, &line, &chain_result, normal_hull, local_seed);
         // A round the plate stopped only changes its scar and grip: solve it on a worker and commit
         // it a fixed game time later. A perforation's fragments are needed now: solve it here.
-        if let Some((impact, axes)) = problem {
-            if matches!(impact.motion, lattice::Motion::Stop { .. }) {
-                let origin = line.entry;
-                self.fea.started = Some(std::thread::spawn(move || {
-                    let started = std::time::Instant::now();
-                    let mut solver = lattice::Lattice::new(impact);
-                    solver.solve();
-                    let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
-                    lattice_outcome(&mut solver, origin, axes, wall_ms)
-                }));
-                self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice: None });
-                return;
-            }
+        let job = problem.map(|(impact, axes)| PlateJob { impact, origin: line.entry, axes });
+        if let Some(job) = job.filter(|j| matches!(j.impact.motion, lattice::Motion::Stop { .. })) {
+            self.fea.started = Some((job, job.spawn()));
+            self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice: None });
+            return;
         }
-        let lattice = problem.map(|(impact, axes)| {
-            let started = std::time::Instant::now();
-            let mut solver = lattice::Lattice::new(impact);
-            solver.solve();
-            let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
-            let outcome = lattice_outcome(&mut solver, line.entry, axes, wall_ms);
+        let lattice = job.map(|job| {
+            let outcome = job.solve();
             let g = outcome.geometry;
             println!("[fea] lattice {} particles, {:.1} mm cells, {} steps, {:.0} ms (the tick waited for it): aperture {:.0} mm, petals {}, plug {}, lip {:.0} mm, bulge {:.0} mm, rim {:.0} K, energy closure {:.2} %",
-                outcome.particles, outcome.cell_mm, outcome.steps, wall_ms, g.aperture_mm, g.petals, g.plug,
+                outcome.particles, outcome.cell_mm, outcome.steps, outcome.wall_ms, g.aperture_mm, g.petals, g.plug,
                 g.lip_mm, g.bulge_mm, g.rim_kelvin, outcome.ledger.closure() * 100.0);
             outcome
         });
@@ -586,11 +735,14 @@ impl Game {
                 ang: Vec3::new(hash01(s ^ 0x11), hash01(s ^ 0x22), hash01(s ^ 0x33)) * std::f32::consts::TAU,
                 spin,
                 age: 0.0,
-                life: profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19)),
+                // A body the lattice solved is steel that stays (it cools to the cold page); the
+                // burst body keeps the authored life of its heat pages.
+                life: if temp_k > 0.0 { f32::MAX } else { profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19)) },
                 bounces: 0,
                 seed: s,
                 temp_k,
                 lodged: false,
+                embed_m: 0.0,
             }
         };
         // Plate clusters on the inside, moving inward. Exterior ejecta leave as the cosmetic impact
@@ -679,5 +831,614 @@ impl Game {
                 pending.struck_at_s, outcome.particles, outcome.wall_ms, outcome.geometry.cavity_mm, outcome.geometry.rim_kelvin,
                 if updated { "" } else { " (the strike had merged into an earlier wound: that record stays)" });
         }
+    }
+
+    /// The resting steel fragment under the crosshair within reach, with the prompt it earns.
+    pub(super) fn fea_fragment_hover(&self, eye: Vec3, look: Vec3) -> Option<(usize, f32, &'static str)> {
+        let look = look.normalize_or_zero();
+        let mut best: Option<(usize, f32, &'static str)> = None;
+        for (i, f) in self.hot_fragments.iter().enumerate() {
+            if !f.active || !f.settled || Some(i) == self.fea.carried_fragment {
+                continue;
+            }
+            let centre = blood_parent_model(&self.player, f.frame).transform_point3(f.pos);
+            let radius = (f.size * 0.8).max(FRAGMENT_PICK_RADIUS_M);
+            let Some(distance) = ray_sphere(eye, look, centre, radius) else { continue };
+            if distance > FRAGMENT_REACH_M || best.is_some_and(|b| b.1 <= distance) {
+                continue;
+            }
+            let label = if !fragment_holdable(f) {
+                "STEEL FRAGMENT - TOO HOT TO HOLD"
+            } else if !fragment_pullable(f) {
+                "STEEL FRAGMENT - STUCK FAST IN THE STEEL"
+            } else {
+                "PICK UP STEEL FRAGMENT [LMB]"
+            };
+            best = Some((i, distance, label));
+        }
+        best
+    }
+
+    /// Take a resting fragment in hand, if it is cool enough to hold and not held fast.
+    pub(super) fn fea_grab_fragment(&mut self, index: usize) -> bool {
+        let Some(f) = self.hot_fragments.get(index).copied() else { return false };
+        if !f.active || !f.settled || !fragment_holdable(&f) || !fragment_pullable(&f) {
+            return false;
+        }
+        let world = blood_parent_model(&self.player, f.frame).transform_point3(f.pos);
+        self.set_carry_pose(world, Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO);
+        self.fea.carried_fragment = Some(index);
+        println!("[fea] a {:.0} g steel fragment taken in hand{}", fragments::cube_mass(f.size) * 1000.0,
+            if f.lodged { " (pulled from the steel)" } else { "" });
+        true
+    }
+
+    /// The fragment in hand follows the hand's spring (it is not integrated while held).
+    pub(super) fn fea_follow_carried_fragment(&mut self) {
+        let Some(index) = self.fea.carried_fragment else { return };
+        if !self.hot_fragments.get(index).is_some_and(|f| f.active) {
+            self.fea.carried_fragment = None;
+            return;
+        }
+        let parent_inv = blood_parent_model(&self.player, self.hot_fragments[index].frame).inverse();
+        let local = parent_inv.transform_point3(self.carry_pos);
+        let f = &mut self.hot_fragments[index];
+        f.pos = local;
+        f.prev_pos = local;
+        f.vel = Vec3::ZERO;
+        f.settled = true;
+        f.lodged = false;
+        f.embed_m = 0.0;
+    }
+
+    /// Let go of the fragment in hand (`throw` = the look direction for R). A throw whose line from
+    /// the hand leaves the vehicle without meeting a source surface goes out through an open
+    /// aperture and leaves the simulation (named: steel outside is not kept); otherwise the chip
+    /// flies inside and comes to rest under the ordinary fragment collision.
+    pub(super) fn fea_release_fragment(&mut self, throw: Option<Vec3>) -> bool {
+        let Some(index) = self.fea.carried_fragment.take() else { return false };
+        if !self.hot_fragments.get(index).is_some_and(|f| f.active) {
+            return false;
+        }
+        let frame = self.hot_fragments[index].frame;
+        let parent_inv = blood_parent_model(&self.player, frame).inverse();
+        let mut vel_world = self.carry_vel;
+        if let Some(forward) = throw {
+            vel_world += forward.normalize_or_zero() * FRAGMENT_THROW_SPEED + Vec3::Y * 0.8;
+            let from = self.carry_pos;
+            let to = from + vel_world.normalize_or_zero() * 3.0;
+            let models = self.fire_surface_models();
+            if self.cabin_fire.sweep(from, to, &models).is_none() {
+                self.hot_fragments[index].active = false;
+                println!("[fea] a steel fragment thrown out of the tank");
+                return true;
+            }
+        }
+        let f = &mut self.hot_fragments[index];
+        f.settled = false;
+        f.vel = parent_inv.transform_vector3(vel_world);
+        f.entered_compartment = true;
+        f.bounces = 0;
+        true
+    }
+}
+
+/// A sub-calibre round's core diameter as a fraction of its calibre (named, shared by the plate
+/// solve and the drawn core: no source in this repository gives the cores' dimensions).
+pub(super) const APCR_CORE_FRACTION: f32 = 0.37;
+/// Drawn length of an APCR core in core diameters (named, unsourced authored shape). The length
+/// of a body never enters the chain or the plate solve; for full-calibre shot it follows from the
+/// round's mass, but an APCR round's mass is mostly its carrier, which is not modelled.
+const APCR_CORE_LENGTH_DIAMETERS: f32 = 3.0;
+
+/// The body the damage model sends into the steel, as drawn when it lodges: the plate solve's
+/// diameter and ellipsoidal nose. A full-calibre round's cylinder holds its mass as solid steel
+/// (named: no cavity, filler, cap, windshield or driving band); an APCR round is its core alone,
+/// `APCR_CORE_LENGTH_DIAMETERS` long.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct PenetratorBody {
+    pub(super) radius_m: f32,
+    pub(super) nose_m: f32,
+    pub(super) length_m: f32,
+}
+
+pub(super) fn penetrator_body(shell: &crate::ballistics::ShellSpec) -> PenetratorBody {
+    let calibre = shell.caliber_mm * 0.001;
+    let apcr = shell.kind == crate::ballistics::ShellKind::Apcr;
+    let d = if apcr { APCR_CORE_FRACTION * calibre } else { calibre };
+    let radius = 0.5 * d;
+    let nose = lodged::nose_length_calibres(shell.kind) * d;
+    if apcr {
+        return PenetratorBody { radius_m: radius, nose_m: nose, length_m: (APCR_CORE_LENGTH_DIAMETERS * d).max(nose) };
+    }
+    let area = std::f32::consts::PI * radius * radius;
+    let cylinder = (shell.mass_kg / crate::fea_damage::materials::RHA_DENSITY - 2.0 / 3.0 * area * nose) / area;
+    PenetratorBody { radius_m: radius, nose_m: nose, length_m: nose + cylinder.max(0.0) }
+}
+
+/// Kinetic rounds that can lodge in the Tiger (every kinetic specification the game fires), each
+/// drawn from its own exact prototype.
+pub(super) static LODGED_SPECS: [&crate::ballistics::ShellSpec; 13] = [
+    &crate::ballistics::PZGR_39, &crate::ballistics::PZGR_40, &crate::ballistics::PZGR_39_43,
+    &crate::ballistics::BR_240_M42, &crate::ballistics::BR_240, &crate::ballistics::BR_240P,
+    &crate::ballistics::BR_271_ZIS2, &crate::ballistics::BR_350B, &crate::ballistics::BR_354P,
+    &crate::ballistics::BR_365, &crate::ballistics::BR_412, &crate::ballistics::BR_471,
+    &crate::ballistics::BR_540,
+];
+/// Lodged rounds of one specification drawn at once (named bound: further ones stay in the
+/// state and stay removable, but are not drawn; logged once).
+pub(super) const LODGED_DRAW_CAPACITY: usize = 6;
+
+fn lodged_spec_index(shell: &crate::ballistics::ShellSpec) -> Option<usize> {
+    LODGED_SPECS.iter().position(|s| s.name == shell.name)
+}
+
+/// The drawn round: a 12-sided lathe, nose tip at the origin pointing +Z, base at -length.
+/// Bare steel (the shells' paint is not modelled).
+pub(super) fn penetrator_mesh(body: PenetratorBody) -> CpuMesh {
+    const SIDES: usize = 12;
+    const NOSE_RINGS: usize = 5;
+    use crate::gltf_load::Vertex;
+    let (r, n, l) = (body.radius_m, body.nose_m.max(1e-4), body.length_m.max(body.nose_m));
+    // Profile rings from the tip: (radius, z, radial normal weight, axial normal weight).
+    let mut rings: Vec<(f32, f32, f32, f32)> = Vec::new();
+    for k in 1..=NOSE_RINGS {
+        let phi = std::f32::consts::FRAC_PI_2 * k as f32 / NOSE_RINGS as f32;
+        let rho = r * phi.sin();
+        let z = -n * (1.0 - phi.cos());
+        // Ellipse (rho/r)^2 + ((z+n)/n)^2 = 1: its gradient is the outward normal.
+        let (nr, nz) = (rho / (r * r), (z + n) / (n * n));
+        let len = (nr * nr + nz * nz).sqrt().max(1e-9);
+        rings.push((rho, z, nr / len, nz / len));
+    }
+    let mut vertices: Vec<Vertex> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let dir = |side: usize| {
+        let a = std::f32::consts::TAU * side as f32 / SIDES as f32;
+        (a.cos(), a.sin())
+    };
+    let push = |p: Vec3, nrm: Vec3, vertices: &mut Vec<Vertex>| {
+        let t = nrm.cross(if nrm.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalize_or_zero();
+        vertices.push(Vertex { pos: p.to_array(), normal: nrm.to_array(), uv: [0.5, 0.5], tangent: [t.x, t.y, t.z, 1.0] });
+        (vertices.len() - 1) as u32
+    };
+    // Tip fan.
+    let tip = push(Vec3::ZERO, Vec3::Z, &mut vertices);
+    let mut previous: Vec<u32> = (0..SIDES).map(|side| {
+        let (c, s) = dir(side);
+        let (rho, z, nr, nz) = rings[0];
+        push(Vec3::new(c * rho, s * rho, z), Vec3::new(c * nr, s * nr, nz), &mut vertices)
+    }).collect();
+    for side in 0..SIDES {
+        indices.extend_from_slice(&[tip, previous[side], previous[(side + 1) % SIDES]]);
+    }
+    let band = |from: &[u32], to: &[u32], indices: &mut Vec<u32>| {
+        for side in 0..SIDES {
+            let next = (side + 1) % SIDES;
+            indices.extend_from_slice(&[from[side], to[side], to[next], from[side], to[next], from[next]]);
+        }
+    };
+    for &(rho, z, nr, nz) in &rings[1..] {
+        let ring: Vec<u32> = (0..SIDES).map(|side| {
+            let (c, s) = dir(side);
+            push(Vec3::new(c * rho, s * rho, z), Vec3::new(c * nr, s * nr, nz), &mut vertices)
+        }).collect();
+        band(&previous, &ring, &mut indices);
+        previous = ring;
+    }
+    // Cylinder (its own radial-normal rows), then the flat base.
+    let top: Vec<u32> = (0..SIDES).map(|side| { let (c, s) = dir(side);
+        push(Vec3::new(c * r, s * r, -n), Vec3::new(c, s, 0.0), &mut vertices) }).collect();
+    let bottom: Vec<u32> = (0..SIDES).map(|side| { let (c, s) = dir(side);
+        push(Vec3::new(c * r, s * r, -l), Vec3::new(c, s, 0.0), &mut vertices) }).collect();
+    band(&top, &bottom, &mut indices);
+    let centre = push(Vec3::new(0.0, 0.0, -l), Vec3::NEG_Z, &mut vertices);
+    let rim: Vec<u32> = (0..SIDES).map(|side| { let (c, s) = dir(side);
+        push(Vec3::new(c * r, s * r, -l), Vec3::NEG_Z, &mut vertices) }).collect();
+    for side in 0..SIDES {
+        indices.extend_from_slice(&[centre, rim[(side + 1) % SIDES], rim[side]]);
+    }
+    let mut mesh = CpuMesh::basic(vertices, indices, Some(crate::prims::solid_color([92, 90, 86])),
+        Vec3::new(-r, -r, -l), Vec3::new(r, r, 0.0));
+    mesh.metallic_factor = 0.85;
+    mesh.roughness_factor = 0.55;
+    mesh
+}
+
+/// Register the lodged-round prototypes and their fixed physical pools (casting, in the TLAS).
+pub(super) fn allocate_lodged_round_pools(device: &wgpu::Device, queue: &wgpu::Queue, r: &mut Renderer) -> Vec<usize> {
+    LODGED_SPECS.iter().map(|spec| {
+        let prototype = r.register_instanced_prototype(device, queue, &penetrator_mesh(penetrator_body(spec)));
+        r.add_moving_instanced_pool(device, prototype, LODGED_DRAW_CAPACITY).expect("lodged round pool")
+    }).collect()
+}
+
+/// Field removal times that are not counted blows (named tuning, like the other field repairs).
+const HAND_PULL_S: f32 = 4.0;
+const BAR_PRY_S: f32 = 15.0;
+/// One sledge blow per swing of the carried hammer (`equipment`'s cycle).
+const SLEDGE_SWING_S: f32 = 0.48;
+
+impl Game {
+    fn lodged_round_model(&self, round: &LodgedRound) -> Mat4 {
+        let rotation = Quat::from_rotation_arc(Vec3::Z, round.dir_local.normalize_or_zero());
+        blood_parent_model(&self.player, round.frame) * Mat4::from_rotation_translation(rotation, round.tip_local)
+    }
+
+    /// Pose every lodged round with its hull or turret.
+    pub(super) fn drive_lodged_rounds(&mut self, r: &mut Renderer) {
+        if self.fea.lodged_draw.is_empty() {
+            return;
+        }
+        let mut per_spec: Vec<Vec<Mat4>> = vec![Vec::new(); LODGED_SPECS.len()];
+        let mut overflow = false;
+        for round in &self.fea.lodged {
+            let Some(index) = lodged_spec_index(round.shell) else { continue };
+            if per_spec[index].len() >= LODGED_DRAW_CAPACITY {
+                overflow = true;
+                continue;
+            }
+            per_spec[index].push(self.lodged_round_model(round));
+        }
+        if overflow && !self.fea.lodged_overflow_logged {
+            println!("[fea] more than {LODGED_DRAW_CAPACITY} rounds of one kind are lodged: the extra ones are not drawn (named bound)");
+            self.fea.lodged_overflow_logged = true;
+        }
+        for (pool, mats) in self.fea.lodged_draw.iter().zip(&per_spec) {
+            r.set_moving_instanced_mats(*pool, mats);
+        }
+    }
+
+    /// Lodged rounds a crewman can work out in the field (not those needing a workshop).
+    pub(super) fn fea_lodged_jobs(&self) -> Vec<super::equipment::RepairJob> {
+        self.fea.lodged.iter().filter(|r| !matches!(r.extraction.removal, lodged::Removal::Workshop))
+            .map(|r| super::equipment::RepairJob::LodgedRound(r.id)).collect()
+    }
+
+    /// Where the tools work on a lodged round: the middle of its exposed length (outside the
+    /// plate for a round held by the struck plate).
+    pub(super) fn fea_lodged_point(&self, id: u64) -> Option<Vec3> {
+        let round = self.fea.lodged.iter().find(|r| r.id == id)?;
+        let body = penetrator_body(round.shell);
+        let exposed_from = if round.in_struck_plate { round.depth_m.min(body.length_m) } else { 0.0 };
+        let along = 0.5 * (exposed_from + body.length_m);
+        Some(self.lodged_round_model(round).transform_point3(Vec3::new(0.0, 0.0, -along)))
+    }
+
+    pub(super) fn fea_lodged_job_seconds(&self, id: u64) -> f32 {
+        match self.fea.lodged.iter().find(|r| r.id == id).map(|r| r.extraction.removal) {
+            Some(lodged::Removal::Hand) => HAND_PULL_S,
+            Some(lodged::Removal::Bar) => BAR_PRY_S,
+            Some(lodged::Removal::Blows(n)) => n as f32 * SLEDGE_SWING_S,
+            _ => f32::INFINITY,
+        }
+    }
+
+    pub(super) fn fea_lodged_job_prompt(&self, id: u64) -> &'static str {
+        match self.fea.lodged.iter().find(|r| r.id == id).map(|r| r.extraction.removal) {
+            Some(lodged::Removal::Hand) => "PULL THE LODGED ROUND OUT [HOLD LMB]",
+            Some(lodged::Removal::Bar) => "PRY THE LODGED ROUND OUT WITH THE BAR [HOLD LMB]",
+            Some(lodged::Removal::Blows(_)) => "KNOCK THE LODGED ROUND LOOSE WITH THE SLEDGE [HOLD LMB]",
+            _ => "THE LODGED ROUND NEEDS A WORKSHOP",
+        }
+    }
+
+    /// The round is out: it leaves the simulation (named: a removed round is not kept as a loose
+    /// object).
+    pub(super) fn fea_remove_lodged(&mut self, id: u64) {
+        if let Some(index) = self.fea.lodged.iter().position(|r| r.id == id) {
+            let round = self.fea.lodged.remove(index);
+            println!("[fea] the lodged {} is out ({:?}, {:.1} kN grip)", round.shell.name,
+                round.extraction.removal, round.extraction.force_n / 1000.0);
+        }
+    }
+}
+
+/// The cupola's aperture radius (the source aperture the descent test uses, `foot`).
+pub(super) const CUPOLA_APERTURE_RADIUS_M: f32 = 0.25;
+const CUPOLA_OPENING: usize = 4;
+
+/// The open area of a solved hole: the measured bore radii across and along the shot.
+pub(super) fn hole_area_m2(g: &lattice::MeasuredGeometry) -> f32 {
+    std::f32::consts::PI * (g.aperture_mm * 1e-3) * (g.aperture_along_mm.max(g.aperture_mm) * 1e-3)
+}
+
+/// The crew compartments' openings: the four roof and escape lids (`tiger_hatches` order) and the
+/// cupola, at their source apertures, then the shot's own entry hole. A lid counts open past half
+/// its travel (named); the compartments' other small leaks are not modelled.
+pub(super) fn crew_openings(lid_phase: [f32; 4], cupola_phase: f32, hole_area_m2: f32) -> Vec<compartment::Opening> {
+    const NAMES: [&str; 4] = ["driver's hatch", "loader's hatch", "radio operator's hatch", "turret escape hatch"];
+    let disc = |r: f32| std::f32::consts::PI * r * r;
+    let mut openings: Vec<compartment::Opening> = (0..4).map(|i| compartment::Opening { name: NAMES[i],
+        area_m2: disc(tiger_hatches::APERTURE_RADII[i]), open: lid_phase[i] > 0.5, hatch: true }).collect();
+    openings.push(compartment::Opening { name: "commander's cupola", area_m2: disc(CUPOLA_APERTURE_RADIUS_M),
+        open: cupola_phase > 0.5, hatch: true });
+    openings.push(compartment::Opening { name: "the shot's entry hole", area_m2: hole_area_m2, open: true, hatch: false });
+    openings
+}
+
+/// Kinetic energy (J) the burst body's pieces carry in a lattice-path population: the pieces with
+/// no solved temperature (the plate's clusters have one).
+pub(super) fn burst_body_kinetic_j(fragments: &[HotFragment]) -> f32 {
+    fragments.iter().filter(|f| f.temp_k <= 0.0)
+        .map(|f| 0.5 * fragments::cube_mass(f.size) * f.vel.length_squared()).sum()
+}
+
+/// The pool slot a new fragment takes. Resting steel the lattice made (cooled chips on the floor
+/// or in the walls) and the chip in a crewman's hand persist: the ring passes over them, and only a
+/// pool full of resting steel gives up the slot at the cursor, its oldest (a named bound of
+/// `N_HOT_FRAGMENTS` bodies). The chip in hand is never overwritten.
+pub(super) fn next_fragment_slot(pool: &[HotFragment], cursor: usize, carried: Option<usize>) -> usize {
+    let n = pool.len();
+    let start = cursor % n;
+    for k in 0..n {
+        let slot = (start + k) % n;
+        let f = &pool[slot];
+        let persistent = f.active && f.settled && f.temp_k > 0.0;
+        if !persistent && Some(slot) != carried {
+            return slot;
+        }
+    }
+    if Some(start) == carried { (start + 1) % n } else { start }
+}
+
+/// Smallest pick radius of a fragment under the crosshair, m (named: a chip smaller than this is
+/// still picked where the eye puts it).
+const FRAGMENT_PICK_RADIUS_M: f32 = 0.012;
+const FRAGMENT_REACH_M: f32 = 2.2;
+/// Speed a crewman's toss adds to a small chip, m/s (named).
+const FRAGMENT_THROW_SPEED: f32 = 6.0;
+
+fn ray_sphere(origin: Vec3, dir: Vec3, centre: Vec3, radius: f32) -> Option<f32> {
+    let oc = origin - centre;
+    let b = oc.dot(dir);
+    let c = oc.length_squared() - radius * radius;
+    let disc = b * b - c;
+    if disc < 0.0 {
+        return None;
+    }
+    let root = disc.sqrt();
+    let t = -b - root;
+    if t >= 0.0 { Some(t) } else if -b + root >= 0.0 { Some(0.0) } else { None }
+}
+
+/// A fragment can be held when it is no hotter than a gloved hand tolerates (`LodgedFragment::
+/// HOLDABLE_K`); an authored chip with no solved temperature while it is on a glowing page.
+fn fragment_holdable(f: &HotFragment) -> bool {
+    if f.temp_k > 0.0 {
+        f.temp_k <= fragments::LodgedFragment::HOLDABLE_K
+    } else {
+        hot_fragment_heat_stage(f) >= N_HOT_FRAGMENT_BATCHES - 2
+    }
+}
+
+/// A fragment embedded in a wall comes out by hand only when one man's pull beats its grip.
+fn fragment_pullable(f: &HotFragment) -> bool {
+    if !f.lodged {
+        return true;
+    }
+    let e = lodged::extraction(lodged::estimated_grip_pa(CABIN_WALL_FLOW_STRESS_PA), f.size, f.embed_m, true);
+    matches!(e.removal, lodged::Removal::Hand)
+}
+
+#[cfg(test)]
+mod compartment_tests {
+    use super::*;
+
+    fn openings(open: [bool; 5], hole: f32) -> Vec<compartment::Opening> {
+        let phase = |o: bool| if o { 1.0 } else { 0.0 };
+        crew_openings([phase(open[0]), phase(open[1]), phase(open[2]), phase(open[3])], phase(open[4]), hole)
+    }
+
+    fn burst(filler_kg: f32, lids: [bool; 5]) -> compartment::PressureHistory {
+        compartment::burst(filler_kg, compartment::TNT_J_PER_KG, 0.0, compartment::TIGER_CREW_AIR_M3,
+            crate::fea_damage::materials::AMBIENT_K, &openings(lids, 0.0046), compartment::GAME_DT_S,
+            compartment::GAME_DURATION_S)
+    }
+
+    #[test]
+    fn an_armour_piercing_burst_holds_the_latches_and_a_large_charge_throws_every_closed_lid() {
+        // A 76 mm BR-350B's 65 g: about 11 kPa, far below a lid's latch (about 90 kPa on 0.22 m2).
+        let small = burst(crate::ballistics::BR_350B.filler_g * 0.001, [false; 5]);
+        assert!(small.hatches_blown.is_empty(), "{} Pa", small.peak_gauge_pa);
+        assert!((small.peak_gauge_pa - 0.4 * 0.065 * 4.184e6 / 10.0).abs() < 300.0, "{}", small.peak_gauge_pa);
+        // A 152 mm OF-530's 5.9 kg inside: every closed lid goes; an open one is not 'blown'.
+        let large = burst(crate::ballistics::OF_530.filler_g * 0.001, [false, true, false, false, false]);
+        let names: Vec<&str> = large.hatches_blown.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names.len(), 4, "{names:?}");
+        assert!(!names.contains(&"loader's hatch"));
+        // Open lids vent it: the pressure falls well below the peak within the sampled 0.2 s.
+        assert!(large.samples.last().unwrap().1 < 0.2 * large.peak_gauge_pa);
+    }
+
+    #[test]
+    fn the_burst_bodys_energy_comes_off_the_filler() {
+        let piece = |temp_k: f32, v: f32| HotFragment { active: true, size: 0.01, temp_k, vel: Vec3::X * v,
+            ..HotFragment::default() };
+        // Two body pieces at 100 m/s; the plate cluster (solved temperature) is not the body's.
+        let pieces = [piece(0.0, 100.0), piece(0.0, 100.0), piece(900.0, 400.0)];
+        let expected = 2.0 * 0.5 * fragments::cube_mass(0.01) * 100.0 * 100.0;
+        assert!((burst_body_kinetic_j(&pieces) - expected).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod lodged_draw_tests {
+    use super::*;
+
+    #[test]
+    fn drawn_body_holds_the_rounds_mass_and_the_solved_diameter() {
+        for spec in LODGED_SPECS.iter() {
+            let body = penetrator_body(spec);
+            let apcr = spec.kind == crate::ballistics::ShellKind::Apcr;
+            let area = std::f32::consts::PI * body.radius_m * body.radius_m;
+            let volume = area * (body.length_m - body.nose_m) + 2.0 / 3.0 * area * body.nose_m;
+            if apcr {
+                assert!((body.length_m / (2.0 * body.radius_m) - APCR_CORE_LENGTH_DIAMETERS).abs() < 1e-4);
+            } else {
+                let mass = volume * crate::fea_damage::materials::RHA_DENSITY;
+                assert!((mass / spec.mass_kg - 1.0).abs() < 1e-3, "{}: {:?}", spec.name, body);
+            }
+            let d = spec.caliber_mm * 0.001 * if apcr { APCR_CORE_FRACTION } else { 1.0 };
+            assert!((2.0 * body.radius_m - d).abs() < 1e-6, "{}", spec.name);
+            assert!(body.length_m > body.nose_m, "{}: the body is longer than its nose", spec.name);
+        }
+    }
+
+    #[test]
+    fn drawn_round_is_a_closed_outward_lathe_of_that_body() {
+        let body = penetrator_body(&crate::ballistics::BR_350B);
+        let mesh = penetrator_mesh(body);
+        // Divergence theorem: a closed, outward-wound surface has a positive volume equal to the
+        // 12-sided lathe of the profile (inscribed polygon: area factor 12 sin(30 deg) / (2 pi)).
+        let mut volume = 0.0f64;
+        for tri in mesh.indices.chunks_exact(3) {
+            let [a, b, c] = [0, 1, 2].map(|i| Vec3::from_array(mesh.vertices[tri[i] as usize].pos).as_dvec3());
+            volume += a.dot(b.cross(c)) / 6.0;
+        }
+        let polygon = 12.0 * (std::f64::consts::TAU / 12.0).sin() / std::f64::consts::TAU;
+        let area = std::f64::consts::PI * (body.radius_m as f64).powi(2) * polygon;
+        let cylinder = area * (body.length_m - body.nose_m) as f64;
+        assert!(volume > cylinder, "outward and closed: {volume}");
+        assert!(volume < cylinder + 2.0 / 3.0 * area * body.nose_m as f64 * 1.01, "{volume}");
+        assert!(mesh.max.z.abs() < 1e-6 && (mesh.min.z + body.length_m).abs() < 1e-6, "tip at the origin, base at -length");
+    }
+
+    #[test]
+    fn every_kinetic_round_the_save_knows_has_a_draw_pool() {
+        use crate::ballistics as b;
+        for spec in [&b::PZGR_39, &b::PZGR_40, &b::PZGR_39_43, &b::BR_240_M42, &b::BR_240, &b::BR_240P,
+            &b::BR_271_ZIS2, &b::BR_350B, &b::BR_354P, &b::BR_365, &b::BR_412, &b::BR_471, &b::BR_540,
+            &b::SPRGR_88, &b::OF_350_F34, &b::OF_530, &b::PANZERFAUST_60] {
+            let kinetic = matches!(spec.kind, b::ShellKind::Ap | b::ShellKind::Apcbc | b::ShellKind::Apcr);
+            assert_eq!(lodged_spec_index(spec).is_some(), kinetic, "{}", spec.name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::*;
+    use crate::expedition_world_save::OwnerBlock;
+
+    fn stop_job() -> PlateJob {
+        PlateJob {
+            impact: lattice::PlateImpact {
+                material: crate::fea_damage::materials::MaterialId::RolledArmour,
+                thickness_m: 0.02,
+                obliquity_rad: 0.2,
+                projectile: lattice::ProjectileShape { mass_kg: 1.43, radius_m: 0.0225, nose_m: 0.054 },
+                v_in: 700.0,
+                motion: lattice::Motion::Stop { depth_m: 0.012 },
+                seed: 5,
+            },
+            origin: Vec3::new(0.4, 1.2, 2.3),
+            axes: [Vec3::X, Vec3::Y, Vec3::Z],
+        }
+    }
+
+    fn saved_state() -> FeaSaved {
+        let extraction = lodged::extraction(4.0e7, 0.045, 0.02, true);
+        FeaSaved {
+            lodged: vec![LodgedRound { id: 3, shell: &crate::ballistics::BR_471, frame: BloodFrame::Hull,
+                tip_local: Vec3::new(0.2, 1.0, 2.6), dir_local: Vec3::NEG_Z, depth_m: 0.07,
+                in_struck_plate: true, component: None, extraction, struck_at_s: 12.5 }],
+            pending: vec![PendingPlateSaved { commit_at_s: 12.75, struck_at_s: 12.5,
+                facing: crate::ballistics::Facing::HullFront, local_mm: [200, 1000, 2600], lodged_id: Some(3),
+                job: stop_job() }],
+            carried_fragment: Some(17),
+            next_id: 4,
+        }
+    }
+
+    #[test]
+    fn damage_state_survives_the_save_codec_and_a_deferred_solve_resolves_the_same() {
+        let block = OwnerBlock::encode("test.fea", 1, &saved_state()).unwrap();
+        let mut runtime = FeaRuntime::default();
+        runtime.import_world_state(block.decode("test.fea", 1).unwrap()).unwrap();
+        let again = OwnerBlock::encode("test.fea", 1, &runtime.export_world_state()).unwrap();
+        assert_eq!(block.payload, again.payload, "export after import is byte-identical");
+        assert_eq!(runtime.lodged.len(), 1);
+        assert_eq!(runtime.carried_fragment, Some(17));
+        // The re-started solve gives the answer a solve before the save would have given.
+        let pending = runtime.pending.pop().unwrap();
+        let resumed = pending.handle.join().unwrap();
+        let direct = stop_job().solve();
+        assert_eq!(resumed.steps, direct.steps);
+        assert_eq!(resumed.rim_curve.kelvin, direct.rim_curve.kelvin);
+        assert_eq!(resumed.grip_normal_n.to_bits(), direct.grip_normal_n.to_bits());
+    }
+
+    #[test]
+    fn damage_state_import_refuses_broken_records() {
+        let mut bad = saved_state();
+        bad.carried_fragment = Some(N_HOT_FRAGMENTS);
+        assert!(FeaRuntime::default().import_world_state(bad).is_err());
+        let mut bad = saved_state();
+        bad.pending[0].lodged_id = Some(99);
+        assert!(FeaRuntime::default().import_world_state(bad).is_err());
+        let mut bad = saved_state();
+        bad.next_id = 2;
+        assert!(FeaRuntime::default().import_world_state(bad).is_err());
+    }
+}
+
+#[cfg(test)]
+mod hand_tests {
+    use super::*;
+
+    fn chip(temp_k: f32, size: f32) -> HotFragment {
+        HotFragment { active: true, settled: true, frame: BloodFrame::Hull, size, life: f32::MAX,
+            temp_k, seed: 7, ..HotFragment::default() }
+    }
+
+    #[test]
+    fn hand_takes_only_cool_and_loose_steel() {
+        // At the glove limit it can be held; above it, it cannot.
+        assert!(fragment_holdable(&chip(fragments::LodgedFragment::HOLDABLE_K, 0.01)));
+        assert!(!fragment_holdable(&chip(fragments::LodgedFragment::HOLDABLE_K + 1.0, 0.01)));
+        // A chip resting loose always comes away.
+        assert!(fragment_pullable(&chip(300.0, 0.01)));
+        // A chip barely bitten into the wall comes out by hand; one driven deep needs more.
+        let mut shallow = chip(300.0, 0.008);
+        shallow.lodged = true;
+        shallow.embed_m = 0.0002;
+        let mut deep = shallow;
+        deep.embed_m = 0.008;
+        let pull = |f: &HotFragment| lodged::extraction(lodged::estimated_grip_pa(CABIN_WALL_FLOW_STRESS_PA),
+            f.size, f.embed_m, true);
+        assert!(fragment_pullable(&shallow), "{:?}", pull(&shallow));
+        assert!(!fragment_pullable(&deep), "{:?}", pull(&deep));
+        assert!(matches!(pull(&deep).removal, lodged::Removal::Bar | lodged::Removal::Blows(_)));
+    }
+
+    #[test]
+    fn pool_keeps_resting_solved_steel_and_the_chip_in_hand() {
+        let mut pool = vec![HotFragment::default(); 6];
+        for i in [0, 1, 3] {
+            pool[i] = chip(320.0, 0.01);
+        }
+        // An authored (unsolved) chip in slot 2 is ordinary, expiring glow: it may be replaced.
+        pool[2] = HotFragment { active: true, settled: true, life: 1.0, ..HotFragment::default() };
+        assert_eq!(next_fragment_slot(&pool, 0, None), 2);
+        assert_eq!(next_fragment_slot(&pool, 0, Some(2)), 4);
+        assert_eq!(next_fragment_slot(&pool, 3, None), 4);
+        // Full of resting steel: the cursor's slot (the oldest) gives way, never the chip in hand.
+        let full = vec![chip(300.0, 0.01); 4];
+        assert_eq!(next_fragment_slot(&full, 1, None), 1);
+        assert_eq!(next_fragment_slot(&full, 1, Some(1)), 2);
+        // A hot chip still flying is not persistent yet: it is not skipped.
+        let mut flying = chip(1200.0, 0.01);
+        flying.settled = false;
+        assert_eq!(next_fragment_slot(&[flying, chip(300.0, 0.01)], 0, None), 0);
+    }
+
+    #[test]
+    fn crosshair_ray_meets_the_chip_it_points_at() {
+        let centre = Vec3::new(0.0, 0.0, 1.0);
+        assert!((ray_sphere(Vec3::ZERO, Vec3::Z, centre, 0.02).unwrap() - 0.98).abs() < 1e-5);
+        assert!(ray_sphere(Vec3::ZERO, Vec3::Y, centre, 0.02).is_none());
+        assert!(ray_sphere(Vec3::ZERO, Vec3::NEG_Z, centre, 0.02).is_none());
+        assert_eq!(ray_sphere(centre, Vec3::Z, centre, 0.02), Some(0.0));
     }
 }
