@@ -723,6 +723,56 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         }
         stills.shots.push(serde_json::json!({"name": "turret_interior_strike", "strike": strike, "effects": g.debug_fea_effects_receipt()}));
     }
+    // Part 12 (`look_matrix`): the display look's colour count, for the owner to flip through.
+    // From the map's own editor home view (`manifest_edits.json` `editor_home`; run it with
+    // KESSEL_CANYON_MANIFEST at the spring bridge map, whose home is the middle of the deck) and
+    // a wider view from above the bank behind it, each rendered through the standard look and the
+    // realism look at 256, 512, 720, 1024 and 2048 colours (`KESSEL_REAL_STEPS` forms 7,7,3; 7;
+    // 11,11,4; 15,15,3; 15,15,7). The stills are the internal grid; scale them by nearest
+    // neighbour for viewing. The look lanes are set between stills: a display choice only.
+    if part("look_matrix") {
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
+        let home = act_manifest::ActManifest::load(&crate::canyon::manifest_path()).ok()
+            .and_then(|m| m.edits().and_then(|e| e.get("editor_home").cloned()))
+            .and_then(|h| {
+                let v = |k: &str| h[k].as_array().filter(|a| a.len() == 3)
+                    .and_then(|a| Some(Vec3::new(a[0].as_f64()? as f32, a[1].as_f64()? as f32, a[2].as_f64()? as f32)));
+                Some((v("eye")?, v("target")?))
+            });
+        let (eye, target) = home.context("the map has no editor_home view (set KESSEL_CANYON_MANIFEST)")?;
+        let back = (eye - target).normalize_or_zero();
+        let side = Vec3::new(-back.z, 0.0, back.x);
+        let views = [("deck", eye, target, 60.0f32), ("bank", eye + back * 45.0 + side * 25.0 + Vec3::Y * 22.0, target, 55.0)];
+        // RGB forms: red and green share a step count, blue its own. Luma/chroma forms (w < 0):
+        // luma levels x chroma levels squared, the chroma levels odd so grey is exact: 10x5x5 =
+        // 250, 20x5x5 = 500, 9x9x9 = 729, 13x9x9 = 1,053, 25x9x9 = 2,025 (the nearest the form
+        // allows to 256, 512, 720, 1024 and 2048).
+        let variants: [(&str, f32, [f32; 4]); 11] = [
+            ("standard", 0.0, r.real),
+            ("real256", 6.0, [1.35, 0.85, 7.0, 3.0]),
+            ("real512", 6.0, [1.35, 0.85, 7.0, 0.0]),
+            ("real720", 6.0, [1.35, 0.85, 11.0, 4.0]),
+            ("real1024", 6.0, [1.35, 0.85, 15.0, 3.0]),
+            ("real2048", 6.0, [1.35, 0.85, 15.0, 7.0]),
+            ("luma250", 6.0, [1.35, 0.85, 9.0, -4.0]),
+            ("luma500", 6.0, [1.35, 0.85, 19.0, -4.0]),
+            ("luma729", 6.0, [1.35, 0.85, 8.0, -8.0]),
+            ("luma1053", 6.0, [1.35, 0.85, 12.0, -8.0]),
+            ("luma2025", 6.0, [1.35, 0.85, 24.0, -8.0]),
+        ];
+        let (look0, real0) = (r.look, r.real);
+        step(&mut g, &mut r, 60, &idle);
+        for (view, e, t, fov) in views {
+            for (name, look, real) in variants {
+                r.look = look;
+                r.real = real;
+                observe(&mut r, e, t, fov);
+                stills.still(&mut r, &format!("{view}_{name}"), &format!("{view} view, {name}"))?;
+            }
+        }
+        r.look = look0;
+        r.real = real0;
+    }
     if !part("kill") {
         fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
             "schema": "panzer.fx-review.v1", "manifest": manifest, "internal_resolution": [r.iw, r.ih],

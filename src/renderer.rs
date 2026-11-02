@@ -111,8 +111,22 @@ fn configured_cabin_pastel() -> bool {
 fn configured_real() -> [f32; 4] {
     let get = |name: &str, default: f32, lo: f32, hi: f32| std::env::var(name).ok()
         .and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(default, |v| v.clamp(lo, hi));
-    [get("KESSEL_REAL_CONTRAST", 1.35, 0.5, 3.0), get("KESSEL_REAL_SATURATION", 0.85, 0.0, 2.0),
-        get("KESSEL_REAL_STEPS", 8.0, 2.0, 64.0), 0.0]
+    // `KESSEL_REAL_STEPS` is one count for every channel, or `R,G,B` where red and green share
+    // theirs (blue may differ: `7,7,3` is the 8-bit 3-3-2 split, 256 colours).
+    let steps: Vec<f32> = std::env::var("KESSEL_REAL_STEPS").ok().map(|v| v.split(',')
+        .filter_map(|p| p.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map(|v| v.clamp(1.0, 64.0)).collect())
+        .unwrap_or_default();
+    // `KESSEL_REAL_STEPS=yc:Y:C` is the luma/chroma form: Y luma steps, C chroma steps per axis
+    // (crush.wgsl `dp_luma_chroma`), carried as w = -C.
+    if let Some(rest) = std::env::var("KESSEL_REAL_STEPS").ok().as_deref().and_then(|v| v.trim().strip_prefix("yc:")) {
+        let p: Vec<f32> = rest.split(':').filter_map(|x| x.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).collect();
+        if let [y, c] = p.as_slice() {
+            return [get("KESSEL_REAL_CONTRAST", 1.35, 0.5, 3.0), get("KESSEL_REAL_SATURATION", 0.85, 0.0, 2.0),
+                y.clamp(2.0, 64.0), -c.clamp(2.0, 64.0)];
+        }
+    }
+    let (rg, blue) = match steps.as_slice() { [n] => (n.max(2.0), 0.0), [r, _, b] => (r.max(2.0), *b), _ => (8.0, 0.0) };
+    [get("KESSEL_REAL_CONTRAST", 1.35, 0.5, 3.0), get("KESSEL_REAL_SATURATION", 0.85, 0.0, 2.0), rg, blue]
 }
 fn configured_palette_pull() -> f32 {
     std::env::var("KESSEL_PALETTE_PULL").ok().and_then(|v| v.trim().parse::<f32>().ok())

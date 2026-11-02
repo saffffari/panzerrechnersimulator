@@ -36,7 +36,8 @@ struct Crush {
     loupe: vec4<f32>,
     // The realism look (mode 6, `KESSEL_LOOK=deltap-real`): x = contrast, the slope in AgX's log
     // exposure about mid grey (1 = AgX as shipped); y = saturation after the outset (1 = as
-    // shipped); z = dithered steps per channel (8 = deltaP's). Appended lane.
+    // shipped); z = dithered steps of red and green (8 = deltaP's); w = blue's (0: as z; 3 with
+    // z 7 is the 8-bit 3-3-2 split, 256 colours). Appended lane.
     real: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
@@ -361,8 +362,33 @@ fn dp_oklab(c: vec3<f32>) -> vec3<f32> {
 // dithered as black-and-cyan salt). The threshold is the full 64-step value, not snapped to
 // eighths: 64 fill patterns make each pattern jump smaller than the shading's own noise, so a
 // wall's wandering shade dissolves into grain instead of drawing contours.
+// The realism look's luma/chroma form (cr.real.w < 0): YCoCg of the display-encoded value, the
+// luma in cr.real.z steps on deltaP's square-root curve, each chroma axis in -cr.real.w steps (an
+// even count, so zero chroma is a level and a grey stays exactly grey). Fine steps of brightness,
+// coarse steps of colour: per-channel RGB steps break a grey into coloured speckle wherever its
+// channels round differently. A recording-medium choice; it adds no light.
+fn dp_luma_chroma(lin: vec3<f32>, th: f32) -> vec3<f32> {
+    let e = clamp(display_encode(lin), vec3(0.0), vec3(1.0));
+    let y = dot(e, vec3(0.25, 0.5, 0.25));
+    let co = 0.5 * (e.r - e.b);
+    let cg = -0.25 * e.r + 0.5 * e.g - 0.25 * e.b;
+    let ys = max(cr.real.z, 2.0);
+    let cs = max(2.0 * round(-cr.real.w * 0.5), 2.0);
+    let yq0 = floor(sqrt(y) * ys + th) / ys;
+    let yq = yq0 * yq0;
+    // A second threshold for the chroma: the same Bayer cell, half a step on, so the chroma's
+    // pattern does not sit on the luma's.
+    let th2 = fract(th + 0.5);
+    let coq = floor((co + 0.5) * cs + th2) / cs - 0.5;
+    let cgq = floor((cg + 0.5) * cs + th2) / cs - 0.5;
+    let rgb = vec3(yq + coq - cgq, yq + cgq, yq - coq - cgq);
+    return clamp(rgb, vec3(0.0), vec3(1.0));
+}
+
 fn dp_dithered_colour(lin: vec3<f32>, th: f32) -> vec3<f32> {
-    let levels = select(8.0, max(cr.real.z, 2.0), cr.look.x > 5.5);
+    if (cr.look.x > 5.5 && cr.real.w < -0.5) { return dp_luma_chroma(lin, th); }
+    let rg = max(cr.real.z, 2.0);
+    let levels = select(vec3(8.0), vec3(rg, rg, select(rg, max(cr.real.w, 1.0), cr.real.w > 0.5)), cr.look.x > 5.5);
     let c = sqrt(clamp(display_encode(lin), vec3(0.0), vec3(1.0)));
     let q = floor(c * levels + vec3(th)) / levels;
     return clamp(q * q, vec3(0.0), vec3(1.0));
