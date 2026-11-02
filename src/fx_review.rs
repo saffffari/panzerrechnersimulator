@@ -361,13 +361,21 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         step(&mut g, &mut r, 90, &idle);
         let strike_frame = 12u32;
         let mut strike = serde_json::Value::Null;
+        // The commander's own eye, turned on the radio operator's post (the station view looks
+        // forward over the gunner and the bow post is below the turret ring from there); the
+        // cabin's own light, haze and shelter stay as the game sets them.
+        let eye = r.camera.pos;
+        let man = g.debug_crew_solo_man_point(CrewRole::Radioman);
+        let look = |r: &mut crate::renderer::Renderer| { r.camera.pos = eye; r.camera.set_forward(man - eye); r.camera.fov_y = 80f32.to_radians(); };
         if let Some(mut film) = Film::start(&stills.prefix, "cabin_hit")? {
+            look(&mut r);
             r.reset_history();
             for frame in 0..110 {
                 if frame == strike_frame {
                     strike = g.debug_crew_solo_strike_raked(CrewRole::Radioman, false, Arc::Side, 0.3, 35.0);
                 }
                 step(&mut g, &mut r, 1, &idle);
+                look(&mut r);
                 let path = film.frame();
                 r.render_to_png(&device, &queue, &path, r.iw, r.ih)?;
                 if frame == strike_frame + 2 { stills.frame_still(&mut r, &film, "cabin_hit_2f", "the hull side holed at the radio operator's post, +2 frames, from the commander's post")?; }
@@ -379,8 +387,10 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             step(&mut g, &mut r, strike_frame, &idle);
             strike = g.debug_crew_solo_strike_raked(CrewRole::Radioman, false, Arc::Side, 0.3, 35.0);
             step(&mut g, &mut r, 2, &idle);
+            look(&mut r);
             stills.still(&mut r, "cabin_hit_2f", "the hull side holed at the radio operator's post, +2 frames, from the commander's post")?;
             step(&mut g, &mut r, 8, &idle);
+            look(&mut r);
             stills.still(&mut r, "cabin_hit_10f", "the same, +10 frames")?;
         }
         stills.shots.push(serde_json::json!({"name": "cabin_hit_strike", "strike": strike}));

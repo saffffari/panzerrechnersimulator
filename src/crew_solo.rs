@@ -2765,6 +2765,8 @@ impl Game {
     /// Walk the interior body next to a man (or his body) and face him. The walk is clamped by
     /// the ordinary floor/breech limits, so the result is a reachable standing spot, not a
     /// teleport into him.
+    /// Headless review: where a living crewman is, world frame (`crew_solo_man_point`).
+    pub fn debug_crew_solo_man_point(&self, role: CrewRole) -> Vec3 { self.crew_solo_man_point(role) }
     pub fn debug_crew_solo_go_to(&mut self, role: CrewRole) -> bool {
         if self.mode != Mode::Tank || self.station != Station::Loader {
             return false;
