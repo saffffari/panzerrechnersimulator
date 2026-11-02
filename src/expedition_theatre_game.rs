@@ -280,7 +280,11 @@ impl Game {
   let positions=(0..count).map(|k|if bridge {route[0]+Vec2::new(0.,k as f32*25.)}else{route[0]-forward*(k as f32*40.)}).collect();
   let first=self.enemies.len();self.append_canyon_platoon(route,positions,count,r);(first..first+count).collect()
  }
- pub(super) fn expedition_deck_at(&self,x:f32,z:f32)->Option<f32>{self.theatre.as_ref()?.crossings.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))}
+ pub(super) fn expedition_deck_at(&self,x:f32,z:f32)->Option<f32>{
+  // The theatre's surveyed bridges, else a map's declared crossings (`river_crossings`).
+  let crossings=self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice()))?;
+  crossings.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))
+ }
  pub(super) fn expedition_vehicle_ground(&self,x:f32,z:f32)->f32 {self.expedition_deck_at(x,z).unwrap_or_else(||self.hf.vehicle_height_at(x,z))}
  pub fn expedition_cycle_order(&mut self,step:i32)->bool{
   let Some(t)=&mut self.theatre else{return false};if t.active.is_some(){return true;}

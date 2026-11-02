@@ -267,6 +267,8 @@ mod expedition_runtime;
 mod halftrack_runtime;
 #[path = "expedition_theatre_game.rs"]
 mod expedition_theatre_game;
+#[path = "river_crossings.rs"]
+mod river_crossings;
 #[path = "expedition_theatre_review.rs"]
 pub mod expedition_theatre_review;
 #[path = "expedition_world_review.rs"]
@@ -9583,6 +9585,8 @@ pub struct Game {
     camp_people: Option<Box<camp_people::CampPeople>>,
     halftrack_runtime: Option<Box<halftrack_runtime::HalftrackRuntime>>,
     theatre: Option<Box<expedition_theatre_game::TheatreRuntime>>,
+    /// A declared river and its bridges on a non-theatre map (`river_crossings`).
+    river: Option<Box<river_crossings::RiverRuntime>>,
     workshop: workshop_runtime::WorkshopRuntime,
     tiger_refuel: tiger_refuel::Runtime,
     crew_status_panel: crew_status_panel::Panel,
@@ -10439,6 +10443,12 @@ impl Game {
         let mut occluders: Vec<stealth::Occluder> = Vec::new();
         let theatre = if expedition_map {
             Some(Box::new(expedition_theatre_game::TheatreRuntime::install(&mut scene,&mut occluders,manifest.as_ref().unwrap(),&hf)?))
+        } else { None };
+        let river = if theatre.is_none() {
+            match manifest.as_ref() {
+                Some(m) => river_crossings::RiverRuntime::install(&mut scene, &mut occluders, m)?.map(Box::new),
+                None => None,
+            }
         } else { None };
 
         // Destructible standing structures — collected as the scene is assembled (near city walls/
@@ -12931,6 +12941,9 @@ impl Game {
         if let Some(t)=&theatre {for &slot in &t.crossing_meshes {
             manifest_walk_surfaces.append("floor_ceiling_expedition_bridge",&scene[slot],Mat4::IDENTITY)?;
         }}
+        if let Some(rv)=&river {for slot in rv.deck_meshes() {
+            manifest_walk_surfaces.append("floor_ceiling_river_bridge",&scene[slot],Mat4::IDENTITY)?;
+        }}
         let mut manifest_structures = 0usize;
         let mut manifest_compatibility_shells = 0usize;
         // Destructible-trees subsystem (docs/DESTRUCTION.md §5): every tree-asset instance —
@@ -14096,6 +14109,7 @@ impl Game {
             camp_people,
             halftrack_runtime,
             theatre,
+            river,
             workshop,
             tiger_refuel,
             crew_status_panel,
@@ -28209,12 +28223,14 @@ impl Game {
             // this supported chassis transform, including the Act-II bridge deck.
             let channel = self.campaign_channel;
             let theatre = &self.theatre;
+            let river = &self.river;
             let _settle_probe = crate::sim_phase::Probe::new("ai_settle_bounded");
             crate::vehicle_ground::settle_bounded(&mut self.enemies[i], |x,z|
                 (if channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
-                    .or_else(||theatre.as_ref().and_then(|t|t.crossings.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
+                    .or_else(||theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||river.as_ref().map(|r|r.crossings.as_slice()))
+                        .and_then(|c|c.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
                     .unwrap_or_else(|| self.hf.vehicle_height_at(x,z)),
-                |lo,hi|bridge_support_upper_bound(&self.hf,channel,theatre.as_ref().map(|t|t.crossings.as_slice()),
+                |lo,hi|bridge_support_upper_bound(&self.hf,channel,theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||river.as_ref().map(|r|r.crossings.as_slice())),
                     lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
             drop(_settle_probe);
             let _lay_probe = crate::sim_phase::Probe::new("ai_lay_fire");
@@ -30553,17 +30569,18 @@ impl Game {
                 // Contact projection can translate a vehicle after its AI update. Keep the final
                 // supported pose consistent without re-running movement or fire decisions.
                 let support = |x,z| (if campaign_channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
-                    .or_else(||self.theatre.as_ref().and_then(|t|t.crossings.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
+                    .or_else(||self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice()))
+                        .and_then(|c|c.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
                     .unwrap_or_else(|| self.hf.vehicle_height_at(x,z));
                 if !self.enemies[i].alive {
                     let turret_attached = self.enemy_turret_attached(i);
                     crate::vehicle_ground::settle_wreck_bounded(&mut self.enemies[i], dt,
                         turret_attached, support, |lo,hi|bridge_support_upper_bound(&self.hf,campaign_channel,
-                            self.theatre.as_ref().map(|t|t.crossings.as_slice()),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
+                            self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice())),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
                 } else {
                     crate::vehicle_ground::settle_bounded(&mut self.enemies[i], support,
                         |lo,hi|bridge_support_upper_bound(&self.hf,campaign_channel,
-                            self.theatre.as_ref().map(|t|t.crossings.as_slice()),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
+                            self.theatre.as_ref().map(|t|t.crossings.as_slice()).or_else(||self.river.as_ref().map(|r|r.crossings.as_slice())),lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
                 }
             }
         }
