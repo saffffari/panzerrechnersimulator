@@ -9557,6 +9557,9 @@ pub struct Game {
     surface_wear: crate::surface_wear::SurfaceWear,
     /// Each enemy slot's finish seed (`vehicle_finish`): a new vehicle, a new look.
     vehicle_finish_seeds: vehicle_finish::Seeds,
+    /// Each enemy's and ally's running-gear snow pack (`snow_cover::step_pack`).
+    enemy_gear_snow: Vec<f32>,
+    ally_gear_snow: Vec<f32>,
     /// Interior walk position (turret-local, on the TURRET FLOOR) while posted INSIDE (Loader).
     walk_pos: Vec3,
     loader_crouch_t: f32, // held Ctrl lowers the actual cabin eye/body
@@ -14109,6 +14112,8 @@ impl Game {
             snow_cover: crate::snow_cover::SnowCover::new(act.season == crate::world::Season::Winter),
             surface_wear: crate::surface_wear::SurfaceWear::default(),
             vehicle_finish_seeds: vehicle_finish::Seeds::default(),
+            enemy_gear_snow: Vec::new(),
+            ally_gear_snow: Vec::new(),
             loader_crouch_t: 0.0,
             walk_sounds: footsteps::Cadence::default(),
             walk_pos: Vec3::new(-0.60, 0.0, 0.15), // the loader's post, right of the breech (−X)
@@ -17029,6 +17034,7 @@ impl Game {
         self.snow_cover.update(dt, snowfall, self.player.speed, self.player.turret_yaw, self.rounds_spent);
         r.player_snow_load = self.snow_cover.player;
         r.world_snow_load = self.snow_cover.world;
+        self.drive_running_gear_snow(dt, r);
         // Wear and grime grow with time crewed, rounds fired, distance driven and, on the glass,
         // precipitation (`surface_wear`).
         self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);

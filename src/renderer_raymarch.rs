@@ -629,6 +629,7 @@ fn rm_source(name: &str) -> String {
         "rm_visibility.wgsl" => VISIBILITY,
         "rm_medium.wgsl" => MEDIUM,
         "rm_depth.wgsl" => include_str!("../shaders/rm_depth.wgsl"),
+        "rm_snow_lift.wgsl" => include_str!("../shaders/rm_snow_lift.wgsl"),
         "rm_scars.wgsl" => include_str!("../shaders/rm_scars.wgsl"),
         "rm_scar_patch.wgsl" => include_str!("../shaders/rm_scar_patch.wgsl"),
         "rm_gbuffer.wgsl" => include_str!("../shaders/rm_gbuffer.wgsl"),
@@ -1006,7 +1007,7 @@ impl Backend {
         };
 
         // Depth-only program for every shadow/cover map.
-        let depth_shader = rm_shader(device, "rm-depth", &["rm_scars.wgsl", "rm_depth.wgsl"]);
+        let depth_shader = rm_shader(device, "rm-depth", &["rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]);
         let depth_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-depth-pl"), bind_group_layouts: &[&depth_bgl], push_constant_ranges: &[push_range(S::VERTEX)],
         });
@@ -1048,7 +1049,7 @@ impl Backend {
         });
 
         // G-buffer.
-        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_gbuffer.wgsl"]);
+        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]);
         let gbuffer_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-gbuffer-pl"), bind_group_layouts: &[&gbuffer_bgl, material_bgl, track_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
         });
@@ -2725,7 +2726,7 @@ impl Backend {
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
                 extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
                     if m.painted_steel { 1.0 } else { 0.0 }, m.lamp_lens as f32],
-                scars: range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]),
+                scars: range.map_or([0, 0, 0, m.running_gear], |r| [r[0], r[1], r[2], m.running_gear]),
                 vehicle: if shadow { [0.0; 4] } else { m.vehicle_finish },
             };
             let stages = if scar_bound { wgpu::ShaderStages::VERTEX_FRAGMENT } else { stages };
@@ -3234,13 +3235,32 @@ mod shader_tests {
         assert_eq!(value, TRACER_INTENSITY);
     }
 
+    /// The depth pre-pass lifts a snowed face by the same field the G-buffer does: the lift
+    /// include carries its own copy of rm_common's noise and lying field, held equal here.
+    #[test]
+    fn the_snow_lift_field_is_rm_commons_lying_field() {
+        let common = rm_source("rm_common.wgsl");
+        let lift = rm_source("rm_snow_lift.wgsl");
+        let body = |source: &str, name: &str| -> String {
+            let start = source.find(&format!("fn {name}(")).unwrap_or_else(|| panic!("{name}"));
+            let open = start + source[start..].find('{').unwrap();
+            let mut depth = 0; let mut end = open;
+            for (i, c) in source[open..].char_indices() { if c == '{' { depth += 1; } if c == '}' { depth -= 1; if depth == 0 { end = open + i; break; } } }
+            source[open..=end].replace("snow_lift_", "rm_").chars().filter(|c| !c.is_whitespace()).collect()
+        };
+        for (a, b) in [("rm_hash", "snow_lift_hash"), ("rm_hash01", "snow_lift_hash01"), ("rm_lattice", "snow_lift_lattice"),
+            ("rm_noise", "snow_lift_noise"), ("rm_fbm", "snow_lift_fbm"), ("rm_snow_lying", "snow_lift_lying")] {
+            assert_eq!(body(&common, a), body(&lift, b), "{a} and {b} differ");
+        }
+    }
+
     /// Every raymarch pipeline's WGSL, assembled as `Backend::new` assembles it, with and without
     /// ray queries: the shaders compile at run time, so this is where a mistake shows without a GPU.
     #[test]
     fn every_raymarch_shader_validates_with_and_without_ray_queries() {
         let common: &[(&str, &[&str])] = &[
-            ("rm-depth", &["rm_scars.wgsl", "rm_depth.wgsl"]),
-            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_gbuffer.wgsl"]),
+            ("rm-depth", &["rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]),
+            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]),
             ("rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]),
             ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),

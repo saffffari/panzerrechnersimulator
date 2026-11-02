@@ -340,6 +340,28 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   observer in the open with three riflemen between; the receipt records the fronts, the
   arrivals, the kick, the men startled, the blade and crown impulses) is the evidence, with
   `pressure_front` tests of the charge's overpressure, impulse, reach and arrival windows.
+- Lying snow with relief (2026-11-02; `rm_snow_lift.wgsl`). The snow on a vehicle was a share
+  of the face's albedo mixed toward white, a flat colour. A covered face is now raised along
+  its normal by the snow's thickness, 6 cm at full cover through the same lying field (slope,
+  breakup, load), and the shading normal follows that field's slope across the face, so the
+  deck's snow carries a lip at every plate edge and pillows between; the depth pre-pass lifts
+  the face identically (a test holds its copy of the field equal to rm_common's). Named
+  approximations: the scene's acceleration structure and the sky-cover map keep the bare
+  geometry, so shadows, ray-query occlusion and the cover map ignore the lift (at most 6 cm);
+  the thickness is a display estimate of a night's fall on a deck, not a deposition model.
+- The winter running gear (2026-11-02; `snow_cover::step_pack`, `Renderer::set_running_gear_snow`,
+  `snow_gear_crust`). Nothing packed the tracks before: the Tiger's belt carried only
+  centimetre flecks (`track_snow`), the enemies' nothing, and lying snow stays off every
+  vertical face by its slope rule, so no vehicle's gear read as winter's. Each hull now carries
+  a pack load, gained with the distance driven through the lying snow (full after 80 m of a
+  full field, in proportion to the world's load) and lost over 15 minutes standing, and the
+  G-buffer draws a packed crust inside the hull frame's running-gear envelope (inner |x|, top
+  y: the T-34's measured from its bake, the Tiger's from its track nodes and interleaved
+  wheels, the heavy vehicles' from their track widths) whatever the face's slope, denser low
+  where the pads run and the snow is thrown, with a 1.5 cm lift, a matte slightly grey snow.
+  Named approximations: the envelope is a box in the hull frame (the lower hull side between
+  the wheels takes crust with them); the pack rates are presentation estimates; a hulk stands
+  at 0.6 of the world's load. `fx-review` part `gear` is the evidence.
 
 Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
 whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never

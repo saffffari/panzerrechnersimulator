@@ -25,6 +25,22 @@ const SHED_THRESHOLD_M_S: f32 = 2.0;
 const TRAVERSE_SHAKE: f32 = 0.4;
 /// Share of the load a shot leaves on the vehicle (muzzle blast over the glacis, recoil).
 const SHOT_KEEPS: f32 = 0.55;
+/// The running gear's packed snow: the belt carries up the snow it runs through onto its pads
+/// and between the guide horns, cakes the wheel rims and throws it onto the lower hull. Metres
+/// of driving through full lying snow that bring bare gear to full pack, and the pack's life once
+/// the vehicle stands (it thaws against the warm hull and falls out slowly): presentation
+/// estimates, not snow-physics measurements.
+pub const PACK_DISTANCE_M: f32 = 80.0;
+pub const PACK_LIFE_S: f32 = 900.0;
+/// One step of a vehicle's pack: gain with the distance driven through the lying snow
+/// (`lying`, the world's load 0..1), loss over the pack's life.
+pub fn step_pack(pack: f32, dt: f32, speed_m_s: f32, lying: f32) -> f32 {
+    let dt = if dt.is_finite() { dt.clamp(0.0, 0.25) } else { 0.0 };
+    let speed = if speed_m_s.is_finite() { speed_m_s.abs() } else { 0.0 };
+    let gain = speed * dt / PACK_DISTANCE_M * lying.clamp(0.0, 1.0) * (1.0 - pack);
+    let loss = dt / PACK_LIFE_S * pack;
+    (pack + gain - loss).clamp(0.0, 1.0)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SnowInputs {
@@ -41,13 +57,16 @@ pub struct SnowInputs {
 pub struct SnowCover {
     pub player: f32,
     pub world: f32,
+    /// The player's running gear's packed snow (`step_pack`).
+    #[serde(default)]
+    pub pack: f32,
     prev_turret_yaw: Option<f32>,
     prev_rounds: Option<u32>,
 }
 
 impl SnowCover {
     pub fn new(winter: bool) -> Self {
-        Self { player: 0.0, world: if winter { WINTER_WORLD_LOAD } else { 0.0 }, prev_turret_yaw: None, prev_rounds: None }
+        Self { player: 0.0, world: if winter { WINTER_WORLD_LOAD } else { 0.0 }, pack: 0.0, prev_turret_yaw: None, prev_rounds: None }
     }
 
     /// One load's update: accumulation toward full cover, shedding in proportion to the load.
@@ -80,6 +99,7 @@ impl SnowCover {
         self.prev_rounds = Some(rounds_spent);
         self.player = Self::step_load(self.player, &SnowInputs { dt, snowfall, vehicle_speed_m_s, traverse_rad_s: traverse, fired });
         self.world = Self::step_load(self.world, &SnowInputs { dt, snowfall, vehicle_speed_m_s: 0.0, traverse_rad_s: 0.0, fired: false });
+        self.pack = step_pack(self.pack, dt, vehicle_speed_m_s, self.world);
     }
 }
 
@@ -110,6 +130,17 @@ mod tests {
         assert!(run(1.0, 4.0, SnowInputs { traverse_rad_s: 0.35, ..still }) < 0.6);
         let shot = SnowCover::step_load(1.0, &SnowInputs { dt: 1.0 / 60.0, fired: true, ..still });
         assert!((shot - SHOT_KEEPS).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn the_gear_packs_with_the_distance_driven_through_lying_snow() {
+        let mut pack = 0.0;
+        for _ in 0..(20.0 * 60.0) as usize { pack = step_pack(pack, 1.0 / 60.0, 4.0, 1.0); } // 80 m
+        assert!((0.55..0.75).contains(&pack), "1 - 1/e after the nominal distance: {pack}");
+        let bare = (0..600).fold(0.0, |p, _| step_pack(p, 1.0 / 60.0, 4.0, 0.0));
+        assert_eq!(bare, 0.0, "no lying snow, nothing to pack");
+        let standing = (0..(300.0 * 60.0) as usize).fold(1.0, |p, _| step_pack(p, 1.0 / 60.0, 0.0, 1.0));
+        assert!(standing > 0.6 && standing < 0.8, "five minutes standing keeps most of it: {standing}");
     }
 
     #[test]
