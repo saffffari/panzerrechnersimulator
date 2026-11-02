@@ -39,7 +39,11 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1280x720 WINDOWED=0 PLATOON=0 LOOK= CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+# LOCKED (the owner, 2 November 2026): the realism look at 2,048 colours (16 red, 16 green, 8 blue
+# levels) on the 1024x576 grid, exactly 5x on the 5120x2880 panel. Agents: do not change these
+# defaults without asking the owner to confirm first; --look/--res still choose others per run.
+REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
+BRIDGE=0 SKY_SET=0 COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -70,9 +74,7 @@ done
 # The bridge map is a bright May afternoon unless --sky-start says otherwise.
 if (( BRIDGE )) && (( ! SKY_SET )); then SKY_START=16:00; fi
 if [[ -n "$LOOK" && $RES_SET == 0 ]]; then RES=1024x576; fi   # deltaP's grid: 5x on the 5120x2880 panel
-# The standard display at 1280x720 (4x on the panel) with the Canyon v2 document's own display profile
-# (ordered dither 0.55, LDR dither 0.65): the owner's pick of 2 November 2026 over deltaP's colour, on
-# the FEA film's turret-ring clip ("better than our stylized effects on the color as of now").
+# (The standard look, when chosen with --look standard, uses the Canyon v2 document's dither profile.)
 cd "$ROOT"
 [[ -x "$BINARY" ]] || { printf 'release binary missing: %s (cargo build --release --locked)\n' "$BINARY" >&2; exit 1; }
 for f in assets/tanks/tiger/baked/tiger_hull.glb assets/worldgen/workshops/gaea-canyon-run-v2/manifest.v1.json \
@@ -113,6 +115,7 @@ export XDG_STATE_HOME="$RUNTIME/state" XDG_CACHE_HOME="$RUNTIME/cache" XDG_CONFI
 export KESSEL_ASSET_ROOT="$ASSET_ROOT"
 export KESSEL_CANYON_MANIFEST="$ASSET_ROOT/assets/worldgen/workshops/${COURSE:-gaea-canyon-run-v2}/manifest.v1.json"
 export KESSEL_RENDERER=raymarch KESSEL_GRAPHICS_PRESET=high KESSEL_INTERNAL_RES="$RES"
+export KESSEL_REAL_STEPS="$REAL_STEPS"   # the locked colour count (top of file)
 export KESSEL_DITHER_PATTERN=screen_bayer8 KESSEL_GEOMETRY_AA=msaa4 KESSEL_SOURCE_VISIBILITY=maps
 export KESSEL_GRAPHICS_CONFIG="$CONFIG" KESSEL_ENABLE_PIZZA_AUDIO=1 KESSEL_TRANSPORT_QUALITY=full
 export KESSEL_CANYON_V2=1
