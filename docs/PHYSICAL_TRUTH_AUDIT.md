@@ -204,7 +204,11 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   slowly and thinning over ten seconds; an authored stand-in for the round's smoke, the spall's
   dust and the burning paint behind the plate, not a vented-gas model. The `fx-review` part
   `cabin_hit` (an observer inside behind the radio operator, the crew-solo fixture's wounding
-  lane through the hull side) is its evidence.
+  lane through the hull side) is its evidence. The spall bodies' trails (`HOT_FRAGMENT_TAIL_MAX_LENGTH`
+  0.04 m, was 0.145 m) are capped at about one frame of the slow end of their motion: on the
+  fixture every trail sat on the old cap a hand's breadth from the eye and drew as rods
+  spanning the compartment for a second; a trail is still a bounded suffix of the body's own
+  measured history, never a beam.
 - The detonation cloud of a shell on a plate (`event_parcels`, `EVENT_DETONATION`; `blast()` now
   carries the struck surface's normal in the burst's direction lane and the event takes it):
   against a plate or wall (normal below 0.7 up) the baked ground-burst volumes are not drawn;

@@ -8358,7 +8358,11 @@ const HOT_FRAGMENT_FIXED_DT: f32 = 1.0 / 480.0;
 const HOT_FRAGMENT_MAX_STEP_M: f32 = 0.018;
 const HOT_FRAGMENT_DAMAGE_MAX_S: f32 = 3.6;
 const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
-const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.145;
+// A tail is the body's own motion over about one frame at the slow end of the spall's speeds
+// (2.4 m/s x 1/60 s): a dash a few bodies long. At 0.145 m, seen from a hand's breadth away in
+// the compartment and bloomed, the tails drew as rods spanning the room for a second (traced
+// with the lights debug, 2026-11-02: every tail at the cap, 0.17-0.7 m from the eye).
+const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.04;
 const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.38;
 // The visible temperature pages also define the radiance of the bounded fragment-swarm emitter.
 // Emission is integrated from each real chip's six cube faces; the narrow history tail is only a
