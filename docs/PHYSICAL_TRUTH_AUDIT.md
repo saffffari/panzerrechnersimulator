@@ -199,7 +199,12 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   puffs born at the hole 0.45 s apart over 2.3 s, about the hole's size, leaving along the
   normal (1.6 m x (1 - e^(-age / 0.6 s))) and rising, fading over 6 s. Both are authored plumes
   on the event's origin and normal, not a vented-gas or detonation-products model; the hole's
-  glow is the existing hot rim.
+  glow is the existing hot rim. Inside the hull the same event fills the compartment: six puffs
+  born over the first second inward along the normal, trapped (no buoyant rise), spreading
+  slowly and thinning over ten seconds; an authored stand-in for the round's smoke, the spall's
+  dust and the burning paint behind the plate, not a vented-gas model. The `fx-review` part
+  `cabin_hit` (an observer inside behind the radio operator, the crew-solo fixture's wounding
+  lane through the hull side) is its evidence.
 - The detonation cloud of a shell on a plate (`event_parcels`, `EVENT_DETONATION`; `blast()` now
   carries the struck surface's normal in the burst's direction lane and the event takes it):
   against a plate or wall (normal below 0.7 up) the baked ground-burst volumes are not drawn;
