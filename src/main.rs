@@ -17013,6 +17013,16 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or(128);
         return run_train_foot_ai(epochs, args.get(3).map(String::as_str));
     }
+    if args.len() >= 2 && args[1] == "fea-bench" {
+        // CPU only: wall time per impact of the layered damage model, apart from driving.
+        let seeds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
+        return game::game_fea_section::bench(seeds, &capture_arg(&args, 3, "artifacts/perf/fea_bench.json"));
+    }
+    if args.len() >= 2 && args[1] == "fea-cross-section" {
+        // CPU only: the layered damage model's slow-motion cross sections (no wgpu device).
+        return game::game_fea_section::run(&capture_arg(&args, 2, "captures/fea_cross_section"),
+            args.get(3).map(String::as_str));
+    }
     if args.len() >= 2 && args[1] == "lan-verify" {
         return lan::run_loopback_verify();
     }

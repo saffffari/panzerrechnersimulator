@@ -505,7 +505,8 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   (linear peridynamic solid, 18-neighbour cubic lattice; not a finite-element method) with elastic
   bulk response, von Mises deviatoric plasticity by Mitchell's return mapping, linear hardening,
   logarithmic rate dependence lagged one step, linear thermal softening, bond failure at a ±8 %
-  scattered critical plastic strain or a 3 GPa tensile spall stress (named range 2–4 GPa), and
+  scattered critical plastic strain or by cumulative tensile spall damage of the Tuler–Butcher form
+  (threshold 2 GPa, 1 µs scale, both named estimates: tension must last to open a spall), and
   compressive contact between broken original neighbours only. The projectile is rigid with an
   ellipsoidal nose; its motion is prescribed from the calibrated speed loss, starting clear of the
   plate. Yield and deviatoric stiffness are exact for an interior family in coordinate-plane shear
@@ -516,7 +517,19 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   budget-sliced solve and any thread count reproduce the reference bit for bit; the lattice
   absorbs 0.25–0.8 of the kinetic energy the calibrated law removes (reported, not forced). The
   fracture pattern (petal count, bulge) is deterministic per impact state but not converged in the
-  time step. Cost on this i9 with 8 threads: 0.2–0.4 s per impact at the 12,000-particle cap.
+  time step. Cost on this i9 with 8 threads (`fea-bench 5`, 65 impacts of the cross-section set,
+  machine shared with other work at load ~12): lattice p50 525 ms, p95 1,075 ms, max 1,088 ms;
+  chain p50 46 µs, p95 0.8 ms. An unloaded machine measured 0.2–0.4 s. Rounds that stop very deep
+  in the plate (85–92 % of the path) also release a small back-face scab in the lattice; the game
+  spawns fragments only for perforations, so these appear only in the cross sections and receipts.
+- **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
+  game's own source-triangle contact, chain and lattice on the CPU-loaded Tiger meshes, drawn as
+  SVG/PNG frames about 1/1000 of real time apart, with a contact sheet and a 12 fps clip per case.
+  Section-view simplifications (named, not used by the game): fragments fly with drag until the
+  first source triangle they enter (no bounce or embedding drawn; surfaces they leave are passed,
+  since the struck plate's own source triangles are not perforated); all 64 hull cradles hold a
+  round; fuel 80 %; turret forward, gun level. The 14.5 mm B-32 case round is a case-set projectile
+  (no anti-tank rifle fires in the game yet) with estimated data.
 - **Lattice in play** (`game_fea::fea_solve_impact`): every kinetic strike on the player's Tiger
   that perforates or stops in the plate is solved before its scar, consequences and fragments are
   resolved. The solve runs to completion inside that tick (the tick waits and logs the wall time;

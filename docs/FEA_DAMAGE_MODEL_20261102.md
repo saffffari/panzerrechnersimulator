@@ -337,3 +337,28 @@ lists every named approximation of this model.
 - Not yet wired: persistent cold steel, grabbing and throwing fragments, drawing and removing
   lodged rounds, applying compartment pressure to the game's hatches, a cold-steel render page.
   These need renderer and interaction work that has to be checked on the GPU.
+
+### Stage 5 (landed): cross sections, and what they showed
+
+- `fea-cross-section PREFIX [CASE]` (CPU only) runs fourteen cases through the game's own contact,
+  chain and lattice: per case a contact sheet, a 12 fps slow-motion clip and one JSON receipt for
+  all, written to `KESSEL_CAPTURES_DIR` when set (as `<worktree>-<prefix>_...`), frames in a
+  temporary folder unless `KESSEL_FEA_KEEP_FRAMES=1`. Run 2026-11-02:
+  `fea-damage-fea_xsec_20261102_*` in `/home/alex/panzer/captures/`.
+- Findings: no Soviet solid round of the game's catalogue perforates the Tiger's 100 mm front at
+  its real slopes on level ground (the 76 mm BR-354P stops 88 mm in and lodges). A 45 mm BR-240P
+  perforates the 60 mm lower side, enters the left final drive's housing, crosses its gearing and
+  stops 35 mm into the far wall of the housing: the owner's "through the plate, into the
+  transmission, not through its casing" case (left track drive knocked out). The same round through
+  the 80 mm side at the fuel tank crosses the left tank, the engine and the right tank before
+  stopping. A 76 mm BR-354P through the sponson crosses six stowed rounds (in play the existing
+  initiation rule makes that an ammunition catastrophe). Filled rounds burst behind the plate; their
+  body steel reaches the gearbox, radio, seats or traverse drive depending on the aim. The B-32
+  bullet lodges 31 mm in the 80 mm side.
+- Two model corrections came from the sections: the instantaneous spall threshold let a 14.5 mm
+  bullet spall the inside of 80 mm plate, so spall is now cumulative tensile damage; and the
+  interior-fragment rule took material still enclosed ahead of a stopped nose, so a stopped round's
+  spall now has to be past the back face. An artificial-viscosity attempt to damp shock ringing
+  was tried and reverted (it did not reduce the spall and worsened energy closure).
+- `fea-bench [SEEDS] [OUT]` times the chain and the lattice per impact, apart from driving.
+- GPU renders of the cutaway Tiger are still queued.

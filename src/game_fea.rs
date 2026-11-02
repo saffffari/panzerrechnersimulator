@@ -129,6 +129,122 @@ pub(super) fn module_for_system(system: System) -> Option<ModuleKind> {
     }
 }
 
+
+/// The shot line through a Tiger, hull frame, for a strike at `impact_world` travelling along
+/// `dir_world`, with the far wall found by coming back along the line from outside to the first
+/// source surface (classified by the same plate classes as the entry).
+pub(super) fn shot_line(source: &surface_fire::CabinFire, models: &[Mat4; surface_fire::FRAMES], tank: &Tank,
+    impact_world: Vec3, dir_world: Vec3, event: &crate::ballistics::ImpactEvent) -> chain::ShotLine {
+    let hull = tank.hull_model();
+    let inv = hull.inverse();
+    let dir_world = dir_world.normalize_or_zero();
+    let entry = inv.transform_point3(impact_world);
+    let dir = inv.transform_vector3(dir_world).normalize_or_zero();
+    let cos = event.impact_angle_deg.to_radians().cos().clamp(0.05, 1.0);
+    let plate_path = event.plate.thickness_mm * 0.001 / cos;
+    const REACH_M: f32 = 12.0;
+    let far = impact_world + dir_world * REACH_M;
+    let near = impact_world + dir_world * (plate_path + 0.02);
+    let far_wall = projectile_armor_source::contact(source, models, tank,
+        ProjectileVehicle::Player, crate::ballistics::ArmorScheme::TigerI, far, near)
+        .and_then(|hit| {
+            let ProjectileContactKind::Vehicle(armor) = hit.kind else { return None };
+            let plate = armor.surface_plate?.plate;
+            let s_outer = (hit.pos - impact_world).dot(dir_world);
+            let normal_hull = inv.transform_vector3(armor.world_normal).normalize_or_zero();
+            let cos_far = dir.dot(normal_hull).abs().clamp(0.05, 1.0);
+            let s_inner = s_outer - plate.thickness_mm * 0.001 / cos_far;
+            (s_inner > plate_path + 0.01).then_some(chain::FarWall {
+                s_inner,
+                plate_mm: plate.thickness_mm,
+                material: crate::fea_damage::materials::MaterialId::RolledArmour,
+                cos_obliquity: cos_far,
+                normal: normal_hull,
+            })
+        });
+    chain::ShotLine { entry, dir, plate_path_m: plate_path, far_wall, max_s: REACH_M }
+}
+
+/// The voxel lattice's problem for a strike: the plate frame (origin at the strike, x along the
+/// shot's in-plane direction, y across, z into the plate; hull-local axes) and the prescribed
+/// motion from the chain's first crossing. `None` for ricochets and shatters (named: their path out
+/// of the plate is not prescribed to the lattice) and for non-kinetic rounds.
+pub(super) fn lattice_problem(event: &crate::ballistics::ImpactEvent, line: &chain::ShotLine,
+    chain_result: &chain::ChainResult, outward_normal_hull: Vec3, seed: u32) -> Option<(lattice::PlateImpact, [Vec3; 3])> {
+    use crate::fea_damage::chain::Fate;
+    let motion = chain_result.crossings.first().and_then(|c| match c.fate {
+        Fate::Perforated | Fate::Burst => Some(lattice::Motion::Perforate { v_out: c.v_out }),
+        Fate::Stopped { depth_m } => Some(lattice::Motion::Stop { depth_m }),
+        _ => None,
+    })?;
+    let mut e3 = -outward_normal_hull.normalize_or_zero();
+    if e3.dot(line.dir) < 0.0 {
+        e3 = -e3;
+    }
+    let tangential = line.dir - e3 * line.dir.dot(e3);
+    let e1 = tangential.try_normalize().unwrap_or_else(|| e3.any_orthonormal_vector());
+    let e2 = e3.cross(e1);
+    let obliquity = line.dir.dot(e3).clamp(-1.0, 1.0).acos().min(1.4);
+    let shell = event.shell;
+    let calibre = shell.caliber_mm * 0.001;
+    // A sub-calibre core goes into the plate; the carrier is not modelled (named).
+    let body_d = if shell.kind == crate::ballistics::ShellKind::Apcr { 0.37 * calibre } else { calibre };
+    let material = match event.plate.material {
+        crate::ballistics::ArmorMaterial::Cast => crate::fea_damage::materials::MaterialId::CastArmour,
+        _ => crate::fea_damage::materials::MaterialId::RolledArmour,
+    };
+    Some((lattice::PlateImpact {
+        material,
+        thickness_m: event.plate.thickness_mm * 0.001,
+        obliquity_rad: obliquity,
+        projectile: lattice::ProjectileShape {
+            mass_kg: shell.mass_kg,
+            radius_m: 0.5 * body_d,
+            nose_m: lodged::nose_length_calibres(shell.kind) * body_d,
+        },
+        v_in: event.striking_v,
+        motion,
+        seed,
+    }, [e1, e2, e3]))
+}
+
+/// Measure a solved lattice into the outcome the game consumes.
+pub(super) fn lattice_outcome(solver: &mut lattice::Lattice, origin_hull: Vec3, axes_hull: [Vec3; 3], wall_ms: f32) -> LatticeOutcome {
+    let geometry = solver.measure();
+    let ledger = solver.ledger_now();
+    let measured = crate::armor_damage::MeasuredScar {
+        perforated: matches!(solver.impact.motion, lattice::Motion::Perforate { .. }),
+        aperture_mm: geometry.aperture_mm,
+        back_radius_mm: geometry.back_radius_mm,
+        petals: geometry.petals,
+        petal_mm: geometry.petal_mm,
+        plug: geometry.plug,
+        cavity_mm: geometry.cavity_mm,
+        worked_radius_mm: geometry.worked_radius_mm,
+        rim_kelvin: geometry.rim_kelvin,
+    };
+    let samples = solver.rim_cooling(&crate::armor_damage::RIM_CURVE_TIMES);
+    let mut kelvin = [crate::armor_damage::AMBIENT_K; 10];
+    for (k, v) in kelvin.iter_mut().zip(samples) {
+        *k = v;
+    }
+    LatticeOutcome {
+        measured,
+        geometry,
+        clusters: solver.clusters(),
+        origin_hull,
+        axes_hull,
+        thickness_m: solver.impact.thickness_m,
+        particles: solver.n,
+        steps: solver.step,
+        cell_mm: solver.h * 1000.0,
+        wall_ms,
+        ledger,
+        grip_normal_n: solver.body_grip_normal_n(),
+        rim_curve: crate::armor_damage::RimCurve { kelvin },
+    }
+}
+
 impl Game {
     /// Turret yaw and gun elevation as the component envelopes need them.
     fn fea_articulation(&self) -> components::Articulation {
@@ -139,40 +255,11 @@ impl Game {
         }
     }
 
-    /// The shot line through the player's Tiger, hull frame, for a strike at `impact_world`
-    /// travelling along `dir_world`, with the far wall found by coming back along the line from
-    /// outside to the first source surface (classified by the same plate classes as the entry).
+    /// The shot line through the player's Tiger (`shot_line`) against the same armour-only source
+    /// cache its shell contacts use.
     pub(super) fn fea_shot_line(&self, impact_world: Vec3, dir_world: Vec3,
         event: &crate::ballistics::ImpactEvent) -> chain::ShotLine {
-        let hull = self.player.hull_model();
-        let inv = hull.inverse();
-        let dir_world = dir_world.normalize_or_zero();
-        let entry = inv.transform_point3(impact_world);
-        let dir = inv.transform_vector3(dir_world).normalize_or_zero();
-        let cos = event.impact_angle_deg.to_radians().cos().clamp(0.05, 1.0);
-        let plate_path = event.plate.thickness_mm * 0.001 / cos;
-        const REACH_M: f32 = 12.0;
-        let models = self.fire_surface_models();
-        let far = impact_world + dir_world * REACH_M;
-        let near = impact_world + dir_world * (plate_path + 0.02);
-        let far_wall = projectile_armor_source::contact(&self.cabin_fire, &models, &self.player,
-            ProjectileVehicle::Player, crate::ballistics::ArmorScheme::TigerI, far, near)
-            .and_then(|hit| {
-                let ProjectileContactKind::Vehicle(armor) = hit.kind else { return None };
-                let plate = armor.surface_plate?.plate;
-                let s_outer = (hit.pos - impact_world).dot(dir_world);
-                let normal_hull = inv.transform_vector3(armor.world_normal).normalize_or_zero();
-                let cos_far = dir.dot(normal_hull).abs().clamp(0.05, 1.0);
-                let s_inner = s_outer - plate.thickness_mm * 0.001 / cos_far;
-                (s_inner > plate_path + 0.01).then_some(chain::FarWall {
-                    s_inner,
-                    plate_mm: plate.thickness_mm,
-                    material: crate::fea_damage::materials::MaterialId::RolledArmour,
-                    cos_obliquity: cos_far,
-                    normal: normal_hull,
-                })
-            });
-        chain::ShotLine { entry, dir, plate_path_m: plate_path, far_wall, max_s: REACH_M }
+        shot_line(&self.projectile_player_armor, &self.fire_surface_models(), &self.player, impact_world, dir_world, event)
     }
 
     /// Run the chain for a kinetic strike on the player's Tiger. `None` for HE and HEAT, whose
@@ -390,88 +477,22 @@ impl Game {
     /// (logged) rather than letting any consumer see a half-solved plate or skip the contact.
     pub(super) fn fea_solve_impact(&mut self, projectile_id: u64, seed: u32, armor: &VehicleArmorContact,
         event: &crate::ballistics::ImpactEvent, impact_world: Vec3, dir_world: Vec3) {
-        use crate::fea_damage::chain::Fate;
         self.fea.current = None;
         let Some((line, chain_result)) = self.fea_run_chain(impact_world, dir_world, event) else { return };
-        let motion = chain_result.crossings.first().and_then(|c| match c.fate {
-            Fate::Perforated | Fate::Burst => Some(lattice::Motion::Perforate { v_out: c.v_out }),
-            Fate::Stopped { depth_m } => Some(lattice::Motion::Stop { depth_m }),
-            // Ricochets and shatters keep the empirical scar: their path out of the plate is not
-            // prescribed to the lattice (named).
-            _ => None,
-        });
         let hull_inv = self.player.hull_model().inverse();
-        let lattice = motion.map(|motion| {
-            let mut e3 = -hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
-            if e3.dot(line.dir) < 0.0 {
-                e3 = -e3;
-            }
-            let tangential = line.dir - e3 * line.dir.dot(e3);
-            let e1 = tangential.try_normalize().unwrap_or_else(|| e3.any_orthonormal_vector());
-            let e2 = e3.cross(e1);
-            let obliquity = line.dir.dot(e3).clamp(-1.0, 1.0).acos().min(1.4);
-            let shell = event.shell;
-            let calibre = shell.caliber_mm * 0.001;
-            // A sub-calibre core goes into the plate; the carrier is not modelled (named).
-            let body_d = if shell.kind == crate::ballistics::ShellKind::Apcr { 0.37 * calibre } else { calibre };
-            let material = match event.plate.material {
-                crate::ballistics::ArmorMaterial::Cast => crate::fea_damage::materials::MaterialId::CastArmour,
-                _ => crate::fea_damage::materials::MaterialId::RolledArmour,
-            };
-            let local_seed = crate::armor_damage::position_seed(armor.local_point) ^ seed.rotate_left(13);
-            let impact = lattice::PlateImpact {
-                material,
-                thickness_m: event.plate.thickness_mm * 0.001,
-                obliquity_rad: obliquity,
-                projectile: lattice::ProjectileShape {
-                    mass_kg: shell.mass_kg,
-                    radius_m: 0.5 * body_d,
-                    nose_m: lodged::nose_length_calibres(shell.kind) * body_d,
-                },
-                v_in: event.striking_v,
-                motion,
-                seed: local_seed,
-            };
+        let normal_hull = hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
+        let local_seed = crate::armor_damage::position_seed(armor.local_point) ^ seed.rotate_left(13);
+        let lattice = lattice_problem(event, &line, &chain_result, normal_hull, local_seed).map(|(impact, axes)| {
             let started = std::time::Instant::now();
             let mut solver = lattice::Lattice::new(impact);
             solver.solve();
             let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
-            let geometry = solver.measure();
-            let ledger = solver.ledger_now();
-            let measured = crate::armor_damage::MeasuredScar {
-                perforated: matches!(motion, lattice::Motion::Perforate { .. }),
-                aperture_mm: geometry.aperture_mm,
-                back_radius_mm: geometry.back_radius_mm,
-                petals: geometry.petals,
-                petal_mm: geometry.petal_mm,
-                plug: geometry.plug,
-                cavity_mm: geometry.cavity_mm,
-                worked_radius_mm: geometry.worked_radius_mm,
-                rim_kelvin: geometry.rim_kelvin,
-            };
+            let outcome = lattice_outcome(&mut solver, line.entry, axes, wall_ms);
+            let g = outcome.geometry;
             println!("[fea] lattice {} particles, {:.1} mm cells, {} steps, {:.0} ms (the tick waited for it): aperture {:.0} mm, petals {}, plug {}, lip {:.0} mm, bulge {:.0} mm, rim {:.0} K, energy closure {:.2} %",
-                solver.n, solver.h * 1000.0, solver.step, wall_ms, geometry.aperture_mm, geometry.petals, geometry.plug,
-                geometry.lip_mm, geometry.bulge_mm, geometry.rim_kelvin, ledger.closure() * 100.0);
-            LatticeOutcome {
-                measured,
-                geometry,
-                clusters: solver.clusters(),
-                origin_hull: line.entry,
-                axes_hull: [e1, e2, e3],
-                thickness_m: impact.thickness_m,
-                particles: solver.n,
-                steps: solver.step,
-                cell_mm: solver.h * 1000.0,
-                wall_ms,
-                ledger,
-                grip_normal_n: solver.body_grip_normal_n(),
-                rim_curve: {
-                    let samples = solver.rim_cooling(&crate::armor_damage::RIM_CURVE_TIMES);
-                    let mut kelvin = [crate::armor_damage::AMBIENT_K; 10];
-                    for (k, v) in kelvin.iter_mut().zip(samples) { *k = v; }
-                    crate::armor_damage::RimCurve { kelvin }
-                },
-            }
+                outcome.particles, outcome.cell_mm, outcome.steps, wall_ms, g.aperture_mm, g.petals, g.plug,
+                g.lip_mm, g.bulge_mm, g.rim_kelvin, outcome.ledger.closure() * 100.0);
+            outcome
         });
         self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice });
     }
@@ -529,7 +550,7 @@ impl Game {
             if out.len() >= N_HOT_FRAGMENTS {
                 break;
             }
-            if cluster.centre.z < 0.5 * lat.thickness_m || cluster.velocity.z <= 0.0 {
+            if !cluster.leaves_inside(lat.thickness_m, lat.cell_mm * 0.001, lat.measured.perforated) {
                 continue;
             }
             let index = out.len();

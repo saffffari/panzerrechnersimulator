@@ -39,9 +39,13 @@ pub const MIN_LATERAL_CALIBRES: f32 = 1.6;
 pub const FAILURE_SCATTER: f32 = 0.08;
 /// Yield scatter (±, fraction), hashed per particle.
 pub const YIELD_SCATTER: f32 = 0.04;
-/// Tensile spall strength of armour steel, Pa (named: plate-impact measurements of armour steels
-/// span roughly 2–4 GPa).
-pub const SPALL_STRENGTH_PA: f32 = 3.0e9;
+/// Spall: cumulative tensile damage of the Tuler–Butcher form, D = ∫ ((σ − σ0)/σ0)² dt / τ, a bond
+/// failing when either end reaches 1 (scattered with the bond's failure strain). Tension must last
+/// to open a spall: a short pulse from a small projectile does not, a long one does. σ0 and τ are
+/// named estimates within the range reported for armour steels (threshold ~2 GPa, microsecond
+/// scale).
+pub const SPALL_THRESHOLD_PA: f32 = 2.0e9;
+pub const SPALL_DAMAGE_TIME_S: f32 = 1.0e-6;
 /// A particle whose intact family's weighted volume falls below this (over h⁵) carries no
 /// state-based stress, only compressive contact: it is all but detached (named).
 pub const MIN_FAMILY: f32 = 3.0;
@@ -168,8 +172,10 @@ pub struct Lattice {
     /// Volumetric strain taken up by cracks (damage dilatation): the bulk response is elastic in
     /// θ − θ_d, so breaking a bond never raises a particle's stored bulk energy.
     theta_d: Vec<f32>,
-    /// Dilatation at the end of the previous step (the spall criterion reads it).
+    /// Dilatation at the end of the previous step.
     theta_prev: Vec<f32>,
+    /// Accumulated spall damage (Tuler–Butcher form, failure at 1).
+    pub spall_damage: Vec<f32>,
     /// Per particle slot: 0 no neighbour, 1 intact, 2 broken (both ends of a bond agree).
     slot_st: Vec<u8>,
     /// Per particle slot: unit direction to the neighbour now.
@@ -219,7 +225,6 @@ pub struct Lattice {
     /// Kinetic energy the calibrated law removed in this plate.
     pub calibrated_loss_j: f64,
     path_resist_m: f32,
-    spall_theta: f32,
     full_m: f32,
     /// Test-only switches for isolating ledger terms.
     #[cfg(test)]
@@ -398,14 +403,14 @@ impl Lattice {
             ux: vec![0.0; n], uy: vec![0.0; n], uz: vec![0.0; n], vx: vec![0.0; n], vy: vec![0.0; n], vz: vec![0.0; n],
             fx: vec![0.0; n], fy: vec![0.0; n], fz: vec![0.0; n], contact_prev: vec![[0.0; 3]; n],
             temp: vec![AMBIENT_K; n], eps_p: vec![0.0; n], eps_rate: vec![0.0; n], theta: vec![0.0; n],
-            theta_d: vec![0.0; n], theta_prev: vec![0.0; n], slot_st, mdir: vec![[0.0; 3]; n * SLOTS],
+            theta_d: vec![0.0; n], theta_prev: vec![0.0; n], spall_damage: vec![0.0; n], slot_st, mdir: vec![[0.0; 3]; n * SLOTS],
             threads: default_threads(),
             yield_scale, m_cur: m_ref.clone(), m_ref, valid, fixed, damping, bond_state, bond_fail,
             ext: vec![0.0; n * SLOTS], e_dp: vec![0.0; n * SLOTS], t_state: vec![0.0; n * SLOTS],
             rest, xi, xi_len, delta, bulk, shear, k_pair, k_contact, mass, vol, dt, t: 0.0, step: 0, t_end,
             tip_s: -start_back, v: v_in, dir, ledger: Ledger::default(), done: false, material,
             calibrated_loss_j: calibrated_loss, path_resist_m: path_resist,
-            spall_theta: SPALL_STRENGTH_PA / bulk, full_m,
+            full_m,
             #[cfg(test)]
             debug_elastic: false,
             #[cfg(test)]
@@ -650,6 +655,7 @@ struct View {
     eps_rate: *mut f32,
     theta: *mut f32,
     theta_prev: *mut f32,
+    spall_damage: *mut f32,
     theta_d: *mut f32,
     m_cur: *mut f32,
     m_ref: *const f32,
@@ -681,6 +687,7 @@ impl View {
             eps_rate: l.eps_rate.as_mut_ptr(),
             theta: l.theta.as_mut_ptr(),
             theta_prev: l.theta_prev.as_mut_ptr(),
+            spall_damage: l.spall_damage.as_mut_ptr(),
             theta_d: l.theta_d.as_mut_ptr(),
             m_cur: l.m_cur.as_mut_ptr(),
             m_ref: l.m_ref.as_ptr(),
@@ -714,7 +721,6 @@ struct Consts {
     k_pair: f32,
     k_contact: f32,
     full_m: f32,
-    spall_theta: f32,
     xi: [Vec3; SLOTS],
     xi_len: [f32; SLOTS],
     rest: [f32; SLOTS],
@@ -732,7 +738,7 @@ impl Consts {
         Consts {
             impact: l.impact, material: l.material, dims: l.dims, origin: l.origin, h: l.h, vol: l.vol,
             dt: l.dt, mass: l.mass, bulk: l.bulk, shear: l.shear, k_pair: l.k_pair, k_contact: l.k_contact,
-            full_m: l.full_m, spall_theta: l.spall_theta, xi: l.xi, xi_len: l.xi_len, rest: l.rest,
+            full_m: l.full_m, xi: l.xi, xi_len: l.xi_len, rest: l.rest,
             delta: l.delta, dir: l.dir, path_resist: l.path_resist_m, t_end: l.t_end,
             elastic_only: l.debug_elastic_flag(), no_fracture: l.debug_no_fracture_flag(),
             rate_free: l.debug_rate_free_flag(),
@@ -903,9 +909,8 @@ unsafe fn pass_extensions(v: &View, c: &Consts, lo: usize, hi: usize, broken: &m
                     let bi = p * BONDS + s;
                     let fail = *v.bond_fail.add(bi);
                     let strained = 0.5 * (*v.eps_p.add(p) + *v.eps_p.add(q)) >= fail;
-                    let th_p = *v.theta_prev.add(p) - *v.theta_d.add(p);
-                    let th_q = *v.theta_prev.add(q) - *v.theta_d.add(q);
-                    let spalled = th_p.max(th_q) >= c.spall_theta * (fail / c.material.failure_strain);
+                    let damage = (*v.spall_damage.add(p)).max(*v.spall_damage.add(q));
+                    let spalled = damage >= fail / c.material.failure_strain;
                     if strained || spalled {
                         *v.bond_state.add(bi) = 2;
                         broken.push((p as u32, s as u8));
@@ -1005,6 +1010,11 @@ unsafe fn pass_states(v: &View, c: &Consts, lo: usize, hi: usize) -> f64 {
         let m_p = (*v.m_ref.add(p)).max(1e-6);
         let a = 15.0 * c.shear / m_p;
         let theta = *v.theta.add(p);
+        let tension = c.bulk * (theta - *v.theta_d.add(p));
+        if tension > SPALL_THRESHOLD_PA {
+            let over = (tension - SPALL_THRESHOLD_PA) / SPALL_THRESHOLD_PA;
+            *v.spall_damage.add(p) += over * over * c.dt / SPALL_DAMAGE_TIME_S;
+        }
         let bulk_term = 3.0 * c.bulk * (theta - *v.theta_d.add(p)) / m_p;
         let rate = if c.rate_free { 0.0 } else { *v.eps_rate.add(p) };
         let sigma = materials::flow_stress(material, *v.eps_p.add(p), rate, *v.temp.add(p)) * *v.yield_scale.add(p);
@@ -1363,6 +1373,20 @@ pub struct Cluster {
     pub size_m: f32,
     /// The detached cluster ahead of the nose on the path (the punched plug).
     pub plug: bool,
+}
+
+impl Cluster {
+    /// Whether this cluster leaves the plate on the inside: moving inward and, when the round
+    /// perforated, past the plate's mid-thickness (the bore is open); when it stopped, already past
+    /// the original back face (a scab), since material crushed ahead of the nose is still enclosed
+    /// by intact plate.
+    pub fn leaves_inside(&self, thickness_m: f32, cell_m: f32, perforated: bool) -> bool {
+        self.velocity.z > 0.0 && if perforated {
+            self.centre.z >= 0.5 * thickness_m
+        } else {
+            self.centre.z >= thickness_m - 0.5 * cell_m
+        }
+    }
 }
 
 /// Terminal geometry measured from the solved lattice, in the plate frame (millimetres where the

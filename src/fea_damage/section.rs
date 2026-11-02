@@ -135,3 +135,120 @@ pub fn lattice_png(l: &Lattice, path: &std::path::Path, pixels_per_cell: u32) ->
     img.save(path)?;
     Ok(())
 }
+
+// ── SVG drawing of a vehicle cross section ─────────────────────────────────────────────────────────
+
+/// A 2-D canvas in SVG with a world-to-pixel mapping for the section plane.
+pub struct Svg {
+    pub width: f32,
+    pub height: f32,
+    body: String,
+}
+
+pub fn esc(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+pub fn rgb(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+impl Svg {
+    pub fn new(width: f32, height: f32, background: [u8; 3]) -> Self {
+        let mut s = Self { width, height, body: String::new() };
+        s.rect(0.0, 0.0, width, height, &rgb(background), "none", 0.0, 1.0);
+        s
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, fill: &str, stroke: &str, stroke_w: f32, opacity: f32) {
+        self.body.push_str(&format!(
+            "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{stroke_w:.1}\" opacity=\"{opacity:.2}\"/>\n"));
+    }
+    pub fn line(&mut self, a: (f32, f32), b: (f32, f32), stroke: &str, width: f32, dash: bool) {
+        self.body.push_str(&format!(
+            "<line x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"{stroke}\" stroke-width=\"{width:.1}\"{}/>\n",
+            a.0, a.1, b.0, b.1, if dash { " stroke-dasharray=\"6,4\"" } else { "" }));
+    }
+    pub fn polyline(&mut self, points: &[(f32, f32)], stroke: &str, width: f32) {
+        if points.len() < 2 {
+            return;
+        }
+        let pts: Vec<String> = points.iter().map(|p| format!("{:.1},{:.1}", p.0, p.1)).collect();
+        self.body.push_str(&format!("<polyline points=\"{}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{width:.1}\"/>\n", pts.join(" ")));
+    }
+    pub fn polygon(&mut self, points: &[(f32, f32)], fill: &str, stroke: &str, width: f32) {
+        let pts: Vec<String> = points.iter().map(|p| format!("{:.1},{:.1}", p.0, p.1)).collect();
+        self.body.push_str(&format!("<polygon points=\"{}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{width:.1}\"/>\n", pts.join(" ")));
+    }
+    pub fn circle(&mut self, c: (f32, f32), r: f32, fill: &str, opacity: f32) {
+        self.body.push_str(&format!("<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"{r:.1}\" fill=\"{fill}\" opacity=\"{opacity:.2}\"/>\n", c.0, c.1));
+    }
+    pub fn text(&mut self, x: f32, y: f32, size: f32, fill: &str, text: &str) {
+        self.body.push_str(&format!(
+            "<text x=\"{x:.1}\" y=\"{y:.1}\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"{size:.1}\" fill=\"{fill}\">{}</text>\n",
+            esc(text)));
+    }
+    /// A raster image (e.g. the static layer) drawn at the origin, referenced by a relative path.
+    pub fn image(&mut self, href: &str, w: f32, h: f32) {
+        self.body.push_str(&format!("<image href=\"{}\" x=\"0\" y=\"0\" width=\"{w:.0}\" height=\"{h:.0}\"/>\n", esc(href)));
+    }
+    pub fn finish(&self) -> String {
+        format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w:.0}\" height=\"{h:.0}\" viewBox=\"0 0 {w:.0} {h:.0}\">\n{}</svg>\n",
+            self.body, w = self.width, h = self.height)
+    }
+}
+
+/// Segments where `plane` (point, unit normal) cuts the triangles of a mesh posed by `model`,
+/// expressed in the plane's 2-D axes `(u, v)` through `origin`.
+pub fn slice_mesh(mesh: &crate::gltf_load::CpuMesh, model: glam::Mat4, origin: Vec3, normal: Vec3,
+    u: Vec3, v: Vec3, out: &mut Vec<((f32, f32), (f32, f32))>) {
+    let vert = |i: u32| model.transform_point3(Vec3::from_array(mesh.vertices[i as usize].pos));
+    for tri in mesh.indices.chunks_exact(3) {
+        let p = [vert(tri[0]), vert(tri[1]), vert(tri[2])];
+        let d = p.map(|q| (q - origin).dot(normal));
+        let mut hits: Vec<Vec3> = Vec::with_capacity(2);
+        for k in 0..3 {
+            let (a, b) = (k, (k + 1) % 3);
+            if (d[a] > 0.0) != (d[b] > 0.0) {
+                let f = d[a] / (d[a] - d[b]);
+                hits.push(p[a] + (p[b] - p[a]) * f);
+            }
+        }
+        if hits.len() == 2 {
+            let to2 = |q: Vec3| ((q - origin).dot(u), (q - origin).dot(v));
+            out.push((to2(hits[0]), to2(hits[1])));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slicing_a_box_gives_its_outline_in_the_plane() {
+        let mesh = crate::prims::box_mesh(Vec3::new(-1.0, 0.0, -2.0), Vec3::new(1.0, 2.0, 2.0), [100, 100, 100]);
+        let mut segments = Vec::new();
+        // The vertical plane x = 0.3: a 4 m by 2 m rectangle in (z, y).
+        slice_mesh(&mesh, glam::Mat4::IDENTITY, Vec3::new(0.3, 0.0, 0.0), Vec3::X, Vec3::Z, Vec3::Y, &mut segments);
+        assert!(!segments.is_empty());
+        let length: f32 = segments.iter().map(|(a, b)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()).sum();
+        assert!((length - 12.0).abs() < 1e-3, "outline length {length}");
+        for (a, b) in &segments {
+            for p in [a, b] {
+                assert!(p.0 >= -2.0 - 1e-4 && p.0 <= 2.0 + 1e-4 && p.1 >= -1e-4 && p.1 <= 2.0 + 1e-4);
+            }
+        }
+    }
+
+    #[test]
+    fn svg_text_is_escaped_and_the_document_closes() {
+        let mut svg = Svg::new(100.0, 50.0, [0, 0, 0]);
+        svg.text(1.0, 2.0, 10.0, "#fff", "a < b & c > d");
+        let doc = svg.finish();
+        assert!(doc.contains("a &lt; b &amp; c &gt; d"));
+        assert!(doc.trim_end().ends_with("</svg>"));
+        assert_eq!(heat_colour(AMBIENT_K, [10, 20, 30]), [10, 20, 30]);
+        assert!(heat_colour(1700.0, [0, 0, 0])[2] > heat_colour(950.0, [0, 0, 0])[2]);
+    }
+}

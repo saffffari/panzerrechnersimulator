@@ -60,6 +60,8 @@ mod game_acoustics;
 mod game_hit_sounds;
 #[path = "game_fea.rs"]
 mod game_fea;
+#[path = "game_fea_section.rs"]
+pub(crate) mod game_fea_section;
 #[path = "game_recorded_fx.rs"]
 mod game_recorded_fx;
 #[path = "main_gun_candidates.rs"]
