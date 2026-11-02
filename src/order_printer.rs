@@ -44,6 +44,8 @@ pub const MAX_LINES: usize = 20;
 const REACH_M: f32 = 2.2;
 /// Read in hand at the map's distance: the 210 mm sheet spans two thirds of the frame.
 const HOLD_DISTANCE: f32 = 0.19;
+/// The torn-off sheet rises into the reading overlay over this time, and sinks when pocketed.
+const RISE_SECONDS: f32 = 0.25;
 /// The camp's machine prints when the reader is on foot within this distance of the table.
 const CAMP_PRINT_RADIUS_M: f32 = 40.0;
 const ENTRY_MAX_CHARS: usize = 120;
@@ -116,6 +118,9 @@ pub struct Printer {
     /// The typed line to the detail: open at the head's keys, sent with Enter.
     pub typing: bool,
     pub entry: String,
+    /// The held sheet's rise into the reading overlay, 0 (pocketed or none) to 1 (up).
+    #[serde(default)]
+    pub rise: f32,
     /// The camp's machine and head, cloned from the turret's when the camp is installed.
     #[serde(skip)]
     pub camp_slots: Option<[usize; 2]>,
@@ -486,6 +491,14 @@ impl Game {
     pub fn order_receipt_held(&self) -> bool {
         self.order_printer.held()
     }
+    /// The held sheet's rise into the overlay, 0 to 1.
+    pub fn order_sheet_rise(&self) -> f32 {
+        self.order_printer.rise
+    }
+    /// A torn-off sheet is in the reader's keeping, in hand or in the pocket.
+    pub fn order_sheet_in_hand(&self) -> bool {
+        self.order_printer.hand.is_some()
+    }
     /// The strip is printing or hangs torn-off-able at a machine.
     pub fn order_strip_active(&self) -> bool {
         self.order_printer.on_machine()
@@ -515,6 +528,25 @@ impl Game {
             self.order_printer.phase = Phase::Hanging;
         }
         self.order_printer.tear()
+    }
+    /// Harness fixture (disclosed where used): a sample order printed in full at the turret's
+    /// machine and torn off into the hands, so a review can show the sheet without a mission.
+    pub fn debug_hold_sample_order(&mut self) -> bool {
+        let order = [
+            "Kampfgruppe Elster holds the southern crossing until relieved. The bridge stays passable for the column.".to_string(),
+            "Enemy armour reported moving west of the river at first light. Engage only from cover; do not pursue.".to_string(),
+            "Report by teleprinter on reaching the crossing and on every contact.".to_string(),
+        ];
+        self.repair_manual.set_held(false);
+        self.order_printer.begin("Befehl Nr. 7", "Kampfgruppe · Nachhut · schriftlicher Befehl", &order, "1  To the crossing", Site::Turret);
+        while self.order_printer.phase == Phase::Printing {
+            self.order_printer.tick(LINE_SECONDS);
+        }
+        self.order_printer.tear()
+    }
+    /// Harness fixture: the sheet's rise set directly, for a still mid-rise.
+    pub fn debug_set_order_sheet_rise(&mut self, rise: f32) {
+        self.order_printer.rise = rise.clamp(0.0, 1.0);
     }
 
     // --- the typed line to the detail ------------------------------------------------------
@@ -643,6 +675,14 @@ impl Game {
             }
             Event::None => {}
         }
+        // The held sheet's rise into the overlay, and its sinking when pocketed or let go.
+        let target = if self.order_printer.held() && self.controlled_soldier_alive() { 1.0 } else { 0.0 };
+        let step = (dt.max(0.0) / RISE_SECONDS).min(1.0);
+        self.order_printer.rise = if target > self.order_printer.rise {
+            (self.order_printer.rise + step).min(target)
+        } else {
+            (self.order_printer.rise - step).max(target)
+        };
     }
     /// Poses: the head and strip in the turret, the camp's machine on its table, the strip in
     /// hand. Called with the interior parts each frame.
@@ -675,11 +715,16 @@ impl Game {
             r.set_emissive(self.slots.order_strip, 0.0);
         }
         let held = self.order_printer.held() && self.controlled_soldier_alive();
-        r.set_visible(self.slots.order_receipt, held);
+        // Read top-down as an overlay (the manual's presentation), or in hand as a sheet in the
+        // scene when the physical book is asked for.
+        let overlay = crate::repair_manual::overlay_mode();
+        r.set_visible(self.slots.order_receipt, held && !overlay);
         if held {
-            r.camera.fov_y = crate::repair_manual::reading_fov(&r.camera);
-            r.set_model(self.slots.order_receipt, held_model(&r.camera));
-            r.set_emissive(self.slots.order_receipt, 0.0);
+            if !overlay {
+                r.camera.fov_y = crate::repair_manual::reading_fov(&r.camera);
+                r.set_model(self.slots.order_receipt, held_model(&r.camera));
+                r.set_emissive(self.slots.order_receipt, 0.0);
+            }
             r.optic_mask = 0.0;
             r.reticle = false;
             self.hide_p08(r);

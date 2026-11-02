@@ -40,7 +40,7 @@ pub(crate) mod track_ruts;
 mod held_map_render;
 #[path = "order_receipt_render.rs"]
 mod order_receipt_render;
-pub use order_receipt_render::{ReceiptInk, RECEIPT_CHARS_PER_LINE, RECEIPT_INK_HEIGHT, RECEIPT_INK_WIDTH};
+pub use order_receipt_render::{draw_order_sheet_overlay, ReceiptInk, RECEIPT_CHARS_PER_LINE, RECEIPT_INK_HEIGHT, RECEIPT_INK_WIDTH};
 #[path = "repair_manual_render.rs"]
 mod repair_manual_render;
 
@@ -11398,6 +11398,15 @@ impl Renderer {
         align: Align,
     ) {
         self.ui.push(text, x, y, size, color, align, false);
+    }
+
+    /// Map the following text, rects and images through a rectangle of the display: a page's
+    /// own [0,1] layout drawn at native resolution where the frame says (`ui::Ui::set_frame`).
+    pub fn ui_set_frame(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.ui.set_frame(x, y, w, h);
+    }
+    pub fn ui_clear_frame(&mut self) {
+        self.ui.clear_frame();
     }
 
     /// Queue a string in a named face (`ui::FACE_*`), the manual's grotesque among them.

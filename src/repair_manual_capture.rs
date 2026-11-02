@@ -325,3 +325,120 @@ pub fn run(prefix: &str, video: bool) -> anyhow::Result<()> {
     println!("[repair-manual] wrote physical page review {prefix}.json");
     Ok(())
 }
+
+/// One display-resolution still of the paper overlays over the converged cabin.
+struct OverlayStill<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    prefix: &'a str,
+    aspect: f32,
+    size: (u32, u32),
+    receipts: Vec<serde_json::Value>,
+}
+
+impl OverlayStill<'_> {
+    fn take(&mut self, r: &mut crate::renderer::Renderer, g: &mut Game, name: &str, settle_frames: u32) -> anyhow::Result<()> {
+        g.update(&TankInput::default(), 0., r);
+        g.prepare_repair_manual(r, self.device, self.queue, None);
+        g.prepare_order_receipt(r, self.device, self.queue);
+        r.ui_reset();
+        if settle_frames > 0 {
+            let warmup = crate::converge_headless_screenshot(r, self.device, self.queue, settle_frames)?;
+            ensure!(warmup.stable, "overlay review eye did not converge");
+        }
+        // The overlays are queued as the play frame queues them, then composited over the
+        // crushed frame at the display's resolution.
+        r.ui_reset();
+        let light = g.reading_light();
+        if g.repair_manual.held {
+            crate::repair_manual::draw_manual_overlay(r, &g.repair_manual, self.aspect, light);
+        }
+        let rise = g.order_sheet_rise();
+        if rise > 0.0 && g.order_sheet_in_hand() {
+            if let Some([_, hand]) = r.order_sheet_images() {
+                crate::renderer::draw_order_sheet_overlay(r, hand, rise, light, self.aspect);
+            }
+        }
+        let path = format!("{}_overlay_{name}.png", self.prefix);
+        r.render_to_png_hud(self.device, self.queue, &path, self.size.0, self.size.1)?;
+        self.receipts.push(json!({"still": name, "file": path, "spread": g.repair_manual.spread(),
+            "zoom": g.repair_manual.zoom(), "turning": g.repair_manual.turning(), "leaf": g.repair_manual.overlay_leaf(),
+            "reading_light": light, "cabin_lamps_on": g.cabin_lights_on(), "sheet_rise": rise,
+            "layout": crate::repair_manual::overlay_layout(self.aspect, &g.repair_manual).spread}));
+        Ok(())
+    }
+}
+
+/// The top-down overlay book and the torn-off sheet as the player reads them: display-
+/// resolution stills over the loader's lit cabin (the same source Tiger and lamps as `run`),
+/// six spreads, a turn at three stages, close reading, the lamps off and the torch, the sheet
+/// mid-rise and up. `KESSEL_MANUAL_3D` must be unset.
+pub fn run_overlay(prefix: &str) -> anyhow::Result<()> {
+    ensure!(crate::repair_manual::overlay_mode(), "KESSEL_MANUAL_3D=1 keeps the book in the scene; unset it for the overlay review");
+    let prefix = crate::capture_target(prefix);
+    const SPREADS: [u8; 6] = [0, 1, 2, 8, 12, 15];
+    const STILLS: [&str; 8] = ["turn_quarter", "turn_half", "turn_three_quarters", "zoom", "lamps_off", "torch", "sheet_rising", "sheet"];
+    let mut outputs: Vec<String> = SPREADS.iter().map(|s| format!("{prefix}_overlay_spread_{s:02}.png")).collect();
+    outputs.extend(STILLS.iter().map(|n| format!("{prefix}_overlay_{n}.png")));
+    outputs.push(format!("{prefix}_overlay.json"));
+    ensure!(outputs.iter().all(|p| !Path::new(p).exists()), "overlay review prefix already exists; choose a fresh prefix");
+    if let Some(parent) = Path::new(&prefix).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::env::set_var("KESSEL_AUDIO_CAPTURE", "1");
+    let instance = crate::create_instance();
+    let adapter = crate::request_adapter(&instance, None);
+    let (device, queue) = crate::request_device(&adapter);
+    let (mut r, mut g) = Game::build_tank_editor(&device, &queue, &TankEditorScene::new(TankAssetId::TigerI))?;
+    g.mute_audio();
+    g.set_defer_rtt_to_render(true);
+    g.set_cabin_lights(true);
+    g.jump_station(Station::Loader);
+    for _ in 0..3 {
+        g.update(&TankInput::default(), 1. / 60., &mut r);
+    }
+    ensure!(g.set_repair_manual_held(true), "manual unavailable at source Tiger loader station");
+    let size = (1920u32, 1080u32);
+    let mut cap = OverlayStill { device: &device, queue: &queue, prefix: &prefix, aspect: size.0 as f32 / size.1 as f32, size, receipts: Vec::new() };
+    for (i, spread) in SPREADS.into_iter().enumerate() {
+        g.repair_manual.restore_state(spread, None)?;
+        ensure!(g.set_repair_manual_held(true), "manual unavailable during spread review");
+        cap.take(&mut r, &mut g, &format!("spread_{spread:02}"), if i == 0 { 24 } else { 4 })?;
+    }
+    // A marked spread 2 turned to 3: the leaf at a quarter, a half and three quarters.
+    g.repair_manual.restore_state(2, Some(2))?;
+    ensure!(g.set_repair_manual_held(true) && g.repair_manual.turn(1), "the leaf did not turn");
+    for name in &STILLS[..3] {
+        g.repair_manual.tick(crate::repair_manual::TURN_SECONDS * 0.25);
+        cap.take(&mut r, &mut g, name, 2)?;
+    }
+    g.repair_manual.tick(crate::repair_manual::TURN_SECONDS);
+    ensure!(!g.repair_manual.turning() && g.repair_manual.spread() == 3, "the turn did not land");
+    // Close reading of the left page.
+    g.repair_manual.focus(glam::Vec2::new(0.25, 0.45));
+    g.repair_manual.zoom_by(8.);
+    cap.take(&mut r, &mut g, "zoom", 2)?;
+    g.repair_manual.zoom_by(-8.);
+    // The lamps off, then the torch in hand.
+    g.set_cabin_lights(false);
+    cap.take(&mut r, &mut g, "lamps_off", 24)?;
+    g.toggle_hand_torch();
+    cap.take(&mut r, &mut g, "torch", 24)?;
+    g.toggle_hand_torch();
+    g.set_cabin_lights(true);
+    // The torn-off sheet: printed in full at the turret's machine, torn, mid-rise, then up.
+    ensure!(g.debug_hold_sample_order(), "the sample order did not tear off");
+    g.debug_set_order_sheet_rise(0.5);
+    cap.take(&mut r, &mut g, "sheet_rising", 24)?;
+    g.debug_set_order_sheet_rise(1.0);
+    cap.take(&mut r, &mut g, "sheet", 2)?;
+    let receipt = json!({
+        "schema": "kessel.manual-overlay-review.v1",
+        "display": [size.0, size.1],
+        "stills": cap.receipts,
+        "scope": "The paper overlays over the source Tiger loader station: the open manual and the torn-off sheet drawn flat at the display's resolution from their retained ink, over the ordinary converged cabin (lamps on, off, and the hand torch). The overlays are not lit by the scene; their brightness is the named reading-light scalar. Human readability and a native-input playtest remain required.",
+    });
+    std::fs::write(format!("{prefix}_overlay.json"), serde_json::to_string_pretty(&receipt)?)?;
+    println!("[manual-overlay-review] PASS — {} stills under {prefix}_overlay_*", cap.receipts.len());
+    Ok(())
+}

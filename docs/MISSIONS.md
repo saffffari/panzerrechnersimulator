@@ -80,7 +80,9 @@ already take any key or Enter.
 
 - **The order sheet.** Since 2 November 2026 the Befehl is a printed strip torn off the
   teleprinter (The March section below; the same machine serves the Canyon run's order from the
-  turret). Before that, at the start the typed Befehl was held up over the world: the title, the
+  turret); torn off, it rises into a flat reading overlay at the display's resolution, the
+  manual's presentation since the same evening (X pockets it, O brings it back; `KESSEL_MANUAL_3D=1`
+  reads it in hand in the scene). Before that, at the start the typed Befehl was held up over the world: the title, the
   three lines, the first beat, a close mark in its corner and the fold keys in small print.
   Enter, Space, E, a left click (the play cursor is captured, so the whole click is the close
   mark) or the pad's A or B folds it at once, and that press does nothing else (no shot, no

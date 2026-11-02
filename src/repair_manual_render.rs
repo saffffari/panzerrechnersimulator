@@ -12,10 +12,12 @@ pub(super) struct PageSurface {
     view: wgpu::TextureView,
     material: Arc<wgpu::BindGroup>,
     last_ink: Option<u64>,
+    /// The same ink in the display-resolution image registry, for the top-down overlay.
+    ui_handle: u32,
 }
 
 impl PageSurface {
-    fn new(renderer: &super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    fn new(renderer: &mut super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("repair-manual-page"),
             size: wgpu::Extent3d {
@@ -31,6 +33,7 @@ impl PageSurface {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_handle = renderer.ui.import_image_view(device, &view);
         let mr = super::upload_texture(
             device,
             queue,
@@ -73,11 +76,18 @@ impl PageSurface {
             view,
             material,
             last_ink: None,
+            ui_handle,
         }
     }
 }
 
 impl super::Renderer {
+    /// The four page faces' ink as display-resolution images (left, right, the turning leaf's
+    /// front and back), once the book has been painted: what the top-down overlay draws.
+    pub fn manual_page_images(&self) -> Option<[u32; 4]> {
+        (self.repair_manual_surfaces.len() >= 4)
+            .then(|| std::array::from_fn(|i| self.repair_manual_surfaces[i].ui_handle))
+    }
     pub fn debug_dump_manual_albedo(&self,device:&wgpu::Device,queue:&wgpu::Queue,
         path:&str)->anyhow::Result<()> {
         self.raymarch.as_ref().ok_or_else(||anyhow::anyhow!("manual albedo requires raymarch backend"))?
@@ -109,8 +119,11 @@ impl super::Renderer {
         slots: [usize; crate::repair_manual::PART_COUNT],
         state: &crate::repair_manual::ManualState,
     ) {
+        // The overlay book is paper over the frame, not in it: its pages never enter the
+        // scene's light history, so a page turn there resets nothing.
+        let in_scene = !crate::repair_manual::overlay_mode();
         if !state.held {
-            if self.repair_manual_presentation.take().is_some() {
+            if self.repair_manual_presentation.take().is_some() && in_scene {
                 self.reset_history();
             }
             return;
@@ -121,7 +134,9 @@ impl super::Renderer {
             // printed surface, so retaining it literally prints the old words over the new
             // page. Pose changes also invalidate that surface correspondence. Camera motion
             // alone is deliberately absent from this key and keeps normal temporal lighting.
-            self.reset_history();
+            if in_scene {
+                self.reset_history();
+            }
             self.repair_manual_presentation = Some(presentation);
         }
         assert!(

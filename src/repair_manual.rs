@@ -20,7 +20,7 @@ const HEIGHT: f32 = 0.158;
 const PAGE_WIDTH: f32 = 0.210;
 const PAGE_HEIGHT: f32 = 0.148;
 const PAGE_Z: f32 = 0.013;
-const TURN_SECONDS: f32 = 0.48;
+pub const TURN_SECONDS: f32 = 0.48;
 const MAX_ZOOM: f32 = 2.6;
 /// Body type: 0.028 of the page height is 4.1 mm on the paper (the Fibel sets about 3.5 mm).
 const BODY_TEXT_SIZE: f32 = 0.028;
@@ -37,6 +37,168 @@ const PRINT_STROKE: f32 = 0.0022;
 /// The plates the pages name, baked from the owner's Tiger CAD by tools/bake_manual_plates.py
 /// into `assets/manual/plates/<name>.png` under the asset root (not committed).
 pub const PLATE_NAMES: [&str; 7] = ["engine_iso", "engine_fan_drive_red", "drivetrain_iso", "transmission_red", "fuel_red", "running_gear_side", "drivetrain_exploded"];
+
+/// The top-down reading overlay (2 November 2026, the owner's pick over the physical book at
+/// the crush resolution): the open book drawn flat at display resolution over the crushed
+/// frame, its retained page ink as images, chapter tabs down the fore-edge, and a leaf that
+/// narrows to the spine and widens on the other side when a page turns. `KESSEL_MANUAL_3D=1`
+/// keeps the physical book in the scene instead (the loupe belongs to that book).
+pub fn overlay_mode() -> bool {
+    static MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| !std::env::var_os("KESSEL_MANUAL_3D").is_some_and(|v| v == "1"))
+}
+/// The chapter tabs down the fore-edge: the label and the spread each opens.
+pub const CHAPTER_TABS: [(&str, u8); 6] = [("BOOK", 0), ("TRACK", 1), ("PARTS", 8), ("CREW", 12), ("WINCH", 14), ("FIRE", 15)];
+/// The open spread spans this much of the frame's width at zoom 1, or at most this much of
+/// its height on a tall display.
+const OVERLAY_SPREAD_WIDTH: f32 = 0.80;
+const OVERLAY_MAX_HEIGHT: f32 = 0.84;
+const PAGE_ASPECT: f32 = PAGE_WIDTH / PAGE_HEIGHT;
+
+/// Where the overlay book lies on the display (normalized, origin top-left; `aspect` is the
+/// display's width over height).
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayLayout {
+    /// The spread, both pages: x, y, w, h.
+    pub spread: [f32; 4],
+    pub page_w: f32,
+    pub page_h: f32,
+    /// One tab per chapter, x, y, w, h, down the right fore-edge.
+    pub tabs: [[f32; 4]; CHAPTER_TABS.len()],
+}
+
+pub fn overlay_layout(aspect: f32, state: &ManualState) -> OverlayLayout {
+    let aspect = if aspect.is_finite() && aspect > 0.1 { aspect } else { 16.0 / 9.0 };
+    // Two landscape pages side by side, fitted to the width, else to the height.
+    let mut w1 = OVERLAY_SPREAD_WIDTH;
+    let mut h1 = w1 * aspect / (2.0 * PAGE_ASPECT);
+    if h1 > OVERLAY_MAX_HEIGHT {
+        h1 = OVERLAY_MAX_HEIGHT;
+        w1 = h1 * 2.0 * PAGE_ASPECT / aspect;
+    }
+    // Zoom about the focus: the focused point of the spread stays where it was at zoom 1.
+    let (x1, y1) = (0.5 - w1 * 0.5, 0.5 - h1 * 0.5);
+    let z = state.zoom.clamp(1.0, MAX_ZOOM);
+    let (w, h) = (w1 * z, h1 * z);
+    let x = x1 + state.focus.x * w1 * (1.0 - z);
+    let y = y1 + state.focus.y * h1 * (1.0 - z);
+    let (page_w, page_h) = (w * 0.5, h);
+    let tab_w = 0.17 * page_h / aspect;
+    let tab_h = 0.105 * page_h;
+    let gap = 0.03 * page_h;
+    let mut tabs = [[0.0; 4]; CHAPTER_TABS.len()];
+    for (i, tab) in tabs.iter_mut().enumerate() {
+        *tab = [x + w, y + 0.09 * page_h + i as f32 * (tab_h + gap), tab_w, tab_h];
+    }
+    OverlayLayout { spread: [x, y, w, h], page_w, page_h, tabs }
+}
+
+/// What a pointer on the overlay meets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OverlayHit {
+    /// A point of the spread, as the uv `click` reads (x across both pages).
+    Page(Vec2),
+    /// A chapter tab: the spread it opens.
+    Tab(u8),
+}
+
+pub fn overlay_hit(aspect: f32, state: &ManualState, pointer: Vec2) -> Option<OverlayHit> {
+    if !state.held || !pointer.is_finite() {
+        return None;
+    }
+    let lay = overlay_layout(aspect, state);
+    for ((_, target), [tx, ty, tw, th]) in CHAPTER_TABS.iter().zip(lay.tabs) {
+        if pointer.x >= tx && pointer.x <= tx + tw && pointer.y >= ty && pointer.y <= ty + th {
+            return Some(OverlayHit::Tab(*target));
+        }
+    }
+    overlay_uv(aspect, state, pointer).map(OverlayHit::Page)
+}
+
+/// The spread uv under a display pointer, when it is on the pages.
+pub fn overlay_uv(aspect: f32, state: &ManualState, pointer: Vec2) -> Option<Vec2> {
+    if !state.held || !pointer.is_finite() {
+        return None;
+    }
+    let [x, y, w, h] = overlay_layout(aspect, state).spread;
+    let uv = Vec2::new((pointer.x - x) / w, (pointer.y - y) / h);
+    (uv.min_element() >= 0.0 && uv.max_element() <= 1.0).then_some(uv)
+}
+
+/// The page point under the pointer in whichever presentation is live: the overlay's pages or
+/// the physical book's (`book_uv`).
+pub fn pointer_uv(camera: &Camera, aspect: f32, pointer: Vec2, state: &ManualState) -> Option<Vec2> {
+    if overlay_mode() {
+        overlay_uv(aspect, state, pointer)
+    } else {
+        book_uv(camera, pointer, state)
+    }
+}
+
+/// The index of the chapter (its tab) a spread belongs to.
+pub fn chapter_of(spread: u8) -> usize {
+    CHAPTER_TABS.iter().rposition(|(_, first)| *first <= spread).unwrap_or(0)
+}
+
+/// Draw the open book flat over the frame from its retained page ink: the boards, the pages,
+/// the gutter's shade, the turning leaf, the ribbon and the chapter tabs. `light` scales the
+/// paper: the overlay is not lit by the scene, so this is a named reading-light scalar
+/// (docs/PHYSICAL_TRUTH_AUDIT.md).
+pub fn draw_manual_overlay(r: &mut Renderer, state: &ManualState, aspect: f32, light: f32) {
+    use crate::ui::FACE_MANUAL_BOLD;
+    let Some(images) = r.manual_page_images() else { return };
+    if !state.held {
+        return;
+    }
+    let light = light.clamp(0.0, 1.0);
+    let lit = |c: [f32; 3], a: f32| [c[0] * light, c[1] * light, c[2] * light, a];
+    let aspect = if aspect.is_finite() && aspect > 0.1 { aspect } else { 16.0 / 9.0 };
+    let lay = overlay_layout(aspect, state);
+    let [x, y, w, h] = lay.spread;
+    let (pw, ph) = (lay.page_w, lay.page_h);
+    // The boards overhang the pages by 4 mm of the 148 mm page; the book's shadow on the desk.
+    let ov = 0.027 * ph;
+    r.fill_rect(x - ov / aspect + 0.012, y - ov + 0.018, w + 2.0 * ov / aspect, h + 2.0 * ov, [0.0, 0.0, 0.0, 0.42]);
+    r.fill_rect(x - ov / aspect, y - ov, w + 2.0 * ov / aspect, h + 2.0 * ov, lit([0.17, 0.20, 0.15], 1.0));
+    r.draw_image(images[0], x, y, pw, ph, lit([1.0, 1.0, 1.0], 1.0));
+    r.draw_image(images[1], x + pw, y, pw, ph, lit([1.0, 1.0, 1.0], 1.0));
+    // The gutter: the pages curve into the spine, so they shade toward it.
+    let bands = 7;
+    for k in 0..bands {
+        let sw = 0.012 * pw;
+        let a = 0.26 * (1.0 - k as f32 / bands as f32);
+        r.fill_rect(x + pw - sw * (k + 1) as f32, y, sw, ph, [0.0, 0.0, 0.0, a]);
+        r.fill_rect(x + pw + sw * k as f32, y, sw, ph, [0.0, 0.0, 0.0, a]);
+    }
+    if let Some((over_right, width)) = state.overlay_leaf() {
+        // The leaf hinged at the spine: its width is the cosine of its angle, its shadow the sine.
+        let lw = pw * width;
+        let s = (1.0 - width * width).max(0.0).sqrt();
+        let shade = 0.55 + 0.45 * width;
+        let sh = pw * 0.07 * s;
+        if over_right {
+            r.fill_rect(x + pw + lw, y, sh, ph, [0.0, 0.0, 0.0, 0.35 * s]);
+            r.draw_image(images[2], x + pw, y, lw.max(1e-4), ph, lit([shade, shade, shade], 1.0));
+        } else {
+            r.fill_rect(x + pw - lw - sh, y, sh, ph, [0.0, 0.0, 0.0, 0.35 * s]);
+            r.draw_image(images[3], x + pw - lw, y, lw.max(1e-4), ph, lit([shade, shade, shade], 1.0));
+        }
+    }
+    if state.bookmark == Some(state.spread) {
+        // The ribbon's tail out of the foot of the marked spread.
+        r.fill_rect(x + pw * 0.5 - 0.006 * pw, y + ph * 0.92, 0.012 * pw, ph * 0.17, lit([RED[0], RED[1], RED[2]], 1.0));
+    }
+    let chapter = chapter_of(state.spread);
+    for (i, ((label, _), [tx, ty, tw, th])) in CHAPTER_TABS.iter().zip(lay.tabs).enumerate() {
+        let active = i == chapter;
+        let tw = if active { tw * 1.18 } else { tw };
+        r.fill_rect(tx + 0.004, ty + 0.006, tw, th, [0.0, 0.0, 0.0, 0.30]);
+        r.fill_rect(tx, ty, tw, th, lit(if active { [0.90, 0.87, 0.76] } else { [0.78, 0.74, 0.62] }, 1.0));
+        r.fill_rect(tx, ty, 0.004 * pw, th, [0.0, 0.0, 0.0, 0.18]);
+        let ink = if active { RED } else { INK };
+        r.draw_text_face(label, tx + tw * 0.5, ty + th * 0.30, th * 0.40, lit([ink[0], ink[1], ink[2]], 1.0), Align::Center, FACE_MANUAL_BOLD);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -287,6 +449,19 @@ impl ManualState {
         self.go_to(target)
     }
 
+    /// A chapter tab: the leaves turn to that spread.
+    pub fn open_spread(&mut self, spread: u8) -> bool {
+        self.go_to(spread)
+    }
+
+    /// The turning leaf as the overlay draws it: over the right page (else the left) and its
+    /// width as a fraction of a page, the cosine of its angle.
+    pub fn overlay_leaf(&self) -> Option<(bool, f32)> {
+        self.turn?;
+        let c = self.leaf_angle().cos();
+        Some((c >= 0.0, c.abs()))
+    }
+
     pub fn tick(&mut self, dt: f32) {
         if !self.held || !dt.is_finite() || dt <= 0.0 {
             return;
@@ -383,7 +558,7 @@ impl ManualState {
         self.held && part < PART_COUNT && (part < 3 || self.turn.is_some())
     }
 
-    fn leaf_angle(&self) -> f32 {
+    pub fn leaf_angle(&self) -> f32 {
         let Some(turn) = self.turn else {
             return 0.0;
         };
@@ -1008,6 +1183,63 @@ mod tests {
         assert!((view.centre_uv - pointer).length() < 0.005, "the lens sits under the pointer: {} vs {pointer}", view.centre_uv);
         assert!(view.radius_uv > 0.03 && view.radius_uv < 0.25, "a hand lens on the screen: {}", view.radius_uv);
         assert!(loupe_view(&camera, Vec2::new(0.02, 0.02), &book).is_none(), "off the book there is no lens");
+    }
+
+    #[test]
+    fn the_overlay_book_fits_the_frame_and_keeps_its_page_proportions() {
+        let mut book = ManualState::default();
+        book.held = true;
+        for aspect in [16.0 / 9.0, 4.0 / 3.0, 21.0 / 9.0] {
+            let lay = overlay_layout(aspect, &book);
+            let [x, y, w, h] = lay.spread;
+            assert!(x >= 0.0 && y >= 0.0 && x + w <= 1.0 + 1e-5 && y + h <= 1.0 + 1e-5, "{aspect}: {:?}", lay.spread);
+            let page_aspect = lay.page_w * aspect / lay.page_h;
+            assert!((page_aspect - PAGE_ASPECT).abs() < 1e-4, "{aspect}: page aspect {page_aspect}");
+            assert!(w >= 0.5, "{aspect}: the spread spans the frame ({w})");
+            for [tx, ty, tw, th] in lay.tabs {
+                assert!(tx >= x + w - 1e-6 && tx + tw <= 1.0 + 0.05 && ty >= y && ty + th <= y + h, "tabs down the fore-edge");
+            }
+        }
+        // Zoom about the pointed point: it stays under the pointer.
+        let aspect = 16.0 / 9.0;
+        let focus = Vec2::new(0.25, 0.45);
+        let at1 = overlay_layout(aspect, &book).spread;
+        let p1 = Vec2::new(at1[0] + focus.x * at1[2], at1[1] + focus.y * at1[3]);
+        book.focus(focus);
+        book.zoom_by(4.0);
+        let at2 = overlay_layout(aspect, &book).spread;
+        let p2 = Vec2::new(at2[0] + focus.x * at2[2], at2[1] + focus.y * at2[3]);
+        assert!(p1.distance(p2) < 1e-4 && at2[2] > at1[2] * 1.5, "{p1} {p2} {at1:?} {at2:?}");
+    }
+
+    #[test]
+    fn tabs_open_their_chapters_and_the_leaf_narrows_to_the_spine() {
+        let mut book = ManualState::default();
+        book.held = true;
+        let aspect = 16.0 / 9.0;
+        let lay = overlay_layout(aspect, &book);
+        let [tx, ty, tw, th] = lay.tabs[1];
+        assert_eq!(overlay_hit(aspect, &book, Vec2::new(tx + tw * 0.5, ty + th * 0.5)), Some(OverlayHit::Tab(1)));
+        let [x, y, w, h] = lay.spread;
+        match overlay_hit(aspect, &book, Vec2::new(x + w * 0.75, y + h * 0.5)) {
+            Some(OverlayHit::Page(uv)) => assert!((uv - Vec2::new(0.75, 0.5)).length() < 1e-5, "{uv}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(overlay_hit(aspect, &book, Vec2::new(0.01, 0.01)), None);
+        assert_eq!((chapter_of(8), chapter_of(13), chapter_of(15)), (2, 3, 5));
+        assert!(book.open_spread(8));
+        // The leaf starts over the right page a page wide, is edge-on at the spine midway,
+        // then widens over the left page and lands as the new spread.
+        let (right, start) = book.overlay_leaf().unwrap();
+        assert!(right && (start - 1.0).abs() < 1e-5);
+        book.tick(TURN_SECONDS * 0.5);
+        let (_, mid) = book.overlay_leaf().unwrap();
+        assert!(mid < 0.05, "{mid}");
+        book.tick(TURN_SECONDS * 0.25);
+        let (right, late) = book.overlay_leaf().unwrap();
+        assert!(!right && late > 0.5, "{right} {late}");
+        book.tick(TURN_SECONDS);
+        assert!(book.overlay_leaf().is_none() && book.spread() == 8);
     }
 
     #[test]

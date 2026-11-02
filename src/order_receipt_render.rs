@@ -26,10 +26,12 @@ pub(super) struct ReceiptSurface {
     view: wgpu::TextureView,
     material: Arc<wgpu::BindGroup>,
     last_ink: Option<u64>,
+    /// The same ink in the display-resolution image registry, for the top-down overlay.
+    ui_handle: u32,
 }
 
 impl ReceiptSurface {
-    fn new(renderer: &super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue, label: &str) -> Self {
+    fn new(renderer: &mut super::Renderer, device: &wgpu::Device, queue: &wgpu::Queue, label: &str) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
@@ -41,6 +43,7 @@ impl ReceiptSurface {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_handle = renderer.ui.import_image_view(device, &view);
         let mr = super::upload_texture(device, queue, "order-strip-mr", wgpu::TextureFormat::Rgba8Unorm, [255, 255, 0, 255], &None);
         let normal = super::upload_texture(device, queue, "order-strip-normal", wgpu::TextureFormat::Rgba8Unorm, [128, 128, 255, 255], &None);
         let material = Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -53,8 +56,42 @@ impl ReceiptSurface {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&renderer.sampler) },
             ],
         }));
-        Self { view, material, last_ink: None }
+        Self { view, material, last_ink: None, ui_handle }
     }
+}
+
+/// The torn-off sheet read top-down: this much of the frame's height.
+const SHEET_OVERLAY_HEIGHT: f32 = 0.64;
+
+/// The torn-off sheet read top-down: its retained ink drawn flat at display resolution, risen
+/// from the foot of the frame by `rise` (0 to 1), its two torn edges ragged, the paper scaled
+/// by the reading light at hand (the overlay is not lit by the scene; a named scalar,
+/// docs/PHYSICAL_TRUTH_AUDIT.md). `aspect` is the display's width over height.
+pub fn draw_order_sheet_overlay(r: &mut super::Renderer, handle: u32, rise: f32, light: f32, aspect: f32) {
+    let aspect = if aspect.is_finite() && aspect > 0.1 { aspect } else { 16.0 / 9.0 };
+    let light = light.clamp(0.0, 1.0);
+    let h = SHEET_OVERLAY_HEIGHT;
+    let w = h * (RECEIPT_INK_WIDTH as f32 / RECEIPT_INK_HEIGHT as f32) / aspect;
+    let p = rise.clamp(0.0, 1.0);
+    let ease = p * p * (3.0 - 2.0 * p);
+    let x = 0.5 - w * 0.5;
+    let y = 0.17 + (1.0 - ease) * 0.95;
+    let paper = [0.89 * light, 0.87 * light, 0.80 * light, 1.0];
+    r.fill_rect(x + 0.008, y + 0.012, w, h, [0.0, 0.0, 0.0, 0.38]);
+    r.ui_set_frame(x, y, w, h);
+    r.draw_image(handle, 0.0, 0.0, 1.0, 1.0, [light, light, light, 1.0]);
+    // The torn edges: teeth of paper past the top and the foot of the print (the roll was torn
+    // at the slot both times), their heights from the project's counter-seeded hash.
+    let teeth = 36u32;
+    let hash = |n: u32| ((n.wrapping_mul(2654435761) >> 8) & 0xff) as f32 / 255.0;
+    let tw = 1.0 / teeth as f32;
+    for k in 0..teeth {
+        let top = 0.004 + 0.012 * hash(k + 11);
+        let foot = 0.004 + 0.015 * hash(k + 97);
+        r.fill_rect(k as f32 * tw, -top, tw * 1.02, top + 0.002, paper);
+        r.fill_rect(k as f32 * tw, 0.998, tw * 1.02, foot + 0.002, paper);
+    }
+    r.ui_clear_frame();
 }
 
 /// The teleprinter's print: capitals, a rule under the title, a rule between the small print
@@ -98,6 +135,12 @@ pub fn draw_receipt(r: &mut super::Renderer, ink: &ReceiptInk) {
 }
 
 impl super::Renderer {
+    /// The two strips' ink as display-resolution images (the strip on the machine, the strip in
+    /// hand), once painted: what the top-down sheet overlay draws.
+    pub fn order_sheet_images(&self) -> Option<[u32; 2]> {
+        (self.order_receipt_surfaces.len() >= 2)
+            .then(|| [self.order_receipt_surfaces[0].ui_handle, self.order_receipt_surfaces[1].ui_handle])
+    }
     /// Paint each strip's ink when it changed and bind it to its mesh: `inks[0]` for the strip
     /// on the machine, `inks[1]` for the strip in hand. Stationary paper costs nothing; a new
     /// line repaints one 1.7 MB target once.

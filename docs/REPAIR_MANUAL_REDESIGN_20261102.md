@@ -85,3 +85,28 @@ the winch rigging or the medical pages (the CAD has no such parts; those stay sc
 need drawing by hand); the kit CAD's offset into the game hull is not measured, so no CAD
 part is registered as a service part yet.
 
+
+## The pivot: top-down (2 November 2026, night)
+
+The physical book read well as an object and badly as a book: at the crush grid the body text
+on the tilted page is a texture of grey, and the loupe is a workaround. The owner's call: a
+top-down 2D book, still paper, with a click-to-flip leaf, tabs, and clickable choices
+(Papers, Please as the reference), drawn at the display's resolution the way the old overlaid
+order slip was, and the torn-off order the same way.
+
+What landed (`repair_manual::overlay_mode`, on unless `KESSEL_MANUAL_3D=1`): the ink layer
+imports the retained page and sheet textures as images (`ui::Ui::import_image_view`) and draws
+the open spread flat over the crushed frame at 80 % of the frame's width (`overlay_layout`),
+the boards, the gutter's shade, six chapter tabs down the fore-edge, the ribbon's tail, a leaf
+that narrows to the spine and widens on the other side over 0.48 s (its page textures squashed
+by the cosine of its angle), zoom about the pointer to 2.6x, and the same click zones as the
+physical page (`overlay_hit` feeding `click`). The torn-off sheet rises from the foot of the
+frame in 0.25 s (`Printer.rise`), both edges torn. The 3D book, the loupe and the sheet in hand
+stay behind the gate. `manual-overlay-review` captures six spreads, the turn at three stages,
+close reading, the lamps off, the torch, and the sheet mid-rise and up.
+
+Could the 3D book have been made to work? Yes: composite the page albedo at native resolution
+over the crushed page (a perspective-warped quad, lit by the crushed frame's own luminance,
+depth-tested), the policy the HUD's words already use. It costs a second pass and a depth read,
+and it keeps the page tilted and small in the hands. The flat overlay reads better and is
+cheaper; the composite stays an option if the owner wants the page back in the hands.

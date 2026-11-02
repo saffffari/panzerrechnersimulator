@@ -754,6 +754,10 @@ pub struct Ui {
     img_cmds: Vec<ImgCmd>,
     img_vbuf: Option<wgpu::Buffer>,
     white: u32, // handle of a 1×1 white texture → tinted filled rects
+    /// A frame every queued command is mapped through: x' = x0 + x * w, y' = y0 + y * h, sizes
+    /// by h. Identity by default; the top-down paper overlays set it to draw a page's own
+    /// [0,1] layout into a rectangle of the display (`set_frame`, `clear_frame`).
+    frame: [f32; 4],
 }
 
 impl Ui {
@@ -915,6 +919,7 @@ impl Ui {
             img_bgl,
             img_layout,
             img_pipes: HashMap::new(),
+            frame: [0.0, 0.0, 1.0, 1.0],
             img_sampler,
             images: Vec::new(),
             img_cmds: Vec::new(),
@@ -1007,9 +1012,25 @@ impl Ui {
         (self.images.len() - 1) as u32
     }
 
+    /// Retain a live texture view with the ordinary linear-clamp image sampler: the top-down
+    /// paper overlays draw the retained page and sheet ink this way at display resolution.
+    pub fn import_image_view(&mut self, device: &wgpu::Device, view: &wgpu::TextureView) -> u32 {
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("paper-image-bind"), layout: &self.img_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.img_sampler) },
+            ],
+        });
+        self.images.push(ImageTex { bind, _tex: None, _imported_view: Some(view.clone()) });
+        (self.images.len() - 1) as u32
+    }
+
     /// Queue an image quad. `x,y,w,h` are normalized [0,1] with the origin top-left; `color` tints
     /// the texel (use white to draw as-is). Drawn before text so labels overlay it.
     pub fn draw_image(&mut self, handle: u32, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+        let [x0, y0, fw, fh] = self.frame;
+        let (x, y, w, h) = (x0 + x * fw, y0 + y * fh, w * fw, h * fh);
         self.img_cmds.push(ImgCmd {
             handle,
             rect: [x, y, x + w, y + h],
@@ -1082,15 +1103,25 @@ impl Ui {
         align: Align,
         face: u8,
     ) {
+        let [x0, y0, w, h] = self.frame;
         self.cmds.push(TextCmd {
             text: text.to_string(),
-            x,
-            y,
-            size,
+            x: x0 + x * w,
+            y: y0 + y * h,
+            size: size * h,
             color,
             align,
             face,
         });
+    }
+
+    /// Map every following command through a rectangle of the display (normalized x, y, w, h),
+    /// so a page drawn in its own [0,1] lands there; `clear_frame` restores the identity.
+    pub fn set_frame(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.frame = [x, y, w, h];
+    }
+    pub fn clear_frame(&mut self) {
+        self.frame = [0.0, 0.0, 1.0, 1.0];
     }
 
     fn ensure_pipes(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {

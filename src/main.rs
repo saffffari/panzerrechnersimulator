@@ -105,6 +105,7 @@ mod indicator_pictograms;
 mod vehicle_motion_review;
 mod repair_manual;
 mod repair_manual_capture;
+mod sky_review;
 mod canyon;
 mod canyon_attempt;
 mod mission;
@@ -13858,6 +13859,7 @@ impl WindowState {
         self.renderer.ui_reset();
         self.draw_expedition_save_notice();
         self.draw_compound_hud(0.5); // STÜTZPUNKT capture bar (no-op outside the Koop mission)
+        self.draw_paper_overlays();
         // Platoon radio: the typed line and the wingmen's replies, display-resolution text outside
         // the crush like the menus (the one place play carries words, by the mode's design).
         {
@@ -14077,6 +14079,26 @@ impl WindowState {
     /// (spanning the whole window) share one drawing. The phase lines, wave ticker and end banner
     /// were words and are gone (2026-09-28); only the wordless capture bar remains while taking
     /// the courtyard.
+    /// The paper read top-down (2 November 2026): the open manual and the torn-off sheet drawn
+    /// flat at display resolution over the crushed frame from their retained ink, unless
+    /// `KESSEL_MANUAL_3D=1` keeps the physical book and sheet in the scene.
+    fn draw_paper_overlays(&mut self) {
+        if !repair_manual::overlay_mode() || self.show_map {
+            return;
+        }
+        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+        let light = self.game.reading_light();
+        if self.game.repair_manual.held {
+            repair_manual::draw_manual_overlay(&mut self.renderer, &self.game.repair_manual, aspect, light);
+        }
+        let rise = self.game.order_sheet_rise();
+        if rise > 0.0 && self.game.order_sheet_in_hand() {
+            if let Some([_, hand]) = self.renderer.order_sheet_images() {
+                renderer::draw_order_sheet_overlay(&mut self.renderer, hand, rise, light, aspect);
+            }
+        }
+    }
+
     fn draw_compound_hud(&mut self, cx: f32) {
         let Some(hud) = self.game.compound_hud() else {
             return;
@@ -15470,8 +15492,9 @@ impl ApplicationHandler for App {
                             state.game.repair_manual.turn(-1);
                         }
                         KeyCode::Equal | KeyCode::NumpadAdd if state.game.repair_manual.held => {
+                            let aspect = state.config.width as f32 / state.config.height.max(1) as f32;
                             if let Some(uv) = state.menu_pointer.and_then(|pointer|
-                                repair_manual::book_uv(&state.renderer.camera, pointer, &state.game.repair_manual)) {
+                                repair_manual::pointer_uv(&state.renderer.camera, aspect, pointer, &state.game.repair_manual)) {
                                 state.game.repair_manual.focus(uv);
                             }
                             state.game.repair_manual.zoom_by(1.0);
@@ -15786,7 +15809,8 @@ impl ApplicationHandler for App {
                 if state.game.repair_manual.held {
                     if btn.is_pressed() && button == winit::event::MouseButton::Left {
                         if let Some(pointer) = state.menu_pointer {
-                            state.game.repair_manual_click(&state.renderer.camera, pointer);
+                            let aspect = state.config.width as f32 / state.config.height.max(1) as f32;
+                            state.game.repair_manual_click(&state.renderer.camera, aspect, pointer);
                         }
                     }
                     self.keys = Keys::default();
@@ -17004,6 +17028,14 @@ fn main() -> anyhow::Result<()> {
     if early_args.get(1).is_some_and(|arg| arg == "repair-manual-review") {
         let prefix = capture_arg(&early_args, 2, "repair_manual_review");
         return repair_manual_capture::run(&prefix, early_args.iter().any(|arg| matches!(arg.as_str(), "video" | "--video")));
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "sky-review") {
+        let prefix = capture_arg(&early_args, 2, "sky_review");
+        return sky_review::run(&prefix);
+    }
+    if early_args.get(1).is_some_and(|arg| arg == "manual-overlay-review") {
+        let prefix = capture_arg(&early_args, 2, "manual_overlay_review");
+        return repair_manual_capture::run_overlay(&prefix);
     }
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).is_some_and(|s| s == "raymarch-interior") {

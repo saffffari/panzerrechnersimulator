@@ -2807,3 +2807,32 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   glass, not an optical model: no refraction, no field curvature, no glass reflections; the
   ring is the only mesh. The lens view's eye adapts over its first frames as the optics' do.
 
+
+### The manual and the sheet read as overlays — 2 November 2026 (`repair_manual::overlay_mode`)
+
+- **What changed.** At the crush grid the Fibel's body text on the tilted physical page could
+  not be read, so the owner chose a top-down reading: the open book and the torn-off sheet are
+  drawn flat at the display's resolution over the crushed frame (`repair_manual::draw_manual_overlay`,
+  `renderer::draw_order_sheet_overlay`) from the same retained ink the physical pages carry
+  (2048 x 1448 pages, 1024 x 731 sheet, imported into the ink layer's image registry by
+  `ui::Ui::import_image_view`), through the policy play already uses for the HUD's words. The
+  pages are images; the boards, the gutter's shade, the chapter tabs, the turning leaf (its
+  width the cosine of the leaf's angle, its shadow the sine), the ribbon's tail and the torn
+  edges are the ink layer's rectangles.
+- **What is not physical, named.** The overlay is not lit by the scene: no transport reaches it.
+  Its brightness is a scalar from the reading light at hand (`Game::reading_light`: 1.0 with
+  the cabin lamps on or on foot, 0.92 with the hand torch, 0.30 in the dark cabin), not a
+  measured illuminance; the leaf's shade and its shadow on the page are drawn, not cast; the
+  turn is the 2D projection of a hinged leaf, not a lit one. The ink is unchanged and not
+  emissive. The loupe does not apply (nothing to magnify at the display's resolution).
+- **Gate.** `KESSEL_MANUAL_3D=1` keeps the physical book and the sheet in hand in the scene,
+  lit by transport, with the loupe; with it unset (both shipping presets) the overlay is the
+  reading, the 3D parts stay invisible and the camera's field is untouched. Neither preset
+  changes emitters, materials or any law: the choice is presentation. `manual-overlay-review`
+  is the overlay's capture (`captures/<prefix>_overlay_*`), `repair-manual-review` the physical
+  book's; `repair_manual::tests` hold the layout, the tabs and the leaf.
+- **Why it is allowed.** The first principle admits the written manual and the written order;
+  the second forbids faking light in the scene. The overlay fakes nothing in the scene: it is
+  paper held up to the player's eye outside the image, as the map's HUD words already are. The
+  debt is that the paper's brightness does not follow the cabin's real light; that is the
+  scalar above, and the gate keeps the lit book.
