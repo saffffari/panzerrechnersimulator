@@ -959,6 +959,10 @@ fn run_gfxbench(
     let act_n = if playtest {
         let path = act_manifest::playtest_manifest_path();
         act_manifest::select_runtime_manifest(Some(path))?.expect("selected Playtest manifest")
+    } else if let Some(path) = std::env::var_os("KESSEL_RECON_MANIFEST") {
+        // As `screenshot`: bench a workshop map (the spring bridge meadow) in its act's slot.
+        act_manifest::select_runtime_manifest(Some(std::path::PathBuf::from(path)))?
+            .ok_or_else(|| anyhow::anyhow!("recon manifest did not select a campaign act"))?
     } else { act_n };
     let (mut r, mut g) = if playtest {
         Game::build_playtest_act(&device, &queue, night, &world::act(act_n))?
