@@ -216,7 +216,10 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   expansion and rise rates for an 88 mm-class burst, not detonation-products gas dynamics; the
   lobes leave the plate at 3 m within a quarter second and lift at once, so the plate and its
   rim are clear of the cloud by about half a second (the first cut sat on the plate for a second
-  and hid the ring).
+  and hid the ring). The burst's own light (`detonation_flash_heat`) is the 60 ms flash with,
+  under it, an afterburn tail at a third of the flash fading over about a second and a half
+  (0.45 s), so the cloud glows on in its own smoke rather than snuffing out at a tenth of a
+  second; the burst's synthesized light follows the same envelope. Authored timing.
 - Hot rim bound (`weapon_particle_math::rim_heat`, `RIM_KELVIN_MAX` 1800 K, was 2000 K): the
   rim's thermal reservoir still takes at most 1.5 % of the lost kinetic energy, but the rim that
   stays on the plate is held at steel's solidus, since hotter steel is molten and leaves with

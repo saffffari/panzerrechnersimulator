@@ -149,9 +149,14 @@ fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
 
 /// Shared authored cooling envelope for the same HE detonation, whether the local VDB atlas
 /// is installed or not. This is presentation timing, not a calibrated radiometric source law.
+/// The detonation's own light over its age: the flash (60 ms decay) and, under it, the
+/// afterburn of the products mixing with the air, a tail at a third of the flash fading over
+/// about a second and a half (0.45 s time constant), so the burst glows on in its own smoke
+/// instead of snuffing out at a tenth of a second (the owner, 2026-11-02). Authored timing for
+/// an 88 mm-class HE round, not a calibrated afterburn law.
 fn detonation_flash_heat(age_s: f32) -> f32 {
     if !age_s.is_finite() || age_s < 0.0 { return 0.0; }
-    let heat = (-age_s / 0.06).exp();
+    let heat = (-age_s / 0.06).exp().max(0.35 * (-age_s / 0.45).exp());
     if heat < 0.01 { 0.0 } else { heat }
 }
 
@@ -2344,7 +2349,7 @@ impl Backend {
                     // plate: five lobes born at the contact, expanding along the normal and sideways
                     // within tenths of a second (2.2 m out, 1 - e^(-t / 0.25 s)), then rising on their
                     // buoyancy and drifting with the wind for 14 s. Each lobe is fire while the
-                    // products afterburn (`detonation_flash_heat`, tens of milliseconds) and the same
+                    // products afterburn (`detonation_flash_heat`, a flash and a tail of about a second) and the same
                     // soot after: fire and smoke are one body born together, the fire dying first
                     // (the owner, 2026-11-02: no gap between the flash and the smoke, nothing
                     // appearing away from the plate).
@@ -3215,8 +3220,10 @@ mod event_source_tests {
             assert!((0.0..=previous).contains(&heat));
             previous = heat;
         }
-        assert_eq!(detonation_flash_heat(0.3), 0.0);
-        assert_eq!(detonation_flash_heat(1.3), 0.0);
+        // The afterburn tail: still glowing at a third of a second, out by two.
+        assert!(detonation_flash_heat(0.3) > 0.15 && detonation_flash_heat(0.3) < 0.2);
+        assert!(detonation_flash_heat(1.3) > 0.0);
+        assert_eq!(detonation_flash_heat(2.0), 0.0);
         assert_eq!(detonation_flash_heat(-1.0), 0.0);
         assert_eq!(detonation_flash_heat(f32::NAN), 0.0);
     }
