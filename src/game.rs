@@ -20839,6 +20839,9 @@ impl Game {
                     self.slot_nature_he[index] = crate::interior_rig::shell_slot_is_he(index);
                 }
                 self.armor_scars = crate::armor_damage::ArmorField::default();
+                // Its steel holds no rounds, and the lost hull's fragments stay with the lost hull.
+                self.fea.reset();
+                self.hot_fragments.iter_mut().for_each(|f| f.active = false);
                 self.crew = default_crew();
                 self.reset_singleplayer_crew();
                 self.death_cause = None;

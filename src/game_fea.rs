@@ -36,6 +36,9 @@ pub(super) struct LodgedRound {
     pub(super) component: Option<String>,
     pub(super) extraction: lodged::Extraction,
     pub(super) struck_at_s: f32,
+    /// Held by a part that elevates with the gun (breech, cradle, sight): `tip_local` and
+    /// `dir_local` are then in the gun's frame (`Tank::gun_model`), not `frame`'s.
+    pub(super) on_gun: bool,
 }
 
 /// One chain run on the player's Tiger, kept for diagnostics, receipts and cross sections.
@@ -442,8 +445,10 @@ impl Game {
             (false, _, Some(components::Frame::Turret | components::Frame::Gun)) => BloodFrame::Turret,
             _ => BloodFrame::Hull,
         };
+        let on_gun = !lodging.in_struck_plate && component_frame == Some(components::Frame::Gun);
         let hull = self.player.hull_model();
-        let parent_inv = blood_parent_model(&self.player, frame).inverse();
+        let parent = if on_gun { self.player.gun_model() } else { blood_parent_model(&self.player, frame) };
+        let parent_inv = parent.inverse();
         let tip_local = parent_inv.transform_point3(hull.transform_point3(tip_hull));
         let dir_local = parent_inv.transform_vector3(hull.transform_vector3(line.dir)).normalize_or_zero();
         let yield_pa = match crossing.layer.kind {
@@ -470,7 +475,7 @@ impl Game {
             lodging.depth_m * 1000.0, if reachable { "" } else { ", not reachable" },
             extraction.force_n / 1000.0, extraction.removal);
         self.fea.lodged.push(LodgedRound { id, shell, frame, tip_local, dir_local, depth_m: lodging.depth_m,
-            in_struck_plate: lodging.in_struck_plate, component: name, extraction, struck_at_s: now_s });
+            in_struck_plate: lodging.in_struck_plate, component: name, extraction, struck_at_s: now_s, on_gun });
         Some(id)
     }
 
@@ -1065,7 +1070,8 @@ const SLEDGE_SWING_S: f32 = 0.48;
 impl Game {
     fn lodged_round_model(&self, round: &LodgedRound) -> Mat4 {
         let rotation = Quat::from_rotation_arc(Vec3::Z, round.dir_local.normalize_or_zero());
-        blood_parent_model(&self.player, round.frame) * Mat4::from_rotation_translation(rotation, round.tip_local)
+        let parent = if round.on_gun { self.player.gun_model() } else { blood_parent_model(&self.player, round.frame) };
+        parent * Mat4::from_rotation_translation(rotation, round.tip_local)
     }
 
     /// Pose every lodged round with its hull or turret.
@@ -1378,7 +1384,7 @@ mod save_tests {
         FeaSaved {
             lodged: vec![LodgedRound { id: 3, shell: &crate::ballistics::BR_471, frame: BloodFrame::Hull,
                 tip_local: Vec3::new(0.2, 1.0, 2.6), dir_local: Vec3::NEG_Z, depth_m: 0.07,
-                in_struck_plate: true, component: None, extraction, struck_at_s: 12.5 }],
+                in_struck_plate: true, component: None, extraction, struck_at_s: 12.5, on_gun: false }],
             pending: vec![PendingPlateSaved { commit_at_s: 12.75, struck_at_s: 12.5,
                 facing: crate::ballistics::Facing::HullFront, local_mm: [200, 1000, 2600], lodged_id: Some(3),
                 job: stop_job() }],

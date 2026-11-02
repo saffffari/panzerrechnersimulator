@@ -517,7 +517,10 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   simulation (not kept as a loose object). A filled round that lodged unexploded is treated as
   inert: its fuze state is not modelled. Lodged rounds and deferred plate solves are saved
   (`vehicles.tanks` owner version 2; a pending solve is re-run from its saved problem on load and
-  gives the identical answer). LAN clients do not see lodged rounds (host state only).
+  gives the identical answer). A round held by a part that elevates with the gun (breech,
+  cradle, sight) moves with the gun. A remount into a spare Tiger leaves the lost hull's lodged
+  rounds and fragments behind. LAN clients do not see lodged rounds (host state only), and the
+  campaign checkpoint between acts does not carry them (named).
 - **Voxel lattice plate solver** (`fea_damage::lattice`): an ordinary state-based peridynamic solid
   (linear peridynamic solid, 18-neighbour cubic lattice; not a finite-element method) with elastic
   bulk response, von Mises deviatoric plasticity by Mitchell's return mapping, linear hardening,
