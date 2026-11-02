@@ -104,6 +104,16 @@ fn configured_cabin_pastel() -> bool {
 }
 /// `KESSEL_PALETTE_PULL=0..1`: in the tinted look (mode 5) how far each pixel's hue and chroma
 /// are pulled toward the nearest pastel entry's (`crush.wgsl` `dp_tinted`); 0.7 unless set.
+/// The realism look (`KESSEL_LOOK=deltap-real`, mode 6): the physical frame's own colour, no
+/// palette pull, through AgX with a steeper log slope and less saturation, then deltaP's
+/// dithered colour, so the gradation is the dither's. `KESSEL_REAL_CONTRAST` (the slope, 1.35
+/// unless set), `KESSEL_REAL_SATURATION` (0.85), `KESSEL_REAL_STEPS` (steps per channel, 8).
+fn configured_real() -> [f32; 4] {
+    let get = |name: &str, default: f32, lo: f32, hi: f32| std::env::var(name).ok()
+        .and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(default, |v| v.clamp(lo, hi));
+    [get("KESSEL_REAL_CONTRAST", 1.35, 0.5, 3.0), get("KESSEL_REAL_SATURATION", 0.85, 0.0, 2.0),
+        get("KESSEL_REAL_STEPS", 8.0, 2.0, 64.0), 0.0]
+}
 fn configured_palette_pull() -> f32 {
     std::env::var("KESSEL_PALETTE_PULL").ok().and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.7)
@@ -482,7 +492,8 @@ fn parse_look(raw: &str) -> Result<f32, &'static str> {
         "deltap-raw" => Ok(3.0),
         "deltap-pastel" | "pastel" => Ok(4.0),
         "deltap-tinted" | "tinted" => Ok(5.0),
-        _ => Err("allowed looks are standard, deltap, deltap-pico8, deltap-raw, deltap-pastel and deltap-tinted"),
+        "deltap-real" | "real" | "realism" => Ok(6.0),
+        _ => Err("allowed looks are standard, deltap, deltap-pico8, deltap-raw, deltap-pastel, deltap-tinted and deltap-real"),
     }
 }
 
@@ -1138,6 +1149,8 @@ struct CrushUniform {
     /// The reader's loupe (mask mode 5, `crush.wgsl`): xy the lens centre in screen uv, z its
     /// radius in height units, w 1 while a lens pass sits in `optic_tex`. Appended lane.
     loupe: [f32; 4],
+    /// The realism look (mode 6): contrast, saturation, dithered steps per channel. Appended lane.
+    real: [f32; 4],
 }
 
 /// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
@@ -2856,6 +2869,8 @@ pub struct Renderer {
     pub optic_mask: f32,
     /// The loupe's circle for mask mode 5: centre uv, radius (height units), 1 when armed.
     pub loupe: [f32; 4],
+    /// The realism look's grade (`configured_real`).
+    pub real: [f32; 4],
     /// Positioned point lights this frame (game.rs sets them; capped at N_LIGHTS in the shader).
     lights: Vec<PointLight>,
     /// Point lights offered for the latest frame (all of them, before the `N_LIGHTS` budget).
@@ -6183,6 +6198,7 @@ impl Renderer {
             interior_haze: 0.0,
             optic_mask: 0.0,
             loupe: [0.0; 4],
+            real: configured_real(),
             lights: Vec::new(),
             lights_offered: 0,
             lights_full: Vec::new(),
@@ -8639,6 +8655,7 @@ impl Renderer {
             dither_forward: self.camera.forward().extend(0.0).to_array(),
             look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, self.palette_smooth],
             loupe: self.loupe,
+            real: self.real,
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {

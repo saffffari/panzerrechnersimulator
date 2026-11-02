@@ -15,9 +15,11 @@ fn complete_crush_shader_validates_and_preserves_eye_offsets() {
         .validate(&module).unwrap();
     let (_,ty)=module.types.iter().find(|(_,ty)|ty.name.as_deref()==Some("Crush")).unwrap();
     let naga::TypeInner::Struct {members,span}=&ty.inner else {panic!("Crush is not a struct")};
-    assert_eq!(*span,144);
+    // Appended lanes: look (128), the reader's loupe (144), the realism look's grade (160).
+    assert_eq!(*span,176);
     for (name,offset) in [("rod_exposure",16),("rod_inverse_saturation",20),("exposure",44),
-        ("dither_pattern",56),("display_grade",64),("dither_right",80),("dither_up",96),("dither_forward",112),("look",128)] {
+        ("dither_pattern",56),("display_grade",64),("dither_right",80),("dither_up",96),("dither_forward",112),("look",128),
+        ("loupe",144),("real",160)] {
         assert_eq!(members.iter().find(|m|m.name.as_deref()==Some(name)).unwrap().offset,offset);
     }
 }

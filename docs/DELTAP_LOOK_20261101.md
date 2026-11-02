@@ -113,3 +113,21 @@ KESSEL_LOOK=deltap KESSEL_RENDERER=raymarch KESSEL_INTERNAL_RES=1024x576 \
 
 Stills of the first pass are `captures/deltap_look_20261101_*.png` (standard / deltap /
 deltap-pico8 / deltap-raw at the same frame), with the receipt in this document's history.
+
+## Added 2 November 2026 (branch `realism_render_test`): the realism look
+
+- `KESSEL_LOOK=deltap-real` (mode 6): the owner asked for "more contrast, less stylized colour,
+  realism, and rely on the dithering", and preferred the standard display's colour to the deltaP
+  and tinted looks on the same clip. The physical frame's own colour (no palette pull), through
+  AgX with a steeper slope through the log-encoded mid grey (`KESSEL_REAL_CONTRAST`, 1.35 unless
+  set; 1 is AgX as shipped) and a little less saturation after the outset
+  (`KESSEL_REAL_SATURATION`, 0.85), then deltaP's dithered colour with
+  `KESSEL_REAL_STEPS` steps per channel (8 unless set): 3 gives 4 levels per channel, 64 colours;
+  8 gives 9 levels, 729 colours (deltaP's); 31 gives 32 levels, 32,768 (the standard posterize's
+  count, on deltaP's square-root curve and full Bayer amplitude). The crush uniform's appended
+  `real` lane (offset 160; span 176). The demo launcher defaults to it on this branch only.
+- Colour counts of the other looks, for reference: standard 32 levels per channel in display
+  gamma (32,768, the far field fading back toward continuous), deltaP and tinted 9 levels on a
+  square-root curve (729), pastel and PICO-8 a fixed 32.
+- Comparison at 1280x720 on the fea-film turret_ring clip: `ring_realism_compare_1280_20261102.png`
+  and its 3x crop in the owner's captures folder.
