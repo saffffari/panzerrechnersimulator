@@ -38,6 +38,7 @@ pub struct MeadowStats {
     pub tiles: [usize; VIEWS],
     pub camera_levels: [usize; LEVELS],
     pub flower_tiles: usize,
+    pub far_tiles: usize,
     /// Upper bound of blades the camera's draws can emit this frame (capacity of its tiles).
     pub camera_blade_capacity: u64,
     pub track_pages: usize,
@@ -53,6 +54,7 @@ pub struct MeadowGpu {
     tiles: wgpu::Buffer,
     /// Per view: per level (first instance, count); the camera's flower range.
     ranges: [[(u32, u32); LEVELS]; VIEWS],
+    far_ranges: [(u32, u32); LEVELS],
     flowers: (u32, u32),
     blade_gbuffer: wgpu::RenderPipeline,
     flower_gbuffer: wgpu::RenderPipeline,
@@ -181,7 +183,7 @@ impl MeadowGpu {
             res, res, build.height_spacing, cover_res, cover_res, 2.0 * build.cover.half_extent, meadow::SPECIES.len());
         Self {
             view_bufs, binds, wind_tex, track_table, track_atlas, tiles,
-            ranges: [[(0, 0); LEVELS]; VIEWS], flowers: (0, 0), blade_gbuffer, flower_gbuffer, blade_depth,
+            ranges: [[(0, 0); LEVELS]; VIEWS], far_ranges: [(0, 0); LEVELS], flowers: (0, 0), blade_gbuffer, flower_gbuffer, blade_depth,
             heights: build.heights, height_res: build.height_res, height_spacing: build.height_spacing, cover_half: build.cover.half_extent,
             pending: None, wind_origin: Vec2::ZERO, mean_wind: Vec2::ZERO, time: 0.0, track_pages: 0,
             stats: MeadowStats::default(),
@@ -241,51 +243,73 @@ impl MeadowGpu {
         let mut tiles: Vec<[i32; 4]> = Vec::with_capacity(VIEWS * MAX_TILES);
         let mut stats = MeadowStats { track_pages: self.track_pages, ..MeadowStats::default() };
         let eye2 = Vec2::new(eye.x, eye.z);
-        let (lo_tile, hi_tile) = (meadow::tile_of(eye2 - Vec2::splat(meadow::DRAW_RADIUS_M)), meadow::tile_of(eye2 + Vec2::splat(meadow::DRAW_RADIUS_M)));
         let bound = self.cover_half;
-        // Each tile once: its box (ground +- a margin, up to the tallest flower) and nearest distance.
-        let mut candidates: Vec<(i32, i32, Vec3, Vec3, f32)> = Vec::new();
-        for tz in lo_tile.1..=hi_tile.1 {
-            for tx in lo_tile.0..=hi_tile.0 {
-                let x0 = tx as f32 * meadow::TILE_M;
-                let z0 = tz as f32 * meadow::TILE_M;
-                if x0 + meadow::TILE_M <= -bound || z0 + meadow::TILE_M <= -bound || x0 >= bound || z0 >= bound { continue; }
-                let near = Vec2::new(eye.x.clamp(x0, x0 + meadow::TILE_M), eye.z.clamp(z0, z0 + meadow::TILE_M));
-                let horizontal = near.distance(eye2);
-                if horizontal > meadow::DRAW_RADIUS_M { continue; }
-                let corners = [self.ground(x0, z0), self.ground(x0 + meadow::TILE_M, z0), self.ground(x0, z0 + meadow::TILE_M),
-                    self.ground(x0 + meadow::TILE_M, z0 + meadow::TILE_M)];
-                let (gmin, gmax) = corners.iter().fold((f32::MAX, f32::MIN), |(a, b), &h| (a.min(h), b.max(h)));
-                let lo = Vec3::new(x0, gmin - 0.4, z0);
-                let hi = Vec3::new(x0 + meadow::TILE_M, gmax + 0.9, z0 + meadow::TILE_M);
-                let dy = if eye.y > gmax { eye.y - gmax } else if eye.y < gmin { gmin - eye.y } else { 0.0 };
-                let distance = (horizontal * horizontal + dy * dy).sqrt();
-                candidates.push((tx, tz, lo, hi, distance));
+        // Each tile once: its box (ground +- a margin, up to the tallest flower) and nearest
+        // distance; near 2 m tiles within the near radius, far 8 m tiles from its cross-fade band
+        // out to the far radius.
+        let mut candidates: Vec<(i32, i32, Vec3, Vec3, f32, bool)> = Vec::new();
+        for (far, size, inner, outer) in [(false, meadow::TILE_M, 0.0, meadow::NEAR_RADIUS_M),
+            (true, meadow::FAR_TILE_M, meadow::NEAR_RADIUS_M - meadow::BAND_M, meadow::FAR_RADIUS_M)] {
+            let lo_tile = ((eye.x - outer) / size).floor() as i32;
+            let hi_tile = ((eye.x + outer) / size).floor() as i32;
+            let lo_z = ((eye.z - outer) / size).floor() as i32;
+            let hi_z = ((eye.z + outer) / size).floor() as i32;
+            for tz in lo_z..=hi_z {
+                for tx in lo_tile..=hi_tile {
+                    let x0 = tx as f32 * size;
+                    let z0 = tz as f32 * size;
+                    if x0 + size <= -bound || z0 + size <= -bound || x0 >= bound || z0 >= bound { continue; }
+                    let near = Vec2::new(eye.x.clamp(x0, x0 + size), eye.z.clamp(z0, z0 + size));
+                    let horizontal = near.distance(eye2);
+                    if horizontal > outer { continue; }
+                    // The far corner must reach the band.
+                    let farthest = Vec2::new(if eye.x < x0 + size * 0.5 { x0 + size } else { x0 }, if eye.z < z0 + size * 0.5 { z0 + size } else { z0 });
+                    if farthest.distance(eye2) < inner { continue; }
+                    let h = size * 0.5;
+                    let samples = [self.ground(x0, z0), self.ground(x0 + size, z0), self.ground(x0, z0 + size),
+                        self.ground(x0 + size, z0 + size), self.ground(x0 + h, z0 + h)];
+                    let (gmin, gmax) = samples.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+                    let margin = if far { 1.5 } else { 0.4 };
+                    let lo = Vec3::new(x0, gmin - margin, z0);
+                    let hi = Vec3::new(x0 + size, gmax + 0.9 + margin, z0 + size);
+                    let dy = if eye.y > gmax { eye.y - gmax } else if eye.y < gmin { gmin - eye.y } else { 0.0 };
+                    candidates.push((tx, tz, lo, hi, (horizontal * horizontal + dy * dy).sqrt(), far));
+                }
             }
         }
         let mut views = [GpuView { vp: Mat4::IDENTITY.to_cols_array_2d(), origin: [0.0; 4], eye: [0.0; 4], lod: [0.0; 4], wind: [0.0; 4], map: [0.0; 4], air: [0.0; 4] }; VIEWS];
         self.ranges = [[(0, 0); LEVELS]; VIEWS];
+        self.far_ranges = [(0, 0); LEVELS];
         self.flowers = (0, 0);
         for view in [1usize, 2, CAMERA] {
             let camera = view == CAMERA;
             let (vp_planes, radius, texel) = if camera {
-                (cam.view_proj(), meadow::DRAW_RADIUS_M, 0.0)
+                (cam.view_proj(), meadow::NEAR_RADIUS_M, 0.0)
             } else {
                 (shadow_views.get(view).copied().unwrap_or(Mat4::IDENTITY), meadow::SHADOW_RADIUS_M, shadow_texels[view])
             };
             let planes = frustum_planes(vp_planes);
             let base = view * MAX_TILES;
             let mut by_level: [Vec<[i32; 4]>; LEVELS] = std::array::from_fn(|_| Vec::new());
+            let mut far_level: [Vec<[i32; 4]>; LEVELS] = std::array::from_fn(|_| Vec::new());
             let mut flower_tiles: Vec<[i32; 4]> = Vec::new();
-            for &(tx, tz, lo, hi, distance) in &candidates {
-                if distance > radius + meadow::TILE_M * 1.5 || !super::aabb_in_frustum(&planes, lo, hi) { continue; }
-                let level = meadow::tile_level(meadow::blade_density(distance, pixel_angle, texel));
+            for &(tx, tz, lo, hi, distance, far) in &candidates {
+                if far && !camera { continue; }
+                if !far && distance > radius + meadow::TILE_M * 1.5 { continue; }
+                if !super::aabb_in_frustum(&planes, lo, hi) { continue; }
+                let density = meadow::blade_density(distance, pixel_angle, texel);
+                if far {
+                    let level = meadow::far_level(density);
+                    far_level[level as usize].push([tx, tz, level as i32, 1]);
+                    continue;
+                }
+                let level = meadow::tile_level(density);
                 by_level[level as usize].push([tx, tz, level as i32, 0]);
                 if camera && distance <= meadow::FLOWER_RADIUS_M { flower_tiles.push([tx, tz, 0, 0]); }
             }
             let start = tiles.len();
+            let reserve = if camera { flower_tiles.len().min(MAX_TILES / 4) } else { 0 };
             for (level, list) in by_level.iter().enumerate() {
-                let reserve = if camera { flower_tiles.len().min(MAX_TILES / 2) } else { 0 };
                 let take = list.len().min(MAX_TILES.saturating_sub(tiles.len() - start + reserve));
                 self.ranges[view][level] = ((base + tiles.len() - start) as u32, take as u32);
                 tiles.extend_from_slice(&list[..take]);
@@ -295,6 +319,13 @@ impl MeadowGpu {
                 }
             }
             if camera {
+                for (level, list) in far_level.iter().enumerate() {
+                    let take = list.len().min(MAX_TILES.saturating_sub(tiles.len() - start + reserve));
+                    self.far_ranges[level] = ((base + tiles.len() - start) as u32, take as u32);
+                    tiles.extend_from_slice(&list[..take]);
+                    stats.far_tiles += take;
+                    stats.camera_blade_capacity += take as u64 * meadow::far_capacity(level as u32) as u64;
+                }
                 let take = flower_tiles.len().min(MAX_TILES.saturating_sub(tiles.len() - start));
                 self.flowers = ((base + tiles.len() - start) as u32, take as u32);
                 tiles.extend_from_slice(&flower_tiles[..take]);
@@ -333,6 +364,15 @@ impl MeadowGpu {
             let vertices = meadow::level_capacity(l) * meadow::level_vertices(l);
             pass.draw(0..vertices, first..first + count);
             if camera { work.scene_instanced_draws += 1; } else { work.shadow_instanced_draws += 1; }
+        }
+        if camera {
+            for level in 0..LEVELS {
+                let (first, count) = self.far_ranges[level];
+                if count == 0 { continue; }
+                let l = level as u32;
+                pass.draw(0..meadow::far_capacity(l) * meadow::level_vertices(l), first..first + count);
+                work.scene_instanced_draws += 1;
+            }
         }
         if camera && self.flowers.1 > 0 {
             pass.set_pipeline(&self.flower_gbuffer);

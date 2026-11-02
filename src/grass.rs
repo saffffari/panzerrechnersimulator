@@ -336,7 +336,7 @@ impl Grass {
             return serde_json::json!({"spring_meadow": true, "tread_pages": m.mirror.slots.len(),
                 "tread_pages_dropped": m.mirror.dropped, "butterflies": m.butterflies.alive.len(),
                 "fireflies_lit": m.fireflies.len(), "sun_altitude_deg": m.sun_altitude_deg,
-                "near_density_per_m2": crate::meadow::NEAR_DENSITY, "draw_radius_m": crate::meadow::DRAW_RADIUS_M,
+                "near_density_per_m2": crate::meadow::NEAR_DENSITY, "draw_radius_m": crate::meadow::FAR_RADIUS_M,
                 "ground_class_loaded": self.mask.is_some(), "primary_raster_only": false,
                 "casts_near_cascade_and_sky_cover_within_m": crate::meadow::SHADOW_RADIUS_M});
         }

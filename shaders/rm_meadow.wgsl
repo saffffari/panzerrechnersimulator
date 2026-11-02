@@ -200,19 +200,27 @@ fn vs_blade(@builtin(vertex_index) vi: u32, @location(0) tile: vec4<i32>) -> VsO
     let per_blade = (2u * segs - 1u) * 3u;
     let j = vi / per_blade;
     let v = vi % per_blade;
-    let seed = md_hash2(tile.x, tile.y, MD_SALT_TILE);
-    let root2 = (vec2(f32(tile.x), f32(tile.y)) + md_r2(seed, j)) * MD_TILE;
-    let radius = mv.lod.y;
+    // tile.w 1: an 8 m far tile with its own seeds, cross-faded with the 2 m near tiles over
+    // the band below the near radius (meadow.rs FAR_TILE_M).
+    let far = tile.w == 1;
+    let tile_m = select(MD_TILE, MD_FAR_TILE, far);
+    let seed = md_hash2(tile.x, tile.y, select(MD_SALT_TILE, MD_SALT_FAR, far));
+    let root2 = (vec2(f32(tile.x), f32(tile.y)) + md_r2(seed, j)) * tile_m;
+    let radius = select(mv.lod.y, MD_FAR_RADIUS, far);
     if (distance(root2, mv.eye.xz) > radius) { return md_culled(); }
     let cv = md_cover(root2);
     if (cv.x <= 0.004) { return md_culled(); }
     let ground = md_ground(root2);
     let root = vec3(root2.x, ground - 0.01, root2.y);
-    let range = md_range(root, radius, min(MD_FADE_START, radius * 0.85));
-    let d = range.x;
+    let d = distance(root, mv.eye.xyz);
+    var fade = 1.0 - smoothstep(radius * 0.85, radius, d);
+    if (mv.lod.z > 0.5) {
+        let band = smoothstep(MD_NEAR_RADIUS - MD_BAND, MD_NEAR_RADIUS, d);
+        fade = select(1.0 - band, band * (1.0 - smoothstep(MD_FAR_RADIUS * 0.8, MD_FAR_RADIUS, d)), far);
+    }
     let width = md_width(d);
-    let count = MD_NEAR_DENSITY * MD_BLADE_WIDTH / width * MD_TILE * MD_TILE * cv.x;
-    let grow = clamp(count - f32(j), 0.0, 1.0) * range.y;
+    let count = MD_NEAR_DENSITY * MD_BLADE_WIDTH / width * tile_m * tile_m * cv.x;
+    let grow = clamp(count - f32(j), 0.0, 1.0) * fade;
     if (grow <= 0.001) { return md_culled(); }
 
     let h = md_hash(seed ^ (j * 0x9e3779b1u));
