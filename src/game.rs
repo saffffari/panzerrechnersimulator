@@ -1482,6 +1482,13 @@ struct HotFragment {
     life: f32,
     bounces: u8,
     seed: u32,
+    /// Solved temperature (K) of a body the voxel lattice produced (`game_fea`); 0 for the
+    /// authored population, whose heat pages follow its normalized age.
+    #[serde(default)]
+    temp_k: f32,
+    /// Embedded in the steel it struck (`fea_damage::fragments::embed_depth`): at rest, held.
+    #[serde(default)]
+    lodged: bool,
 }
 
 /// One real cube-to-cabin contact from the latest simulation frame. Audio consumes this bounded,
@@ -3972,6 +3979,8 @@ fn generate_penetration_fragments(
             life,
             bounces: 0,
             seed: s,
+            temp_k: 0.0,
+            lodged: false,
         });
     }
     fragments
@@ -4235,10 +4244,24 @@ fn hot_fragment_bounce_budget(seed: u32) -> u8 {
     7 + (hash01(seed ^ 0xB07C_EA11) * 5.0).floor().min(4.0) as u8
 }
 
+/// Lower temperature bound (K) of each heat page for bodies with a solved temperature: amber,
+/// orange, red-orange, dull red (named bands of the incandescence colours the pages draw; the dull
+/// red page also holds steel below visible glow until a cold-steel page exists).
+const FEA_HEAT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1300.0, 1100.0, 900.0, 0.0];
+/// Air density in the fighting compartment for fragment drag (named: 20 C, sea level).
+const CABIN_AIR_DENSITY: f32 = 1.2;
+/// Flow stress of the steel the cabin collision walls stand for (armour), for embedding (named).
+const CABIN_WALL_FLOW_STRESS_PA: f32 = 800.0e6;
+
 /// Normalized cooling keeps long-lived fragments visibly incandescent throughout their flight,
 /// but the near-white phase is deliberately only a few rendered frames. Saturated orange and red
 /// own most of the trajectory so a dense shower reads as hot metal instead of an exposure wash.
 fn hot_fragment_heat_stage(fragment: &HotFragment) -> usize {
+    // A body the lattice solved carries its temperature: its page is the incandescence band it is
+    // in (`FEA_HEAT_PAGE_KELVIN`), no longer its normalized age.
+    if fragment.temp_k > 0.0 {
+        return FEA_HEAT_PAGE_KELVIN.iter().position(|&k| fragment.temp_k >= k).unwrap_or(N_HOT_FRAGMENT_BATCHES - 1);
+    }
     let jitter = (hash01(fragment.seed ^ 0x7E11) - 0.5) * 0.008;
     let heat_age = (fragment.age / fragment.life.max(0.001) + jitter).clamp(0.0, 1.0);
     if heat_age < 0.014 {
@@ -4407,6 +4430,28 @@ fn hot_fragment_bounce(
         return;
     }
     let incoming_speed = fragment.vel.length();
+    // Hard enough to push its face a quarter of its size into the wall: it stays in it.
+    if let Some(depth) = crate::fea_damage::fragments::embed_depth(fragment.size, -vn, CABIN_WALL_FLOW_STRESS_PA) {
+        fragment.pos -= normal * (depth - 0.5 * fragment.size).min(0.5 * fragment.size);
+        fragment.vel = Vec3::ZERO;
+        fragment.spin = Vec3::ZERO;
+        fragment.settled = true;
+        fragment.lodged = true;
+        fragment.prev_pos = fragment.pos;
+        fragment.bounces = fragment.bounces.saturating_add(1);
+        *collision_count = collision_count.saturating_add(1);
+        if collisions.len() < MAX_HOT_FRAGMENT_COLLISIONS_PER_FRAME {
+            collisions.push(HotFragmentCollision {
+                turret_local: fragment.frame == BloodFrame::Turret,
+                local_pos: fragment.pos,
+                local_normal: normal,
+                speed: incoming_speed,
+                seed: fragment.seed,
+                bounce_count: fragment.bounces,
+            });
+        }
+        return;
+    }
     let tangent = fragment.vel - normal * vn;
     fragment.vel = tangent * keep + normal * (-vn * restitution);
     // The renderer may show only measured history since this contact; never connect the incoming
@@ -4461,13 +4506,19 @@ fn integrate_hot_fragment_traced(
     }
 
     let radius = fragment.size * 0.52;
+    if fragment.temp_k > 0.0 {
+        fragment.temp_k = crate::fea_damage::fragments::cool(fragment.temp_k, fragment.size,
+            fragment.vel.length(), crate::armor_damage::AMBIENT_K, physics_dt);
+    }
     let steps = ((fragment.vel.length() * physics_dt / HOT_FRAGMENT_MAX_STEP_M).ceil() as usize)
         .clamp(1, 1024);
     let step_dt = physics_dt / steps as f32;
     for _ in 0..steps {
         let from = fragment.pos;
         let incoming_speed = fragment.vel.length();
-        fragment.vel.y -= PROJECTILE_GRAVITY_MPS2 * step_dt;
+        // Quadratic air drag on the tumbling cube, then gravity (`fea_damage::fragments`).
+        fragment.vel = crate::fea_damage::fragments::drag_step(fragment.vel, fragment.size, CABIN_AIR_DENSITY,
+            Vec3::new(0.0, -PROJECTILE_GRAVITY_MPS2, 0.0), step_dt);
         fragment.pos += fragment.vel * step_dt;
         fragment.ang += fragment.spin * step_dt;
 
@@ -19716,6 +19767,7 @@ impl Game {
                 scar,
                 struck_at: field.struck_at(index),
                 rim_kelvin: field.rim_kelvin(index),
+                rim_curve: field.rim_curve(index),
                 plug_rest,
                 interior: interior == ArmorInterior::PlayerTiger,
                 extent,
@@ -26503,6 +26555,13 @@ impl Game {
         let to_local = frame.inverse();
         let normal = to_local.transform_vector3(armor.world_normal).normalize_or_zero();
         let dir = to_local.transform_vector3(travel_world).normalize_or_zero();
+        // The player's Tiger: the voxel lattice's measured geometry when it solved this strike.
+        if armor.vehicle == ProjectileVehicle::Player {
+            if let Some((measured, curve)) = self.fea_measured_scar() {
+                return self.armor_scars.record_measured(armor.facing, armor.local_point, normal, dir, event, now_s,
+                    &measured, curve);
+            }
+        }
         self.vehicle_scars_mut(armor.vehicle)
             .record_at(armor.facing, armor.local_point, normal, dir, event, now_s)
     }
@@ -26636,6 +26695,9 @@ impl Game {
                         self.enemy_ai_stats.hit_on_tiger(i, enemy_ai_telemetry::Aspect::of_facing(armor.facing), penetrated);
                     }
                 }
+                // The layered model: the chain behind the plate and the voxel lattice of the struck
+                // plate, consumed by the scar, the consequences and the fragments below (`game_fea`).
+                self.fea_solve_impact(projectile.id, projectile.seed, &armor, &event, impact_pos, travel_world);
                 if !self.god {
                     let scar = self.record_vehicle_scar(&armor, &event, travel_world, r.time);
                     println!(
@@ -28788,8 +28850,10 @@ impl Game {
             .transform_vector3(shell_dir_w)
             .normalize_or_zero();
         self.armor_tick = self.armor_tick.wrapping_add(1);
-        let fragments =
-            generate_penetration_fragments(penetration_id, frame, entry, axis, ev, seed);
+        // The voxel lattice's clusters (and a burst round's body) when it solved this strike;
+        // otherwise the authored population.
+        let fragments = self.fea_penetration_fragments(penetration_id, frame, &ev, seed)
+            .unwrap_or_else(|| generate_penetration_fragments(penetration_id, frame, entry, axis, ev, seed));
         // God mode preserves the physically truthful shower but suppresses every target mutation.
         if self.god {
             self.stage_penetration_fragments(&fragments);

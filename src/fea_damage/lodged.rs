@@ -98,6 +98,26 @@ pub fn extraction(grip_pa: f32, diameter_m: f32, held_m: f32, reachable: bool) -
     Extraction { force_n: force, slide_m: held, work_j: work, removal }
 }
 
+/// Extraction from the lattice's measured normal grip on the body (`Lattice::body_grip_normal_n`).
+pub fn extraction_from_grip(grip_normal_n: f32, held_m: f32, reachable: bool) -> Extraction {
+    let held = held_m.max(0.0);
+    let force = FRICTION_STEEL * grip_normal_n.max(0.0);
+    let work = force * held;
+    let removal = if !reachable {
+        Removal::Workshop
+    } else if force <= HAND_PULL_N {
+        Removal::Hand
+    } else if force <= HAND_PULL_N * BAR_ADVANTAGE {
+        Removal::Bar
+    } else if force <= MAX_BLOW_GRIP_N {
+        let blows = (work / (SLEDGE_BLOW_J * SLEDGE_EFFICIENCY)).ceil().max(1.0) as u32;
+        if blows <= MAX_FIELD_BLOWS { Removal::Blows(blows) } else { Removal::Workshop }
+    } else {
+        Removal::Workshop
+    };
+    Extraction { force_n: force, slide_m: held, work_j: work, removal }
+}
+
 /// Stage-1 grip before a lattice solve: a named fraction of the struck material's yield.
 pub fn estimated_grip_pa(yield_stress_pa: f32) -> f32 {
     RESIDUAL_GRIP_FRACTION * yield_stress_pa.max(0.0)

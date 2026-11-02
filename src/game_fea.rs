@@ -10,7 +10,7 @@
 //! injury outcomes stay with the existing crew model.
 use super::*;
 use crate::fea_damage::components::{self, Side, System};
-use crate::fea_damage::{chain, lodged};
+use crate::fea_damage::{chain, lattice, lodged};
 
 /// Contact identity of the residual penetrator in fragment contact records. Fragments use
 /// `penetration_id << 10 | index`; the penetrator sets the top bit.
@@ -51,10 +51,51 @@ pub(super) struct FeaChainReceipt {
     pub(super) struck_not_breached: Vec<String>,
 }
 
+/// The voxel lattice's solve of one strike on the player's Tiger, in the hull frame.
+#[derive(Clone, Debug)]
+pub(super) struct LatticeOutcome {
+    pub(super) measured: crate::armor_damage::MeasuredScar,
+    pub(super) geometry: lattice::MeasuredGeometry,
+    pub(super) clusters: Vec<lattice::Cluster>,
+    /// The plate frame: origin at the strike on the struck face, x along the shot's in-plane
+    /// direction, y across it, z into the plate (all hull-local).
+    pub(super) origin_hull: Vec3,
+    pub(super) axes_hull: [Vec3; 3],
+    pub(super) thickness_m: f32,
+    pub(super) particles: usize,
+    pub(super) steps: u64,
+    pub(super) cell_mm: f32,
+    pub(super) wall_ms: f32,
+    pub(super) ledger: lattice::Ledger,
+    pub(super) grip_normal_n: f32,
+    /// The rim's solved cooling (`armor_damage::RIM_CURVE_TIMES`).
+    pub(super) rim_curve: crate::armor_damage::RimCurve,
+}
+
+impl LatticeOutcome {
+    pub(super) fn plate_to_hull(&self, p: Vec3) -> Vec3 {
+        self.origin_hull + self.axes_hull[0] * p.x + self.axes_hull[1] * p.y + self.axes_hull[2] * p.z
+    }
+    pub(super) fn plate_dir_to_hull(&self, v: Vec3) -> Vec3 {
+        self.axes_hull[0] * v.x + self.axes_hull[1] * v.y + self.axes_hull[2] * v.z
+    }
+}
+
+/// Everything solved for the strike being resolved now; consumed by the scar, the penetration's
+/// consequences and its fragments, then cleared.
+#[derive(Clone, Debug)]
+pub(super) struct ImpactSolve {
+    pub(super) projectile_id: u64,
+    pub(super) line: chain::ShotLine,
+    pub(super) chain: chain::ChainResult,
+    pub(super) lattice: Option<LatticeOutcome>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct FeaRuntime {
     pub(super) lodged: Vec<LodgedRound>,
     pub(super) receipts: Vec<FeaChainReceipt>,
+    pub(super) current: Option<ImpactSolve>,
     next_id: u64,
 }
 
@@ -163,7 +204,7 @@ impl Game {
     /// Record a round the chain left lodged. `part` is the struck armour part (the frame of a round
     /// held in the plate); a round stopped inside goes to the frame of the component holding it.
     fn fea_record_lodged(&mut self, line: &chain::ShotLine, result: &chain::ChainResult,
-        event: &crate::ballistics::ImpactEvent, part: ArmorPart, now_s: f32) -> Option<u64> {
+        event: &crate::ballistics::ImpactEvent, part: ArmorPart, now_s: f32, grip_normal_n: Option<f32>) -> Option<u64> {
         let lodging = result.lodged?;
         let crossing = result.crossings.get(lodging.crossing)?;
         let shell = event.shell;
@@ -192,7 +233,12 @@ impl Game {
         let held = (lodging.depth_m - nose).max(0.0);
         let reachable = lodging.in_struck_plate
             || matches!(crossing.layer.kind, chain::LayerKind::Casing { .. });
-        let extraction = lodged::extraction(lodged::estimated_grip_pa(yield_pa), d, held, reachable);
+        // The lattice's measured grip on the body when it solved this plate; otherwise the named
+        // stage-1 estimate.
+        let extraction = match (lodging.in_struck_plate, grip_normal_n) {
+            (true, Some(grip)) => lodged::extraction_from_grip(grip, held, reachable),
+            _ => lodged::extraction(lodged::estimated_grip_pa(yield_pa), d, held, reachable),
+        };
         let id = self.fea.next_id;
         self.fea.next_id += 1;
         let name = component.map(|c| components::COMPONENT_SPECS[c].id.to_string());
@@ -209,8 +255,10 @@ impl Game {
     /// A kinetic round the struck plate stopped: it may stay lodged in it.
     pub(super) fn fea_nonpenetration(&mut self, armor: &VehicleArmorContact,
         event: &crate::ballistics::ImpactEvent, impact_world: Vec3, dir_world: Vec3, now_s: f32) {
-        let Some((line, result)) = self.fea_run_chain(impact_world, dir_world, event) else { return };
-        self.fea_record_lodged(&line, &result, event, armor.part, now_s);
+        let solved = self.fea.current.as_ref().map(|s| (s.line, s.chain.clone(), s.lattice.as_ref().map(|l| l.grip_normal_n)));
+        let Some((line, result, grip)) = solved.or_else(|| self.fea_run_chain(impact_world, dir_world, event)
+            .map(|(l, r)| (l, r, None))) else { return };
+        self.fea_record_lodged(&line, &result, event, armor.part, now_s, grip);
         self.fea.push_receipt(FeaChainReceipt { shell: event.shell.name, terminal: event.terminal,
             entry_hull: line.entry, dir_hull: line.dir, far_wall_mm: line.far_wall.map(|w| w.plate_mm),
             result, knocked_out: Vec::new(), struck_not_breached: Vec::new() });
@@ -223,7 +271,10 @@ impl Game {
         event: &crate::ballistics::ImpactEvent, part: ArmorPart, penetration_id: u64, frame: BloodFrame,
         solo_body: Option<Vec3>, couch_bodies: &[CouchCrewBody], live_ammunition: &[LiveAmmoRound],
         result: &mut SpallResult, contacts: &mut Vec<FragmentDamageContact>) {
-        let Some((line, chain_result)) = self.fea_run_chain(impact_world, dir_world, event) else { return };
+        let current = self.fea.current.as_ref().filter(|s| s.projectile_id == penetration_id)
+            .map(|s| (s.line, s.chain.clone(), s.lattice.as_ref().map(|l| l.grip_normal_n)));
+        let Some((line, chain_result, grip)) = current.or_else(|| self.fea_run_chain(impact_world, dir_world, event)
+            .map(|(l, r)| (l, r, None))) else { return };
         let hull = self.player.hull_model();
         let parent_inv = blood_parent_model(&self.player, frame).inverse();
         let to_frame = |p_hull: Vec3| parent_inv.transform_point3(hull.transform_point3(p_hull));
@@ -324,7 +375,7 @@ impl Game {
             }
         }
         let now = self.armor_clock_s;
-        self.fea_record_lodged(&line, &chain_result, event, part, now);
+        self.fea_record_lodged(&line, &chain_result, event, part, now, grip);
         println!("[fea] {}: {}", shell.name, chain_result.summary());
         if !knocked_out.is_empty() || !struck_not_breached.is_empty() {
             println!("[fea]   breached {:?}; struck, not breached {:?}", knocked_out, struck_not_breached);
@@ -332,5 +383,192 @@ impl Game {
         self.fea.push_receipt(FeaChainReceipt { shell: shell.name, terminal: event.terminal, entry_hull: line.entry,
             dir_hull: line.dir, far_wall_mm: line.far_wall.map(|w| w.plate_mm), result: chain_result,
             knocked_out, struck_not_breached });
+    }
+
+    /// Solve one kinetic strike on the player's Tiger: the chain, then the voxel lattice of the
+    /// struck plate. The lattice runs to completion inside this tick: a long solve holds the tick
+    /// (logged) rather than letting any consumer see a half-solved plate or skip the contact.
+    pub(super) fn fea_solve_impact(&mut self, projectile_id: u64, seed: u32, armor: &VehicleArmorContact,
+        event: &crate::ballistics::ImpactEvent, impact_world: Vec3, dir_world: Vec3) {
+        use crate::fea_damage::chain::Fate;
+        self.fea.current = None;
+        let Some((line, chain_result)) = self.fea_run_chain(impact_world, dir_world, event) else { return };
+        let motion = chain_result.crossings.first().and_then(|c| match c.fate {
+            Fate::Perforated | Fate::Burst => Some(lattice::Motion::Perforate { v_out: c.v_out }),
+            Fate::Stopped { depth_m } => Some(lattice::Motion::Stop { depth_m }),
+            // Ricochets and shatters keep the empirical scar: their path out of the plate is not
+            // prescribed to the lattice (named).
+            _ => None,
+        });
+        let hull_inv = self.player.hull_model().inverse();
+        let lattice = motion.map(|motion| {
+            let mut e3 = -hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
+            if e3.dot(line.dir) < 0.0 {
+                e3 = -e3;
+            }
+            let tangential = line.dir - e3 * line.dir.dot(e3);
+            let e1 = tangential.try_normalize().unwrap_or_else(|| e3.any_orthonormal_vector());
+            let e2 = e3.cross(e1);
+            let obliquity = line.dir.dot(e3).clamp(-1.0, 1.0).acos().min(1.4);
+            let shell = event.shell;
+            let calibre = shell.caliber_mm * 0.001;
+            // A sub-calibre core goes into the plate; the carrier is not modelled (named).
+            let body_d = if shell.kind == crate::ballistics::ShellKind::Apcr { 0.37 * calibre } else { calibre };
+            let material = match event.plate.material {
+                crate::ballistics::ArmorMaterial::Cast => crate::fea_damage::materials::MaterialId::CastArmour,
+                _ => crate::fea_damage::materials::MaterialId::RolledArmour,
+            };
+            let local_seed = crate::armor_damage::position_seed(armor.local_point) ^ seed.rotate_left(13);
+            let impact = lattice::PlateImpact {
+                material,
+                thickness_m: event.plate.thickness_mm * 0.001,
+                obliquity_rad: obliquity,
+                projectile: lattice::ProjectileShape {
+                    mass_kg: shell.mass_kg,
+                    radius_m: 0.5 * body_d,
+                    nose_m: lodged::nose_length_calibres(shell.kind) * body_d,
+                },
+                v_in: event.striking_v,
+                motion,
+                seed: local_seed,
+            };
+            let started = std::time::Instant::now();
+            let mut solver = lattice::Lattice::new(impact);
+            solver.solve();
+            let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
+            let geometry = solver.measure();
+            let ledger = solver.ledger_now();
+            let measured = crate::armor_damage::MeasuredScar {
+                perforated: matches!(motion, lattice::Motion::Perforate { .. }),
+                aperture_mm: geometry.aperture_mm,
+                back_radius_mm: geometry.back_radius_mm,
+                petals: geometry.petals,
+                petal_mm: geometry.petal_mm,
+                plug: geometry.plug,
+                cavity_mm: geometry.cavity_mm,
+                worked_radius_mm: geometry.worked_radius_mm,
+                rim_kelvin: geometry.rim_kelvin,
+            };
+            println!("[fea] lattice {} particles, {:.1} mm cells, {} steps, {:.0} ms (the tick waited for it): aperture {:.0} mm, petals {}, plug {}, lip {:.0} mm, bulge {:.0} mm, rim {:.0} K, energy closure {:.2} %",
+                solver.n, solver.h * 1000.0, solver.step, wall_ms, geometry.aperture_mm, geometry.petals, geometry.plug,
+                geometry.lip_mm, geometry.bulge_mm, geometry.rim_kelvin, ledger.closure() * 100.0);
+            LatticeOutcome {
+                measured,
+                geometry,
+                clusters: solver.clusters(),
+                origin_hull: line.entry,
+                axes_hull: [e1, e2, e3],
+                thickness_m: impact.thickness_m,
+                particles: solver.n,
+                steps: solver.step,
+                cell_mm: solver.h * 1000.0,
+                wall_ms,
+                ledger,
+                grip_normal_n: solver.body_grip_normal_n(),
+                rim_curve: {
+                    let samples = solver.rim_cooling(&crate::armor_damage::RIM_CURVE_TIMES);
+                    let mut kelvin = [crate::armor_damage::AMBIENT_K; 10];
+                    for (k, v) in kelvin.iter_mut().zip(samples) { *k = v; }
+                    crate::armor_damage::RimCurve { kelvin }
+                },
+            }
+        });
+        self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice });
+    }
+
+    /// The measured terminal geometry and solved rim cooling for the strike being resolved, if
+    /// the lattice solved it.
+    pub(super) fn fea_measured_scar(&self) -> Option<(crate::armor_damage::MeasuredScar, Option<crate::armor_damage::RimCurve>)> {
+        self.fea.current.as_ref()?.lattice.as_ref().map(|l| (l.measured, Some(l.rim_curve)))
+    }
+
+    /// The penetration's fragment population from the lattice: every cluster that broke free on
+    /// the inside of the plate (its mass, centre, velocity and spin as solved), and, for a filled
+    /// round that burst, its body's steel (mass minus filler) partitioned into the existing authored
+    /// size shape and speeds (named: no fragmentation law). `None` when no lattice solved it.
+    pub(super) fn fea_penetration_fragments(&self, penetration_id: u64, frame: BloodFrame,
+        event: &crate::ballistics::ImpactEvent, seed: u32) -> Option<Vec<HotFragment>> {
+        let solve = self.fea.current.as_ref().filter(|s| s.projectile_id == penetration_id)?;
+        let lat = solve.lattice.as_ref()?;
+        let hull = self.player.hull_model();
+        let parent_inv = blood_parent_model(&self.player, frame).inverse();
+        let to_frame = |p_plate: Vec3| parent_inv.transform_point3(hull.transform_point3(lat.plate_to_hull(p_plate)));
+        let dir_to_frame = |v: Vec3| parent_inv.transform_vector3(hull.transform_vector3(lat.plate_dir_to_hull(v)));
+        let profile = fragment_shower_profile(true, event.behind_armor, event.shell.caliber_mm, event.residual_v,
+            if event.shell.kind == crate::ballistics::ShellKind::Heat { 0.0 } else { event.shell.filler_g });
+        let penetration_seed = seed ^ penetration_id as u32 ^ (penetration_id >> 32) as u32 ^ 0x5A11_5A11;
+        let mut out: Vec<HotFragment> = Vec::new();
+        let make = |index: usize, pos: Vec3, vel: Vec3, size: f32, spin: Vec3, temp_k: f32| {
+            let s = penetration_seed.wrapping_add((index as u32).wrapping_mul(2_246_822_519));
+            HotFragment {
+                id: (penetration_id << 10) | index as u64,
+                penetration_id,
+                active: true,
+                settled: false,
+                origin: pos,
+                prev_pos: pos,
+                entered_compartment: fragment_inside_compartment(frame, pos, size * 0.52),
+                audio_whizzed: false,
+                frame,
+                pos,
+                vel,
+                size,
+                ang: Vec3::new(hash01(s ^ 0x11), hash01(s ^ 0x22), hash01(s ^ 0x33)) * std::f32::consts::TAU,
+                spin,
+                age: 0.0,
+                life: profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19)),
+                bounces: 0,
+                seed: s,
+                temp_k,
+                lodged: false,
+            }
+        };
+        // Plate clusters on the inside, moving inward. Exterior ejecta leave as the cosmetic impact
+        // sparks only (named): this pool is the interior's.
+        for cluster in &lat.clusters {
+            if out.len() >= N_HOT_FRAGMENTS {
+                break;
+            }
+            if cluster.centre.z < 0.5 * lat.thickness_m || cluster.velocity.z <= 0.0 {
+                continue;
+            }
+            let index = out.len();
+            out.push(make(index, to_frame(cluster.centre), dir_to_frame(cluster.velocity), cluster.size_m,
+                dir_to_frame(cluster.angular_velocity), cluster.temperature_k.max(crate::armor_damage::AMBIENT_K + 1.0)));
+        }
+        if solve.chain.burst {
+            const STEEL: f32 = 7850.0;
+            let body_mass = (event.shell.mass_kg - event.shell.filler_g * 0.001).max(0.0);
+            let count = (N_HOT_FRAGMENTS - out.len()).min(512);
+            if body_mass > 0.0 && count > 0 {
+                let exit = lat.plate_to_hull(Vec3::ZERO) + solve.line.dir * solve.line.plate_path_m;
+                let burst = parent_inv.transform_point3(hull.transform_point3(exit));
+                let axis = parent_inv.transform_vector3(hull.transform_vector3(solve.line.dir)).normalize_or_zero();
+                let mut side = axis.cross(Vec3::Y).normalize_or_zero();
+                if side.length_squared() < 0.5 {
+                    side = axis.cross(Vec3::X).normalize_or_zero();
+                }
+                let up = side.cross(axis).normalize_or_zero();
+                let shape: Vec<f32> = (0..count).map(|i| {
+                    let s = penetration_seed ^ 0xB0D7_0000 ^ (i as u32).wrapping_mul(2_654_435_761);
+                    profile.min_size_m + (profile.max_size_m - profile.min_size_m) * hash01(s ^ 0xE1).powf(2.4)
+                }).collect();
+                let raw_mass: f32 = shape.iter().map(|s| STEEL * s * s * s).sum();
+                let k = (body_mass / raw_mass.max(1e-12)).cbrt();
+                for (i, base) in shape.iter().enumerate() {
+                    let s = penetration_seed ^ 0xB0D7_0000 ^ (i as u32).wrapping_mul(2_654_435_761);
+                    let radial = hash01(s ^ 0x51).sqrt();
+                    let angle = hash01(s ^ 0xA7) * std::f32::consts::TAU;
+                    let fan = (side * angle.cos() + up * angle.sin()) * radial * profile.cone_half_tan;
+                    let dir = (axis + fan).normalize_or_zero();
+                    let speed = profile.speed_min + (profile.speed_max - profile.speed_min) * hash01(s ^ 0xD3).sqrt();
+                    let spin = Vec3::new(hash01(s ^ 0x44) - 0.5, hash01(s ^ 0x55) - 0.5, hash01(s ^ 0x66) - 0.5) * 40.0;
+                    let index = out.len();
+                    // The burst body's temperature is not solved: authored heat pages (temp 0).
+                    out.push(make(index, burst, dir * speed, base * k, spin, 0.0));
+                }
+            }
+        }
+        Some(out)
     }
 }

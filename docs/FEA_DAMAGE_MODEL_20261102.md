@@ -312,3 +312,28 @@ lists every named approximation of this model.
   `projectile_armor_source` and `tiger_damage` tests unchanged and passing; the full suite has the
   same five pre-existing failures as the base commit (asset-cook, building-kit and mechanic-capture
   tests that need files this worktree lacks) and no new ones.
+
+### Stage 2 (landed): the lattice drives the player's Tiger's scars, fragments and grip
+
+- `game_fea::fea_solve_impact` runs the chain and the lattice for every kinetic strike on the
+  player's Tiger that perforates or stops in the plate, before the scar is recorded; the scar takes
+  the measured geometry (`ArmorField::record_measured`), a lodged round takes the lattice's measured
+  normal grip on its body (`Lattice::body_grip_normal_n`, Coulomb 0.3), and the penetration's
+  fragments are the lattice's interior clusters (plus a burst round's body steel).
+- Scars carry the lattice's own rim cooling curve (`RimCurve`, ten samples over 64 s), which the
+  renderer now uses for those scars.
+- Determinism and presets: the solve is the same constant set in every preset; thread count and
+  budget slicing do not change it (bit-exact tests).
+- Not yet: the renderer still draws a parametric near patch from the measured scalars (the
+  displaced lattice surface itself is not uploaded), enemies keep the empirical scars, ricochets
+  and shatters are not solved.
+
+### Stage 3/4 physics (landed, partly wired)
+
+- `fea_damage::fragments`: drag (exact quadratic-drag step), lumped radiative and convective
+  cooling, embedding depth, the burst body partition (mass exact), the lodged-fragment record. The
+  live integrator uses drag, cooling, embedding and temperature heat pages.
+- `fea_damage::compartment`: the quasi-static burst pressure, venting and hatch loads.
+- Not yet wired: persistent cold steel, grabbing and throwing fragments, drawing and removing
+  lodged rounds, applying compartment pressure to the game's hatches, a cold-steel render page.
+  These need renderer and interaction work that has to be checked on the GPU.

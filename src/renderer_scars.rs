@@ -34,6 +34,9 @@ pub struct ScarDraw {
     pub struck_at: f32,
     /// Initial rim temperature of that strike (K).
     pub rim_kelvin: f32,
+    /// The lattice's solved cooling curve of that rim, when it solved the strike; otherwise the
+    /// shared thin-ring estimate's exponential applies.
+    pub rim_curve: Option<crate::armor_damage::RimCurve>,
     /// Where the punched plug came to rest, in the mesh frame (centre, normal of its seat).
     pub plug_rest: Option<(Vec3, Vec3)>,
     /// A modeled interior lies behind this plate (the player's Tiger): daylight leaks in.
@@ -46,7 +49,7 @@ pub struct ScarDraw {
 
 impl ScarDraw {
     pub fn cold(scar: ArmorScar) -> Self {
-        Self { scar, struck_at: f32::NEG_INFINITY, rim_kelvin: AMBIENT_K, plug_rest: None, interior: false, extent: [13; 16] }
+        Self { scar, struck_at: f32::NEG_INFINITY, rim_kelvin: AMBIENT_K, rim_curve: None, plug_rest: None, interior: false, extent: [13; 16] }
     }
 }
 
@@ -151,7 +154,10 @@ fn pack_one(r: &Renderer, model: Mat4, draw: &ScarDraw, eye: Vec3, px_per_rad: f
     let near = distance < NEAR_PATCH_MAX_M && radius * px_per_rad / distance.max(0.05) >= NEAR_PATCH_MIN_PX
         && frame.near.len() < MAX_NEAR_SCARS && scar.kind != ScarKind::Pock;
     if near { frame.near.push(frame.gpu.len() as u32); }
-    let kelvin = renderer_weapon_particles::math::rim_temperature(draw.rim_kelvin, age);
+    let kelvin = match draw.rim_curve {
+        Some(curve) => curve.at(age),
+        None => renderer_weapon_particles::math::rim_temperature(draw.rim_kelvin, age),
+    };
     let rim = rim_radiance(kelvin);
     let heat = ((kelvin - AMBIENT_K) / 1000.0).clamp(0.0, 1.0);
     // Snow drifts into a sky-facing cavity while it snows; a loaded scar is a day old.

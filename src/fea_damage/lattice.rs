@@ -1306,6 +1306,20 @@ mod tests {
     }
 
     #[test]
+    fn the_rim_cools_monotonically_from_its_solved_temperature() {
+        let mut l = coarse(small_impact(true, 9));
+        l.solve();
+        let times = crate::armor_damage::RIM_CURVE_TIMES;
+        let curve = l.rim_cooling(&times);
+        assert_eq!(curve.len(), times.len());
+        assert!(curve[0] > AMBIENT_K + 50.0, "fresh rim {}", curve[0]);
+        for w in curve.windows(2) {
+            assert!(w[1] <= w[0] + 1e-3, "{curve:?}");
+        }
+        assert!(curve[curve.len() - 1] < curve[0]);
+    }
+
+    #[test]
     fn thread_count_does_not_change_the_result() {
         let mut a = coarse(small_impact(true, 5));
         let mut b = coarse(small_impact(true, 5));
@@ -1604,6 +1618,95 @@ impl Lattice {
         g.rim_kelvin = rim_k;
         g.work_ratio = (self.ledger.projectile_work / self.calibrated_loss_j.max(1e-9)) as f32;
         g
+    }
+
+    /// Normal force the plate presses onto the projectile's cylindrical body behind its nose at
+    /// the end of the solve (N): the grip that friction acts on when a stopped round is pulled.
+    pub fn body_grip_normal_n(&self) -> f32 {
+        let tip = self.dir * self.tip_s;
+        let nose = self.impact.projectile.nose_m;
+        let mut total = 0.0f32;
+        for p in 0..self.n {
+            let f = Vec3::from_array(self.contact_prev[p]);
+            if f == Vec3::ZERO {
+                continue;
+            }
+            let rel = self.position(p) - tip;
+            let behind = -rel.dot(self.dir);
+            if behind < nose {
+                continue;
+            }
+            let radial = (rel + self.dir * behind).normalize_or_zero();
+            total += f.dot(radial).abs();
+        }
+        total
+    }
+
+    /// Temperature of the hottest exposed surface particle around the bore at each of `times`
+    /// (s after the strike): explicit conduction through intact face bonds, radiation (the
+    /// material's emissivity) and natural convection (10 W/m² K, named) from every exposed face.
+    /// The patch's own boundary is adiabatic (named: the rest of the plate is not a heat sink here,
+    /// so late temperatures run slightly high).
+    pub fn rim_cooling(&self, times: &[f32]) -> Vec<f32> {
+        const FACE_SLOTS: [usize; 6] = [0, 1, 2, BONDS, BONDS + 1, BONDS + 2];
+        const NATURAL_CONVECTION: f32 = 10.0;
+        let m = self.material;
+        let alpha = m.conductivity / (m.density * m.specific_heat);
+        let h = self.h;
+        let face = h * h;
+        let capacity = m.density * m.specific_heat * h * h * h;
+        let a = self.impact.projectile.radius_m + 3.0 * h;
+        let tip = self.dir * self.tip_s;
+        // Particles near the bore whose temperature counts as the rim, and every particle's exposed
+        // face count.
+        let mut exposed = vec![0u8; self.n];
+        let mut rim: Vec<usize> = Vec::new();
+        for p in 0..self.n {
+            let mut faces = 0u8;
+            for &s in &FACE_SLOTS {
+                if self.slot_state(p, s) != 1 {
+                    faces += 1;
+                }
+            }
+            exposed[p] = faces;
+            let rel = self.position(p) - tip;
+            let along = rel.dot(self.dir);
+            let radial = (rel - self.dir * along).length();
+            if faces > 0 && radial < a {
+                rim.push(p);
+            }
+        }
+        let mut temp = self.temp.clone();
+        let mut next = temp.clone();
+        let rim_now = |temp: &[f32]| rim.iter().map(|&p| temp[p]).fold(AMBIENT_K, f32::max);
+        let mut out = Vec::with_capacity(times.len());
+        let mut t = 0.0f32;
+        let dt_stable = 0.15 * h * h / alpha;
+        for &target in times {
+            while t < target - 1e-6 {
+                let dt = dt_stable.min(0.05 * (t + 0.5)).min(target - t);
+                for p in 0..self.n {
+                    let tp = temp[p];
+                    let mut q = 0.0f32;
+                    for &s in &FACE_SLOTS {
+                        if self.slot_state(p, s) == 1 {
+                            let n = (p as isize + self.delta[s]) as usize;
+                            q += m.conductivity * h * (temp[n] - tp);
+                        }
+                    }
+                    if exposed[p] > 0 {
+                        let area = face * exposed[p] as f32;
+                        q -= area * (m.emissivity * materials::STEFAN_BOLTZMANN * (tp.powi(4) - AMBIENT_K.powi(4))
+                            + NATURAL_CONVECTION * (tp - AMBIENT_K));
+                    }
+                    next[p] = (tp + q * dt / capacity).max(AMBIENT_K.min(tp));
+                }
+                std::mem::swap(&mut temp, &mut next);
+                t += dt;
+            }
+            out.push(rim_now(&temp));
+        }
+        out
     }
 
     /// Fraction of particle `p`'s family bonds that are broken.

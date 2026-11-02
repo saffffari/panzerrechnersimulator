@@ -516,8 +516,41 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   budget-sliced solve and any thread count reproduce the reference bit for bit; the lattice
   absorbs 0.25–0.8 of the kinetic energy the calibrated law removes (reported, not forced). The
   fracture pattern (petal count, bulge) is deterministic per impact state but not converged in the
-  time step. Cost on this i9 with 8 threads: 0.2–0.4 s per impact at the 12,000-particle cap. Not
-  yet wired into the game's scars or fragments.
+  time step. Cost on this i9 with 8 threads: 0.2–0.4 s per impact at the 12,000-particle cap.
+- **Lattice in play** (`game_fea::fea_solve_impact`): every kinetic strike on the player's Tiger
+  that perforates or stops in the plate is solved before its scar, consequences and fragments are
+  resolved. The solve runs to completion inside that tick (the tick waits and logs the wall time;
+  no consumer sees a half-solved plate, nothing is skipped; both presets get the same result).
+  Ricochets, shatters, HE and HEAT keep their existing scars. Other vehicles keep the empirical
+  scar rules. The sub-calibre core of an APCR round goes into the plate; its carrier is not modelled.
+- **Scars from the lattice** (`ArmorField::record_measured`): aperture, back-face tear, petals,
+  plug, cavity depth (a dent's resistance loss), worked radius and rim temperature are measured;
+  a hole keeps the 94 % resistance rule and entrance funnel. The rim's cooling is the lattice's own
+  (conduction through intact face bonds, radiation, 10 W/m² K natural convection; the patch
+  boundary adiabatic, named) as a ten-sample curve over 64 s, replacing the authored 2.5 s
+  exponential for those scars (runtime only; a loaded scar is cold). The near-patch renderer still
+  draws a parametric profile from these scalars: the lattice's own displaced surface is not yet
+  drawn.
+- **Fragments from the lattice**: the clusters that broke free on the inside of the plate (mass,
+  centre, velocity, spin and temperature as solved) are the penetration's fragment population;
+  exterior ejecta are left to the cosmetic impact sparks. Material finer than a lattice cell is not
+  resolved, so a penetration now yields tens of resolved chips rather than hundreds of authored
+  ones. A filled round that burst adds its body's steel (mass minus filler) partitioned into the
+  existing authored size shape and speeds, scaled to the exact mass (no fragmentation law); its
+  temperature is not solved and keeps the authored heat pages. HE, HEAT and harness penetrations
+  without a solve keep the authored population.
+- **Every fragment** (lattice or authored) now flies with quadratic air drag (tumbling cube, mean
+  area a quarter of the surface, Cd 1.05, 1.2 kg/m³; named) as well as gravity, and embeds in a
+  cabin collision wall when its normal energy can push its face a quarter of its size into 800 MPa
+  steel (named cavity-work rule): it stays there, settled. Solved bodies cool as lumped cubes
+  (radiation, Ranz–Marshall convection) and take the heat page of their temperature band (1,300 /
+  1,100 / 900 K bounds, named); below visible glow they still use the dull-red page until a
+  cold-steel page exists. Lodged and settled steel still retires with its body's life: no
+  persistent residue, no grab-and-toss yet.
+- **Compartment pressure** (`fea_damage::compartment`): quasi-static ideal-gas pressure from the
+  filler's energy less its fragments' kinetic energy over a named 10 m³ of free air, vented through
+  open apertures by isentropic orifice flow (Cd 0.6), hatches forced past a named 20 kN latch.
+  Tested against the closed forms; not yet applied to the game's hatches or drawn.
 
 ## Armor scars, 2026-10-27 (branch `armor-scars`, `docs/ARMOR_SCARS.md`)
 

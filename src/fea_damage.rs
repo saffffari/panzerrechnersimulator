@@ -8,6 +8,8 @@
 
 pub mod chain;
 pub mod components;
+pub mod compartment;
+pub mod fragments;
 pub mod lattice;
 pub mod lodged;
 pub mod materials;
