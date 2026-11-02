@@ -318,6 +318,10 @@ fn dp_pico8(lin: vec3<f32>, th: f32) -> vec3<f32> {
 }
 fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool) -> vec3<f32> {
     let lab = dp_oklab(lin);
+    // KESSEL_PALETTE_SMOOTH (cr.look.w): 0 holds deltaP's flat bands between entries (the pair
+    // penalty, the ratio's dead zones and its eighths), 1 dithers across them (a tenth of the
+    // penalty, narrow dead zones, sixteenths).
+    let smooth = clamp(cr.look.w, 0.0, 1.0);
     var pl: array<vec3<f32>, 32>;
     var pk: array<vec3<f32>, 32>;
     for (var i = 0; i < 32; i = i + 1) {
@@ -336,7 +340,7 @@ fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool) -> vec3<f32> {
             let len2 = dot(axis, axis);
             var t = 0.0;
             if (len2 > 1.0e-9) { t = clamp(dot(lin - a, axis) / len2, 0.0, 1.0); }
-            let err = distance(dp_oklab(mix(a, b, t)), lab) + cr.look.y * distance(pk[i], pk[j]);
+            let err = distance(dp_oklab(mix(a, b, t)), lab) + cr.look.y * (1.0 - 0.9 * smooth) * distance(pk[i], pk[j]);
             if (err < best_err) {
                 best_err = err;
                 best_i = i;
@@ -346,9 +350,11 @@ fn dp_palette(lin: vec3<f32>, th: f32, pastel: bool) -> vec3<f32> {
         }
     }
     var t = best_t;
-    if (t < 0.09) { t = 0.0; }
-    else if (t > 0.91) { t = 1.0; }
-    else { t = round(t * 8.0) / 8.0; }
+    let dead = mix(0.09, 0.03, smooth);
+    let steps = mix(8.0, 16.0, smooth);
+    if (t < dead) { t = 0.0; }
+    else if (t > 1.0 - dead) { t = 1.0; }
+    else { t = round(t * steps) / steps; }
     let i = select(best_i, best_j, th < t);
     return select(DP_PAL[i], DP_PASTEL[i], pastel);
 }

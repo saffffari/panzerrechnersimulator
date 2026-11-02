@@ -89,6 +89,14 @@ const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const LOOK_ENV: &str = "KESSEL_LOOK";
 /// deltaP's pair-distance penalty for the PICO-8 best-pair search (its `--penalty` default).
 const DELTAP_PAIR_PENALTY: f32 = 0.12;
+/// `KESSEL_PALETTE_SMOOTH=0..1`: how far the palette modes dither between entries instead of
+/// holding flat bands (`crush.wgsl` `dp_palette`): at 0 deltaP's penalty, ratio dead zones and
+/// eighths (the rings the owner liked); at 1 a near-zero penalty, narrow dead zones and
+/// sixteenths. The look lane's w. 0 unless set.
+fn configured_palette_smooth() -> f32 {
+    std::env::var("KESSEL_PALETTE_SMOOTH").ok().and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.0)
+}
 /// deltaP's bloom strength (`bloom::DEFAULT`): the summed pyramid's share added to the frame.
 // 2026-11-01 playtest: at deltaP's 0.8 with its 0.55 knee and 1.0 cap a vision port's daylight
 // flooded the cabin and every lamp read as a wide blur ("super blurry", "can't see anything in
@@ -2693,6 +2701,8 @@ pub struct Renderer {
     pub look: f32,
     /// The display tonemap: 0 AgX, 1 the ACES fit (`KESSEL_TONEMAP`).
     tonemap: f32,
+    /// The palette modes' smoothness, 0 to 1 (`KESSEL_PALETTE_SMOOTH`).
+    palette_smooth: f32,
     pub display_tuning: Option<display_tuning::DisplayTuning>,
     /// User reproduction controls: exposure multiplier, saturation, warmth, gamma.
     pub display_grade: [f32; 4],
@@ -6085,6 +6095,7 @@ impl Renderer {
             master_retro: configured_master_retro(),
             look: configured_look(),
             tonemap: configured_tonemap(),
+            palette_smooth: configured_palette_smooth(),
             display_tuning: None,
             display_grade: [1.0, 1.0, 0.0, 1.0],
             display_dither_pattern: configured_display_dither(),
@@ -8542,7 +8553,7 @@ impl Renderer {
             dither_right: self.camera.right().extend((self.camera.fov_y * 0.5).tan() * self.camera.aspect).to_array(),
             dither_up: self.camera.right().cross(self.camera.forward()).extend((self.camera.fov_y * 0.5).tan()).to_array(),
             dither_forward: self.camera.forward().extend(0.0).to_array(),
-            look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, 0.0],
+            look: [self.look, DELTAP_PAIR_PENALTY, self.tonemap, self.palette_smooth],
             loupe: self.loupe,
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
