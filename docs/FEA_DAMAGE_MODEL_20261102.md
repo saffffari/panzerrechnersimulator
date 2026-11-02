@@ -423,4 +423,9 @@ lists every named approximation of this model.
 - Play cost seen in the owner's demo: stopped-round solves of 139 and 120 ms, and one of 3.6 s
   while the machine was busy with other work (the update waited 2.9 s). Deferred solves now use
   half the threads (at most 6) and the barrier backs off to short sleeps; not yet re-measured.
+- Cross sections re-run with this stage's compartment rule (`fea-damage-fea_xsec_v4_20261102_*`):
+  the front bursts read 25 kPa (85 mm BR-365), 16 kPa (122 mm BR-471) and 6 kPa (100 mm BR-412
+  through the mantlet) with every lid holding; the 57 mm burst at the fuel tank and the 76 mm
+  burst through the engine deck are in the engine bay and get no crew pressure. The frames' pressure
+  line now counts from the burst (it had shown the peak before the strike).
 - Not verified on the GPU yet: queued under the shared GPU lock.

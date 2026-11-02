@@ -290,6 +290,8 @@ fn run_case(rig: &Rig, case: &SectionCase, out_prefix: &str) -> anyhow::Result<s
     }
     let burst = chain_result.as_ref().is_some_and(|r| r.burst);
     let mut pressure = None;
+    // The burst's time on the frame clock (the round leaving the plate's back face).
+    let mut burst_at = 0.0f32;
     if burst {
         let profile = fragment_shower_profile(true, event.behind_armor, event.shell.caliber_mm, event.residual_v, event.shell.filler_g);
         let body_mass = (event.shell.mass_kg - event.shell.filler_g * 0.001).max(0.0);
@@ -324,6 +326,7 @@ fn run_case(rig: &Rig, case: &SectionCase, out_prefix: &str) -> anyhow::Result<s
             pressure = Some(compartment::burst(event.shell.filler_g * 0.001, compartment::TNT_J_PER_KG, body_ke,
                 compartment::TIGER_CREW_AIR_M3, crate::armor_damage::AMBIENT_K, &openings,
                 compartment::GAME_DT_S, compartment::GAME_DURATION_S));
+            burst_at = t_burst;
         }
     }
     // Frame times: every 25 µs through the round's passage and the lattice, then the fragments.
@@ -550,7 +553,8 @@ fn run_case(rig: &Rig, case: &SectionCase, out_prefix: &str) -> anyhow::Result<s
         }
         line_text(&mut svg, &format!("fragments: {} ({:.2} kg, {:.0} kJ)", flying.len(), fragment_mass, fragment_ke / 1000.0), "#909aa4");
         if let Some(p) = &pressure {
-            let now = p.samples.iter().rev().find(|s| s.0 <= t.max(0.0)).map_or(0.0, |s| s.1);
+            let since = t - burst_at;
+            let now = if since < 0.0 { 0.0 } else { p.samples.iter().rev().find(|s| s.0 <= since).map_or(0.0, |s| s.1) };
             line_text(&mut svg, &format!("compartment: {:.1} kPa now, peak {:.1} kPa{}", now / 1000.0, p.peak_gauge_pa / 1000.0,
                 if p.hatches_blown.is_empty() { String::new() } else { format!(", blown: {}", p.hatches_blown.iter().map(|h| h.0).collect::<Vec<_>>().join(", ")) }), "#c0a0ff");
         }

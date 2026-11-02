@@ -855,6 +855,10 @@ impl Game {
             if distance > FRAGMENT_REACH_M || best.is_some_and(|b| b.1 <= distance) {
                 continue;
             }
+            // The hand reaches only what the eye sees: no steel between them (the toolbox rule).
+            if !self.equipment_path_clear(eye, eye + look * distance, radius + 0.03) {
+                continue;
+            }
             let label = if !fragment_holdable(f) {
                 "STEEL FRAGMENT - TOO HOT TO HOLD"
             } else if !fragment_pullable(f) {

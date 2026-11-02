@@ -268,6 +268,7 @@ impl Game {
     fn equipment_hands_free(&self) -> bool {
         !self.workshop_held() && !self.carrying_track_kit && !self.ext_equipped && !self.compass_equipped
             && self.carry_mesh.is_none() && self.carried_casing.is_none()
+            && self.fea.carried_fragment.is_none()
             && self.held_item.is_none() && !self.panzerfaust_claimed
     }
 
