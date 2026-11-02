@@ -1000,7 +1000,31 @@ fn run_gfxbench(
     let mut pending: std::collections::VecDeque<(wgpu::SubmissionIndex,bool)> = Default::default();
     let mut completed_frames = 0u32;
     let mut throughput_started = None;
+    // `KESSEL_BENCH_KILL=FRAME`: at timed frame FRAME the nearest living enemy takes a
+    // catastrophic kill (the ammunition detonation, the turret thrown, the wreck burning), as
+    // the owner's playtest did ("fps tanks when i hit first t34 and never recovers", 2 November
+    // 2026); the summary then splits the frames before and after it and prints the simulation's
+    // phase costs after it.
+    let bench_kill: Option<u32> = std::env::var("KESSEL_BENCH_KILL").ok().and_then(|v| v.trim().parse().ok());
+    let mut kill_split: Option<usize> = None;
     for i in 0..(frames + WARMUP) {
+        // Five seconds after the kill the phase counters restart, so the end-of-run phases are
+        // the settled state's, not the detonation's and the thrown turret's.
+        if bench_kill.is_some_and(|at| i == WARMUP + at + 300) { let _ = g.sim_phase.take(); }
+        if bench_kill.is_some_and(|at| i == WARMUP + at) {
+            let eye = g.player.pos;
+            let target = g.enemies.iter().enumerate().filter(|(_, e)| e.alive)
+                .min_by(|a, b| a.1.pos.distance(eye).total_cmp(&b.1.pos.distance(eye))).map(|(idx, e)| (idx, e.pos));
+            if let Some((idx, pos)) = target {
+                let side = Vec3::new(-g.player.forward().z, 0.0, g.player.forward().x).normalize_or_zero();
+                let killed = g.debug_catastrophic_kill(idx, pos + Vec3::Y * 1.2 + side * 1.4, side);
+                println!("[gfxbench] kill at timed frame {}: enemy {idx} at {:.0} m, {}", i - WARMUP, pos.distance(eye), if killed { "catastrophic" } else { "not alive" });
+                let _ = g.sim_phase.take();
+                kill_split = Some(times.len());
+            } else {
+                println!("[gfxbench] kill at timed frame {}: no living enemy", i - WARMUP);
+            }
+        }
         if pipelined && i == WARMUP {
             // Drain every warmup submission before starting the completed-throughput interval.
             while let Some((submission, measured)) = pending.pop_front() {
@@ -1121,6 +1145,26 @@ fn run_gfxbench(
             cpu_ms[0] / timed, cpu_ms[1] / timed, cpu_ms[2] / timed);
         if let Some(stats) = r.raymarch_stats() { println!("[gfxbench] raymarch {stats:?}"); }
         if let Some(stats) = r.scatter_stats() { println!("[gfxbench] scatter {stats:?}"); }
+        if let Some(split) = kill_split {
+            let mean = |v: &[f32]| if v.is_empty() { 0.0 } else { v.iter().sum::<f32>() / v.len() as f32 };
+            let meanf = |v: &[f64]| if v.is_empty() { 0.0 } else { v.iter().sum::<f64>() / v.len() as f64 };
+            println!("[gfxbench] before the kill: {} frames, gpu frame {:.2} ms, live frame {:.2} ms, simulation {:.2} ms (mean)",
+                split, mean(&times[..split]), meanf(&live_times[..split]), meanf(&simulation_times[..split]));
+            println!("[gfxbench] after the kill: {} frames, gpu frame {:.2} ms, live frame {:.2} ms, simulation {:.2} ms (mean); worst simulation {:.2} ms",
+                times.len() - split, mean(&times[split..]), meanf(&live_times[split..]), meanf(&simulation_times[split..]),
+                simulation_times[split..].iter().cloned().fold(0.0f64, f64::max));
+            let series: Vec<String> = simulation_times[split..].chunks(60)
+                .map(|w| format!("{:.1}", w.iter().sum::<f64>() / w.len() as f64)).collect();
+            println!("[gfxbench] simulation after the kill, per second (ms mean): {}", series.join(" "));
+            println!("[gfxbench] simulation phases from five seconds after the kill (ms): {}", g.sim_phase.take());
+            for (i, e) in g.enemies.iter().enumerate() {
+                println!("[gfxbench] enemy {i}: alive {}, overturned {}, speed {:.2} m/s, {:.0} m off, height {:.2} over ground, roll {:.2} pitch {:.2}",
+                    e.alive, e.overturned(), e.speed, e.pos.distance(g.player.pos), e.pos.y - g.hf.height_at(e.pos.x, e.pos.z), e.roll, e.pitch);
+            }
+            for (i, settled, speed, quiet) in g.debug_thrown_turrets() {
+                println!("[gfxbench] thrown turret of wreck {i}: settled {settled}, speed {speed:.3} m/s, quiet {quiet:.2} s");
+            }
+        }
         times.sort_by(f32::total_cmp);
         let n = times.len();
         let avg: f32 = times.iter().sum::<f32>() / n as f32;

@@ -3407,6 +3407,41 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   twilight paths and painted the civil twilight magenta; the averages keep it blue-grey. The
   three-band model's own approximation, stated; the illuminance gates still pass.
 
+### The frame after the first kill — 2 November 2026
+
+The owner, playing the merged line: "fps tanks when i hit first t34 and never recovers".
+Measured with `gfxbench high 600` under `KESSEL_BENCH_LIVE_FRAME=1 KESSEL_BENCH_KILL=60` (a
+catastrophic kill of the nearest enemy at timed frame 60, the summary split before and after it,
+the simulation's phases after it): the GPU frame did not change (16.4 to 12.8 ms mean) and the
+simulation went from 3.9 to 12.9 ms a frame (worst 34.7), the phase `wrecks_fire_haze` at 7.4 ms
+of it, for a wreck 1.7 km away. The cost was the thrown turret's rest test: a settled body
+re-certified its support every frame by sweeping every surface sample of the turret against
+the wreck's hull (`wreck_turret::Body::supported_at_rest`). The test is a function of the body's
+pose, the hull's pose and the terrain, none of which changes while the body is settled, so the
+body now keeps the hull pose it was certified against and repeats the test only when that pose
+changes or every two seconds (`REST_RECHECK_S`); a restored body re-tests on its first step. A
+cached result of the same test, not a change to the contact model; if the terrain ever deforms
+under a wreck, the cache must be keyed on it too. With the turret quiet the simulation still
+climbed to 120 to 170 ms a frame ten seconds after the kill, all of it in `enemy_ai`, and the
+probes placed it in `settle_incapacitated_enemy`: a living enemy that has capsized runs the
+rolled hull's support solve (`vehicle_rollover::advance_query`, every triangle sample of its
+hull and turret against the terrain, substepped) every frame for as long as it lies there,
+60 to 280 ms an update for one T-34. The solve's result is a function of the hull's state and the
+terrain; a capsized hull at rest on a stable support now keeps the state it was certified in
+(position, attitude, heading, heave and angular rates, `Ride::rolled_rest`), as does a hull the
+solve leaves exactly as it found it (a fixed point: the capsized T-34 lay a hair above its
+support with nothing to integrate, so the stable-support exit never came), and is solved again
+only when something changes that state (an impulse, a displacement) or every two seconds
+(`ROLLED_REST_RECHECK_S`). A cached result of the same solve, not a change to the rollover
+model. Measured after (the same bench, 900 frames): the simulation 3.8 ms before the kill,
+21 ms through the turret's five seconds of tumbling, then 5.5 to 8 ms for the rest of the run
+(was 120 to 170), the enemy AI 0.09 ms, the run 78 fps mean with a worst frame of 19 ms. The
+one open question from it: a T-34 of the platoon capsized while manoeuvring 1.8 km away ten
+seconds after the kill, which is the AI's driving, not the frame. Also in the same measure: the daylight apertures' measure every eighth frame (above),
+and the run log's `[frames]` lines and the audio's starved-block count at exit for the next
+playtest; the bench's `KESSEL_BENCH_KILL` split, its per-second series and its probes stay for
+the next report.
+
 ### Daylight through the ports — 2 November 2026 (raymarch backend)
 
 The owner, buttoned up at noon: "light still doesn't seem to make it into the interior from the

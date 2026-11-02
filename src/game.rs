@@ -18477,7 +18477,7 @@ impl Game {
 
         // Advance wreck fire clocks, tumbling turret-pop physics, and delayed cook-offs.
         self.sim_phase.seg("dressing_scars_portable");
-        let phase_t = std::time::Instant::now(); self.update_wrecks(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_wrecks"); self.update_wrecks(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
         self.enemy_crew.update(dt, &self.enemies, &self.wrecks, &self.hf, &self.occluders);
         self.enemy_crew.draw(r);
         self.living_wounds.update_draw(dt,r);
@@ -18501,8 +18501,8 @@ impl Game {
         // Advance the PLAYER's interior fire: it grows once lit and, once established, reaches the
         // ammunition on a countdown — an unchecked fire cooks off the ammo (catastrophic kill).
         self.sim_phase.seg("trees_scatter_push");
-        let phase_t = std::time::Instant::now(); self.update_fire(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
-        let phase_t = std::time::Instant::now(); self.update_haze(dt); self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_fire"); self.update_fire(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_haze"); self.update_haze(dt); } self.sim_phase.add(crate::sim_phase::Phase::WrecksFireHaze, phase_t);
 
         // Push enemy transforms. A LIVING enemy draws normally (lit, no glow). A DEAD one stays on
         // the field as a BURNING WRECK — its hull (and, unless the turret popped, its turret) keep
@@ -28044,7 +28044,7 @@ impl Game {
     }
 
     fn enemy_ai(&mut self, dt: f32) {
-        self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model());
+        { let _p = crate::sim_phase::Probe::new("ai_weather_pose"); self.weather_view.set_cabin_pose(self.player.hull_model(),self.player.turret_model()); }
         // Garage and Playtest practice have stationary targets. Skip detection and all AI orders,
         // but retain physical braking/terrain settling and the ordinary player-hit damage path.
         if self.targets_only || !self.enemy_return_fire_allowed() {
@@ -28066,10 +28066,10 @@ impl Game {
         // Detection + platoon alert state machine first: accrue the per-enemy detection meters,
         // resolve the 5-second rule, and log every SPOTTED / platoon transition. The per-enemy
         // behaviour branch below reads the fresh alert state to decide who may track and fire.
-        self.enemy_ai_stats.tick(dt);
-        let phase_t = std::time::Instant::now(); self.update_stealth(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyStealth, phase_t);
+        { let _p = crate::sim_phase::Probe::new("ai_stats_tick"); self.enemy_ai_stats.tick(dt); }
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_stealth"); self.update_stealth(dt); } self.sim_phase.add(crate::sim_phase::Phase::EnemyStealth, phase_t);
         let phase_t = std::time::Instant::now(); let winter_orders = self.winter_enemy_orders(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyOrders, phase_t);
-        let phase_t = std::time::Instant::now(); self.update_at_guns(dt); self.sim_phase.add(crate::sim_phase::Phase::EnemyAtGuns, phase_t);
+        let phase_t = std::time::Instant::now(); { let _p = crate::sim_phase::Probe::new("update_at_guns"); self.update_at_guns(dt); } self.sim_phase.add(crate::sim_phase::Phase::EnemyAtGuns, phase_t);
 
         // Snapshot once before the stable-index update loop: avoidance for enemy N must not depend
         // on whether enemy N-1 has already moved this frame. The parked/dead player hull remains a
@@ -28083,13 +28083,14 @@ impl Game {
                 .filter(|(i, _)| self.enemy_active.get(*i).copied().unwrap_or(false))
                 .map(|(i, enemy)| vehicle_motion(i, enemy)),
         );
-        avoidance_bodies.extend(self.platoon_bodies());
+        { let _p = crate::sim_phase::Probe::new("ai_platoon_bodies"); avoidance_bodies.extend(self.platoon_bodies()); }
 
         for i in 0..self.enemies.len() {
             if !self.enemies[i].alive {
                 continue;
             }
-            if settle_incapacitated_enemy(&mut self.enemies[i],dt,&self.hf) {
+            let _loop_probe = crate::sim_phase::Probe::new("ai_loop_body");
+            if { let _p = crate::sim_phase::Probe::new("ai_settle_incapacitated"); settle_incapacitated_enemy(&mut self.enemies[i],dt,&self.hf) } {
                 if let Some(age) = self.enemy_track_age.get_mut(i) { *age = 0.0; }
                 continue;
             }
@@ -28097,10 +28098,10 @@ impl Game {
             // encounter still ticks its perception, but its orders are not applied.
             let evolved_drives = self.enemy_policy_over_orders && self.enemy_policy.is_some();
             let winter = winter_orders.get(i).copied().flatten().filter(|_| !evolved_drives);
-            if winter.is_none() && self.enemy_return_fire_allowed() && self.mixed_tank_engagement(i, dt) {
+            if winter.is_none() && self.enemy_return_fire_allowed() && { let _p = crate::sim_phase::Probe::new("ai_mixed_engagement"); self.mixed_tank_engagement(i, dt) } {
                 continue;
             }
-            let mode = winter.map_or_else(|| self.enemy_mode(i), |order| match order.phase {
+            let mode = winter.map_or_else(|| { let _p = crate::sim_phase::Probe::new("ai_mode"); self.enemy_mode(i) }, |order| match order.phase {
                 winter_encounter_ai::Phase::Track => AiMode::Track,
                 winter_encounter_ai::Phase::Patrol => AiMode::Patrol,
                 _ => AiMode::Search,
@@ -28135,9 +28136,11 @@ impl Game {
             } else if self.brawl {
                 (0.0, 0.0, false) // opposing team eliminated: hold, do not seek the referee
             } else if let Some(net) = &self.enemy_policy {
-                let a = net.forward(&self.executor_obs(i));
+                let obs = { let _p = crate::sim_phase::Probe::new("ai_executor_obs"); self.executor_obs(i) };
+                let a = { let _p = crate::sim_phase::Probe::new("ai_net_forward"); net.forward(&obs) };
                 (a[0], a[1], a[2] > 0.0)
             } else {
+                let _p = crate::sim_phase::Probe::new("ai_maneuver");
                 let (d, st) = match mode {
                     AiMode::Track => {
                         if casemate {
@@ -28151,15 +28154,15 @@ impl Game {
                 };
                 (d, st, true)
             };
-            let (drive, steer) = apply_vehicle_avoidance(
+            let (drive, steer) = { let _p = crate::sim_phase::Probe::new("ai_avoidance"); apply_vehicle_avoidance(
                 vehicle_motion(i, &self.enemies[i]),
                 &avoidance_bodies,
                 drive,
                 steer,
-            );
+            ) };
             let previous = self.enemies[i].pos;
-            self.enemies[i].update(drive, steer, 0.0, 0.0, dt, &self.hf);
-            self.constrain_winter_enemy_motion(i, previous);
+            { let _p = crate::sim_phase::Probe::new("ai_tank_update"); self.enemies[i].update(drive, steer, 0.0, 0.0, dt, &self.hf); }
+            { let _p = crate::sim_phase::Probe::new("ai_constrain_motion"); self.constrain_winter_enemy_motion(i, previous); }
             if self.campaign_channel {
                 let requested = Vec2::new(self.enemies[i].pos.x, self.enemies[i].pos.z);
                 let resolved =
@@ -28174,18 +28177,21 @@ impl Game {
             // this supported chassis transform, including the Act-II bridge deck.
             let channel = self.campaign_channel;
             let theatre = &self.theatre;
+            let _settle_probe = crate::sim_phase::Probe::new("ai_settle_bounded");
             crate::vehicle_ground::settle_bounded(&mut self.enemies[i], |x,z|
                 (if channel {act2_bridge_deck_height(&self.hf,Vec2::new(x,z))} else {None})
                     .or_else(||theatre.as_ref().and_then(|t|t.crossings.iter().find_map(|b|b.deck_at(Vec2::new(x,z)))))
                     .unwrap_or_else(|| self.hf.vehicle_height_at(x,z)),
                 |lo,hi|bridge_support_upper_bound(&self.hf,channel,theatre.as_ref().map(|t|t.crossings.as_slice()),
                     lo,hi,self.hf.vehicle_height_upper_bound(lo,hi)));
+            drop(_settle_probe);
+            let _lay_probe = crate::sim_phase::Probe::new("ai_lay_fire");
             if self.enemy_active.get(i).copied().unwrap_or(false) {
                 self.enemy_ai_stats.frame(i, dt, mode != AiMode::Patrol, mode == AiMode::Track,
                     self.enemies[i].speed, drive, self.enemies[i].pos);
             }
 
-            if !self.enemy_has_live_threat() && !self.brawl {
+            if { let _p = crate::sim_phase::Probe::new("ai_live_threat"); !self.enemy_has_live_threat() } && !self.brawl {
                 continue;
             }
             if self.enemies[i].overturned() { continue; } // inversion during this frame's movement
@@ -28467,6 +28473,7 @@ impl Game {
     }
 
     fn los_clear(&self, from: Vec3, to: Vec3) -> bool {
+        let _p = crate::sim_phase::Probe::new("los_clear");
         let d = to - from;
         let dist = d.length();
         if dist < 1e-3 {
@@ -29907,8 +29914,12 @@ impl Game {
                         }
                     }
                     if let Some(body) = &mut w.t_body {
+                        let was_settled = body.settled;
                         body.advance(dt, &self.hf, self.enemies[i].hull_model());
                         w.t_pos = body.model().transform_point3(Vec3::ZERO);
+                        if body.settled && !was_settled {
+                            println!("[wreck turret] #{i} settled {:.1} s after the throw, {:.2} m from the ring", w.fire_t, w.t_pos.distance(w.t_initial.transform_point3(Vec3::ZERO)));
+                        }
                     }
                 }
             }
@@ -33711,6 +33722,11 @@ impl Game {
             w.t_impact = Some((breach, breach_normal.normalize_or_zero()));
         }
         true
+    }
+
+    /// The thrown turrets' state for the bench: (wreck index, settled, speed m/s, quiet seconds).
+    pub fn debug_thrown_turrets(&self) -> Vec<(usize, bool, f32, f32)> {
+        self.wrecks.iter().enumerate().filter_map(|(i, w)| w.t_body.as_ref().map(|b| (i, b.settled, b.velocity.length(), b.quiet_seconds()))).collect()
     }
 
     pub fn capture_catastrophic(&self, enemy: Option<usize>) -> bool {

@@ -231,8 +231,26 @@ fn advance_source(tank: &mut Tank, parts: &[Vec<Vec3>;2], dt: f32, attached: boo
     advance_query(tank,dt,|tank|support_at(tank,parts,attached,height_at));
 }
 
+/// Seconds between re-certifications of an overturned hull at rest (`Ride::rolled_rest`).
+pub(crate) const ROLLED_REST_RECHECK_S: f32 = 2.0;
+/// The state an overturned hull's rest is certified in: anything that moves or kicks it changes
+/// this and the support is solved again.
+fn rolled_rest_key(tank:&Tank)->[f32;9] {
+    [tank.pos.x,tank.pos.y,tank.pos.z,tank.pitch,tank.roll,tank.heading,tank.ride.vy,tank.ride.pitch_rate,tank.ride.roll_rate]
+}
+
 fn advance_query(tank:&mut Tank,dt:f32,query:impl Fn(&Tank)->Option<Support>) {
     let dt=if dt.is_finite() {dt.clamp(0.0,0.1)} else {0.0};
+    if let Some((key,age))=tank.ride.rolled_rest {
+        if key==rolled_rest_key(tank) && age<ROLLED_REST_RECHECK_S {
+            tank.ride.rolled_rest=Some((key,age+dt));
+            tank.speed=0.0;tank.ride.overturned=true;tank.ride.active=true;
+            return;
+        }
+    }
+    tank.ride.rolled_rest=None;
+    let key_before=rolled_rest_key(tank);
+    let mut at_rest=false;
     let spec=crate::vehicle_spec::for_tank(tank.kind,&tank.parts);
     let cg=Vec3::Y*spec.cg_height_m;
     let [length,width,height]=spec.hull_lwh_m;
@@ -281,6 +299,7 @@ fn advance_query(tank:&mut Tank,dt:f32,query:impl Fn(&Tank)->Option<Support>) {
         let polygon=support_polygon(&support.contacts);
         if stable_support(&polygon,com) {
             tank.ride.pitch_rate=0.0; tank.ride.roll_rate=0.0;
+            at_rest=true;
             break;
         }
         if h<=0.0 {break;}
@@ -342,6 +361,11 @@ fn advance_query(tank:&mut Tank,dt:f32,query:impl Fn(&Tank)->Option<Support>) {
     tank.ride.load.fill(0.0);
     tank.ride.heave_accel=0.0; tank.ride.pitch_accel=0.0; tank.ride.roll_accel=0.0;
     tank.ride.along_accel=0.0; tank.ride.lateral_accel=0.0;
+    // Certified at rest: on a stable support with no angular rate, or a fixed point of the solve
+    // (it left the state as it found it, so the next call from this state is the same answer).
+    let key_after=rolled_rest_key(tank);
+    tank.ride.rolled_rest=((at_rest && tank.ride.pitch_rate==0.0 && tank.ride.roll_rate==0.0) || key_after==key_before)
+        .then(|| (key_after,0.0));
 }
 
 pub(crate) fn advance_rolled_hull(tank: &mut Tank, support: Option<f32>, dt: f32) {

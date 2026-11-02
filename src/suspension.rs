@@ -240,6 +240,15 @@ pub struct Ride {
     pub pitch_rate: f32,
     pub roll: f32,
     pub roll_rate: f32,
+    /// An overturned hull certified at rest by `vehicle_rollover::advance_query`: the state it
+    /// was certified in (position, attitude, heading, heave and angular rates) and the seconds
+    /// since. While nothing has changed that state, the support solve is not repeated: it
+    /// sampled every triangle of the hull and turret against the terrain every frame, 60 to
+    /// 280 ms an update for one capsized T-34 (2 November 2026, the frame after the first kill).
+    /// Any impulse or displacement changes the state and re-solves; re-certified anyway every
+    /// `ROLLED_REST_RECHECK_S`.
+    #[serde(default)]
+    pub rolled_rest: Option<([f32; 9], f32)>,
     /// Where the last step was taken (a larger jump is a placement: the ride restarts).
     pub xz: Vec2,
     last_speed: f32,
