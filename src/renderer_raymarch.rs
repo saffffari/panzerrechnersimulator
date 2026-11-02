@@ -232,7 +232,10 @@ struct FrameUniform {
     section: [f32; 4],
 }
 
-/// The G-buffer push's section bit (`scars.w` bit 0): set only for a cut mesh, only in the
+/// Where the section bit sits in the push's `scars.w` (bytes 0-2 carry the running gear's snow).
+const SECTION_BIT_SHIFT: u32 = 24;
+
+/// The G-buffer push's section bit (`scars.w` bit 24): set only for a cut mesh, only in the
 /// camera's G-buffer pass and only while a film section plane is held. Shadow maps never get it.
 fn section_bit(film_section: Option<[f32; 4]>, section_cut: bool, shadow: bool) -> u32 {
     u32::from(film_section.is_some() && section_cut && !shadow)
@@ -243,6 +246,10 @@ pub(super) const MAX_APERTURES: usize = 24;
 /// `KESSEL_RM_SKIP` bit: no daylight through the panes (the apertures' term in rm_shade.wgsl and
 /// rm_volume.wgsl), for the A/B.
 const SKIP_APERTURES: u32 = 2097152;
+/// Frames between measures of the apertures (rm_aperture.wgsl): about 200 ray queries per pane
+/// on one thread each cost 1.07 ms a frame measured every frame (gfxbench, 2 November 2026); the
+/// panes' openness changes only as the turret traverses against the hull.
+const APERTURE_MEASURE_PERIOD: u32 = 8;
 
 /// The smallest pane taken as an aperture (m^2 of its face): a port's glass block is about
 /// 117 cm^2, a cupola block's window 65 cm^2 and more; a stray sliver of a bake is not a pane.
@@ -560,6 +567,10 @@ pub(super) struct Backend {
     aperture_bind: wgpu::BindGroup,
     aperture_pipe: Option<wgpu::ComputePipeline>,
     aperture_count: u32,
+    /// The frame the apertures were last measured on, and how many there were: the measure
+    /// reruns every `APERTURE_MEASURE_PERIOD` frames or when the count changes (the panes ride
+    /// rigid parts; a turret's traverse moves a port against the hull slowly).
+    aperture_measured: Cell<Option<(u32, u32)>>,
     rt_empty: Option<wgpu::Tlas>,
     rt_empty_built: bool,
     /// Per mesh slot: x y z a mirror's world normal, w the optic (0 none, 1 window, 2 mirror).
@@ -761,6 +772,7 @@ fn rm_source(name: &str) -> String {
         "rm_visibility.wgsl" => VISIBILITY,
         "rm_medium.wgsl" => MEDIUM,
         "rm_depth.wgsl" => include_str!("../shaders/rm_depth.wgsl"),
+        "rm_snow_lift.wgsl" => include_str!("../shaders/rm_snow_lift.wgsl"),
         "rm_scars.wgsl" => include_str!("../shaders/rm_scars.wgsl"),
         "rm_scar_patch.wgsl" => include_str!("../shaders/rm_scar_patch.wgsl"),
         "rm_gbuffer.wgsl" => include_str!("../shaders/rm_gbuffer.wgsl"),
@@ -1166,7 +1178,7 @@ impl Backend {
         };
 
         // Depth-only program for every shadow/cover map.
-        let depth_shader = rm_shader(device, "rm-depth", &["rm_scars.wgsl", "rm_depth.wgsl"]);
+        let depth_shader = rm_shader(device, "rm-depth", &["rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]);
         let depth_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-depth-pl"), bind_group_layouts: &[&depth_bgl], push_constant_ranges: &[push_range(S::VERTEX)],
         });
@@ -1208,7 +1220,7 @@ impl Backend {
         });
 
         // G-buffer.
-        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_gbuffer.wgsl"]);
+        let gbuffer_shader = rm_shader(device, "rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]);
         let gbuffer_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rm-gbuffer-pl"), bind_group_layouts: &[&gbuffer_bgl, material_bgl, track_bgl], push_constant_ranges: &[push_range(S::VERTEX_FRAGMENT)],
         });
@@ -1458,7 +1470,7 @@ impl Backend {
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
-            aperture_measure_buf, aperture_bind, aperture_pipe, aperture_count: 0,
+            aperture_measure_buf, aperture_bind, aperture_pipe, aperture_count: 0, aperture_measured: Cell::new(None),
             shadow_far, shadow_near, sky_cover, point_faces_tex, point_faces_array, point_face_views,
             integrated, heat, explosion_atlas, explosion_pending, explosion_slots: explosions, point_veil: [0.0; 2], heat_integrated, linear_sampler, cmp_sampler,
             depth_bgl, gbuffer_bind, visibility_bgl, volume_bgl, integrate_bgl, shade_bgl, points_bgl, post_bgl,
@@ -2972,9 +2984,11 @@ impl Backend {
                 params: if shadow { [view_index, 0.0, 0.0, 0.0] } else { [m.emissive, m.metallic_factor, m.roughness_factor, kind] },
                 extra: [self.snow_load(if m.snow_vehicle { r.player_snow_load } else { r.world_snow_load }), if m.snow_vehicle { 1.0 } else { 0.0 },
                     if m.painted_steel { 1.0 } else { 0.0 }, m.lamp_lens as f32],
+                // scars.w: the running gear's packed snow in bytes 0-2 (rm_snow_lift.wgsl), the film
+                // section bit in bit 24 (`section_bit`).
                 scars: {
                     let mut scars = range.map_or([0; 4], |r| [r[0], r[1], r[2], 0]);
-                    scars[3] = section_bit(r.film_section(), m.section_cut, shadow);
+                    scars[3] = m.running_gear | section_bit(r.film_section(), m.section_cut, shadow) << SECTION_BIT_SHIFT;
                     scars
                 },
                 vehicle: if shadow { [0.0; 4] } else { m.vehicle_finish },
@@ -3141,7 +3155,9 @@ impl Backend {
         // 3c. The apertures: each pane's open share and acceptance measured against the scene.
         if let (Some(pipe), Some(rt)) = (&self.aperture_pipe, &self.rt_bind) {
             // KESSEL_RM_APERTURE_UNMEASURED=1 keeps the open-and-unrestricted default record (review).
-            if self.aperture_count > 0 && std::env::var("KESSEL_RM_APERTURE_UNMEASURED").as_deref() != Ok("1") {
+            let due = self.aperture_measured.get().map_or(true, |(frame, count)| count != self.aperture_count || r.frame.saturating_sub(frame) >= APERTURE_MEASURE_PERIOD);
+            if self.aperture_count > 0 && due && std::env::var("KESSEL_RM_APERTURE_UNMEASURED").as_deref() != Ok("1") {
+                self.aperture_measured.set(Some((r.frame, self.aperture_count)));
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("rm-aperture"), timestamp_writes: r.gpu_profile.as_ref().and_then(|p| p.compute("rm-aperture")),
                 });
@@ -3505,13 +3521,32 @@ mod shader_tests {
         assert_eq!(value, TRACER_INTENSITY);
     }
 
+    /// The depth pre-pass lifts a snowed face by the same field the G-buffer does: the lift
+    /// include carries its own copy of rm_common's noise and lying field, held equal here.
+    #[test]
+    fn the_snow_lift_field_is_rm_commons_lying_field() {
+        let common = rm_source("rm_common.wgsl");
+        let lift = rm_source("rm_snow_lift.wgsl");
+        let body = |source: &str, name: &str| -> String {
+            let start = source.find(&format!("fn {name}(")).unwrap_or_else(|| panic!("{name}"));
+            let open = start + source[start..].find('{').unwrap();
+            let mut depth = 0; let mut end = open;
+            for (i, c) in source[open..].char_indices() { if c == '{' { depth += 1; } if c == '}' { depth -= 1; if depth == 0 { end = open + i; break; } } }
+            source[open..=end].replace("snow_lift_", "rm_").chars().filter(|c| !c.is_whitespace()).collect()
+        };
+        for (a, b) in [("rm_hash", "snow_lift_hash"), ("rm_hash01", "snow_lift_hash01"), ("rm_lattice", "snow_lift_lattice"),
+            ("rm_noise", "snow_lift_noise"), ("rm_fbm", "snow_lift_fbm"), ("rm_snow_lying", "snow_lift_lying")] {
+            assert_eq!(body(&common, a), body(&lift, b), "{a} and {b} differ");
+        }
+    }
+
     /// Every raymarch pipeline's WGSL, assembled as `Backend::new` assembles it, with and without
     /// ray queries: the shaders compile at run time, so this is where a mistake shows without a GPU.
     #[test]
     fn every_raymarch_shader_validates_with_and_without_ray_queries() {
         let common: &[(&str, &[&str])] = &[
-            ("rm-depth", &["rm_scars.wgsl", "rm_depth.wgsl"]),
-            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_gbuffer.wgsl"]),
+            ("rm-depth", &["rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_depth.wgsl"]),
+            ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_snow_lift.wgsl", "rm_gbuffer.wgsl"]),
             ("rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]),
             ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
@@ -3736,7 +3771,8 @@ mod film_section_tests {
         assert_eq!(section_bit(plane, true, true), 0, "the sun cascades and light faces keep the whole vehicle");
         assert_eq!(section_bit(plane, false, false), 0);
         assert_eq!(section_bit(plane, true, false), 1);
-        assert!(rm_source("rm_gbuffer.wgsl").contains("(pc.scars.w & 1u) != 0u && rm_beyond_section("));
+        assert!(rm_source("rm_gbuffer.wgsl").contains("((pc.scars.w >> 24u) & 1u) != 0u && rm_beyond_section("));
+        assert_eq!(SECTION_BIT_SHIFT, 24, "bytes 0-2 of scars.w are the running gear's snow");
         assert!(!rm_source("rm_depth.wgsl").contains("rm_beyond_section"), "shadow maps never cut");
         let mut openers = Vec::new();
         let needle = [".set_film_section", "(Some"].concat(); // not this file's own text

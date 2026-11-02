@@ -1633,6 +1633,9 @@ struct MeshGpu {
     /// Cut by the film/review section view (`Renderer::set_film_section`): hidden from the camera
     /// beyond the plane, still whole for shadow maps, ray queries and the simulation.
     section_cut: bool,
+    /// The running gear's packed snow (`set_running_gear_snow`): pack in byte 0, the gear
+    /// envelope's inner |x| and top y in centimetres in bytes 1 and 2 (rm_snow_lift.wgsl).
+    running_gear: u32,
     /// Another vehicle's finish (`set_vehicle_finish`; zeros for none): the raymarch G-buffer's
     /// per-tank paint, whitewash, mud, soot and wear (`rm_gbuffer.wgsl` `vehicle_finish`).
     vehicle_finish: [f32; 4],
@@ -3748,6 +3751,7 @@ fn make_mesh_gpu(
         lamp_lens: 0,
         snow_vehicle: false,
         section_cut: false,
+        running_gear: 0,
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
         painted_steel: false,
@@ -6857,6 +6861,15 @@ impl Renderer {
         self.meshes.iter().enumerate().filter(|(_, m)| !m.raster_only && !m.track_recv
             && !(m.emissive > 0.0 && !m.emissive_own && !m.emissive_win)
             && m.world_min.cmpge(lo).all() && m.world_max.cmple(hi).all()).map(|(i, _)| i).collect()
+    }
+    /// Mesh `idx` is a hull with running gear in its frame's envelope |x| >= `inner_m`, y <=
+    /// `top_m`: `pack` (0..1) of the gear is crusted with the snow it ran through
+    /// (`snow_cover::step_pack`; rm_snow_lift.wgsl `snow_gear_crust`).
+    pub fn set_running_gear_snow(&mut self, idx: usize, pack: f32, inner_m: f32, top_m: f32) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            let byte = |v: f32| (v.clamp(0.0, 2.55) * 100.0).round() as u32;
+            g.running_gear = ((pack.clamp(0.0, 1.0) * 255.0).round() as u32) | byte(inner_m) << 8 | byte(top_m) << 16;
+        }
     }
     /// Mesh `idx` is part of the player's vehicle: its lying snow follows `player_snow_load`.
     pub fn mark_snow_vehicle(&mut self, idx: usize) {
@@ -13342,7 +13355,7 @@ mod atmosphere_tests {
         let crush = include_str!("../shaders/crush.wgsl");
         assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
         assert!(crush.contains("let rod_gain = mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN, clamp(cr.eye_range_strength, 0.0, 1.0));"));
-        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + rod_hue * (rods * rod_gain);"),
+        assert!(crush.contains("return radiance * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);"),
             "owner-directed cabin reproduction still acts only on the display rod term");
         assert!(crush.contains("let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));"),
             "the night's hue outdoors, the cabin's own hue inside");

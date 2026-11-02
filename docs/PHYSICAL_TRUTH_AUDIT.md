@@ -368,6 +368,28 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   observer in the open with three riflemen between; the receipt records the fronts, the
   arrivals, the kick, the men startled, the blade and crown impulses) is the evidence, with
   `pressure_front` tests of the charge's overpressure, impulse, reach and arrival windows.
+- Lying snow with relief (2026-11-02; `rm_snow_lift.wgsl`). The snow on a vehicle was a share
+  of the face's albedo mixed toward white, a flat colour. A covered face is now raised along
+  its normal by the snow's thickness, 6 cm at full cover through the same lying field (slope,
+  breakup, load), and the shading normal follows that field's slope across the face, so the
+  deck's snow carries a lip at every plate edge and pillows between; the depth pre-pass lifts
+  the face identically (a test holds its copy of the field equal to rm_common's). Named
+  approximations: the scene's acceleration structure and the sky-cover map keep the bare
+  geometry, so shadows, ray-query occlusion and the cover map ignore the lift (at most 6 cm);
+  the thickness is a display estimate of a night's fall on a deck, not a deposition model.
+- The winter running gear (2026-11-02; `snow_cover::step_pack`, `Renderer::set_running_gear_snow`,
+  `snow_gear_crust`). Nothing packed the tracks before: the Tiger's belt carried only
+  centimetre flecks (`track_snow`), the enemies' nothing, and lying snow stays off every
+  vertical face by its slope rule, so no vehicle's gear read as winter's. Each hull now carries
+  a pack load, gained with the distance driven through the lying snow (full after 80 m of a
+  full field, in proportion to the world's load) and lost over 15 minutes standing, and the
+  G-buffer draws a packed crust inside the hull frame's running-gear envelope (inner |x|, top
+  y: the T-34's measured from its bake, the Tiger's from its track nodes and interleaved
+  wheels, the heavy vehicles' from their track widths) whatever the face's slope, denser low
+  where the pads run and the snow is thrown, with a 1.5 cm lift, a matte slightly grey snow.
+  Named approximations: the envelope is a box in the hull frame (the lower hull side between
+  the wheels takes crust with them); the pack rates are presentation estimates; a hulk stands
+  at 0.6 of the world's load. `fx-review` part `gear` is the evidence.
 
 Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
 whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never
@@ -3487,7 +3509,13 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   ray queries the record is open and unrestricted on the piece's shortest axis and no fitting
   shadows the pane (the raymarch backend's portable fallback). The key beam through a slot is
   unchanged: the shadow cascades'. Gate for the A/B: `KESSEL_RM_SKIP=2097152` leaves the term
-  out; `KESSEL_RM_PROBE` prints the measure (`[rm-aperture]`).
+  out; `KESSEL_RM_PROBE` prints the measure (`[rm-aperture]`). Cost: the measure's ~200 ray
+  queries per pane run on one thread each and cost 1.07 ms a frame every frame (gfxbench, the
+  merged line of 2 November 2026, the largest single pass); it now runs every eighth frame or
+  when the pane count changes (`APERTURE_MEASURE_PERIOD`): the panes ride rigid parts and a
+  turret's traverse moves a port against the hull slowly, so a record at most eight frames old
+  is the same measure. A sampling cadence, not a transport change; open: the pass could use a
+  workgroup per pane.
 - **What the measure says of the Tiger** (`KESSEL_RM_PROBE`, act 1): each turret side port reads
   20 % open with half-angles 23.5 x 1.6 degrees (a 1.2 cm slot through 22 cm of housing: the
   bake, confirmed by a CPU ray test), so a wall opposite takes sky only in a band under 6 cm
@@ -3505,6 +3533,16 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   daylight from its periscopes yet. The cause is not found (the housing between the lower
   window and the mirror, or the periscope's actual optics); until it is, the cupola by day is
   its relayed pictures and the hatch.
+- **The night gain at most the key** (`crush.wgsl`, `observer::rod_display`): the rod channel
+  times the night display gain (ROD_DISPLAY_GAIN 6 outdoors) is now capped at the display's
+  key, 0.18: the gain lifts the dark toward mid-grey and never past it, the moonless night
+  unchanged below the key. A bound on a named display departure, not a change to the eye or the
+  scene, written against the owner's "some exposures are fully white at night", "in the sight".
+  Not the cause: the model's test (`the_night_gain_lifts_the_rods_toward_the_key_and_never_past_it`)
+  puts the lifted channel of an eye adapted to the moonlit sight field at 0.11 and the cones
+  below 1e-3, and the headless sight at the Christmas Eve Moon (`captures/demo-20261101-sight_night_20261102_sim*.jpg`,
+  the eye converged) is a pale field, not white; the live white-out's cause is open (the
+  moment, the lamps' state and the time spent head out before it are not known).
 - **A star's pixel at most white** (`rm_shade.wgsl` `rm_pixel_star`; the eye's state buffer bound
   to the shade, `rm_display_white`: the radiance the eye maps to display white, 1 / its cone
   exposure): the pixel star carried

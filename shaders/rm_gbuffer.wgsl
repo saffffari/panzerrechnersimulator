@@ -63,10 +63,12 @@ fn inverse_transpose_3x3(m: mat3x3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(c0 * inv_det, c1 * inv_det, c2 * inv_det);
 }
 
-fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>) -> VsOut {
-    let world = (model * vec4(pos, 1.0)).xyz;
+fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, local: vec3<f32>, gear: vec3<f32>) -> VsOut {
     let linear = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
     let n = normalize(inverse_transpose_3x3(linear) * normal);
+    // Lying snow's relief and the running gear's crust (rm_snow_lift.wgsl): the face is raised
+    // along its normal by the snow's thickness; the depth pre-pass lifts it the same.
+    let world = (model * vec4(pos, 1.0)).xyz + n * rm_snow_lift(local, n, clamp(pc.extra.x, 0.0, 1.0), gear);
     let t = normalize(linear * tangent.xyz);
     var out: VsOut;
     out.relative = world - fr.cam_pos.xyz;
@@ -82,7 +84,7 @@ fn project(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>,
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
       @location(3) tangent: vec4<f32>) -> VsOut {
     let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
-    return project(pc.model, pos, normal, uv, tangent, pos * metric);
+    return project(pc.model, pos, normal, uv, tangent, pos * metric, snow_gear_unpack(pc.scars.w));
 }
 
 @vertex
@@ -104,7 +106,7 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
         n.y -= dot(derivative, n) / max(1.0 + derivative.y, 0.1);
         t += derivative * t.y;
     }
-    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz);
+    return project(model, p, normalize(n), uv, vec4(normalize(t), tangent.w), (model * vec4(p, 1.0)).xyz, vec3(0.0));
 }
 
 // Surface wear on the player's vehicle (surface_wear.rs): scratches where boots, cases and tools
@@ -400,8 +402,8 @@ fn fs(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 }
 
 fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
-    // A sectioned vehicle (film/review view, scars.w bit 0) is opened for the camera only.
-    if ((pc.scars.w & 1u) != 0u && rm_beyond_section(in.relative + fr.cam_pos.xyz)) { discard; }
+    // A sectioned vehicle (film/review view, scars.w bit 24) is opened for the camera only.
+    if (((pc.scars.w >> 24u) & 1u) != 0u && rm_beyond_section(in.relative + fr.cam_pos.xyz)) { discard; }
     let raw = textureSample(albedo_tex, samp, in.uv);
     let kind = pc.params.w;
     if (kind > 3.5 && kind < 4.5 && raw.a < 0.5) { discard; }
@@ -452,6 +454,28 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
     var roughness = clamp(mr.g * pc.params.z, 0.08, 1.0);
     var metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
     var albedo = raw.rgb;
+    // Snow's relief: the lift field's slope across the face tilts the shading normal (the
+    // vertices carry the thickness, the pillows and lips between them come from here), and the
+    // running gear's packed crust is a matte, slightly grey snow whatever the face's slope.
+    let gear = snow_gear_unpack(pc.scars.w);
+    let snow_load = clamp(pc.extra.x, 0.0, 1.0);
+    var crust = 0.0;
+    if (kind < 2.5 && pc.params.w < 2.5 && (snow_load > 0.001 || gear.x > 0.001)) {
+        let n0 = normalize(in.normal);
+        let linear = mat3x3<f32>(pc.model[0].xyz, pc.model[1].xyz, pc.model[2].xyz);
+        let metric = vec3(length(pc.model[0].xyz), length(pc.model[1].xyz), length(pc.model[2].xyz));
+        // Mesh-frame directions of the world tangent frame (a rigid model with uniform scale).
+        let tw = normalize(select(cross(n0, vec3(0.0, 1.0, 0.0)), cross(n0, vec3(1.0, 0.0, 0.0)), abs(n0.y) > 0.9));
+        let bw = cross(n0, tw);
+        let tl = (transpose(linear) * tw) / max(metric * metric, vec3(1e-6)) * metric;
+        let bl = (transpose(linear) * bw) / max(metric * metric, vec3(1e-6)) * metric;
+        let e = 0.03;
+        let l0 = rm_snow_lift(in.local, n0, snow_load, gear);
+        let lt = rm_snow_lift(in.local + tl * e, n0, snow_load, gear);
+        let lb = rm_snow_lift(in.local + bl * e, n0, snow_load, gear);
+        n = normalize(n - tw * ((lt - l0) / e) - bw * ((lb - l0) / e));
+        crust = snow_gear_crust(in.local, gear);
+    }
     if (housing) {
         // A lamp's bezel and cage: dark, worn steel, lit by the cabin like any fitting.
         albedo = vec3(0.06, 0.058, 0.055);
@@ -528,9 +552,17 @@ fn gbuffer_surface(in: VsOut, front: bool) -> GOut {
         roughness = finished.roughness;
         metallic = finished.metal;
     }
+    if (crust > 0.0) {
+        // Packed snow: a little greyer and darker than the lying snow's RM_SNOW_ALBEDO (the
+        // belt's grit in it), broken at the scale of a pad.
+        let grey = 0.86 + 0.12 * snow_lift_fbm(in.local * 23.0, 17u);
+        albedo = mix(albedo, vec3(0.82, 0.84, 0.87) * grey, crust);
+        roughness = mix(roughness, 0.92, crust);
+        metallic *= 1.0 - crust;
+    }
     // Ordinary surfaces carry the share of the face lying snow can cover in g0.a (0..0.9);
     // kinds 3+ keep their code.
-    let lying = rm_snow_lying(in.local, n, clamp(pc.extra.x, 0.0, 1.0));
+    let lying = rm_snow_lying(in.local, normalize(in.normal), clamp(pc.extra.x, 0.0, 1.0));
     out.g0 = vec4(albedo, select(lying * 0.9, kind, kind > 2.5));
     out.g1 = vec4(n, roughness);
     out.g2 = vec4(0.0, 0.0, 0.0, metallic);

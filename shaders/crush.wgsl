@@ -83,7 +83,10 @@ fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
     // cabin's own hue inside the hull (observer::CABIN_ROD_DISPLAY_HUE, unchanged since
     // 2026-10-04, so the cabin keeps its look). Cones keep every source's own colour.
     let rod_hue = mix(vec3(OBS_ROD_HUE_R, OBS_ROD_HUE_G, OBS_ROD_HUE_B), vec3(OBS_CABIN_ROD_HUE_R, OBS_CABIN_ROD_HUE_G, OBS_CABIN_ROD_HUE_B), clamp(cr.eye_range_strength, 0.0, 1.0));
-    return radiance * camera_white_gain() * cr.exposure + rod_hue * (rods * rod_gain);
+    // The lifted rod channel reaches the display's key at most (observer::rod_display): an eye
+    // adapted to the moonlit field, or dark-adapted beyond it, showed the whole sight white
+    // (2 November 2026); mid-grey is what a night field is to a locally adapted eye.
+    return radiance * camera_white_gain() * cr.exposure + rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY);
 }
 
 // The retina adapts place by place: a man in a dark cabin sees both the cabin and the bright

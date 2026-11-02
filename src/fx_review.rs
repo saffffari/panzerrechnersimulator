@@ -180,7 +180,7 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     Ok(())
 }
 
-/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,burnout,shockwave,kill` selects the parts (all by default);
+/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,burnout,shockwave,gear,kill` selects the parts (all by default);
 /// `KESSEL_FX_REVIEW_CLOCK` the strike and kill clock, `KESSEL_FX_REVIEW_FILM=1` the clips.
 fn part(name: &str) -> bool {
     match std::env::var("KESSEL_FX_REVIEW_PARTS") {
@@ -510,6 +510,51 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         anyhow::ensure!(peak > 0.005, "the eye was not kicked ({peak})");
         stills.shots.push(serde_json::json!({"name": "shockwave_receipt", "observer": eye.to_array(), "men_placed": placed,
             "distance_m": eye.distance(centre), "eye_kick_peak_m": peak, "pressure": receipt}));
+    }
+    // Part 8 (`gear`): the winter running gear and the lying snow's relief. The Tiger drives
+    // six seconds through the lying snow (its gear packs with the distance), then stands under
+    // a full load; a T-34 stands with its gear packed. From low beside the tracks, and the deck
+    // from above and behind.
+    if part("gear") {
+        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        g.debug_place_tiger(tiger, 0.0);
+        g.debug_set_snow_loads(0.0, 0.9);
+        step(&mut g, &mut r, 30, &idle);
+        let drive = TankInput { drive: 1.0, ..TankInput::default() };
+        step(&mut g, &mut r, 360, &drive);
+        step(&mut g, &mut r, 90, &idle);
+        g.debug_set_snow_loads(1.0, 0.9);
+        let (_, _, driven_pack) = g.debug_snow_loads();
+        // The drive's pack is the receipt's; the stills show the gear after a longer run (0.85).
+        g.debug_set_running_gear_snow(None, 0.85);
+        step(&mut g, &mut r, 30, &idle);
+        let forward = g.player.forward();
+        let right = Vec3::new(-forward.z, 0.0, forward.x);
+        let hull = g.player.pos;
+        let ground = |g: &Game, p: Vec3| Vec3::new(p.x, g.hf.height_at(p.x, p.z), p.z);
+        let eye = ground(&g, hull + right * 4.8 - forward * 1.0) + Vec3::Y * 0.9;
+        observe(&mut r, eye, ground(&g, hull) + Vec3::Y * 0.75 + forward * 0.6, 50.0);
+        stills.still(&mut r, "gear_tiger_tracks", "the Tiger's running gear after ~25 m through the lying snow: the pads and horns packed, the wheels caked, snow on the run")?;
+        let eye = ground(&g, hull - forward * 7.5 + right * 3.0) + Vec3::Y * 2.8;
+        observe(&mut r, eye, ground(&g, hull) + forward * 1.0 + Vec3::Y * 1.3, 50.0);
+        stills.still(&mut r, "gear_tiger_deck", "the deck's lying snow in relief: lips at the plate edges, pillows between")?;
+        let eye = ground(&g, hull + right * 3.2 - forward * 2.5) + Vec3::Y * 2.1;
+        observe(&mut r, eye, ground(&g, hull) + Vec3::Y * 1.6 - forward * 1.2 + right * 0.6, 48.0);
+        stills.still(&mut r, "gear_tiger_deck_close", "the engine deck's snow from three metres: the thickness at the fender's edge, the relief over the louvres")?;
+        let target_pos = hull + forward * 14.0 + right * 7.0;
+        let live = g.debug_stage_live_t34(target_pos.x, target_pos.z, 0.6).context("fixture needs a live T-34")?;
+        g.debug_hold_enemy_fire();
+        g.debug_set_running_gear_snow(Some(live), 0.85);
+        step(&mut g, &mut r, 30, &idle);
+        let c = g.enemies[live].center();
+        let f34 = g.enemies[live].forward();
+        let r34 = Vec3::new(-f34.z, 0.0, f34.x);
+        let eye = ground(&g, c + r34 * 5.0 - f34 * 1.5) + Vec3::Y * 0.9;
+        observe(&mut r, eye, ground(&g, c) + Vec3::Y * 0.8 + f34 * 0.5, 50.0);
+        stills.still(&mut r, "gear_t34_tracks", "a T-34 standing with its running gear packed, the lying snow on its deck in relief")?;
+        let (snow_load, _, _) = g.debug_snow_loads();
+        stills.shots.push(serde_json::json!({"name": "gear_receipt", "tiger_pack_after_drive": driven_pack, "tiger_pack_shown": 0.85, "tiger_snow_load": snow_load,
+            "distance_driven_m": hull.distance(Vec3::new(tiger.x, hull.y, tiger.y))}));
     }
     if !part("kill") {
         fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({

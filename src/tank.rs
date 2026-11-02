@@ -361,6 +361,23 @@ pub const IS3_PARTS: Parts = Parts {
     frame_scale: 1.0,
 };
 
+/// The running gear's envelope in the hull frame's metres, (inner |x|, top y): the tracks, the
+/// wheels and the lower hull between them, where the belt's snow packs (rm_snow_lift.wgsl).
+/// The T-34's measured from its bake (tracks outboard of |x| 1.0, the run's top near 1.1 m,
+/// the sponsons overhanging above); the heavy vehicles by their published track widths and
+/// run heights, the SU-100 the T-34's hull. The Tiger's is `TIGER_RUNNING_GEAR`.
+pub fn running_gear_envelope(kind: EnemyKind) -> (f32, f32) {
+    match kind {
+        EnemyKind::T34 | EnemyKind::Su100 => (1.00, 1.15),
+        EnemyKind::Kv2 => (1.00, 1.25),
+        EnemyKind::Isu152 | EnemyKind::Is2 | EnemyKind::Is3 => (1.00, 1.20),
+    }
+}
+/// The Tiger's running gear in its hull frame's metres: the interleaved road wheels reach in to
+/// |x| 0.90 under the hull side, the track steel lies outboard of 1.52 (measured from the bake's
+/// track nodes), the run's top near 1.05 m.
+pub const TIGER_RUNNING_GEAR: (f32, f32) = (0.90, 1.05);
+
 pub fn parts_for(kind: EnemyKind) -> Parts {
     match kind {
         EnemyKind::T34 => T34_PARTS,

@@ -1591,6 +1591,16 @@ impl<S: Source<Item = f32>> Source for LazyNormalized<S> {
 
 /// Owns the audio device and all preloaded clips. Keep it alive for the whole
 /// program: dropping it stops all sound.
+/// The run's live delivery, in the log at exit (2 November 2026, "audio popping like at audible
+/// frequency rate"): how many output blocks the callback found empty, of how many produced.
+impl Drop for Audio {
+    fn drop(&mut self) {
+        let t = self.live_output.snapshot();
+        eprintln!("[audio] live delivery at exit: {} starved blocks of {} produced (block {} frames, queue {} blocks, first starvation at {:?} us)",
+            t["starved_blocks"], t["produced_blocks"], t["block_frames"], t["queued_blocks_max"], t["first_starved_elapsed_us"]);
+    }
+}
+
 pub struct Audio {
     soundscape: RefCell<Option<soundscape::Runtime>>,
     terminal_mixer: Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>,
