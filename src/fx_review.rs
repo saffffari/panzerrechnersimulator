@@ -18,7 +18,7 @@
 //! with the look unset for an A/B.
 use crate::{
     act_manifest, celestial_sky, ephemeris,
-    game::{Game, Station, TankInput},
+    game::{Arc, CrewRole, Game, Station, TankInput},
     graphics, world,
 };
 use anyhow::Context;
@@ -180,7 +180,7 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     Ok(())
 }
 
-/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,kill` selects the parts (all by default);
+/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,kill` selects the parts (all by default);
 /// `KESSEL_FX_REVIEW_CLOCK` the strike and kill clock, `KESSEL_FX_REVIEW_FILM=1` the clips.
 fn part(name: &str) -> bool {
     match std::env::var("KESSEL_FX_REVIEW_PARTS") {
@@ -347,6 +347,43 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             }
             step(&mut g, &mut r, 90, &idle);
         }
+    }
+    // Part 5 (`cabin_hit`): the inside of the Tiger as a solid shot comes through the hull side
+    // at the radio operator's post (the crew-solo fixture's wounding lane, raked rearward), seen
+    // from the commander's own post inside with the living crew at theirs. Film mode films 110
+    // frames from the round's launch; otherwise two stills, 2 and 10 frames after the strike.
+    if part("cabin_hit") {
+        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        g.debug_place_tiger(tiger, 0.0);
+        g.enable_singleplayer_crew();
+        g.station = Station::Commander;
+        g.commander_outside = false;
+        step(&mut g, &mut r, 90, &idle);
+        let strike_frame = 12u32;
+        let mut strike = serde_json::Value::Null;
+        if let Some(mut film) = Film::start(&stills.prefix, "cabin_hit")? {
+            r.reset_history();
+            for frame in 0..110 {
+                if frame == strike_frame {
+                    strike = g.debug_crew_solo_strike_raked(CrewRole::Radioman, false, Arc::Side, 0.3, 35.0);
+                }
+                step(&mut g, &mut r, 1, &idle);
+                let path = film.frame();
+                r.render_to_png(&device, &queue, &path, r.iw, r.ih)?;
+                if frame == strike_frame + 2 { stills.frame_still(&mut r, &film, "cabin_hit_2f", "the hull side holed at the radio operator's post, +2 frames, from the commander's post")?; }
+                if frame == strike_frame + 10 { stills.frame_still(&mut r, &film, "cabin_hit_10f", "the same, +10 frames")?; }
+                if frame == strike_frame + 60 { stills.frame_still(&mut r, &film, "cabin_hit_60f", "the same, a second on")?; }
+            }
+            film.finish()?;
+        } else {
+            step(&mut g, &mut r, strike_frame, &idle);
+            strike = g.debug_crew_solo_strike_raked(CrewRole::Radioman, false, Arc::Side, 0.3, 35.0);
+            step(&mut g, &mut r, 2, &idle);
+            stills.still(&mut r, "cabin_hit_2f", "the hull side holed at the radio operator's post, +2 frames, from the commander's post")?;
+            step(&mut g, &mut r, 8, &idle);
+            stills.still(&mut r, "cabin_hit_10f", "the same, +10 frames")?;
+        }
+        stills.shots.push(serde_json::json!({"name": "cabin_hit_strike", "strike": strike}));
     }
     if !part("kill") {
         fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
