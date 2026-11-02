@@ -174,6 +174,13 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
     receipt.insert("solved_fragments_at_strike".into(), json!(solved.len()));
     if let Some(hole) = g.armor_scars.scars().iter().copied()
         .find(|s| s.kind == crate::armor_damage::ScarKind::Hole && s.is_turret()) {
+        // Outside, 70 ms after the strike: the hole's rim and bore at their solved local
+        // temperature (the lattice solved this perforation inside its tick).
+        let turret = g.player.turret_model();
+        let centre = turret.transform_point3(hole.local_position());
+        let normal = turret.transform_vector3(hole.local_normal()).normalize_or_zero();
+        rig.still(&g, &mut r, "hole_glow", "the turret-rear hole 70 ms after the strike, glowing at its solved local temperature",
+            Some((centre + normal * 0.85 + Vec3::Y * 0.15, centre, 32.0)))?;
         let at = g.player.turret_model().transform_point3(hole.local_position() - hole.local_normal() * hole.plate_m());
         g.loader_face_world(at);
         step(&mut g, &mut r, 1, &idle);
