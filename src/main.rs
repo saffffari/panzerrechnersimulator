@@ -11966,6 +11966,16 @@ struct WindowState {
 impl WindowState {
     fn new(window: Arc<Window>, lan_config: Option<lan::LanConfig>) -> anyhow::Result<Self> {
         let size = window.inner_size();
+        // Pixel exactness: the frame reaches the panel through a nearest blit over the whole
+        // surface, so it is sharp exactly when the surface is a whole multiple of the grid (the
+        // Studio Display's 5120x2880 is 5x of 1024x576). Say so at start, so a compositor scale
+        // that hands a logical size cannot soften it unnoticed.
+        if let Some((iw, ih)) = std::env::var("KESSEL_INTERNAL_RES").ok().and_then(|v| {
+            let (w, h) = v.split_once('x')?; Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?)) }) {
+            let exact = iw > 0 && ih > 0 && size.width % iw == 0 && size.height % ih == 0 && size.width / iw == size.height / ih;
+            println!("[panzerrechnersystem] surface {}x{} for the {iw}x{ih} grid: {}", size.width, size.height,
+                if exact { format!("pixel exact, {}x", size.width / iw) } else { "NOT a whole multiple: the nearest blit will be uneven".to_owned() });
+        }
         let instance = create_instance();
         let surface = instance.create_surface(window.clone())?;
         let adapter = request_adapter(&instance, Some(&surface));

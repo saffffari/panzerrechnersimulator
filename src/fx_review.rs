@@ -74,11 +74,20 @@ impl Film {
     }
     fn last_frame(&self) -> std::path::PathBuf { self.dir.join(format!("{:05}.png", self.frames.saturating_sub(1))) }
     fn finish(self) -> anyhow::Result<String> {
-        let status = std::process::Command::new("ffmpeg").args([
-            "-v", "error", "-nostdin", "-y", "-framerate", "60",
-            "-i", &format!("{}/%05d.png", self.dir.display()),
-            "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", &self.out,
-        ]).status().context("ffmpeg")?;
+        // `KESSEL_FX_REVIEW_FILM_SCALE=N`: every frame scaled N times by nearest neighbour and
+        // encoded with full-resolution chroma (4:4:4) at a near-lossless quality, so a one-pixel
+        // dither survives on the panel (1024x576 x 5 is the Studio Display's 5120x2880).
+        let scale = std::env::var("KESSEL_FX_REVIEW_FILM_SCALE").ok().and_then(|v| v.parse::<u32>().ok()).filter(|&n| n > 1);
+        let input = format!("{}/%05d.png", self.dir.display());
+        let mut args: Vec<String> = ["-v", "error", "-nostdin", "-y", "-framerate", "60", "-i", &input, "-an", "-c:v", "libx264"]
+            .iter().map(|s| s.to_string()).collect();
+        match scale {
+            Some(n) => args.extend(["-vf".into(), format!("scale=iw*{n}:ih*{n}:flags=neighbor"), "-preset".into(), "slow".into(),
+                "-crf".into(), "8".into(), "-pix_fmt".into(), "yuv444p".into()]),
+            None => args.extend(["-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p"].iter().map(|s| s.to_string())),
+        }
+        args.push(self.out.clone());
+        let status = std::process::Command::new("ffmpeg").args(&args).status().context("ffmpeg")?;
         anyhow::ensure!(status.success(), "ffmpeg failed encoding {}", self.out);
         let _ = fs::remove_dir_all(&self.dir);
         println!("[fx-review] {} ({} frames at 60 fps)", self.out, self.frames);
@@ -747,13 +756,14 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         // luma levels x chroma levels squared, the chroma levels odd so grey is exact: 10x5x5 =
         // 250, 20x5x5 = 500, 9x9x9 = 729, 13x9x9 = 1,053, 25x9x9 = 2,025 (the nearest the form
         // allows to 256, 512, 720, 1024 and 2048).
-        let variants: [(&str, f32, [f32; 4]); 11] = [
+        let variants: [(&str, f32, [f32; 4]); 12] = [
             ("standard", 0.0, r.real),
             ("real256", 6.0, [1.35, 0.85, 7.0, 3.0]),
             ("real512", 6.0, [1.35, 0.85, 7.0, 0.0]),
             ("real720", 6.0, [1.35, 0.85, 11.0, 4.0]),
             ("real1024", 6.0, [1.35, 0.85, 15.0, 3.0]),
             ("real2048", 6.0, [1.35, 0.85, 15.0, 7.0]),
+            ("real4096", 6.0, [1.35, 0.85, 15.0, 0.0]),
             ("luma250", 6.0, [1.35, 0.85, 9.0, -4.0]),
             ("luma500", 6.0, [1.35, 0.85, 19.0, -4.0]),
             ("luma729", 6.0, [1.35, 0.85, 8.0, -8.0]),
@@ -763,7 +773,10 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         let (look0, real0) = (r.look, r.real);
         step(&mut g, &mut r, 60, &idle);
         for (view, e, t, fov) in views {
+            // `KESSEL_LOOK_MATRIX_ONLY=a,b` renders only those looks.
+            let only = std::env::var("KESSEL_LOOK_MATRIX_ONLY").ok();
             for (name, look, real) in variants {
+                if only.as_deref().is_some_and(|o| !o.split(',').any(|n| n.trim() == name)) { continue; }
                 r.look = look;
                 r.real = real;
                 observe(&mut r, e, t, fov);

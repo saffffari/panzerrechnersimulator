@@ -38,7 +38,10 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-COURSE= MODE=menu RES=1280x720 WINDOWED=0 PLATOON=0 LOOK= CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
+# realism_render_test: the owner's pick of 2 November 2026, the realism look at 2,048 colours on the
+# 1024x576 grid, fullscreen on the 5120x2880 Studio Display (exactly 5x, nearest).
+export KESSEL_REAL_STEPS=${KESSEL_REAL_STEPS:-15,15,7}
+COURSE= MODE=menu RES=1024x576 WINDOWED=0 PLATOON=0 LOOK=deltap-real CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 SKY_START=07:00 AUDIO_RANGE=reference T34S= BRAIN= GUNS=
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
