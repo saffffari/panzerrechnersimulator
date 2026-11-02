@@ -3531,4 +3531,8 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   to 1,300 m with smaller cells (`CloudLayerParameters`, the act-1 profile): winter stratus and
   stratocumulus bases run 300 to 800 m, and the lower deck foreshortens and moves against the
   ground instead of reading as a map on the sky. The act-1 profile also carries the winter
-  aerosol that the atmosphere default carries.
+  aerosol that the atmosphere default carries. The thinner deck let a quarter more of the
+  moonless night through (2.5e-4 lx overcast against the literature's 3e-5..2e-4,
+  `moonlight_and_the_moonless_night_are_as_dark_as_measured`): its liquid water content is
+  0.38 g/m^3 (0.25 before), which keeps the deck's water path at 0.32 kg/m^2 and lies within
+  winter stratus's 0.2-0.5 g/m^3.
