@@ -189,6 +189,41 @@ staged start, the garrison marked dead by fixture and the Tiger stood on the sit
 checks the beats and the net's lines in order, and writes `PREFIX_{order_at_camp,map_at_camp,order_at_turn,secured}.png`
 and a JSON receipt. CPU: `mission_game::tests::the_march_has_an_authored_order_for_every_site`.
 
+### The loop (2 November 2026)
+
+The March is now played against a stock the map states. The theatre catalog's `start` block
+(`catalog/expedition_theatre.v1.json`, `expedition_theatre::Start`) is what the Tiger carries when
+the expedition opens: 420 L of the 540 L tank, 24 PzGr and 8 SprGr in the 64 cradles (52 PzGr,
+12 SprGr, the chamber extra). It is applied once, when the theatre is first installed
+(`Game::enable_expedition_theatre` → `Game::stow_main_gun_loadout`, the same stowing the campaign
+start uses); resume never reapplies it. It is an authored state of the fiction (a Tiger low on
+ammunition inside the pocket), not a standard-issue claim, and the numbers are the owner's to tune
+in the catalog: a full rack would see out every order on the sheet, and the theatre's twelve sites
+hold 27 guard tanks plus nine released counterattack tanks against 65 rounds aboard a full Tiger
+and 72 on the sites' carts. Fuel burns by the authored campaign law (`standalone_fuel.rs`:
+0.018 + 0.010 × speed L/s, 13.2 L per road kilometre at 20 km/h, 32 km from the opening tank),
+and the fuel sites and the camp each stand eight 20 L cans.
+
+The map's margin carries the stock (`Game::expedition_stock`, `ExpeditionStock::lines`): fuel and
+the road kilometres it buys at 20 km/h under the same law, the 88 mm aboard by nature (chamber,
+cradles, loose rounds, the one in the hands, the banked overflow), the men aboard, at camp, in the
+field and dead, and the orders left of the eight and done. The lines are read from the live
+authorities, never from a tally of their own.
+
+Harness: `expedition-loop-review PREFIX` plays the whole loop in sequence on the actual Game: each
+order is the map's own first choice; the drive to its turn and on to the site is staged along the
+road graph (nodes from the catalog's road points, the shortest path by Dijkstra, the off-road legs
+added) with the fuel charged by the engine's drain law at road speed, so a drive the tank cannot
+afford strands it short; the fight is staged by marking the garrison and the released
+counterattack dead and spending two PzGr per tank from the cradles (a disclosed rate, not a
+ballistic result; a rack that cannot give them ends the run "out of ammunition"); the hold runs
+on the theatre's own clock; the site's carts and cans are taken by flag; the camp's moves follow;
+at order 3 (`KESSEL_LOOP_DEATH_AT`) the controlled man is a staged casualty, the camp's reserve
+relieves him through the real departure (one opportunity spent at 70 m out of camp), remounts and
+finishes the retained order; the finale at zero opportunities resolves the run. The receipt
+(`PREFIX.json`) carries the stock after every order. It needs the GPU for the Game build and has
+not been run yet.
+
 ## Verified by play (27 October 2026, RTX 4090, shader backend)
 
 Unit tests: `cargo test --bin panzerrechnersystem -- mission canyon_director hand_map hand_compass

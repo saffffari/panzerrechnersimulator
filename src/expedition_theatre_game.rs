@@ -11,6 +11,8 @@ mod ammunition;
 mod relay;
 #[path="expedition_mission_review.rs"]
 mod mission_review;
+#[path="expedition_loop_review.rs"]
+mod loop_review;
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub(super) struct Crossing {pub center:Vec2,pub deck_y:f32,pub half_length:f32,pub half_width:f32}
@@ -25,6 +27,21 @@ pub(super) struct SiteProgress {
  pub id:u64,pub guards:Vec<usize>,pub infantry:Vec<usize>,pub counterattack:Vec<usize>,pub held_s:f32,
  pub complete:bool,pub visited:bool,pub counterattack_released:bool,pub relay_delivered:bool,
  pub territory:Territory,pub recapture_s:f32,pub captures:u16,pub failure:Option<String>,
+}
+/// What the expedition has left, as the map states it between orders: the stake of the next one.
+#[derive(Clone,Debug,Serialize)]
+pub struct ExpeditionStock {
+ pub fuel_l:f32,pub range_km:f32,pub ap:u32,pub he:u32,
+ pub aboard:usize,pub camp:usize,pub field:usize,pub dead:usize,
+ pub orders_left:u8,pub orders_done:usize,
+}
+impl ExpeditionStock {
+ pub fn lines(&self)->[String;4] {
+  let men=if self.field>0 {format!("MEN {} ABOARD  {} CAMP  {} FIELD  {} DEAD",self.aboard,self.camp,self.field,self.dead)}
+   else {format!("MEN {} ABOARD  {} CAMP  {} DEAD",self.aboard,self.camp,self.dead)};
+  [format!("FUEL {:.0} L  ~{:.0} KM",self.fuel_l,self.range_km),format!("88 MM  {} AP  {} HE",self.ap,self.he),men,
+   format!("ORDERS {} LEFT  {} DONE",self.orders_left,self.orders_done)]
+ }
 }
 /// Only surviving physical enemies exert pressure. Re-entering a sector does not create a new
 /// garrison, counterattack, cache or crew member. A defending capable person arrests the clock.
@@ -190,6 +207,7 @@ impl TheatreRuntime {
 }
 impl Game {
  pub fn run_expedition_mission_review(prefix:&str)->Result<()>{mission_review::run(prefix)}
+ pub fn run_expedition_loop_review(prefix:&str)->Result<()>{loop_review::run(prefix)}
  pub fn enable_expedition_theatre(&mut self,r:&mut Renderer)->Result<bool>{
   let Some(mut t)=self.theatre.take() else{return Ok(false)};
   if t.initialized {self.theatre=Some(t);return Ok(true)}
@@ -242,6 +260,13 @@ impl Game {
     let id=710000+s.id*10+n as u64;let p=Vec3::new(s.position[0]+8.+n as f32*1.2,self.hf.height_at(s.position[0]+8.,s.position[1]+4.),s.position[1]+4.);
     self.spawn_workshop_reward(crate::expedition::ItemId(id),kind,p)?;t.reward_parts.push(id);
    }}
+   // The authored opening stock (catalog "start"): the fuel in the tank and the exact rounds
+   // stowed, once, when the theatre is first installed. Resume never comes through here.
+   if let Some(start)=t.spec.start.clone() {
+    self.standalone_fuel_liters=Some(start.fuel_l);
+    let rack=self.stow_main_gun_loadout(usize::from(start.rounds_ap),usize::from(start.rounds_he));
+    println!("[expedition] opening stock: {:.0} L fuel, {} PzGr + {} SprGr aboard ({rack} in the cradles)",start.fuel_l,start.rounds_ap,start.rounds_he);
+   }
    t.initialized=true;Ok(())
   })();self.theatre=Some(t);result?;Ok(true)
  }
@@ -283,6 +308,22 @@ impl Game {
  }
  /// An order is accepted and open.
  pub fn expedition_order_active(&self)->bool {self.theatre.as_ref().is_some_and(|t|t.active.is_some())}
+ /// The expedition's remaining stock, read from the live authorities: the tank, the rack and
+ /// the hands, the coordinator's people, the dispatch budget and the theatre's tally.
+ pub fn expedition_stock(&self)->Option<ExpeditionStock> {
+  let t=self.theatre.as_ref()?;let e=self.expedition_state()?;
+  let fuel_l=self.tank_fuel_liters().unwrap_or(0.);let (ap,he)=self.main_gun_rounds_aboard();
+  let (mut aboard,mut camp,mut field,mut dead)=(0,0,0,0);
+  for p in &e.people {
+   if !p.alive(){dead+=1;continue;}
+   match p.location {
+    crate::expedition::PersonLocation::Seat{vehicle,..}|crate::expedition::PersonLocation::Aboard{vehicle,..} if vehicle==crate::expedition::TIGER_ID=>aboard+=1,
+    crate::expedition::PersonLocation::Camp{..}=>camp+=1,
+    _=>field+=1,
+   }
+  }
+  Some(ExpeditionStock{fuel_l,range_km:super::standalone_fuel::road_range_km(fuel_l),ap,he,aboard,camp,field,dead,orders_left:e.preparation_slots,orders_done:t.completed})
+ }
  /// What the mission sheet observes of its site (src/mission.rs `Observation`): living guard
  /// tanks of the site's finite garrison, and whether the theatre has credited the site as secured.
  pub(super) fn expedition_site_observation(&self,site:u64)->Option<(u32,bool)> {
@@ -521,6 +562,8 @@ impl Game {
    r.draw_text(&format!("{} TANKS / HOLD {:.0}s / {} ORDERS",s.guards,s.hold_s,slots),0.34,0.813,0.019,ink,crate::ui::Align::Left);
   }
   for (line,text) in crate::ui::wrap_text(&t.notice,52).into_iter().take(2).enumerate(){r.draw_text(&text,0.34,0.838+line as f32*0.017,0.015,ink,crate::ui::Align::Left);}
+  // The stock, pencilled in the sheet's margin: what the next order is played against.
+  if let Some(stock)=self.expedition_stock(){for (n,line) in stock.lines().iter().enumerate(){r.draw_text(line,0.195,0.785+n as f32*0.0175,0.0135,ink,crate::ui::Align::Left);}}
   if t.active.is_some(){r.draw_text("[ WITHDRAW ORDER ]",0.55,0.882,0.023,ink,crate::ui::Align::Center);}
   else {for (x,label) in [(0.35,"<"),(0.53,"[ ACCEPT ]"),(0.73,"[ NEXT ]")]{r.draw_text(label,x,0.882,0.023,ink,crate::ui::Align::Center);}}
   r.draw_text("PgUp/Dn SELECT   M MAP   X FOLD",0.57,0.913,0.016,ink,crate::ui::Align::Center);

@@ -19,7 +19,12 @@ pub fn mission_sheet(site:u64)->Result<Option<crate::mission::Mission>> {
  Ok(mission_sheets()?.into_iter().find(|m|m.site==Some(site)))
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
-pub struct Spec { pub schema:String,pub version:u32,pub name:String,pub seed:u64,pub extent_m:f32,pub grid_res:usize,pub camp:[f32;2],pub sites:Vec<Site>,pub roads:Vec<Vec<[f32;2]>>,pub river:River,pub provenance:String }
+pub struct Spec { pub schema:String,pub version:u32,pub name:String,pub seed:u64,pub extent_m:f32,pub grid_res:usize,pub camp:[f32;2],#[serde(default)]pub start:Option<Start>,pub sites:Vec<Site>,pub roads:Vec<Vec<[f32;2]>>,pub river:River,pub provenance:String }
+/// What the Tiger carries when the expedition opens: an authored state of the fiction, applied
+/// once when the theatre is first installed (`Game::enable_expedition_theatre`). Absent, the
+/// Tiger opens as the playtest does (420 L, the hull stowage full).
+#[derive(Clone,Debug,Serialize,Deserialize)]
+pub struct Start {pub fuel_l:f32,pub rounds_ap:u16,pub rounds_he:u16,#[serde(default)]pub note:String}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct Site {pub id:u64,pub name:String,pub position:[f32;2],pub kind:Kind,pub guards:usize,pub hold_s:f32,pub rewards:Vec<String>}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
@@ -39,6 +44,11 @@ impl Spec {
   for s in &self.sites {ensure!(ids.insert(s.id)&&valid(s.position)&&(1..=3).contains(&s.guards)&&s.hold_s.is_finite()&&s.hold_s>0.,"invalid or duplicate mission site");}
   ensure!(self.sites.iter().filter(|s|s.kind==Kind::Finale).count()==1,"exactly one final objective required");
   for road in &self.roads {ensure!(road.len()>=2&&road.iter().all(|p|valid(*p)),"invalid road");}
+  if let Some(start)=&self.start {
+   ensure!(start.fuel_l.is_finite()&&(0.0..=crate::game::TIGER_FUEL_CAPACITY_L).contains(&start.fuel_l),"start fuel outside the Tiger's tank");
+   let (ap_slots,he_slots)=crate::interior_rig::shell_slot_capacity();
+   ensure!(usize::from(start.rounds_ap)<=ap_slots+1&&usize::from(start.rounds_he)<=he_slots,"start loadout exceeds the hull stowage (chamber included)");
+  }
   Ok(())
  }
  pub fn is_manifest(m:&crate::act_manifest::ActManifest)->bool {m.value()["authoring"]["mode"].as_str()==Some("expedition")}
@@ -58,4 +68,15 @@ impl Site {
 #[cfg(test)] mod tests {use super::*;
  #[test] fn authored_theatre_has_choices_and_one_finale(){let s=Spec::load().unwrap();assert_eq!(s.sites.len(),12);assert!(s.sites.iter().any(|s|s.position[1]< -3000.));assert!(s.sites.iter().any(|s|s.position[0]>3000.));}
  #[test] fn duplicate_site_cannot_alias_loot(){let mut s=Spec::load().unwrap();s.sites[1].id=s.sites[0].id;assert!(s.validate().is_err());}
+ #[test] fn the_march_opens_with_an_authored_part_loadout(){
+  let s=Spec::load().unwrap();let start=s.start.as_ref().expect("The March authors its opening loadout");
+  assert!(start.fuel_l>0.&&start.fuel_l<=540.);assert!(start.rounds_ap>0&&start.rounds_he>0);
+  let (ap,he)=crate::interior_rig::shell_slot_capacity();assert!(usize::from(start.rounds_ap)<ap&&usize::from(start.rounds_he)<=he,"a full rack would not be a stake");
+ }
+ #[test] fn a_loadout_beyond_the_stowage_or_the_tank_is_refused(){
+  let mut s=Spec::load().unwrap();s.start.as_mut().unwrap().rounds_he=13;assert!(s.validate().is_err());
+  let mut s=Spec::load().unwrap();s.start.as_mut().unwrap().rounds_ap=54;assert!(s.validate().is_err());
+  let mut s=Spec::load().unwrap();s.start.as_mut().unwrap().fuel_l=541.;assert!(s.validate().is_err());
+  let mut s=Spec::load().unwrap();s.start=None;s.validate().unwrap();
+ }
 }

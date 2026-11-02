@@ -396,7 +396,7 @@ enum TrackRepairPhase {
 const N_PICKUPS: usize = 14;
 /// Tiger I road-fuel capacity. Campaign fuel is already tracked in litres, so a physical can feeds
 /// the same live meter instead of creating a second abstract "fuel pickup" currency.
-const TIGER_FUEL_CAPACITY_L: f32 = 540.0;
+pub(crate) const TIGER_FUEL_CAPACITY_L: f32 = 540.0;
 const PORTABLE_REACH_M: f32 = 2.2;
 const N_MAP_CASES: usize = crate::run_route::ROUTE_SITE_COUNT;
 
@@ -14538,30 +14538,10 @@ impl Game {
 
         // Rebuild the visible rack from typed carried ammunition. APCR currently rides the AP mesh
         // and ballistic family, but remains a distinct persistent count for the future shell model.
-        self.cartridge_primers.clear_inventory();
-        self.slot_taken.fill(true);
         let inv = &start.persistent.inventory;
         let ap_like = usize::from(inv.ap_rounds.saturating_add(inv.apcr_rounds));
         let he = usize::from(inv.he_rounds);
-        let total = (ap_like + he).min(self.slot_taken.len() + 1);
-        let chamber_he = total > 0 && ap_like == 0;
-        self.breech = if total > 0 {
-            Breech::Loaded
-        } else {
-            Breech::Empty
-        };
-        self.he_loaded = chamber_he;
-        let mut rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
-        let mut rack_he = he.saturating_sub(usize::from(chamber_he));
-        for (i, taken) in self.slot_taken.iter_mut().enumerate() {
-            let nature_he = crate::interior_rig::shell_slot_is_he(i);
-            self.slot_nature_he[i] = nature_he;
-            let remaining = if nature_he { &mut rack_he } else { &mut rack_ap };
-            if *remaining > 0 { *taken = false; *remaining -= 1; }
-        }
-        let rack = self.slot_taken.iter().filter(|taken| !**taken).count();
-        self.banked.ap_88mm = rack_ap as u32;
-        self.banked.he_88mm = rack_he as u32;
+        let rack = self.stow_main_gun_loadout(ap_like, he);
         // The firing counter starts at zero for a fresh act. Empty authored cradles are capacity,
         // not historical shots and must never offset the first chambered round.
         self.rounds_spent = 0;
@@ -22834,6 +22814,42 @@ impl Game {
     pub fn debug_casing_carried(&self) -> bool {
         self.carried_casing.is_some()
     }
+    /// Stow an exact typed loadout: the chamber first (AP when any AP is carried), then the
+    /// hull cradles by their permanent nature, the overflow banked as typed counts. Primers are
+    /// re-issued for the new bodies. Returns the rack count. The campaign start and the
+    /// expedition's authored opening (`expedition_theatre::Start`) both come through here.
+    pub(crate) fn stow_main_gun_loadout(&mut self, ap_like: usize, he: usize) -> usize {
+        self.cartridge_primers.clear_inventory();
+        self.slot_taken.fill(true);
+        let total = (ap_like + he).min(self.slot_taken.len() + 1);
+        let chamber_he = total > 0 && ap_like == 0;
+        self.breech = if total > 0 { Breech::Loaded } else { Breech::Empty };
+        self.he_loaded = chamber_he;
+        let mut rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
+        let mut rack_he = he.saturating_sub(usize::from(chamber_he));
+        for (i, taken) in self.slot_taken.iter_mut().enumerate() {
+            let nature_he = crate::interior_rig::shell_slot_is_he(i);
+            self.slot_nature_he[i] = nature_he;
+            let remaining = if nature_he { &mut rack_he } else { &mut rack_ap };
+            if *remaining > 0 { *taken = false; *remaining -= 1; }
+        }
+        self.banked.ap_88mm = rack_ap as u32;
+        self.banked.he_88mm = rack_he as u32;
+        self.slot_taken.iter().filter(|taken| !**taken).count()
+    }
+
+    /// The 88 mm aboard by nature, (PzGr, SprGr): the chamber, the cradles, the loose rounds
+    /// riding inside, the one in the hands, and the banked overflow. Counts, not positions.
+    pub fn main_gun_rounds_aboard(&self) -> (u32, u32) {
+        let (mut ap, mut he) = (0u32, 0u32);
+        if matches!(self.breech, Breech::Loaded) { if self.he_loaded { he += 1 } else { ap += 1 } }
+        for (taken, nature_he) in self.slot_taken.iter().zip(&self.slot_nature_he) {
+            if !taken { if *nature_he { he += 1 } else { ap += 1 } }
+        }
+        let (loose_ap, loose_he) = unracked_88mm_aboard(&self.loose, self.carry_mesh, &self.slot_nature_he);
+        (ap + u32::from(loose_ap) + self.banked.ap_88mm, he + u32::from(loose_he) + self.banked.he_88mm)
+    }
+
     pub fn debug_rack_left(&self) -> usize {
         self.slot_taken.iter().filter(|t| !**t).count()
     }

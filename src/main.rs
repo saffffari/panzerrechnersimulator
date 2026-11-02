@@ -16883,6 +16883,10 @@ fn main() -> anyhow::Result<()> {
         let prefix=capture_arg(&early_args,2,"expedition_mission_review");
         return Game::run_expedition_mission_review(&prefix);
     }
+    if early_args.get(1).is_some_and(|arg|arg=="expedition-loop-review") {
+        let prefix=capture_arg(&early_args,2,"expedition_loop_review");
+        return Game::run_expedition_loop_review(&prefix);
+    }
     if early_args.get(1).is_some_and(|arg|arg=="workshop-engine-review") {
         let prefix=capture_arg(&early_args,2,"workshop_engine_review");
         return game::workshop_runtime::engine::review::run(&prefix);

@@ -260,6 +260,11 @@ pub const fn shell_slot_from_source_id(id:u32)->Option<usize> {
 pub fn shell_slot_is_he(index: usize) -> bool {
     HE_RACK_SOURCE_IDS.contains(&(shell_source_id(index) as usize))
 }
+/// The hull stowage's capacity by nature: (PzGr cradles, SprGr cradles). The chamber is extra.
+pub fn shell_slot_capacity() -> (usize, usize) {
+    let he = (0..SHELL_SLOTS.len()).filter(|i| shell_slot_is_he(*i)).count();
+    (SHELL_SLOTS.len() - he, he)
+}
 
 pub(crate) const AUTHORED_SHELL_SLOTS: &[(Frame, Vec3, [f32; 4])] = &[
     (

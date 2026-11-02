@@ -2715,3 +2715,22 @@ applies and asserts the same existing mute policy on both sides, with both recei
 it retains every acoustic owner byte comparison. No production acoustic code or tolerance
 changed. This proves muted owner continuity, not live-audio cache/voice continuity, and does
 not close the separate cartridge source-sweep, seam-picker or moving-loader visual limitations.
+
+### The March as a loop — 2 November 2026
+
+- **Opening stock is authored state, not a model** (`catalog/expedition_theatre.v1.json` `start`,
+  `expedition_theatre::Start`, applied by `Game::stow_main_gun_loadout` at the theatre's first
+  install): 420 L, 24 PzGr, 8 SprGr. The fiction is a Tiger low on ammunition inside the pocket;
+  no standard-issue claim is made and the catalog note says so. The spec refuses a loadout beyond
+  the 64 cradles plus the chamber or fuel beyond the 540 L tank.
+- **The map's range figure** (`standalone_fuel::road_range_km`) is the existing authored campaign
+  drain law evaluated at 20 km/h (13.2 L/km, 32 km from 420 L); it adds no new law and inherits
+  that law's standing limit (a gameplay calibration, not a measured Maybach fuel map). Gate:
+  `standalone_fuel::tests::the_map_range_is_the_drain_law_at_road_speed`.
+- **`expedition-loop-review` fixtures, disclosed in its receipt**: drives are staged along the
+  catalog's road graph with the fuel charged by the drain law (the Tiger is placed, not driven);
+  fights spend two PzGr per enemy tank by flag (no shot is fired; no ballistic claim); carts and
+  cans are taken by flag rather than through the hands; the walk from camp to the Tiger and the
+  remount are staged. The harness answers whether the loop's accounting closes, not whether the
+  route can be driven or the fight won.
+
