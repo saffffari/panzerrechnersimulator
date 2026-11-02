@@ -218,6 +218,9 @@ pub struct Beat {
     pub fail: Failure,
     pub open: Vec<Line>,
     pub done: Vec<Line>,
+    /// Said instead of `done` when the beat closes by `bypass_fraction`: the place was passed, not
+    /// cleared. Empty means the net says nothing about it.
+    pub bypassed: Vec<Line>,
     pub failed: Vec<Line>,
     pub nudge: Vec<Line>,
     pub consequence: Vec<Line>,
@@ -368,6 +371,7 @@ fn beat(value: &serde_json::Value, k: usize) -> anyhow::Result<Beat> {
         trigger, complete, bypass_fraction, fail,
         open: lines(&value["lines"]["open"], &format!("{what}.lines.open"))?,
         done: lines(&value["lines"]["done"], &format!("{what}.lines.done"))?,
+        bypassed: lines(&value["lines"]["bypassed"], &format!("{what}.lines.bypassed"))?,
         failed: lines(&value["lines"]["failed"], &format!("{what}.lines.failed"))?,
         nudge: lines(&value["lines"]["nudge"], &format!("{what}.lines.nudge"))?,
         consequence: lines(&value["lines"]["consequence"], &format!("{what}.lines.consequence"))?,
@@ -436,6 +440,9 @@ pub enum BeatStatus { Pending, Active, Done, Failed }
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct BeatRun {
     pub status: BeatStatus,
+    /// Done by passing `bypass_fraction` rather than by the beat's own completion: a strongpoint
+    /// gone round is a strongpoint passed, and the record and the net say so.
+    pub bypassed: bool,
     pub at: Vec2,
     pub started_s: f32,
     pub ended_s: f32,
@@ -597,7 +604,7 @@ impl MissionState {
                 resolve(place).ok_or_else(|| anyhow!("beat {:?}: cue place {:?} not on this map", beat.id, place))
             }).collect::<anyhow::Result<Vec<_>>>()?;
             beats.push(BeatRun {
-                status: BeatStatus::Pending, at, started_s: 0.0, ended_s: 0.0, dwell_s: 0.0, nudges: 0,
+                status: BeatStatus::Pending, bypassed: false, at, started_s: 0.0, ended_s: 0.0, dwell_s: 0.0, nudges: 0,
                 consequence_sent: false, recovered_on_foot: false,
                 cue_due: vec![None; beat.cues.len()], cue_at,
             });
@@ -659,14 +666,17 @@ impl MissionState {
             run.ended_s = self.elapsed_s;
             for due in &mut run.cue_due { *due = None; }
         }
+        let bypassed = self.beats[index].bypassed;
         self.log.push(format!("[mission] {:>7.1}s beat {} {:?} {}: progress {:.3}, actor ({:.0}, {:.0})",
-            self.elapsed_s, index + 1, beat.id, if status == BeatStatus::Done { "done" } else { "failed" },
+            self.elapsed_s, index + 1, beat.id,
+            if status != BeatStatus::Done { "failed" } else if bypassed { "bypassed" } else { "done" },
             obs.route_fraction, obs.actor.x, obs.actor.y));
         if status == BeatStatus::Done {
-            // A reached place is a fix: the crew knows where it is again.
+            // A reached or passed place is a fix: the crew knows where it is again.
             self.fix = obs.actor;
             self.travel_since_fix_m = 0.0;
-            self.say(&beat.done);
+            // A bypassed strongpoint was passed, not cleared: never claim its `done` words.
+            if bypassed { self.say(&beat.bypassed); } else { self.say(&beat.done); }
         } else {
             self.say(&beat.failed);
         }
@@ -713,10 +723,7 @@ impl MissionState {
         let beat = &self.mission.beats[index];
         let run = &mut self.beats[index];
         let inside = obs.actor.distance(run.at) <= beat.radius_m;
-        if let Some(f) = beat.bypass_fraction {
-            if obs.route_fraction >= f { return true; }
-        }
-        match &beat.complete {
+        let met = match &beat.complete {
             Completion::Enter { dwell_s } => {
                 run.dwell_s = if inside { run.dwell_s + dt } else { 0.0 };
                 inside && run.dwell_s >= *dwell_s
@@ -744,7 +751,15 @@ impl MissionState {
             Completion::Escort => obs.live_allies.iter().any(|p| p.distance(run.at) <= beat.radius_m),
             Completion::CampaignObjective(name) => obs.objectives_complete.iter().any(|o| o == name),
             Completion::CourseFinished => obs.course_finished,
+        };
+        if met { return true; }
+        if let Some(f) = beat.bypass_fraction {
+            if obs.route_fraction >= f {
+                self.beats[index].bypassed = true;
+                return true;
+            }
         }
+        false
     }
 
     fn failure_met(&self, index: usize, obs: &Observation) -> bool {
@@ -990,7 +1005,7 @@ impl MissionState {
             "elapsed_s": self.elapsed_s, "finished": self.finished,
             "beats": self.beats.iter().zip(&self.mission.beats).enumerate().map(|(k, (run, beat))| serde_json::json!({
                 "number": k + 1, "id": beat.id, "title": beat.title, "goal": beat.goal.name(),
-                "status": format!("{:?}", run.status), "at": [run.at.x, run.at.y], "radius_m": beat.radius_m,
+                "status": format!("{:?}", run.status), "bypassed": run.bypassed, "at": [run.at.x, run.at.y], "radius_m": beat.radius_m,
                 "started_s": run.started_s, "ended_s": run.ended_s, "nudges": run.nudges,
                 "consequence_sent": run.consequence_sent,
             })).collect::<Vec<_>>(),
@@ -1019,7 +1034,8 @@ mod tests {
                  "trigger": {"kind": "route_fraction", "f": 0.3},
                  "complete": {"kind": "destroy_near", "count": 2, "radius_m": 300.0}, "bypass_fraction": 0.8,
                  "fail": {"kind": "timeout", "seconds": 40.0},
-                 "lines": {"failed": [{"from": "Adler", "text": "Leave it. Out."}]},
+                 "lines": {"done": [{"from": "", "text": "yard clear"}], "bypassed": [{"from": "", "text": "past the yard"}],
+                           "failed": [{"from": "Adler", "text": "Leave it. Out."}]},
                  "cues": [{"kind": "alert", "radius_m": 400.0}, {"kind": "smoke_column", "height_m": 50.0}],
                  "pacing": {"release": {"count": 2, "fraction": 0.55}}},
                 {"id": "head", "title": "Ravine head", "goal": "reach", "at": {"ref": "course_goal"}, "radius_m": 85.0,
@@ -1213,4 +1229,22 @@ mod tests {
         assert_eq!(bearing_deg(Vec2::ZERO, Vec2::new(100.0, 0.0)).round(), 90.0);
         assert_eq!(bearing_deg(Vec2::ZERO, Vec2::new(0.0, -100.0)).round(), 0.0);
     }
+
+    #[test]
+    fn a_bypassed_strongpoint_is_passed_not_cleared() {
+        let mut s = MissionState::new(parse(&sheet(), Path::new("t.json")).unwrap(), &resolve).unwrap();
+        for _ in 0..12 { s.step(0.1, &obs(Vec2::new(0.0, -20.0), 0.01)); }
+        s.step(0.1, &obs(Vec2::new(0.0, -700.0), 0.35));
+        assert_eq!(s.current(), Some(1));
+        // No kills: the Tiger drives on past the yard's bypass fraction.
+        s.step(0.1, &obs(Vec2::new(0.0, -1700.0), 0.85));
+        assert_eq!(s.beat_status(1), BeatStatus::Done);
+        let report = s.report();
+        assert_eq!(report["beats"][1]["bypassed"], serde_json::json!(true));
+        let said: Vec<String> = report["radio"].as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap().to_owned()).collect();
+        assert!(said.iter().any(|t| t == "past the yard"), "{said:?}");
+        assert!(!said.iter().any(|t| t == "yard clear"), "a bypassed yard was never cleared: {said:?}");
+        assert!(s.log.iter().any(|l| l.contains("bypassed")), "{:?}", s.log);
+    }
+
 }
