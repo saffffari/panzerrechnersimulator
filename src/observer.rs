@@ -540,6 +540,15 @@ pub fn rod_response(scotopic: f64, gain: f64, inverse_saturation: f64) -> f64 {
     (gain * signal).min(local_response)
 }
 
+/// What the display shows of the rod channel: the response times the night display gain, at
+/// most the display's key (`crush.wgsl`: `min(rods * rod_gain, OBS_DISPLAY_KEY)`). The gain is a
+/// named departure that lifts the dark toward mid-grey; a field the eye is adapted to, or more
+/// sensitive than, is shown at the key, never at white (2 November 2026, the sight at night).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn rod_display(rods: f64, gain: f64) -> f64 {
+    (rods * gain).min(DISPLAY_KEY)
+}
+
 /// The ACES fit `crush.wgsl` applies (Narkowicz), the one tone curve of the display.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn aces(x: f64) -> f64 {
@@ -734,9 +743,41 @@ mod tests {
         assert_eq!(crush.matches("OBS_ROD_DISPLAY_GAIN").count(), 1);
         assert!((1.0..=ROD_DISPLAY_GAIN).contains(&CABIN_ROD_DISPLAY_GAIN));
         assert!(crush.contains("mix(OBS_ROD_DISPLAY_GAIN, OBS_CABIN_ROD_DISPLAY_GAIN"));
-        assert!(crush.contains("rod_hue * (rods * rod_gain)"));
+        assert!(crush.contains("rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY)"));
         assert!(wgsl_constants().contains("const OBS_ROD_DISPLAY_GAIN: f32 = "));
         assert!(include_str!("../docs/PHYSICAL_TRUTH_AUDIT.md").contains("ROD_DISPLAY_GAIN"));
+    }
+
+    /// The sight at the moonlit night (2 November 2026, "some exposures are fully white at night",
+    /// "in the sight"): the lifted rod channel is bounded by the display's key, so no eye state
+    /// can show a night field past mid-grey. The model's own numbers for the moonlit field (an
+    /// eye adapted to it, and one dark-adapted under the stars two seconds before) are printed:
+    /// at the time of writing both lie below the key, so the owner's white sight is not this
+    /// path; the bound stands as a bound.
+    #[test]
+    fn the_night_gain_lifts_the_rods_toward_the_key_and_never_past_it() {
+        let viewing = Viewing::Binocular;
+        // Moonlit snow in the sight: about 0.01 cd/m^2, scotopic twice that.
+        let field = Meter::uniform(0.01, 0.021);
+        let starlit = Meter::uniform(2.0e-4, 2.7e-4);
+        let adapted = Eye::adapted(field, viewing).mapping(viewing);
+        let mut dark = Eye::adapted(starlit, viewing);
+        dark.step_at(field, viewing, 2.0, 1.0);
+        let dark = dark.mapping(viewing);
+        for (name, m) in [("adapted", adapted), ("dark-adapted", dark)] {
+            let rods = rod_response(field.scotopic_cd_m2, m.rod_exposure, m.rod_inverse_saturation);
+            let lifted = rods * ROD_DISPLAY_GAIN;
+            let cones = m.aces_input(flat_radiance(field.photopic_cd_m2))[1] - rods;
+            eprintln!("{name}: rods {rods:.4} lifted {lifted:.4} cones {cones:.3e} pupil {:.1} mm", m.pupil_mm);
+            let shown = rod_display(rods, ROD_DISPLAY_GAIN);
+            assert!(shown <= DISPLAY_KEY + 1e-9 && shown >= rods, "{name}: {shown} within [{rods}, {DISPLAY_KEY}]");
+        }
+        // The moonless night is still lifted: below the key the gain is the gain.
+        let night = Eye::adapted(starlit, viewing).mapping(viewing);
+        let rods = rod_response(starlit.scotopic_cd_m2, night.rod_exposure, night.rod_inverse_saturation);
+        assert!((rod_display(rods, ROD_DISPLAY_GAIN) - rods * ROD_DISPLAY_GAIN).abs() < 1e-12);
+        let crush = include_str!("../shaders/crush.wgsl");
+        assert!(crush.contains("rod_hue * min(rods * rod_gain, OBS_DISPLAY_KEY)"));
     }
 
     #[test]

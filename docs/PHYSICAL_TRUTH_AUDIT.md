@@ -2968,6 +2968,16 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   daylight from its periscopes yet. The cause is not found (the housing between the lower
   window and the mirror, or the periscope's actual optics); until it is, the cupola by day is
   its relayed pictures and the hatch.
+- **The night gain at most the key** (`crush.wgsl`, `observer::rod_display`): the rod channel
+  times the night display gain (ROD_DISPLAY_GAIN 6 outdoors) is now capped at the display's
+  key, 0.18: the gain lifts the dark toward mid-grey and never past it, the moonless night
+  unchanged below the key. A bound on a named display departure, not a change to the eye or the
+  scene, written against the owner's "some exposures are fully white at night", "in the sight".
+  Not the cause: the model's test (`the_night_gain_lifts_the_rods_toward_the_key_and_never_past_it`)
+  puts the lifted channel of an eye adapted to the moonlit sight field at 0.11 and the cones
+  below 1e-3, and the headless sight at the Christmas Eve Moon (`captures/demo-20261101-sight_night_20261102_sim*.jpg`,
+  the eye converged) is a pale field, not white; the live white-out's cause is open (the
+  moment, the lamps' state and the time spent head out before it are not known).
 - **A star's pixel at most white** (`rm_shade.wgsl` `rm_pixel_star`; the eye's state buffer bound
   to the shade, `rm_display_white`: the radiance the eye maps to display white, 1 / its cone
   exposure): the pixel star carried
