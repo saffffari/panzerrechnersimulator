@@ -359,14 +359,18 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         g.station = Station::Commander;
         g.commander_outside = false;
         step(&mut g, &mut r, 90, &idle);
+        // Down to the basket floor and over to the radio operator, as the crew-solo proof walks
+        // to a wounded man: from there the bow post is in plain view. The eye is the player's
+        // own on the walk, turned on the man; the cabin's light, haze and shelter stay as the
+        // game sets them. (From the cupola the bow post hides under the turret ring.)
+        g.jump_station(Station::Loader);
+        step(&mut g, &mut r, 72, &idle);
+        anyhow::ensure!(g.debug_crew_solo_go_to(CrewRole::Radioman), "the walk to the radio operator did not start");
+        step(&mut g, &mut r, 120, &idle);
         let strike_frame = 12u32;
         let mut strike = serde_json::Value::Null;
-        // The commander's own eye, turned on the radio operator's post (the station view looks
-        // forward over the gunner and the bow post is below the turret ring from there); the
-        // cabin's own light, haze and shelter stay as the game sets them.
-        let eye = r.camera.pos;
         let man = g.debug_crew_solo_man_point(CrewRole::Radioman);
-        let look = |r: &mut crate::renderer::Renderer| { r.camera.pos = eye; r.camera.set_forward(man - eye); r.camera.fov_y = 80f32.to_radians(); };
+        let look = |r: &mut crate::renderer::Renderer| { let eye = r.camera.pos; r.camera.set_forward(man - eye); r.camera.fov_y = 80f32.to_radians(); };
         if let Some(mut film) = Film::start(&stills.prefix, "cabin_hit")? {
             look(&mut r);
             r.reset_history();
