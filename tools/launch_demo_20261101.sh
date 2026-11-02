@@ -9,8 +9,9 @@
 #   tools/launch_demo_20261101.sh --canyon        straight into a fresh Canyon v2 winter run (missions + living crew)
 #   tools/launch_demo_20261101.sh --windowed      1280x720 window instead of borderless fullscreen
 #   tools/launch_demo_20261101.sh --res 640x360   render grid (default 480x270; 640x360 is an exact 8x on the 5K panel)
-#   tools/launch_demo_20261101.sh --look deltap   the deltaP display look (docs/DELTAP_LOOK_20261101.md): 1024x576,
-#                                                 dithered colour, pyramid bloom; --look deltap-pico8 for the 32-colour frame
+#   tools/launch_demo_20261101.sh --look standard the old display look at 480x270; the default is the deltaP look
+#                                                 (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered colour, pyramid bloom;
+#                                                 the owner's pick, 2026-11-01); --look deltap-pico8 for the 32-colour frame
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --check         validate binary and assets, start nothing
 set -euo pipefail
@@ -18,7 +19,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK= SEED= CHECK=0 RES_SET=0
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap SEED= CHECK=0 RES_SET=0
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -27,7 +28,7 @@ while (( $# )); do
         --windowed) WINDOWED=1 ;;
         --platoon) PLATOON=1 ;;
         --res) RES=$2; RES_SET=1; shift ;;
-        --look) LOOK=$2; shift ;;
+        --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
         --seed) SEED=$2; shift ;;
         --check) CHECK=1 ;;
         -h|--help) sed -n 2,14p "$0"; exit 0 ;;
