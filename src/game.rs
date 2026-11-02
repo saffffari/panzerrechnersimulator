@@ -18379,6 +18379,10 @@ impl Game {
         for slot in self.slots.gunner_sight {
             r.set_model(slot,self.sight_model());
         }
+        // A smashed telescope has no glass left in the eyepiece: the lens is gone until the
+        // spare is fitted (tiger_damage::Fault::SightSmashed).
+        r.set_visible(self.slots.gunner_sight[1],
+            self.module_fault(ModuleKind::GunnerSight) != tiger_damage::Fault::SightSmashed);
         for block in 0..tiger_damage::BLOCKS {
             // Ports 0..7 are the cupola blocks, registered first in block order.
             r.set_raster_optic_blocked(block, !self.exterior.block_clear(block));
@@ -28832,8 +28836,11 @@ impl Game {
         for effect in effects {
             self.apply_damage_effect(effect, seed);
         }
+        // The ring mark stays only for a fault the seam shows: the wedged fragment, or the torn
+        // bolt heads of a wrecked ring.
         if self.exterior.ring_jam.is_some() && !self.modules.iter().any(|m|
-            m.kind == ModuleKind::TurretTraverse && m.fault == tiger_damage::Fault::RingJammed) {
+            m.kind == ModuleKind::TurretTraverse
+                && matches!(m.fault, tiger_damage::Fault::RingJammed | tiger_damage::Fault::RingWrecked)) {
             self.exterior.ring_jam = None;
         }
         self.recompute_hp();
@@ -28851,6 +28858,9 @@ impl Game {
                 module.functional = fault.functional();
                 if fault == tiger_damage::Fault::SightOutOfTrue {
                     self.exterior.sight_error = tiger_damage::sight_error(seed);
+                }
+                if kind == ModuleKind::MainGun && fault == tiger_damage::Fault::MountSheared {
+                    self.player.gun_held_in_recoil = true; // the barrel shows it (tank.rs)
                 }
                 println!("[damage] {} — {}", kind.name(), fault.name());
             }
@@ -37023,6 +37033,7 @@ mod tests {
             gun_pitch: 0.0,
             reload: 0.0,
             shot_age: crate::tank::GUN_RECOIL_END,
+            gun_held_in_recoil: false,
             alive: true,
             hp: tank::MAX_HP,
             parts: tank::TIGER_PARTS,
@@ -37101,6 +37112,7 @@ mod tests {
             gun_pitch: 0.0,
             reload: 0.0,
             shot_age: crate::tank::GUN_RECOIL_END,
+            gun_held_in_recoil: false,
             alive: true,
             hp: tank::MAX_HP,
             parts: tank::TIGER_PARTS,
@@ -37155,6 +37167,7 @@ mod tests {
             gun_pitch: 0.0,
             reload: 0.0,
             shot_age: crate::tank::GUN_RECOIL_END,
+            gun_held_in_recoil: false,
             alive: true,
             hp: tank::MAX_HP,
             parts: tank::TIGER_PARTS,

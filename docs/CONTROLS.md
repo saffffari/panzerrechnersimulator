@@ -467,6 +467,14 @@ size, and stitch-apron rules.
   Completed work leaves the tools in your hands. X puts them down for later pickup; repair
   cannot be performed remotely from the kit mount. Specialized repair minigames beyond the
   existing track sequence remain future work.
+- A damaged part in sight and within reach gets a dim four-corner marker, tools or no tools,
+  and its name on hover when nothing can be done about it; the hammer mark means the carried
+  tool can work it now. Since 2026-11-02 every diagnosed fault has a field technique
+  (`src/tiger_damage.rs`): the four that were the workshop's cost a carried spare (two sets of
+  gun mount bolts, one set of ring bolts, one spare telescope, the cupola's AA MG 34), and with
+  the spare gone the part stays marked and named. A sheared gun mount shows as the barrel held at
+  full recoil; a wrecked ring as the torn bolt heads at the seam; a smashed telescope as an
+  eyepiece with no glass.
 - These mechanics have CPU coverage; the combined shader branch still needs visual and live
   input review for hand placement, clipping, readability and usable reach.
 - Binoculars at the Gunner are deliberately absent (the TZF is that post's optic).

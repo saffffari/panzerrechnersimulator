@@ -26,23 +26,30 @@ pub enum Fault {
     /// Recoil brake losing oil: the oil safety cuts the firing circuit ("Wenn die Ölsicherung
     /// ausgeschaltet hat, darf nicht geschossen werden", TF p.56). Crew tops up the 5.1 l.
     RecoilLeak,
-    /// Mantlet hit sheared the mount bolts; the gun stays in full recoil (Zabel). Workshop.
+    /// Mantlet hit sheared the mount bolts; the gun stays in full recoil (Zabel), and the barrel
+    /// shows it. Zabel's was the workshop's job; here the crew jacks the gun back into battery
+    /// and fits the spare mount bolts (the owner's 2026-11-02 concession: every fault has a
+    /// field technique, so a hit is not a trip to the workshop).
     MountSheared,
     /// Hydraulic traverse fault (TF p.63): no powered traverse. Crew: "Kupplung abklopfen".
     HydraulicFault,
     /// A fragment wedged in the 10 mm turret-ring gap: no traverse at all. Crew knocks it free
     /// from outside (inference; the hydraulic drive has a relief valve for a blocked turret).
     RingJammed,
-    /// Ring bolts or bearing wrecked: no traverse. Workshop with a gantry.
+    /// Ring bolts or bearing wrecked: no traverse; the torn bolt heads stand out of the ring
+    /// seam where the shell struck. The workshop's job with a gantry; here the crew packs the
+    /// bearing and bolts it down from outside with the spare ring bolts (2026-11-02 concession).
     RingWrecked,
     /// Sight knocked out of true by shock ("wandern sie durch die Erschütterung aus", TF p.79):
     /// the reticle no longer shows where the gun points. Crew boresights through the bore.
     SightOutOfTrue,
-    /// Sight optics smashed: no reticle. Workshop (optics were scarce).
+    /// Sight optics smashed: no reticle. Optics were scarce; here the crew fits the one spare
+    /// telescope carried (2026-11-02 concession).
     SightSmashed,
     /// MG jacket or barrel bent: barrel change from the spare box (TF pp.58–61).
     MgBarrel,
-    /// MG shot to pieces (Zabel: both). The armourer's job.
+    /// MG shot to pieces (Zabel: both). The armourer's job; here the crew swaps in the cupola's
+    /// AA MG 34, the one spare gun the tank carries (2026-11-02 concession).
     MgWrecked,
     /// Radio knocked out by shock (Zabel). Crew re-seats plugs and fuses (TF p.48).
     RadioShock,
@@ -56,6 +63,44 @@ pub enum Fault {
 pub enum Spare {
     VisionBlock,
     TrackLink,
+    /// Gun mount bolts, for a sheared mount.
+    MountBolts,
+    /// Turret ring bolts, for a wrecked ring.
+    RingBolts,
+    /// The spare TZF telescope.
+    Telescope,
+    /// The cupola's AA MG 34, taken down to replace a wrecked coax or hull MG.
+    AaMg,
+}
+
+impl Spare {
+    pub fn name(self) -> &'static str {
+        match self {
+            Spare::VisionBlock => "spare vision block",
+            Spare::TrackLink => "spare track link",
+            Spare::MountBolts => "spare mount bolts",
+            Spare::RingBolts => "spare ring bolts",
+            Spare::Telescope => "spare telescope",
+            Spare::AaMg => "cupola AA MG",
+        }
+    }
+}
+
+/// The spares carried for the field techniques that replace a workshop job (2026-11-02): one set
+/// each, the mount bolts two. Counts are tuning; the AA MG is the one real spare gun.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SpareStock {
+    pub mount_bolts: u8,
+    pub ring_bolts: u8,
+    pub telescopes: u8,
+    pub aa_mg: u8,
+}
+
+impl Default for SpareStock {
+    fn default() -> Self {
+        Self { mount_bolts: 2, ring_bolts: 1, telescopes: 1, aa_mg: 1 }
+    }
 }
 
 /// How the crewman puts a fault right in the field.
@@ -69,9 +114,12 @@ pub struct FieldRepair {
 }
 
 impl Fault {
-    /// `None` means no field repair: the workshop's job, or nothing to repair.
+    /// `None` means nothing to repair, or (`Spall`) the legacy repair table's job. Every
+    /// diagnosed fault has a field technique since 2026-11-02; the four that were the workshop's
+    /// consume a spare from the `SpareStock`, and without it the part stays as it is.
     pub fn field_repair(self) -> Option<FieldRepair> {
         let inside = |seconds| Some(FieldRepair { seconds, outside: false, spare: None });
+        let with = |seconds, outside, spare| Some(FieldRepair { seconds, outside, spare: Some(spare) });
         match self {
             // Times are tuning; the sources give procedures but no durations.
             Fault::RecoilLeak => inside(20.0),
@@ -80,8 +128,12 @@ impl Fault {
             Fault::SightOutOfTrue => inside(25.0),
             Fault::MgBarrel => inside(6.0),
             Fault::RadioShock => inside(2.0),
-            Fault::None | Fault::MountSheared | Fault::RingWrecked | Fault::SightSmashed
-            | Fault::MgWrecked | Fault::Spall => None,
+            // The former workshop jobs: long, and each eats a carried spare.
+            Fault::MountSheared => with(75.0, false, Spare::MountBolts),
+            Fault::RingWrecked => with(90.0, true, Spare::RingBolts),
+            Fault::SightSmashed => with(40.0, false, Spare::Telescope),
+            Fault::MgWrecked => with(30.0, false, Spare::AaMg),
+            Fault::None | Fault::Spall => None,
         }
     }
 
@@ -91,13 +143,13 @@ impl Fault {
     }
 
     /// Worse failures are never replaced by milder ones: 0 intact, 1 still working, 2 out but
-    /// field-repairable, 3 the workshop's job.
+    /// put right with the tools alone, 3 out and costing a spare, 4 undiagnosed spall.
     pub fn severity(self) -> u8 {
         match (self, self.field_repair()) {
             (Fault::None, _) => 0,
             (fault, _) if fault.functional() => 1,
-            (_, Some(_)) => 2,
-            (_, None) => 3,
+            (_, Some(repair)) => if repair.spare.is_some() { 3 } else { 2 },
+            (_, None) => 4,
         }
     }
 
@@ -425,6 +477,38 @@ pub struct Exterior {
     pub ring_jam: Option<Vec3>,
     /// How far (radians: traverse, elevation) the sight's line has wandered from the bore.
     pub sight_error: glam::Vec2,
+    /// The spares the field techniques of the former workshop jobs consume.
+    #[serde(default)]
+    pub spares: SpareStock,
+}
+
+impl Exterior {
+    /// How many of `spare` are left.
+    pub fn spares_left(&self, spare: Spare) -> u8 {
+        match spare {
+            Spare::VisionBlock => self.spare_blocks,
+            Spare::TrackLink => self.spare_links,
+            Spare::MountBolts => self.spares.mount_bolts,
+            Spare::RingBolts => self.spares.ring_bolts,
+            Spare::Telescope => self.spares.telescopes,
+            Spare::AaMg => self.spares.aa_mg,
+        }
+    }
+
+    /// Consume one `spare`; false, and nothing taken, when none is left.
+    pub fn take_spare(&mut self, spare: Spare) -> bool {
+        let count = match spare {
+            Spare::VisionBlock => &mut self.spare_blocks,
+            Spare::TrackLink => &mut self.spare_links,
+            Spare::MountBolts => &mut self.spares.mount_bolts,
+            Spare::RingBolts => &mut self.spares.ring_bolts,
+            Spare::Telescope => &mut self.spares.telescopes,
+            Spare::AaMg => &mut self.spares.aa_mg,
+        };
+        if *count == 0 { return false; }
+        *count -= 1;
+        true
+    }
 }
 
 pub const SPARE_BLOCKS: u8 = 4;
@@ -435,7 +519,8 @@ pub const SPARE_LINKS: u8 = 6;
 impl Default for Exterior {
     fn default() -> Self {
         Self { running_gear: [1.0; 2], blocks: [Block::Clear; BLOCKS], spare_blocks: SPARE_BLOCKS,
-            spare_links: SPARE_LINKS, visor_jammed: false, visor_freeing_s: 0.0, ring_jam: None, sight_error: glam::Vec2::ZERO }
+            spare_links: SPARE_LINKS, visor_jammed: false, visor_freeing_s: 0.0, ring_jam: None, sight_error: glam::Vec2::ZERO,
+            spares: SpareStock::default() }
     }
 }
 
@@ -572,15 +657,24 @@ mod tests {
     }
 
     #[test]
-    fn repairable_faults_are_exactly_the_documented_field_fixes() {
+    fn every_diagnosed_fault_has_a_field_technique_and_the_former_workshop_jobs_cost_a_spare() {
         for fault in [Fault::RecoilLeak, Fault::HydraulicFault, Fault::RingJammed, Fault::SightOutOfTrue,
             Fault::MgBarrel, Fault::RadioShock] {
-            assert!(fault.field_repair().is_some(), "{fault:?}");
+            assert!(fault.field_repair().is_some_and(|r| r.spare.is_none()), "{fault:?} needs tools only");
         }
-        for fault in [Fault::MountSheared, Fault::RingWrecked, Fault::SightSmashed, Fault::MgWrecked, Fault::None] {
-            assert!(fault.field_repair().is_none(), "{fault:?} is the workshop's job");
+        for (fault, spare) in [(Fault::MountSheared, Spare::MountBolts), (Fault::RingWrecked, Spare::RingBolts),
+            (Fault::SightSmashed, Spare::Telescope), (Fault::MgWrecked, Spare::AaMg)] {
+            assert_eq!(fault.field_repair().and_then(|r| r.spare), Some(spare), "{fault:?}");
+            assert!(fault.severity() > Fault::RecoilLeak.severity(), "a spare-costing fault outranks a tools-only one");
         }
+        for fault in [Fault::None, Fault::Spall] {
+            assert!(fault.field_repair().is_none(), "{fault:?}");
+        }
+        let mut exterior = Exterior::default();
+        assert!(exterior.take_spare(Spare::RingBolts) && !exterior.take_spare(Spare::RingBolts));
+        assert_eq!(exterior.spares_left(Spare::MountBolts), 2);
         assert!(Fault::RingJammed.field_repair().unwrap().outside);
+        assert!(Fault::RingWrecked.field_repair().unwrap().outside);
         assert!(Fault::SightOutOfTrue.functional(), "an untrue sight still shows a reticle");
         assert!(!Fault::RecoilLeak.functional());
     }
