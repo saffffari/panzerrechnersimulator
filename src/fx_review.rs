@@ -257,7 +257,12 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         step(&mut g, &mut r, 30, &idle);
         let origin = g.enemies[cold].pos;
         let hull = origin + Vec3::Y * 1.1;
-        let eye = origin + Vec3::new(-4.5, 1.5, -6.5);
+        // `KESSEL_FX_REVIEW_EYE=x,y,z` moves the observer (metres from the struck hull's origin;
+        // the default looks from the south-west side).
+        let eye = origin + std::env::var("KESSEL_FX_REVIEW_EYE").ok().and_then(|v| {
+            let p: Vec<f32> = v.split(',').filter_map(|c| c.trim().parse().ok()).collect();
+            (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2]))
+        }).unwrap_or(Vec3::new(-4.5, 1.5, -6.5));
         strike(&mut stills, &mut g, &mut r, &idle, "strike_ap_normal",
             Vec2::new(origin.x, origin.z - 60.0), false, hull, eye, hull,
             "88 mm AP from 60 m square on the left flank: near-normal strike")?;
