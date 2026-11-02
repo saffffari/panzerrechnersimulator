@@ -124,6 +124,7 @@ impl Renderer {
         frame
     }
     pub(super) fn prepare_weapon_particles(&mut self,device:&wgpu::Device,queue:&wgpu::Queue) {
+        let _probe=crate::sim_phase::Probe::new("render_prepare_weapon_particles");
         if !self.shader_backend{return;}
         let mut frames=std::mem::take(&mut self.weapon_particles.frames);for frame in frames.values_mut(){frame.active=false;}
         // The raymarch backend draws its own sparks in the main view; only its relayed ports take these.

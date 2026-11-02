@@ -34,10 +34,14 @@ deltaP does, so a `deltap-pico8` frame is a genuine 32-colour frame.
 
 **The deltaP pyramid bloom** (`stylized_bloom.wgsl` `fs_dp_prefilter`, `fs_dp_down`,
 `fs_dp_up`, `fs_dp_composite`; a port of deltaP `bloom.wgsl`): a 13-tap Jimenez downsample with a
-soft-knee bright pass in exposed units (knee 0.55 +- 0.35, each texel capped at 1.0 exposed) and a
-Karis average in the first level, five halvings of the half-resolution bright pass (the existing
-`bloom_levels` pyramid, 1/4 .. 1/64 of the grid), then 3x3 tent upsamples added back level by
-level at 0.9 per octave, and the sum added to the HDR frame at 0.8 before the tonemap. The halo
+soft-knee bright pass in exposed units and a Karis average in the first level, five halvings of
+the half-resolution bright pass (the existing `bloom_levels` pyramid, 1/4 .. 1/64 of the grid),
+then 3x3 tent upsamples added back level by level, and the sum added to the HDR frame before the
+tonemap. deltaP's own values (knee 0.55 +- 0.35, cap 1.0, 0.9 per octave, strength 0.8) were too
+much for this renderer's exposed range: the owner's first expedition playtest had every lamp a
+wide blur and the vision ports flooding the cabin, and a burning T-34 was a soft ball in a mottled
+plateau. Since the same evening the knee is 1.0 +- 0.5 exposed, the cap 0.5, the octaves fall at
+0.65 and the sum enters at 0.4 (`DP_THRESH`, `DP_KNEE`, `DP_CAP`, `DP_TAIL`, `DELTAP_BLOOM`). The halo
 therefore goes through the same quantizer and Bayer threshold as everything else and comes out as
 dithered rings round a lamp rather than a smooth gradient over the pixel art. Under the look the
 compact halo and the CIE veil do not run; the pyramid's falling tail stands in for both.

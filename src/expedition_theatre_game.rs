@@ -321,6 +321,18 @@ impl Game {
   }
   self.sync_expedition_now()
  }
+ /// Bench fixture (disclosed where used): the staged Tiger moved to `distance` m short of the open
+ /// order's site, facing it, engine running. Nothing about the site changes.
+ pub fn debug_expedition_stage_at_distance(&mut self,distance:f32,r:&mut Renderer)->Result<()> {
+  let site_at=self.mission.as_ref().context("no open order")?.beats.last().unwrap().at;
+  let from=Vec2::new(self.player.pos.x,self.player.pos.z);
+  let dir=(site_at-from).normalize_or_zero();let at=site_at-dir*distance;
+  let heading=crate::world::heading_of(site_at-at).to_radians();
+  self.player=Tank::new(at.x,at.y,heading,&self.hf,tank::TIGER_PARTS);
+  self.player.pos.y=self.expedition_vehicle_ground(at.x,at.y);self.engine_on=true;self.engine_crank_t=0.;
+  r.reset_history();println!("[expedition] STAGED at {distance:.0} m short of the site: ({:.0}, {:.0})",at.x,at.y);
+  self.sync_expedition_now()
+ }
  /// Review fixture (disclosed where used): the site's finite garrison marked dead where it
  /// stands, no shot fired. Returns the guard tank indices and the sentry indices so the receipt
  /// can name them. Nothing is spawned, moved or revived.

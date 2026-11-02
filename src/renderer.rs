@@ -87,7 +87,11 @@ const LOOK_ENV: &str = "KESSEL_LOOK";
 /// deltaP's pair-distance penalty for the PICO-8 best-pair search (its `--penalty` default).
 const DELTAP_PAIR_PENALTY: f32 = 0.12;
 /// deltaP's bloom strength (`bloom::DEFAULT`): the summed pyramid's share added to the frame.
-pub(crate) const DELTAP_BLOOM: f32 = 0.8;
+// 2026-11-01 playtest: at deltaP's 0.8 with its 0.55 knee and 1.0 cap a vision port's daylight
+// flooded the cabin and every lamp read as a wide blur ("super blurry", "can't see anything in
+// the ports"); the glare now starts above 1.0 exposed, each texel adds at most 0.5, the octaves
+// fall at 0.65 and the sum enters at 0.4 (shaders/stylized_bloom.wgsl DP_*).
+pub(crate) const DELTAP_BLOOM: f32 = 0.4;
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
 const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
 const TRANSPORT_QUALITY_ENV: &str = "KESSEL_TRANSPORT_QUALITY";
@@ -508,6 +512,15 @@ pub const MAX_WORN_VEHICLES: usize = 16;
 pub const FULL_DAY_S: f64 = 300.0;
 pub const TWILIGHT_S: f64 = 150.0;
 pub const NIGHT_S: f64 = 300.0;
+/// `KESSEL_DAY_CYCLE_SCALE`: the three phase lengths above times this (an expedition of hours
+/// wants a slower clock than the Canyon run's fifteen-minute day; the demo launcher sets 6, a
+/// ninety-minute cycle, after the 2026-11-01 playtest found the transitions "way too fast" and
+/// the sight picture swinging with the sky). The Sun and Moon still stand where the ephemeris
+/// puts them; only the clock's rate changes. 1 when unset or invalid.
+pub fn day_cycle_scale() -> f64 {
+    std::env::var("KESSEL_DAY_CYCLE_SCALE").ok().and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && (0.1..=100.0).contains(v)).unwrap_or(1.0)
+}
 /// Sunrise and sunset run from the end of civil twilight to the end of the golden hour.
 const TWILIGHT_FROM_DEG: f64 = -6.0;
 const TWILIGHT_TO_DEG: f64 = 8.0;
@@ -6448,8 +6461,9 @@ impl Renderer {
         });
         // Real seconds of each phase over its play seconds. A phase the date lacks runs at the
         // day's mean rate.
-        let mean = 86_400.0 / (FULL_DAY_S + 2.0 * TWILIGHT_S + NIGHT_S);
-        let rate = |phase: usize, play_s: f64| if phases[phase] > 60.0 { phases[phase] / play_s } else { mean };
+        let scale = day_cycle_scale();
+        let mean = 86_400.0 / ((FULL_DAY_S + 2.0 * TWILIGHT_S + NIGHT_S) * scale);
+        let rate = |phase: usize, play_s: f64| if phases[phase] > 60.0 { phases[phase] / (play_s * scale) } else { mean };
         let rates = [rate(0, NIGHT_S), rate(1, 2.0 * TWILIGHT_S), rate(2, FULL_DAY_S)];
         // Blend across a degree at each boundary so the clock never jumps.
         let altitude = self.celestial.sun_altitude_deg();
@@ -8220,6 +8234,7 @@ impl Renderer {
         }
     }
     fn upload_uniforms(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let _probe = crate::sim_phase::Probe::new("render_upload_uniforms");
         self.apply_weather_override();
         queue.write_buffer(&self.blit_ubuf, 16, bytemuck::bytes_of(&self.blit_reticle()));
         self.prepare_scene_visibility(device,queue);
@@ -11207,8 +11222,26 @@ impl Renderer {
         let pixels = self.capture_rgba(device, queue, cw, ch, hud)?;
         let img = image::RgbaImage::from_raw(cw, ch, pixels)
             .ok_or_else(|| anyhow::anyhow!("capture buffer wrong size"))?;
-        ensure_output_parent(path)?;
-        img.save(path)?;
+        // `KESSEL_CAPTURE_4K_JPG=1` (the demo launcher): every still goes out as a 3840-wide JPEG,
+        // nearest-neighbour from the captured frame whatever the internal grid, so it stays sharp
+        // full-screen on the owner's 5K display and the folder stays small (owner, 2026-11-01).
+        // The capture itself is unchanged: the same frame, the same pixels, repeated.
+        let (path, img, cw, ch): (String, image::RgbaImage, u32, u32) = if std::env::var_os("KESSEL_CAPTURE_4K_JPG").is_some_and(|v| v == "1") {
+            let scale = (3840.0 / cw as f32).max(1.0);
+            let (w, h) = ((cw as f32 * scale).round() as u32, (ch as f32 * scale).round() as u32);
+            let up = if (w, h) == (cw, ch) { img } else { image::imageops::resize(&img, w, h, image::imageops::FilterType::Nearest) };
+            let jpg = std::path::Path::new(path).with_extension("jpg").to_string_lossy().into_owned();
+            (jpg, up, w, h)
+        } else { (path.to_owned(), img, cw, ch) };
+        ensure_output_parent(&path)?;
+        if path.ends_with(".jpg") {
+            let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();
+            let file = std::io::BufWriter::new(std::fs::File::create(&path)?);
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 92);
+            encoder.encode_image(&rgb)?;
+        } else {
+            img.save(&path)?;
+        }
         println!(
             "[panzerrechnersystem] wrote {path} ({cw}x{ch}, internal {}x{}, retro {:.2})",
             self.iw, self.ih, self.master_retro

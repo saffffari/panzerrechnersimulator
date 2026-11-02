@@ -4,6 +4,48 @@ Updated: 2026-11-01 (the deltaP display look; The March orders and the staged st
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
+## Expedition frame cost, 2026-11-01 (`expedition-bench`, `artifacts/perf/expedition_*_20261101.log`)
+
+The first expedition playtest at 1024x576 under the deltaP look ran at "3 fps at times". The
+new `expedition-bench FROM_S RENDER_S [preset] [site]` (`KESSEL_BENCH_CLOSE_M` stages the Tiger
+that close to the site, gunner on fire at will) measured a standing frame of 35 ms, of which
+16 ms were the commander's raster optic relays (the relay sky pass alone 10 ms: sky.wgsl's
+per-pixel atmosphere and cloud march for every uncovered aperture pixel of every port, with the
+port buckets grown by the 1024x576 grid), and, once the Tiger was penetrated and the cabin
+burned, a CPU update of 46 ms (p50) and a fenced frame of 226 ms (p50): the interior fire's
+49,152 flame and 24,576 soot grains regenerated every update, and every relayed port walking all
+of them again on the CPU each frame. Changes, none of which alters an emitter, a material, a
+medium or a simulation value:
+
+- Relay sky from the sky cache (`shaders/relay_sky_cached.wgsl`): an optical capture on the
+  raymarch backend samples the frame's equirectangular sky cache by direction instead of
+  marching sky.wgsl again. Same transport, same cloud march, one evaluation per cache texel per
+  refresh phase instead of one per port pixel. Named approximation: the solar and secondary discs
+  are not in the cache (the main frame draws them analytically), so a port looking straight at
+  the Sun shows the cloud-attenuated sky without the disc.
+- Relay extents (`aperture_extent`): the "two source samples per native aperture pixel" rule is
+  taken against a 640x360 frame at most, so the port buckets stop growing with the internal grid.
+  A resolution choice (the ports keep the resolution they had at 640x360), not a transport change.
+- Grain views (`prepare_fine_vfx_view`): a batch whose bounds lie outside a view's frustum is
+  skipped before any per-grain work (the cabin's grains lie behind a port's near plane). No grain
+  that a view could see is dropped; the receipt counts `culled_batches`.
+
+- Fire presentation cadence (`drive_interior_fire`, `FIRE_PRESENTATION_PERIOD` 2): the fire's
+  grains, their wall-clearance sweeps (`clear_source_paths`, 14 ms of the 26 ms) and their upload
+  regenerate every second update, 30 Hz at the 60 Hz step; a skipped update keeps the last grains
+  and the aggregate lights derived from the same cells. The fire's cells, emission and heat are
+  unchanged; only the grains' flicker rate halves. A grain can therefore stand up to one update
+  (17 ms) past a wall it has since drifted into.
+- Playback range: the demo launcher now runs the reference tone curve (`KESSEL_AUDIO_RANGE=
+  reference`, `src/reproduction.rs`): the balanced range's lift of up to 12 dB below 110 dB(A)
+  made distant strikes and MG impacts read as near ones (owner, 2026-11-01). A reproduction
+  choice; physical source levels and the propagation are untouched.
+
+Still open after these: the interior fire presentation's own cost per update (probed as
+`fire_smoke_clearance`, `fire_patch_surfaces`, `fire_world_sources`, `surface_blood_update`), the
+raymarch main view's per-frame grain merge (`collect_parcels`), and the `native-pixel-hdr-effects`
+pass (the effects session's item).
+
 ## The March orders, 2026-11-01 (`catalog/expedition_missions.v1.json`, `docs/MISSIONS.md` "The March")
 
 Authored three-beat orders for the expedition theatre's twelve sites, on the Canyon mission model.
@@ -34,11 +76,16 @@ simulation value reads it. Named presentation choices while the look is on:
   exhaustive OKLab best pair with the ratio solved in linear light (`deltap-pico8`). Both discard
   tonal precision after the eye and the tonemap; neither adds light. The standard crush's
   far-field dither attenuation does not apply under the look.
-- Glare: deltaP's pyramid bloom (13-tap Jimenez downsample, soft-knee bright pass at 0.55 +- 0.35
-  exposed with a per-texel cap of 1.0, Karis average, 3x3 tent upsample at 0.9 per octave, summed
-  at 0.8 into the HDR frame before the tonemap) replaces the compact halo *and* the CIE veil. The
-  knee, cap and strength are deltaP's authored values, not a measured point-spread function; the
-  veil's omission is a departure from the eye model's intraocular scatter, taken for the look.
+- Glare: deltaP's pyramid bloom (13-tap Jimenez downsample, soft-knee bright pass, Karis
+  average, 3x3 tent upsamples summed into the HDR frame before the tonemap) replaces the compact
+  halo *and* the CIE veil. deltaP's authored values (knee 0.55 +- 0.35 exposed, cap 1.0, 0.9 per
+  octave, strength 0.8) put 3.75 exposed units of halo on every texel at the cap, which turned a
+  fire's 1-3 exposed texels into a wide plateau and flooded the cabin from a vision port
+  (2026-11-01 playtest; the effects session's measurement). Since 2026-11-01 the bright pass
+  starts at 1.0 +- 0.5 exposed, caps at 0.5 per texel, falls at 0.65 per octave and enters at
+  0.4 (about 0.5 exposed units of halo per capped texel). These remain authored values, not a
+  measured point-spread function; the veil's omission is a departure from the eye model's
+  intraocular scatter, taken for the look.
 - Grid: 1024x576 by the demo launcher (5x on the 5120x2880 panel), a resolution preset only.
 
 Gate: `tests/dither_motion.rs` and `tests/display_quantization.rs` validate the complete crush
@@ -115,6 +162,13 @@ enable/move/self-exclusion contact behavior; binary snapshot identity preservati
 tests and the real-input workshop review are pending; source parsing alone is not gameplay proof.
 
 ## Living crew personal-space contact, 2026-10-30
+
+- 2026-11-01: a walker whose locomotion capsule starts more than a touch inside another man's
+  source triangles (deeper than 0.55 of the capsule radius: a seat left straight into the
+  gunner's side) has that step released instead of clamped, so he can walk out; a touching capsule
+  keeps the sweep's back-out rule. Counted in the receipt as `depenetrations`. This is a solver
+  escape for an authored exit position inside a body, not a contact law; the proper fix is an exit
+  position clear of the seated gunner (`place_interior_exit`).
 
 Interior walking now queries the indexed standing/seated crew source meshes. Animated seated
 positions come from the same last pose uploaded by `crew_arm_animation`; target transforms include

@@ -2657,8 +2657,9 @@ pub fn draw_mission_overlay(r: &mut Renderer, overlay: &crate::mission::Overlay,
         }
         return;
     }
-    // The net: a signals log, top left, oldest first.
-    let mut y = 0.05;
+    // The net: a signals log, bottom left, oldest first, the newest line nearest the frame's
+    // foot (2026-11-01: the owner wants the words out of the way of the view).
+    let mut y = 0.80 - 0.028 * overlay.radio.len().saturating_sub(1) as f32;
     for (from, text, alpha) in &overlay.radio {
         let (color, line) = if from.is_empty() {
             ([COL_NOTE[0], COL_NOTE[1], COL_NOTE[2], 0.9 * alpha], text.clone())

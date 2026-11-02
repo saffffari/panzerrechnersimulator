@@ -6028,6 +6028,8 @@ const FIRE_SMOKE_BATCHES: usize = 2; // two soot shades, both sparse screen-door
 const MAX_WORLD_FIRE_SOURCES: usize = 8; // nearest wrecks/hulks; keeps the shared pool bounded
 const FLAME_CUBES_PER_INTERIOR_SPOT: usize = 6144;
 const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
+/// Updates between two regenerations of the fire's grains (`drive_interior_fire`).
+const FIRE_PRESENTATION_PERIOD: u32 = 2;
 // Authored particle radiance calibration, not a temperature or physical fire-power model.
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
@@ -9688,6 +9690,8 @@ pub struct Game {
     /// Live catch-up keeps source/physics clocks current but publishes expensive fire/grass
     /// particle pages once, from the final completed simulation state.
     defer_presentation_rebuild: bool,
+    /// Counts updates for the fire presentation's cadence (`FIRE_PRESENTATION_PERIOD`).
+    fire_presentation_phase: u32,
     cabin_fire: surface_fire::CabinFire,
     projectile_player_armor:surface_fire::CabinFire,
     projectile_enemy_armor:surface_fire::CabinFire,
@@ -14083,6 +14087,7 @@ impl Game {
             rtt_last_refresh,
             defer_rtt_to_render: false,
             defer_presentation_rebuild: false,
+            fire_presentation_phase: 0,
             cabin_fire,
             projectile_player_armor,
             projectile_enemy_armor,
@@ -16746,8 +16751,10 @@ impl Game {
             // held from before the lay/travel-lock gates opened must not auto-fire the cannon the
             // instant they do — only a FRESH press taken at the sights fires. (Mirrors the MG's
             // `click_hover` guard below.)
+            // Solo: only a press taken IN the sights fires (2026-11-01 playtest: a click meant
+            // for a control or a crewman fired the gun from the commander's post).
             let main_trigger = gunner_input.is_some_and(|i| i.flag(crate::lan::F_FIRE_MAIN))
-                || (coop.is_none() && input.mg_coax);
+                || (coop.is_none() && input.mg_coax && self.gunner_optic);
             let lmb_edge = main_trigger && !self.prev_lmb;
             // The solo crew's gunner pulls his own trigger once laid and ordered.
             let ai_pulse = (coop.is_none() || self.lan_ai_frame.is_some())
@@ -16786,7 +16793,7 @@ impl Game {
         }
         self.prev_space = input.fire;
         self.prev_lmb = gunner_input.is_some_and(|i| i.flag(crate::lan::F_FIRE_MAIN))
-            || (coop.is_none() && input.mg_coax);
+            || (coop.is_none() && input.mg_coax && self.gunner_optic);
         acting
     }
 
@@ -31887,10 +31894,10 @@ impl Game {
     /// connected supported contact film. Every view draws the same moving-frame evidence.
     fn drive_cubic_blood(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("drive_cubic_blood");
-        let models = self.fire_surface_models();
-        let source = self.cabin_fire.source_contacts(&models);
-        self.surface_blood.update(dt, &models, &source);
-        let mut grain_mats = self.surface_blood.wet_models(&models);
+        let models = { let _p = crate::sim_phase::Probe::new("blood_fire_surface_models"); self.fire_surface_models() };
+        let source = { let _p = crate::sim_phase::Probe::new("blood_source_contacts"); self.cabin_fire.source_contacts(&models) };
+        { let _p = crate::sim_phase::Probe::new("surface_blood_update"); self.surface_blood.update(dt, &models, &source); }
+        let mut grain_mats = { let _p = crate::sim_phase::Probe::new("surface_blood_wet_models"); self.surface_blood.wet_models(&models) };
         // Preserve tiny physical droplets but give their raster silhouette a readable minimum.
         // This changes only instance scale, never contact radii, particle count or simulation work.
         for mat in grain_mats.iter_mut().flatten() {
@@ -32498,7 +32505,14 @@ impl Game {
     /// the count bounded and make all four couch views see the exact same grains.
     fn drive_interior_fire(&mut self, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("drive_interior_fire");
-        self.drive_fire_presentation(r,!self.defer_presentation_rebuild,true);
+        // The flame and soot grains are regenerated and uploaded every FIRE_PRESENTATION_PERIOD
+        // updates (30 Hz at the 60 Hz step): the 2026-11-01 expedition bench spent 26 ms of every
+        // update on the cabin fire's 73,728 grains, their wall-clearance sweeps and their upload.
+        // A skipped update keeps the last grains and their aggregate lights in place; the fire's
+        // cells, emission and heat are unchanged, only the flicker rate halves.
+        self.fire_presentation_phase = self.fire_presentation_phase.wrapping_add(1);
+        let particles = !self.defer_presentation_rebuild && self.fire_presentation_phase % FIRE_PRESENTATION_PERIOD == 0;
+        self.drive_fire_presentation(r,particles,true);
     }
 
     /// Source origins/timestamps and ordered smoke supports remain current on every simulation
@@ -32527,10 +32541,10 @@ impl Game {
 
         // Frame-bound contacts own flame placement and suppression. Global geometry and light
         // budgets stay fixed as the fire spreads across more connected surface patches.
-        let models = self.fire_surface_models();
-        let patches: Vec<_> = (0..N_INT_FIRE_SPOTS).filter_map(|k| {
+        let models = { let _p = crate::sim_phase::Probe::new("fire_surface_models"); self.fire_surface_models() };
+        let patches: Vec<_> = { let _p = crate::sim_phase::Probe::new("fire_patch_surfaces"); (0..N_INT_FIRE_SPOTS).filter_map(|k| {
             self.cabin_fire.patch_surface(k, &models).filter(|p| p.intensity > 0.02).map(|p| (k, p))
-        }).collect();
+        }).collect() };
         let per_patch = (MAX_INTERIOR_FLAME_CUBES / patches.len().max(1)).min(FLAME_CUBES_PER_INTERIOR_SPOT);
         let smoke_per_patch = interior_soot_budget(patches.len());
         for (k, patch) in patches {
@@ -32574,7 +32588,7 @@ impl Game {
             let endpoints: Vec<_> = positions.iter().zip(&samples).map(|(&position, sample)| {
                     position + (position - source).normalize_or_zero() * sample.size * 0.87
                 }).collect();
-            let clear = self.cabin_fire.clear_source_paths(source, &endpoints, &models);
+            let clear = { let _p = crate::sim_phase::Probe::new("fire_smoke_clearance"); self.cabin_fire.clear_source_paths(source, &endpoints, &models) };
             for ((sample, position), visible) in samples.iter().zip(positions).zip(clear) {
                 if !visible { continue; }
                 smoke_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
@@ -32586,12 +32600,14 @@ impl Game {
         // Select the nearest sustained exterior emitters deterministically. Current wrecks, dead
         // allies and archived burning hulks all use the same cube field; distant history cannot
         // grow the global upload or its world-space bounds without limit.
+        let _world_probe = crate::sim_phase::Probe::new("fire_world_sources");
         let listener = self.player.center();
         let mut world_sources: Vec<(f32, Vec3, f32, u32)> = Vec::new();
         let mut surface_patches = std::collections::HashMap::new();
         for i in 0..self.wrecks.len() {
             if self.enemy_active[i] && !self.enemies[i].alive && self.wrecks[i].burning {
-                surface_patches.insert(0x7100_0000 ^ i as u32, self.wreck_surface_patches(i));
+                let wreck_patches = { let _p = crate::sim_phase::Probe::new("fire_wreck_patches"); self.wreck_surface_patches(i) };
+                surface_patches.insert(0x7100_0000 ^ i as u32, wreck_patches);
                 let enemy = &self.enemies[i];
                 let pos = surface_patches.get(&(0x7100_0000 ^ i as u32)).and_then(|p|p.first()).map(|p|p.position)
                     .or_else(|| self.wreck_deck_anchors[wreck_kind_index(enemy.kind)]

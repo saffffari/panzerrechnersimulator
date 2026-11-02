@@ -228,10 +228,10 @@ fn fs_composite_glare(in: VsOut) -> @location(0) vec4<f32> {
 // falling tail (Spencer et al. 1995). The threshold is in exposed units, so "bright" means bright
 // for the eye as it is adapted now; the per-texel cap keeps a flash from becoming a blob. Knee,
 // cap and tail are deltaP's authored values (named in docs/PHYSICAL_TRUTH_AUDIT.md).
-const DP_THRESH: f32 = 0.55;
-const DP_KNEE: f32 = 0.35;
-const DP_CAP: f32 = 1.0;
-const DP_TAIL: f32 = 0.9;
+const DP_THRESH: f32 = 1.0;
+const DP_KNEE: f32 = 0.5;
+const DP_CAP: f32 = 0.5;
+const DP_TAIL: f32 = 0.65;
 
 fn dp_tap(uv: vec2<f32>) -> vec3<f32> {
     return textureSampleLevel(src, samp, uv, 0.0).rgb;

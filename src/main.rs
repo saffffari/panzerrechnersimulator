@@ -95,6 +95,7 @@ mod expedition_frontend;
 mod expedition_save_frontend;
 mod expedition_live_review;
 mod expedition_orders_review;
+mod expedition_bench;
 mod halftrack;
 mod support_camp;
 mod support_camp_capture;
@@ -9201,6 +9202,14 @@ fn mux_duel_soundtrack(picture: &str, soundtrack: &str, output: &str) -> anyhow:
         ])
         .status()?;
     anyhow::ensure!(status.success(), "ffmpeg could not mux the duel soundtrack");
+    // One clip, with its sound (owner, 2026-11-01): the silent picture and the soundtrack wav
+    // are removed once the muxed file exists; a failed mux above leaves them for recovery.
+    if std::fs::metadata(output).is_ok_and(|m| m.len() > 0) {
+        for stale in [picture, soundtrack] {
+            if stale != output { let _ = std::fs::remove_file(stale); }
+        }
+        println!("[capture] {output}: muxed; the silent picture and the soundtrack wav were removed");
+    }
     Ok(())
 }
 
@@ -15529,10 +15538,15 @@ impl ApplicationHandler for App {
                             } else if g.commander_outside {
                                 g.commander_outside = false;
                                 println!("[panzerrechnersystem] view: PERISCOPE (safe)");
+                            } else if matches!(g.station, game::Station::Commander) && g.hatch_is_open() {
+                                // X from the buttoned periscope with the lid open: up through it,
+                                // head out (2026-11-01: the owner lost head-out when X became the
+                                // one back-out key; Shift still toggles it, Space descends).
+                                g.toggle_commander_head();
+                                println!("[panzerrechnersystem] view: CUPOLA (head out, exposed)");
                             } else if matches!(g.station, game::Station::Commander) {
-                                // X again from the buttoned periscope: drop down into the fighting
-                                // compartment (the interior/loader view) — the clean "leave the
-                                // cupola" the user asked for (LMB-into-the-tank was the only way).
+                                // X from the buttoned periscope under a shut lid: drop down into the
+                                // fighting compartment (the interior/loader view).
                                 g.jump_station(game::Station::Loader);
                                 println!("[panzerrechnersystem] down into the compartment");
                             }
@@ -17338,6 +17352,13 @@ fn main() -> anyhow::Result<()> {
         let frames=args.get(3).and_then(|s|s.parse().ok()).unwrap_or(180);
         let out=args.get(4).map(String::as_str).unwrap_or("artifacts/performance/winter-encounter-20260925/latest.json");
         return winter_bench::run(mode,frames,out);
+    }
+    if args.len() >= 2 && args[1] == "expedition-bench" {
+        let preset = args.get(4).map(|value| graphics::GraphicsPreset::parse(value)
+            .ok_or_else(|| anyhow::anyhow!("expedition-bench preset must be low, high or ultra (got {value:?})"))).transpose()?;
+        return expedition_bench::run(args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30.0), preset,
+            args.get(5).and_then(|s| s.parse().ok()).unwrap_or(10));
     }
     if args.len() >= 2 && args[1] == "gfxbench-drive" {
         let preset = args.get(4).map(|value| graphics::GraphicsPreset::parse(value)

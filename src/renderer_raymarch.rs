@@ -365,6 +365,12 @@ pub(super) struct Backend {
     sky_cache_buf: wgpu::Buffer,
     sky_cache_bind: wgpu::BindGroup,
     sky_cache_pipe: wgpu::RenderPipeline,
+    /// The optic relays' sky sampled from the cache (shaders/relay_sky_cached.wgsl) in place of
+    /// sky.wgsl's per-pixel atmosphere and cloud march: single-sample and, with the native
+    /// geometry AA on, its multisampled twin for the relays' MSAA layers.
+    pub(super) relay_sky_cached: wgpu::RenderPipeline,
+    pub(super) relay_sky_cached_aa: Option<wgpu::RenderPipeline>,
+    pub(super) relay_cache_bind: wgpu::BindGroup,
     /// Cloud transmittance toward the key body by ground position around the eye (the sky's own
     /// cloud field); `cloud_area` is its centre x, z, half extent and the eye's y this frame.
     cloud_shadow: Target,
@@ -1113,6 +1119,39 @@ impl Backend {
         let sky_cache_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rm-sky-cache"), layout: &sky_cache_bgl, entries: &[entry(0, sky_cache_buf.as_entire_binding())],
         });
+        // The relays' cached sky: the camera layout the renderer's sky pass uses, plus the cache's
+        // window uniform, texture and sampler (group 1).
+        let relay_cache_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rm-relay-sky-bgl"), entries: &[uniform_entry(0, S::FRAGMENT), tex_entry(1), sampler_entry(2)],
+        });
+        let relay_cache_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rm-relay-sky"), layout: &relay_cache_bgl, entries: &[
+                entry(0, sky_cache_buf.as_entire_binding()),
+                entry(1, wgpu::BindingResource::TextureView(&sky_cache.view)),
+                entry(2, wgpu::BindingResource::Sampler(&sky_sampler)),
+            ],
+        });
+        let relay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rm-relay-sky-cached"), source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/relay_sky_cached.wgsl").into()),
+        });
+        let relay_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("rm-relay-sky-pl"),
+            bind_group_layouts: &[&sky_pipe.get_bind_group_layout(0), &relay_cache_bgl],
+            push_constant_ranges: &[],
+        });
+        let relay_pipe = |samples: u32| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rm-relay-sky-cached"), layout: Some(&relay_pl),
+            vertex: wgpu::VertexState { module: &relay_shader, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Equal, stencil: Default::default(), bias: Default::default() }),
+            multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+            fragment: Some(wgpu::FragmentState { module: &relay_shader, entry_point: Some("fs"),
+                targets: &[Some(color_target(hdr_format()))], compilation_options: Default::default() }),
+            multiview: None, cache: None,
+        });
+        let relay_sky_cached = relay_pipe(1);
+        let relay_sky_cached_aa = renderer_aa::enabled().then(|| relay_pipe(renderer_aa::SAMPLES));
         let sky_entry = rm_source("sky.wgsl")
             .replace("const CLOUD_VIEW_STEPS: i32 = 32;", &format!("const CLOUD_VIEW_STEPS: i32 = {};", quality.cloud_view_steps))
             .replace("const CLOUD_LIGHT_STEPS: i32 = 5;", &format!("const CLOUD_LIGHT_STEPS: i32 = {};", quality.cloud_light_steps));
@@ -1194,6 +1233,7 @@ impl Backend {
             iw, ih, vol, quality, frame_buf, shadow_views_buf, parcels_buf, cell_start_buf, cell_items_buf,
             lights_buf, light_cell_start_buf, light_cell_items_buf, weapon_buf, ember_buf,
             g0, g1, g2, sky_cache, sky_cache_size, sky_cache_phases, sky_cache_buf, sky_cache_bind, sky_cache_pipe,
+            relay_sky_cached, relay_sky_cached_aa, relay_cache_bind,
             cloud_shadow, cloud_shadow_buf, cloud_shadow_bind, cloud_shadow_pipe, cloud_area: [0.0; 4],
             sky_phase: 0, prev_sky_key: None, reuse_maps: false, maps_frame: None, sky_sampler,
             scratch, temporal, view: 0, refl_bgl, rt_bgl, rt_bind: None, rt_empty, rt_empty_built: false, rt_optics_buf, rt_optics: Vec::new(),
@@ -1922,6 +1962,7 @@ impl Backend {
     /// the glow of spark bursts, blast fireballs and tracer strips, binned into the froxel grid's
     /// coarse cells. Fire grains near the eye are also kept as one-pixel embers.
     fn collect_parcels(&mut self, r: &Renderer, rel_vp: Mat4, eye: Vec3, vz: f32, ln_range: f32) {
+        let _probe = crate::sim_phase::Probe::new("render_collect_parcels");
         self.parcels.clear();
         self.pairs.clear();
         self.embers.clear();
@@ -2945,6 +2986,10 @@ impl Backend {
             work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
+        // The hovered object's one-pixel silhouette over the crushed frame (src/hover_outline.rs):
+        // native-pixel interaction UI outside exposure, bloom and the dither, as on the shader
+        // backend. It was never encoded on this chain (2026-11-01: "we lost the outline").
+        if finish_ldr { r.encode_hover_outline(encoder, &mut work); }
         let mut total = r.render_work.get();
         total.accumulate(work);
         r.render_work.set(total);

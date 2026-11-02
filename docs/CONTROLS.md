@@ -9,8 +9,9 @@ and the current driver cruise setting.
 
 | Input | Current solo action |
 |---|---|
-| LMB | Interact, pick up, enter, equip or use; fire the main gun while in its sights |
-| X | Put away the topmost held item or exit the current station/view; one layer per press |
+| LMB | Interact, pick up, enter, equip or use; fires the main gun only while in its sights (a click from any other post never fires) |
+| X | Put away the topmost held item or exit the current station/view; one layer per press. At the commander's periscope with the lid open, X puts the head out through the cupola and X again brings it back in; with the lid shut it drops into the compartment |
+| Shift / Space (cupola) | Shift: head out and in through the open cupola lid. Space tap at the buttoned cupola: down into the compartment; Space held with the head out: climb out on foot |
 | Q / E | Decrease/increase driver cruise: reverse 3/2/1, stop, forward 1/2/3 |
 | W/S, A/D | Manual drive/steer at control stations; walk in the compartment or on foot |
 | Arrow keys | Coarse traverse/elevation through a capable gunner; direct control at gun sights |
