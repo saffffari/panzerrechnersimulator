@@ -161,8 +161,12 @@ impl Default for AtmosphereParameters {
             cloud_offset_m: DVec3::ZERO, cloud_evolution_s: 0.0, star_frame:[0.0;4],
             ground_glow_flux: DVec3::ZERO,
             cloud: CloudLayerParameters {
-                bottom_altitude_m: 900.0,
-                top_altitude_m: 2_200.0,
+                // A winter stratocumulus deck low over the steppe (bases 300 to 800 m are the
+                // rule for winter stratus and stratocumulus; the owner, 2 November 2026: "the
+                // clouds lower and more like in the world"): the deck's bases foreshorten toward
+                // the horizon and move against the ground as the tank does.
+                bottom_altitude_m: 450.0,
+                top_altitude_m: 1_300.0,
                 liquid_water_content_kg_m3: 0.25e-3,
                 droplet_effective_radius_m: 10.0e-6,
                 extinction_efficiency: 2.0,
@@ -170,8 +174,8 @@ impl Default for AtmosphereParameters {
                 single_scattering_albedo: 0.999,
                 asymmetry: 0.85,
                 coverage: 0.0,
-                structure_scale_large_m: 1_700.0,
-                structure_scale_small_m: 420.0,
+                structure_scale_large_m: 1_100.0,
+                structure_scale_small_m: 300.0,
             },
         }
     }

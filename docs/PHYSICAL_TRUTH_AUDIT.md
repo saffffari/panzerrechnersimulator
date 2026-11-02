@@ -2924,3 +2924,12 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   (`Parts::local`); the crew harnesses before and after measure it (the same 15 of 20 crew-solo
   checks and all five climb checks pass with the gate on). The camp table's head stays at the
   kit's size while the turret's is at the real size.
+- **The cabin dimmer, the deck lower** (2 November 2026, the owner on the tinted stills): the
+  cabin practicals' art-calibrated power scale 0.003 to 0.0018 (`interior_rig::CABIN_PRACTICAL_POWER_SCALE`,
+  a real emitter change, not a grade), the eye's draw-in knee 1.5 to 2.0 stops and slope 0.32
+  to 0.55 (`observer::EYE_RANGE_*`, the owner-directed presentation of local adaptation, now
+  lifting the dark corners less), and the winter cloud deck's bases 900 to 450 m and tops 2,200
+  to 1,300 m with smaller cells (`CloudLayerParameters`, the act-1 profile): winter stratus and
+  stratocumulus bases run 300 to 800 m, and the lower deck foreshortens and moves against the
+  ground instead of reading as a map on the sky. The act-1 profile also carries the winter
+  aerosol that the atmosphere default carries.

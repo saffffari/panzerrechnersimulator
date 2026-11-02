@@ -110,8 +110,11 @@ pub const CABIN_ROD_DISPLAY_GAIN: f64 = 1.0;
 /// The display's draw-in of regions far from the adapted level (`crush.wgsl` `eye_range`): beyond
 /// the knee (stops from the display key) a region's distance to the key is scaled by the slope.
 /// Owner-directed presentation of local adaptation (docs/PHYSICAL_TRUTH_AUDIT.md).
-pub const EYE_RANGE_KNEE_STOPS: f64 = 1.5;
-pub const EYE_RANGE_SLOPE: f64 = 0.32;
+/// 2 November 2026: the knee 1.5 to 2.0 stops and the slope 0.32 to 0.55, so the cabin's dark
+/// corners stay near black beside the bright ports (the owner: "some areas near black or black
+/// so the focus goes to outside"); the draw-in still keeps the ports from clipping.
+pub const EYE_RANGE_KNEE_STOPS: f64 = 2.0;
+pub const EYE_RANGE_SLOPE: f64 = 0.55;
 /// The colour the rod signal is reproduced in, linear Rec. 709, luminance-neutral (luma 0.99).
 /// Rod vision has no hue of its own, but the mesopic appearance of a moonlit field is reported
 /// and modelled as a cool, bluish grey (the Purkinje shift: rod sensitivity peaks at 507 nm,

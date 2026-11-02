@@ -920,11 +920,13 @@ fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
             ground_extinction_m_inv: 0.0068,
             wind_exposure: 1.0,
             mie_scale_height_m: 1_200.0,
-            mie_scattering_m_inv: 3.996e-6,
-            mie_extinction_m_inv: 4.440e-6,
+            // The winter continental aerosol and the low stratocumulus deck of
+            // physical_environment::AtmosphereParameters::default (2 November 2026).
+            mie_scattering_m_inv: 4.0e-5,
+            mie_extinction_m_inv: 4.444e-5,
             mie_asymmetry: 0.80,
-            cloud_bottom_m: 900.0,
-            cloud_top_m: 2_200.0,
+            cloud_bottom_m: 450.0,
+            cloud_top_m: 1_300.0,
             cloud_lwc_kg_m3: 0.25e-3,
             cloud_droplet_radius_m: 10.0e-6,
         },

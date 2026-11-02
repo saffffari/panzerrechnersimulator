@@ -25,7 +25,9 @@ pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(-0.01264894,
 /// Art-calibrated fixture output in the renderer's linear scale, not measured historical watts.
 /// Daylight apertures must establish the daytime cabin's bright end. Apply the same reduction to
 /// the visible dome lens and its transported light; exposure remains the ordinary measured eye.
-pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.003;
+/// 2 November 2026: 0.003 to 0.0018 (the owner: "the orange light is a bit overwhelming,
+/// turn it down and have some areas near black so the focus goes to outside").
+pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.0018;
 
 /// The visible finite cube is the source of the lamp's spectrum and total emitted power.
 /// Dimensions, colours and radiances remain authored, not measured historical fixtures.
@@ -79,13 +81,16 @@ pub const DOME_FIXTURE: FiniteCubeLamp = FiniteCubeLamp {
 };
 pub const ANNUNCIATOR_FIXTURES: [FiniteCubeLamp; 4] = [
     FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 46, 30], emission: 1.0 },
-    FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 145, 36], emission: 1.0 },
+    // 2 November 2026: the amber annunciator is full red (the owner: "more of the lights full
+    // red and maybe a blue"); the panel reads red, red, blue, green.
+    FiniteCubeLamp { half_size_m: 0.012, srgb: [255, 40, 28], emission: 1.0 },
     FiniteCubeLamp { half_size_m: 0.012, srgb: [70, 128, 255], emission: 1.0 },
     FiniteCubeLamp { half_size_m: 0.012, srgb: [70, 255, 96], emission: 1.0 },
 ];
 pub const BREECH_FIXTURES: [FiniteCubeLamp; 3] = [
+    // The green is the owner's ("the green light on the gun is perfect"); the amber is full red.
     FiniteCubeLamp { half_size_m: 0.010, srgb: [60, 235, 90], emission: 1.2 },
-    FiniteCubeLamp { half_size_m: 0.010, srgb: [255, 164, 32], emission: 1.2 },
+    FiniteCubeLamp { half_size_m: 0.010, srgb: [255, 40, 28], emission: 1.2 },
     FiniteCubeLamp { half_size_m: 0.010, srgb: [235, 45, 30], emission: 1.2 },
 ];
 
@@ -135,10 +140,11 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
 ];
 /// The actual instrument backlight's linear spectrum, shared by both rendering backends.
 /// This changes only the TPZ source, not the independent indicator lamps or exposure.
-pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.31, 0.018);
+// 2 November 2026: paler and dimmer (the owner: "the dial can be less orange but dimmer").
+pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.50, 0.14);
 /// Ten percent below the 2026-10-30 output, plus the deeper-orange spectrum above.
 /// This is an owner-directed appearance calibration, not measured period photometry.
-pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.0495 * CABIN_PRACTICAL_POWER_SCALE;
+pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.030 * CABIN_PRACTICAL_POWER_SCALE;
 /// The driver's ignition lamp, a finite cube on his panel (`lamp_mounts::IGNITION`), an indicator's
 /// power. Before 2026-10-28 an invisible point at 0.025, twelve times the dome lamp, which washed
 /// the driver's post red.

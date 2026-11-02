@@ -305,10 +305,9 @@ fn dp_tinted(lin: vec3<f32>, th: f32) -> vec3<f32> {
         let d = distance(pk, lab);
         if (d < best_d) { best_d = d; best = pk; }
     }
-    // Outdoors only: inside the hull (the buttoned-up view's eye_range_strength) the cabin keeps
-    // the plain dithered colour, as it keeps its own rod hue and gain (the owner: the interior's
-    // look must not change with the sky).
-    let pull = clamp(cr.look.w, 0.0, 1.0) * (1.0 - clamp(cr.eye_range_strength, 0.0, 1.0));
+    // Inside the hull too: the owner preferred the tinted cabin to the plain one when shown both
+    // (2 November 2026), so the pull is the same everywhere.
+    let pull = clamp(cr.look.w, 0.0, 1.0);
     let pulled = vec3(lab.x, mix(lab.yz, best.yz, pull));
     return dp_dithered_colour(max(dp_oklab_to_linear(pulled), vec3(0.0)), th);
 }

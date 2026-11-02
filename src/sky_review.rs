@@ -205,18 +205,31 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         cap.take(&mut r, "night_moon_overcast", "the moonlit night under overcast: the cauldron's glow")?;
         clear_weather(&mut r);
     }
-    // The interior: the loader's seat with the cabin lamps on, at noon and at night.
+    // The interior in the world (not the editor's hall): the loader's seat, the gunner's sight
+    // and the buttoned-up commander at noon and at night, the lamps on, and the loader with
+    // them off, so daylight through the ports and the sight shows against the lamps.
     {
-        let (mut r, mut g) = Game::build_tank_editor(&device, &queue, &TankEditorScene::new(TankAssetId::TigerI))?;
+        let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
         g.mute_audio();
         g.set_defer_rtt_to_render(true);
         g.set_cabin_lights(true);
-        g.jump_station(Station::Loader);
         for _ in 0..3 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
-        for (name, instant, note) in [("interior_noon", crate::celestial_sky::phase_instant(1, ClockPhase::Day), "the loader's seat, lamps on, noon"),
-            ("interior_night", moon_night, "the loader's seat, lamps on, the moonlit night")] {
+        let noon = crate::celestial_sky::phase_instant(1, ClockPhase::Day);
+        for (name, station, instant, lamps, note) in [
+            ("interior_noon", Station::Loader, noon, true, "the loader's seat in the world, lamps on, noon"),
+            ("interior_night", Station::Loader, moon_night, true, "the loader's seat in the world, lamps on, the moonlit night"),
+            ("interior_noon_dark", Station::Loader, noon, false, "the loader's seat, lamps off, noon: the ports' daylight alone"),
+            ("gunner_noon", Station::Gunner, noon, true, "the gunner's sight at noon"),
+            ("gunner_night", Station::Gunner, moon_night, true, "the gunner's sight on the moonlit night"),
+            ("commander_noon", Station::Commander, noon, true, "the commander buttoned up at noon"),
+            ("commander_night", Station::Commander, moon_night, true, "the commander buttoned up on the moonlit night"),
+        ] {
+            g.set_cabin_lights(lamps);
+            // The cupola is reached from the walkable compartment (Game::jump_station).
+            if station == Station::Commander { g.jump_station(Station::Loader); }
+            g.jump_station(station);
             r.set_sky_clock(SkyClock::new(instant, site));
-            g.update(&TankInput::default(), 0.0, &mut r);
+            for _ in 0..3 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
             cap.take(&mut r, name, note)?;
         }
     }
