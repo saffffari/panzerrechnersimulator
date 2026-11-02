@@ -45,8 +45,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let transmittance = textureSampleLevel(integrated, linear_samp, vec3(uv, slice), 0.0).a;
     let focal = fr.view_proj[1][1] * fr.res.y * 0.5;
     if (kind == 2u) {
-        // Ember: a 1 cm incandescent grain; projected coverage inside the pixel scales its energy.
-        let intensity = f32((in.packed >> 8u) & 0xFFu) / 32.0;
+        // Ember: a 1 cm incandescent grain (one of a flame grain's EMBERS_PER_GRAIN, carrying its
+        // share); projected coverage inside the pixel scales its energy. Intensity in 1/128 steps.
+        let intensity = f32((in.packed >> 8u) & 0xFFu) / 128.0;
         let colour = vec3(f32((in.packed >> 16u) & 0x1Fu) / 31.0, f32((in.packed >> 21u) & 0x3Fu) / 63.0, f32((in.packed >> 27u) & 0x1Fu) / 31.0);
         let coverage = clamp(pow(0.012 * focal / max(dist, 0.05), 2.0), 0.02, 1.0);
         return vec4(colour * intensity * coverage * transmittance, 0.0);

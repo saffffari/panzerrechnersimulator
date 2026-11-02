@@ -1632,6 +1632,9 @@ struct MeshGpu {
     lamp_lens: u8,
     /// The player's vehicle: takes `player_snow_load` instead of the world's (raymarch backend).
     snow_vehicle: bool,
+    /// The running gear's packed snow (`set_running_gear_snow`): pack in byte 0, the gear
+    /// envelope's inner |x| and top y in centimetres in bytes 1 and 2 (rm_snow_lift.wgsl).
+    running_gear: u32,
     /// Another vehicle's finish (`set_vehicle_finish`; zeros for none): the raymarch G-buffer's
     /// per-tank paint, whitewash, mud, soot and wear (`rm_gbuffer.wgsl` `vehicle_finish`).
     vehicle_finish: [f32; 4],
@@ -3743,6 +3746,7 @@ fn make_mesh_gpu(
         emissive_own: false,
         lamp_lens: 0,
         snow_vehicle: false,
+        running_gear: 0,
         vehicle_finish: [0.0; 4],
         instrument_cover: false,
         painted_steel: false,
@@ -6828,6 +6832,15 @@ impl Renderer {
     pub fn set_worn_vehicles(&mut self, vehicles: &[[[f32; 4]; 2]]) {
         self.worn_vehicles.clear();
         self.worn_vehicles.extend_from_slice(&vehicles[..vehicles.len().min(MAX_WORN_VEHICLES)]);
+    }
+    /// Mesh `idx` is a hull with running gear in its frame's envelope |x| >= `inner_m`, y <=
+    /// `top_m`: `pack` (0..1) of the gear is crusted with the snow it ran through
+    /// (`snow_cover::step_pack`; rm_snow_lift.wgsl `snow_gear_crust`).
+    pub fn set_running_gear_snow(&mut self, idx: usize, pack: f32, inner_m: f32, top_m: f32) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            let byte = |v: f32| (v.clamp(0.0, 2.55) * 100.0).round() as u32;
+            g.running_gear = ((pack.clamp(0.0, 1.0) * 255.0).round() as u32) | byte(inner_m) << 8 | byte(top_m) << 16;
+        }
     }
     /// Mesh `idx` is part of the player's vehicle: its lying snow follows `player_snow_load`.
     pub fn mark_snow_vehicle(&mut self, idx: usize) {

@@ -113,6 +113,8 @@ pub struct Bend {
     velocity: Vec2,
 }
 
+/// The tip can lie no farther than this from the root: a flattened blade.
+pub const MAX_DISPLACEMENT: f32 = HEIGHT * 0.85;
 impl Bend {
     /// A critically damped spring integrates in bounded substeps, so a loading hitch cannot launch
     /// the tips. Displacement is in world metres and drives a root-anchored quadratic centerline.
@@ -123,7 +125,18 @@ impl Bend {
         for _ in 0..steps {
             self.velocity += ((target - self.displacement) * 64.0 - self.velocity * 16.0) * h;
             self.displacement += self.velocity * h;
+            if self.displacement.length_squared() > MAX_DISPLACEMENT * MAX_DISPLACEMENT {
+                self.displacement = self.displacement.normalize() * MAX_DISPLACEMENT;
+                // Flattened: the tip's outward velocity is spent against the ground.
+                let outward = self.velocity.dot(self.displacement.normalize());
+                if outward > 0.0 { self.velocity -= self.displacement.normalize() * outward; }
+            }
         }
+    }
+    /// A pressure front's drag impulse (`pressure_front::blade_gust`): the tip's velocity jumps,
+    /// the spring rings it down or holds it flat.
+    pub fn impulse(&mut self, tip_velocity: Vec2) {
+        if tip_velocity.is_finite() { self.velocity += tip_velocity; }
     }
 }
 

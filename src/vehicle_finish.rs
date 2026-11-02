@@ -98,6 +98,62 @@ impl Game {
         (0..n).collect()
     }
 
+    /// Advance and push every hull's running-gear snow (`snow_cover::step_pack`): the player's
+    /// from `snow_cover`, each enemy's and ally's from its own speed through the world's lying
+    /// snow, a hulk's as standing gear in the winter's snow.
+    pub(super) fn drive_running_gear_snow(&mut self, dt: f32, r: &mut Renderer) {
+        let lying = self.snow_cover.world;
+        let (inner, top) = tank::TIGER_RUNNING_GEAR;
+        r.set_running_gear_snow(self.slots.tiger[0], self.snow_cover.pack, inner, top);
+        self.enemy_gear_snow.resize(self.enemies.len(), 0.0);
+        for ei in 0..self.enemies.len() {
+            let e = &self.enemies[ei];
+            let speed = if e.alive { e.speed } else { 0.0 };
+            self.enemy_gear_snow[ei] = crate::snow_cover::step_pack(self.enemy_gear_snow[ei], dt, speed, lying);
+            let rigs = [self.slots.t34[ei], self.slots.su100[ei], self.slots.kv2[ei],
+                self.slots.isu152[ei], self.slots.is2[ei], self.slots.is3[ei]];
+            let rig = rigs[match e.kind {
+                EnemyKind::T34 => 0, EnemyKind::Su100 => 1, EnemyKind::Kv2 => 2,
+                EnemyKind::Isu152 => 3, EnemyKind::Is2 => 4, EnemyKind::Is3 => 5,
+            }];
+            let (inner, top) = tank::running_gear_envelope(e.kind);
+            r.set_running_gear_snow(rig[0], self.enemy_gear_snow[ei], inner, top);
+        }
+        for (i, hulk) in self.campaign_hulks.iter().enumerate() {
+            let rigs = [self.slots.hulk_t34[i], self.slots.hulk_su100[i], self.slots.hulk_kv2[i],
+                self.slots.hulk_isu152[i], self.slots.hulk_is2[i], self.slots.hulk_is3[i]];
+            let rig = rigs[match hulk.kind {
+                EnemyKind::T34 => 0, EnemyKind::Su100 => 1, EnemyKind::Kv2 => 2,
+                EnemyKind::Isu152 => 3, EnemyKind::Is2 => 4, EnemyKind::Is3 => 5,
+            }];
+            let (inner, top) = tank::running_gear_envelope(hulk.kind);
+            r.set_running_gear_snow(rig[0], 0.6 * lying, inner, top);
+        }
+        self.ally_gear_snow.resize(self.allies.len(), 0.0);
+        for (i, ally) in self.allies.iter().enumerate() {
+            let speed = if ally.tank.alive { ally.tank.speed } else { 0.0 };
+            self.ally_gear_snow[i] = crate::snow_cover::step_pack(self.ally_gear_snow[i], dt, speed, lying);
+            if let Some(&slots) = self.slots.allies.get(i) {
+                r.set_running_gear_snow(slots[0], self.ally_gear_snow[i], inner, top);
+            }
+        }
+    }
+
+    /// Headless: the lying-snow loads (the player's vehicle, the world) for a fixture.
+    pub fn debug_set_snow_loads(&mut self, player: f32, world: f32) {
+        self.snow_cover.player = player.clamp(0.0, 1.0);
+        self.snow_cover.world = world.clamp(0.0, 1.0);
+    }
+    /// Headless: (the player's lying load, the world's, the player's gear pack).
+    pub fn debug_snow_loads(&self) -> (f32, f32, f32) { (self.snow_cover.player, self.snow_cover.world, self.snow_cover.pack) }
+    /// Headless: set a vehicle's running-gear pack (0..1); `None` for the player.
+    pub fn debug_set_running_gear_snow(&mut self, enemy: Option<usize>, pack: f32) {
+        match enemy {
+            None => self.snow_cover.pack = pack.clamp(0.0, 1.0),
+            Some(i) => { self.enemy_gear_snow.resize(self.enemies.len(), 0.0); if let Some(p) = self.enemy_gear_snow.get_mut(i) { *p = pack.clamp(0.0, 1.0); } }
+        }
+    }
+
     /// Push every other vehicle's finish and the worn-edge list (raymarch backend only).
     pub(super) fn drive_vehicle_finishes(&mut self, r: &mut Renderer) {
         if !crate::graphics::raymarch_backend_enabled() || !enabled() { return; }

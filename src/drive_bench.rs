@@ -84,12 +84,12 @@ pub fn run(from_s: f32, render_s: f32, requested_preset: Option<graphics::Graphi
         for (label, ms) in r.read_gpu_profile_frame(&device, &queue)? { *frame.entry(label).or_default() += ms; }
         fenced += 1;
         // The spark and grain receipts of the frame whose port effects cost the most so far.
-        second_sparks = second_sparks.max(frame.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0));
-        let effects = frame.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0)
+        second_sparks = second_sparks.max(frame.get("analytic-streaked-sparks").copied().unwrap_or(0.0));
+        let effects = frame.get("analytic-streaked-sparks").copied().unwrap_or(0.0)
             + frame.get("native-pixel-hdr-effects").copied().unwrap_or(0.0);
         if std::env::var_os("KESSEL_BENCH_RECEIPTS").is_some() && effects > worst_effects.0 {
             worst_effects = (effects, serde_json::json!({"t": t, "station": format!("{:?}", g.station),
-                "sparks_ms": frame.get("analytic-thousandfold-sparks"), "grains_ms": frame.get("native-pixel-hdr-effects"),
+                "sparks_ms": frame.get("analytic-streaked-sparks"), "grains_ms": frame.get("native-pixel-hdr-effects"),
                 "sparks": r.debug_weapon_particle_receipt(), "grains": r.debug_fine_vfx_receipt()}));
         }
         for (label, ms) in frame { passes.entry(label).or_default().push(ms); }

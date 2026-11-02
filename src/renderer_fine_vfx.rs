@@ -170,23 +170,44 @@ fn particle_seed(id:[u32;4])->u32 {
 fn buffer_capacity(current:usize,needed:usize)->usize {
     if needed<=current {current}else{needed.max(64).next_power_of_two()}
 }
-/// First discard optional oversampling, never necessary coverage. If necessary coverage itself
-/// cannot fit, admit only whole parents at valid weight and expose all omitted presentation energy.
-/// This failure mode changes the rendered quadrature and is not an accepted capture.
-fn allocate_counts(parents:&mut [Parent],budget:u64) {
+/// The fewest samples a parent draws before whole omission: one per `max_weight` covered pixels.
+/// At weight 1 no pixel carries more than the parent's own radiance over that pixel's area; a
+/// relayed port allows `PORT_MAX_WEIGHT` (its pane shows a magnified fire whose thousand parcels
+/// overlap every pixel, and a sparser, brighter speckle keeps every parcel's light where whole
+/// omission would drop most of them, 2026-11-01).
+fn floor_count(area:f32,max_weight:f32)->u64 {((area/max_weight).ceil() as u64).max(1)}
+const PORT_MAX_WEIGHT:f32=8.0;
+/// Share `budget` between `lo` (every parent's floor) and `hi` (its ceiling) in proportion to
+/// each parent's gap, then hand the rounding remainder out one by one.
+fn share_between(parents:&mut [Parent],lo:impl Fn(&Parent)->u64,hi:impl Fn(&Parent)->u64,budget:u64) {
+    let floor=parents.iter().fold(0u64,|sum,p|sum.saturating_add(lo(p)));
+    let available=budget-floor;let gaps=parents.iter().fold(0u64,|sum,p|sum.saturating_add(hi(p)-lo(p))).max(1);
+    let mut assigned=floor;
+    for p in parents.iter_mut() {
+        let extra=(((hi(p)-lo(p)) as u128*available as u128)/gaps as u128) as u64;
+        p.count=(lo(p)+extra) as u32;assigned+=extra;
+    }
+    for p in parents.iter_mut() {
+        if assigned==budget {break;}
+        if u64::from(p.count)<hi(p) {p.count+=1;assigned+=1;}
+    }
+}
+/// First discard optional oversampling, then thin every parent's two-samples-per-pixel coverage
+/// towards one sample per covered pixel (weight at most 1), keeping every parent's emission and
+/// optical depth in expectation. Only if even that cannot fit are whole parents admitted at
+/// valid weight and all omitted presentation energy exposed; that failure mode changes the
+/// rendered quadrature and is not an accepted capture.
+fn allocate_counts(parents:&mut [Parent],budget:u64,max_weight:f32) {
     let required=parents.iter().fold(0u64,|sum,p|sum.saturating_add(p.required));
     let desired=parents.iter().fold(0u64,|sum,p|sum.saturating_add(p.desired));
     if desired<=budget {for p in parents {p.count=p.desired as u32;}return;}
     if required<=budget {
-        let available=budget-required;let extras=desired-required;let mut assigned=required;
-        for p in parents.iter_mut() {
-            let extra=(((p.desired-p.required) as u128*available as u128)/extras as u128) as u64;
-            p.count=(p.required+extra) as u32;assigned+=extra;
-        }
-        for p in parents.iter_mut() {
-            if assigned==budget {break;}
-            if u64::from(p.count)<p.desired {p.count+=1;assigned+=1;}
-        }
+        share_between(parents,|p|p.required,|p|p.desired,budget);
+        return;
+    }
+    let floor=parents.iter().fold(0u64,|sum,p|sum.saturating_add(floor_count(p.area,max_weight)));
+    if floor<=budget {
+        share_between(parents,|p|floor_count(p.area,max_weight).min(p.required),|p|p.required,budget);
     } else {
         let mut remaining=budget;
         // The array is globally far-to-near. Keep nearer whole parents first during an explicit
@@ -224,10 +245,12 @@ impl Renderer {
         let stored=self.fine_vfx.particle_ids.entry(batch).or_default();stored.clear();stored.extend_from_slice(ids);true
     }
     /// `budget`: the grains this view may draw (`MAX_PER_VIEW` for the main view, a relayed port's
-    /// preset `relay_effect_budget`). Its coverage rule is unchanged: optional density goes first,
-    /// then whole far parents, counted as omitted.
+    /// preset `relay_grain_budget`). Over budget, optional density goes first, then every parent is
+    /// thinned towards one sample per covered pixel (`allocate_counts`), then whole far parents,
+    /// counted as omitted. `density`: whether a batch's optional quadrature density applies (the
+    /// main view); a relayed port draws each parcel at its coverage only.
     pub(super) fn prepare_fine_vfx_view(&self,device:&wgpu::Device,queue:&wgpu::Queue,
-        camera:&Camera,extent:[u32;2],depth:&wgpu::TextureView,smoke:&wgpu::Buffer,previous:Option<Frame>,budget:u64)->Frame {
+        camera:&Camera,extent:[u32;2],depth:&wgpu::TextureView,smoke:&wgpu::Buffer,previous:Option<Frame>,budget:u64,density:bool)->Frame {
         let mut allocations=0;
         let mut frame=previous.unwrap_or_else(|| {
             allocations+=1;
@@ -276,8 +299,9 @@ impl Renderer {
                 if !aabb_in_frustum(&planes,lo,hi){continue;}
                 let (area,near)=projected_area_with_view(*model,camera.pos,relative_vp,extent,material.soot);
                 if area<=0.0 || !area.is_finite(){continue;}
-                let (required,desired)=dense_sample_request(area,material.minimum,material.density);
-                receipt.maximum_density_multiplier=receipt.maximum_density_multiplier.max(material.density);
+                let multiplier=if density {material.density}else{1};
+                let (required,desired)=dense_sample_request(area,material.minimum,multiplier);
+                receipt.maximum_density_multiplier=receipt.maximum_density_multiplier.max(multiplier);
                 receipt.parents+=1;receipt.requested_grains=receipt.requested_grains.saturating_add(desired);
                 receipt.required_grains=receipt.required_grains.saturating_add(required);
                 receipt.near_plane_intersections+=u64::from(near);
@@ -289,7 +313,7 @@ impl Renderer {
         }
         frame.parents.sort_by(|a,b|b.depth.total_cmp(&a.depth));
         let budget=budget.min(MAX_PER_VIEW);
-        allocate_counts(&mut frame.parents,budget);
+        allocate_counts(&mut frame.parents,budget,if density {1.0}else{PORT_MAX_WEIGHT});
         for parent in &frame.parents {
             if parent.count==0 {
                 receipt.saturated_parents+=1;receipt.omitted_projected_area_px+=parent.area as f64;
@@ -335,7 +359,7 @@ impl Renderer {
         for frame in frames.values_mut(){frame.active=false;}
         // The raymarch backend draws its own grains in the main view; only its relayed ports take these.
         if self.raymarch.is_none() {
-            let main=self.prepare_fine_vfx_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX),MAX_PER_VIEW);
+            let main=self.prepare_fine_vfx_view(device,queue,&self.camera,[self.iw,self.ih],&self.depth_view,&self.smoke_buf,frames.remove(&usize::MAX),MAX_PER_VIEW,true);
             frames.insert(usize::MAX,main);
         }
         self.prepare_fine_vfx_ports(device,queue,&mut frames);
@@ -365,7 +389,8 @@ impl Renderer {
                 "gpu_buffer_allocations":r.gpu_buffer_allocations,"instance_capacity":r.instance_capacity,"lifetime_buffer_allocations":r.lifetime_buffer_allocations}})
         }).collect();
         views.sort_by(|a,b|a["view"].as_str().cmp(&b["view"].as_str()));
-        serde_json::json!({"path":"one-native-pixel HDR quads; shared raster medium lighting and attenuation","max_grains_per_draw":MAX_PER_DRAW,"max_grains_per_view":MAX_PER_VIEW,"views":views,"transparency":"parents globally sorted back to front across all materials/counts; no per-grain order sort"})
+        serde_json::json!({"path":"one-native-pixel HDR quads; shared raster medium lighting and attenuation","max_grains_per_draw":MAX_PER_DRAW,"max_grains_per_view":MAX_PER_VIEW,"views":views,"transparency":"parents globally sorted back to front across all materials/counts; no per-grain order sort",
+            "budget":"optional density first, then every parent thinned towards one sample per covered pixel (weight at most 1), then whole far parents omitted and counted; relayed ports draw at their preset's relay_grain_budget without optional density"})
     }
 }
 
@@ -475,21 +500,48 @@ mod tests {
     #[test]
     fn hard_budget_removes_optional_work_then_reports_whole_omissions_without_hot_pixels() {
         let mut p:Vec<_>=(0..100).map(|_|parent(0.1,64)).collect();
-        allocate_counts(&mut p,150);
+        allocate_counts(&mut p,150,1.0);
         assert_eq!(p.iter().map(|p|u64::from(p.count)).sum::<u64>(),150);
         assert!(p.iter().all(|p|p.count>0 && p.area/p.count as f32<=0.5));
         // The former fallback-to-one could exceed a cap once more parents arrived after exhaustion.
-        allocate_counts(&mut p,40);
+        allocate_counts(&mut p,40,1.0);
         assert_eq!(p.iter().map(|p|u64::from(p.count)).sum::<u64>(),40);
         assert_eq!(p.iter().filter(|p|p.count==0).count(),60);
         assert!(p.iter().filter(|p|p.count>0).all(|p|u64::from(p.count)>=p.required));
-        let mut impossible=[parent(100.0,1),parent(0.1,1)];allocate_counts(&mut impossible,3);
+        let mut impossible=[parent(100.0,1),parent(0.1,1)];allocate_counts(&mut impossible,3,1.0);
         assert_eq!(impossible[0].count,0);assert_eq!(impossible[1].count,1);
-        allocate_counts(&mut p,0);assert!(p.iter().all(|p|p.count==0));
+        allocate_counts(&mut p,0,1.0);assert!(p.iter().all(|p|p.count==0));
+    }
+    #[test]
+    fn saturated_coverage_thins_every_parent_to_one_sample_a_pixel_before_omitting_any() {
+        // Three parcels each over 100 pixels ask for 600 samples; a budget of 400 thins each of
+        // them evenly (floor 100, share of the rest), none is omitted, no weight passes 1.
+        let mut p:Vec<_>=(0..3).map(|_|parent(100.0,1)).collect();
+        assert_eq!(p.iter().map(|p|p.required).sum::<u64>(),600);
+        allocate_counts(&mut p,400,1.0);
+        assert_eq!(p.iter().map(|p|u64::from(p.count)).sum::<u64>(),400);
+        assert!(p.iter().all(|p|(133..=134).contains(&p.count)));
+        assert!(p.iter().all(|p|p.area/p.count as f32<=1.0));
+        // Below the floor (one sample a pixel) the whole-parent omission stands: one parent at its
+        // full coverage, the two others omitted and counted.
+        allocate_counts(&mut p,250,1.0);
+        assert_eq!(p.iter().map(|p|u64::from(p.count)).sum::<u64>(),200);
+        assert_eq!(p.iter().filter(|p|p.count==0).count(),2);
+        // A relayed port keeps all three at the same budget, each sample carrying up to eight
+        // covered pixels' radiance (here 100 / 83 < 2).
+        allocate_counts(&mut p,250,PORT_MAX_WEIGHT);
+        assert_eq!(p.iter().map(|p|u64::from(p.count)).sum::<u64>(),250);
+        assert!(p.iter().all(|p|p.count>=13 && p.area/p.count as f32<=PORT_MAX_WEIGHT));
+        allocate_counts(&mut p,30,PORT_MAX_WEIGHT);
+        assert_eq!(p.iter().filter(|p|p.count==0).count(),3,"below one sample an eight pixels only whole parents at valid weight are admitted, and none fits");
+        // A sub-pixel parent's floor is its one required sample: unchanged by the thinning step.
+        let mut small:Vec<_>=(0..10).map(|_|parent(0.3,1)).collect();
+        allocate_counts(&mut small,7,1.0);
+        assert_eq!(small.iter().filter(|p|p.count==1).count(),7);
     }
     #[test]
     fn close_parent_splits_contiguous_prefix_without_brightening_or_restarting_samples() {
-        let mut p=[parent(100_000.0,64)];allocate_counts(&mut p,MAX_PER_VIEW);
+        let mut p=[parent(100_000.0,64)];allocate_counts(&mut p,MAX_PER_VIEW,1.0);
         let chunks:Vec<_>=sample_chunks(p[0].count).collect();
         assert!(chunks.len()>1);assert_eq!(chunks[0].0,0);
         assert_eq!(chunks.iter().map(|(_,n)|n).sum::<u32>(),p[0].count);

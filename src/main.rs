@@ -114,6 +114,7 @@ mod radio_llm;
 mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
+mod fx_review;
 mod canyon_director;
 mod playtest_mode;
 mod winter_weather;
@@ -162,6 +163,7 @@ mod shell_flight_audio;
 mod panzerfaust;
 mod pixel_particles;
 mod pressure_front;
+mod incandescence;
 mod heat_haze;
 mod world_doors;
 mod prims;
@@ -1068,7 +1070,7 @@ fn run_gfxbench(
             simulation_times.push(simulation_ms);
             let mut frame_passes: std::collections::BTreeMap<&str, f64> = Default::default();
             for (label, ms) in &gpu_frame { *frame_passes.entry(label.as_str()).or_default() += ms; }
-            let sparks = frame_passes.get("analytic-thousandfold-sparks").copied().unwrap_or(0.0);
+            let sparks = frame_passes.get("analytic-streaked-sparks").copied().unwrap_or(0.0);
             if std::env::var_os("KESSEL_BENCH_RECEIPTS").is_some() && sparks > worst_sparks.0 {
                 worst_sparks = (sparks, serde_json::json!({"frame": i, "sparks_ms": sparks, "sparks": r.debug_weapon_particle_receipt()}));
             }
@@ -17040,6 +17042,10 @@ fn main() -> anyhow::Result<()> {
         return repair_manual_capture::run_overlay(&prefix);
     }
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "fx-review") {
+        let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(90u32);
+        return fx_review::run(&capture_arg(&args, 2, "fx_review"), frames);
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-interior") {
         return raymarch_showcase::run_interior(&capture_arg(&args, 2, "raymarch_interior"));
     }
