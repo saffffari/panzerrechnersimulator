@@ -420,4 +420,7 @@ lists every named approximation of this model.
   hand's limit, the loader taking, throwing and dropping chips, the field repair working the
   lodged round out on foot, and a 152 mm BR-540 burst forward of the firewall against closed
   lids; stills and a receipt with PASS/FAIL checks.
+- Play cost seen in the owner's demo: stopped-round solves of 139 and 120 ms, and one of 3.6 s
+  while the machine was busy with other work (the update waited 2.9 s). Deferred solves now use
+  half the threads (at most 6) and the barrier backs off to short sleeps; not yet re-measured.
 - Not verified on the GPU yet: queued under the shared GPU lock.

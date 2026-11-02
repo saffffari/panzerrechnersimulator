@@ -757,6 +757,12 @@ impl Consts {
 
 /// A sense-reversing spin barrier (the passes are microseconds long; a parking barrier would
 /// cost more than the work). Spins briefly, then yields.
+/// Barrier back-off: spins, then yields, then sleeps of this many microseconds (named tuning;
+/// none of it changes a result: every phase still waits for every worker).
+const BARRIER_SPINS: u32 = 2000;
+const BARRIER_YIELDS: u32 = 64;
+const BARRIER_SLEEP_US: u64 = 50;
+
 struct SpinBarrier {
     count: std::sync::atomic::AtomicUsize,
     generation: std::sync::atomic::AtomicUsize,
@@ -776,10 +782,20 @@ impl SpinBarrier {
             self.count.store(0, Relaxed);
             self.generation.fetch_add(1, Release);
         } else {
+            // Spin (a phase's work is tens of microseconds), then yield, then sleep: on a machine
+            // busy with other work a descheduled worker holds every other one at the barrier,
+            // and spinning or yielding threads keep it off the cores. A play-time solve was
+            // measured 25 times slower (3.6 s) under that contention with spin-and-yield alone.
             let mut spins = 0u32;
             while self.generation.load(Acquire) == gen {
                 spins += 1;
-                if spins < 2000 { std::hint::spin_loop() } else { std::thread::yield_now() }
+                if spins < BARRIER_SPINS {
+                    std::hint::spin_loop()
+                } else if spins < BARRIER_SPINS + BARRIER_YIELDS {
+                    std::thread::yield_now()
+                } else {
+                    std::thread::sleep(std::time::Duration::from_micros(BARRIER_SLEEP_US));
+                }
             }
         }
     }
@@ -1202,6 +1218,13 @@ unsafe fn pass_gather(v: &View, c: &Consts, lo: usize, hi: usize, tip_s: f32, sp
 
 pub fn default_threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 12)
+}
+
+/// Workers for a solve that runs beside a live game (a deferred solve): half the machine's
+/// threads, at most 6, so the game's own threads keep their cores (named tuning; the result is
+/// bit-identical whatever the count).
+pub fn background_threads() -> usize {
+    (std::thread::available_parallelism().map_or(2, |n| n.get()) / 2).clamp(1, 6)
 }
 
 #[cfg(test)]

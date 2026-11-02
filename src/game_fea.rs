@@ -115,12 +115,18 @@ impl PlateJob {
     /// Solve on a worker thread. The solve is bit-exact whatever the thread count or slicing
     /// (`lattice` tests), so a job re-run after a load gives the same answer.
     pub(super) fn spawn(self) -> std::thread::JoinHandle<LatticeOutcome> {
-        std::thread::spawn(move || self.solve())
+        std::thread::spawn(move || self.solve_with(lattice::background_threads()))
     }
 
+    /// Solve now with every worker (the tick waits for it).
     pub(super) fn solve(self) -> LatticeOutcome {
+        self.solve_with(lattice::default_threads())
+    }
+
+    fn solve_with(self, threads: usize) -> LatticeOutcome {
         let started = std::time::Instant::now();
         let mut solver = lattice::Lattice::new(self.impact);
+        solver.set_threads(threads);
         solver.solve();
         let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
         lattice_outcome(&mut solver, self.origin, self.axes, wall_ms)

@@ -556,7 +556,13 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   late (logged), so the switch happens at the same simulation moment on every machine; until then
   the scar shows the empirical geometry, and both the renderer and the next round's resistance see
   the change together. No consumer sees a half-solved plate, nothing is skipped, and both presets
-  get the same result.
+  get the same result. Measured in the owner's demo (2026-11-02, Canyon run, this branch): three
+  stopped 45 mm rounds solved on the worker in 139, 120 and 3,595 ms; the slow one, with the
+  machine busy with other work, held the update 2.9 s at its commit. A deferred solve now runs on
+  half the machine's threads (at most 6) beside the game, and the solver's barrier backs off from
+  spinning to yielding to 50 µs sleeps, so a descheduled worker is not kept off the cores (both
+  named tuning; results are bit-identical whatever the thread count). Not yet re-measured under
+  contention. A perforation still holds its tick for its whole solve (about 0.2–0.45 s).
   Ricochets, shatters, HE and HEAT keep their existing scars. Other vehicles keep the empirical
   scar rules. The sub-calibre core of an APCR round goes into the plate; its carrier is not modelled.
 - **Scars from the lattice** (`ArmorField::record_measured`): aperture, back-face tear, petals,
