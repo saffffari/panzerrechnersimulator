@@ -23,6 +23,7 @@ and the current driver cruise setting.
 | E / LMB on the strip | Tear the printed order off the machine and read it in hand (free hands, like the map) |
 | X (strip in hand) | Fold the strip into the pocket |
 | O | Hold the pocketed strip up again |
+| E / LMB on the head's keys, then type, Enter / Esc | Key a line to the support detail (Stab) at the teleprinter: the line and the detail's answer print on the strip and hang there until torn off. The answer comes from the radio model (`KESSEL_RADIO_MODEL`, `ANTHROPIC_API_KEY`) or, with no key or network, from the offline responder that reads the same context back |
 | 1 / 2 | P08 / Panzerfaust on foot; 1 toggles the mounted P08 while aboard |
 | R | Reload personal weapon on foot; throw a carried spent case while aboard |
 | F / T | Handheld light / request ammunition type |

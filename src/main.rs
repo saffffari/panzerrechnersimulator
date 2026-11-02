@@ -13844,6 +13844,11 @@ impl WindowState {
                 self.renderer.draw_text("T: FUNK", 0.02, 0.86, 0.016, [0.6, 0.6, 0.58, 0.35], ui::Align::Left);
             }
         }
+        // The line to the support detail, typed at the teleprinter's keys: the entry only; the
+        // line and the answer print on the strip, not on the frame.
+        if let Some(entry) = self.game.stab_entry() {
+            self.renderer.draw_text(&format!("STAB > {entry}_"), 0.02, 0.86, 0.020, [1.0, 0.82, 0.46, 0.95], ui::Align::Left);
+        }
         if self.game.is_tank_editor_play() {
             // Developer workshop only, reached from the editor.
             tank_editor_acceptance::draw_workshop_status(&mut self.renderer);
@@ -15228,9 +15233,13 @@ impl ApplicationHandler for App {
                 native_input_audit::key(&format!("{code:?}"),down);
                 // Platoon radio line open: every key is text (or Enter/Escape/Backspace) until it
                 // closes; the driver's level-triggered keys are released so the hull does not creep.
-                if matches!(state.state, AppState::Playing) && state.game.platoon_typing() {
+                if matches!(state.state, AppState::Playing) && (state.game.platoon_typing() || state.game.stab_typing()) {
                     if down {
-                        state.game.platoon_radio_key(code, text.as_deref());
+                        if state.game.stab_typing() {
+                            state.game.stab_radio_key(code, text.as_deref());
+                        } else {
+                            state.game.platoon_radio_key(code, text.as_deref());
+                        }
                     }
                     self.keys = Keys::default();
                     return;

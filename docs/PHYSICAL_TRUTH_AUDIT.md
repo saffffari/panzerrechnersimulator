@@ -2754,4 +2754,9 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   the bank's switch recordings at -14 dB per line, not a teleprinter recording.
 - **The ink is albedo**, repainted only when a line is added, under the cabin's and the camp's
   real light; the strip in hand is a view-local raster-only object like the held map.
+- **The line to Stab is words, not simulation** (`Game::stab_transmit`, `radio_llm::submit_stab`):
+  the model path and the offline responder both receive only the simulation's own context
+  (order, beat, stock, notice, camp, position, clock, weather) and return text that prints on
+  the strip; nothing they say changes the simulation, spawns, supplies or alerts anything.
+  The platoon radio's boundary (`docs/PLATOON_MODE.md`) applies unchanged.
 

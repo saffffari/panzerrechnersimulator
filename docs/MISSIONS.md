@@ -181,7 +181,12 @@ tears it off into the hands, X folds it into the pocket, O holds it up again. No
 drawn over the world any more (`MissionState::order_printed` folds the old sheet at once). M
 still rereads the order on the map, where the order's marks, the position estimate and the
 bearing line are pencilled onto the theatre sheet (`draw_expedition_map`), and the pocket
-compass carries the march bearing. The demo launcher's `--order N` accepts order N at the start;
+compass carries the march bearing. The head's keys (E while looking at them) open a typed line
+to the detail: Enter sends it, the line prints on the strip at once and the detail's answer
+prints under it when it comes, through the platoon radio's model path with a prompt of its own
+(`radio_llm::stab_system_prompt`, one reply, no order grammar) or, with no key or network, the
+offline responder (`parse_offline_stab`), which reads the open order, the beat, the stock
+lines, the theatre notice and the camp back by keyword. Both know only the simulation's context. The demo launcher's `--order N` accepts order N at the start;
 `--forward` stands the crewed Tiger on the approach road at the first beat, engine running, facing
 the site, a playtest fixture disclosed in the log (`debug_expedition_start_order`).
 

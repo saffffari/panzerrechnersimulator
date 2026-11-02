@@ -112,6 +112,16 @@ pub fn run(requested: &str) -> anyhow::Result<()> {
         guidance.marks.len() == 2 && guidance.marks[0].3 && guidance.bearing.is_some_and(|(_, to, _)| to.distance(site) < 1.0),
         json!({"marks": guidance.marks.len(), "bearing": guidance.bearing.map(|(_, _, deg)| deg), "slip": guidance.slip}));
     still(&device, &queue, &g, &mut r, &format!("{prefix}_order_at_turn.png"))?;
+    // The machine at the commander's left: a line keyed to the detail prints on the strip
+    // (offline responder unless a key is set), the head turned to it for the still.
+    let keyed = g.stab_transmit("Stab, Elster. What is my fuel and ammunition? Over.").is_some();
+    step(&mut g, &mut r, 4.0);
+    check("a line keyed to the detail prints on the turret's strip with an answer",
+        keyed && g.order_strip_active() && g.order_print_phase() != crate::game::order_printer::Phase::Idle,
+        json!({"print": format!("{:?}", g.order_print_phase())}));
+    g.debug_look_at_order_machine();
+    step(&mut g, &mut r, 0.2);
+    still(&device, &queue, &g, &mut r, &format!("{prefix}_machine.png"))?;
 
     // Fixture: the yard's finite garrison marked dead (no shot fired here), the Tiger stood on
     // the yard for the theatre's own hold clock.

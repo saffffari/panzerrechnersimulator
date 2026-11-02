@@ -127,7 +127,7 @@ mod hand_compass;
 #[path = "hand_map.rs"]
 mod hand_map;
 #[path = "order_printer.rs"]
-mod order_printer;
+pub mod order_printer;
 #[path = "repair_manual_game.rs"]
 mod repair_manual_game;
 #[path = "hatch_control.rs"]
@@ -9557,6 +9557,8 @@ pub struct Game {
     enigma_dressing: Option<crate::tank_dressing::Prop>,
     /// The written order's teleprinter and strip (src/order_printer.rs).
     order_printer: order_printer::Printer,
+    /// The support detail's line, opened on first use (src/radio_llm.rs, `submit_stab`).
+    stab_net: Option<crate::radio_llm::RadioLlm>,
     fx: Fx,
     /// Host-authoritative cannon shells. Stable IDs are never reused during a Game lifetime;
     /// presentation pools may drop/replace a tracer without changing this simulation pool.
@@ -13994,6 +13996,7 @@ impl Game {
             tiger_dressing,
             enigma_dressing,
             order_printer: Default::default(),
+            stab_net: None,
             fx: Fx::default(),
             projectiles: Vec::with_capacity(256),
             projectile_scratch: Vec::with_capacity(256),

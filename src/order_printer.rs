@@ -1,10 +1,13 @@
-//! The written order as a physical print. The support detail's teleprinter head sits in the
-//! turret at the commander's left, under the roof above the traverse gearbox, and the detail's
-//! own machine (the reviewed Enigma, with a head beside it) stands on the camp's orders table.
-//! An order accepted on the map prints on the strip line by line, at whichever machine the
-//! reader is nearer; the reader tears the strip off (E or the action button while looking at
-//! it), reads it in hand, folds it into a pocket with X and holds it up again with O. The flat
-//! order slip that used to hang over the world is gone: the paper is the only sheet.
+//! The written order as a physical print, and the commander's line to the support detail. The
+//! detail's teleprinter head sits in the turret at the commander's left, under the roof above
+//! the traverse gearbox, and the detail's own machine (the reviewed Enigma, with a head beside
+//! it) stands on the camp's orders table. An order accepted on the map prints on the strip line
+//! by line, at whichever machine the reader is nearer; the reader tears the strip off (E or the
+//! action button while looking at it), reads it in hand, folds it into a pocket with X and holds
+//! it up again with O. The head's keys (E while looking at them) open a typed line to the detail
+//! ("Stab"): Enter sends it, the line and the detail's answer print on the strip and hang there
+//! until torn off. The flat order slip that used to hang over the world is gone: the paper is
+//! the only sheet.
 //!
 //! Geometry (turret-local metres): the head's box was chosen on a 5 cm occupancy map of the
 //! baked turret mesh (2 November 2026): the traverse gearbox and flywheel (source parts
@@ -36,6 +39,7 @@ const REACH_M: f32 = 2.2;
 const HOLD_DISTANCE: f32 = 0.165;
 /// The camp's machine prints when the reader is on foot within this distance of the table.
 const CAMP_PRINT_RADIUS_M: f32 = 40.0;
+const ENTRY_MAX_CHARS: usize = 120;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Site {
@@ -44,18 +48,23 @@ pub enum Site {
     Camp,
 }
 
+/// The strip on the machine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phase {
-    /// Nothing printed; the strip is in the machine.
+    /// Nothing printed; the paper is in the machine.
     #[default]
     Idle,
-    /// Lines coming out at the site.
+    /// Lines coming out.
     Printing,
     /// All lines out; the strip hangs from the slot until torn off.
     Hanging,
-    /// Torn off and in the reader's hands.
+}
+
+/// The strip in the reader's keeping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Hand {
+    #[default]
     Held,
-    /// Folded into the pocket; O holds it up again.
     Pocket,
 }
 
@@ -67,22 +76,46 @@ pub enum Event {
     Finished,
 }
 
+/// One printed paper: what it says and how much of it is out.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Printer {
+pub struct Strip {
     pub title: String,
     pub heading: String,
     pub lines: Vec<String>,
     pub printed: usize,
-    pub clock: f32,
+}
+
+impl Strip {
+    /// Lines on the paper so far, the title and the small print counted as the first two.
+    pub fn lines_out(&self) -> usize {
+        self.printed.min(self.lines.len() + 2)
+    }
+    pub fn complete(&self) -> bool {
+        self.printed >= self.lines.len() + 2
+    }
+    pub fn ink(&self) -> crate::renderer::ReceiptInk<'_> {
+        crate::renderer::ReceiptInk { title: &self.title, heading: &self.heading, lines: &self.lines, printed: self.lines_out() }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Printer {
+    pub machine: Strip,
     pub phase: Phase,
+    pub clock: f32,
     pub at: Site,
+    pub hand: Option<Strip>,
+    pub hand_phase: Hand,
+    /// The typed line to the detail: open at the head's keys, sent with Enter.
+    pub typing: bool,
+    pub entry: String,
     /// The camp's machine and head, cloned from the turret's when the camp is installed.
     #[serde(skip)]
     pub camp_slots: Option<[usize; 2]>,
 }
 
-/// The print lines of an order: the title, the small print, then the order's lines wrapped to
-/// the strip, in the teleprinter's capitals, with a rule between paragraphs.
+/// The print lines of an order: the order's lines wrapped to the strip in the teleprinter's
+/// capitals, a blank between paragraphs, the first beat last.
 pub fn print_lines(order: &[String], first_beat: &str) -> Vec<String> {
     let mut out = Vec::new();
     for paragraph in order {
@@ -104,14 +137,27 @@ pub fn print_lines(order: &[String], first_beat: &str) -> Vec<String> {
 }
 
 impl Printer {
+    /// A new paper on the machine (whatever hung there is lost, as a strip left in a machine is).
     pub fn begin(&mut self, title: &str, heading: &str, order: &[String], first_beat: &str, at: Site) {
-        self.title = title.to_uppercase();
-        self.heading = heading.to_uppercase();
-        self.lines = print_lines(order, first_beat);
-        self.printed = 0;
+        self.machine = Strip { title: title.to_uppercase(), heading: heading.to_uppercase(), lines: print_lines(order, first_beat), printed: 0 };
         self.clock = 0.0;
         self.phase = Phase::Printing;
         self.at = at;
+    }
+    /// More lines onto the paper in the machine: the print resumes where it stopped.
+    pub fn append(&mut self, paragraphs: &[String]) {
+        if self.phase == Phase::Idle {
+            return;
+        }
+        let mut more = print_lines(paragraphs, "");
+        if !self.machine.lines.is_empty() && !more.is_empty() {
+            self.machine.lines.push(String::new());
+        }
+        self.machine.lines.append(&mut more);
+        self.machine.lines.truncate(MAX_LINES);
+        if !self.machine.complete() {
+            self.phase = Phase::Printing;
+        }
     }
     pub fn tick(&mut self, dt: f32) -> Event {
         if self.phase != Phase::Printing {
@@ -122,56 +168,51 @@ impl Printer {
             return Event::None;
         }
         self.clock -= LINE_SECONDS;
-        self.printed += 1;
-        if self.printed >= self.lines.len() + 2 {
-            self.printed = self.lines.len() + 2;
+        self.machine.printed += 1;
+        if self.machine.complete() {
+            self.machine.printed = self.machine.lines.len() + 2;
             self.phase = Phase::Hanging;
             return Event::Finished;
         }
         Event::LinePrinted
     }
-    /// Lines on the paper so far, the title and the small print counted as the first two.
-    pub fn lines_out(&self) -> usize {
-        self.printed.min(self.lines.len() + 2)
-    }
     /// How much of the strip has left the slot, 0 to 1.
     pub fn emerged(&self) -> f32 {
         match self.phase {
             Phase::Idle => 0.0,
-            Phase::Printing => (self.lines_out() as f32 + 1.0) / (self.lines.len() as f32 + 3.0),
-            _ => 1.0,
+            Phase::Printing => (self.machine.lines_out() as f32 + 1.0) / (self.machine.lines.len() as f32 + 3.0),
+            Phase::Hanging => 1.0,
         }
     }
+    /// The hanging strip into the hands; a strip already in the pocket is thrown away for it.
     pub fn tear(&mut self) -> bool {
         if self.phase != Phase::Hanging {
             return false;
         }
-        self.phase = Phase::Held;
+        self.hand = Some(std::mem::take(&mut self.machine));
+        self.hand_phase = Hand::Held;
+        self.phase = Phase::Idle;
         true
     }
     pub fn stow(&mut self) -> bool {
-        if self.phase != Phase::Held {
+        if !self.held() {
             return false;
         }
-        self.phase = Phase::Pocket;
+        self.hand_phase = Hand::Pocket;
         true
     }
     pub fn hold_up(&mut self) -> bool {
-        if self.phase != Phase::Pocket {
+        if self.hand.is_none() || self.hand_phase != Hand::Pocket {
             return false;
         }
-        self.phase = Phase::Held;
+        self.hand_phase = Hand::Held;
         true
     }
     pub fn held(&self) -> bool {
-        self.phase == Phase::Held
+        self.hand.is_some() && self.hand_phase == Hand::Held
     }
     pub fn on_machine(&self) -> bool {
         matches!(self.phase, Phase::Printing | Phase::Hanging)
-    }
-    /// The ink the strip carries now.
-    pub fn ink(&self) -> crate::renderer::ReceiptInk<'_> {
-        crate::renderer::ReceiptInk { title: &self.title, heading: &self.heading, lines: &self.lines, printed: self.lines_out() }
     }
 }
 
@@ -189,7 +230,7 @@ pub fn head_mesh() -> CpuMesh {
     add(&mut out, crate::prims::box_mesh(
         Vec3::new(HEAD_MIN.x - 0.004, SLOT.y - 0.012, SLOT.z - STRIP_WIDTH * 0.5 - 0.008),
         Vec3::new(HEAD_MIN.x, SLOT.y + 0.012, SLOT.z + STRIP_WIDTH * 0.5 + 0.008), [38, 38, 36]));
-    // Four keys below the slot: the commander's line to the detail (O / typed line, later).
+    // Four keys below the slot: the commander's line to the detail.
     for n in 0..4 {
         let z = SLOT.z - 0.045 + n as f32 * 0.03;
         add(&mut out, crate::prims::box_mesh(
@@ -261,6 +302,13 @@ fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     Some(t0)
 }
 
+/// What the hands find at a machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pick {
+    Strip,
+    Keys,
+}
+
 impl Game {
     /// The machine the reader is at: aboard, the turret's; on foot near the camp's table, the
     /// camp's; otherwise the turret's (the print waits in the Tiger).
@@ -284,24 +332,48 @@ impl Game {
         m.order_printed();
         let at = self.order_print_site();
         self.order_printer.begin(&title, &heading, &order, &first, at);
-        println!("[order] printing {} lines at the {:?} machine", self.order_printer.lines.len() + 2, at);
+        println!("[order] printing {} lines at the {:?} machine", self.order_printer.machine.lines.len() + 2, at);
     }
-    /// The strip's box in world space, for the hands.
-    fn order_strip_box(&self) -> Option<(Mat4, Vec3, Vec3)> {
-        if !self.order_printer.on_machine() {
+    /// The frame of the machine the print is at.
+    fn order_machine_frame(&self, at: Site) -> Mat4 {
+        match at {
+            Site::Turret => self.player.turret_model(),
+            Site::Camp => self.camp_machine_root().unwrap_or_else(|| self.player.turret_model()),
+        }
+    }
+    /// The machine in reach of the hands: the turret's when aboard, the camp's when on foot by it.
+    fn machine_in_reach(&self) -> Option<Site> {
+        match self.mode {
+            Mode::Tank => Some(Site::Turret),
+            Mode::Foot => {
+                let anchors = self.installed_camp_anchors()?;
+                (self.foot.pos.distance(anchors.orders) < 6.0).then_some(Site::Camp)
+            }
+        }
+    }
+    /// What the crosshair rests on at the machine in reach: the hanging strip, or the keys.
+    fn order_machine_pick(&self, eye: Vec3, dir: Vec3) -> Option<(Site, Pick)> {
+        let site = self.machine_in_reach()?;
+        let inv = self.order_machine_frame(site).inverse();
+        let o = inv.transform_point3(eye);
+        let d = inv.transform_vector3(dir).normalize_or_zero();
+        let mut best: Option<(f32, Pick)> = None;
+        if self.order_printer.on_machine() && self.order_printer.at == site {
+            let emerged = self.order_printer.emerged();
+            let min = Vec3::new(SLOT.x - 0.012, SLOT.y - STRIP_LENGTH * emerged, SLOT.z - STRIP_WIDTH * 0.5);
+            let max = Vec3::new(SLOT.x + 0.004, SLOT.y + 0.005, SLOT.z + STRIP_WIDTH * 0.5);
+            if let Some(t) = ray_box(o, d, min, max) { best = Some((t, Pick::Strip)); }
+        }
+        let keys_min = Vec3::new(HEAD_MIN.x - 0.012, HEAD_MIN.y, HEAD_MIN.z);
+        let keys_max = Vec3::new(HEAD_MAX.x, HEAD_MAX.y, HEAD_MAX.z);
+        if let Some(t) = ray_box(o, d, keys_min, keys_max) {
+            if best.is_none_or(|b| t < b.0) { best = Some((t, Pick::Keys)); }
+        }
+        let (t, pick) = best?;
+        if t > REACH_M || !self.equipment_path_clear(eye, eye + dir * (t - 0.02), 0.02) {
             return None;
         }
-        let emerged = self.order_printer.emerged();
-        let (model, min, max) = match self.order_printer.at {
-            Site::Turret => (self.player.turret_model(), Vec3::new(SLOT.x - 0.012, SLOT.y - STRIP_LENGTH * emerged, SLOT.z - STRIP_WIDTH * 0.5),
-                Vec3::new(SLOT.x + 0.004, SLOT.y + 0.005, SLOT.z + STRIP_WIDTH * 0.5)),
-            Site::Camp => {
-                let root = self.camp_machine_root()?;
-                (root, Vec3::new(SLOT.x - 0.012, SLOT.y - STRIP_LENGTH * emerged, SLOT.z - STRIP_WIDTH * 0.5),
-                    Vec3::new(SLOT.x + 0.004, SLOT.y + 0.005, SLOT.z + STRIP_WIDTH * 0.5))
-            }
-        };
-        Some((model, min, max))
+        Some((site, pick))
     }
     /// The camp machine's frame: the head's turret-local box re-based onto the orders table so
     /// the slot stands at a reader's chest height, facing the approach from the camp's spawn.
@@ -326,30 +398,45 @@ impl Game {
         top.is_finite().then_some(top)
     }
     pub fn order_printer_hover(&self, eye: Vec3, dir: Vec3) -> Option<String> {
-        let (model, min, max) = self.order_strip_box()?;
-        let inv = model.inverse();
-        let o = inv.transform_point3(eye);
-        let d = inv.transform_vector3(dir).normalize_or_zero();
-        let t = ray_box(o, d, min, max)?;
-        if t > REACH_M || !self.equipment_path_clear(eye, eye + dir * (t - 0.02), 0.02) {
-            return None;
+        if self.order_printer.typing {
+            return Some("LINE TO STAB  ·  ENTER SENDS, ESC CANCELS".into());
         }
-        Some(match self.order_printer.phase {
-            Phase::Printing => "ORDER PRINTING".into(),
-            _ => "TEAR OFF THE ORDER".into(),
+        let (_, pick) = self.order_machine_pick(eye, dir)?;
+        Some(match (pick, self.order_printer.phase) {
+            (Pick::Strip, Phase::Printing) => "ORDER PRINTING".into(),
+            (Pick::Strip, _) => "TEAR OFF THE STRIP".into(),
+            (Pick::Keys, _) => "KEY A LINE TO STAB".into(),
         })
     }
     pub fn order_printer_interact(&mut self, eye: Vec3, dir: Vec3) -> bool {
-        if self.order_printer_hover(eye, dir).is_none() || self.order_printer.phase != Phase::Hanging {
-            return false;
+        if self.order_printer.typing {
+            return true;
         }
-        if self.carry_mesh.is_some() || self.held_item.is_some() || self.carried_tools() || self.map_held || self.repair_manual.held {
-            return false;
-        }
-        if self.order_printer.tear() {
-            let at = self.hands_pos();
-            self.recorded(crate::audio::RecordedFx::PaperPage, -1.0, at);
-            println!("[order] torn off and in hand");
+        let Some((_, pick)) = self.order_machine_pick(eye, dir) else { return false };
+        match pick {
+            Pick::Strip => {
+                if self.order_printer.phase != Phase::Hanging {
+                    return true;
+                }
+                if self.carry_mesh.is_some() || self.held_item.is_some() || self.carried_tools() || self.map_held || self.repair_manual.held {
+                    return true;
+                }
+                if self.order_printer.tear() {
+                    let at = self.hands_pos();
+                    self.recorded(crate::audio::RecordedFx::PaperPage, -1.0, at);
+                    println!("[order] torn off and in hand");
+                }
+            }
+            Pick::Keys => {
+                if !self.controlled_soldier_alive() {
+                    return true;
+                }
+                self.order_printer.typing = true;
+                self.order_printer.entry.clear();
+                let at = self.hands_pos();
+                self.recorded(crate::audio::RecordedFx::SwitchButton, -4.0, at);
+                println!("[order] line to Stab open");
+            }
         }
         true
     }
@@ -386,36 +473,151 @@ impl Game {
     pub fn order_print_phase(&self) -> Phase {
         self.order_printer.phase
     }
+    /// Harness fixture (disclosed where used): the commander's head turned to the machine at
+    /// his left so a still shows the head and the strip.
+    pub fn debug_look_at_order_machine(&mut self) {
+        let eye = self.station_eye(Station::Commander);
+        let target = self.player.turret_model().transform_point3(SLOT);
+        let d = (target - eye).normalize_or_zero();
+        self.head_yaw = d.x.atan2(-d.z);
+        self.head_pitch = d.y.asin();
+        println!("[order] STAGED look at the machine: yaw {:.2} pitch {:.2}", self.head_yaw, self.head_pitch);
+    }
     /// Harness fixture (disclosed where used): the print finished at once and the strip torn
     /// off into the hands, as the reader would after waiting for it.
     pub fn debug_tear_order_strip(&mut self) -> bool {
         if self.order_printer.phase == Phase::Printing {
-            self.order_printer.printed = self.order_printer.lines.len() + 2;
+            self.order_printer.machine.printed = self.order_printer.machine.lines.len() + 2;
             self.order_printer.phase = Phase::Hanging;
         }
         self.order_printer.tear()
     }
+
+    // --- the typed line to the detail ------------------------------------------------------
+
+    /// The line to Stab is open: keys go to text, not to the driver.
+    pub fn stab_typing(&self) -> bool {
+        self.order_printer.typing
+    }
+    /// The entry under the cursor while the line is open.
+    pub fn stab_entry(&self) -> Option<&str> {
+        self.order_printer.typing.then_some(self.order_printer.entry.as_str())
+    }
+    /// Keyboard routing while the line is open. Enter sends; Escape closes the line.
+    pub fn stab_radio_key(&mut self, code: winit::keyboard::KeyCode, text: Option<&str>) -> bool {
+        use winit::keyboard::KeyCode;
+        if !self.order_printer.typing {
+            return false;
+        }
+        match code {
+            KeyCode::Escape => {
+                self.order_printer.typing = false;
+                self.order_printer.entry.clear();
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                let line = std::mem::take(&mut self.order_printer.entry);
+                self.order_printer.typing = false;
+                self.stab_transmit(&line);
+            }
+            KeyCode::Backspace => {
+                self.order_printer.entry.pop();
+            }
+            _ => {
+                if let Some(t) = text {
+                    for ch in t.chars() {
+                        if !ch.is_control() && self.order_printer.entry.chars().count() < ENTRY_MAX_CHARS {
+                            self.order_printer.entry.push(ch);
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+    /// What the detail's radio knows when the commander keys it: truth from the simulation.
+    pub fn stab_radio_context(&self) -> crate::radio_llm::StabContext {
+        let callsign = self.mission.as_ref().map(|m| m.mission.callsign.clone()).filter(|c| !c.is_empty()).unwrap_or_else(|| "Elster".into());
+        let (order_title, order_lines, beat, beats_done, beats_total) = match self.mission.as_ref() {
+            Some(m) => {
+                let report = m.report();
+                let beats = report["beats"].as_array().cloned().unwrap_or_default();
+                let done = beats.iter().filter(|b| b["status"] == "Done").count();
+                let current = self.mission_current_beat().map(|(n, title)| format!("{n}  {title}"));
+                (Some(m.mission.title.clone()), m.mission.order.clone(), current, done, beats.len())
+            }
+            None => (None, Vec::new(), None, 0, 0),
+        };
+        let stock_lines = self.expedition_stock().map(|s| s.lines().to_vec()).unwrap_or_default();
+        let site_notice = self.theatre.as_ref().map(|t| t.notice.clone()).unwrap_or_default();
+        let camp = self.expedition_state().map(|e| {
+            let p = e.camp.position;
+            format!("site {} at ({:.0}, {:.0})", e.camp.site.0, p.x, p.z)
+        }).unwrap_or_else(|| "none".into());
+        let p = if self.mode == Mode::Foot { self.foot.pos } else { self.player.pos };
+        crate::radio_llm::StabContext {
+            callsign,
+            order_title,
+            order_lines,
+            beat,
+            beats_done,
+            beats_total,
+            stock_lines,
+            site_notice,
+            camp,
+            position: format!("({:.0}, {:.0}), {}", p.x, p.z, if self.mode == Mode::Foot { "on foot" } else { "aboard" }),
+            clock: if self.night { "night".into() } else { "day".into() },
+            weather: if self.darkness > 0.5 { "dark".into() } else { "winter overcast".into() },
+        }
+    }
+    /// Key the detail: the line prints on the strip at once; the answer prints when it comes.
+    pub fn stab_transmit(&mut self, text: &str) -> Option<u64> {
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let ctx = self.stab_radio_context();
+        let callsign = ctx.callsign.clone();
+        let net = self.stab_net.get_or_insert_with(crate::radio_llm::RadioLlm::new);
+        let id = net.submit_stab(text, ctx);
+        let at = self.order_print_site();
+        let line = format!("{callsign}: {text}");
+        if self.order_printer.on_machine() && self.order_printer.at == at && self.order_printer.machine.title == "FUNKSPRUCH" {
+            self.order_printer.append(&[line]);
+        } else {
+            self.order_printer.begin("Funkspruch", &format!("{callsign} an Stab · Fernschreiber"), &[line], "", at);
+        }
+        println!("[order] #{id} line to Stab \"{text}\"");
+        Some(id)
+    }
     pub(super) fn tick_order_printer(&mut self, dt: f32) {
-        if !self.controlled_soldier_alive() && self.order_printer.held() {
-            self.order_printer.stow();
+        if !self.controlled_soldier_alive() {
+            if self.order_printer.held() { self.order_printer.stow(); }
+            self.order_printer.typing = false;
+        }
+        // The detail's answers, printed as they come.
+        let replies: Vec<(u64, String, String)> = self.stab_net.as_mut().map(|net| net.poll().into_iter()
+            .flat_map(|r| r.replies.into_iter().map(move |reply| (r.request_id, reply.callsign, reply.text))).collect()).unwrap_or_default();
+        for (id, callsign, text) in replies {
+            println!("[order] #{id} {callsign} ▸ {text}");
+            let line = format!("{callsign}: {text}");
+            if self.order_printer.on_machine() {
+                self.order_printer.append(&[line]);
+            } else {
+                let at = self.order_print_site();
+                self.order_printer.begin("Funkspruch", "Stab an Elster · Fernschreiber", &[line], "", at);
+            }
         }
         match self.order_printer.tick(dt) {
             Event::LinePrinted => {
-                let at = self.order_machine_slot_world();
+                let at = self.order_machine_frame(self.order_printer.at).transform_point3(SLOT);
                 self.recorded(crate::audio::RecordedFx::SwitchButton, -14.0, at);
             }
             Event::Finished => {
-                let at = self.order_machine_slot_world();
+                let at = self.order_machine_frame(self.order_printer.at).transform_point3(SLOT);
                 self.recorded(crate::audio::RecordedFx::SwitchButton, -8.0, at);
                 println!("[order] print complete; the strip hangs at the {:?} machine", self.order_printer.at);
             }
             Event::None => {}
-        }
-    }
-    fn order_machine_slot_world(&self) -> Vec3 {
-        match self.order_printer.at {
-            Site::Turret => self.player.turret_model().transform_point3(SLOT),
-            Site::Camp => self.camp_machine_root().map_or(self.player.turret_model().transform_point3(SLOT), |m| m.transform_point3(SLOT)),
         }
     }
     /// Poses: the head and strip in the turret, the camp's machine on its table, the strip in
@@ -445,11 +647,7 @@ impl Game {
         let on_machine = self.order_printer.on_machine();
         r.set_visible(self.slots.order_strip, on_machine);
         if on_machine {
-            let frame = match self.order_printer.at {
-                Site::Turret => tm,
-                Site::Camp => self.camp_machine_root().unwrap_or(tm),
-            };
-            r.set_model(self.slots.order_strip, strip_model(frame, self.order_printer.emerged()));
+            r.set_model(self.slots.order_strip, strip_model(self.order_machine_frame(self.order_printer.at), self.order_printer.emerged()));
             r.set_emissive(self.slots.order_strip, 0.0);
         }
         let held = self.order_printer.held() && self.controlled_soldier_alive();
@@ -466,13 +664,14 @@ impl Game {
             r.set_visible(self.slots.binocular_prop, false);
         }
     }
-    /// The strip's ink, repainted only when a line is added: before the scene, like the map.
+    /// The strips' ink, repainted only when a line is added: before the scene, like the map.
     pub fn prepare_order_receipt(&mut self, renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.order_printer.phase == Phase::Idle {
+        let machine = self.order_printer.on_machine().then(|| self.order_printer.machine.ink());
+        let hand = self.order_printer.hand.as_ref().map(Strip::ink);
+        if machine.is_none() && hand.is_none() {
             return;
         }
-        let ink = self.order_printer.ink();
-        renderer.render_order_receipt_ink(device, queue, [self.slots.order_strip, self.slots.order_receipt], &ink);
+        renderer.render_order_strip_ink(device, queue, [self.slots.order_strip, self.slots.order_receipt], [machine, hand]);
     }
 }
 
@@ -485,8 +684,8 @@ mod tests {
         let mut p = Printer::default();
         p.begin("Order 10: Hagen ammunition yard", "Unterstützungstrupp", &["Elster: clear the yard, then load what you can carry.".into(), "Report at the turn.".into()], "1  The approach", Site::Turret);
         assert_eq!(p.phase, Phase::Printing);
-        assert!(p.lines.iter().all(|l| l.chars().count() <= CHARS_PER_LINE && l == &l.to_uppercase()));
-        assert_eq!(p.emerged(), 1.0 / (p.lines.len() as f32 + 3.0));
+        assert!(p.machine.lines.iter().all(|l| l.chars().count() <= CHARS_PER_LINE && l == &l.to_uppercase()));
+        assert_eq!(p.emerged(), 1.0 / (p.machine.lines.len() as f32 + 3.0));
         assert!(!p.tear(), "nothing to tear while printing");
         let mut events = 0;
         let mut finished = false;
@@ -497,13 +696,32 @@ mod tests {
                 Event::None => {}
             }
         }
-        assert!(finished && events == p.lines.len() + 1, "{events} line events for {} lines", p.lines.len());
+        assert!(finished && events == p.machine.lines.len() + 1, "{events} line events for {} lines", p.machine.lines.len());
         assert_eq!(p.phase, Phase::Hanging);
         assert_eq!(p.emerged(), 1.0);
         assert!(p.tear() && p.held() && !p.on_machine());
+        assert!(p.machine.lines.is_empty(), "the machine is empty after the tear");
         assert!(!p.hold_up(), "already in hand");
-        assert!(p.stow() && p.phase == Phase::Pocket);
+        assert!(p.stow() && p.hand_phase == Hand::Pocket && !p.held());
         assert!(p.hold_up() && p.held());
+    }
+
+    #[test]
+    fn a_reply_appends_to_the_hanging_line_and_the_print_resumes() {
+        let mut p = Printer::default();
+        p.begin("Funkspruch", "Elster an Stab", &["ELSTER: WHERE IS THE CAMP".into()], "", Site::Camp);
+        while !matches!(p.tick(0.05), Event::Finished) {}
+        assert_eq!(p.phase, Phase::Hanging);
+        let before = p.machine.lines.len();
+        p.append(&["Stab: Elster, Stab. The camp is at site 0. Out.".into()]);
+        assert_eq!(p.phase, Phase::Printing);
+        assert!(p.machine.lines.len() > before + 1, "a blank and the reply's lines");
+        assert!(p.emerged() < 1.0);
+        while !matches!(p.tick(0.05), Event::Finished) {}
+        assert_eq!(p.phase, Phase::Hanging);
+        assert!(p.tear());
+        p.append(&["nothing".into()]);
+        assert_eq!(p.phase, Phase::Idle, "an empty machine takes no appended lines");
     }
 
     #[test]
