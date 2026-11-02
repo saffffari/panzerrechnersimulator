@@ -196,27 +196,43 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     if !crate::gpu_profile::requested() {
         println!("[fx-review] KESSEL_GPU_PROFILE is not 1: part 3 reports wall time only");
     }
-    let manifest = crate::canyon::manifest_path();
-    act_manifest::select_runtime_manifest(Some(manifest.clone()))?;
+    // `KESSEL_FX_REVIEW_WORLD=arena`: the act-0 training arena (a 1 km square of snow, cover and
+    // pines) instead of the Canyon act, whose 30,000 destructibles and sky occluder take a minute
+    // of CPU to build before the first frame. The fixtures are the same tanks at the same
+    // offsets from the arena's spawn; the receipt names the world.
+    let arena = std::env::var("KESSEL_FX_REVIEW_WORLD").as_deref() == Ok("arena");
+    let manifest = if arena { "arena (world::act(0))".to_owned() } else {
+        let path = crate::canyon::manifest_path();
+        act_manifest::select_runtime_manifest(Some(path.clone()))?;
+        path.display().to_string()
+    };
+    let (tiger, wreck) = if arena {
+        // 220 m up the field from the spawn, past the seeded infantry group that stands at it.
+        let site = world::act(0).spawn + Vec2::new(0.0, 220.0);
+        (site, site + (WRECK - TIGER))
+    } else { (TIGER, WRECK) };
     graphics::set_active_preset(graphics::GraphicsPreset::High);
     let instance = crate::create_instance();
     let adapter = crate::request_adapter(&instance, None);
     let (device, queue) = crate::request_device(&adapter);
-    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(1))?;
+    let built = std::time::Instant::now();
+    let (mut r, mut g) = if arena { Game::build_act(&device, &queue, false, &world::act(0))? }
+        else { Game::build_playtest_act(&device, &queue, false, &world::act(1))? };
+    println!("[fx-review] world built in {:.1} s ({manifest})", built.elapsed().as_secs_f64());
     let mut stills = Stills { device: &device, queue: &queue, prefix: prefix.to_owned(), shots: Vec::new() };
     g.mute_audio();
     g.debug_banish_enemies();
     g.debug_hold_enemy_fire();
     g.targets_only = true;
-    g.debug_place_tiger(TIGER, 0.0);
-    let wreck = g.debug_stage_burning_t34(WRECK.x, WRECK.y).context("fixture needs a T-34")?;
+    g.debug_place_tiger(tiger, 0.0);
+    let burning = g.debug_stage_burning_t34(wreck.x, wreck.y).context("fixture needs a T-34")?;
     let idle = TankInput::default();
 
     // Part 1: the burning wreck, eight seconds into its fire, at dusk and at night.
     r.set_weather_override(Some(0.0));
     clock(&mut r, "1942-12-21T12:40:00Z")?;
     step(&mut g, &mut r, 480, &idle);
-    let origin = g.enemies[wreck].pos;
+    let origin = g.enemies[burning].pos;
     let deck = origin + Vec3::Y * 1.8;
     if part("fire") {
         observe(&mut r, origin + Vec3::new(10.0, 1.7, -12.0), deck, 58.0);
@@ -253,7 +269,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // (heading 0); its left flank is -z.
     if part("strikes") {
         clock(&mut r, &part_clock("1942-12-21T19:30:00Z"))?;
-        let cold = g.debug_stage_cold_wreck(WRECK.x + 45.0, WRECK.y, 0.0).context("fixture needs a third T-34")?;
+        let cold = g.debug_stage_cold_wreck(wreck.x + 45.0, wreck.y, 0.0).context("fixture needs a third T-34")?;
         step(&mut g, &mut r, 30, &idle);
         let origin = g.enemies[cold].pos;
         let hull = origin + Vec3::Y * 1.1;
@@ -277,7 +293,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // The commander's post at night: the lamps and their glare, the game's own camera.
     if part("cabin") {
         clock(&mut r, "1942-12-21T19:30:00Z")?;
-        g.debug_place_tiger(TIGER, 0.0);
+        g.debug_place_tiger(tiger, 0.0);
         g.station = Station::Commander;
         g.commander_outside = false;
         step(&mut g, &mut r, 30, &idle);
@@ -289,7 +305,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // 60 m abeam, one on the glacis from 70 m ahead. Film mode films each; otherwise two stills.
     if part("tiger") {
         clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
-        g.debug_place_tiger(TIGER, 0.0);
+        g.debug_place_tiger(tiger, 0.0);
         step(&mut g, &mut r, 60, &idle);
         let forward = g.player.forward();
         let right = Vec3::new(-forward.z, 0.0, forward.x);
@@ -344,8 +360,8 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // Part 3: the gunner's frame, the Tiger facing the burning wreck 22 m off so the periscopes
     // and the TZF hold its fire grains, across a catastrophic kill 30 m ahead and right of it.
     clock(&mut r, &part_clock("1942-12-21T12:40:00Z"))?;
-    let heading = (WRECK - TIGER).to_angle();
-    g.debug_place_tiger(TIGER, std::f32::consts::FRAC_PI_2 - heading);
+    let heading = (wreck - tiger).to_angle();
+    g.debug_place_tiger(tiger, std::f32::consts::FRAC_PI_2 - heading);
     let forward = g.player.forward();
     let right = Vec3::new(-forward.z, 0.0, forward.x);
     let target_pos = g.player.pos + forward * 30.0 + right * 7.0;
