@@ -215,21 +215,26 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         g.set_cabin_lights(true);
         for _ in 0..3 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
         let noon = crate::celestial_sky::phase_instant(1, ClockPhase::Day);
-        for (name, station, instant, lamps, note) in [
-            ("interior_noon", Station::Loader, noon, true, "the loader's seat in the world, lamps on, noon"),
-            ("interior_night", Station::Loader, moon_night, true, "the loader's seat in the world, lamps on, the moonlit night"),
-            ("interior_noon_dark", Station::Loader, noon, false, "the loader's seat, lamps off, noon: the ports' daylight alone"),
-            ("gunner_noon", Station::Gunner, noon, true, "the gunner's sight at noon"),
-            ("gunner_night", Station::Gunner, moon_night, true, "the gunner's sight on the moonlit night"),
-            ("commander_noon", Station::Commander, noon, true, "the commander buttoned up at noon"),
-            ("commander_night", Station::Commander, moon_night, true, "the commander buttoned up on the moonlit night"),
+        for (name, station, instant, lamps, hatch, note) in [
+            ("interior_noon", Station::Loader, noon, true, false, "the loader's seat in the world, lamps on, noon"),
+            ("interior_night", Station::Loader, moon_night, true, false, "the loader's seat in the world, lamps on, the moonlit night"),
+            ("interior_noon_dark", Station::Loader, noon, false, false, "the loader's seat, lamps off, noon: the ports' daylight alone"),
+            ("interior_noon_hatch_dark", Station::Loader, noon, false, true, "the loader's seat, lamps off, the cupola's hatch open at noon"),
+            ("interior_noon_hatch", Station::Loader, noon, true, true, "the loader's seat, lamps on, the cupola's hatch open at noon"),
+            ("gunner_noon", Station::Gunner, noon, true, false, "the gunner's sight at noon"),
+            ("gunner_night", Station::Gunner, moon_night, true, false, "the gunner's sight on the moonlit night"),
+            ("commander_noon", Station::Commander, noon, true, false, "the commander buttoned up at noon"),
+            ("commander_night", Station::Commander, moon_night, true, false, "the commander buttoned up on the moonlit night"),
         ] {
             g.set_cabin_lights(lamps);
             // The cupola is reached from the walkable compartment (Game::jump_station).
             if station == Station::Commander { g.jump_station(Station::Loader); }
             g.jump_station(station);
             r.set_sky_clock(SkyClock::new(instant, site));
-            for _ in 0..3 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
+            // The cupola's lid swings over a couple of seconds (Game::update's hatch_target).
+            let settle = if g.hatch_open != hatch { 150 } else { 3 };
+            g.hatch_open = hatch;
+            for _ in 0..settle { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
             cap.take(&mut r, name, note)?;
         }
     }

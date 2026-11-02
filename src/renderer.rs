@@ -97,6 +97,11 @@ fn configured_palette_smooth() -> f32 {
     std::env::var("KESSEL_PALETTE_SMOOTH").ok().and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(0.0)
 }
+/// `KESSEL_CABIN_LOOK=pastel`: in the tinted look (mode 5) the cabin (the buttoned-up view)
+/// quantizes to the pastel palette itself; `plain` (the default) keeps the dithered colour there.
+fn configured_cabin_pastel() -> bool {
+    std::env::var("KESSEL_CABIN_LOOK").map(|v| v.trim().eq_ignore_ascii_case("pastel")).unwrap_or(false)
+}
 /// `KESSEL_PALETTE_PULL=0..1`: in the tinted look (mode 5) how far each pixel's hue and chroma
 /// are pulled toward the nearest pastel entry's (`crush.wgsl` `dp_tinted`); 0.7 unless set.
 fn configured_palette_pull() -> f32 {
@@ -1102,7 +1107,8 @@ struct CrushUniform {
     menu_mode: f32, // 1 = main-menu turntable pass (keep pure black truly black); 0 = normal game frame
     ldr_dither: f32, // shader-only fixed coverage for the linear 8-bit intermediate; ABI lane 32
     mask: f32, // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
-    _removed_proxy_rt_mix: f32,
+    /// 1: inside the hull the tinted look quantizes to the pastel palette (`KESSEL_CABIN_LOOK=pastel`).
+    cabin_look: f32,
     /// The eye's cone channel: ACES input per unit of radiance (byte 44). The eye pass copies it
     /// from the active view's state every metered frame; the upload only seeds unmetered frames.
     exposure: f32,
@@ -1644,6 +1650,10 @@ struct MeshGpu {
     periscope_focal_m: f32,
     /// A mirror's plane normal in the mesh's own frame (raymarch ray queries fold at it).
     mirror_normal: glam::Vec3,
+    /// A glass mesh's panes, each a quad and slab thickness in the mesh's own frame
+    /// (`renderer_raymarch::pane_quads`), read from the retained source mesh the first time
+    /// the mesh is taken as daylight apertures.
+    pane: std::cell::OnceCell<Vec<([glam::Vec3; 4], f32)>>,
     /// When true this mesh is TERRAIN: the fragment stage samples the tank-track map (rut darkening
     /// + a normal-perturbed dip). Signalled via params.w = 3.0.
     track_recv: bool,
@@ -3735,6 +3745,7 @@ fn make_mesh_gpu(
         periscope_kind: 0,
         periscope_focal_m: 0.0,
         mirror_normal: glam::Vec3::ZERO,
+        pane: std::cell::OnceCell::new(),
         track_recv: false,
         metallic_factor: m.metallic_factor,
         roughness_factor: m.roughness_factor,
@@ -8550,7 +8561,7 @@ impl Renderer {
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
-            _removed_proxy_rt_mix: 0.0,
+            cabin_look: if configured_cabin_pastel() { 1.0 } else { 0.0 },
             exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),

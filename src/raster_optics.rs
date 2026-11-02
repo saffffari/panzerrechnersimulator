@@ -728,6 +728,13 @@ impl Renderer {
         self.rt_surface_dirty=self.rt_on;
     }
 
+    /// The registered optics whose glass is a telescope's eyepiece (the gunner's sight): their
+    /// meshes admit light only through an exit pupil, so the raymarch backend's daylight
+    /// apertures leave them out.
+    pub(super) fn raster_optic_eyepiece_meshes(&self) -> Vec<usize> {
+        self.raster_optics.as_ref().map(|o| o.specs.iter().filter(|s| s.eyepiece.is_some()).map(|s| s.mesh).collect()).unwrap_or_default()
+    }
+
     /// Some port's exterior view is prepared this frame (its entrance face is in view).
     pub(super) fn raster_optics_prepared(&self) -> bool {
         self.raster_optics.as_ref().is_some_and(|o| !o.prepared.borrow().is_empty())

@@ -17,7 +17,7 @@ struct Crush {
     menu_mode: f32, // 1 = main-menu turntable pass: keep pure black truly black (kill grain on near-black)
     ldr_dither: f32, // fixed native-LDR quantization coverage; shader backend only
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
-    _removed_proxy_rt_mix: f32,
+    cabin_look: f32, // 1 = inside the hull the tinted look quantizes to the pastel palette (KESSEL_CABIN_LOOK=pastel)
     exposure: f32,  // the eye's chromatic cone channel per unit radiance
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
@@ -305,9 +305,11 @@ fn dp_tinted(lin: vec3<f32>, th: f32) -> vec3<f32> {
         let d = distance(pk, lab);
         if (d < best_d) { best_d = d; best = pk; }
     }
-    // Inside the hull too: the owner preferred the tinted cabin to the plain one when shown both
-    // (2 November 2026), so the pull is the same everywhere.
-    let pull = clamp(cr.look.w, 0.0, 1.0);
+    // Outdoors only. The cabin stills the owner preferred on 2 November 2026 were, it turned out,
+    // rendered with the pull outside the hull alone (the build predated the change that took it
+    // inside); with it inside the annunciators' green went to the palette's muted greens ("the
+    // green lights are no longer that amazing green"). Inside, the plain dithered colour.
+    let pull = clamp(cr.look.w, 0.0, 1.0) * (1.0 - clamp(cr.eye_range_strength, 0.0, 1.0));
     let pulled = vec3(lab.x, mix(lab.yz, best.yz, pull));
     return dp_dithered_colour(max(dp_oklab_to_linear(pulled), vec3(0.0)), th);
 }
@@ -407,7 +409,13 @@ fn dp_crush(lin: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
     var code = display_encode(lin);
     if (cr.look.x < 1.5) { code = dp_dithered_colour(lin, th); }
     else if (cr.look.x < 2.5) { code = dp_pico8(lin, th); }
-    else if (cr.look.x > 4.5) { code = dp_tinted(lin, th); }
+    else if (cr.look.x > 4.5) {
+        // The tinted look: inside the hull (the buttoned-up view's eye_range_strength) the pastel
+        // palette itself when asked (the owner, 2 November 2026, on a cabin still under the
+        // palette: "a fantastic shot"), else the plain dithered colour; outdoors the pulled tones.
+        if (cr.cabin_look > 0.5 && cr.eye_range_strength > 0.5) { code = dp_palette(lin, th, true); }
+        else { code = dp_tinted(lin, th); }
+    }
     else if (cr.look.x > 3.5) { code = dp_palette(lin, th, true); }
     return display_decode(code);
 }

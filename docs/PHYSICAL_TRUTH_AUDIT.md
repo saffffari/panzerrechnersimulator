@@ -2906,6 +2906,76 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   twilight paths and painted the civil twilight magenta; the averages keep it blue-grey. The
   three-band model's own approximation, stated; the illuminance gates still pass.
 
+### Daylight through the ports — 2 November 2026 (raymarch backend)
+
+The owner, buttoned up at noon: "light still doesn't seem to make it into the interior from the
+side vision port or the gun sights during day. it looks identical to night." Measured in the
+act-1 world (`sky-review`, the interior section rebuilt from the editor's hall to the world):
+the loader's seat displayed at 0.0487 at noon and 0.0475 on the moonlit night with the lamps on,
+and with them off at noon the scene mean was 0.16 cd/m^2; the gunner's sight picture was full
+daylight (1,745 cd/m^2) and the loader's port showed the steppe through a slot a few pixels
+tall, so the pictures were right and the transport into the cabin was not. The cause: a cabin
+surface's sky came only from the two cosine-weighted occlusion rays a pixel casts each frame
+(`rt_open_share`, glass passed), and a Tiger side port is a glass block at the inner end of a
+slot through 22 cm of armour (`tools`-side ray test of the bake: open at the glass's centre,
+walled two centimetres above and below) that subtends a few degrees: the rays never found it.
+
+- **The apertures' term** (`shaders/rm_aperture.wgsl`, `rm_shade.wgsl`, `rm_volume.wgsl`,
+  `renderer_raymarch::aperture_records`): every visible pane of the player's vehicle, the direct
+  glass (the ports, the visors) and the periscopes' windows, but the sight's eyepiece, is carried
+  to the frame piece by piece (`pane_quads`, one per connected piece of a glass page: the
+  turret's page holds both port blocks and the sight's lens) as the piece's centre and principal
+  axes with its transmittance (the pane shader's dielectric entry and laminate absorption over
+  the glass, less the glass load). A compute pass asks the scene's own geometry (ray queries,
+  passing the periscopes' windows and lenses and folding at their mirrors) which of the piece's
+  two shorter axes, either way, is the pane's face (the one most of whose rays leave the vehicle
+  within 8 m: a port's block is thicker than it is tall, so its proportions do not say), how much
+  of that face is open (a 9 x 5 grid of rays), the tilt across each axis at which a ray from the
+  open part's centroid still escapes (bisected; the two sides averaged), and the direction the
+  centre ray leaves in (a periscope's, folded); the shaders take the measured face. A surface in
+  the crew compartment then takes each pane as a finite source: the cached sky along the pane's
+  measured direction (the mean upwelling ground band below the horizon), its projected solid
+  angle by Lambert's contour integral (exact for a quad above the surface's plane), the pane's
+  transmittance, the measured open share, the slot's acceptance (1 - tan(angle) / tan(half-angle),
+  exact for a straight rectangular slot), and one ray toward the pane for the compartment's
+  fittings in the way; the diffuse and the split-sum specular lobes both take it. The cabin's
+  air takes the same source over the pane's solid angle through the medium's phase (no
+  occlusion ray in the froxel pass). The stochastic occlusion rays of a compartment surface now
+  count panes as cover (`rm_ray_open_sealed`, the periscope path kept), so a pane is counted
+  once. No opening is invented: a pane walled in measures closed and gives nothing. Named
+  approximations: the sky over a pane's field is taken along one direction (a port's field is
+  degrees wide); the exterior seen through a port (the deck, the fender, a wall beside the tank)
+  is the ground band, not resolved geometry; the acceptance is symmetric per axis; a relay's thin
+  lens passes a ray straight on the energy path (its imaging stays the relay captures'); without
+  ray queries the record is open and unrestricted on the piece's shortest axis and no fitting
+  shadows the pane (the raymarch backend's portable fallback). The key beam through a slot is
+  unchanged: the shadow cascades'. Gate for the A/B: `KESSEL_RM_SKIP=2097152` leaves the term
+  out; `KESSEL_RM_PROBE` prints the measure (`[rm-aperture]`).
+- **What the measure says of the Tiger** (`KESSEL_RM_PROBE`, act 1): each turret side port reads
+  20 % open with half-angles 23.5 x 1.6 degrees (a 1.2 cm slot through 22 cm of housing: the
+  bake, confirmed by a CPU ray test), so a wall opposite takes sky only in a band under 6 cm
+  tall; the cupola's periscope entry windows 80 % open at 43 x 18 degrees but outside the
+  compartment behind their housings; the driver's visor 96 % open at 38 x 20 degrees. With the
+  records forced open (`KESSEL_RM_APERTURE_UNMEASURED=1`) the lamps-off noon cabin went from
+  0.16 to 0.51 cd/m^2 mean; measured, it is the physics of a buttoned-up Tiger: the ports and
+  the sight pictures are bright, the walls are not. The honest daylight is the hatch: the
+  loader's seat with the cupola open at noon, lamps off, 0.55 cd/m^2 mean against 0.16 buttoned
+  up (`captures/demo-20261101-daylight_in_20261102l_hatch_sky_*`, `interior_noon_hatch*` in
+  `sky-review`). Open: the cupola periscopes' lower windows (the ones that face the commander)
+  measure closed (`captures/demo-20261101-daylight_in_20261102p_sky.json`, records 3, 5, 7, 9,
+  11, 13, 15) although the rays follow the mirrors' folds and pass the windows and lenses, with
+  eight segments and the rays started outside the pane's slab; so the cupola ring takes no
+  daylight from its periscopes yet. The cause is not found (the housing between the lower
+  window and the mirror, or the periscope's actual optics); until it is, the cupola by day is
+  its relayed pictures and the hatch.
+- **The cabin dimmer again, the round lamp recoloured** (the owner: "turn down the dial and cabin
+  lights too and rest more on the light from outside which should still be quite dark during the
+  day"; "white light color indicator should become yellow or blue"): the practicals' power scale
+  0.0018 to 0.0012 and the TPZ illuminator 0.030 to 0.018 of it (real emitter changes); the
+  sight's round lamp armour-piercing yellow, high explosive red (APCR stays blue).
+- **The tinted look's pull outdoors only** (`crush.wgsl`): a presentation change back to the
+  2 November morning state; the cabin stills the owner preferred had been rendered that way.
+
 ### The Tiger at the real vehicle's size — 2 November 2026 (`docs/TIGER_SCALE_20261102.md`)
 
 - **The bake was 1.112 times the kit's 1:35** (the damage session's registration: the GLBs are the

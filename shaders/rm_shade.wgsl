@@ -190,7 +190,7 @@ fn shade_history(world: vec3<f32>, motion: mat4x4<f32>) -> ShadeHistory {
         local_shares / max(count, 1.0), local_bounce / max(count, 1.0));
 }
 fn luminance(c: vec3<f32>) -> f32 { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, history: ShadeHistory) -> f32 {
+fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, history: ShadeHistory, sealed: bool) -> f32 {
     let a = select(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), abs(n.y) > 0.9);
     let t = normalize(cross(a, n));
     let b = cross(n, t);
@@ -204,7 +204,9 @@ fn rt_open_share(world: vec3<f32>, n: vec3<f32>, dist: f32, pixel: vec2<i32>, hi
         let phi = 2.0 * RM_PI * rm_hash01(seed ^ 0x9e3779b9u);
         let s = sqrt(r1);
         let d = t * (cos(phi) * s) + b * (sin(phi) * s) + n * sqrt(max(1.0 - r1, 0.0));
-        if (rm_ray_open(origin, d, RM_AO_RANGE_M)) { open += 1.0; }
+        var escaped = false;
+        if (sealed) { escaped = rm_ray_open_sealed(origin, d, RM_AO_RANGE_M); } else { escaped = rm_ray_open(origin, d, RM_AO_RANGE_M); }
+        if (escaped) { open += 1.0; }
     }
     let fresh = open / f32(rays);
     return select(fresh, mix(history.local_shares.x, share_clamped(fresh, history.local_shares.x), RM_AO_BLEND), history.valid);
@@ -536,7 +538,9 @@ fn fs(in: VsOut) -> ShadeOut {
         let rays_used = RM_RAY_QUERIES && !grass && fr.debug.w < 0.5;
         let receiver_in_cabin = rm_cabin_domain(world + n * 0.03) >= 0;
         if (rays_used) {
-            let rays = rt_open_share(world, n, dist, pixel, history);
+            // In the crew compartment the panes are cover to these rays: their daylight is the
+            // apertures' term below, so it is not counted twice.
+            let rays = rt_open_share(world, n, dist, pixel, history, receiver_in_cabin);
             shares_out.x = rays;
             let seen = min(rays, open);
             hidden_cover = open - seen;
@@ -601,6 +605,35 @@ fn fs(in: VsOut) -> ShadeOut {
             }
             let tau = lamp_tau(world, lights[index].a.xyz, 4u);
             color += (diffuse + rm_ggx_specular(n, v, s.dir, roughness, f0)) * s.e * ndl * vis * exp(-tau);
+        }
+        // Daylight through the panes (2 November 2026, "light still doesn't seem to make it into
+        // the interior from the side vision port"): a surface of the crew compartment takes each
+        // of the player's panes as a finite source of the sky it looks out on, its radiance the
+        // cached sky along the line through the pane (the ground band below the horizon), its
+        // extent the pane's projected solid angle (exact, Lambert), its throughput the pane's
+        // transmittance times what rm_aperture.wgsl measured of the slot behind it, and one ray
+        // toward the pane for the compartment's own fittings in the way. The two stochastic rays
+        // above could not find a slot a few degrees wide: at noon the cabin read as at night.
+        if (receiver_in_cabin) {
+            let ndv = max(dot(n, v), 0.001);
+            let count = min(u32(fr.worn_count.y), RM_APERTURES);
+            for (var a = 0u; a < count; a += 1u) {
+                let ap = fr.apertures[a];
+                let face = rm_aperture_face(a);
+                let c = ap[0].xyz;
+                let to = c - world;
+                let r = length(to);
+                if (r < 0.02) { continue; }
+                let w = to / r;
+                if (dot(n, w) <= 0.0 || dot(face.m, w) <= 0.02) { continue; }
+                let through = rm_aperture_acceptance(face, w);
+                if (through <= 0.0) { continue; }
+                let omega = rm_quad_projected_solid_angle(world, n, c, face.u, face.v);
+                if (omega <= 1.0e-7) { continue; }
+                if (rays_used && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), w, 0.0, max(r - 0.03, 0.0)) >= 0.0) { continue; }
+                let radiance = rm_aperture_radiance(face.sky_dir) * vec3(ap[0].w, ap[1].w, ap[2].w) * through;
+                color += (diffuse + env_brdf(f0, roughness, ndv) / RM_PI) * radiance * omega;
+            }
         }
         color += g2.rgb;
     }

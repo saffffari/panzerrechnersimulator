@@ -6,7 +6,7 @@
 // when the scene is one combined TLAS). Every query asks both and keeps the nearer hit.
 @group(2) @binding(0) var rm_tlas: acceleration_structure;
 @group(2) @binding(2) var rm_tlas_static: acceleration_structure;
-// Per mesh slot: xyz a mirror's world normal, w the optic (0 none, 1 window, 2 mirror).
+// Per mesh slot: xyz a mirror's world normal, w the optic (0 none, 1 window or thin lens, 2 mirror).
 @group(2) @binding(1) var<storage, read> rm_optics: array<vec4<f32>>;
 const RM_RAY_QUERIES: bool = true;
 const RM_RT_MASK: u32 = 0x11u; // rt::MASK_WORLD | rt::MASK_PROTO
@@ -50,14 +50,33 @@ fn rm_hit_optic(custom: u32) -> vec4<f32> {
 }
 // Whether a ray escapes within `range` m, passing the periscopes' windows and folding at their
 // mirrors (a real optical path into the cabin: what a periscope shows, it also lets in). At most
-// four segments.
+// eight segments. `mask`: the instances that stop it (RM_RT_MASK lets panes pass; 0x13 counts
+// them as cover, for a surface of the crew compartment whose panes are accounted as apertures,
+// rm_shade.wgsl, so the stochastic rays do not count them a second time; the periscopes'
+// windows and mirrors keep their path under either mask).
+fn rm_ray_open_masked(origin: vec3<f32>, dir: vec3<f32>, range: f32, mask: u32) -> bool {
+    return rm_ray_escape_masked(origin, dir, range, mask).w > 0.5;
+}
 fn rm_ray_open(origin: vec3<f32>, dir: vec3<f32>, range: f32) -> bool {
+    return rm_ray_open_masked(origin, dir, range, RM_RT_MASK);
+}
+fn rm_ray_open_sealed(origin: vec3<f32>, dir: vec3<f32>, range: f32) -> bool {
+    return rm_ray_open_masked(origin, dir, range, 0x13u);
+}
+// The direction a ray leaves the scene in within `range` m (xyz), passing the periscopes'
+// windows and folding at their mirrors, w = 1; w = 0 where something stops it (xyz then the
+// direction it was stopped on). Eight segments: a periscope's two closed windows are four
+// faces, its two mirrors two folds.
+fn rm_ray_escape(origin: vec3<f32>, dir: vec3<f32>, range: f32) -> vec4<f32> {
+    return rm_ray_escape_masked(origin, dir, range, RM_RT_MASK);
+}
+fn rm_ray_escape_masked(origin: vec3<f32>, dir: vec3<f32>, range: f32, mask: u32) -> vec4<f32> {
     var o = origin;
     var d = dir;
     var left = range;
-    for (var segment = 0; segment < 4; segment = segment + 1) {
+    for (var segment = 0; segment < 8; segment = segment + 1) {
         var rq: ray_query;
-        rayQueryInitialize(&rq, rm_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, RM_RT_MASK, 0.0, left, o, d));
+        rayQueryInitialize(&rq, rm_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, mask, 0.0, left, o, d));
         while (rayQueryProceed(&rq)) { }
         let hit = rayQueryGetCommittedIntersection(&rq);
         let moving = hit.kind != RAY_QUERY_INTERSECTION_NONE;
@@ -66,15 +85,15 @@ fn rm_ray_open(origin: vec3<f32>, dir: vec3<f32>, range: f32) -> bool {
         var rs: ray_query;
         rayQueryInitialize(&rs, rm_tlas_static, RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_OPAQUE, RM_RT_MASK, 0.0, select(left, hit.t, moving), o, d));
         while (rayQueryProceed(&rs)) { }
-        if (rayQueryGetCommittedIntersection(&rs).kind != RAY_QUERY_INTERSECTION_NONE) { return false; }
-        if (!moving) { return true; }
+        if (rayQueryGetCommittedIntersection(&rs).kind != RAY_QUERY_INTERSECTION_NONE) { return vec4(d, 0.0); }
+        if (!moving) { return vec4(d, 1.0); }
         let optic = rm_hit_optic(hit.instance_custom_data);
-        if (optic.w < 0.5) { return false; }
+        if (optic.w < 0.5) { return vec4(d, 0.0); }
         o = o + d * hit.t;
         left -= hit.t;
         if (optic.w > 1.5) { d = reflect(d, normalize(optic.xyz)); }
         o += d * 0.004;
-        if (left <= 0.0) { return true; }
+        if (left <= 0.0) { return vec4(d, 1.0); }
     }
-    return false;
+    return vec4(d, 0.0);
 }

@@ -199,6 +199,28 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
         // sees through an open hatch above it (light through the vision blocks is left out).
         let sky_vis = rm_sky_visibility(p, 0.0);
         inscatter += m.sigma_s * rm_sky_isotropic() * mix(select(0.08, 0.0, cabin_domain >= 0), 1.0, sky_vis);
+        // The cabin's air through the panes (rm_shade.wgsl's apertures): each pane's sky over
+        // its solid angle from the cell, cut by the measured slot behind it, scattered toward
+        // the eye by the medium's phase. The key beam through a slot is the cascades' term above.
+        // No ray toward the pane for the compartment's fittings (named approximation).
+        if (cabin_domain >= 0) {
+            let count = min(u32(fr.worn_count.y), RM_APERTURES);
+            for (var a = 0u; a < count; a += 1u) {
+                let ap = fr.apertures[a];
+                let face = rm_aperture_face(a);
+                let c = ap[0].xyz;
+                let to = c - p;
+                let r = length(to);
+                if (r < 0.03) { continue; }
+                let w = to / r;
+                if (dot(face.m, w) <= 0.02) { continue; }
+                let through = rm_aperture_acceptance(face, w);
+                if (through <= 0.0) { continue; }
+                let omega = rm_quad_solid_angle(p, c, face.u, face.v);
+                let radiance = rm_aperture_radiance(face.sky_dir) * vec3(ap[0].w, ap[1].w, ap[2].w) * through;
+                inscatter += m.sigma_s * radiance * omega * rm_phase_dense(dot(ray, w), m.g, m.sigma_t);
+            }
+        }
         // Lamps, fires, flashes, tracer heads: the lights binned into this cell.
         let lstart = light_cell_start[cell_index];
         let lend = light_cell_start[cell_index + 1u];

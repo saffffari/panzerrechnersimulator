@@ -41,7 +41,13 @@ struct Frame {
     cabin_motion: array<mat4x4<f32>, 3>, // per domain: world point now -> same frame point last frame
     worn_count: vec4<f32>,        // x other vehicles worn at their edges and corners (Renderer::set_worn_vehicles)
     worn: array<vec4<f32>, 32>,   // per vehicle: centre xyz + reach m, then mechanical wear, exterior grime
+    // The player's panes as daylight apertures (worn_count.y of them; rm_aperture.wgsl measures
+    // each and names its face): col0 centre xyz + tint r, col1 the piece's shortest axis (unit)
+    // + tint g, col2 its longest half-axis + tint b, col3 its middle half-axis + the shortest
+    // half-length. The tint is the pane's normal-incidence transmittance.
+    apertures: array<mat4x4<f32>, 24>,
 };
+const RM_APERTURES: u32 = 24u;
 // cabin_medium.rs `Uniform` (shaders/cabin_medium.wgsl `CabinMedium`): hull, turret, cupola.
 struct RmCabinAir {
     world_to_local: array<mat4x4<f32>, 3>,
@@ -53,6 +59,38 @@ struct RmCabinAir {
 @group(0) @binding(0) var<uniform> fr: Frame;
 
 const RM_PI: f32 = 3.14159265358979;
+
+// The solid angle of a triangle of unit vectors from the eye (Van Oosterom and Strackee 1983).
+fn rm_tri_solid_angle(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>) -> f32 {
+    let num = abs(dot(a, cross(b, c)));
+    let den = 1.0 + dot(a, b) + dot(a, c) + dot(b, c);
+    return 2.0 * atan2(num, max(den, 1.0e-6));
+}
+// The solid angle of the quad (centre c, half-axes u and v) from p.
+fn rm_quad_solid_angle(p: vec3<f32>, c: vec3<f32>, u: vec3<f32>, v: vec3<f32>) -> f32 {
+    let q0 = normalize(c + u + v - p);
+    let q1 = normalize(c - u + v - p);
+    let q2 = normalize(c - u - v - p);
+    let q3 = normalize(c + u - v - p);
+    return rm_tri_solid_angle(q0, q1, q2) + rm_tri_solid_angle(q0, q2, q3);
+}
+// The projected solid angle of that quad on a surface at p with normal n (Lambert's contour
+// integral: the irradiance from the quad at uniform radiance L is L times this). Exact for a
+// quad wholly above the surface's plane; one that crosses it is taken unsigned (named
+// approximation, a pane at the edge of a wall's own plane).
+fn rm_quad_projected_solid_angle(p: vec3<f32>, n: vec3<f32>, c: vec3<f32>, u: vec3<f32>, v: vec3<f32>) -> f32 {
+    var q = array<vec3<f32>, 4>(normalize(c + u + v - p), normalize(c - u + v - p), normalize(c - u - v - p), normalize(c + u - v - p));
+    var sum = 0.0;
+    for (var i = 0u; i < 4u; i += 1u) {
+        let a = q[i];
+        let b = q[(i + 1u) % 4u];
+        let g = cross(a, b);
+        let gl = length(g);
+        if (gl < 1.0e-6) { continue; }
+        sum += acos(clamp(dot(a, b), -1.0, 1.0)) * dot(n, g / gl);
+    }
+    return clamp(abs(sum) * 0.5, 0.0, RM_PI);
+}
 const RM_CELLS: vec3<u32> = vec3<u32>(32u, 18u, 24u);
 
 // Camera ray for a 0..1 screen uv (y down), from the camera-relative projection.

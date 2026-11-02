@@ -15,6 +15,7 @@
 #   tools/launch_demo_20261101.sh --look standard the old display look at 480x270; the default is the deltaP look
 #                                                 (docs/DELTAP_LOOK_20261101.md: 1024x576, dithered colour, pyramid bloom;
 #                                                 the owner's pick, 2026-11-01); --look deltap-pico8 for the 32-colour frame
+#   tools/launch_demo_20261101.sh --cabin-look pastel  the pastel palette itself inside the hull under the tinted look
 #   tools/launch_demo_20261101.sh --platoon       two AI Tigers under command on the Canyon run (KESSEL_PLATOON=2)
 #   tools/launch_demo_20261101.sh --day-cycle 6   day/night clock: the 15-minute cycle times this (default 6, a 90-minute cycle)
 #   tools/launch_demo_20261101.sh --audio-range balanced   the playback curve: reference (default; distant sounds fall off as
@@ -25,7 +26,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ASSET_ROOT=${PANZER_ASSET_ROOT:-/windows/shop/panzerrechnersystem}
 BINARY="$ROOT/target/release/panzerrechnersystem"
 RUNTIME="$ROOT/artifacts/runtime"
-MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 AUDIO_RANGE=reference
+MODE=menu RES=480x270 WINDOWED=0 PLATOON=0 LOOK=deltap-tinted CABIN_LOOK= SEED= CHECK=0 RES_SET=0 ORDER= FORWARD=0 DAY_CYCLE=6 AUDIO_RANGE=reference
 while (( $# )); do
     case "$1" in
         --canyon) MODE=canyon ;;
@@ -35,6 +36,7 @@ while (( $# )); do
         --platoon) PLATOON=1 ;;
         --res) RES=$2; RES_SET=1; shift ;;
         --look) LOOK=$2; [[ "$LOOK" == standard ]] && LOOK=; shift ;;
+        --cabin-look) CABIN_LOOK=$2; shift ;;   # pastel: the palette itself inside the hull (tinted look)
         --seed) SEED=$2; shift ;;
         --order) ORDER=$2; MODE=expedition; shift ;;
         --forward) FORWARD=1; MODE=expedition ;;
@@ -105,6 +107,7 @@ export KESSEL_SESSION_LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).session.jsonl"
 (( PLATOON )) && export KESSEL_PLATOON=2
 [[ -n "$SEED" ]] && export KESSEL_CANYON_SEED="$SEED"
 [[ -n "$LOOK" ]] && export KESSEL_LOOK="$LOOK"
+[[ -n "$CABIN_LOOK" ]] && export KESSEL_CABIN_LOOK="$CABIN_LOOK"
 
 LOG="$RUNTIME/demo-$(date +%Y%m%d-%H%M%S).log"
 {

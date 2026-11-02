@@ -68,7 +68,12 @@ channel (`observer.rs`), and two observers in one display would be wrong.
   entry's by `KESSEL_PALETTE_PULL` (0.7 unless set, after the 0.5 stills still read mauve at dusk), lightness kept: continuous tones in the
   palette's colour family, magentas and purples sliding to its teals, greys and creams. Outdoors
   only: inside the hull the pull is zero (the buttoned-up view's eye_range_strength), so the
-  cabin keeps the plain dithered colour, as it keeps its own rod hue and gain.
+  cabin keeps the plain dithered colour, as it keeps its own rod hue and gain. (It went inside for
+  a few hours on 2 November 2026 and muted the annunciators' green; back outside.)
+- `KESSEL_CABIN_LOOK=pastel` (the launcher's `--cabin-look pastel`; the crush uniform's
+  `cabin_look` lane): in the tinted look the cabin quantizes to the pastel palette itself (mode 4's
+  quantizer) while the outside keeps the pulled continuous tones. Offered after the owner called a
+  cabin still under the palette "a fantastic shot" (2 November 2026); `plain` is the default.
 - `KESSEL_PALETTE_SMOOTH=0..1` (the look lane's w in the palette modes): 0 keeps deltaP's flat bands between palette
   entries (the pair penalty, the ratio's dead zones and eighths); 1 dithers across them (a tenth
   of the penalty, narrow dead zones, sixteenths), the smoother variant to compare.

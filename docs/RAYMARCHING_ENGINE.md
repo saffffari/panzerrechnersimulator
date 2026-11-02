@@ -1729,6 +1729,25 @@ beside the Tiger, live frames 0.1 to 10 s after). Captures:
 build below); clips `captures/videos/crew_battle_overhead_before_after.mp4` and
 `captures/videos/drive_day_gun_flash_before_after.mp4`.
 
+## Daylight through the panes (2026-11-02)
+
+The owner at noon, buttoned up: the cabin looked as it did at night. The shade's sky for a
+compartment surface came from two cosine-weighted occlusion rays a pixel (glass passed), and a
+side port is a slot a few degrees wide through 22 cm of armour behind its glass block: the rays
+never found it, so the walls took no daylight at all (the lamps-off noon cabin measured
+0.16 cd/m^2 mean). Now the player's panes are **apertures**: `aperture_records` carries every
+visible glass mesh of the player's vehicle (the sight's lenses excepted) to the frame as a quad
+from the mesh itself with its transmittance; `rm_aperture.wgsl` (one workgroup per pane, ray
+queries) measures each against the scene, the open share of the pane outward and the tilt across
+each axis at which a ray still escapes; `rm_shade.wgsl` lights a compartment surface by each
+pane's sky over its projected solid angle (Lambert's contour integral) through the pane's
+transmittance, the measured open share, the slot's acceptance and one ray for the fittings in
+the way; `rm_volume.wgsl` lights the cabin's air the same way over the pane's solid angle
+through the medium's phase. The stochastic rays of a compartment surface stop at panes
+(`rm_ray_open_sealed`), so a pane is counted once. `KESSEL_RM_SKIP=2097152` leaves the term out.
+Named approximations and the measurement are in the ledger (docs/PHYSICAL_TRUTH_AUDIT.md,
+"Daylight through the ports").
+
 ## A/B against the shader backend
 
 `raymarch-showcase` also runs with `KESSEL_RENDERER=shader` (`captures/shader_showcase_v1_*`). The
@@ -1828,7 +1847,9 @@ disk at pipeline creation; `KESSEL_RM_DEBUG=1` prints source radiance, lights an
 - The vision blocks and sights relay the shader backend's exterior raster captures (an interim,
   "Black sights and weather in the cabin"); the real path is the ray queries carrying the image
   through the periscope folds and shading what they hit with this backend's own lighting. The
-  relays' GPU cost is unmeasured.
+  relays' GPU cost is unmeasured. The owner sees it (2 November 2026): "the vision ports don't
+  have the same fog and lighting as outside": the relayed pictures are the raster backend's
+  lighting and fog, the direct ports (the turret's side slits) this backend's.
 - Track ruts on terrain: on branch `terrain-detail` the ground is the detail surface
   (docs/TERRAIN_DETAIL.md): ruts, boot prints and craters are geometry in every pass and the
   terrain LOD replaces the coarse mesh; without a `terrain.detail` block the coarse mesh is still

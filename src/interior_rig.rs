@@ -26,8 +26,10 @@ pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(-0.01264894,
 /// Daylight apertures must establish the daytime cabin's bright end. Apply the same reduction to
 /// the visible dome lens and its transported light; exposure remains the ordinary measured eye.
 /// 2 November 2026: 0.003 to 0.0018 (the owner: "the orange light is a bit overwhelming,
-/// turn it down and have some areas near black so the focus goes to outside").
-pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.0018;
+/// turn it down and have some areas near black so the focus goes to outside"), then 0.0012 once
+/// daylight came through the ports ("turn down the dial and cabin lights too and rest more on
+/// the light from outside").
+pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.0012;
 
 /// The visible finite cube is the source of the lamp's spectrum and total emitted power.
 /// Dimensions, colours and radiances remain authored, not measured historical fixtures.
@@ -103,12 +105,14 @@ pub const SIGHT_LOAD_FIXTURES: [FiniteCubeLamp; 2] = [
     FiniteCubeLamp { half_size_m: 0.005, srgb: [235, 50, 32], emission: 0.3 },
 ];
 /// Its companion: the round in the chamber or in the loader's hands. Armour-piercing (PzGr. 39)
-/// warm white, APCR (PzGr. 40) blue, high explosive (SprGr.) amber: the three differ along the
-/// blue-yellow axis and in brightness, which survive red-green colour blindness.
+/// yellow, APCR (PzGr. 40) blue, high explosive (SprGr.) red: yellow and blue differ along the
+/// axis that survives red-green colour blindness, and the red is the dimmest of the three.
+/// (2 November 2026: the owner asked for no white indicator, "yellow or blue", and for more of
+/// the lights full red.)
 pub const SIGHT_ROUND_FIXTURES: [FiniteCubeLamp; 3] = [
-    FiniteCubeLamp { half_size_m: 0.005, srgb: [255, 236, 200], emission: 1.0 },
+    FiniteCubeLamp { half_size_m: 0.005, srgb: [255, 214, 60], emission: 1.0 },
     FiniteCubeLamp { half_size_m: 0.005, srgb: [70, 130, 255], emission: 0.8 },
-    FiniteCubeLamp { half_size_m: 0.005, srgb: [255, 150, 30], emission: 0.55 },
+    FiniteCubeLamp { half_size_m: 0.005, srgb: [255, 40, 28], emission: 0.55 },
 ];
 
 pub fn dome_lamp_state(time_s: f32) -> f32 { 0.96 + 0.04 * (time_s * 5.0).sin() }
@@ -144,7 +148,7 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
 pub const TPZ_ILLUMINATOR_LINEAR_COLOR: Vec3 = Vec3::new(1.0, 0.50, 0.14);
 /// Ten percent below the 2026-10-30 output, plus the deeper-orange spectrum above.
 /// This is an owner-directed appearance calibration, not measured period photometry.
-pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.030 * CABIN_PRACTICAL_POWER_SCALE;
+pub const TPZ_ILLUMINATOR_INTENSITY: f32 = 0.018 * CABIN_PRACTICAL_POWER_SCALE;
 /// The driver's ignition lamp, a finite cube on his panel (`lamp_mounts::IGNITION`), an indicator's
 /// power. Before 2026-10-28 an invisible point at 0.025, twelve times the dome lamp, which washed
 /// the driver's post red.
@@ -217,8 +221,11 @@ mod lighting_tests {
         let low = DOME_FIXTURE.sample(dome_lamp_state(3.0*std::f32::consts::FRAC_PI_2/5.0));
         assert!((low.visible_emissive/high.visible_emissive-0.92).abs()<1e-6);
         assert!((low.radiant_intensity/high.radiant_intensity-0.92).abs()<1e-6);
-        // 42 * 0.003 radiance, six faces of a 28 mm cube, I = L*A/4.
-        assert!((high.radiant_intensity-0.0001481760).abs()<1e-9);
+        // 42 x the practicals' power scale as radiance, six faces of a 28 mm cube, I = L*A/4
+        // (0.000148176 at the 0.003 scale of 2026-10-28; the scale has been cut twice since).
+        let area = 6.0 * (2.0 * TURRET_DOME_LAMP_HALF_SIZE).powi(2);
+        let expected = 42.0 * CABIN_PRACTICAL_POWER_SCALE * dome_lamp_state(std::f32::consts::FRAC_PI_2/5.0) * area / 4.0;
+        assert!((high.radiant_intensity-expected).abs()<1e-9, "{} vs {expected}", high.radiant_intensity);
     }
 }
 
