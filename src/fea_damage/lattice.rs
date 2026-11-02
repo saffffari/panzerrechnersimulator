@@ -26,8 +26,9 @@ use serde::Serialize;
 
 use super::materials::{self, Material, MaterialId, AMBIENT_K, TAYLOR_QUINNEY};
 
-/// Particle cap, the same in every preset (presets never change a damage outcome).
-pub const MAX_PARTICLES: usize = 12_000;
+/// Particle cap, the same in every preset and in the cross-section tool (presets never change a
+/// damage outcome). 6,000 keeps a perforation's solve near a tenth of a second on this machine.
+pub const MAX_PARTICLES: usize = 6_000;
 pub const MIN_CELLS_THROUGH: usize = 4;
 pub const TARGET_CELLS_THROUGH: f32 = 8.0;
 pub const TARGET_CELLS_ACROSS_CALIBRE: f32 = 10.0;
@@ -58,8 +59,9 @@ pub const CONTACT_STIFFNESS: f32 = 2.0;
 pub const FRICTION_KINETIC: f32 = 0.1;
 /// Cells of damping ramp inside the clamped boundary.
 pub const DAMPING_CELLS: usize = 3;
-/// Time step as a fraction of a cell's P-wave transit.
-pub const DT_CFL: f32 = 0.3;
+/// Time step as a fraction of a cell's P-wave transit (stable to 0.6; 0.4 keeps energy closure
+/// near 1 %).
+pub const DT_CFL: f32 = 0.4;
 /// Relaxation after the projectile's motion ends, in lateral wave transits.
 pub const RELAX_TRANSITS: f32 = 2.0;
 
@@ -1199,7 +1201,7 @@ unsafe fn pass_gather(v: &View, c: &Consts, lo: usize, hi: usize, tip_s: f32, sp
 }
 
 pub fn default_threads() -> usize {
-    std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8)
+    std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 12)
 }
 
 #[cfg(test)]
@@ -1246,11 +1248,22 @@ mod tests {
         }
         l.tip_s = -1.0; // projectile far away
         l.compute_forces();
-        let mid = l.index(l.dims[0] / 2, l.dims[1] / 2, l.dims[2] / 2);
-        assert!((l.theta[mid] - 3.0 * s).abs() < 1e-3 * 3.0 * s, "theta {}", l.theta[mid]);
-        let f = Vec3::new(l.fx[mid], l.fy[mid], l.fz[mid]).length();
+        // The dilatation is exact for every particle, surfaces included (each family normalises).
+        for p in 0..l.n {
+            assert!((l.theta[p] - 3.0 * s).abs() < 2e-3 * 3.0 * s, "theta {} at {p}", l.theta[p]);
+        }
+        // Zero net force where a particle and all its neighbours have full families; next to a free
+        // surface the peridynamic surface effect leaves a residual (named).
+        let full = (1u32 << SLOTS) - 1;
+        let deep = (0..l.n).filter(|&p| l.valid[p] == full && (0..SLOTS).all(|sl| {
+            let q = (p as isize + l.delta[sl]) as usize;
+            l.valid[q] == full
+        }));
         let scale = l.bulk * 3.0 * s * l.h * l.h;
-        assert!(f < 1e-3 * scale, "interior force {f} vs scale {scale}");
+        for p in deep {
+            let f = Vec3::new(l.fx[p], l.fy[p], l.fz[p]).length();
+            assert!(f < 1e-3 * scale, "interior force {f} vs scale {scale}");
+        }
     }
 
     #[test]

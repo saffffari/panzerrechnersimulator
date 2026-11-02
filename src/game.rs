@@ -17003,6 +17003,8 @@ impl Game {
         self.advance_camp_people(dt, r);
         if let Some(arms)=&self.first_person {arms.clear(r);}
         self.armor_clock_s = r.time;
+        // Deferred plate solves of rounds the Tiger's armour stopped commit at a fixed game time.
+        self.fea_commit_pending();
         // The gun's muzzle for the renderer's effect backends, every update (the FX pass that
         // also sets it does not run on every path).
         r.muzzle_hint = Some(self.player.muzzle());

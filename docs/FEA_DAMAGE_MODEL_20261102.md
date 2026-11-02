@@ -362,3 +362,14 @@ lists every named approximation of this model.
   was tried and reverted (it did not reduce the spall and worsened energy closure).
 - `fea-bench [SEEDS] [OUT]` times the chain and the lattice per impact, apart from driving.
 - GPU renders of the cutaway Tiger are still queued.
+
+### Play cost (landed)
+
+- The particle cap is 6,000 and the time step 0.4 of a cell's P-wave transit, one constant set for
+  play, the presets and the cross-section tool. Measured (`fea-bench 5`, loaded machine): lattice
+  p50 215 ms, p95 447 ms on 12 threads; energy closure within 1.8 %.
+- Perforations are solved inside their tick (the hold is logged). Rounds the plate stops are
+  solved on a worker and committed 0.25 s of game time later (`fea_commit_pending`), waiting only
+  if late, so the result lands at the same simulation moment on every machine.
+- Re-run cross sections at these constants: `fea-damage-fea_xsec_6k_20261102_*` in the owner's
+  captures folder (the 12,000-particle run was removed).

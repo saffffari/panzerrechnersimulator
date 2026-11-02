@@ -517,9 +517,10 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   budget-sliced solve and any thread count reproduce the reference bit for bit; the lattice
   absorbs 0.25–0.8 of the kinetic energy the calibrated law removes (reported, not forced). The
   fracture pattern (petal count, bulge) is deterministic per impact state but not converged in the
-  time step. Cost on this i9 with 8 threads (`fea-bench 5`, 65 impacts of the cross-section set,
-  machine shared with other work at load ~12): lattice p50 525 ms, p95 1,075 ms, max 1,088 ms;
-  chain p50 46 µs, p95 0.8 ms. An unloaded machine measured 0.2–0.4 s. Rounds that stop very deep
+  time step. Cost on this i9 at the 6,000-particle cap, time step 0.4 of a cell's P-wave transit,
+  12 threads (`fea-bench 5`, 65 impacts of the cross-section set, machine shared with other work at
+  load ~18): lattice p50 215 ms, p95 447 ms, max 498 ms, energy closure within 1.8 %; chain p50
+  46 µs, p95 0.8 ms. (At 12,000 particles and 8 threads, load ~12: p50 525 ms, p95 1,075 ms.) Rounds that stop very deep
   in the plate (85–92 % of the path) also release a small back-face scab in the lattice; the game
   spawns fragments only for perforations, so these appear only in the cross sections and receipts.
 - **Cross sections** (`fea-cross-section PREFIX [CASE]`, CPU only, `game_fea_section.rs`): the
@@ -531,9 +532,14 @@ The struck plate's outcome (perforated or not, residual speed) is still the cali
   round; fuel 80 %; turret forward, gun level. The 14.5 mm B-32 case round is a case-set projectile
   (no anti-tank rifle fires in the game yet) with estimated data.
 - **Lattice in play** (`game_fea::fea_solve_impact`): every kinetic strike on the player's Tiger
-  that perforates or stops in the plate is solved before its scar, consequences and fragments are
-  resolved. The solve runs to completion inside that tick (the tick waits and logs the wall time;
-  no consumer sees a half-solved plate, nothing is skipped; both presets get the same result).
+  that perforates or stops in the plate is solved. A perforation is solved inside its tick before
+  its scar, consequences and fragments are resolved (the tick waits and logs the wall time). A round
+  the plate stopped changes only its scar and grip: its solve runs on a worker thread and commits a
+  fixed 0.25 s of game time later (`FEA_STOP_COMMIT_S`, named), the update waiting for it if it is
+  late (logged), so the switch happens at the same simulation moment on every machine; until then
+  the scar shows the empirical geometry, and both the renderer and the next round's resistance see
+  the change together. No consumer sees a half-solved plate, nothing is skipped, and both presets
+  get the same result.
   Ricochets, shatters, HE and HEAT keep their existing scars. Other vehicles keep the empirical
   scar rules. The sub-calibre core of an APCR round goes into the plate; its carrier is not modelled.
 - **Scars from the lattice** (`ArmorField::record_measured`): aperture, back-face tear, petals,

@@ -91,11 +91,32 @@ pub(super) struct ImpactSolve {
     pub(super) lattice: Option<LatticeOutcome>,
 }
 
-#[derive(Clone, Debug, Default)]
+/// A plate solve of a round the plate stopped, running on a worker thread. It commits at a fixed
+/// game time after the strike (`FEA_STOP_COMMIT_S`), deterministically; if it is not finished by
+/// then, that update waits for it (logged).
+#[derive(Debug)]
+pub(super) struct PendingPlate {
+    pub(super) commit_at_s: f32,
+    pub(super) struck_at_s: f32,
+    pub(super) facing: crate::ballistics::Facing,
+    pub(super) local_mm: [i16; 3],
+    pub(super) lodged_id: Option<u64>,
+    pub(super) handle: std::thread::JoinHandle<LatticeOutcome>,
+}
+
+/// Game time between a stopped round's strike and the commit of its plate solve (named: long
+/// enough for the solve to finish on a worker on this machine; the scar meanwhile shows the
+/// empirical geometry, and both consumers switch together at the commit).
+pub(super) const FEA_STOP_COMMIT_S: f32 = 0.25;
+
+#[derive(Debug, Default)]
 pub(super) struct FeaRuntime {
     pub(super) lodged: Vec<LodgedRound>,
     pub(super) receipts: Vec<FeaChainReceipt>,
     pub(super) current: Option<ImpactSolve>,
+    /// A stopped round's solve started this strike, waiting to be queued with its scar.
+    pub(super) started: Option<std::thread::JoinHandle<LatticeOutcome>>,
+    pub(super) pending: Vec<PendingPlate>,
     next_id: u64,
 }
 
@@ -345,7 +366,18 @@ impl Game {
         let solved = self.fea.current.as_ref().map(|s| (s.line, s.chain.clone(), s.lattice.as_ref().map(|l| l.grip_normal_n)));
         let Some((line, result, grip)) = solved.or_else(|| self.fea_run_chain(impact_world, dir_world, event)
             .map(|(l, r)| (l, r, None))) else { return };
-        self.fea_record_lodged(&line, &result, event, armor.part, now_s, grip);
+        let lodged_id = self.fea_record_lodged(&line, &result, event, armor.part, now_s, grip);
+        // Queue this strike's deferred plate solve with the scar it will refine.
+        if let Some(handle) = self.fea.started.take() {
+            self.fea.pending.push(PendingPlate {
+                commit_at_s: now_s + FEA_STOP_COMMIT_S,
+                struck_at_s: now_s,
+                facing: armor.facing,
+                local_mm: crate::armor_damage::quantize_mm(armor.local_point),
+                lodged_id,
+                handle,
+            });
+        }
         self.fea.push_receipt(FeaChainReceipt { shell: event.shell.name, terminal: event.terminal,
             entry_hull: line.entry, dir_hull: line.dir, far_wall_mm: line.far_wall.map(|w| w.plate_mm),
             result, knocked_out: Vec::new(), struck_not_breached: Vec::new() });
@@ -482,7 +514,24 @@ impl Game {
         let hull_inv = self.player.hull_model().inverse();
         let normal_hull = hull_inv.transform_vector3(armor.world_normal).normalize_or_zero();
         let local_seed = crate::armor_damage::position_seed(armor.local_point) ^ seed.rotate_left(13);
-        let lattice = lattice_problem(event, &line, &chain_result, normal_hull, local_seed).map(|(impact, axes)| {
+        let problem = lattice_problem(event, &line, &chain_result, normal_hull, local_seed);
+        // A round the plate stopped only changes its scar and grip: solve it on a worker and commit
+        // it a fixed game time later. A perforation's fragments are needed now: solve it here.
+        if let Some((impact, axes)) = problem {
+            if matches!(impact.motion, lattice::Motion::Stop { .. }) {
+                let origin = line.entry;
+                self.fea.started = Some(std::thread::spawn(move || {
+                    let started = std::time::Instant::now();
+                    let mut solver = lattice::Lattice::new(impact);
+                    solver.solve();
+                    let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
+                    lattice_outcome(&mut solver, origin, axes, wall_ms)
+                }));
+                self.fea.current = Some(ImpactSolve { projectile_id, line, chain: chain_result, lattice: None });
+                return;
+            }
+        }
+        let lattice = problem.map(|(impact, axes)| {
             let started = std::time::Instant::now();
             let mut solver = lattice::Lattice::new(impact);
             solver.solve();
@@ -591,5 +640,44 @@ impl Game {
             }
         }
         Some(out)
+    }
+
+    /// Commit every deferred plate solve whose time has come (called at the start of each update).
+    /// A solve still running at its commit time is waited for: the update holds rather than letting
+    /// the scar and the grip switch at a machine-dependent moment.
+    pub(super) fn fea_commit_pending(&mut self) {
+        if self.fea.pending.is_empty() {
+            return;
+        }
+        let now = self.armor_clock_s;
+        let mut index = 0;
+        while index < self.fea.pending.len() {
+            if self.fea.pending[index].commit_at_s > now {
+                index += 1;
+                continue;
+            }
+            let pending = self.fea.pending.remove(index);
+            let waited = std::time::Instant::now();
+            let finished = pending.handle.is_finished();
+            let Ok(outcome) = pending.handle.join() else {
+                eprintln!("[fea] a deferred plate solve failed; the empirical scar stays");
+                continue;
+            };
+            if !finished {
+                println!("[fea] the update waited {:.0} ms for a deferred plate solve (pending rule)",
+                    waited.elapsed().as_secs_f32() * 1000.0);
+            }
+            let updated = self.armor_scars.apply_measured(pending.facing, pending.local_mm, &outcome.measured, Some(outcome.rim_curve));
+            if let Some(id) = pending.lodged_id {
+                if let Some(round) = self.fea.lodged.iter_mut().find(|r| r.id == id) {
+                    let d = round.shell.caliber_mm * 0.001;
+                    let held = (round.depth_m - lodged::nose_length_calibres(round.shell.kind) * d).max(0.0);
+                    round.extraction = lodged::extraction_from_grip(outcome.grip_normal_n, held, true);
+                }
+            }
+            println!("[fea] committed the plate solve of a stopped round struck at {:.2} s ({} particles, {:.0} ms on a worker): cavity {:.0} mm, rim {:.0} K{}",
+                pending.struck_at_s, outcome.particles, outcome.wall_ms, outcome.geometry.cavity_mm, outcome.geometry.rim_kelvin,
+                if updated { "" } else { " (the strike had merged into an earlier wound: that record stays)" });
+        }
     }
 }

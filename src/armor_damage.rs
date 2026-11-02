@@ -588,6 +588,28 @@ impl ArmorField {
         recorded
     }
 
+    /// Apply a measurement solved after the strike was first recorded (a deferred plate solve) to
+    /// the dent at `facing`/`local_mm`, if it is still its own record. Depth, resistance loss and
+    /// radius never shrink (a later strike may have deepened the wound meanwhile); the rim takes the
+    /// solved temperature and cooling. Returns whether a record was updated.
+    pub fn apply_measured(&mut self, facing: Facing, local_mm: [i16; 3], measured: &MeasuredScar,
+        rim_curve: Option<RimCurve>) -> bool {
+        let Some(index) = self.scars.iter().position(|s| s.facing == facing && s.local_mm == local_mm && s.kind == ScarKind::Dent)
+        else { return false };
+        let scar = &mut self.scars[index];
+        let cavity = measured.cavity_mm.clamp(0.5, scar.plate_mm as f32 * 0.98);
+        scar.loss_mm = scar.loss_mm.max(cavity.round() as u16);
+        scar.depth_dmm = scar.depth_dmm.max((cavity * 10.0).round() as u16);
+        let radius = (measured.worked_radius_mm.round() as u16).max(scar.radius_mm / 2);
+        scar.radius_mm = scar.radius_mm.max(radius);
+        self.rim_k.resize(self.scars.len(), AMBIENT_K);
+        self.rim_curve.resize(self.scars.len(), None);
+        self.rim_k[index] = measured.rim_kelvin.max(AMBIENT_K);
+        self.rim_curve[index] = rim_curve;
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
     /// A rifle-calibre bullet (or a fragment) on armor: a splash crater and stripped paint with no
     /// resistance change. `energy_j` is the strike's kinetic energy.
     #[allow(clippy::too_many_arguments)]
@@ -996,6 +1018,21 @@ mod tests {
         assert_eq!(scar.depth_dmm, 520);
         let base = Plate { name: "test", thickness_mm: 100.0, slope_deg: 0.0, material: crate::ballistics::ArmorMaterial::Rha };
         assert!(field.plate_at(base, Facing::HullFront, Vec3::new(0.0, 1.2, 3.0)).thickness_mm < 50.0);
+    }
+
+    #[test]
+    fn a_deferred_measurement_updates_its_own_dent_only() {
+        let mut field = ArmorField::default();
+        let scar = field.record_at(Facing::HullFront, Vec3::new(0.2, 1.4, 3.0), Vec3::Z, -Vec3::Z,
+            &event(Terminal::Bounce), 1.0);
+        let revision = field.revision();
+        let measured = MeasuredScar { cavity_mm: 61.0, worked_radius_mm: 140.0, rim_kelvin: 1000.0, ..Default::default() };
+        assert!(field.apply_measured(Facing::HullFront, scar.local_mm, &measured, None));
+        let after = field.scars()[0];
+        assert_eq!(after.loss_mm, 61.max(scar.loss_mm));
+        assert!(after.radius_mm >= scar.radius_mm && field.revision() != revision);
+        assert!(!field.apply_measured(Facing::HullSide, scar.local_mm, &measured, None));
+        assert!(!field.apply_measured(Facing::HullFront, [0, 0, 0], &measured, None));
     }
 
     #[test]
