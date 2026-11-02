@@ -64,12 +64,12 @@ DECK_ABOVE_WATER = 8.0
 BRIDGE_HALF_W = 6.0
 BRIDGE_HALF_L = RIVER_HALF_W+BANK_RUN+12.0
 RAMP_M = 90.0
-SQUARE_R = 30.0
+SQUARE_R = 16.0
 
 VARIANTS = {
-    'playtest': dict(dest='spring-bridge-v2', lot_gap=(0.0, 3.0), outer_gap=(4.0, 10.0), dressing=1.0,
-                     kerbs=True, trees=26000, street_tree_m=13.0, craters=34, alleys=True),
-    'render': dict(dest='spring-bridge-lite-v2', lot_gap=(3.0, 8.0), outer_gap=(10.0, 20.0), dressing=0.35,
+    'playtest': dict(dest='spring-bridge-v2', houses=14, lot_gap=(0.0, 3.0), outer_gap=(4.0, 10.0), dressing=1.0,
+                     kerbs=True, trees=26000, street_tree_m=13.0, craters=16, alleys=False),
+    'render': dict(dest='spring-bridge-lite-v2', houses=10, lot_gap=(3.0, 8.0), outer_gap=(10.0, 20.0), dressing=0.35,
                    kerbs=False, trees=7000, street_tree_m=24.0, craters=12, alleys=False),
 }
 CONDITIONS = [('intact', .15), ('shelled', .30), ('burned', .25), ('partly_collapsed', .30)]
@@ -132,18 +132,19 @@ def lay_streets(cx, cz, centre_x, variant):
         sq = np.array([cx+s*(reach+SQUARE_R), cz])
         far = np.array([cx+s*700.0, cz+s*35.0])
         a = np.array([cx+s*(RIVER_HALF_W+BANK_RUN), cz])
-        add(a+(sq-a)*np.linspace(0, 1, int(np.linalg.norm(sq-a)/4.0)+2)[:, None], 6.0, 'main', 'cobble')
-        add(bezier(sq, sq+np.array([s*160.0, -s*30.0]), far), 6.0, 'main', 'cobble')
+        add(a+(sq-a)*np.linspace(0, 1, int(np.linalg.norm(sq-a)/4.0)+2)[:, None], 4.5, 'main', 'cobble')
+        add(bezier(sq, sq+np.array([s*160.0, -s*30.0]), far), 4.5, 'main', 'dirt')
     # Quays along each bank, north and south of the bridge's abutment.
-    zs = np.arange(cz-320.0, cz+321.0, 6.0)
+    zs = np.arange(cz-120.0, cz+121.0, 6.0)
     for s in (-1, 1):
         off = s*(RIVER_HALF_W+BANK_RUN+9.0)
         for side in (-1, 1):
             z = zs[(zs-cz)*side >= BRIDGE_HALF_W+16.0]
-            add(np.column_stack([centre_x(z)+off, z]), 5.0, 'quay', 'cobble')
+            add(np.column_stack([centre_x(z)+off, z]), 3.5, 'quay', 'cobble')
     # Lanes fanning out of each square at irregular angles, bending as they go.
-    fans = {-1: [(38, 300, 0.30), (-52, 280, -0.25), (104, 230, 0.35), (-118, 250, -0.30)],
-            1: [(28, 320, -0.28), (-40, 300, 0.32), (114, 240, -0.30), (-96, 260, 0.25)]}
+    # Two short lanes out of each bridgehead, becoming field tracks.
+    fans = {-1: [(38, 140, 0.30), (-118, 120, -0.30)],
+            1: [(28, 150, -0.28), (-96, 120, 0.25)]}
     for s in (-1, 1):
         sq = np.array([cx+s*(reach+SQUARE_R), cz])
         for k, (deg, length, bend) in enumerate(fans[s]):
@@ -153,7 +154,7 @@ def lay_streets(cx, cz, centre_x, variant):
             start = sq+out*SQUARE_R
             mid = start+out*length*0.5+normal*length*bend*0.5
             end = start+out*length
-            add(bezier(start, mid, end), 4.5, 'lane', 'cobble' if k < 2 else 'dirt')
+            add(bezier(start, mid, end), 3.0, 'lane', 'dirt')
     # Alleys from the quays outward, curving to meet the fan.
     if variant['alleys']:
         for s in (-1, 1):
@@ -195,7 +196,7 @@ def build_town(cx, cz, streets, centre_x, variant):
     pts, half = street_samples(streets)
     reach = BRIDGE_HALF_L+RAMP_M
     squares = [np.array([cx+s*(reach+SQUARE_R), cz]) for s in (-1, 1)]
-    buildings, rects = [], []
+    buildings, rects, candidates = [], [], []
     n = 0
     for si, st in enumerate(streets):
         if st['kind'] == 'main' and np.abs(st['pts'][:, 0]-cx).max() < reach+1:
@@ -214,15 +215,12 @@ def build_town(cx, cz, streets, centre_x, variant):
                 base = p[i]+d*(s_m-along[i])
                 normal = np.array([-d[1], d[0]])*side
                 dist = float(np.hypot(base[0]-cx, base[1]-cz))
-                inner = dist < 260.0
-                if inner:
-                    typ = pick(key, [('merchant_brick_house', .66), ('apartment_block', .10), ('workshop', .12), ('wooden_house', .12)])
-                else:
-                    typ = pick(key, [('wooden_house', .68), ('workshop', .20), ('merchant_brick_house', .12)])
-                w = {'apartment_block': 24.0, 'merchant_brick_house': [12.0, 16.0, 20.0][int(rnd(key, 1)*3)],
-                     'workshop': [12.0, 16.0][int(rnd(key, 1)*2)], 'wooden_house': [8.0, 12.0][int(rnd(key, 1)*2)]}[typ]
-                dep = {'apartment_block': 12.0, 'merchant_brick_house': 12.0, 'workshop': 12.0,
-                       'wooden_house': [8.0, 12.0][int(rnd(key, 2)*2)]}[typ]
+                inner = True
+                # Small houses: the grammar's smallest brick house (12 x 8, two or three
+                # storeys), timber cottages and small workshops.
+                typ = pick(key, [('merchant_brick_house', .55), ('wooden_house', .30), ('workshop', .15)])
+                w = {'merchant_brick_house': 12.0, 'workshop': 12.0, 'wooden_house': 8.0}[typ]
+                dep = 8.0
                 # The frontage faces the street; the grammar takes quarter turns, so the house is
                 # turned to the quarter nearest the street's direction.
                 street_deg = math.degrees(math.atan2(d[0], d[1]))
@@ -234,7 +232,7 @@ def build_town(cx, cz, streets, centre_x, variant):
                 dev = math.radians(abs(((street_deg+45.0) % 90.0)-45.0))
                 frontage = w if along_x else dep
                 overhang = 0.5*frontage*math.sin(dev)+0.5*(fw if along_x else fd)*(1-math.cos(dev))
-                setback = st['half']+0.8+overhang+(2.5*rnd(key, 3) if not inner else 0.6*rnd(key, 3))
+                setback = st['half']+0.4+overhang+0.4*rnd(key, 3)
                 c = base+normal*(setback+(fw if along_x else fd)*0.5)
                 rect = cc.footprint(float(c[0]), float(c[1]), w, dep, yaw)
                 why = ('street' if rect_hits_streets(rect, pts, half) else
@@ -244,25 +242,27 @@ def build_town(cx, cz, streets, centre_x, variant):
                        'bridge' if (abs(c[1]-cz) < BRIDGE_HALF_W+14.0+dep and abs(c[0]-cx) < reach+10.0) else 'edge' if not (abs(c[0]) < CROP_HALF-60 and abs(c[1]) < CROP_HALF-60) else 'ok')
                 REJECT[(st['kind'], why)] = REJECT.get((st['kind'], why), 0)+1
                 ok = (not rect_hits_streets(rect, pts, half)
-                      and all(cc.rect_gap(rect, r) >= 0.0 for r in rects)
                       and all(np.hypot(*(np.array([(rect[0]+rect[1])/2, (rect[2]+rect[3])/2])-q)) > SQUARE_R+max(w, dep)*0.5+2.0 for q in squares)
                       and abs(float(c[0])-float(centre_x(np.array([c[1]]))[0])) > RIVER_HALF_W+BANK_RUN+12.0+max(w, dep)*0.5
                       and not (abs(c[1]-cz) < BRIDGE_HALF_W+14.0+dep and abs(c[0]-cx) < reach+10.0)
                       and abs(c[0]) < CROP_HALF-60 and abs(c[1]) < CROP_HALF-60)
-                empty_lot = rnd(key, 6) < (0.10 if inner else 0.30)
-                if ok and not empty_lot:
-                    n += 1
-                    storeys = {'apartment_block': 3+int(rnd(key, 4)*2), 'merchant_brick_house': 1+int(rnd(key, 4)*3),
-                               'workshop': 1, 'wooden_house': 1}[typ]
-                    cellar = typ in ('merchant_brick_house', 'apartment_block') and rnd(key, 5) < .5
-                    bank = 'w' if c[0] < cx else 'e'
-                    buildings.append(dict(id=f'canyon.hamlet.bridge2_{bank}_{n:03d}', typology=typ,
-                        seed=int(cc.uid.fnv1a32(key)), width_m=w, depth_m=dep, storeys=storeys, cellar=bool(cellar),
-                        condition=pick(key+'c', CONDITIONS), x=cc.r3(float(c[0])), z=cc.r3(float(c[1])), yaw_deg=yaw))
-                    rects.append(rect)
-                gap = variant['lot_gap'] if inner else variant['outer_gap']
-                s_m += max(w, dep)+gap[0]+(gap[1]-gap[0])*rnd(key, 8)
+                if ok:
+                    storeys = {'merchant_brick_house': 2+int(rnd(key, 4)*2), 'workshop': 1, 'wooden_house': 1}[typ]
+                    cellar = typ == 'merchant_brick_house' and rnd(key, 5) < .5
+                    candidates.append((dist, key, rect, dict(typology=typ, seed=int(cc.uid.fnv1a32(key)), width_m=w,
+                        depth_m=dep, storeys=storeys, cellar=bool(cellar), condition=pick(key+'c', CONDITIONS),
+                        x=cc.r3(float(c[0])), z=cc.r3(float(c[1])), yaw_deg=yaw)))
+                s_m += w if along_x else dep              # lot after lot, wall to wall
                 k += 1
+    # A tiny town: the lots nearest the bridge, packed, until the town has its houses.
+    for dist, key, rect, b in sorted(candidates, key=lambda t: t[0]):
+        if len(buildings) >= variant['houses']:
+            break
+        if all(cc.rect_gap(rect, r) >= 0.0 for r in rects):
+            n += 1
+            bank = 'w' if b['x'] < cx else 'e'
+            buildings.append(dict(id=f'canyon.hamlet.bridge2_{bank}_{n:03d}', **b))
+            rects.append(rect)
     return buildings, rects, squares
 
 
@@ -483,7 +483,7 @@ def ground_paint(colour, grass, axis_tex, streets, rects, squares, centre_tex, c
     ad = np.abs(d_tex)
     # Inside the town the strip fields give way to gardens and meadow between the houses.
     rr = np.hypot(axis_tex[None, :]-cx, axis_tex[:, None]-cz)
-    town = np.clip((560.0-rr)/90.0, 0, 1)
+    town = np.clip((190.0-rr)/60.0, 0, 1)
     town = (town*town*(3-2*town))[..., None]
     mottle = (0.5+0.5*np.sin(axis_tex[None, :]*0.21)*np.cos(axis_tex[:, None]*0.17)).astype(np.float32)[..., None]
     garden = np.array([0.24, 0.36, 0.12], dtype=np.float32)*(0.85+0.3*mottle)
@@ -552,7 +552,7 @@ def build(variant_name='playtest', carry_from=None, plan=None):
     town, town_rects, squares = build_town(cx, cz, streets, centre_x, variant)
     print('[spring-bridge-v2] lots by street kind and outcome:', {f'{k}/{w}': n for (k, w), n in sorted(REJECT.items())})
     # Clear the valley and the town of the grammar's houses and dressing.
-    town_r = 520.0
+    town_r = 300.0
     def in_town(x, z, m=0.0):
         return math.hypot(x-cx, z-cz) < town_r+m
     def in_river(x, z, m):
@@ -696,7 +696,8 @@ def build(variant_name='playtest', carry_from=None, plan=None):
         note='centreline points are [x, z, water_y]; the water surface is flat across the channel')
     piers = [[cc.r3(dx), cc.r3(float(water[row]-BED_DEPTH))] for dx in np.linspace(-RIVER_HALF_W+10, RIVER_HALF_W-10, 3)]
     manifest['crossings'] = [dict(center=[cx, cz], deck_y=cc.r3(deck_y), half_length=BRIDGE_HALF_L, half_width=BRIDGE_HALF_W,
-                                  deck_thickness_m=1.2, piers=piers, name='the_bridge')]
+                                  deck_thickness_m=1.2, piers=piers, name='the_bridge',
+                                  truss=dict(over_m=6.0, under_m=2.5, panel_m=7.0))]
     # Ground, cropped with everything else.
     colour, grass = sp.ground(rng, H, ravine*(np.abs(X-centre[:, None]) > FLOOD_HALF), route, buildings, woods)
     axis_tex = np.linspace(-EXTENT/2, EXTENT/2, TEX, dtype=np.float32)
