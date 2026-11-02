@@ -12030,6 +12030,10 @@ impl WindowState {
             out.start_play(PlayMode::Koop);
         } else if std::env::var_os("KESSEL_CANYON").is_some() {
             out.start_play(PlayMode::Canyon);
+        } else if std::env::var_os("KESSEL_EXPEDITION").is_some() {
+            // The 2026-11-01 demo launcher: straight into a new expedition at the camp
+            // (tools/launch_demo_20261101.sh --expedition), the same path as the menu's entry.
+            out.start_play(PlayMode::Expedition);
         } else if std::env::var_os("KESSEL_SINGLEPLAYER").is_some() {
             out.start_play(PlayMode::Kampagne);
         } else if std::env::var_os("KESSEL_PLAYTEST").is_some() {
