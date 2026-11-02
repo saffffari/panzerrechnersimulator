@@ -300,6 +300,7 @@ fn rm_star_lattice(cell: vec3<i32>, seed: u32) -> f32 {
 }
 // The same lattice, share, magnitude law and irradiance as physical_environment.rs STAR_*.
 const RM_STAR_CELLS: f32 = 96.0;
+const RM_STAR_CEILING: f32 = 3.0;
 const RM_STAR_SHARE: f32 = 0.16;
 const RM_STAR_MAG_BRIGHTEST: f32 = -1.5;
 const RM_STAR_MAG_FAINTEST: f32 = 6.5;
@@ -368,6 +369,15 @@ fn rm_pixel_star(dir: vec3<f32>, pixel: vec2<i32>) -> vec3<f32> {
             radiance += tint * irradiance / pixel_sr * exp(-0.22 * airmass);
         }
     }
+    // A star's pixel is at most the display's white (2 November 2026, "bright night flashing
+    // star flares"): its whole flux in one pixel stood orders above the night's white, the bloom
+    // grew a flare round it, and the flare hopped as the star crossed pixels with the head's
+    // sway. The eye sees a point; the display shows a white pixel: the ceiling is three times
+    // the display's white, where AgX reads white and the deltaP bloom adds its half-texel halo
+    // at most (at the white itself a star read grey). Named approximation: the eye's own glare
+    // round a bright star is not drawn.
+    let white = rm_display_white();
+    if (white > 0.0) { radiance = min(radiance, vec3(white * RM_STAR_CEILING)); }
     return radiance;
 }
 

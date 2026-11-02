@@ -21183,9 +21183,12 @@ impl Game {
     /// Pick the portable prop the dismounted player's crosshair is actually resting on. Collected
     /// is intentionally ignored: an emptied can remains a real object and can be picked up again.
     fn portable_item_hover(&self, cam_fwd: Vec3, cam_pos: Vec3) -> Option<usize> {
+        // The track kit in hand does not hide a prop from the crosshair: taking the prop sets the
+        // kit down first (`interact_portable_item`; 2 November 2026, "while holding hammer you
+        // should still be able to lmb on stuff").
         if !matches!(self.mode, Mode::Foot) || self.climb.active || self.held_item.is_some()
             || self.carry_mesh.is_some() || self.carried_casing.is_some()
-            || self.carrying_track_kit || self.panzerfaust_claimed {
+            || self.panzerfaust_claimed {
             return None;
         }
         self.pickups
@@ -21294,6 +21297,8 @@ impl Game {
         let Some(index) = self.portable_item_hover(cam_fwd, cam_pos) else {
             return false;
         };
+        // Both hands for the prop: the track kit is set down where he stands first.
+        if self.carrying_track_kit { self.put_down_toolbox(); }
         if let Some(item) = &mut self.pickups[index].portable {
             item.equip();
             self.held_item = Some(index);

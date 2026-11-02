@@ -2968,6 +2968,18 @@ walled two centimetres above and below) that subtends a few degrees: the rays ne
   daylight from its periscopes yet. The cause is not found (the housing between the lower
   window and the mirror, or the periscope's actual optics); until it is, the cupola by day is
   its relayed pictures and the hatch.
+- **A star's pixel at most white** (`rm_shade.wgsl` `rm_pixel_star`; the eye's state buffer bound
+  to the shade, `rm_display_white`: the radiance the eye maps to display white, 1 / its cone
+  exposure): the pixel star carried
+  its whole flux in one pixel, orders above the night's white, the deltaP bloom grew a flare round
+  it and the flare hopped as the star crossed pixels under the head's sway ("bright night
+  flashing star flares"). The display now shows a star as a white pixel, as the eye sees a point.
+  Named approximation: the eye's own glare round a bright star is not drawn. The shader
+  backend's sky draws stars as radiance over the lattice cell and is unchanged.
+- **The modes start at dawn** (`KESSEL_SKY_START`, the launcher's `--sky-start`, default
+  `dawn`): the clock started at local apparent noon, and under the launcher's ninety-minute
+  cycle the Sun left the full day a quarter of an hour in ("day changes to night way too soon").
+  A clock choice, not a lighting change; the ephemeris lights the dawn.
 - **The cabin dimmer again, the round lamp recoloured** (the owner: "turn down the dial and cabin
   lights too and rest more on the light from outside which should still be quite dark during the
   day"; "white light color indicator should become yellow or blue"): the practicals' power scale

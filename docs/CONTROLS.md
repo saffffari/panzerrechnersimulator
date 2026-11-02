@@ -467,6 +467,8 @@ size, and stitch-apron rules.
   dismounting does not grant extra ammunition.
 - Pick up the physical repair toolbox. The box stays in the left hand and hammer in the right,
   inside or outside. Approach and aim at the actual broken component, then hold LMB to repair.
+  A prop under the crosshair can still be taken with the kit in hand: the kit is set down where
+  you stand first, both hands being needed.
   At a broken track: grab the loose end, hold LMB and pull down, fit the link, then hammer the pin.
   Completed work leaves the tools in your hands. X puts them down for later pickup; repair
   cannot be performed remotely from the kit mount. Specialized repair minigames beyond the
@@ -518,8 +520,10 @@ size, and stitch-apron rules.
   in a few seconds and then holds itself on a slope. It no longer rolls away when stopped.
 - **Cigarettes.** C brings out the whole packet. Look at a cigarette (it is outlined) and press
   the left button to take it. Hold the right button to light it, then hold the right button to
-  toke; the left button and every interaction stay free. C with one in the mouth takes it back in
-  the hand. A lit cigarette goes to the mouth by itself when the hands are needed.
+  toke; the left button and every interaction stay free. A short tap of the right button on a
+  lit cigarette in the hand knocks the ash off once some has grown (it falls by itself at each
+  quarter, and in the mouth). C with one in the mouth takes it back in the hand. A lit cigarette
+  goes to the mouth by itself when the hands are needed.
 - **Leaving by the cupola needs the cupola view first.** From below, click the cupola to climb
   into its seat; only there does held Space climb out. The hatch lever itself can be worked from
   below as well as from the seat. X drops back down.

@@ -1060,6 +1060,7 @@ impl Backend {
                 tex2d_entry(11, vis_stages, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2),
                 tex2d_entry(12, vis_stages, wgpu::TextureSampleType::Float { filterable: false }, wgpu::TextureViewDimension::D2Array),
                 readonly_storage(13, vis_stages),
+                readonly_storage(14, vis_stages),
             ],
         });
         let volume_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1502,6 +1503,8 @@ impl Backend {
                 entry(11, wgpu::BindingResource::TextureView(&self.cloud_shadow.view)),
                 entry(12, wgpu::BindingResource::TextureView(&r.cabin_medium_view)),
                 entry(13, self.aperture_measure_buf.as_entire_binding()),
+                // The main view's eye: the pixel stars' ceiling (rm_shade.wgsl rm_display_white).
+                entry(14, r.exp_bufs[0].as_entire_binding()),
             ],
         });
         let volume = self.temporal.iter().map(|t| std::array::from_fn(|i| device.create_bind_group(&wgpu::BindGroupDescriptor {

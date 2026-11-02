@@ -32,6 +32,15 @@ struct Light { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, };
 // piece's shortest axis); col1 the face's outward normal, col2 and col3 its half-axes, and in
 // their w lanes the direction the pane looks out along (a periscope's folded at its mirror).
 @group(1) @binding(13) var<storage, read> aperture_measure: array<mat4x4<f32>>;
+// The crewman's eye as the exposure pass keeps it (exposure.wgsl's state lanes; lane 0 the cone
+// channel's exposure, display input per unit radiance).
+@group(1) @binding(14) var<storage, read> eye_state: array<f32>;
+// The radiance the eye currently maps to the display's white (0 before it is metered).
+fn rm_display_white() -> f32 {
+    if (arrayLength(&eye_state) < 1u) { return 0.0; }
+    let e = eye_state[0];
+    return select(0.0, 1.0 / e, e > 0.0);
+}
 
 // Aperture `a`'s face: the measured one, else the record's shortest axis with its longest and
 // middle half-axes. Returns the outward normal, the two half-axes, the direction the pane looks

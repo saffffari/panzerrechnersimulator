@@ -546,6 +546,16 @@ pub const MAX_WORN_VEHICLES: usize = 16;
 pub const FULL_DAY_S: f64 = 300.0;
 pub const TWILIGHT_S: f64 = 150.0;
 pub const NIGHT_S: f64 = 300.0;
+/// `KESSEL_SKY_START=dawn|day|dusk|night`: the phase of the act's day the clock starts in when
+/// no record authors an instant (`Renderer::new`); `day` (local apparent noon) unless set.
+pub fn configured_sky_start_phase() -> crate::celestial_sky::ClockPhase {
+    match std::env::var("KESSEL_SKY_START").ok().as_deref().map(str::trim) {
+        Some(v) if v.eq_ignore_ascii_case("dawn") => crate::celestial_sky::ClockPhase::Dawn,
+        Some(v) if v.eq_ignore_ascii_case("dusk") => crate::celestial_sky::ClockPhase::Dusk,
+        Some(v) if v.eq_ignore_ascii_case("night") => crate::celestial_sky::ClockPhase::Night,
+        _ => crate::celestial_sky::ClockPhase::Day,
+    }
+}
 /// `KESSEL_DAY_CYCLE_SCALE`: the three phase lengths above times this (an expedition of hours
 /// wants a slower clock than the Canyon run's fifteen-minute day; the demo launcher sets 6, a
 /// ninety-minute cycle, after the 2026-11-01 playtest found the transitions "way too fast" and
@@ -3819,9 +3829,10 @@ impl Renderer {
         let graphics_preset = crate::graphics::active_preset();
         let shader_backend = crate::graphics::shader_backend_enabled();
         println!("[renderer] backend={} (ray queries {})", if crate::graphics::raymarch_backend_enabled() { "raymarch" } else if shader_backend { "shader" } else { "physical" }, if shader_backend && !crate::graphics::raymarch_ray_queries_wanted() { "disabled" } else { "adapter-dependent" });
-        // Until a caller sets an act clock the sky is Stalingrad's solstice noon.
-        let default_sky_clock = crate::celestial_sky::SkyClock::for_act(
-            1, crate::celestial_sky::ClockPhase::Day);
+        // Until a caller sets an act clock the sky is Stalingrad's solstice noon, or the phase
+        // `KESSEL_SKY_START` names (the demo launcher starts play at dawn: from noon the Sun
+        // left the full day after a quarter of an hour, "day changes to night way too soon").
+        let default_sky_clock = crate::celestial_sky::SkyClock::for_act(1, configured_sky_start_phase());
         let default_celestial = crate::celestial_sky::CelestialLighting::for_clock(
             &default_sky_clock, AtmosphereParameters::default().solar_irradiance);
         let transport_quality = TransportQuality::configured();
