@@ -390,6 +390,39 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   Named approximations: the envelope is a box in the hull frame (the lower hull side between
   the wheels takes crust with them); the pack rates are presentation estimates; a hulk stands
   at 0.6 of the world's load. `fx-review` part `gear` is the evidence.
+- What the layered damage model's breaches do outside the hull (2026-11-02;
+  `game_fea_effects`). The chain names the casings a round opened and where; before, that knocked
+  the system out and lit the game's fire, and nothing showed. Now a holed fuel tank with petrol
+  above the hole runs it out through the round's own hole in the plate at Torricelli's rate
+  through the solved aperture (discharge coefficient 0.62, the head the tank's live level above
+  the hole from the component voxels, falling as the tank drains; the two modelled tanks share the
+  system's fill); the litres are taken from the live fuel; it falls as drawn beads (a fixed count
+  per litre, presentation) and pools where it lands as a flat disc of 4 mm depth, and once the
+  breach's fire burns (the game's existing rule) the pool burns as a world fire source. A holed
+  radiator steams through the deck grilles over it for 120 s; a breached engine smokes its oil
+  through the grilles for 240 s and, burning, stands its flames out of them (a world fire source
+  at the grille); a holed gearbox, steering unit or final drive drips its oil (30/20/12 l,
+  estimates, at 0.08 of petrol's rate through the same hole, named) under the hull and pools.
+  Named approximations: the vents' durations stand for the coolant and oil volumes; the grille
+  is the first source surface met from above the component's centre; a pool spreads on whatever
+  it lands on without flowing; a pool's and the engine's fires are drawn with the world fire's
+  tongues (two to three metres tall, their count with the strength), not a low, wide pool flame,
+  and they stand at the game's fire strength from the first frame rather than growing over the
+  seconds a petrol fire takes; nothing here is saved (a reload loses a running leak, not the fuel
+  it took). `fx-review` part `breach` is the evidence; tests cover Torricelli's rate, a hole
+  above the liquid, the drain and the pool's growth.
+- Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
+  law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
+  motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
+  instead of 4 cm and 0.22 of the chip's size wide, so a 1/60 s exposure of a chip at tens of
+  metres a second reads as a streak; the five heat pages' colours are the Planck law at their
+  bands (1450, 1200, 1000, 820 K; cold steel below 750 K) instead of an authored amber set, and
+  the two coolest pages' display scale is lifted (1.05 to 1.4, 0.18 to 0.6; tails 0.86 to 1.1,
+  0.12 to 0.5) so a chip at the Draper point reads red hot in the dark cabin. The cabin fire's
+  four pages are the same Planck law at the exterior pages' temperatures (their display scale
+  unchanged), so the Tiger's fire and a wreck's burn alike. Named: the pages' display scales
+  are presentation, the chips' temperatures are the lattice's (plastic and friction work, cooling
+  by radiation and convection).
 
 Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
 whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never

@@ -622,6 +622,7 @@ impl Game {
         self.fea_record_lodged(&line, &chain_result, event, part, now, grip);
         // Without a lattice solve the hole is the calibre's (named).
         let hole = hole_area_m2.unwrap_or(std::f32::consts::PI * radius * radius);
+        self.fea_breach_effects(&line, &chain_result, hole);
         let compartment = if chain_result.burst {
             self.fea_compartment_burst(&line, &chain_result, event, part, hole, burst_fragment_kinetic_j)
         } else { None };
@@ -755,6 +756,12 @@ impl Game {
                 embed_m: 0.0,
             }
         };
+        {
+            let temps: Vec<f32> = lat.clusters.iter().map(|c| c.temperature_k).collect();
+            if let (Some(lo), Some(hi)) = (temps.iter().cloned().reduce(f32::min), temps.iter().cloned().reduce(f32::max)) {
+                println!("[fea] {} solved clusters at {lo:.0}-{hi:.0} K", temps.len());
+            }
+        }
         // Plate clusters on the inside, moving inward. Exterior ejecta leave as the cosmetic impact
         // sparks only (named): this pool is the interior's.
         for cluster in &lat.clusters {

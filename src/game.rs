@@ -60,6 +60,8 @@ mod game_acoustics;
 mod game_hit_sounds;
 #[path = "game_fea.rs"]
 mod game_fea;
+#[path = "game_fea_effects.rs"]
+mod game_fea_effects;
 #[path = "game_fea_section.rs"]
 pub(crate) mod game_fea_section;
 #[path = "game_fea_review.rs"]
@@ -6114,8 +6116,11 @@ const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
 // Cabin flame chromaticity needs an amber core after sRGB decoding, not almost pure red.
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
 // pages independent: restoring cabin warmth must not retune distant wrecks or muzzle reports.
+/// The cabin's four pages were an authored amber set; since 2026-11-02 they are the same Planck
+/// law as the exterior's at the same temperatures (the owner: the Tiger's fire looked different
+/// from the T-34's), their display scale (`FIRE_FLAME_EMISSIVE`) unchanged.
 const CABIN_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_STAGES] = [
-    [183, 76, 12], [255, 160, 32], [255, 211, 94], [203, 81, 13],
+    [255, 111, 24], [255, 128, 38], [255, 160, 70], [255, 96, 14],
 ];
 /// Exterior pages: the soot's temperatures, base (0), body (1), core (2) and the tongues' tips
 /// and outer sheath (3), drawn on the one Planck law the sparks, rims, embers and jets share
@@ -8454,8 +8459,11 @@ const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
 // (2.4 m/s x 1/60 s): a dash a few bodies long. At 0.145 m, seen from a hand's breadth away in
 // the compartment and bloomed, the tails drew as rods spanning the room for a second (traced
 // with the lights debug, 2026-11-02: every tail at the cap, 0.17-0.7 m from the eye).
-const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.04;
-const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.38;
+/// A fragment's tracer: the frame's own motion, at most this long (the owner, 2026-11-02:
+/// spall and shrapnel with tracers; a 1/60 s exposure of a 300 m/s chip is five metres, so the
+/// streak is bounded to read as a tracer and not a rod across the compartment).
+const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.45;
+const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.22;
 // The visible temperature pages also define the radiance of the bounded fragment-swarm emitter.
 // Emission is integrated from each real chip's six cube faces; the narrow history tail is only a
 // motion representation of that same body and therefore contributes no duplicate source power.
@@ -8467,7 +8475,9 @@ const HOT_FRAGMENT_STAGE_COLOR: [Vec3; N_HOT_FRAGMENT_BATCHES] = [
     // Cold, oxidised steel: a body the lattice solved, below visible glow. No emission.
     Vec3::new(70.0 / 255.0, 68.0 / 255.0, 64.0 / 255.0),
 ];
-const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.05, 0.18, 0.0];
+/// Display scale per heat page; the dull-red page is lifted so a solved chip at the Draper
+/// point still reads red hot in the dark cabin (the owner, 2026-11-02).
+const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.4, 0.6, 0.0];
 // These pre-allocated scene slots are retained only to avoid re-indexing the large fixed scene while
 // the renderer agent admits dynamic physical grains into the TLAS. They are submitted empty forever.
 const N_MICRO_SPARK_BATCHES: usize = 3;
@@ -8975,6 +8985,8 @@ struct Slots {
     armor_patch: [usize; N_ARMOR_MARKS],
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     track_snow: [usize;2],
+    /// The breach effects' petrol and oil beads and pools (`game_fea_effects`).
+    fea_liquid: [usize;2],
     weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
     fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // advected hot/yellow/orange/red flame parcels
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
@@ -9684,6 +9696,8 @@ pub struct Game {
     /// The layered damage model's state on the player's Tiger: lodged rounds and chain receipts
     /// (`game_fea`, docs/FEA_DAMAGE_MODEL_20261102.md).
     fea: game_fea::FeaRuntime,
+    /// What the breaches do outside the hull: leaks, vents, the fires they stand.
+    fea_effects: game_fea_effects::FeaEffects,
     /// Rotating LAN cursor over `armor_scars` (`net_snapshot`).
     armor_net_cursor: std::cell::Cell<usize>,
     /// Probed surface extent and plug rest per drawn wound (`push_vehicle_scars`), keyed by the
@@ -12577,6 +12591,7 @@ impl Game {
             armor_patch,
             flame,
             track_snow: [usize::MAX;2],
+            fea_liquid: [usize::MAX;2],
             weapon_vfx: [usize::MAX; weapon_vfx::PAGES],
             fire_flame_batch,
             fire_smoke_batch,
@@ -13477,7 +13492,11 @@ impl Game {
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
         // carries the effect after the flash. Every page reserves the bounded pool because an
         // impact frame may legitimately put every chip in the same heat stage.
-        let hot_steel = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3], [70, 68, 64]];
+        // The four hot pages are the Planck law at their bands' temperatures (`FEA_HEAT_PAGE_KELVIN`:
+        // 1450, 1200, 1000 and 820 K), the one law the fire pages, sparks and rims glow on; the
+        // fifth is cold oxidised steel.
+        let hot_steel = [crate::incandescence::planck_srgb8(1450.0), crate::incandescence::planck_srgb8(1200.0),
+            crate::incandescence::planck_srgb8(1000.0), crate::incandescence::planck_srgb8(820.0), [70, 68, 64]];
         let hot_emissive = HOT_FRAGMENT_STAGE_EMISSIVE;
         slots.hot_fragment_batch = std::array::from_fn(|i| {
             let batch = renderer
@@ -13495,7 +13514,7 @@ impl Game {
         // A second bounded page set draws one narrow, velocity-aligned tail for each flying head.
         // It reuses a plain unit box rather than crossed fins/billboards, so two luminous axes can
         // never be baked into one fragment. Slower and settled chips submit no tail transform.
-        let tail_emissive = [2.10, 1.78, 0.86, 0.12, 0.0];
+        let tail_emissive = [2.10, 1.78, 1.10, 0.50, 0.0];
         slots.hot_fragment_tail_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -13511,6 +13530,7 @@ impl Game {
         });
         // Rounds held by the Tiger's steel: exact physical pools, one per kinetic specification.
         let fea_lodged_draw = game_fea::allocate_lodged_round_pools(device, queue, &mut renderer);
+        slots.fea_liquid = game_fea_effects::allocate_liquid_pools(device, queue, &mut renderer);
         // Retired fixed-scene slots. Scene indices stay stable during the renderer transaction, but
         // `drive_penetration_fx` submits empty arrays and these meshes never become visible.
         let retired_micro = [[1, 1, 1], [1, 1, 1], [1, 1, 1]];
@@ -14152,6 +14172,7 @@ impl Game {
             armor_tick: 0,
             armor_scars: crate::armor_damage::ArmorField::default(),
             fea: game_fea::FeaRuntime::with_draw_pools(fea_lodged_draw),
+            fea_effects: Default::default(),
             armor_net_cursor: std::cell::Cell::new(0),
             scar_geometry_cache: Default::default(),
             armor_clock_s: 0.0,
@@ -20935,6 +20956,7 @@ impl Game {
                 self.armor_scars = crate::armor_damage::ArmorField::default();
                 // Its steel holds no rounds, and the lost hull's fragments stay with the lost hull.
                 self.fea.reset();
+                self.fea_effects = Default::default();
                 self.hot_fragments.iter_mut().for_each(|f| f.active = false);
                 self.crew = default_crew();
                 self.reset_singleplayer_crew();
@@ -23844,6 +23866,7 @@ impl Game {
         self.armor_scars = crate::armor_damage::ArmorField::default();
         // A fresh Tiger: no rounds in its steel, no plate solves pending, no chip in hand.
         self.fea.reset();
+        self.fea_effects = Default::default();
         self.death_cause = None;
         self.last_fatal = None;
         self.fire = 0.0;
@@ -31389,6 +31412,7 @@ impl Game {
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("update_fx");
         self.drive_cookoff_build(dt);
+        self.drive_fea_effects(dt, r);
         self.hide_claimed_field_people(r);
         // Persistent casualty physics advances once with the host simulation, never once per split
         // viewport. Every camera therefore sees the same directional throw and final body pose.
@@ -33122,6 +33146,11 @@ impl Game {
                     0x7300_0000 ^ i as u32,
                 ));
             }
+        }
+        // The player's Tiger's breaches (`game_fea_effects`): the engine bay's fire out of the deck
+        // grilles and the petrol pools' fires, once the breach's fire burns.
+        for (pos, strength, seed) in self.fea_fire_sources() {
+            world_sources.push((pos.distance_squared(listener), pos, strength, seed));
         }
         // Tableau stovepipes (`urban_tableaux`): a stove's fire is inside its shelter, so its
         // source is smoke only, drawn as a thin column from the pipe mouth; it shares the world
