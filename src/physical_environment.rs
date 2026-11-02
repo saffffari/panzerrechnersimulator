@@ -130,14 +130,16 @@ impl Default for AtmosphereParameters {
             ozone_center_altitude_m: 25_000.0,
             ozone_half_width_m: 15_000.0,
             rayleigh_scattering_m_inv: DVec3::new(5.802e-6, 13.558e-6, 33.100e-6),
-            // Aerosol: a winter continental background with the cauldron's smoke, optical depth
-            // about 0.08 at 550 nm over the 1,200 m scale height (AERONET continental winter
-            // climatologies run 0.05 to 0.10; Bruneton's 0.005 is a clear mountain sky). Single
+            // Aerosol: a winter continental background, optical depth about 0.05 at 550 nm over
+            // the 1,200 m scale height, the low end of the AERONET continental winter
+            // climatologies (0.05 to 0.10; Bruneton's 0.005 is a clear mountain sky). Single
             // scattering albedo 0.9 as before. The aureole and the whitened horizon it gives are
             // what a steppe sunset has; without it the three-band sky was pure Rayleigh, and its
-            // sunset the saturated orange of a monochromatic transmittance (2 November 2026).
-            mie_scattering_m_inv: 6.0e-5,
-            mie_extinction_m_inv: 6.667e-5,
+            // sunset the saturated orange of a monochromatic transmittance (2 November 2026). The
+            // first value, 0.08, whitened the day sky until the clouds lost their contrast
+            // against it (the owner: "we need the clouds back"), hence the low end.
+            mie_scattering_m_inv: 4.0e-5,
+            mie_extinction_m_inv: 4.444e-5,
             // Ozone (the Chappuis band, peak near 600 nm) averaged over each band's width
             // (600-760, 500-600, 400-500 nm) instead of Bruneton's point samples at 680, 550
             // and 440 nm (0.650, 1.881, 0.085 e-6). The point samples absorbed the green band

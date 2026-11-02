@@ -66,7 +66,9 @@ channel (`observer.rs`), and two observers in one display would be wrong.
   these pastel tones are too stylized, somewhere in the middle, less pink and purple"): the
   dithered-colour mode with each pixel's OKLab hue and chroma pulled toward the nearest pastel
   entry's by `KESSEL_PALETTE_PULL` (0.7 unless set, after the 0.5 stills still read mauve at dusk), lightness kept: continuous tones in the
-  palette's colour family, magentas and purples sliding to its teals, greys and creams.
+  palette's colour family, magentas and purples sliding to its teals, greys and creams. Outdoors
+  only: inside the hull the pull is zero (the buttoned-up view's eye_range_strength), so the
+  cabin keeps the plain dithered colour, as it keeps its own rod hue and gain.
 - `KESSEL_PALETTE_SMOOTH=0..1` (the look lane's w in the palette modes): 0 keeps deltaP's flat bands between palette
   entries (the pair penalty, the ratio's dead zones and eighths); 1 dithers across them (a tenth
   of the penalty, narrow dead zones, sixteenths), the smoother variant to compare.

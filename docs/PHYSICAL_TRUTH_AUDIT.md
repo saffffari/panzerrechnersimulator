@@ -2888,8 +2888,9 @@ not close the separate cartridge source-sweep, seam-picker or moving-loader visu
   it replaces; it changes no light. The CPU reference `observer::aces` stays as the mapping's
   monotonic reference in the tests.
 - **The aerosol is a winter continental background** (`AtmosphereParameters::default`:
-  Mie scattering 6.0e-5 and extinction 6.667e-5 per metre at sea level over the 1,200 m scale
-  height, optical depth about 0.08 at 550 nm, single-scattering albedo 0.9): AERONET continental
+  Mie scattering 4.0e-5 and extinction 4.444e-5 per metre at sea level over the 1,200 m scale
+  height, optical depth about 0.05 at 550 nm, single-scattering albedo 0.9; first set at 0.08,
+  which whitened the day sky until the clouds lost contrast): AERONET continental
   winter climatologies run 0.05 to 0.10, and the cauldron's smoke adds; Bruneton's 0.005 was a
   clear mountain sky, under which the three-band sunset was the saturated orange of a
   monochromatic transmittance. A sourced estimate, not a measurement of the day.

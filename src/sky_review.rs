@@ -187,6 +187,15 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             aim_exterior(&mut r, &mut g, toward, 50.0);
             cap.take(&mut r, name, note)?;
         }
+        // The day under six tenths cloud: the clouds against the hazed sky.
+        for (name, instant, note) in [("noon_clouds", crate::celestial_sky::phase_instant(1, ClockPhase::Day), "noon under six tenths cloud"),
+            ("sunset_clouds", dusk(0.0), "sunset under six tenths cloud")] {
+            r.set_sky_clock(SkyClock::new(instant, site));
+            r.overcast = 0.6;
+            let toward = r.celestial().key.direction;
+            aim_exterior(&mut r, &mut g, toward, 10.0);
+            cap.take(&mut r, name, note)?;
+        }
         r.set_sky_clock(SkyClock::new(moon_night, site));
         r.overcast = 0.6;
         let toward = r.celestial().key.direction;
