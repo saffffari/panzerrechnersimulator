@@ -31,8 +31,8 @@ shader and the Crush lanes (span 144, `look` at 128, earlier lanes unmoved);
 
 The owner's Canyon playtest under the look (2026-11-01) found the fire glowing over too wide a
 radius, armour and blast sparks reading as one effect stacked on itself, and a T-34 kill dropping
-the frame rate. Receipts: `captures/fx_before2_20261101_deltap_*` / `fx_after_20261101_deltap_*`
-(the `fx-review` harness, `src/fx_review.rs`: the burning wreck at dusk and night, three strikes on
+the frame rate. Receipts: `captures/fx_before2_20261101_deltap_*` / `fx_after_20261101_deltap_*`,
+`fx_strikes_20261102_deltap_*` and `fx_kill_20261102_deltap.json` (the `fx-review` harness, `src/fx_review.rs`: the burning wreck at dusk and night, three strikes on
 its hull from the real projectile path, the gunner's frame across a catastrophic kill with
 `KESSEL_GPU_PROFILE=1`).
 
@@ -50,6 +50,11 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   omitted and counted. Each parcel's emission and optical depth hold in expectation; the port's
   fire is a sparser, brighter speckle (per-pixel noise rises as 1 / sqrt(samples)); the main
   view's own fire is the raymarch backend's parcels and embers and is untouched.
+  Measured on the 120-frame kill at 1280x720 (`fx_kill_20261102_deltap.json`, RTX 4090, the GPU
+  otherwise idle): `native-pixel-hdr-effects` p50 0.43 / p95 3.6 / max 5.5 ms (before: 3.3 /
+  29.2 / 43.8); on the worst frame the sight pane draws 460,800 of 7.75 million requested grains
+  for 1,398 parcels at a weight of at most 7.98, none omitted; the sparks pass p50 1.3 / p95 2.2
+  / max 3.3 ms; `rm-points` 0.72 ms with the six embers a grain (10,044 embers that frame).
   The grain sampler's radical inverses are per-base functions (bit reversal for base 2), the same
   sequence a few floating-point ulps off; no sample identity changes.
 - Embers (the main view's own fire, `renderer_raymarch.rs` `collect_parcels`, `rm_points.wgsl`):
@@ -75,8 +80,8 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   eye against the previous presentation, not fragmentation or thermal measurements; the bounce
   plane is the terrain height under the strike, not the hull or any object.
 
-Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above 1, whole omission below
-it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never
+Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
+whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never
 below ground, rest on it; two strikes differ by event and by seed; support bounds hold),
 `src/weapon_vfx.rs` tests, and the shader validation tests of both spark shaders.
 
