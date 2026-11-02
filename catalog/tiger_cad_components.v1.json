@@ -1,0 +1,1598 @@
+{
+ "schema": "panzer.tiger-cad-components.v1",
+ "generated_by": ["tools/bake_tiger_cad_components.py (FreeCAD)", "tools/tiger_cad_register.py"],
+ "report": "docs/research/TIGER_CAD_COMPONENTS_20261102.md",
+ "source": {
+  "cad": "Rye Field Model RM-5010 Tiger I 1/35 full-interior kit CAD (SolidWorks AP214 STEP + SLDPRT metadata)",
+  "step_sha256": {
+   "full": "ca8afcc58e15b1746ea39bfe02613ba3989de372d1f8a0dbe5bd8dcf46015c04",
+   "base": "08944bca10dcabea4626864552108250d9a1878dff97f5d4bfbce71c5b3d7c42",
+   "engine": "90346296c51578669d23777bfcb1e8ca8f16c7af904004166ccc68b18e25d424"
+  },
+  "labels": "kit part numbers and names from the SolidWorks files' custom properties (Tiger-I(SW).zip), linked to STEP solids by cached mass (ABS 1.02 g/cm^3) plus position"
+ },
+ "frames": {
+  "hull": "engine hull metres: origin at ground contact, +Y up, +Z forward (barrel), +X vehicle left",
+  "turret": "turret-local metres = hull minus the game turret pivot, turret yaw 0",
+  "turret_pivot_hull_m": [0.0, 0.524, 0.019],
+  "gun_trunnion_turret_m": [0.004, 1.845, 1.04]
+ },
+ "transform_kit_mm_to_engine_hull_m": {
+  "s_m_per_kit_mm": 0.038919827,
+  "R": "identity",
+  "t_m": [2e-06, 0.570671, 2.657689],
+  "pairs": 446,
+  "residual_mm": {
+   "per_axis_rms_mm": [0.0474, 0.0687, 0.1484],
+   "per_axis_max_abs_mm": [0.5182, 0.7334, 1.4109],
+   "per_axis_mean_mm": [0.0, 0.0, 0.0],
+   "norm_rms_mm": 0.1703,
+   "norm_p95_mm": 0.256,
+   "norm_max_mm": 1.4127
+  }
+ },
+ "scale_note": "The game's Tiger is this kit CAD at 0.0389198 m per kit mm, 1.1120 x the kit's nominal 1:35 (0.035 m/mm): every box below is in that game scale, about 11 % larger than the real vehicle the kit represents.",
+ "tessellation_chord_tolerance": {
+  "kit_mm": 0.02,
+  "engine_mm": 0.7784
+ },
+ "envelope_error_fields": {
+  "max_vertex_outside_box_mm": "largest distance of any tessellated vertex outside the box (box fitted to the vertices, so ~0)",
+  "max_brep_outside_box_mm": "largest excursion of the exact B-rep surface past any box face (OCC optimal bounds without triangulation, per box axis); a point's distance from the box is at most sqrt(3) times this",
+  "chord_tolerance_mm": "tessellation chord tolerance used for the vertices, engine millimetres",
+  "empty_fraction": "1 - fused solid volume / box volume: how much of the box is not kit material"
+ },
+ "game_mesh_field": "status present / partial / absent: whether the game's own GLBs draw this component's kit solids (vertex proximity, exact point-to-triangle check where ambiguous)",
+ "components": [
+  {
+   "id": "engine_block",
+   "name": "Engine block (kit 'MAIN 引擎主體', engine main body)",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "28U05",
+     "solid_ids": [253],
+     "kit_name": "MAIN(引擎主體)",
+     "gloss_en": "engine main body",
+     "sw_mass_g": [10.61],
+     "solid_mass_g_abs": 10.6141
+    }
+   ],
+   "solid_ids": [253],
+   "evidence": "SolidWorks part TG_RM5010-28U05 'MAIN(引擎主體)' (engine main body) in assembly 0B29 EngineSystem, merging kit pieces U6/U7/U16/U21/U22/U29/U32/H35/H55/H61/H63/H64; its cached mass 10.61 g equals this solid's volume x ABS 1.02 g/cm^3 (10.614 g); identical invariants to the largest solid of the separate EngineSystem STEP; rear compartment centreline between the two side compartments.",
+   "doubts": "One merged kit body: the engine-mounted kit pieces listed are fused into it, so sub-parts cannot be separated. Its B-rep carries five small internal void shells (kit_cavities).",
+   "obb": {
+    "center_m": [0.037949, 1.249822, -1.951391],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.524445, 0.667475, 0.650934]
+   },
+   "volume_m3": {
+    "solids": 0.613475934,
+    "box": 1.822894997
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0003,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.6635
+   },
+   "kit_cavities": {
+    "solids": [
+     {
+      "solid_id": 253,
+      "inner_shells": 5,
+      "cavity_volume_mm3": 67.691385
+     }
+    ],
+    "note": "internal void shells in the kit B-rep (volume in kit mm^3)"
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "engine_air_filters",
+   "name": "Engine air filters, pair (kit 28U20 'FILTER TANK')",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "28U20",
+     "solid_ids": [217],
+     "kit_name": "FILTER TANK",
+     "gloss_en": null,
+     "sw_mass_g": [0.65],
+     "solid_mass_g_abs": 0.6524
+    },
+    {
+     "member": "28U20",
+     "solid_ids": [309],
+     "kit_name": "FILTER TANK",
+     "gloss_en": null,
+     "sw_mass_g": [0.65],
+     "solid_mass_g_abs": 0.6524
+    }
+   ],
+   "solid_ids": [217, 309],
+   "evidence": "File label 'FILTER TANK' (28U20, EngineSystem; 0.65 g = 0.652 g); the only EngineSystem part instanced twice (14 STEP solids from 13 part files); two identical axisymmetric drums on top of the engine block.",
+   "doubts": "The SolidWorks part carries no Chinese description, only the file label.",
+   "obb": {
+    "center_m": [2e-06, 1.77505, -1.893985],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.231573, 0.1263, 0.495255]
+   },
+   "volume_m3": {
+    "solids": 0.07541818,
+    "box": 0.115880592
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.004,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.3492
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "radiator_left",
+   "name": "Radiator, left side compartment (kit 27K76 'COOLBOX 冷卻箱')",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "27K76",
+     "solid_ids": [212],
+     "kit_name": "COOLBOX(冷卻箱)",
+     "gloss_en": "cooling box",
+     "sw_mass_g": [2.85],
+     "solid_mass_g_abs": 2.8492
+    }
+   ],
+   "solid_ids": [212],
+   "evidence": "Part 27K76 'COOLBOX(冷卻箱)' (cooling box) in 0B23 EngineRoom, 2.85 g = 2.849 g (unique); flat block 9.3 kit mm deep across the airflow, between the fuel-tank shells (front) and the twin-fan shroud (rear) of the left rear side compartment, filler neck on top.",
+   "doubts": "The kit models the core and header as one body; no tubes or coolant are modelled.",
+   "obb": {
+    "center_m": [1.148137, 1.644738, -2.176366],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 0.9975641, -0.0697565], [0.0, 0.0697565, 0.9975641]],
+    "half_extents_m": [0.498174, 0.386014, 0.160279]
+   },
+   "volume_m3": {
+    "solids": 0.16467654,
+    "box": 0.246575822
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0001,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.3321
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "radiator_right",
+   "name": "Radiator, right side compartment (kit 27K77 'COOLBOX 冷卻箱')",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "27K77",
+     "solid_ids": [211],
+     "kit_name": "COOLBOX(冷卻箱)",
+     "gloss_en": "cooling box",
+     "sw_mass_g": [2.84],
+     "solid_mass_g_abs": 2.8365
+    }
+   ],
+   "solid_ids": [211],
+   "evidence": "Mirror of radiator_left: part 27K77 'COOLBOX(冷卻箱)', 2.84 g = 2.837 g (unique).",
+   "doubts": "As radiator_left.",
+   "obb": {
+    "center_m": [-1.148133, 1.633172, -2.175557],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 0.9975641, -0.0697565], [0.0, 0.0697565, 0.9975641]],
+    "half_extents_m": [0.498174, 0.374434, 0.160279]
+   },
+   "volume_m3": {
+    "solids": 0.163946625,
+    "box": 0.239179039
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.3145
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "cooling_fans_left",
+   "name": "Cooling fan pair and shroud, left (kit 27H13 'COVER 風扇罩' + rotors)",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "27H13",
+     "solid_ids": [171],
+     "kit_name": "COVER(風扇罩)",
+     "gloss_en": "fan cover",
+     "sw_mass_g": [0.6],
+     "solid_mass_g_abs": 0.6013
+    },
+    {
+     "member": "27H25",
+     "solid_ids": [126],
+     "kit_name": "PLATE",
+     "gloss_en": null,
+     "sw_mass_g": [0.21],
+     "solid_mass_g_abs": 0.2091
+    }
+   ],
+   "solid_ids": [126, 171],
+   "evidence": "Part 27H13 'COVER(風扇罩)' (fan cover/shroud, 0B23 EngineRoom, 0.60 g = 0.601 g, one per side) with two circular ducts; the companion solid is the pair of eight-bladed fan rotors with hubs seated in those ducts (geometry), 0.21 g, consistent with the unlabelled EngineRoom part 27H25 (the other 0.21 g candidates are turret parts). The game's fan derivative (catalog/tiger_workshop_cooling.v1.json) was cut from this rotor solid's mesh.",
+   "doubts": "The rotor solid's part number is inferred from mass and folder (27H25_PLATE carries no description).",
+   "obb": {
+    "center_m": [1.148137, 1.620446, -2.605433],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.504801, 0.320123, 0.307706]
+   },
+   "volume_m3": {
+    "solids": 0.04682364,
+    "box": 0.397799213
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.3785,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.8823
+   },
+   "kit_shell": {
+    "solids": [
+     {
+      "solid_id": 171,
+      "mean_wall_kit_mm_2V_over_A": 0.654,
+      "box_fill": 0.096,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.519,
+        "cavity_of_hits": 0.853
+       },
+       "y": {
+        "hit": 0.882,
+        "cavity_of_hits": 0.252
+       },
+       "z": {
+        "hit": 0.778,
+        "cavity_of_hits": 0.0
+       }
+      }
+     }
+    ],
+    "note": "hollow kit moulding (rays cross separate thin walls around empty space): mean wall = 2 x volume / area in kit millimetres. A 1/35 plastic part's wall is not the real casing and must not be used as one; the kit models no contents."
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "cooling_fans_right",
+   "name": "Cooling fan pair and shroud, right (kit 27H13 'COVER 風扇罩' + rotors)",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "27H13",
+     "solid_ids": [170],
+     "kit_name": "COVER(風扇罩)",
+     "gloss_en": "fan cover",
+     "sw_mass_g": [0.6],
+     "solid_mass_g_abs": 0.6013
+    },
+    {
+     "member": "27H25",
+     "solid_ids": [125],
+     "kit_name": "PLATE",
+     "gloss_en": null,
+     "sw_mass_g": [0.21],
+     "solid_mass_g_abs": 0.2091
+    }
+   ],
+   "solid_ids": [125, 170],
+   "evidence": "Mirror of cooling_fans_left.",
+   "doubts": "As cooling_fans_left.",
+   "obb": {
+    "center_m": [-1.148133, 1.620446, -2.605433],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.504801, 0.320123, 0.307706]
+   },
+   "volume_m3": {
+    "solids": 0.04682364,
+    "box": 0.397799213
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.3785,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.8823
+   },
+   "kit_shell": {
+    "solids": [
+     {
+      "solid_id": 170,
+      "mean_wall_kit_mm_2V_over_A": 0.654,
+      "box_fill": 0.096,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.519,
+        "cavity_of_hits": 0.853
+       },
+       "y": {
+        "hit": 0.882,
+        "cavity_of_hits": 0.252
+       },
+       "z": {
+        "hit": 0.778,
+        "cavity_of_hits": 0.0
+       }
+      }
+     }
+    ],
+    "note": "hollow kit moulding (rays cross separate thin walls around empty space): mean wall = 2 x volume / area in kit millimetres. A 1/35 plastic part's wall is not the real casing and must not be used as one; the kit models no contents."
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "fuel_tank_left",
+   "name": "Fuel tank shells, left side compartment (kit 27H12 'BOX' + 28H21/22 'COVER 油箱外蓋')",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "27H12",
+     "solid_ids": [338],
+     "kit_name": "BOX",
+     "gloss_en": null,
+     "sw_mass_g": [1.18],
+     "solid_mass_g_abs": 1.1757
+    },
+    {
+     "member": "28H21|28H22",
+     "solid_ids": [304],
+     "kit_name": "COVER(油箱外蓋) | COVER(油箱外蓋)",
+     "gloss_en": "fuel tank outer cover | fuel tank outer cover",
+     "sw_mass_g": [0.86, 0.86],
+     "solid_mass_g_abs": 0.8627
+    }
+   ],
+   "solid_ids": [304, 338],
+   "evidence": "Part pair 28H21/28H22 'COVER(油箱外蓋)' (fuel tank outer cover, 0B23 EngineRoom, 0.86 g, mirror pair) and the unlabelled box 27H12 (1.18 g; the only other 1.18 g part, 21K57, is the front unit above the gearbox) carrying a filler neck on top; the two thin-walled wedge shells nest between the engine-room front bulkhead and the radiator. The game's fuel-service derivative (catalog/tiger_fuel_service.v1.json, removed root Hull_0902) was made from the 27H12 solid of this side.",
+   "doubts": "The kit labels only the outer cover as fuel-tank; whether the space is one tank or two is not shown. Both parts are hollow kit mouldings with no modelled contents (see kit_shell).",
+   "obb": {
+    "center_m": [1.148137, 1.632565, -1.608829],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.496228, 0.321706, 0.447493]
+   },
+   "volume_m3": {
+    "solids": 0.117812535,
+    "box": 0.571500314
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.7939
+   },
+   "kit_shell": {
+    "solids": [
+     {
+      "solid_id": 304,
+      "mean_wall_kit_mm_2V_over_A": 0.76,
+      "box_fill": 0.095,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.573,
+        "cavity_of_hits": 0.876
+       },
+       "y": {
+        "hit": 0.941,
+        "cavity_of_hits": 0.0
+       },
+       "z": {
+        "hit": 0.993,
+        "cavity_of_hits": 0.0
+       }
+      }
+     },
+     {
+      "solid_id": 338,
+      "mean_wall_kit_mm_2V_over_A": 0.92,
+      "box_fill": 0.145,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.526,
+        "cavity_of_hits": 0.746
+       },
+       "y": {
+        "hit": 1.0,
+        "cavity_of_hits": 0.0
+       },
+       "z": {
+        "hit": 0.847,
+        "cavity_of_hits": 0.582
+       }
+      }
+     }
+    ],
+    "note": "hollow kit moulding (rays cross separate thin walls around empty space): mean wall = 2 x volume / area in kit millimetres. A 1/35 plastic part's wall is not the real casing and must not be used as one; the kit models no contents."
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "fuel_tank_right",
+   "name": "Fuel tank shells, right side compartment (kit 27H12 'BOX' + 28H21/22 'COVER 油箱外蓋')",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "27H12",
+     "solid_ids": [337],
+     "kit_name": "BOX",
+     "gloss_en": null,
+     "sw_mass_g": [1.18],
+     "solid_mass_g_abs": 1.1757
+    },
+    {
+     "member": "28H21|28H22",
+     "solid_ids": [303],
+     "kit_name": "COVER(油箱外蓋) | COVER(油箱外蓋)",
+     "gloss_en": "fuel tank outer cover | fuel tank outer cover",
+     "sw_mass_g": [0.86, 0.86],
+     "solid_mass_g_abs": 0.8627
+    }
+   ],
+   "solid_ids": [303, 337],
+   "evidence": "Mirror of fuel_tank_left (game removed root Hull_0901 is this side's 27H12 solid).",
+   "doubts": "As fuel_tank_left.",
+   "obb": {
+    "center_m": [-1.148133, 1.632565, -1.608829],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.496228, 0.321706, 0.447493]
+   },
+   "volume_m3": {
+    "solids": 0.117814123,
+    "box": 0.571500314
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.7939
+   },
+   "kit_shell": {
+    "solids": [
+     {
+      "solid_id": 303,
+      "mean_wall_kit_mm_2V_over_A": 0.76,
+      "box_fill": 0.095,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.573,
+        "cavity_of_hits": 0.876
+       },
+       "y": {
+        "hit": 0.941,
+        "cavity_of_hits": 0.0
+       },
+       "z": {
+        "hit": 0.993,
+        "cavity_of_hits": 0.0
+       }
+      }
+     },
+     {
+      "solid_id": 337,
+      "mean_wall_kit_mm_2V_over_A": 0.92,
+      "box_fill": 0.145,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.526,
+        "cavity_of_hits": 0.746
+       },
+       "y": {
+        "hit": 1.0,
+        "cavity_of_hits": 0.0
+       },
+       "z": {
+        "hit": 0.847,
+        "cavity_of_hits": 0.582
+       }
+      }
+     }
+    ],
+    "note": "hollow kit moulding (rays cross separate thin walls around empty space): mean wall = 2 x volume / area in kit millimetres. A 1/35 plastic part's wall is not the real casing and must not be used as one; the kit models no contents."
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "gearbox",
+   "name": "Gearbox casing (kit 21K49 'BOX 轉向機')",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "21K49",
+     "solid_ids": [1132],
+     "kit_name": "BOX(轉向機)",
+     "gloss_en": "steering gear",
+     "sw_mass_g": [5.0],
+     "solid_mass_g_abs": 4.9998
+    }
+   ],
+   "solid_ids": [1132],
+   "evidence": "Part 21K49 'BOX(轉向機)' (steering gear) in 0B21 DriverRoom, 5.00 g = 5.000 g (unique): the longitudinal casing on the centreline between the driver's and radio operator's stations, directly behind the transverse steering unit and in line with the propeller shaft.",
+   "doubts": "The kit names all three transmission housings 轉向機 (steering gear: main / middle / rear); naming this one the gearbox rests on its longitudinal shape and position (gearbox behind the transversely mounted steering unit), not on the kit label.",
+   "obb": {
+    "center_m": [-0.042031, 1.058127, 1.81994],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.287228, 0.308425, 0.684016]
+   },
+   "volume_m3": {
+    "solids": 0.288975607,
+    "box": 0.484766389
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.03,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.4039
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "steering_unit",
+   "name": "Steering unit with end covers (kit 21K54 / 21K51 / 21K59)",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "21K54",
+     "solid_ids": [1340],
+     "kit_name": "BOX(轉向機中)",
+     "gloss_en": "steering gear, middle",
+     "sw_mass_g": [1.43],
+     "solid_mass_g_abs": 1.4291
+    },
+    {
+     "member": "21K51",
+     "solid_ids": [1404],
+     "kit_name": "BOX(轉向機後)",
+     "gloss_en": "steering gear, rear",
+     "sw_mass_g": [2.57],
+     "solid_mass_g_abs": 2.5734
+    },
+    {
+     "member": "21K59",
+     "solid_ids": [1341],
+     "kit_name": "COVER(外罩)",
+     "gloss_en": "outer cover",
+     "sw_mass_g": [0.86],
+     "solid_mass_g_abs": 0.863
+    },
+    {
+     "member": "21K59",
+     "solid_ids": [1342],
+     "kit_name": "COVER(外罩)",
+     "gloss_en": "outer cover",
+     "sw_mass_g": [0.86],
+     "solid_mass_g_abs": 0.863
+    }
+   ],
+   "solid_ids": [1340, 1341, 1342, 1404],
+   "evidence": "Parts 21K54 'BOX(轉向機中)' (steering gear, middle; 1.43 g) and 21K51 'BOX(轉向機後)' (steering gear, rear; 2.57 g) form the transverse housing at the hull front, with 21K59 'COVER(外罩)' (outer cover, 0.86 g, two instances) drum covers on both ends facing the final drives; all four in 0B21 DriverRoom and in the Base Unit STEP.",
+   "doubts": "The transverse housing's internal split (steering gear vs brakes) is not modelled.",
+   "obb": {
+    "center_m": [2e-06, 1.041369, 2.772989],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.984672, 0.371038, 0.398442]
+   },
+   "volume_m3": {
+    "solids": 0.330899998,
+    "box": 1.164567041
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0258,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.7159
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "radio",
+   "name": "Radio sets (probable; kit 21K57 'BOX 控制盒', control box)",
+   "frame": "hull",
+   "confidence": "inferred",
+   "kit_parts": [
+    {
+     "member": "21K57",
+     "solid_ids": [1127],
+     "kit_name": "BOX(控制盒)",
+     "gloss_en": "control box",
+     "sw_mass_g": [1.18],
+     "solid_mass_g_abs": 1.1791
+    }
+   ],
+   "solid_ids": [1127],
+   "evidence": "Part 21K57 'BOX(控制盒)' (control box, 0B21 DriverRoom, 1.18 g = 1.179 g; the other 1.18 g part 27H12 is in the engine room): two stacked boxes on top of the gearbox between the driver and the radio operator, with a face of knobs, plugs and panels turned towards the radio operator's side (-X), where the Tiger I carried its radio sets.",
+   "doubts": "The kit label says 'control box', not radio: the radio identification is inferred from position and face detail.",
+   "obb": {
+    "center_m": [0.02063, 1.625398, 1.716802],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.17981, 0.307467, 0.477741]
+   },
+   "volume_m3": {
+    "solids": 0.068152004,
+    "box": 0.21129697
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.6775
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "final_drive_left",
+   "name": "Final drive housing, left (kit 29D56 'DRIVER' + 18-22/23 'COVER 前輪殼')",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "29D56",
+     "solid_ids": [1380],
+     "kit_name": "DRIVER",
+     "gloss_en": null,
+     "sw_mass_g": [0.58],
+     "solid_mass_g_abs": 0.5841
+    },
+    {
+     "member": "18-22|18-23",
+     "solid_ids": [1430],
+     "kit_name": "COVER(前輪殼) | COVER(前輪殼)",
+     "gloss_en": "front-wheel housing | front-wheel housing",
+     "sw_mass_g": [0.61, 0.61],
+     "solid_mass_g_abs": 0.6116
+    }
+   ],
+   "solid_ids": [1380, 1430],
+   "evidence": "Part 29D56 'DRIVER' (0.58 g = 0.584 g, two instances) is coaxial with the drive sprocket (sprocket axis at kit y 8.2, z 6.0 mm) between the hull side and the sprocket; the mirror pair 18-22/18-23 'COVER(前輪殼)' (front-wheel housing, 0.61 g) is the casing plate behind it on the hull side.",
+   "doubts": "Only the external housing is modelled; the reduction gears inside are not.",
+   "obb": {
+    "center_m": [1.231815, 0.981704, 3.009565],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.243249, 0.512225, 0.484901]
+   },
+   "volume_m3": {
+    "solids": 0.069108763,
+    "box": 0.483341619
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0167,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.857
+   },
+   "kit_shell": {
+    "solids": [
+     {
+      "solid_id": 1380,
+      "mean_wall_kit_mm_2V_over_A": 0.947,
+      "box_fill": 0.157,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.778,
+        "cavity_of_hits": 0.0
+       },
+       "y": {
+        "hit": 0.736,
+        "cavity_of_hits": 0.557
+       },
+       "z": {
+        "hit": 0.745,
+        "cavity_of_hits": 0.564
+       }
+      }
+     }
+    ],
+    "note": "hollow kit moulding (rays cross separate thin walls around empty space): mean wall = 2 x volume / area in kit millimetres. A 1/35 plastic part's wall is not the real casing and must not be used as one; the kit models no contents."
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "final_drive_right",
+   "name": "Final drive housing, right (kit 29D56 'DRIVER' + 18-22/23 'COVER 前輪殼')",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "29D56",
+     "solid_ids": [1381],
+     "kit_name": "DRIVER",
+     "gloss_en": null,
+     "sw_mass_g": [0.58],
+     "solid_mass_g_abs": 0.5841
+    },
+    {
+     "member": "18-22|18-23",
+     "solid_ids": [1429],
+     "kit_name": "COVER(前輪殼) | COVER(前輪殼)",
+     "gloss_en": "front-wheel housing | front-wheel housing",
+     "sw_mass_g": [0.61, 0.61],
+     "solid_mass_g_abs": 0.6116
+    }
+   ],
+   "solid_ids": [1381, 1429],
+   "evidence": "Mirror of final_drive_left.",
+   "doubts": "As final_drive_left.",
+   "obb": {
+    "center_m": [-1.231811, 0.981704, 3.009565],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.243249, 0.512225, 0.484901]
+   },
+   "volume_m3": {
+    "solids": 0.069105244,
+    "box": 0.483341619
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0167,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.857
+   },
+   "kit_shell": {
+    "solids": [
+     {
+      "solid_id": 1381,
+      "mean_wall_kit_mm_2V_over_A": 0.947,
+      "box_fill": 0.157,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.778,
+        "cavity_of_hits": 0.0
+       },
+       "y": {
+        "hit": 0.736,
+        "cavity_of_hits": 0.559
+       },
+       "z": {
+        "hit": 0.743,
+        "cavity_of_hits": 0.563
+       }
+      }
+     }
+    ],
+    "note": "hollow kit moulding (rays cross separate thin walls around empty space): mean wall = 2 x volume / area in kit millimetres. A 1/35 plastic part's wall is not the real casing and must not be used as one; the kit models no contents."
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "ammo_sponson_left_rear",
+   "name": "Sponson ammunition bin, left rear (16 rounds)",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "23M03",
+     "solid_ids": [548, 549, 550, 551, 556, 557, 558, 559, 564, 565, 566, 567, 572, 573, 574, 575],
+     "kit_name": "23M03",
+     "gloss_en": null,
+     "sw_mass_g": [null],
+     "solid_mass_g_abs": 0.1252
+    },
+    {
+     "member": "25M06-0A",
+     "solid_ids": [521, 523, 525, 527],
+     "kit_name": "BLACKET(砲彈架)",
+     "gloss_en": "shell rack",
+     "sw_mass_g": [0.06],
+     "solid_mass_g_abs": 0.064
+    },
+    {
+     "member": "24H03",
+     "solid_ids": [514],
+     "kit_name": "COVER(砲彈儲槽蓋)",
+     "gloss_en": "shell storage bin cover",
+     "sw_mass_g": [0.53],
+     "solid_mass_g_abs": 0.5274
+    }
+   ],
+   "solid_ids": [514, 521, 523, 525, 527, 548, 549, 550, 551, 556, 557, 558, 559, 564, 565, 566, 567, 572, 573, 574, 575],
+   "evidence": "23M03 'AMMO(砲彈)' (shell: complete 8.8 cm round, 0.13 g = 0.125 g, 25.2 x 3.0 kit mm, 70 identical solids, 4 x 4 in this bin), 25M06 'BLACKET(砲彈架)' (shell rack) shelves and 24H03 'COVER(砲彈儲槽蓋)' (shell storage bin cover) closing the bin towards the fighting compartment.",
+   "doubts": "The kit carries 70 rounds in total; the vehicle's full stowage is not modelled.",
+   "obb": {
+    "center_m": [1.347601, 1.642739, -0.54658],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.290926, 0.311531, 0.582824]
+   },
+   "volume_m3": {
+    "solids": 0.161090446,
+    "box": 0.42258255
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0002,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.6188
+   },
+   "game_mesh": {
+    "status": "partial",
+    "solids_absent": [514, 548, 549, 550, 551, 556, 557, 558, 559, 564, 565, 566, 567, 572, 573, 574, 575],
+    "solids_partial": [],
+    "note": "tiger_hull.glb omits these 16 rounds (tiger_rack_source.json: cartridges excluded from the static hull); the game draws rounds at tiger_interior.json shell slots on these rounds' axes (64 of 65 slots: lateral offset <= 5.5 mm, slot point 74 mm along the axis from the solid centroid). The bin cover is in no game mesh; the shelves are."
+   }
+  },
+  {
+   "id": "ammo_sponson_left_front",
+   "name": "Sponson ammunition bin, left front (16 rounds)",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "23M03",
+     "solid_ids": [841, 842, 843, 844, 849, 850, 851, 852, 858, 859, 860, 861, 866, 867, 868, 869],
+     "kit_name": "23M03",
+     "gloss_en": null,
+     "sw_mass_g": [null],
+     "solid_mass_g_abs": 0.1252
+    },
+    {
+     "member": "25M06-0A",
+     "solid_ids": [885, 887, 889, 891],
+     "kit_name": "BLACKET(砲彈架)",
+     "gloss_en": "shell rack",
+     "sw_mass_g": [0.06],
+     "solid_mass_g_abs": 0.064
+    },
+    {
+     "member": "24H01|24H02",
+     "solid_ids": [881],
+     "kit_name": "COVER(砲彈儲槽蓋) | COVER(砲彈儲槽蓋)",
+     "gloss_en": "shell storage bin cover | shell storage bin cover",
+     "sw_mass_g": [0.47, 0.47],
+     "solid_mass_g_abs": 0.4719
+    }
+   ],
+   "solid_ids": [841, 842, 843, 844, 849, 850, 851, 852, 858, 859, 860, 861, 866, 867, 868, 869, 881, 885, 887, 889, 891],
+   "evidence": "As ammo_sponson_left_rear; cover 24H01/24H02 'COVER(砲彈儲槽蓋)' (0.47 g pair).",
+   "doubts": "As ammo_sponson_left_rear.",
+   "obb": {
+    "center_m": [1.346628, 1.660426, 0.611284],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.291899, 0.293845, 0.575041]
+   },
+   "volume_m3": {
+    "solids": 0.157880634,
+    "box": 0.394582973
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0001,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.5999
+   },
+   "game_mesh": {
+    "status": "partial",
+    "solids_absent": [841, 842, 843, 844, 849, 850, 851, 852, 858, 859, 860, 861, 866, 867, 868, 869, 881],
+    "solids_partial": [],
+    "note": "tiger_hull.glb omits these 16 rounds (tiger_rack_source.json: cartridges excluded from the static hull); the game draws rounds at tiger_interior.json shell slots on these rounds' axes (64 of 65 slots: lateral offset <= 5.5 mm, slot point 74 mm along the axis from the solid centroid). The bin cover is in no game mesh; the shelves are."
+   }
+  },
+  {
+   "id": "ammo_sponson_right_rear",
+   "name": "Sponson ammunition bin, right rear (16 rounds)",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "23M03",
+     "solid_ids": [544, 545, 546, 547, 552, 553, 554, 555, 560, 561, 562, 563, 568, 569, 570, 571],
+     "kit_name": "23M03",
+     "gloss_en": null,
+     "sw_mass_g": [null],
+     "solid_mass_g_abs": 0.1252
+    },
+    {
+     "member": "25M06-0A",
+     "solid_ids": [520, 522, 524, 526],
+     "kit_name": "BLACKET(砲彈架)",
+     "gloss_en": "shell rack",
+     "sw_mass_g": [0.06],
+     "solid_mass_g_abs": 0.064
+    },
+    {
+     "member": "24H04",
+     "solid_ids": [506],
+     "kit_name": "COVER(砲彈儲槽蓋)",
+     "gloss_en": "shell storage bin cover",
+     "sw_mass_g": [0.57],
+     "solid_mass_g_abs": 0.5739
+    }
+   ],
+   "solid_ids": [506, 520, 522, 524, 526, 544, 545, 546, 547, 552, 553, 554, 555, 560, 561, 562, 563, 568, 569, 570, 571],
+   "evidence": "As ammo_sponson_left_rear; cover 24H04 'COVER(砲彈儲槽蓋)' (0.57 g).",
+   "doubts": "As ammo_sponson_left_rear; 25H27 'BLACKET' has the same 0.57 g mass, the cover is chosen by position.",
+   "obb": {
+    "center_m": [-1.327164, 1.642739, -0.54658],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.311359, 0.311531, 0.582824]
+   },
+   "volume_m3": {
+    "solids": 0.163779688,
+    "box": 0.452262242
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0002,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.6379
+   },
+   "game_mesh": {
+    "status": "partial",
+    "solids_absent": [506, 544, 545, 546, 547, 552, 553, 554, 555, 560, 561, 562, 563, 568, 569, 570, 571],
+    "solids_partial": [],
+    "note": "tiger_hull.glb omits these 16 rounds (tiger_rack_source.json: cartridges excluded from the static hull); the game draws rounds at tiger_interior.json shell slots on these rounds' axes (64 of 65 slots: lateral offset <= 5.5 mm, slot point 74 mm along the axis from the solid centroid). The bin cover is in no game mesh; the shelves are."
+   }
+  },
+  {
+   "id": "ammo_sponson_right_front",
+   "name": "Sponson ammunition bin, right front (16 rounds)",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "23M03",
+     "solid_ids": [837, 838, 839, 840, 845, 846, 847, 848, 854, 855, 856, 857, 862, 863, 864, 865],
+     "kit_name": "23M03",
+     "gloss_en": null,
+     "sw_mass_g": [null],
+     "solid_mass_g_abs": 0.1252
+    },
+    {
+     "member": "25M06-0A",
+     "solid_ids": [884, 886, 888, 890],
+     "kit_name": "BLACKET(砲彈架)",
+     "gloss_en": "shell rack",
+     "sw_mass_g": [0.06],
+     "solid_mass_g_abs": 0.064
+    },
+    {
+     "member": "24H01|24H02",
+     "solid_ids": [880],
+     "kit_name": "COVER(砲彈儲槽蓋) | COVER(砲彈儲槽蓋)",
+     "gloss_en": "shell storage bin cover | shell storage bin cover",
+     "sw_mass_g": [0.47, 0.47],
+     "solid_mass_g_abs": 0.4719
+    }
+   ],
+   "solid_ids": [837, 838, 839, 840, 845, 846, 847, 848, 854, 855, 856, 857, 862, 863, 864, 865, 880, 884, 886, 888, 890],
+   "evidence": "As ammo_sponson_left_rear; cover 24H01/24H02.",
+   "doubts": "As ammo_sponson_left_rear.",
+   "obb": {
+    "center_m": [-1.346624, 1.660426, 0.611284],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.291899, 0.293845, 0.575041]
+   },
+   "volume_m3": {
+    "solids": 0.157880634,
+    "box": 0.394582973
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0001,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.5999
+   },
+   "game_mesh": {
+    "status": "partial",
+    "solids_absent": [837, 838, 839, 840, 845, 846, 847, 848, 854, 855, 856, 857, 862, 863, 864, 865, 880],
+    "solids_partial": [],
+    "note": "tiger_hull.glb omits these 16 rounds (tiger_rack_source.json: cartridges excluded from the static hull); the game draws rounds at tiger_interior.json shell slots on these rounds' axes (64 of 65 slots: lateral offset <= 5.5 mm, slot point 74 mm along the axis from the solid centroid). The bin cover is in no game mesh; the shelves are."
+   }
+  },
+  {
+   "id": "ammo_floor_left",
+   "name": "Hull-floor rounds, left of the propeller shaft (3 rounds)",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "23M03",
+     "solid_ids": [716, 717, 748],
+     "kit_name": "23M03",
+     "gloss_en": null,
+     "sw_mass_g": [null],
+     "solid_mass_g_abs": 0.1252
+    }
+   ],
+   "solid_ids": [716, 717, 748],
+   "evidence": "Three 23M03 rounds lying on the hull floor under the turret basket floor.",
+   "doubts": "Their bin/tray structure is not identified; the envelope covers the rounds only.",
+   "obb": {
+    "center_m": [0.568231, 0.86257, 0.09871],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.190707, 0.05838, 0.601311]
+   },
+   "volume_m3": {
+    "solids": 0.02171668,
+    "box": 0.053557277
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0001,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.5945
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "ammo_floor_right",
+   "name": "Hull-floor rounds, right of the propeller shaft (3 rounds)",
+   "frame": "hull",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "23M03",
+     "solid_ids": [714, 715, 747],
+     "kit_name": "23M03",
+     "gloss_en": null,
+     "sw_mass_g": [null],
+     "solid_mass_g_abs": 0.1252
+    }
+   ],
+   "solid_ids": [714, 715, 747],
+   "evidence": "Mirror of ammo_floor_left.",
+   "doubts": "As ammo_floor_left.",
+   "obb": {
+    "center_m": [-0.568227, 0.86257, 0.09871],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.190707, 0.05838, 0.601311]
+   },
+   "volume_m3": {
+    "solids": 0.02171668,
+    "box": 0.053557277
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0001,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.5945
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "hull_mg",
+   "name": "Hull machine gun (kit 28B-K81 + 28B-K07 'GUN 機槍')",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "28B-K81",
+     "solid_ids": [1273],
+     "kit_name": "GUN(機槍)",
+     "gloss_en": "machine gun",
+     "sw_mass_g": [0.05],
+     "solid_mass_g_abs": 0.0503
+    },
+    {
+     "member": "28B-K07",
+     "solid_ids": [1176],
+     "kit_name": "GUN(機槍)",
+     "gloss_en": "machine gun",
+     "sw_mass_g": [0.03],
+     "solid_mass_g_abs": 0.0275
+    }
+   ],
+   "solid_ids": [1176, 1273],
+   "evidence": "Two collinear rods on one axis (kit x -16.4, y 30.5-31.0, along z) behind the front plate on the right (radio operator's) side; masses 0.05 g and 0.03 g match the front-armour unit's 28B-K81 and 28B-K07 'GUN(機槍)' (machine gun); the game node 'MG Operater' sits beside it.",
+   "doubts": "Many small parts share these masses; the labels rest on mass plus position. The ball mount and trigger parts are not included.",
+   "obb": {
+    "center_m": [-0.662608, 1.767643, 2.30856],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 0.9961947, -0.0871557], [0.0, 0.0871557, 0.9961947]],
+    "half_extents_m": [0.076867, 0.118749, 0.596081]
+   },
+   "volume_m3": {
+    "solids": 0.004495607,
+    "box": 0.043527511
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0099,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.8967
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "driver_seat",
+   "name": "Driver's seat (kit 20K67 'CHAIR 椅子' + 20K65 'CHAIR 椅座架')",
+   "frame": "hull",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "20K67",
+     "solid_ids": [1173],
+     "kit_name": "CHAIR(椅子)",
+     "gloss_en": "chair",
+     "sw_mass_g": [0.17],
+     "solid_mass_g_abs": 0.1718
+    },
+    {
+     "member": "20K65",
+     "solid_ids": [1200],
+     "kit_name": "CHAIR(椅座架)",
+     "gloss_en": "seat frame",
+     "sw_mass_g": [0.06],
+     "solid_mass_g_abs": 0.0599
+    }
+   ],
+   "solid_ids": [1173, 1200],
+   "evidence": "A chair with backrest (0.17 g, 20K67 'CHAIR(椅子)') on a four-legged frame (0.06 g, 20K65 'CHAIR(椅座架)', seat frame), both 0B21 DriverRoom, at the left front driver's station.",
+   "doubts": "Other parts share both masses; the labels rest on mass plus shape and position.",
+   "obb": {
+    "center_m": [0.564376, 0.937077, 2.019658],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.204292, 0.350838, 0.299428]
+   },
+   "volume_m3": {
+    "solids": 0.013387593,
+    "box": 0.171688375
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.1602,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.922
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "gun_breech",
+   "name": "88 mm gun breech ring and block (kit 02U03 'ROOM 供彈座')",
+   "frame": "turret",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "02U03",
+     "solid_ids": [787],
+     "kit_name": "ROOM(供彈座)",
+     "gloss_en": "loading seat",
+     "sw_mass_g": [1.11],
+     "solid_mass_g_abs": 1.1129
+    }
+   ],
+   "solid_ids": [787],
+   "evidence": "Part 02U03 'ROOM(供彈座)' (loading seat, merged U3+U4, 0C02 Barrel Base Unit, 1.11 g = 1.113 g, unique) on the bore axis behind the trunnion; it is the solid the game's tiger_gun.glb names 'Breech' (matched by invariants).",
+   "doubts": "Breech ring and block are one kit body (02U03 merges kit pieces U3+U4). The kit also lists a small 02J54 'BLOCK(炮門)' (breech block, 0.08 g) that was not located among the many 0.08 g solids.",
+   "obb": {
+    "center_m": [0.003894, 1.924553, 0.321013],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.282169, 0.179031, 0.346386]
+   },
+   "volume_m3": {
+    "solids": 0.064323284,
+    "box": 0.139987185
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0001,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.5405
+   },
+   "frame_note": "turret-local = engine hull - game turret pivot [0.0, 0.524, 0.019] at turret yaw 0",
+   "elevates_with_gun": {
+    "trunnion_turret_m": [0.004, 1.845, 1.04],
+    "cad_elevation_deg": 0.0,
+    "note": "box given at 0 deg elevation (the CAD's pose); it rotates with the gun about the turret-local x axis through the trunnion point"
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "gun_cradle",
+   "name": "88 mm gun cradle and recoil cylinders (kit 02J07 'BASE 砲管座' + 02J50/02J51)",
+   "frame": "turret",
+   "confidence": "kit_label",
+   "kit_parts": [
+    {
+     "member": "02J07",
+     "solid_ids": [984],
+     "kit_name": "BASE(砲管座)",
+     "gloss_en": "gun-tube seat",
+     "sw_mass_g": [0.73],
+     "solid_mass_g_abs": 0.7347
+    },
+    {
+     "member": "02J51",
+     "solid_ids": [962],
+     "kit_name": "OIL BOTTLE(油壓罐)",
+     "gloss_en": "hydraulic cylinder",
+     "sw_mass_g": [0.27],
+     "solid_mass_g_abs": 0.2732
+    },
+    {
+     "member": "02J50",
+     "solid_ids": [968],
+     "kit_name": "OIL BOTTLE(油壓罐)",
+     "gloss_en": "hydraulic cylinder",
+     "sw_mass_g": [0.26],
+     "solid_mass_g_abs": 0.2595
+    }
+   ],
+   "solid_ids": [962, 968, 984],
+   "evidence": "Part 02J07 'BASE(砲管座)' (gun-tube seat, merged J07+U18+J31, 0.73 g) on the bore axis between the mantlet base and the breech, flanked by 02J50/02J51 'OIL BOTTLE(油壓罐)' (hydraulic cylinders: recoil brake and recuperator, 0.26/0.27 g, unique) along the barrel at bore height.",
+   "doubts": "05U13 'MOTOR' also weighs 0.73 g; it is the turret-floor solid (turret_traverse_motor).",
+   "obb": {
+    "center_m": [0.003894, 1.902174, 0.813349],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.334711, 0.216978, 0.523472]
+   },
+   "volume_m3": {
+    "solids": 0.07325343,
+    "box": 0.30413634
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.7591
+   },
+   "frame_note": "turret-local = engine hull - game turret pivot [0.0, 0.524, 0.019] at turret yaw 0",
+   "elevates_with_gun": {
+    "trunnion_turret_m": [0.004, 1.845, 1.04],
+    "cad_elevation_deg": 0.0,
+    "note": "box given at 0 deg elevation (the CAD's pose); it rotates with the gun about the turret-local x axis through the trunnion point"
+   },
+   "kit_shell": {
+    "solids": [
+     {
+      "solid_id": 984,
+      "mean_wall_kit_mm_2V_over_A": 0.766,
+      "box_fill": 0.183,
+      "ray_test_by_axis": {
+       "x": {
+        "hit": 0.686,
+        "cavity_of_hits": 0.481
+       },
+       "y": {
+        "hit": 0.733,
+        "cavity_of_hits": 0.661
+       },
+       "z": {
+        "hit": 0.71,
+        "cavity_of_hits": 0.523
+       }
+      }
+     }
+    ],
+    "note": "hollow kit moulding (rays cross separate thin walls around empty space): mean wall = 2 x volume / area in kit millimetres. A 1/35 plastic part's wall is not the real casing and must not be used as one; the kit models no contents."
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "coax_mg",
+   "name": "Coaxial machine gun (kit 03J19 'GUN 機槍')",
+   "frame": "turret",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "03J19",
+     "solid_ids": [972],
+     "kit_name": "GUN(機槍)",
+     "gloss_en": "machine gun",
+     "sw_mass_g": [0.18],
+     "solid_mass_g_abs": 0.1842
+    }
+   ],
+   "solid_ids": [972],
+   "evidence": "An MG-length body (32.9 kit mm = 1.15 m at 1:35) right of the gun at bore height, ammunition belt links running to it; 0.18 g matches 03J19 'GUN(機槍)' (merged J19+J68+J16, 0C03 Gun Unit); its axis passes the game's coax port (src/tank.rs TIGER_COAX_PORT, gun-frame x -0.497 m).",
+   "doubts": "Several small parts weigh 0.18 g; the label rests on mass plus shape and position.",
+   "obb": {
+    "center_m": [-0.497199, 1.928622, 0.942064],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 0.9925462, 0.1218693], [0.0, -0.1218693, 0.9925462]],
+    "half_extents_m": [0.102165, 0.16568, 0.636526]
+   },
+   "volume_m3": {
+    "solids": 0.010646716,
+    "box": 0.086193833
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0001,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.8765
+   },
+   "frame_note": "turret-local = engine hull - game turret pivot [0.0, 0.524, 0.019] at turret yaw 0",
+   "elevates_with_gun": {
+    "trunnion_turret_m": [0.004, 1.845, 1.04],
+    "cad_elevation_deg": 0.0,
+    "note": "box given at 0 deg elevation (the CAD's pose); it rotates with the gun about the turret-local x axis through the trunnion point"
+   },
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "gunner_sight",
+   "name": "Gunner's sight (kit 01J18 'VIEWER 觀測鏡')",
+   "frame": "turret",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "01J18",
+     "solid_ids": [1002],
+     "kit_name": "VIEWER(觀測鏡)",
+     "gloss_en": "sight",
+     "sw_mass_g": [0.18],
+     "solid_mass_g_abs": 0.1779
+    }
+   ],
+   "solid_ids": [1002],
+   "evidence": "A 24 kit mm tube left of the gun at bore height whose ends coincide with the game's sight eyepiece and objective (src/tank.rs TIGER_SIGHT_EYEPIECE / TIGER_SIGHT_OBJECTIVE); 0.18 g matches 01J18 'VIEWER(觀測鏡)' (merged J18+J67, 0C01 Barrel Unit).",
+   "doubts": "Mass shared with other parts; the label rests on mass plus position.",
+   "obb": {
+    "center_m": [0.54488, 1.99728, 1.000394],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 0.9986295, -0.052336], [0.0, 0.052336, 0.9986295]],
+    "half_extents_m": [0.155679, 0.061531, 0.469194]
+   },
+   "volume_m3": {
+    "solids": 0.010284014,
+    "box": 0.035955847
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0117,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.714
+   },
+   "frame_note": "turret-local = engine hull - game turret pivot [0.0, 0.524, 0.019] at turret yaw 0",
+   "elevates_with_gun": {
+    "trunnion_turret_m": [0.004, 1.845, 1.04],
+    "cad_elevation_deg": 0.0,
+    "note": "box given at 0 deg elevation (the CAD's pose); it rotates with the gun about the turret-local x axis through the trunnion point"
+   },
+   "game_mesh": {
+    "status": "partial",
+    "solids_absent": [],
+    "solids_partial": [1002],
+    "note": "Only about a third of this kit solid's surface lies within 2 mm of the game's meshes: the game's sight geometry differs from the kit part. The box locates the kit sight."
+   }
+  },
+  {
+   "id": "turret_traverse_motor",
+   "name": "Turret traverse motor (kit 05U13 'MOTOR 馬達')",
+   "frame": "turret",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "05U13",
+     "solid_ids": [701],
+     "kit_name": "MOTOR(馬達)",
+     "gloss_en": "motor",
+     "sw_mass_g": [0.73],
+     "solid_mass_g_abs": 0.7343
+    }
+   ],
+   "solid_ids": [701],
+   "evidence": "Part 05U13 'MOTOR(馬達)' (merged U13+U14, 0C05 Room Unit, 0.73 g = 0.734 g) on the turret basket floor beside the turret axis.",
+   "doubts": "02J07 has the same mass (it is the gun cradle on the bore axis); the motor type is not stated by the kit. The kit body includes the tall vertical drive shaft, so the box is mostly empty.",
+   "obb": {
+    "center_m": [0.532882, 1.046366, 0.016952],
+    "axes": [[0.7431448, -0.6691306, 0.0], [0.6691306, 0.7431448, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.297329, 0.580757, 0.206762]
+   },
+   "volume_m3": {
+    "solids": 0.042442033,
+    "box": 0.285621911
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.0,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.8514
+   },
+   "frame_note": "turret-local = engine hull - game turret pivot [0.0, 0.524, 0.019] at turret yaw 0",
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  },
+  {
+   "id": "gunner_seat",
+   "name": "Gunner's seat cushion (kit 06J20B 'SEAT 座墊')",
+   "frame": "turret",
+   "confidence": "kit_label+geometry",
+   "kit_parts": [
+    {
+     "member": "06J20B",
+     "solid_ids": [767],
+     "kit_name": "SEAT(座墊)",
+     "gloss_en": "seat cushion",
+     "sw_mass_g": [0.2],
+     "solid_mass_g_abs": 0.2004
+    }
+   ],
+   "solid_ids": [767],
+   "evidence": "Round seat cushion at the gunner's station left of the gun, 0.20 g = 06J20B 'SEAT(座墊)' (seat cushion, 0C05 Room Unit); its game mesh (Turret_0092) uses the game's 'seats_black' material.",
+   "doubts": "Cushion only; the seat post and frame are separate small parts not included.",
+   "obb": {
+    "center_m": [0.546735, 1.140318, 0.217758],
+    "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "half_extents_m": [0.250849, 0.099246, 0.18805]
+   },
+   "volume_m3": {
+    "solids": 0.011584326,
+    "box": 0.037453177
+   },
+   "envelope_error": {
+    "max_vertex_outside_box_mm": 0.0,
+    "max_brep_outside_box_mm": 0.3047,
+    "chord_tolerance_mm": 0.7784,
+    "empty_fraction": 0.6907
+   },
+   "frame_note": "turret-local = engine hull - game turret pivot [0.0, 0.524, 0.019] at turret yaw 0",
+   "game_mesh": {
+    "status": "present",
+    "solids_absent": [],
+    "solids_partial": []
+   }
+  }
+ ],
+ "cad_only_components": {
+  "warning": "In the kit CAD but drawn by no game mesh. Using them as damage volumes would add hidden primitives with no visible geometry (CLAUDE.md physical truth rule 3).",
+  "components": [
+   {
+    "id": "fuel_cans_turret_floor",
+    "name": "Fuel cans on the turret floor, three (kit 05O27 'FUEL 油箱')",
+    "frame": "turret",
+    "confidence": "kit_label+geometry",
+    "kit_parts": [
+     {
+      "member": "05O27",
+      "solid_ids": [529, 530, 531],
+      "kit_name": "FUEL(油箱)",
+      "gloss_en": "fuel tank",
+      "sw_mass_g": [0.49],
+      "solid_mass_g_abs": 0.49
+     }
+    ],
+    "solid_ids": [529, 530, 531],
+    "evidence": "Three identical boxes standing side by side at the rear of the turret basket floor; 0.49 g matches 05O27 'FUEL(油箱)' (fuel tank, merged kit pieces O27-O30, 0C05 Room Unit); each is 4.5 x 12.5 x 10.1 kit mm (0.16 x 0.44 x 0.35 m at 1:35), a 20-litre canister's proportions.",
+    "doubts": "19K28_BASE (floor hatch) has the same mass; the CAD does not establish that real vehicles stowed cans here.",
+    "obb": {
+     "center_m": [0.018934, 0.897039, -0.55224],
+     "axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+     "half_extents_m": [0.28104, 0.243218, 0.196048]
+    },
+    "volume_m3": {
+     "solids": 0.084959234,
+     "box": 0.107205537
+    },
+    "envelope_error": {
+     "max_vertex_outside_box_mm": 0.0,
+     "max_brep_outside_box_mm": 0.0609,
+     "chord_tolerance_mm": 0.7784,
+     "empty_fraction": 0.2075
+    },
+    "frame_note": "turret-local = engine hull - game turret pivot [0.0, 0.524, 0.019] at turret yaw 0",
+    "game_mesh": {
+     "status": "absent",
+     "solids_absent": [529, 530, 531],
+     "solids_partial": [],
+     "note": "No game mesh draws these cans. A damage volume here would be a hidden primitive with no visible geometry (CLAUDE.md, physical truth rule 3): CAD record only until the cans are drawn."
+    }
+   }
+  ]
+ },
+ "not_identified": [
+  {
+   "what": "radio operator's, commander's and loader's seats",
+   "why": "kit seat parts (06J20A, 06J24, 06J46, 06J75, 19K05, 19K12A) share masses with many small parts and were not located with evidence"
+  },
+  {
+   "what": "two unlabelled boxes on the hull floor ahead of the engine bulkhead (kit 24H37_BOX, '---', 1.17 g each)",
+   "where_kit_mm": [[-7.5, 9.2, -86.8], [7.5, 9.2, -85.0]],
+   "why": "no description in the SolidWorks file and no distinctive shape; function unknown"
+  },
+  {
+   "what": "hydraulic reservoirs in the driver's compartment (19K15 / 20H65 'HYDRAULIC 油壓罐')",
+   "where_kit_mm": [[-22.3, 10.7, -10.1], [22.3, 10.4, -23.1]],
+   "why": "located by mass and position but their system (brakes, steering, traverse) is not stated by the kit"
+  },
+  {
+   "what": "engine ancillaries (exhaust manifolds 28H43/28H46, cylinder-bank COOLBOX 28U01/28U02, pipes, carburettors, 28U23/28U31)",
+   "why": "named per solid in assemblies/engine_system.obj but not given damage envelopes (they sit on the engine block box)"
+  },
+  {
+   "what": "further fuel tanks, batteries, turret-traverse oil reservoir, MG ammunition bags",
+   "why": "not present as distinguishable kit parts, or not located with evidence"
+  },
+  {
+   "what": "kit solid 35 (invalid B-rep) and solid 541 (negative volume)",
+   "why": "defective STEP bodies; excluded from extents, never used in components"
+  }
+ ]
+}
