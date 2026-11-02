@@ -88,10 +88,14 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   a percent of the vertex work. The ground's ejecta keep their quadrature (`GROUND_MULTIPLIER`
   1000: a mass distributed over grains, not sparks) and the hot rim its ring. The 14 ms streak is
   an exposure-length presentation of the spark's path, not a measured trail; the pass is now
-  `analytic-streaked-sparks` (was `analytic-thousandfold-sparks`). Later the same day: 24 samples
-  along the 14 ms path (eight drew as bars of bloomed dots: each dot held an eighth of a spark's
-  light against a blue-hour exposure), the port shader caps a sample's projected area at 6 px as
-  the main view's does, and a streaked spark's colour is `spark_glow`: the three Planck-band
+  `analytic-streaked-sparks` (was `analytic-thousandfold-sparks`). Later the same day the streak
+  itself was withdrawn: eight samples along the 14 ms path drew as bars of bloomed dots and 24 as
+  solid lines (the owner: "thick laser beams"). A spark is now one sample where it is at the
+  frame's instant, as every other body in this renderer (nothing is motion-blurred), covering
+  its cross-section only; its tail is the support test's, no longer a smear of its light into
+  the pixel. `SPARK_MULTIPLIER` and both shaders' `SPARK_TRAIL` are 1 and the `streaked`
+  machinery stays at that length. The port shader caps a sample's projected area at 6 px as the
+  main view's does, and a spark's colour is `spark_glow`: the three Planck-band
   ratios at the spark's temperature, cooling from its own start (2100-3400 K by kind, hash and
   the ricochet's retained energy; a blast's hottest) to 1100 K over its burn, on the palette's
   authored display scale (5.3 at 1500 K to 9.9 from 2800 K). The temperatures are authored
@@ -104,6 +108,24 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   or the burning wreck 41 m off hold them, so one or two lights (the weaker burst, or the wreck's
   0.13 W/sr when two bursts outrank it) pass through the struck hull unshadowed. Kill at 1024x576
   after all of it: sparks 0.14 / 0.14 / 0.15 ms, rm-points 0.03, port grains unchanged.
+- Exterior flame pages (`game.rs` `FIRE_FLAME_COLORS`, the second row; `exterior_flame_parcel_sample`
+  stage regions): the base and the tongues' tips and outer sheath are the deep red of cooling
+  soot ([168,52,9] and [148,28,6] sRGB, from the 2026-10-01 ambers [187,87,18] and [192,88,18])
+  and the sheath takes the outer quarter of the spread and the top third of the rise (was the
+  outer sixth and the top fifth); the yellow-white core and amber body are unchanged. Still an
+  authored radiance calibration, not a soot temperature model (the owner, 2026-11-02: the fire
+  "too yellow"; the embers inherit the pages, so the fire's outer points go deep red with it).
+- Strike smoke in the raymarch backend (`renderer_raymarch.rs` `event_parcels`): a detonation's
+  five soot puffs used to appear 1.5 m above the burst and spread about it, so a shell on a plate
+  made a cloud in the air beside the hull (the owner: "exploding out of thin air"). They now leave
+  the struck surface along its normal (a plate's, or up off the ground), born at the surface the
+  size of the burst, slowing as they mix (2.6 m x (1 - e^(-t / 0.7 s))) and rising on their
+  buoyancy from zero. A heavy round through the plate is its own event (`EVENT_PENETRATION`,
+  from `ARMOR_IMPACT`; a heavy ricochet stays `EVENT_ARMOUR`) and vents through the hole: six
+  puffs born at the hole 0.45 s apart over 2.3 s, about the hole's size, leaving along the
+  normal (1.6 m x (1 - e^(-age / 0.6 s))) and rising, fading over 6 s. Both are authored plumes
+  on the event's origin and normal, not a vented-gas or detonation-products model; the hole's
+  glow is the existing hot rim.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
   takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on

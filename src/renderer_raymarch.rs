@@ -94,6 +94,8 @@ const EVENT_RECORDS: usize = 2;
 const EVENT_DETONATION: u32 = 0;
 const EVENT_MUZZLE: u32 = 1;
 const EVENT_ARMOUR: u32 = 2;
+/// A heavy round through the plate: the hole vents the compartment's smoke along its normal.
+const EVENT_PENETRATION: u32 = 3;
 /// Spark record kinds the backend adds to the simulation's (weapon_particle_math.rs ends at 8).
 const SPARK_FRAGMENT_STREAKS: u32 = 9;
 const SPARK_BURNING_FRAGMENTS: u32 = 10;
@@ -130,7 +132,8 @@ fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
         else { burst.parameters[3] > 0.5 };
     match burst.meta[3] {
         wm::BLAST if heavy && burst.parameters[2] > 2.0 => Some(EVENT_DETONATION),
-        wm::ARMOR_IMPACT | wm::RICOCHET if heavy => Some(EVENT_ARMOUR),
+        wm::ARMOR_IMPACT if heavy => Some(EVENT_PENETRATION),
+        wm::RICOCHET if heavy => Some(EVENT_ARMOUR),
         _ => None,
     }
 }
@@ -2297,16 +2300,25 @@ impl Backend {
                                 2.5 / radius, h(50 + k) * 100.0, u);
                         }
                     }
-                    // Soot: five puffs rising on their own buoyancy and drifting with the wind.
+                    // Soot: five puffs leaving the struck surface along its normal (a plate's, or
+                    // up off the ground), slowing as they mix, then rising on their own buoyancy
+                    // and drifting with the wind. They are born at the surface the size of the
+                    // burst, so the cloud grows out of the strike, not in the air above it (the
+                    // owner, 2026-11-02: smoke "exploding out of thin air").
                     if t > 0.1 && t < 14.0 && explosion.is_none() {
                         let u = (t - 0.1) / 13.9;
+                        let n = e.normal;
+                        let side = if n.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+                        let t1 = n.cross(side).normalize_or_zero();
+                        let t2 = n.cross(t1);
                         for k in 0..5u32 {
                             let a = h(60 + k) * std::f32::consts::TAU;
                             let rb = h(70 + k);
-                            let rise = (1.5 + 7.5 * u.powf(0.55)) * (0.7 + 0.6 * rb);
-                            let spread = (0.8 + 5.0 * u.sqrt()) * (0.4 + 0.6 * h(80 + k));
-                            let center = o + Vec3::new(a.cos() * spread, rise, a.sin() * spread) + wind * (t * 0.8);
-                            let radius = (1.0 + 3.5 * u.sqrt()) * (0.6 + 0.6 * rb);
+                            let out = (2.6 * (1.0 - (-t / 0.7).exp())) * (0.5 + 0.9 * h(85 + k));
+                            let rise = (7.5 * u.powf(1.1)) * (0.7 + 0.6 * rb);
+                            let spread = (0.3 + 4.5 * u.sqrt()) * (0.4 + 0.6 * h(80 + k));
+                            let center = o + n * out + Vec3::Y * rise + (t1 * a.cos() + t2 * a.sin()) * spread + wind * (t * 0.8);
+                            let radius = (0.6 + 3.5 * u.sqrt()) * (0.6 + 0.6 * rb);
                             let density = (1.0 - u).powf(1.3) * 0.7;
                             // Dark grey, not black: the burst's smoke is soot mixed with lifted earth.
                             push(center, radius, [0.4, 0.38, 0.36], PARCEL_SMOKE, 0.0, density / radius, h(90 + k) * 100.0, 0.0);
@@ -2349,6 +2361,30 @@ impl Backend {
                         // A ground hit is not evidence of burning fuel. Persistent residue is
                         // drawn only by the source-supported surface-fire simulation; this
                         // cosmetic event must not plant an unrelated ring of glowing embers.
+                    }
+                }
+                EVENT_PENETRATION => {
+                    // The vent through the hole: the round's own propellant smoke and the
+                    // compartment's leave along the hole's normal for a few seconds, each puff
+                    // born at the hole about its size, slowing as it mixes with the air and
+                    // rising on its buoyancy. The glowing rim is the hole; this is what comes
+                    // out of it (an authored plume, not a vented-gas model).
+                    let n = e.normal;
+                    let side = if n.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+                    let t1 = n.cross(side).normalize_or_zero();
+                    let t2 = n.cross(t1);
+                    for k in 0..6u32 {
+                        let born = 0.05 + 0.45 * k as f32;
+                        let age = t - born;
+                        if age <= 0.0 || age > 6.0 { continue; }
+                        let a = h(130 + k) * std::f32::consts::TAU;
+                        let out = (1.6 * (1.0 - (-age / 0.6).exp())) * (0.6 + 0.8 * h(140 + k));
+                        let rise = 0.9 * age * age.min(2.5);
+                        let spread = (0.05 + 0.35 * age) * (0.5 + h(150 + k));
+                        let center = o + n * out + Vec3::Y * rise + (t1 * a.cos() + t2 * a.sin()) * spread + wind * (age * 0.6);
+                        let radius = 0.25 + 0.45 * age;
+                        let density = (1.0 - age / 6.0).powi(2) * 0.5 * (1.0 - 0.12 * k as f32);
+                        push(center, radius, [0.30, 0.29, 0.28], PARCEL_SMOKE, 0.0, density / radius, h(160 + k) * 100.0, 0.0);
                     }
                 }
                 EVENT_MUZZLE => {
@@ -2435,7 +2471,7 @@ impl Backend {
                     if t < 0.25 { synth(SPARK_FRAGMENT_STREAKS, 1800, 0.25, [0.0; 4]); }
                     if t < 5.5 { synth(SPARK_BURNING_FRAGMENTS, 64, 5.5, [e.ground_y.unwrap_or(o.y - 0.3), if e.ground_y.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0]); }
                 }
-                EVENT_ARMOUR => { if t < 1.3 { synth(SPARK_MOLTEN_SPRAY, 420, 1.3, [0.0; 4]); } }
+                EVENT_ARMOUR | EVENT_PENETRATION => { if t < 1.3 { synth(SPARK_MOLTEN_SPRAY, 420, 1.3, [0.0; 4]); } }
                 _ => {}
             }
         }
@@ -3096,7 +3132,7 @@ mod event_source_tests {
         assert_eq!(source_event_kind(&record(wm::BULLET_ARMOR, 1.0, false)), None);
         assert_eq!(source_event_kind(&record(wm::GROUND, 100.0, true)), None);
         assert_eq!(source_event_kind(&record(wm::FULL_COOKOFF, 1.0, true)), None);
-        assert_eq!(source_event_kind(&record(wm::ARMOR_IMPACT, 1.0, true)), Some(EVENT_ARMOUR));
+        assert_eq!(source_event_kind(&record(wm::ARMOR_IMPACT, 1.0, true)), Some(EVENT_PENETRATION));
         assert_eq!(source_event_kind(&record(wm::RICOCHET, 1.0, true)), Some(EVENT_ARMOUR));
     }
 

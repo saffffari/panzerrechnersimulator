@@ -96,7 +96,9 @@ fn pixel_quad(center: vec3<f32>, corner: u32) -> vec4<f32> {
 }
 
 // Samples drawn along each spark's path for the streaked kinds (vs_spark: 2, 5, 6).
-const SPARK_TRAIL: u32 = 24u;
+// One sample a spark: the spark where it is at the frame's instant, as every other body in this
+// renderer (no motion blur anywhere); 8 and 24 samples along its path drew as bars (2026-11-02).
+const SPARK_TRAIL: u32 = 1u;
 
 @vertex fn vs_spark(@builtin(vertex_index) vertex: u32,
     @location(0) origin_age: vec4<f32>, @location(1) direction_life: vec4<f32>,
@@ -299,7 +301,9 @@ const SPARK_TRAIL: u32 = 24u;
     let focal = fr.view_proj[1][1] * fr.res.y * 0.5;
     // A streak drawn as one native pixel carries its whole projected area; cap it so a shard
     // passing the eye does not become a bloom blob.
-    let projected_area = min(width * (width + tail) * pow(focal / clip.w, 2.0), select(6.0, 3.0, kind >= 9u));
+    // A streaked spark covers its cross-section only: its tail is the support test's, not a smear
+    // of its light into the pixel (which made every spark a bloom blob).
+    let projected_area = min(select(width * (width + tail), width * width, streaked) * pow(focal / clip.w, 2.0), select(6.0, 3.0, kind >= 9u));
     let weight = projected_area * f32(identity.z) / f32(identity.y);
     let position = pixel_quad(center, corner);
     if (kind == 7u) {

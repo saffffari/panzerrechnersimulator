@@ -4,7 +4,7 @@ use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 /// Samples a record carries per spark. Both spark shaders draw each spark as a dotted streak of
 /// SPARK_TRAIL samples along its path over 14 ms, so a record carries exactly that many: the
 /// thousandfold quadrature of 2026-10 drew as sheets and cones (2026-11-02).
-pub const SPARK_MULTIPLIER:u32=24;
+pub const SPARK_MULTIPLIER:u32=1;
 /// Ground ejecta grains a record carries per source grain: a quadrature of an estimated mass.
 pub const GROUND_MULTIPLIER:u32=1000;
 pub const EXTERIOR_VOLUME_MULTIPLIER:f32=100.0;
@@ -357,7 +357,7 @@ mod tests {
     }
     #[test] fn burst_volume_count_and_upload_are_bounded_independently() {
         assert!((EXTERIOR_RADIUS_MULTIPLIER.powi(3)-EXTERIOR_VOLUME_MULTIPLIER).abs()<0.0001);
-        assert_eq!(384*SPARK_MULTIPLIER,9216);assert_eq!(std::mem::size_of::<Record>(),80);
+        assert_eq!(384*SPARK_MULTIPLIER,384);assert_eq!(std::mem::size_of::<Record>(),80);
         assert_eq!(MAX_BURSTS*std::mem::size_of::<Record>(),3840);
         // Every burst's streak samples fit the view cap together; the cap bounds the ground's grains.
         let mut available=MAX_SPARKS_PER_VIEW;let mut emitted=0;
@@ -403,9 +403,13 @@ mod tests {
         let budget=240*136*8;
         let drawn=thinned_counts(&[blast,ground,rim],budget);
         let total=drawn.iter().map(|&n|u64::from(n)).sum::<u64>();
-        assert!(total<=budget && total+2>=budget,"{total} of {budget}");
+        // A burst at its floor (one sample a spark) may carry the total past the budget by its
+        // own source count; everything else shares what is left.
+        assert!(total<=budget+u64::from(blast.meta[2]) && total+2>=budget,"{total} of {budget}");
         assert_eq!(drawn[2],RIM_SAMPLES,"a hot rim is never thinned");
-        for (r,&n) in [blast,ground].iter().zip(&drawn) {
+        // A spark burst carries one sample a spark and cannot thin below its source count.
+        assert_eq!(drawn[0],blast.meta[1]);
+        for (r,&n) in [ground].iter().zip(&drawn[1..]) {
             assert!(n>=r.meta[2] && n<r.meta[1]);
             // Each sample is weighed by source / drawn: the burst's emission is the same.
             let total=n as f64*(r.meta[2] as f64/n as f64);

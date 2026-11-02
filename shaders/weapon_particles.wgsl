@@ -74,7 +74,7 @@ fn spark_strike_arc(origin: vec3<f32>, velocity: vec3<f32>, t: f32, ground: f32,
 }
 // Samples drawn along each spark's path for the spark kinds (0-3, 5, 6); the record carries
 // SPARK_MULTIPLIER (= SPARK_TRAIL) samples a spark (rm_sparks.wgsl is the main view's twin).
-const SPARK_TRAIL:u32=24u;
+const SPARK_TRAIL:u32=1u;
 // Ground ejecta grains a record carries per source grain (`GROUND_MULTIPLIER`): a quadrature of
 // an estimated mass, not sparks.
 const GROUND_QUADRATURE:u32=1000u;
@@ -207,7 +207,7 @@ const GROUND_QUADRATURE:u32=1000u;
     // Density is quadrature, not1000x power. The geometric source support remains millimetres;
     // a native pixel integrates its apparent area. No per-view point-light power changes.
     // Capped as in rm_sparks.wgsl: a spark passing the eye is not a bloom blob.
-    let projected_area=min(width*(width+tail)*pow(weapon_cam.extent.z/clip.w,2.0),6.0);
+    let projected_area=min(select(width*(width+tail),width*width,streaked)*pow(weapon_cam.extent.z/clip.w,2.0),6.0);
     let weight=projected_area*f32(identity.z)/f32(identity.y);
     let position=vec4(vec2(edge.x*2.0-1.0,1.0-edge.y*2.0)*clip.w,clip.z,clip.w);
     if(kind==7u){

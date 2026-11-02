@@ -6039,9 +6039,11 @@ const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
 // pages independent: restoring cabin warmth must not retune distant wrecks or muzzle reports.
 const FIRE_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_BATCHES] = [
     [183, 76, 12], [255, 160, 32], [255, 211, 94], [203, 81, 13],
-    // Exterior pages sit hotter than the cabin: more green and a trace of blue pull the snow
-    // wash from saturated orange toward amber with a whiter core, per the 2026-10-01 review.
-    [187, 87, 18], [255, 176, 44], [255, 225, 122], [192, 88, 18],
+    // Exterior pages: a yellow-white core (page 2) over an amber body (1), and a base (0) and
+    // the tongues' tips and outer sheath (3) in the deep red of cooling soot (the owner,
+    // 2026-11-02: the fire "too yellow", to extend into the deep red; the 2026-10-01 amber
+    // pages were [187,87,18] and [192,88,18] for the base and tips).
+    [168, 52, 9], [255, 176, 44], [255, 225, 122], [148, 28, 6],
 ];
 // Halving the grain edge and quadrupling the count preserves approximate projected coverage
 // while breaking up the coarse black confetti. The shared cap still bounds a spreading fire.
@@ -6265,9 +6267,11 @@ fn exterior_flame_parcel_sample(seed: u32, grain: usize, time: f32) -> FireVoxel
         (phase * 0.79 - height_t * 1.8).cos()) * (0.32 * height_t.powi(2));
     let horizontal = roots[tongue] * (1.0 - 0.45 * height_t)
         + Vec2::new(angle.cos(),angle.sin()) * (spread * radial) + bend;
-    let stage = if radial > 0.84 || height_t > 0.80 { 3 }
-        else if height_t < 0.08 && radial > 0.55 { 0 }
-        else if radial < 0.55 && height_t > 0.08 && height_t < 0.62 { 2 }
+    // The deep-red sheath and tips (3) take the outer quarter of the spread and the top third
+    // of each tongue's rise; the yellow core (2) stays the inner half of the lower body.
+    let stage = if radial > 0.76 || height_t > 0.70 { 3 }
+        else if height_t < 0.12 && radial > 0.45 { 0 }
+        else if radial < 0.50 && height_t > 0.12 && height_t < 0.58 { 2 }
         else { 1 };
     let tier = (hash01(spawn ^ 0x27d4_eb2f) * 3.0).floor().min(2.0) as usize;
     FireVoxelSample {
