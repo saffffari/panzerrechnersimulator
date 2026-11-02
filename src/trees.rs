@@ -79,6 +79,12 @@ struct DTree {
     push_work: f32, // work (J) the bow has put into bending the trunk (tank_push)
     state: State,
     seed: u32,
+    /// A standing tree's sway after a pressure front: the crown's displacement (m, world xz)
+    /// and its velocity, a damped spring at the tree's first mode (`pressure_front`).
+    #[serde(default)]
+    lean: glam::Vec2,
+    #[serde(default)]
+    lean_v: glam::Vec2,
 }
 
 /// A world event the game routes to FX/audio (the subsystem stays deaf and mute itself).
@@ -162,6 +168,8 @@ fn page_tree_records(batch: usize, mesh: &CpuMesh, mats: &[Mat4]) -> Vec<DTree> 
                 push_work: 0.0,
                 state: State::Standing,
                 seed: 0x7EE_0000 ^ ((batch as u32) << 12) ^ inst as u32,
+                lean: glam::Vec2::ZERO,
+                lean_v: glam::Vec2::ZERO,
             }
         })
         .collect()
@@ -464,6 +472,33 @@ impl Trees {
             self.batches[bi].1[ii] = pose;
             self.dirty[bi] = true;
         }
+        // Standing trees swaying after a front: a damped spring at the first mode (damping
+        // ratio 0.15, the foliage's aerodynamic damping), the pose a rotation of the authored
+        // transform about the base toward the crown's displacement; restored once settled.
+        for i in 0..self.trees.len() {
+            let tree = &mut self.trees[i];
+            if tree.state != State::Standing
+                || (tree.lean.length_squared() < 1e-8 && tree.lean_v.length_squared() < 1e-8) { continue; }
+            let omega = std::f32::consts::TAU * crate::pressure_front::tree_sway_hz(tree.height);
+            let h = dt.clamp(0.0, 0.05);
+            tree.lean_v += (-omega * omega * tree.lean - 2.0 * 0.15 * omega * tree.lean_v) * h;
+            tree.lean += tree.lean_v * h;
+            let reach = (tree.height * 0.7).max(0.5);
+            tree.lean = tree.lean.clamp_length_max(reach * 0.35);
+            let settled = tree.lean.length() < 0.002 && tree.lean_v.length() < 0.01;
+            let pose = if settled {
+                tree.lean = glam::Vec2::ZERO; tree.lean_v = glam::Vec2::ZERO;
+                tree.base
+            } else {
+                let angle = tree.lean.length() / reach;
+                let axis = Vec3::new(tree.lean.y, 0.0, -tree.lean.x).normalize_or_zero();
+                Mat4::from_translation(tree.pos) * Mat4::from_axis_angle(axis, angle)
+                    * Mat4::from_translation(-tree.pos) * tree.base
+            };
+            let (bi, ii) = (tree.batch, tree.inst);
+            self.batches[bi].1[ii] = pose;
+            self.dirty[bi] = true;
+        }
         for bi in 0..self.batches.len() {
             if self.dirty[bi] {
                 let (rbatch, ref mats) = self.batches[bi];
@@ -471,6 +506,28 @@ impl Trees {
                 self.dirty[bi] = false;
             }
         }
+    }
+
+    /// The fronts' arrivals in (t0, t1] at each standing tree's crown: the crown takes the drag
+    /// impulse radially from the source (`pressure_front::crown_tip_velocity_m_s`); `update`
+    /// rings the sway down. A tree inside the burst's damage radius is snapped by `blast`.
+    pub fn pressure_sweep(&mut self, fronts: &[crate::pressure_front::Front], t0: f32, t1: f32) -> f32 {
+        let mut peak = 0.0f32;
+        if fronts.is_empty() { return peak; }
+        for tree in &mut self.trees {
+            if tree.state != State::Standing { continue; }
+            let crown = tree.pos + Vec3::Y * tree.height * 0.7;
+            for front in fronts {
+                let Some(arrival) = front.arrival_at(crown) else { continue };
+                if arrival.at <= t0 || arrival.at > t1 { continue; }
+                let v = crate::pressure_front::crown_tip_velocity_m_s(
+                    front.tnt_kg, crown.distance(front.origin), tree.height, tree.trunk_r);
+                let radial = glam::Vec2::new(arrival.direction.x, arrival.direction.z).normalize_or_zero();
+                tree.lean_v += radial * v;
+                peak = peak.max(v);
+            }
+        }
+        peak
     }
 
     /// Class of tree `idx` — the pen ray charges a mature trunk more budget than a fir.

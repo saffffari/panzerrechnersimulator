@@ -308,6 +308,38 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
 - The tracer pellet's intensity is 180 cd (61 cd before): the 61 was a lower bound from the
   trace's required visibility, and the AgX display desaturates the hotter pellet toward white
   as a 3400 K source of that intensity should look; its chroma is unchanged.
+- The airborne front of every surface burst reaches everything at the speed of sound
+  (2026-11-02; `pressure_front`, `Game::emit_blast_front`, `deliver_pressure_fronts`). Before,
+  only an HE burst and an inner-surface penetration emitted a front, received by the eye alone
+  (a kick of an authored 0.18 m over distance squared). Now the first blast of a kill, the
+  stowage's detonation at the turret's launch, a wreck's cook-off, the 88's and the enemy
+  guns' muzzle blasts and the HE burst each leave one front, carrying the source's TNT
+  equivalent (the sound levels' own: 0.71 kg, 3.67 kg, 0.71 kg, 0.36 kg per kg of
+  propellant, the HE fill's equivalent), followed to where its incident overpressure falls
+  under 0.2 kPa (at most 240 m). Every receiver's response is computed from that charge at its
+  own distance and delivered at its own arrival, d / c, the same range and speed the report's
+  scheduler uses, so the boom and the front arrive together: the eye's kick (a quarter metre
+  at 20 kPa scaling with the root of the Kingery-Bulmash overpressure below it, decaying as the
+  existing armour-hit kick; a presentation of the startle and the chest thump, the head's
+  physical displacement being negligible, and never through the player's intact hull or for
+  the own gun), the standing men (a flinch of 0.3 s at 140 dB peak to 1.2 s at 170 dB, nothing
+  under 130; a presentation of a startle, since the drag impulse on a man at these distances
+  is millimetres per second), the grass (each wind cell's blade spring takes the tip velocity
+  the dynamic-pressure impulse gives a 5 mm, 0.7 g/m leaf at Cd 1.2: flattened within 15 m of
+  3.67 kg, a whip at 40 m, a tremor at 100 m; the spring's displacement is now bounded at 0.85
+  of the blade) and the standing trees (the crown's drag impulse on a cone a third as wide as
+  tall at Cd 0.6 against 0.3 of the stem's mass, a damped spring at 5/height Hz with damping
+  ratio 0.15, the pose a rotation about the base; centimetres at 15 m from 3.67 kg, as a 10 m
+  pine should). The dynamic pressure is the weak-shock ½ρu² with u = Δp/(ρc), which overstates
+  a front above ~50 kPa by up to a third: those distances are inside the burst's damage radius,
+  where `blast` snaps the trees and resolves the men anatomically. Named approximations: a
+  grass cell (8 m) receives its impulse at its centre's arrival; the muzzle blast is treated as
+  a surface burst of its charge's equivalent (the directivity of the real muzzle blast is in the
+  sound, not the front); the refractive cap is unchanged (a representative subframe radius,
+  not a gas solver). `fx-review` part `shockwave` (a primed catastrophic kill 33 m from an
+  observer in the open with three riflemen between; the receipt records the fronts, the
+  arrivals, the kick, the men startled, the blade and crown impulses) is the evidence, with
+  `pressure_front` tests of the charge's overpressure, impulse, reach and arrival windows.
 
 Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
 whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never

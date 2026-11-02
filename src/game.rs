@@ -9636,6 +9636,21 @@ pub struct Game {
     pressure_reset_pending: bool,
     pressure_arrivals_delivered: u32,
     pressure_last_arrival_s: f32,
+    /// Airborne fronts queued by sites without the renderer at hand (id, origin, TNT kg, the
+    /// eye responds); emitted at the next update, with the report's own range and speed.
+    pending_fronts: Vec<(u64, Vec3, f32, bool)>,
+    /// The fronts swept over the men, the trees and the grass each update, and the window
+    /// (last sweep, now] their arrivals are taken in.
+    pressure_sweep_t: f32,
+    pressure_sweep_fronts: Vec<crate::pressure_front::Front>,
+    pressure_sweep_window: (f32, f32),
+    /// Headless: an observer standing in the open receives the fronts instead of the player's
+    /// eye (the `fx-review` shockwave fixture).
+    pressure_observer: Option<Vec3>,
+    pressure_startled: u32,
+    pressure_last_kick: f32,
+    pressure_grass_peak: f32,
+    pressure_tree_peak: f32,
     /// Set once the player reaches the act's goal gate (the red X). The front-end reads it and
     /// advances the act flow (W5); never reset within a life.
     pub act_complete: bool,
@@ -14067,6 +14082,15 @@ impl Game {
             pressure_reset_pending: false,
             pressure_arrivals_delivered: 0,
             pressure_last_arrival_s: -1.0,
+            pending_fronts: Vec::new(),
+            pressure_sweep_t: -1.0,
+            pressure_sweep_fronts: Vec::new(),
+            pressure_sweep_window: (-1.0, -1.0),
+            pressure_observer: None,
+            pressure_startled: 0,
+            pressure_last_kick: 0.0,
+            pressure_grass_peak: 0.0,
+            pressure_tree_peak: 0.0,
             act_complete: false,
             sights_mag: 0,
             sight_steady: None,
@@ -17238,6 +17262,7 @@ impl Game {
                 self.hit_camera_kick = (self.hit_camera_kick + kick).clamp_length_max(0.72);
             } else { pressure_index += 1; }
         }
+        self.deliver_pressure_fronts(dt, r);
         // The external hand can operate the same lid. Advance it in both modes so opening it
         // from the roof really moves the source lid and its collision surface before entry.
         let hatch_before = self.hatch_t;
@@ -17291,10 +17316,13 @@ impl Game {
             let hf = &self.hf;
             let act_id = self.act.id;
             let wind_scale = self.weather_wind_scale;
+            let fronts = &self.pressure_sweep_fronts;
+            let (t0, t1) = self.pressure_sweep_window;
+            let gust = |p: Vec3| crate::pressure_front::blade_gust(fronts, p, t0, t1);
             if self.defer_presentation_rebuild {
-                g.advance(r.camera.pos,dt,r.time,|x,z|hf.height_at(x,z),|p|wind_at(act_id,p)*wind_scale);
+                g.advance(r.camera.pos,dt,r.time,|x,z|hf.height_at(x,z),|p|wind_at(act_id,p)*wind_scale,gust);
             } else {
-                g.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act_id, p) * wind_scale);
+                g.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act_id, p) * wind_scale, gust);
             }
         }
 
@@ -20292,7 +20320,7 @@ impl Game {
         let wind_scale = self.weather_wind_scale;
         if let Some(grass) = self.grass.as_mut() {
             let hf = &self.hf;
-            grass.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act, p) * wind_scale);
+            grass.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act, p) * wind_scale, |_| Vec2::ZERO);
         }
         r.set_weather_wind(wind_at(act, r.camera.pos) * wind_scale);
     }
@@ -23219,6 +23247,7 @@ impl Game {
                 0x4E_B145 ^ self.armor_tick.wrapping_mul(31),
             );
             self.schedule_sound_from(crate::audio::Sfx::KillExplosion, bp);
+            self.queue_blast_front(0xDB00_0000 | u64::from(self.armor_tick), bp, crate::sound_levels::VEHICLE_KILL_TNT_KG, true);
         }
     }
 
@@ -23270,6 +23299,33 @@ impl Game {
     }
 
     /// Review telemetry: scheduled airborne camera responses and their shared acoustic deadline.
+    /// Headless: an observer standing in the open receives the fronts (the eye's kick) instead
+    /// of the player's eye; `None` restores the player.
+    pub fn debug_pressure_observer(&mut self, eye: Option<Vec3>) { self.pressure_observer = eye; }
+    /// Headless: the eye's current kick as the exterior camera sample (translation, yaw, pitch).
+    pub fn debug_observer_kick(&self, right: Vec3) -> (Vec3, f32, f32) {
+        let s = interior_impact_camera::sample(self.hit_camera_kick, right, false);
+        (s.translation, s.yaw, s.pitch)
+    }
+    pub fn debug_pressure_receipt(&self) -> serde_json::Value {
+        serde_json::json!({
+            "pending": self.pressure_arrivals.len(), "delivered": self.pressure_arrivals_delivered,
+            "last_arrival_s": self.pressure_last_arrival_s, "last_kick_m": self.pressure_last_kick,
+            "men_startled": self.pressure_startled, "grass_tip_peak_m_s": self.pressure_grass_peak,
+            "crown_peak_m_s": self.pressure_tree_peak,
+            "fronts": self.pressure_sweep_fronts.iter().map(|f| serde_json::json!({
+                "origin": f.origin.to_array(), "emitted_at": f.emitted_at, "tnt_kg": f.tnt_kg, "reach_m": f.max_radius})).collect::<Vec<_>>()})
+    }
+    /// Headless: stand the first `points.len()` soldiers at `points` (on the ground, idle).
+    pub fn debug_place_soldiers(&mut self, points: &[Vec3]) -> usize {
+        let mut placed = 0;
+        for (soldier, p) in self.soldiers.iter_mut().zip(points) {
+            let pos = Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z);
+            soldier.pos = pos; soldier.route = [pos; 4]; soldier.alive = true; soldier.escort_enemy = None;
+            placed += 1;
+        }
+        placed
+    }
     pub fn debug_pressure_arrivals(&self) -> (usize, u32, f32) {
         (self.pressure_arrivals.len(), self.pressure_arrivals_delivered, self.pressure_last_arrival_s)
     }
@@ -23779,6 +23835,13 @@ impl Game {
         self.pressure_reset_pending = true;
         self.pressure_arrivals_delivered = 0;
         self.pressure_last_arrival_s = -1.0;
+        self.pending_fronts.clear();
+        self.pressure_sweep_t = -1.0;
+        self.pressure_sweep_fronts.clear();
+        self.pressure_startled = 0;
+        self.pressure_last_kick = 0.0;
+        self.pressure_grass_peak = 0.0;
+        self.pressure_tree_peak = 0.0;
         self.concussion_t = 0.0;
         self.concussion_dur = 0.0;
         // A new attempt is a new crewman: fresh ears.
@@ -26308,23 +26371,75 @@ impl Game {
             0x4E_B145 ^ self.armor_tick.wrapping_mul(31),
         );
         let source = point - incoming.normalize_or_zero() * 0.025;
-        let front = crate::pressure_front::Front { id: projectile_id.wrapping_mul(2),
-            origin: source, direction: Vec3::Y, emitted_at: r.time, strength: 1.0,
-            max_radius: 80.0, cap_cosine: -1.0 };
         self.schedule_emission(crate::audio::Sfx::KillExplosion,source,burst,None,None);
-        if let Some(arrival) = r.pressure_fronts.emit(front, r.camera.pos) {
-            let distance = source.distance(r.camera.pos);
-            // Never push an exterior pressure response through the player's intact hull. The
-            // struck inner surface radiates a distinct, small cabin response in the vehicle path.
-            let outside = matches!(self.mode, Mode::Foot)
-                || (matches!(self.station, Station::Commander) && self.commander_outside);
-            let clear = self.los_clear(source, r.camera.pos)
-                && self.cabin_fire.sweep(source, r.camera.pos, &self.fire_surface_models()).is_none();
-            if outside && clear {
-                self.pressure_arrivals.push((arrival, arrival.direction *
-                    (0.18 / (1.0 + distance * distance * 0.08))));
+        self.emit_blast_front(projectile_id.wrapping_mul(2), source, burst.tnt_kg, true, r);
+    }
+
+    /// A surface burst's airborne front from `origin`: one front at the speed of sound, its
+    /// optical cap, and the arrival-timed responses of the eye (`emit_blast_front`), the men,
+    /// the standing trees and the grass (`deliver_pressure_fronts`), all from the charge's
+    /// overpressure at each receiver (`pressure_front`). Queued for the next update when the
+    /// site has no renderer at hand; the report is scheduled by the callers over the same
+    /// range at the same speed, so the boom and the front arrive together.
+    fn queue_blast_front(&mut self, id: u64, origin: Vec3, tnt_kg: f32, eye: bool) {
+        if origin.is_finite() && tnt_kg.is_finite() && tnt_kg > 0.0 {
+            self.pending_fronts.push((id, origin, tnt_kg, eye));
+        }
+    }
+    fn emit_blast_front(&mut self, id: u64, origin: Vec3, tnt_kg: f32, eye: bool, r: &mut Renderer) {
+        let front = crate::pressure_front::Front { id, origin, direction: Vec3::Y, emitted_at: r.time,
+            strength: (tnt_kg / 0.5).clamp(0.15, 1.0), max_radius: crate::pressure_front::reach_m(tnt_kg),
+            cap_cosine: -1.0, tnt_kg };
+        let observer = self.pressure_observer;
+        let listener = observer.unwrap_or(r.camera.pos);
+        let Some(arrival) = r.pressure_fronts.emit(front, listener) else { return };
+        if !eye { return; }
+        let kick = crate::pressure_front::eye_kick_m(
+            crate::pressure_front::overpressure_kpa(tnt_kg, origin.distance(listener)));
+        // Never push an exterior pressure response through the player's intact hull. The
+        // struck inner surface radiates a distinct, small cabin response in the vehicle path.
+        // The headless observer stands in the open by definition.
+        let outside = observer.is_some() || matches!(self.mode, Mode::Foot)
+            || (matches!(self.station, Station::Commander) && self.commander_outside);
+        let clear = observer.is_some() || (self.los_clear(origin, listener)
+            && self.cabin_fire.sweep(origin, listener, &self.fire_surface_models()).is_none());
+        if outside && clear && kick > 0.0 {
+            self.pressure_arrivals.push((arrival, arrival.direction * kick));
+            self.pressure_last_kick = kick;
+        }
+    }
+    /// Each update: emit the queued fronts, then sweep the travelling ones over the men (a
+    /// startle at the report's level there), the standing trees (the crown's drag impulse) and,
+    /// through `pressure_sweep_fronts`, the grass cells (the blade tips' impulse), each at its
+    /// own arrival in (last sweep, now].
+    fn deliver_pressure_fronts(&mut self, dt: f32, r: &mut Renderer) {
+        for (id, origin, tnt, eye) in std::mem::take(&mut self.pending_fronts) {
+            self.emit_blast_front(id, origin, tnt, eye, r);
+        }
+        let now = r.time;
+        let t0 = if self.pressure_sweep_t < 0.0 || self.pressure_sweep_t > now { now - dt.max(0.0) } else { self.pressure_sweep_t };
+        self.pressure_sweep_t = now;
+        self.pressure_sweep_window = (t0, now);
+        self.pressure_sweep_fronts = r.pressure_fronts.active(now);
+        if self.pressure_sweep_fronts.is_empty() { return; }
+        let fronts = std::mem::take(&mut self.pressure_sweep_fronts);
+        for soldier in self.soldiers.iter_mut().filter(|s| s.alive) {
+            let chest = soldier.pos + Vec3::Y * 1.2;
+            for front in &fronts {
+                let Some(arrival) = front.arrival_at(chest) else { continue };
+                if arrival.at <= t0 || arrival.at > now { continue; }
+                let seconds = crate::pressure_front::startle_s(front.tnt_kg, chest.distance(front.origin));
+                if seconds > 0.0 { soldier.startle(seconds, front.origin); self.pressure_startled += 1; }
             }
         }
+        let tree_peak = self.trees.pressure_sweep(&fronts, t0, now);
+        self.pressure_tree_peak = self.pressure_tree_peak.max(tree_peak);
+        if self.grass.is_some() {
+            let eye = r.camera.pos;
+            let gust = crate::pressure_front::blade_gust(&fronts, Vec3::new(eye.x, self.hf.height_at(eye.x, eye.z), eye.z), t0, now);
+            self.pressure_grass_peak = self.pressure_grass_peak.max(gust.length());
+        }
+        self.pressure_sweep_fronts = fronts;
     }
 
     fn resolve_authoritative_terminal(
@@ -26753,7 +26868,7 @@ impl Game {
                     r.pressure_fronts.emit(crate::pressure_front::Front {
                         id: projectile.id.wrapping_mul(2).wrapping_add(1), origin, direction,
                         emitted_at: r.time, strength: (event.shell.caliber_mm / 152.4).clamp(0.15, 1.0),
-                        max_radius: 5.5, cap_cosine: 0.0,
+                        max_radius: 5.5, cap_cosine: 0.0, tnt_kg: 0.0,
                     }, r.camera.pos)
                 });
                 let air_delay_s = if let Some(arrival) = pressure_arrival {
@@ -27110,6 +27225,12 @@ impl Game {
     }
 
     fn play_player_main_gun_report(&mut self, shot_sequence: u32, shell_flight: Option<f32>) {
+        // The 88's muzzle blast as a front (2.5 kg of propellant at `TNT_PER_KG_PROPELLANT`):
+        // the grass ahead of the muzzle, the men near the gun. Not the eye: the own gun's
+        // camera sample (`main_gun_camera_sample`) already carries the discharge.
+        let (own_muzzle, _) = self.player.muzzle();
+        self.queue_blast_front(0xA000_0000 | u64::from(shot_sequence), own_muzzle,
+            2.5 * crate::sound_levels::TNT_PER_KG_PROPELLANT, false);
         // The loudest thing the crewman hears all day. It reaches the ears as an impulse below
         // (`hear_own_vehicle_impulse`): the ear model decides what it costs.
         let head_out = (matches!(self.station, Station::Commander) && self.commander_outside)
@@ -28442,6 +28563,10 @@ impl Game {
         let report_stamp = self.enemy_report_audit.discharge(i, self.enemy_gun_shots[i],
             shell.caliber_mm, muzzle, distance, id);
         let reports_before = self.scheduled.len();
+        // The muzzle blast's front: the charge's TNT equivalent (`TNT_PER_KG_PROPELLANT`) from
+        // the muzzle, flattening the snow's stalks ahead of the gun and ducking the men near it.
+        self.queue_blast_front(0xE000_0000 | u64::from(self.enemy_gun_shots[i]) << 8 | i as u64, muzzle,
+            charge * crate::sound_levels::TNT_PER_KG_PROPELLANT, true);
         self.scheduled.push(ScheduledSound {
             delay: distance / speed_of_sound(),
             sfx: crate::audio::Sfx::EnemyGun,
@@ -29541,16 +29666,18 @@ impl Game {
         }
 
         if catastrophic {
-            // Big INSTANT fireball at the turret ring + a spray of glowing debris. The BLAST is seen
-            // now; its heavy boom + tearing metal arrive delayed by range to the wreck.
-            self.spawn_blast(ring, 9.0, 26.0, 0.85);
+            // The first blast at the ring (the ready rounds, `VEHICLE_KILL_TNT_KG`) and a spray
+            // of glowing debris, its boom and its front leaving now; the stowage's detonation,
+            // the turret's throw and the tearing metal come with the launch after the burn
+            // (`drive_cookoff_build`, the launch in `update_fx`).
+            self.spawn_blast(ring, 6.5, 20.0, 0.7);
             self.spawn_debris(ring, 11, 15.0, seed);
-            if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::TurretPop, ring,
+            if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::KillExplosion, ring,
                 seed.wrapping_add(0x7055), "enemy_catastrophic_kill")
             {
-                self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring);
+                self.schedule_sound_from(crate::audio::Sfx::KillExplosion, ring);
             }
-            self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring);
+            self.queue_blast_front(0x4B00_0000 | u64::from(seed), ring, crate::sound_levels::VEHICLE_KILL_TNT_KG, true);
             println!(
                 "[panzerrechnersystem] {} #{idx} CATASTROPHIC KILL — ammo rack, turret blown off!",
                 ekind.name()
@@ -29582,6 +29709,7 @@ impl Game {
             if self.wrecks[i].kind == WreckKind::None {
                 continue;
             }
+            let mut launched: Option<Vec3> = None;
             {
                 let w = &mut self.wrecks[i];
                 w.fire_t += dt;
@@ -29596,6 +29724,7 @@ impl Game {
                 if w.kind == WreckKind::TurretPop {
                     if w.t_launch_pending {
                         w.t_launch_pending = false;
+                        launched = Some(w.t_pos);
                         let source = self.wreck_turret_sources[wreck_kind_index(self.enemies[i].kind)].clone();
                         let (point, normal) = w.t_impact.unwrap_or((w.t_pos, Vec3::Y));
                         w.t_body = wreck_turret::Body::launch(source, w.t_gun_local,
@@ -29610,6 +29739,20 @@ impl Game {
                         w.t_pos = body.model().transform_point3(Vec3::ZERO);
                     }
                 }
+            }
+            if let Some(ring) = launched {
+                // The stowage's detonation (`AMMUNITION_DETONATION_TNT_KG`): the blast at the
+                // ring, the turret's own report and the tearing metal, and the front that
+                // reaches the eye, the men, the trees and the grass at the speed of sound.
+                let seed = (i as u32).wrapping_mul(0x9E37_79B9) ^ self.kill_tick.wrapping_mul(0x85EB_CA6B);
+                self.spawn_blast(ring, 9.0, 26.0, 0.85);
+                if !self.schedule_hit_recording(crate::audio::HitFamily::Penetration, crate::audio::Sfx::TurretPop, ring,
+                    seed.wrapping_add(0x7055), "enemy_catastrophic_kill")
+                {
+                    self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring);
+                }
+                self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring);
+                self.queue_blast_front(0x5400_0000 | u64::from(seed), ring, crate::sound_levels::AMMUNITION_DETONATION_TNT_KG, true);
             }
             // Cosmetic pressure sequence uses the actual terminal breach. A merged closed
             // hatch is not invented as an opening. Mark once per wreck, not once per frame.
@@ -29670,6 +29813,8 @@ impl Game {
                     .wrapping_mul(668265263)
                     .wrapping_add(i as u32 * 104729);
                 self.spawn_blast(center + Vec3::new(0.0, 0.5, 0.0), 8.0, 24.0, 0.8);
+                self.queue_blast_front(0xC000_0000 | u64::from(seed), center + Vec3::new(0.0, 0.5, 0.0),
+                    crate::sound_levels::COOK_OFF_TNT_KG, true);
                 if let Some((point,normal))=self.wrecks[i].t_impact {
                     self.weapon_vfx.full_cookoff_plume(point,normal);
                     self.wrecks[i].catastrophe_plume_started=true;

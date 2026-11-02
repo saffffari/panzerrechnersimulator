@@ -180,7 +180,7 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
     Ok(())
 }
 
-/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,burnout,kill` selects the parts (all by default);
+/// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,burnout,shockwave,kill` selects the parts (all by default);
 /// `KESSEL_FX_REVIEW_CLOCK` the strike and kill clock, `KESSEL_FX_REVIEW_FILM=1` the clips.
 fn part(name: &str) -> bool {
     match std::env::var("KESSEL_FX_REVIEW_PARTS") {
@@ -443,6 +443,74 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         }
         stills.shots.push(serde_json::json!({"name": "burnout_wreck", "turret_pop_position": g.debug_enemy_turret_pop_position(live).map(|p| p.to_array())}));
     }
+    // Part 7 (`shockwave`): a primed catastrophic kill 33 m from an observer standing in the
+    // open with three riflemen between, filmed from before the launch: the fronts (the first
+    // blast's, then the stowage's) leave the ring at the speed of sound, the refractive cap
+    // crosses the frame, the men duck as it reaches them, the stalks whip, and the eye is
+    // kicked when it arrives with the report. The receipt: emission, arrivals, the kick, the
+    // men startled, the grass and crown impulses.
+    if part("shockwave") {
+        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        g.debug_place_tiger(tiger, 0.0);
+        let forward = g.player.forward();
+        let right = Vec3::new(-forward.z, 0.0, forward.x);
+        let target_pos = g.player.pos + forward * 60.0 + right * 10.0;
+        let live = g.debug_stage_live_t34(target_pos.x, target_pos.z, 1.2).context("fixture needs a live T-34")?;
+        g.debug_hold_enemy_fire();
+        step(&mut g, &mut r, 60, &idle);
+        anyhow::ensure!(g.debug_prime_enemy_turret_pop(live), "the catastrophic roll could not be primed");
+        let centre = g.enemies[live].center();
+        let stand = centre - forward * 30.0 - right * 14.0;
+        let eye = Vec3::new(stand.x, g.hf.height_at(stand.x, stand.z) + 1.7, stand.z);
+        let men = [centre - forward * 10.0 - right * 3.0, centre - forward * 15.0 + right * 2.0, centre - forward * 19.0 - right * 7.0];
+        let placed = g.debug_place_soldiers(&men);
+        g.debug_pressure_observer(Some(eye));
+        let look = centre + Vec3::Y * 1.0;
+        let kill_frame = 12u32;
+        let launch_frame = kill_frame + 84;
+        let mut kicks = Vec::new();
+        let frame_cam = |g: &Game, r: &mut crate::renderer::Renderer| {
+            observe(r, eye, look, 55.0);
+            let (translation, yaw, pitch) = g.debug_observer_kick(r.camera.right());
+            r.camera.pos += translation; r.camera.yaw += yaw; r.camera.pitch += pitch;
+            translation.length()
+        };
+        if let Some(mut film) = Film::start(&stills.prefix, "shockwave")? {
+            frame_cam(&g, &mut r);
+            r.reset_history();
+            for frame in 0..240 {
+                if frame == kill_frame {
+                    let ring = g.enemies[live].center() + Vec3::Y * 0.9;
+                    anyhow::ensure!(g.debug_catastrophic_kill(live, ring - forward * 1.2, -forward), "the kill did not take");
+                }
+                step(&mut g, &mut r, 1, &idle);
+                kicks.push(frame_cam(&g, &mut r));
+                let path = film.frame();
+                r.render_to_png(&device, &queue, &path, r.iw, r.ih)?;
+                for (at, name, note) in [(2u32, "shockwave_launch", "the launch: the front leaving the ring"), (5, "shockwave_front", "the cap crossing the men"), (8, "shockwave_eye", "the front at the eye, the kick"), (40, "shockwave_after", "the stalks and the men after it")] {
+                    if frame == launch_frame + at { stills.frame_still(&mut r, &film, name, note)?; }
+                }
+            }
+            film.finish()?;
+        } else {
+            step(&mut g, &mut r, kill_frame, &idle);
+            let ring = g.enemies[live].center() + Vec3::Y * 0.9;
+            anyhow::ensure!(g.debug_catastrophic_kill(live, ring - forward * 1.2, -forward), "the kill did not take");
+            for (at, name, note) in [(86u32, "shockwave_launch", "the launch: the front leaving the ring"), (3, "shockwave_front", "the cap crossing the men"), (3, "shockwave_eye", "the front at the eye, the kick"), (32, "shockwave_after", "the stalks and the men after it")] {
+                step(&mut g, &mut r, at, &idle);
+                kicks.push(frame_cam(&g, &mut r));
+                stills.still(&mut r, name, note)?;
+            }
+        }
+        g.debug_pressure_observer(None);
+        let peak = kicks.iter().cloned().fold(0.0f32, f32::max);
+        let receipt = g.debug_pressure_receipt();
+        println!("[fx-review] shockwave: {receipt}");
+        anyhow::ensure!(receipt["delivered"].as_u64().unwrap_or(0) >= 1, "no front reached the observer");
+        anyhow::ensure!(peak > 0.005, "the eye was not kicked ({peak})");
+        stills.shots.push(serde_json::json!({"name": "shockwave_receipt", "observer": eye.to_array(), "men_placed": placed,
+            "distance_m": eye.distance(centre), "eye_kick_peak_m": peak, "pressure": receipt}));
+    }
     if !part("kill") {
         fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
             "schema": "panzer.fx-review.v1", "manifest": manifest, "internal_resolution": [r.iw, r.ih],
@@ -513,7 +581,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
         if effects > worst.0 {
             worst = (effects, serde_json::json!({"frame": frame, "frames_after_kill": frame as i64 - kill_frame as i64,
                 "sparks_ms": this.get("analytic-streaked-sparks"), "grains_ms": this.get("native-pixel-hdr-effects"),
-                "points_ms": this.get("rm-points"), "sparks": r.debug_weapon_particle_receipt(), "grains": r.debug_fine_vfx_receipt(),
+                "points_ms": this.get("rm-points"), "volume_ms": this.get("rm-volume"), "shade_ms": this.get("rm-shade"), "sparks": r.debug_weapon_particle_receipt(), "grains": r.debug_fine_vfx_receipt(),
                 "raymarch": r.raymarch_stats().map(|s| format!("{s:?}"))}));
         }
         for (label, ms) in this { passes.entry(label).or_default().push(ms); }

@@ -495,14 +495,16 @@ impl Grass {
         dt: f32,
         ground: impl Fn(f32, f32) -> f32,
         wind_at: impl Fn(Vec3) -> Vec2,
+        gust_at: impl Fn(Vec3) -> Vec2,
     ) {
-        self.advance(cam,dt,r.time,ground,wind_at);
+        self.advance(cam,dt,r.time,ground,wind_at,gust_at);
         self.present(r);
     }
 
-    /// Integrate every substep, even when several updates share one presented frame.
+    /// Integrate every substep, even when several updates share one presented frame. `gust_at`
+    /// is a pressure front's tip-velocity impulse at a cell this step (zero without one).
     pub fn advance(&mut self,cam:Vec3,dt:f32,time:f32,
-        ground:impl Fn(f32,f32)->f32,wind_at:impl Fn(Vec3)->Vec2) {
+        ground:impl Fn(f32,f32)->f32,wind_at:impl Fn(Vec3)->Vec2,gust_at:impl Fn(Vec3)->Vec2) {
         self.rebuild(Vec2::new(cam.x, cam.z), &ground);
         if self.contact_revision != self.tracks.revision {
             for root in self.layers.iter_mut().flat_map(|l| &mut l.roots) {
@@ -517,6 +519,7 @@ impl Grass {
             let wind = wind_at(point);
             let phase = time * 1.4 - point.x * 0.075 - point.z * 0.052;
             let gust = 0.78 + 0.18 * phase.sin() + 0.07 * (phase * 2.17 + 0.8).sin();
+            bend.impulse(gust_at(point));
             bend.update(
                 wind.normalize_or_zero() * (wind.length_squared() * 0.005 * gust).min(0.19),
                 dt,
@@ -616,8 +619,8 @@ mod population_tests {
             every.trample(track,0.2);deferred.trample(track,0.2);
             let time=(step+1) as f32*0.05;
             let wind=|_:Vec3|Vec2::new(3.0+step as f32*0.4,-2.0);
-            every.advance(camera,0.05,time,|_,_|0.0,wind);
-            deferred.advance(camera,0.05,time,|_,_|0.0,wind);
+            every.advance(camera,0.05,time,|_,_|0.0,wind,|_|Vec2::ZERO);
+            deferred.advance(camera,0.05,time,|_,_|0.0,wind,|_|Vec2::ZERO);
             every.build_mats();
         }
         deferred.build_mats();
