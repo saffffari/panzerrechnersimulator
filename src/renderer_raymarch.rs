@@ -53,9 +53,12 @@ pub const MAX_SCENE_LIGHTS: usize = 448;
 /// 52 285 lx per unit at the 3400 K white-yellow of a burning magnesium and strontium nitrate
 /// composition, Planck bands (1, 0.705, 0.348), so this is about 61 cd): an estimate from the trace requirement, a 7.62 mm
 /// trace seen by day to about 850 yd (780 m; ARDEC/Orbital ATK, NDIA 2018), against a point-source
-/// threshold of 1e-4 lx (Venus by day): 1e-4 x 780^2 = 61 cd. It lights the scene from the head
+/// threshold of 1e-4 lx (Venus by day): 1e-4 x 780^2 = 61 cd, a lower bound (the trace is seen
+/// farther than that requirement). Three times it, 180 cd, since 2026-11-02 (the owner: the
+/// tracers bright white; the AgX display desaturates the hot pellet toward white as it should,
+/// the 3400 K chroma is unchanged). It lights the scene from the head
 /// (`collect_lights`) and sets the drawn strip's radiance (`rm_sparks.wgsl` RM_TRACER_INTENSITY).
-const TRACER_INTENSITY: f32 = 0.001167;
+const TRACER_INTENSITY: f32 = 0.0035;
 /// Lights the backend synthesizes from ballistic bursts and tracer heads.
 const MAX_EFFECT_LIGHTS: usize = 64;
 const MAX_LIGHTS: usize = MAX_SCENE_LIGHTS + MAX_EFFECT_LIGHTS;
@@ -67,13 +70,13 @@ const EMBER_REACH_M: f32 = 90.0;
 /// each carrying its share of the grain's intensity. The owner's 2026-11-01 note on the dusk
 /// wreck: "tons of these sharp smaller ones instead of a bunch of clusters that look like
 /// isolated fires"; one ember per grain drew the fire as a few hundred points.
-const EMBERS_PER_GRAIN: usize = 12;
+const EMBERS_PER_GRAIN: usize = 20;
 /// The share of a flame grain's authored emission drawn as its embers (sharp one-pixel points);
 /// the merged volumetric parcel keeps the rest. At 0.5 the two halves are the 2026-11-01 split
 /// (six embers at the grain's intensity, the parcel at 0.6 x coverage / radius); at 0.8 the fire
 /// reads as points with a faint body behind them (the owner, 2026-11-02: the parcels, merged
 /// per 4 px volume cell, drew as "diffuse glowing cubes" over the embers).
-const FIRE_EMBER_SHARE: f32 = 0.8;
+const FIRE_EMBER_SHARE: f32 = 0.6;
 const SKY_COVER_RES: u32 = 512;
 const SKY_COVER_HALF_M: f32 = 48.0;
 const POINT_SHADOWS: usize = 2;
@@ -125,6 +128,8 @@ struct Event {
     normal: Vec3,
     /// Ground height under a detonation when the simulation also recorded ground ejecta there.
     ground_y: Option<f32>,
+    /// A vent's strength (the pressure behind the jet, 0..1); 1 for the other kinds.
+    strength: f32,
     /// Material from that same ground-ejecta source, never inferred from the camera's biome.
     ground_snow: f32,
     born: f32,
@@ -845,12 +850,13 @@ impl Backend {
         let scratch = target(device, "rm-scratch", iw, ih, hdr_format(), gusage | wgpu::TextureUsages::COPY_DST);
         let rt_bgl = rt_scene.then(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rm-rt-bgl"), entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                binding: 0, visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
-            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT),
+            }, readonly_storage(1, wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE),
             // The static half of the split scene (`Renderer::rt_split`; the empty TLAS otherwise).
+            // The froxel pass (compute) asks the same scene for every lamp's shadow in the air.
             wgpu::BindGroupLayoutEntry {
-                binding: 2, visibility: wgpu::ShaderStages::FRAGMENT,
+                binding: 2, visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None,
             }],
         }));
@@ -1076,9 +1082,13 @@ impl Backend {
         });
 
         // Froxel lighting and integration.
-        let volume_shader = rm_shader(device, "rm-volume", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_volume.wgsl"]);
+        // The froxel pass asks the scene for every unshadowed lamp's visibility from each cell
+        // (rm_volume.wgsl): with ray queries no light scatters in the air through armour.
+        let volume_rt = if rt_scene { "rm_rt.wgsl" } else { "rm_rt_stub.wgsl" };
+        let volume_shader = rm_shader(device, "rm-volume", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", volume_rt, "rm_volume.wgsl"]);
+        let volume_layouts: Vec<&wgpu::BindGroupLayout> = [&volume_bgl, &visibility_bgl].into_iter().chain(rt_bgl.as_ref()).collect();
         let volume_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rm-volume-pl"), bind_group_layouts: &[&volume_bgl, &visibility_bgl], push_constant_ranges: &[],
+            label: Some("rm-volume-pl"), bind_group_layouts: &volume_layouts, push_constant_ranges: &[],
         });
         let volume_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("rm-volume"), layout: Some(&volume_pl), module: &volume_shader, entry_point: Some("cs"), compilation_options: Default::default(), cache: None,
@@ -2243,7 +2253,8 @@ impl Backend {
                 .min_by(|(a, _), (b, _)| a.distance_squared(origin).total_cmp(&b.distance_squared(origin)));
             let ground_y = ground.map(|(p, _)| p.y);
             let ground_snow = ground.map_or(0.0, |(_, snow)| *snow);
-            self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, ground_snow,
+            let strength = if event_kind == EVENT_VENT { burst.parameters[0].clamp(0.0, 1.0) } else { 1.0 };
+            self.events.push(Event { kind: event_kind, seed, origin, dir, normal, ground_y, ground_snow, strength,
                 born: now - burst.origin_age[3].max(0.0) });
         }
         // The gun's own report: its flash light (tens of W/sr against lamps of 1e-4) appears at
@@ -2254,7 +2265,7 @@ impl Backend {
             if flashing && !self.events.iter().any(|e| e.kind == EVENT_MUZZLE && (now - e.born).abs() < 0.5) && self.events.len() < MAX_EVENTS {
                 let seed = (r.frame as u32).wrapping_mul(0x2545_F491) ^ 0x4D55_5A5A;
                 self.events.push(Event { kind: EVENT_MUZZLE, seed, origin: muzzle, dir: dir.normalize_or_zero(),
-                    normal: Vec3::Y, ground_y: None, ground_snow: 0.0, born: now });
+                    normal: Vec3::Y, ground_y: None, ground_snow: 0.0, strength: 1.0, born: now });
             }
         }
         self.stats.events = self.events.len();
@@ -2479,25 +2490,34 @@ impl Backend {
                     }
                 }
                 EVENT_VENT => {
-                    // The jet: four parcels along the opening's normal lengthening over the vent's
-                    // 0.7 s, fire while the gas burns (cooling along the jet and with age), then
-                    // its smoke drifting off. Authored jet geometry on the burst's real opening.
+                    // The jet: the stowage's burning gas leaving one opening along its normal, a
+                    // column one to four metres long with the pressure behind it (`strength`),
+                    // fire while the gas burns, cooling along its length and with age on the one
+                    // Planck law the sparks, the rims and the fire pages share
+                    // (`incandescence`), then its smoke drifting off. Authored jet geometry on
+                    // the burst's real opening; a flame jet, its few sparks are the spark pass's.
+                    let s = e.strength.clamp(0.2, 1.0);
+                    let length = 1.0 + 3.0 * s;
                     if t < 0.7 {
                         let n = e.normal;
                         let u = t / 0.7;
-                        for k in 0..4u32 {
-                            let along = 0.15 + 0.4 * k as f32 + 1.4 * u;
-                            let radius = (0.1 + 0.08 * k as f32 + 0.25 * u) * (0.8 + 0.4 * h(230 + k));
-                            let center = o + n * along + wind * (t * 0.5) + Vec3::Y * (0.4 * u * u);
-                            let heat = (1.0 - u) * (1.0 - 0.18 * k as f32);
-                            push(center, radius, [0.9, 0.6, 0.3], PARCEL_FIREBALL, 4.0 * heat / radius, (0.6 + 1.2 * u) / radius, h(240 + k) * 100.0, u);
+                        let grown = 0.35 + 0.65 * (1.0 - (-t / 0.12).exp());
+                        for k in 0..6u32 {
+                            let f = (k as f32 + 0.5) / 6.0;
+                            let along = 0.1 + length * f * grown;
+                            let radius = (0.12 + 0.22 * f * s) * (0.85 + 0.3 * h(230 + k));
+                            let center = o + n * along + wind * (t * 0.5) + Vec3::Y * (0.6 * f * f * u);
+                            let heat = (1.0 - 0.6 * u) * (1.0 - 0.55 * f);
+                            let kelvin = 1900.0 - 600.0 * f - 300.0 * u;
+                            push(center, radius, crate::incandescence::planck_chroma(kelvin), PARCEL_FIREBALL,
+                                6.0 * s * heat / radius, (0.4 + 1.0 * u) / radius, h(240 + k) * 100.0, 1.0 - heat);
                         }
                     }
                     if t > 0.3 && t < 4.0 {
                         let u = (t - 0.3) / 3.7;
-                        let center = o + e.normal * (1.2 + 1.5 * u) + Vec3::Y * (1.5 * u) + wind * (t * 0.7);
-                        let radius = 0.5 + 1.2 * u;
-                        push(center, radius, [0.3, 0.28, 0.26], PARCEL_SMOKE, 0.0, (1.0 - u) * 0.9 / radius, h(250) * 100.0, 0.0);
+                        let center = o + e.normal * (length * 0.8 + 1.5 * u) + Vec3::Y * (1.5 * u) + wind * (t * 0.7);
+                        let radius = 0.4 + 0.3 * s + 1.2 * u;
+                        push(center, radius, [0.3, 0.28, 0.26], PARCEL_SMOKE, 0.0, (1.0 - u) * 0.9 * s / radius, h(250) * 100.0, 0.0);
                     }
                 }
                 EVENT_MUZZLE => {
@@ -2875,6 +2895,7 @@ impl Backend {
             cpass.set_pipeline(&self.volume_pipe);
             cpass.set_bind_group(0, &binds.volume[self.view][flip], &[]);
             cpass.set_bind_group(1, &binds.visibility, &[]);
+            if let Some(rt) = &self.rt_bind { cpass.set_bind_group(2, rt, &[]); }
             cpass.dispatch_workgroups(self.vol[0].div_ceil(4), self.vol[1].div_ceil(4), self.vol[2].div_ceil(4));
             work.compute_passes += 1;
         }
@@ -3221,7 +3242,6 @@ mod shader_tests {
             ("rm-depth", &["rm_scars.wgsl", "rm_depth.wgsl"]),
             ("rm-gbuffer", &["rm_common.wgsl", "terrain_material.wgsl", "rm_scars.wgsl", "rm_gbuffer.wgsl"]),
             ("rm-scar-patch", &["rm_common.wgsl", "rm_scars.wgsl", "rm_scar_patch.wgsl"]),
-            ("rm-volume", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", "rm_volume.wgsl"]),
             ("rm-integrate", &["rm_common.wgsl", "rm_integrate.wgsl"]),
             ("rm-lens", &["rm_common.wgsl", "rm_lens.wgsl"]),
             ("rm-points", &["rm_common.wgsl", "rm_visibility.wgsl", "rm_points.wgsl"]),
@@ -3230,6 +3250,7 @@ mod shader_tests {
         for (label, parts) in common { validate(label, &rm_assemble(parts)); }
         for (rt, glass_rt) in [("rm_rt.wgsl", "rm_rt_g3.wgsl"), ("rm_rt_stub.wgsl", "rm_rt_stub.wgsl")] {
             validate(&format!("rm-shade {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt, "rm_shade.wgsl"]));
+            validate(&format!("rm-volume {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", rt, "rm_volume.wgsl"]));
             validate(&format!("rm-reflect {rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", rt, "rm_reflect.wgsl"]));
             validate(&format!("rm-glass {glass_rt}"), &rm_assemble(&["rm_common.wgsl", "rm_visibility.wgsl", "rm_medium.wgsl", glass_rt, "rm_glass.wgsl"]));
         }

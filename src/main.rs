@@ -163,6 +163,7 @@ mod shell_flight_audio;
 mod panzerfaust;
 mod pixel_particles;
 mod pressure_front;
+mod incandescence;
 mod heat_haze;
 mod world_doors;
 mod prims;

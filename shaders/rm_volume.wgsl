@@ -216,6 +216,15 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (vis <= 0.001) { continue; }
                 tau = rm_march_tau(p, s.dir, s.dist, LAMP_MARCH_STEPS, jitter.y);
             } else {
+                // A lamp without depth faces: one shadow ray from the cell toward the source,
+                // stopped short of its own fixture, as the surfaces ask it (rm_shade.wgsl). A
+                // burning tank's fire lit the snow haze under its own belly and the air behind
+                // its hull through the plates (2026-11-02). Without ray queries the air stays
+                // unshadowed for these lamps; the named gap of the portable preset.
+                if (RM_RAY_QUERIES && fr.debug.w < 0.5) {
+                    let reach = s.dist - clamp(4.0 * lights[index].a.w, 0.15, 0.3);
+                    if (reach > 0.02 && rm_ray_blocked(p, s.dir, 0.0, reach) >= 0.0) { continue; }
+                }
                 tau = m.sigma_t * min(s.dist, 12.0);
             }
             var shape = 1.0;

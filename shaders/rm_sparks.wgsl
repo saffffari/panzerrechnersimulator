@@ -318,7 +318,7 @@ const SPARK_TRAIL: u32 = 1u;
 
 // A small-arms tracer pellet's intensity, renderer units (`TRACER_INTENSITY` in
 // renderer_raymarch.rs, about 60 cd; its head lights the scene with the same value).
-const RM_TRACER_INTENSITY: f32 = 0.001167;
+const RM_TRACER_INTENSITY: f32 = 0.0035;
 
 // The eyepiece's barrel distortion (rm_lens.wgsl: the frame at q shows the scene at q (1 + k r^2),
 // r = |q| / 0.45) applied to a clip position drawn after the lens pass: the point where the scene

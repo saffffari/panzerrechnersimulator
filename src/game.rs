@@ -6041,19 +6041,27 @@ const FIRE_PRESENTATION_PERIOD: u32 = 2;
 // The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
 const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
     0.35, 0.90, 0.60, 0.18, // restored pre-Canyon radiance; aggregate uses actual grain area
-    0.20, 0.125, 0.0625, 0.025, // exterior cell radiance; aggregate light uses this same table
+    // Exterior cell radiance; the aggregate light uses this same table. The body and core
+    // pages carry the luminance their 2026-10-01 amber and yellow-white pages had (x1.36 and
+    // x1.66 against the Planck pages' chroma), the base and tips keep their scale and so gain
+    // in the red (the owner, 2026-11-02: the fire into the deep red).
+    0.20, 0.17, 0.104, 0.025,
 ];
 // Cabin flame chromaticity needs an amber core after sRGB decoding, not almost pure red.
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
 // pages independent: restoring cabin warmth must not retune distant wrecks or muzzle reports.
-const FIRE_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_BATCHES] = [
+const CABIN_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_STAGES] = [
     [183, 76, 12], [255, 160, 32], [255, 211, 94], [203, 81, 13],
-    // Exterior pages: a yellow-white core (page 2) over an amber body (1), and a base (0) and
-    // the tongues' tips and outer sheath (3) in the deep red of cooling soot (the owner,
-    // 2026-11-02: the fire "too yellow", to extend into the deep red; the 2026-10-01 amber
-    // pages were [187,87,18] and [192,88,18] for the base and tips).
-    [168, 52, 9], [255, 176, 44], [255, 225, 122], [148, 28, 6],
 ];
+/// Exterior pages: the soot's temperatures, base (0), body (1), core (2) and the tongues' tips
+/// and outer sheath (3), drawn on the one Planck law the sparks, rims, embers and jets share
+/// (`incandescence`; the owner, 2026-11-02: the fire into the deep red, one visual language).
+/// Soot in a diffusion flame radiates at 1300-2100 K; the core is the hottest, the tips cooling.
+const FIRE_FLAME_KELVIN: [f32; FIRE_FLAME_STAGES] = [1500.0, 1750.0, 2100.0, 1350.0];
+fn fire_flame_colors() -> [[u8; 3]; FIRE_FLAME_BATCHES] {
+    std::array::from_fn(|page| if page < FIRE_FLAME_STAGES { CABIN_FLAME_COLORS[page] }
+        else { crate::incandescence::planck_srgb8(FIRE_FLAME_KELVIN[page - FIRE_FLAME_STAGES]) })
+}
 // Halving the grain edge and quadrupling the count preserves approximate projected coverage
 // while breaking up the coarse black confetti. The shared cap still bounds a spreading fire.
 const SMOKE_CUBES_PER_INTERIOR_SPOT: usize = 3072;
@@ -6102,7 +6110,7 @@ fn fire_aggregate_light(
 ) -> Option<PointLight> {
     let radiance: [Vec3; FIRE_FLAME_STAGES] = std::array::from_fn(|stage| {
         let page = stage + if exterior { FIRE_FLAME_STAGES } else { 0 };
-        let rgb = FIRE_FLAME_COLORS[page].map(|value| crate::rt_surface::srgb_to_linear(value as f32 / 255.0));
+        let rgb = fire_flame_colors()[page].map(|value| crate::rt_surface::srgb_to_linear(value as f32 / 255.0));
         Vec3::from_array(rgb) * FIRE_FLAME_EMISSIVE[page]
     });
     let mut rgb_intensity = Vec3::ZERO;
@@ -6117,7 +6125,16 @@ fn fire_aggregate_light(
     }
     let peak = rgb_intensity.max_element();
     if peak <= 0.0 { return None; }
-    let centroid = weighted_pos / weight_sum;
+    let mut centroid = weighted_pos / weight_sum;
+    if exterior {
+        // A wreck's one light stands in the flames' crown, not at the mean of cells spread over
+        // the deck and the hull sides, which lies inside the hull: from there the snow under the
+        // belly was lit and the snow beside the tank shadowed by the plates (2026-11-02). The
+        // light is raised to the upper third of the cells' heights.
+        let mut heights: Vec<f32> = cells.iter().map(|cell| parent.transform_point3(origin + cell.offset).y).collect();
+        heights.sort_by(f32::total_cmp);
+        centroid.y = centroid.y.max(heights[heights.len() * 2 / 3]);
+    }
     let support_radius = cells.iter().fold(0.0f32, |radius, cell| {
         let position = parent.transform_point3(origin + cell.offset);
         radius.max(position.distance(centroid) + cell.size.max(0.0) * 0.5 * 3.0f32.sqrt())
@@ -13431,7 +13448,7 @@ impl Game {
         // Continuous flame parcels: separate four-stage cabin/exterior heat pages plus two soot
         // pages cover every player/wreck emitter with ten bounded draws per viewport. Capacities are
         // deliberately per page because phase migration may temporarily put every grain in one shade.
-        let flame_colors = FIRE_FLAME_COLORS;
+        let flame_colors = fire_flame_colors();
         let flame_emissive = FIRE_FLAME_EMISSIVE;
         slots.fire_flame_batch = std::array::from_fn(|i| {
             let prototype = if i < FIRE_FLAME_STAGES {
@@ -29606,7 +29623,7 @@ impl Game {
                 }else{None}
             };
             if let Some((point,normal))=pressure_vent {
-                self.weapon_vfx.pressure_vent(point,normal);
+                self.weapon_vfx.pressure_vent(point,normal,0.5);
                 // One finite release at the same genuine breach, propagated at arrival.
                 // Authored source estimate below an armor strike, not another detonation.
                 // `ScheduledSound::buf` is interleaved stereo; the vent source is mono. Passing it
@@ -31025,37 +31042,21 @@ impl Game {
                 (w.vent_build_s, w.fire_t, w.vent_last_tick)
             };
             let progress = (1.0 - build / COOKOFF_VENT_BUILD_S).clamp(0.0, 1.0);
-            let interval = 0.35 - 0.27 * progress;
-            let tick = (fire_t / interval) as u32;
-            let mut jets: Vec<(Vec3, Vec3)> = Vec::new();
+            // One jet from the turret roof, where the hatch is (the commander's eye sits under
+            // it): re-issued every 0.3 s so it stands as long as the pressure builds, its
+            // strength (the jet's length and heat in the raymarch) rising with the build. The
+            // breach, the open holes and the ring vented separately before 2026-11-02; the
+            // owner asked for the one flame jet up through the roof.
+            let tick = (fire_t / 0.3) as u32;
             if tick != started {
                 let e = &self.enemies[i];
-                let (hull, turret) = (e.hull_model(), e.turret_model());
-                if let Some((point, normal)) = self.wrecks[i].t_impact.filter(|(_, n)| n.length_squared() > 0.5) {
-                    jets.push((point, normal.normalize()));
-                }
-                for scar in e.scars.scars().iter().filter(|s| s.is_open()) {
-                    let frame = if scar.is_turret() { turret } else { hull };
-                    let point = frame.transform_point3(scar.local_position());
-                    let normal = frame.transform_vector3(scar.local_normal()).normalize_or_zero();
-                    if normal.length_squared() > 0.5 && !jets.iter().any(|(p, _)| p.distance(point) < 0.2) {
-                        jets.push((point, normal));
-                    }
-                }
-                if build < 0.2 {
-                    // The race lifting: the gas round the whole ring, outward and up.
-                    let ring = self.wrecks[i].t_initial;
-                    let centre = ring.transform_point3(Vec3::ZERO);
-                    let up = ring.transform_vector3(Vec3::Y).normalize_or_zero();
-                    let radius = COOKOFF_RING_RADIUS_M;
-                    for k in 0..8 {
-                        let a = k as f32 * std::f32::consts::FRAC_PI_4;
-                        let out = ring.transform_vector3(Vec3::new(a.cos(), 0.0, a.sin())).normalize_or_zero();
-                        jets.push((centre + out * radius, (out * 0.8 + up * 0.6).normalize_or_zero()));
-                    }
-                }
+                let ring = self.wrecks[i].t_initial;
+                let roof = self.wreck_turret_sources[wreck_kind_index(e.kind)].turret_top_y();
+                let eye = e.parts.commander_eye;
+                let point = ring.transform_point3(Vec3::new(eye.x, roof + 0.02, eye.z));
+                let up = ring.transform_vector3(Vec3::Y).normalize_or_zero();
+                self.weapon_vfx.pressure_vent(point, up, 0.35 + 0.65 * progress);
             }
-            for (point, normal) in jets { self.weapon_vfx.pressure_vent(point, normal); }
             let w = &mut self.wrecks[i];
             if tick != started { w.vent_last_tick = tick; }
             w.vent_build_s -= dt.max(0.0);
@@ -32640,8 +32641,15 @@ impl Game {
         // update on the cabin fire's 73,728 grains, their wall-clearance sweeps and their upload.
         // A skipped update keeps the last grains and their aggregate lights in place; the fire's
         // cells, emission and heat are unchanged, only the flicker rate halves.
+        // A burning wreck's fire alone is a few thousand grains: it is regenerated every update,
+        // as the sparks and the embers are (the owner, 2026-11-02: the fire refreshing below the
+        // game's rate while every other effect ran at it). The period applies while the cabin
+        // burns, whose grains cost the 26 ms.
         self.fire_presentation_phase = self.fire_presentation_phase.wrapping_add(1);
-        let particles = !self.defer_presentation_rebuild && self.fire_presentation_phase % FIRE_PRESENTATION_PERIOD == 0;
+        let models = self.fire_surface_models();
+        let cabin_burning = (0..N_INT_FIRE_SPOTS).any(|k| self.cabin_fire.patch_world(k, &models).is_some_and(|(_, s)| s > 0.02));
+        let period = if cabin_burning { FIRE_PRESENTATION_PERIOD } else { 1 };
+        let particles = !self.defer_presentation_rebuild && self.fire_presentation_phase % period == 0;
         self.drive_fire_presentation(r,particles,true);
     }
 
@@ -32811,14 +32819,29 @@ impl Game {
         for (source_index, (_, pos, strength, seed)) in world_sources.into_iter().enumerate() {
             let stove=stoves.contains(&seed);
             let wind=r.weather_wind_world;
+            let source_cells = if stove || !particles { Vec::new() }
+                else if let Some(patches)=surface_patches.get(&seed) {
+                    surface_wreck_fire_cells(seed,fx_time,strength,pos,patches,wind)
+                } else {world_fire_cells(seed, fx_time, strength)};
+            // The soot leaves the flame where the tongues end: the smoke's root is the crown of
+            // this frame's cells (the mean of their upper third), not a patch on the hull
+            // (the owner, 2026-11-02: the smoke and the fire did not match up).
+            let crown = (!source_cells.is_empty()).then(|| {
+                let mut heights: Vec<f32> = source_cells.iter().map(|c| c.offset.y).collect();
+                heights.sort_by(f32::total_cmp);
+                let cut = heights[heights.len() * 2 / 3];
+                let (mut sum, mut n) = (Vec3::ZERO, 0.0f32);
+                for c in source_cells.iter().filter(|c| c.offset.y >= cut) { sum += c.offset; n += 1.0; }
+                pos + sum / n.max(1.0)
+            });
             if volumes && source_index<3 {
                 for lobe in 0..3 {
                     let age=lobe as f32*1.35+0.45;
                     let roll=crate::particle_motion::advancing_phase(seed,fx_time,0.55);
                     let sway=Vec3::new((roll+age).sin(),0.0,(roll*0.73+age).cos())*0.18*age;
                     let radius=if stove {0.22+age*0.20}else{0.65+age*0.68};
-                    let root=surface_patches.get(&seed).and_then(|p|p.get(lobe*3%p.len().max(1)))
-                        .map_or(pos,|p|p.position);
+                    let root=crown.unwrap_or_else(||surface_patches.get(&seed).and_then(|p|p.get(lobe*3%p.len().max(1)))
+                        .map_or(pos,|p|p.position));
                     let center=root+Vec3::new(wind.x*age*0.28,age*if stove {0.75}else{1.2},wind.y*age*0.28)+sway;
                     // Each source patch gets its own continuous carrier path. Do not join
                     // unrelated fire roots. The support stretch preserves this lobe's optical
@@ -32829,9 +32852,6 @@ impl Game {
             if stove {continue;}
             if volumes && heat_review { r.heat_sources.add(pos,0.72,3.2,strength,seed as f32*0.0001); }
             if !particles {continue;}
-            let source_cells = if let Some(patches)=surface_patches.get(&seed) {
-                surface_wreck_fire_cells(seed,fx_time,strength,pos,patches,wind)
-            } else {world_fire_cells(seed, fx_time, strength)};
             for sample in &source_cells {
                 flame_mats[FIRE_FLAME_STAGES + sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size),
@@ -38789,7 +38809,7 @@ mod tests {
         let one = fire_aggregate_light(&[cell], origin, parent, false).unwrap();
         // PointLight separates peak radiant intensity from normalized linear RGB. The red
         // base is below sRGB 255, so its texture's peak must participate in emitted power.
-        let linear_color = Vec3::from_array(FIRE_FLAME_COLORS[0].map(|value|
+        let linear_color = Vec3::from_array(fire_flame_colors()[0].map(|value|
             crate::rt_surface::srgb_to_linear(value as f32 / 255.0)));
         let peak_color = linear_color.max_element();
         let expected = peak_color * FIRE_FLAME_EMISSIVE[0] * flame_parcel_area() * cell.size.powi(2) / 4.0;
@@ -38819,9 +38839,14 @@ mod tests {
         assert!(source.color.y / source.color.x < 0.75);
         assert!(source.color.z / source.color.x < 0.15);
         assert!(source.radiant_intensity > 0.0 && source.radiant_intensity.is_finite());
-        assert_eq!(&FIRE_FLAME_COLORS[FIRE_FLAME_STAGES..],
-            &[[187, 87, 18], [255, 176, 44], [255, 225, 122], [192, 88, 18]]);
-        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.20, 0.125, 0.0625, 0.025]);
+        // The exterior pages are the Planck law at the stages' temperatures: deep red to orange.
+        let pages = fire_flame_colors();
+        for (stage, kelvin) in FIRE_FLAME_KELVIN.iter().enumerate() {
+            assert_eq!(pages[FIRE_FLAME_STAGES + stage], crate::incandescence::planck_srgb8(*kelvin));
+        }
+        assert!(pages[FIRE_FLAME_STAGES + 3][1] < pages[FIRE_FLAME_STAGES][1]
+            && pages[FIRE_FLAME_STAGES][1] < pages[FIRE_FLAME_STAGES + 2][1]);
+        assert_eq!(&FIRE_FLAME_EMISSIVE[FIRE_FLAME_STAGES..], &[0.20, 0.17, 0.104, 0.025]);
     }
 
     #[test]
@@ -38831,7 +38856,7 @@ mod tests {
         let mut expected = Vec3::ZERO;
         for cell in &cells {
             let page = FIRE_FLAME_STAGES + cell.stage;
-            let color = Vec3::from_array(FIRE_FLAME_COLORS[page].map(|v|
+            let color = Vec3::from_array(fire_flame_colors()[page].map(|v|
                 crate::rt_surface::srgb_to_linear(v as f32 / 255.0)));
             expected += color * FIRE_FLAME_EMISSIVE[page] * 1.5 * cell.size.powi(2);
         }

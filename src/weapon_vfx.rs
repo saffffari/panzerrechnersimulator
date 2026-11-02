@@ -82,7 +82,7 @@ impl Weapon {
 struct Flight { from: Vec3, to: Vec3, age: f32, life: f32, weapon: Weapon, armor_normal: Option<Vec3> }
 #[derive(Clone, Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
-enum BurstKind { Muzzle, Blast, InteriorBlast, PressureVent(Vec3), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet { normal:Vec3, energy_j:f32 }, BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
+enum BurstKind { Muzzle, Blast, InteriorBlast, PressureVent(Vec3, f32), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet { normal:Vec3, energy_j:f32 }, BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
 impl BurstKind {
     fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
 }
@@ -116,7 +116,7 @@ struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
 fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) -> bool {
     let (normal, offset) = match burst.kind {
         BurstKind::Ground{normal,..} => (normal,0.01),
-        BurstKind::ArmorImpact(normal) | BurstKind::PressureVent(normal) | BurstKind::FullCookoff(normal) => (normal, ARMOR_FLASH_OFFSET_M),
+        BurstKind::ArmorImpact(normal) | BurstKind::PressureVent(normal, _) | BurstKind::FullCookoff(normal) => (normal, ARMOR_FLASH_OFFSET_M),
         BurstKind::Ricochet{normal,..} | BurstKind::BulletArmor {normal,..} => (normal, ARMOR_RICOCHET_OFFSET_M),
         _ => return true,
     };
@@ -214,7 +214,7 @@ impl Effects {
                 // A sustained MG stream must not erase a sixteen-second cookoff plume before
                 // its ballistic apex. Reuse ordinary/muzzle emitters before catastrophe slots.
                 (0..BURSTS).map(|n|(self.next_burst+n)%BURSTS).find(|&i| {
-                    !matches!(self.bursts[i].unwrap().kind,BurstKind::FullCookoff(_)|BurstKind::PressureVent(_))
+                    !matches!(self.bursts[i].unwrap().kind,BurstKind::FullCookoff(_)|BurstKind::PressureVent(..))
                 }).unwrap_or(self.next_burst)
             });
         if self.bursts[k].is_some(){self.replaced_bursts+=1;}
@@ -257,9 +257,12 @@ impl Effects {
             "estimated_material_density_kg_m3":budget.density,"snow_fraction":budget.snow,
             "requested_grains":budget.base_count*gpu_weapon::GROUND_MULTIPLIER,"height_cap_m":gpu_weapon::GROUND_APEX_TARGET_M}));
     }
-    pub(super) fn pressure_vent(&mut self,point:Vec3,normal:Vec3) {
-        if !point.is_finite() || !normal.is_finite() || normal.length_squared()<0.5{return;}
-        let n=normal.normalize();self.burst(point+n*ARMOR_FLASH_OFFSET_M,n,0.20,1.90,BurstKind::PressureVent(n),Weapon::Cannon(88));
+    /// The stowage's burning gas leaving one opening: `strength` (0..1) is the pressure behind
+    /// it, the jet's length and heat in the raymarch (`EVENT_VENT`). A flame jet with a few
+    /// sparks, not a spark jet (the owner, 2026-11-02).
+    pub(super) fn pressure_vent(&mut self,point:Vec3,normal:Vec3,strength:f32) {
+        if !point.is_finite() || !normal.is_finite() || normal.length_squared()<0.5 || !strength.is_finite(){return;}
+        let n=normal.normalize();self.burst(point+n*ARMOR_FLASH_OFFSET_M,n,0.20,1.90,BurstKind::PressureVent(n,strength.clamp(0.0,1.0)),Weapon::Cannon(88));
     }
     /// Full-ammunition event only: visual ejecta with a304.8m maximum vertical ballistic rise.
     /// Authoritative turret and damaging fragments remain in their independent physical solvers.
@@ -327,17 +330,23 @@ impl Effects {
                 self.stamp_newest(at,None);
                 self.burst(point,normal,(event.shell.caliber_mm*0.00065).clamp(0.025,0.15),0.9,
                     BurstKind::PenetrationSmoke(normal),weapon);self.stamp_newest(at,None);
-                if event.terminal==Terminal::Penetration {
-                    if let Some(heat)=gpu_weapon::rim_heat(event.shell.caliber_mm,event.plate.thickness_mm,deposited) {
-                        self.burst(point+normal*0.002,Quat::from_rotation_arc(Vec3::Z,normal)*Vec3::X,heat.radius,6.0,
-                            BurstKind::HotRim{normal,heat},weapon);self.stamp_newest(at,Some(anchor));
-                    }
+                // The hole's rim (a perforation) or the shattered round's crater (`rim_heat`):
+                // the plate's own steel at the strike, heated by the work left in it.
+                if let Some(heat)=gpu_weapon::rim_heat(event.shell.caliber_mm,event.plate.thickness_mm,deposited) {
+                    self.burst(point+normal*0.002,Quat::from_rotation_arc(Vec3::Z,normal)*Vec3::X,heat.radius,6.0,
+                        BurstKind::HotRim{normal,heat},weapon);self.stamp_newest(at,Some(anchor));
                 }
             },
             Terminal::Ricochet=>{
                 let reflected=outgoing.expect("resolved ricochet carries actual outgoing velocity").normalize_or_zero();
                 self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,1.4,BurstKind::Ricochet{normal,energy_j:residual},weapon);
                 self.stamp_newest(at,None);
+                // The gouge: the round's lost work heats the plate it skidded off (named
+                // approximation: the same annulus as a hole's rim, at the strike).
+                if let Some(heat)=gpu_weapon::rim_heat(event.shell.caliber_mm,event.plate.thickness_mm,deposited) {
+                    self.burst(point+normal*0.002,Quat::from_rotation_arc(Vec3::Z,normal)*Vec3::X,heat.radius,6.0,
+                        BurstKind::HotRim{normal,heat},weapon);self.stamp_newest(at,Some(anchor));
+                }
             },
             Terminal::Bounce=>{
                 self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,normal,0.02,0.45,
@@ -573,7 +582,7 @@ impl Effects {
     fn draw_burst(&mut self, mut b: Burst, eye: Vec3, remaining: usize) -> usize {
         // Only exterior blast presentation expands; source damage and cabin ignition do not.
         if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
-        if matches!(b.kind,BurstKind::PressureVent(_)|BurstKind::FullCookoff(_)|BurstKind::Ground{..}|BurstKind::PenetrationSmoke(_)|BurstKind::HotRim{..}) {return 0;}
+        if matches!(b.kind,BurstKind::PressureVent(..)|BurstKind::FullCookoff(_)|BurstKind::Ground{..}|BurstKind::PenetrationSmoke(_)|BurstKind::HotRim{..}) {return 0;}
         if self.gpu_analytic && matches!(b.kind,BurstKind::BulletArmor{..}|BurstKind::Ricochet{..}) {return 0;}
         if let BurstKind::BulletArmor{normal,energy_j,cosine}=b.kind {
             if energy_j<0.01 {return 0;}
@@ -743,7 +752,7 @@ fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
                 meta:[b.seed,budget.base_count*gpu_weapon::GROUND_MULTIPLIER,budget.base_count,gpu_weapon::GROUND]};
             return r.active().then_some(r);
         },
-        BurstKind::PressureVent(n)=>(gpu_weapon::PRESSURE_VENT,192,n,ARMOR_FLASH_OFFSET_M,0.0,0.0,1.0),
+        BurstKind::PressureVent(n,strength)=>(gpu_weapon::PRESSURE_VENT,48,n,ARMOR_FLASH_OFFSET_M,strength,0.0,1.0),
         BurstKind::FullCookoff(n)=>(gpu_weapon::FULL_COOKOFF,768,n,ARMOR_FLASH_OFFSET_M,
             crate::sound_levels::AMMUNITION_DETONATION_TNT_KG*4_184_000.0*0.002,5.0,1.0),
         BurstKind::Muzzle|BurstKind::InteriorBlast|BurstKind::Dust|BurstKind::PenetrationSmoke(_)=>return None,
@@ -755,7 +764,7 @@ fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
         (true,Some(ground))=>(ground,2.0+if heavy {1.0}else{0.0}),
         _=>(scale,if heavy {1.0}else{0.0}),
     };
-    let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(if matches!(b.kind,BurstKind::PressureVent(_)){b.life-0.65}else{b.life}).to_array(),
+    let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(if matches!(b.kind,BurstKind::PressureVent(..)){b.life-0.65}else{b.life}).to_array(),
         normal_offset:normal.extend(offset).to_array(),parameters:[energy,cosine,scale,flags],
         meta:[b.seed,count as u32*gpu_weapon::SPARK_MULTIPLIER,count as u32,kind]};
     r.active().then_some(r)
@@ -881,7 +890,7 @@ impl Game {
             // drawn (renderer_raymarch.rs `draws_explosion_volumes`); its three lobes were dark balls.
             if matches!(b.kind,BurstKind::Blast) && r.draws_explosion_volumes() {continue;}
             if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
-            if let BurstKind::PressureVent(normal)=b.kind {
+            if let BurstKind::PressureVent(normal,_)=b.kind {
                 let advance=(b.age*26.0).min(12.0);let fade=(1.0-b.age/b.life).max(0.0);
                 r.add_smoke_sweep(b.pos,b.pos+normal*advance,0.35+advance*0.035,0.14*fade,b.age*2.0,0.20);
                 continue;
@@ -967,7 +976,7 @@ mod tests {
                 (terminal==Terminal::Ricochet).then_some(Vec3::new(100.0,200.0,0.0)));fx.prepare(0.02,point);
             let has=|pred:fn(BurstKind)->bool|fx.bursts.iter().flatten().any(|b|pred(b.kind));
             assert_eq!(has(|k|matches!(k,BurstKind::Ricochet{..})),terminal==Terminal::Ricochet);
-            assert_eq!(has(|k|matches!(k,BurstKind::HotRim{..})),terminal==Terminal::Penetration);
+            assert_eq!(has(|k|matches!(k,BurstKind::HotRim{..})),matches!(terminal,Terminal::Penetration|Terminal::Shatter|Terminal::Ricochet));
             assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),matches!(terminal,Terminal::Penetration|Terminal::Shatter));
             assert_eq!(has(|k|matches!(k,BurstKind::Blast)),terminal==Terminal::HeBlast);
             assert!(!has(|k|matches!(k,BurstKind::ArmorImpact(_)|BurstKind::Impact|BurstKind::InteriorBlast)));

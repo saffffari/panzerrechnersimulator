@@ -105,7 +105,7 @@ pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     if !caliber_mm.is_finite() || !plate_mm.is_finite() || !deposited_j.is_finite()
         || caliber_mm<=0.0 || plate_mm<=0.0 || deposited_j<=0.0 {return None;}
     let radius=caliber_mm*0.0005;
-    let width=(caliber_mm*0.00010).clamp(0.002,0.025);
+    let width=(caliber_mm*0.00018).clamp(0.003,0.03);
     let area=std::f32::consts::PI*((radius+width).powi(2)-radius.powi(2));
     let depth=(plate_mm*0.00003).clamp(0.001,0.006);
     let mass_kg=area*depth*7850.0;

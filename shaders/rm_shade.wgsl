@@ -594,7 +594,7 @@ fn fs(in: VsOut) -> ShadeOut {
             if (RM_RAY_QUERIES && lights[index].c.y < -0.5 && fr.debug.w < 0.5) {
                 // Lights without depth faces: one shadow ray toward the source, stopped short of
                 // its own fixture (the emitter sits inside its housing).
-                let reach = s.dist - max(0.15, 4.0 * lights[index].a.w);
+                let reach = s.dist - clamp(4.0 * lights[index].a.w, 0.15, 0.3);
                 if (reach > 0.02 && rm_ray_blocked(world + n * (0.01 + 0.002 * dist), s.dir, 0.0, reach) >= 0.0) { continue; }
             } else {
                 vis *= mix(0.3, 1.0, contact_shadow(rel, s.dir, min(0.3, s.dist * 0.5), 0.12, still));

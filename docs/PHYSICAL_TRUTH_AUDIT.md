@@ -248,18 +248,66 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   whose cadence quickens with the pressure (every 0.35 s at first, every 0.08 s at the end),
   and in the last fifth of a second from the turret race all round (eight points on a 0.71 m
   ring, outward and up) as it begins to lift; then the launch is armed and the existing ring
-  plume follows the body. In the raymarch backend a heavy pressure vent is an event
-  (`EVENT_VENT`): a four-parcel jet along the opening's normal lengthening over 0.7 s, fire
-  while the gas burns and cooling along the jet, its smoke drifting off for four seconds, and a
-  torch light of about 0.3 W/sr at the jet. The build time, the cadence, the ring radius and
-  the jet's geometry are authored estimates of a stowage's deflagration before the ring vents,
-  not a gas-dynamics model; `fx-review` part `burnout` (a primed catastrophic kill from an
-  observer 14 m off, five seconds) is the evidence.
+  plume follows the body. Since the same day's later change the build vents through ONE
+  opening, the turret roof where the hatch is (the commander's eye sits under it; the roof
+  height is the turret source's highest point), a jet re-issued every 0.3 s whose strength
+  rises with the build (the breach, the open holes and the ring no longer vent; the owner
+  asked for the one flame jet up through the roof). In the raymarch backend a heavy pressure
+  vent is an event (`EVENT_VENT`): a six-parcel flame jet along the opening's normal, one to
+  four metres long with the strength, fire while the gas burns and cooling along the jet and
+  with age on the shared Planck law (`incandescence`), its smoke drifting off for four seconds,
+  a torch light of about 0.3 W/sr at the jet, and 48 sparks (192 before) from the spark pass.
+  The build time, the cadence, the jet's geometry and its lengths are authored estimates of a
+  stowage's deflagration before the ring vents, not a gas-dynamics model; `fx-review` part
+  `burnout` (a primed catastrophic kill from an observer 14 m off, five seconds) is the
+  evidence.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
   takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
   21 December 1942, the sun about 5 deg under). In film mode the fenced wall time includes the
   frame's readback and PNG write and is not a frame-rate figure; the pass timestamps are.
+- Every lamp is occluded by every object in the air as on the surfaces (2026-11-02). The
+  froxel pass (`rm_volume.wgsl`) gave a lamp without a shadow cube (all but the two strongest
+  within 45 m: every fire, flash, torch and tracer head) no visibility test at all, only the
+  medium's extinction, so a burning tank's fire lit the snow haze under its own belly and the
+  air behind its hull through the plates. With ray queries the pass now binds the live scene
+  (both TLASes) and asks one any-hit shadow ray per froxel cell and lamp toward the source,
+  stopped short of the fixture, exactly the surface pass's rule. That exemption was four
+  times the lamp's source radius, meant for a lamp in its housing; a fire's source radius is
+  the whole flame, so the ray stopped four to eight metres short of a fire and nothing within
+  that of a burning tank was shadowed at all: it is now within 0.15-0.3 m in both passes. A
+  wreck's one fire light also stands in the flames' crown (the upper third of its cells'
+  heights) instead of at the mean of cells spread over the deck and sides, which lay inside
+  the hull and lit the snow under the belly. Without ray queries (the
+  portable preset, `KESSEL_RM_RT=0`) the air stays unshadowed for those lamps: the named gap of
+  that preset, not of the hero one. Cost is a ray per lit cell per lamp in the cell's bin;
+  measured in the `fx-review` receipts (`rm-volume`).
+- A burning wreck's flame and soot grains are regenerated every update (2026-11-02): the
+  2026-11-01 half-rate (`FIRE_PRESENTATION_PERIOD` 2) was taken for the cabin fire's 73,728
+  grains and applied to the wreck fire too, which then flickered at 30 Hz against the sparks'
+  and embers' 60. The period now applies only while the cabin burns; a wreck fire alone is a
+  few thousand grains.
+- The exterior fire pages are the Planck law at the soot's temperatures (base 1500 K, body
+  1750 K, core 2100 K, tips 1350 K; `incandescence::planck_srgb8`), the same band ratios
+  `spark_glow` and `rim_color` compute in the spark shaders, so the fire, the embers, the vent
+  jet, the detonation's parcels, the sparks and the hot rims glow on one law (the owner,
+  2026-11-02: one visual language, and the fire into the deep red). Not calibrated soot
+  emissivity; the display scale per page is unchanged. Twenty embers per grain (twelve before)
+  carrying 0.6 of the grain's light (0.8), so the sharp points read as a continuous burning
+  surface over the deck with the tongues' volume behind them.
+- A wreck's smoke leaves from the flame's crown (2026-11-02): each soot lobe's root is the
+  mean of this frame's upper third of flame cells, not a patch on the hull, so the smoke rises
+  from where the tongues end (it rose beside them). A stove's or a non-particle frame's smoke
+  keeps the patch root.
+- Glowing metal on every heavy plate strike (2026-11-02): the hot rim (`rim_heat`, the plate's
+  own steel at the strike heated by the round's lost work, 1.5 % of it, capped at the solidus)
+  was drawn for perforations only; a shattered round's crater and a ricochet's gouge now draw
+  the same annulus (named approximation: a gouge is drawn as the annulus a hole's rim is), and
+  the annulus is 1.8 x wider (0.18 mm per shell millimetre, 3-30 mm). The owner: more glowing
+  metal on the impacts.
+- The tracer pellet's intensity is 180 cd (61 cd before): the 61 was a lower bound from the
+  trace's required visibility, and the AgX display desaturates the hotter pellet toward white
+  as a 3400 K source of that intensity should look; its chroma is unchanged.
 
 Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
 whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never
