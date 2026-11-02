@@ -132,7 +132,9 @@ fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
         else { burst.parameters[3] > 0.5 };
     match burst.meta[3] {
         wm::BLAST if heavy && burst.parameters[2] > 2.0 => Some(EVENT_DETONATION),
-        wm::ARMOR_IMPACT if heavy => Some(EVENT_PENETRATION),
+        // A tank round's perforation presents as BULLET_ARMOR (its incandescent dust) with the
+        // plate's normal; ARMOR_IMPACT is the small-arms plate strike's kind.
+        wm::BULLET_ARMOR | wm::ARMOR_IMPACT if heavy => Some(EVENT_PENETRATION),
         wm::RICOCHET if heavy => Some(EVENT_ARMOUR),
         _ => None,
     }
@@ -2213,6 +2215,9 @@ impl Backend {
             let seed = e.seed;
             let h = |k: u32| random(seed ^ k.wrapping_mul(0x9E37_79B9));
             let o = e.origin;
+            // KESSEL_RM_LIGHTS_DEBUG=1: each event once, a second in.
+            let debug_event = std::env::var("KESSEL_RM_LIGHTS_DEBUG").is_ok() && (t - 1.0).abs() < 0.009;
+            if debug_event { println!("[rm-event] kind {} seed {} t {t:.3} origin {:?} normal {:?} ground_y {:?}", e.kind, seed, o.to_array(), e.normal.to_array(), e.ground_y); }
             // A baked explosion volume (PARCEL_VOLUME) of `role`: `size` its largest half extent,
             // its base at `base` (the ground, when it stands on it) or centred on `base` + its
             // half height, `lift` above that, drifting with `drift`.
@@ -2384,6 +2389,7 @@ impl Backend {
                         let center = o + n * out + Vec3::Y * rise + (t1 * a.cos() + t2 * a.sin()) * spread + wind * (age * 0.6);
                         let radius = 0.25 + 0.45 * age;
                         let density = (1.0 - age / 6.0).powi(2) * 0.5 * (1.0 - 0.12 * k as f32);
+                        if debug_event { println!("[rm-event]   vent puff {k} age {age:.2} center {:?} radius {radius:.2} extinction {:.2}", center.to_array(), density / radius); }
                         push(center, radius, [0.30, 0.29, 0.28], PARCEL_SMOKE, 0.0, density / radius, h(160 + k) * 100.0, 0.0);
                     }
                 }
@@ -3133,6 +3139,8 @@ mod event_source_tests {
         assert_eq!(source_event_kind(&record(wm::GROUND, 100.0, true)), None);
         assert_eq!(source_event_kind(&record(wm::FULL_COOKOFF, 1.0, true)), None);
         assert_eq!(source_event_kind(&record(wm::ARMOR_IMPACT, 1.0, true)), Some(EVENT_PENETRATION));
+        assert_eq!(source_event_kind(&record(wm::BULLET_ARMOR, 1.0, true)), Some(EVENT_PENETRATION));
+        assert_eq!(source_event_kind(&record(wm::BULLET_ARMOR, 1.0, false)), None);
         assert_eq!(source_event_kind(&record(wm::RICOCHET, 1.0, true)), Some(EVENT_ARMOUR));
     }
 

@@ -121,7 +121,9 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   the struck surface along its normal (a plate's, or up off the ground), born at the surface the
   size of the burst, slowing as they mix (2.6 m x (1 - e^(-t / 0.7 s))) and rising on their
   buoyancy from zero. A heavy round through the plate is its own event (`EVENT_PENETRATION`,
-  from `ARMOR_IMPACT`; a heavy ricochet stays `EVENT_ARMOUR`) and vents through the hole: six
+  from the perforation's `BULLET_ARMOR` dust record or an `ARMOR_IMPACT`, flagged heavy; a heavy
+  ricochet stays `EVENT_ARMOUR`; before this no tank-round perforation made any event, so the
+  molten spray only ever followed ricochets) and vents through the hole: six
   puffs born at the hole 0.45 s apart over 2.3 s, about the hole's size, leaving along the
   normal (1.6 m x (1 - e^(-age / 0.6 s))) and rising, fading over 6 s. Both are authored plumes
   on the event's origin and normal, not a vented-gas or detonation-products model; the hole's
