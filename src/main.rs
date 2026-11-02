@@ -15365,7 +15365,9 @@ impl ApplicationHandler for App {
                             state.show_map = state.game.set_map_held(!state.show_map);
                             state.pencil_down = false;
                         }
-                        KeyCode::KeyB if state.couch_keyboard_has_authority() => {
+                        // I — the repair manual (B stays the binoculars, as it always was; the
+                        // owner's 2026-11-01 report: "repair manual overwrote B binoculars key").
+                        KeyCode::KeyI if state.couch_keyboard_has_authority() => {
                             let held = state.game.set_repair_manual_held(!state.game.repair_manual.held);
                             if held { state.show_map = false; self.binocs = false; }
                             state.set_play_cursor(!held);
@@ -15521,7 +15523,7 @@ impl ApplicationHandler for App {
                             if state.game.toggle_cigarette() {self.binocs=false;}
                             state.game.consume_primary_press();
                         }
-                        KeyCode::KeyI
+                        KeyCode::KeyB
                             if state.game.mode == game::Mode::Foot
                                 || (state.game.mode == game::Mode::Tank
                                     && !matches!(state.game.station, game::Station::Gunner)) =>

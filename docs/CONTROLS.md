@@ -17,7 +17,7 @@ and the current driver cruise setting.
 | Mouse | Fine gun aim only at sights; head/body look elsewhere |
 | V | Indicate an approximate clock-bearing sector; no enemy lock or automatic range measurement |
 | K | Toggle the autonomous-gunner experiment; no commander LMB fire order |
-| M / B | Physical map / repair manual |
+| M / I | Physical map / repair manual (B stays the binoculars) |
 | 1 / 2 | P08 / Panzerfaust on foot; 1 toggles the mounted P08 while aboard |
 | R | Reload personal weapon on foot; throw a carried spent case while aboard |
 | F / T | Handheld light / request ammunition type |
