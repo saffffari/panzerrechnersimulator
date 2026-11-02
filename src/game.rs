@@ -17180,9 +17180,10 @@ impl Game {
         // precipitation (`surface_wear`).
         self.surface_wear.update(dt, self.player.speed, self.rounds_spent, r.precipitation);
         r.wear = self.surface_wear.uniform();
-        // Winter: the crews' washable white coat over the grey (a December 1942 Tiger in the
-        // snow would carry one); none in the other seasons.
-        r.whitewash = if self.act.season == crate::world::Season::Winter { 1.0 } else { 0.0 };
+        // The scratched, worn Dunkelgrau in every season, the owner's choice of 2 November 2026
+        // over the winter coat. A crew in the snow would often carry a washable white coat
+        // (December 1942); `KESSEL_WHITEWASH=1` lays it on (renderer_raymarch's override).
+        r.whitewash = 0.0;
         let loader_before = (self.breech, self.casing_pull, self.ram, self.grab);
         self.projectile_flight_audio.segments.clear();
         r.set_hovered_meshes(&[]);
