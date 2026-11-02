@@ -2719,19 +2719,23 @@ impl Backend {
                     // Inside the hull the same hole fills the compartment: the round's own smoke,
                     // the spall's dust and the burning paint and stowage behind the plate, left
                     // trapped (no buoyant rise through a roof), spreading slowly from the hole and
-                    // thinning over ten seconds. Six puffs born over the first second, inward
+                    // thinning over six seconds. Six puffs born over the first second, inward
                     // along the normal. On a vehicle without a modelled interior they sit inside
                     // its shell unseen (the owner, 2026-11-02: the inside of a hit needs its smoke).
+                    // At the exterior vent's density (1.6) the puffs were opaque across the
+                    // turret and an interior camera saw only sky-lit fog for ten seconds; a third
+                    // of it keeps the compartment legible through the smoke (named presentation
+                    // density, not a vented-gas model).
                     for k in 0..6u32 {
                         let born = 0.02 + 0.2 * k as f32;
                         let age = t - born;
-                        if age <= 0.0 || age > 10.0 { continue; }
+                        if age <= 0.0 || age > 6.0 { continue; }
                         let a = h(170 + k) * std::f32::consts::TAU;
                         let inward = (0.9 * (1.0 - (-age / 0.5).exp())) * (0.5 + 0.9 * h(180 + k));
                         let spread = (0.05 + 0.18 * age.min(4.0)) * (0.5 + h(190 + k));
                         let center = o - n * inward + (t1 * a.cos() + t2 * a.sin()) * spread + Vec3::Y * (0.15 * age.min(2.0) * h(200 + k));
                         let radius = (0.3 + 0.25 * age.min(4.0)) * (0.8 + 0.4 * h(210 + k));
-                        let density = (1.0 - age / 10.0).powi(2) * 1.6 * (1.0 - 0.08 * k as f32);
+                        let density = (1.0 - age / 6.0).powi(2) * 0.55 * (1.0 - 0.08 * k as f32);
                         push(center, radius, [0.26, 0.25, 0.24], PARCEL_SMOKE, 0.0, density / radius, h(220 + k) * 100.0, 0.0);
                     }
                 }

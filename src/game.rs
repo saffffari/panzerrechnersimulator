@@ -60,6 +60,8 @@ mod game_acoustics;
 mod game_hit_sounds;
 #[path = "game_fea.rs"]
 mod game_fea;
+#[path = "game_fea_effects.rs"]
+mod game_fea_effects;
 #[path = "game_fea_section.rs"]
 pub(crate) mod game_fea_section;
 #[path = "game_fea_review.rs"]
@@ -3963,7 +3965,7 @@ fn generate_penetration_fragments(
         // exact sampled diameter remains shared by mass, collision and rendering.
         let size_t = hash01(s ^ 0xE1).powf(2.4);
         let size = profile.min_size_m + (profile.max_size_m - profile.min_size_m) * size_t;
-        let life = profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19));
+        let life = (profile.fragment_life * (0.82 + 0.30 * hash01(s ^ 0x19))).max(AUTHORED_FRAGMENT_LIFE_MIN_S);
         let entered_compartment = fragment_inside_compartment(frame, entry, size * 0.52);
         fragments.push(HotFragment {
             // Ten low bits are enough for the 768-slot population, leaving a stable compound ID
@@ -3991,7 +3993,7 @@ fn generate_penetration_fragments(
             life,
             bounces: 0,
             seed: s,
-            temp_k: 0.0,
+            temp_k: AUTHORED_FRAGMENT_KELVIN,
             lodged: false,
             embed_m: 0.0,
         });
@@ -4261,6 +4263,22 @@ fn hot_fragment_bounce_budget(seed: u32) -> u8 {
 /// orange, red-orange, dull red, and cold steel below 750 K (named bands of the incandescence
 /// colours the pages draw; visible glow begins near the Draper point, 798 K).
 const FEA_HEAT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1300.0, 1100.0, 900.0, 750.0, 0.0];
+/// The light the chips give the compartment follows the Planck visible radiance of their band
+/// (the 550 nm band at the band's lower temperature against 1,300 K: 2.5 % at 1,100 K, 1.3e-4
+/// at 900 K, 4e-7 at 750 K), not the page's display scale: a cabin of resting dull-red chips lit
+/// its own dust orange when the pages were lifted and drawn hotter (2026-11-02).
+const HOT_FRAGMENT_LIGHT_SHARE: [f32; N_HOT_FRAGMENT_BATCHES] = [1.0, 0.025, 1.3e-4, 4.0e-7, 0.0];
+/// An authored (unsolved) chip leaves the plate at this temperature (adiabatic shear and
+/// friction heat; the lattice's solved clusters span 500-1,400 K) and cools as a lumped body
+/// like a solved one (`fea_damage::fragments::cool`), so its glow holds for the seconds to tens
+/// of seconds its mass over its surface gives (a 5 mm chip about 13 s to the Draper point, a
+/// 1.4 mm splinter a second) instead of fading on an authored life (the owner, 2026-11-02).
+const AUTHORED_FRAGMENT_KELVIN: f32 = 1250.0;
+/// An authored chip stays at least this long so its cooling can be seen.
+const AUTHORED_FRAGMENT_LIFE_MIN_S: f32 = 20.0;
+/// The heat pages are drawn this much hotter than their band (white-yellow through red instead
+/// of orange through dull red): the owner's display choice, 2026-11-02; a named approximation.
+const HOT_PAGE_DRAWN_OVER_BAND: f32 = 1.7;
 /// Air density in the fighting compartment for fragment drag (named: 20 C, sea level).
 const CABIN_AIR_DENSITY: f32 = 1.2;
 /// Flow stress of the steel the cabin collision walls stand for (armour), for embedding (named).
@@ -4320,7 +4338,7 @@ fn hot_fragment_aggregate_light(
     }) {
         let stage = hot_fragment_heat_stage(fragment);
         let area_m2 = 6.0 * fragment.size.max(0.0).powi(2);
-        let emission = radiance[stage] * (area_m2 / 4.0);
+        let emission = radiance[stage] * (area_m2 / 4.0) * HOT_FRAGMENT_LIGHT_SHARE[stage];
         let weight = emission.max_element();
         if weight <= 0.0 {
             continue;
@@ -6114,8 +6132,11 @@ const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
 // Cabin flame chromaticity needs an amber core after sRGB decoding, not almost pure red.
 // The first four pages also own the aggregate surface/air light color below. Keep the outdoor
 // pages independent: restoring cabin warmth must not retune distant wrecks or muzzle reports.
+/// The cabin's four pages were an authored amber set; since 2026-11-02 they are the same Planck
+/// law as the exterior's at the same temperatures (the owner: the Tiger's fire looked different
+/// from the T-34's), their display scale (`FIRE_FLAME_EMISSIVE`) unchanged.
 const CABIN_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_STAGES] = [
-    [183, 76, 12], [255, 160, 32], [255, 211, 94], [203, 81, 13],
+    [255, 111, 24], [255, 128, 38], [255, 160, 70], [255, 96, 14],
 ];
 /// Exterior pages: the soot's temperatures, base (0), body (1), core (2) and the tongues' tips
 /// and outer sheath (3), drawn on the one Planck law the sparks, rims, embers and jets share
@@ -8454,8 +8475,11 @@ const HOT_FRAGMENT_TAIL_MIN_SPEED: f32 = 1.2;
 // (2.4 m/s x 1/60 s): a dash a few bodies long. At 0.145 m, seen from a hand's breadth away in
 // the compartment and bloomed, the tails drew as rods spanning the room for a second (traced
 // with the lights debug, 2026-11-02: every tail at the cap, 0.17-0.7 m from the eye).
-const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.04;
-const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.38;
+/// A fragment's tracer: the frame's own motion, at most this long (the owner, 2026-11-02:
+/// spall and shrapnel with tracers; a 1/60 s exposure of a 300 m/s chip is five metres, so the
+/// streak is bounded to read as a tracer and not a rod across the compartment).
+const HOT_FRAGMENT_TAIL_MAX_LENGTH: f32 = 0.45;
+const HOT_FRAGMENT_TAIL_WIDTH_RATIO: f32 = 0.22;
 // The visible temperature pages also define the radiance of the bounded fragment-swarm emitter.
 // Emission is integrated from each real chip's six cube faces; the narrow history tail is only a
 // motion representation of that same body and therefore contributes no duplicate source power.
@@ -8467,7 +8491,9 @@ const HOT_FRAGMENT_STAGE_COLOR: [Vec3; N_HOT_FRAGMENT_BATCHES] = [
     // Cold, oxidised steel: a body the lattice solved, below visible glow. No emission.
     Vec3::new(70.0 / 255.0, 68.0 / 255.0, 64.0 / 255.0),
 ];
-const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.05, 0.18, 0.0];
+/// Display scale per heat page; the dull-red page is lifted so a solved chip at the Draper
+/// point still reads red hot in the dark cabin (the owner, 2026-11-02).
+const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.4, 0.6, 0.0];
 // These pre-allocated scene slots are retained only to avoid re-indexing the large fixed scene while
 // the renderer agent admits dynamic physical grains into the TLAS. They are submitted empty forever.
 const N_MICRO_SPARK_BATCHES: usize = 3;
@@ -8975,6 +9001,8 @@ struct Slots {
     armor_patch: [usize; N_ARMOR_MARKS],
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     track_snow: [usize;2],
+    /// The breach effects' petrol and oil beads and pools (`game_fea_effects`).
+    fea_liquid: [usize;2],
     weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
     fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // advected hot/yellow/orange/red flame parcels
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
@@ -9684,6 +9712,8 @@ pub struct Game {
     /// The layered damage model's state on the player's Tiger: lodged rounds and chain receipts
     /// (`game_fea`, docs/FEA_DAMAGE_MODEL_20261102.md).
     fea: game_fea::FeaRuntime,
+    /// What the breaches do outside the hull: leaks, vents, the fires they stand.
+    fea_effects: game_fea_effects::FeaEffects,
     /// Rotating LAN cursor over `armor_scars` (`net_snapshot`).
     armor_net_cursor: std::cell::Cell<usize>,
     /// Probed surface extent and plug rest per drawn wound (`push_vehicle_scars`), keyed by the
@@ -12577,6 +12607,7 @@ impl Game {
             armor_patch,
             flame,
             track_snow: [usize::MAX;2],
+            fea_liquid: [usize::MAX;2],
             weapon_vfx: [usize::MAX; weapon_vfx::PAGES],
             fire_flame_batch,
             fire_smoke_batch,
@@ -13477,7 +13508,14 @@ impl Game {
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
         // carries the effect after the flash. Every page reserves the bounded pool because an
         // impact frame may legitimately put every chip in the same heat stage.
-        let hot_steel = [[255, 220, 54], [255, 182, 28], [225, 94, 9], [104, 14, 3], [70, 68, 64]];
+        // The four hot pages are the Planck law, the one law the fire pages, sparks and rims glow
+        // on, drawn at `HOT_PAGE_DRAWN_OVER_BAND` times their bands' lower temperatures
+        // (`FEA_HEAT_PAGE_KELVIN`: 2200, 1870, 1530 and 1275 K drawn for 1300, 1100, 900 and
+        // 750 K): white-yellow, orange, orange-red, red. The owner's call (2026-11-02: "orange-yellow
+        // white hot metal", not the dull red the solved temperatures give); named as a display
+        // choice, the chips' temperatures themselves are the lattice's. The fifth is cold steel.
+        let hot_steel = [crate::incandescence::planck_srgb8(1300.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(1100.0 * HOT_PAGE_DRAWN_OVER_BAND),
+            crate::incandescence::planck_srgb8(900.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(750.0 * HOT_PAGE_DRAWN_OVER_BAND), [70, 68, 64]];
         let hot_emissive = HOT_FRAGMENT_STAGE_EMISSIVE;
         slots.hot_fragment_batch = std::array::from_fn(|i| {
             let batch = renderer
@@ -13495,7 +13533,7 @@ impl Game {
         // A second bounded page set draws one narrow, velocity-aligned tail for each flying head.
         // It reuses a plain unit box rather than crossed fins/billboards, so two luminous axes can
         // never be baked into one fragment. Slower and settled chips submit no tail transform.
-        let tail_emissive = [2.10, 1.78, 0.86, 0.12, 0.0];
+        let tail_emissive = [2.10, 1.78, 1.10, 0.50, 0.0];
         slots.hot_fragment_tail_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
@@ -13511,6 +13549,7 @@ impl Game {
         });
         // Rounds held by the Tiger's steel: exact physical pools, one per kinetic specification.
         let fea_lodged_draw = game_fea::allocate_lodged_round_pools(device, queue, &mut renderer);
+        slots.fea_liquid = game_fea_effects::allocate_liquid_pools(device, queue, &mut renderer);
         // Retired fixed-scene slots. Scene indices stay stable during the renderer transaction, but
         // `drive_penetration_fx` submits empty arrays and these meshes never become visible.
         let retired_micro = [[1, 1, 1], [1, 1, 1], [1, 1, 1]];
@@ -14152,6 +14191,7 @@ impl Game {
             armor_tick: 0,
             armor_scars: crate::armor_damage::ArmorField::default(),
             fea: game_fea::FeaRuntime::with_draw_pools(fea_lodged_draw),
+            fea_effects: Default::default(),
             armor_net_cursor: std::cell::Cell::new(0),
             scar_geometry_cache: Default::default(),
             armor_clock_s: 0.0,
@@ -20935,6 +20975,7 @@ impl Game {
                 self.armor_scars = crate::armor_damage::ArmorField::default();
                 // Its steel holds no rounds, and the lost hull's fragments stay with the lost hull.
                 self.fea.reset();
+                self.fea_effects = Default::default();
                 self.hot_fragments.iter_mut().for_each(|f| f.active = false);
                 self.crew = default_crew();
                 self.reset_singleplayer_crew();
@@ -21229,6 +21270,13 @@ impl Game {
             r.set_hovered_meshes(&slots);
             return;
         }
+        // No outline while shrapnel flies inside the vehicle (the owner, 2026-11-02): the prompt's
+        // silhouette has no place in a compartment crossed by hot steel.
+        if self.hot_fragments.iter().any(|f| f.active && !f.settled && f.entered_compartment
+            && f.vel.length() > HOT_FRAGMENT_TAIL_MIN_SPEED) {
+            r.set_hovered_meshes(&slots);
+            return;
+        }
         if let Some(slot) = self.cigarette_pick.and_then(|pick|
             self.hand_props.as_ref().and_then(|props| props.stock_slot(pick))) {
             // The one cigarette in the open packet that the left button would take.
@@ -21263,13 +21311,9 @@ impl Game {
                 }
             } else if let Some(station) = self.hover_station {
                 match station {
-                    Station::Gunner => {
-                        // From the cupola the outlined thing is the gunner himself.
-                        match self.gunner_body_slot().filter(|_| self.station == Station::Commander) {
-                            Some(slot) => slots.push(slot),
-                            None => slots.extend(self.slots.gunner_sight),
-                        }
-                    }
+                    // The gunner's station is outlined by its sight, never by the man (the owner,
+                    // 2026-11-02: the outline then has nothing to do with his death).
+                    Station::Gunner => slots.extend(self.slots.gunner_sight),
                     Station::Loader => slots.push(self.slots.breechcover),
                     Station::Commander => slots.extend(self.slots.tiger_periscopes.iter()
                         .step_by(tiger_periscopes::CUPOLA_PART_COUNT).take(7).copied()),
@@ -23844,6 +23888,7 @@ impl Game {
         self.armor_scars = crate::armor_damage::ArmorField::default();
         // A fresh Tiger: no rounds in its steel, no plate solves pending, no chip in hand.
         self.fea.reset();
+        self.fea_effects = Default::default();
         self.death_cause = None;
         self.last_fatal = None;
         self.fire = 0.0;
@@ -31400,6 +31445,7 @@ impl Game {
     fn update_fx(&mut self, dt: f32, r: &mut Renderer) {
         let _probe = crate::sim_phase::Probe::new("update_fx");
         self.drive_cookoff_build(dt);
+        self.drive_fea_effects(dt, r);
         self.hide_claimed_field_people(r);
         // Persistent casualty physics advances once with the host simulation, never once per split
         // viewport. Every camera therefore sees the same directional throw and final body pose.
@@ -33133,6 +33179,11 @@ impl Game {
                     0x7300_0000 ^ i as u32,
                 ));
             }
+        }
+        // The player's Tiger's breaches (`game_fea_effects`): the engine bay's fire out of the deck
+        // grilles and the petrol pools' fires, once the breach's fire burns.
+        for (pos, strength, seed) in self.fea_fire_sources() {
+            world_sources.push((pos.distance_squared(listener), pos, strength, seed));
         }
         // Tableau stovepipes (`urban_tableaux`): a stove's fire is inside its shelter, so its
         // source is smoke only, drawn as a thin column from the pipe mouth; it shares the world
@@ -37787,8 +37838,10 @@ mod tests {
             };
             assert_eq!(hot_fragment_heat_stage(&chip), stage);
             let light = hot_fragment_aggregate_light(&[chip], chip.frame, Mat4::IDENTITY).unwrap();
+            // The source's power is the page's visible emission over the Lambertian face area,
+            // scaled by the band's Planck visible share (`HOT_FRAGMENT_LIGHT_SHARE`).
             let expected = linear * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
-                * (unit_area * chip.size.powi(2) / 4.0);
+                * (unit_area * chip.size.powi(2) / 4.0) * HOT_FRAGMENT_LIGHT_SHARE[stage];
             let actual = light.color * light.radiant_intensity;
             assert!((actual - expected).abs().max_element() < expected.max_element() * 2.0e-6,
                 "stage {stage}: source {actual:?} does not match visible face emission {expected:?}");

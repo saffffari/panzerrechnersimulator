@@ -99,20 +99,35 @@ pub fn strike_arc(origin:Vec3,velocity:Vec3,t:f32,ground:Option<f32>,q:f32)->(Ve
 /// incandescent grains piling onto a few pixels, bounded in the spark shaders instead.
 #[derive(Clone,Copy,Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct RimHeat {pub radius:f32,pub width:f32,pub mass_kg:f32,pub heat_j:f32,pub initial_kelvin:f32}
+pub struct RimHeat {pub radius:f32,pub width:f32,pub mass_kg:f32,pub heat_j:f32,pub initial_kelvin:f32,
+    /// The rim's cooling time constant (s): conduction out of the worked zone into the plate.
+    #[serde(default="default_rim_tau")] pub tau_s:f32}
+fn default_rim_tau()->f32 {2.5}
 pub const RIM_KELVIN_MAX:f32=1800.0;
+/// Steel's thermal diffusivity (m²/s).
+pub const STEEL_DIFFUSIVITY:f32=1.2e-5;
+/// Share of the round's lost plate work that heats the worked zone round the wound: calibrated on
+/// the lattice's solved rims (1,350-1,400 K for an 88 mm round on 45 mm of plate); the previous
+/// 1.5 % into a millimetre skin gave the same temperatures with a skin's cooling, a flash.
+pub const RIM_HEAT_SHARE:f32=0.12;
+/// The heated zone's depth: a quarter calibre of plastically worked steel (4-30 mm), not a skin.
+pub fn rim_depth_m(caliber_mm:f32)->f32 {(caliber_mm*0.00025).clamp(0.004,0.030)}
+/// The rim's cooling time constant: conduction out of the worked zone into the plate, depth²/α
+/// (1-40 s: a bullet's mark fades in a second, an 88's hole glows for half a minute). The owner,
+/// 2026-11-02: hot metal cooled far too fast; the glow should hold ten to twenty seconds.
+pub fn rim_tau_s(caliber_mm:f32)->f32 {(rim_depth_m(caliber_mm).powi(2)/STEEL_DIFFUSIVITY).clamp(1.0,40.0)}
 pub fn rim_heat(caliber_mm:f32,plate_mm:f32,deposited_j:f32)->Option<RimHeat> {
     if !caliber_mm.is_finite() || !plate_mm.is_finite() || !deposited_j.is_finite()
         || caliber_mm<=0.0 || plate_mm<=0.0 || deposited_j<=0.0 {return None;}
     let radius=caliber_mm*0.0005;
     let width=(caliber_mm*0.00018).clamp(0.003,0.03);
     let area=std::f32::consts::PI*((radius+width).powi(2)-radius.powi(2));
-    let depth=(plate_mm*0.00003).clamp(0.001,0.006);
+    let depth=rim_depth_m(caliber_mm);
     let mass_kg=area*depth*7850.0;
-    let heat_j=(deposited_j*0.015).min(mass_kg*500.0*(RIM_KELVIN_MAX-293.0));
-    Some(RimHeat {radius,width,mass_kg,heat_j,initial_kelvin:293.0+heat_j/(mass_kg*500.0)})
+    let heat_j=(deposited_j*RIM_HEAT_SHARE).min(mass_kg*500.0*(RIM_KELVIN_MAX-293.0));
+    Some(RimHeat {radius,width,mass_kg,heat_j,initial_kelvin:293.0+heat_j/(mass_kg*500.0),tau_s:rim_tau_s(caliber_mm)})
 }
-pub fn rim_temperature(initial:f32,age:f32)->f32 {293.0+(initial-293.0).max(0.0)*(-age.max(0.0)/2.5).exp()}
+pub fn rim_temperature(initial:f32,age:f32,tau_s:f32)->f32 {293.0+(initial-293.0).max(0.0)*(-age.max(0.0)/tau_s.max(0.05)).exp()}
 pub fn rim_sample(r:Record,index:u32)->Option<Sample> {
     if r.meta[3]!=HOT_RIM || !r.active() || index>=r.meta[1] {return None;}
     let n=Vec3::from_array(r.normal_offset[..3].try_into().unwrap());
@@ -336,7 +351,15 @@ mod tests {
         assert!((full.initial_kelvin-RIM_KELVIN_MAX).abs()<0.5,"{}",full.initial_kelvin);
         for hz in [30,60,144] {
             let time=(0..hz*2).fold(0.0_f64,|t,_|t+1.0/hz as f64) as f32;
-            assert!((rim_temperature(heat.initial_kelvin,time)-rim_temperature(heat.initial_kelvin,2.0)).abs()<0.001);
+            assert!((rim_temperature(heat.initial_kelvin,time,heat.tau_s)-rim_temperature(heat.initial_kelvin,2.0,heat.tau_s)).abs()<0.001);
+        }
+        // The worked zone's conduction time: an 88's hole glows for tens of seconds, a bullet's
+        // mark for about a second; the 88's rim is still above the Draper point after 15 s.
+        assert!(rim_tau_s(88.0)>30.0 && rim_tau_s(88.0)<=40.0,"{}",rim_tau_s(88.0));
+        assert!(rim_tau_s(45.0)>8.0 && rim_tau_s(45.0)<13.0,"{}",rim_tau_s(45.0));
+        assert!(rim_tau_s(7.62)<=1.5,"{}",rim_tau_s(7.62));
+        assert!(rim_temperature(RIM_KELVIN_MAX,15.0,rim_tau_s(88.0))>800.0);
+        {
         }
         let n=Vec3::new(0.6,0.7,-0.2).normalize();let tangent=Quat::from_rotation_arc(Vec3::Z,n)*Vec3::X;
         let r=Record{origin_age:[35.0,4.0,-98.0,0.25],direction_life:tangent.extend(6.0).to_array(),normal_offset:n.extend(0.002).to_array(),

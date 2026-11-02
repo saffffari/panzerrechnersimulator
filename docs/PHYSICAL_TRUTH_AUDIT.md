@@ -291,8 +291,10 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   evidence.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
-  takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
-  21 December 1942, the sun about 5 deg under). In film mode the fenced wall time includes the
+  takes a clock (`KESSEL_FX_REVIEW_CLOCK=noon|dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
+  21 December 1942, the sun about 5 deg under; since 2026-11-02 every part defaults to `noon`,
+  09:30 UTC, local noon at Stalingrad with the sun about 18 deg up, the owner having had enough
+  of sunset renders). In film mode the fenced wall time includes the
   frame's readback and PNG write and is not a frame-rate figure; the pass timestamps are.
 - Every lamp is occluded by every object in the air as on the surfaces (2026-11-02). The
   froxel pass (`rm_volume.wgsl`) gave a lamp without a shadow cube (all but the two strongest
@@ -390,6 +392,66 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   Named approximations: the envelope is a box in the hull frame (the lower hull side between
   the wheels takes crust with them); the pack rates are presentation estimates; a hulk stands
   at 0.6 of the world's load. `fx-review` part `gear` is the evidence.
+- What the layered damage model's breaches do outside the hull (2026-11-02;
+  `game_fea_effects`). The chain names the casings a round opened and where; before, that knocked
+  the system out and lit the game's fire, and nothing showed. Now a holed fuel tank with petrol
+  above the hole runs it out through the round's own hole in the plate at Torricelli's rate
+  through the solved aperture (discharge coefficient 0.62, the head the tank's live level above
+  the hole from the component voxels, falling as the tank drains; the two modelled tanks share the
+  system's fill); the litres are taken from the live fuel; it falls as drawn beads (a fixed count
+  per litre, presentation) and pools where it lands as a flat disc of 4 mm depth, and once the
+  breach's fire burns (the game's existing rule) the pool burns as a world fire source. A holed
+  radiator steams through the deck grilles over it for 120 s; a breached engine smokes its oil
+  through the grilles for 240 s and, burning, stands its flames out of them (a world fire source
+  at the grille); a holed gearbox, steering unit or final drive drips its oil (30/20/12 l,
+  estimates, at 0.08 of petrol's rate through the same hole, named) under the hull and pools.
+  Named approximations: the vents' durations stand for the coolant and oil volumes; the grille
+  is the first source surface met from above the component's centre; a pool spreads on whatever
+  it lands on without flowing; a pool's and the engine's fires are drawn with the world fire's
+  tongues (two to three metres tall, their count with the strength), not a low, wide pool flame,
+  and they stand at the game's fire strength from the first frame rather than growing over the
+  seconds a petrol fire takes; nothing here is saved (a reload loses a running leak, not the fuel
+  it took). `fx-review` part `breach` is the evidence; tests cover Torricelli's rate, a hole
+  above the liquid, the drain and the pool's growth.
+- Hot metal cools on its own thermal time (2026-11-02; Alex, playing: "glowing hot metal cools
+  way too rapidly, it should glow for a good 10-20 sec slowly decaying"). The thin-ring rim
+  estimate (`rim_heat`, every strike the lattice does not solve: enemies, ricochets, shatters)
+  heated a 1-6 mm skin with 1.5 % of the lost plate work and cooled it on an authored 2.5 s; the
+  heated zone is now a quarter calibre of worked steel (4-30 mm), 12 % of the lost work (the
+  share calibrated on the lattice's solved rims, 1,350-1,400 K for an 88 on 45 mm, capped at the
+  solidus), and it cools by conduction into the plate on depth²/α with steel's diffusivity
+  1.2e-5 m²/s: 1 s for a bullet's mark, 10 s for a 45 mm hole, 36 s for an 88's. The scar
+  renderer's empirical rims take the same time from the wound's calibre; the lattice's own
+  cooling curves are unchanged. Every authored chip (the burst body's steel, the fragment
+  shower) now leaves the plate at 1,250 K and cools as a lumped body by the solved chips' law
+  (radiation and convection over its mass and surface): a 5 mm chip glows for some 13 s, a
+  1.4 mm splinter a second, instead of fading on an authored life; such chips stay at least 20 s
+  so the cooling is seen, then retire as before (only the solved steel persists). Named: the
+  1,250 K leaving temperature and the 12 % share are estimates bounded by the lattice.
+- The chips' aggregate light follows the Planck visible radiance of their temperature band
+  (2026-11-02): 2.5 % at 1,100 K, 1.3e-4 at 900 K, 4e-7 at 750 K of the 1,300 K band's, so the
+  pages' display scale (lifted and drawn hotter for legibility) no longer lights the cabin's dust
+  orange from a floor of resting dull-red chips.
+- A penetration's trapped interior smoke is a third as dense as its exterior vent (0.55 against
+  1.6) and clears in six seconds instead of ten (2026-11-02): at the vent's density the six
+  puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten
+  seconds. A compartment does fill with smoke; the density is a named presentation value, not a
+  vented-gas model.
+- Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
+  law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
+  motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
+  instead of 4 cm and 0.22 of the chip's size wide, so a 1/60 s exposure of a chip at tens of
+  metres a second reads as a streak; the five heat pages' colours are the Planck law drawn at
+  1.7 times their bands' lower temperatures (2200, 1870, 1530, 1275 K drawn for chips of 1300,
+  1100, 900 and 750 K and up; cold steel below 750 K: white-yellow through red, the owner's call
+  over the dull red the solved temperatures give, a named display choice) instead of an
+  authored amber set, and
+  the two coolest pages' display scale is lifted (1.05 to 1.4, 0.18 to 0.6; tails 0.86 to 1.1,
+  0.12 to 0.5) so a chip at the Draper point reads red hot in the dark cabin. The cabin fire's
+  four pages are the same Planck law at the exterior pages' temperatures (their display scale
+  unchanged), so the Tiger's fire and a wreck's burn alike. Named: the pages' display scales
+  are presentation, the chips' temperatures are the lattice's (plastic and friction work, cooling
+  by radiation and convection).
 
 Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above the view's cap of 1 or 8,
 whole omission below it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never
