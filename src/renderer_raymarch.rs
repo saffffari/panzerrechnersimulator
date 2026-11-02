@@ -118,7 +118,9 @@ struct Event {
 /// source flash is collected separately. A shell landing under the gun is still a shell burst.
 fn source_event_kind(burst: &renderer_weapon_particles::Record) -> Option<u32> {
     use renderer_weapon_particles::math as wm;
-    let heavy = burst.parameters[3] > 0.5;
+    // The strike kinds flag the ground height in the same lane (`strike_flags`).
+    let heavy = if matches!(burst.meta[3], wm::RICOCHET | wm::BULLET_ARMOR) { wm::strike_flags(burst.parameters[3]).0 }
+        else { burst.parameters[3] > 0.5 };
     match burst.meta[3] {
         wm::BLAST if heavy && burst.parameters[2] > 2.0 => Some(EVENT_DETONATION),
         wm::ARMOR_IMPACT | wm::RICOCHET if heavy => Some(EVENT_ARMOUR),

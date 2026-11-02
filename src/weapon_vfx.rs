@@ -82,9 +82,9 @@ impl Weapon {
 struct Flight { from: Vec3, to: Vec3, age: f32, life: f32, weapon: Weapon, armor_normal: Option<Vec3> }
 #[derive(Clone, Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
-enum BurstKind { Muzzle, Blast, InteriorBlast, PressureVent(Vec3), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet(Vec3), BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
+enum BurstKind { Muzzle, Blast, InteriorBlast, PressureVent(Vec3), FullCookoff(Vec3), Ground {normal:Vec3,budget:gpu_weapon::GroundBudget}, Impact, ArmorImpact(Vec3), PenetrationSmoke(Vec3), HotRim {normal:Vec3,heat:gpu_weapon::RimHeat}, Dust, Ricochet { normal:Vec3, energy_j:f32 }, BulletArmor { normal:Vec3, energy_j:f32, cosine:f32 } }
 impl BurstKind {
-    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet(_) | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
+    fn emits_smoke(self) -> bool { !matches!(self, Self::Ricochet{..} | Self::BulletArmor{..} | Self::Ground{..} | Self::HotRim{..}) }
 }
 #[derive(Clone,Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -105,7 +105,10 @@ impl SurfaceAnchor {
 #[derive(Clone, Copy)]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Burst { pos: Vec3, dir: Vec3, age: f32, life: f32, radius: f32,
-    seed: u32, kind: BurstKind, weapon: Weapon, born_s:Option<f32>,anchor:Option<SurfaceAnchor> }
+    seed: u32, kind: BurstKind, weapon: Weapon, born_s:Option<f32>,anchor:Option<SurfaceAnchor>,
+    /// The ground height under the burst when the caller knows it (`set_ground_hint`): a strike's
+    /// sparks bounce off it once and lie on it. Cosmetic only; no collision body.
+    ground:Option<f32> }
 
 /// Cosmetic armor grains cannot cross the source plate. Test the complete oriented cuboid,
 /// including its speed streak, rather than only its center. Returning grains disappear on
@@ -114,7 +117,7 @@ fn armor_grain_is_air_side(burst: Burst, pos: Vec3, size: Vec3, rotation: Quat) 
     let (normal, offset) = match burst.kind {
         BurstKind::Ground{normal,..} => (normal,0.01),
         BurstKind::ArmorImpact(normal) | BurstKind::PressureVent(normal) | BurstKind::FullCookoff(normal) => (normal, ARMOR_FLASH_OFFSET_M),
-        BurstKind::Ricochet(normal) | BurstKind::BulletArmor {normal,..} => (normal, ARMOR_RICOCHET_OFFSET_M),
+        BurstKind::Ricochet{normal,..} | BurstKind::BulletArmor {normal,..} => (normal, ARMOR_RICOCHET_OFFSET_M),
         _ => return true,
     };
     let half_support = (rotation.conjugate() * normal).abs().dot(size) * 0.5;
@@ -158,6 +161,7 @@ pub(super) struct Effects {
     pixel_world_scale: f32,
     gpu_analytic: bool,
     gpu_tracers: Vec<GpuWeaponRecord>,
+    ground_hint:Option<f32>,
     bullet_exposure_s:f32,
     wind: Vec2,
     now_s:f32,
@@ -173,7 +177,7 @@ impl Default for Effects {
     fn default() -> Self { Self {
         flights: [None; FLIGHTS], bursts: [None; BURSTS], next_flight: 0, next_burst: 0,
         sequence: 0, replaced_bursts:0, pixel_world_scale: 0.0036, gpu_analytic:false,
-        gpu_tracers:Vec::with_capacity(BULLET_SEGMENTS), bullet_exposure_s:BULLET_EXPOSURE_S, wind: Vec2::ZERO,
+        gpu_tracers:Vec::with_capacity(BULLET_SEGMENTS), ground_hint:None, bullet_exposure_s:BULLET_EXPOSURE_S, wind: Vec2::ZERO,
         now_s:0.0,small_arm_rounds:Default::default(),bullet_segments:Default::default(),
         bullet_times:Default::default(),last_bullet_contact_s:None,small_arms_review:Default::default(),
         mats: std::array::from_fn(|_| Vec::with_capacity(PAGE_CAPACITY)),
@@ -215,9 +219,13 @@ impl Effects {
             });
         if self.bursts[k].is_some(){self.replaced_bursts+=1;}
         self.bursts[k] = Some(Burst { pos, dir: dir.normalize_or_zero(), age: 0.0,
-            life, radius: radius.clamp(0.02, 9.0), seed: self.sequence, kind, weapon, born_s:None,anchor:None });
+            life, radius: radius.clamp(0.02, 9.0), seed: self.sequence, kind, weapon, born_s:None,anchor:None,
+            ground:self.ground_hint.filter(|g|g.is_finite()) });
         self.next_burst = (k + 1) % BURSTS;
     }
+    /// The terrain height under the next strikes' bursts (the caller's heightfield), so their
+    /// sparks bounce off the ground and lie on it; `None` leaves them free-flying.
+    pub(super) fn set_ground_hint(&mut self, ground:Option<f32>) { self.ground_hint=ground; }
     pub(super) fn muzzle(&mut self, pos: Vec3, dir: Vec3, weapon: Weapon) {
         let life = match weapon { Weapon::Pistol => 0.65, Weapon::Rifle | Weapon::MachineGun => 0.95, _ => 3.4 };
         self.burst(pos, dir, weapon.muzzle_size(), life, BurstKind::Muzzle, weapon);
@@ -268,7 +276,7 @@ impl Effects {
         if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {
             self.burst(point+normal*ARMOR_FLASH_OFFSET_M,normal,0.75,1.2,BurstKind::ArmorImpact(normal),weapon);
         }
-        self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {1.4}else{0.65},BurstKind::Ricochet(normal),weapon);
+        self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,if matches!(weapon,Weapon::Cannon(_) | Weapon::Rocket) {1.4}else{0.65},BurstKind::Ricochet{normal,energy_j:0.0},weapon);
     }
     fn stamp_newest(&mut self,at:f32,anchor:Option<SurfaceAnchor>) {
         if let Some(b)=self.bursts[(self.next_burst+BURSTS-1)%BURSTS].as_mut(){
@@ -326,7 +334,7 @@ impl Effects {
             },
             Terminal::Ricochet=>{
                 let reflected=outgoing.expect("resolved ricochet carries actual outgoing velocity").normalize_or_zero();
-                self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,1.4,BurstKind::Ricochet(normal),weapon);
+                self.burst(point+normal*ARMOR_RICOCHET_OFFSET_M,reflected,0.24,1.4,BurstKind::Ricochet{normal,energy_j:residual},weapon);
                 self.stamp_newest(at,None);
             },
             Terminal::Bounce=>{
@@ -517,7 +525,7 @@ impl Effects {
                     if let Some(normal) = flight.armor_normal {
                         let reflected = incoming - normal * (2.0*incoming.dot(normal));
                         self.burst(flight.to+normal*0.008,reflected,0.24,0.65,
-                            BurstKind::Ricochet(normal),flight.weapon);
+                            BurstKind::Ricochet{normal,energy_j:0.0},flight.weapon);
                     } else {
                         self.impact(flight.to,incoming,
                             if flight.weapon == Weapon::Pistol { 0.12 } else { 0.20 }, false, flight.weapon);
@@ -564,7 +572,7 @@ impl Effects {
         // Only exterior blast presentation expands; source damage and cabin ignition do not.
         if matches!(b.kind,BurstKind::Blast) {b.radius*=gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER;}
         if matches!(b.kind,BurstKind::PressureVent(_)|BurstKind::FullCookoff(_)|BurstKind::Ground{..}|BurstKind::PenetrationSmoke(_)|BurstKind::HotRim{..}) {return 0;}
-        if self.gpu_analytic && matches!(b.kind,BurstKind::BulletArmor{..}|BurstKind::Ricochet(_)) {return 0;}
+        if self.gpu_analytic && matches!(b.kind,BurstKind::BulletArmor{..}|BurstKind::Ricochet{..}) {return 0;}
         if let BurstKind::BulletArmor{normal,energy_j,cosine}=b.kind {
             if energy_j<0.01 {return 0;}
             let count=bullet_spark_count(energy_j,cosine).min(remaining);
@@ -587,7 +595,7 @@ impl Effects {
             }
             return count;
         }
-        if let BurstKind::Ricochet(normal) = b.kind {
+        if let BurstKind::Ricochet{normal,..} = b.kind {
             let cannon=matches!(b.weapon,Weapon::Cannon(_) | Weapon::Rocket);
             let count = remaining.min(if cannon {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS});
             for j in 0..count {
@@ -708,10 +716,12 @@ impl Effects {
 fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
     let heavy=matches!(b.weapon,Weapon::Cannon(_)|Weapon::Rocket);
     let (kind,count,normal,offset,energy,cosine,scale)=match b.kind {
-        BurstKind::Blast=>(gpu_weapon::BLAST,BLAST_SPARKS,Vec3::ZERO,0.0,0.0,0.0,gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER),
+        // A blast's `parameters.x` is its charge against an 88 mm HE round's (radius 2.9 for
+        // 0.9 kg of filler, `armor_terminal`), which scales its sparks' speed law.
+        BurstKind::Blast=>(gpu_weapon::BLAST,BLAST_SPARKS,Vec3::ZERO,0.0,b.radius/2.9,0.0,gpu_weapon::EXTERIOR_RADIUS_MULTIPLIER),
         BurstKind::Impact=>(gpu_weapon::BLAST,IMPACT_SPARKS,Vec3::ZERO,0.0,0.0,0.0,1.0),
         BurstKind::ArmorImpact(n)=>(gpu_weapon::ARMOR_IMPACT,IMPACT_SPARKS,n,ARMOR_FLASH_OFFSET_M,0.0,0.0,1.0),
-        BurstKind::Ricochet(n)=>(gpu_weapon::RICOCHET,if heavy {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS},n,ARMOR_RICOCHET_OFFSET_M,0.0,0.0,1.0),
+        BurstKind::Ricochet{normal,energy_j}=>(gpu_weapon::RICOCHET,if heavy {CANNON_RICOCHET_SPARKS}else{SMALL_ARM_RICOCHET_SPARKS},normal,ARMOR_RICOCHET_OFFSET_M,energy_j.max(0.0),0.0,1.0),
         BurstKind::BulletArmor{normal,energy_j,cosine}=>{
             if energy_j<0.01{return None;}
             (gpu_weapon::BULLET_ARMOR,bullet_spark_count(energy_j,cosine),normal,ARMOR_RICOCHET_OFFSET_M,energy_j,cosine,1.0)
@@ -733,8 +743,15 @@ fn gpu_burst_record(b:Burst)->Option<GpuWeaponRecord> {
             crate::sound_levels::AMMUNITION_DETONATION_TNT_KG*4_184_000.0*0.002,5.0,1.0),
         BurstKind::Muzzle|BurstKind::InteriorBlast|BurstKind::Dust|BurstKind::PenetrationSmoke(_)=>return None,
     };
+    // The strike kinds carry the ground height under the burst in `parameters.z`, flagged in
+    // `parameters.w` (`weapon_particle_math::strike_flags`); the other kinds keep their scale.
+    let strike=matches!(kind,gpu_weapon::RICOCHET|gpu_weapon::BULLET_ARMOR);
+    let (scale,flags)=match (strike,b.ground) {
+        (true,Some(ground))=>(ground,2.0+if heavy {1.0}else{0.0}),
+        _=>(scale,if heavy {1.0}else{0.0}),
+    };
     let r=GpuWeaponRecord {origin_age:b.pos.extend(b.age).to_array(),direction_life:b.dir.extend(if matches!(b.kind,BurstKind::PressureVent(_)){b.life-0.65}else{b.life}).to_array(),
-        normal_offset:normal.extend(offset).to_array(),parameters:[energy,cosine,scale,if heavy {1.0}else{0.0}],
+        normal_offset:normal.extend(offset).to_array(),parameters:[energy,cosine,scale,flags],
         meta:[b.seed,count as u32*gpu_weapon::SPARK_MULTIPLIER,count as u32,kind]};
     r.active().then_some(r)
 }
@@ -778,8 +795,10 @@ impl Game {
         if projectile.velocity.dot(normal)>0.0 {normal=-normal;}
         if normal.length_squared()<0.5{return;}
         let anchor=SurfaceAnchor::new(armor.vehicle,armor.part,model,contact.pos,normal);
+        self.weapon_vfx.set_ground_hint(Some(self.hf.height_at(contact.pos.x,contact.pos.z)));
         self.weapon_vfx.armor_terminal(projectile.id,self.enemy_report_audit.clock_s,contact.pos,
             projectile.velocity,normal,event,anchor,outgoing);
+        self.weapon_vfx.set_ground_hint(None);
     }
     pub(super) fn present_source_ground_impact(&mut self,projectile:&AuthoritativeProjectile,contact:ProjectileContact,r:&Renderer) {
         if matches!(contact.kind,ProjectileContactKind::Terrain) && r.analytic_weapon_particles_active() {
@@ -942,7 +961,7 @@ mod tests {
             fx.armor_terminal(7,0.0,point,incoming,normal,event,anchor,
                 (terminal==Terminal::Ricochet).then_some(Vec3::new(100.0,200.0,0.0)));fx.prepare(0.02,point);
             let has=|pred:fn(BurstKind)->bool|fx.bursts.iter().flatten().any(|b|pred(b.kind));
-            assert_eq!(has(|k|matches!(k,BurstKind::Ricochet(_))),terminal==Terminal::Ricochet);
+            assert_eq!(has(|k|matches!(k,BurstKind::Ricochet{..})),terminal==Terminal::Ricochet);
             assert_eq!(has(|k|matches!(k,BurstKind::HotRim{..})),terminal==Terminal::Penetration);
             assert_eq!(has(|k|matches!(k,BurstKind::PenetrationSmoke(_))),matches!(terminal,Terminal::Penetration|Terminal::Shatter));
             assert_eq!(has(|k|matches!(k,BurstKind::Blast)),terminal==Terminal::HeBlast);
@@ -952,7 +971,7 @@ mod tests {
         event.shell=&crate::ballistics::SPRGR_88;event.terminal=Terminal::Penetration;
         let mut fx=Effects::default();fx.armor_terminal(8,0.0,point,incoming,normal,event,anchor,None);
         assert!(fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Blast)),"real HE breach retains its chemical detonation");
-        assert!(!fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::HotRim{..}|BurstKind::Ricochet(_))));
+        assert!(!fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::HotRim{..}|BurstKind::Ricochet{..})));
     }
     #[test] fn entry_rim_follows_the_exact_source_frame_and_outward_normal() {
         let original=Mat4::from_rotation_translation(Quat::from_rotation_y(0.8),Vec3::new(10.0,4.0,-17.0));
@@ -1164,9 +1183,9 @@ mod tests {
         let normal=Vec3::NEG_Z;
         fx.small_arm_contact(Vec3::ZERO,Vec3::Z*10.0,Weapon::MachineGun,Some(normal));
         fx.prepare(0.02,Vec3::ZERO);
-        assert!(!fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Ricochet(_))));
+        assert!(!fx.bursts.iter().flatten().any(|b|matches!(b.kind,BurstKind::Ricochet{..})));
         fx.prepare(0.05,Vec3::ZERO);
-        let impact=fx.bursts.iter().flatten().find(|b|matches!(b.kind,BurstKind::Ricochet(_))).unwrap();
+        let impact=fx.bursts.iter().flatten().find(|b|matches!(b.kind,BurstKind::Ricochet{..})).unwrap();
         assert!(impact.dir.dot(normal)>0.99);
         assert!(fx.mats[4].iter().all(|m|m.w_axis.z<10.0));
     }

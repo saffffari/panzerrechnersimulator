@@ -25967,8 +25967,10 @@ impl Game {
                         if hit.steel {
                             let deposited=0.5*projectile.shell.mass_kg
                                 *(armor_incident_velocity.length_squared()-projectile.velocity.length_squared()).max(0.0);
+                            self.weapon_vfx.set_ground_hint(Some(self.hf.height_at(contact.pos.x,contact.pos.z)));
                             self.weapon_vfx.steel_perforation_spray(contact.pos,armor_incident_velocity,hit.normal,
                                 deposited,projectile.shell.caliber_mm,self.enemy_report_audit.clock_s);
+                            self.weapon_vfx.set_ground_hint(None);
                         }
                         self.schedule_sound_from(crate::audio::Sfx::ImpactTank,contact.pos);
                         active.push(projectile);
@@ -33194,6 +33196,29 @@ impl Game {
         self.wrecks[idx].ignition_load = 0.75;
         self.wrecks[idx].cookoff_t = None;
         Some(idx)
+    }
+
+    /// Headless-only (`fx-review`): a knocked-out, cold T-34 hull parked at `(x, z)` (destroyed
+    /// through the ordinary route with neither its ammunition nor its fuel struck, so no fire).
+    pub fn debug_stage_cold_wreck(&mut self, x: f32, z: f32, heading: f32) -> Option<usize> {
+        let idx = self.debug_first_t34()?;
+        self.debug_place_enemy(idx, x, z, heading);
+        self.enemy_active[idx] = true;
+        self.destroy_enemy(idx);
+        Some(idx)
+    }
+
+    /// Headless-only (`fx-review`): the catastrophic ammunition-rack kill of enemy `idx` through
+    /// the same route a penetration takes (`destroy_enemy_damage` with the ammunition struck): the
+    /// blast, the thrown debris, the turret pop, its ring plume and the pressure vent at the given
+    /// breach. The breach is authored here because no projectile resolved one.
+    pub fn debug_catastrophic_kill(&mut self, idx: usize, breach: Vec3, breach_normal: Vec3) -> bool {
+        if !self.enemies.get(idx).is_some_and(|e| e.alive) { return false; }
+        self.destroy_enemy_damage(idx, true, false);
+        if let Some(w) = self.wrecks.get_mut(idx) {
+            w.t_impact = Some((breach, breach_normal.normalize_or_zero()));
+        }
+        true
     }
 
     pub fn capture_catastrophic(&self, enemy: Option<usize>) -> bool {

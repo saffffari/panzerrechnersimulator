@@ -1010,7 +1010,7 @@ impl Renderer {
             let layer=&optics.layers[view.port];
             let prepared=self.prepare_fine_vfx_view(device,queue,&view.camera,view.extent,
                 &layer.depth,&layer.weather.smoke_buf,frames.remove(&view.port),
-                crate::graphics::active_preset().raymarch().relay_effect_budget(view.extent));
+                crate::graphics::active_preset().raymarch().relay_grain_budget(view.extent),false);
             frames.insert(view.port,prepared);
         }
     }

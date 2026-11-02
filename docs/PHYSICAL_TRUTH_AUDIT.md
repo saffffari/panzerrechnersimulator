@@ -1,6 +1,6 @@
 # Panzerrechnersystem physical-truth ledger
 
-Updated: 2026-11-01 (the deltaP display look); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
+Updated: 2026-11-01 (the deltaP display look; fire, sparks and the effects pass under it); 2026-10-28 (tank-hit recordings; library recordings for handling, breech, wounds, materials, footsteps; own-gun voice candidates; vehicle dynamics: per-vehicle spec, sprung hulls, AI drivetrain, head on the neck; enemy tank crews: fix and flank, armour solution, flash and engine cues; traced room acoustics, foley catalogue, engine direction; LAN on Windows: the living crew in empty co-op seats, laptop tier); 2026-10-27 (solo crew, wounds and first aid; armor scars; strewn-field scatter entry; terrain detail; platoon wingman model; missions: signal stars, smoke columns, alerts; raymarch backend ledger entry; plate-solve obliquity ceiling, Canyon run loop; binaural rendering row); 2026-10-01 (graphics, weather and impact integration). This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
@@ -26,6 +26,50 @@ simulation value reads it. Named presentation choices while the look is on:
 Gate: `tests/dither_motion.rs` and `tests/display_quantization.rs` validate the complete crush
 shader and the Crush lanes (span 144, `look` at 128, earlier lanes unmoved);
 `src/renderer.rs` unit tests check the uniform's offsets.
+
+## Fire, sparks and the effects pass under the deltaP look, 2026-11-01 (branch `fx-fire-sparks`)
+
+The owner's Canyon playtest under the look (2026-11-01) found the fire glowing over too wide a
+radius, armour and blast sparks reading as one effect stacked on itself, and a T-34 kill dropping
+the frame rate. Receipts: `captures/fx_before2_20261101_deltap_*` / `fx_after_20261101_deltap_*`
+(the `fx-review` harness, `src/fx_review.rs`: the burning wreck at dusk and night, three strikes on
+its hull from the real projectile path, the gunner's frame across a catastrophic kill with
+`KESSEL_GPU_PROFILE=1`).
+
+- The fire's glow is the pyramid bloom, not the grains: embers and fire parcels are already one
+  frame pixel / one froxel in size at 1024x576. Measured against the standard look on the same
+  frame and handed to the main worktree, which owns the bloom constants (the deltaP section above).
+- Relayed ports' fire and soot grains: a port's native extent is twice its displayed span and a
+  flame parcel covers thousands of a port's pixels, so the spark budget (16 a pixel on High) let
+  the gunner's sight pane draw 3.7 million grains for one burning wreck (44 ms worst frame,
+  `native-pixel-hdr-effects`). Ports now take `relay_grain_samples_per_pixel` (Low 1, High 2,
+  Ultra 4) and no optional quadrature density; over budget every parcel is thinned towards one
+  sample per covered pixel, and in a port on to one sample per eight covered pixels (a sample's
+  weight at most 8: the sight pane magnifies a fire whose thousand parcels overlap every pixel,
+  and at weight 1 whole omission dropped 1,297 of 1,654 parcels), before any whole far parcel is
+  omitted and counted. Each parcel's emission and optical depth hold in expectation; the port's
+  fire is a sparser, brighter speckle (per-pixel noise rises as 1 / sqrt(samples)); the main
+  view's own fire is the raymarch backend's parcels and embers and is untouched.
+  The grain sampler's radical inverses are per-base functions (bit reversal for base 2), the same
+  sequence a few floating-point ulps off; no sample identity changes.
+- Strike sparks (`RICOCHET`, `BULLET_ARMOR`, `BLAST`, `ARMOR_IMPACT`; `weapon_particle_math.rs`
+  is the reference, `rm_sparks.wgsl` and `weapon_particles.wgsl` follow it): a ricochet's fan
+  follows the outgoing ray, lifting off the plate and spreading with the ray's elevation; its
+  speed law is slow-heavy (`q^1.5`) and scaled by the round's retained kinetic energy (the
+  solver's `residual_v`); each spark burns for a time set by its size and cools through white and
+  yellow as a fraction of that time, hotter strikes whiter longer; the sparks leave over a few
+  milliseconds; they bounce once off the terrain under the strike (a fifth to two fifths of the
+  vertical speed, just over half of the tangential) and lie on it. A blast's sparks scale with
+  its charge. Each burst's fan width, speed share, lift and spread of leaving times are its own
+  (a hash of the burst's seed), so two strikes of one kind no longer coincide. Authored: the
+  speed laws, the restitution, the size-to-lifetime coupling and the cooling fractions are set by
+  eye against the previous presentation, not fragmentation or thermal measurements; the bounce
+  plane is the terrain height under the strike, not the hull or any object.
+
+Gate: `src/renderer_fine_vfx.rs` tests (thinning floor, no weight above 1, whole omission below
+it), `src/graphics.rs` (grain rate per preset), `src/weapon_particle_math.rs` tests (bounce never
+below ground, rest on it; two strikes differ by event and by seed; support bounds hold),
+`src/weapon_vfx.rs` tests, and the shader validation tests of both spark shaders.
 
 ## Physical terrain wavelength and cold restore, 2026-10-31
 
@@ -1631,7 +1675,7 @@ refinement remain separate acceptance work, as recorded in the hand-prop note.
 | Retained optical capture metadata (2026-10-31) | A Low-preset skipped layer keeps the camera, texel extent and frame of the color/depth actually encoded. First nonzero use forces initialization; replacing, blocking/repairing or occluding/revealing the port invalidates that cache. The current physical entrance and eye remain current. A finite gunner pupil refreshes if its current visible rays no longer fit the retained capture. | `src/raster_optics.rs` (`CapturedView`, `retained_capture`, `capture_covers_visible_entrance`) | Reduced cadence still produces temporally old exterior motion and objective-origin parallax until refresh. This fixes stale-image/current-projection misregistration; it does not make cached images current or remove the separate vision-block acceptance approximation. |
 | Sky cache accumulation (2026-10-28) | Each refresh of a sky-cache texel marches the clouds with a new jitter (an integer hash) and is blended in at 0.3; a sky jump writes it whole. | `src/renderer_raymarch.rs` (`SKY_CACHE_BLEND`), `shaders/rm_sky_cache.wgsl`, `shaders/sky.wgsl` (`cloud_jitter`) | A temporal average over a texel's last few refreshes (about 64 frames): a cloud feature moving across the sky trails over about a second. |
 | Open-share firefly clamp (2026-10-28) | A new open-sky share estimate (the ray queries' and the screen gather's) may not exceed three times the same-surface history's share plus 0.02 before it is blended in. | `shaders/rm_shade.wgsl` (`share_clamped`) | Biases a share of 0.3 by under 2 % at two rays a frame; a share that opens suddenly rises at least 1.3 times a frame, so a hatch's light comes up over about a quarter second. |
-| Relayed ports' one-pixel effect budget (2026-10-28) | Each relayed port draws at most `relay_effect_samples_per_pixel` (Low 8, High 16, Ultra 32) weapon-spark samples and as many fire and soot grain samples per native pixel of its view. Over budget a spark burst draws its share of samples, never fewer than its source count, each weighted by source / drawn; ground ejecta keep the full count's grain size and take the represented optical depth; hot rims are never thinned. Grains keep two samples per covered pixel of a parcel and drop whole far parcels, counted. | `src/graphics.rs` (`relay_effect_budget`), `src/weapon_particle_math.rs` (`thinned_counts`), `shaders/weapon_particles.wgsl`, `src/renderer_fine_vfx.rs` | Thinning keeps each burst's emission and optical depth in expectation; the shower is sparser and its per-pixel noise higher (relative noise goes as 1 / sqrt(samples a pixel): a port drew 47 sparks a pixel in one strike before, 8 on Low now). Omitted far parcels are those beyond the budget, usually behind nearer smoke; their projected area is reported. The shader backend's main view keeps its absolute caps. Since the evening each burst first draws at most that rate over the pixels its conservative support covers (`footprint_count`; ground ejecta bounded by their own speed): a distant strike's first frames take a few hundred samples, each standing for more. |
+| Relayed ports' one-pixel effect budget (2026-10-28) | Each relayed port draws at most `relay_effect_samples_per_pixel` (Low 8, High 16, Ultra 32) weapon-spark samples and as many fire and soot grain samples per native pixel of its view. Over budget a spark burst draws its share of samples, never fewer than its source count, each weighted by source / drawn; ground ejecta keep the full count's grain size and take the represented optical depth; hot rims are never thinned. Grains keep two samples per covered pixel of a parcel and drop whole far parcels, counted. Since 2026-11-01 a port's grains take their own rate (`relay_grain_samples_per_pixel`, Low 1, High 2, Ultra 4) without optional density, and over budget every parcel is thinned towards one sample per covered pixel (one per eight in a port) before any whole parcel is omitted (the 2026-11-01 section above). | `src/graphics.rs` (`relay_effect_budget`), `src/weapon_particle_math.rs` (`thinned_counts`), `shaders/weapon_particles.wgsl`, `src/renderer_fine_vfx.rs` | Thinning keeps each burst's emission and optical depth in expectation; the shower is sparser and its per-pixel noise higher (relative noise goes as 1 / sqrt(samples a pixel): a port drew 47 sparks a pixel in one strike before, 8 on Low now). Omitted far parcels are those beyond the budget, usually behind nearer smoke; their projected area is reported. The shader backend's main view keeps its absolute caps. Since the evening each burst first draws at most that rate over the pixels its conservative support covers (`footprint_count`; ground ejecta bounded by their own speed): a distant strike's first frames take a few hundred samples, each standing for more. |
 | Clustered occluder in the environment-visibility atlas | A rigid mesh of 160,000 indices or more (the Tiger hull and turret) is drawn into the per-frame dynamic layer of the environment-visibility atlas from a vertex-clustered copy generated from its own source triangles at load: 6 mm cells, the first source vertex in a cell stands for the cell, collapsed triangles dropped. The rendered mesh, collision, sun shadows and lamp shadows still use the source triangles. | `src/sky_visibility.rs` (`clustered_occluder`), `src/renderer.rs` | No vertex moves more than 10.4 mm, under half of the fine cascade's 23 mm texel. Used only when clustering at least halves the triangle count. |
 
 ## Owner-directed gameplay departures

@@ -111,6 +111,7 @@ mod radio_llm;
 mod platoon_proof;
 mod wreck_fire_review;
 mod raymarch_showcase;
+mod fx_review;
 mod canyon_director;
 mod playtest_mode;
 mod winter_weather;
@@ -16902,6 +16903,10 @@ fn main() -> anyhow::Result<()> {
         return repair_manual_capture::run(&prefix, early_args.iter().any(|arg| matches!(arg.as_str(), "video" | "--video")));
     }
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "fx-review") {
+        let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(90u32);
+        return fx_review::run(&capture_arg(&args, 2, "fx_review"), frames);
+    }
     if args.get(1).is_some_and(|s| s == "raymarch-interior") {
         return raymarch_showcase::run_interior(&capture_arg(&args, 2, "raymarch_interior"));
     }
