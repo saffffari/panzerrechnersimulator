@@ -4263,6 +4263,9 @@ fn hot_fragment_bounce_budget(seed: u32) -> u8 {
 /// orange, red-orange, dull red, and cold steel below 750 K (named bands of the incandescence
 /// colours the pages draw; visible glow begins near the Draper point, 798 K).
 const FEA_HEAT_PAGE_KELVIN: [f32; N_HOT_FRAGMENT_BATCHES] = [1300.0, 1100.0, 900.0, 750.0, 0.0];
+/// The heat pages are drawn this much hotter than their band (white-yellow through red instead
+/// of orange through dull red): the owner's display choice, 2026-11-02; a named approximation.
+const HOT_PAGE_DRAWN_OVER_BAND: f32 = 1.7;
 /// Air density in the fighting compartment for fragment drag (named: 20 C, sea level).
 const CABIN_AIR_DENSITY: f32 = 1.2;
 /// Flow stress of the steel the cabin collision walls stand for (armour), for embedding (named).
@@ -13492,11 +13495,14 @@ impl Game {
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
         // carries the effect after the flash. Every page reserves the bounded pool because an
         // impact frame may legitimately put every chip in the same heat stage.
-        // The four hot pages are the Planck law at their bands' temperatures (`FEA_HEAT_PAGE_KELVIN`:
-        // 1450, 1200, 1000 and 820 K), the one law the fire pages, sparks and rims glow on; the
-        // fifth is cold oxidised steel.
-        let hot_steel = [crate::incandescence::planck_srgb8(1450.0), crate::incandescence::planck_srgb8(1200.0),
-            crate::incandescence::planck_srgb8(1000.0), crate::incandescence::planck_srgb8(820.0), [70, 68, 64]];
+        // The four hot pages are the Planck law, the one law the fire pages, sparks and rims glow
+        // on, drawn at `HOT_PAGE_DRAWN_OVER_BAND` times their bands' lower temperatures
+        // (`FEA_HEAT_PAGE_KELVIN`: 2200, 1870, 1530 and 1275 K drawn for 1300, 1100, 900 and
+        // 750 K): white-yellow, orange, orange-red, red. The owner's call (2026-11-02: "orange-yellow
+        // white hot metal", not the dull red the solved temperatures give); named as a display
+        // choice, the chips' temperatures themselves are the lattice's. The fifth is cold steel.
+        let hot_steel = [crate::incandescence::planck_srgb8(1300.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(1100.0 * HOT_PAGE_DRAWN_OVER_BAND),
+            crate::incandescence::planck_srgb8(900.0 * HOT_PAGE_DRAWN_OVER_BAND), crate::incandescence::planck_srgb8(750.0 * HOT_PAGE_DRAWN_OVER_BAND), [70, 68, 64]];
         let hot_emissive = HOT_FRAGMENT_STAGE_EMISSIVE;
         slots.hot_fragment_batch = std::array::from_fn(|i| {
             let batch = renderer
@@ -21251,6 +21257,13 @@ impl Game {
             r.set_hovered_meshes(&slots);
             return;
         }
+        // No outline while shrapnel flies inside the vehicle (the owner, 2026-11-02): the prompt's
+        // silhouette has no place in a compartment crossed by hot steel.
+        if self.hot_fragments.iter().any(|f| f.active && !f.settled && f.entered_compartment
+            && f.vel.length() > HOT_FRAGMENT_TAIL_MIN_SPEED) {
+            r.set_hovered_meshes(&slots);
+            return;
+        }
         if let Some(slot) = self.cigarette_pick.and_then(|pick|
             self.hand_props.as_ref().and_then(|props| props.stock_slot(pick))) {
             // The one cigarette in the open packet that the left button would take.
@@ -21285,13 +21298,9 @@ impl Game {
                 }
             } else if let Some(station) = self.hover_station {
                 match station {
-                    Station::Gunner => {
-                        // From the cupola the outlined thing is the gunner himself.
-                        match self.gunner_body_slot().filter(|_| self.station == Station::Commander) {
-                            Some(slot) => slots.push(slot),
-                            None => slots.extend(self.slots.gunner_sight),
-                        }
-                    }
+                    // The gunner's station is outlined by its sight, never by the man (the owner,
+                    // 2026-11-02: the outline then has nothing to do with his death).
+                    Station::Gunner => slots.extend(self.slots.gunner_sight),
                     Station::Loader => slots.push(self.slots.breechcover),
                     Station::Commander => slots.extend(self.slots.tiger_periscopes.iter()
                         .step_by(tiger_periscopes::CUPOLA_PART_COUNT).take(7).copied()),

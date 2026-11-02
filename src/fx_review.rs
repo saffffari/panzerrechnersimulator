@@ -44,6 +44,7 @@ fn clock(r: &mut crate::renderer::Renderer, utc: &str) -> anyhow::Result<()> {
 /// UTC), `night` the moonlit night of the other parts (19:30 UTC).
 fn part_clock(default: &str) -> String {
     match std::env::var("KESSEL_FX_REVIEW_CLOCK").ok().as_deref() {
+        Some("noon") => "1942-12-21T09:30:00Z".to_owned(),
         Some("dusk") => "1942-12-21T12:40:00Z".to_owned(),
         Some("blue") => "1942-12-21T13:40:00Z".to_owned(),
         Some("night") => "1942-12-21T19:30:00Z".to_owned(),
@@ -181,7 +182,7 @@ fn strike(stills: &mut Stills, g: &mut Game, r: &mut crate::renderer::Renderer, 
 }
 
 /// `KESSEL_FX_REVIEW_PARTS=fire,strikes,flash,cabin,tiger,cabin_hit,burnout,shockwave,gear,breach,turret_pov,turret_interior,kill` selects the parts (all by default);
-/// `KESSEL_FX_REVIEW_CLOCK` the strike and kill clock, `KESSEL_FX_REVIEW_FILM=1` the clips.
+/// `KESSEL_FX_REVIEW_CLOCK` the clock (`noon` 09:30 UTC, the parts' default since 2026-11-02; `dusk`, `blue`, `night`, or an ISO instant), `KESSEL_FX_REVIEW_FILM=1` the clips.
 fn part(name: &str) -> bool {
     match std::env::var("KESSEL_FX_REVIEW_PARTS") {
         Ok(list) => list.split(',').any(|p| p.trim() == name),
@@ -304,7 +305,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // (`debug_enemy_fire_at_player`), the observer outside: one square on the left flank from
     // 60 m abeam, one on the glacis from 70 m ahead. Film mode films each; otherwise two stills.
     if part("tiger") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         step(&mut g, &mut r, 60, &idle);
         let forward = g.player.forward();
@@ -353,7 +354,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // from the commander's own post inside with the living crew at theirs. Film mode films 110
     // frames from the round's launch; otherwise two stills, 2 and 10 frames after the strike.
     if part("cabin_hit") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         g.enable_singleplayer_crew();
         g.station = Station::Commander;
@@ -402,7 +403,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // primed, from an observer 14 m off: the stowage's burn jetting from the breach and the
     // holes, the ring venting, the turret going, the plume. Film mode films five seconds.
     if part("burnout") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         let forward = g.player.forward();
         let right = Vec3::new(-forward.z, 0.0, forward.x);
@@ -450,7 +451,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // kicked when it arrives with the report. The receipt: emission, arrivals, the kick, the
     // men startled, the grass and crown impulses.
     if part("shockwave") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         let forward = g.player.forward();
         let right = Vec3::new(-forward.z, 0.0, forward.x);
@@ -516,7 +517,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // a full load; a T-34 stands with its gear packed. From low beside the tracks, and the deck
     // from above and behind.
     if part("gear") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         g.debug_set_snow_loads(0.0, 0.9);
         step(&mut g, &mut r, 30, &idle);
@@ -562,7 +563,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // grilles, and when the fire the breach started burns, the pool and the grilles burn. Filmed
     // from the struck side, eight seconds.
     if part("breach") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         g.debug_set_snow_loads(0.3, 0.9);
         step(&mut g, &mut r, 60, &idle);
@@ -613,7 +614,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // drives three seconds through the lying snow, stops, and fires an HE round at the field
     // 60 m ahead; the muzzle blast and its front, the burst, the snow on the deck and the gun.
     if part("turret_pov") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         g.debug_set_snow_loads(0.8, 0.9);
         g.debug_set_running_gear_snow(None, 0.7);
@@ -660,7 +661,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
     // the turret side at the loader, the plate solved, its spall crossing the compartment with its
     // tracers and the solved chips' heat, the fire it starts. Six seconds.
     if part("turret_interior") {
-        clock(&mut r, &part_clock("1942-12-21T13:05:00Z"))?;
+        clock(&mut r, &part_clock("1942-12-21T09:30:00Z"))?;
         g.debug_place_tiger(tiger, 0.0);
         g.enable_singleplayer_crew();
         g.station = Station::Commander;
@@ -673,14 +674,35 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             let eye = turret.transform_point3(g.player.parts.commander_eye);
             let target = turret.transform_point3(Vec3::new(0.0, 1.75, 1.7));
             r.camera.pos = eye; r.camera.set_forward(target - eye); r.camera.fov_y = 100f32.to_radians();
+            // The player's eye is stunned by a heavy hit on the vehicle (`concussion`, a veil over
+            // the view for seconds); this clip is a review of what crosses the compartment, so
+            // the veil is held off. Disclosed harness action; the game keeps it.
+            r.concussion = 0.0;
+        };
+        // A real round through the ordinary flight and terminal route (the plate solved by the
+        // lattice, its chips carrying their temperatures): a 76 mm APCR from the right, level,
+        // into the turret side at the loader's height.
+        let launch = |g: &mut Game| {
+            // World space, level: the arena's ground rolls the hull, so a turret-frame aim left
+            // low and climbed past the plate. Seven metres off the vehicle's right (the loader's
+            // side) at the turret side's height, 2.3 m above the ground under the turret.
+            let turret = g.player.turret_model();
+            let pivot = turret.transform_point3(Vec3::ZERO);
+            let right = -g.player.forward().cross(Vec3::Y).normalize_or_zero();
+            let ground = g.hf.height_at(pivot.x, pivot.z);
+            let target = Vec3::new(pivot.x, ground + 2.3, pivot.z) + g.player.forward() * 0.6;
+            let from = target + right * 7.0;
+            let dir = -right;
+            let id = g.debug_launch_round(&crate::ballistics::BR_354P, false, from, dir, 100.0, 0x5EA1_0100);
+            println!("[fx-review] turret_interior launch: from {:?} dir {:?}; player pos {:?} centre {:?} turret pivot {:?}", from.to_array(), dir.to_array(),
+                g.player.pos.to_array(), g.player.center().to_array(), pivot.to_array());
+            serde_json::json!({"shell": "76mm BR-354P", "projectile": id, "from_turret_local_m": [-7.0, 1.25, 0.8]})
         };
         if let Some(mut film) = Film::start(&stills.prefix, "turret_interior")? {
             look(&g, &mut r);
             r.reset_history();
             for frame in 0..360 {
-                if frame == strike_frame {
-                    strike = g.debug_crew_solo_strike_raked(CrewRole::Loader, false, Arc::Side, 0.3, 35.0);
-                }
+                if frame == strike_frame { strike = launch(&mut g); }
                 step(&mut g, &mut r, 1, &idle);
                 look(&g, &mut r);
                 let path = film.frame();
@@ -692,7 +714,7 @@ pub fn run(prefix: &str, frames: u32) -> anyhow::Result<()> {
             film.finish()?;
         } else {
             step(&mut g, &mut r, strike_frame, &idle);
-            strike = g.debug_crew_solo_strike_raked(CrewRole::Loader, false, Arc::Side, 0.3, 35.0);
+            strike = launch(&mut g);
             for (at, name, note) in [(2u32, "turret_interior_2f", "the turret side holed at the loader, +2 frames"), (6, "turret_interior_8f", "+8 frames"), (32, "turret_interior_40f", "two thirds of a second on"), (200, "turret_interior_4s", "four seconds on")] {
                 step(&mut g, &mut r, at, &idle);
                 look(&g, &mut r);

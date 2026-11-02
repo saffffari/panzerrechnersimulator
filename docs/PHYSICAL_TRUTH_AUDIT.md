@@ -291,8 +291,10 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   evidence.
 - The `fx-review` harness films (`KESSEL_FX_REVIEW_FILM=1`: every frame of each strike and of
   the kill to a 60 fps H.264 clip, stills taken as frames of the clip with no history reset) and
-  takes a clock (`KESSEL_FX_REVIEW_CLOCK=dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
-  21 December 1942, the sun about 5 deg under). In film mode the fenced wall time includes the
+  takes a clock (`KESSEL_FX_REVIEW_CLOCK=noon|dusk|blue|night|<UTC>`, blue hour 13:40 UTC on
+  21 December 1942, the sun about 5 deg under; since 2026-11-02 every part defaults to `noon`,
+  09:30 UTC, local noon at Stalingrad with the sun about 18 deg up, the owner having had enough
+  of sunset renders). In film mode the fenced wall time includes the
   frame's readback and PNG write and is not a frame-rate figure; the pass timestamps are.
 - Every lamp is occluded by every object in the air as on the surfaces (2026-11-02). The
   froxel pass (`rm_volume.wgsl`) gave a lamp without a shadow cube (all but the two strongest
@@ -411,12 +413,20 @@ its hull from the real projectile path, the gunner's frame across a catastrophic
   seconds a petrol fire takes; nothing here is saved (a reload loses a running leak, not the fuel
   it took). `fx-review` part `breach` is the evidence; tests cover Torricelli's rate, a hole
   above the liquid, the drain and the pool's growth.
+- A penetration's trapped interior smoke is a third as dense as its exterior vent (0.55 against
+  1.6) and clears in six seconds instead of ten (2026-11-02): at the vent's density the six
+  puffs were opaque across the turret, and an interior camera saw only sky-lit fog for ten
+  seconds. A compartment does fill with smoke; the density is a named presentation value, not a
+  vented-gas model.
 - Spall and shrapnel carry tracers, and the solved chips glow by their temperature on the one
   law (2026-11-02; the owner). A flying fragment's tail is still a frame of its own measured
   motion (no rod drawn through a wall; a ricochet starts a new segment), now bounded at 0.45 m
   instead of 4 cm and 0.22 of the chip's size wide, so a 1/60 s exposure of a chip at tens of
-  metres a second reads as a streak; the five heat pages' colours are the Planck law at their
-  bands (1450, 1200, 1000, 820 K; cold steel below 750 K) instead of an authored amber set, and
+  metres a second reads as a streak; the five heat pages' colours are the Planck law drawn at
+  1.7 times their bands' lower temperatures (2200, 1870, 1530, 1275 K drawn for chips of 1300,
+  1100, 900 and 750 K and up; cold steel below 750 K: white-yellow through red, the owner's call
+  over the dull red the solved temperatures give, a named display choice) instead of an
+  authored amber set, and
   the two coolest pages' display scale is lifted (1.05 to 1.4, 0.18 to 0.6; tails 0.86 to 1.1,
   0.12 to 0.5) so a chip at the Draper point reads red hot in the dark cabin. The cabin fire's
   four pages are the same Planck law at the exterior pages' temperatures (their display scale
